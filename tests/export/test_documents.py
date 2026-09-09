@@ -1,4 +1,4 @@
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -76,16 +76,17 @@ def test_defaults_from_the_verified_schema_are_present():
 
 
 def test_unit_format_is_escaped_into_the_unit_attribute():
-    """Spec 6.1, Korrektur 2026-09-02: VirtualInUdpCmd hat 15 Attribute, u. a. Unit."""
+    """Spec 6.1, correction 2026-09-02: VirtualInUdpCmd has 15 attributes, Unit among them."""
     out = text_of(render_virtual_in_udp("L", "192.168.1.50", 7000, inputs()))
     assert 'Unit="&lt;v.1&gt; °C"' in out
 
 
 def test_info_element_is_the_first_child_of_virtual_in_udp():
-    """Spec 6.1, Korrektur 2026-09-02: jede Vorlage traegt ein Info-Element als erstes Kind."""
+    """Spec 6.1, correction 2026-09-02: every template carries an Info
+    element as its first child."""
     out = text_of(render_virtual_in_udp("L", "192.168.1.50", 7000, inputs()))
-    # ">" Nr. 1 schliesst die XML-Deklaration, ">" Nr. 2 das Wurzelelement —
-    # erst danach beginnt der Elementinhalt, in dem <Info> stehen soll.
+    # ">" No. 1 closes the XML declaration, ">" No. 2 the root element -
+    # only then does the element content begin, where <Info> should be.
     body_after_root = out.split(">", 2)[2]
     assert body_after_root.lstrip().startswith('<Info templateType="1" minVersion="14040925"/>')
 
@@ -116,7 +117,7 @@ def test_virtual_out_carries_method_and_address():
 
 
 def test_virtual_out_cmd_has_no_id_attribute():
-    """Spec 6.1, Korrektur 2026-09-02: VirtualOutCmd hat 15 Attribute und kein ID."""
+    """Spec 6.1, correction 2026-09-02: VirtualOutCmd has 15 attributes and no ID."""
     out = text_of(
         render_virtual_out(
             "Lampe",
@@ -135,8 +136,8 @@ def test_info_element_is_the_first_child_of_virtual_out():
             [LoxoneCommand("d1_1_onoff", "Schalten", "/cmd/d1_1_onoff/1", False)],
         )
     )
-    # ">" Nr. 1 schliesst die XML-Deklaration, ">" Nr. 2 das Wurzelelement —
-    # erst danach beginnt der Elementinhalt, in dem <Info> stehen soll.
+    # ">" No. 1 closes the XML declaration, ">" No. 2 the root element -
+    # only then does the element content begin, where <Info> should be.
     body_after_root = out.split(">", 2)[2]
     assert body_after_root.lstrip().startswith('<Info templateType="3" minVersion="14040925"/>')
 
@@ -153,9 +154,8 @@ def test_filename_is_ascii_only():
 
 
 def test_filenames_of_labels_differing_only_by_separator_do_not_collide():
-    """ "Lampe 1", "Lampe_1" und "Lampe-1" normalisieren alle auf dasselbe
-    Label-Segment — auf verschiedenen Geraeten muss die ID sie trotzdem
-    trennen."""
+    """ "Lampe 1", "Lampe_1" and "Lampe-1" all normalize to the same label
+    segment - on different devices, the ID must still keep them apart."""
     space = filename_for("VIU", 1, "Lampe 1")
     underscore = filename_for("VIU", 2, "Lampe_1")
     hyphen = filename_for("VIU", 3, "Lampe-1")
@@ -163,9 +163,9 @@ def test_filenames_of_labels_differing_only_by_separator_do_not_collide():
 
 
 def test_filename_with_empty_label_has_no_trailing_separator_or_empty_segment():
-    """Ein Label, das komplett wegnormalisiert (nicht-ASCII, leer, nur
-    Sonderzeichen), darf weder mit "_" enden noch ein leeres "__"-Segment
-    hinterlassen — die Datei bleibt trotzdem eindeutig ueber die ID."""
+    """A label that normalizes away entirely (non-ASCII, empty, only special
+    characters) must neither end with "_" nor leave behind an empty "__"
+    segment - the file still stays unique via the ID."""
     for label in ("厨房", "", "!!!"):
         name = filename_for("VIU", 12, label)
         assert name == "VIU_d12.xml"

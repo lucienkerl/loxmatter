@@ -1,4 +1,4 @@
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -14,16 +14,17 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Zugang zur Oberflaeche: Passwort, Sitzung, Drosselung.
+"""Access to the interface: password, session, throttling.
 
-Drei Module, absichtlich getrennt und absichtlich ohne FastAPI-Bezug:
+Three modules, deliberately separate and deliberately without any FastAPI
+reference:
 
-- `passwords` rechnet Hashes und prueft sie. Kennt weder Datenbank noch HTTP.
-- `sessions` legt Sitzungen an und prueft sie. Kennt den `AuthStore`, kein HTTP.
-- `throttle` zaehlt Fehlversuche. Kennt gar nichts ausser der Uhr.
+- `passwords` computes hashes and checks them. Knows neither database nor HTTP.
+- `sessions` creates sessions and checks them. Knows the `AuthStore`, no HTTP.
+- `throttle` counts failed attempts. Knows nothing at all except the clock.
 
-Der HTTP-Teil liegt in `loxmatter.api.auth`, der Waechter in
-`loxmatter.loxone.server`. Diese Trennung ist der Grund, warum die Logik
-hier ohne ASGI-Testclient pruefbar ist - und warum ein Geheimnis nur an den
-Stellen auftauchen kann, die es wirklich brauchen.
+The HTTP part lives in `loxmatter.api.auth`, the guard in
+`loxmatter.loxone.server`. This separation is why the logic here is
+testable without an ASGI test client - and why a secret can only ever
+surface at the places that actually need it.
 """

@@ -1,4 +1,4 @@
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -15,12 +15,12 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 
-"""Macht aus gespeicherten Kommandos die virtuellen Ausgaenge einer Vorlage.
+"""Turns stored commands into a template's virtual outputs.
 
-Gegenstueck zu `export.signals` fuer die Eingangsseite. Bewusst NICHT in
-`export.commands`: das Modul leitet Kommandos aus einem Matter-Abbild ab und
-liegt damit unterhalb von `model.store` (der importiert `DeviceCommand` von
-dort). Ein Zugriff auf `StoredCommand` von dort waere ein Importzyklus.
+The counterpart to `export.signals` for the input side. Deliberately NOT
+in `export.commands`: that module derives commands from a Matter snapshot
+and so sits below `model.store` (which imports `DeviceCommand` from it).
+Accessing `StoredCommand` from there would be an import cycle.
 """
 
 from __future__ import annotations
@@ -40,39 +40,38 @@ def _command_path(command: StoredCommand) -> str:
 
 
 def to_outputs(commands: Sequence[StoredCommand]) -> list[LoxoneCommand]:
-    """Baut die virtuellen Ausgaenge eines Geraets aus seinen Kommandos.
+    """Builds a device's virtual outputs from its commands.
 
-    **Ein und Aus gibt es zusaetzlich als EINEN kombinierten Ausgang**
-    (2026-09-03). Loxone sieht fuer einen digitalen virtuellen Ausgang
-    `CmdOn` und `CmdOff` vor: ein Objekt, das bei der steigenden Flanke das
-    eine und bei der fallenden das andere schickt. Genau das braucht man, um
-    einen Schalter direkt darauf zu legen.
+    **On and off are additionally available as ONE combined output**
+    (2026-09-03). Loxone provides `CmdOn` and `CmdOff` for a digital
+    virtual output: one object that sends the one on the rising edge and
+    the other on the falling edge. That is exactly what is needed to wire
+    a switch directly onto it.
 
-    **Die einzelnen Ausgaenge bleiben trotzdem erhalten**, und das ist keine
-    Unentschlossenheit, sondern der Fall, in dem das Geraet auch ausserhalb
-    von Loxone geschaltet werden kann: dann folgt der Zustand in der Config
-    nicht mehr dem tatsaechlichen, und man will Ein und Aus einzeln
-    ausloesen koennen, statt an einer Flanke zu haengen, die vielleicht gar
-    nicht kommt. Beide Varianten in der Vorlage zu haben kostet nichts - es
-    sind Eintraege, aus denen man sich bedient; wer den kombinierten
-    verdrahtet, laesst die einzelnen einfach liegen.
+    **The individual outputs are kept nonetheless**, and that is not
+    indecision but the case where the device can also be switched outside
+    Loxone: then the state in the config no longer follows the actual
+    state, and you want to be able to trigger on and off individually
+    instead of depending on an edge that may never come. Having both
+    variants in the template costs nothing - they are entries to pick
+    from; whoever wires up the combined one simply leaves the individual
+    ones unused.
 
-    Gepaart wird nur, was zusammengehoert: gleicher Endpunkt UND gleicher
-    Cluster. Die Zuordnung stammt aus den gespeicherten Feldern, nicht aus
-    dem Schluesselnamen - Schluessel sind opak (Hauptdokument 6.2), und aus
-    `d1_1_on` auf den Endpunkt zurueckzuschliessen waere ein Bruch dieser
-    Regel durch die Hintertuer.
+    Only what belongs together is paired: same endpoint AND same cluster.
+    The grouping comes from the stored fields, not from the key name -
+    keys are opaque (main document 6.2), and inferring the endpoint back
+    from `d1_1_on` would be a backdoor violation of that rule.
 
-    `toggle` bekommt keinen Partner: es hat keinen Gegenbefehl. Ebenso jedes
-    Kommando mit Wert (`level`), das ohnehin analog ist.
+    `toggle` gets no partner: it has no counter-command. The same applies
+    to any command with a value (`level`), which is analog anyway.
 
-    Die URLs aendern sich nicht - `/cmd/d1_1_on/1` und `/cmd/d1_1_off/1`
-    bleiben, was sie waren. Neu ist allein ein zusaetzliches Loxone-Objekt,
-    das beide benutzt. Der kombinierte Ausgang steht unmittelbar vor seinem
-    `on`, damit die drei in der Config beieinander liegen.
+    The URLs do not change - `/cmd/d1_1_on/1` and `/cmd/d1_1_off/1` stay
+    what they were. All that is new is one additional Loxone object that
+    uses both. The combined output sits immediately before its `on`, so
+    the three sit together in the config.
 
-    Eine Quelle fuer beide Exportwege: `cli.py`s `export`-Kommando und der
-    API-Router bauten diese Liste vorher zweimal getrennt zusammen.
+    One source for both export paths: `cli.py`'s `export` command and the
+    API router used to assemble this list separately, twice over.
     """
     by_group: dict[tuple[int, int], dict[str, StoredCommand]] = {}
     for command in commands:
@@ -90,9 +89,9 @@ def to_outputs(commands: Sequence[StoredCommand]) -> list[LoxoneCommand]:
         if off is not None:
             result.append(
                 LoxoneCommand(
-                    # Der Kommentar nennt beide Schluessel: in der Config
-                    # ist sonst nicht zu sehen, welche zwei Befehle hier
-                    # zusammengefasst sind.
+                    # The comment names both keys: otherwise there is no
+                    # way to see in the config which two commands are
+                    # combined here.
                     key=f"{command.key} + {off.key}",
                     title=PAIRED_TITLE,
                     path=_command_path(command),

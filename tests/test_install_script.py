@@ -1,30 +1,30 @@
-"""Verhaltenstests fuer install.sh.
+"""Behavior tests for install.sh.
 
-Das Skript veraendert fremde Rechner: es installiert Pakete, ruft sudo,
-klont und startet Container. Geprueft wird deshalb, WELCHE Befehle es
-waehlt - nicht, was sie bewirken. Dazu laeuft es gegen einen versiegelten
-PATH aus zwei Verzeichnissen:
+The script changes other people's machines: it installs packages, calls sudo,
+clones and starts containers. What's checked is therefore WHICH commands it
+chooses - not what they do. For this it runs against a sealed
+PATH made of two directories:
 
-  bin/  gefaelschte Binaries (docker, git, sudo, apt-get, curl, uname, ip,
-        hostname, usermod). Jedes protokolliert seinen Aufruf nach $STUB_LOG
-        und endet erfolgreich. Ein Werkzeug "fehlt" schlicht dadurch, dass
-        sein Stub nicht angelegt wird - deshalb darf im PATH nichts liegen,
-        was es auf dem Testrechner echt gibt.
-  sys/  Symlinks auf genau die echten Werkzeuge, die das Skript legitim
-        braucht (sh, awk, sed, grep, ...). `id` steht bewusst NICHT dabei,
-        sondern ist ein Stub - sonst haenge das Verhalten davon ab, ob die
-        Testsuite gerade als root laeuft.
+  bin/  fake binaries (docker, git, sudo, apt-get, curl, uname, ip,
+        hostname, usermod). Each logs its call to $STUB_LOG
+        and exits successfully. A tool "is missing" simply because
+        its stub isn't created - so the PATH must not contain anything
+        that genuinely exists on the test machine.
+  sys/  symlinks to exactly the real tools the script legitimately
+        needs (sh, awk, sed, grep, ...). `id` is deliberately NOT among
+        them, but is a stub instead - otherwise the behavior would depend
+        on whether the test suite happens to run as root.
 
-Die Stubs liegen zusaetzlich unveraendert in templates/. Der apt-get-Stub
-kopiert von dort nach bin/, und der curl-Stub gibt fuer get.docker.com ein
-Skript aus, das dasselbe fuer `docker` tut. Damit verhaelt sich ein Lauf, in
-dem ein Werkzeug fehlt und nachinstalliert wird, wie auf einem echten Host:
-danach ist es da.
+The stubs also sit unchanged in templates/. The apt-get stub
+copies them from there into bin/, and the curl stub, for get.docker.com,
+prints a script that does the same thing for `docker`. That way a run in
+which a tool is missing and gets installed afterward behaves like on a real
+host: afterward it's there.
 
-Die Kindprozesse laufen mit start_new_session=True, also ohne
-kontrollierendes Terminal. Damit schlaegt jedes Oeffnen von /dev/tty fehl
-und der nicht-interaktive Zweig ist deterministisch - unabhaengig davon, ob
-pytest gerade in einem Terminal oder in der CI laeuft.
+The child processes run with start_new_session=True, i.e. without a
+controlling terminal. That makes every attempt to open /dev/tty fail
+and the non-interactive branch deterministic - independent of whether
+pytest happens to run in a terminal or in CI.
 """
 
 from __future__ import annotations
@@ -42,8 +42,8 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parent.parent
 INSTALLER = REPO_ROOT / "install.sh"
 
-# Echte Werkzeuge, die das Skript benutzen darf. Alles andere kommt aus
-# einem Stub oder gilt als nicht installiert.
+# Real tools the script is allowed to use. Everything else comes from
+# a stub or counts as not installed.
 SYSTEM_TOOLS = (
     "sh",
     "cat",
@@ -77,8 +77,8 @@ _IP = 'echo "default via 10.0.1.1 dev eth0 proto dhcp src 10.0.1.56"\n'
 
 _HOSTNAME = 'echo "10.0.1.56"\n'
 
-# Nicht als echtes Werkzeug: sonst haengt jeder root-Test davon ab, als wer
-# die Testsuite laeuft. FAKE_UID=0 macht daraus einen root-Lauf.
+# Not a real tool: otherwise every root test would depend on who
+# the test suite runs as. FAKE_UID=0 turns it into a root run.
 _ID = """case "${1-}" in
   -un|-nu|-n) echo "tester" ;;
   *) echo "${FAKE_UID-1000}" ;;
@@ -91,8 +91,8 @@ esac
 exit 0
 """
 
-# Holt die "installierten" Pakete aus templates/ nach bin/ - danach sind sie
-# wirklich da, so wie nach einem echten apt-get.
+# Fetches the "installed" packages from templates/ into bin/ - afterward they
+# are really there, just like after a real apt-get.
 _APT_GET = """for pkg in "$@"; do
   if [ -f "$STUB_TEMPLATES/$pkg" ]; then
     cp "$STUB_TEMPLATES/$pkg" "$STUB_BIN/$pkg"
@@ -123,8 +123,8 @@ fi
 exit 0
 """
 
-# Legt beim `clone` ein Checkout an, das die ECHTEN Stack-Dateien enthaelt -
-# so laufen die Tests gegen die tatsaechliche docker-compose.yml und .env.example.
+# On `clone`, creates a checkout that contains the REAL stack files -
+# that way the tests run against the actual docker-compose.yml and .env.example.
 _GIT = """if [ "${1-}" = "-C" ]; then shift 2; fi
 case "${1-}" in
   clone)
@@ -140,10 +140,10 @@ esac
 exit 0
 """
 
-# Das Skript laedt get.docker.com jetzt per `-o <datei>` herunter statt es zu
-# pipen - der Stub muss `-o` deshalb selbst auswerten und den Rumpf dorthin
-# schreiben statt ihn nur auszugeben. Ohne `-o` (z.B. beim health-Check) geht
-# die Ausgabe wie zuvor nach stdout.
+# The script now downloads get.docker.com via `-o <file>` instead of
+# piping it - the stub therefore has to evaluate `-o` itself and write the
+# body there instead of just printing it. Without `-o` (e.g. during the
+# health check), the output goes to stdout as before.
 _CURL = """out=""
 url=""
 prev=""
@@ -228,8 +228,9 @@ def installer(tmp_path):
     templates = tmp_path / "templates"
     templates.mkdir()
     log = tmp_path / "stub.log"
-    # Eigenes TMPDIR, damit `mktemp` im Skript hier landet statt im echten
-    # /tmp - nur so laesst sich pruefen, ob eine temporaere Datei liegen bleibt.
+    # A dedicated TMPDIR, so `mktemp` in the script lands here instead of in
+    # the real /tmp - only this way can it be checked whether a temporary
+    # file is left behind.
     tmpdir = tmp_path / "tmp"
     tmpdir.mkdir()
 
@@ -247,11 +248,11 @@ def installer(tmp_path):
             stale.unlink()
         for stale in list(templates.iterdir()):
             stale.unlink()
-        # Ein zweiter installer()-Aufruf im selben Test (z.B. um ein zweites
-        # Mal gegen ein vorhandenes Checkout zu laufen) soll nur SEINE eigenen
-        # Aufrufe in result.calls sehen - ohne das hier wuerde der erste Lauf
-        # im Log stehen bleiben und jeder "not called(...)" auf den zweiten
-        # Lauf faelschlich fehlschlagen.
+        # A second installer() call in the same test (e.g. to run a second
+        # time against an existing checkout) should only see ITS OWN calls
+        # in result.calls - without this, the first run would remain in
+        # the log and every "not called(...)" on the second run would
+        # wrongly fail.
         if log.exists():
             log.unlink()
 
@@ -260,7 +261,7 @@ def installer(tmp_path):
             path.write_text(f'#!/bin/sh\nprintf \'%s\\n\' "{name} $*" >> "$STUB_LOG"\n{body}')
             path.chmod(0o755)
 
-        # templates/ kennt alles, bin/ nur das, was auf diesem Host "da" ist.
+        # templates/ knows everything, bin/ only what's "there" on this host.
         for name, body in dict(DEFAULT_STUBS, **(stubs or {})).items():
             write(templates, name, body)
         for name, body in active.items():
@@ -275,15 +276,15 @@ def installer(tmp_path):
             "TMPDIR": str(tmpdir),
             "LOXMATTER_REPO": str(REPO_ROOT),
             "LOXMATTER_DIR": str(home / "loxmatter"),
-            # Ohne Terminal muss die Adresse aus der Umgebung kommen. Tests,
-            # die genau diesen Abbruch pruefen, setzen sie auf "".
+            # Without a terminal, the address must come from the environment.
+            # Tests that check exactly this abort set it to "".
             "MINISERVER_IP": "10.0.1.99",
-            # /sys/class/rfkill gibt es auf macOS nicht und ist nirgends
-            # beschreibbar. Dieser Pfad existiert standardmaessig nicht -
-            # check_rfkill findet dann nichts, genau wie auf einem Host ohne
-            # rfkill. Tests fuer check_rfkill zeigen hierher auf ein
-            # praepariertes Verzeichnis.
-            "RFKILL_DIR": str(tmp_path / "kein-rfkill-hier"),
+            # /sys/class/rfkill doesn't exist on macOS and is nowhere
+            # writable. This path doesn't exist by default -
+            # check_rfkill then finds nothing, just like on a host without
+            # rfkill. Tests for check_rfkill point this at a
+            # prepared directory instead.
+            "RFKILL_DIR": str(tmp_path / "no-rfkill-here"),
         }
         full_env.update(env or {})
         return full_env
@@ -302,10 +303,10 @@ def installer(tmp_path):
         )
         return Result(proc, home, log, tmpdir)
 
-    # Fuer Tests, die auf den LAUFENDEN Prozess einwirken muessen (z.B. ein
-    # Signal schicken), statt nur das fertige Ergebnis zu pruefen. Gleicher
-    # Aufbau wie `run`, nur mit Popen statt subprocess.run, damit `run`
-    # selbst unveraendert bleibt.
+    # For tests that need to act on the RUNNING process (e.g. send a
+    # signal) instead of just checking the finished result. Same
+    # structure as `run`, just with Popen instead of subprocess.run, so `run`
+    # itself stays unchanged.
     def start(*args, env=None, omit=(), stubs=None):
         full_env = build_env(env, omit, stubs)
         return subprocess.Popen(
@@ -324,57 +325,57 @@ def installer(tmp_path):
     return run
 
 
-def test_hilfe_endet_erfolgreich(installer):
+def test_help_exits_successfully(installer):
     result = installer("--help")
     assert result.returncode == 0
     assert "--dry-run" in result.output
 
 
-def test_unbekanntes_argument_bricht_ab(installer):
+def test_an_unknown_argument_aborts(installer):
     result = installer("--nope")
     assert result.returncode == 2
     assert "Unknown argument" in result.output
 
 
-def test_dir_ohne_wert_nimmt_nicht_das_naechste_flag(installer):
-    # --dir --dry-run nahm bisher "--dry-run" klaglos als Pfad, DRY_RUN blieb
-    # 0, und der Lauf machte sich mit einem Verzeichnis namens "--dry-run"
-    # ans Werk statt abzubrechen.
+def test_dir_without_a_value_does_not_take_the_next_flag(installer):
+    # --dir --dry-run used to take "--dry-run" uncomplainingly as the path,
+    # DRY_RUN stayed 0, and the run went to work with a directory named
+    # "--dry-run" instead of aborting.
     result = installer("--dir", "--dry-run")
     assert result.returncode == 2
     assert "--dir needs a path" in result.output
     assert not (result.home / "loxmatter").exists()
 
 
-def test_macos_wird_abgewiesen(installer):
+def test_macos_is_refused(installer):
     result = installer(stubs={"uname": "echo Darwin\n"})
     assert result.returncode == 2
     assert "needs Linux" in result.output
     assert not (result.home / "loxmatter").exists()
 
 
-def test_fremde_architektur_wird_abgewiesen(installer):
+def test_an_unsupported_architecture_is_refused(installer):
     riscv = 'case "${1-}" in\n  -m) echo riscv64 ;;\n  *) echo Linux ;;\nesac\n'
     result = installer(stubs={"uname": riscv})
     assert result.returncode == 2
     assert "riscv64" in result.output
 
 
-def test_ohne_sudo_und_ohne_root_bricht_es_vor_dem_klonen_ab(installer):
+def test_without_sudo_and_without_root_it_aborts_before_cloning(installer):
     result = installer(omit=("docker", "sudo"))
     assert result.returncode == 2
     assert "docker" in result.output
     assert not result.called("git clone")
 
 
-def test_alle_fehlenden_werkzeuge_werden_auf_einmal_genannt(installer):
+def test_all_missing_tools_are_named_at_once(installer):
     result = installer(omit=("git", "curl", "openssl", "docker", "sudo"))
     assert result.returncode == 2
     for tool in ("git", "curl", "openssl", "docker"):
         assert tool in result.output
 
 
-def test_ohne_apt_get_nennt_es_die_pakete_und_bricht_ab(installer):
+def test_without_apt_get_it_names_the_packages_and_aborts(installer):
     result = installer(omit=("git", "apt-get"))
     assert result.returncode == 2
     assert "apt-get" in result.output
@@ -382,76 +383,76 @@ def test_ohne_apt_get_nennt_es_die_pakete_und_bricht_ab(installer):
     assert not result.called("git clone")
 
 
-def test_root_wird_gewarnt_aber_nicht_gestoppt(installer):
+def test_root_is_warned_but_not_stopped(installer):
     result = installer(env={"FAKE_UID": "0"})
     assert result.returncode == 0
     assert "Running as root" in result.output
 
 
-def test_ohne_funkmodul_faellt_es_auf_wifi(installer):
+def test_without_a_radio_module_it_falls_back_to_wifi(installer):
     result = installer()
     assert result.returncode == 0
     assert "Operating mode: wifi" in result.output
 
 
-def test_thread_ohne_geraet_und_ohne_terminal_bricht_ab(installer):
+def test_thread_without_a_device_and_without_a_terminal_aborts(installer):
     result = installer(env={"LOXMATTER_MODE": "thread"})
     assert result.returncode == 2
     assert "no radio" in result.output
 
 
-def test_thread_mit_geraet_aus_der_umgebung(installer):
+def test_thread_with_a_device_from_the_environment(installer):
     result = installer(env={"LOXMATTER_MODE": "thread", "RADIO_DEVICE": "/dev/ttyUSB0"})
     assert result.returncode == 0
     assert "Operating mode: thread" in result.output
 
 
-def test_unbekannte_betriebsart_bricht_ab(installer):
+def test_an_unknown_operating_mode_aborts(installer):
     result = installer(env={"LOXMATTER_MODE": "zigbee"})
     assert result.returncode == 2
     assert "thread" in result.output
 
 
-def test_ungueltige_miniserver_ip_bricht_vor_dem_klonen_ab(installer):
-    result = installer(env={"MINISERVER_IP": "nicht.eine.ip"})
+def test_an_invalid_miniserver_ip_aborts_before_cloning(installer):
+    result = installer(env={"MINISERVER_IP": "not.an.ip"})
     assert result.returncode == 2
     assert "not a valid IPv4" in result.output
     assert not result.called("git clone")
 
 
-def test_ohne_miniserver_ip_und_ohne_terminal_bricht_es_ab(installer):
+def test_without_a_miniserver_ip_and_without_a_terminal_it_aborts(installer):
     result = installer(env={"MINISERVER_IP": ""})
     assert result.returncode == 2
     assert "MINISERVER_IP" in result.output
     assert not result.called("git clone")
 
 
-def test_zu_langes_oktett_wird_abgewiesen(installer):
-    # `[ n -gt 255 ]` scheitert bei einer Zahl jenseits des Integer-Bereichs
-    # mit einem Fehler statt mit "falsch" - und ein fehlgeschlagener Test in
-    # `if` liest sich wie "nicht groesser". Diese Adresse galt deshalb einmal
-    # als gueltig.
+def test_an_over_long_octet_is_refused(installer):
+    # `[ n -gt 255 ]` fails on a number beyond the integer range
+    # with an error instead of with "false" - and a failed test in
+    # `if` reads like "not greater". This address was therefore once
+    # considered valid.
     result = installer(env={"MINISERVER_IP": "1.2.3.999999999999999999999"})
     assert result.returncode == 2
     assert "not a valid IPv4" in result.output
 
 
-def test_fuehrende_nullen_werden_abgewiesen(installer):
-    # 010 lesen verschiedene Verbraucher als oktal, nicht als 10.
+def test_leading_zeros_are_refused(installer):
+    # Various consumers read 010 as octal, not as 10.
     result = installer(env={"MINISERVER_IP": "01.02.03.04"})
     assert result.returncode == 2
     assert "not a valid IPv4" in result.output
 
 
-def test_nur_die_fehlenden_pakete_werden_installiert(installer):
+def test_only_the_missing_packages_are_installed(installer):
     result = installer(omit=("git", "curl"))
     assert result.returncode == 0
     assert result.called("apt-get install -y git curl")
     assert not result.called("apt-get install -y git curl openssl")
 
 
-def test_docker_kommt_nach_den_basispaketen(installer):
-    # get.docker.com braucht selbst curl - die Reihenfolge ist keine Kosmetik.
+def test_docker_comes_after_the_base_packages(installer):
+    # get.docker.com itself needs curl - the order isn't cosmetic.
     result = installer(omit=("git", "curl", "docker"))
     assert result.returncode == 0
     apt = next(i for i, c in enumerate(result.calls) if c.startswith("apt-get install"))
@@ -459,7 +460,7 @@ def test_docker_kommt_nach_den_basispaketen(installer):
     assert apt < docker_install
 
 
-def test_nach_eigener_docker_installation_laeuft_alles_ueber_sudo(installer):
+def test_after_installing_docker_itself_everything_runs_via_sudo(installer):
     result = installer(omit=("docker",))
     assert result.returncode == 0
     assert result.called("usermod -aG docker")
@@ -467,7 +468,7 @@ def test_nach_eigener_docker_installation_laeuft_alles_ueber_sudo(installer):
     assert "log out and back in" in result.output
 
 
-def test_vorhandenes_docker_wird_nicht_neu_installiert(installer):
+def test_an_existing_docker_is_not_reinstalled(installer):
     result = installer()
     assert result.returncode == 0
     assert not any("get.docker.com" in call for call in result.calls)
@@ -477,14 +478,14 @@ def test_vorhandenes_docker_wird_nicht_neu_installiert(installer):
 # ------------------------------------------------------------- phase three --
 
 
-def test_klont_nach_target_dir(installer):
+def test_it_clones_into_the_target_dir(installer):
     result = installer()
     assert result.returncode == 0
     assert result.called("git clone --branch main https://github.com/lucienkerl/loxmatter.git")
     assert (result.home / "loxmatter" / "deploy" / "testhost").is_dir()
 
 
-def test_zweiter_lauf_klont_nicht_erneut(installer):
+def test_a_second_run_does_not_clone_again(installer):
     first = installer()
     assert first.returncode == 0
     second = installer()
@@ -493,19 +494,19 @@ def test_zweiter_lauf_klont_nicht_erneut(installer):
     assert "existing checkout" in second.output
 
 
-def test_fremdes_verzeichnis_wird_abgewiesen(installer, tmp_path):
-    fremd = tmp_path / "home" / "loxmatter"
-    fremd.mkdir(parents=True)
-    (fremd / "irgendwas.txt").write_text("nicht loxmatter")
+def test_a_foreign_directory_is_refused(installer, tmp_path):
+    foreign = tmp_path / "home" / "loxmatter"
+    foreign.mkdir(parents=True)
+    (foreign / "something.txt").write_text("not loxmatter")
     result = installer()
     assert result.returncode == 2
     assert "does not look like a loxmatter checkout" in result.output
 
 
-def test_zweiter_lauf_bietet_das_update_an_ohne_es_zu_tun(installer):
-    # update.sh sichert vorher die Signaldatenbank. Ein Installskript, das
-    # nebenbei aktualisiert, umginge diese Sicherung - also wird nur
-    # angeboten.
+def test_a_second_run_offers_the_update_without_doing_it(installer):
+    # update.sh backs up the signal database beforehand. An install script
+    # that updates on the side would bypass this backup - so it is only
+    # offered.
     first = installer()
     assert first.returncode == 0
     second = installer(env={"FAKE_BEHIND": "3"})
@@ -514,11 +515,11 @@ def test_zweiter_lauf_bietet_das_update_an_ohne_es_zu_tun(installer):
     assert "Apply them with" in second.output
 
 
-def test_update_angebot_kommt_vor_dem_neustart(installer):
-    # main startete bisher zuerst - mit dem ALTEN Checkout - und bot das
-    # Update erst danach an. Ein erneuter Lauf ist der dokumentierte
-    # Update-Weg, also der haeufige Fall: hier darf nicht mit der alten
-    # Version neu gestartet werden, bevor das Update angeboten wurde.
+def test_update_offer_comes_before_restart(installer):
+    # main previously started first - with the OLD checkout - and offered the
+    # update only after that. A rerun is the documented
+    # update path, thus the common case: the old
+    # version must not be restarted before the update is offered.
     first = installer()
     assert first.returncode == 0
     second = installer(env={"FAKE_BEHIND": "3"})
@@ -528,18 +529,18 @@ def test_update_angebot_kommt_vor_dem_neustart(installer):
     assert fetch_index < up_index
 
 
-def test_erster_lauf_prueft_nicht_auf_updates(installer):
-    # Frisch geklont - es gibt nichts zu aktualisieren.
+def test_the_first_run_does_not_check_for_updates(installer):
+    # Freshly cloned - there's nothing to update.
     result = installer(env={"FAKE_BEHIND": "3"})
     assert result.returncode == 0
     assert "new commits" not in result.output
 
 
-def test_dry_run_veraendert_nichts(installer):
-    # git und docker sind hier absichtlich VORHANDEN (Standard-Stubs, kein
-    # omit=(...)): "kein Klon, kein docker-Aufruf" soll daran haengen, dass
-    # ein Trockenlauf sie nicht aufruft - nicht daran, dass es sie auf dem
-    # Testrechner gar nicht gibt.
+def test_a_dry_run_changes_nothing(installer):
+    # git and docker are deliberately PRESENT here (default stubs, no
+    # omit=(...)): "no clone, no docker call" should hinge on the fact that
+    # a dry run doesn't call them - not on the fact that they don't
+    # exist on the test machine at all.
     result = installer("--dry-run")
     assert result.returncode == 0
     assert not result.called("apt-get")
@@ -550,31 +551,31 @@ def test_dry_run_veraendert_nichts(installer):
     assert "would run" in result.output
 
 
-def test_fehlgeschlagener_docker_download_bricht_ab(installer):
-    # `curl ... | sh` meldete hier Erfolg, wenn der Download scheiterte: ohne
-    # pipefail zaehlt der Status des LETZTEN Befehls, und ein `sh` mit leerer
-    # Eingabe endet mit 0. Der Lauf lief dann in usermod weiter.
+def test_a_failed_docker_download_aborts(installer):
+    # `curl ... | sh` used to report success here when the download failed:
+    # without pipefail, the status of the LAST command counts, and an `sh`
+    # with empty input exits with 0. The run then continued into usermod.
     result = installer(omit=("docker",), stubs={"curl": "exit 6\n"})
     assert result.returncode == 2
     assert "Could not download" in result.output
     assert not result.called("usermod")
 
 
-def test_leerer_docker_download_bricht_ab(installer):
-    # curl kann mit 0 enden und trotzdem nichts liefern (leerer Koerper hinter
-    # einem haklichen Proxy). Ein leeres Skript laeuft dann fehlerfrei durch,
-    # und der Lauf meldete faelschlich, das Compose-Plugin fehle.
+def test_an_empty_docker_download_aborts(installer):
+    # curl can exit with 0 and still deliver nothing (an empty body behind
+    # a flaky proxy). An empty script then runs through without error,
+    # and the run wrongly reported that the compose plugin was missing.
     result = installer(omit=("docker",), stubs={"curl": "exit 0\n"})
     assert result.returncode == 2
     assert "was empty" in result.output
     assert not result.called("usermod")
 
 
-def test_unvollstaendiger_docker_download_wird_erkannt(installer):
-    # curl kann mit 0 enden und eine abgeschnittene, aber syntaktisch gueltige
-    # Datei liefern - ein echtes Docker-Installskript beginnt mit einem langen
-    # Kommentarkopf. Sie laeuft fehlerfrei durch und installiert nichts. Das
-    # muss als solches gemeldet werden, nicht als fehlendes Compose-Plugin.
+def test_an_incomplete_docker_download_is_detected(installer):
+    # curl can exit with 0 and deliver a truncated but syntactically valid
+    # file - a real Docker install script starts with a long comment
+    # header. It runs through without error and installs nothing. That
+    # must be reported as such, not as a missing compose plugin.
     truncated = (
         'out=""\n'
         "while [ $# -gt 0 ]; do\n"
@@ -583,7 +584,7 @@ def test_unvollstaendiger_docker_download_wird_erkannt(installer):
         "  esac\n"
         "  shift\n"
         "done\n"
-        'if [ -n "$out" ]; then printf \'#!/bin/sh\\n# abgeschnitten\\ntrue\\n\' > "$out"; fi\n'
+        'if [ -n "$out" ]; then printf \'#!/bin/sh\\n# truncated\\ntrue\\n\' > "$out"; fi\n'
         "exit 0\n"
     )
     result = installer(omit=("docker",), stubs={"curl": truncated})
@@ -594,11 +595,11 @@ def test_unvollstaendiger_docker_download_wird_erkannt(installer):
 
 @pytest.mark.skipif(
     sys.platform == "darwin",
-    reason="mktemp auf macOS ignoriert TMPDIR - die Pruefung waere hier immer wahr",
+    reason="mktemp on macOS ignores TMPDIR - the check would always be true here",
 )
-def test_kein_temporaeres_skript_bleibt_liegen(installer):
-    # Der Download landet in einer Datei, nicht in einer Pipe - sie muss auf
-    # jedem Weg wieder verschwinden, auch wenn der Lauf abbricht.
+def test_no_temporary_script_is_left_behind(installer):
+    # The download lands in a file, not in a pipe - it must disappear
+    # again no matter what, even if the run aborts.
     result = installer(omit=("docker",), stubs={"curl": "exit 6\n"})
     assert result.returncode == 2
     assert list(result.tmpdir.iterdir()) == []
@@ -606,15 +607,15 @@ def test_kein_temporaeres_skript_bleibt_liegen(installer):
 
 @pytest.mark.skipif(
     sys.platform == "darwin",
-    reason="mktemp auf macOS ignoriert TMPDIR - die Pruefung waere hier immer wahr",
+    reason="mktemp on macOS ignores TMPDIR - the check would always be true here",
 )
-def test_sigint_raeumt_temporaere_datei_auf(installer):
-    # Bisher nur einmal manuell per SIGINT vorgefuehrt, hier als Test: der
-    # Download haengt, das Signal geht an die ganze Prozessgruppe (der
-    # Kindprozess ist durch start_new_session=True selbst Gruppenfuehrer -
-    # ein Signal nur an ihn wuerde eine Shell, die auf ihr Vordergrund-Kind
-    # wartet, erst nach dessen Ende bemerken), und danach darf im
-    # temporaeren Verzeichnis nichts mehr liegen.
+def test_sigint_cleans_up_the_temporary_file(installer):
+    # Previously only demonstrated once manually via SIGINT, here as a test:
+    # the download hangs, the signal goes to the whole process group (the
+    # child process is itself the group leader via start_new_session=True -
+    # a signal to it alone would only be noticed by a shell waiting on its
+    # foreground child once that child ends), and afterward nothing must
+    # be left in the temporary directory.
     proc = installer.start(omit=("docker",), stubs={"curl": "sleep 30\n"})
     deadline = time.time() + 10
     while True:
@@ -623,26 +624,26 @@ def test_sigint_raeumt_temporaere_datei_auf(installer):
         if time.time() > deadline:
             proc.kill()
             proc.wait()
-            pytest.fail("curl-Stub ist nicht rechtzeitig gestartet")
+            pytest.fail("curl stub did not start in time")
         time.sleep(0.05)
 
-    # start_new_session=True macht proc.pid zur Prozessgruppen-ID.
+    # start_new_session=True makes proc.pid the process group id.
     os.killpg(proc.pid, signal.SIGINT)
     try:
         proc.wait(timeout=10)
     except subprocess.TimeoutExpired:
         proc.kill()
         proc.wait()
-        pytest.fail("Installer hat nach SIGINT nicht beendet")
+        pytest.fail("Installer did not exit after SIGINT")
 
     assert proc.returncode == 130
     assert list(installer.tmpdir.iterdir()) == []
 
 
-def test_kein_update_angebot_wenn_docker_gerade_erst_kam(installer):
-    # update.sh ruft docker ohne sudo. Wurde Docker in diesem Lauf erst
-    # installiert, greift die Gruppenmitgliedschaft erst nach einer
-    # Neuanmeldung - das Angebot koennte gar nicht funktionieren.
+def test_no_update_offer_when_docker_was_just_installed(installer):
+    # update.sh calls docker without sudo. If Docker was just installed
+    # in this run, group membership only takes effect after logging back
+    # in - the offer couldn't work at all.
     first = installer()
     assert first.returncode == 0
     second = installer(omit=("docker",), env={"FAKE_BEHIND": "3"})
@@ -651,40 +652,41 @@ def test_kein_update_angebot_wenn_docker_gerade_erst_kam(installer):
     assert "Apply them with" not in second.output
 
 
-def test_checkout_ohne_compose_datei_wird_abgewiesen(installer, tmp_path):
-    # Alter Klon von vor deploy/testhost/: Dockerfile da, Stack fehlt. Ohne
-    # diesen Fall prueft die Suite nur die Dockerfile-Haelfte der Bedingung.
-    alt = tmp_path / "home" / "loxmatter"
-    alt.mkdir(parents=True, exist_ok=True)
-    (alt / "Dockerfile").write_text("FROM python:3.12-slim\n")
+def test_a_checkout_without_a_compose_file_is_refused(installer, tmp_path):
+    # Old clone from before deploy/testhost/: Dockerfile present, stack
+    # missing. Without this case, the suite only tests the Dockerfile half
+    # of the condition.
+    old = tmp_path / "home" / "loxmatter"
+    old.mkdir(parents=True, exist_ok=True)
+    (old / "Dockerfile").write_text("FROM python:3.12-slim\n")
     result = installer()
     assert result.returncode == 2
     assert "does not look like a loxmatter checkout" in result.output
     assert not result.called("git clone")
 
 
-def test_unsinnige_commit_zahl_meldet_kein_update(installer):
-    # rev-list liefert normalerweise eine Zahl. Liefert es etwas anderes,
-    # darf daraus kein Update-Angebot mit Muellwert werden.
+def test_a_nonsensical_commit_count_reports_no_update(installer):
+    # rev-list normally returns a number. If it returns something else,
+    # that must not turn into an update offer with a garbage value.
     first = installer()
     assert first.returncode == 0
-    second = installer(env={"FAKE_BEHIND": "keine-zahl"})
+    second = installer(env={"FAKE_BEHIND": "not-a-number"})
     assert second.returncode == 0
     assert "new commits" not in second.output
 
 
-def test_kein_git_repository_bekommt_eigene_meldung_statt_netzwerkschuld(installer):
-    # ensure_checkout prueft nur auf Dockerfile und docker-compose.yml - ein
-    # aus einem Tarball entpackter Checkout besteht das, hat aber kein .git.
-    # `git fetch` scheitert daran genauso wie an einem Netzwerkproblem, und
-    # "Could not reach GitHub" waere dafuer die falsche Erklaerung.
-    kein_repo_git = _GIT.replace(
+def test_not_a_git_repository_gets_its_own_message_instead_of_blaming_the_network(installer):
+    # ensure_checkout only checks for Dockerfile and docker-compose.yml - a
+    # checkout unpacked from a tarball passes that but has no .git.
+    # `git fetch` fails on that just as it would on a network problem, and
+    # "Could not reach GitHub" would be the wrong explanation for it.
+    not_a_repo_git = _GIT.replace(
         'case "${1-}" in\n  clone)',
         'case "${1-}" in\n  rev-parse) exit 1 ;;\n  clone)',
     )
     first = installer()
     assert first.returncode == 0
-    second = installer(stubs={"git": kein_repo_git}, env={"FAKE_BEHIND": "3"})
+    second = installer(stubs={"git": not_a_repo_git}, env={"FAKE_BEHIND": "3"})
     assert second.returncode == 0
     assert "is not a git repository" in second.output
     assert "Could not reach GitHub" not in second.output
@@ -702,13 +704,13 @@ def _env(result):
     )
 
 
-def test_wifi_lauf_schaltet_das_thread_profil_ab(installer):
+def test_a_wifi_run_turns_off_the_thread_profile(installer):
     result = installer()
     assert result.returncode == 0
     assert _env(result)["COMPOSE_PROFILES"] == ""
 
 
-def test_thread_lauf_setzt_profil_geraet_und_interface(installer):
+def test_a_thread_run_sets_the_profile_device_and_interface(installer):
     result = installer(env={"LOXMATTER_MODE": "thread", "RADIO_DEVICE": "/dev/ttyUSB0"})
     assert result.returncode == 0
     values = _env(result)
@@ -717,19 +719,19 @@ def test_thread_lauf_setzt_profil_geraet_und_interface(installer):
     assert values["BACKBONE_IF"] == "eth0"
 
 
-def test_miniserver_ip_kommt_aus_der_umgebung(installer):
+def test_the_miniserver_ip_comes_from_the_environment(installer):
     result = installer(env={"MINISERVER_IP": "10.0.1.77"})
     assert _env(result)["MINISERVER_IP"] == "10.0.1.77"
 
 
-def test_token_wird_erzeugt(installer):
+def test_a_token_is_generated(installer):
     result = installer()
     token = _env(result)["LOXMATTER_API_TOKEN"]
     assert len(token) == 64
     assert set(token) <= set("0123456789abcdef")
 
 
-def test_token_faellt_ohne_openssl_auf_urandom_zurueck(installer):
+def test_without_openssl_the_token_falls_back_to_urandom(installer):
     result = installer(omit=("openssl",))
     assert result.returncode == 0
     token = _env(result)["LOXMATTER_API_TOKEN"]
@@ -737,19 +739,19 @@ def test_token_faellt_ohne_openssl_auf_urandom_zurueck(installer):
     assert set(token) <= set("0123456789abcdef")
 
 
-def test_leerer_urandom_fallback_bricht_laut_ab(installer):
-    # gen_tokens Rueckfallpipe (`od ... | tr -d ' \n'`) laeuft ohne pipefail:
-    # ein scheiterndes od faellt nicht auf, tr auf leerer Eingabe liefert
-    # trotzdem Erfolg. Ein leeres Token wurde bisher stillschweigend als
-    # "generated" gemeldet. openssl bleibt hier absichtlich vorhanden (sonst
-    # wuerde es der apt-get-Stub "nachinstallieren" und den Fallback nie
-    # erreichen) - sein `rand`-Aufruf selbst schlaegt fehl.
+def test_an_empty_urandom_fallback_aborts_loudly(installer):
+    # gen_tokens's fallback pipe (`od ... | tr -d ' \n'`) runs without
+    # pipefail: a failing od goes unnoticed, tr on empty input still
+    # reports success. An empty token used to be silently reported as
+    # "generated". openssl is deliberately present here (otherwise the
+    # apt-get stub would "install" it and the fallback would never be
+    # reached) - its `rand` call itself fails.
     result = installer(stubs={"openssl": "exit 1\n", "od": "exit 1\n"})
     assert result.returncode == 2
     assert "Could not generate LOXMATTER_API_TOKEN" in result.output
 
 
-def test_zweiter_lauf_laesst_die_env_unberuehrt(installer):
+def test_a_second_run_leaves_the_env_untouched(installer):
     first = installer()
     before = first.env_file.read_bytes()
     second = installer()
@@ -757,7 +759,7 @@ def test_zweiter_lauf_laesst_die_env_unberuehrt(installer):
     assert second.env_file.read_bytes() == before
 
 
-def test_nur_der_fehlende_schluessel_wird_ergaenzt(installer):
+def test_only_the_missing_key_is_added(installer):
     first = installer()
     text = first.env_file.read_text().replace(
         f"LOXMATTER_API_TOKEN={_env(first)['LOXMATTER_API_TOKEN']}",
@@ -767,11 +769,11 @@ def test_nur_der_fehlende_schluessel_wird_ergaenzt(installer):
     second = installer(env={"MINISERVER_IP": "10.0.1.55"})
     values = _env(second)
     assert len(values["LOXMATTER_API_TOKEN"]) == 64
-    # Die vorhandene Adresse bleibt, obwohl die Umgebung eine andere nennt.
+    # The existing address stays, even though the environment names a different one.
     assert values["MINISERVER_IP"] == "10.0.1.99"
 
 
-def test_ein_schluessel_wird_ersetzt_nicht_angehaengt(installer):
+def test_a_key_is_replaced_not_appended(installer):
     result = installer()
     lines = [
         line
@@ -781,23 +783,23 @@ def test_ein_schluessel_wird_ersetzt_nicht_angehaengt(installer):
     assert len(lines) == 1
 
 
-def test_rueckwaertsstrich_im_wert_bleibt_erhalten(installer):
-    # `awk -v value=...` verarbeitet Escapes: ein Rueckwaertsstrich wurde
-    # stillschweigend geschluckt, aus \t wurde ein echter Tabulator.
+def test_a_backslash_in_the_value_is_preserved(installer):
+    # `awk -v value=...` processes escapes: a backslash used to be
+    # silently swallowed, \t turned into a real tab character.
     result = installer(env={"LOXMATTER_MODE": "thread", "RADIO_DEVICE": r"/dev/serial/by-id/a\tb"})
     assert result.returncode == 0
     assert r"RADIO_DEVICE=/dev/serial/by-id/a\tb" in result.env_file.read_text()
 
 
-def test_env_ohne_abschliessenden_zeilenumbruch_bleibt_heil(installer):
-    # Eine von Hand bearbeitete .env endet oft ohne Zeilenumbruch. Ein
-    # angehaengter Schluessel verschmolz dann mit der letzten Zeile und
-    # zerstoerte deren Wert.
+def test_an_env_without_a_trailing_newline_stays_intact(installer):
+    # A hand-edited .env often ends without a trailing newline. An
+    # appended key then merged with the last line and
+    # destroyed its value.
     first = installer()
     assert first.returncode == 0
     text = first.env_file.read_text()
     keep = "\n".join(line for line in text.splitlines() if not line.startswith("COMPOSE_PROFILES="))
-    first.env_file.write_text(keep.rstrip("\n"))  # bewusst ohne Zeilenumbruch am Ende
+    first.env_file.write_text(keep.rstrip("\n"))  # deliberately without a trailing newline
     second = installer()
     assert second.returncode == 0
     values = dict(
@@ -809,11 +811,11 @@ def test_env_ohne_abschliessenden_zeilenumbruch_bleibt_heil(installer):
     assert "COMPOSE_PROFILES" in values
 
 
-def test_abbruch_in_configure_nennt_die_angefasste_env(installer):
-    # COMPOSE_PROFILES, RADIO_DEVICE und RADIO_BAUDRATE stehen schon in der
-    # .env, wenn BACKBONE_IF keinen Wert bekommt (kein Default-Route-Eintrag,
-    # kein Terminal) und der Lauf abbricht. Der Abbruch muss das sagen, sonst
-    # sieht es aus wie ein sauberer Abbruch vor jeder Aenderung.
+def test_an_abort_in_configure_names_the_touched_env(installer):
+    # COMPOSE_PROFILES, RADIO_DEVICE, and RADIO_BAUDRATE already sit in the
+    # .env when BACKBONE_IF gets no value (no default-route entry,
+    # no terminal) and the run aborts. The abort must say so, otherwise
+    # it looks like a clean abort before any change.
     result = installer(
         env={"LOXMATTER_MODE": "thread", "RADIO_DEVICE": "/dev/ttyUSB0"},
         stubs={"ip": "echo\n"},
@@ -830,10 +832,10 @@ def test_abbruch_in_configure_nennt_die_angefasste_env(installer):
     assert values["COMPOSE_PROFILES"] == "thread"
 
 
-def test_widerspruechlicher_modus_wird_laut_gemeldet(installer):
-    # LOXMATTER_MODE=thread trifft auf eine vorhandene .env mit
-    # COMPOSE_PROFILES= (wifi). "Operating mode: thread" und sechs Zeilen
-    # spaeter "mode: wifi" widersprachen sich bisher stillschweigend.
+def test_a_conflicting_mode_is_reported_loudly(installer):
+    # LOXMATTER_MODE=thread meets an existing .env with
+    # COMPOSE_PROFILES= (wifi). "Operating mode: thread" and, six lines
+    # later, "mode: wifi" used to silently contradict each other.
     first = installer()
     assert first.returncode == 0
     second = installer(env={"LOXMATTER_MODE": "thread"})
@@ -843,18 +845,18 @@ def test_widerspruechlicher_modus_wird_laut_gemeldet(installer):
     assert "wins over the requested" in second.output
 
 
-def test_altinstallation_behaelt_ihren_border_router(installer):
-    # Eine .env von vor den Compose-Profilen kennt COMPOSE_PROFILES nicht.
-    # Ein leerer Wert naehme dem naechsten `compose up` den otbr-Dienst weg -
-    # deshalb entscheidet dann der laufende Container.
+def test_an_old_installation_keeps_its_border_router(installer):
+    # A .env from before the compose profiles doesn't know COMPOSE_PROFILES.
+    # An empty value would take the otbr service away from the next
+    # `compose up` - so the running container decides instead.
     first = installer(env={"LOXMATTER_MODE": "thread", "RADIO_DEVICE": "/dev/ttyUSB0"})
     assert first.returncode == 0
-    ohne = "\n".join(
+    without = "\n".join(
         line
         for line in first.env_file.read_text().splitlines()
         if not line.startswith("COMPOSE_PROFILES=")
     )
-    first.env_file.write_text(ohne + "\n")
+    first.env_file.write_text(without + "\n")
     second = installer(env={"FAKE_CONTAINERS": "otbr matter-server loxmatter"})
     assert second.returncode == 0
     values = dict(
@@ -865,68 +867,68 @@ def test_altinstallation_behaelt_ihren_border_router(installer):
     assert values["COMPOSE_PROFILES"] == "thread"
 
 
-# --------------------------------------------------------- phase fuenf/sechs --
+# --------------------------------------------------------- phase five/six --
 
 
-def test_stack_wird_gestartet(installer):
+def test_stack_is_started(installer):
     result = installer()
     assert result.returncode == 0
     assert result.called("docker compose up -d")
     assert (result.home / "loxmatter" / "deploy" / "testhost" / "data").is_dir()
 
 
-def test_kein_lokaler_bau_bei_der_installation(installer):
-    # ghcr.io liefert seit 0.2.0 fertige Images (arm64, amd64). Ein `--build`
-    # zwaenge compose, lokal zu bauen UND das Ergebnis unter dem `image:`-Namen
-    # des Dienstes zu taggen - eine frische Installation truege dann ein
-    # LOKALES Image namens ghcr.io/lucienkerl/loxmatter:stable, das sich
-    # selbst als `dev` meldet, und genau das loest den Arbeitskopie-Hinweis
-    # der Oberflaeche auf einer frisch installierten, veroeffentlichten
-    # Version aus. Ohne --build baut `up` nur noch, wenn compose ueberhaupt
-    # kein Image beschaffen kann (siehe der Kommentar ueber `image:` in
-    # docker-compose.yml) - der gewuenschte Rueckfall fuer einen Host ohne
-    # GHCR-Zugang.
+def test_no_local_build_during_installation(installer):
+    # ghcr.io has provided finished images (arm64, amd64) since 0.2.0. A `--build`
+    # would force compose to build locally AND tag the result under the service's `image:` name -
+    # a fresh installation would then carry a
+    # LOCAL image named ghcr.io/lucienkerl/loxmatter:stable, which reports
+    # itself as `dev`, and that is exactly what triggers the working copy hint
+    # in the UI on a freshly installed, published
+    # version. Without --build, `up` only builds if compose cannot
+    # get an image at all (see the comment about `image:` in
+    # docker-compose.yml) - the desired fallback for a host without
+    # GHCR access.
     result = installer()
     assert result.returncode == 0
     assert not any("--build" in call for call in result.calls)
 
 
-def test_gesundheitspruefung_laeuft(installer):
+def test_health_check_runs(installer):
     result = installer()
     assert any("/health" in call for call in result.calls)
     assert "answers" in result.output
 
 
-def test_kranker_dienst_liefert_trotzdem_den_rest(installer):
-    # Antwortet /health nicht, ist die Containerliste die wahrscheinlichste
-    # Erklaerung - sie darf nicht mit abgebrochen werden. Nur der Health-Zweig
-    # des curl-Stubs schlaegt fehl, get.docker.com bliebe unberuehrt, falls
-    # dieser Pfad in einem anderen Test gebraucht wuerde.
-    curl_health_scheitert = _CURL.replace(
+def test_an_unhealthy_service_still_delivers_the_rest(installer):
+    # If /health doesn't respond, the container list is the most likely
+    # explanation - it must not be aborted along with it. Only the health
+    # branch of the curl stub fails; get.docker.com would stay untouched,
+    # should this path ever be needed in another test.
+    curl_health_fails = _CURL.replace(
         '*health*) body=\'{"status":"ok"}\' ;;',
         "*health*) exit 1 ;;",
     )
-    result = installer(stubs={"curl": curl_health_scheitert})
+    result = installer(stubs={"curl": curl_health_fails})
     assert result.returncode == 2
     assert "does not answer" in result.output
-    # Die Containerliste kommt ERST NACH der Gesundheitspruefung - genau das
-    # durfte bisher nicht mehr laufen.
+    # The container list comes ONLY AFTER the health check - that's
+    # exactly what used to fail to run.
     assert any("compose ps --services" in call for call in result.calls)
     assert "Web interface" in result.output
 
 
-def test_gesunder_port_kommt_aus_der_compose_datei(installer):
-    # Der echte Stack lauscht auf 8080 - das muss aus der Datei kommen, nicht
-    # aus dem Rueckfallwert.
+def test_the_health_port_comes_from_the_compose_file(installer):
+    # The real stack listens on 8080 - that must come from the file, not
+    # from the fallback value.
     result = installer()
     assert result.returncode == 0
     assert any(":8080/health" in call for call in result.calls)
     assert "assuming 8080" not in result.output
 
 
-def test_mehrdeutiger_port_faellt_hoerbar_zurueck(installer):
-    # Zwei --listen-Stellen: lieber laut aufgeben als still die falsche Zahl
-    # nehmen und danach dem Dienst die Schuld geben.
+def test_an_ambiguous_port_falls_back_audibly(installer):
+    # Two --listen entries: better to give up loudly than to silently pick
+    # the wrong number and blame the service for it afterward.
     first = installer()
     compose = first.home / "loxmatter" / "deploy" / "testhost" / "docker-compose.yml"
     compose.write_text(compose.read_text() + '\n      - --listen\n      - "9090"\n')
@@ -936,36 +938,36 @@ def test_mehrdeutiger_port_faellt_hoerbar_zurueck(installer):
     assert not any(":9090/" in call for call in second.calls)
 
 
-def test_fehlender_dienst_wird_zum_befund(installer):
+def test_a_missing_service_becomes_a_finding(installer):
     result = installer(env={"FAKE_SERVICES": "loxmatter"})
     assert result.returncode == 0
     assert "matter-server" in result.output
     assert "not running" in result.output
 
 
-def test_thread_lauf_ohne_wpan_meldet_den_workaround(installer):
+def test_a_thread_run_without_wpan_reports_the_workaround(installer):
     result = installer(env={"LOXMATTER_MODE": "thread", "RADIO_DEVICE": "/dev/ttyUSB0"})
     assert result.returncode == 0
     assert "start-stop-daemon" in result.output
     assert "otbr-agent" in result.output
 
 
-def test_wifi_lauf_erwaehnt_thread_gar_nicht_als_problem(installer):
+def test_a_wifi_run_does_not_mention_thread_as_a_problem_at_all(installer):
     result = installer()
     assert result.returncode == 0
     assert "start-stop-daemon" not in result.output
 
 
-def test_rfkill_prueft_jeden_bluetooth_adapter_nicht_nur_den_ersten(installer, tmp_path):
-    # check_rfkill brach bisher nach dem ERSTEN Eintrag vom Typ "bluetooth"
-    # ab (`return 0` traf immer, gesperrt oder nicht) - ein zweiter Adapter
-    # kam nie zur Sprache. rfkill0 ist hier frei, rfkill1 gesperrt: die
-    # alphabetische Glob-Reihenfolge sorgt dafuer, dass der freie Adapter
-    # zuerst dran ist.
+def test_rfkill_checks_every_bluetooth_adapter_not_just_the_first(installer, tmp_path):
+    # check_rfkill used to abort after the FIRST entry of type "bluetooth"
+    # (`return 0` always matched, blocked or not) - a second adapter
+    # never came up. rfkill0 is unblocked here, rfkill1 blocked: the
+    # alphabetical glob order ensures the unblocked adapter comes
+    # first.
     rfkill_dir = tmp_path / "rfkill"
-    frei = rfkill_dir / "rfkill0"
-    gesperrt = rfkill_dir / "rfkill1"
-    for entry, soft in ((frei, "0"), (gesperrt, "1")):
+    unblocked = rfkill_dir / "rfkill0"
+    blocked = rfkill_dir / "rfkill1"
+    for entry, soft in ((unblocked, "0"), (blocked, "1")):
         entry.mkdir(parents=True)
         (entry / "type").write_text("bluetooth\n")
         (entry / "soft").write_text(f"{soft}\n")
@@ -975,33 +977,33 @@ def test_rfkill_prueft_jeden_bluetooth_adapter_nicht_nur_den_ersten(installer, t
     assert "rfkill0" not in result.output
 
 
-# -------------------------------------------------------------- phase sieben --
+# -------------------------------------------------------------- phase seven --
 
 
-def test_bericht_nennt_die_weboberflaeche_und_das_passwort(installer):
+def test_the_report_names_the_web_interface_and_the_password(installer):
     result = installer()
     assert result.returncode == 0
     assert "http://10.0.1.56:8080/" in result.output
     assert "set a password" in result.output
 
 
-def test_thread_bericht_schlaegt_den_watchdog_vor(installer):
+def test_the_thread_report_suggests_the_watchdog(installer):
     result = installer(env={"LOXMATTER_MODE": "thread", "RADIO_DEVICE": "/dev/ttyUSB0"})
     assert "otbr-watchdog.sh" in result.output
     assert str(result.home / "loxmatter") in result.output
 
 
-def test_wifi_bericht_schlaegt_keinen_watchdog_vor(installer):
+def test_the_wifi_report_suggests_no_watchdog(installer):
     result = installer()
     assert "otbr-watchdog.sh" not in result.output
-    assert "COMPOSE_PROFILES=thread" in result.output  # so ruestet man nach
+    assert "COMPOSE_PROFILES=thread" in result.output  # that's how you upgrade later
 
 
-def test_watchdog_protokoll_liegt_neben_dem_checkout_nicht_in_home(installer, tmp_path):
-    # Die Cron-Zeile schrieb das Log bisher immer nach $HOME, auch wenn
-    # --dir den Checkout ganz woanders anlegt - dann passt die eigene
-    # Zeile nicht mehr zu sich selbst.
-    checkout = tmp_path / "anderswo" / "loxmatter"
+def test_the_watchdog_log_sits_next_to_the_checkout_not_in_home(installer, tmp_path):
+    # The cron line used to always write the log to $HOME, even when
+    # --dir puts the checkout somewhere else entirely - then its own
+    # line no longer matched itself.
+    checkout = tmp_path / "elsewhere" / "loxmatter"
     result = installer(
         "--dir",
         str(checkout),
@@ -1012,23 +1014,23 @@ def test_watchdog_protokoll_liegt_neben_dem_checkout_nicht_in_home(installer, tm
     assert f"{result.home}/otbr-watchdog.log" not in result.output
 
 
-def test_bericht_verweist_auf_befunde_ohne_sie_zu_wiederholen(installer):
-    # check_containers meldet den fehlenden Dienst schon direkt in run_checks,
-    # dort wo er auffaellt. report() darf diesen Block danach nicht noch
-    # einmal ausgeben - sonst stehen dieselben kopierbaren Befehle zweimal im
-    # Lauf, nur durch ein paar Zeilen getrennt.
+def test_the_report_points_to_findings_without_repeating_them(installer):
+    # check_containers already reports the missing service directly in
+    # run_checks, right where it's noticed. report() must not print this
+    # block a second time afterward - otherwise the same copyable commands
+    # appear twice in the run, separated by only a few lines.
     result = installer(env={"FAKE_SERVICES": "loxmatter"})
     assert result.returncode == 0
     assert result.output.count("docker compose logs matter-server") == 1
 
 
-def test_trockenlauf_bericht_erfindet_keine_adresse(installer):
-    # Im Trockenlauf wurde der Stack nie gestartet und PORT nie aus der
-    # compose-Datei gelesen - der Bericht darf dann keine Web-Adresse
-    # behaupten. git und docker sind hier absichtlich VORHANDEN (kein
-    # omit=(...)): die Behauptung "es wird nichts geklont oder gestartet"
-    # soll am Verhalten des Trockenlaufs haengen, nicht daran, dass die
-    # Werkzeuge auf dem Testrechner fehlen.
+def test_a_dry_run_report_does_not_invent_an_address(installer):
+    # In a dry run, the stack was never started and PORT was never read
+    # from the compose file - the report must therefore not claim any
+    # web address. git and docker are deliberately PRESENT here (no
+    # omit=(...)): the claim "nothing is cloned or started" should
+    # hinge on the dry run's behavior, not on the tools being
+    # missing on the test machine.
     result = installer("--dry-run")
     assert result.returncode == 0
     assert "Web interface" not in result.output
@@ -1037,10 +1039,10 @@ def test_trockenlauf_bericht_erfindet_keine_adresse(installer):
     assert not result.called("docker compose up")
 
 
-def test_ohne_befunde_kein_verweis_auf_befunde(installer):
-    # Ein Lauf im WiFi-Modus hat nichts zu bemaengeln: kein Thread-Netz zu
-    # pruefen, alle Dienste laufen. Dann darf am Ende auch kein Verweis auf
-    # Befunde stehen, die es nicht gibt.
+def test_with_no_findings_there_is_no_reference_to_findings(installer):
+    # A run in WiFi mode has nothing to complain about: no Thread network to
+    # check, all services running. Then there must also be no reference at
+    # the end to findings that don't exist.
     result = installer()
     assert result.returncode == 0
     assert "Findings" not in result.output

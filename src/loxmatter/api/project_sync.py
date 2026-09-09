@@ -1,4 +1,4 @@
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -14,39 +14,38 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""`POST /api/export/project-sync` (Entwurf `docs/superpowers/specs/
-2026-09-03-projektdatei-sync-design.md`, Abschnitt 7).
+"""`POST /api/export/project-sync` (design `docs/superpowers/specs/
+2026-09-03-project-file-sync-design.md`, section 7).
 
-Nimmt eine hochgeladene Loxone-Projektdatei entgegen und liefert Diff-Plan
-plus beide gepatchten Datei-Varianten in einer Antwort - derselbe `Store`,
-den auch `api.export` und `api.devices` bekommen (siehe deren
-Moduldocstrings zur Begruendung: ein zweiter, unabhaengig geoeffneter Store
-vergaebe fuer dasselbe Geraet einen zweiten Satz Signalschluessel).
+Accepts an uploaded Loxone project file and returns a diff plan plus both
+patched file variants in a single response - the same `Store` that
+`api.export` and `api.devices` also receive (see their module docstrings
+for the rationale: a second, independently opened store would assign a
+second set of signal keys for the same device).
 
-**Zwei Fehlerpfade, unterschiedlich behandelt:**
+**Two error paths, handled differently:**
 
-- `ProjectFormatError` - die hochgeladene Datei ist kein gueltiges/
-  erkennbares Loxone-Projekt (kein `ControlList`, unabgeschlossenes Tag,
-  keine UTF-8-Textdatei) - wird zur verstaendlichen 400 mit der deutschen
-  Meldung, die die Exception schon traegt. Kein Serverfehler, kein nackter
-  500.
-- `AmbiguousMiniserverError` (Subklasse von `ProjectFormatError`) - die
-  Datei konfiguriert mehr als einen Miniserver und keiner wurde ausgewaehlt.
-  Traegt sie `candidates` (mindestens ein gefundener Miniserver), liefert
-  der Endpunkt STATT einer 400 eine normale 200-Antwort mit
-  `needs_miniserver_selection=True` und `available_miniservers` - die WebUI
-  zeigt dann ein Auswahlfeld statt eines Fehlers (Nutzerwunsch nach dem
-  Review: auswaehlen statt die IP von Hand abzutippen). Nur der "gar keiner
-  konfiguriert"-Fall (leere `candidates`, nichts zur Auswahl) bleibt eine
-  echte 400.
+- `ProjectFormatError` - the uploaded file is not a valid/recognisable
+  Loxone project (no `ControlList`, an unclosed tag, not a UTF-8 text
+  file) - becomes a comprehensible 400 with the message the exception
+  already carries. No server error, no bare 500.
+- `AmbiguousMiniserverError` (subclass of `ProjectFormatError`) - the file
+  configures more than one Miniserver and none was selected. If it
+  carries `candidates` (at least one Miniserver found), the endpoint
+  returns, INSTEAD of a 400, a normal 200 response with
+  `needs_miniserver_selection=True` and `available_miniservers` - the
+  WebUI then shows a selection field instead of an error (user request
+  after the review: select instead of typing the IP by hand). Only the
+  "none configured at all" case (empty `candidates`, nothing to select)
+  remains a genuine 400.
 
-`patch.MissingCaptionError` gehoert zu keinem der beiden dazu: ein ansonsten
-wohlgeformtes Projekt, dem nur der `VirtualInCaption`- bzw.
-`VirtualOutCaption`-Abschnitt fehlt, ist laut Entwurf Abschnitt 8 eine Grenze
-des experimentellen Pfades, kein Grund, die ganze Antwort zu verwerfen.
-`run_sync` faengt das darum selbst ab und liefert
-`patched_with_new_devices=None` plus `new_devices_unavailable_reason`; Plan
-und konservative Datei kommen normal beim Anwender an."""
+`patch.MissingCaptionError` belongs to neither of the two: an otherwise
+well-formed project that is merely missing the `VirtualInCaption` or
+`VirtualOutCaption` section is, per design section 8, a limit of the
+experimental path, not a reason to discard the whole response. `run_sync`
+therefore catches it itself and returns `patched_with_new_devices=None`
+plus `new_devices_unavailable_reason`; the plan and the conservative file
+reach the user normally."""
 
 from __future__ import annotations
 
@@ -81,28 +80,27 @@ def build_project_sync_router(store: Store) -> APIRouter:
 
     @router.post("/project-sync")
     async def project_sync(
-        file: UploadFile = File(..., description="Die hochgeladene .Loxone-Projektdatei"),
-        bridge_ip: str = Query(..., description="IP der Bruecke, aus Sicht des Miniservers"),
-        port: int = Query(DEFAULT_UDP_PORT, description="UDP-Port, auf dem der Miniserver lauscht"),
+        file: UploadFile = File(..., description="The uploaded .Loxone project file"),
+        bridge_ip: str = Query(..., description="IP of the bridge, as seen by the Miniserver"),
+        port: int = Query(DEFAULT_UDP_PORT, description="UDP port the Miniserver listens on"),
         listen: int = Query(
             DEFAULT_LISTEN_PORT,
-            description="HTTP-Port in den Kommando-URLs neuer Ausgaenge - muss mit dem"
-            " --listen von `loxmatter run` uebereinstimmen, wie bei /api/export/download.",
+            description="HTTP port in the command URLs of new outputs - must match the"
+            " --listen of `loxmatter run`, as for /api/export/download.",
         ),
         miniserver_ip: str | None = Query(
             None,
-            description="Interne IP des Miniservers (`LoxLIVE.IntAddr` in der Projektdatei,"
-            " dieselbe IP wie bei `loxmatter run --miniserver`). Nur noetig, wenn die"
-            " hochgeladene Datei mehr als einen Miniserver konfiguriert und noch keiner"
-            " ausgewaehlt wurde - die Antwort traegt in dem Fall stattdessen"
-            " `needs_miniserver_selection=True` mit den gefundenen Miniservern zur Auswahl.",
+            description="Internal IP of the Miniserver (`LoxLIVE.IntAddr` in the project"
+            " file, the same IP as for `loxmatter run --miniserver`). Only needed if the"
+            " uploaded file configures more than one Miniserver and none has been"
+            " selected yet - in that case the response instead carries"
+            " `needs_miniserver_selection=True` with the found Miniservers to choose from.",
         ),
     ) -> ProjectSyncPlanOut:
-        """Baut Diff-Plan und beide gepatchten Datei-Varianten im Speicher -
-        schreibt nirgends auf die Platte und markiert kein Geraet als
-        exportiert (anders als `/api/export/download`: eine hochgeladene
-        Projektdatei ist keine heruntergeladene Vorlage, siehe Entwurf
-        Abschnitt 4)."""
+        """Builds the diff plan and both patched file variants in memory -
+        writes nothing to disk and marks no device as exported (unlike
+        `/api/export/download`: an uploaded project file is not a
+        downloaded template, see design section 4)."""
         raw = await file.read()
         try:
             result = run_sync(

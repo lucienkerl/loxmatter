@@ -1,5 +1,5 @@
 #!/bin/sh
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -899,7 +899,7 @@ this has to be re-applied after every 'docker compose up':
   docker exec otbr ot-ctl ifconfig up
   docker exec otbr ot-ctl thread start
 The state goes from 'detached' to 'leader' after about 15 seconds. See
-deploy/testhost/README.md, 'start-stop-daemon haengt auf dem Pi-Kernel'."
+deploy/testhost/README.md, 'start-stop-daemon hangs on the Pi kernel'."
 }
 
 run_checks() {

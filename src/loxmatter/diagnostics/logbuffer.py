@@ -1,4 +1,4 @@
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -14,123 +14,115 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Der Log-Ring, aus dem die Systemseite der Oberflaeche ihre Zeilen bekommt.
+"""The log ring the interface's system page gets its lines from.
 
-Heute gibt es dafuer ueberhaupt keine Erfassung - Logzeilen gehen nur nach
-`docker logs`, und genau dann, wenn man sie braucht (eine Person meldet "es
-geht nicht", siehe `api.diagnostics`), sitzt man nicht zwingend vor dem
-Terminal. `LogBufferHandler` haengt sich wie jeder andere `logging.Handler`
-an einen Logger und haelt die letzten `LOG_BUFFER_SIZE` Zeilen in einem
-`RingBuffer` (siehe `api.diagnostics.RingBuffer`, hier bewusst importiert,
-nicht neu gebaut - dieselbe Begruendung wie in `loxone.sender`: ein
-generischer, laufzeitunabhaengiger Ringpuffer an einer Stelle).
+Today there is no capture for this at all - log lines only go to `docker
+logs`, and precisely when they are needed (someone reports "it's not
+working", see `api.diagnostics`), you are not necessarily sitting in front
+of the terminal. `LogBufferHandler` attaches to a logger like any other
+`logging.Handler` and keeps the last `LOG_BUFFER_SIZE` lines in a
+`RingBuffer` (see `api.diagnostics.RingBuffer`, deliberately imported here
+rather than rebuilt - the same rationale as in `loxone.sender`: one
+generic, runtime-independent ring buffer in one place).
 
-**Die eine Regel, die diese Datei von jeder anderen im Projekt
-unterscheidet: `LogBufferHandler` darf NIEMALS selbst protokollieren -
-auch nicht im Fehlerfall.** Ueberall sonst im Projekt gilt "einen
-Beobachterfehler verschlucken, aber loggen" (siehe z. B.
-`api.diagnostics.RingBuffer.append`, an dem seit Nachbesserung Task 7,
-Fix 2 auch `UdpSender.add_datagram_observer` haengt). Hier waere der Logeintrag
-selbst der naechste Aufruf DESSELBEN Handlers - `logger.exception(...)`
-in `emit()` liefe direkt wieder bei `emit()` ein und erzeugte eine
-Endlosschleife. Deshalb faengt `emit()` jeden Fehler ab, den ein
-Beobachter wirft, OHNE ihn zu protokollieren und ohne ihn weiterzureichen
-(siehe `test_a_throwing_observer_neither_breaks_logging_nor_logs`). Selbst
-ein Fehler beim Formatieren/Anhaengen des Eintrags selbst laeuft nicht
-ueber `logging`, sondern ueber `self.handleError(record)` - die von
-`logging.Handler` vorgesehene Ausweichroute, die den Traceback direkt
-(per `traceback.print_exc`) auf `sys.stderr` schreibt, OHNE einen Logger
-aufzurufen. Das ist keine Ausnahme von der Regel, sondern der einzige
-Weg, sie einzuhalten: `sys.stderr` ist kein `logging`-Aufruf und kann
-deshalb nicht rekursiv wieder bei diesem Handler ankommen.
+**The one rule that sets this file apart from every other one in the
+project: `LogBufferHandler` must NEVER log by itself - not even on
+error.** Everywhere else in the project, "swallow an observer error, but
+log it" applies (see e.g. `api.diagnostics.RingBuffer.append`, which
+`UdpSender.add_datagram_observer` has also hung off since the task 7,
+fix 2 correction). Here, the log entry itself would be the next call to
+THIS SAME handler - `logger.exception(...)` in `emit()` would come
+straight back into `emit()` and create an infinite loop. That is why
+`emit()` catches every error an observer raises WITHOUT logging it and
+without propagating it (see
+`test_a_throwing_observer_neither_breaks_logging_nor_logs`). Even an
+error while formatting/appending the entry itself does not go through
+`logging`, but through `self.handleError(record)` - the fallback route
+`logging.Handler` provides, which writes the traceback directly (via
+`traceback.print_exc`) to `sys.stderr`, WITHOUT calling any logger. That
+is not an exception to the rule but the only way to follow it: `sys.stderr`
+is not a `logging` call and so cannot recursively arrive back at this
+handler.
 
-**`emit()` laeuft im aufrufenden Thread, nicht im Event-Loop.** Logzeilen
-entstehen in diesem Projekt auch in fremden Threads - aiohttp und das
-chip-SDK protokollieren aus ihren eigenen Threads heraus, und
-`logging.Logger.callHandlers` ruft jeden Handler synchron im genau
-diesem Thread auf. `emit()` darf deshalb keine asyncio-Primitive
-benutzen und nie warten (kein `await`, kein `asyncio.Lock`) - ein Aufruf
-aus dem falschen Thread waere entweder ein Laufzeitfehler oder ein
-stiller Deadlock. `collections.deque.append` ist unter CPython atomar -
-NICHT weil "jede Bytecode-Operation ohne Zwischenausstieg laeuft"
-(`deque.append` ist ueberhaupt keine Folge von Python-Bytecode-Operationen),
-sondern weil es ein einziger C-Aufruf ist, der die GIL fuer seine gesamte
-Dauer haelt und sie nie zwischendurch freigibt - kein anderer Thread kann
-mitten in einem `append` zum Zug kommen. Deshalb braucht der Ring hier
-KEIN zusaetzliches Schloss fuer das ANHAENGEN, obwohl mehrere Threads
-gleichzeitig anhaengen koennen.
+**`emit()` runs in the calling thread, not in the event loop.** Log lines
+in this project also arise in foreign threads - aiohttp and the chip SDK
+log from their own threads, and `logging.Logger.callHandlers` calls every
+handler synchronously in exactly that thread. `emit()` must therefore not
+use any asyncio primitives and must never wait (no `await`, no
+`asyncio.Lock`) - a call from the wrong thread would be either a runtime
+error or a silent deadlock. `collections.deque.append` is atomic under
+CPython - NOT because "every bytecode operation runs without an
+intermediate exit" (`deque.append` is not a sequence of Python bytecode
+operations at all), but because it is a single C call that holds the GIL
+for its entire duration and never releases it in between - no other
+thread can get a turn in the middle of an `append`. That is why the ring
+here needs NO additional lock for APPENDING, even though several threads
+can append at the same time.
 
-**Das deckt nur die Schreibseite ab.** Ein Lesezugriff auf Python-Ebene
-ist keine einzelne atomare C-Operation und deshalb NICHT auf dieselbe Art
-geschuetzt: `RingBuffer.__iter__` (siehe `api.diagnostics`) gibt einen
-lebenden `deque`-Iterator zurueck, und `deque` erkennt eine Mutation
-waehrend einer laufenden Iteration und bricht mit
-`RuntimeError('deque mutated during iteration')` ab, sobald ein
-gleichzeitiges `append` (bei vollem Ring: eine Verdraengung) dazwischen
-faehrt. Eine einfache `for entry in ring:`-Schleife - genau die Form, die
-`api.diagnostics` heute fuer `sender.datagram_log` und `command_log`
-benutzt - ist deshalb nicht mehr sicher, sobald der Ring aus mehr als
-einem Thread beschrieben werden kann. Bislang war das kein Problem, weil
-jeder bisherige Ring nur aus einem einzigen (Event-Loop-)Pfad heraus
-beschrieben wurde; `LogBufferHandler` ist der erste Schreiber aus
-BELIEBIGEN Threads. Ein Leser muss deshalb `list(ring)` aufrufen, um eine
-Momentaufnahme zu nehmen (wie `RingBuffer.append` selbst ein einziger,
-sicherer C-Aufruf) - siehe `RingBuffer` in `api.diagnostics` fuer denselben
-Hinweis von der Leserseite aus.
+**That only covers the write side.** A read at the Python level is not a
+single atomic C operation and is therefore NOT protected the same way:
+`RingBuffer.__iter__` (see `api.diagnostics`) returns a live `deque`
+iterator, and `deque` detects a mutation during an ongoing iteration and
+aborts with `RuntimeError('deque mutated during iteration')` as soon as a
+concurrent `append` (with a full ring: an eviction) intervenes. A plain
+`for entry in ring:` loop - exactly the form `api.diagnostics` uses today
+for `sender.datagram_log` and `command_log` - is therefore no longer safe
+once the ring can be written from more than one thread. So far that was
+never a problem, because every existing ring was only ever written from a
+single (event-loop) path; `LogBufferHandler` is the first writer from ANY
+thread. A reader must therefore call `list(ring)` to take a snapshot (like
+`RingBuffer.append` itself a single, safe C call) - see `RingBuffer` in
+`api.diagnostics` for the same note from the reader's side.
 
-**Der Zeitstempel kommt aus `loxmatter.timestamps.now_iso`** - derselben
-Funktion, die auch `DatagramLogEntry.timestamp` (siehe `api.diagnostics`)
-und `CommandLogEntry.timestamp` benutzen. Zwei verschiedene Zeitformate
-nebeneinander in derselben Systemseite waeren fuer den Leser ein Raetsel.
+**The timestamp comes from `loxmatter.timestamps.now_iso`** - the same
+function that `DatagramLogEntry.timestamp` (see `api.diagnostics`) and
+`CommandLogEntry.timestamp` also use. Two different time formats side by
+side on the same system page would be a puzzle for the reader.
 
-**Am Logger `loxmatter`, nicht am Root-Logger** (siehe `install_log_buffer`
-unten). Die Zeilen fremder Bibliotheken (aiohttp, uvicorn, das chip-SDK)
-gehoeren nicht in eine Bedienoberflaeche fuer diese Bruecke.
+**On the logger `loxmatter`, not on the root logger** (see
+`install_log_buffer` below). The lines from third-party libraries
+(aiohttp, uvicorn, the chip SDK) do not belong in an operator interface
+for this bridge.
 
-**Der echte Fund beim Beleg der Rekursionsfreiheit (Schritt 5 des
-Auftrags).** Ein Beobachter, der selbst ueber DENSELBEN Logger
-protokolliert (an dem `LogBufferHandler` haengt), loest einen
-verschachtelten, zweiten `emit()`-Aufruf im selben Thread-Stack aus -
-`Logger.callHandlers` haengt Handler synchron in den aufrufenden Stack.
-Ohne Gegenmassnahme waere das eine ECHTE, unbegrenzte Python-Rekursion
-(der Beobachter des zweiten Aufrufs protokolliert erneut, ausgeloest vom
-selben Beobachter, mit einer bei jeder Ebene laengeren "Echo"-Zeile) -
-kein Sonderfall, der sich von selbst erledigt. Deshalb traegt
-`LogBufferHandler` ein Thread-lokales Wiedereintritts-Flag
-(`_ThreadState.active`): der Eintrag eines verschachtelten `emit()`-Aufrufs
-im selben Thread landet zwar noch im Ring (die Zeile geht nicht verloren),
-aber seine Beobachter werden NICHT erneut benachrichtigt - die Kette
-bricht garantiert nach genau einer Ebene ab, nicht erst, wenn Pythons
-Rekursionslimit anschlaegt.
+**The real finding while proving freedom from recursion (step 5 of the
+assignment).** An observer that itself logs through the SAME logger (the
+one `LogBufferHandler` is attached to) triggers a nested, second `emit()`
+call in the same thread stack - `Logger.callHandlers` hangs handlers
+synchronously into the calling stack. Without a countermeasure, that would
+be REAL, unbounded Python recursion (the second call's observer logs
+again, triggered by the same observer, with an "echo" line growing longer
+at every level) - not a special case that resolves itself. That is why
+`LogBufferHandler` carries a thread-local re-entrancy flag
+(`_ThreadState.active`): the entry from a nested `emit()` call in the same
+thread still lands in the ring (the line is not lost), but its observers
+are NOT notified again - the chain is guaranteed to break after exactly
+one level, not only once Python's recursion limit kicks in.
 
-**Warum thread-lokal und nicht ein einzelnes, handlerweites Flag - die
-richtige Begruendung, nachdem die urspruengliche sich als falsch
-herausstellte.** Ein frueherer Entwurf dieses Docstrings behauptete, ein
-handlerweites Flag wuerde einen Thread B blockieren, waehrend Thread A
-gerade in `emit()` steckt, und belegte das mit
-`test_a_line_from_another_thread_arrives`. Beides war falsch: dieser Test
-ist `thread.start(); thread.join()` - streng sequenziell, keine echte
-Nebenlaeufigkeit - und selbst mit zwei tatsaechlich gleichzeitigen Threads
-blockiert Thread B ohnehin an `logging.Handler.lock` (ein `RLock`, das
-`Handler.handle()` fuer die gesamte Dauer von `emit()` haelt), unabhaengig
-davon, ob das Wiedereintritts-Flag pro Thread oder handlerweit gefuehrt
-wird. Gemessen: Thread B wartete 0,41 s, waehrend ein Beobachter von
-Thread A 0,4 s schlief - exakt die Wartezeit, die `Handler.lock` ohnehin
-erzwingt.
+**Why thread-local and not a single, handler-wide flag - the correct
+rationale, after the original one turned out to be wrong.** An earlier
+draft of this docstring claimed that a handler-wide flag would block a
+thread B while thread A is currently in `emit()`, and backed that with
+`test_a_line_from_another_thread_arrives`. Both claims were wrong: that
+test is `thread.start(); thread.join()` - strictly sequential, no real
+concurrency - and even with two genuinely concurrent threads, thread B
+blocks on `logging.Handler.lock` anyway (an `RLock` that `Handler.handle()`
+holds for the entire duration of `emit()`), regardless of whether the
+re-entrancy flag is kept per thread or handler-wide. Measured: thread B
+waited 0.41 s while an observer on thread A slept for 0.4 s - exactly the
+wait `Handler.lock` enforces anyway.
 
-Der tatsaechliche Grund: die Sperre haelt auch dann, wenn ein Aufrufer
-`handler.emit()` DIREKT aufruft und damit `Handler.handle()` samt
-`Handler.lock` umgeht - `logging.Handler` erlaubt das ausdruecklich, und
-nichts in diesem Projekt verbietet es einem kuenftigen Aufrufer. Ein
-einfaches, handlerweites Instanz-Flag wuerde im HEUTIGEN Aufbau
-(Zugriff ausschliesslich ueber `Logger.callHandlers` -> `Handler.handle()`
--> `Handler.lock`) nachweislich keine einzige Benachrichtigung verlieren,
-die die thread-lokale Fassung nicht auch verloeren wuerde - die
-Thread-Lokalitaet ist also eine Absicherung gegen einen heute nicht
-auftretenden, aber moeglichen Fall (direkter `emit()`-Aufruf), nicht eine
-Notwendigkeit fuer echte Nebenlaeufigkeit ueber `handle()`. Das hier
-festzuhalten, verhindert, dass ein spaeterer Leser die Sperre fuer
-notwendiger haelt, als sie ist.
+The actual reason: the lock also holds when a caller invokes
+`handler.emit()` DIRECTLY and thereby bypasses `Handler.handle()` along
+with `Handler.lock` - `logging.Handler` explicitly permits that, and
+nothing in this project forbids a future caller from doing so. A simple,
+handler-wide instance flag would, under the CURRENT setup (access
+exclusively via `Logger.callHandlers` -> `Handler.handle()` ->
+`Handler.lock`), provably not lose a single notification that the
+thread-local version would not also lose - thread-locality is therefore a
+safeguard against a case that does not occur today but could (a direct
+`emit()` call), not a necessity for genuine concurrency via `handle()`.
+Recording this here keeps a later reader from thinking the lock is more
+necessary than it is.
 """
 
 from __future__ import annotations
@@ -148,15 +140,14 @@ LOG_BUFFER_SIZE = 500
 
 @dataclass(frozen=True)
 class LogEntry:
-    """Eine einzelne Logzeile aus dem ueberwachten Logger.
+    """A single log line from the monitored logger.
 
-    `message` ist bereits die fertig formatierte Nachricht INKLUSIVE
-    Traceback, falls einer anhaengt (`self.format(record)` in `emit()`
-    liefert das) - nicht das rohe `record.msg` mit unaufgeloesten
-    `%s`-Platzhaltern. Bei einer Stoerung ist der Traceback das
-    Interessanteste an der Zeile; er darf nicht verlorengehen, nur weil er
-    nicht in einem eigenen Feld steht (siehe
-    `test_an_exception_is_kept_as_text`)."""
+    `message` is already the fully formatted message INCLUDING a
+    traceback, if one is attached (`self.format(record)` in `emit()`
+    provides that) - not the raw `record.msg` with unresolved `%s`
+    placeholders. In the event of a fault, the traceback is the most
+    interesting part of the line; it must not be lost just because it does
+    not sit in its own field (see `test_an_exception_is_kept_as_text`)."""
 
     timestamp: str
     level: str
@@ -165,24 +156,23 @@ class LogEntry:
 
 
 class _ThreadState(threading.local):
-    """Traegt das Wiedereintritts-Flag je Thread - siehe Moduldocstring,
-    Abschnitt "Der echte Fund...". Ein eigenes `__init__`, weil
-    `threading.local`-Unterklassen es fuer JEDEN Thread neu aufrufen, der
-    zum ersten Mal ein Attribut auf der Instanz anfasst (siehe
-    `threading.local`-Dokumentation) - so startet `active` in jedem Thread
-    zuverlaessig bei `False`, ohne dass ein Aufrufer das Attribut selbst
-    vorbelegen muesste."""
+    """Carries the re-entrancy flag per thread - see the module docstring,
+    the "The real finding..." section. A dedicated `__init__` because
+    `threading.local` subclasses call it anew for EVERY thread that
+    touches an attribute on the instance for the first time (see the
+    `threading.local` documentation) - so `active` reliably starts at
+    `False` in every thread, without any caller having to pre-set the
+    attribute itself."""
 
     def __init__(self) -> None:
         self.active = False
 
 
 class LogBufferHandler(logging.Handler):
-    """`logging.Handler`, der die letzten `LOG_BUFFER_SIZE` Zeilen in einem
-    `RingBuffer` haelt und optionale Beobachter benachrichtigt - siehe
-    Moduldocstring fuer die Regeln, die `emit()` einhalten muss (keine
-    eigene Protokollierung, kein asyncio, Thread-lokale
-    Wiedereintrittssperre)."""
+    """`logging.Handler` that keeps the last `LOG_BUFFER_SIZE` lines in a
+    `RingBuffer` and notifies optional observers - see the module
+    docstring for the rules `emit()` must follow (no logging of its own,
+    no asyncio, thread-local re-entrancy lock)."""
 
     def __init__(self) -> None:
         super().__init__()
@@ -191,76 +181,73 @@ class LogBufferHandler(logging.Handler):
         self._state = _ThreadState()
 
     def add_observer(self, callback: Callable[[LogEntry], None]) -> None:
-        """Meldet einen Beobachter an - MIT EINEM VERTRAG, DER VON
-        `Runtime.add_observer`/`UdpSender.add_datagram_observer` ABWEICHT,
-        nicht deren Wiederholung:
+        """Registers an observer - WITH A CONTRACT THAT DIFFERS FROM
+        `Runtime.add_observer`/`UdpSender.add_datagram_observer`, not a
+        repetition of it:
 
-        - **Der Beobachter sieht NICHT jede Zeile.** Eine Zeile, die
-          synchron AUS einem Beobachter heraus protokolliert wird (derselbe
-          Logger, derselbe Thread), landet zwar noch im Ring, erreicht aber
-          KEINEN Beobachter - auch nicht die, die mit der Rekursion nichts
-          zu tun haben (siehe Klassen-/Moduldocstring, Wiedereintritts-
-          sperre). `UdpSender.add_datagram_observer` liefert dagegen
-          tatsaechlich jeden Eintrag - als Vorbild fuer DIESE Methode waere
-          das irrefuehrend.
-        - **Laeuft im Thread, der die Zeile erzeugt hat** - nicht im
-          Event-Loop. `logging.Logger.callHandlers` ruft `emit()` synchron
-          im aufrufenden Stack auf, und `emit()` ruft die Beobachter direkt
-          von dort aus auf.
-        - **Laeuft, waehrend `logging.Handler.lock` gehalten wird**
-          (`Handler.handle()` haelt dieses Schloss ueber die gesamte Dauer
-          von `emit()`).
+        - **The observer does NOT see every line.** A line logged
+          synchronously FROM WITHIN an observer (same logger, same
+          thread) still lands in the ring, but reaches NO observer - not
+          even ones that have nothing to do with the recursion (see the
+          class/module docstring, re-entrancy lock). `UdpSender.
+          add_datagram_observer`, by contrast, genuinely delivers every
+          entry - using it as a model for THIS method would be
+          misleading.
+        - **Runs in the thread that produced the line** - not in the
+          event loop. `logging.Logger.callHandlers` calls `emit()`
+          synchronously in the calling stack, and `emit()` calls the
+          observers directly from there.
+        - **Runs while `logging.Handler.lock` is held** (`Handler.
+          handle()` holds this lock for the entire duration of `emit()`).
 
-        **Deshalb darf ein Beobachter niemals blockieren und muss zuegig
-        zurueckkehren.** Ein Beobachter, der auf ein Schloss wartet, das
-        ein anderer, gerade protokollierender Thread haelt, kann in einen
-        Deadlock laufen: dieser andere Thread haengt seinerseits an
-        `Handler.lock`, das der erste Thread waehrend seines
-        Beobachteraufrufs haelt. Kein Absturz - ein Haenger, in einem
-        Dienst, der wochenlang unbeaufsichtigt laeuft."""
+        **That is why an observer must never block and must return
+        promptly.** An observer waiting on a lock held by another,
+        currently-logging thread can run into a deadlock: that other
+        thread is in turn waiting on `Handler.lock`, which the first
+        thread holds during its observer call. Not a crash - a hang, in a
+        service running unattended for weeks."""
         self._observers.append(callback)
 
     def remove_observer(self, callback: Callable[[LogEntry], None]) -> None:
-        """Meldet einen Beobachter wieder ab. Ein unbekannter Beobachter
-        (z. B. doppelt abgemeldet) ist kein Fehler, sondern wird still
-        ignoriert - dieselbe Regel wie bei `Runtime.remove_observer`."""
+        """Deregisters an observer again. An unknown observer (e.g.
+        deregistered twice) is not an error but is silently ignored - the
+        same rule as for `Runtime.remove_observer`."""
         try:
             self._observers.remove(callback)
         except ValueError:
             pass
 
     def emit(self, record: logging.LogRecord) -> None:
-        """Formt den Datensatz zu einem `LogEntry`, haengt ihn an den Ring
-        und benachrichtigt danach die Beobachter - siehe Moduldocstring fuer
-        die Begruendung jeder einzelnen Eigenschaft unten.
+        """Shapes the record into a `LogEntry`, appends it to the ring, and
+        then notifies the observers - see the module docstring for the
+        rationale behind each individual property below.
 
-        Formatieren und Anhaengen laufen in einem eigenen try/except: ein
-        Fehler dabei (z. B. eine Formatzeichenkette mit fehlendem Argument
-        in `self.format(record)`) geht NICHT ueber `logging` - das waere
-        bereits die verbotene Selbst-Protokollierung -, sondern ueber
-        `self.handleError(record)`, die Standard-Ausweichroute von
-        `logging.Handler`, die direkt auf `sys.stderr` schreibt.
+        Formatting and appending run in their own try/except: an error
+        during that (e.g. a format string with a missing argument in
+        `self.format(record)`) does NOT go through `logging` - that would
+        already be the forbidden self-logging - but through
+        `self.handleError(record)`, `logging.Handler`'s standard fallback
+        route, which writes directly to `sys.stderr`.
 
-        **Luecke, bewusst in Kauf genommen:** Die Wiedereintrittssperre
-        deckt nur die Beobachterschleife unten ab, NICHT `self.format(record)`
-        selbst. Ein Log-Argument, dessen `__str__`/`__repr__` seinerseits
-        ueber denselben Logger protokolliert, rekursiert durch `format()`
-        OHNE die Sperre zu durchlaufen - das waere echte, unbegrenzte
-        Rekursion bis `RecursionError`, nicht durch das Flag gebremst. Kein
-        bekannter Aufrufer im Projekt tut das heute (alle `%`-Argumente sind
-        einfache Werte), deshalb bewusst nicht zusaetzlich abgesichert - wer
-        die Sperre ueber `format()` auszudehnen erwaegt, muss dann aber auch
-        bei Wiedereintritt weiterhin an den Ring anhaengen (siehe oben:
-        "die Zeile geht nicht verloren").
+        **Gap, deliberately accepted:** the re-entrancy lock only covers
+        the observer loop below, NOT `self.format(record)` itself. A log
+        argument whose `__str__`/`__repr__` itself logs through the same
+        logger recurses through `format()` WITHOUT passing through the
+        lock - that would be real, unbounded recursion up to a
+        `RecursionError`, not slowed by the flag. No known caller in the
+        project does that today (all `%` arguments are simple values), so
+        it is deliberately not additionally guarded against - anyone
+        considering extending the lock over `format()` must then also
+        keep appending to the ring on re-entry (see above: "the line is
+        not lost").
 
-        Jeder Beobachter laeuft in seinem eigenen try/except, das nichts
-        protokolliert und nichts weiterreicht (siehe Moduldocstring, "Die
-        eine Regel..."). Vor der Benachrichtigung prueft `emit()` das
-        Thread-lokale Wiedereintritts-Flag: steckt dieser Thread bereits in
-        einem laufenden `emit()`-Aufruf (ein Beobachter hat selbst ueber
-        denselben Logger protokolliert), landet der neue Eintrag zwar noch
-        im Ring, aber seine Beobachter werden NICHT erneut benachrichtigt -
-        siehe Moduldocstring, "Der echte Fund...", und
+        Every observer runs in its own try/except that logs nothing and
+        propagates nothing (see the module docstring, "The one rule...").
+        Before notifying, `emit()` checks the thread-local re-entrancy
+        flag: if this thread is already inside a running `emit()` call (an
+        observer itself logged through the same logger), the new entry
+        still lands in the ring, but its observers are NOT notified again
+        - see the module docstring, "The real finding...", and
         `test_an_observer_that_logs_through_the_same_handler_terminates`."""
         try:
             entry = LogEntry(
@@ -270,10 +257,10 @@ class LogBufferHandler(logging.Handler):
                 message=self.format(record),
             )
             self.entries.append(entry)
-        except Exception:  # noqa: BLE001 — kein `logging.exception(...)` moeglich (siehe
-            # Moduldocstring, "Die eine Regel..."): genau das waere die verbotene
-            # Selbst-Protokollierung. `self.handleError` ist die vorgesehene
-            # Ausweichroute von `logging.Handler` und schreibt direkt auf `sys.stderr`.
+        except Exception:  # noqa: BLE001 — `logging.exception(...)` is not possible here
+            # (see the module docstring, "The one rule..."): exactly that would be the
+            # forbidden self-logging. `self.handleError` is the fallback route
+            # `logging.Handler` provides, and writes directly to `sys.stderr`.
             self.handleError(record)
             return
 
@@ -285,11 +272,11 @@ class LogBufferHandler(logging.Handler):
             for observer in list(self._observers):
                 try:
                     observer(entry)
-                except Exception:  # noqa: BLE001, S110 — bewusst weit gefangen und bewusst
-                    # NICHT protokolliert: der Ausgleich waere selbst eine Logzeile, die
-                    # denselben Handler erneut aufruft (siehe Moduldocstring, "Die eine
-                    # Regel..."). Das ist die einzige Stelle im Projekt, an der ein
-                    # verschluckter Fehler NICHT durch einen Logeintrag ausgeglichen wird.
+                except Exception:  # noqa: BLE001, S110 — deliberately caught broadly and
+                    # deliberately NOT logged: the compensating log line would itself call
+                    # this same handler again (see the module docstring, "The one rule...").
+                    # This is the one place in the project where a swallowed error is NOT
+                    # compensated for by a log entry.
                     pass
         finally:
             self._state.active = False
@@ -298,52 +285,49 @@ class LogBufferHandler(logging.Handler):
 def install_log_buffer(
     logger_name: str = "loxmatter", level: int = logging.INFO
 ) -> LogBufferHandler:
-    """Haengt einen neuen `LogBufferHandler` an den benannten Logger, setzt
-    dessen Stufe UND die Stufe des Loggers selbst, und gibt den Handler
-    zurueck.
+    """Attaches a new `LogBufferHandler` to the named logger, sets its
+    level AND the level of the logger itself, and returns the handler.
 
-    Standardmaessig an `loxmatter`, NICHT an den Root-Logger - siehe
-    Moduldocstring. Ein Aufrufer, der wirklich alles mitschneiden will
-    (z. B. ein Test), kann `logger_name` explizit ueberschreiben.
+    By default on `loxmatter`, NOT on the root logger - see the module
+    docstring. A caller that genuinely wants to capture everything (e.g. a
+    test) can explicitly override `logger_name`.
 
-    **Warum diese Funktion auch `logging.getLogger(logger_name).setLevel(
-    level)` setzt, nicht nur `handler.setLevel(level)`.** Was einen Handler
-    ueberhaupt erreicht, entscheidet nicht die Stufe des Handlers, sondern
-    zuerst `Logger.isEnabledFor` auf dem protokollierenden Logger selbst -
-    ein `logger.info(...)`-Aufruf, dessen Logger effektiv auf WARNING steht,
-    wird verworfen, BEVOR irgendein Handler ihn zu Gesicht bekommt, egal
-    welche Stufe der Handler traegt. Ohne diese Zeile bliebe `loxmatter`
-    (und mit ihm jeder Modul-Logger des Projekts - alle sind
-    `logging.getLogger(__name__)`, also Kinder von `loxmatter`, ohne
-    eigene, explizit gesetzte Stufe) auf der von Python vorgegebenen
-    effektiven Stufe WARNING: nirgends im Projekt steht ein `basicConfig`,
-    `setLevel` oder `dictConfig` fuer `loxmatter`, und
-    `uvicorn.Config(log_level="info")` in `cli.py` setzt ausschliesslich
-    die `uvicorn.*`-Logger, nicht `loxmatter`. Mit der Vorgabe `level=
-    logging.INFO` dieser Funktion waere `install_log_buffer()` ohne diese
-    Zeile praktisch wirkungslos gewesen: jede `logger.info(...)`-Zeile im
-    ganzen Projekt haette den Handler nie erreicht, nur `logger.warning(...)`
-    und hoeher waeren angekommen - obwohl der Entwurf (Live-Feed-Spec,
-    Abschnitt 4, "Stufenfilter Logs") ausdruecklich "ab INFO" verlangt.
+    **Why this function also sets `logging.getLogger(logger_name).
+    setLevel(level)`, not just `handler.setLevel(level)`.** What reaches a
+    handler at all is decided not by the handler's level, but first by
+    `Logger.isEnabledFor` on the logging logger itself - a `logger.
+    info(...)` call whose logger effectively sits at WARNING is discarded
+    BEFORE any handler ever sees it, regardless of the handler's level.
+    Without this line, `loxmatter` (and with it every module logger in
+    the project - all of them are `logging.getLogger(__name__)`, i.e.
+    children of `loxmatter`, with no explicitly set level of their own)
+    would stay at Python's default effective level of WARNING: nowhere in
+    the project is there a `basicConfig`, `setLevel` or `dictConfig` for
+    `loxmatter`, and `uvicorn.Config(log_level="info")` in `cli.py` sets
+    only the `uvicorn.*` loggers, not `loxmatter`. With this function's
+    default of `level=logging.INFO`, `install_log_buffer()` would have
+    been practically useless without this line: every `logger.info(...)`
+    line in the whole project would never have reached the handler, only
+    `logger.warning(...)` and above would have arrived - even though the
+    design (live-feed spec, section 4, "level filter for logs") explicitly
+    requires "from INFO up".
 
-    **Nebenwirkung, die ein Aufrufer kennen muss:** dies setzt eine
-    EXPLIZITE Stufe auf dem Logger `logger_name` selbst, nicht nur auf
-    diesem einen Handler - das wirkt auf JEDEN Handler, der heute oder
-    kuenftig ebenfalls an diesem Logger (oder einem seiner Kinder ohne
-    eigene Stufe) haengt, und zwar in BEIDE Richtungen: das Gate liegt ab
-    jetzt bei genau `level`, nicht mehr bei der zuvor geltenden effektiven
-    Stufe. Mit der Vorgabe (INFO, niedriger als das bisherige WARNING)
-    kommt fuer jeden anderen Handler an diesem Logger MEHR durch als
-    vorher - ein anderer Handler mit eigener, hoeherer `Handler.setLevel(
-    ...)` filtert das selbst wieder heraus und sieht nichts zusaetzliches.
-    Ruft ein Aufrufer diese Funktion dagegen mit einer `level` auf, die
-    HOEHER liegt als das bisherige WARNING (z. B. ERROR), kommt fuer JEDEN
-    Handler an diesem Logger WENIGER durch als vorher - auch fuer einen,
-    der selbst auf einer niedrigeren Stufe stehen wuerde. Heute haengt kein
-    zweiter Handler an `loxmatter`; ein kuenftiger Aufrufer, der einem
-    zweiten Handler am selben Logger eine eigene, davon unabhaengige Stufe
-    sichern will, muss die Logger-Stufe nach diesem Aufruf selbst erneut
-    setzen."""
+    **Side effect a caller needs to know about:** this sets an EXPLICIT
+    level on the logger `logger_name` itself, not only on this one
+    handler - that affects EVERY handler attached today or in future to
+    this logger (or one of its children with no level of its own), in
+    BOTH directions: the gate now sits at exactly `level`, no longer at
+    the previously effective level. With the default (INFO, lower than
+    the previous WARNING), MORE gets through for every other handler on
+    this logger than before - another handler with its own, higher
+    `Handler.setLevel(...)` filters that back out itself and sees nothing
+    extra. If a caller instead calls this function with a `level` HIGHER
+    than the previous WARNING (e.g. ERROR), LESS gets through for EVERY
+    handler on this logger than before - even for one that would itself
+    sit at a lower level. Today no second handler is attached to
+    `loxmatter`; a future caller who wants to secure an independent level
+    of its own for a second handler on the same logger must reset the
+    logger's level itself after this call."""
     handler = LogBufferHandler()
     handler.setLevel(level)
     target_logger = logging.getLogger(logger_name)

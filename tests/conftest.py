@@ -1,4 +1,4 @@
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -14,7 +14,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Gemeinsame Fixtures für die gesamte Testsuite."""
+"""Shared fixtures for the entire test suite."""
 
 from collections.abc import Iterator
 from pathlib import Path
@@ -26,18 +26,18 @@ from loxmatter import i18n
 
 @pytest.fixture(autouse=True)
 def isolate_loxmatter_store(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Verhindert, dass irgendein Test die echte Datenbank im Home-Verzeichnis
-    des Nutzers anfasst.
+    """Prevents any test from touching the real database in the user's
+    home directory.
 
-    `export` legt seine Signalschlüssel-Datenbank standardmäßig unter
-    `~/.loxmatter/loxmatter.sqlite` an (siehe `loxmatter.cli._resolve_store_path`).
-    Ohne dieses Fixture würde jeder Test, der `export` über die CLI aufruft
-    und `--store-path` nicht selbst setzt, in die echte Home-Datenbank
-    schreiben. Zwei Absicherungen: `LOXMATTER_STORE` zeigt auf ein
-    Test-Verzeichnis, und zusätzlich zeigt `Path.home()` selbst auf ein
-    Fake-Home unterhalb von `tmp_path` — auch falls ein Test die
-    Rangfolge aus `_resolve_store_path` einmal falsch nutzt, bleibt die
-    echte Home unberührt.
+    `export` places its signal-key database by default at
+    `~/.loxmatter/loxmatter.sqlite` (see `loxmatter.cli._resolve_store_path`).
+    Without this fixture, any test that calls `export` through the CLI
+    and doesn't set `--store-path` itself would write to the real home
+    database. Two safeguards: `LOXMATTER_STORE` points at a test
+    directory, and additionally `Path.home()` itself points at a
+    fake home below `tmp_path` - even if a test ever gets the
+    precedence from `_resolve_store_path` wrong, the real home
+    stays untouched.
     """
     fake_home = tmp_path / "fake-home"
     fake_home.mkdir()
@@ -47,16 +47,16 @@ def isolate_loxmatter_store(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> 
 
 @pytest.fixture(autouse=True)
 def reset_language() -> Iterator[None]:
-    """Setzt die globale Spracheinstellung vor UND nach jedem Test zurueck.
+    """Resets the global language setting before AND after every test.
 
-    Nur nach dem Test zurueckzusetzen reicht nicht: `cli.py`s
-    Modul-Import-Bootstrap (siehe dort) laeuft VOR jeder Fixture und liest
-    dabei die echte Umgebung (LOXMATTER_LANG, eine echte gespeicherte
-    Einstellung) - ohne das Zuruecksetzen VOR dem Test haengt das Ergebnis
-    des allerersten in einer Session ausgefuehrten Tests vom Sprachzustand
-    der Entwicklungsumgebung ab, in der pytest laeuft (Befund aus dem
-    abschliessenden Review: mit `LOXMATTER_LANG=de` in der Umgebung schlug
-    ein gezielt einzeln ausgefuehrter Test fehl)."""
+    Resetting only after the test isn't enough: `cli.py`'s module-import
+    bootstrap (see there) runs BEFORE any fixture and reads the real
+    environment while doing so (LOXMATTER_LANG, a real saved setting) -
+    without resetting BEFORE the test, the result of the very first test
+    run in a session depends on the language state of the development
+    environment pytest runs in (finding from the final review: with
+    `LOXMATTER_LANG=de` in the environment, a test run individually and
+    on purpose failed)."""
     i18n.set_language(i18n.DEFAULT_LANGUAGE)
     yield
     i18n.set_language(i18n.DEFAULT_LANGUAGE)

@@ -1,4 +1,4 @@
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -14,11 +14,11 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""HTTP-API der WebUI (Spec 8) - getrennt vom Loxone-Endpunkt in `loxone.server`.
+"""HTTP API of the WebUI (Spec 8) - separate from the Loxone endpoint in `loxone.server`.
 
-`loxone.server` bedient den Miniserver (`/cmd`, `/resync`, `/health`); dieses
-Paket bedient die Single-Page-App, die Geraete einlernt, benennt und ihre
-Signale verwaltet.
+`loxone.server` serves the Miniserver (`/cmd`, `/resync`, `/health`); this
+package serves the single-page app that commissions devices, names them and
+manages their signals.
 """
 
 from __future__ import annotations

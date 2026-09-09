@@ -1,4 +1,4 @@
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -14,72 +14,67 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Die WebSocket-Mechanik, die sich mehrere Live-Routen teilen (Task 1,
-Herausloesung aus `api.live`): eine Warteschlange pro Verbindung, das
-Bemerken einer Trennung und die Aushandlung des Subprotokolls fuer das
-Token im Handshake. `api.live` (die Werte-Route) war der erste Nutzer;
-ein zweiter Kanal (Diagnose-Feed) kommt hinzu, ohne diese Mechanik ein
-zweites Mal zu bauen - genau das hat die erste Korrektur daran (die
-unbegrenzte Warteschlange, Review-Fix Phase 5) schon einmal noetig
-gemacht, als es nur einen Nutzer gab.
+"""The WebSocket mechanics shared by several live routes (Task 1, factored
+out of `api.live`): a queue per connection, noticing a disconnect, and
+negotiating the subprotocol for the token in the handshake. `api.live` (the
+values route) was the first user; a second channel (diagnostics feed) is
+being added without building this mechanism a second time - exactly what
+the first fix to it (the unbounded queue, review fix Phase 5) already made
+necessary once, when there was only one user.
 
-**Die Warteschlange ist begrenzt (Review-Fix Important #1, 2026-09-02).**
-Diese Bruecke laeuft wochenlang unbeaufsichtigt in jemandes Zuhause, nicht
-als anfragegebundener Webserver - ein Browser-Tab im Hintergrund oder ein
-eingeschlafenes Laptop, der/das nicht mehr liest, ist dort keine
-Ausnahme, sondern Alltag. Eine unbegrenzte Warteschlange wuerde in diesem
-Fall unbegrenzt wachsen. `BoundedQueue` unten deckelt sie deshalb bei
-`QUEUE_MAXSIZE` und wirft bei Ueberlauf den AELTESTEN Eintrag weg, nicht den
-neuesten - eine Live-Ansicht will den aktuellsten Stand, der veraltete
-Eintrag ist der verzichtbare. Warum genau `QUEUE_MAXSIZE`, siehe dort.
+**The queue is bounded (review fix Important #1, 2026-09-02).** This
+bridge runs unattended in someone's home for weeks, not as a
+request-scoped web server - a browser tab in the background or a laptop
+that has gone to sleep and stops reading is not the exception there but the
+everyday case. An unbounded queue would grow without limit in that case.
+`BoundedQueue` below therefore caps it at `QUEUE_MAXSIZE` and, on overflow,
+drops the OLDEST entry, not the newest - a live view wants the most current
+state, the stale entry is the dispensable one. For why exactly
+`QUEUE_MAXSIZE`, see there.
 
-Bewusst NICHT umgesetzt: die Verbindung aktiv zu trennen, wenn sie dauerhaft
-voll bleibt. Die Begrenzung oben deckelt bereits die einzige Gefahr, die der
-Review benannt hat (unbegrenztes Wachstum) - eine dauerhaft volle
-Warteschlange kostet jetzt nur noch die feste, kleine Groesse von
-`QUEUE_MAXSIZE` Eintraegen, kein wachsendes Problem mehr. Ein aktives
-Trennen braeuchte eine eigene, gut begruendete Zeitschwelle ("wie viele
-Minuten ohne Fortschritt gelten als tot?") - eine falsch gewaehlte Schwelle
-wuerfe eine Sitzung raus, die nur kurz durch OS-Drosselung eines
-Hintergrund-Tabs ins Stocken kam, und Live-Werte sind reine Anzeige: ein
-paar verpasste Zwischenwerte haben keine Folgen ausser einer kurzzeitig
-veralteten Anzeige. Das Debug-Log unten (siehe `BoundedQueue.put`) macht
-eine haengende Verbindung trotzdem auffindbar, ohne dieses Risiko
-einzugehen.
+Deliberately NOT implemented: actively disconnecting the connection when it
+stays permanently full. The bound above already caps the one danger the
+review named (unbounded growth) - a permanently full queue now costs only
+the fixed, small size of `QUEUE_MAXSIZE` entries, no longer a growing
+problem. Actively disconnecting would need its own, well-justified time
+threshold ("how many minutes without progress count as dead?") - a
+wrongly chosen threshold would kick out a session that only briefly
+stalled from OS throttling of a background tab, and live values are pure
+display: a few missed intermediate values have no consequence beyond a
+briefly stale display. The debug log below (see `BoundedQueue.put`) still
+makes a hanging connection discoverable, without taking on this risk.
 
-**Ein getrennter Client wird zuverlaessig bemerkt.** Eine reine Sende-Route
-erwartet selbst keine eingehenden Nachrichten - trotzdem laeuft
-`watch_for_disconnect` nebenher und ruft `websocket.receive_text()` in
-einer Schleife auf. Grund: nach ASGI-Spezifikation liefert der Server das
-`websocket.disconnect`-Ereignis nur ueber `receive()` aus - eine Route, die
-nur sendet und nie empfaengt, wuerde einen geschlossenen Browser-Tab nie
-bemerken und ihren Beobachter fuer immer angemeldet lassen. `asyncio.wait(
-..., return_when=FIRST_COMPLETED)` im Aufrufer laesst die Route reagieren,
-sobald einer der beiden Teil-Tasks endet - Trennung ODER ein Sendefehler -,
-und raeumt den jeweils anderen sauber ab.
+**A disconnected client is reliably noticed.** A pure send route itself
+expects no incoming messages - yet `watch_for_disconnect` runs alongside it
+and calls `websocket.receive_text()` in a loop. Reason: per the ASGI
+specification, the server only delivers the `websocket.disconnect` event
+via `receive()` - a route that only sends and never receives would never
+notice a closed browser tab and would leave its observer registered
+forever. `asyncio.wait(..., return_when=FIRST_COMPLETED)` in the caller
+lets the route react as soon as either of the two sub-tasks ends -
+disconnect OR a send error - and cleanly tears down the other one.
 
-**Das Token reist hier im Subprotokoll, nicht im Header (Review-Fix Fix 1c,
-2026-09-03).** Die Browser-`WebSocket`-API kennt keinen Parameter fuer eigene
-Header - `Authorization` ist bei diesen Routen also unmoeglich. `app.js`
-verbindet sich deshalb mit `new WebSocket(url, ["bearer", token])`, was der
-Browser als `Sec-WebSocket-Protocol: bearer, <Token>` sendet;
-`loxone.server.build_api_guard` liest das Token dort aus, und
-`accepted_subprotocol` unten gibt den Marker `bearer` im Accept zurueck (nie
-das Token selbst), weil der Browser den Handshake nach RFC 6455 sonst
-abbricht.
+**The token travels here in the subprotocol, not in the header (review fix
+Fix 1c, 2026-09-03).** The browser `WebSocket` API has no parameter for
+custom headers - `Authorization` is therefore impossible on these routes.
+`app.js` therefore connects with `new WebSocket(url, ["bearer", token])`,
+which the browser sends as `Sec-WebSocket-Protocol: bearer, <token>`;
+`loxone.server.build_api_guard` reads the token out there, and
+`accepted_subprotocol` below returns the marker `bearer` in the accept
+(never the token itself), because otherwise the browser aborts the
+handshake per RFC 6455.
 
-Ein `WebSocketDisconnect` ist der Normalfall - ein Browser-Tab, der
-geschlossen oder neu geladen wird - kein Fehler, und schreibt deshalb
-nichts ins Log. **Ein blosses `WebSocketDisconnect` reicht aber nicht
-(Review-Fix Important #2, 2026-09-02):** haengt ein `send_json`-Aufruf in
-`send_loop` genau dann, wenn der Client trennt, wirft die ASGI-Schicht -
-je nach Server - manchmal kein `WebSocketDisconnect`, sondern ein
-`RuntimeError` ueber eine bereits geschlossene Verbindung. `send_loop`
-faengt das direkt am Sendepunkt ab und behandelt es wie eine normale
-Trennung: Debug-Log statt `logger.error`, Beobachter wird trotzdem
-abgemeldet (das bleibt Sache des Aufrufers, siehe dessen `finally`) - ein
-geschlossener Browser-Tab ist kein Programmfehler, gleich welche Exception
-die ASGI-Schicht dafuer gerade waehlt."""
+A `WebSocketDisconnect` is the normal case - a browser tab being closed or
+reloaded - not an error, and therefore writes nothing to the log. **A bare
+`WebSocketDisconnect` is not enough, though (review fix Important #2,
+2026-09-02):** if a `send_json` call in `send_loop` hangs at exactly the
+moment the client disconnects, the ASGI layer - depending on the server -
+sometimes throws not a `WebSocketDisconnect` but a `RuntimeError` about an
+already-closed connection. `send_loop` catches that right at the send
+point and treats it like a normal disconnect: debug log instead of
+`logger.error`, the observer is still deregistered (that remains the
+caller's job, see its `finally`) - a closed browser tab is not a program
+bug, whichever exception the ASGI layer happens to choose for it."""
 
 from __future__ import annotations
 
@@ -91,49 +86,48 @@ from fastapi import WebSocket
 logger = logging.getLogger(__name__)
 
 BEARER_SUBPROTOCOL = "bearer"
-"""Der Marker, mit dem ein Browser-WebSocket sein Token im Handshake
-mitschickt (`new WebSocket(url, ["bearer", token])`).
+"""The marker with which a browser WebSocket sends its token along in the
+handshake (`new WebSocket(url, ["bearer", token])`).
 
-Die EINE Definition dieses Wertes auf der Serverseite: `loxone.server`
-importiert ihn (ueber `api.live`, das ihn von hier weiterreicht) fuer das
-Auslesen (`build_api_guard`), `accepted_subprotocol` unten benutzt ihn fuer
-die Antwortseite - das gewaehlte Subprotokoll muss im Accept zurueckkommen.
-Zwei eigene Konstanten in zwei Modulen koennten auseinanderlaufen, ohne dass
-eine davon fuer sich falsch aussaehe. Oeffentlich (ohne Unterstrich), weil
-`loxone.server` und `tests/api/test_web.py` ihn tatsaechlich von aussen
-brauchen."""
+The ONE definition of this value on the server side: `loxone.server`
+imports it (via `api.live`, which passes it on from here) for reading it
+out (`build_api_guard`), `accepted_subprotocol` below uses it for the
+response side - the chosen subprotocol must come back in the accept. Two
+separate constants in two modules could drift apart without either one
+looking wrong on its own. Public (no underscore) because `loxone.server`
+and `tests/api/test_web.py` genuinely need it from outside."""
 
 QUEUE_MAXSIZE = 512
-"""Obergrenze der Warteschlange je WebSocket-Verbindung (Review-Fix
+"""Upper bound of the queue per WebSocket connection (review fix
 Important #1, 2026-09-02).
 
-Muss einen vollen Resend-Burst klaglos aufnehmen: `/resync` (Spec 6.4)
-verschickt mit `Runtime.resend_all()` jeden bekannten Wert neu, und schon
-ein einzelnes Geraet wie der IKEA-Stecker der Testsuite kommt dabei auf
-rund 110 Datagramme - bei mehreren Geraeten am selben Bruecken-Prozess
-addiert sich das. 512 laesst dafuer reichlich Luft (mehr als das Vierfache
-des Einzelgeraet-Bursts), ohne dass eine dauerhaft haengende Verbindung
-mehr als ein paar hundert kleiner Tupel im Speicher haelt."""
+Must absorb a full resend burst without complaint: `/resync` (Spec 6.4)
+resends every known value via `Runtime.resend_all()`, and a single device
+like the test suite's IKEA plug already comes to around 110 datagrams on
+its own - with several devices on the same bridge process this adds up.
+512 leaves ample headroom for that (more than four times the single-device
+burst), without a permanently hanging connection holding more than a few
+hundred small tuples in memory."""
 
 
 class BoundedQueue:
-    """Warteschlange mit fester Obergrenze fuer eine einzelne
-    WebSocket-Verbindung - wirft bei Ueberlauf den AELTESTEN Eintrag weg,
-    nicht den neuesten (siehe Modul-Docstring, Review-Fix Important #1).
+    """Queue with a fixed upper bound for a single WebSocket connection -
+    on overflow, drops the OLDEST entry, not the newest (see module
+    docstring, review fix Important #1).
 
-    `put` laeuft synchron im Beobachter-Aufrufpfad (`_notify_observers`) und
-    darf deshalb nie blockieren oder werfen: `queue.full()`, `get_nowait()`
-    und `put_nowait()` enthalten keinen `await` und laufen damit atomar
-    innerhalb EINES Schritts der Event-Loop - kein anderer Task (insb. nicht
-    `send_loop`, der ueber `get()` liest) kann dazwischenfunken.
+    `put` runs synchronously in the observer call path (`_notify_observers`)
+    and must therefore never block or throw: `queue.full()`, `get_nowait()`
+    and `put_nowait()` contain no `await` and thus run atomically within
+    ONE step of the event loop - no other task (in particular not
+    `send_loop`, which reads via `get()`) can interleave.
 
-    Traegt EIN Nutzlast-Objekt (`dict[str, object]`) statt eines festen
-    `(key, value)`-Zweiertupels: verschiedene Kanaele (Werte-Stream,
-    Diagnose-Feed) schicken verschiedene Nachrichtenarten, ein fest
-    verdrahtetes Zweiertupel passt nicht mehr fuer beide.
+    Carries ONE payload object (`dict[str, object]`) instead of a fixed
+    `(key, value)` pair: different channels (values stream, diagnostics
+    feed) send different kinds of messages, a hard-wired pair no longer
+    fits both.
 
-    `connection_label` dient nur dem Log unten: er macht eine haengende
-    Verbindung im Betrieb auffindbar (z. B. `('192.168.1.5', 54321)`)."""
+    `connection_label` only serves the log below: it makes a hanging
+    connection discoverable in operation (e.g. `('192.168.1.5', 54321)`)."""
 
     def __init__(self, maxsize: int, connection_label: str) -> None:
         self._queue: asyncio.Queue[dict[str, object]] = asyncio.Queue(maxsize=maxsize)
@@ -142,36 +136,35 @@ class BoundedQueue:
         self._dropping = False
 
     def put(self, payload: dict[str, object]) -> None:
-        """Reiht ein, wirft bei Ueberlauf den AELTESTEN Eintrag weg (siehe
-        Klassendocstring).
+        """Enqueues, dropping the OLDEST entry on overflow (see class
+        docstring).
 
-        **Bedingt gefaehrlich fuer eine `/api/diagnostics/live`-Verbindung,
-        deren `log_handler`-Zweig verdrahtet ist** (Nachbesserung Task 7,
-        Fix 3b). `logger.debug(...)` unten laeuft auf dem Loop-Thread,
-        AUSSERHALB von `LogBufferHandler.emit()` - also ohne dessen
-        Wiedereintrittssperre (siehe `diagnostics.logbuffer`-Moduldocstring).
-        Liefe der Logger `loxmatter.api.streaming` jemals auf DEBUG, erzeugte
-        der Uebergang ins Verwerfen eine neue Logzeile, die - sofern
-        `on_log` fuer dieselbe Verbindung angemeldet ist - ueber genau
-        dieses `put` erneut eingereiht wuerde: eine verworfene Logzeile
-        erzeugt eine neue, die wieder eingereiht wird. Heute unerreichbar,
-        weil `install_log_buffer()` den Logger `loxmatter` auf INFO haelt
-        und nichts im Projekt einen DEBUG-Schalter anbietet (siehe
-        Entwurf, Abschnitt 7, Punkt 2) - der `_dropping`-Zustand oben
-        begrenzt die Wiedereinreihung selbst dann auf einen einzigen
-        verschachtelten `put`-Aufruf, keine unbegrenzte Rekursion, aber ein
-        spaeterer DEBUG-Schalter sollte diese Stelle kennen."""
+        **Conditionally dangerous for an `/api/diagnostics/live` connection
+        whose `log_handler` branch is wired up** (follow-up Task 7,
+        Fix 3b). The `logger.debug(...)` below runs on the loop thread,
+        OUTSIDE `LogBufferHandler.emit()` - so without its reentrancy lock
+        (see the `diagnostics.logbuffer` module docstring). If the logger
+        `loxmatter.api.streaming` ever ran at DEBUG, the transition into
+        dropping would produce a new log line that - if `on_log` is
+        registered for the same connection - would be enqueued again via
+        this very `put`: a dropped log line produces a new one that gets
+        enqueued again. Unreachable today, because `install_log_buffer()`
+        keeps the `loxmatter` logger at INFO and nothing in the project
+        offers a DEBUG switch (see design, section 7, point 2) - the
+        `_dropping` state above limits the re-enqueuing even then to a
+        single nested `put` call, not unbounded recursion, but a later
+        DEBUG switch should be aware of this spot."""
         if self._queue.full():
-            self._queue.get_nowait()  # aeltesten Eintrag verwerfen, Platz fuer den neuesten schaffen
+            self._queue.get_nowait()  # discard the oldest entry, make room for the newest
             if not self._dropping:
-                # Nur beim UEBERGANG loggen, nicht bei jedem weiteren Verwurf
-                # - eine dauerhaft volle Verbindung soll im Log auffindbar
-                # sein, nicht das Log selbst fluten (Review-Fix Important
+                # Only log on the TRANSITION, not on every further drop -
+                # a permanently full connection should be discoverable in
+                # the log, not flood the log itself (review fix Important
                 # #1: "Log at debug level when dropping starts").
                 self._dropping = True
                 logger.debug(
-                    "WebSocket-Verbindung %s liest nicht mehr mit - Warteschlange "
-                    "(%d Eintraege) ist voll, aelteste Werte werden verworfen",
+                    "WebSocket connection %s has stopped reading - queue "
+                    "(%d entries) is full, dropping oldest values",
                     self._connection_label,
                     self._maxsize,
                 )
@@ -184,51 +177,50 @@ class BoundedQueue:
 
 
 async def watch_for_disconnect(websocket: WebSocket) -> None:
-    """Endet ueber die von `receive_text` geworfene `WebSocketDisconnect`,
-    sobald der Client die Verbindung schliesst - siehe Modul-Docstring."""
+    """Ends via the `WebSocketDisconnect` thrown by `receive_text` as soon
+    as the client closes the connection - see module docstring."""
     while True:
         await websocket.receive_text()
 
 
 async def send_loop(websocket: WebSocket, queue: BoundedQueue) -> None:
-    """Pumpt die Warteschlange des Beobachters auf die WebSocket-Leitung."""
+    """Pumps the observer's queue onto the WebSocket wire."""
     while True:
         payload = await queue.get()
         try:
             await websocket.send_json(payload)
         except RuntimeError:
-            # Review-Fix Important #2, 2026-09-02: manche ASGI-Server werfen
-            # bei einem Sendeversuch auf eine bereits geschlossene Verbindung
-            # kein `WebSocketDisconnect`, sondern ein `RuntimeError` (siehe
-            # Modul-Docstring). Fuer diese Route ist das derselbe Fall wie
-            # ein normaler `WebSocketDisconnect`: ein Browser-Tab, der weg
-            # ist, kein Programmfehler - also `logger.debug`, nicht
-            # `logger.error`, und die Schleife endet sauber statt zu werfen.
+            # Review fix Important #2, 2026-09-02: some ASGI servers throw
+            # not a `WebSocketDisconnect` but a `RuntimeError` on a send
+            # attempt to an already-closed connection (see module
+            # docstring). For this route that is the same case as a normal
+            # `WebSocketDisconnect`: a browser tab that is gone, not a
+            # program bug - so `logger.debug`, not `logger.error`, and the
+            # loop ends cleanly instead of raising.
             logger.debug(
-                "WebSocket-Verbindung beim Versand verloren - wird wie eine Trennung behandelt",
+                "WebSocket connection lost during send - treating it as a disconnect",
                 exc_info=True,
             )
             return
 
 
 def accepted_subprotocol(websocket: WebSocket) -> str | None:
-    """Das gewaehlte Subprotokoll fuer `websocket.accept(subprotocol=...)`.
+    """The chosen subprotocol for `websocket.accept(subprotocol=...)`.
 
-    MUSS im Accept zurueckkommen, sonst bricht der Browser den Handshake
-    nach RFC 6455 ab (Review-Fix Fix 1c, 2026-09-03). `app.js` verbindet
-    sich mit `new WebSocket(url, ["bearer", token])`, wenn ein Token gesetzt
-    ist - das ist der einzige Kanal, ueber den ein Browser-WebSocket ein
-    Geheimnis in den Handshake bekommt (siehe
-    `loxone.server.build_api_guard`, der es dort ausliest). Echoed wird
-    ausschliesslich der Marker `bearer`, NIE der zweite Wert: der ist das
-    Token, und ein Server, der es im Accept-Header zurueckspiegelt, schriebe
-    es in jedes Proxy- und Browser-Protokoll auf dem Weg.
+    MUST come back in the accept, otherwise the browser aborts the
+    handshake per RFC 6455 (review fix Fix 1c, 2026-09-03). `app.js`
+    connects with `new WebSocket(url, ["bearer", token])` when a token is
+    set - that is the only channel through which a browser WebSocket gets
+    a secret into the handshake (see `loxone.server.build_api_guard`,
+    which reads it out there). Only the marker `bearer` is echoed, NEVER
+    the second value: that is the token, and a server that mirrors it back
+    in the accept header would write it into every proxy's and browser's
+    log along the way.
 
-    Nur echoen, wenn der Client den Marker auch angeboten hat: ein
-    Subprotokoll, das der Client nicht in seiner Liste hatte, ist nach
-    RFC 6455 ebenso ein Handshake-Fehler - eine Verbindung ohne Token (kein
-    Token gesetzt, oder ein anderer Client wie `websockets` mit echtem
-    `Authorization`-Header) muss deshalb weiterhin ohne Subprotokoll
-    angenommen werden."""
+    Only echo if the client actually offered the marker: a subprotocol
+    that the client did not have in its list is likewise a handshake error
+    per RFC 6455 - a connection without a token (no token set, or another
+    client such as `websockets` with a real `Authorization` header) must
+    therefore still be accepted without a subprotocol."""
     offered: list[str] = websocket.scope.get("subprotocols", [])
     return BEARER_SUBPROTOCOL if BEARER_SUBPROTOCOL in offered else None

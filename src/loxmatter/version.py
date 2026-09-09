@@ -1,4 +1,4 @@
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -14,20 +14,20 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Woher die laufende Fassung ihre Identitaet kennt - Entwurf "Updates
-ueber die Oberflaeche einspielen" (2026-09-08), Abschnitt 4.
+"""How the running version knows its identity - draft "Deploy updates via the UI"
+(2026-09-08), section 4.
 
-Die Angaben kommen aus der UMGEBUNG, nicht aus dem Checkout auf dem Host.
-`Dockerfile` legt sie beim Bau als `ENV` ab, gespeist aus Build-Argumenten,
-die die CI setzt. Der Grund fuer diese Richtung: ein Checkout auf dem Host
-kann inzwischen woanders stehen, weitergewandert oder umgezogen sein, ohne
-dass das je ausgeliefert wurde - das Image dagegen IST, was laeuft.
+The values come from the ENVIRONMENT, not from the checkout on the host.
+`Dockerfile` stores them at build time as `ENV`, sourced from build arguments
+that CI sets. The reason for this direction: a checkout on the host
+may have moved elsewhere, progressed further, or been relocated, without
+that ever being deployed - the image, by contrast, IS what is running.
 
-Ausserhalb eines Images - im Entwicklungscheckout, wo `uv run loxmatter`
-direkt startet - fehlen die Variablen. Das ist kein Fehlerfall, sondern
-der Normalfall beim Entwickeln: `version` heisst dann "dev",
-`commit`/`built_at` sind None. Wer daraus eine Ausnahme machte, koennte
-die Bruecke ausserhalb von Docker nicht mehr starten.
+Outside an image - in the development checkout, where `uv run loxmatter`
+starts directly - the variables are missing. This is not an error condition, but
+the normal case for development: `version` then reads "dev",
+`commit`/`built_at` are None. If someone made this an exception, the
+bridge could no longer start outside of Docker.
 """
 
 from __future__ import annotations
@@ -47,13 +47,12 @@ class BuildInfo:
 
 
 def _clean(name: str) -> str | None:
-    """Leere Umgebungsvariablen wie fehlende behandeln.
+    """Treat empty environment variables as missing.
 
-    Docker Compose interpoliert eine in `.env` fehlende Variable zu einem
-    LEEREN String, nicht zu "nicht gesetzt". Genau diese Falle hat bei
-    `LOXMATTER_API_TOKEN` schon einmal zugeschlagen (siehe die ausfuehrliche
-    Begruendung in deploy/testhost/docker-compose.yml); ohne diese Funktion
-    hiesse die Version auf einem Host ohne gesetzten Wert "" statt "dev".
+    Docker Compose interpolates a variable missing from `.env` to an
+    EMPTY string, not to "not set". This exact trap already caught
+    `LOXMATTER_API_TOKEN` once (see the detailed explanation in deploy/testhost/docker-compose.yml);
+    without this function the version on a host without a set value would be "" instead of "dev".
     """
     value = os.environ.get(name, "").strip()
     return value or None
@@ -64,7 +63,7 @@ def build_info() -> BuildInfo:
         version=_clean("LOXMATTER_VERSION") or "dev",
         commit=_clean("LOXMATTER_COMMIT"),
         built_at=_clean("LOXMATTER_BUILT_AT"),
-        # Bewusst NICHT aus der Umgebung: siehe Docstring von
-        # `test_die_schema_version_laesst_sich_aus_der_umgebung_nicht_faelschen`.
+        # Deliberately NOT from the environment: see docstring of
+        # `test_schema_version_cannot_be_forged_from_the_environment`.
         schema_version=schema_version(),
     )

@@ -1,4 +1,4 @@
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -14,64 +14,63 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Der Teil des Stores, der den Zugang verwaltet - Passwort-Hash und
-Sitzungen - statt Geraete, Signale und Kommandos.
+"""The part of the store that manages access - password hash and
+sessions - as opposed to devices, signals and commands.
 
-Eigenes Modul und eigene Klasse, nicht weitere Methoden an `Store`: dort
-liegen inzwischen ueber neunhundert Zeilen zum Geraetemodell, und der Zugang
-hat damit fachlich nichts zu tun. Die Verbindung gehoert trotzdem weiterhin
-`Store` - diese Klasse ist eine Sicht darauf, kein zweiter Verbindungsaufbau
-auf dieselbe Datei (das waere eine zweite Sperrdomaene fuer dieselben Daten).
+Its own module and its own class, not further methods on `Store`: that class
+now carries over nine hundred lines for the device model, and access has
+nothing to do with that domain. The connection still belongs to `Store`,
+though - this class is a view onto it, not a second connection to the same
+file (that would be a second lock domain for the same data).
 
-Was hier NICHT stattfindet: Kryptografie und HTTP. Diese Klasse legt einen
-Hash ab und liest ihn wieder, ohne zu wissen, wie er entsteht (siehe
-`loxmatter.auth.passwords`), und sie kennt weder Cookies noch Statuscodes
-(siehe `loxmatter.auth.sessions` und `loxmatter.api.auth`). Wer das hier
-vermischt, hat am Ende drei Stellen, an denen ein Geheimnis auftauchen kann,
-statt einer.
+What does NOT happen here: cryptography and HTTP. This class stores a hash
+and reads it back without knowing how it is produced (see
+`loxmatter.auth.passwords`), and it knows neither cookies nor status codes
+(see `loxmatter.auth.sessions` and `loxmatter.api.auth`). Mixing those in
+here would end up with three places where a secret can turn up instead of
+one.
 
-Das Schema der beiden Tabellen steht in `store.py` bei `_SCHEMA` und
-`_migrate_to_v4` - Schema-Definitionen bleiben an einem Ort, auch wenn der
-Zugriff darauf hier liegt.
+The schema of the two tables lives in `store.py` under `_SCHEMA` and
+`_migrate_to_v4` - schema definitions stay in one place, even though access
+to them lives here.
 """
 
 from __future__ import annotations
 
 import sqlite3
 
-# Der einzige Schluessel, den `setting` bislang traegt. Die Tabelle ist
-# trotzdem generisch (Schluessel/Wert) angelegt, weil die uebrige
-# Konfiguration denselben Weg gehen soll (Spec 14.2) - eine Tabelle
-# `password` mit einer Spalte waere in dem Moment wieder umzubauen.
+# The only key `setting` carries so far. The table is nonetheless generic
+# (key/value) by design, because the rest of the configuration is meant to
+# go the same way (Spec 14.2) - a `password` table with one column would
+# have to be rebuilt the moment that happens.
 _PASSWORD_KEY = "password_hash"
 
 
 class AuthStore:
-    """Zugriff auf `setting` und `session` ueber die Verbindung des Stores."""
+    """Access to `setting` and `session` via the store's connection."""
 
     def __init__(self, db: sqlite3.Connection) -> None:
         self._db = db
 
     def password_hash(self) -> str | None:
-        """Der abgelegte Hash - `None`, solange kein Passwort vergeben ist.
+        """The stored hash - `None` as long as no password has been set.
 
-        `None` ist der Zustand, an dem der gesamte Zugang haengt: er
-        bedeutet "Ersteinrichtung noch offen" und laesst nach
-        `loxone.server.build_api_guard` keine einzige `/api`-Route zu."""
+        `None` is the state the entire access layer hinges on: it means
+        "initial setup still open" and, per `loxone.server.build_api_guard`,
+        blocks every single `/api` route."""
         row = self._db.execute(
             "SELECT value FROM setting WHERE key = ?", (_PASSWORD_KEY,)
         ).fetchone()
         return None if row is None else str(row["value"])
 
     def set_password_hash_if_unset(self, value: str) -> bool:
-        """Legt den Hash an, aber nur, wenn noch keiner da ist - `True`, wenn
-        dieser Aufruf ihn gesetzt hat.
+        """Stores the hash, but only if none is there yet - `True` if this
+        call is the one that set it.
 
-        `INSERT OR IGNORE` und nicht "erst pruefen, dann schreiben": SQLite
-        entscheidet das in einer einzigen Anweisung, zwei gleichzeitige
-        Einrichtungsversuche koennen sich also nicht gegenseitig
-        ueberschreiben. Genau darauf verlaesst sich `POST /auth/setup`, um
-        nach dem ersten Erfolg dauerhaft mit 409 zu antworten."""
+        `INSERT OR IGNORE` rather than "check first, then write": SQLite
+        decides this in a single statement, so two concurrent setup attempts
+        cannot overwrite each other. `POST /auth/setup` relies on exactly
+        this to answer 409 permanently after the first success."""
         cursor = self._db.execute(
             "INSERT OR IGNORE INTO setting (key, value) VALUES (?, ?)",
             (_PASSWORD_KEY, value),
@@ -80,14 +79,14 @@ class AuthStore:
         return cursor.rowcount == 1
 
     def set_password_hash(self, value: str) -> None:
-        """Setzt den Hash und ueberschreibt einen vorhandenen, fuer sich
-        allein committend.
+        """Sets the hash, overwriting any existing one, committing on its
+        own.
 
-        NICHT der Weg fuer `loxmatter set-password` (siehe `reset_password`
-        unten, der diese Anweisung mit dem Abmelden aller Sitzungen zu EINER
-        Transaktion zusammenfasst) - dieser Baustein bleibt oeffentlich, weil
-        Testcode ihn nutzt, um in einer Fixture ein Passwort vorzugeben, ohne
-        dabei Sitzungen anzufassen."""
+        NOT the path for `loxmatter set-password` (see `reset_password`
+        below, which folds this statement together with signing out every
+        session into ONE transaction) - this piece stays public because test
+        code uses it to preset a password in a fixture without touching any
+        session."""
         self._db.execute(
             "INSERT INTO setting (key, value) VALUES (?, ?) "
             "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
@@ -96,17 +95,16 @@ class AuthStore:
         self._db.commit()
 
     def reset_password(self, value: str) -> None:
-        """Setzt einen neuen Hash und meldet alle Sitzungen ab - in EINER
-        Transaktion, nicht als zwei fuer sich genommen committende Schritte.
+        """Sets a new hash and signs out every session - in ONE transaction,
+        not as two separately committing steps.
 
-        Der einzige Aufrufer ist `loxmatter set-password` (Spec 9,
-        Notausgang). Getrennt committende Anweisungen liessen ein Fenster
-        offen, in dem bereits das neue Passwort gilt, waehrend eine alte -
-        eigentlich abzumeldende - Sitzung noch weiterlaeuft: scheitert der
-        zweite Schritt (z. B. ein voller Datentraeger zwischen den beiden
-        Commits), bleibt genau der Zustand stehen, gegen den dieser Befehl
-        gebaut wurde. Ein gemeinsamer Commit macht das unmoeglich - entweder
-        gilt hinterher beides oder keins von beidem."""
+        The only caller is `loxmatter set-password` (Spec 9, emergency
+        escape hatch). Separately committing statements would leave a window
+        open in which the new password already applies while an old session
+        - meant to be signed out - keeps running: if the second step fails
+        (e.g. a full disk between the two commits), exactly the state this
+        command was built against would remain. A shared commit makes that
+        impossible - either both take effect afterward or neither does."""
         self._db.execute(
             "INSERT INTO setting (key, value) VALUES (?, ?) "
             "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
@@ -123,9 +121,9 @@ class AuthStore:
         self._db.commit()
 
     def session_expires_at(self, session_id: str) -> int | None:
-        """Ablaufzeitpunkt als Unix-Sekunden - `None`, wenn es die Sitzung
-        nicht (mehr) gibt. Ob sie damit noch gilt, entscheidet
-        `loxmatter.auth.sessions`, nicht diese Klasse."""
+        """Expiry time as Unix seconds - `None` if the session does not (or
+        no longer) exist. Whether it is therefore still valid is decided by
+        `loxmatter.auth.sessions`, not this class."""
         row = self._db.execute(
             "SELECT expires_at FROM session WHERE id = ?", (session_id,)
         ).fetchone()
@@ -140,15 +138,15 @@ class AuthStore:
         self._db.commit()
 
     def delete_all_sessions(self) -> None:
-        """Meldet jeden ab. Aufgerufen von `loxmatter set-password`: wer das
-        Passwort zuruecksetzt, will nicht, dass eine alte Sitzung
-        weiterlaeuft."""
+        """Signs everyone out. Called by `loxmatter set-password`: whoever
+        resets the password does not want an old session to keep
+        running."""
         self._db.execute("DELETE FROM session")
         self._db.commit()
 
     def purge_expired_sessions(self, now: int) -> None:
-        """Raeumt abgelaufene Zeilen weg. Aufgerufen beim Anlegen einer neuen
-        Sitzung - kein Hintergrundjob fuer eine Tabelle, die im Normalfall
-        eine Handvoll Zeilen haelt."""
+        """Clears out expired rows. Called when creating a new session - no
+        background job for a table that normally holds a handful of
+        rows."""
         self._db.execute("DELETE FROM session WHERE expires_at <= ?", (now,))
         self._db.commit()

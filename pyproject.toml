@@ -1,7 +1,7 @@
 [project]
 name = "loxmatter"
 version = "0.2.0"
-description = "Bindet Matter-Geraete (Thread, Wi-Fi oder Ethernet) an einen Loxone Miniserver an"
+description = "Connects Matter devices (Thread, Wi-Fi or Ethernet) to a Loxone Miniserver"
 readme = "README.md"
 license = "GPL-3.0-or-later"
 license-files = ["LICENSE", "src/loxmatter/web/vendor/LICENSE"]
@@ -9,26 +9,33 @@ requires-python = ">=3.12"
 dependencies = [
     "aiohttp>=3.9",
     "fastapi>=0.115",
-    "python-matter-server>=8.1.2",
-    # Task 11, Phase 6: FastAPIs `File`/`UploadFile` (api/project_sync.py,
-    # `POST /api/export/project-sync`) brauchen "python-multipart", um
-    # `multipart/form-data`-Bodies ueberhaupt zu parsen - ohne dieses Paket
-    # wirft der Endpunkt schon beim Start von `build_app` ein `RuntimeError`
-    # ("Form data requires python-multipart to be installed"), nicht erst
-    # bei der ersten Anfrage.
+    # matter-python-client instead of python-matter-server (8 September 2026):
+    # `python-matter-server` is ARCHIVED at 8.1.2 - that is the last
+    # version that will ever be released. The successor `matterjs-server`
+    # (matter.js, Matter 1.6.0) delivers this package under `python_client/`,
+    # which provides `matter_server*` AND `chip*` under the same module
+    # paths. Therefore only this line changes here, no module under
+    # src/ - see design 2026-09-08, section 2.
+    "matter-python-client>=1.4.0",
+    # Task 11, Phase 6: FastAPI's `File`/`UploadFile` (api/project_sync.py,
+    # `POST /api/export/project-sync`) need "python-multipart" to
+    # parse `multipart/form-data` bodies at all - without this package
+    # the endpoint throws a `RuntimeError` already at startup of `build_app`
+    # ("Form data requires python-multipart to be installed"), not just
+    # at the first request.
     "python-multipart>=0.0.32",
     "pyyaml>=6.0",
     "typer>=0.12",
     "uvicorn>=0.30",
-    # Task 7, Phase 5: `uvicorn` allein (ohne das "standard"-Extra) bringt
-    # keine WebSocket-Implementierung mit - `GET /api/live` (Spec 8.3,
-    # api/live.py) antwortet ohne dieses Paket mit 404 "Unsupported upgrade
-    # request", geprueft gegen einen echten `uvicorn.run` dieses Dienstes,
-    # nicht nur vermutet: die bisherige Testsuite lief ausschliesslich ueber
-    # den In-Prozess-ASGI-Pfad (tests/api/conftest.py, `_InProcessWebSocket`)
-    # und damit nie durch uvicorns eigene HTTP/WebSocket-Weiche. Ohne diese
-    # Zeile funktioniert die Live-Aktualisierung der WebUI in keiner
-    # Installation, die genau diese Abhaengigkeitsliste installiert.
+    # Task 7, Phase 5: `uvicorn` alone (without the "standard" extra) does
+    # not bring a WebSocket implementation - `GET /api/live` (Spec 8.3,
+    # api/live.py) answers with 404 "Unsupported upgrade request" without
+    # this package, verified against a real `uvicorn.run` of this service,
+    # not just assumed: the test suite so far ran exclusively over the
+    # in-process ASGI path (tests/api/conftest.py, `_InProcessWebSocket`)
+    # and therefore never through uvicorn's own HTTP/WebSocket switch.
+    # Without this line, the WebUI's live updates do not work in any
+    # installation that installs exactly this dependency list.
     "websockets>=12",
 ]
 
@@ -53,33 +60,33 @@ build-backend = "hatchling.build"
 asyncio_mode = "auto"
 testpaths = ["tests"]
 markers = [
-    # Task 7, Review-Fix Important #1: startet einen echten `uvicorn`-Prozess
-    # (siehe tests/api/test_live_smoke.py) - kein Ausschluss per Default,
-    # der Marker dient nur der gezielten Auswahl/Abwahl (`-m slow` /
-    # `-m "not slow"`), nicht dem Vergessen dieses Tests.
-    "slow: startet einen echten Server-Prozess statt des In-Prozess-Testpfads",
+    # Task 7, Review-Fix Important #1: starts a real `uvicorn` process
+    # (see tests/api/test_live_smoke.py) - not excluded by default, the
+    # marker only serves targeted selection/deselection (`-m slow` /
+    # `-m "not slow"`), not forgetting this test.
+    "slow: starts a real server process instead of the in-process test path",
 ]
 
 [tool.ruff]
 line-length = 100
-# Die Entwuerfe und Plaene unter docs/ sind Prosa, nicht Quelltext. Ihre
-# Python-Bloecke sind Zitate und Ausschnitte - oft aus der Mitte einer
-# Funktion, mit genau der Einrueckung, die zeigt, wohin der Ausschnitt
-# gehoert. `ruff format` liest solche Bloecke trotzdem als eigenstaendige
-# Moduldateien und zieht sie auf Spalte 0: aus einem Ausschnitt einer Route
-# wird dann Code auf Modulebene, und das Dokument sagt etwas anderes, als es
-# meint. Ein Formatierer, der Dokumentation umschreibt, hat hier nichts zu
-# entscheiden - `mypy` sieht aus demselben Grund nur `src` und `scripts`.
+# The designs and plans under docs/ are prose, not source code. Their
+# Python blocks are quotations and excerpts - often from the middle of a
+# function, with exactly the indentation that shows where the excerpt
+# belongs. `ruff format` still reads such blocks as standalone module
+# files and pulls them to column 0: an excerpt from a route then becomes
+# module-level code, and the document says something other than what it
+# means. A formatter that rewrites documentation has no business deciding
+# that here - `mypy` sees only `src` and `scripts` for the same reason.
 extend-exclude = ["docs"]
 
 [tool.ruff.lint.flake8-bugbear]
-# `File(...)` als Vorgabewert eines `UploadFile`-Parameters (Task 11,
-# api/project_sync.py) ist das von FastAPI selbst dokumentierte Muster -
-# anders als bei `Query(...)`/`Path(...)` erkennt B008 es nicht automatisch
-# als unveraenderlich, weil `UploadFile` selbst kein unveraenderlicher Typ
-# ist (siehe B008-Erklaerung: "Parameters with immutable type annotations
-# will be ignored by this rule" - `str`/`int` bei Query/Path greifen,
-# `UploadFile` bei File nicht).
+# `File(...)` as the default value of an `UploadFile` parameter (Task 11,
+# api/project_sync.py) is the pattern FastAPI itself documents - unlike
+# `Query(...)`/`Path(...)`, B008 doesn't automatically recognize it as
+# immutable, because `UploadFile` itself is not an immutable type (see the
+# B008 explanation: "Parameters with immutable type annotations will be
+# ignored by this rule" - `str`/`int` apply for Query/Path, `UploadFile`
+# for File does not).
 extend-immutable-calls = ["fastapi.File"]
 
 [tool.mypy]
@@ -87,18 +94,20 @@ strict = true
 files = ["src", "scripts"]
 
 [[tool.mypy.overrides]]
-# chip (Teil des CHIP-SDK, das python-matter-server fuer Cluster-Kommandos
-# nutzt) liefert keine py.typed-Markierung/Stubs - siehe
-# BridgeMatterClient.send_command in matter/client.py.
+# chip provides no py.typed marking/stubs - see
+# BridgeMatterClient.send_command in matter/client.py. As of 8 September
+# 2026 the package comes from the same distribution as `matter_server`
+# (matter-python-client) and is generated from matter.js models, not
+# from the CHIP SDK anymore; the missing type marking doesn't change.
 module = "chip.*"
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
-# playwright ist bewusst KEINE Projekt-Abhaengigkeit: es wird nur gebraucht,
-# um die README-Screenshots neu zu erzeugen, und laeuft deshalb ad hoc ueber
-# `uv run --with playwright ... scripts/capture_screenshots.py`. In CI ist es
-# folglich nicht installiert, `files = ["src", "scripts"]` nimmt das Skript
-# aber mit - ohne diese Ausnahme scheitert mypy dort an einem Import, den es
-# gar nicht aufloesen koennen soll.
+# playwright is deliberately NOT a project dependency: it's only needed to
+# regenerate the README screenshots, and so runs ad hoc via
+# `uv run --with playwright ... scripts/capture_screenshots.py`. It is
+# consequently not installed in CI, but `files = ["src", "scripts"]` picks
+# the script up anyway - without this exception mypy would fail there on an
+# import it isn't even supposed to be able to resolve.
 module = "playwright.*"
 ignore_missing_imports = true

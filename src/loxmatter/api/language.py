@@ -1,4 +1,4 @@
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -14,22 +14,22 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Die gemeinsame Spracheinstellung ueber die API - Phase B+C, Spec-Abschnitt 5.
+"""The shared language setting across the API - Phase B+C, spec section 5.
 
-Zwei getrennte Router, weil sie unterschiedlich geschuetzt werden muessen
-(`loxone.server.build_app` bindet sie deshalb mit unterschiedlichem
-`dependencies=`-Argument ein, siehe dort):
+Two separate routers, because they need to be protected differently
+(`loxone.server.build_app` therefore wires them in with a different
+`dependencies=` argument, see there):
 
-- `build_i18n_router`: `GET /api/i18n` - UNGESCHUETZT. Die Ersteinrichtungs-
-  und Anmeldeseite braucht diese Texte, um sich ueberhaupt anzuzeigen, bevor
-  jemand angemeldet sein kann - dieselbe Notwendigkeit wie bei `/auth-info`
-  (siehe `api/auth.py`), nur fuer Uebersetzungen statt Zugangsstatus.
-- `build_language_router`: `PATCH /api/language` - geschuetzt wie jede
-  andere `/api`-Route, die den Zustand der Installation aendert.
+- `build_i18n_router`: `GET /api/i18n` - UNPROTECTED. The initial-setup and
+  login page needs these texts to display itself at all before anyone can be
+  logged in - the same necessity as with `/auth-info` (see `api/auth.py`),
+  just for translations instead of access status.
+- `build_language_router`: `PATCH /api/language` - protected like every
+  other `/api` route that changes the installation's state.
 
-Liest `i18n`s eigene, bereits durch die Namensraum-Konvention (`web.*`)
-gefilterte Teilmenge - kein zweiter, eigener Satz Uebersetzungen fuer den
-Client, dieselbe `strings.yaml` wie ueberall sonst."""
+Reads `i18n`'s own subset, already filtered by the namespace convention
+(`web.*`) - not a second, separate set of translations for the client, the
+same `strings.yaml` as everywhere else."""
 
 from __future__ import annotations
 
@@ -54,12 +54,11 @@ class LanguageOut(BaseModel):
 
 
 def _web_strings() -> dict[str, str]:
-    """Alle `web.*`-Schluessel, unaufgeloest (mit noch unbefuellten
-    {platzhaltern}) in der aktuellen Sprache - der Browser fuellt sie
-    selbst (siehe app.js, t()). i18n.raw_template() statt i18n.t(), weil
-    t() sofort mit KeyError abstuerzen wuerde, sobald ein web.*-Schluessel
-    ueberhaupt einen Platzhalter traegt (Befund aus der Umsetzung der
-    WebUI-Uebersetzungsmechanik)."""
+    """All `web.*` keys, unresolved (with {placeholders} still unfilled) in
+    the current language - the browser fills them in itself (see app.js,
+    t()). i18n.raw_template() instead of i18n.t(), because t() would crash
+    immediately with a KeyError as soon as a web.* key carries a placeholder
+    at all (a finding from implementing the WebUI translation mechanism)."""
     return {key: i18n.raw_template(key) for key in i18n.strings_with_prefix("web.")}
 
 

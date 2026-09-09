@@ -1,4 +1,4 @@
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -57,7 +57,7 @@ def test_empty_or_absent_event_list_produces_nothing():
 
 
 def test_unknown_cluster_is_still_extracted():
-    """Spec 3.5: profiles/ ist Anreicherung, kein Gatekeeper."""
+    """Spec 3.5: profiles/ is enrichment, not a gatekeeper."""
     signals = extract_signals(snapshot({"1/64999/7": 42}))
     assert signals == [SignalRef(1, 64999, 7, SignalKind.ATTRIBUTE)]
 
@@ -68,7 +68,7 @@ def test_signals_are_sorted_deterministically():
 
 
 def test_finds_attributes_the_device_claims_but_did_not_report():
-    # AttributeList (65531) nennt 0 und 16, geliefert wurde nur 0.
+    # AttributeList (65531) names 0 and 16, but only 0 was delivered.
     missing = find_unreported_attributes(snapshot({"1/6/65531": [0, 16], "1/6/0": True}))
     assert missing == [SignalRef(1, 6, 16, SignalKind.ATTRIBUTE)]
 
@@ -88,14 +88,15 @@ def test_unparsable_paths_are_collected_not_raised():
     assert extract_signals(snap) == [SignalRef(1, 6, 0, SignalKind.ATTRIBUTE)]
 
 
-# Zweite Event-Quelle: FeatureMap des Switch-Clusters (0x003B / 59).
+# Second event source: FeatureMap of the switch cluster (0x003B / 59).
 #
-# EventList (65530) ist optional und laut Validierung an echten IKEA-Geräten
-# (siehe tests/matter/test_real_devices.py) in der Praxis nicht implementiert —
-# ein Taster ohne diese Ableitung liefert null Event-Signale. Die Bedingungen
-# unten sind aus data_model/1.4/clusters/Switch.xml (project-chip/connectedhomeip,
-# maschinenlesbare Transkription der Matter Application Cluster Specification)
-# übernommen: je Event ein mandatoryConform über Feature-Bits.
+# EventList (65530) is optional and, per validation against real IKEA
+# devices (see tests/matter/test_real_devices.py), not implemented in
+# practice — a switch without this derivation delivers zero event signals.
+# The conditions below are taken from
+# data_model/1.4/clusters/Switch.xml (project-chip/connectedhomeip, a
+# machine-readable transcription of the Matter Application Cluster
+# Specification): one mandatoryConform per event, over feature bits.
 
 
 def test_feature_map_ms_only_yields_initial_press_only():
@@ -120,10 +121,10 @@ def test_feature_map_ls_only_yields_switch_latched_only():
 
 
 def test_feature_map_30_matches_ikea_bilresa_button():
-    # MS + MSR + MSL + MSM = 2 + 4 + 8 + 16 = 30, das reale FeatureMap des
-    # IKEA BILRESA-Tasters (node 4, Endpoints 1 und 2). AS ist nicht gesetzt,
-    # also feuert MultiPressOngoing zusätzlich zu MultiPressComplete; LS ist
-    # nicht gesetzt, SwitchLatched fehlt entsprechend.
+    # MS + MSR + MSL + MSM = 2 + 4 + 8 + 16 = 30, the real FeatureMap of the
+    # IKEA BILRESA switch (node 4, endpoints 1 and 2). AS is not set, so
+    # MultiPressOngoing fires in addition to MultiPressComplete; LS is not
+    # set, so SwitchLatched is correspondingly absent.
     signals = extract_signals(snapshot({"1/59/65532": 30}))
     assert signals == [
         SignalRef(1, 59, 1, SignalKind.EVENT),  # InitialPress
@@ -136,7 +137,7 @@ def test_feature_map_30_matches_ikea_bilresa_button():
 
 
 def test_feature_map_msm_with_action_switch_excludes_multi_press_ongoing():
-    # MSM + AS = 16 + 32 = 48. MultiPressOngoing verlangt MSM UND NICHT AS.
+    # MSM + AS = 16 + 32 = 48. MultiPressOngoing requires MSM AND NOT AS.
     signals = extract_signals(snapshot({"1/59/65532": 48}))
     assert signals == [SignalRef(1, 59, 6, SignalKind.EVENT)]  # MultiPressComplete
 
@@ -146,14 +147,14 @@ def test_feature_map_zero_yields_no_events():
 
 
 def test_feature_map_is_ignored_for_clusters_without_a_table_entry():
-    """Die FeatureMap-Ableitung ist Cluster-spezifisches Wissen — für Cluster
-    ohne Eintrag in FEATURE_MAP_EVENTS darf sie nichts erfinden."""
+    """The FeatureMap derivation is cluster-specific knowledge — for clusters
+    without an entry in FEATURE_MAP_EVENTS it must not invent anything."""
     assert extract_signals(snapshot({"1/6/65532": 30})) == []
 
 
 def test_event_list_and_feature_map_are_unioned_and_deduplicated():
     signals = extract_signals(snapshot({"1/59/65530": [1, 3], "1/59/65532": 6}))
-    # EventList nennt {1, 3}, FeatureMap (MS+MSR) auch {1, 3} — kein Duplikat.
+    # EventList names {1, 3}, FeatureMap (MS+MSR) also {1, 3} — no duplicate.
     assert signals == [
         SignalRef(1, 59, 1, SignalKind.EVENT),
         SignalRef(1, 59, 3, SignalKind.EVENT),
@@ -165,16 +166,16 @@ def test_feature_map_attribute_itself_is_not_an_attribute_signal():
     assert all(s.kind is SignalKind.EVENT for s in signals)
 
 
-# Drittes Instrument: Cluster, für die weder eine EventList vorliegt noch ein
-# Eintrag in FEATURE_MAP_EVENTS existiert. Hier kann das Werkzeug nicht sagen,
-# ob es Events gibt — anders als bei "0 Events", wo es das (über EventList
-# oder FeatureMap-Tabelle) tatsächlich geprüft hat.
+# Third instrument: clusters for which neither an EventList exists nor an
+# entry in FEATURE_MAP_EVENTS. Here the tool cannot say whether there are
+# events — unlike "0 events", where it has actually checked (via EventList
+# or the FeatureMap table).
 
 
 def test_flags_clusters_without_event_list_and_without_feature_map_table_entry():
-    # Cluster 42 (OTA Requestor) und 145 (ElectricalEnergyMeasurement) haben
-    # beide mandatorische Events laut Spec, aber keine EventList und keinen
-    # Eintrag in FEATURE_MAP_EVENTS — genau der blinde Fleck.
+    # Clusters 42 (OTA Requestor) and 145 (ElectricalEnergyMeasurement) both
+    # have mandatory events per spec, but no EventList and no entry in
+    # FEATURE_MAP_EVENTS — exactly the blind spot.
     snap = snapshot({"0/42/0": 1, "2/145/65532": 5})
     assert find_clusters_with_undiscoverable_events(snap) == [(0, 42), (2, 145)]
 
@@ -185,8 +186,8 @@ def test_cluster_with_event_list_is_not_flagged():
 
 
 def test_cluster_with_feature_map_table_entry_is_not_flagged_even_without_event_list():
-    # Switch (59) steht in FEATURE_MAP_EVENTS — auch ohne EventList weiß das
-    # Werkzeug hier, wonach es suchen muss.
+    # Switch (59) is in FEATURE_MAP_EVENTS — even without an EventList, the
+    # tool knows what to look for here.
     snap = snapshot({"1/59/0": True})
     assert find_clusters_with_undiscoverable_events(snap) == []
 

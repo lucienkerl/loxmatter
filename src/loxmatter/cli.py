@@ -1,4 +1,4 @@
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -14,7 +14,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Kommandozeile der Bridge."""
+"""The bridge's command line."""
 
 from __future__ import annotations
 
@@ -57,6 +57,7 @@ from loxmatter.matter.discovery import (
     find_unreported_attributes,
 )
 from loxmatter.matter.models import NodeSnapshot, SignalKind
+from loxmatter.matter.supervisor import attach, supervise
 from loxmatter.model.locale_store import LocaleStore
 from loxmatter.model.store import Store
 from loxmatter.profiles.table import is_exportable
@@ -65,27 +66,27 @@ logger = logging.getLogger(__name__)
 
 
 def _resolve_store_path(explicit: Path | None) -> Path:
-    """Ermittelt den Pfad der Signalschlüssel-Datenbank.
+    """Determines the path of the signal-key database.
 
-    Rangfolge: `--store-path` schlägt die Umgebungsvariable `LOXMATTER_STORE`,
-    die wiederum den Standard `~/.loxmatter/loxmatter.sqlite` schlägt.
+    Precedence: `--store-path` beats the environment variable
+    `LOXMATTER_STORE`, which in turn beats the default
+    `~/.loxmatter/loxmatter.sqlite`.
 
-    Der Standard ist absichtlich vom Arbeitsverzeichnis unabhängig. Die
-    Datenbank hält die Signalschlüssel — und die Schlüssel *sind* die
-    Verdrahtung in Loxone (Spec 6.2): sobald ein Nutzer einen exportierten
-    Eingang auf einen Funktionsbaustein gezogen hat, verbindet nur noch der
-    Schlüsseltext den Baustein mit der Bridge. Läge der Standard relativ zum
-    Arbeitsverzeichnis (z. B. `loxmatter.sqlite`), würde ein Export aus einem
-    anderen Verzeichnis — heute `~/exports`, morgen der Desktop, oder ein
-    Cron-Job mit eigenem Arbeitsverzeichnis — die vorhandene Datenbank
-    verfehlen. Das Werkzeug hielte das Gerät dann für neu, vergäbe eine neue
-    `device_id` und damit einen komplett neuen Satz Schlüssel. Der Nutzer
-    importiert die neue Vorlage, und jeder bisher verdrahtete Baustein wird
-    stillschweigend tot — ohne Fehlermeldung. NICHT wieder auf einen
-    relativen Pfad vereinfachen.
+    The default is deliberately independent of the working directory. The
+    database holds the signal keys — and the keys *are* the wiring in
+    Loxone (spec 6.2): once a user has dragged an exported input onto a
+    function block, only the key text still connects the block to the
+    bridge. If the default were relative to the working directory (e.g.
+    `loxmatter.sqlite`), an export from a different directory — today
+    `~/exports`, tomorrow the desktop, or a cron job with its own working
+    directory — would miss the existing database. The tool would then
+    consider the device new, assign a new `device_id`, and with it a
+    completely new set of keys. The user imports the new template, and
+    every previously wired block silently dies — with no error message.
+    Do NOT simplify this back to a relative path.
 
-    `LOXMATTER_STORE` erlaubt einen abweichenden, festen Ort — etwa ein
-    eingehängtes Volume in einer Container-Bereitstellung.
+    `LOXMATTER_STORE` allows a different, fixed location — such as a
+    mounted volume in a containerised deployment.
     """
     if explicit is not None:
         return explicit
@@ -96,26 +97,25 @@ def _resolve_store_path(explicit: Path | None) -> Path:
 
 
 def _resolve_cli_language(store_path: Path, env: Mapping[str, str]) -> str:
-    """Bestimmt die Sprache fuer GENAU diesen Prozess, aufgerufen einmal
-    beim Modulimport (siehe unten, vor `app = typer.Typer(...)`) - siehe
-    Spec-Abschnitt 4.
+    """Determines the language for EXACTLY this process, called once at
+    module import (see below, before `app = typer.Typer(...)`) - see spec
+    section 4.
 
-    Rangfolge: `LOXMATTER_LANG` (dieser Aufruf, ohne die gespeicherte
-    Einstellung zu aendern) > gespeicherte Einstellung > `DEFAULT_LANGUAGE`.
-    Ein ungueltiger `LOXMATTER_LANG`-Wert warnt auf stderr und faellt auf
-    die naechste Stufe zurueck - diese eine Warnung bleibt zwangslaeufig
-    Englisch, die Sprache steht an dieser Stelle noch nicht fest.
+    Precedence: `LOXMATTER_LANG` (this run, without changing the stored
+    setting) > stored setting > `DEFAULT_LANGUAGE`. An invalid
+    `LOXMATTER_LANG` value warns on stderr and falls back to the next
+    tier - this one warning necessarily stays in English, since the
+    language is not yet settled at this point.
 
-    `store_path` ist NICHT `--store-path` (das ist zu diesem Zeitpunkt noch
-    nicht geparst, siehe den Abschnitt "Deviation from the spec" im
-    Implementierungsplan dieser Aufgabe) - der Aufrufer uebergibt
-    `_resolve_store_path(None)`, also `LOXMATTER_STORE` oder den
-    Standardpfad.
+    `store_path` is NOT `--store-path` (that has not been parsed yet at
+    this point, see the "Deviation from the spec" section in this task's
+    implementation plan) - the caller passes `_resolve_store_path(None)`,
+    i.e. `LOXMATTER_STORE` or the default path.
 
-    Oeffnet die Datenbank nur lesend und nur fuer diese eine Abfrage - NICHT
-    ueber `Store(...)`, das bei jedem Aufruf `CREATE TABLE IF NOT EXISTS`
-    und Migrationen ausfuehrt und damit einen Schreibzugriff braucht, den
-    ein blosses `--help` nie voraussetzen darf."""
+    Opens the database read-only and only for this one query - NOT via
+    `Store(...)`, which runs `CREATE TABLE IF NOT EXISTS` and migrations
+    on every call and thus needs write access, which a plain `--help`
+    must never require."""
     override = env.get("LOXMATTER_LANG")
     if override:
         candidate = override.strip().lower()
@@ -142,12 +142,12 @@ def _resolve_cli_language(store_path: Path, env: Mapping[str, str]) -> str:
     return i18n.DEFAULT_LANGUAGE
 
 
-# Einmal beim Modulimport aufgeloest, vor jeder Kommandodefinition unten -
-# `help=`-Texte sind Typer-Konstruktionsargumente und damit an dieser Stelle
-# eingefroren (siehe Spec-Abschnitt 5). `typer.echo`/`_fail`-Aufrufe IN den
-# Kommandos lesen `i18n.current_language()` dagegen bei jedem Aufruf frisch
-# ueber `t()` - fuer sie ist dieser eine Bootstrap-Aufruf kein Einfrieren,
-# nur der Startwert.
+# Resolved once at module import, before any command definition below -
+# `help=` texts are Typer construction arguments and thus frozen at this
+# point (see spec section 5). `typer.echo`/`_fail` calls INSIDE the
+# commands, by contrast, read `i18n.current_language()` freshly on every
+# call via `t()` - for them this one bootstrap call is not a freeze, only
+# the starting value.
 i18n.set_language(_resolve_cli_language(_resolve_store_path(None), os.environ))
 
 app = typer.Typer(help=i18n.t("cli.app.help"))
@@ -155,8 +155,9 @@ app = typer.Typer(help=i18n.t("cli.app.help"))
 
 @app.callback()
 def main() -> None:
-    """Ohne diesen Callback macht Typer bei genau einem Kommando aus
-    `loxmatter inspect ...` ein `loxmatter ...` — der Unterbefehl verschwindet."""
+    """Without this callback, Typer turns `loxmatter inspect ...` into
+    `loxmatter ...` when there is exactly one command — the subcommand
+    disappears."""
 
 
 def render_report(snapshot: NodeSnapshot) -> str:
@@ -203,23 +204,23 @@ def render_report(snapshot: NodeSnapshot) -> str:
 
 
 def _fail(message: str) -> NoReturn:
-    """Meldet einen erwarteten CLI-Fehler: eine Zeile auf stderr, danach
-    Programmende mit Exit-Code ≠ 0 — statt eines Tracebacks."""
+    """Reports an expected CLI error: one line on stderr, then program end
+    with a non-zero exit code — instead of a traceback."""
     typer.echo(message, err=True)
     raise typer.Exit(code=1)
 
 
 def _ensure_out_dir(out: Path) -> None:
-    """Legt das Zielverzeichnis an; meldet einen Fehlschlag als CLI-Fehler
-    statt eines Tracebacks.
+    """Creates the target directory; reports a failure as a CLI error
+    instead of a traceback.
 
-    `export` ruft dies an zwei Stellen auf — einmal vor den Systemvorlagen,
-    einmal vor den Gerätevorlagen (`mkdir(exist_ok=True)` verträgt den
-    zweiten Aufruf) — statt einmal ganz am Anfang. So entsteht das
-    Verzeichnis erst, wenn feststeht, dass das Kommando tatsächlich etwas
-    schreibt: ein Aufruf ohne `--system`, `--node` oder `--fixture` scheitert
-    an der Parametervalidierung in `_load_snapshot`, bevor hier irgendetwas
-    angelegt wird (Review-Fix Minor #3, 2026-09-02).
+    `export` calls this in two places — once before the system templates,
+    once before the device templates (`mkdir(exist_ok=True)` tolerates the
+    second call) — instead of once right at the start. That way the
+    directory is only created once it is certain the command actually
+    writes something: a call without `--system`, `--node` or `--fixture`
+    fails at the parameter validation in `_load_snapshot` before anything
+    is created here (review fix minor #3, 2026-09-02).
     """
     try:
         out.mkdir(parents=True, exist_ok=True)
@@ -228,8 +229,8 @@ def _ensure_out_dir(out: Path) -> None:
 
 
 def _load_fixture(path: Path) -> NodeSnapshot:
-    """Lädt eine Fixture-Datei; meldet kaputten Inhalt als CLI-Fehler statt
-    mit einem rohen KeyError/JSONDecodeError abzubrechen."""
+    """Loads a fixture file; reports broken content as a CLI error instead
+    of aborting with a raw KeyError/JSONDecodeError."""
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
@@ -242,18 +243,17 @@ def _load_fixture(path: Path) -> NodeSnapshot:
 
 
 def _build_client(url: str) -> BridgeMatterClient:
-    """Eigener Konstruktions-Schritt, damit Tests den Client per Monkeypatch
-    durch eine mit Fake-Factories bestückte Instanz ersetzen können — ohne
-    Netzwerk zu berühren (siehe BridgeMatterClient.session_factory)."""
+    """A dedicated construction step so tests can replace the client via
+    monkeypatch with an instance fitted with fake factories — without
+    touching the network (see BridgeMatterClient.session_factory)."""
     return BridgeMatterClient(url)
 
 
 def _load_snapshot(fixture: Path | None, node: int | None, url: str) -> NodeSnapshot:
-    """Lädt ein Node-Abbild aus einer Datei oder von einem laufenden matter-server.
+    """Loads a node snapshot from a file or from a running matter-server.
 
-    Gemeinsam von `inspect` und `export` genutzt, damit die vier deutschen
-    Fehlermeldungen dieses Pfads nur an einer Stelle stehen, statt in zwei
-    Kommandos auseinanderzudriften.
+    Shared by `inspect` and `export`, so the four error messages of this
+    path live in one place instead of drifting apart across two commands.
     """
     if fixture is not None:
         return _load_fixture(fixture)
@@ -281,7 +281,7 @@ def _load_snapshot(fixture: Path | None, node: int | None, url: str) -> NodeSnap
 @app.command(help=i18n.t("cli.inspect.help"))
 def inspect(
     node: int | None = typer.Option(None, help=i18n.t("cli.common.help_node")),
-    fixture: Path | None = typer.Option(  # noqa: B008 — typer-Idiom, `Path` gilt Ruff nicht als unveränderlich
+    fixture: Path | None = typer.Option(  # noqa: B008 — typer idiom, Path is not Ruff-immutable
         None,
         help=i18n.t("cli.inspect.help_fixture"),  # noqa: B008
     ),
@@ -350,8 +350,8 @@ def export(
     try:
         device_id = store.register_device(snapshot)
         stored = store.register_signals(device_id, snapshot)
-        # Ausgangsbefehle kommen aus AcceptedCommandList, nicht aus den Attributen:
-        # Matter-Attribute sind fast alle nur lesbar (Task 6).
+        # Output commands come from AcceptedCommandList, not from the
+        # attributes: Matter attributes are almost all read-only (task 6).
         stored_commands = store.register_commands(
             device_id, extract_commands(snapshot, raw=raw_commands), snapshot.node_id
         )
@@ -360,10 +360,10 @@ def export(
 
     label = f"{snapshot.vendor_name} {snapshot.product_name}".strip() or f"Node {snapshot.node_id}"
     inputs = to_inputs(stored, device_id, label)
-    # Der Schluessel kommt ausschliesslich vom Store (siehe register_commands):
-    # so stammen der Schluessel in der Vorlage und der in der Datenbank aus
-    # einer Quelle statt aus zwei unabhaengigen Zusammensetzungen, die
-    # auseinanderdriften koennten, ohne dass ein Fehler es meldet.
+    # The key comes exclusively from the store (see register_commands): so
+    # the key in the template and the one in the database come from one
+    # source instead of two independent compositions that could drift
+    # apart without any error reporting it.
     commands = to_outputs(stored_commands)
 
     _ensure_out_dir(out)
@@ -374,10 +374,11 @@ def export(
         viu.write_bytes(render_virtual_in_udp(label, bridge_ip, port, inputs))
     except OSError as exc:
         _fail(i18n.t("cli.export.fail_write_first_file", path=viu, exc=exc))
-    # Ohne Ausgangsbefehle waere die VO-Vorlage leer bis auf ihr Grundgeruest -
-    # ein Import in Loxone Config braechte nichts ausser eine leere Vorlage im
-    # Baum. Das Online-Signal macht die VIU-Vorlage dagegen nie leer (siehe
-    # `to_inputs`), sie entsteht deshalb immer.
+    # Without output commands the VO template would be empty apart from
+    # its basic skeleton - an import into Loxone Config would bring
+    # nothing but an empty template in the tree. The online signal, by
+    # contrast, never lets the VIU template be empty (see `to_inputs`), so
+    # it is always produced.
     if commands:
         try:
             vo.write_bytes(render_virtual_out(label, f"http://{bridge_ip}:{listen}", commands))
@@ -392,22 +393,22 @@ def export(
                 )
             )
 
-    # Text zaehlt mit: der virtuelle Texteingang ist ein eigener Vorlagentyp
-    # und kommt in einer spaeteren Ausbaustufe (Spec 6.6). Die Entscheidung
-    # faellt `profiles.table.is_exportable` und sonst niemand (Review-Fix
-    # Fix 8, 2026-09-03) - vorher stand hier eine von Hand kopierte
-    # Umkehrung `(Exportability.NONE, Exportability.TEXT)`, eine zweite in
-    # `api/export.py`, und beide neben genau dem Helfer, der diese
-    # Verdopplung schon einmal beenden sollte.
+    # Text counts too: the virtual text input is its own template type and
+    # comes in a later expansion stage (spec 6.6). The decision is made by
+    # `profiles.table.is_exportable` and nobody else (review fix 8,
+    # 2026-09-03) - previously a hand-copied inversion
+    # `(Exportability.NONE, Exportability.TEXT)` stood here, a second one
+    # in `api/export.py`, and both next to exactly the helper that was
+    # meant to end this duplication once already.
     skipped = sum(1 for s in stored if not is_exportable(s.exportability))
-    # hidden_count (Nachbesserung Fix 3, Phase 6): dieselbe Zahl, die
-    # `api/export.py`s `_device_preview` als `ExportDeviceOut.hidden_count`
-    # ausliefert (`StoredSignal.functional`, aus
-    # `profiles.relevance.is_functional` - keine zweite Berechnung hier,
-    # nur derselbe Ausdruck auf denselben Zeilen). Vorher blieb die Rechnung
-    # auf der Kommandozeile sichtbar unvollstaendig: "6 Eingaenge" und "49
-    # Signale nicht exportierbar" bei 159 Signalen liessen die restlichen
-    # 104 unerwaehnt.
+    # hidden_count (fix 3 follow-up, phase 6): the same number that
+    # `api/export.py`'s `_device_preview` delivers as
+    # `ExportDeviceOut.hidden_count` (`StoredSignal.functional`, from
+    # `profiles.relevance.is_functional` - no second computation here,
+    # just the same expression on the same lines). Previously the
+    # arithmetic on the command line visibly did not add up: "6 inputs"
+    # and "49 signals not exportable" out of 159 signals left the
+    # remaining 104 unmentioned.
     hidden_count = sum(1 for s in stored if not s.functional)
     typer.echo(i18n.t("cli.export.echo_viu_summary", filename=viu.name, count=len(inputs)))
     if commands:
@@ -417,14 +418,13 @@ def export(
     typer.echo(i18n.t("cli.export.echo_skipped_signals", count=skipped))
     typer.echo(i18n.t("cli.export.echo_hidden_signals", count=hidden_count))
 
-    # exported_at (Task 5, Phase 5): `GET /api/export/status` der WebUI muss
-    # "wann zuletzt exportiert" unabhaengig davon beantworten, ob der letzte
-    # Export per CLI oder per API lief - beide schreiben dieselbe Datenbank
-    # (siehe Store.mark_exported). Oben bereits geschlossen, hier bewusst
-    # erst NACH beiden erfolgreichen write_bytes-Aufrufen wieder geoeffnet:
-    # ein fehlgeschlagener Schreibvorgang (siehe die beiden _fail-Aufrufe
-    # oben, die das Kommando vorher beenden) darf das Geraet nicht
-    # faelschlich als exportiert markieren.
+    # exported_at (task 5, phase 5): the WebUI's `GET /api/export/status`
+    # must answer "when last exported" regardless of whether the last
+    # export ran via CLI or via API - both write the same database (see
+    # Store.mark_exported). Already closed above, deliberately reopened
+    # here only AFTER both successful write_bytes calls: a failed write
+    # (see the two _fail calls above, which end the command beforehand)
+    # must not wrongly mark the device as exported.
     store = Store(resolved_store_path)
     try:
         store.mark_exported(device_id)
@@ -433,30 +433,30 @@ def export(
 
 
 def _warn_if_no_password(store: Store) -> None:
-    """Warnt beim Start deutlich, solange kein Passwort vergeben ist.
+    """Warns clearly at startup for as long as no password has been set.
 
-    Nimmt den bereits geoeffneten `Store` entgegen, nicht dessen Pfad: `run`
-    unten oeffnet ihn ohnehin schon (in einem `try`/`except`, das einen
-    unbeschreibbaren Pfad als klaren CLI-Fehler beendet) und reicht ihn drei
-    Zeilen spaeter an `_run` weiter. Eine zweite `Store(store_path)` hier
-    haette dieselbe Datei ein zweites Mal geoeffnet - ein zweiter
-    `_migrate`-Lauf, eine zweite Sperrdomaene auf derselben SQLite-Datei, und
-    ohne den Schutz des `try`/`except` von `run`, das nur die ERSTE Oeffnung
-    umgibt.
+    Takes the already-opened `Store`, not its path: `run` below opens it
+    anyway (in a `try`/`except` that ends an unwritable path as a clear
+    CLI error) and passes it on to `_run` three lines later. A second
+    `Store(store_path)` here would have opened the same file a second
+    time - a second `_migrate` run, a second lock domain on the same
+    SQLite file, and without the protection of `run`'s `try`/`except`,
+    which only wraps the FIRST opening.
 
-    Die Warnung gilt seit dem WebUI-Login dem Passwort und NICHT mehr dem
-    Token: ein konfiguriertes Token bringt sie nicht zum Schweigen, denn es
-    ist der Weg fuer Skripte und kein Ersatz fuer die Ersteinrichtung.
+    Since the WebUI login, the warning is about the password and NO
+    LONGER about the token: a configured token does not silence it,
+    because it is the route for scripts, not a substitute for the initial
+    setup.
 
-    Der Zustand, vor dem sie warnt, ist ein anderer als frueher. Bis hierher
-    lief ein Dienst ohne Token vollstaendig offen. Jetzt liefert er ohne
-    Passwort gar nichts mehr aus - dafuer kann bis zur Passwortvergabe jeder,
-    der ihn erreicht, ihn uebernehmen, indem er die Ersteinrichtung
-    abschliesst (Spec 5, bewusst so entschieden). Genau darauf zielt dieser
-    Text.
+    The state it warns about is different from before. Up to this point, a
+    service without a token ran completely open. Now it delivers nothing
+    at all without a password - but in exchange, until a password is set,
+    anyone who can reach it can take it over by completing the initial
+    setup (spec 5, a deliberate decision). That is exactly what this text
+    targets.
 
-    Eigene Funktion statt einer Zeile inline in `run`/`_run`, damit ein Test
-    sie ohne laufenden Server aufrufen kann - siehe
+    A dedicated function instead of one line inline in `run`/`_run`, so a
+    test can call it without a running server - see
     `tests/api/test_security.py`."""
     if store.auth.password_hash() is not None:
         return
@@ -491,12 +491,12 @@ def run(
 ) -> None:
     log_handler = install_log_buffer()
     resolved_store_path = _resolve_store_path(store_path)
-    # Wie bei `export` ausgegeben (Review-Fix M10, 2026-09-02): die
-    # wahrscheinlichste Fehlkonfiguration ist eine `export`- und eine
-    # `run`-Datenbank, die auseinanderlaufen — exportiert mit
-    # `--store-path`, gestartet ohne (oder umgekehrt). Ohne diese Zeile
-    # zeigt sich das erst als 404 in einem Log, das niemand liest, weil
-    # `run` den verwendeten Pfad bislang nie nannte.
+    # Printed the same way as in `export` (review fix M10, 2026-09-02):
+    # the most likely misconfiguration is an `export` database and a
+    # `run` database drifting apart — exported with `--store-path`,
+    # started without it (or the other way round). Without this line,
+    # that only ever shows up as a 404 in a log nobody reads, because
+    # `run` used to never name the path it was using.
     typer.echo(i18n.t("cli.common.echo_database_path", path=resolved_store_path.resolve()))
     try:
         resolved_store_path.parent.mkdir(parents=True, exist_ok=True)
@@ -531,86 +531,93 @@ async def _run(
     port: int,
     listen: int,
     matter_data_dir: Path | None = None,
-    host: str = "0.0.0.0",  # Standard wie in `run` — der Miniserver muss den Dienst erreichen
+    host: str = "0.0.0.0",  # Same default as `run` — the Miniserver must reach the service
     api_token: str | None = None,
     log_handler: LogBufferHandler | None = None,
-    # Task 8, Stufe 2: derselbe Default wie `build_app`s eigener - siehe
-    # dort. Ein eigenes Schluesselwort statt eines weiteren positionalen
-    # Parameters, damit die bestehenden Testaufrufe von `_run(...)` ohne
-    # dieses Argument unveraendert weiterlaufen.
+    # Task 8, stage 2: the same default as `build_app`'s own - see there.
+    # A keyword of its own instead of another positional parameter, so
+    # that existing test calls to `_run(...)` keep working unchanged
+    # without this argument.
     update_dir: Path = Path("/data/update"),
 ) -> None:
-    """Baut Sender, Laufzeit und Client auf `store` auf und hält sie am Laufen.
+    """Builds sender, runtime and client on top of `store` and keeps them
+    running.
 
-    `store` kommt bereits geöffnet herein (siehe `run` oben). `UdpSender`,
-    `Runtime` und `_build_client` führen in ihren Konstruktoren keine E/A
-    aus, die scheitern könnte — anders als `Store(...)` selbst. Ab hier sind
-    also garantiert alle vier Ressourcen vorhanden, wenn `finally` sie
-    schließt: kein Leck durch einen fehlgeschlagenen Konstruktor irgendwo
-    zwischen `try` und dem ersten `await`.
+    `store` comes in already open (see `run` above). `UdpSender`,
+    `Runtime` and `_build_client` perform no I/O in their constructors
+    that could fail — unlike `Store(...)` itself. So from here on it is
+    guaranteed that all four resources exist by the time `finally` closes
+    them: no leak from a failed constructor anywhere between `try` and the
+    first `await`.
 
-    Jeder Aufräumschritt in `finally` steht in seinem eigenen `try`/`except`:
-    scheitert einer (z. B. `runtime.stop()`, weil der letzte Full-Resend
-    mitten in einem Sendefehler steckte), dürfen die folgenden trotzdem
-    laufen — sonst bliebe je nach Fehlerort der UDP-Socket offen oder die
-    matter-server-Verbindung hängen. `asyncio.CancelledError` fließt an all
-    dem vorbei ungefangen durch: ein Strg-C soll den Abbruch weiterreichen,
-    nicht als Aufräumfehler verschluckt werden.
+    Every cleanup step in `finally` sits in its own `try`/`except`: if one
+    fails (e.g. `runtime.stop()`, because the last full resend was stuck
+    in a send error), the following ones are still allowed to run —
+    otherwise, depending on where the error occurred, the UDP socket
+    could stay open or the matter-server connection could hang.
+    `asyncio.CancelledError` flows past all of this uncaught: a Ctrl-C is
+    meant to propagate the cancellation, not be swallowed as a cleanup
+    error.
 
-    Zum eigentlichen Abbruchverhalten: `uvicorn.Server.serve()` fängt
-    SIGINT/SIGTERM selbst ab (`Server.capture_signals`) und kehrt bei einem
-    ersten Strg-C geordnet zurück, statt eine Ausnahme zu werfen — der
-    `finally`-Block unten läuft in diesem Fall wie bei jedem anderen reguären
-    Ende auch. `asyncio.run()` selbst installiert seit Python 3.11 zusätzlich
-    einen eigenen SIGINT-Handler, der bei einem Strg-C außerhalb von
-    `serve()` (z. B. während `client.connect()`) den gesamten `_run`-Task
-    abbricht — auch das erreicht `finally` als normale Abbruch-Ausnahme.
+    On the actual cancellation behaviour: `uvicorn.Server.serve()` itself
+    catches SIGINT/SIGTERM (`Server.capture_signals`) and returns cleanly
+    on a first Ctrl-C instead of raising an exception — the `finally`
+    block below runs in that case just as it would for any other regular
+    end. Since Python 3.11, `asyncio.run()` itself additionally installs
+    its own SIGINT handler, which, on a Ctrl-C outside `serve()` (e.g.
+    during `client.connect()`), cancels the entire `_run` task — that too
+    reaches `finally` as a normal cancellation exception.
 
-    **Log-Ring (Task 5, Phase 5; Aufrufstelle korrigiert in Task 7, Fix 1).**
-    `install_log_buffer()` hängt einen `LogBufferHandler` an den Logger
-    `loxmatter` und wird an GENAU EINER Stelle im gesamten Quelltext
-    aufgerufen — in `run()` oben, als dessen allererste Anweisung, NICHT
-    hier. `_run()` bekommt den fertigen Handler als Parameter `log_handler`
-    herein und reicht ihn unten unverändert an `build_app()` weiter. Die
-    Absicherung "genau einmal" hängt an der ZAHL der Aufrufstellen im
-    Quelltext, nicht an ihrer Position: `run()` ruft `install_log_buffer()`
-    selbst nur einmal auf und ist der einzige Aufrufer von `_run()` (über
-    `asyncio.run(...)`, ebenfalls nur einmal je Prozess). Ein zweiter
-    Aufruf von `install_log_buffer()` — gleich an welcher Stelle — hängte
-    einen ZWEITEN `LogBufferHandler` an denselben, prozessweiten Logger
-    `loxmatter`, und jede folgende Logzeile liefe zweimal in
-    `Logger.callHandlers` ein und stünde doppelt im Ring (siehe
+    **Log ring (task 5, phase 5; call site corrected in task 7, fix 1).**
+    `install_log_buffer()` attaches a `LogBufferHandler` to the logger
+    `loxmatter` and is called at EXACTLY ONE place in the entire source
+    tree — in `run()` above, as its very first statement, NOT here.
+    `_run()` receives the finished handler as the parameter `log_handler`
+    and passes it on unchanged to `build_app()` below. The "exactly once"
+    guarantee depends on the NUMBER of call sites in the source, not on
+    their position: `run()` itself calls `install_log_buffer()` only once
+    and is the only caller of `_run()` (via `asyncio.run(...)`, likewise
+    only once per process). A second call to `install_log_buffer()` —
+    wherever it occurred — would attach a SECOND `LogBufferHandler` to the
+    same, process-wide logger `loxmatter`, and every subsequent log line
+    would arrive twice in `Logger.callHandlers` and appear twice in the
+    ring (see
     `test_run_installs_the_log_buffer_exactly_once_and_passes_it_to__run`
-    in `tests/test_cli.py`, das genau das mit einer Zeilenzählung belegt,
-    NICHT bloß mit "ein Handler ist vorhanden").
+    in `tests/test_cli.py`, which proves exactly that with a line count,
+    NOT merely with "a handler is present").
 
-    **Warum die Aufrufstelle ueberhaupt umzog.** Bis Task 7 hing der Aufruf
-    hier in `_run()`, unmittelbar vor `uvicorn.Config(...)` — also NACH
+    **Why the call site moved at all.** Until task 7, the call sat here in
+    `_run()`, immediately before `uvicorn.Config(...)` — i.e. AFTER
     `client.connect()`, `subscribe()`, `runtime.start()`,
-    `seed_from_snapshot()` und `resend_all()`, und nach der Warnung aus
-    `_warn_if_no_password` in `run()`, die synchron läuft, bevor `_run()`
-    überhaupt beginnt. Jede Zeile, die einer dieser Schritte protokollierte,
-    war deshalb weg, bevor der Ring existierte — allen voran der
-    Sicherheitshinweis zum fehlenden Passwort (siehe
+    `seed_from_snapshot()` and `resend_all()`, and after the warning from
+    `_warn_if_no_password` in `run()`, which runs synchronously before
+    `_run()` even begins. Every line any of these steps logged was
+    therefore gone before the ring existed — first and foremost the
+    security note about the missing password (see
     `test_run_installs_the_log_buffer_before_the_password_warning` in
-    `tests/test_cli.py`, das genau diese Zeile nach einem `run()`-Lauf im
-    Ring nachweist).
+    `tests/test_cli.py`, which proves exactly this line is in the ring
+    after a `run()` run).
 
-    Ohne die Weitergabe an `build_app()` unten bliebe `log_handler` dort
-    auf seinem Vorgabewert `None` stehen, und der Log-Strom der Route
-    `/api/diagnostics/live` (Task 4 dieser Phase) wäre im echten Lauf
-    dauerhaft leer (siehe `loxone.server.build_app`-Moduldocstring,
-    Abschnitt "`log_handler` ist neu...", das genau diese Lücke schon
-    benannte — siehe dort auch für den umgekehrten Fall, ein `log_handler`
-    von `None`, wie ihn jeder Aufrufer von `_run()` bekommt, der keinen
-    übergibt, z. B. ein Test)."""
+    Without passing it on to `build_app()` below, `log_handler` would stay
+    at its default value of `None` there, and the log stream of the
+    `/api/diagnostics/live` route (task 4 of this phase) would be
+    permanently empty in a real run (see the `loxone.server.build_app`
+    module docstring, the "`log_handler` is new..." section, which already
+    named exactly this gap — see there also for the reverse case, a
+    `log_handler` of `None`, as received by every caller of `_run()` that
+    passes none, e.g. a test)."""
     sender = UdpSender(miniserver, port)
-    runtime = Runtime(store, sender)
     client = _build_client(url)
+    # `lambda: client.connected`, NOT `client.connected`: the second form
+    # would be a bool evaluated once, and the heartbeat would thereby hang
+    # forever on the state of the moment of startup. `mypy --strict`
+    # rejects it.
+    runtime = Runtime(store, sender, link_ok=lambda: client.connected)
 
     async def invoke(call: MatterCall) -> None:
         await client.send_command(call)
 
+    supervisor_task: asyncio.Task[None] | None = None
     try:
         try:
             await client.connect()
@@ -618,35 +625,22 @@ async def _run(
             _fail(i18n.t("cli.common.fail_matter_unreachable", url=url))
         except MatterUnavailableError as exc:
             _fail(i18n.t("cli.common.fail_matter_not_ready", url=url, exc=exc))
-        await client.subscribe(store.device_id_for_node, runtime)
         await runtime.start()
-        # Startwerte aus dem aktuellen Geraetezustand laden, BEVOR der Resend
-        # unten sie verschickt (Spec 6.4, Live-Lauf vom 2026-09-02): ohne das
-        # faende `resend_all()` einen leeren Cache vor, weil ein Wert dort nur
-        # ueber eine sich aendernde Subscription landet - siehe
-        # `Runtime.seed_from_snapshot`.
-        snapshots = await client.snapshots()
-        await runtime.seed_from_snapshot(snapshots)
-        # Geraetetypen von Bestandsgeraeten nachtragen (Entwurf Geraete-Tab,
-        # 2026-09-05, Abschnitt 3.4): die Abbilder sind gerade geholt, ein
-        # zweiter Abruf nur fuer diesen Zweck waere Verschwendung. Fuellt nur
-        # Zeilen ohne Typen; ein Geraet, das gerade offline ist und deshalb
-        # hier fehlt, behaelt seine und wird beim naechsten Start erreicht.
-        store.backfill_device_types(snapshots)
-        # Kommandos von Bestandsgeraeten auffrischen, aus denselben Abbildern
-        # (Betriebsbefund 2026-09-08): ein Geraet, das eingelernt wurde,
-        # bevor ein Kommando in `clusters.yaml` stand, fuehrte es nie - eine
-        # RGB-Leuchte blieb ohne Farb-Bedienelement, obwohl die Bruecke den
-        # Befehl laengst kannte. Siehe `Store.backfill_commands`.
-        gained = store.backfill_commands(snapshots)
+        # Since 8 September 2026 the startup sequence and the rebuild share
+        # one place (`matter.supervisor.attach`) - see there for why.
+        gained = await attach(client, store, runtime)
         if gained:
             typer.echo(i18n.t("cli.run.echo_commands_backfilled", count=gained))
-        # Ein Neustart der Bridge soll wirken wie /resync (Spec 6.4).
-        await runtime.resend_all()
+        # The supervisor runs for as long as the service runs: if the
+        # websocket to matter-server dies, it rebuilds the connection and
+        # lets `attach` run again. Without it the bridge stays mute after a
+        # restart of matter-server, without reporting it - exactly the
+        # outage of 8 September 2026.
+        supervisor_task = asyncio.ensure_future(supervise(client, store, runtime))
 
-        # `log_handler` kommt bereits fertig herein (siehe Docstring oben,
-        # Abschnitt "Log-Ring") - `install_log_buffer()` selbst steht seit
-        # Task 7 (Fix 1) einzig in `run()`, VOR diesem gesamten Aufbau.
+        # `log_handler` arrives already finished (see the docstring above,
+        # "Log ring" section) - `install_log_buffer()` itself has, since
+        # task 7 (fix 1), lived only in `run()`, BEFORE this entire setup.
         config = uvicorn.Config(
             build_app(
                 store,
@@ -665,25 +659,47 @@ async def _run(
         )
         await uvicorn.Server(config).serve()
     finally:
+        if supervisor_task is not None:
+            supervisor_task.cancel()
+            try:
+                await supervisor_task
+            except asyncio.CancelledError:
+                # Two different cancellations arrive here as the same exception,
+                # and only one of them is the expected one.
+                # `supervisor_task.cancelled()` tells them apart: if the
+                # supervisor itself was cancelled, it was our `cancel()` one line
+                # above - exactly what we expected, nothing to report. If it was
+                # NOT, then the cancellation hit the surrounding `_run` task while
+                # we were waiting for it (a second Ctrl-C in the middle of the
+                # shutdown), and that one MUST keep travelling - the docstring
+                # above says the same for every other cleanup step.
+                if not supervisor_task.cancelled():
+                    raise
+            except Exception:
+                # Its own `try` like every neighbouring block: if the supervisor
+                # ended earlier on some other exception, `await` delivers it here -
+                # and without this `except` the whole rest of the cleanup would be
+                # skipped, `store.close()` included.
+                logger.exception("Supervisor of the matter-server connection ended with an error")
         try:
             await runtime.stop()
         except asyncio.CancelledError:
             raise
         except Exception:
-            logger.exception("Laufzeit konnte beim Beenden nicht sauber gestoppt werden")
+            logger.exception("Runtime could not be stopped cleanly on shutdown")
         try:
             await sender.close()
         except asyncio.CancelledError:
             raise
         except Exception:
-            logger.exception("UDP-Sender konnte beim Beenden nicht sauber geschlossen werden")
+            logger.exception("UDP sender could not be closed cleanly on shutdown")
         try:
             await client.disconnect()
         except asyncio.CancelledError:
             raise
         except Exception:
             logger.exception(
-                "Verbindung zu matter-server konnte beim Beenden nicht sauber getrennt werden"
+                "Connection to matter-server could not be disconnected cleanly on shutdown"
             )
         store.close()
 
@@ -708,7 +724,7 @@ def set_password(
         store.auth.reset_password(hash_password(password))
     finally:
         store.close()
-    # Bewusst ohne das Passwort in der Ausgabe - auch nicht verkuerzt.
+    # Deliberately without the password in the output - not even truncated.
     typer.echo(i18n.t("cli.set_password.echo_success"))
 
 
@@ -720,12 +736,12 @@ def set_language_cmd(
         help=i18n.t("cli.common.help_store_path_short"),  # noqa: B008
     ),
 ) -> None:
-    """Setzt die gemeinsame Spracheinstellung (CLI und, ab Phase B, WebUI).
+    """Sets the shared language setting (CLI and, from phase B on, WebUI).
 
-    Verlangt wie `set_password` eine VORHANDENE Datenbank und aus demselben
-    Grund: eine neue, leere Fremddatenbank auf dem Host anzulegen waere bei
-    einer containerisierten Installation (`LOXMATTER_STORE` nur innerhalb des
-    Containers erreichbar) ein stiller Fehlschlag mit gemeldetem Erfolg."""
+    Requires, like `set_password`, an EXISTING database, and for the same
+    reason: creating a new, empty stray database on the host would, in a
+    containerised installation (`LOXMATTER_STORE` reachable only inside
+    the container), be a silent failure reported as success."""
     if language not in i18n.SUPPORTED_LANGUAGES:
         _fail(
             i18n.t(
@@ -754,13 +770,13 @@ def fake_miniserver_cmd(
         help=i18n.t("cli.fake_miniserver.help_template"),  # noqa: B008
     ),
 ) -> None:
-    """Ersetzt den Miniserver: schreibt jedes Datagramm mit.
+    """Stands in for the Miniserver: records every datagram.
 
-    `--template` wird bereits hier geprueft, statt den Nutzer erst nach dem
-    Warten auf Strg-C (der Pfad wird erst im `finally` von `_fake_miniserver`
-    gelesen) mit einem Fehler zu ueberraschen — wie bei den uebrigen Kommandos
-    dieses Moduls soll ein falscher Pfad sofort als CLI-Fehler enden (Review-Fix
-    Minor #5).
+    `--template` is already checked here, instead of surprising the user
+    with an error only after waiting for Ctrl-C (the path is only read in
+    `_fake_miniserver`'s `finally`) — as with the other commands of this
+    module, a wrong path should end immediately as a CLI error (review fix
+    minor #5).
     """
     if template is not None and not template.is_file():
         _fail(i18n.t("cli.fake_miniserver.fail_template_not_found", path=template))
@@ -768,13 +784,14 @@ def fake_miniserver_cmd(
 
 
 def _silent_keys_report(template_name: str, announced: set[str], silent: list[str]) -> str:
-    """Formuliert die Abschlussmeldung von `fake-miniserver --template`.
+    """Phrases the closing message of `fake-miniserver --template`.
 
-    Drei zu unterscheidende Faelle: `announced` leer heisst, die Vorlage traegt
-    gar kein `Check`-Attribut (z. B. eine VO_-Datei oder eine leere Vorlage) —
-    dann gibt es nichts zu pruefen, und das ist etwas anderes als "alles wurde
-    gesehen". Nur wenn `announced` nicht leer und `silent` leer ist, war die
-    Pruefung tatsaechlich erfolgreich (Review-Fix Minor #4).
+    Three cases to distinguish: `announced` empty means the template
+    carries no `Check` attribute at all (e.g. a VO_ file or an empty
+    template) — then there is nothing to check, and that is different
+    from "everything was seen". Only when `announced` is non-empty and
+    `silent` is empty was the check actually successful (review fix minor
+    #4).
     """
     if not announced:
         return i18n.t("cli.fake_miniserver.report_no_check_signals", template=template_name)
@@ -792,9 +809,9 @@ def _silent_keys_report(template_name: str, announced: set[str], silent: list[st
 
 
 async def _fake_miniserver(port: int, template: Path | None) -> None:
-    # datetime.now() ohne tz ist hier Absicht: das ist die Ortszeit fuer einen
-    # Menschen, der dem Terminal beim Draufschauen zusieht - keine
-    # gespeicherte oder verglichene Zeit.
+    # datetime.now() without a tz is intentional here: this is the local
+    # time for a human watching the terminal - not a time that gets
+    # stored or compared.
     def announce(key: str, value: str) -> None:
         typer.echo(f"{datetime.now():%H:%M:%S} {key} = {value}")  # noqa: DTZ005
 
@@ -808,7 +825,7 @@ async def _fake_miniserver(port: int, template: Path | None) -> None:
     await fake.start()
     typer.echo(i18n.t("cli.fake_miniserver.echo_listening", port=fake.port))
     try:
-        await asyncio.Event().wait()  # blockiert, bis Strg-C den Task abbricht
+        await asyncio.Event().wait()  # blocks until Ctrl-C cancels the task
     finally:
         await fake.stop()
         if template is not None:

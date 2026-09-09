@@ -1,4 +1,4 @@
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -14,13 +14,13 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Der Live-Kanal fuer Logs, Mitschnitt und Kommando-Log (Task 4, Phase 5,
-Spec 10.5) - siehe api/diagnostics_live.py.
+"""The live channel for logs, recording and command log (Task 4, Phase 5,
+Spec 10.5) - see api/diagnostics_live.py.
 
-Die Token-Absicherung dieser Route steht bewusst NICHT hier, sondern bei den
-uebrigen WebSocket-Sicherheitstests in tests/api/test_security.py (siehe
-dort, Abschnitt zu `/api/live` - `/api/diagnostics/live` folgt demselben
-Muster daneben)."""
+The token protection of this route is deliberately NOT here, but with the
+rest of the WebSocket security tests in tests/api/test_security.py (see
+there, the section on `/api/live` - `/api/diagnostics/live` follows the
+same pattern next to it)."""
 
 from __future__ import annotations
 
@@ -42,9 +42,9 @@ from loxmatter.loxone.server import build_app
 
 
 async def _drain_snapshot(socket: Any, *, timeout: float = 0.5) -> None:
-    """Liest die Momentaufnahme weg, bis eine kurze Weile lang nichts Neues
-    mehr ankommt - wartet dabei NIE unbegrenzt (siehe Brief: "ein Test, der
-    haengt, statt fehlzuschlagen, ist schlimmer als keiner")."""
+    """Reads away the snapshot until nothing new arrives for a short while -
+    never waits unboundedly while doing so (see the brief: "a test that
+    hangs instead of failing is worse than none")."""
     while True:
         try:
             await asyncio.wait_for(socket.receive_json(), timeout=timeout)
@@ -53,9 +53,9 @@ async def _drain_snapshot(socket: Any, *, timeout: float = 0.5) -> None:
 
 
 async def test_a_fresh_datagram_arrives_as_a_message(api_with_runtime):
-    """Der Strom haengt am SENDER, nicht an der Laufzeit: nur dort ist
-    sichtbar, was tatsaechlich auf der Leitung war - einschliesslich
-    Full-Resend und Impulsende, die die Laufzeit-Beobachter auslassen."""
+    """The stream hangs off the SENDER, not the runtime: only there is it
+    visible what was actually on the wire - including full resend and
+    pulse-end, which the runtime observers leave out."""
     client, runtime, device_id = api_with_runtime
     async with client.websocket_connect("/api/diagnostics/live") as socket:
         await _drain_snapshot(socket)
@@ -67,13 +67,13 @@ async def test_a_fresh_datagram_arrives_as_a_message(api_with_runtime):
 
 
 async def test_a_datagram_message_carries_why_it_was_sent(api_with_runtime):
-    """Nachbesserung Task 6 (2026-09-03): die WebUI erkennt ein
-    entbehrliches Datagramm (Heartbeat, Full-Resend) am `forced`-Feld der
-    Nachricht - nicht mehr an der Ankunftsrate im Browser (siehe
-    `DatagramLogEntry.forced` und `app.js`, `visibleDatagrams`, fuer die
-    Begruendung). Eine echte Wertaenderung (`on_attribute`, kein `force`)
-    muss `forced: false` tragen, ein `resend_all()` (derselbe `force=True`-
-    Aufrufer wie der Heartbeat) `forced: true`."""
+    """Follow-up fix, Task 6 (2026-09-03): the WebUI recognizes a
+    non-essential datagram (heartbeat, full resend) by the message's
+    `forced` field - no longer by the arrival rate in the browser (see
+    `DatagramLogEntry.forced` and `app.js`, `visibleDatagrams`, for the
+    reasoning). A real value change (`on_attribute`, no `force`) must
+    carry `forced: false`, a `resend_all()` (the same `force=True` caller
+    as the heartbeat) `forced: true`."""
     client, runtime, device_id = api_with_runtime
     async with client.websocket_connect("/api/diagnostics/live") as socket:
         await _drain_snapshot(socket)
@@ -94,56 +94,55 @@ async def test_a_fresh_log_line_arrives_as_a_message(api_with_runtime):
     client, _, _ = api_with_runtime
     async with client.websocket_connect("/api/diagnostics/live") as socket:
         await _drain_snapshot(socket)
-        logging.getLogger("loxmatter.test").warning("Miniserver nicht erreichbar")
+        logging.getLogger("loxmatter.test").warning("Miniserver unreachable")
         message = await asyncio.wait_for(socket.receive_json(), timeout=2)
 
     assert message["kind"] == "log"
     assert message["level"] == "WARNING"
-    assert message["message"] == "Miniserver nicht erreichbar"
+    assert message["message"] == "Miniserver unreachable"
 
 
 async def test_a_log_line_from_a_real_other_thread_arrives(api_with_runtime):
-    """Review-Fix Wichtig #1, 2026-09-03: `on_log` haengt an
-    `LogBufferHandler.add_observer`, dessen Vertrag ausdruecklich sagt, dass
-    der Beobachter "im Thread laeuft, der die Zeile erzeugt hat" - in
-    diesem Projekt aiohttp und das chip-SDK, also ein FREMDER Thread, nicht
-    der Event-Loop-Thread dieser Route. Ein blosses `queue.put(...)` fasst
-    `asyncio.Queue`-Interna an (`put_nowait` -> `Future.set_result` ->
-    `loop.call_soon`) - aus einem fremden Thread weckt `loop.call_soon`
-    einen bereits blockierten Event-Loop nicht, nur `call_soon_threadsafe`
-    tut das (siehe api/diagnostics_live.py, Moduldocstring, Abschnitt
-    "Logs"). Kein Test bis hierhin hat das gefunden, weil jede Logzeile
-    bislang aus derselben Coroutine kam, auf der auch der Loop laeuft.
+    """Review fix Important #1, 2026-09-03: `on_log` hangs off
+    `LogBufferHandler.add_observer`, whose contract explicitly says that the
+    observer "runs in the thread that produced the line" - in this project
+    aiohttp and the chip SDK, so a FOREIGN thread, not this route's event
+    loop thread. A plain `queue.put(...)` touches `asyncio.Queue`
+    internals (`put_nowait` -> `Future.set_result` -> `loop.call_soon`) -
+    from a foreign thread, `loop.call_soon` does not wake an already
+    blocked event loop, only `call_soon_threadsafe` does (see
+    api/diagnostics_live.py, module docstring, "Logs" section). No test up
+    to this point had found that, because every log line so far came from
+    the same coroutine the loop itself runs on.
 
-    Deshalb erzeugt dieser Test die Zeile aus einem ECHTEN, separaten
-    `threading.Thread` - nicht bloss sequenziell wie `test_a_line_from_
-    another_thread_arrives` in test_logbuffer.py (dort `start(); join()`
-    VOR dem naechsten Schritt), sondern waehrend die Verbindung bereits
-    wirklich RUHT: `send_loop` haengt in `await queue.get()`, sonst
-    passiert auf dem Loop nichts - genau der Zustand, in dem ein blosses
-    `call_soon` aus einem fremden Thread den blockierten Selector nicht
-    weckt. Die 0,3-Sekunden-Verzoegerung im Erzeuger-Thread gibt der
-    Verbraucher-Coroutine Zeit, tatsaechlich in diesem Wartezustand
-    anzukommen, BEVOR die Zeile entsteht.
+    This test therefore produces the line from a REAL, separate
+    `threading.Thread` - not just sequentially like
+    `test_a_line_from_another_thread_arrives` in test_logbuffer.py (there
+    `start(); join()` BEFORE the next step), but while the connection is
+    already genuinely IDLE: `send_loop` is sitting in `await queue.get()`,
+    otherwise nothing happens on the loop - exactly the state in which a
+    plain `call_soon` from a foreign thread does not wake the blocked
+    selector. The 0.3-second delay in the producer thread gives the
+    consumer coroutine time to actually arrive at this waiting state
+    BEFORE the line is produced.
 
-    `asyncio.wait_for(..., timeout=2)` gibt dem Test eine Zeitgrenze, wie
-    verlangt: schlaeft die Verbindung weiter, WIRFT der Test (statt zu
-    haengen). Die zusaetzliche `elapsed < 1.0`-Pruefung unten macht den
-    Test auch gegen den Sonderfall robust, dass `wait_for`s eigener
-    Zeitgeber (der einzige andere im Test geplante Ereignis) den
-    blockierten Selector zufaellig zur gleichen Zeit weckt wie die
-    verspaetete Zeile selbst: mit der Behebung kommt die Nachricht binnen
-    Millisekunden nach den 0,3 s des Erzeuger-Threads an, weit VOR der
-    Zeitgrenze - kaeme sie stattdessen erst spaet an (oder gar nicht, siehe
-    `wait_for`s eigene `TimeoutError`), schlaegt der Test in jedem Fall
-    fehl, nie nur zufaellig durch."""
+    `asyncio.wait_for(..., timeout=2)` gives the test a time limit, as
+    required: if the connection keeps sleeping, the test RAISES (instead of
+    hanging). The additional `elapsed < 1.0` check below also makes the
+    test robust against the edge case that `wait_for`'s own timer (the
+    only other event scheduled in the test) happens to wake the blocked
+    selector at the same time as the delayed line itself: with the fix,
+    the message arrives within milliseconds of the producer thread's
+    0.3s, well BEFORE the time limit - if it instead arrived late (or not
+    at all, see `wait_for`'s own `TimeoutError`), the test fails in every
+    case, never just by chance."""
     client, _runtime, _device_id = api_with_runtime
     async with client.websocket_connect("/api/diagnostics/live") as socket:
         await _drain_snapshot(socket)
 
         def emit_from_another_thread() -> None:
             time.sleep(0.3)
-            logging.getLogger("loxmatter.test").warning("aus einem echten fremden Thread")
+            logging.getLogger("loxmatter.test").warning("from a real foreign thread")
 
         thread = threading.Thread(target=emit_from_another_thread)
         thread.start()
@@ -155,14 +154,14 @@ async def test_a_log_line_from_a_real_other_thread_arrives(api_with_runtime):
             thread.join()
 
     assert message["kind"] == "log"
-    assert message["message"] == "aus einem echten fremden Thread"
+    assert message["message"] == "from a real foreign thread"
     assert elapsed < 1.0
 
 
 async def test_the_connection_starts_with_a_snapshot(api_with_runtime):
-    """Ohne die Momentaufnahme klaffte eine Luecke zwischen 'einmal
-    abrufen' und 'ab jetzt zuhoeren' - und die Ansicht waere beim Oeffnen
-    leer, bis zufaellig etwas passiert."""
+    """Without the snapshot there would be a gap between 'fetch once' and
+    'listen from now on' - and the view would be empty when opened, until
+    something happened to occur."""
     client, runtime, device_id = api_with_runtime
     await runtime.on_attribute(device_id, "2/144/4", 230000)
 
@@ -174,8 +173,8 @@ async def test_the_connection_starts_with_a_snapshot(api_with_runtime):
 
 
 async def test_a_fresh_command_arrives_as_a_message(api_with_runtime):
-    """Der dritte Strom: der Kommando-Log-Ring aus loxone/server.py, ueber
-    die neue Beobachterkette auf `RingBuffer` (siehe api/diagnostics.py)."""
+    """The third stream: the command log ring from loxone/server.py, via the
+    new observer chain on `RingBuffer` (see api/diagnostics.py)."""
     client, _runtime, device_id = api_with_runtime
     async with client.websocket_connect("/api/diagnostics/live") as socket:
         await _drain_snapshot(socket)
@@ -190,9 +189,9 @@ async def test_a_fresh_command_arrives_as_a_message(api_with_runtime):
 
 
 async def test_the_snapshot_is_capped_per_stream(api_with_runtime):
-    """`SNAPSHOT_LIMIT` begrenzt die Momentaufnahme je Strom - siehe
-    Docstring dort: 500 Eintraege x 3 Stroeme auf einen Schlag waeren beim
-    Oeffnen der Ansicht eine spuerbare Nachricht."""
+    """`SNAPSHOT_LIMIT` caps the snapshot per stream - see the docstring
+    there: 500 entries x 3 streams all at once would be a noticeable
+    message when the view is opened."""
     client, _runtime, device_id = api_with_runtime
     extra_commands = SNAPSHOT_LIMIT + 5
     for _ in range(extra_commands):
@@ -213,27 +212,28 @@ async def test_the_snapshot_is_capped_per_stream(api_with_runtime):
 
 
 async def test_observers_are_unsubscribed_after_disconnect(api_with_runtime, caplog, monkeypatch):
-    """Im `finally` werden alle drei Beobachter wieder abgemeldet -
-    Aktivitaet NACH dem Trennen darf weder einen Fehler werfen noch die
-    naechste Verbindung beeintraechtigen.
+    """In the `finally`, all three observers are unregistered again -
+    activity AFTER the disconnect must neither raise an error nor affect
+    the next connection.
 
-    Nachbesserung Task 7, Fix 3c: die vorherige Fassung prüfte nur, dass
-    danach keine ERROR-Zeilen entstehen und die naechste Verbindung
-    funktioniert - beides gilt unveraendert, selbst wenn alle drei
-    Beobachter vollstaendig verleckt blieben (ein Test, der so gar nicht
-    fehlschlagen KANN). Dieser Test zaehlt stattdessen die tatsaechlichen
-    An-/Abmeldungen - nach dem Vorbild von `runtime.observer_count()` in
-    `test_live.py`, das hier aber nicht direkt uebertragbar ist: die
-    `api_with_runtime`-Fixture gibt weder `sender` noch den lokalen
-    `command_log`-Ring (eine reine Variable in `loxone.server.build_app`)
-    nach aussen. Ein Spion an den beiden oeffentlichen Methoden, die
-    `api.diagnostics_live` tatsaechlich aufruft (`RingBuffer.add_observer`/
-    `remove_observer` - seit Nachbesserung Task 7, Fix 2 auch der Weg von
-    `UdpSender.add_datagram_observer`, siehe dort - und `LogBufferHandler.
-    add_observer`/`remove_observer`), macht die Anzahl unabhaengig davon
-    sichtbar: zwei `RingBuffer`-Anmeldungen (`sender.datagram_log` UND
-    `command_log`) und eine `LogBufferHandler`-Anmeldung beim Verbinden,
-    dieselben drei Objekte exakt einmal abgemeldet beim Trennen."""
+    Follow-up fix, Task 7, Fix 3c: the previous version only checked that
+    no ERROR lines resulted afterward and that the next connection worked -
+    both still hold, even if all three observers stayed completely leaked
+    (a test that simply CANNOT fail that way). This test instead counts
+    the actual subscribe/unsubscribe calls - following the example of
+    `runtime.observer_count()` in `test_live.py`, which isn't directly
+    applicable here though: the `api_with_runtime` fixture hands out
+    neither `sender` nor the local `command_log` ring (a plain variable in
+    `loxone.server.build_app`) to the outside. A spy on the two public
+    methods that `api.diagnostics_live` actually calls
+    (`RingBuffer.add_observer`/`remove_observer` - since the Task 7, Fix 2
+    follow-up also the path taken by
+    `UdpSender.add_datagram_observer`, see there - and
+    `LogBufferHandler.add_observer`/`remove_observer`), makes the count
+    visible independent of that: two `RingBuffer` subscriptions
+    (`sender.datagram_log` AND `command_log`) and one `LogBufferHandler`
+    subscription on connect, the same three objects unsubscribed exactly
+    once on disconnect."""
     ring_added: list[RingBuffer[Any]] = []
     ring_removed: list[RingBuffer[Any]] = []
     log_added: list[LogBufferHandler] = []
@@ -275,10 +275,10 @@ async def test_observers_are_unsubscribed_after_disconnect(api_with_runtime, cap
     assert set(ring_added) == set(ring_removed)
     assert set(log_added) == set(log_removed)
 
-    # Nach dem Trennen: neue Eintraege in allen drei Stroemen duerfen nicht
-    # gegen eine tote Verbindung anlaufen.
+    # After the disconnect: new entries on all three streams must not run
+    # into a dead connection.
     await runtime.on_attribute(device_id, "2/144/4", 231000)
-    logging.getLogger("loxmatter.test").warning("nach dem Trennen")
+    logging.getLogger("loxmatter.test").warning("after the disconnect")
     assert not any(record.levelno >= logging.ERROR for record in caplog.records)
 
     async with client.websocket_connect("/api/diagnostics/live") as socket:
@@ -288,9 +288,9 @@ async def test_observers_are_unsubscribed_after_disconnect(api_with_runtime, cap
 
 
 class _RecordingSender:
-    """Wie `RecordingSender` in test_live.py - erfuellt `Runtime`, ohne
-    einen echten UDP-Mitschnitt zu fuehren. Fuer den Beleg unten, dass die
-    Route auch OHNE `sender`/`log_handler` an `build_app` antwortet."""
+    """Like `RecordingSender` in test_live.py - satisfies `Runtime` without
+    keeping a real UDP recording. For the proof below that the route also
+    answers WITHOUT `sender`/`log_handler` passed to `build_app`."""
 
     async def send(self, key: str, value: object, *, force: bool = False) -> bool:
         return True
@@ -301,10 +301,10 @@ class _RecordingSender:
 
 @pytest.fixture
 async def api_without_diagnostics_streams(plug_store, no_invoke, fake_client):
-    """Wie `api_with_runtime`, aber OHNE `sender`/`log_handler` an
-    `build_app` - fuer den Beleg, dass `GET /api/diagnostics/live` trotzdem
-    antwortet und nur die beiden fehlenden Zweige entfallen (siehe
-    api/diagnostics_live.py, Moduldocstring)."""
+    """Like `api_with_runtime`, but WITHOUT `sender`/`log_handler` passed to
+    `build_app` - for the proof that `GET /api/diagnostics/live` still
+    answers and only the two missing branches are absent (see
+    api/diagnostics_live.py, module docstring)."""
     store, device_id = plug_store
     runtime = Runtime(store, _RecordingSender())
     app = build_app(store, no_invoke, runtime, client=fake_client)
@@ -317,9 +317,9 @@ async def api_without_diagnostics_streams(plug_store, no_invoke, fake_client):
 async def test_without_a_sender_or_log_handler_the_route_still_answers(
     api_without_diagnostics_streams,
 ):
-    """`sender` und `log_handler` sind optional (siehe `build_app`) - fehlt
-    einer, entfaellt sein Zweig, nicht die Route: die Anmeldung selbst
-    (`POST /auth/login`) landet trotzdem im Kommando-Log-Zweig."""
+    """`sender` and `log_handler` are optional (see `build_app`) - if one is
+    missing, its branch is absent, not the route: the login itself (`POST
+    /auth/login`) still lands in the command log branch."""
     client, _runtime, _device_id = api_without_diagnostics_streams
     async with client.websocket_connect("/api/diagnostics/live") as socket:
         message = await asyncio.wait_for(socket.receive_json(), timeout=2)

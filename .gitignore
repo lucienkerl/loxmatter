@@ -4,12 +4,12 @@ __pycache__/
 .superpowers/
 .DS_Store
 
-# Vorlagen aus einer echten Loxone-Installation: enthalten IPs, Hostnamen und
-# Zugangsdaten. Duerfen nicht ins Repository. Golden Files werden daraus
-# bereinigt abgeleitet, nicht die Originale.
+# Templates from a real Loxone installation: contain IPs, hostnames and
+# credentials. Must not go into the repository. Golden files are derived
+# from these, cleaned up, not the originals.
 tests/fixtures/VirtualIn/
 tests/fixtures/VirtualOut/
 
-# Lokale Datenbank des Exporters
+# Local database of the exporter
 *.sqlite
 *.sqlite3

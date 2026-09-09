@@ -1,4 +1,4 @@
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -20,7 +20,7 @@ from pathlib import Path
 
 from loxmatter.devtools.fake_miniserver import FakeMiniserver
 
-REFERENCE = Path(__file__).parents[1] / "fixtures" / "loxone" / "VIU_Referenz.xml"
+REFERENCE = Path(__file__).parents[1] / "fixtures" / "loxone" / "VIU_reference.xml"
 
 
 async def test_records_incoming_datagrams():
@@ -35,7 +35,7 @@ async def test_records_incoming_datagrams():
 
 
 async def test_malformed_datagram_is_recorded_not_dropped():
-    """Ein Datagramm ohne Doppelpunkt ist ein Fehler, den man sehen will."""
+    """A datagram without a colon is an error you want to see."""
     fake = FakeMiniserver(port=0)
     await fake.start()
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -47,7 +47,7 @@ async def test_malformed_datagram_is_recorded_not_dropped():
 
 
 async def test_silent_keys_names_signals_that_never_arrived():
-    """Der eigentliche Nutzen: exportierte Signale finden, die nie feuern."""
+    """The real point: find exported signals that never fire."""
     fake = FakeMiniserver(port=0)
     await fake.start()
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -57,7 +57,7 @@ async def test_silent_keys_names_signals_that_never_arrived():
     await fake.stop()
     sock.close()
     assert "d1_1_beispiel" not in silent
-    assert silent  # die Referenz traegt mehr als einen Befehl
+    assert silent  # the reference carries more than one command
 
 
 def test_silent_keys_reads_the_check_attribute():
@@ -71,13 +71,13 @@ def test_announced_keys_lists_every_check_attribute_of_the_template():
 
 
 def test_announced_keys_is_empty_for_a_template_without_check_attributes(tmp_path):
-    """Eine VO_-Vorlage oder eine leere Vorlage traegt kein Check-Attribut - das
-    ist etwas anderes als eine Vorlage, deren Signale alle gesehen wurden
-    (siehe cli._silent_keys_report)."""
-    empty = tmp_path / "VO_ohne_check.xml"
+    """A VO_ template or an empty template carries no check attribute -
+    that's something different from a template whose signals were all
+    seen (see cli._silent_keys_report)."""
+    empty = tmp_path / "VO_without_check.xml"
     empty.write_text(
         '<?xml version="1.0" encoding="utf-8"?>\n'
-        '<VirtualOut Title="Ohne Check" Comment="" Address="" Port="80">\n'
+        '<VirtualOut Title="Without Check" Comment="" Address="" Port="80">\n'
         "</VirtualOut>\n",
         encoding="utf-8",
     )
@@ -87,8 +87,8 @@ def test_announced_keys_is_empty_for_a_template_without_check_attributes(tmp_pat
 
 
 async def test_on_received_callback_fires_for_well_formed_datagrams():
-    """Fuer `loxmatter fake-miniserver`, das jedes Datagramm mit Zeitstempel
-    drucken soll, statt received/malformed abzufragen."""
+    """For `loxmatter fake-miniserver`, which is meant to print every
+    datagram with a timestamp instead of polling received/malformed."""
     seen: list[tuple[str, str]] = []
     fake = FakeMiniserver(port=0, on_received=lambda key, value: seen.append((key, value)))
     await fake.start()

@@ -1,4 +1,4 @@
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -50,10 +50,10 @@ async def api(tmp_path, no_invoke, fake_runtime, fake_client, fake_otbr):
 
 @pytest.fixture
 async def button_api(tmp_path, no_invoke, fake_runtime, fake_client, fake_otbr):
-    """Wie `api` oben, aber mit `ikea_bilresa_button.json` statt der
-    Steckdose: die Fernbedienung ist der Fall, den `profiles.endpoints`
-    ueberhaupt erst noetig macht - derselbe Geraetetyp (GenericSwitch) auf
-    zwei Endpunkten (Ep 1 und Ep 2)."""
+    """Like `api` above, but with `ikea_bilresa_button.json` instead of the
+    plug: the remote is the case that makes `profiles.endpoints`
+    necessary in the first place - the same device type (GenericSwitch) on
+    two endpoints (Ep 1 and Ep 2)."""
     store = Store(tmp_path / "t.sqlite")
     snapshot = load_snapshot("ikea_bilresa_button.json")
     device_id = store.register_device(snapshot)
@@ -76,10 +76,10 @@ async def button_api(tmp_path, no_invoke, fake_runtime, fake_client, fake_otbr):
 
 
 async def test_a_signal_carries_its_endpoint_cluster_and_endpoint_label(button_api):
-    """Die Oberflaeche gruppiert nach Endpunkt und erkennt den Batteriestand
-    an seinem Cluster. Beides aus `path` ("1/59/2") in JavaScript
-    herauszuparsen hiesse, die Zerlegung ein zweites Mal zu pflegen -
-    deshalb liefert die API die Zahlen fertig."""
+    """The UI groups by endpoint and recognizes the battery state
+    by its cluster. Parsing both out of `path` ("1/59/2") in JavaScript
+    would mean maintaining the split a second time -
+    so the API delivers the numbers ready-made."""
     client, _store, device_id = button_api
 
     response = await client.get(f"/api/devices/{device_id}/signals")
@@ -96,14 +96,14 @@ async def test_a_signal_carries_its_endpoint_cluster_and_endpoint_label(button_a
 
 
 async def test_signals_fall_back_to_a_plain_endpoint_label_when_types_are_null(button_api):
-    """`device.device_types` ist `NULL`, solange `Store.backfill_device_types`
-    nicht lief - laut dessen Docstring der dokumentierte Normalfall fuer ein
-    Geraet, das beim Bruueckenstart offline war. `endpoints.endpoint_labels(None)`
-    liefert dafuer ein leeres Woerterbuch (siehe `tests/profiles/test_endpoints.py`);
-    dieser Test hier belegt die AUSGELIEFERTE Stelle, die mit dieser leeren
-    Zuordnung tatsaechlich umgehen muss - `_signal_out` in `api/devices.py`.
-    Ohne dessen `.get(..., i18n.t(...))`-Ruecktritt wirft die Route hier einen
-    KeyError statt eines Namens, den es immer gibt."""
+    """`device.device_types` is `NULL` as long as `Store.backfill_device_types`
+    has not run - per its docstring the documented normal case for a
+    device that was offline at bridge start. `endpoints.endpoint_labels(None)`
+    returns an empty dict for that (see `tests/profiles/test_endpoints.py`);
+    this test here proves the SHIPPED spot that actually has to handle this
+    empty mapping - `_signal_out` in `api/devices.py`.
+    Without its `.get(..., i18n.t(...))` fallback, the route here would raise a
+    KeyError instead of a name that always exists."""
     client, store, device_id = button_api
     store._db.execute("UPDATE device SET device_types = NULL WHERE id = ?", (device_id,))
     store._db.commit()
@@ -129,12 +129,12 @@ async def test_device_list_carries_name_and_signal_count(api):
 
 
 async def test_device_list_reports_how_many_inputs_the_next_export_would_produce(api):
-    """Nachbesserung Fix 7 (Abschlussreview): die Gerätekachel zeigte bisher
-    nur `signal_count` (159) und `exportable_count` (110) - beide korrekt,
-    aber keine davon beantwortet, wie viele Eingänge der nächste Export
-    tatsächlich erzeugt. `next_export_count` ist dieselbe Zahl wie
-    `ExportDeviceOut.inputs` in der Exportvorschau: 5 funktionale Signale
-    plus das Online-Signal, siehe
+    """Follow-up fix 7 (closing review): the device tile used to show only
+    `signal_count` (159) and `exportable_count` (110) - both correct, but
+    neither answers how many inputs the next export would actually
+    produce. `next_export_count` is the same number as
+    `ExportDeviceOut.inputs` in the export preview: 5 functional signals
+    plus the online signal, see
     `test_export_api.py::test_preview_reports_what_would_be_written`."""
     client, _, device_id, _ = api
     response = await client.get("/api/devices")
@@ -144,7 +144,7 @@ async def test_device_list_reports_how_many_inputs_the_next_export_would_produce
 
 
 async def test_signal_tree_marks_what_cannot_be_exported(api):
-    """Spec 6.6: nicht abbildbare Werte werden angezeigt, aber nicht exportierbar."""
+    """Spec 6.6: values that can't be mapped are shown but not exportable."""
     client, _, device_id, _ = api
     signals = (await client.get(f"/api/devices/{device_id}/signals")).json()
     assert len(signals) == 159
@@ -153,9 +153,28 @@ async def test_signal_tree_marks_what_cannot_be_exported(api):
     assert unexportable["reason"]
 
 
+async def test_the_unexportable_reason_follows_the_selected_language(api):
+    """The reasons in `_UNEXPORTABLE_REASON_KEYS` must run through i18n.t()
+    like every other user-facing string, not sit hardcoded in German."""
+    client, store, device_id, _ = api
+
+    async def fetch_reasons() -> set[str]:
+        signals = (await client.get(f"/api/devices/{device_id}/signals")).json()
+        return {s["reason"] for s in signals if s.get("reason")}
+
+    english = await fetch_reasons()
+    store.locale.set_language("de")
+    german = await fetch_reasons()
+
+    assert english, "fixture must contain at least one unexportable signal"
+    assert english != german
+    assert any("virtual UDP input" in reason for reason in english)
+    assert any("virtueller UDP-Eingang" in reason for reason in german)
+
+
 async def test_the_signal_payload_says_whether_a_signal_is_functional(api):
-    """Die Oberflaeche muss die beiden Bloecke trennen koennen, ohne die
-    Regel ein zweites Mal in JavaScript nachzubauen (Aufgabe 8)."""
+    """The UI must be able to separate the two blocks without rebuilding the
+    rule a second time in JavaScript (Task 8)."""
     client, _, device_id, _ = api
     rows = (await client.get(f"/api/devices/{device_id}/signals")).json()
     onoff = next(r for r in rows if r["key"].endswith("_onoff"))
@@ -173,7 +192,7 @@ async def test_signal_carries_its_immutable_key_and_editable_title(api):
 
 
 async def test_renaming_a_signal_leaves_its_key_alone(api):
-    """Spec 6.2: der Schluessel ist die Verdrahtung in Loxone."""
+    """Spec 6.2: the key is the wiring in Loxone."""
     client, store, device_id, _ = api
     before = {s.ref: s.key for s in store.signals(device_id)}
     key = next(iter(before.values()))
@@ -199,7 +218,7 @@ async def test_unknown_signal_yields_404(api):
 
 
 async def test_unknown_signal_yields_404_in_german(api):
-    """Deutscher Begleittest zu test_unknown_signal_yields_404."""
+    """German companion test to test_unknown_signal_yields_404."""
     client, store, _, _ = api
     store.locale.set_language("de")
     response = await client.patch("/api/signals/d1_1_gibtsnicht", json={"title": "x"})
@@ -213,8 +232,8 @@ async def test_unknown_device_yields_404(api):
 
 
 async def test_exporting_a_signal_can_be_turned_off(api):
-    """`SignalPatch.exported` ist das Gegenstueck zu `title` - unabhaengige
-    Felder, unabhaengig setzbar (Spec 5, Datenmodell)."""
+    """`SignalPatch.exported` is the counterpart to `title` - independent
+    fields, settable independently (Spec 5, data model)."""
     client, store, device_id, _ = api
     key = next(s.key for s in store.signals(device_id) if s.exported)
     response = await client.patch(f"/api/signals/{key}", json={"exported": False})
@@ -224,7 +243,7 @@ async def test_exporting_a_signal_can_be_turned_off(api):
 
 
 async def test_the_signal_payload_says_whether_resend_is_flagged(api):
-    """Periodischer Resend als Opt-in (Entwurf 2026-09-04) - Vorgabewert aus."""
+    """Periodic resend as opt-in (design 2026-09-04) - default value off."""
     client, _, device_id, _ = api
     signals = (await client.get(f"/api/devices/{device_id}/signals")).json()
     assert signals
@@ -253,13 +272,14 @@ async def test_resend_and_exported_are_independent_fields(api):
 
 
 async def test_signal_route_404s_once_its_device_has_been_removed(api):
-    """Review-Fix Important #4, 2026-09-02: `rename_signal` loeste bisher
-    ausschliesslich ueber `signal_by_key` auf, ohne wie jede geraete-gebundene
-    Route zu pruefen, ob das zugehoerige Geraet noch aktiv ist. Nach dem
-    Entfernen meldete `GET /api/devices/{id}` korrekt 404, aber `PATCH
-    /api/signals/{key}` mutierte die verwaiste Zeile weiterhin klaglos. Ruft
-    `store.forget_device` hier direkt statt ueber `DELETE
-    /api/devices/{id}` - dieser Test gilt unabhaengig vom Matter-Client."""
+    """Review-fix Important #4, 2026-09-02: `rename_signal` used to resolve
+    exclusively via `signal_by_key`, without checking, as every
+    device-bound route does, whether the associated device is still
+    active. After removal, `GET /api/devices/{id}` correctly reported 404,
+    but `PATCH /api/signals/{key}` kept mutating the orphaned row without
+    complaint. Calls `store.forget_device` here directly instead of via
+    `DELETE /api/devices/{id}` - this test holds independent of the Matter
+    client."""
     client, store, device_id, _ = api
     key = store.signals(device_id)[0].key
     store.forget_device(device_id)
@@ -272,7 +292,8 @@ async def test_signal_route_404s_once_its_device_has_been_removed(api):
 
 
 async def test_signal_route_404s_once_its_device_has_been_removed_in_german(api):
-    """Deutscher Begleittest zu test_signal_route_404s_once_its_device_has_been_removed."""
+    """German companion test to
+    test_signal_route_404s_once_its_device_has_been_removed."""
     client, store, device_id, _ = api
     key = store.signals(device_id)[0].key
     store.forget_device(device_id)
@@ -286,9 +307,9 @@ async def test_signal_route_404s_once_its_device_has_been_removed_in_german(api)
 
 
 async def test_signal_route_404s_after_the_device_is_removed_through_the_api(api):
-    """Wie oben, aber ueber den echten `DELETE`-Pfad statt eines direkten
-    `store.forget_device`-Aufrufs - belegt, dass der Fix auch fuer den Weg
-    greift, den eine Nutzerin tatsaechlich in der Oberflaeche ausloest."""
+    """Like above, but via the real `DELETE` path instead of a direct
+    `store.forget_device` call - proves the fix also holds for the path a
+    user actually triggers in the UI."""
     client, store, device_id, _ = api
     key = store.signals(device_id)[0].key
 
@@ -335,10 +356,10 @@ async def test_commissioning_a_device_registers_it(api):
 
 
 async def test_a_pairing_code_with_dashes_reaches_the_stack_without_them(api):
-    """Der Fall, um den es geht: so steht der Code auf dem Geraet, und so
-    tippt ihn jeder ab. Bis hierher schnitt die Trenner niemand weg - auch
-    `MatterClient.commission_with_code` nicht, das den String unveraendert
-    in den WebSocket-Befehl setzt."""
+    """The case this is about: that is how the code is printed on the device,
+    and that is how everyone types it in. Up to here, nobody strips the
+    dashes - not even `MatterClient.commission_with_code`, which puts the
+    string unchanged into the WebSocket command."""
     client, _, _, fake_client = api
     response = await client.post("/api/devices/commission", json={"code": "1234-567-8901"})
     assert response.status_code == 201
@@ -346,8 +367,8 @@ async def test_a_pairing_code_with_dashes_reaches_the_stack_without_them(api):
 
 
 async def test_a_qr_code_reaches_the_stack_untouched(api):
-    """Der MT:-Text ist Base38-kodiert - ein Bindestrich darin traegt
-    Bedeutung. Die Normalisierung muss ihn deshalb in Ruhe lassen."""
+    """The MT: text is Base38-encoded - a dash inside it carries
+    meaning. Normalization must therefore leave it alone."""
     client, _, _, fake_client = api
     response = await client.post(
         "/api/devices/commission", json={"code": " MT:Y.K90SO527JA0648G00 "}
@@ -357,8 +378,8 @@ async def test_a_qr_code_reaches_the_stack_untouched(api):
 
 
 async def test_spaces_inside_a_pairing_code_are_removed_as_well(api):
-    """Wer aus einer Anleitung kopiert, bringt oft Leerzeichen statt
-    Bindestriche mit."""
+    """Someone copying from a manual often brings along spaces instead
+    of dashes."""
     client, _, _, fake_client = api
     response = await client.post("/api/devices/commission", json={"code": "3497 011 2332"})
     assert response.status_code == 201
@@ -366,10 +387,10 @@ async def test_spaces_inside_a_pairing_code_are_removed_as_well(api):
 
 
 async def test_a_code_made_only_of_separators_normalizes_to_an_empty_string(api):
-    """Randfall der Normalisierung, nicht der Validierung (Entwurf Abschnitt
-    8): ein Code aus lauter Trennern hat keine Ziffer, die uebrig bleiben
-    koennte. Das Backend liefert dafuer "" an den Stack - ein leerer Code
-    bleibt ein leerer Code und scheitert dort, wo er heute scheitert."""
+    """Edge case of normalization, not of validation (design section
+    8): a code made only of separators has no digit that could be
+    left over. The backend therefore passes "" to the stack - an empty code
+    stays an empty code and fails where it fails today."""
     client, _, _, fake_client = api
     response = await client.post("/api/devices/commission", json={"code": "---"})
     assert response.status_code == 201
@@ -377,10 +398,10 @@ async def test_a_code_made_only_of_separators_normalizes_to_an_empty_string(api)
 
 
 async def test_an_overlong_code_is_passed_on_rather_than_rejected(api):
-    """Der Validator normalisiert, er validiert NICHT (Entwurf Abschnitt 8):
-    ueber die Bauformen der Setup-Codes entscheidet der Matter-Stack, nicht
-    diese Bruecke. Ein zu langer Code geht deshalb durch und scheitert dort,
-    wo er hingehoert."""
+    """The validator normalizes, it does NOT validate (design section 8):
+    the Matter stack decides on the shapes of setup codes, not
+    this bridge. An overlong code therefore passes through and fails
+    where it belongs."""
     client, _, _, fake_client = api
     response = await client.post(
         "/api/devices/commission", json={"code": "1234-567-8901-2345-678-9012"}
@@ -391,14 +412,14 @@ async def test_an_overlong_code_is_passed_on_rather_than_rejected(api):
 
 async def test_a_rejected_pairing_code_yields_422(api):
     client, _, _, fake_client = api
-    fake_client.fail_commission_with = CommissioningError("Einlernen fehlgeschlagen: abgelehnt")
+    fake_client.fail_commission_with = CommissioningError("Commissioning failed: rejected")
     response = await client.post("/api/devices/commission", json={"code": "MT:ABC123"})
     assert response.status_code == 422
 
 
 async def test_matter_server_unreachable_during_commissioning_yields_502(api):
     client, _, _, fake_client = api
-    fake_client.fail_commission_with = MatterUnavailableError("matter-server nicht erreichbar")
+    fake_client.fail_commission_with = MatterUnavailableError("matter-server unreachable")
     response = await client.post("/api/devices/commission", json={"code": "MT:ABC123"})
     assert response.status_code == 502
 
@@ -418,11 +439,11 @@ async def test_removing_an_unknown_device_yields_404(api):
 
 
 async def test_a_failed_fabric_removal_leaves_the_device_listed(api):
-    """Belegt die in `api/devices.py` begruendete Reihenfolge: scheitert
-    `remove_node`, bleibt das Geraet in `Store` sichtbar und entfernbar,
-    statt lautlos zu verschwinden, waehrend es in der Fabric noch haengt."""
+    """Proves the order justified in `api/devices.py`: if `remove_node`
+    fails, the device stays visible and removable in `Store` instead of
+    silently disappearing while it still hangs around in the fabric."""
     client, store, device_id, fake_client = api
-    fake_client.fail_remove_with = MatterUnavailableError("matter-server weg")
+    fake_client.fail_remove_with = MatterUnavailableError("matter-server gone")
     response = await client.delete(f"/api/devices/{device_id}")
     assert response.status_code == 502
     assert [d.id for d in store.devices()] == [device_id]
@@ -445,7 +466,8 @@ async def test_commissioning_without_a_matter_client_yields_503(tmp_path, no_inv
 async def test_commissioning_without_a_matter_client_yields_503_in_german(
     tmp_path, no_invoke, fake_runtime
 ):
-    """Deutscher Begleittest zu test_commissioning_without_a_matter_client_yields_503."""
+    """German companion test to
+    test_commissioning_without_a_matter_client_yields_503."""
     store = Store(tmp_path / "t.sqlite")
     app = build_app(store, no_invoke, fake_runtime(store))  # client defaults to None
     transport = httpx.ASGITransport(app=app)
@@ -466,7 +488,7 @@ async def test_removal_without_a_matter_client_yields_503(tmp_path, no_invoke, f
     device_id = store.register_device(snapshot)
     store.register_signals(device_id, snapshot)
 
-    app = build_app(store, no_invoke, fake_runtime(store))  # nur 3 Argumente, wie in Phase 4
+    app = build_app(store, no_invoke, fake_runtime(store))  # only 3 args, as in Phase 4
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
         await authenticate(store, c)
@@ -481,13 +503,14 @@ async def test_removal_without_a_matter_client_yields_503(tmp_path, no_invoke, f
 async def test_removal_without_a_matter_client_yields_503_in_german(
     tmp_path, no_invoke, fake_runtime
 ):
-    """Deutscher Begleittest zu test_removal_without_a_matter_client_yields_503."""
+    """German companion test to
+    test_removal_without_a_matter_client_yields_503."""
     store = Store(tmp_path / "t.sqlite")
     snapshot = load_snapshot("ikea_grillplats_plug.json")
     device_id = store.register_device(snapshot)
     store.register_signals(device_id, snapshot)
 
-    app = build_app(store, no_invoke, fake_runtime(store))  # nur 3 Argumente, wie in Phase 4
+    app = build_app(store, no_invoke, fake_runtime(store))  # only 3 args, as in Phase 4
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
         await authenticate(store, c)
@@ -501,27 +524,27 @@ async def test_removal_without_a_matter_client_yields_503_in_german(
 
 
 # ---------------------------------------------------------------------------
-# Erreichbarkeit eines frisch eingelernten Geraets
+# Reachability of a freshly commissioned device
 #
-# Der aufgezeichnete Ernstfall vom 2026-09-04: ein gerade eingelerntes Geraet
-# stand in der Oberflaeche auf "offline" und blieb es, obwohl matter-server
-# es sauber interviewt und eine Subscription darauf aufgebaut hatte
-# ("Subscription succeeded with report interval [1, 60]").
+# The recorded real-world incident from 2026-09-04: a device that had just
+# been commissioned showed as "offline" in the UI and stayed that way, even
+# though matter-server had cleanly interviewed it and built a subscription
+# for it ("Subscription succeeded with report interval [1, 60]").
 #
-# Die Ursache liegt in der Reihenfolge: matter-server meldet `NODE_ADDED`
-# schon WAEHREND `commission_with_code` laeuft (siehe dort
+# The cause lies in the ordering: matter-server reports `NODE_ADDED` while
+# `commission_with_code` is still running (see there
 # `device_controller._setup_node`, `signal_event(EventType.NODE_ADDED, ...)`
-# noch vor der Rueckkehr des Aufrufs). Zu diesem Zeitpunkt kennt der Store den
-# Node noch nicht - `store.register_device` laeuft erst danach -, und
-# `BridgeMatterClient._dispatch_loop` verwirft die Meldung folgerichtig
-# ("Aktualisierung fuer unbekannte Node ... verworfen"). Danach kommt fuer ein
-# ruhig im Netz stehendes Geraet keine weitere `NODE_ADDED`/`NODE_UPDATED`-
-# Meldung mehr, und `_device_out` liest `d<id>_online` als fehlend, also als
-# `False`. Erst ein Neustart der Bruecke setzte den Wert - ueber
+# still before the call returns). At that point the store doesn't know the
+# node yet - `store.register_device` only runs afterward - and
+# `BridgeMatterClient._dispatch_loop` consequently discards the report
+# ("update for unknown node ... discarded"). After that, a device sitting
+# quietly on the network produces no further `NODE_ADDED`/`NODE_UPDATED`
+# report, and `_device_out` reads `d<id>_online` as missing, i.e. as
+# `False`. Only a restart of the bridge set the value - via
 # `Runtime.seed_from_snapshot`.
 #
-# Das Einlernen muss den Wert deshalb selbst saeen, aus genau dem Abbild, das
-# es ohnehin schon in der Hand haelt.
+# Commissioning must therefore seed the value itself, from exactly the
+# snapshot it already has in hand anyway.
 # ---------------------------------------------------------------------------
 
 
@@ -533,9 +556,9 @@ async def test_a_freshly_commissioned_device_is_online_right_away(api):
 
 
 async def test_the_online_state_of_a_new_device_outlives_its_own_response(api):
-    """Nicht nur in der Antwort auf das Einlernen selbst: der Wert muss in der
-    Runtime stehen, sonst faellt die Kachel beim naechsten Laden der Seite
-    zurueck auf "offline" - genau das Bild, das gemeldet wurde."""
+    """Not only in the response to commissioning itself: the value must be
+    in the runtime, or the tile falls back to "offline" the next time the
+    page loads - exactly the picture that was reported."""
     client, _, _, _ = api
     new_device = (await client.post("/api/devices/commission", json={"code": "MT:X"})).json()
 
@@ -545,8 +568,8 @@ async def test_the_online_state_of_a_new_device_outlives_its_own_response(api):
 
 
 async def test_a_new_device_that_matter_server_cannot_reach_stays_offline(api):
-    """Der Wert wird gesaet, nicht behauptet: meldet matter-server den Node als
-    nicht erreichbar, sagt die Kachel das auch."""
+    """The value is seeded, not assumed: if matter-server reports the node
+    as unreachable, the tile says so too."""
     client, _, _, fake_client = api
     fake_client.available = False
 
@@ -556,15 +579,14 @@ async def test_a_new_device_that_matter_server_cannot_reach_stays_offline(api):
 
 
 # ---------------------------------------------------------------------------
-# Thread-Zugangsdaten beim Einlernen
+# Thread credentials during commissioning
 #
-# matter-server haelt sie nur im Arbeitsspeicher und vergisst sie bei jedem
-# Neustart (siehe `loxmatter/matter/otbr.py`). Das Eingabefeld der
-# Oberflaeche allein hat das nicht aufgefangen: es ist optional und wird nach
-# jedem Einlernen geleert, also war es beim naechsten Mal leer - und ein
-# Thread-Geraet scheiterte mit "Commission with code failed for node N",
-# waehrend der eigentliche Grund ("Required network information not provided")
-# nur im Log von matter-server stand.
+# matter-server keeps them only in memory and forgets them on every restart
+# (see `loxmatter/matter/otbr.py`). The UI's input field alone didn't catch
+# this: it's optional and gets cleared after every commissioning, so it was
+# empty the next time - and a Thread device failed with "Commission with
+# code failed for node N", while the actual reason ("Required network
+# information not provided") only showed up in matter-server's log.
 # ---------------------------------------------------------------------------
 
 
@@ -576,17 +598,17 @@ async def test_a_missing_thread_dataset_is_fetched_from_the_border_router(api, f
 
     assert response.status_code == 201
     assert fake_client.datasets == [fake_otbr.dataset]
-    # Reihenfolge, nicht nur Vorkommen: nach dem Einlernen gesetzt waere der
-    # Datensatz fuer genau dieses Geraet zu spaet. "follow" kommt zuletzt
-    # dazu (Task 4): das Nachziehen der Abonnements setzt die bereits
-    # vergebene device_id voraus.
+    # Order, not just occurrence: set after commissioning, the dataset
+    # would be too late for this exact device. "follow" is added last
+    # (Task 4): catching up on subscriptions requires the device_id that
+    # has already been assigned.
     assert fake_client.order == ["dataset", "commission", "follow"]
 
 
 async def test_a_dataset_from_the_request_wins_over_the_border_router(api, fake_otbr):
-    """Der manuelle Weg bleibt: wer einen Datensatz eintraegt - etwa fuer ein
-    Thread-Netz, das nicht von diesem Border Router kommt -, bekommt seinen,
-    nicht den vom Host."""
+    """The manual path stays: whoever enters a dataset - say for a Thread
+    network that doesn't come from this border router - gets theirs, not
+    the host's."""
     client, _, _, fake_client = api
     fake_client.thread_dataset_set = False
 
@@ -600,12 +622,12 @@ async def test_a_dataset_from_the_request_wins_over_the_border_router(api, fake_
 
 
 async def test_a_hand_entered_dataset_that_is_no_dataset_yields_422(api):
-    """Der vom Border Router geholte Datensatz laeuft durch dieselbe Pruefung
-    (`otbr.validated_dataset`), der von Hand eingetragene lief bisher ungeprueft
-    durch. Wer ihn als JSON-Struktur oder mit Zeilenumbruechen einfuegt,
-    loeste bei matter-server ein `bytes.fromhex`-Scheitern aus - das kommt
-    als `FailedCommand` zurueck, nicht als `MatterUnavailableError`, und
-    landete damit als 500 "Internal Server Error" in der Oberflaeche."""
+    """The dataset fetched from the border router goes through the same
+    check (`otbr.validated_dataset`); the one entered by hand used to run
+    through unchecked. Pasting it in as a JSON structure or with line
+    breaks triggered a `bytes.fromhex` failure at matter-server - that
+    comes back as a `FailedCommand`, not as a `MatterUnavailableError`, and
+    landed as a 500 "Internal Server Error" in the UI."""
     client, _, _, fake_client = api
 
     response = await client.post(
@@ -614,16 +636,15 @@ async def test_a_hand_entered_dataset_that_is_no_dataset_yields_422(api):
     )
 
     assert response.status_code == 422
-    # Und zwar VOR dem Einlernen: ein verbrauchter Pairing-Code waere ein
-    # teurer Preis fuer einen Tippfehler im Eingabefeld.
+    # And that BEFORE commissioning: a consumed pairing code would be an
+    # expensive price for a typo in the input field.
     assert fake_client.datasets == []
     assert fake_client.commissioned == []
 
 
 async def test_the_rejected_dataset_never_appears_in_the_message(api):
-    """Der Datensatz enthaelt den Netzwerkschluessel des Thread-Netzes - er
-    gehoert weder in ein Log noch in eine Fehlermeldung (siehe
-    `matter/otbr.py`)."""
+    """The dataset contains the Thread network's network key - it belongs
+    in neither a log nor an error message (see `matter/otbr.py`)."""
     client, _, _, _ = api
 
     response = await client.post(
@@ -637,14 +658,14 @@ async def test_the_rejected_dataset_never_appears_in_the_message(api):
 
 
 async def test_a_hand_entered_dataset_with_an_odd_length_yields_422(api):
-    """Genau der Fall, fuer den das `strip()` gebaut wurde, einen Schritt
-    weiter: beim Kopieren der Ausgabe von `ot-ctl dataset active -x` geht am
-    Zeilenende ein Zeichen verloren, uebrig bleiben 221 statt 222 Hex-Zeichen.
-    Jedes davon ist Hex, die Zeichenklassen-Pruefung liess das durch - bei
-    matter-server scheiterte dann `bytes.fromhex`, und dieser Fehler kommt als
-    `UnknownError` zurueck, nicht als `MatterUnavailableError`. Der `except`
-    der Route griff nicht, und die Antwort war 500 "Internal Server Error" -
-    genau das Ergebnis, das die Pruefung abschaffen sollte."""
+    """Exactly the case the `strip()` was built for, one step further: when
+    copying the output of `ot-ctl dataset active -x`, a character gets
+    lost at the line end, leaving 221 instead of 222 hex characters. Each
+    of those is hex, so the character-class check let it through - at
+    matter-server, `bytes.fromhex` then failed, and that error comes back
+    as `UnknownError`, not as `MatterUnavailableError`. The route's
+    `except` didn't catch it, and the response was 500 "Internal Server
+    Error" - exactly the outcome this check was meant to eliminate."""
     client, _, _, fake_client = api
 
     response = await client.post(
@@ -653,17 +674,17 @@ async def test_a_hand_entered_dataset_with_an_odd_length_yields_422(api):
     )
 
     assert response.status_code == 422
-    # Auch hier VOR dem Einlernen: der aufgedruckte Pairing-Code bleibt heil.
+    # Also before commissioning here: the printed pairing code stays intact.
     assert fake_client.datasets == []
     assert fake_client.commissioned == []
-    # Der Datensatz ist ein Credential und gehoert nicht in die Antwort.
+    # The dataset is a credential and does not belong in the response.
     assert "0e08AAA" not in response.json()["detail"]
 
 
 async def test_a_hand_entered_dataset_may_carry_a_trailing_newline(api):
-    """Ein aus dem Terminal kopierter Datensatz bringt fast immer einen
-    Zeilenumbruch mit. `validated_dataset` schneidet ihn ab, statt ihn abzulehnen -
-    matter-server bekommt den bereinigten Datensatz."""
+    """A dataset copied from the terminal almost always brings a trailing
+    newline along. `validated_dataset` trims it instead of rejecting it -
+    matter-server gets the cleaned-up dataset."""
     client, _, _, fake_client = api
 
     response = await client.post(
@@ -686,11 +707,11 @@ async def test_a_server_that_already_has_the_credentials_is_left_alone(api, fake
 
 
 async def test_commissioning_goes_ahead_when_no_border_router_answers(api, fake_otbr):
-    """Ein WiFi-Geraet braucht gar keinen Thread-Datensatz. Ein fehlender
-    Border Router darf das Einlernen deshalb nicht abbrechen - er ist ein
-    Hinweis, kein Fehler."""
+    """A WiFi device doesn't need a Thread dataset at all. A missing border
+    router must therefore not abort commissioning - it's a hint, not an
+    error."""
     client, _, _, _ = api
-    fake_otbr.fail_with = ThreadDatasetUnavailableError("kein Border Router erreichbar")
+    fake_otbr.fail_with = ThreadDatasetUnavailableError("no border router reachable")
 
     response = await client.post("/api/devices/commission", json={"code": "MT:ABC123"})
 
@@ -698,14 +719,13 @@ async def test_commissioning_goes_ahead_when_no_border_router_answers(api, fake_
 
 
 async def test_a_failure_without_thread_credentials_names_the_likely_cause(api, fake_otbr):
-    """Der Kern des gemeldeten Problems: die Oberflaeche zeigte nur
-    "Commission with code failed for node 7" - ohne den einen Satz, der sagt,
-    woran es lag."""
+    """The core of the reported problem: the UI showed only "Commission with
+    code failed for node 7" - without the one sentence saying why."""
     client, _, _, fake_client = api
     fake_client.thread_dataset_set = False
-    fake_otbr.fail_with = ThreadDatasetUnavailableError("kein Border Router erreichbar")
+    fake_otbr.fail_with = ThreadDatasetUnavailableError("no border router reachable")
     fake_client.fail_commission_with = CommissioningError(
-        "Einlernen fehlgeschlagen: Commission with code failed for node 7."
+        "Commissioning failed: Commission with code failed for node 7."
     )
 
     response = await client.post("/api/devices/commission", json={"code": "MT:ABC123"})
@@ -714,14 +734,14 @@ async def test_a_failure_without_thread_credentials_names_the_likely_cause(api, 
     detail = response.json()["detail"]
     assert "Commission with code failed for node 7." in detail
     assert "Thread" in detail
-    assert "kein Border Router erreichbar" in detail
+    assert "no border router reachable" in detail
 
 
 async def test_commissioning_follows_the_new_node(api):
-    """Ohne diesen Aufruf haette das frisch eingelernte Geraet kein einziges
-    Attribut-Abonnement: `subscribe()` lief einmal beim Start der Bruecke,
-    und das `NODE_ADDED` zu diesem Geraet kam nachweislich schon, bevor der
-    Store ihm eine device_id geben konnte."""
+    """Without this call, the freshly commissioned device would have no
+    attribute subscription at all: `subscribe()` ran once when the bridge
+    started, and the `NODE_ADDED` for this device demonstrably arrived
+    before the store could give it a device_id."""
     client, store, _, fake_client = api
 
     new_device = (await client.post("/api/devices/commission", json={"code": "MT:X"})).json()
@@ -730,17 +750,18 @@ async def test_commissioning_follows_the_new_node(api):
 
 
 async def test_the_new_node_is_followed_only_after_it_is_registered(api):
-    """Die Reihenfolge ist der ganze Grund fuer diesen Aufruf: wuerde die
-    Route frueher nachziehen, liefe `resolve_device_id` erneut ins Leere -
-    genau das Wettrennen, das `NODE_ADDED` schon verloren hat. Die blosse
-    Reihenfolge "commission vor follow" beweist das nicht - erst die
-    Zusicherung, dass der Store die Node-ID beim `follow_node`-Aufruf schon
-    auf die neue `device_id` aufloesen konnte, zeigt, dass die Route
-    tatsaechlich erst NACH der Registrierung nachzieht."""
+    """The ordering is the whole reason for this call: if the route caught
+    up earlier, `resolve_device_id` would run into nothing again - exactly
+    the race that `NODE_ADDED` already lost. The mere ordering "commission
+    before follow" doesn't prove that - only the assurance that the store
+    could already resolve the node ID to the new `device_id` at the time
+    of the `follow_node` call shows that the route actually catches up
+    only AFTER registration."""
     client, _, _, fake_client = api
-    # Der Thread-Datensatz ist hier nicht das Thema dieses Tests (siehe
-    # test_a_missing_thread_dataset_is_fetched_from_the_border_router dafuer)
-    # - ohne diese Zeile stuende zusaetzlich "dataset" am Anfang der Liste.
+    # The Thread dataset isn't the subject of this test (see
+    # test_a_missing_thread_dataset_is_fetched_from_the_border_router for
+    # that) - without this line, "dataset" would additionally sit at the
+    # front of the list.
     fake_client.thread_dataset_set = True
 
     response = await client.post("/api/devices/commission", json={"code": "MT:X"})
@@ -751,13 +772,14 @@ async def test_the_new_node_is_followed_only_after_it_is_registered(api):
 
 
 async def test_the_route_forces_the_seeding_of_the_new_node(api):
-    """Die Route zieht nach, NACHDEM die Dispatch-Schleife dasselbe schon
-    getan hat: matter-server meldet `NODE_ADDED` bereits waehrend
-    `commission_with_code` laeuft, und der Dispatch-Task abonniert dabei
-    jeden Pfad des neuen Node. Der Nachzug der Route findet deshalb einen
-    leeren Diff vor - ohne `seed_even_without_new_paths` endet er vor dem
-    Handler, und die Startwerte des Geraets wuerden nie gesaet (siehe
-    `BridgeMatterClient.follow_node` und
+    """The route catches up AFTER the dispatch loop has already done the
+    same thing: matter-server reports `NODE_ADDED` while
+    `commission_with_code` is still running, and the dispatch task
+    subscribes to every path of the new node in the process. The route's
+    catch-up therefore finds an empty diff - without
+    `seed_even_without_new_paths` it ends before the handler, and the
+    device's starting values would never be seeded (see
+    `BridgeMatterClient.follow_node` and
     `test_the_commissioning_route_still_seeds_after_the_dispatch_loop_was_first`
     in tests/matter/test_client.py)."""
     client, _, _, fake_client = api
@@ -768,27 +790,28 @@ async def test_the_route_forces_the_seeding_of_the_new_node(api):
 
 
 # ---------------------------------------------------------------------------
-# Der Nachlauf des Einlernens darf den Vorgang nicht nachtraeglich absagen
+# The follow-up of commissioning must not retroactively cancel the process
 #
-# `set_online` und `follow_node` laufen NACH `register_device` - also ab dem
-# Punkt, an dem das Geraet in der Fabric UND im Store steht. Ein Fehlschlag
-# dort ist kein gescheitertes Einlernen, sondern ein unvollstaendiger
-# Nachlauf an einem vollendeten Vorgang.
+# `set_online` and `follow_node` run AFTER `register_device` - so from the
+# point at which the device is in the fabric AND in the store. A failure
+# there is not a failed commissioning, but an incomplete follow-up on a
+# completed process.
 #
-# Das Szenario ist genau das, um das dieser Branch kreist: matter-server wird
-# unmittelbar nach dem Einlernen neu gestartet, `follow_node` scheitert mit
-# `MatterUnavailableError`, und die Route antwortete mit 500. Die Oberflaeche
-# zeigte "Einlernen fehlgeschlagen", die Geraetekachel erschien nicht - aber
-# das Geraet WAR eingelernt. Wer daraufhin erneut auf "Einlernen" drueckt,
-# scheitert an einem verbrauchten Pairing-Code (422) und sucht den Fehler bei
-# sich. Zweiter Weg dorthin: `Runtime.set_online` -> `UdpSender.send` ->
-# `socket.sendto` wirft `OSError`, wenn das Miniserver-Netz kurz weg ist.
+# The scenario is exactly what this branch is built around: matter-server
+# restarts right after commissioning, `follow_node` fails with
+# `MatterUnavailableError`, and the route answered with 500. The UI showed
+# "Commissioning failed", the device tile didn't appear - but the device
+# WAS commissioned. Anyone who then presses "commission" again fails on a
+# consumed pairing code (422) and looks for the mistake in themselves.
+# Second path there: `Runtime.set_online` -> `UdpSender.send` ->
+# `socket.sendto` raises `OSError` when the Miniserver network is briefly
+# down.
 # ---------------------------------------------------------------------------
 
 
 async def test_a_failing_follow_up_still_reports_the_device_as_commissioned(api):
     client, store, _, fake_client = api
-    fake_client.fail_follow_with = MatterUnavailableError("matter-server nicht erreichbar")
+    fake_client.fail_follow_with = MatterUnavailableError("matter-server unreachable")
 
     response = await client.post("/api/devices/commission", json={"code": "MT:X"})
 
@@ -799,8 +822,8 @@ async def test_a_failing_follow_up_still_reports_the_device_as_commissioned(api)
 async def test_a_failing_online_seed_still_reports_the_device_as_commissioned(
     tmp_path, no_invoke, fake_runtime, fake_client, fake_otbr
 ):
-    """Eigener Aufbau statt der `api`-Fixture: der Fehlschlag muss auf der
-    `FakeRuntime` gesetzt werden, und die Fixture haelt sie nicht heraus."""
+    """A dedicated setup instead of the `api` fixture: the failure must be
+    set on the `FakeRuntime`, and the fixture doesn't hand that out."""
     store = Store(tmp_path / "t.sqlite")
     fake_client.store = store
     runtime = fake_runtime(store)
@@ -813,9 +836,42 @@ async def test_a_failing_online_seed_still_reports_the_device_as_commissioned(
 
     assert response.status_code == 201
     assert store.device(response.json()["id"]).node_id == 100
-    # Und der Nachlauf laeuft trotz des Fehlschlags weiter: das Nachziehen
-    # der Abonnements haengt nicht am Gelingen des Erreichbarkeits-Saeens.
+    # And the follow-up keeps going despite the failure: catching up on
+    # subscriptions doesn't depend on the reachability seed succeeding.
     assert fake_client.followed == [100]
+    store.close()
+
+
+async def test_the_device_list_carries_last_heard_from_the_runtime(
+    tmp_path, no_invoke, fake_runtime, fake_client, fake_otbr
+):
+    """Traces "last heard" from the runtime all the way into the JSON response.
+
+    A dedicated setup instead of the `api` fixture, for the same reason as
+    `test_a_failing_online_seed_still_reports_the_device_as_commissioned`
+    above: the timestamp has to be set on the `FakeRuntime`, and the fixture
+    doesn't hand that out.
+
+    The counter-check in the same test is the actual point: a second, unheard
+    device must report `None`. Without it the guarantee would also hold if the
+    route inserted some timestamp for every device instead of THIS device's."""
+    store = Store(tmp_path / "t.sqlite")
+    snapshot = load_snapshot("ikea_grillplats_plug.json")
+    heard_id = store.register_device(snapshot)
+    store.register_signals(heard_id, snapshot)
+    silent_id = store.register_device(load_snapshot("ikea_bilresa_button.json"))
+    fake_client.store = store
+    runtime = fake_runtime(store)
+    runtime.last_heard[heard_id] = "2026-09-08T21:13:00+00:00"
+    app = build_app(store, no_invoke, runtime, client=fake_client, thread_dataset_source=fake_otbr)
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
+        await authenticate(store, c)
+        devices = (await c.get("/api/devices")).json()
+
+    by_id = {d["id"]: d for d in devices}
+    assert by_id[heard_id]["last_heard"] == "2026-09-08T21:13:00+00:00"
+    assert by_id[silent_id]["last_heard"] is None
     store.close()
 
 
@@ -847,8 +903,8 @@ async def test_patching_only_the_label_leaves_the_room_alone(api):
 
 
 async def test_an_empty_room_string_clears_the_room(api):
-    """`""` heisst "Raum entfernen", `null`/weggelassen heisst
-    "unveraendert" - dasselbe Prinzip wie bei `SignalPatch`."""
+    """`""` means "remove room", `null`/omitted means "unchanged" - the same
+    principle as `SignalPatch`."""
     client, store, device_id, _fake = api
     store.set_room(device_id, "Bad")
     response = await client.patch(f"/api/devices/{device_id}", json={"room": ""})
@@ -857,23 +913,22 @@ async def test_an_empty_room_string_clears_the_room(api):
 
 
 async def test_patching_the_room_does_not_make_the_device_pending(api):
-    """Der Raum landet in keiner Exportvorlage - ein frisch exportiertes
-    Geraet darf durch eine Raumzuweisung nicht wieder ausstehend werden
-    (Entwurf 3.3).
+    """The room doesn't land in any export template - a freshly exported
+    device must not become pending again through a room assignment
+    (design 3.3).
 
-    Der Export vorweg ist noetig, damit der Ausgangszustand eindeutig ist:
-    ein nie exportiertes Geraet gilt immer als ausstehend, dort waere die
-    Aussage dieses Tests nicht zu erkennen.
+    The export up front is needed so the starting state is unambiguous: a
+    device that was never exported always counts as pending, and this
+    test's point wouldn't be visible there.
 
-    Die Gegenprobe - eine Umbenennung MUSS das Geraet als ausstehend
-    fuehren - steht bereits in `tests/api/test_export_api.py` (der Test um
-    Zeile 280, "Umbenennung … muss `GET /api/export/status` melden") und
-    wird hier nicht ein zweites Mal geschrieben. Sie ist der Grund, warum
-    dieser Test nicht dadurch gruen werden kann, dass `updated_at`
-    versehentlich gar nicht mehr gesetzt wird.
+    The counter-check - a rename MUST mark the device as pending - already
+    exists in `tests/api/test_export_api.py` (the test around line 280,
+    "rename … must be reported by `GET /api/export/status`") and is not
+    written a second time here. It's the reason this test can't turn green
+    just because `updated_at` accidentally stops being set at all.
 
-    `GET /api/export/status` antwortet mit einer LISTE, nicht mit einem
-    Objekt (`-> list[ExportStatusOut]`, `api/export.py:362`)."""
+    `GET /api/export/status` answers with a LIST, not an object
+    (`-> list[ExportStatusOut]`, `api/export.py:362`)."""
     client, store, device_id, _fake = api
     store.mark_exported(device_id)
 
@@ -900,18 +955,17 @@ async def test_commissioning_accepts_a_room(api):
 
 
 async def test_recommissioning_a_known_device_applies_the_chosen_room(api):
-    """Review-Fund, Finding 4: `register_device` gibt fuer ein bereits
-    aktives Geraet frueh zurueck, VOR dem INSERT - das `room`-Argument wird
-    dabei verworfen (siehe dessen Docstring). Die Einlern-Kachel der
-    Oberflaeche bietet inzwischen ein Raumfeld an; ohne den Fix hier bekaeme
-    eine Person, die ein bereits bekanntes Geraet mit gewaehltem Raum
-    erneut einlernt, ein 201 und keinerlei Hinweis darauf, dass ihre Wahl
-    ignoriert wurde.
+    """Review finding, Finding 4: `register_device` returns early for a
+    device that's already active, BEFORE the INSERT - the `room` argument
+    gets dropped in the process (see its docstring). The UI's
+    commissioning tile now offers a room field; without the fix here, a
+    person who recommissions an already-known device with a chosen room
+    would get a 201 and no hint at all that their choice was ignored.
 
-    `fake_client.snapshot_to_return` liefert absichtlich dieselbe
-    `unique_id` wie das Geraet, das die `api`-Fixture bereits ohne Raum
-    registriert hat (`ikea_grillplats_plug.json`) - das ist der Fall
-    "erneutes Einlernen eines bekannten Geraets", nicht "neues Geraet"."""
+    `fake_client.snapshot_to_return` deliberately returns the same
+    `unique_id` as the device the `api` fixture already registered without
+    a room (`ikea_grillplats_plug.json`) - that's the case
+    "recommissioning a known device", not "new device"."""
     client, store, device_id, fake_client = api
     assert store.device(device_id).room is None
     fake_client.snapshot_to_return = load_snapshot("ikea_grillplats_plug.json")
@@ -925,34 +979,32 @@ async def test_recommissioning_a_known_device_applies_the_chosen_room(api):
     assert body["id"] == device_id
     assert body["room"] == "Küche"
     assert store.device(device_id).room == "Küche"
-    # Kein zweites Geraet entstanden - `register_device` hat den fruehen
-    # Rueckgabepfad genommen, `set_room` hat den Raum nachgetragen.
+    # No second device created - `register_device` took the early return
+    # path, `set_room` added the room afterward.
     assert len(store.devices()) == 1
 
 
 async def test_recommissioning_a_known_device_uses_set_room_not_rename_device(api, monkeypatch):
-    """Die Gegenprobe zum Fix aus Finding 4, auf Store-Ebene statt ueber
-    `GET /api/export/status`: `register_signals` markiert ein Geraet bei
-    JEDEM Wiedereinlernen ohnehin als "seither geaendert" - absichtlich, mit
-    eigener Begruendung im Docstring dort ("reines Refresh eines schon
-    bekannten Geraets"), unabhaengig von einer Raumwahl. Ein End-zu-Ende-Test
-    ueber `GET /api/export/status` koennte die beiden Ursachen deshalb nicht
-    auseinanderhalten und wuerde immer "geaendert" zeigen, egal ob die
-    nachgetragene Raumwahl `updated_at` anfasst oder nicht.
+    """The counter-check to the fix from Finding 4, at the store level
+    instead of via `GET /api/export/status`: `register_signals` marks a
+    device as "changed since" on EVERY recommissioning anyway -
+    deliberately, with its own justification in the docstring there ("a
+    plain refresh of an already-known device"), independent of any room
+    choice. An end-to-end test via `GET /api/export/status` therefore
+    couldn't tell the two causes apart and would always show "changed",
+    regardless of whether the added room touches `updated_at` or not.
 
-    Dieser Test prueft die eigentliche Zusicherung direkt: die Route in
-    `api/devices.py` darf zum Nachtragen der Raumwahl ausschliesslich
-    `Store.set_room` rufen, nie `Store.rename_device` - `rename_device`
-    wuerde `updated_at` setzen, und der Raum landet in keiner Exportvorlage
-    (Entwurf 3.3). `rename_device` wird hier durch eine Falle ersetzt, die
-    den Test scheitern liesse, waere sie tatsaechlich aufgerufen worden."""
+    This test checks the actual guarantee directly: the route in
+    `api/devices.py` may only call `Store.set_room` to add the room
+    choice afterward, never `Store.rename_device` - `rename_device` would
+    set `updated_at`, and the room doesn't land in any export template
+    (design 3.3). `rename_device` is replaced here with a trap that would
+    make the test fail if it were actually called."""
     client, store, device_id, fake_client = api
     fake_client.snapshot_to_return = load_snapshot("ikea_grillplats_plug.json")
 
     def _rename_device_is_the_wrong_call(*_args, **_kwargs):
-        raise AssertionError(
-            "rename_device darf beim Nachtragen einer Raumwahl nicht aufgerufen werden"
-        )
+        raise AssertionError("rename_device must not be called when adding a room choice afterward")
 
     monkeypatch.setattr(store, "rename_device", _rename_device_is_the_wrong_call)
 

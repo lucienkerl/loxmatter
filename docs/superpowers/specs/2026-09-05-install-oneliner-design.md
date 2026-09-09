@@ -1,357 +1,361 @@
-# One-Liner-Installskript: `install.sh`
+# One-Liner Install Script: `install.sh`
 
-Entwurf, 5. September 2026. Beschreibt ein Skript, das eine loxmatter-Installation
-auf einen einzigen Befehl reduziert:
+Design, September 5, 2026. Describes a script that reduces a loxmatter
+installation to a single command:
 
 ```
 curl -fsSL https://raw.githubusercontent.com/lucienkerl/loxmatter/main/install.sh | sh
 ```
 
-Knüpft an [`deploy/testhost/README.md`](../../../deploy/testhost/README.md) an —
-dort steht der manuelle Weg, den dieses Skript zusammenfasst — und an
-[`scripts/update.sh`](../../../scripts/update.sh), dessen Stil und Aufgabenteilung
-es übernimmt. Der Quickstart-Abschnitt aus
-[dem README-Produktseiten-Entwurf](2026-09-05-readme-produktseite-design.md)
-wird von diesem Entwurf beliefert, siehe Abschnitt 10.
+Connects to [`deploy/testhost/README.md`](../../../deploy/testhost/README.md) —
+that's where the manual path this script summarizes lives — and to
+[`scripts/update.sh`](../../../scripts/update.sh), whose style and division of
+labor it adopts. The quickstart section from
+[the README product-page design](2026-09-05-readme-product-page-design.md)
+is supplied by this design, see section 10.
 
-## 1. Das Problem
+## 1. The Problem
 
-Eine Installation sind heute acht Schritte über zwei Dokumente verteilt:
-klonen, `.env` aus der Vorlage anlegen, vier Werte darin von Hand setzen,
-`mkdir -p data`, `docker compose up -d --build` — und auf einem Raspberry Pi
-danach noch der rfkill-Unblock und der `start-stop-daemon`-Workaround aus
-[`deploy/testhost/README.md`](../../../deploy/testhost/README.md), ohne die
-weder BLE-Einlernen noch das Thread-Netz funktionieren.
+An installation today is eight steps spread across two documents:
+clone, create `.env` from the template, set four values in it by hand,
+`mkdir -p data`, `docker compose up -d --build` — and on a Raspberry Pi
+after that the rfkill unblock and the `start-stop-daemon` workaround from
+[`deploy/testhost/README.md`](../../../deploy/testhost/README.md), without
+which neither BLE commissioning nor the Thread network work.
 
-Wer den `MINISERVER_IP`-Schritt überspringt, bekommt einen laufenden Stack,
-der nichts an den Miniserver schickt. Wer den Thread-Workaround nicht kennt,
-bekommt einen Stack, der aussieht wie ein gesunder und keine Geräte findet.
-Beide Fehler zeigen sich erst Stunden später.
+Whoever skips the `MINISERVER_IP` step gets a running stack
+that sends nothing to the Miniserver. Whoever doesn't know the Thread
+workaround gets a stack that looks healthy and finds no devices.
+Both errors only show up hours later.
 
-Dazu kommt eine Hürde, die gar nicht am Ablauf liegt: der Stack setzt ein
-Thread-Funkmodul voraus, auch wenn jemand ausschließlich WLAN-Matter-Geräte
-anbinden will. `devices: - ${RADIO_DEVICE}:${RADIO_DEVICE}` am `otbr`-Dienst
-lässt `docker compose up` scheitern, sobald der Pfad nicht existiert. Dieser
-Entwurf hebt das mit auf.
+On top of that comes a hurdle that has nothing to do with the flow: the
+stack requires a Thread radio module, even if someone only wants to
+connect WiFi Matter devices. `devices: - ${RADIO_DEVICE}:${RADIO_DEVICE}`
+on the `otbr` service makes `docker compose up` fail as soon as the path
+does not exist. This design lifts that too.
 
-## 2. Abgestimmte Entscheidungen
+## 2. Agreed Decisions
 
-| Frage | Entscheidung | Grund |
+| Question | Decision | Reason |
 |---|---|---|
-| Installweg | **Nur der Docker-Stack** (`deploy/testhost/`) | Die Zielausgabe „Passwort vergeben, WebUI öffnen" ist nur mit laufendem Dienst erreichbar, und die WebUI braucht einen erreichbaren `matter-server`. Der reine CLI-Weg über `uv` erreicht diesen Zustand nicht und ist ohnehin drei Zeilen. |
-| Host-Eingriff | **Installieren, prüfen, berichten** | Der rfkill-Fix braucht faktisch root, der otbr-Workaround ist kernelspezifisch und würde auf gesunden Hosts laufende Prozesse killen. Stilles Gelingen bei totem Thread-Netz wäre das schlechteste Ergebnis — deshalb wird geprüft und benannt, aber nicht heimlich repariert. |
-| Konfiguration | **Interaktiv über `/dev/tty`**, Env-Variablen überschreiben | `stdin` ist im `curl \| sh`-Fall die Pipe. Erkennbare Werte werden vorgeschlagen, `MINISERVER_IP` ist nicht erkennbar und wird gefragt. |
-| Fehlende Basiswerkzeuge | **`git`, `curl`, `openssl` werden nachinstalliert** | Sonst scheitert der One-Liner auf einem frischen Host an einer Kleinigkeit. |
-| Fehlendes Docker | **Wird ungefragt nachinstalliert**, aber angekündigt | Bewusste Entscheidung des Auftraggebers. „Nicht fragen" heißt nicht „nicht sagen": das Skript nennt Schritt und Quelle, hält aber nicht an. |
-| Paketverwaltung | **Nur `apt-get`** | Debian, Ubuntu, Raspberry Pi OS sind die dokumentierten Zielhosts. Ungetestete Paketmanager-Zweige sind genau der Abbruch mittendrin, den dieser Entwurf ausschließt. |
-| Betriebsart | **Thread oder WiFi/Ethernet-only.** `otbr` wird ein Compose-Profil | Ohne Funkmodul scheiterte `docker compose up` bisher an `devices: ${RADIO_DEVICE}`, obwohl WLAN-Matter-Geräte den Border Router gar nicht brauchen. Die Betriebsart steht als `COMPOSE_PROFILES` in der `.env`, damit jeder spätere Compose-Aufruf sie kennt, ohne ein `--profile` mitzuschleppen. |
-| Zweiter Lauf | **Prüfen und geradeziehen**, Update nur nach Zustimmung | `scripts/update.sh` sichert vorher die Signaldatenbank; ein Installskript, das nebenbei aktualisiert, umginge diese Sicherung. Also wird gefragt und an `update.sh` delegiert. |
-| Sprache | **Durchgehend Englisch**, auch die Kommentare | Abweichung von der Projektkonvention (deutsche Code-Kommentare), bewusst: der One-Liner ist der erste Kontakt mit dem Projekt und steht in einer englischen README. |
-| Absicherung | `shellcheck` in der CI, `--dry-run`, Tests mit gefälschten Binaries | Idempotenz und „sauberer Abbruch statt mittendrin" sollen geprüft sein, nicht behauptet. |
+| Install path | **Only the Docker stack** (`deploy/testhost/`) | The target outcome "set a password, open the WebUI" is only reachable with the service running, and the WebUI needs a reachable `matter-server`. The pure CLI path via `uv` does not reach this state and is three lines anyway. |
+| Host intervention | **Install, check, report** | The rfkill fix effectively needs root, the otbr workaround is kernel-specific and would kill running processes on healthy hosts. Silent success with a dead Thread network would be the worst outcome — so it is checked and named, but not secretly fixed. |
+| Configuration | **Interactive via `/dev/tty`**, env variables override | `stdin` is the pipe in the `curl \| sh` case. Detectable values are suggested, `MINISERVER_IP` is not detectable and is asked. |
+| Missing base tools | **`git`, `curl`, `openssl` are installed afterward** | Otherwise the one-liner fails on a fresh host over a triviality. |
+| Missing Docker | **Installed without asking**, but announced | Deliberate decision by the client. "Don't ask" doesn't mean "don't tell": the script names the step and source, but does not stop. |
+| Package management | **Only `apt-get`** | Debian, Ubuntu, Raspberry Pi OS are the documented target hosts. Untested package-manager branches are exactly the mid-way abort this design rules out. |
+| Operating mode | **Thread or WiFi/Ethernet-only.** `otbr` becomes a compose profile | Without a radio module, `docker compose up` used to fail on `devices: ${RADIO_DEVICE}`, even though WiFi Matter devices don't need the border router at all. The operating mode sits as `COMPOSE_PROFILES` in the `.env`, so every later compose call knows it without carrying a `--profile` along. |
+| Second run | **Check and straighten out**, update only after consent | `scripts/update.sh` backs up the signal database first; an install script that updates along the way would bypass that backup. So it asks and delegates to `update.sh`. |
+| Language | **English throughout**, including the comments | Deviation from the project convention (German code comments), deliberate: the one-liner is the first contact with the project and sits in an English README. |
+| Safeguarding | `shellcheck` in CI, `--dry-run`, tests with fake binaries | Idempotence and "clean abort instead of mid-way" should be verified, not just claimed. |
 
 ## 3. Form
 
-**Ort:** `install.sh` im Wurzelverzeichnis des Repositories, passend zur Ziel-URL
-`…/main/install.sh`. GPL-Kopf wie die übrigen Skripte.
+**Location:** `install.sh` at the repository root, matching the target URL
+`…/main/install.sh`. GPL header like the other scripts.
 
-**Reines POSIX `sh`, kein Bash.** Der One-Liner endet auf `| sh`, und auf
-Raspberry Pi OS ist `/bin/sh` dash. Ein Bash-Skript, das per `sh` gepipet wird,
-bricht an der ersten `[[`-Zeile ab. Das kostet Arrays und `set -o pipefail`;
-dafür läuft es überall, wo der One-Liner hinzeigt. Geprüft wird mit
-`shellcheck -s sh`, nicht mit dem Bash-Dialekt.
+**Pure POSIX `sh`, no Bash.** The one-liner ends in `| sh`, and on
+Raspberry Pi OS `/bin/sh` is dash. A Bash script piped through `sh`
+aborts at the first `[[` line. This costs arrays and `set -o pipefail`;
+in exchange it runs everywhere the one-liner points. Checked with
+`shellcheck -s sh`, not with the Bash dialect.
 
-**Alles in Funktionen, `main "$@"` in der letzten Zeile.** Bricht die
-Übertragung mitten im Download ab, führt `sh` ein halbes Skript aus. Mit diesem
-Muster definiert ein abgeschnittenes Skript nur Funktionen und tut nichts —
-ohne das ist eine unterbrochene Leitung ein halb installierter Host.
+**Everything in functions, `main "$@"` on the last line.** If the
+transfer is cut off mid-download, `sh` executes half a script. With this
+pattern, a truncated script only defines functions and does nothing —
+without it, an interrupted connection is a half-installed host.
 
-**Aufrufformen:**
+**Invocation forms:**
 
 ```
-curl -fsSL .../install.sh | sh                     # der One-Liner
-curl -fsSL .../install.sh | sh -s -- --dry-run     # zeigt alles, ändert nichts
-sh install.sh --dir /srv/loxmatter                 # heruntergeladen und gelesen
+curl -fsSL .../install.sh | sh                     # the one-liner
+curl -fsSL .../install.sh | sh -s -- --dry-run     # shows everything, changes nothing
+sh install.sh --dir /srv/loxmatter                 # downloaded and read
 ```
 
-Flags: `--dry-run`, `--dir <pfad>`, `--help`. Umgebungsvariablen, die eine
-Rückfrage überspringen: `LOXMATTER_DIR`, `MINISERVER_IP`, `RADIO_DEVICE`,
+Flags: `--dry-run`, `--dir <path>`, `--help`. Environment variables that
+skip a question: `LOXMATTER_DIR`, `MINISERVER_IP`, `RADIO_DEVICE`,
 `RADIO_BAUDRATE`, `BACKBONE_IF`, `BLUETOOTH_ADAPTER`, `LOXMATTER_API_TOKEN`.
 
-## 4. Ablauf
+## 4. Flow
 
-### Phase 1 — Prüfen, bevor irgendetwas verändert wird
+### Phase 1 — Check Before Anything Is Changed
 
-Alles, was scheitern kann, scheitert hier. Diese Phase legt keine Datei an,
-installiert kein Paket und startet keinen Container.
+Everything that can fail, fails here. This phase creates no file,
+installs no package, and starts no container.
 
-- **Linux?** Auf macOS/BSD sofortiger Abbruch mit Verweis auf den
-  Entwicklerweg (`uv sync`). Begründung im Text: `network_mode: host`,
-  `/dev/ttyUSB*`, `/run/dbus` und rfkill gibt es dort nicht.
-- **Architektur** in `aarch64|arm64|x86_64|amd64`? Sonst Abbruch, mit dem
-  tatsächlich erkannten Wert in der Meldung.
-- **Fehlendes einsammeln, nicht beim ersten Treffer abbrechen:** `git`,
-  `curl`, `openssl`, `docker`, `docker compose`. Das Ergebnis ist eine Liste.
-- **Kann das Fehlende behoben werden?** Nur wenn es etwas zu installieren gibt:
-  root oder `sudo` vorhanden, und `apt-get` vorhanden. Sonst Abbruch mit der
-  **vollständigen** Paketliste, nicht nur dem ersten fehlenden Werkzeug.
-- **Läuft das Skript als root?** Warnung, kein Abbruch: der Klon und
-  `~/loxmatter-backups` gehören danach root, und `scripts/update.sh` läuft
-  später nur noch als root.
-- **Konfiguration beschaffbar?** Kein `/dev/tty` (nicht-interaktiver Lauf) und
-  `MINISERVER_IP` weder gesetzt noch in einer vorhandenen `.env` — Abbruch,
-  mit der Zeile zum Nachbessern (`curl … | MINISERVER_IP=10.0.1.99 sh`).
-- **Zielverzeichnis** anlegbar bzw. vorhanden und beschreibbar.
+- **Linux?** On macOS/BSD, immediate abort with a pointer to the
+  developer path (`uv sync`). Reasoning in the text: `network_mode: host`,
+  `/dev/ttyUSB*`, `/run/dbus`, and rfkill don't exist there.
+- **Architecture** in `aarch64|arm64|x86_64|amd64`? Otherwise abort, with the
+  actually detected value in the message.
+- **Collect missing tools, don't abort on the first hit:** `git`,
+  `curl`, `openssl`, `docker`, `docker compose`. The result is a list.
+- **Can the missing ones be fixed?** Only if there's something to install:
+  root or `sudo` present, and `apt-get` present. Otherwise abort with the
+  **complete** package list, not just the first missing tool.
+- **Is the script running as root?** Warning, no abort: the clone and
+  `~/loxmatter-backups` belong to root afterward, and `scripts/update.sh` only
+  runs as root from then on.
+- **Configuration obtainable?** No `/dev/tty` (non-interactive run) and
+  `MINISERVER_IP` neither set nor in an existing `.env` — abort,
+  with the line to fix it (`curl … | MINISERVER_IP=10.0.1.99 sh`).
+- **Target directory** creatable, or existing and writable.
 
-### Phase 2 — Nachinstallieren, falls nötig
+### Phase 2 — Install Afterward, If Needed
 
-Zweistufig, in dieser Reihenfolge, weil `get.docker.com` selbst `curl` braucht:
+Two-stage, in this order, because `get.docker.com` itself needs `curl`:
 
-1. Basispakete: `apt-get update`, dann
-   `DEBIAN_FRONTEND=noninteractive apt-get install -y` mit **genau** den
-   fehlenden aus `git curl openssl` — nichts darüber hinaus.
-2. Docker: angekündigt („Docker is not installed. Installing it from
-   https://get.docker.com — this requires sudo."), dann
-   `curl -fsSL https://get.docker.com | sh`, dann `usermod -aG docker <user>`.
+1. Base packages: `apt-get update`, then
+   `DEBIAN_FRONTEND=noninteractive apt-get install -y` with **exactly** the
+   ones missing from `git curl openssl` — nothing beyond that.
+2. Docker: announced ("Docker is not installed. Installing it from
+   https://get.docker.com — this requires sudo."), then
+   `curl -fsSL https://get.docker.com | sh`, then `usermod -aG docker <user>`.
 
-Hat das Skript Docker in diesem Lauf selbst installiert, benutzt es für den
-Rest **dieses einen Laufs** `sudo docker` — die neue Gruppenmitgliedschaft
-greift erst nach einer Neuanmeldung. Der Schlussbericht sagt das: einmal ab-
-und wieder anmelden, danach geht `docker` ohne `sudo`, und `scripts/update.sh`
-braucht das.
+If the script installed Docker itself in this run, it uses
+`sudo docker` for the rest of **this one run** — the new group membership
+only takes effect after a re-login. The final report says so: log out
+and back in once, after that `docker` works without `sudo`, and
+`scripts/update.sh` needs that.
 
-### Phase 3 — Klon
+### Phase 3 — Clone
 
-`git clone https://github.com/lucienkerl/loxmatter.git ~/loxmatter`, Branch
-`main` (Tags gibt es nicht). Über HTTPS, nicht SSH — auf einem frischen Host
-liegt kein Schlüssel.
+`git clone https://github.com/lucienkerl/loxmatter.git ~/loxmatter`, branch
+`main` (there are no tags). Over HTTPS, not SSH — a fresh host has
+no key.
 
-Existiert das Verzeichnis bereits: **nicht klonen, nicht ziehen.** Es wird nur
-geprüft, dass es ein loxmatter-Checkout ist (`Dockerfile` und
-`deploy/testhost/docker-compose.yml` vorhanden, wie `update.sh` es prüft), sonst
-Abbruch. Das Aktualisieren ist Sache von Phase 6.
+If the directory already exists: **do not clone, do not pull.** It is only
+checked that it is a loxmatter checkout (`Dockerfile` and
+`deploy/testhost/docker-compose.yml` present, the way `update.sh` checks it),
+otherwise abort. Updating is Phase 6's job.
 
-### Phase 4 — Konfiguration
+### Phase 4 — Configuration
 
-`.env` aus `.env.example` anlegen, falls sie fehlt.
+Create `.env` from `.env.example` if it is missing.
 
-**Zuerst die Betriebsart.** Findet das Skript ein `/dev/ttyUSB*` oder
-`/dev/ttyACM*`, schlägt es Thread vor, sonst WiFi/Ethernet-only. Die Antwort
-landet als `COMPOSE_PROFILES=thread` bzw. `COMPOSE_PROFILES=` in der `.env`;
-`LOXMATTER_MODE=thread|wifi` überspringt die Frage. Im WiFi-Modus entfallen die
-Fragen nach `RADIO_DEVICE` und `BACKBONE_IF` ersatzlos — beide gehören
-ausschließlich dem `otbr`-Dienst, der dann nicht erzeugt wird.
+**First the operating mode.** If the script finds a `/dev/ttyUSB*` or
+`/dev/ttyACM*`, it suggests Thread, otherwise WiFi/Ethernet-only. The answer
+lands as `COMPOSE_PROFILES=thread` or `COMPOSE_PROFILES=` in the `.env`;
+`LOXMATTER_MODE=thread|wifi` skips the question. In WiFi mode, the
+questions about `RADIO_DEVICE` and `BACKBONE_IF` are dropped entirely — both
+belong exclusively to the `otbr` service, which is then not created.
 
-Dann jeder Wert einzeln:
+Then each value individually:
 
-| Variable | Erkennung | Rückfrage |
+| Variable | Detection | Question |
 |---|---|---|
-| `BACKBONE_IF` | `ip route show default` → Feld nach `dev` | mit Vorschlag; nur im Thread-Modus |
-| `RADIO_DEVICE` | erstes `/dev/ttyUSB*`, sonst erstes `/dev/ttyACM*` | mit Vorschlag; nur im Thread-Modus, dort nicht leer |
-| `RADIO_BAUDRATE` | Vorgabe `460800` aus `.env.example` | keine; nur im Thread-Modus |
-| `BLUETOOTH_ADAPTER` | erstes `hci<N>` aus `/sys/class/bluetooth` → `<N>` | mit Vorschlag; in **beiden** Betriebsarten, BLE ist auch für WLAN-Geräte der Einlernweg |
-| `MINISERVER_IP` | nicht erkennbar (das Projekt kennt keine Miniserver-Suche) | Pflichtfrage, IPv4-Format wird geprüft |
-| `LOXMATTER_API_TOKEN` | `openssl rand -hex 32`, Rückfall `od -An -tx1 -N32 /dev/urandom \| tr -d ' \n'` | keine |
+| `BACKBONE_IF` | `ip route show default` → field after `dev` | with a suggestion; Thread mode only |
+| `RADIO_DEVICE` | first `/dev/ttyUSB*`, else first `/dev/ttyACM*` | with a suggestion; Thread mode only, not empty there |
+| `RADIO_BAUDRATE` | default `460800` from `.env.example` | none; Thread mode only |
+| `BLUETOOTH_ADAPTER` | first `hci<N>` from `/sys/class/bluetooth` → `<N>` | with a suggestion; in **both** operating modes, BLE is also the commissioning path for WiFi devices |
+| `MINISERVER_IP` | not detectable (the project has no Miniserver search) | mandatory question, IPv4 format is checked |
+| `LOXMATTER_API_TOKEN` | `openssl rand -hex 32`, fallback `od -An -tx1 -N32 /dev/urandom \| tr -d ' \n'` | none |
 
-Regeln, die für jeden Wert gelten:
+Rules that apply to every value:
 
-- **Bestehende `.env`-Werte werden nie überschrieben.** Nur fehlende oder leere
-  Schlüssel werden gefüllt. Wer beim zweiten Lauf eine angepasste `.env` hat,
-  behält sie.
-- **Zeilenersetzung, kein Anhängen.** Eine zweite Definition derselben Variablen
-  wäre zwar wirksam (Compose nimmt die letzte), aber wer die Datei später
-  bearbeitet, ändert dann die falsche Zeile — die Begründung steht so schon in
+- **Existing `.env` values are never overwritten.** Only missing or empty
+  keys are filled. Whoever has a customized `.env` on the second run
+  keeps it.
+- **Line replacement, no appending.** A second definition of the same
+  variable would work (Compose takes the last one), but whoever edits the
+  file later then changes the wrong line — the justification for this
+  already lives in
   [`deploy/testhost/README.md`](../../../deploy/testhost/README.md).
-- Eine gesetzte Umgebungsvariable überspringt die zugehörige Rückfrage.
-- Fragen laufen über `/dev/tty`, weil `stdin` die Pipe ist.
+- A set environment variable skips the corresponding question.
+- Questions run via `/dev/tty`, because `stdin` is the pipe.
 
-**Im Thread-Modus darf `RADIO_DEVICE` nicht leer bleiben.** Die Compose-Datei
-reicht das Gerät als `devices: - ${RADIO_DEVICE}:${RADIO_DEVICE}` durch; ein
-leerer Wert ergibt `- :`, ein nicht existierender Pfad die Meldung „error
-gathering device information" — beides lässt `docker compose up` scheitern.
-Findet das Skript kein `/dev/ttyUSB*` und kein `/dev/ttyACM*`, schlägt es
-deshalb WiFi/Ethernet-only vor statt eine Vorgabe zu erfinden. Wer trotzdem
-Thread will, weil das Modul erst noch gesteckt wird, gibt den Pfad von Hand an.
+**In Thread mode, `RADIO_DEVICE` must not stay empty.** The compose file
+passes the device through as `devices: - ${RADIO_DEVICE}:${RADIO_DEVICE}`; an
+empty value gives `- :`, a non-existent path the message "error
+gathering device information" — both make `docker compose up` fail.
+If the script finds no `/dev/ttyUSB*` and no `/dev/ttyACM*`, it therefore
+suggests WiFi/Ethernet-only instead of inventing a default. Whoever wants
+Thread anyway, because the module is only about to be plugged in, gives the
+path by hand.
 
-Der Rückfall auf `/dev/urandom` für das Token liefert dasselbe Format (64
-Zeichen aus `[0-9a-f]`, keine Leerzeichen, ASCII — genau die Anforderung aus
-`.env.example`). Er existiert, damit ausgerechnet die Token-Erzeugung eine
-sonst gesunde Installation nicht kippen kann.
+The fallback to `/dev/urandom` for the token delivers the same format (64
+characters from `[0-9a-f]`, no spaces, ASCII — exactly the requirement from
+`.env.example`). It exists so that of all things, token generation cannot
+tip over an otherwise healthy installation.
 
 ### Phase 5 — Start
 
-`mkdir -p data` im Stack-Verzeichnis, dann `docker compose up -d --build`. Davor
-die Ansage, dass der Bau auf einem Raspberry Pi mehrere Minuten dauert — ohne
-sie sieht ein stiller Build wie ein Hänger aus.
+`mkdir -p data` in the stack directory, then `docker compose up -d --build`.
+Before that, the notice that the build takes several minutes on a Raspberry
+Pi — without it, a silent build looks like it's stuck.
 
-Kein `--profile` am Aufruf: die Betriebsart steht als `COMPOSE_PROFILES` in der
-`.env`, die Compose von sich aus liest. Damit gilt sie auch für jeden späteren
-Aufruf von Hand und für `scripts/update.sh`, ohne dass dort etwas nachgezogen
-werden müsste.
+No `--profile` on the call: the operating mode sits as `COMPOSE_PROFILES` in
+the `.env`, which Compose reads on its own. This way it also applies to
+every later manual call and to `scripts/update.sh`, without anything
+needing to be repeated there.
 
-### Phase 6 — Prüfen und berichten
+### Phase 6 — Check and Report
 
-Vier Prüfungen, die **nichts verändern**:
+Four checks that **change nothing**:
 
-1. **Dienst gesund:** `http://127.0.0.1:<port>/health`, bis zu 20 Sekunden
-   Geduld, Port aus der Compose-Datei gelesen — dasselbe Vorgehen wie in
-   `update.sh`. Antwortet er nicht, werden die letzten 30 Zeilen aus
-   `docker logs loxmatter` ausgegeben.
-2. **Container:** laufen `otbr`, `matter-server` und `loxmatter`?
-3. **Bluetooth:** ist der Adapter rfkill-soft-blockiert? Ermittelt über
-   `/sys/class/rfkill/*/type` = `bluetooth` und die zugehörige `soft`-Datei —
-   der Index wird gesucht, nicht als `rfkill0` angenommen. Ist er blockiert,
-   wird der Befehl aus dem deploy-README **ausgegeben, nicht ausgeführt**,
-   mit dem tatsächlich gefundenen Index.
-4. **Thread**, nur im Thread-Modus: gibt es eine `wpan*`-Schnittstelle mit
-   Mesh-Adresse in `/proc/net/if_inet6`? Dieselbe Prüfung, die
-   `scripts/otbr-watchdog.sh` und die Ansicht „System" benutzen. Fehlt sie, wird
-   der `start-stop-daemon`-Workaround als Befehlsblock ausgegeben — mit den
-   Werten aus der gerade geschriebenen `.env` eingesetzt — samt dem Hinweis,
-   dass er nach **jedem** `compose up` erneut nötig ist, bis das OTBR-Image
-   ersetzt wird. Im WiFi-Modus entfällt die Prüfung, und der Bericht sagt
-   ausdrücklich, dass Thread abgeschaltet ist und wie man ihn nachrüstet.
+1. **Service healthy:** `http://127.0.0.1:<port>/health`, up to 20 seconds
+   of patience, port read from the compose file — the same approach as in
+   `update.sh`. If it doesn't answer, the last 30 lines from
+   `docker logs loxmatter` are printed.
+2. **Containers:** are `otbr`, `matter-server`, and `loxmatter` running?
+3. **Bluetooth:** is the adapter rfkill soft-blocked? Determined via
+   `/sys/class/rfkill/*/type` = `bluetooth` and the corresponding `soft` file —
+   the index is searched for, not assumed to be `rfkill0`. If it is blocked,
+   the command from the deploy README is **printed, not executed**,
+   with the actually found index.
+4. **Thread**, Thread mode only: is there a `wpan*` interface with
+   a mesh address in `/proc/net/if_inet6`? The same check
+   `scripts/otbr-watchdog.sh` and the "System" view use. If it's missing,
+   the `start-stop-daemon` workaround is printed as a command block — with
+   the values from the just-written `.env` substituted in — along with the
+   note that it is needed again after **every** `compose up` until the OTBR
+   image is replaced. In WiFi mode, the check is skipped, and the report
+   explicitly says that Thread is off and how to retrofit it.
 
-Prüfung 3 und 4 sind Befunde, kein Abbruchgrund: ein Stack ohne Thread-Netz ist
-für reine WLAN-Matter-Geräte vollständig brauchbar.
+Checks 3 and 4 are findings, not a reason to abort: a stack without a
+Thread network is fully usable for pure WiFi Matter devices.
 
-### Phase 7 — Schlussbericht
+### Phase 7 — Final Report
 
-- LAN-Adresse wie in `update.sh` (`hostname -I | awk '{print $1}'`) und die
-  WebUI-URL.
-- „Open it and set a password — until you do, no `/api` route answers."
-- Im Thread-Modus der Watchdog-Cron-Vorschlag, mit dem **tatsächlichen**
-  Installationspfad, nicht dem `/home/pi/matter-loxone` aus dem deploy-README.
-  Im WiFi-Modus entfällt er — es gibt keinen `otbr`-Dienst zu bewachen.
-- `scripts/update.sh` als Weg für später.
-- Falls Docker in diesem Lauf installiert wurde: der Hinweis auf die
-  Neuanmeldung.
-- Alle offenen Befunde aus Phase 6 noch einmal gesammelt, damit sie nicht
-  zwischen den Build-Zeilen verschwinden.
+- LAN address as in `update.sh` (`hostname -I | awk '{print $1}'`) and the
+  WebUI URL.
+- "Open it and set a password — until you do, no `/api` route answers."
+- In Thread mode, the watchdog cron suggestion, with the **actual**
+  installation path, not the `/home/pi/matter-loxone` from the deploy README.
+  In WiFi mode it is dropped — there is no `otbr` service to watch.
+- `scripts/update.sh` as the path for later.
+- If Docker was installed in this run: the note about the
+  re-login.
+- All open findings from Phase 6 collected once more, so they don't
+  disappear between the build lines.
 
-## 5. Fehlerverhalten
+## 5. Error Behavior
 
-`set -eu`. Kein `pipefail` — dash kennt es nicht; wo eine Pipeline zählt, wird
-das Ergebnis ausdrücklich geprüft.
+`set -eu`. No `pipefail` — dash doesn't know it; where a pipeline counts,
+the result is explicitly checked.
 
-Eine Variable hält die Beschreibung des laufenden Schritts. Ein `EXIT`-Trap gibt
-sie bei jedem unerwarteten Abbruch aus, zusammen mit dem, was bereits geschehen
-ist und was nicht:
+A variable holds the description of the current step. An `EXIT` trap prints
+it on every unexpected abort, together with what has already happened
+and what hasn't:
 
 ```
 Failed while: writing .env
 The checkout at /home/pi/loxmatter exists; nothing was started.
 ```
 
-**Kein Rollback.** Ein Skript, das auf einem fremden Host aufräumt, richtet mehr
-Schaden an als der halbe Zustand, den es beseitigen will. Stattdessen benennt
-jede Abbruchmeldung den erreichten Punkt, und ein erneuter Lauf nimmt ihn auf.
+**No rollback.** A script that cleans up on someone else's host does more
+damage than the half-state it wants to remove. Instead, every abort
+message names the point reached, and a repeated run picks it up from there.
 
-## 6. Idempotenz
+## 6. Idempotence
 
-Ein zweiter Lauf:
+A second run:
 
-- klont nicht erneut und zieht nicht,
-- lässt bestehende `.env`-Werte unangetastet und ergänzt nur fehlende,
-- ruft `docker compose up -d --build` erneut auf, was von sich aus idempotent
-  ist,
-- führt die Prüfungen aus Phase 6 erneut aus,
-- und prüft zusätzlich per `git fetch`, ob `main` weiter ist. Wenn ja:
-  Rückfrage über `/dev/tty` („N new commits available. Update now? [y/N]"). Bei
-  Zustimmung läuft `scripts/update.sh`, das die Signaldatenbank vorher sichert.
-  Ohne TTY entfällt die Frage, der Hinweis bleibt.
+- does not clone again and does not pull,
+- leaves existing `.env` values untouched and only fills in missing ones,
+- calls `docker compose up -d --build` again, which is idempotent on its
+  own,
+- runs the checks from Phase 6 again,
+- and additionally checks via `git fetch` whether `main` is ahead. If so:
+  a question via `/dev/tty` ("N new commits available. Update now? [y/N]"). On
+  consent, `scripts/update.sh` runs, which backs up the signal database first.
+  Without a TTY the question is skipped, the hint stays.
 
-Damit ist der Wiederholungslauf sowohl die Reparatur eines abgebrochenen ersten
-Laufs als auch der bequeme Weg zum Update — ohne die Sicherung zu umgehen, die
-`update.sh` mitbringt.
+This makes the repeat run both the repair of an aborted first
+run and the convenient path to an update — without bypassing the backup
+`update.sh` brings along.
 
-## 7. Was das Skript ausdrücklich nicht tut
+## 7. What the Script Explicitly Does Not Do
 
-- Es entsperrt rfkill nicht selbst. Der Befehl braucht einen privilegierten
-  Container mit `/sys`-Einhängung; das ungefragt zu tun ist genau die stille
-  Root-Aktion, die dieser Entwurf ausschließt.
-- Es wendet den otbr-Workaround nicht selbst an. Er ist kernelspezifisch und
-  würde auf Hosts, die ihn nicht brauchen, laufende Prozesse killen.
-- Es trägt den Watchdog-Cron nicht selbst ein.
-- Es installiert kein TLS und ändert nichts an den Sicherheitseigenschaften des
-  Stacks. Die Warnhinweise aus dem README-Entwurf gelten unverändert.
-- Es fasst `README.md` nicht an (siehe Abschnitt 10). `deploy/testhost/README.md`
-  bekommt lediglich den Abschnitt zur neuen Betriebsart, weil die Compose-Datei
-  sich ändert und ihre eigene Dokumentation sonst falsch würde.
+- It does not unblock rfkill itself. The command needs a privileged
+  container with a `/sys` mount; doing that without asking is exactly the
+  silent root action this design rules out.
+- It does not apply the otbr workaround itself. It is kernel-specific and
+  would kill running processes on hosts that don't need it.
+- It does not add the watchdog cron entry itself.
+- It installs no TLS and changes nothing about the security properties of
+  the stack. The warnings from the README design apply unchanged.
+- It does not touch `README.md` (see section 10). `deploy/testhost/README.md`
+  only gets the section on the new operating mode, because the compose file
+  changes and its own documentation would otherwise become wrong.
 
-## 8. Dateien
+## 8. Files
 
-| Datei | Änderung |
+| File | Change |
 |---|---|
-| `install.sh` | neu — Wurzelverzeichnis, POSIX `sh`, GPL-Kopf, durchgehend englisch |
-| `tests/test_install_script.py` | neu — Tests mit gefälschten Binaries, siehe Abschnitt 9 |
-| `.github/workflows/ci.yml` | ein Schritt `shellcheck -s sh install.sh` |
-| `docs/superpowers/specs/2026-09-05-install-oneliner-design.md` | dieses Dokument |
-| `deploy/testhost/docker-compose.yml` | `otbr` bekommt `profiles: ["thread"]`; `matter-server` verliert `depends_on: otbr` |
-| `deploy/testhost/.env.example` | neue Variable `COMPOSE_PROFILES`, kommentiert |
-| `deploy/testhost/README.md` | ein Abschnitt „WiFi/Ethernet-only" |
-| `scripts/otbr-watchdog.sh` | Wächter davor: kein `otbr`-Container → still beenden |
+| `install.sh` | new — repository root, POSIX `sh`, GPL header, English throughout |
+| `tests/test_install_script.py` | new — tests with fake binaries, see section 9 |
+| `.github/workflows/ci.yml` | one step `shellcheck -s sh install.sh` |
+| `docs/superpowers/specs/2026-09-05-install-oneliner-design.md` | this document |
+| `deploy/testhost/docker-compose.yml` | `otbr` gets `profiles: ["thread"]`; `matter-server` loses `depends_on: otbr` |
+| `deploy/testhost/.env.example` | new variable `COMPOSE_PROFILES`, commented |
+| `deploy/testhost/README.md` | a section "WiFi/Ethernet-only" |
+| `scripts/otbr-watchdog.sh` | guard against it: no `otbr` container → exit quietly |
 
-**Warum `matter-server` sein `depends_on: otbr` verliert:** Compose bricht ab,
-wenn ein Dienst von einem abhängt, dessen Profil nicht aktiv ist. Der Verlust
-ist inhaltlich folgenlos — `depends_on` steuert nur die Startreihenfolge, nicht
-die Bereitschaft, und `matter-server` braucht den Border Router beim Start
-nicht: Thread-Kommissionierung läuft später über das Host-Netz, in dem `otbr`
-mit `network_mode: host` ohnehin steht.
+**Why `matter-server` loses its `depends_on: otbr`:** Compose aborts if a
+service depends on one whose profile is not active. The loss has
+no effect on content — `depends_on` only controls start order, not
+readiness, and `matter-server` does not need the border router at
+startup: Thread commissioning later runs over the host network, on which
+`otbr` already sits via `network_mode: host` anyway.
 
-**Warum `scripts/otbr-watchdog.sh` einen Wächter braucht:** er prüft heute nur,
-ob eine `wpan*`-Schnittstelle da ist, und startet sonst `otbr` neu. Im
-WiFi-Modus ist sie nie da und der Dienst existiert nicht — der Wächter würde
-alle fünf Minuten einen Fehlschlag ins Log schreiben. Fehlt der Container,
-beendet er sich künftig still.
+**Why `scripts/otbr-watchdog.sh` needs a guard:** today it only checks
+whether a `wpan*` interface exists, and restarts `otbr` otherwise. In
+WiFi mode it never exists and the service doesn't exist — the watchdog would
+write a failure to the log every five minutes. If the container is missing,
+it will exit quietly from now on.
 
-`shellcheck` läuft zunächst nur gegen `install.sh`. Die vorhandenen Bash-Skripte
-(`scripts/update.sh`, `scripts/otbr-watchdog.sh`) mitzuprüfen fördert vermutlich
-Altbefunde zutage — das wäre eine eigene Aufgabe.
+`shellcheck` initially only runs against `install.sh`. Checking the
+existing bash scripts (`scripts/update.sh`, `scripts/otbr-watchdog.sh`) as
+well would presumably surface pre-existing findings — that would be its own
+task.
 
-## 9. Teststrategie
+## 9. Test Strategy
 
-`tests/test_install_script.py` legt ein temporäres `HOME` an und einen `PATH`
-mit Stubs für `docker`, `git`, `sudo`, `apt-get`, `ip`, `uname`, `curl`. Jeder
-Stub schreibt seinen Aufruf in eine Protokolldatei und endet erfolgreich. Ohne
-`/dev/tty` läuft der nicht-interaktive Zweig, die Werte kommen aus der Umgebung.
+`tests/test_install_script.py` sets up a temporary `HOME` and a `PATH`
+with stubs for `docker`, `git`, `sudo`, `apt-get`, `ip`, `uname`, `curl`. Each
+stub writes its call to a log file and exits successfully. Without
+`/dev/tty` the non-interactive branch runs, the values come from the environment.
 
-Geprüfte Fälle:
+Cases checked:
 
-| Fall | Erwartung |
+| Case | Expectation |
 |---|---|
-| `uname`-Stub meldet `Darwin` | Abbruch, kein Verzeichnis angelegt, Exit ≠ 0 |
-| `git`/`curl`/`openssl` fehlen | genau diese drei im `apt-get`-Aufruf, keine weiteren |
-| Docker fehlt | `get.docker.com` erst **nach** `apt-get`; danach `sudo docker` in allen Folgeaufrufen |
-| kein `sudo`, kein root, Docker fehlt | Abbruch in Phase 1; `git clone` steht **nicht** im Protokoll |
-| `MINISERVER_IP` fehlt, kein TTY | Abbruch vor dem Klon |
-| zweiter Lauf bei vollständiger `.env` | kein `git clone`, `.env` byte-identisch, `compose up -d` erneut |
-| `.env` mit `MINISERVER_IP`, ohne `LOXMATTER_API_TOKEN` | nur die fehlende Zeile kommt dazu, die vorhandene bleibt |
-| kein `/dev/ttyUSB*`, kein `/dev/ttyACM*`, kein `LOXMATTER_MODE` | WiFi-Modus: `COMPOSE_PROFILES=` in der `.env`, keine `RADIO_DEVICE`-Zeile gesetzt, kein Abbruch |
-| `LOXMATTER_MODE=thread` ohne erkanntes Gerät und ohne `RADIO_DEVICE` | Abbruch in Phase 1, vor dem Klon |
-| `LOXMATTER_MODE=thread` mit erkanntem Gerät | `COMPOSE_PROFILES=thread`, `RADIO_DEVICE` und `BACKBONE_IF` gesetzt |
-| `--dry-run` | kein veraendernder Stub wird aufgerufen: kein `apt-get`, kein `git clone`, kein `docker`, kein `sudo`. Lesende Erkennung (`uname`, `ip route`) laeuft weiter — sie veraendert nichts |
+| `uname` stub reports `Darwin` | abort, no directory created, exit ≠ 0 |
+| `git`/`curl`/`openssl` missing | exactly these three in the `apt-get` call, no others |
+| Docker missing | `get.docker.com` only **after** `apt-get`; then `sudo docker` in all following calls |
+| no `sudo`, no root, Docker missing | abort in Phase 1; `git clone` does **not** appear in the log |
+| `MINISERVER_IP` missing, no TTY | abort before the clone |
+| second run with a complete `.env` | no `git clone`, `.env` byte-identical, `compose up -d` again |
+| `.env` with `MINISERVER_IP`, without `LOXMATTER_API_TOKEN` | only the missing line is added, the existing one stays |
+| no `/dev/ttyUSB*`, no `/dev/ttyACM*`, no `LOXMATTER_MODE` | WiFi mode: `COMPOSE_PROFILES=` in the `.env`, no `RADIO_DEVICE` line set, no abort |
+| `LOXMATTER_MODE=thread` without a detected device and without `RADIO_DEVICE` | abort in Phase 1, before the clone |
+| `LOXMATTER_MODE=thread` with a detected device | `COMPOSE_PROFILES=thread`, `RADIO_DEVICE` and `BACKBONE_IF` set |
+| `--dry-run` | no mutating stub is called: no `apt-get`, no `git clone`, no `docker`, no `sudo`. Read-only detection (`uname`, `ip route`) still runs — it changes nothing |
 
-**Was diese Tests nicht leisten:** Sie prüfen die *Auswahl* der Befehle, nicht
-ihre Wirkung. Ob `docker compose up -d --build` auf einem Pi tatsächlich einen
-gesunden Stack ergibt, zeigt nur ein Lauf auf einem Pi. Das steht hier, damit es
-später niemand für mehr hält, als es ist — die Vorlage dafür ist der Fehler in
-`scripts/update.sh`, das monatelang ein Image baute, das nirgends ankam, und
-trotzdem „Fertig" meldete.
+**What these tests do not achieve:** they check the *choice* of commands, not
+their effect. Whether `docker compose up -d --build` actually produces a
+healthy stack on a Pi is only shown by a run on a Pi. This is stated here so
+that nobody later mistakes it for more than it is — the cautionary
+precedent is the bug in `scripts/update.sh`, which for months built an
+image that never arrived anywhere, and
+still reported "Done" anyway.
 
-## 10. Übergabe an die README-Produktseite
+## 10. Handoff to the README Product Page
 
-Die README wird in einer eigenen Session zu einer englischen Produktseite
-umgebaut (siehe
-[2026-09-05-readme-produktseite-design.md](2026-09-05-readme-produktseite-design.md),
-Abschnitt 7: „Das One-Liner-Installskript entsteht in einer eigenen Session […]
-wer das Skript baut, zieht Schritt 1 nach"). Zum Zeitpunkt dieses Entwurfs liegt
-jene Spec auf einem eigenen Branch, die README selbst ist unverändert.
+The README is being rebuilt into an English product page in its own
+session (see
+[2026-09-05-readme-product-page-design.md](2026-09-05-readme-product-page-design.md),
+section 7: "The one-liner install script is built in its own session […]
+whoever builds the script pulls step 1 along"). At the time of this design,
+that spec sits on its own branch, the README itself is unchanged.
 
-**Diese Session fasst deshalb weder `README.md` noch den fremden Branch an.**
-Stattdessen steht der fertige Wortlaut hier und wird von der README-Session in
-Abschnitt 6 („🚀 Quickstart") der Produktseite übernommen.
+**This session therefore touches neither `README.md` nor the other branch.**
+Instead, the finished wording sits here and is adopted by the README session
+into section 6 ("🚀 Quickstart") of the product page.
 
-### Wortlaut für den Quickstart (englisch, zum Übernehmen)
+### Wording for the Quickstart (English, ready to adopt)
 
 > ## 🚀 Quickstart
 >
@@ -394,38 +398,39 @@ Abschnitt 6 („🚀 Quickstart") der Produktseite übernommen.
 > (unblocking Bluetooth, restarting the Thread agent), are in
 > [docs/SETUP.md](docs/SETUP.md).
 
-Die beiden Pi-Schritte, auf die der letzte Absatz verweist, stehen heute in
-[`deploy/testhost/README.md`](../../../deploy/testhost/README.md) („Bluetooth-Adapter
-ist rfkill-soft-blocked" und „start-stop-daemon haengt auf dem Pi-Kernel") und
-wandern mit dem README-Umbau nach `docs/SETUP.md`.
+The two Pi steps the last paragraph refers to currently live in
+[`deploy/testhost/README.md`](../../../deploy/testhost/README.md)
+(`Bluetooth-Adapter ist rfkill-soft-blocked` and
+`start-stop-daemon haengt auf dem Pi-Kernel`) and
+move to `docs/SETUP.md` with the README rebuild.
 
-## 11. Abgrenzung
+## 11. Boundaries
 
-- Kein veröffentlichtes Container-Image. Der Stack baut `loxmatter` weiterhin aus
-  dem Klon (`context: ../..`); ein Image in einer Registry wäre eine eigene
-  Aufgabe und würde den Klon überflüssig machen.
-- Keine Änderung an Anwendungscode.
-- Keine Änderung an `scripts/update.sh`. Es baut und startet gezielt den Dienst
-  `loxmatter` und ist von den Profilen nicht betroffen.
-- An `docker-compose.yml`, `.env.example` und `scripts/otbr-watchdog.sh` wird nur
-  das geändert, was die WiFi/Ethernet-only-Betriebsart braucht (Abschnitt 8) —
-  keine Härtung, keine Digest-Pins, kein Nicht-root-Nutzer.
-- Kein `systemd`-Dienst, keine automatische Watchdog-Einrichtung.
-- Keine Unterstützung für andere Paketverwaltungen als `apt-get`.
-- Kein Wechsel der Betriebsart im laufenden Betrieb durch das Skript. Wer später
-  ein Funkmodul nachrüstet, setzt `COMPOSE_PROFILES=thread` und `RADIO_DEVICE`
-  in der `.env` und startet den Stack neu; der Schlussbericht des WiFi-Modus
-  nennt genau diese zwei Zeilen.
+- No published container image. The stack continues to build `loxmatter` from
+  the clone (`context: ../..`); an image in a registry would be its own
+  task and would make the clone redundant.
+- No change to application code.
+- No change to `scripts/update.sh`. It specifically builds and starts the
+  `loxmatter` service and is not affected by the profiles.
+- Only what the WiFi/Ethernet-only operating mode needs is changed in
+  `docker-compose.yml`, `.env.example`, and `scripts/otbr-watchdog.sh`
+  (section 8) — no hardening, no digest pins, no non-root user.
+- No `systemd` service, no automatic watchdog setup.
+- No support for package managers other than `apt-get`.
+- No switching of the operating mode while running, done by the script.
+  Whoever retrofits a radio module later sets `COMPOSE_PROFILES=thread` and
+  `RADIO_DEVICE` in the `.env` and restarts the stack; the WiFi mode's
+  final report names exactly these two lines.
 
-## 12. Risiken
+## 12. Risks
 
-| Risiko | Umgang |
+| Risk | Handling |
 |---|---|
-| `get.docker.com` ändert sein Verhalten oder ist nicht erreichbar | Fehler wird als eigener Schritt gemeldet („Failed while: installing Docker"), der Klon existiert dann noch nicht |
-| Die erkannten Vorgaben sind falsch (mehrere USB-Geräte, mehrere Interfaces) | Jeder erkannte Wert ist ein Vorschlag in einer Rückfrage, keine stille Festlegung |
-| Ein nicht-interaktiver Lauf trifft stillschweigend falsche Annahmen | Ohne TTY wird nichts geraten: fehlt `MINISERVER_IP`, bricht Phase 1 ab |
-| Der Nutzer hält „Fertig" für „Thread läuft" | Phase 6 prüft `wpan*` ausdrücklich und wiederholt den Befund im Schlussbericht |
-| Die Stub-Tests wiegen in falscher Sicherheit | Abschnitt 9 benennt die Grenze; Abnahme auf einem Pi bleibt Voraussetzung |
-| `sudo docker` im selben Lauf verdeckt, dass die Gruppe noch nicht greift | Der Schlussbericht fordert die Neuanmeldung ausdrücklich ein |
-| Ein bestehender Stack ohne `COMPOSE_PROFILES` in der `.env` verliert beim nächsten `compose up` seinen `otbr`-Dienst | Der zweite Lauf ergänzt fehlende Schlüssel: fehlt `COMPOSE_PROFILES` und existiert ein `otbr`-Container, wird `thread` eingetragen — bestehende Installationen bleiben, was sie sind |
-| Ein Funkmodul steckt, wird aber nicht erkannt (anderer Gerätename) | Die Betriebsart ist eine Rückfrage mit Vorschlag, keine stille Festlegung; Thread lässt sich mit von Hand angegebenem Pfad wählen |
+| `get.docker.com` changes its behavior or is unreachable | error is reported as its own step ("Failed while: installing Docker"), the clone does not exist yet at that point |
+| The detected defaults are wrong (multiple USB devices, multiple interfaces) | every detected value is a suggestion in a question, not a silent decision |
+| A non-interactive run silently makes wrong assumptions | without a TTY, nothing is guessed: if `MINISERVER_IP` is missing, Phase 1 aborts |
+| The user takes "Done" to mean "Thread is running" | Phase 6 explicitly checks `wpan*` and repeats the finding in the final report |
+| The stub tests give false confidence | section 9 names the limit; acceptance on a Pi remains a prerequisite |
+| `sudo docker` in the same run hides that the group does not yet take effect | the final report explicitly demands the re-login |
+| An existing stack without `COMPOSE_PROFILES` in the `.env` loses its `otbr` service on the next `compose up` | the second run fills in missing keys: if `COMPOSE_PROFILES` is missing and an `otbr` container exists, `thread` is written in — existing installations stay what they are |
+| A radio module is plugged in but not detected (different device name) | the operating mode is a question with a suggestion, not a silent decision; Thread can be selected with a manually given path |

@@ -1,4 +1,4 @@
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -14,10 +14,10 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Speichert das Abbild eines echten Geräts als Fixture.
+"""Saves a snapshot of a real device as a fixture.
 
-Aufruf: uv run python scripts/record_node.py 12 tests/fixtures/nodes/ikea_bulb.json
-Mit abweichendem matter-server:
+Usage: uv run python scripts/record_node.py 12 tests/fixtures/nodes/ikea_bulb.json
+With a different matter-server:
        uv run python scripts/record_node.py 3 tests/fixtures/nodes/ikea_plug.json \\
            --url ws://10.0.1.56:5580/ws
 """
@@ -34,12 +34,12 @@ from loxmatter.matter.client import BridgeMatterClient
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("node_id", type=int, help="Node-ID am matter-server")
-    parser.add_argument("target", type=Path, help="Zieldatei für die Fixture")
+    parser.add_argument("node_id", type=int, help="Node ID on matter-server")
+    parser.add_argument("target", type=Path, help="Target file for the fixture")
     parser.add_argument(
         "--url",
         default="ws://localhost:5580/ws",
-        help="Adresse von matter-server (Default: ws://localhost:5580/ws)",
+        help="Address of matter-server (default: ws://localhost:5580/ws)",
     )
     return parser.parse_args()
 
@@ -64,7 +64,7 @@ async def main() -> None:
         + "\n",
         encoding="utf-8",
     )
-    print(f"{args.target} geschrieben, {len(snapshot.attributes)} Attribute")
+    print(f"{args.target} written, {len(snapshot.attributes)} attributes")
 
 
 if __name__ == "__main__":

@@ -1,4 +1,4 @@
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -14,17 +14,16 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Tests fuer die Auslieferung der WebUI (Task 7, Phase 5) - siehe
-`loxone/server.py` (Routen `/` und `/static`) und `web/` (die eigentliche
-Oberflaeche).
+"""Tests for the delivery of the WebUI (Task 7, Phase 5) - see
+`loxone/server.py` (routes `/` and `/static`) and `web/` (the actual
+UI).
 
-`api` folgt demselben Muster wie in `test_diagnostics.py`: eine Testdatei,
-eine lokale `api`-Fixture, aufgebaut aus den gemeinsamen Bausteinen in
-`conftest.py` (`no_invoke`, `fake_runtime`, `fake_client`). Diese Tests
-brauchen kein Geraet im Store - die Oberflaeche wird ausgeliefert, bevor
-ueberhaupt ein Klick passiert -, bauen aber trotzdem eines auf, damit ein
-spaeterer Test in dieser Datei (z. B. eine Stichprobe auf `/api/devices`)
-ohne eine zweite Fixture auskommt.
+`api` follows the same pattern as `test_diagnostics.py`: one test file,
+one local `api` fixture, built from the shared building blocks in
+`conftest.py` (`no_invoke`, `fake_runtime`, `fake_client`). These tests
+need no device in the store - the UI is delivered before any click ever
+happens - but build one anyway, so a later test in this file (e.g. a
+spot check on `/api/devices`) can do without a second fixture.
 """
 
 from __future__ import annotations
@@ -50,18 +49,18 @@ WEB_DIR = Path(__file__).resolve().parents[2] / "src" / "loxmatter" / "web"
 
 
 def _without_comments(markup: str) -> str:
-    """Die Seite ohne ihre HTML-Kommentare.
+    """The page without its HTML comments.
 
-    Die Kommentare in `index.html` sind ausfuehrlich und nennen Attribute
-    und Beschriftungen beim Namen - unter anderem, um zu begruenden, warum
-    sie dort NICHT stehen. Eine Suche ueber die rohe Datei findet deshalb
-    auch das, wovor der Kommentar gerade warnt."""
+    The comments in `index.html` are extensive and name attributes and
+    labels explicitly - among other things, to explain why they are NOT
+    there. A search over the raw file therefore also finds the very thing
+    the comment is warning about."""
     return re.sub(r"<!--.*?-->", "", markup, flags=re.DOTALL)
 
 
 def _label_around(markup: str, needle: str) -> str:
-    """Das `<label>`-Element, das `needle` enthaelt - die Beschriftung, die
-    neben einem Eingabefeld tatsaechlich auf dem Bildschirm steht."""
+    """The `<label>` element that contains `needle` - the label that
+    actually appears on screen next to an input field."""
     position = markup.index(needle)
     start = markup.rindex("<label", 0, position)
     end = markup.index("</label", position)
@@ -91,7 +90,7 @@ async def test_root_serves_the_interface(api):
 
 
 async def test_alpine_is_served_locally_not_from_a_cdn(api):
-    """Die Bruecke laeuft in Installationen ohne Internet."""
+    """The bridge runs in installations without internet access."""
     client, _, _ = api
     page = (await client.get("/")).text
     assert "cdn." not in page
@@ -100,11 +99,11 @@ async def test_alpine_is_served_locally_not_from_a_cdn(api):
 
 
 async def test_the_page_names_all_four_views(api):
-    """Aufgabe 10 bindet die Reiterleiste an `t('web.nav.*')` (Aufgabe 9) statt
-    die deutschen Namen fest ins Markup zu schreiben - der ausgelieferte
-    Quelltext traegt deshalb keinen der alten Literale mehr, sondern die
-    fuenf `x-text`-Bindungen (die Uebersetzung selbst passiert erst zur
-    Laufzeit im Browser, siehe `test_load_i18n_...` in Aufgabe 8)."""
+    """Task 10 binds the tab bar to `t('web.nav.*')` (Task 9) instead of
+    writing the German names straight into the markup - the delivered
+    source therefore no longer carries any of the old literals, but the
+    five `x-text` bindings (the translation itself only happens at
+    runtime in the browser, see `test_load_i18n_...` in Task 8)."""
     client, _, _ = api
     page = (await client.get("/")).text
     assert ">Geräte<" not in page
@@ -113,14 +112,14 @@ async def test_the_page_names_all_four_views(api):
 
 
 async def test_the_page_does_not_promise_what_the_spec_excludes(api):
-    """Spec 8.2: Inbetriebnahme- und Diagnosewerkzeug, keine Smart-Home-Oberflaeche.
+    """Spec 8.2: a commissioning and diagnostics tool, not a smart-home UI.
 
-    Prueft nicht nur `index.html`, sondern auch `/static/app.js` (Review-Fix
-    Minor #3, 2026-09-02): die vier Woerter sind heute in keiner der beiden
-    Dateien vorhanden, das war also bislang kein falsches Gruen - aber ein
-    kuenftiges Feature, dessen deutsche Texte nur in JavaScript entstehen
-    (z. B. dynamisch zusammengesetzt statt im Markup), zoege sonst an dieser
-    Sperre vorbei, ohne dass sie es je bemerkt."""
+    Checks not only `index.html` but also `/static/app.js` (review fix
+    Minor #3, 2026-09-02): the four words are currently absent from both
+    files, so this was not a false green so far - but a future feature
+    whose German text is only ever assembled in JavaScript (e.g. built
+    dynamically instead of appearing in the markup) would otherwise slip
+    past this guard without it ever noticing."""
     client, _, _ = api
     page = (await client.get("/")).text.lower()
     script = (await client.get("/static/app.js")).text.lower()
@@ -130,9 +129,10 @@ async def test_the_page_does_not_promise_what_the_spec_excludes(api):
 
 
 async def test_the_page_carries_an_icon_that_is_actually_ausgeliefert(api):
-    """Ein `link rel="icon"` ins Leere faellt niemandem auf - der Browser zeigt
-    dann still sein Standardblatt. Deshalb hier beides in einem Test: dass die
-    Seite das Icon nennt UND dass unter dem genannten Pfad etwas liegt."""
+    """A `link rel="icon"` pointing at nothing goes unnoticed by anyone - the
+    browser just quietly shows its default sheet. Hence both checks in one
+    test here: that the page names the icon AND that something actually
+    lives at the named path."""
     client, _, _ = api
     page = (await client.get("/")).text
     assert 'href="/static/favicon.svg"' in page
@@ -142,24 +142,24 @@ async def test_the_page_carries_an_icon_that_is_actually_ausgeliefert(api):
 
 
 async def test_the_mark_stands_in_the_interface_in_both_its_sizes(api):
-    """Das Zeichen sass bislang nur im Browser-Tab, nicht in der Oberflaeche.
+    """The mark previously sat only in the browser tab, not in the UI.
 
-    Geprueft wird die Groessenregel, die der Kopfkommentar in `icon.svg`
-    aufstellt: die grosse Fassung gilt "ab etwa 32 px", darunter greift
-    `favicon.svg` mit kraeftigeren Strichen, weil die sechs Aussenpunkte sonst
-    ineinanderfliessen. Die Kopfzeile (24 px) muss deshalb `favicon.svg`
-    nennen, die beiden Anmeldebildschirme (64 px) `icon.svg` - ein vertauschtes
-    Paar sieht im Test wie im Browser gleich "richtig" aus und faellt nur bei
-    genauem Hinsehen auf.
+    Checked here is the size rule that the header comment in `icon.svg`
+    sets out: the large version applies "from about 32 px up", below that
+    `favicon.svg` takes over with heavier strokes, because the six outer
+    dots would otherwise merge into each other. The header (24 px) must
+    therefore name `favicon.svg`, and the two login screens (64 px) must
+    name `icon.svg` - a swapped pair looks equally "right" in the test and
+    in the browser, and only shows up on close inspection.
 
-    `alt=""` gehoert mitgeprueft: "loxmatter" steht in allen drei
-    Ueberschriften direkt daneben, ein gefuellter Alt-Text liesse einen
-    Screenreader den Namen zweimal vorlesen."""
+    `alt=""` needs checking too: "loxmatter" appears right next to it in
+    all three headings, and a filled-in alt text would make a screen
+    reader read the name out twice."""
     client, _, _ = api
     page = (await client.get("/")).text
 
     assert '<img class="brand-mark" src="/static/favicon.svg" alt=""' in page
-    # Zweimal: einmal ueber der Anmeldung, einmal ueber der Ersteinrichtung.
+    # Twice: once above the login, once above the initial setup.
     assert page.count('<img class="auth-mark" src="/static/icon.svg" alt=""') == 2
 
     for name in ("icon.svg", "favicon.svg"):
@@ -169,69 +169,69 @@ async def test_the_mark_stands_in_the_interface_in_both_its_sizes(api):
 
 
 def test_the_stylesheet_has_balanced_braces():
-    """Eine nicht geschlossene CSS-Regel verschluckt ALLES, was ihr folgt -
-    ohne Fehlermeldung, ohne dass ein Test es merkt.
+    """An unclosed CSS rule swallows EVERYTHING that follows it -
+    with no error message, with no test noticing.
 
-    Genau das ist beim Zusammenfuehren von main passiert (2026-09-08): ein
-    Konfliktmarker schnitt mitten durch `.signals-summary`, die Aufloesung
-    nahm die schliessende Klammer mit, und damit war das gesamte Stylesheet
-    ab dieser Zeile wirkungslos. Das Signal-Modal fiel auf den Zustand
-    zurueck, den der ganze Umbau beseitigt hatte: kein Raster, ausgefranste
-    Zeilen, der Spaltenkopf als Fliesstext.
+    That is exactly what happened when merging main (2026-09-08): a
+    conflict marker cut right through `.signals-summary`, and resolving it
+    took the closing brace along with it, so the entire stylesheet was
+    dead from that line on. The signal modal fell back to the state
+    the whole rework had eliminated: no grid, ragged
+    rows, the column header as flowing text.
 
-    Die Testreihe blieb dabei vollstaendig gruen. Sie kann das auch gar
-    nicht sehen: jede CSS-Zusicherung in dieser Datei sucht Zeichenketten in
-    der ausgelieferten Datei, und die Zeichenketten standen ja alle noch
-    darin - nur eben in totem Text. Aufgefallen ist es erst am neu
-    erzeugten Screenshot.
+    The test suite stayed fully green throughout. It cannot even see
+    this: every CSS assertion in this file searches for strings in
+    the shipped file, and the strings were indeed all still
+    in there - just in dead text. It only surfaced on a newly
+    generated screenshot.
 
-    Dieser Test ist die billigste Absicherung dagegen: er versteht kein CSS,
-    er zaehlt nur. Kommentare werden vorher entfernt, weil `{` und `}` darin
-    vorkommen duerfen (und in diesem Stylesheet reichlich vorkommen, es ist
-    dicht kommentiert)."""
+    This test is the cheapest safeguard against that: it does not
+    understand CSS, it only counts. Comments are stripped first, because
+    `{` and `}` are allowed to appear inside them (and appear plenty in
+    this stylesheet, which is densely commented)."""
     css = (WEB_DIR / "style.css").read_text(encoding="utf-8")
     without_comments = re.sub(r"/\*.*?\*/", "", css, flags=re.DOTALL)
 
     depth = 0
     for number, line in enumerate(without_comments.split("\n"), start=1):
         depth += line.count("{") - line.count("}")
-        assert depth >= 0, f"eine Klammer zuviel geschlossen, Zeile {number}"
+        assert depth >= 0, f"one brace too many closed, line {number}"
 
-    assert depth == 0, f"{depth} Regel(n) nicht geschlossen - alles danach ist wirkungslos"
+    assert depth == 0, f"{depth} rule(s) not closed - everything after that is dead"
 
 
 def test_the_icons_are_well_formed_xml():
-    """Ein SVG, das nicht als XML parst, zeigt KEIN Browser an - er blendet es
-    still als kaputtes Bild aus, ohne Meldung irgendwo.
+    """An SVG that does not parse as XML is displayed by NO browser - it
+    silently hides it as a broken image, without a message anywhere.
 
-    Genau das ist beim ersten Anlauf passiert: der Kopfkommentar in icon.svg
-    nannte die Akzentfarbe `--accent` beim CSS-Namen, und zwei aufeinander-
-    folgende Bindestriche sind in einem XML-Kommentar verboten. Die Datei war
-    auf GitHub und im Browser-Tab gleichermassen unsichtbar. Ein Blick in die
-    Datei verraet das nicht, ein Parser schon."""
+    That is exactly what happened on the first attempt: the header comment
+    in icon.svg named the accent colour `--accent` by its CSS name, and two
+    consecutive hyphens are forbidden inside an XML comment. The file was
+    invisible on GitHub and in the browser tab alike. A look at the file
+    does not reveal that, a parser does."""
     for name in ("icon.svg", "favicon.svg"):
         ElementTree.parse(WEB_DIR / name)
 
 
 async def test_the_inline_icon_symbols_are_well_formed_xml(api):
-    """Derselbe Befund wie oben, aber fuer das inline `<svg style="display:
-    none">` in `index.html` statt fuer die beiden Einzeldateien - dort
-    parst bislang niemand mit. Dabei gilt fuer ein `<symbol>` genau dasselbe
-    wie fuer eine eigene SVG-Datei: ein `<use xlink:href="#i-...">`, das auf
-    ein Symbol zeigt, dessen Markup nicht als XML durchgeht, zeichnet
-    STILLSCHWEIGEND nichts - keine Fehlermeldung in der Konsole, nur eine
-    Kachel ohne Icon, siehe der Kommentar zu `i-cat-other` in `index.html`.
+    """The same finding as above, but for the inline `<svg style="display:
+    none">` in `index.html` instead of the two standalone files - nothing
+    has parsed that so far. The same holds for a `<symbol>` as for a
+    standalone SVG file: a `<use xlink:href="#i-...">` that points at a
+    symbol whose markup does not pass as XML draws SILENTLY nothing - no
+    error message in the console, just a tile without an icon, see the
+    comment on `i-cat-other` in `index.html`.
 
-    Der Block traegt inzwischen sechzehn `<symbol>`-Definitionen, acht davon
-    aus dem Geraete-Tab-Umbau (Entwurf 2026-09-05, Abschnitt 6.5) - keine
-    davon war bislang durch einen Parser gelaufen. Ein einzelner falscher
-    Bindestrich oder ein nicht geschlossenes Tag in einem neuen Symbol waere
-    also erst im Browser aufgefallen, und selbst dort nur als leere Flaeche,
-    nie als Meldung."""
+    The block now carries sixteen `<symbol>` definitions, eight of them
+    from the device-tab rework (design 2026-09-05, section 6.5) - none
+    of them had run through a parser before. A single wrong
+    dash or an unclosed tag in a new symbol would therefore only have
+    surfaced in the browser, and even there only as an empty area,
+    never as a message."""
     client, _, _ = api
     page = (await client.get("/")).text
     match = re.search(r'<svg style="display: none".*?</svg>', page, flags=re.DOTALL)
-    assert match, "inline SVG-Symbolblock nicht gefunden"
+    assert match, "inline SVG symbol block not found"
     ElementTree.fromstring(match.group(0))
 
 
@@ -242,22 +242,22 @@ async def test_static_files_do_not_escape_their_directory(api):
 
 
 # ---------------------------------------------------------------------------
-# Einrichtung und Login statt eines Token-Feldes (Task 7, WebUI-Login). Ohne
-# Browser laesst sich hier nicht klicken - pruefbar ist aber, dass die
-# ausgelieferten Dateien die Eigenschaften tragen, ohne die die Bedienung
-# nachweislich nicht funktionieren KANN.
+# Setup and login instead of a token field (Task 7, WebUI login). Without a
+# browser there is no clicking to be done here - but what can be checked is
+# that the delivered files carry the properties without which the flow
+# demonstrably CANNOT work.
 # ---------------------------------------------------------------------------
 
 
 async def test_the_interface_offers_setup_and_login_instead_of_a_token_field(api):
-    """Nachfolger von `test_the_interface_offers_a_field_to_enter_the_token`
-    (Review-Fix Fix 1). Beide Bildschirme stehen unbedingt im ausgelieferten
-    Markup - Alpine blendet sie erst im Browser per `x-if`/`x-show` ein oder
-    aus, ein Test ohne Browser-Engine sieht deshalb immer beide. Geprueft
-    wird: drei Passwortfelder vom Typ `password` (zwei fuer die Einrichtung,
-    eins fuer den Login - Typ `password`, damit nichts ueber der Schulter
-    mitlesbar ist), die beiden Absende-Beschriftungen, und dass die alte
-    Token-Eingabe verschwunden ist."""
+    """Successor to `test_the_interface_offers_a_field_to_enter_the_token`
+    (review fix Fix 1). Both screens are unconditionally present in the
+    delivered markup - Alpine only shows or hides them in the browser via
+    `x-if`/`x-show`, so a test without a browser engine always sees both.
+    Checked here: three password fields of type `password` (two for setup,
+    one for login - type `password` so nothing can be read over someone's
+    shoulder), the two submit labels, and that the old token input is
+    gone."""
     client, _, _ = api
     page = (await client.get("/")).text
     assert page.count('type="password"') == 3
@@ -268,26 +268,26 @@ async def test_the_interface_offers_setup_and_login_instead_of_a_token_field(api
 
 
 async def test_no_plain_link_points_at_a_token_protected_route(api):
-    """Ein `<a href>` haette bei jeder Fehlerantwort (heute z. B. eine 401
-    nach abgelaufener Sitzung) die Seite durch deren rohen Text ersetzt.
-    Jeder Download unter `/api` muss deshalb ueber `fetch()` laufen (siehe
-    `requestDownload` in app.js)."""
+    """An `<a href>` would replace the page with the error response's raw
+    text on any error response (today, e.g. a 401 after an expired
+    session). Every download under `/api` must therefore go through
+    `fetch()` (see `requestDownload` in app.js)."""
     client, _, _ = api
     page = (await client.get("/")).text
     assert 'href="/api' not in page
 
 
 async def test_no_secret_travels_in_a_url_or_local_storage(api):
-    """Nachfolger von `test_the_token_never_travels_in_a_url`: seit dem
-    WebUI-Login (Task 7) gibt es kein Token mehr, das ueber den Browser
-    haette lecken koennen - das Passwort geht ausschliesslich im Rumpf eines
-    POST an `/auth/setup` bzw. `/auth/login`, die Sitzung ausschliesslich als
-    `HttpOnly`-Cookie, das dieses Skript nie anfasst. Belegt wird, dass beide
-    frueheren Wege dafuer aus der Oberflaeche verschwunden sind: kein
-    `Bearer`-Header mehr (ein Kommentar in `requestJson` nennt das Wort
-    `Authorization` zwar noch beim Erklaeren, WARUM es fehlt - das ist kein
-    falsches Gruen, das hier bewusst nicht mitgeprueft wird), kein
-    `localStorage`, kein Geheimnis in einer URL."""
+    """Successor to `test_the_token_never_travels_in_a_url`: since the
+    WebUI login (Task 7) there is no longer a token that could leak via the
+    browser - the password travels exclusively in the body of a POST to
+    `/auth/setup` or `/auth/login`, the session exclusively as an
+    `HttpOnly` cookie that this script never touches. What is checked here
+    is that both former paths for that have disappeared from the UI: no
+    more `Bearer` header (a comment in `requestJson` does still mention the
+    word `Authorization` while explaining WHY it is absent - that is not a
+    false green, it is deliberately left unchecked here), no `localStorage`,
+    no secret in a URL."""
     client, _, _ = api
     script = (await client.get("/static/app.js")).text
     assert "Bearer" not in script
@@ -304,26 +304,24 @@ async def test_no_secret_travels_in_a_url_or_local_storage(api):
 
 
 async def test_reconnecting_the_diagnostics_channel_clears_the_three_buffers_first(api):
-    """Nachbesserung Task 6 (2026-09-03): jede (Wieder-)Verbindung des
-    Diagnose-Kanals (`/api/diagnostics/live`) bekommt vom Server eine
-    Momentaufnahme von bis zu `SNAPSHOT_LIMIT` Eintraegen je Strom, in
-    GENAU derselben Nachrichtenform wie eine laufende Zeile - ohne
-    Kennzeichnung als Momentaufnahme (siehe `api/diagnostics_live.py`).
-    Ohne ein Leeren der drei gehaltenen Straeme VOR jedem (Wieder-)Aufbau
-    haengte sich diese Momentaufnahme einfach an das bereits Gehaltene an:
-    ein Wechsel weg von "System" und zurueck, oder jede automatische
-    Wiederverbindung nach einem Netzhaenger, haette bis zu 150 bereits
-    vorhandene Zeilen ein zweites Mal angehaengt.
+    """Follow-up fix, Task 6 (2026-09-03): every (re-)connection of the
+    diagnostics channel (`/api/diagnostics/live`) receives a snapshot from
+    the server of up to `SNAPSHOT_LIMIT` entries per stream, in EXACTLY the
+    same message shape as a live line - with no marker identifying it as a
+    snapshot (see `api/diagnostics_live.py`). Without clearing the three
+    held streams BEFORE every (re-)build, this snapshot simply appended
+    itself to what was already held: switching away from "System" and back,
+    or any automatic reconnection after a network hiccup, would have
+    appended up to 150 already-present lines a second time.
 
-    **Was dieser Test belegt und was nicht.** Ohne Browser-Engine laesst sich
-    hier nicht ausfuehren, dass `connectDiagnosticsLive()` zur Laufzeit
-    tatsaechlich `this.datagrams`/`this.commandLog`/`this.diagnosticsLogs`
-    leert, oder dass ein Wechsel der Ansicht diese Funktion ueberhaupt
-    aufruft. Belegt wird nur, dass der AUSGELIEFERTE Quelltext innerhalb des
-    Rumpfs von `connectDiagnosticsLive()` `clearDiagnosticsBuffers()` ruft -
-    und zwar VOR dem Aufbau des neuen `WebSocket`, nicht erst danach (sonst
-    liefe die Momentaufnahme der alten Verbindung dem Leeren noch in die
-    Quere)."""
+    **What this test proves and what it does not.** Without a browser
+    engine there is no way to run here whether `connectDiagnosticsLive()`
+    actually clears `this.datagrams`/`this.commandLog`/`this.diagnosticsLogs`
+    at runtime, or whether switching views even calls this function. What is
+    proven is only that the DELIVERED source calls `clearDiagnosticsBuffers()`
+    within the body of `connectDiagnosticsLive()` - and specifically BEFORE
+    building the new `WebSocket`, not only afterwards (otherwise the old
+    connection's snapshot could still get in the way of the clearing)."""
     client, _, _ = api
     script = (await client.get("/static/app.js")).text
 
@@ -336,11 +334,11 @@ async def test_reconnecting_the_diagnostics_channel_clears_the_three_buffers_fir
 
 
 async def test_the_browser_and_the_server_agree_on_the_download_filenames(api):
-    """Seit die beiden Downloads ueber `fetch` statt ueber einen Link laufen,
-    vergibt der Browser den Dateinamen selbst - der Server schickt seinen
-    trotzdem weiter mit. Zwei Namen fuer dieselbe Datei an zwei Orten waeren
-    fuer sich genommen beide plausibel; ein Auseinanderlaufen faellt erst
-    dem Anwender auf, der die falsch benannte Datei in der Hand haelt."""
+    """Since both downloads run through `fetch` instead of a link, the
+    browser assigns the filename itself - the server still sends its own
+    along regardless. Two names for the same file in two places would each
+    look plausible on their own; a drift between them would only be
+    noticed by the user holding the wrongly named file."""
     client, _, _ = api
     script = (await client.get("/static/app.js")).text
     assert f'"{ARCHIVE_NAME}"' in script
@@ -348,119 +346,117 @@ async def test_the_browser_and_the_server_agree_on_the_download_filenames(api):
 
 
 async def test_the_page_declares_a_doctype(api):
-    """Ohne `<!doctype html>` rendert jeder Browser die Seite im
-    Quirks-Modus (`document.compatMode === "BackCompat"`) - einem
-    Kompatibilitaetsmodus fuer Seiten aus den Neunzigern, in dem unter
-    anderem das Boxmodell und die Prozenthoehen anders rechnen als in jeder
-    Vorgabe von `style.css`. Belegt wird hier nur, dass die Deklaration
-    ausgeliefert wird; ob das Layout dadurch anders aussieht, kann ohne
-    Browser-Engine kein Test dieser Suite sagen."""
+    """Without `<!doctype html>`, every browser renders the page in quirks
+    mode (`document.compatMode === "BackCompat"`) - a compatibility mode for
+    pages from the nineties, in which, among other things, the box model
+    and percentage heights compute differently from any rule in
+    `style.css`. What is proven here is only that the declaration is
+    delivered; whether the layout actually looks different as a result is
+    something no test in this suite can say without a browser engine."""
     client, _, _ = api
     page = (await client.get("/")).text
     assert page.lower().startswith("<!doctype html>")
 
 
 async def test_the_page_does_not_call_init_a_second_time(api):
-    """Alpine 3 ruft `init()` eines `x-data`-Objekts von sich aus auf. Ein
-    zusaetzliches `x-init="init()"` auf demselben Element ruft es ein
-    zweites Mal - und `init()` startet nach einer angemeldeten Sitzung den
-    Live-WebSocket: jeder offene Tab hielt so zwei Verbindungen, von denen
-    nur die zuletzt geoeffnete in `this.socket` landete; die andere blieb
-    unsichtbar und lief bis zum Schliessen des Tabs weiter.
+    """Alpine 3 calls `init()` of an `x-data` object on its own. An
+    additional `x-init="init()"` on the same element calls it a second
+    time - and `init()` starts the live WebSocket after a logged-in
+    session: every open tab thus held two connections, of which only the
+    most recently opened one ended up in `this.socket`; the other one
+    stayed invisible and kept running until the tab was closed.
 
-    **Was dieser Test belegt und was nicht.** Er belegt, dass keiner der
-    ausgelieferten `x-init`-Ausdruecke `init()` aufruft. Er belegt NICHT,
-    dass ein echter Seitenaufruf am Ende genau einen Beobachter
-    hinterlaesst - dafuer braeuchte es eine Browser-Engine, die Alpine
-    tatsaechlich ausfuehrt, und die gibt es in dieser Suite nicht
-    (`Runtime.observer_count()` nach einem simulierten Aufruf waere das
-    direkte Mass gewesen). Ein zweiter Aufruf auf einem anderen Weg - ein
-    `Alpine.start()` von Hand, ein zweites `x-data="app()"` - liefe an
-    dieser Sperre vorbei.
+    **What this test proves and what it does not.** It proves that none of
+    the delivered `x-init` expressions calls `init()`. It does NOT prove
+    that a real page load ends up leaving exactly one observer behind -
+    that would need a browser engine that actually runs Alpine, and this
+    suite does not have one (`Runtime.observer_count()` after a simulated
+    call would have been the direct measure). A second call via a
+    different route - an `Alpine.start()` by hand, a second
+    `x-data="app()"` - would slip past this guard.
 
-    2026-09-05/06: die Signalliste im Geraete-Modal nutzt seither selbst
-    `x-init`, um den Anfangszustand ihrer beiden `<details>`-Gruppen zu
-    setzen (siehe `index.html`), ohne mit dem hier bewachten Fehler etwas
-    zu tun zu haben. Die Sperre prueft daher seither nicht mehr, ob
-    `x-init` ueberhaupt vorkommt, sondern nur noch, ob einer seiner
-    Ausdruecke `init(` aufruft - fuer den bewachten Fehler ist das
-    mindestens so scharf wie vorher: ein `x-init="init()"` auf einem
-    verschachtelten Element, das die alte pauschale Pruefung nur zufaellig
-    mit erfasste, faellt der neuen absichtlich auf.
+    2026-09-05/06: the signal list in the device modal has since started
+    using `x-init` itself, to set the initial state of its two `<details>`
+    groups (see `index.html`), without having anything to do with the bug
+    guarded against here. Since then the guard therefore no longer checks
+    whether `x-init` occurs at all, only whether one of its expressions
+    calls `init(` - for the bug being guarded against, this is at least as
+    sharp as before: an `x-init="init()"` on a nested element, which the
+    old blanket check only caught by coincidence, is deliberately caught by
+    the new one.
 
-    Der Regex erfasst `x-init="..."` UND `x-init='...'` - alle Fundstellen
-    in dieser Codebasis sind heute doppelt zitiert, aber die Pruefung soll
-    nicht stillschweigend an einer einfach zitierten Fundstelle vorbeilaufen
-    (Fund 2, Review der Nacharbeit, 2026-09-06).
+    The regex matches `x-init="..."` AND `x-init='...'` - every occurrence
+    in this codebase today uses double quotes, but the check should not
+    silently slip past a singly-quoted occurrence (Finding 2, review of the
+    follow-up work, 2026-09-06).
 
-    Die Schleife allein prueft nichts, wenn der Regex ins Leere trifft -
-    faende eine kuenftige `x-init`-Schreibweise (andere Anfuehrung, anderes
-    Attribut-Format) keinen Treffer mehr, liefe die Sperre stillschweigend
-    leer statt fehlzuschlagen. Der zusaetzliche `assert` unten haelt die
-    Sperre scharf, indem er mindestens einen Treffer verlangt (Fund 8,
-    Review der Nacharbeit, 2026-09-06)."""
+    The loop alone proves nothing if the regex finds no match - if some
+    future `x-init` spelling (different quoting, different attribute
+    format) no longer matched, the guard would silently run empty instead
+    of failing. The extra `assert` below keeps the guard sharp by demanding
+    at least one match (Finding 8, review of the follow-up work,
+    2026-09-06)."""
     client, _, _ = api
     markup = _without_comments((await client.get("/")).text)
     assert 'x-data="app()"' in markup
     expressions = re.findall(r"x-init=[\"']([^\"']*)[\"']", markup)
-    assert expressions, "kein x-init in der ausgelieferten Seite gefunden"
+    assert expressions, "no x-init found in the delivered page"
     for expression in expressions:
-        assert "init(" not in expression, f"x-init ruft init() auf: {expression}"
+        assert "init(" not in expression, f"x-init calls init(): {expression}"
 
 
 async def test_the_signal_view_ships_a_functional_and_an_expert_block(api):
-    """Aufgabe 8: die Signalliste soll sich in „Funktional“ (offen) und
-    „Experte“ (zugeklappt, mit Anzahl) gliedern, statt alle 159 Signale
-    eines Geraets flach untereinander zu zeigen.
+    """Task 8: the signal list should be organised into "Functional" (open)
+    and "Expert" (collapsed, with a count), instead of showing all 159
+    signals of a device flatly one after another.
 
-    **Was dieser Test belegt und was nicht.** Belegt wird nur, dass die
-    ausgelieferten Dateien (`index.html`, `app.js`) die dafuer noetigen
-    Bausteine enthalten: beide Ueberschriften und - im Skript - dass beide
-    Listen tatsaechlich ueber `signal.functional` unterschieden werden
-    statt ueber eine zweite, in JavaScript nachgebaute Relevanz-Regel.
-    NICHT belegt wird, dass Alpine daraus zur Laufzeit tatsaechlich zwei
-    getrennte, korrekt gefilterte Bloecke macht, oder dass die Gliederung
-    fuer ein echtes Geraet richtig aussieht - dafuer braeuchte es eine
-    Browser-Engine, die es in dieser Suite nicht gibt (siehe
-    `test_the_page_does_not_call_init_a_second_time` oben).
+    **What this test proves and what it does not.** What is proven is only
+    that the delivered files (`index.html`, `app.js`) contain the building
+    blocks needed for that: both headings, and - in the script - that the
+    two lists are actually distinguished via `signal.functional` rather
+    than via a second relevance rule rebuilt in JavaScript. What is NOT
+    proven is that Alpine actually turns this into two separate, correctly
+    filtered blocks at runtime, or that the grouping looks right for a real
+    device - that would need a browser engine, which this suite does not
+    have (see `test_the_page_does_not_call_init_a_second_time` above).
 
-    Aufgabe 12: die beiden Gruppentitel tragen seither `t(...)` statt
-    fester deutscher Literale - siehe
-    `test_the_signal_group_titles_are_translated` fuer die Bindung selbst;
-    hier bleibt nur der Beleg, dass die Gruppierung (`signal.functional`)
-    unveraendert ist.
+    Task 12: the two group titles have carried `t(...)` instead of
+    fixed German literals ever since - see
+    `test_the_signal_group_titles_are_translated` for the binding itself;
+    what remains here is only the proof that the grouping
+    (`signal.functional`) is unchanged.
 
-    Aufgabe 6: die eine „Funktional"-Gruppe wich Endpunkt-Gruppen (siehe
-    `test_the_groups_follow_the_ranking_not_the_endpoint_number` fuer deren
-    Reihenfolge und Inhalt). Der Schluessel `group_functional` gibt es
-    seither nicht mehr; die urspruengliche Zusicherung dieses Tests -
-    Gruppentitel ueber `t(...)` statt fest verdrahtet - bleibt gueltig,
-    zielt jetzt aber auf den Endpunkt-Untertitel."""
+    Task 6: the single "Functional" group gave way to endpoint groups (see
+    `test_the_groups_follow_the_ranking_not_the_endpoint_number` for their
+    order and content). The `group_functional` key no longer
+    exists since then; the original assertion of this test -
+    group titles via `t(...)` instead of hardcoded - remains valid,
+    but now targets the endpoint subtitle."""
     client, _, _ = api
     script = (await client.get("/static/app.js")).text
     assert 't("web.signals.group_endpoint_subtitle"' in script
     assert 't("web.signals.group_expert")' in script
-    # Beide Listen lesen nur das von der API mitgelieferte Feld, keine
-    # eigene JavaScript-Fassung von `profiles.relevance.is_functional`.
+    # Both lists only read the field supplied by the API, no separate
+    # JavaScript version of `profiles.relevance.is_functional`.
     assert "signal.functional" in script
 
 
 async def test_the_signal_row_offers_a_resend_checkbox(api):
-    """Periodischer Resend als Opt-in (Entwurf 2026-09-04) - dieselbe Art
-    Beleg wie beim Funktional/Experte-Test oben: nur, dass die Bausteine
-    ausgeliefert werden und `signal.resend` lesen/schreiben, nicht dass
-    Alpine sie zur Laufzeit korrekt rendert (siehe dortiger Docstring).
+    """Periodic resend as an opt-in (design 2026-09-04) - the same kind of
+    proof as the functional/expert test above: only that the building
+    blocks are delivered and read/write `signal.resend`, not that Alpine
+    renders them correctly at runtime (see the docstring there).
 
-    Aufgabe 7 ersetzt das fruehere `x-show="signal.exportable"` am
-    umschliessenden `<label>` durch `:disabled="!signal.exportable"` am
-    `<input>` selbst: die Rasterzeile (`.signal-grid`) braucht in JEDER
-    Zeile dieselbe Anzahl Zellen, sonst verschieben sich die Spalten der
-    nicht-exportierbaren Signale gegen die Kopfzeile - genau das Fluchten,
-    das diese Aufgabe zusichert. Ein deaktiviertes statt verstecktes
-    Kaestchen belegt denselben Fall: `resend_marked()` kann fuer ein
-    nicht-exportierbares Signal ohnehin nie etwas bewirken (`_last_values`
-    bleibt dort leer, siehe `Runtime._cache_attribute`), es laesst sich nur
-    nicht mehr anklicken."""
+    Task 7 replaces the earlier `x-show="signal.exportable"` on the
+    enclosing `<label>` with `:disabled="!signal.exportable"` on the
+    `<input>` itself: the grid row (`.signal-grid`) needs the same
+    number of cells in EVERY row, otherwise the columns of the
+    non-exportable signals shift against the header row - exactly the
+    alignment this task guarantees. A disabled rather than hidden
+    checkbox covers the same case: `resend_marked()` can never have any
+    effect for a non-exportable signal anyway (`_last_values`
+    stays empty there, see `Runtime._cache_attribute`), it just can no
+    longer be clicked."""
     client, _, _ = api
     script = (await client.get("/static/app.js")).text
     page = (await client.get("/")).text
@@ -483,13 +479,13 @@ async def test_the_settings_view_offers_a_resend_interval_field(api):
 
 
 async def test_the_system_view_shows_the_running_version(api):
-    """Die Versionskarte (Task, Aufgabe "das Image ziehen") holt
-    `GET /api/version` und bindet das Ergebnis an vier Textbausteine -
-    derselbe Beleg wie bei den uebrigen Markup-Tests dieser Datei: nur,
-    dass Markup und Skript ausgeliefert werden, nicht dass Alpine sie zur
-    Laufzeit korrekt befuellt. Ein Tippfehler in `versionInfo` in einer der
-    beiden Dateien liefert sonst dauerhaft eine leere Karte aus, ohne dass
-    ein Test das bemerkt."""
+    """The version card (task "pull the image") fetches
+    `GET /api/version` and binds the result to four text modules -
+    the same proof as the other markup tests in this file: only that
+    markup and script are delivered, not that Alpine fills them correctly at
+    runtime. A typo in `versionInfo` in one of the
+    two files otherwise delivers a blank card permanently, with
+    no test noticing it."""
     client, _, _ = api
     page = (await client.get("/")).text
     script = (await client.get("/static/app.js")).text
@@ -893,25 +889,26 @@ async def test_the_update_card_css_classes_carry_the_rules_the_markup_relies_on(
 
 
 async def test_the_device_tile_no_longer_promises_a_ranking_it_does_not_have(api):
-    """Review-Fix Fix 9 (2026-09-03) hatte die Ueberschrift „Wichtigste
-    Werte“ absichtlich in „Signale (Anfang der Liste)“ umbenannt, weil die
-    gezeigten Signale damals nur nach `exportable` gefiltert waren - bei
-    der Testvorlage NetworkCommissioning und BasicInformation statt Ein/Aus
-    und Leistung. Seit `signal.functional` das echte Auswahlkriterium
-    mitliefert, ist die alte, ehrlichere Formulierung wieder zutreffend.
+    """Review fix Fix 9 (2026-09-03) had deliberately renamed the heading
+    "Most important values" to "Signals (start of the list)", because the
+    signals shown at the time were only filtered by `exportable` - for the
+    test template that meant NetworkCommissioning and BasicInformation
+    instead of on/off and power. Now that `signal.functional` supplies the
+    real selection criterion, the old, more honest wording is accurate
+    again.
 
-    Task 8 (Raster-Umbau, 2026-09-05) hat die eigene Werte-Ueberschrift
-    danach ganz entfernt: die Kachel zeigt heute (seit dem Wegfall des
-    Leitwerts, Entwurf 2026-09-07) alle funktionalen Signale gleichrangig
-    als fluchtendes Raster ohne Abschnittstitel - eine Ueberschrift ueber
-    der einzigen Werteliste einer sonst schon
-    kompakten Kachel waere reiner Platzverbrauch gewesen. Der Schluessel
-    `web.devices.values_heading` ist deshalb (Task 9) aus `strings.yaml`
-    entfernt und taucht im ausgelieferten Markup nicht mehr auf. Die
-    urspruengliche Sorge des
-    Tests - eine Ueberschrift, die mehr verspricht als die Kachel haelt -
-    bleibt trotzdem gueltig zu pruefen: die beiden ueberholten
-    Formulierungen duerfen nirgends mehr auftauchen."""
+    Task 8 (grid rework, 2026-09-05) then removed the dedicated values
+    heading entirely: the tile today (since the removal of the
+    primary signal, design 2026-09-07) shows all functional signals at
+    equal rank as an aligned grid with no section title - a heading over
+    the single value list of an already
+    compact tile would have been pure waste of space. The key
+    `web.devices.values_heading` was therefore (task 9) removed from
+    `strings.yaml` and no longer appears in the shipped markup. The
+    original concern of this
+    test - a heading that promises more than the tile delivers -
+    still remains valid to check: neither of the two outdated
+    phrasings may show up anywhere anymore."""
     client, _, _ = api
     page = (await client.get("/")).text
     assert "x-text=\"t('web.devices.values_heading')\"" not in page
@@ -920,14 +917,15 @@ async def test_the_device_tile_no_longer_promises_a_ranking_it_does_not_have(api
 
 
 async def test_the_export_preview_shows_how_many_signals_are_held_back(api):
-    """Nachbesserung Fix 3 (Abschlussreview): `hidden_count` kam schon vorher
-    aus `GET /api/export/preview`, aber nirgends in der Oberflaeche an - die
-    Vorschautabelle hatte Spalten fuer Eingaenge, Befehle und Uebersprungen,
-    keine fuer als Experte zurueckgehaltene Signale. Belegt wie die
-    uebrigen Markup-Tests in dieser Datei nur, dass die ausgelieferte Seite
-    die Spalte und ihre Bindung an `device.hidden_count` enthaelt - nicht,
-    dass Alpine sie zur Laufzeit korrekt befuellt (dafuer braeuchte es eine
-    Browser-Engine, siehe `test_the_page_does_not_call_init_a_second_time`)."""
+    """Follow-up fix, Fix 3 (final review): `hidden_count` already came
+    from `GET /api/export/preview` before this, but arrived nowhere in the
+    UI - the preview table had columns for inputs, commands, and skipped
+    items, none for signals held back as expert-only. Like the other
+    markup tests in this file, this proves only that the delivered page
+    contains the column and its binding to `device.hidden_count` - not
+    that Alpine actually populates it correctly at runtime (that would
+    need a browser engine, see
+    `test_the_page_does_not_call_init_a_second_time`)."""
     client, _, _ = api
     page = (await client.get("/")).text
     assert "x-text=\"t('web.export.col_expert_withheld')\"" in page
@@ -935,28 +933,28 @@ async def test_the_export_preview_shows_how_many_signals_are_held_back(api):
 
 
 # ---------------------------------------------------------------------------
-# Live-Diagnose (Aufgabe 6, Spec 10.5): die Ansicht „System" holt Logs,
-# UDP-Mitschnitt und Kommando-Log seither laufend ueber
-# `/api/diagnostics/live` statt einmalig per GET. Wie bei den uebrigen
-# Markup-Tests dieser Datei gilt: ohne Browser-Engine ist nur nachweisbar,
-# dass etwas ausgeliefert wird - nicht, dass es zur Laufzeit funktioniert.
+# Live diagnostics (Task 6, Spec 10.5): the "System" view has since fetched
+# logs, UDP capture, and the command log continuously via
+# `/api/diagnostics/live` instead of once via GET. As with the other markup
+# tests in this file: without a browser engine only that something is
+# delivered can be proven - not that it works at runtime.
 # ---------------------------------------------------------------------------
 
 
 async def test_the_system_view_connects_to_the_diagnostics_live_socket(api):
-    """Aufgabe 6, Schritt 1+2: der Diagnose-Kanal folgt demselben Muster wie
-    `connectLive()` fuer den Wertekanal, oeffnet aber nur beim Wechsel auf
-    „System" und schliesst beim Verlassen - `selectView` (app.js) ist dafuer
-    die einzige Stelle.
+    """Task 6, steps 1+2: the diagnostics channel follows the same pattern
+    as `connectLive()` for the values channel, but only opens on switching
+    to "System" and closes on leaving it - `selectView` (app.js) is the
+    single place for that.
 
-    **Was dieser Test belegt und was nicht.** Belegt wird, dass `app.js`
-    tatsaechlich `/api/diagnostics/live` anspricht und dass `selectView`
-    sowohl den oeffnenden als auch den schliessenden Aufruf enthaelt. NICHT
-    belegt wird, dass ein echter Seitenaufruf am Ende genau eine Verbindung
-    haelt, dass sie beim Verlassen der Ansicht tatsaechlich schliesst, oder
-    dass keine Wiederverbindung mehr geplant wird, nachdem sie geschlossen
-    wurde - dafuer braeuchte es eine Browser-Engine, die es in dieser Suite
-    nicht gibt (siehe `test_the_page_does_not_call_init_a_second_time`)."""
+    **What this test proves and what it does not.** What is proven is that
+    `app.js` actually contacts `/api/diagnostics/live` and that
+    `selectView` contains both the opening and the closing call. What is
+    NOT proven is that a real page load ends up holding exactly one
+    connection, that it actually closes on leaving the view, or that no
+    reconnection is scheduled anymore after it has closed - that would
+    need a browser engine, which this suite does not have (see
+    `test_the_page_does_not_call_init_a_second_time`)."""
     client, _, _ = api
     script = (await client.get("/static/app.js")).text
     assert "/api/diagnostics/live" in script
@@ -967,17 +965,17 @@ async def test_the_system_view_connects_to_the_diagnostics_live_socket(api):
 
 
 async def test_the_system_view_offers_the_four_diagnostics_controls(api):
-    """Aufgabenstellung, Schritt 3: „Drei Bereiche, darüber die vier
-    Bedienelemente aus dem Entwurf" - Pause/Fortsetzen, der Rauschfilter,
-    die Log-Stufe und eine Möglichkeit, die gehaltenen Zeilen zu leeren.
+    """Task description, step 3: "Three sections, above them the four
+    controls from the design" - pause/resume, the noise filter, the log
+    level, and a way to clear the held lines.
 
-    Belegt nur, dass Markup und Skript die vier Bindungen tragen - nicht,
-    dass ein Klick im Browser tatsaechlich etwas umschaltet (siehe
-    Testdocstring oben).
+    Proves only that markup and script carry the four bindings - not that
+    a click in the browser actually toggles anything (see the test
+    docstring above).
 
-    Seit Aufgabe 14 tragen die Beschriftungen `t(...)`-Aufrufe statt fester
-    deutscher Literale - hier wird nur noch belegt, dass die Bindungen
-    selbst (Attribute, Handler, Vorgabewerte) unveraendert sind."""
+    Since Task 14 the labels carry `t(...)` calls instead of fixed German
+    literals - here it is now only proven that the bindings themselves
+    (attributes, handlers, default values) are unchanged."""
     client, _, _ = api
     page = (await client.get("/")).text
     script = (await client.get("/static/app.js")).text
@@ -989,26 +987,25 @@ async def test_the_system_view_offers_the_four_diagnostics_controls(api):
     assert "x-text=\"diagnosticsPaused ? t('web.system.resume') : t('web.system.pause')\"" in page
     assert "clearDiagnosticsBuffers()" in page
     assert "x-text=\"t('web.system.clear')\"" in page
-    # Vorgaben aus der Aufgabenstellung (Schritt 2): Filter aus, Log-Stufe
+    # Defaults from the task description (step 2): filter off, log level
     # "INFO".
     assert "hideNoise: true" in script
     assert 'logLevel: "INFO"' in script
 
 
 async def test_the_diagnostics_filter_only_affects_display_not_held_lines(api):
-    """Entwurf 4 (Aufgabenstellung): ein Filter darf nur die Anzeige
-    betreffen, nicht die gehaltenen Zeilen - wer ihn ausschaltet, muss die
-    vorhandenen Zeilen sofort sehen, nicht auf neue warten. Umgesetzt als
-    zwei getrennte Dinge in `app.js`: `datagrams`/`diagnosticsLogs` halten
-    JEDE eingetroffene Zeile, `visibleDatagrams()`/`visibleDiagnosticsLogs()`
-    filtern erst beim Anzeigen daraus.
+    """Design item 4 (task description): a filter may only affect the
+    display, not the held lines - whoever switches it off must see the
+    existing lines immediately, not wait for new ones. Implemented as two
+    separate things in `app.js`: `datagrams`/`diagnosticsLogs` hold EVERY
+    line that arrives, `visibleDatagrams()`/`visibleDiagnosticsLogs()`
+    only filter from them when displaying.
 
-    Belegt wird, dass das Markup tatsaechlich an die filternden Funktionen
-    bindet statt an die rohen Listen, und dass diese Funktionen die rohen
-    Listen unveraendert lassen (kein `datagrams =`/`diagnosticsLogs =`
-    innerhalb ihres Rumpfs). NICHT belegt wird, dass ein Umschalten im
-    Browser die Anzeige tatsaechlich ohne Verzoegerung aktualisiert - dafuer
-    braeuchte es eine Browser-Engine."""
+    Proves that the markup actually binds to the filtering functions
+    instead of the raw lists, and that these functions leave the raw lists
+    unchanged (no `datagrams =`/`diagnosticsLogs =` within their body). It
+    does NOT prove that toggling in the browser actually updates the
+    display without delay - that would need a browser engine."""
     client, _, _ = api
     page = (await client.get("/")).text
     script = (await client.get("/static/app.js")).text
@@ -1022,54 +1019,53 @@ async def test_the_diagnostics_filter_only_affects_display_not_held_lines(api):
 
 
 async def test_the_noise_rule_is_written_down(api):
-    """Die Aufgabenstellung ueberlaesst bewusst, woran „Rauschen" (der
-    Heartbeat und ein Full-Resend) erkannt wird - verlangt aber, dass die
-    gewaehlte Regel als Kommentar nachlesbar ist, nicht nur implizit im Code
-    steckt: „ein Filter, dessen Kriterium niemand nachlesen kann, ist beim
-    naechsten Zweifel wertlos."
+    """The task description deliberately leaves open how "noise" (the
+    heartbeat and a full resend) is recognised - but requires that the
+    chosen rule is readable as a comment, not just implicit in the code:
+    "a filter whose criterion nobody can look up is worthless the next
+    time it's doubted."
 
-    Seit der Nachbesserung (Task 6, 2026-09-03) liegt das Kriterium NICHT
-    mehr im Browser: eine fruehere Regel ueber die Ankunftsrate markierte
-    jeden schnell aufeinanderfolgenden, aber echten Wertewechsel (z. B.
-    Impuls und Zaehler aus `Runtime.on_event`) faelschlich als Rauschen -
-    das gewaehlte Kriterium ist stattdessen das vom Server mitgeschickte
-    `forced`-Feld (`DatagramLogEntry.forced`).
+    Since the follow-up fix (Task 6, 2026-09-03), the criterion no longer
+    lives in the browser: an earlier rule based on arrival rate wrongly
+    marked any fast succession of genuine value changes (e.g. a pulse and
+    a counter from `Runtime.on_event`) as noise - the chosen criterion is
+    instead the `forced` field sent along by the server
+    (`DatagramLogEntry.forced`).
 
-    Belegt nur, dass ein solcher Kommentar existiert und Feld, Quelle und
-    die widerlegte fruehere Regel beim Namen nennt - nicht, dass die
-    Unterscheidung zur Laufzeit korrekt zwischen Rauschen und echten
-    Aenderungen trennt (siehe dafuer `tests/loxone/test_sender.py`,
-    `test_the_forced_field_reflects_why_a_datagram_was_sent_not_when`, und
+    Proves only that such a comment exists and names the field, its
+    source, and the disproven earlier rule by name - not that the
+    distinction actually separates noise from genuine changes correctly at
+    runtime (for that, see `tests/loxone/test_sender.py`,
+    `test_the_forced_field_reflects_why_a_datagram_was_sent_not_when`, and
     `tests/api/test_diagnostics_live.py`,
     `test_a_datagram_message_carries_why_it_was_sent`)."""
     client, _, _ = api
     script = (await client.get("/static/app.js")).text
     assert "message.forced" in script
     assert "DatagramLogEntry.forced" in script
-    assert "Schwall" in script
-    assert "Full-Resend" in script
+    assert "burst" in script
+    assert "full resend" in script
 
 
 async def test_the_export_field_asks_for_the_bridge_not_the_miniserver(api):
-    """Der Wert dieses Feldes wird zur `Address` des virtuellen
-    UDP-Eingangs und zum Rumpf der Kommando-URLs (`http://<ip>:<listen>`) -
-    beides die Adresse DIESER Bruecke, nie die des Miniservers. War das Feld
-    mit "Miniserver-IP" beschriftet, trug der Anwender folgerichtig die
-    falsche der beiden Adressen ein und bekam Vorlagen, die richtig aussehen
-    und stumm bleiben: die Kommandos gingen an den Miniserver selbst zurueck,
-    und dessen Adressfilter verwarf die Datagramme der Bruecke - ohne
-    Fehlermeldung, genau der Fehlschlagtyp, den Spec 8.1 ausschliessen
-    will.
+    """This field's value becomes the `Address` of the virtual UDP input
+    and the body of the command URLs (`http://<ip>:<listen>`) - both of
+    them the address of THIS bridge, never the Miniserver's. When the
+    field was labelled "Miniserver IP", the user consequently entered the
+    wrong one of the two addresses and got configurations that looked
+    correct and stayed silent: the commands went back to the Miniserver
+    itself, and its address filter discarded the bridge's datagrams - with
+    no error message, exactly the kind of silent failure Spec 8.1 aims to
+    rule out.
 
-    Zwei Stellen zeigen das Feld (Geraete-Dashboard-Entwurf, Abschnitt 4/5):
-    editierbar in Einstellungen (`settingsDraft.bridge_ip`) - dort tippt
-    jemand tatsaechlich hinein, dort waere eine falsche Beschriftung am
-    teuersten - und schreibgeschuetzt im Export-Tab (`bridgeSettings.
-    bridge_ip`), das denselben Wert nur noch anzeigt.
+    Two places show the field (device dashboard design, sections 4/5):
+    editable in settings (`settingsDraft.bridge_ip`) - where someone
+    actually types into it, where a wrong label would be most costly - and
+    read-only in the export tab (`bridgeSettings.bridge_ip`), which only
+    displays the same value.
 
-    Beide Stellen tragen inzwischen `t('web.bridge_ip_label')` - denselben
-    Schluessel: der Export-Tab seit Aufgabe 13, die Einstellungen-Ansicht
-    seit Aufgabe 15."""
+    Both places have since carried `t('web.bridge_ip_label')` - the same
+    key: the export tab since Task 13, the settings view since Task 15."""
     client, _, _ = api
     markup = _without_comments((await client.get("/")).text)
 
@@ -1085,27 +1081,27 @@ async def test_the_export_field_asks_for_the_bridge_not_the_miniserver(api):
 
 
 async def test_the_age_is_a_tooltip_and_the_change_is_a_highlight(api):
-    """Die Altersangabe stand frueher neben dem Wert und aenderte jede
-    Sekunde ihre Breite - das schob die Zeile hin und her und zog den Blick
-    auf die Bewegung statt auf die Aenderung (2026-09-03).
+    """The age indicator used to sit next to the value and change its
+    width every second - that shifted the row back and forth and drew the
+    eye to the movement instead of the change (2026-09-03).
 
-    Jetzt traegt sie der `title` der Zelle, und die Aenderung zeigt eine
-    Hervorhebung, die wieder verblasst. Belegt ist damit, dass beides
-    ausgeliefert wird - NICHT, dass es im Browser so aussieht: in dieser
-    Suite laeuft keine Engine, die CSS anwendet oder Alpine ausfuehrt.
+    Now the cell's `title` carries it, and the change shows a highlight
+    that then fades again. This proves that both are delivered - NOT that
+    they look that way in the browser: no engine that applies CSS or runs
+    Alpine runs in this suite.
     """
     client, _, _ = api
     page = (await client.get("/")).text
     assert "signalAgeTitle(signal)" in page
     assert "'value-fresh': signalIsFresh(signal)" in page
-    # Nirgends mehr im Textfluss - das war die Ursache des Zappelns.
+    # No longer anywhere in the text flow - that was the cause of the jitter.
     assert 'x-text="signalSeenText(signal)"' not in page
 
 
 async def test_the_highlight_cannot_change_the_width_of_a_cell(api):
-    """Polster und Radius muessen am Grundzustand haengen, nicht an der
-    Hervorhebung: kaemen sie mit ihr dazu, waere das Zappeln zurueck - nur
-    an einer anderen Stelle."""
+    """Padding and radius must belong to the base state, not to the
+    highlight: if they were added along with it, the jitter would be back
+    - just in a different place."""
     client, _, _ = api
     css = (await client.get("/static/style.css")).text
     base = css.split(".value {", 1)[1].split("}", 1)[0]
@@ -1117,24 +1113,24 @@ async def test_the_highlight_cannot_change_the_width_of_a_cell(api):
 
 
 # ---------------------------------------------------------------------------
-# Ein Geraet ohne Leitsignal (Kachel-Kopfzeile).
+# A device without a primary signal (tile header).
 #
-# Die einzige Stelle dieser Suite, die `app.js` wirklich AUSFUEHRT, statt den
-# ausgelieferten Text zu lesen. Der Grund: der Fehler, um den es hier geht,
-# steckt nicht im Markup, sondern im Verhalten der drei Helfer - eine
-# Textstichprobe auf `if (!signal)` wuerde auch dann gruen bleiben, wenn die
-# Bedingung das Falsche tut. Alpine laeuft trotzdem nicht mit; gepruefte
-# Einheit ist das von `app()` gelieferte Zustandsobjekt.
+# The only place in this suite that actually EXECUTES `app.js`, instead of
+# reading the delivered text. The reason: the bug at issue here does not
+# live in the markup but in the behaviour of the three helpers - a text
+# spot check for `if (!signal)` would stay green even if the condition
+# does the wrong thing. Alpine still does not run along with it; the unit
+# under test is the state object delivered by `app()`.
 # ---------------------------------------------------------------------------
 
 NODE = shutil.which("node")
 
 
 def _app_state(setup: str = "") -> dict:
-    """Laedt `app.js` in node, ruft `app()` und fuehrt `setup` darauf aus.
+    """Loads `app.js` in node, calls `app()`, and runs `setup` on it.
 
-    `app.js` ist ein einfaches Skript ohne Modulsystem (bewusst, siehe Kopf
-    der Datei) - deshalb `new Function` statt eines Imports.
+    `app.js` is a simple script with no module system (deliberately, see
+    the header of the file) - hence `new Function` instead of an import.
     """
     script = f"""
       const fs = require("node:fs");
@@ -1142,9 +1138,9 @@ def _app_state(setup: str = "") -> dict:
       const state = new Function(src + "\\nreturn app();")();
       {setup}
     """
-    # `check=False`, weil die Zeile darunter denselben Fehlschlag mit dem
-    # nuetzlicheren Text meldet: `stderr` zeigt, WORAN node gescheitert ist,
-    # `CalledProcessError` nur, DASS es gescheitert ist.
+    # `check=False`, because the line below reports the same failure with
+    # the more useful text: `stderr` shows WHAT node failed on,
+    # `CalledProcessError` only THAT it failed.
     result = subprocess.run(
         [NODE, "-e", script], capture_output=True, text=True, timeout=30, check=False
     )
@@ -1152,7 +1148,7 @@ def _app_state(setup: str = "") -> dict:
     return json.loads(result.stdout)
 
 
-@pytest.mark.skipif(NODE is None, reason="node wird fuer diesen Test gebraucht")
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
 def test_a_cold_load_during_the_restart_window_still_starts_the_update_poll():
     """Review fix, Important 1: `loadSystem()` used to await `GET
     /api/version` first, inside the same `try` as `loadUpdateStatus()`
@@ -1910,23 +1906,23 @@ def test_an_expired_session_stops_the_update_poll_instead_of_retrying_forever():
     assert values["updateError"] is None
 
 
-@pytest.mark.skipif(NODE is None, reason="node wird fuer diesen Test gebraucht")
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
 def test_the_signal_helpers_tolerate_null_without_throwing():
-    """Frueher `test_a_device_without_a_lead_signal_does_not_throw_in_any_binding`.
+    """Formerly `test_a_device_without_a_lead_signal_does_not_throw_in_any_binding`.
 
-    Der Aufhaenger war der Leitwert: zwischen `GET /api/devices` und
-    `GET /api/devices/<id>/signals` liegt ein Rendering-Durchlauf, in dem
-    `signalsByDevice` fuer das Geraet noch LEER ist - `leadSignalFor`
-    lieferte dann `null`. Das `x-show` auf der Huelle half nicht: es setzt
-    nur `display`, es haelt Alpine NICHT davon ab, die Ausdruecke der
-    Kinder auszuwerten. Die drei Helfer lasen also `signal.key` auf `null`
-    und warfen - dreimal pro Geraet, bei jedem Durchlauf.
+    The trigger was the primary signal: between `GET /api/devices` and
+    `GET /api/devices/<id>/signals` there is a rendering pass in which
+    `signalsByDevice` for the device is still EMPTY - `leadSignalFor`
+    then returned `null`. The `x-show` on the wrapper did not help: it
+    only sets `display`, it does NOT stop Alpine from evaluating the
+    children's expressions. So the three helpers read `signal.key` on
+    `null` and threw - three times per device, on every pass.
 
-    Diesen Aufrufer gibt es nicht mehr (Entwurf 2026-09-07): das `x-for`
-    des Werterasters laeuft ueber eine leere Liste und wertet gar nichts
-    aus. Die Duldsamkeit der Helfer bleibt trotzdem stehen und wird
-    weiterhin belegt - der Test fragt sie jetzt direkt statt ueber einen
-    Aufrufer, den es nicht mehr gibt.
+    This caller no longer exists (design 2026-09-07): the `x-for`
+    of the value grid runs over an empty list and evaluates nothing
+    at all. The helpers' tolerance nonetheless stays in place and is
+    still checked here - the test now asks them directly instead of via
+    a caller that no longer exists.
     """
     values = _app_state(
         """
@@ -1945,21 +1941,20 @@ def test_the_signal_helpers_tolerate_null_without_throwing():
     )
 
     for name, call in values["calls"].items():
-        assert call["ok"], f"{name} warf: {call.get('error')}"
+        assert call["ok"], f"{name} threw: {call.get('error')}"
 
-    # Was die Kachel in diesem Zustand zeigt: keine Hervorhebung, kein
-    # Tooltip - und der Strich, den `formatValue` fuer "kein Wert" fuehrt.
+    # What the tile shows in this state: no highlight, no tooltip - and the
+    # dash that `formatValue` uses for "no value".
     assert values["calls"]["signalIsFresh"]["value"] is False
     assert values["calls"]["signalAgeTitle"]["value"] in (None, "")
     assert values["calls"]["liveValueOf"]["value"] is None
     assert values["formatted"] == "-"
 
 
-@pytest.mark.skipif(NODE is None, reason="node wird fuer diesen Test gebraucht")
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
 def test_a_signal_that_exists_is_unaffected_by_the_guard():
-    """Die Absicherung darf den Normalfall nicht verbiegen: ein echtes
-    Signal muss weiter seinen Live-Wert, seine Hervorhebung und seinen
-    Tooltip bekommen."""
+    """The safeguard must not distort the normal case: a real signal must
+    still get its live value, its highlight, and its tooltip."""
     values = _app_state(
         """
         const signal = { key: "d1_1_onoff", title: "Zustand", value: false, functional: true };
@@ -1980,22 +1975,22 @@ def test_a_signal_that_exists_is_unaffected_by_the_guard():
     assert values["title"]
 
 
-@pytest.mark.skipif(NODE is None, reason="node wird fuer diesen Test gebraucht")
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
 def test_the_groups_follow_the_ranking_not_the_endpoint_number():
-    """Der Grund fuer die Gruppen: `press` steht zweimal in der Liste -
-    1/59/1 und 2/59/1, also zwei verschiedene Tasten derselben
-    Fernbedienung. Ohne Gruppe ist das zweimal dasselbe Wort ohne Auskunft,
-    welche gemeint ist.
+    """The reason for the groups: `press` appears twice in the list -
+    1/59/1 and 2/59/1, i.e. two different buttons of the same
+    remote. Without a group, that is the same word twice with no clue
+    which one is meant.
 
-    Und die Reihenfolge: "Geraet" (Endpunkt 0, nur die Batterie) steht
-    ZULETZT, obwohl es die kleinste Endpunktnummer traegt - die Gruppen
-    uebernehmen die Reihenfolge des ersten Auftretens in der bereits
-    gerangten Liste, sie sortieren nicht selbst. Genau das kann eine
-    Zeichenketten-Suche in `app.js` nicht belegen.
+    And the order: "Geraet" (endpoint 0, only the battery) comes
+    LAST, even though it carries the lowest endpoint number - the groups
+    take over the order of first occurrence in the already
+    ranked list, they do not sort by themselves. This is exactly what a
+    string search in `app.js` cannot prove.
 
-    `t()` liefert ohne geladene Uebersetzungstabelle den Schluessel selbst
-    zurueck (siehe `t` in app.js) - der Titel der Experte-Gruppe ist hier
-    deshalb der Schluessel, und das genuegt fuer die Zusicherung."""
+    `t()` returns the key itself when no translation table is loaded
+    (see `t` in app.js) - the title of the expert group here is
+    therefore the key, and that is enough for the assertion."""
     values = _app_state(
         """
         state.signalsByDevice = { 1: [
@@ -2021,18 +2016,18 @@ def test_the_groups_follow_the_ranking_not_the_endpoint_number():
     assert [g["title"] for g in values[:3]] == ["Taste 1", "Taste 2", "Gerät"]
     assert values[0]["signals"] == ["d1_1_press"]
     assert values[1]["signals"] == ["d1_2_press"]
-    # 156 Signale ueber alle Endpunkte zu gliedern erzeugte nur mehr
-    # Ueberschriften - der Experte-Block bleibt EINE zugeklappte Gruppe.
+    # Structuring 156 signals across all endpoints would only produce more
+    # headings - the expert block stays ONE collapsed group.
     assert values[3]["signals"] == ["d1_0_vendor"]
     assert values[3]["collapsible"] is True
     assert [g["collapsible"] for g in values[:3]] == [False, False, False]
 
 
-@pytest.mark.skipif(NODE is None, reason="node wird fuer diesen Test gebraucht")
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
 def test_a_device_without_functional_signals_yields_only_the_expert_group():
-    """Der Zustand, fuer den der Hinweis `none_functional` jetzt AUSSERHALB
-    der Gruppenschleife steht: eine Endpunktgruppe ist nie leer, es gibt
-    dann schlicht keine."""
+    """The state for which the `none_functional` notice now sits OUTSIDE
+    the group loop: an endpoint group is never empty, in that case
+    there simply is none."""
     values = _app_state(
         """
         state.signalsByDevice = { 1: [
@@ -2047,25 +2042,25 @@ def test_a_device_without_functional_signals_yields_only_the_expert_group():
 
 
 def test_first_signals_for_filters_orders_and_caps_at_the_preview_limit():
-    """Nacharbeit 2026-09-07, Fund 3: Der Umbau auf das Werteraster (Entwurf
-    2026-09-05) hat aus `test_a_signal_that_exists_is_unaffected_by_the_guard`
-    die Zeile `assert values["lead"] == "d1_1_onoff"` entfernt - formal eine
-    Aussage ueber das inzwischen geloeschte `leadSignalFor`. Tatsaechlich war
-    das aber die einzige Assertion im Repo, die `firstSignalsFor` in einem
-    echten `node`-Prozess ausfuehrte. `test_the_value_grid_now_carries_every_
-    functional_signal` (tests/api/test_web.py) belegt seither nur noch, dass
-    `x-for="signal in firstSignalsFor(device.id)"` als String ausgeliefert
-    wird - nicht, was der Helfer selbst tut. Dieser Test schliesst die
-    Luecke eigenstaendig, statt sie an einen Test mit anderem Zweck
-    anzuflanschen.
+    """Follow-up 2026-09-07, finding 3: the rework to the value grid (design
+    2026-09-05) removed the line `assert values["lead"] == "d1_1_onoff"`
+    from `test_a_signal_that_exists_is_unaffected_by_the_guard` - formally a
+    statement about the now-deleted `leadSignalFor`. In fact, though,
+    that was the only assertion in the repo that ran `firstSignalsFor` in a
+    real `node` process. `test_the_value_grid_now_carries_every_
+    functional_signal` (tests/api/test_web.py) has since only proven that
+    `x-for="signal in firstSignalsFor(device.id)"` is shipped as a string
+    - not what the helper itself does. This test closes the
+    gap on its own, instead of bolting it onto a test with a
+    different purpose.
 
-    Geprueft werden alle drei Aufgaben von `firstSignalsFor` /
-    `remainingSignalCount` zusammen (app.js): nicht-funktionale Signale
-    fallen durch das `signal.functional`-Sieb, die Reihenfolge der
-    Eingabe-Liste bleibt erhalten (kein Sortieren, kein Umschichten), und
-    ab mehr als `FUNCTIONAL_PREVIEW_LIMIT` (6) funktionalen Signalen liefert
-    `firstSignalsFor` genau sechs zurueck, waehrend `remainingSignalCount`
-    den Rest zaehlt."""
+    All three responsibilities of `firstSignalsFor` /
+    `remainingSignalCount` are checked together (app.js): non-functional
+    signals fall through the `signal.functional` filter, the order of
+    the input list is preserved (no sorting, no reshuffling), and
+    once there are more than `FUNCTIONAL_PREVIEW_LIMIT` (6) functional
+    signals, `firstSignalsFor` returns exactly six, while
+    `remainingSignalCount` counts the rest."""
     values = _app_state(
         """
         const signals = [
@@ -2087,28 +2082,27 @@ def test_first_signals_for_filters_orders_and_caps_at_the_preview_limit():
         """
     )
 
-    # Sieben der neun Signale sind funktional (s1, s3, s4, s6, s7, s8, s9);
-    # s2 und s5 muessen draussen bleiben, und die Reihenfolge der restlichen
-    # sieben bleibt die der Eingabe-Liste - kein Sortieren nach Schluessel
-    # oder sonst etwas.
+    # Seven of the nine signals are functional (s1, s3, s4, s6, s7, s8, s9);
+    # s2 and s5 must stay out, and the order of the remaining
+    # seven stays that of the input list - no sorting by key
+    # or anything else.
     assert values["first"] == ["s1", "s3", "s4", "s6", "s7", "s8"]
-    # Sieben funktionale Signale, Deckel bei sechs: genau eines bleibt uebrig.
+    # Seven functional signals, capped at six: exactly one is left over.
     assert values["remaining"] == 1
 
 
-@pytest.mark.skipif(NODE is None, reason="node wird fuer diesen Test gebraucht")
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
 def test_live_values_are_shown_with_at_most_two_decimal_places():
-    """Die Live-Werte kommen aus Matter-Attributen als ganzzahlige
-    Hundertstel; das Umrechnen erbt die Fliesskomma-Unschaerfe, und
-    `String(value)` schrieb sie ungekuerzt in die Kachel
-    (22.529999999999998 fuer 22.53). Zwei Nachkommastellen sind die
-    Genauigkeit, die das Geraet ueberhaupt liefert - alles dahinter ist
-    Rauschen, das die Spalte sprengt.
+    """The live values come from Matter attributes as integer
+    hundredths; converting them inherits the floating-point fuzz, and
+    `String(value)` used to write them into the tile unabridged
+    (22.529999999999998 for 22.53). Two decimal places are the
+    precision the device delivers in the first place - everything
+    beyond that is noise that blows up the column.
 
-    Geprueft wird hier das VERHALTEN, nicht der ausgelieferte Text: ob
-    gerundet oder abgeschnitten wird und was mit einem glatten Wert
-    passiert, steht in keiner Zeichenkette, die man in `app.js` suchen
-    koennte.
+    What is checked here is the BEHAVIOR, not the shipped text: whether
+    it rounds or truncates and what happens with a clean value is not
+    in any string that one could search for in `app.js`.
     """
     values = _app_state(
         """
@@ -2120,52 +2114,51 @@ def test_live_values_are_shown_with_at_most_two_decimal_places():
         """
     )
 
-    assert values[0] == "22.53", "die Fliesskomma-Unschaerfe verschwindet"
-    assert values[1] == "21", "ein glatter Wert bekommt keine Nullen angehaengt"
-    assert values[2] == "21.5", "eine einzelne Nachkommastelle bleibt eine"
-    assert values[3] == "21.01", "es wird gerundet, nicht abgeschnitten"
+    assert values[0] == "22.53", "the floating-point fuzz disappears"
+    assert values[1] == "21", "a clean value gets no zeros appended"
+    assert values[2] == "21.5", "a single decimal place stays one"
+    assert values[3] == "21.01", "it rounds, it does not truncate"
     assert values[4] == "-3.14"
     assert values[5] == "1234.57"
     assert values[6] == "0"
-    # Was keine Zahl ist, wird auch nicht als eine behandelt: eine
-    # Zeichenkette aus der Live-Verbindung zu zerlegen hiesse raten, welcher
-    # Teil davon eine Zahl sein soll.
+    # What is not a number is also not treated as one: parsing a
+    # string from the live connection would mean guessing which
+    # part of it is supposed to be a number.
     assert values[7] == "22.5299"
-    # Und die beiden Sonderwege von `formatValue` bleiben, wie sie waren
-    # (die Uebersetzungstabelle ist in node nicht geladen, deshalb steht
-    # hier der Schluessel statt "wahr"/"falsch" - siehe
+    # And the two special paths of `formatValue` stay as they were
+    # (the translation table is not loaded in node, so the key
+    # appears here instead of "wahr"/"falsch" - see
     # `test_formatting_helpers_translate_and_the_locale_follows_the_language`
-    # fuer die Uebersetzung selbst).
+    # for the translation itself).
     assert values[8] == "web.format.true"
     assert values[9] == "web.format.false"
     assert values[10] == "-"
 
 
 # ---------------------------------------------------------------------------
-# Uebersetzungsmechanismus (Aufgabe 8). Diese Aufgabe uebersetzt noch KEINEN
-# eigenen WebUI-Text (das ist Aufgabe 9+) - sie baut nur die Leitung:
-# `t()` als globale, top-level Funktion in app.js (erreichbar auch aus
-# requestJson/requestDownload, die keinen `this`-Zugriff auf das
-# Alpine-Bauteil haben), `stringsReady`/`language`/`loadI18n()` als
-# reaktive Bestandteile des `app()`-Objekts, und drei zusaetzliche
-# stringsReady-Gatter in index.html nach demselben Muster wie das
-# bestehende authReady.
+# Translation mechanism (Task 8). This task does not yet translate any
+# WebUI text of its own (that is Task 9+) - it only builds the plumbing:
+# `t()` as a global, top-level function in app.js (also reachable from
+# requestJson/requestDownload, which have no `this` access to the Alpine
+# component), `stringsReady`/`language`/`loadI18n()` as reactive members
+# of the `app()` object, and three additional stringsReady gates in
+# index.html following the same pattern as the existing authReady.
 # ---------------------------------------------------------------------------
 
 
 async def test_the_translation_helper_is_a_global_top_level_function(api):
-    """`t()` darf keine Methode von app() sein - `requestJson`/
-    `requestDownload` (app.js, vor `function app()`) haben keinen Zugriff
-    auf `this` des Alpine-Bauteils, brauchen aber selbst uebersetzten Text
-    (spaetere Aufgaben). Deshalb liegt `t()` als Top-Level-Funktion vor
-    `function app()`, gestuetzt auf die ebenfalls modul-globale,
-    nicht-reaktive Variable `translationStrings` - keins von beidem ein
-    Feld des app()-Objekts.
+    """`t()` must not be a method of app() - `requestJson`/
+    `requestDownload` (app.js, before `function app()`) have no access to
+    `this` of the Alpine component, but themselves need translated text
+    (later tasks). That is why `t()` sits as a top-level function ahead of
+    `function app()`, backed by the likewise module-global, non-reactive
+    variable `translationStrings` - neither one a field of the app()
+    object.
 
-    Belegt nur, dass der ausgelieferte Quelltext diese Bausteine in dieser
-    Reihenfolge enthaelt - nicht, dass Alpine `t(...)` zur Laufzeit
-    tatsaechlich ueber den umgebenden Skript-Scope aufloest (dafuer
-    braeuchte es eine Browser-Engine)."""
+    Proves only that the delivered source contains these building blocks
+    in this order - not that Alpine actually resolves `t(...)` at runtime
+    via the surrounding script scope (that would need a browser
+    engine)."""
     client, _, _ = api
     script = (await client.get("/static/app.js")).text
     assert "function t(key" in script
@@ -2176,10 +2169,10 @@ async def test_the_translation_helper_is_a_global_top_level_function(api):
 
 
 async def test_strings_ready_and_language_are_reactive_fields_on_app(api):
-    """Anders als t()/translationStrings BLEIBEN stringsReady/language
-    Felder auf dem app()-Objekt - die muessen reaktiv sein, damit
-    x-if="stringsReady && ..." in index.html tatsaechlich neu rendert,
-    sobald loadI18n() fertig ist."""
+    """Unlike t()/translationStrings, stringsReady/language REMAIN fields
+    on the app() object - they must be reactive, so that
+    x-if="stringsReady && ..." in index.html actually re-renders once
+    loadI18n() has finished."""
     client, _, _ = api
     script = (await client.get("/static/app.js")).text
     app_body = script[script.index("function app()") :]
@@ -2189,10 +2182,10 @@ async def test_strings_ready_and_language_are_reactive_fields_on_app(api):
 
 
 async def test_load_i18n_sets_the_document_language_via_dom_assignment(api):
-    """<html lang> (index.html) liegt AUSSERHALB des x-data-Bereichs (der
-    erst bei <body> beginnt) - eine Alpine-Direktive koennte dort nicht
-    binden. Gesetzt wird es deshalb per gewoehnlicher DOM-Zuweisung
-    innerhalb von loadI18n(), nicht ueber :lang="..." in index.html."""
+    """<html lang> (index.html) sits OUTSIDE the x-data area (which only
+    begins at <body>) - an Alpine directive could not bind there. It is
+    therefore set via a plain DOM assignment inside loadI18n(), not via
+    :lang="..." in index.html."""
     client, _, _ = api
     script = (await client.get("/static/app.js")).text
     page = (await client.get("/")).text
@@ -2204,24 +2197,22 @@ async def test_load_i18n_sets_the_document_language_via_dom_assignment(api):
 
 
 async def test_load_i18n_catches_a_failed_request_so_init_still_proceeds(api):
-    """Regressionstest: anders als ihre Schwester `loadAuthInfo()` (die ein
-    `catch` UND ein `finally` traegt) hatte `loadI18n()` bisher NUR ein
-    `finally` - ein Fehlschlag von `GET /api/i18n` (Netzwerkaussetzer, ein
-    5xx) lief dadurch als unbehandelte Ablehnung durch `init()`s
-    `await Promise.all([this.loadI18n(), this.loadAuthInfo()])` durch, und
-    `init()` selbst umschliesst diese Zeile mit keinem eigenen `try`/`catch`
-    - mit der Folge, dass `if (this.authenticated) { await this.startApp(); }`
-    danach NIE lief, selbst wenn `loadAuthInfo()` fuer sich genommen
-    erfolgreich war und die Person angemeldet ist. Sichtbare Auswirkung: ein
-    voruebergehender Fehlschlag von `/api/i18n` bei bereits gueltiger
-    Sitzung liess die App nie Geraete/Daten laden, ohne jede sichtbare
-    Fehlermeldung.
+    """Regression test: unlike its sibling `loadAuthInfo()` (which carries
+    both a `catch` AND a `finally`), `loadI18n()` previously had ONLY a
+    `finally` - a failure of `GET /api/i18n` (a network hiccup, a 5xx)
+    would therefore run as an unhandled rejection through `init()`'s
+    `await Promise.all([this.loadI18n(), this.loadAuthInfo()])`, and
+    `init()` itself wraps this line in no `try`/`catch` of its own - with
+    the consequence that `if (this.authenticated) { await this.startApp(); }`
+    would then NEVER run, even if `loadAuthInfo()` on its own succeeded and
+    the person is logged in. Visible effect: a transient failure of
+    `/api/i18n` with an already-valid session meant the app never loaded
+    devices/data, without any visible error message.
 
-    Belegt nur, dass der ausgelieferte Quelltext innerhalb des Rumpfs von
-    `loadI18n()` ein `catch`-Bloch enthaelt, das den Fehler protokolliert -
-    nicht, dass ein echter Netzwerkfehler im Browser zur Laufzeit
-    tatsaechlich dort landet und `startApp()` danach trotzdem laeuft
-    (dafuer braeuchte es eine Browser-Engine, siehe
+    Proves only that the delivered source contains a `catch` block within
+    the body of `loadI18n()` that logs the error - not that a real network
+    error at runtime in the browser actually lands there and `startApp()`
+    still runs afterwards (that would need a browser engine, see
     `test_the_page_does_not_call_init_a_second_time`)."""
     client, _, _ = api
     script = (await client.get("/static/app.js")).text
@@ -2235,25 +2226,25 @@ async def test_load_i18n_catches_a_failed_request_so_init_still_proceeds(api):
 
 
 async def test_init_loads_translations_and_auth_info_in_parallel(api):
-    """Beide sind unabhaengige, ungeschuetzte Aufrufe, die dieselben
-    Auth-Bildschirm-Vorlagen gaten - init() muss sie parallel starten,
-    nicht nacheinander."""
+    """Both are independent, unauthenticated calls that gate the same
+    auth-screen templates - init() must start them in parallel, not one
+    after the other."""
     client, _, _ = api
     script = (await client.get("/static/app.js")).text
-    # Bis zur naechsten Methode statt ueber eine feste Zeichenzahl: `init()`
-    # hat seit der URL-Navigation ein paar Zeilen mehr, und ein Fenster von
-    # 800 Zeichen endete mitten im Kommentar davor.
+    # Up to the next method instead of a fixed character count: `init()`
+    # has had a few more lines since the URL navigation, and an 800-
+    # character window ended in the middle of the comment before it.
     init_start = script.index("async init()")
     body = script[init_start : script.index("async request(method, path, body)")]
     assert "Promise.all([this.loadI18n(), this.loadAuthInfo()])" in body
 
 
 async def test_the_three_main_screens_also_wait_for_translations(api):
-    """Nach demselben Muster wie authReady (verhindert das Aufblitzen des
-    falschen Bildschirms, bis /auth-info geantwortet hat): stringsReady
-    gated zusaetzlich alle drei Hauptbereiche (Ersteinrichtung, Anmeldung,
-    App), damit keiner davon mit unuebersetzten {key}-Texten aufblitzt,
-    bevor GET /api/i18n geantwortet hat."""
+    """Following the same pattern as authReady (prevents the wrong screen
+    from flashing up until /auth-info has responded): stringsReady
+    additionally gates all three main areas (initial setup, login, app),
+    so that none of them flashes up with untranslated {key} text before
+    GET /api/i18n has responded."""
     client, _, _ = api
     page = (await client.get("/")).text
     assert 'x-if="stringsReady && authReady && !authenticated && !passwordSet"' in page
@@ -2262,21 +2253,21 @@ async def test_the_three_main_screens_also_wait_for_translations(api):
 
 
 async def test_get_i18n_returns_a_real_web_namespace_key(api):
-    """Der Uebersetzungsmechanismus braucht mindestens einen echten
-    web.*-Schluessel, um GET /api/i18n end-to-end zu pruefen, ohne von der
-    noch nicht geschriebenen Tabelle aus Aufgabe 9 abzuhaengen - siehe
-    strings.yaml, web.test.smoke (eine bewusst test-only benannte
-    Schablone, analog zu test.* aus Phase A).
+    """The translation mechanism needs at least one real `web.*` key to
+    check GET /api/i18n end-to-end without depending on the table from
+    Task 9, which has not been written yet - see strings.yaml,
+    web.test.smoke (a template deliberately named test-only, analogous to
+    test.* from Phase A).
 
-    Bewusst OHNE {platzhalter} in diesem Schluessel (siehe Kommentar bei
-    web.test.smoke in strings.yaml sowie den Aufgabe-8-Bericht): der
-    urspruengliche Plan sah "smoke test {value}" vor, aber
-    `api/language.py:_web_strings()` ruft `i18n.t(key)` fuer jeden
-    web.*-Schluessel OHNE Werte auf - ein Platzhalter dort wirft `KeyError`
-    und reisst die GESAMTE Antwort mit sich (bestaetigt an vier bereits
-    zusammengefuehrten Tests in tests/api/test_language.py, die dadurch
-    ploetzlich fehlschlugen). Der eigentliche Fehler liegt in Dateien
-    ausserhalb des Kreises dieser Aufgabe und ist hier nicht behoben."""
+    Deliberately WITHOUT a {placeholder} in this key (see the comment on
+    web.test.smoke in strings.yaml as well as the Task 8 report): the
+    original plan called for "smoke test {value}", but
+    `api/language.py:_web_strings()` calls `i18n.t(key)` for every
+    `web.*` key WITHOUT values - a placeholder there raises `KeyError` and
+    takes the ENTIRE response down with it (confirmed against four already
+    merged tests in tests/api/test_language.py, which suddenly failed as a
+    result). The actual bug lives in files outside the scope of this task
+    and is not fixed here."""
     client, _, _ = api
     response = await client.get("/api/i18n")
     assert response.status_code == 200
@@ -2286,29 +2277,27 @@ async def test_get_i18n_returns_a_real_web_namespace_key(api):
 
 
 # ---------------------------------------------------------------------------
-# Aufgabe 10 - erste inhaltliche WebUI-Uebersetzung: Reiterleiste, Kopfzeile,
-# Verbindungsstatus, Formatierungs-/Fehlerhelfer, Zugangsbildschirme. Die
-# Uebersetzungstabelle selbst (Aufgabe 9) und die Uebersetzungsmaschine
-# (Aufgabe 8) sind bereits gepruefte Bausteine - hier wird nur belegt, dass
-# die ausgelieferten Dateien tatsaechlich an diese Bausteine binden, statt
-# weiter die deutschen Literale zu tragen. Wie bei den uebrigen Markup-Tests
-# dieser Datei gilt: ohne Browser-Engine ist nicht pruefbar, dass Alpine
-# `t(...)` zur Laufzeit korrekt aufloest - nur, dass der Quelltext dafuer die
-# richtige Bindung traegt.
+# Task 10 - first substantive WebUI translation: tab bar, header, connection
+# status, formatting/error helpers, access screens. The translation table
+# itself (Task 9) and the translation engine (Task 8) are already checked
+# building blocks - here it is only proven that the delivered files actually
+# bind to these building blocks instead of continuing to carry the German
+# literals. As with the other markup tests in this file: without a browser
+# engine it cannot be checked that Alpine correctly resolves `t(...)` at
+# runtime - only that the source carries the right binding for it.
 # ---------------------------------------------------------------------------
 
 
 async def test_the_generic_network_errors_call_the_global_t_from_a_free_function(api):
-    """Aufgabe 10, Schritt 6: der Beleg, dass `t()` auch ausserhalb von
-    `app()` funktioniert - `requestJson`/`requestDownload` haben keinen
-    Zugriff auf `this` des Alpine-Bauteils. Alle drei trugen denselben
-    deutschen Literal (siehe Inventar §13); alle drei muessen jetzt denselben
-    `t("web.errors.bridge_unreachable")`-Aufruf tragen, keinen mehr fest im
-    Text. `requestUpload` (Projektdatei-Sync-Feature, unabhaengig von dieser
-    i18n-Phase auf main entstanden) trug beim Zusammenfuehren der beiden
-    Branches denselben Literal noch fest im Text - beim Konfliktaufloesen
-    auf denselben `t(...)`-Aufruf umgestellt, damit hier kein drittes,
-    unuebersetztes Vorkommen uebrig bleibt."""
+    """Task 10, step 6: the proof that `t()` also works outside `app()` -
+    `requestJson`/`requestDownload` have no access to `this` of the Alpine
+    component. All three carried the same German literal (see inventory
+    §13); all three must now carry the same `t("web.errors.bridge_unreachable")`
+    call, none of them fixed in the text anymore. `requestUpload` (project
+    file sync feature, developed independently of this i18n phase on main)
+    still carried the same literal fixed in the text when the two branches
+    were merged - switched to the same `t(...)` call while resolving the
+    conflict, so that no third, untranslated occurrence is left here."""
     client, _, _ = api
     script = (await client.get("/static/app.js")).text
     assert "Die Brücke ist nicht erreichbar" not in script
@@ -2318,14 +2307,14 @@ async def test_the_generic_network_errors_call_the_global_t_from_a_free_function
 
 
 async def test_the_nav_tabs_bind_to_translation_keys_without_altering_their_links(api):
-    """Aufgabe 10, Schritt 3: `x-text` ersetzt den Textknoten jedes Reiters,
-    `:class` bleibt unangetastet - ein falsch gebundener Reiter waere im
-    Browser sofort sichtbar, aber dieser Test ohne Browser-Engine kann nur
-    pruefen, dass Adresse und Bindungen NEBENEINANDER auf demselben Element
-    stehen, nicht dass ein Klick tatsaechlich die Ansicht wechselt.
+    """Task 10, step 3: `x-text` replaces the text node of every tab,
+    `:class` stays untouched - a wrongly bound tab would be immediately
+    visible in the browser, but this test without a browser engine can
+    only check that the address and the bindings sit SIDE BY SIDE on the
+    same element, not that a click actually switches the view.
 
-    Seit der URL-Navigation ist jeder Reiter ein `<a href="#/...">` statt
-    eines Knopfes mit `@click` (siehe die drei folgenden Tests)."""
+    Since the URL navigation, every tab is an `<a href="#/...">` instead
+    of a button with `@click` (see the three following tests)."""
     client, _, _ = api
     page = (await client.get("/")).text
     for view_key in ("devices", "export", "system", "settings"):
@@ -2335,15 +2324,14 @@ async def test_the_nav_tabs_bind_to_translation_keys_without_altering_their_link
 
 
 async def test_every_view_has_its_own_url_fragment(api):
-    """Der Anlass dieser Aenderung: wer auf "Einstellungen" die Seite neu lud,
-    landete wieder im Geraete-Dashboard. Jede Ansicht hat deshalb ein eigenes
-    Fragment, und die Reiterleiste besteht aus echten Links darauf.
+    """The reason for this change: whoever reloaded the page on "Settings"
+    ended up back at the device dashboard. Every view therefore has its
+    own fragment, and the tab bar consists of real links to them.
 
-    Geprueft wird beides zusammen: die Liste in `app.js` (sie entscheidet,
-    welches Fragment ueberhaupt angenommen wird) und die vier `href`s im
-    Markup. Ein Reiter, der auf ein Fragment zeigt, das `VIEWS` nicht kennt,
-    faende nach dem Neuladen wieder das Dashboard vor - genau der Fehler, der
-    hier verschwinden soll."""
+    Both are checked together: the list in `app.js` (it decides which
+    fragment is accepted at all) and the four `href`s in the markup. A tab
+    pointing at a fragment `VIEWS` does not know would find the dashboard
+    again after a reload - exactly the bug meant to disappear here."""
     client, _, _ = api
     page = (await client.get("/")).text
     script = (await client.get("/static/app.js")).text
@@ -2354,14 +2342,14 @@ async def test_every_view_has_its_own_url_fragment(api):
 
 
 async def test_the_view_comes_from_the_url_before_anything_is_loaded(api):
-    """`init()` liest das Fragment, BEVOR `startApp()` laeuft - sonst baute
-    die Seite erst das Dashboard auf und danach die gewuenschte Ansicht: zwei
-    Ladevorgaenge und ein sichtbares Aufblitzen der falschen Ansicht.
+    """`init()` reads the fragment BEFORE `startApp()` runs - otherwise the
+    page would first build the dashboard and only then the requested view:
+    two load passes and a visible flash of the wrong view.
 
-    Der `hashchange`-Zuhoerer haengt genau einmal am Fenster. Das ist in
-    dieser Datei kein Formalismus: doppelte Zuhoerer und doppelte
-    Live-Verbindungen aus einem zweiten `init()` sind hier schon zweimal
-    passiert (siehe `test_the_page_does_not_call_init_a_second_time`)."""
+    The `hashchange` listener attaches to the window exactly once. That is
+    not a formality in this file: duplicate listeners and duplicate live
+    connections from a second `init()` have already happened twice here
+    (see `test_the_page_does_not_call_init_a_second_time`)."""
     client, _, _ = api
     script = (await client.get("/static/app.js")).text
     init_body = script[
@@ -2373,19 +2361,19 @@ async def test_the_view_comes_from_the_url_before_anything_is_loaded(api):
 
 
 async def test_the_fragment_and_the_shown_view_cannot_drift_apart(api):
-    """Beide Richtungen sind verdrahtet: `selectView` traegt die Ansicht in
-    die Adresszeile ein (`writeHash`), `applyHash` liest sie zurueck und
-    schaltet um. Ohne den Rueckweg blieben Reiterklick, Zurueck-Knopf und
-    Lesezeichen wirkungslos; ohne den Hinweg zeigte die Adresszeile nach
-    einem programmatischen Wechsel (z. B. ueber den Hinweis-Link "Erst in
-    Einstellungen ... hinterlegen") noch die vorige Ansicht an.
+    """Both directions are wired up: `selectView` writes the view into the
+    address bar (`writeHash`), `applyHash` reads it back and switches over.
+    Without the return path, tab clicks, the back button, and bookmarks
+    would be ineffective; without the forward path, the address bar would
+    still show the previous view after a programmatic switch (e.g. via the
+    hint link "First set it up in Settings ...").
 
-    Die beiden Abbruchbedingungen in `applyHash` sind kein Beiwerk: das
-    `hashchange`, das `selectView` ueber `writeHash` selbst ausloest, landet
-    wieder hier - ohne den Abgleich `view === this.view` liefe jeder
-    programmatische Wechsel zweimal. Und vor der Anmeldung darf gar nichts
-    geladen werden, sonst liefe eine von Hand geaenderte Adresse auf dem
-    Login-Bildschirm in eine 401."""
+    The two early-exit conditions in `applyHash` are not incidental: the
+    `hashchange` that `selectView` triggers itself via `writeHash` ends up
+    back here - without the `view === this.view` check, every programmatic
+    switch would run twice. And nothing at all may load before login,
+    otherwise a manually changed address on the login screen would run
+    into a 401."""
     client, _, _ = api
     script = (await client.get("/static/app.js")).text
     apply_start = script.index("async applyHash() {")
@@ -2399,13 +2387,13 @@ async def test_the_fragment_and_the_shown_view_cannot_drift_apart(api):
 
 
 async def test_an_unknown_fragment_does_not_leave_the_page_empty(api):
-    """Ein Lesezeichen auf die aufgeloeste Signale-Ansicht (`#/signals`, siehe
-    `test_the_signals_view_is_gone_from_navigation_and_markup`) oder ein
-    Tippfehler in der Adresszeile: `viewFromHash` liefert dann `null`, und
-    beide Aufrufer weichen aus - `init()` auf `DEFAULT_VIEW`, `applyHash` auf
-    die gerade gezeigte Ansicht, die es zugleich nachtraegt. Ohne diesen
-    Rueckfall waere jedes `x-show="view === ..."` falsch: eine Seite mit
-    Kopfzeile, Reitern und sonst nichts."""
+    """A bookmark to the dissolved signals view (`#/signals`, see
+    `test_the_signals_view_is_gone_from_navigation_and_markup`) or a typo
+    in the address bar: `viewFromHash` then returns `null`, and both
+    callers fall back - `init()` to `DEFAULT_VIEW`, `applyHash` to the
+    currently shown view, which it also writes back at the same time.
+    Without this fallback, every `x-show="view === ..."` would be false: a
+    page with a header, tabs, and nothing else."""
     client, _, _ = api
     script = (await client.get("/static/app.js")).text
     assert 'const DEFAULT_VIEW = "devices";' in script
@@ -2418,12 +2406,12 @@ async def test_an_unknown_fragment_does_not_leave_the_page_empty(api):
 
 
 async def test_the_first_visit_does_not_leave_a_dead_history_entry(api):
-    """Beim Aufruf ohne Fragment traegt `writeHash` `#/devices` per
-    `replaceState` nach statt per `location.hash`: ein eigener Chronikeintrag
-    fuehrte beim Zurueck-Knopf auf dieselbe Seite ohne Fragment, die das
-    Fragment sofort wieder ergaenzte - eine Schaltflaeche, die sichtbar nichts
-    tut. Nur der Wechsel ZWISCHEN zwei gueltigen Ansichten bekommt einen
-    Eintrag, damit der Zurueck-Knopf den vorigen Reiter zeigt."""
+    """When loaded without a fragment, `writeHash` back-fills `#/devices`
+    via `replaceState` instead of via `location.hash`: a dedicated history
+    entry would lead the back button to the same page without a fragment,
+    which would immediately add the fragment back - a button that visibly
+    does nothing. Only a switch BETWEEN two valid views gets an entry, so
+    that the back button shows the previous tab."""
     client, _, _ = api
     script = (await client.get("/static/app.js")).text
     write_body = script[
@@ -2435,26 +2423,27 @@ async def test_the_first_visit_does_not_leave_a_dead_history_entry(api):
 
 
 async def test_the_tab_styling_covers_links_and_buttons(api):
-    """`nav.tabs` traegt zweierlei: die Reiterleiste oben, seit der
-    URL-Navigation aus `<a href="#/...">`, und die Sprachumschaltung in den
-    Einstellungen, die sich dieselbe Leiste fuer zwei Knoepfe borgt (siehe
-    `test_the_settings_tab_has_a_language_toggle`). Beide Selektoren muessen
-    deshalb stehenbleiben - ein Umbau auf nur `nav.tabs a` liess die
-    Sprachknoepfe ohne Polsterung, ohne gedaempfte Schrift und ohne den
-    Unterstrich der aktiven Sprache zurueck."""
+    """`nav.tabs` carries two things: the tab bar up top, made of
+    `<a href="#/...">` since the URL navigation, and the language toggle
+    in settings, which borrows the same bar for two buttons (see
+    `test_the_settings_tab_has_a_language_toggle`). Both selectors must
+    therefore remain - a rework down to just `nav.tabs a` left the
+    language buttons without padding, without dimmed text, and without
+    the active language's underline."""
     client, _, _ = api
     css = (await client.get("/static/style.css")).text
     assert "nav.tabs a,\nnav.tabs button {" in css
     assert "nav.tabs a.active,\nnav.tabs button.active {" in css
     tab_rule = css[css.index("nav.tabs a,") : css.index("main {")]
-    # Ein Link erbt sonst die Unterstreichung der Dokument-Linkfarbe.
+    # A link would otherwise inherit the underline of the document's link colour.
     assert "text-decoration: none;" in tab_rule
-    # Und diese beiden Werte hatten die Reiter als Knoepfe aus der
-    # allgemeinen `button`-Regel (weiter unten in dieser Datei) - ein Link
-    # bringt sie nicht mit: ohne sie wurde die Leiste vier Pixel hoeher und
-    # der Unterstrich des aktiven Reiters eckig statt abgerundet. Beides fiel
-    # erst in den byte-genau reproduzierbaren Screenshots auf (siehe
-    # scripts/capture_screenshots.py), nicht im Test und nicht beim Hinsehen.
+    # And the tabs used to get these two values as buttons from the
+    # general `button` rule (further down in this file) - a link does not
+    # bring them along: without them the bar became four pixels taller and
+    # the active tab's underline square instead of rounded. Both only
+    # showed up in the byte-exact reproducible screenshots (see
+    # scripts/capture_screenshots.py), not in the test and not on visual
+    # inspection.
     assert "line-height: 1.3;" in tab_rule
     assert "border-radius: 5px;" in tab_rule
     button_rule = css[css.index("\nbutton {") : css.index("button.primary {")]
@@ -2476,9 +2465,9 @@ async def test_the_header_logout_and_connection_banner_are_translated(api):
 
 
 async def test_connection_status_text_translates_all_four_branches(api):
-    """Aufgabe 10, Schritt 4: `connectionStatusText()` behaelt seine drei
-    Bedingungen unveraendert - nur die vier zurueckgegebenen Literale werden
-    zu `t(...)`-Aufrufen."""
+    """Task 10, step 4: `connectionStatusText()` keeps its three
+    conditions unchanged - only the four returned literals become `t(...)`
+    calls."""
     client, _, _ = api
     script = (await client.get("/static/app.js")).text
     start = script.index("connectionStatusText() {")
@@ -2495,10 +2484,10 @@ async def test_connection_status_text_translates_all_four_branches(api):
 
 
 async def test_the_relative_time_and_header_helpers_are_translated(api):
-    """Aufgabe 10, Schritt 4: die drei Alters-Literale in `sinceText()` und
-    die beiden Tooltip-Literale in `signalAgeTitle()` tragen jetzt
-    Platzhalter statt Template-Strings - dieselben Variablennamen wie
-    zuvor (`seconds`/`minutes`/das gerundete Stunden-Objekt/`text`)."""
+    """Task 10, step 4: the three age literals in `sinceText()` and the
+    two tooltip literals in `signalAgeTitle()` now carry placeholders
+    instead of template strings - the same variable names as before
+    (`seconds`/`minutes`/the rounded hours object/`text`)."""
     client, _, _ = api
     script = (await client.get("/static/app.js")).text
     since_start = script.index("sinceText(timestamp) {")
@@ -2521,11 +2510,11 @@ async def test_the_relative_time_and_header_helpers_are_translated(api):
 
 
 async def test_the_setup_screen_is_fully_translated(api):
-    """Aufgabe 10, Schritt 5: Ueberschrift, Warnbanner (als `x-html`, weil der
-    uebersetzte Text das `<strong>` selbst mitbringt, siehe strings.yaml
-    `web.auth.setup_warning`), beide Feldbeschriftungen, der Hinweistext und
-    der Absende-Knopf - keiner der frueheren deutschen Literale darf mehr im
-    Markup stehen."""
+    """Task 10, step 5: heading, warning banner (as `x-html`, because the
+    translated text brings the `<strong>` along itself, see strings.yaml
+    `web.auth.setup_warning`), both field labels, the hint text, and the
+    submit button - none of the former German literals may remain in the
+    markup."""
     client, _, _ = api
     markup = _without_comments((await client.get("/")).text)
     assert "x-text=\"t('web.auth.setup_heading')\"" in markup
@@ -2541,11 +2530,10 @@ async def test_the_setup_screen_is_fully_translated(api):
 
 
 async def test_the_login_screen_is_translated_and_the_product_name_h1_is_untouched(api):
-    """Aufgabe 10, Schritt 5: der Absende-Knopf und das gemeinsame
-    Passwort-Label wandern auf `t(...)`, aber BEIDE `<h1>loxmatter</h1>`
-    (Kopfzeile und Login-Bildschirm) sowie `<title>loxmatter</title>`
-    bleiben unangetastet - das ist der Produktname, keine Textzeichenkette
-    (Aufgabe 9's Scope-Hinweis)."""
+    """Task 10, step 5: the submit button and the shared password label
+    move to `t(...)`, but BOTH `<h1>loxmatter</h1>` (header and login
+    screen) as well as `<title>loxmatter</title>` remain untouched - that
+    is the product name, not a text string (Task 9's scope note)."""
     client, _, _ = api
     markup = _without_comments((await client.get("/")).text)
     assert "x-text=\"t('web.auth.login_submit')\"" in markup
@@ -2555,10 +2543,10 @@ async def test_the_login_screen_is_translated_and_the_product_name_h1_is_untouch
 
 
 async def test_session_expired_and_password_mismatch_are_translated(api):
-    """Aufgabe 10, Schritt 5: die drei identischen "Sitzung abgelaufen"-Stellen
-    (Konstruktor von `UnauthorizedError`, `handleDiagnosticsDisconnect`,
-    `handleLiveDisconnect`) teilen sich denselben Schluessel; der
-    Passwort-Abgleich beim Einrichten bekommt seinen eigenen."""
+    """Task 10, step 5: the three identical "session expired" spots
+    (`UnauthorizedError`'s constructor, `handleDiagnosticsDisconnect`,
+    `handleLiveDisconnect`) share the same key; the password match check
+    during setup gets its own."""
     client, _, _ = api
     script = (await client.get("/static/app.js")).text
     assert "Die Sitzung ist abgelaufen" not in script
@@ -2569,11 +2557,10 @@ async def test_session_expired_and_password_mismatch_are_translated(api):
 
 
 async def test_formatting_helpers_translate_and_the_locale_follows_the_language(api):
-    """Aufgabe 10, Schritt 6: `formatTimestamp`/`formatValue` verlieren ihre
-    drei deutschen Literale UND ihr fest verdrahtetes `"de-DE"` - die
-    `toLocaleString`-Gebietsschema muss dem aktiven `language`-Feld folgen,
-    nicht laenger daran vorbei auf Deutsch stehen bleiben, waehrend der Rest
-    der Seite Englisch zeigt."""
+    """Task 10, step 6: `formatTimestamp`/`formatValue` lose their three
+    German literals AND their hard-wired `"de-DE"` - the `toLocaleString`
+    locale must follow the active `language` field, no longer bypassing it
+    to stay in German while the rest of the page shows English."""
     client, _, _ = api
     script = (await client.get("/static/app.js")).text
     format_ts_start = script.index("formatTimestamp(isoTimestamp) {")
@@ -2592,9 +2579,9 @@ async def test_formatting_helpers_translate_and_the_locale_follows_the_language(
 
 
 async def test_the_commissioning_card_is_translated(api):
-    """Aufgabe 11, Schritt 3: Ueberschrift, beide Platzhalter, der
-    Absende-Knopf und der Hinweistext der Einlernen-Karte tragen jetzt
-    `t(...)`, keiner der frueheren deutschen Literale bleibt im Markup."""
+    """Task 11, step 3: heading, both placeholders, the submit button, and
+    the hint text of the commissioning card now carry `t(...)`, none of
+    the former German literals remain in the markup."""
     client, _, _ = api
     markup = _without_comments((await client.get("/")).text)
     assert "x-text=\"t('web.devices.commission_heading')\"" in markup
@@ -2607,9 +2594,9 @@ async def test_the_commissioning_card_is_translated(api):
     assert ">Einlernen<" not in markup
     assert "x-text=\"t('web.devices.commission_hint')\"" in markup
     assert "Hängt das Gerät schon in Apple" not in markup
-    # Der zweite Hinweisabsatz kam mit dem Einlern-Zweig dazu (die Bruecke
-    # holt den Thread-Datensatz selbst vom Border Router) und laeuft
-    # seither ueber dieselbe Tabelle wie der erste.
+    # The second hint paragraph was added along with the commissioning
+    # branch (the bridge fetches the thread dataset itself from the border
+    # router) and has since run through the same table as the first.
     assert "x-text=\"t('web.devices.thread_dataset_hint')\"" in markup
     assert "holt ihn beim" not in markup
     assert "x-text=\"t('web.devices.empty')\"" in markup
@@ -2617,15 +2604,15 @@ async def test_the_commissioning_card_is_translated(api):
 
 
 async def test_the_commissioning_card_leads_with_a_labelled_code_field(api):
-    """Entwurf "Code zuerst" (2026-09-07): der Pairing-Code ist das einzige
-    Pflichtfeld dieser Karte und bekommt eine eigene Zeile, eine sichtbare
-    Beschriftung und den Absende-Knopf in derselben Umrandung.
+    """Design "code first" (2026-09-07): the pairing code is this card's
+    only required field and gets its own row, a visible label, and the
+    submit button within the same border.
 
-    Vorher standen hier vier gleich breite Felder in einer `.row` - der
-    Code hatte dasselbe Gewicht wie der Thread-Datensatz, den fast niemand
-    je ausfuellt - und die Beschriftungen lebten nur im `placeholder`, der
-    beim ersten Tastendruck verschwindet und fuer einen Screenreader keine
-    Beschriftung ist, sondern ein Beispiel."""
+    Previously, four equally wide fields sat here in a `.row` - the code
+    had the same weight as the thread dataset, which almost nobody ever
+    fills in - and the labels lived only in the `placeholder`, which
+    disappears at the first keystroke and, to a screen reader, is not a
+    label but an example."""
     client, _, _ = api
     markup = _without_comments((await client.get("/")).text)
 
@@ -2636,29 +2623,29 @@ async def test_the_commissioning_card_leads_with_a_labelled_code_field(api):
     code_field = markup[code_start : markup.index("</div>", code_start)]
     assert 'id="commission-code"' in code_field
     assert 'x-model="commissionCode"' in code_field
-    # Enter im Feld tut dasselbe wie der Knopf daneben - beide stehen in
-    # derselben Umrandung, also muessen sie auch dasselbe ausloesen.
+    # Enter in the field does the same as the button next to it - both sit
+    # inside the same border, so they must also trigger the same thing.
     assert '@keydown.enter="commissionDevice()"' in code_field
     assert '@click="commissionDevice()"' in code_field
     assert "x-text=\"t('web.devices.commission_submit')\"" in code_field
 
-    # Die vier Felder in einer Reihe sind weg.
+    # The four fields in a row are gone.
     assert '<div class="row">\n            <input\n              type="text"' not in markup
 
 
 async def test_the_pairing_code_field_formats_normalizes_and_labels_itself(api):
-    """Entwurf "Pairing-Code: schreiben, wie er auf dem Geraet steht"
-    (2026-09-07): das Feld schreibt die Bindestriche beim Tippen mit,
-    benennt rechts im Feld, was es erkannt hat, und die Karte schickt den
-    NORMALISIERTEN statt den bloss getrimmten Wert ab.
+    """Design "pairing code: write it the way it stands on the device"
+    (2026-09-07): the field writes the dashes along as you type,
+    names on the right of the field what it has recognized, and the
+    card sends off the NORMALIZED rather than the merely trimmed value.
 
-    Fuer den gesamten Umbau gab es zuvor genau EINE Assertion in dieser
-    Datei (auf `commissionRunCode`, siehe
+    For the entire rework there was previously exactly ONE assertion in
+    this file (on `commissionRunCode`, see
     `test_commission_device_drives_the_flow_and_stops_where_it_failed`).
-    Nichts sicherte, dass `@input` noch am Feld haengt, dass es den Chip
-    gibt, oder dass `commissionDevice` wirklich den normalisierten statt
-    des getrimmten Werts verschickt - wer das beim Umsortieren verliert,
-    saehe sonst weiterhin lauter gruene Tests."""
+    Nothing verified that `@input` is still attached to the field, that
+    the chip exists, or that `commissionDevice` really sends the
+    normalized rather than the trimmed value - anyone who lost that while
+    reshuffling code would otherwise still see nothing but green tests."""
     client, _, _ = api
     markup = _without_comments((await client.get("/")).text)
 
@@ -2670,22 +2657,22 @@ async def test_the_pairing_code_field_formats_normalizes_and_labels_itself(api):
     assert ":class=\"'tone-' + commissionCodeBadge().tone\"" in code_field
     assert 'x-text="commissionCodeBadge().text"' in code_field
 
-    # Die Beispielzeile mit den beiden Bauformen, die den Klammerzusatz im
-    # frueheren Platzhalter ersetzt.
+    # The example line with the two code forms that replaces the
+    # parenthetical addition in the earlier placeholder.
     example_start = markup.index('<p class="code-examples"')
     example_block = markup[example_start : markup.index("</p>", example_start)]
     assert "x-text=\"t('web.devices.code_example_manual')\"" in example_block
     assert "x-text=\"t('web.devices.code_example_qr')\"" in example_block
 
     script = (await client.get("/static/app.js")).text
-    # `commissionDevice` verschickt den NORMALISIERTEN Wert, nicht mehr
-    # `this.commissionCode.trim()` - die Trenner, die das Feld beim Tippen
-    # selbst gesetzt hat, gehoeren nicht in den Matter-Stack.
+    # `commissionDevice` sends off the NORMALIZED value, no longer
+    # `this.commissionCode.trim()` - the separators the field itself
+    # inserted while typing do not belong in the Matter stack.
     assert "const code = normalizePairingCode(this.commissionCode);" in script
     assert "const body = { code };" in script
 
-    # Die vier reinen Funktionen, auf Modulebene, ohne geladene
-    # Sprachtabelle prueffaehig.
+    # The four pure functions, at module level, checkable without a
+    # loaded translation table.
     assert "function isPairingQrCode(" in script
     assert "function formatPairingCode(" in script
     assert "function normalizePairingCode(" in script
@@ -2693,14 +2680,14 @@ async def test_the_pairing_code_field_formats_normalizes_and_labels_itself(api):
 
 
 async def test_the_two_long_commissioning_hints_moved_into_disclosures(api):
-    """Kein Satz der frueheren drei Hinweisabsaetze ist verlorengegangen -
-    die beiden langen stehen jetzt in je einer `<details>`-Klappe bei dem
-    Feld, um das es geht, statt dauerhaft als 78 Woerter Fliesstext unter
-    der Karte.
+    """No sentence of the former three hint paragraphs has been lost - the
+    two long ones now each sit in a `<details>` disclosure next to the
+    field they concern, instead of permanently as 78 words of running
+    text below the card.
 
-    Nativ, nicht per Alpine-Zustand: ein Auf-/Zu-Zustand, den niemand
-    zuruecksetzen muss, kann auch mit nichts anderem auseinanderlaufen -
-    dieselbe Ueberlegung wie beim Kachel-Menue und den Signalgruppen."""
+    Native, not via Alpine state: an open/closed state that nobody needs
+    to reset also cannot drift out of sync with anything else - the same
+    reasoning as with the tile menu and the signal groups."""
     client, _, _ = api
     markup = _without_comments((await client.get("/")).text)
 
@@ -2709,35 +2696,34 @@ async def test_the_two_long_commissioning_hints_moved_into_disclosures(api):
     assert help_block.count('<details class="commission-disclosure">') == 2
     assert help_block.count("</details>") == 2
 
-    # Klappe 1: der Multi-Admin-Hinweis, hinter einer Frage, die man bei
-    # sich wiedererkennt - nicht hinter dem Namen eines Eingabefeldes.
+    # Disclosure 1: the multi-admin hint, behind a question the reader
+    # recognises in themselves - not behind the name of an input field.
     assert "x-text=\"t('web.devices.code_help_summary')\"" in help_block
     assert "x-text=\"t('web.devices.commission_hint')\"" in help_block
 
-    # Klappe 2: das Thread-Feld samt seinem Hinweis. Die Beschriftung ist
-    # jetzt ein echtes `<label>`; der Platzhalter darf sie nicht ersetzen.
+    # Disclosure 2: the thread field along with its hint. The label is now
+    # a real `<label>`; the placeholder must not replace it.
     assert "x-text=\"t('web.devices.thread_summary')\"" in help_block
     assert 'x-model="commissionThreadDataset"' in help_block
     assert "x-text=\"t('web.devices.thread_dataset_hint')\"" in help_block
     thread_label = _label_around(help_block, "web.devices.thread_dataset_label")
     assert 'for="commission-thread"' in thread_label
 
-    # Und keiner der drei Absaetze steht mehr frei in der Karte.
+    # And none of the three paragraphs stands freely in the card anymore.
     assert markup.count("x-text=\"t('web.devices.commission_hint')\"") == 1
     assert markup.count("x-text=\"t('web.devices.thread_dataset_hint')\"") == 1
 
 
 async def test_the_commissioning_message_banner_survived_the_redesign(api):
-    """Regression zum Umbau selbst: beim Herausloesen der alten `.row` fiel
-    der Meldungsabsatz mit heraus. Der Zustand stimmte weiter - eine leere
-    Code-Eingabe setzte `commissionMessage` -, nur zeigte ihn nichts mehr
-    an, und keiner der damals 1219 Tests bemerkte das.
+    """Regression from the rebuild itself: when the old `.row` was pulled
+    out, the message paragraph came out with it. The state was still
+    correct - an empty code entry set `commissionMessage` - only nothing
+    displayed it anymore, and none of the then-1219 tests noticed.
 
-    Er steht bewusst AUSSERHALB beider Haelften: die Pruefung auf einen
-    leeren Code schlaegt zu, bevor ein Lauf beginnt (also am Formular),
-    Erfolg und Fehlschlag melden sich danach (also an der Ablaufanzeige).
-    Zwei Kopien waeren zwei Stellen, an denen die Meldung haengenbleiben
-    kann - deshalb genau eine."""
+    It deliberately sits OUTSIDE both halves: the check for an empty code
+    fires before a run begins (i.e. at the form), success and failure
+    report afterwards (i.e. at the progress display). Two copies would be
+    two places where the message could get stuck - hence exactly one."""
     client, _, _ = api
     markup = _without_comments((await client.get("/")).text)
 
@@ -2747,26 +2733,26 @@ async def test_the_commissioning_message_banner_survived_the_redesign(api):
     assert ":class=\"commissionMessageIsError ? 'banner danger' : 'banner ok'\"" in banner
     assert 'x-text="commissionMessage"' in banner
 
-    # Weder im Formular- noch im Ablauf-Zweig, sondern hinter beiden: sonst
-    # verschwaende ein Wechsel zwischen den Haelften die Meldung.
+    # Neither in the form branch nor in the progress branch, but behind
+    # both: otherwise a switch between the halves would make the message
+    # disappear.
     form_start = markup.index('<div x-show="commissionStep === null">')
     flow_start = markup.index('<div x-show="commissionStep !== null"')
     assert form_start < flow_start < banner_start
 
 
 async def test_the_commissioning_flow_shows_the_two_phases_it_actually_knows(api):
-    """Entwurf "Der Ablauf wird sichtbar": waehrend eines Laufs ersetzt eine
-    Ablaufanzeige das Formular. Einlernen dauert zwanzig bis sechzig
-    Sekunden und war bis hierher ein grau werdender Knopf - von einer
-    haengenden Seite nicht zu unterscheiden.
+    """Design "the process becomes visible": during a run, a progress
+    display replaces the form. Commissioning takes twenty to sixty
+    seconds and used to be a button turning grey - indistinguishable from
+    a hung page.
 
-    ZWEI Schritte, nicht drei: mehr Abschnitte kann diese Oberflaeche nicht
-    ehrlich auseinanderhalten. Sie kennt den POST auf
-    /api/devices/commission und das anschliessende Nachladen von Signalen
-    und Befehlen - einen Zwischenstand aus dem Matter-Stack ("Geraet
-    gefunden") meldet ihr niemand. Ein dritter Punkt saehe besser aus und
-    waere geraten; dieser Test haelt die Anzeige auf dem fest, was
-    tatsaechlich bekannt ist."""
+    TWO steps, not three: this UI cannot honestly tell apart more
+    sections than that. It knows the POST to /api/devices/commission and
+    the subsequent reload of signals and commands - nobody reports it an
+    intermediate state from the Matter stack ("device found"). A third
+    point would look nicer and would be a guess; this test keeps the
+    display pinned to what is actually known."""
     client, _, _ = api
     markup = _without_comments((await client.get("/")).text)
 
@@ -2780,14 +2766,14 @@ async def test_the_commissioning_flow_shows_the_two_phases_it_actually_knows(api
     assert "x-text=\"t('web.devices.commission_step_joining')\"" in flow
     assert "x-text=\"t('web.devices.commission_step_loading')\"" in flow
 
-    # Der Code des laufenden Versuchs steht ueber den Schritten - nach einem
-    # Erfolg ist das Eingabefeld geleert, die Anzeige stuende sonst ohne
-    # den Code da, um den es ging.
+    # The code of the running attempt sits above the steps - after a
+    # success the input field is cleared, otherwise the display would sit
+    # there without the code it was about.
     assert 'x-text="commissionRunCode"' in flow
 
-    # Ein Weg zurueck zum Formular, mit zwei Beschriftungen fuer die zwei
-    # Bedeutungen: nach einem Erfolg das naechste Geraet, nach einem
-    # Fehlschlag derselbe Versuch noch einmal.
+    # One way back to the form, with two labels for the two meanings:
+    # after a success the next device, after a failure the same attempt
+    # once more.
     assert '@click="resetCommission()"' in flow
     assert 'x-text="commissionFailed ?' in flow
     assert "t('web.devices.commission_retry')" in flow
@@ -2795,14 +2781,14 @@ async def test_the_commissioning_flow_shows_the_two_phases_it_actually_knows(api
 
 
 async def test_commission_device_drives_the_flow_and_stops_where_it_failed(api):
-    """Die Schrittanzeige haengt an `commissionDevice` selbst, nicht an
-    einer Zeitschaltung: Schritt 0 ab dem POST, Schritt 1 ab dem Nachladen,
-    Schritt 2 am Ende.
+    """The step display hangs off `commissionDevice` itself, not off a
+    timer: step 0 from the POST, step 1 from the reload, step 2 at the
+    end.
 
-    Im Fehlerfall wird der Zaehler ausdruecklich NICHT zurueckgesetzt - er
-    zeigt weiter auf den Schritt, auf dem es haengengeblieben ist, und
-    genau den faerbt `commissionStepClass` rot. Ein Ruecksetzer hier
-    naehme der Anzeige ihre einzige Auskunft: wie weit es gekommen ist."""
+    On failure, the counter is explicitly NOT reset - it keeps pointing
+    at the step it got stuck on, and `commissionStepClass` colours
+    exactly that one red. A reset here would take away the display's only
+    piece of information: how far it got."""
     client, _, _ = api
     script = (await client.get("/static/app.js")).text
     commission_start = script.index("async commissionDevice() {")
@@ -2812,28 +2798,28 @@ async def test_commission_device_drives_the_flow_and_stops_where_it_failed(api):
     assert "this.commissionStep = 0;" in body
     assert "this.commissionFailed = false;" in body
     assert "this.commissionRunCode = formatPairingCode(this.commissionCode.trim());" in body
-    # Schritt 1 steht VOR dem Nachladen, Schritt 2 dahinter.
+    # Step 1 comes BEFORE the reload, step 2 after it.
     load = body.index(
         "await Promise.all([this.loadControls(device.id), this.loadSignals(device.id)]);"
     )
     assert body.index("this.commissionStep = 1;") < load
     assert load < body.index("this.commissionStep = 2;")
-    # Der Fehlerzweig markiert, setzt aber nicht zurueck.
+    # The error branch marks it, but does not reset it.
     assert "this.commissionFailed = true;" in body
     assert "this.commissionStep = null;" not in body
 
 
 async def test_the_step_class_is_derived_and_reset_returns_to_the_form(api):
-    """`commissionStepClass` ist ein reiner Ausdruck auf
-    `commissionStep`/`commissionFailed`, keine dritte Zustandsvariable mit
-    Klassennamen darin: zwei Felder, die dasselbe erzaehlen, laufen frueher
-    oder spaeter auseinander - und die Anzeige ist die Stelle, an der das
-    niemandem auffiele, weil sie ja irgendetwas zeigt.
+    """`commissionStepClass` is a pure expression on
+    `commissionStep`/`commissionFailed`, no third state variable with
+    class names in it: two fields telling the same story drift apart
+    sooner or later - and the display is the place where nobody would
+    notice, because it does show something.
 
-    `resetCommission` raeumt beides plus die Meldung (sie gehoert zu dem
-    Lauf, den man verlaesst) und setzt den Fokus zurueck ins Codefeld -
-    erst im naechsten Tick, weil `x-show` das Formular bis dahin noch auf
-    `display: none` haelt und ein `focus()` darauf still nichts tut."""
+    `resetCommission` clears both plus the message (it belongs to the run
+    being left) and resets focus back into the code field - only on the
+    next tick, because `x-show` still holds the form at `display: none`
+    until then and a `focus()` on it would silently do nothing."""
     client, _, _ = api
     script = (await client.get("/static/app.js")).text
 
@@ -2858,15 +2844,15 @@ async def test_the_step_class_is_derived_and_reset_returns_to_the_form(api):
 
 
 async def test_the_commissioning_disclosures_do_not_shift_what_stands_around_them(api):
-    """Erster Anlauf war eine Reihe: Raumfeld links, die beiden Klappen per
-    Fuellstueck ans rechte Ende geschoben. Im Browser riss ein aufgeklapptes
-    `<details>` - ein hohes Flex-Element - diese Reihe auseinander: die
-    aufgeklappte Klappe rutschte nach unten, die zweite blieb mittig neben
-    deren Erklaertext haengen.
+    """The first attempt was a row: the room field on the left, the two
+    disclosures pushed to the right end via a spacer. In the browser, an
+    opened `<details>` - a tall flex element - tore this row apart: the
+    opened disclosure slid downward, the second one stayed stuck centred
+    next to its explanatory text.
 
-    Sie stehen deshalb untereinander in einem eigenen Behaelter. Ein Auf-
-    und Zuklappen darf nicht verschieben, was um es herum steht, und am
-    wenigsten die Schaltflaeche, die man gerade angeklickt hat."""
+    They therefore sit stacked in their own container. Opening and closing
+    one must not shift what stands around it, least of all the control
+    that was just clicked."""
     client, _, _ = api
     css = (await client.get("/static/style.css")).text
 
@@ -2876,39 +2862,38 @@ async def test_the_commissioning_disclosures_do_not_shift_what_stands_around_the
     assert "align-items: flex-start;" in block
 
     markup = _without_comments((await client.get("/")).text)
-    # Das Fuellstueck des ersten Anlaufs ist restlos weg - sonst bliebe eine
-    # Regel ohne Element bzw. ein Element ohne Regel stehen.
+    # The spacer from the first attempt is gone entirely - otherwise a
+    # rule without an element, or an element without a rule, would remain.
     assert "meta-spacer" not in markup
     assert "meta-spacer" not in css
 
 
 async def test_the_device_card_static_text_is_translated(api):
-    """Aufgabe 11, Schritt 3: Statuspillen, Entfernen-Knopf, die beiden
-    Werte-/Bedienungs-Abschnittsueberschriften mit ihren Ladehinweisen und
-    Leerzustaenden, der Wert-Platzhalter und der Senden-Knopf der
-    Geraetekarte - jeweils als reiner `x-text`, weil keiner dieser
-    Schluessel eingebettetes HTML traegt.
+    """Task 11, step 3: status pills, remove button, the two values/
+    controls section headings with their loading hints and empty states,
+    the value placeholder, and the send button of the device card - each
+    as a plain `x-text`, because none of these keys carries embedded HTML.
 
-    Task 8 (Raster-Umbau, 2026-09-05) hatte Export und Entfernen zu
-    Icon-Knoepfen mit `:title` gemacht (der Platz auf einer 260 px breiten
-    Kachel reicht nicht fuer ausgeschriebene Beschriftungen); Task 2 (Kebab-
-    Menue, 2026-09-05) hat beide von der Fusszeile ins Menue verlegt, wo
-    genug Platz fuer ausgeschriebenen Text ist - `remove`/`export` stehen
-    seither wieder als `x-text`, nicht mehr als `:title`. Die beiden Werte-/
-    Bedienungs-Abschnittsueberschriften bleiben von Task 8 ersatzlos
-    gestrichen - die Kachel zeigt ohnehin nur noch ein einziges Werteraster
-    ohne eigenen Titel; `values_heading`/`controls_heading` sind seit
-    Task 9 aus `strings.yaml` entfernt.
+    Task 8 (grid rebuild, 2026-09-05) had turned export and remove into
+    icon buttons with `:title` (the space on a 260 px wide tile is not
+    enough for spelled-out labels); Task 2 (kebab menu, 2026-09-05) moved
+    both from the footer into the menu, where there is enough room for
+    spelled-out text - `remove`/`export` have since gone back to being
+    `x-text`, no longer `:title`. The two values/controls section
+    headings remain removed without replacement from Task 8 - the tile
+    now shows only a single values grid with no title of its own anyway;
+    `values_heading`/`controls_heading` have been removed from
+    `strings.yaml` since Task 9.
 
-    `no_functional_signals`, `controls_loading` und `no_known_commands`
-    dagegen wurden von Task 9 zunaechst ebenfalls (verfrueht) entfernt und
-    sind seit Fund 1 der Review vom 2026-09-05 wieder da: ohne sie war ein
-    Geraet mit leeren funktionalen Signalen bzw. ein noch ladender/
-    fehlgeschlagener Befehlsabruf nicht von einer echten Leermenge zu
-    unterscheiden - genau die Sorte stillschweigend falscher Zustand, die
-    Spec 8.1 ausschliessen will (siehe
-    `test_the_command_bar_distinguishes_loading_from_genuinely_empty` fuer
-    den ausfuehrlichen Beleg dieses Funds)."""
+    `no_functional_signals`, `controls_loading`, and `no_known_commands`,
+    on the other hand, were also (prematurely) removed by Task 9 at first
+    and have been back since Finding 1 of the review on 2026-09-05:
+    without them, a device with empty functional signals, or a still-
+    loading/failed command fetch, could not be distinguished from a
+    genuinely empty set - exactly the kind of silently wrong state Spec
+    8.1 aims to rule out (see
+    `test_the_command_bar_distinguishes_loading_from_genuinely_empty` for
+    the detailed proof of this finding)."""
     client, _, _ = api
     markup = _without_comments((await client.get("/")).text)
     assert "x-text=\"t('web.devices.changed_since_export')\"" in markup
@@ -2940,19 +2925,19 @@ async def test_the_device_card_static_text_is_translated(api):
 
 
 async def test_the_remaining_count_hints_keep_their_dynamic_span_and_translate_the_rest(api):
-    """Aufgabe 11, Schritt 3: die beiden "N weitere..."-Hinweise bestehen aus
-    einem dynamischen Zaehler (`remainingSignalCount`/`hiddenRawCommandsFor`)
-    gefolgt von statischem Text - nur der statische Teil wandert auf
-    `t(...)`, der Zaehler-Ausdruck bleibt unveraendert.
+    """Task 11, step 3: the two "N more..." hints consist of a dynamic
+    counter (`remainingSignalCount`/`hiddenRawCommandsFor`) followed by
+    static text - only the static part moves to `t(...)`, the counter
+    expression stays unchanged.
 
-    Task 8 (Raster-Umbau, 2026-09-05) hat aus dem eigenen `<span>` je
-    Zaehler-Ausdruck ein zusammengesetztes `x-text` auf einem einzigen
-    Element gemacht (der Hinweis auf die restlichen Signale ist jetzt die
-    letzte Zeile des Werterasters statt eines eigenen Absatzes, siehe
-    `.value-row` in `index.html`) und die Kurzformen `more_signals_short`/
-    `more_commands_short` eingefuehrt - die alten Schluessel
-    `more_in_signals_view`/`more_commands_unnamed` bleiben ungenutzt in
-    `strings.yaml` liegen (Task 9 raeumt sie auf)."""
+    Task 8 (grid rebuild, 2026-09-05) turned the dedicated `<span>` per
+    counter expression into a composed `x-text` on a single element (the
+    hint about the remaining signals is now the last row of the values
+    grid instead of its own paragraph, see `.value-row` in `index.html`)
+    and introduced the short forms `more_signals_short`/
+    `more_commands_short` - the old keys `more_in_signals_view`/
+    `more_commands_unnamed` remain unused in `strings.yaml` (Task 9
+    cleans them up)."""
     client, _, _ = api
     markup = _without_comments((await client.get("/")).text)
     assert (
@@ -2970,19 +2955,19 @@ async def test_the_remaining_count_hints_keep_their_dynamic_span_and_translate_t
 
 
 async def test_the_bridge_ip_hint_splits_prefix_link_suffix_without_collapsing_to_x_html(api):
-    """Aufgabe 11, Schritt 3 (das neue Muster dieser Aufgabe): der Hinweis
-    "Erst in Einstellungen -> ... hinterlegen." enthaelt einen echten Link auf
-    die Einstellungen, der beim Uebersetzen NICHT in einen `x-html`-Block
-    verschwinden darf - sonst bliebe von dem Link nur noch Text uebrig. Drei
-    eigene Elemente (Praefix, Link, Suffix) je mit eigenem `x-text` halten ihn
-    unangetastet. Seit der URL-Navigation traegt er dieselbe Adresse wie der
-    Reiter (`#/settings`) statt eines `href="#"` mit abgefangenem Klick.
+    """Task 11, step 3 (the new pattern for this task): the hint "First
+    set it up in Settings -> ..." contains a real link to settings, which
+    must NOT disappear into an `x-html` block when translated - otherwise
+    only text would remain of the link. Three separate elements (prefix,
+    link, suffix), each with its own `x-text`, keep it intact. Since the
+    URL navigation it carries the same address as the tab (`#/settings`)
+    instead of an `href="#"` with an intercepted click.
 
-    Der Ausschnitt endet an der NAECHSTEN Ansicht, nicht an einem
-    schliessenden Tag: `"view === 'signals'"` war dieser Anker, bis der
-    Reiter aufgeloest wurde (2026-09-05) - jetzt ist es `'export'`. Ein
-    Anker auf `</div>` oder `</section>` waere hier untauglich, davon gibt
-    es in der Geraeteansicht Dutzende."""
+    The excerpt ends at the NEXT view, not at a closing tag:
+    `"view === 'signals'"` was this anchor, until the tab was dissolved
+    (2026-09-05) - now it is `'export'`. An anchor on `</div>` or
+    `</section>` would be unsuitable here, there are dozens of those in
+    the device view."""
     client, _, _ = api
     markup = _without_comments((await client.get("/")).text)
     device_section_start = markup.index("x-show=\"view === 'devices'\"")
@@ -2998,10 +2983,10 @@ async def test_the_bridge_ip_hint_splits_prefix_link_suffix_without_collapsing_t
 
 
 async def test_the_device_list_dynamic_errors_and_toasts_are_translated(api):
-    """Aufgabe 11, Schritt 4: die Lade-/Speicher-/Entfernen-Fehler, die
-    Export-Hinweise (`exportHintFor`) und die beiden Kommando-Toasts der
-    Geraeteliste tragen jetzt `t(...)` mit denselben Platzhaltern wie
-    vorher die Template-Strings."""
+    """Task 11, step 4: the load/save/remove errors, the export hints
+    (`exportHintFor`), and the two command toasts of the device list now
+    carry `t(...)` with the same placeholders that the template strings
+    used before."""
     client, _, _ = api
     script = (await client.get("/static/app.js")).text
     assert (
@@ -3061,10 +3046,10 @@ async def test_the_device_list_dynamic_errors_and_toasts_are_translated(api):
 
 
 async def test_the_device_card_export_bridge_ip_validation_is_translated(api):
-    """Aufgabe 11, Schritt 4: die Brücken-IP-Pruefung in `exportDevice`
-    (Geraetekarte) teilt sich den Schluessel `web.export.bridge_ip_missing`
-    mit Vorschau/Download (Aufgabe 13) - hier wird nur die Kopie in
-    `exportDevice` selbst geprueft."""
+    """Task 11, step 4: the bridge IP check in `exportDevice` (device
+    card) shares the key `web.export.bridge_ip_missing` with the
+    preview/download (Task 13) - here only the copy inside `exportDevice`
+    itself is checked."""
     client, _, _ = api
     script = (await client.get("/static/app.js")).text
     export_start = script.index("async exportDevice(device) {")
@@ -3075,9 +3060,9 @@ async def test_the_device_card_export_bridge_ip_validation_is_translated(api):
 
 
 async def test_the_commissioning_flow_messages_are_translated(api):
-    """Aufgabe 11, Schritt 4: die leere-Code-Pruefung, die Erfolgsmeldung
-    (ein einziger `t(...)`-Aufruf statt vier zusammengesetzter Literale) und
-    die Fehlschlag-Meldung von `commissionDevice`."""
+    """Task 11, step 4: the empty-code check, the success message (a
+    single `t(...)` call instead of four composed literals), and the
+    failure message of `commissionDevice`."""
     client, _, _ = api
     script = (await client.get("/static/app.js")).text
     commission_start = script.index("async commissionDevice() {")
@@ -3090,13 +3075,13 @@ async def test_the_commissioning_flow_messages_are_translated(api):
         in body
     )
     assert "wurde eingelernt" not in body
-    # Der Fehlschlag wird seit dem Zusammenfuehren mit dem Einlern-Zweig am
-    # HTTP-Status unterschieden, nicht mehr am Text: eine 422 dieser Route
-    # traegt die bereits vom Server gerahmte Meldung (api.errors.
-    # commissioning_failed), alles andere bekommt den Rahmen hier. Ein
-    # Vergleich auf den Anfang des Meldungstextes waere genau die Stelle,
-    # an der die Uebersetzung wieder auseinanderliefe - er kennt immer nur
-    # eine der beiden Sprachen.
+    # Since merging with the commissioning branch, the failure has been
+    # distinguished by HTTP status, no longer by text: a 422 from this
+    # route carries the message already framed by the server (api.errors.
+    # commissioning_failed), everything else gets the framing here. A
+    # comparison against the start of the message text would be exactly
+    # the place where the translation would drift apart again - it only
+    # ever knows one of the two languages.
     assert "error.status === 422" in body
     assert 't("web.devices.commission_failed", { message })' in body
     assert "startsWith" not in body
@@ -3104,23 +3089,24 @@ async def test_the_commissioning_flow_messages_are_translated(api):
 
 
 async def test_commission_device_avoids_duplicate_tiles(api):
-    """Fund 4 (Re-Review 2026-09-05): die Einlern-Route liefert fuer ein
-    schon registriertes Geraet dieselbe `device_id` zurueck (siehe den
-    Backend-Test `test_recommissioning_a_known_device_applies_the_chosen_room`
-    in `tests/api/test_devices.py`). Ein bedingungsloses `push` legte dieses
-    Geraet ein zweites Mal in `this.devices` ab: zwei Kacheln mit derselben
-    `device.id`, was `x-for`s `:key="device.id"` verletzt und den Raum-Chip
-    doppelt zaehlen liess.
+    """Finding 4 (re-review 2026-09-05): the commissioning route returns
+    the same `device_id` for a device that is already registered (see the
+    backend test
+    `test_recommissioning_a_known_device_applies_the_chosen_room` in
+    `tests/api/test_devices.py`). An unconditional `push` dropped this
+    device into `this.devices` a second time: two tiles with the same
+    `device.id`, which violates `x-for`'s `:key="device.id"` and made the
+    room chip count it twice.
 
-    Ohne Browser-Engine laesst sich weder ein doppelter Alpine-Key-Warnhinweis
-    in der Konsole pruefen noch die Race gegen ein zeitgleich laufendes
-    `saveRoom`/`saveLabel` (das sich vor seinem eigenen `await` eine
-    Objekt-Referenz merkt) - belegt wird deshalb der ausgelieferte
-    Methodenkoerper: er sucht per `findIndex` nach einem bereits vorhandenen
-    Geraet mit derselben ID, befuellt bei einem Treffer das bestehende
-    Objekt per `Object.assign` statt es im Array auszutauschen (sonst
-    schriebe ein spaeter aufloesendes `saveRoom`/`saveLabel` in ein aus dem
-    Array entkoppeltes Exemplar), und haengt andernfalls neu an."""
+    Without a browser engine there is no way to check either a duplicate
+    Alpine key warning in the console, or the race against a concurrently
+    running `saveRoom`/`saveLabel` (which remembers an object reference
+    before its own `await`) - what is proven instead is the delivered
+    method body: it looks for an already-present device with the same ID
+    via `findIndex`, and on a match fills the existing object via
+    `Object.assign` instead of replacing it in the array (otherwise a
+    `saveRoom`/`saveLabel` resolving later would write into an instance
+    decoupled from the array), and otherwise appends a new one."""
     client, _, _ = api
     script = (await client.get("/static/app.js")).text
     commission_start = script.index("async commissionDevice() {")
@@ -3133,11 +3119,11 @@ async def test_commission_device_avoids_duplicate_tiles(api):
 
 
 async def test_the_remove_confirm_dialog_text_comes_from_t(api):
-    """Aufgabe 11, Schritt 4: der native `window.confirm(...)` in
-    `removeDevice` traegt jetzt einen einzigen `t(...)`-Aufruf mit `label`
-    und `id` statt der handgebauten Vorlagen-Zeichenkette - der Dialog
-    selbst laesst sich ohne Browser-Engine nicht pruefen, wohl aber, dass
-    sein Text jetzt aus der Uebersetzungstabelle kommt."""
+    """Task 11, step 4: the native `window.confirm(...)` in `removeDevice`
+    now carries a single `t(...)` call with `label` and `id` instead of
+    the hand-built template string - the dialog itself cannot be checked
+    without a browser engine, but that its text now comes from the
+    translation table can be."""
     client, _, _ = api
     script = (await client.get("/static/app.js")).text
     assert (
@@ -3149,20 +3135,20 @@ async def test_the_remove_confirm_dialog_text_comes_from_t(api):
 
 
 async def test_remove_device_reconciles_the_room_filter(api):
-    """Fund 1 (Re-Review 2026-09-05): `removeDevice` mutierte `this.devices`
-    direkt und rief weder `reconcileRoomFilter()` noch ein Neuladen auf.
-    Filtert man auf einen Raum und loescht dessen letztes Geraet, bleibt
-    `roomFilter` auf dem verschwundenen Namen stehen: keine Kachel mehr
-    sichtbar, kein Chip mehr aktiv - und war es der letzte Raum ueberhaupt,
-    verschwindet sogar die ganze Chip-Leiste (`hasAnyRoom()` dann false,
-    siehe index.html), also auch der "Alle"-Chip, der den Ausweg boete.
-    Reines Neuladen der Seite war der einzige Ausweg.
+    """Finding 1 (re-review 2026-09-05): `removeDevice` mutated
+    `this.devices` directly and called neither `reconcileRoomFilter()`
+    nor a reload. Filter by a room and delete its last device, and
+    `roomFilter` stays pointed at the vanished name: no tile visible
+    anymore, no chip active anymore - and if it was the last room at all,
+    even the entire chip bar disappears (`hasAnyRoom()` then false, see
+    index.html), taking with it the "All" chip that would offer a way
+    out. Simply reloading the page was the only way out.
 
-    Ohne eine Browser-Engine laesst sich weder `roomFilter` noch das
-    gerenderte Markup nach einem Klick pruefen (siehe die anderen Tests in
-    dieser Datei, die dasselbe eingestehen). Belegt wird deshalb, dass der
-    ausgelieferte Methodenkoerper von `removeDevice` selbst nach dem
-    Entfernen aus `this.devices` `reconcileRoomFilter()` aufruft."""
+    Without a browser engine there is no way to check either `roomFilter`
+    or the rendered markup after a click (see the other tests in this
+    file that admit the same limitation). Proven instead is that the
+    delivered method body of `removeDevice` itself calls
+    `reconcileRoomFilter()` after removing from `this.devices`."""
     client, _, _ = api
     script = (await client.get("/static/app.js")).text
 
@@ -3176,16 +3162,16 @@ async def test_remove_device_reconciles_the_room_filter(api):
 
 
 async def test_the_signal_modal_static_text_is_translated(api):
-    """Frueher `test_the_signal_view_static_text_is_translated`: dieselben
-    Zusicherungen, jetzt gegen das Modal statt gegen den aufgeloesten
-    Reiter (2026-09-05).
+    """Formerly `test_the_signal_view_static_text_is_translated`: the same
+    assertions, now against the modal instead of the dissolved tab
+    (2026-09-05).
 
-    Zwei davon sind ersatzlos entfallen: `show_expert` (der globale
-    Schalter weicht einem `<details>` je Gruppe) und
-    `expert_collapsed_hint` (dessen Text auf genau diesen Schalter
-    verwies). Die uebrigen Hinweise, Beschriftungen und Platzhalter tragen
-    unveraendert `t(...)` - keiner der frueheren deutschen Literale bleibt
-    im Markup."""
+    Two of them have been dropped without replacement: `show_expert` (the
+    global toggle gives way to a `<details>` per group) and
+    `expert_collapsed_hint` (whose text referred to exactly that toggle).
+    The remaining hints, labels, and placeholders still carry `t(...)`
+    unchanged - none of the former German literals remain in the
+    markup."""
     client, _, _ = api
     markup = _without_comments((await client.get("/")).text)
     dialog = _signals_dialog(markup)
@@ -3208,19 +3194,19 @@ async def test_the_signal_modal_static_text_is_translated(api):
 
 
 async def test_the_signal_group_titles_are_translated(api):
-    """Aufgabe 12, Schritt 4: `signalGroupsFor`'s Gruppentitel (Objekt-
-    Literale) laufen ueber `t(...)` statt fester Literale "Funktional" /
-    "Experte".
+    """Task 12, step 4: `signalGroupsFor`'s group titles (object
+    literals) go through `t(...)` instead of the fixed literals "Funktional"
+    / "Experte".
 
-    Aufgabe 6 aendert, WELCHE Objekt-Literale das sind: die Endpunktgruppen
-    tragen `signal.endpoint_label` als Titel (kommt bereits uebersetzt von
-    der API, siehe Aufgabe 4) und `t("web.signals.group_endpoint_subtitle")`
-    als Untertitel; nur die Experte-Gruppe hat noch einen fest ueber `t(...)`
-    gesetzten Titel. Der Schluessel `group_functional` gibt es seither
-    nicht mehr. Die urspruengliche Zusicherung - kein fest verdrahtetes
-    deutsches Literal im Gruppenaufbau - bleibt erhalten: die Sperre gegen
-    `"Experte"` als Literal bleibt, die gegen `"Funktional"` entfaellt mit
-    dem Titel, den es nicht mehr gibt."""
+    Task 6 changes WHICH object literals those are: the endpoint groups
+    carry `signal.endpoint_label` as their title (already comes translated
+    from the API, see task 4) and `t("web.signals.group_endpoint_subtitle")`
+    as a subtitle; only the expert group still has a title set fixed via
+    `t(...)`. The `group_functional` key no longer exists since
+    then. The original assertion - no hardcoded German literal in the
+    group construction - is preserved: the ban on
+    `"Experte"` as a literal remains, the one on `"Funktional"` disappears
+    along with the title that no longer exists."""
     client, _, _ = api
     script = (await client.get("/static/app.js")).text
     signal_groups_start = script.index("signalGroupsFor(deviceId) {")
@@ -3232,8 +3218,8 @@ async def test_the_signal_group_titles_are_translated(api):
 
 
 async def test_the_group_header_shows_the_endpoint_as_a_subtitle(api):
-    """Aufgabe 6, Schritt 5: die `<summary>` der Gruppe zeigt neben Titel
-    und Anzahl jetzt auch `group.subtitle` ("Endpunkt N")."""
+    """Task 6, step 5: the group's `<summary>` now also shows
+    `group.subtitle` ("Endpunkt N") next to the title and count."""
     client, _, _ = api
     page = _without_comments((await client.get("/")).text)
 
@@ -3241,12 +3227,12 @@ async def test_the_group_header_shows_the_endpoint_as_a_subtitle(api):
 
 
 async def test_the_signal_view_dynamic_errors_and_success_are_translated(api):
-    """Aufgabe 12, Schritt 4: der Lade-, Titel-Speicher- und
-    Export-Kennzeichen-Fehler sowie die Rohwert-Erfolgsmeldung tragen jetzt
-    `t(...)`. Die Fehlermeldung des Rohwert-Schreibens (`app.js`, `writeRaw`
-    catch-Zweig) bleibt bewusst unangetastet - sie reicht den bereits vom
-    Backend uebersetzten `detail`-Text unveraendert durch (Aufgabe 9s
-    Scope-Notiz); dafuer gibt es keinen `web.*`-Schluessel."""
+    """Task 12, step 4: the load error, the title-save error, the export-
+    flag error, and the raw-value success message now carry `t(...)`. The
+    error message of the raw-value write (`app.js`, `writeRaw` catch
+    branch) deliberately remains untouched - it passes through the
+    `detail` text already translated by the backend unchanged (Task 9's
+    scope note); there is no `web.*` key for it."""
     client, _, _ = api
     script = (await client.get("/static/app.js")).text
 
@@ -3285,7 +3271,7 @@ async def test_the_signal_view_dynamic_errors_and_success_are_translated(api):
         in write_raw_body
     )
     assert '"Geschrieben."' not in write_raw_body
-    # Bewusst unuebersetzt: gibt den Backend-Fehlertext unveraendert durch.
+    # Deliberately untranslated: passes through the backend error text unchanged.
     assert (
         "this.rawWriteMessages[signal.key] = { text: error.message, isError: true };"
         in write_raw_body
@@ -3293,17 +3279,17 @@ async def test_the_signal_view_dynamic_errors_and_success_are_translated(api):
 
 
 async def test_the_export_tab_static_text_is_translated(api):
-    """Aufgabe 13, Schritt 3: die Ueberschrift, die IP-/Port-Labels, der
-    Einstellungen-verwaltet-Hinweis (dasselbe Praefix/Link/Suffix-Muster wie
-    Aufgabe 11s Bruecken-IP-Hinweis, hier mit `web.export.settings_hint_*`
-    und dem geteilten `web.settings.miniserver_link`), die beiden
-    Checkbox-Labels, die Filtererklaerung (per `x-html`, sie enthaelt ein
-    eingebettetes `<strong>`), die beiden Knoepfe, die Vorschau-Ueberschrift,
-    alle acht Spaltenkoepfe, die Experte-zurueckgehalten-Erklaerung und das
-    Systemvorlagen-Praefix tragen jetzt `t(...)` statt fester deutscher
-    Literale - keiner der frueheren Literale bleibt im Markup. Der
-    dynamische `x-text`, der `exportPreview.system_files` anhaengt, bleibt
-    unveraendert neben dem uebersetzten Praefix stehen."""
+    """Task 13, step 3: the heading, the IP/port labels, the managed-in-
+    settings hint (the same prefix/link/suffix pattern as Task 11's
+    bridge-IP hint, here with `web.export.settings_hint_*` and the shared
+    `web.settings.miniserver_link`), the two checkbox labels, the filter
+    explanation (via `x-html`, it contains an embedded `<strong>`), the
+    two buttons, the preview heading, all eight column headers, the
+    expert-withheld explanation, and the system-templates prefix now
+    carry `t(...)` instead of fixed German literals - none of the former
+    literals remain in the markup. The dynamic `x-text` that appends
+    `exportPreview.system_files` remains unchanged next to the translated
+    prefix."""
     client, _, _ = api
     markup = _without_comments((await client.get("/")).text)
 
@@ -3319,8 +3305,8 @@ async def test_the_export_tab_static_text_is_translated(api):
     assert "x-text=\"t('web.export.settings_hint_suffix')\"" in markup
     assert "Wird in" not in markup
     assert "verwaltet." not in markup
-    # Der Link selbst bleibt unveraendert (dieselbe Adresse wie der Reiter,
-    # jetzt mit dem geteilten Schluessel aus Aufgabe 11 uebersetzt).
+    # The link itself remains unchanged (the same address as the tab, now
+    # translated with the shared key from Task 11).
     export_hint_start = markup.index("web.export.settings_hint_prefix")
     export_hint_end = markup.index("web.export.settings_hint_suffix")
     export_hint = markup[export_hint_start:export_hint_end]
@@ -3375,14 +3361,14 @@ async def test_the_export_tab_static_text_is_translated(api):
 
 
 async def test_the_export_tab_filter_explanation_html_renders_the_bold_tag(api):
-    """Aufgabe 13, Schritt 3 (Nachbesserung): `web.export.filter_explanation`
-    enthaelt ein eingebettetes `<strong>und</strong>` - die Bindung muss
-    `x-html` sein, sonst zeigt der Browser die spitzen Klammern als Text
-    statt fett darzustellen. `GET /api/i18n` liefert die rohen Vorlagen (per
-    `i18n.raw_template`, siehe `api/language.py`), die `app.js`s `t()` in
-    diesen HTML-Block einsetzt - belegt hier nur, dass das rohe `<strong>`
-    darin ankommt; die tatsaechliche Fettdarstellung ist Teil der manuellen
-    Browserpruefung."""
+    """Task 13, step 3 (follow-up fix): `web.export.filter_explanation`
+    contains an embedded `<strong>and</strong>` - the binding must be
+    `x-html`, otherwise the browser shows the angle brackets as text
+    instead of rendering bold. `GET /api/i18n` delivers the raw templates
+    (via `i18n.raw_template`, see `api/language.py`), which `app.js`'s
+    `t()` inserts into this HTML block - proven here only is that the raw
+    `<strong>` arrives in it; the actual bold rendering is part of the
+    manual browser check."""
     client, _, _ = api
     body = (await client.get("/api/i18n")).json()
     template = body["strings"]["web.export.filter_explanation"]
@@ -3390,12 +3376,12 @@ async def test_the_export_tab_filter_explanation_html_renders_the_bold_tag(api):
 
 
 async def test_the_export_tab_dynamic_errors_are_translated(api):
-    """Aufgabe 13, Schritt 4: der Status-Ladefehler, die verbleibenden zwei
-    von drei Kopien der Brücken-IP-Pruefung (`previewExport`,
-    `downloadExport` - die dritte in `exportDevice` gehoert Aufgabe 11 und
-    ist bereits uebersetzt, siehe
+    """Task 13, step 4: the status load error, the remaining two of three
+    copies of the bridge IP check (`previewExport`, `downloadExport` - the
+    third one in `exportDevice` belongs to Task 11 and is already
+    translated, see
     `test_the_device_card_export_bridge_ip_validation_is_translated`),
-    der Vorschau-Fehler und der Download-Fehler tragen jetzt `t(...)`."""
+    the preview error, and the download error now carry `t(...)`."""
     client, _, _ = api
     script = (await client.get("/static/app.js")).text
 
@@ -3432,20 +3418,20 @@ async def test_the_export_tab_dynamic_errors_are_translated(api):
 
 
 async def test_the_system_tab_static_text_is_translated(api):
-    """Aufgabe 14, Schritt 3: die beiden Karten-Ueberschriften „Systemcheck"
-    und „Live-Diagnose" mitsamt „Aktualisieren"-Knopf, die drei
-    ternaeren Literale (Systemcheck-Status OK/Fehler, Verbindungsstatus
-    live/getrennt - letzterer nutzt den bereits aus Aufgabe 10 bekannten
-    Schluessel `web.connection.live` fuer den wahren Zweig -, Pausieren/
-    Fortsetzen), das Rauschfilter-Label, die Log-Stufen-Beschriftung samt
-    aller vier `<option>`s (der „Fehler"-Eintrag teilt sich
-    `web.system.check_error` mit dem Systemcheck-Status), der „Leeren"-
-    Knopf, die Pause/Leeren-Erklaerung (als `x-html`, sie enthaelt ein
-    eingebettetes `<span class="key">tail -f</span>`), die Ueberschriften
-    und Hinweistexte der Logs-, UDP- und Kommando-Log-Karten sowie die
-    Sicherungskarte (Ueberschrift, beide Erklaerungsabsaetze, der
-    Download-Knopf) tragen jetzt `t(...)` statt fester deutscher Literale
-    - keiner der frueheren Literale bleibt im Markup."""
+    """Task 14, step 3: the two card headings "Systemcheck" and
+    "Live-Diagnose" together with the "Aktualisieren" button, the three
+    ternary literals (system check status OK/error, connection status
+    live/disconnected - the latter uses the key `web.connection.live`
+    already known from Task 10 for the true branch -, pause/resume), the
+    noise-filter label, the log-level label along with all four
+    `<option>`s (the "Fehler" entry shares `web.system.check_error` with
+    the system check status), the "Leeren" button, the pause/clear
+    explanation (as `x-html`, it contains an embedded
+    `<span class="key">tail -f</span>`), the headings and hint texts of
+    the logs, UDP, and command-log cards, as well as the backup card
+    (heading, both explanation paragraphs, the download button) now carry
+    `t(...)` instead of fixed German literals - none of the former
+    literals remain in the markup."""
     client, _, _ = api
     markup = _without_comments((await client.get("/")).text)
 
@@ -3516,12 +3502,12 @@ async def test_the_system_tab_static_text_is_translated(api):
 
 
 async def test_the_system_tab_pause_clear_explanation_html_renders_the_key_span(api):
-    """Aufgabe 14, Schritt 3 (Nachbesserung): `web.system.pause_clear_explanation`
-    enthaelt ein eingebettetes `<span class="key">tail -f</span>` - die
-    Bindung muss `x-html` sein, sonst zeigt der Browser die spitzen Klammern
-    als Text statt das Tastatur-Styling anzuwenden. Belegt hier nur, dass
-    das rohe Markup im ausgelieferten Sprachstring ankommt; die tatsaechliche
-    Darstellung ist Teil der manuellen Browserpruefung."""
+    """Task 14, step 3 (follow-up fix): `web.system.pause_clear_explanation`
+    contains an embedded `<span class="key">tail -f</span>` - the binding
+    must be `x-html`, otherwise the browser shows the angle brackets as
+    text instead of applying the keyboard styling. Proven here only is
+    that the raw markup arrives in the delivered language string; the
+    actual rendering is part of the manual browser check."""
     client, _, _ = api
     body = (await client.get("/api/i18n")).json()
     template = body["strings"]["web.system.pause_clear_explanation"]
@@ -3529,9 +3515,9 @@ async def test_the_system_tab_pause_clear_explanation_html_renders_the_key_span(
 
 
 async def test_the_system_tab_dynamic_errors_are_translated(api):
-    """Aufgabe 14, Schritt 4: der Systemcheck-Ladefehler (`loadSystem`) und
-    der Sicherungs-Fehler (`downloadFabricBackup`) tragen jetzt `t(...)`
-    statt Template-Strings."""
+    """Task 14, step 4: the system-check load error (`loadSystem`) and the
+    backup error (`downloadFabricBackup`) now carry `t(...)` instead of
+    template strings."""
     client, _, _ = api
     script = (await client.get("/static/app.js")).text
 
@@ -3555,23 +3541,23 @@ async def test_the_system_tab_dynamic_errors_are_translated(api):
 
 
 async def test_the_settings_tab_static_text_is_translated(api):
-    """Aufgabe 15, Schritt 3: die Verbindungskarte (Ueberschrift, Erklaerung
-    als `x-html` - sie enthaelt ein eingebettetes `<strong>Nicht</strong>`
-    und einen `<span class="key">` mit dem URL-Beispiel -, das geteilte
-    `web.bridge_ip_label`, der Platzhalter, die Port-Beschriftungen, der
-    Speichern-Knopf und der Zuletzt-gespeichert-/Noch-nicht-gespeichert-
-    Hinweis) tragen jetzt `t(...)` statt fester deutscher Literale. Die
-    „Verbindung zum Miniserver"-Ueberschrift ist der eindeutigste Beleg,
-    dass diese Karte ueberhaupt uebersetzt wurde - siehe Schritt 1/2.
+    """Task 15, step 3: the connection card (heading, explanation as
+    `x-html` - it contains an embedded "<strong>Nicht</strong>" and a
+    `<span class="key">` with the URL example -, the shared
+    `web.bridge_ip_label`, the placeholder, the port labels, the save
+    button, and the last-saved/not-yet-saved hint) now carry `t(...)`
+    instead of fixed German literals. The "Verbindung zum Miniserver"
+    heading is the clearest proof that this card was translated at all -
+    see steps 1/2.
 
-    Prueft NICHT mehr die globale Abwesenheit des Textes ueber die ganze
-    Seite: das unabhaengig auf main entstandene Projektdatei-Sync-Feature
-    (siehe dessen eigene Karte im Export-Tab) verlinkt mit genau derselben
-    rohen deutschen Phrase „Einstellungen → Verbindung zum Miniserver" auf
-    diese Einstellungskarte - ein eigenes, noch unuebersetztes Feature
-    ausserhalb dieser Aufgabe, kein Beleg dafuer, dass die Ueberschrift hier
-    selbst unuebersetzt waere. Die praezise `>...<`-Form unten trifft
-    ausschliesslich die Ueberschrift als eigenen Textknoten."""
+    Does NOT check the global absence of the text across the whole page
+    anymore: the project file sync feature, developed independently on
+    main (see its own card in the export tab), links to this settings
+    card with the exact same raw German phrase
+    "Einstellungen → Verbindung zum Miniserver" - a separate, untranslated
+    outside this task, not proof that the heading itself is untranslated
+    here. The precise `>...<` form below matches exclusively the heading
+    as its own text node."""
     client, _, _ = api
     markup = _without_comments((await client.get("/")).text)
 
@@ -3604,13 +3590,13 @@ async def test_the_settings_tab_static_text_is_translated(api):
 
 
 async def test_the_settings_tab_connection_explanation_html_renders_inline_markup(api):
-    """Aufgabe 15, Schritt 3 (Nachbesserung, analog zu Aufgabe 13/14):
-    `web.settings.connection_explanation` enthaelt sowohl ein eingebettetes
-    `<strong>Nicht</strong>` als auch einen `<span class="key">`, der das
-    URL-Beispiel umschliesst - die Bindung muss deshalb `x-html` sein, sonst
-    zeigt der Browser die spitzen Klammern als Text. `GET /api/i18n` liefert
-    die rohe Vorlage; die tatsaechliche Darstellung ist Teil der manuellen
-    Browserpruefung."""
+    """Task 15, step 3 (follow-up fix, analogous to Task 13/14):
+    `web.settings.connection_explanation` contains both an embedded
+    "<strong>Nicht</strong>" and a `<span class="key">` that encloses the
+    URL example - the binding must therefore be `x-html`, otherwise the
+    browser shows the angle brackets as text. `GET /api/i18n` delivers the
+    raw template; the actual rendering is part of the manual browser
+    check."""
     client, _, _ = api
     body = (await client.get("/api/i18n")).json()
     template = body["strings"]["web.settings.connection_explanation"]
@@ -3619,10 +3605,10 @@ async def test_the_settings_tab_connection_explanation_html_renders_inline_marku
 
 
 async def test_the_settings_tab_dynamic_errors_are_translated(api):
-    """Aufgabe 15, Schritt 6: der Lade- und Speicherfehler sowie die
-    Pflichtfeld-Meldung und die Erfolgs-Toast von `loadSettings`/
-    `saveSettings` tragen jetzt `t(...)` statt fester deutscher Literale
-    oder Template-Strings."""
+    """Task 15, step 6: the load and save errors as well as the required-
+    field message and the success toast of `loadSettings`/`saveSettings`
+    now carry `t(...)` instead of fixed German literals or template
+    strings."""
     client, _, _ = api
     script = (await client.get("/static/app.js")).text
 
@@ -3650,15 +3636,14 @@ async def test_the_settings_tab_dynamic_errors_are_translated(api):
 
 
 async def test_the_settings_tab_has_a_language_toggle(api):
-    """Aufgabe 15, Schritt 4: die bisherige Platzhalterkarte „Weitere
-    Einstellungen" ist ersetzt (nicht uebersetzt, siehe ihr eigener
-    Kommentar in Aufgabe 9) durch zwei Knoepfe, die die aktuelle Sprache
-    ueber die bereits vorhandene reaktive `language`-Eigenschaft (Aufgabe 8)
-    markieren und beim Anklicken `setLanguage(...)` aufrufen (Schritt 5).
-    Wiederverwendet die bereits vorhandene `nav.tabs`/`button.active`-Klasse
-    (Reiterleiste oben) statt einer neu erfundenen CSS-Klasse - siehe
-    `style.css`, es gibt sonst kein Beispiel fuer eine Knopfreihe mit
-    Aktiv-Zustand."""
+    """Task 15, step 4: the former placeholder card
+    "Weitere Einstellungen" is replaced (not translated, see its comment in
+    Task 9) by two buttons that mark the current language via the
+    already-existing reactive `language` property (Task 8) and call
+    `setLanguage(...)` on click (step 5). Reuses the already-existing
+    `nav.tabs`/`button.active` class (tab bar up top) instead of a newly
+    invented CSS class - see `style.css`, there is otherwise no example
+    of a button row with an active state."""
     client, _, _ = api
     markup = _without_comments((await client.get("/")).text)
 
@@ -3677,11 +3662,10 @@ async def test_the_settings_tab_has_a_language_toggle(api):
 
 
 async def test_app_js_defines_set_language(api):
-    """Aufgabe 15, Schritt 1/2 und 5: `app.js` liefert `setLanguage`, das
-    `PATCH /api/language` (Aufgabe 1) aufruft und danach die Seite neu
-    laedt - siehe die Auftragsbeschreibung fuer die bewusst einfache
-    Variante ohne Sonderfall fuer bereits angezeigte Toasts/WebSocket-
-    Zustaende."""
+    """Task 15, steps 1/2 and 5: `app.js` supplies `setLanguage`, which
+    calls `PATCH /api/language` (Task 1) and then reloads the page - see
+    the task description for the deliberately simple variant with no
+    special case for already-shown toasts/WebSocket states."""
     client, _, _ = api
     script = (await client.get("/static/app.js")).text
 
@@ -3695,15 +3679,15 @@ async def test_app_js_defines_set_language(api):
 
 
 async def test_set_language_handles_request_failures_like_save_settings(api):
-    """Review-Fix Important (Whole-Branch-Review, 2026-09-04): jede andere
-    Aktion in app.js (`saveSettings`, `exportDevice`, `commissionDevice`,
-    `sendCommand`, ...) kapselt `this.request(...)` in try/catch und
-    zeigt einen Fehler ueber ein bestehendes Fehlerfeld an -
-    `setLanguage` war bislang die einzige Ausnahme: ein Fehlschlag (z. B.
-    400/502, `this.request` wirft erneut ausser bei 401) wurde zu einer
-    unbehandelten Promise-Ablehnung ohne jede Rueckmeldung. Dieser Test
-    haelt fest, dass `setLanguage` jetzt dasselbe try/catch/finally-Muster
-    wie `saveSettings` verwendet (settingsBusy-Wache eingeschlossen)."""
+    """Review fix Important (whole-branch review, 2026-09-04): every other
+    action in app.js (`saveSettings`, `exportDevice`, `commissionDevice`,
+    `sendCommand`, ...) wraps `this.request(...)` in try/catch and shows
+    an error via an existing error field - `setLanguage` was previously
+    the only exception: a failure (e.g. 400/502, `this.request` re-throws
+    except for 401) became an unhandled promise rejection with no
+    feedback whatsoever. This test records that `setLanguage` now uses
+    the same try/catch/finally pattern as `saveSettings` (including the
+    settingsBusy guard)."""
     client, _, _ = api
     script = (await client.get("/static/app.js")).text
 
@@ -3721,20 +3705,20 @@ async def test_set_language_handles_request_failures_like_save_settings(api):
 
 
 async def test_the_projectsync_card_static_text_is_translated(api):
-    """Aufgabe 16 (Projektdatei-Sync-Karte): die Ueberschrift, der Einfuehr-
-    ungstext, der Bruecken-IP-Hinweis (Praefix/Link/Suffix - derselbe Aufbau
-    wie Aufgabe 11/13, hier mit `web.export.projectsync_bridge_ip_hint_*`
-    und dem geteilten `web.settings.miniserver_link`), das Dateifeld-Label,
-    der Verarbeitungs-Hinweis, die Miniserver-Auswahl (Label, Platzhalter-
-    Option, Mehrfach-Hinweis - Nutzerwunsch nach dem Review: ersetzt seit
-    dem Zusammenfuehren mit `main` das fruehere IP-Textfeld komplett, siehe
+    """Task 16 (project file sync card): the heading, the intro text, the
+    bridge IP hint (prefix/link/suffix - the same structure as Task
+    11/13, here with `web.export.projectsync_bridge_ip_hint_*` and the
+    shared `web.settings.miniserver_link`), the file field label, the
+    processing hint, the miniserver selection (label, placeholder option,
+    multiple-miniservers hint - a user request after the review: has, since
+    merging with `main`, completely replaced the former IP text field, see
     `web.export.projectsync_miniserver_select_*`/`_multiple_miniservers_
-    hint`), die "Alles aktuell"-Meldung, die fuenf Gesamt-Tally-
-    Beschriftungen, die abweichende "alles aktuell"-Kurzform je
-    Geraetekarte, die vereinfachte Disclosure (ein einziger `t(...)`-Aufruf
-    mit `{count}` statt zwei Elementen), das Checkbox-Label und der
-    Download-Knopf tragen jetzt `t(...)` statt fester deutscher Literale -
-    keiner der frueheren Literale bleibt im Markup."""
+    hint`), the "all up to date" message, the five overall tally labels,
+    the differing "all up to date" short form per device card, the
+    simplified disclosure (a single `t(...)` call with `{count}` instead
+    of two elements), the checkbox label, and the download button now
+    carry `t(...)` instead of fixed German literals - none of the former
+    literals remain in the markup."""
     client, _, _ = api
     markup = _without_comments((await client.get("/")).text)
 
@@ -3801,14 +3785,14 @@ async def test_the_projectsync_card_static_text_is_translated(api):
 
 
 async def test_the_projectsync_card_dynamic_strings_are_translated(api):
-    """Aufgabe 16 (Projektdatei-Sync-Karte): der Bruecken-IP-Fehler in
-    `uploadProjectFile` (teilt sich `web.export.bridge_ip_missing` mit
-    Aufgabe 11/13), der Hochladen-fehlgeschlagen-Fehler, die sieben-
-    eintragige `projectSyncStatusLabel`-Tabelle, das verwaiste-Geraet-
-    Fallback-Label in `projectSyncGroupedEntries`, die beiden
-    Ein-/Ausgang-Sektionsbeschriftungen, die fuenf `projectSyncEntryNote`-
-    Rueckgaben und die sechs-eintragige `projectSyncAttrLabel`-Tabelle
-    tragen jetzt `t(...)` statt fester deutscher Literale."""
+    """Task 16 (project file sync card): the bridge IP error in
+    `uploadProjectFile` (shares `web.export.bridge_ip_missing` with Task
+    11/13), the upload-failed error, the seven-entry
+    `projectSyncStatusLabel` table, the orphaned-device fallback label in
+    `projectSyncGroupedEntries`, the two input/output section labels, the
+    five `projectSyncEntryNote` return values, and the six-entry
+    `projectSyncAttrLabel` table now carry `t(...)` instead of fixed
+    German literals."""
     client, _, _ = api
     script = (await client.get("/static/app.js")).text
 
@@ -3818,11 +3802,11 @@ async def test_the_projectsync_card_dynamic_strings_are_translated(api):
     assert 'this.projectSync.error = t("web.export.bridge_ip_missing");' in upload_body
     assert "die Brücken-IP hinterlegen" not in upload_body
 
-    # `_syncProjectFile` ist seit dem Zusammenfuehren mit `main` (Miniserver-
-    # Auswahlfeld statt IP-Textfeld) der gemeinsame Kern von
-    # `uploadProjectFile` UND `confirmProjectSyncMiniserver` - der Hochladen-
-    # fehlgeschlagen-Fehler lebt seither dort, nicht mehr in
-    # `uploadProjectFile` selbst.
+    # `_syncProjectFile` has, since merging with `main` (a miniserver
+    # selection field instead of an IP text field), been the shared core of
+    # both `uploadProjectFile` AND `confirmProjectSyncMiniserver` - the
+    # upload-failed error has lived there since, no longer in
+    # `uploadProjectFile` itself.
     sync_start = script.index("async _syncProjectFile(file, miniserverIp) {")
     sync_end = script.index("\n    },", sync_start)
     sync_body = script[sync_start:sync_end]
@@ -3896,12 +3880,11 @@ async def test_the_projectsync_card_dynamic_strings_are_translated(api):
 
 
 async def test_the_resend_card_static_text_is_translated(api):
-    """Periodischer-Resend-Karte (Settings-Tab, letzte Karte, direkt nach der
-    Sprachumschaltung) und das dazugehoerige Checkbox-Label in der
-    Signalliste tragen jetzt `t(...)` statt fester deutscher Literale - die
-    Speichern-Schaltflaeche teilt sich absichtlich `web.settings.save` mit
-    der Verbindungs-Karte darueber (dieselbe Bedeutung, kein eigener
-    Schluessel)."""
+    """The periodic-resend card (settings tab, last card, right after the
+    language toggle) and the corresponding checkbox label in the signal
+    list now carry `t(...)` instead of fixed German literals - the save
+    button deliberately shares `web.settings.save` with the connection
+    card above it (the same meaning, no key of its own)."""
     client, _, _ = api
     markup = _without_comments((await client.get("/")).text)
 
@@ -3927,10 +3910,10 @@ async def test_the_resend_card_static_text_is_translated(api):
 
 
 async def test_the_resend_card_dynamic_strings_are_translated(api):
-    """`toggleResend` (Signalliste), sowie `loadResendInterval` und
-    `saveResendInterval` (Settings-Tab) tragen jetzt `t(...)` statt fester
-    deutscher Literale fuer ihre Fehlermeldungen, die Validierung und den
-    Erfolgs-Toast."""
+    """`toggleResend` (signal list), as well as `loadResendInterval` and
+    `saveResendInterval` (settings tab), now carry `t(...)` instead of
+    fixed German literals for their error messages, the validation, and
+    the success toast."""
     client, _, _ = api
     script = (await client.get("/static/app.js")).text
 
@@ -3970,11 +3953,10 @@ async def test_the_resend_card_dynamic_strings_are_translated(api):
 
 
 async def test_the_script_offers_room_filtering_grouping_and_search(api):
-    """Die Oberflaeche wird nicht von einem JS-Testlaeufer geprueft (es gibt
-    keinen - Alpine laeuft vendored im Browser). Diese Pruefung haelt
-    deshalb nur fest, DASS die Bausteine ausgeliefert werden, auf die das
-    Markup in index.html sich stuetzt - ein Umbenennen auf einer Seite ohne
-    die andere faellt hier auf."""
+    """The UI is not checked by a JS test runner (there is none - Alpine
+    runs vendored in the browser). This check therefore only records THAT
+    the building blocks the markup in index.html relies on are delivered
+    - a rename on one side without the other shows up here."""
     client, _, _ = api
     script = (await client.get("/static/app.js")).text
     for name in (
@@ -3996,8 +3978,8 @@ async def test_the_script_offers_room_filtering_grouping_and_search(api):
 
 
 async def test_the_search_never_reaches_the_server(api):
-    """Die Suche laeuft ueber die ohnehin geladene Geraeteliste - es gibt
-    keinen Endpunkt dafuer, und es soll auch keiner entstehen."""
+    """The search runs over the device list already loaded anyway - there
+    is no endpoint for it, and none should be created either."""
     client, _, _ = api
     script = (await client.get("/static/app.js")).text
     assert "/api/devices/search" not in script
@@ -4014,10 +3996,10 @@ async def test_the_page_offers_the_room_bar(api):
 
 
 async def test_every_category_has_an_icon_symbol(api):
-    """Acht Kategorien, acht Symbole - "other" eingeschlossen. Ein fehlendes
-    Symbol faellt im Browser NICHT auf: ein `<use>` auf eine unbekannte ID
-    zeichnet stillschweigend nichts, keine Fehlermeldung. Deshalb faellt es
-    hier auf."""
+    """Eight categories, eight symbols - "other" included. A missing
+    symbol does NOT show up in the browser: a `<use>` pointing at an
+    unknown ID silently draws nothing, no error message. That is why it
+    shows up here instead."""
     client, _, _ = api
     page = (await client.get("/")).text
     for category in (
@@ -4034,22 +4016,22 @@ async def test_every_category_has_an_icon_symbol(api):
 
 
 async def test_the_tile_action_buttons_use_svg_symbols_not_raw_glyphs(api):
-    """Fund 6 (Review vom 2026-09-05): Umbenennen-, Export- und
-    Entfernen-Schaltflaeche zeigten die rohen Zeichen "✎", "↓" und "🗑"
-    statt eines der eigenen `<symbol>`-Icons - Spec 6.5 und der Rest dieser
-    Ansicht verlangen inline SVG, keine externe Icon-Bibliothek und keine
-    rohen Glyphen. "🗑" rendert unter macOS/Windows zudem als farbiges
-    Emoji statt eines einfarbigen Symbols und bricht damit die
-    kupfer-/gedeckte Symbolsprache der uebrigen Icons.
+    """Finding 6 (review from 2026-09-05): the rename, export, and remove
+    buttons showed the raw characters "✎", "↓", and "🗑" instead of one of
+    the app's own `<symbol>` icons - Spec 6.5 and the rest of this view
+    require inline SVG, no external icon library, and no raw glyphs. "🗑"
+    also renders as a coloured emoji on macOS/Windows instead of a
+    monochrome symbol, breaking the copper/muted symbol language of the
+    other icons.
 
-    Task 2 (Kebab-Menue, 2026-09-05) hat Export und Entfernen aus der
-    Fusszeile ins Menue verlegt und dabei zu ausgeschriebenen
-    Text-Schaltflaechen gemacht - dort ist Platz fuer Beschriftung statt
-    Icon. Ihre Symbole `#i-export`/`#i-remove` waren seither nirgends mehr
-    eingebunden und sind mit dem Abschluss-Review vom 2026-09-05 ganz aus
-    dem Symbol-Block entfernt worden. Nur die Umbenennen-Schaltflaeche
-    bleibt ein Icon-Knopf und wird hier weiter geprueft; das Kebab-Symbol
-    selbst deckt `test_the_tile_menu_has_its_own_icon_symbol` ab."""
+    Task 2 (kebab menu, 2026-09-05) moved export and remove from the
+    footer into the menu, turning them into spelled-out text buttons in
+    the process - there is room for a label there instead of an icon.
+    Their symbols `#i-export`/`#i-remove` had since been referenced
+    nowhere and were removed entirely from the symbol block with the
+    final review from 2026-09-05. Only the rename button remains an icon
+    button and is still checked here; the kebab symbol itself is covered
+    by `test_the_tile_menu_has_its_own_icon_symbol`."""
     client, _, _ = api
     page = (await client.get("/")).text
     assert "x-text=\"'✎'\"" not in page
@@ -4066,13 +4048,13 @@ async def test_the_tile_action_buttons_use_svg_symbols_not_raw_glyphs(api):
 
 
 async def test_the_tile_menu_has_its_own_icon_symbol(api):
-    """Das Kebab-Symbol wird wie alle anderen inline ausgeliefert - keine
-    Icon-Bibliothek, kein CDN, weil die Oberflaeche offline laeuft. Ein
-    `<use>` auf eine fehlende ID zeichnet stillschweigend nichts - die
-    riskante Richtung ist deshalb nicht die Symbol-Definition, sondern ihre
-    Verwendung: ein `<use href="#i-kebab">` ohne passendes `<symbol
-    id="i-kebab">` waere hier ebenso stillschweigend leer geblieben wie
-    umgekehrt. Beide Seiten werden deshalb geprueft."""
+    """The kebab symbol is delivered inline like all the others - no icon
+    library, no CDN, because the UI runs offline. A `<use>` pointing at a
+    missing ID silently draws nothing - the risky direction is therefore
+    not the symbol definition but its usage: a `<use href="#i-kebab">`
+    with no matching `<symbol id="i-kebab">` would have stayed just as
+    silently empty here as the reverse. Both sides are therefore
+    checked."""
     client, _store, _device_id = api
     page = (await client.get("/")).text
     assert 'id="i-kebab"' in page
@@ -4087,20 +4069,20 @@ async def test_the_device_grid_is_multi_column(api):
 
 
 async def test_device_tiles_in_the_same_row_stretch_to_equal_height(api):
-    """Nacharbeit 2026-09-05, Fund 2: `align-items: start` liess jede
-    Kachel auf ihrer eigenen Inhaltshoehe stehen - im Browser gemessen
-    zwei Kacheln derselben Reihe bei 277px und 271px (siehe
-    Aufgabenbericht). `align-items: stretch` allein reicht nicht: es dehnt
-    nur die Karte, der zusaetzliche Freiraum blieb dann als Leerraum
-    UNTER der Fusszeile stehen, waehrend die kuerzere Nachbarkachel ihre
-    Fusszeile direkt unters letzte Kommando zeichnet (gemessen: zwei
-    Fusszeilen derselben Reihe 14px versetzt). Die Karte muss deshalb
-    selbst eine Flex-Spalte werden, deren Fusszeile den Freiraum per
-    `margin-top: auto` vor sich aufsaugt. Ohne Browser-Engine kann diese
-    Suite die Reihen-Hoehen selbst nicht nachrechnen - belegt wird nur,
-    dass `.device-grid` auf `align-items: stretch` steht und die Karte
-    beides mitbringt: `display: flex; flex-direction: column` sowie ein
-    `.device-foot` mit `margin-top: auto`."""
+    """Follow-up fix 2026-09-05, Finding 2: `align-items: start` left
+    every tile standing at its own content height - measured in the
+    browser, two tiles of the same row came out at 277px and 271px (see
+    the task report). `align-items: stretch` alone is not enough: it only
+    stretches the card, and the extra free space then remained as empty
+    space BELOW the footer, while the shorter neighbouring tile draws its
+    footer right below its last command (measured: two footers of the
+    same row offset by 14px). The card must therefore itself become a
+    flex column whose footer absorbs the free space ahead of it via
+    `margin-top: auto`. Without a browser engine this suite cannot
+    recompute the row heights itself - what is proven is only that
+    `.device-grid` has `align-items: stretch` and that the card brings
+    both: `display: flex; flex-direction: column` as well as a
+    `.device-foot` with `margin-top: auto`."""
     client, _, _ = api
     css = (await client.get("/static/style.css")).text
     grid_rule = css.split(".device-grid {", 1)[1].split("}", 1)[0]
@@ -4113,23 +4095,23 @@ async def test_device_tiles_in_the_same_row_stretch_to_equal_height(api):
 
 
 async def test_the_loading_and_no_signals_hints_keep_their_pre_flex_spacing(api):
-    """Fund 2 (Review vom 2026-09-05): `display: flex` auf `.device-card`
-    (s.o.) hat einen zweiten, unbeabsichtigten Nebeneffekt - Flex-Items
-    kollabieren ihre Margins nicht mehr untereinander. `.value-rows`
-    (`margin-bottom: 0.5rem`, 8px) und die beiden bedingt sichtbaren
-    `<p class="hint">`-Absaetze direkt danach (UA-Standard `margin-block:
-    1em`, bei deren `font-size: 0.82rem` 13.12px) kollabierten im Browser
-    gemessen vorher zu `max(8px, 13.12px)` = 13.12px, seither addieren sie
-    sich zu 21.12px (siehe Aufgabenbericht) - eine Kachel im Lade- oder
-    "keine funktionalen Signale"-Zustand wird dadurch sichtbar hoeher, nur
-    weil sie zufaellig eine Flex-Spalte geworden ist. Ohne Browser-Engine
-    kann diese Suite die tatsaechliche Luecke nicht nachrechnen - belegt
-    wird nur, dass die ausgelieferte Regel den beiden betroffenen Absaetzen
-    (nicht dem dritten, unabhaengigen Miniserver-Hinweis nach
-    `.device-foot`) ein kompensierendes `margin-top` von `0.32rem`
-    (13.12px - 8px) mitgibt, statt sie unveraendert zu lassen oder ihr
-    Margin komplett auf 0 zu setzen (was die Luecke auf 8px verkleinern,
-    nicht wiederherstellen wuerde)."""
+    """Finding 2 (review from 2026-09-05): `display: flex` on
+    `.device-card` (see above) has a second, unintended side effect - flex
+    items no longer collapse their margins with each other. `.value-rows`
+    (`margin-bottom: 0.5rem`, 8px) and the two conditionally visible
+    `<p class="hint">` paragraphs right after it (UA default `margin-block:
+    1em`, which at their `font-size: 0.82rem` is 13.12px) previously
+    collapsed, measured in the browser, to `max(8px, 13.12px)` = 13.12px,
+    and have since added up to 21.12px (see the task report) - a tile in
+    the loading or "no functional signals" state becomes visibly taller as
+    a result, purely because it happened to become a flex column. Without
+    a browser engine this suite cannot recompute the actual gap - what is
+    proven is only that the delivered rule gives the two affected
+    paragraphs (not the third, independent Miniserver hint after
+    `.device-foot`) a compensating `margin-top` of `0.32rem`
+    (13.12px - 8px), instead of leaving them unchanged or setting their
+    margin to 0 entirely (which would shrink the gap to 8px, not restore
+    it)."""
     client, _, _ = api
     css = (await client.get("/static/style.css")).text
     rule = css.split(".value-rows + p.hint,\n.value-rows + p.hint + p.hint {", 1)[1].split("}", 1)[
@@ -4139,15 +4121,15 @@ async def test_the_loading_and_no_signals_hints_keep_their_pre_flex_spacing(api)
 
 
 async def test_the_device_card_does_not_clip_its_overflowing_menu(api):
-    """Fund 1 (Review 2026-09-05): das Kachel-Menue haengt absolut an
-    `.device-card` und oeffnet nach oben ueber deren Rand hinaus. Solange
-    `.device-card` (wie zuvor) `overflow: hidden` traegt, schneidet die
-    Karte genau diesen Teil des Menues ab - im echten Browser gemessen
-    (siehe Aufgabenbericht): `document.elementFromPoint` am oberen
-    Menuerand liefert dann die Karte statt des Menues. Diese Suite hat
-    keine Browser-Engine und kann das Abschneiden selbst nicht
-    nachstellen - belegt wird nur, dass die ausgelieferte Regel
-    `overflow: visible` traegt und nicht wieder auf `hidden` zurueckfaellt."""
+    """Finding 1 (review 2026-09-05): the tile menu is positioned
+    absolutely relative to `.device-card` and opens upward past its edge.
+    As long as `.device-card` carries `overflow: hidden` (as it did
+    before), the card clips exactly this part of the menu - measured in a
+    real browser (see the task report): `document.elementFromPoint` at the
+    top edge of the menu then returns the card instead of the menu. This
+    suite has no browser engine and cannot reproduce the clipping itself -
+    what is proven is only that the delivered rule carries
+    `overflow: visible` and does not fall back to `hidden` again."""
     client, _, _ = api
     css = (await client.get("/static/style.css")).text
     rule = css.split(".device-card {", 1)[1].split("}", 1)[0]
@@ -4156,13 +4138,13 @@ async def test_the_device_card_does_not_clip_its_overflowing_menu(api):
 
 
 async def test_the_device_card_stripe_is_rounded_on_its_own(api):
-    """Der Farbstreifen (`.device-card::before`) verdankte seine gerundeten
-    Ecken bislang dem `overflow: hidden` der Karte, das ihn wegschnitt statt
-    ihn zu runden - dieselbe Regel, die auch das Kachel-Menue abschnitt
-    (siehe `test_the_device_card_does_not_clip_its_overflowing_menu`). Mit
-    `overflow: visible` (s.o.) muss der Streifen seine linksseitige Rundung
-    jetzt selbst tragen, sonst stehen seine oberen/unteren linken Ecken
-    eckig neben der runden Karte."""
+    """The colour stripe (`.device-card::before`) previously owed its
+    rounded corners to the card's `overflow: hidden`, which clipped it
+    instead of rounding it - the same rule that also clipped the tile
+    menu (see `test_the_device_card_does_not_clip_its_overflowing_menu`).
+    With `overflow: visible` (see above), the stripe must now carry its
+    left-side rounding itself, otherwise its top-left/bottom-left corners
+    sit square next to the rounded card."""
     client, _, _ = api
     css = (await client.get("/static/style.css")).text
     rule = css.split(".device-card::before {", 1)[1].split("}", 1)[0]
@@ -4170,32 +4152,32 @@ async def test_the_device_card_stripe_is_rounded_on_its_own(api):
 
 
 async def test_the_tile_menu_outranks_the_sticky_header(api):
-    """Fund 1 (Nacharbeit 2026-09-05): `.tile-menu-items` oeffnet nach OBEN
-    ueber den Kachelrand hinaus (s.o.) und kann dabei bis unter die sticky
-    Kopfzeile (`header.app-header`, `z-index: 10`) reichen, sobald eine
-    Kachel der ersten Reihe ihr Menue oeffnet. Im echten Browser gemessen
-    (siehe Aufgabenbericht): Menue-Oberkante bei y=48, Kopfzeile-Unterkante
-    bei y=56, `document.elementFromPoint` an der Menue-Oberkante lieferte
-    die Kopfzeile statt des Menues - ohne Browser-Engine kann diese Suite
-    das Uebermalen selbst nicht nachstellen, belegt wird nur, dass die
-    ausgelieferte Regel einen hoeheren `z-index` traegt als die Kopfzeile
-    und nicht wieder darunter faellt.
+    """Finding 1 (follow-up fix 2026-09-05): `.tile-menu-items` opens
+    UPWARD past the tile's edge (see above) and can in doing so reach
+    beneath the sticky header (`header.app-header`, `z-index: 10`) as soon
+    as a tile in the first row opens its menu. Measured in a real browser
+    (see the task report): menu top edge at y=48, header bottom edge at
+    y=56, `document.elementFromPoint` at the menu's top edge returned the
+    header instead of the menu - without a browser engine this suite
+    cannot reproduce the overpainting itself, what is proven is only that
+    the delivered rule carries a higher `z-index` than the header and does
+    not fall back below it again.
 
-    Review-Fund 4 (2026-09-05, Review der Nacharbeit): dieser Vergleich
-    zweier Zahlen ist eine NOTWENDIGE, aber keine HINREICHENDE Bedingung -
-    ein `z-index` gilt nur innerhalb des Stacking-Kontexts seines
-    Erzeugers, und `opacity`/`filter`/`transform`/`backdrop-filter`/
-    `will-change`/`isolation`/`contain: paint` auf `.device-card`,
-    `.device-foot` oder `.tile-menu` spannen einen solchen Kontext auf.
-    Gemessen mit `opacity: 0.75` auf `.device-card` (dem Vor-Nacharbeit-
-    Zustand): `document.elementFromPoint` an der Menue-Oberkante lieferte
-    trotzdem die Kopfzeile, SELBST mit `z-index: 20` hier - die Karten-
-    Opacity sperrte das Menue in ihren eigenen Kontext ein, in dem der
-    Vergleich nie ankam. Dieser Test kennt keine Stacking-Kontexte, er
-    vergleicht nur zwei Zahlen im Stylesheet - kommt einer der genannten
-    Nebeneffekte zwischen `.device-card` und `.tile-menu-items` zurueck,
-    faengt sich das Menue wieder unter der Kopfzeile, OHNE dass dieser
-    Test (oder irgendein anderer in dieser Datei) das meldet."""
+    Review finding 4 (2026-09-05, review of the follow-up work): this
+    comparison of two numbers is a NECESSARY but not a SUFFICIENT
+    condition - a `z-index` only applies within the stacking context of
+    its creator, and `opacity`/`filter`/`transform`/`backdrop-filter`/
+    `will-change`/`isolation`/`contain: paint` on `.device-card`,
+    `.device-foot`, or `.tile-menu` open up such a context. Measured with
+    `opacity: 0.75` on `.device-card` (the pre-follow-up-fix state):
+    `document.elementFromPoint` at the menu's top edge still returned the
+    header, EVEN with `z-index: 20` here - the card's opacity locked the
+    menu into its own context, where the comparison never arrived. This
+    test knows nothing of stacking contexts, it only compares two numbers
+    in the stylesheet - if any of the mentioned side effects returns
+    between `.device-card` and `.tile-menu-items`, the menu gets caught
+    under the header again, WITHOUT this test (or any other in this file)
+    reporting it."""
     client, _, _ = api
     css = (await client.get("/static/style.css")).text
     header_rule = css.split("header.app-header {", 1)[1].split("}", 1)[0]
@@ -4206,18 +4188,18 @@ async def test_the_tile_menu_outranks_the_sticky_header(api):
 
 
 async def test_the_tile_menu_caps_its_width_and_truncates_long_room_names(api):
-    """Fund 2 (Nacharbeit 2026-09-05): `.tile-menu-item` ist `white-space:
-    nowrap`, `.tile-menu-items` hatte nur ein `min-width`, keine Obergrenze
-    - ein frei vergebener, langer Raumname blaeht die shrink-to-fit-Box auf
-    seine volle Wortbreite auf und laesst sie, weil sie an `right: 0`
-    verankert ist, nach LINKS aus der Kachel herauswachsen. Im Browser
-    gemessen bei 375 px Breite mit dem Raumnamen "Werkstatt im
-    Untergeschoss hinter der Heizung und dem Regal" (siehe
-    Aufgabenbericht): Menue 384 px breit, linke Kante bei x=-46, das
-    Dokument scrollte horizontal. Diese Suite hat keine Browser-Engine und
-    kann das Layout selbst nicht nachrechnen - belegt wird nur, dass die
-    ausgelieferte Regel ein `max-width` traegt und `.tile-menu-item` seinen
-    Text mit Ellipse statt mit Umbruch kuerzt."""
+    """Finding 2 (follow-up fix 2026-09-05): `.tile-menu-item` is
+    `white-space: nowrap`, `.tile-menu-items` only had a `min-width`, no
+    upper bound - a freely chosen, long room name inflates the
+    shrink-to-fit box to its full word width and, because it is anchored
+    at `right: 0`, lets it grow out of the tile to the LEFT. Measured in
+    the browser at 375 px width with the room name
+    "Werkstatt im Untergeschoss hinter der Heizung und dem Regal":
+    menu 384 px wide, left edge at x=-46, the document scrolled
+    horizontally. This suite has no browser engine and cannot recompute
+    the layout itself - what is proven is only that the delivered rule
+    carries a `max-width` and that `.tile-menu-item` truncates its text
+    with an ellipsis instead of wrapping."""
     client, _, _ = api
     css = (await client.get("/static/style.css")).text
     items_rule = css.split(".tile-menu-items {", 1)[1].split("}", 1)[0]
@@ -4229,20 +4211,21 @@ async def test_the_tile_menu_caps_its_width_and_truncates_long_room_names(api):
 
 
 async def test_the_current_room_checkmark_survives_the_width_cap(api):
-    """Review-Fund 1 (2026-09-05, Review der Nacharbeit): `.tile-menu-item.
-    is-current::after` haengt sein Haekchen als normalen Text ans
-    Zeilenende - genau dort, wo `.tile-menu-item`s `overflow: hidden;
-    text-overflow: ellipsis` (Fund 2 der Nacharbeit, s.o.) abschneidet. Im
-    Browser gemessen mit dem Raumnamen "Werkstatt im Untergeschoss hinter
-    der Heizung und dem Regal" (siehe Aufgabenbericht): `clientWidth`
-    246px, `scrollWidth` 413px, das `::after` lag 167px hinter der
-    Clip-Kante - unsichtbar, der Eintrag zeigte die Ellipse ohne jedes
-    Haekchen. Ohne Browser-Engine kann diese Suite das Abschneiden selbst
-    nicht nachstellen - belegt wird nur, dass die ausgelieferte Regel das
-    Haekchen ausserhalb des geclippten Textflusses positioniert
-    (`position: absolute` auf einem `position: relative`-Bezugsrahmen)
-    statt es dem Textinhalt zu ueberlassen, und dass der aktuelle Eintrag
-    dafuer Platz reserviert."""
+    """Review finding 1 (2026-09-05, review of the follow-up work):
+    `.tile-menu-item.is-current::after` appends its checkmark as ordinary
+    text at the end of the line - exactly where `.tile-menu-item`'s
+    `overflow: hidden; text-overflow: ellipsis` (finding 2 of the
+    follow-up fix, see above) cuts it off. Measured in the browser with
+    the room name
+    "Werkstatt im Untergeschoss hinter der Heizung und dem Regal":
+    `clientWidth` 246px, `scrollWidth`
+    413px, the `::after` sat 167px behind the clip edge - invisible, the
+    entry showed the ellipsis with no checkmark at all. Without a browser
+    engine this suite cannot reproduce the clipping itself - what is
+    proven is only that the delivered rule positions the checkmark outside
+    the clipped text flow (`position: absolute` on a
+    `position: relative` reference frame) instead of leaving it to the
+    text content, and that the current entry reserves space for it."""
     client, _, _ = api
     css = (await client.get("/static/style.css")).text
     item_rule = css.split(".tile-menu-item {", 1)[1].split("}", 1)[0]
@@ -4254,20 +4237,21 @@ async def test_the_current_room_checkmark_survives_the_width_cap(api):
 
 
 async def test_room_chip_in_the_tile_menu_carries_the_full_name_as_a_title(api):
-    """Ergaenzung zu Fund 2: gekuerzt mit Ellipse bleibt der volle Raumname
-    nirgends sichtbar, ausser man haelt ueber dem Eintrag oder fokussiert
-    ihn - dafuer braucht der Knopf ein natives `title`. `chip.key` ist ein
-    vom Nutzer vergebener Raumname, also Daten und keine zu uebersetzende
-    Oberflaechen-Zeichenkette - anders als der Rest der Menuetexte laeuft er
-    bewusst NICHT durch `t()`. Diese Suite prueft nur, dass das Attribut
-    ausgeliefert wird, nicht dass der Browser es beim Hover tatsaechlich
-    anzeigt."""
+    """Addition to finding 2: truncated with an ellipsis, the full room
+    name is not visible anywhere, unless you hover over the entry or
+    focus it - which requires the button to have a native `title`.
+    `chip.key` is a room name assigned by the user, so it is data, not a
+    UI string to translate - unlike the rest of the menu text, it
+    deliberately does NOT run through `t()`. This suite only checks that
+    the attribute is delivered, not that the browser actually shows it on
+    hover."""
     client, _, _ = api
     page = (await client.get("/")).text
-    # `roomChips()` wird zweimal per `x-for` durchlaufen: einmal im nativen
-    # `<select>` von "Commission a new device", einmal im Kachel-Menue -
-    # gesucht wird deshalb erst ab `.tile-menu-items`, sonst traf der erste
-    # (falsche) Treffer und der Test haette nie etwas belegt.
+    # `roomChips()` is traversed twice via `x-for`: once in the native
+    # `<select>` for "Commission a new device", once in the tile menu -
+    # so the search starts only from `.tile-menu-items`, otherwise the
+    # first (wrong) match would have hit and the test would never have
+    # proven anything.
     menu_start = page.index('class="tile-menu-items"')
     chip_start = page.index('x-for="chip in roomChips()', menu_start)
     chip_end = page.index("</template>", chip_start)
@@ -4276,32 +4260,33 @@ async def test_room_chip_in_the_tile_menu_carries_the_full_name_as_a_title(api):
 
 
 async def test_offline_dimming_stays_off_the_tile_menu(api):
-    """Fund 3 (Nacharbeit 2026-09-05): `.device-card.is-offline { opacity:
-    0.75 }` spannte einen Deckkraft-Kontext ueber die GANZE Karte auf, das
-    Kachel-Menue eingeschlossen - es haengt als Nachfahre im `.device-foot`.
-    Ein offline Geraet dimmte damit sein eigenes, absolut ueber die
-    Nachbarkachel schwebendes Menue auf 75 % mit, durch das dann die
-    Nachbarkachel sichtbar durchschien. Ohne Browser-Engine kann diese
-    Suite das Durchscheinen selbst nicht nachstellen - belegt wird nur, dass
-    `.device-card.is-offline` KEIN pauschales `opacity` mehr traegt und
-    `.tile-menu` in der stattdessen gezielten Dimmung explizit ausgenommen
-    ist."""
+    """Finding 3 (follow-up fix 2026-09-05): `.device-card.is-offline {
+    opacity: 0.75 }` opened up an opacity context over the ENTIRE card,
+    the tile menu included - it hangs as a descendant inside
+    `.device-foot`. An offline device thereby dimmed its own menu, which
+    floats absolutely over the neighbouring tile, to 75% along with it,
+    letting the neighbouring tile visibly show through it. Without a
+    browser engine this suite cannot reproduce the show-through itself -
+    what is proven is only that `.device-card.is-offline` no longer
+    carries a blanket `opacity` and that `.tile-menu` is explicitly
+    excluded from the now-targeted dimming."""
     client, _, _ = api
     css = (await client.get("/static/style.css")).text
-    # Die pauschale Karten-Regel `.device-card.is-offline { opacity: ... }`
-    # gibt es nicht mehr - nur noch als Selektor-Praefix vor `::before` oder
-    # `>`. Ein bare `{` direkt danach waere die alte, verworfene Fassung.
+    # The blanket card rule `.device-card.is-offline { opacity: ... }` no
+    # longer exists - only as a selector prefix before `::before` or `>`.
+    # A bare `{` directly after it would be the old, discarded version.
     assert ".device-card.is-offline {" not in css
     assert ".device-card.is-offline > *:not(.device-foot) {" in css
     assert ".device-card.is-offline .device-foot > *:not(.tile-menu) {" in css
 
 
 async def test_offline_stripe_keeps_its_dimmed_look_on_its_own(api):
-    """Ergaenzung zu Fund 3: mit der Dimmung weg von `.device-card` dimmt
-    sich der Farbstreifen (`.device-card::before`) nicht mehr automatisch
-    als deren Nachfahre mit - ohne eigene Regel saehe er in einer offline
-    Kachel ploetzlich saettigter aus als vorher. `.device-card.is-offline::
-    before` muss das `opacity: 0.75` deshalb jetzt selbst tragen."""
+    """Addition to finding 3: with the dimming moved away from
+    `.device-card`, the colour stripe (`.device-card::before`) no longer
+    automatically dims along with it as a descendant - without a rule of
+    its own it would suddenly look more saturated than before in an
+    offline tile. `.device-card.is-offline::before` must therefore now
+    carry the `opacity: 0.75` itself."""
     client, _, _ = api
     css = (await client.get("/static/style.css")).text
     stripe_rule = css.split(".device-card.is-offline::before {", 1)[1].split("}", 1)[0]
@@ -4309,17 +4294,17 @@ async def test_offline_stripe_keeps_its_dimmed_look_on_its_own(api):
 
 
 async def test_offline_dimming_reaches_the_kebab_trigger_too(api):
-    """Review-Fund 2 (2026-09-05, Review der Nacharbeit): die Ausnahme
-    `.device-card.is-offline .device-foot > *:not(.tile-menu)` nimmt das
-    GESAMTE `<details class="tile-menu">` aus, nicht nur die transiente,
-    sich oeffnende Liste - eingeschlossen dessen permanent sichtbaren
-    `<summary>`-Kebab. Im Browser gemessen an einer offline Karte:
-    `.device-foot` Opacity 1, `.tile-menu > summary` Opacity 1, waehrend
-    der `.hint` daneben bei 0.75 lag - der Kebab-Rahmen wirkte dadurch
-    heller als alles drumherum. Ohne Browser-Engine kann diese Suite den
-    Helligkeitsunterschied selbst nicht nachstellen - belegt wird nur, dass
-    der Ausloeser eine eigene, auf ihn gezielte `opacity: 0.75`-Regel
-    bekommen hat, statt weiterhin unbehandelt zu bleiben."""
+    """Review finding 2 (2026-09-05, review of the follow-up work): the
+    exception `.device-card.is-offline .device-foot > *:not(.tile-menu)`
+    excludes the ENTIRE `<details class="tile-menu">`, not only the
+    transient, opening list - including its permanently visible
+    `<summary>` kebab. Measured in the browser on an offline card:
+    `.device-foot` opacity 1, `.tile-menu > summary` opacity 1, while the
+    `.hint` next to it sat at 0.75 - the kebab trigger consequently looked
+    brighter than everything around it. Without a browser engine this
+    suite cannot reproduce the brightness difference itself - what is
+    proven is only that the trigger has been given its own, targeted
+    `opacity: 0.75` rule, instead of remaining unhandled."""
     client, _, _ = api
     css = (await client.get("/static/style.css")).text
     summary_rule = css.split(".device-card.is-offline .tile-menu > summary {", 1)[1].split("}", 1)[
@@ -4329,45 +4314,46 @@ async def test_offline_dimming_reaches_the_kebab_trigger_too(api):
 
 
 async def test_offline_footer_divider_matches_the_dimmed_commands_divider(api):
-    """Review-Fund 3 (2026-09-05, Review der Nacharbeit): `.device-commands`
-    und `.device-foot` ziehen beide `border-top: 1px solid var(--border)`.
-    Bei einem offline Geraet dimmt die erste Trennlinie als Teil von
-    `.device-commands` (ein direktes, komplett gedimmtes Kartenkind, s.o.)
-    mit, die zweite nicht - `.device-foot` selbst bleibt von der Dimmung
-    ausgenommen (nur seine Kinder ausser `.tile-menu` werden gedimmt), sein
-    Rahmen malt also ein paar Pixel darunter in voller Staerke weiter.
-    `.device-foot` als Ganzes zu dimmen scheidet aus, das traefe
-    `.tile-menu` als Nachfahren gleich mit. Ohne Browser-Engine kann diese
-    Suite den Helligkeitsunterschied selbst nicht nachstellen - belegt wird
-    nur, dass die ausgelieferte Regel NUR die Randfarbe dimmt (`color-mix`
-    auf `border-top-color`), nicht die Deckkraft des ganzen Elements."""
+    """Review finding 3 (2026-09-05, review of the follow-up work):
+    `.device-commands` and `.device-foot` both draw
+    `border-top: 1px solid var(--border)`. On an offline device, the
+    first divider dims along as part of `.device-commands` (a direct,
+    fully dimmed card child, see above), the second one does not -
+    `.device-foot` itself remains excluded from the dimming (only its
+    children other than `.tile-menu` are dimmed), so its border keeps
+    painting at full strength a few pixels below. Dimming `.device-foot`
+    as a whole is out of the question, that would take `.tile-menu` as a
+    descendant along with it. Without a browser engine this suite cannot
+    reproduce the brightness difference itself - what is proven is only
+    that the delivered rule dims ONLY the border colour (`color-mix` on
+    `border-top-color`), not the opacity of the whole element."""
     client, _, _ = api
     css = (await client.get("/static/style.css")).text
     foot_offline_rule = css.split(".device-card.is-offline .device-foot {", 1)[1].split("}", 1)[0]
     assert "border-top-color" in foot_offline_rule
     assert "color-mix" in foot_offline_rule
     assert "75%" in foot_offline_rule
-    # Darf NICHT die Deckkraft des ganzen `.device-foot` (und damit seines
-    # Nachfahren `.tile-menu`) mitziehen - genau der Fehler, den die
-    # `:not(.tile-menu)`-Ausnahme oben verhindern soll.
+    # Must NOT drag along the opacity of the whole `.device-foot` (and
+    # thus its descendant `.tile-menu`) - exactly the bug the
+    # `:not(.tile-menu)` exception above is meant to prevent.
     assert "opacity" not in foot_offline_rule
 
 
 async def test_the_footer_pill_wraps_onto_its_own_line_below_the_kebab(api):
-    """Der Kebab teilt sich die erste Fusszeilen-Zeile mit dem Export-
-    Hinweis, die Pille bricht darunter um (2026-09-06).
+    """The kebab shares the first footer line with the export hint, the
+    pill wraps onto its own line below it (2026-09-06).
 
-    `order: 1` allein reichte nicht: passt bei einer breiten Kachel alles
-    in eine Zeile, ueberholt die Pille den Kebab und der steht mitten in
-    der Fusszeile statt rechts. `flex-basis: 100%` zwingt die Pille immer
-    auf eine eigene Zeile, womit die Aufteilung bei jeder Kachelbreite
-    dieselbe ist. Beide Eigenschaften gehoeren zusammen - deshalb prueft
-    dieser Test beide, nicht nur die auffaelligere.
+    `order: 1` alone was not enough: if everything fits on one line for a
+    wide tile, the pill overtakes the kebab and it ends up sitting in the
+    middle of the footer instead of on the right. `flex-basis: 100%`
+    always forces the pill onto its own line, making the split the same
+    at every tile width. Both properties belong together - that is why
+    this test checks both, not just the more conspicuous one.
 
-    Reiner Auslieferungsbeleg: geprueft wird die Regel im ausgelieferten
-    Stylesheet, nicht das Ergebnis im Browser. Wie sie sich tatsaechlich
-    auswirkt, ist bei 300, 460 und 526 px Kachelbreite von Hand gemessen
-    worden (siehe Commit-Nachricht)."""
+    Pure delivery proof: what is checked is the rule in the delivered
+    stylesheet, not the result in the browser. How it actually plays out
+    has been measured by hand at 300, 460, and 526 px tile width (see the
+    commit message)."""
     client, _, _ = api
     css = (await client.get("/static/style.css")).text
     rule = css.split(".device-foot > .status-pill {", 1)[1].split("}", 1)[0]
@@ -4376,44 +4362,44 @@ async def test_the_footer_pill_wraps_onto_its_own_line_below_the_kebab(api):
 
 
 async def test_the_changed_pill_now_lives_in_the_tile_footer(api):
-    """Pille-in-die-Fusszeile-Umbau (2026-09-06): die Geaendert-seit-Export-
-    Pille sass bisher in der Kopfzeile (`.device-ident`), wo sie laut dem
-    inzwischen entfernten Entwurf-6.2-Kommentar das Leitwert-Label
-    verdraengte. Sie steht jetzt in `.device-foot`, direkt neben
-    `exportHintFor` - derselbe Exportzustand, dieselbe Zeile, statt Streit
-    um die schmale Zeile unter dem Geraetenamen. Die Reihenfolge Hinweis-
-    dann-Pille spiegelt den Fliesstext ("Zuletzt exportiert am ... und
-    seither geaendert"), nicht umgekehrt.
+    """Pill-into-the-footer rebuild (2026-09-06): the changed-since-export
+    pill previously sat in the header (`.device-ident`), where, per the
+    now-removed design-6.2 comment, it displaced the primary-value label.
+    It now sits in `.device-foot`, right next to `exportHintFor` - the
+    same export state, the same line, instead of competing for the narrow
+    line below the device name. The order hint-then-pill mirrors the
+    running text ("Last exported on ... and changed since"), not the
+    reverse.
 
-    Reiner Auslieferungsbeleg (kein Browser-Lauf, kein Alpine-Rendering):
-    geprueft wird die Position der Textmarken im ausgelieferten Markup,
-    nicht das tatsaechliche Layout - das bestaetigt nur, was ausgeliefert
-    wird, nichts ueber Umbruch oder Ueberlauf im Browser (siehe die
-    manuelle Pruefung im Aufgabenbericht fuer 261 px/1440 px)."""
+    Pure delivery proof (no browser run, no Alpine rendering): what is
+    checked is the position of the text markers in the delivered markup,
+    not the actual layout - that only confirms what is delivered, nothing
+    about wrapping or overflow in the browser (see the manual check in the
+    task report for 261 px/1440 px)."""
     client, _, _ = api
     markup = _without_comments((await client.get("/")).text)
     foot_pos = markup.index('class="device-foot"')
     hint_pos = markup.index('x-text="exportHintFor(device.id)"')
     pill_pos = markup.index("x-text=\"t('web.devices.changed_since_export')\"")
     offline_pos = markup.index("x-text=\"t('web.devices.offline')\"")
-    # Die Pille steht nach dem Fusszeilen-Anfang und nach dem Export-
-    # Hinweis - nicht mehr vor `.device-foot` in der Kopfzeile.
+    # The pill sits after the start of the footer and after the export
+    # hint - no longer before `.device-foot` in the header.
     assert foot_pos < hint_pos < pill_pos
-    # "Offline" bleibt in der Kopfzeile, also VOR der Fusszeile: das ist
-    # Geraetezustand, kein Exportzustand, und bleibt dort, wo der Blick
-    # zuerst hinfaellt.
+    # "Offline" stays in the header, i.e. BEFORE the footer: that is
+    # device state, not export state, and stays where the eye lands
+    # first.
     assert offline_pos < foot_pos
 
-    # Die Pille haengt NICHT mehr an `isOnline` (2026-09-06). Diese Kopplung
-    # stammte aus der Kopfzeile, wo sich Pille und Offline-Marke eine Zeile
-    # teilten; unten konkurriert nichts, und ob ein Geraet seit dem Export
-    # geaendert wurde, ist unabhaengig davon, ob es gerade antwortet. Ohne
-    # diese Zusicherung koennte ein spaeterer Umbau die Bedingung
-    # stillschweigend wieder mitschleppen - und ein offline stehendes Geraet
-    # mit ausstehendem Export saehe wieder aus wie eines ohne, weil auch der
-    # Randstreifen `is-changed` an `isOnline` koppelt.
-    # Rueckwaerts auf die PILLE ankern, nicht auf das naechste `<span`: das
-    # waere das innere Text-Span, das den Beschriftungsschluessel traegt.
+    # The pill is NO LONGER tied to `isOnline` (2026-09-06). This coupling
+    # came from the header, where the pill and the offline marker shared a
+    # line; nothing competes for space below, and whether a device has
+    # changed since export is independent of whether it is currently
+    # responding. Without this assertion, a later rebuild could silently
+    # drag the condition back in - and a device sitting offline with a
+    # pending export would look like one without, because the edge stripe
+    # `is-changed` also ties to `isOnline`.
+    # Anchor backward on the PILL itself, not on the next `<span`: that
+    # would be the inner text span carrying the label key.
     pill_open = markup.rindex('<span class="status-pill warn"', 0, pill_pos)
     pill_tag = markup[pill_open : markup.index(">", pill_open)]
     assert "changedSinceExport(device.id)" in pill_tag
@@ -4421,48 +4407,47 @@ async def test_the_changed_pill_now_lives_in_the_tile_footer(api):
 
 
 async def test_command_row_wrappers_do_not_stack_their_sibling_margin(api):
-    """Nacharbeit 2026-09-05, Fund 3: jeder Befehl steckt in einem eigenen
-    `<span class="row">`-Wrapper (index.html), und `.row + .row {
-    margin-top: 0.5rem }` (weiter oben in dieser Datei) ist fuer vertikal
-    GESTAPELTE Zeilen gedacht. In `.device-commands` sitzen die Wrapper
-    aber NEBENEINANDER in derselben zentrierten Flex-Zeile - ein
-    Top-Margin schiebt einen Wrapper darin nicht nach unten, sondern
-    innerhalb der zentrierten Zeile nach OBEN. Im Browser gemessen: alle
-    drei Befehlsknoepfe sind gleich hoch (30.9px), der erste (margin-lose)
-    stand aber bei `top: 976.1`, die beiden folgenden bei `top: 980.1`
-    (siehe Aufgabenbericht). Ohne Browser-Engine kann diese Suite den
-    Versatz selbst nicht nachrechnen - belegt wird nur, dass
-    `.device-commands` das Stapel-Margin gezielt auf 0 setzt, statt das
-    Element (das Flex/`gap`/Zentrierung weiterhin braucht) ganz von `.row`
-    zu loesen."""
+    """Follow-up fix 2026-09-05, Finding 3: each command sits in its own
+    `<span class="row">` wrapper (index.html), and `.row + .row {
+    margin-top: 0.5rem }` (further up in this file) is meant for
+    vertically STACKED rows. In `.device-commands`, though, the wrappers
+    sit SIDE BY SIDE in the same centred flex row - a top margin on one of
+    them there does not push it downward, but UPWARD within the centred
+    row. Measured in the browser: all three command buttons are the same
+    height (30.9px), but the first one (margin-free) sat at `top:
+    976.1`, the two following ones at `top: 980.1` (see the task report).
+    Without a browser engine this suite cannot recompute the offset itself
+    - what is proven is only that `.device-commands` sets the stacking
+    margin to 0 in a targeted way, instead of detaching the element (which
+    still needs flex/`gap`/centring) from `.row` entirely."""
     client, _, _ = api
     css = (await client.get("/static/style.css")).text
     override_rule = css.split(".device-commands > .row + .row {", 1)[1].split("}", 1)[0]
     assert "margin-top: 0;" in override_rule
-    # Die allgemeine, fuer vertikale Stapel gedachte Regel muss unangetastet
-    # bleiben - der Fix ist ein gezielter Override, keine Streichung. Wie
-    # jede andere Regelpruefung in dieser Datei wird dafuer der Regelkoerper
-    # extrahiert statt der komplette Block samt Klammern und Einrueckung zu
-    # matchen (Fund 3, Review vom 2026-09-05) - ein Kommentar in der Regel
-    # oder eine andere Reihenfolge der Deklaration duerfte diesen Test nicht
-    # brechen, ohne dass sich am Verhalten etwas aendert.
+    # The general rule, meant for vertical stacks, must remain untouched -
+    # the fix is a targeted override, not a removal. As with every other
+    # rule check in this file, the rule body is extracted for that instead
+    # of matching the complete block including braces and indentation
+    # (Finding 3, review from 2026-09-05) - a comment in the rule or a
+    # different order of the declaration should not break this test
+    # without anything about the behaviour changing.
     base_rule = css.split(".row + .row {", 1)[1].split("}", 1)[0]
     assert "margin-top: 0.5rem;" in base_rule
 
 
 async def test_device_name_truncates_with_an_ellipsis_instead_of_clipping(api):
-    """Fund 1 (Review vom 2026-09-05), nachgezogen 2026-09-07: seit dem
-    Wegfall von `.lead-value` hat der Name die Kopfzeile fuer sich und
-    kuerzt nur noch bei aussergewoehnlich langen Namen. Dass er es dann
-    SICHTBAR tut, bleibt die Zusicherung dieses Tests. Ein
-    `<input>` clippt seinen Text intern, sobald er nicht passt, und zwar
-    OHNE jedes Zeichen, das anzeigt, dass Text fehlt, solange kein
-    `text-overflow` gesetzt ist - im Browser gemessen bei 261 px Kachel-
-    breite: Name 65 px, mitten im Buchstaben abgeschnitten, wo `overflow:
-    hidden` plus `text-overflow: ellipsis` stattdessen sichtbar kuerzen
-    (siehe Aufgabenbericht). Ohne Browser-Engine kann diese Suite das
-    Kuerzen selbst nicht nachrechnen - belegt wird nur, dass die
-    ausgelieferte Regel beide Eigenschaften traegt."""
+    """Finding 1 (review from 2026-09-05), followed up on 2026-09-07: since
+    the removal of `.lead-value`, the name has the header row to itself
+    and only truncates for exceptionally long names. That it then does
+    so VISIBLY remains the assertion of this test. An
+    `<input>` clips its text internally as soon as it does not fit, and
+    does so WITHOUT any character indicating that text is missing, as
+    long as no `text-overflow` is set - measured in the browser at a
+    261px tile width: name 65px, cut off mid-letter, where `overflow:
+    hidden` plus `text-overflow: ellipsis` instead truncate visibly
+    (see the task report). Without a browser engine, this suite cannot
+    verify the truncation itself - it only proves that the
+    shipped rule carries both properties."""
     client, _, _ = api
     css = (await client.get("/static/style.css")).text
     rule = css.split(".device-head .device-name {", 1)[1].split("}", 1)[0]
@@ -4471,33 +4456,30 @@ async def test_device_name_truncates_with_an_ellipsis_instead_of_clipping(api):
 
 
 async def test_reconcile_room_filter_falls_back_to_all_when_the_filtered_room_vanishes(api):
-    """Fund 2 (Review vom 2026-09-05), zwei Runden: Verschiebt man ueber das
-    Kachel-Menue das letzte Geraet eines gefilterten Raums in einen
-    anderen, oder benennt/vereint man den gefilterten Raum weg, aendert
-    `roomChips()` sich - `roomFilter` selbst aber nicht, ohne dass etwas
-    das nachzieht. Der gefilterte Raum existiert dann nicht mehr, kein Chip
-    ist mehr aktiv, keine Kachel mehr sichtbar, und der (nur an `roomFilter`
-    haengende) Umbenennen-Stift zeigt weiter auf einen Raum, der bei einem
-    Klick 404 liefern wuerde.
+    """Finding 2 (review from 2026-09-05), two rounds: move a filtered
+    room's last device into another one via the tile menu, or rename/merge
+    the filtered room away, and `roomChips()` changes - `roomFilter`
+    itself does not, with nothing following it. The filtered room then no
+    longer exists, no chip is active anymore, no tile visible anymore, and
+    the rename pencil (tied only to `roomFilter`) keeps pointing at a room
+    that would return a 404 on click.
 
-    Die ERSTE Fassung dieses Fixes schloss "Ohne Raum" (`roomFilter ===
-    ""`) noch bewusst aus, mit der (fuer den Umbenennen-Stift richtigen)
-    Begruendung, der zeige sich fuer "Ohne Raum" ohnehin nie. Das Re-Review
-    (2026-09-05) zeigte den blinden Fleck: "Ohne Raum" ist der Filter, in
-    dem jemand ein unsortiertes Geraet nach dem anderen einem Raum zuweist
-    - genau das laesst den "Ohne Raum"-Chip aus `roomChips()`
-    verschwinden, sobald das letzte Geraet versorgt ist, mit denselben
-    Symptomen (kein Chip aktiv, keine Kachel, kein Ausweg) wie beim echten
-    Raumnamen. Der Guard prueft deshalb jetzt nur noch auf "Alle" (`null`)
-    - fuer den gibt es nichts zu tun, `roomChips()` kennt dafuer ohnehin
-    keinen Chip.
+    The FIRST version of this fix still deliberately excluded "No room"
+    (`roomFilter === ""`), with the (for the rename pencil, correct)
+    reasoning that it never shows up for "No room" anyway. The re-review
+    (2026-09-05) revealed the blind spot: "No room" is the filter someone
+    uses to assign one unsorted device after another to a room - exactly
+    that makes the "No room" chip disappear from `roomChips()` as soon as
+    the last device has been taken care of, with the same symptoms (no
+    chip active, no tile, no way out) as with a real room name. The guard
+    therefore now only checks for "All" (`null`) - there is nothing to do
+    for that one, `roomChips()` has no chip for it anyway.
 
-    Belegt wird, dass die Methode existiert, ihr Guard wie beschrieben nur
-    noch `null` ausschliesst (nicht mehr `""`), und dass sowohl `saveRoom`
-    als auch `commitRenameRoom` sie nach ihrem jeweiligen Schreibvorgang
-    aufrufen - nicht, dass Alpine daraufhin tatsaechlich auf den
-    "Alle"-Chip umschaltet (dafuer braeuchte es eine Browser-Engine, siehe
-    `test_the_page_does_not_call_init_a_second_time`)."""
+    Proven is that the method exists, that its guard as described now
+    only excludes `null` (no longer `""`), and that both `saveRoom` and
+    `commitRenameRoom` call it after their respective write - not that
+    Alpine then actually switches to the "All" chip (that would need a
+    browser engine, see `test_the_page_does_not_call_init_a_second_time`)."""
     client, _, _ = api
     script = (await client.get("/static/app.js")).text
 
@@ -4521,31 +4503,29 @@ async def test_reconcile_room_filter_falls_back_to_all_when_the_filtered_room_va
 
 
 async def test_the_command_bar_distinguishes_loading_from_genuinely_empty(api):
-    """Fund 3 (Review vom 2026-09-05): Der Kachel-Umbau hatte die beiden
-    Hinweise verloren, die frueher auf `controlsLoaded(device.id)` gattert
-    waren, und der nachfolgende i18n-Aufraeumdurchgang loeschte daraufhin
-    konsequent - aber verfrueht - die dazugehoerigen Schluessel
-    `web.devices.controls_loading` und `web.devices.no_known_commands`.
-    `controlsLoaded()` blieb als tote Funktion zurueck, deren eigener
-    Docstring ihre Notwendigkeit begruendete (Spec 8.1: ein Fehlschlag darf
-    nicht als harmloser Zustand erscheinen) - ohne dass irgendetwas sie
-    noch aufrief. Ohne die Unterscheidung rendert ein Geraet, dessen
-    `/controls`-Abruf fehlgeschlagen oder noch nicht fertig ist, denselben
-    leeren, umrandeten Streifen wie ein Geraet ganz ohne Befehle: die
-    stillschweigend falsche Anzeige, die Spec 8.1 gerade ausschliessen
-    will.
+    """Finding 3 (review from 2026-09-05): the tile rebuild had lost the
+    two hints that used to be gated on `controlsLoaded(device.id)`, and
+    the subsequent i18n cleanup pass then consistently - but prematurely -
+    deleted their associated keys `web.devices.controls_loading` and
+    `web.devices.no_known_commands`. `controlsLoaded()` remained behind as
+    dead code, its own docstring justifying why it was needed (Spec 8.1: a
+    failure must not appear as a harmless state) - with nothing calling it
+    anymore. Without the distinction, a device whose `/controls` fetch has
+    failed or is not yet finished renders the same empty, bordered strip
+    as a device with no commands at all: exactly the kind of silently
+    wrong display Spec 8.1 aims to rule out.
 
-    Analog fuer Signale: `web.devices.no_functional_signals` wurde
-    ebenfalls geloescht, wodurch eine Kachel mit geladenen, aber leeren
-    funktionalen Signalen (damals: `leadSignalFor` liefert `null`; die
-    Bedingung dafuer heisst heute `functionalSignalsFor(id).length === 0`,
-    `leadSignalFor` gibt es seit dem Wegfall des Leitwerts nicht mehr)
-    zwischen Kopfzeile und Befehlsleiste stillschweigend eine Luecke
-    zeigte - ununterscheidbar von einer noch ladenden Kachel.
+    Analogous for signals: `web.devices.no_functional_signals` was
+    also deleted, causing a tile with loaded but empty
+    functional signals (back then: `leadSignalFor` returns `null`; the
+    condition for it is today called `functionalSignalsFor(id).length === 0`,
+    `leadSignalFor` no longer exists since the primary signal was removed)
+    to silently show a gap between the header row and the command bar -
+    indistinguishable from a tile still loading.
 
-    Belegt wird, dass beide Unterscheidungen wieder ausgeliefert werden und
-    `controlsLoaded` dabei tatsaechlich (wieder) verwendet wird - nicht,
-    dass Alpine sie im Browser korrekt umschaltet."""
+    Proven is that both distinctions are delivered again and that
+    `controlsLoaded` is actually used (again) for it - not that Alpine
+    switches them correctly in the browser."""
     client, _, _ = api
     page = (await client.get("/")).text
     script = (await client.get("/static/app.js")).text
@@ -4570,23 +4550,22 @@ async def test_the_command_bar_distinguishes_loading_from_genuinely_empty(api):
 
 
 async def test_the_tile_menu_is_a_native_details_that_closes_four_ways(api):
-    """`<details>` haelt den Auf-/Zu-Zustand im DOM - der Grund, warum das
-    Menue ueberhaupt so gebaut ist (siehe Entwurf, Abschnitt 4). Drei der
-    vier Schliesswege muessen dennoch von Hand kommen: `<details>` schliesst
-    weder bei einem Klick daneben noch bei Escape von selbst, und Enter im
-    Neu-Raum-Feld committet den Entwurf statt bloss zu schliessen. Der
-    vierte, der Klick auf einen Eintrag (Raum, Export, Entfernen), steht an
-    den Eintraegen selbst.
+    """`<details>` holds the open/closed state in the DOM - the reason the
+    menu is built this way in the first place (see the design, section
+    4). Three of the four ways to close it nonetheless have to come by
+    hand: `<details>` closes neither on a click outside nor on Escape by
+    itself, and Enter in the new-room field commits the draft instead of
+    merely closing. The fourth, clicking an entry (room, export, remove),
+    sits on the entries themselves.
 
-    Geprueft wird ausschliesslich im Kachel-Menue-Block, nicht seitenweit:
-    `@keydown.escape` (ohne `.window`) steht auch am Raum-Umbenennen-Feld
-    (`room-rename-input`) - ein seitenweiter `in page`-Test bliebe selbst
-    dann gruen, wenn der eigene Escape-Wachposten des Menues geloescht
-    wuerde, solange irgendwo sonst auf der Seite `@keydown.escape`
-    vorkommt. Die uebrigen Wege laufen ueber `closeTileMenu($el)`, das
-    JEDER Eintrag beim Klick UND der Enter-Handler des Neu-Raum-Felds
-    aufrufen (siehe `closeTileMenu` in app.js, das dort tatsaechlich
-    `open = false` setzt)."""
+    Checked exclusively within the tile-menu block, not page-wide:
+    `@keydown.escape` (without `.window`) also sits on the room-rename
+    field (`room-rename-input`) - a page-wide `in page` test would stay
+    green even if the menu's own escape guard were deleted, as long as
+    `@keydown.escape` occurs anywhere else on the page. The remaining
+    paths run through `closeTileMenu($el)`, which EVERY entry calls on
+    click AND the new-room field's Enter handler (see `closeTileMenu` in
+    app.js, which actually sets `open = false` there)."""
     client, _store, _device_id = api
     page = (await client.get("/")).text
     script = (await client.get("/static/app.js")).text
@@ -4603,47 +4582,46 @@ async def test_the_tile_menu_is_a_native_details_that_closes_four_ways(api):
 
 
 async def test_the_tile_menu_resets_new_room_mode_on_every_close(api):
-    """Fund 1 (Abschluss-Review 2026-09-05): `newRoomFor` schaltet nur noch
-    die Sichtbarkeit des Neu-Raum-Textfelds, blieb dabei aber auf drei von
-    vier Schliesswegen unveraendert stehen - nur Enter und das Escape IM
-    Feld setzten es zurueck (siehe deren `@keydown`-Handler weiter unten in
-    dieser Datei). Ausserhalb geklickt, Escape im Menue oder ein Klick auf
-    einen Raumeintrag liessen `newRoomFor` auf der Geraete-ID stehen, obwohl
-    das Menue sichtbar zu ist: beim naechsten Oeffnen zeigte die Kachel ein
-    leeres Neu-Raum-Feld statt des "+ Neuer Raum"-Knopfes - im Browser
-    gemessen: `newRoomFor` blieb nach einem Aussenklick auf der ID des
-    Geraets stehen, und beim Wiedereroeffnen war
-    `newRoomButtonVisible: false, strayInputVisible: true`.
+    """Finding 1 (final review 2026-09-05): `newRoomFor` now only toggles
+    the visibility of the new-room text field, but was left unchanged on
+    three of the four ways to close - only Enter and Escape INSIDE the
+    field reset it (see their `@keydown` handlers further down in this
+    file). Clicking outside, Escape in the menu, or clicking a room entry
+    left `newRoomFor` pointing at the device ID even though the menu is
+    visibly closed: on the next open, the tile showed an empty new-room
+    field instead of the "+ New room" button - measured in the browser:
+    after an outside click, `newRoomFor` stayed pointed at the device's
+    ID, and on reopening it was `newRoomButtonVisible: false,
+    strayInputVisible: true`.
 
-    Der Fix haengt an `@toggle` statt an jedem der vier Schliesswege
-    einzeln: `<details>` feuert `toggle` bei JEDER Zustandsaenderung, gleich
-    aus welchem Grund, und ist damit die einzige Stelle, die den
-    Neu-Raum-Zustand noch kennen muss.
+    The fix hangs off `@toggle` instead of each of the four ways to close
+    individually: `<details>` fires `toggle` on EVERY state change,
+    whatever the reason, and is thereby the only place that still needs to
+    know about the new-room state.
 
-    Fund 5 (Re-Review 2026-09-05): fixierte diese Pruefung noch den
-    gesamten Inline-Ausdruck zeichengenau - Leerzeichen und
-    Anfuehrungszeichen eingeschlossen. Der naheliegende naechste Umbau
-    (den Ausdruck wie `closeTileMenu` in eine Methode ziehen) haette sie
-    bei unveraendertem Verhalten zerschossen. Geprueft wird deshalb nur
-    noch die Absicht: das `<details>` traegt ein `@toggle`, und dessen
-    Ausdruck setzt bei Uebereinstimmung mit der Geraete-ID `newRoomFor`
-    und `newRoomDraft` zurueck - nicht mehr, in welcher exakten Schreibweise
-    das geschieht.
+    Finding 5 (re-review 2026-09-05): this check used to pin the entire
+    inline expression character for character - whitespace and quotation
+    marks included. The obvious next rebuild (pulling the expression into
+    a method like `closeTileMenu`) would have broken it with no change in
+    behaviour. What is checked now is therefore only the intent: the
+    `<details>` carries a `@toggle`, and its expression resets
+    `newRoomFor` and `newRoomDraft` on a match with the device ID - no
+    longer in exactly what spelling that happens.
 
-    Fund 6 (Selbstverteidigungs-Review 2026-09-05): die drei Substring-
-    Assertions unten pruefen nur, dass die drei Bestandteile IRGENDWO im
-    Ausdruck auftauchen. Baut man die urspruengliche, in Fund 3 (siehe
-    Kommentar ueber dem `<details>` in index.html) verworfene Fassung
-    `!$el.open && newRoomFor === device.id` wieder ein, enthaelt der
-    Ausdruck `newRoomFor === device.id`, `newRoomFor = null` und
-    `newRoomDraft = ''` weiterhin woertlich - alle drei Assertions blieben
-    gruen, obwohl genau die Luecke zurueck waere, die Fund 3 geschlossen
-    hat: verschwindet eine Kachel mit offenem Menue (Re-Render entfernt den
-    Knoten ersatzlos), feuert nie ein schliessendes `toggle`, `newRoomFor`
-    bleibt auf der Geraete-ID stehen, und `!$el.open` verwirft dann das
-    naechste `toggle` fuer dieselbe ID (ein Oeffnen) als Reset-Anlass - das
-    verwaiste Neu-Raum-Feld ist wieder da. Nur eine eigene Negativ-Assertion
-    auf `!$el.open` macht diese Abwesenheit explizit pruefbar."""
+    Finding 6 (self-defence review 2026-09-05): the three substring
+    assertions below only check that the three components appear
+    SOMEWHERE in the expression. Rebuilding the original version discarded
+    in Finding 3 (see the comment above the `<details>` in index.html),
+    `!$el.open && newRoomFor === device.id`, the expression would still
+    literally contain `newRoomFor === device.id`, `newRoomFor = null`, and
+    `newRoomDraft = ''` - all three assertions would stay green even
+    though exactly the gap Finding 3 closed would be back: if a tile with
+    an open menu disappears (a re-render removes the node without
+    replacement), a closing `toggle` never fires, `newRoomFor` stays
+    pointed at the device ID, and `!$el.open` then discards the next
+    `toggle` for the same ID (an open) as a reset trigger - the orphaned
+    new-room field is back. Only a dedicated negative assertion on
+    `!$el.open` makes this absence explicitly checkable."""
     client, _store, _device_id = api
     page = (await client.get("/")).text
     menu = page.split('class="tile-menu"', 1)[1].split("</details>", 1)[0]
@@ -4658,16 +4636,16 @@ async def test_the_tile_menu_resets_new_room_mode_on_every_close(api):
 
 
 async def test_the_tile_menu_escape_listener_is_window_scoped(api):
-    """Fund 2 (Review 2026-09-05): `@keydown.escape` ohne `.window` haengt am
-    `<details>`-Teilbaum und feuert nur, wenn der Fokus dort drinsteht.
-    Safari auf macOS setzt den Fokus bei einem Mausklick auf `<summary>`
-    NICHT dorthin (Standard, "Volle Tastatursteuerung" aus) - danach landet
-    Escape auf `document.body` und erreicht das `<details>` nie, das Menue
-    bleibt lautlos offen. `.window` haengt den Listener stattdessen an
-    `window` und wirkt unabhaengig vom Fokus. Ohne Browser-Engine kann diese
-    Suite das Fokusverhalten selbst nicht nachstellen - belegt wird nur,
-    dass die ausgelieferte Seite die fokusunabhaengige Form traegt und
-    nicht wieder auf die element-gebundene zurueckfaellt."""
+    """Finding 2 (review 2026-09-05): `@keydown.escape` without `.window`
+    hangs off the `<details>` subtree and only fires when focus sits
+    inside it. Safari on macOS does NOT put focus there on a mouse click
+    on `<summary>` (default, "Full Keyboard Access" off) - Escape then
+    lands on `document.body` and never reaches the `<details>`, the menu
+    stays silently open. `.window` instead attaches the listener to
+    `window` and works independently of focus. Without a browser engine
+    this suite cannot reproduce the focus behaviour itself - what is
+    proven is only that the delivered page carries the focus-independent
+    form and does not fall back to the element-bound one again."""
     client, _store, _device_id = api
     page = (await client.get("/")).text
     menu = page.split('class="tile-menu"', 1)[1].split("</details>", 1)[0]
@@ -4675,26 +4653,26 @@ async def test_the_tile_menu_escape_listener_is_window_scoped(api):
 
 
 async def test_close_tile_menu_restores_focus_conditionally_without_scrolling(api):
-    """Selbstverteidigungs-Review 2026-09-05, Fund 3: `closeTileMenu` (app.js)
-    holt sich den Fokus nur zurueck, wenn er beim Schliessen tatsaechlich IM
-    Menue stand (`hadFocus`), und tut das mit `{ preventScroll: true }`. Bis
-    hierher gab es dafuer keine einzige Assertion in dieser Datei -
-    `grep -c "preventScroll|hadFocus|tile-menu-new"` liefert vor diesem Test
-    0. Ein Refactor haette beides unbemerkt kippen koennen: liesse man die
-    `hadFocus`-Wache weg, risse ein Aussenklick oder Escape ausserhalb des
-    Menues (die `@click.outside`/`@keydown.escape.window`-Handler rufen
-    `closeTileMenu` unbedingt fuer JEDE Kachel auf, s. Test oben) den Fokus
-    von genau dem Element weg, das der Nutzer gerade angeklickt hat - selbst
-    wenn dessen Menue laengst zu ist. Fehlte `preventScroll`, spraenge die
-    Seite bei jedem programmatischen Fokus-Ruf zur `<summary>` zurueck, auch
-    wenn die zugehoerige Kachel laengst aus dem sichtbaren Bereich
-    gescrollt ist.
+    """Self-defence review 2026-09-05, finding 3: `closeTileMenu` (app.js)
+    only takes focus back if it actually sat INSIDE the menu when closing
+    (`hadFocus`), and does so with `{ preventScroll: true }`. Up to this
+    point there was not a single assertion for this in this file -
+    `grep -c "preventScroll|hadFocus|tile-menu-new"` returns 0 before this
+    test. A refactor could have tipped over either one unnoticed: leave
+    out the `hadFocus` guard, and an outside click or Escape outside the
+    menu (the `@click.outside`/`@keydown.escape.window` handlers call
+    `closeTileMenu` unconditionally for EVERY tile, see the test above)
+    would tear focus away from exactly the element the user just clicked -
+    even if its menu has long been closed. If `preventScroll` were
+    missing, the page would jump back to the `<summary>` on every
+    programmatic focus call, even if the corresponding tile has long
+    scrolled out of the visible area.
 
-    Dies ist eine Assertion gegen die AUSGELIEFERTE Datei, keine
-    Verhaltenspruefung: sie belegt, dass beide Bausteine im Quelltext von
-    `closeTileMenu` stehen, nicht, dass sich der Browser beim Ausfuehren
-    tatsaechlich so verhaelt (dafuer fehlt dieser Suite eine echte
-    Browser-Engine, siehe Test oben)."""
+    This is an assertion against the DELIVERED file, not a behaviour
+    check: it proves that both building blocks are present in the source
+    of `closeTileMenu`, not that the browser actually behaves that way
+    when running it (this suite lacks a real browser engine for that, see
+    the test above)."""
     client, _store, _device_id = api
     script = (await client.get("/static/app.js")).text
     close_start = script.index("closeTileMenu(el) {")
@@ -4705,19 +4683,20 @@ async def test_close_tile_menu_restores_focus_conditionally_without_scrolling(ap
 
 
 async def test_the_new_room_escape_handler_focuses_the_new_room_button(api):
-    """Selbstverteidigungs-Review 2026-09-05, Fund 3: Escape im Neu-Raum-
-    Textfeld blendet das Feld per `x-show` aus, OHNE ihm dabei den Fokus zu
-    nehmen (Fund 2, Kommentarblock ueber dem `<details>` in index.html) -
-    der Handler muss den Fokus deshalb selbst auf den wieder auftauchenden
-    "+ Neuer Raum"-Knopf (`.tile-menu-new`) schicken. Ohne diese Assertion
-    koennte der Fokus-Ruf ersatzlos aus dem Escape-Handler verschwinden, und
-    die Suite bliebe gruen - der Fokus bliebe dann auf dem unsichtbaren,
-    aus dem Tab-Fluss gefallenen Textfeld stranden, ein totes Ende fuer
-    Tastatur- und Screenreader-Nutzung.
+    """Self-defence review 2026-09-05, finding 3: Escape in the new-room
+    text field hides the field via `x-show`, WITHOUT taking focus away
+    from it in the process (finding 2, comment block above the
+    `<details>` in index.html) - the handler must therefore itself send
+    focus to the reappearing "+ New room" button (`.tile-menu-new`).
+    Without this assertion, the focus call could disappear from the
+    Escape handler without replacement, and the suite would stay green -
+    focus would then be left stranded on the invisible text field that
+    has fallen out of the tab order, a dead end for keyboard and
+    screen-reader use.
 
-    Auch dies ist eine Assertion gegen die AUSGELIEFERTE Datei: sie belegt,
-    dass der Fokus-Ruf im Quelltext steht, nicht, dass der Browser den
-    Fokus beim tatsaechlichen Escape-Druck auch dorthin bewegt."""
+    This too is an assertion against the DELIVERED file: it proves that
+    the focus call is present in the source, not that the browser also
+    moves focus there on an actual Escape press."""
     client, _store, _device_id = api
     page = (await client.get("/")).text
     menu = page.split('class="tile-menu"', 1)[1].split("</details>", 1)[0]
@@ -4730,9 +4709,9 @@ async def test_the_new_room_escape_handler_focuses_the_new_room_button(api):
 
 
 async def test_export_and_remove_moved_into_the_tile_menu(api):
-    """Beide Aktionen liegen jetzt im Menue und schliessen es beim Klick.
-    Der Export-Knopf bleibt an `bridgeSettings.bridge_ip` gebunden - ohne
-    hinterlegte Bruecken-IP gibt es nichts zu exportieren."""
+    """Both actions now sit in the menu and close it on click. The export
+    button remains bound to `bridgeSettings.bridge_ip` - with no bridge IP
+    entered, there is nothing to export."""
     client, _store, _device_id = api
     page = (await client.get("/")).text
     menu = page.split('class="tile-menu"', 1)[1].split("</details>", 1)[0]
@@ -4742,10 +4721,10 @@ async def test_export_and_remove_moved_into_the_tile_menu(api):
 
 
 async def test_the_rooms_are_menu_entries_and_the_select_is_gone(api):
-    """Die Raumzuweisung ist jetzt eine Liste von Eintraegen im Menue. Das
-    `<select>` und die gesamte Mechanik, die noetig war, um seinen
-    angezeigten Wert mit `device.room` in Deckung zu halten, entfaellt
-    ersatzlos - genau darum geht es bei diesem Umbau."""
+    """Room assignment is now a list of entries in the menu. The
+    `<select>` and the entire mechanism that was needed to keep its
+    displayed value in sync with `device.room` is gone without
+    replacement - that is exactly the point of this rebuild."""
     client, _store, _device_id = api
     page = (await client.get("/")).text
     script = (await client.get("/static/app.js")).text
@@ -4761,19 +4740,18 @@ async def test_the_rooms_are_menu_entries_and_the_select_is_gone(api):
 
 
 async def test_the_current_room_is_marked_for_assistive_tech_too(api):
-    """Das Haekchen am aktuellen Raum ist rein grafisch. `aria-current`
-    traegt dieselbe Auskunft fuer alles, was die Seite nicht sieht - ohne
-    das waere der aktuelle Raum im Menue nur eine von mehreren gleich
-    aussehenden Zeilen.
+    """The checkmark on the current room is purely visual. `aria-current`
+    carries the same information for anything the page cannot see -
+    without it, the current room in the menu would be just one of several
+    identical-looking rows.
 
-    Geprueft wird im Kachel-Menue-Block, nicht seitenweit - ein blosses
-    `"aria-current" in page` waere schon durch irgendeine zukuenftige,
-    voellig unabhaengige Verwendung des Attributs anderswo auf der Seite
-    zufrieden, ohne dass hier ueberhaupt etwas markiert waere. Belegt wird
-    ausserdem, dass das Attribut tatsaechlich an `roomKeyOf(device)` haengt
-    - demselben Vergleich, der auch `.is-current` (das sichtbare Haekchen)
-    steuert - und nicht an einem unabhaengigen, potenziell
-    auseinanderlaufenden Ausdruck."""
+    Checked within the tile-menu block, not page-wide - a bare
+    `"aria-current" in page` would already be satisfied by some future,
+    entirely unrelated use of the attribute elsewhere on the page, without
+    anything being marked here at all. Also proven is that the attribute
+    is actually tied to `roomKeyOf(device)` - the same comparison that
+    also drives `.is-current` (the visible checkmark) - and not to an
+    independent expression that could potentially drift out of sync."""
     client, _store, _device_id = api
     page = (await client.get("/")).text
     menu = page.split('class="tile-menu"', 1)[1].split("</details>", 1)[0]
@@ -4782,22 +4760,22 @@ async def test_the_current_room_is_marked_for_assistive_tech_too(api):
 
 
 async def test_the_kebab_button_names_itself_via_aria_label_and_hides_its_icon(api):
-    """A11y-Nacharbeit (2026-09-05), Fund 1: der Kebab-Knopf trug bisher nur
-    `title`, und `title` ist bei der Berechnung des zugaenglichen Namens
-    (accessible name) lediglich der letzte Rueckfallwert - Screenreader
-    verlassen sich darauf nicht zuverlaessig. Der Spec-Text zu diesem Menue
-    nannte `web.devices.menu` bereits "der zugaengliche Name des
-    ⋮-Knopfs" (siehe Kommentar ueber den Keys in strings.yaml), was bis zu
-    diesem Fix schlicht nicht stimmte. `aria-label` traegt jetzt denselben
-    uebersetzten Wert, `title` bleibt zusaetzlich als Maus-Tooltip stehen -
-    unterschiedliche Zwecke, beide Attribute duerfen nebeneinander stehen.
+    """A11y follow-up fix (2026-09-05), finding 1: the kebab button
+    previously only carried `title`, and `title` is merely the last
+    fallback value when computing the accessible name - screen readers do
+    not reliably rely on it. The spec text for this menu already called
+    `web.devices.menu` "the accessible name of the ⋮ button" (see the
+    comment above the keys in strings.yaml), which simply was not true
+    until this fix. `aria-label` now carries the same translated value,
+    `title` additionally remains as a mouse tooltip - different purposes,
+    both attributes are allowed to sit side by side.
 
-    Das `<svg>` bekommt zugleich `aria-hidden="true"`: ein dekoratives Icon
-    in einem bereits benannten Element darf dem Accessibility-Baum keinen
-    zweiten, konkurrierenden Namen liefern. Dies ist eine Assertion gegen
-    die AUSGELIEFERTE Datei, keine Verhaltenspruefung - eine echte
-    Browser-Engine fuer die tatsaechliche Namensberechnung fehlt dieser
-    Suite (siehe die uebrigen Kachel-Menue-Tests in dieser Datei)."""
+    The `<svg>` at the same time gets `aria-hidden="true"`: a decorative
+    icon inside an element that already has a name must not give the
+    accessibility tree a second, competing name. This is an assertion
+    against the DELIVERED file, not a behaviour check - this suite lacks
+    a real browser engine for the actual name computation (see the other
+    tile-menu tests in this file)."""
     client, _store, _device_id = api
     page = (await client.get("/")).text
     menu = page.split('class="tile-menu"', 1)[1].split("</details>", 1)[0]
@@ -4808,43 +4786,41 @@ async def test_the_kebab_button_names_itself_via_aria_label_and_hides_its_icon(a
 
 
 async def test_the_room_list_is_a_labelled_group_for_assistive_tech(api):
-    """A11y-Nacharbeit (2026-09-05), Fund 2: die Ueberschrift
-    `.tile-menu-heading` war rein optisch ein Abschnittslabel fuer die
-    Raumeintraege - ohne programmatische Verbindung hoert ein
-    Screenreader-Nutzer beim Durchtabben nur "Kueche, aktueller Eintrag"
-    ohne jede Auskunft, dass das ein Raum ist. `role="group"` plus
-    `aria-labelledby` auf einem neuen `.tile-menu-rooms`-Wrapper stellt
-    diese Verbindung her.
+    """A11y follow-up fix (2026-09-05), finding 2: the
+    `.tile-menu-heading` heading was purely a visual section label for the
+    room entries - without a programmatic connection, a screen-reader user
+    tabbing through only hears "Kitchen, current entry" with no indication
+    at all that this is a room. `role="group"` plus `aria-labelledby` on a
+    new `.tile-menu-rooms` wrapper establishes this connection.
 
-    Die id der Ueberschrift ist bewusst PRO GERAET abgeleitet
-    (`'tile-menu-room-heading-' + device.id`) statt eine feste Konstante:
-    die ganze Seite teilt sich ein einziges `x-data`, und dieses Markup
-    wird einmal PRO Kachel gerendert - eine feste id waere im
-    ausgelieferten Dokument so oft dupliziert wie es Kacheln gibt, und
-    `aria-labelledby` traefe dann nur das erste Vorkommen. Die Suche prueft
-    deshalb ausdruecklich den `device.id`-Ausdruck, nicht nur, dass
-    irgendeine id existiert - ein Rueckbau auf eine Konstante saehe sonst
-    zunaechst identisch aus.
+    The heading's id is deliberately derived PER DEVICE
+    (`'tile-menu-room-heading-' + device.id`) instead of a fixed constant:
+    the whole page shares a single `x-data`, and this markup is rendered
+    once PER TILE - a fixed id would be duplicated in the delivered
+    document as many times as there are tiles, and `aria-labelledby` would
+    then only hit the first occurrence. The search therefore explicitly
+    checks for the `device.id` expression, not just that some id exists -
+    reverting to a constant would otherwise look identical at first
+    glance.
 
-    Belegt wird ausserdem, dass die Gruppe tatsaechlich die Raum-Eintraege
-    und das Neu-Raum-Feld umschliesst, Export und Entfernen aber aussen vor
-    laesst - eine zu weit oder zu eng gezogene Gruppe waere fuer
-    Screenreader-Nutzer ebenso falsch wie gar keine.
+    Also proven is that the group actually encloses the room entries and
+    the new-room field, but leaves export and remove outside - a group
+    drawn too wide or too narrow would be just as wrong for screen-reader
+    users as no group at all.
 
-    Review-Fund 7 (2026-09-05, Review der Nacharbeit): den Schnitt am
-    ERSTEN `</div>` nach dem Oeffnungstag der Gruppe enden zu lassen ist
-    nur korrekt, solange innerhalb der Gruppe kein verschachteltes `<div>`
-    auftaucht - kaeme eines hinzu, faende `menu.index("</div>", ...)` dessen
-    schliessendes Tag statt des der Gruppe, `group_body` waere dann zu kurz
-    abgeschnitten. Die POSITIVEN Assertions unten wuerden das laut melden
-    (der abgeschnittene Text enthaelt "roomChips()" & Co. dann nicht mehr),
-    die beiden NEGATIVEN ("not in") dagegen wuerden lautlos weiter
-    bestehen, obwohl sie nichts mehr pruefen - ein verschachteltes `<div>`
-    faellt schlicht aus dem (jetzt zu kurzen) `group_body` heraus, noch
-    bevor Export/Entfernen ueberhaupt drankommen koennten. Verankert wird
-    das Ende deshalb an `<hr class="tile-menu-sep"` - dem tatsaechlichen,
-    im Markup fest stehenden Ende der Raumgruppe (s. index.html), nicht an
-    einem zufaelligen ersten `</div>`."""
+    Review finding 7 (2026-09-05, review of the follow-up work): ending
+    the cut at the FIRST `</div>` after the group's opening tag is only
+    correct as long as no nested `<div>` appears inside the group - if one
+    were added, `menu.index("</div>", ...)` would find its closing tag
+    instead of the group's, and `group_body` would then be cut off too
+    short. The POSITIVE assertions below would loudly report that (the
+    truncated text would then no longer contain "roomChips()" and
+    friends), whereas the two NEGATIVE ones ("not in") would silently keep
+    passing even though they no longer check anything - a nested `<div>`
+    simply falls outside the (now too short) `group_body`, before
+    export/remove could even come into play. The end is therefore anchored
+    at `<hr class="tile-menu-sep"` - the actual, markup-fixed end of the
+    room group (see index.html), not at some arbitrary first `</div>`."""
     client, _store, _device_id = api
     page = (await client.get("/")).text
     menu = page.split('class="tile-menu"', 1)[1].split("</details>", 1)[0]
@@ -4867,25 +4843,25 @@ async def test_the_room_list_is_a_labelled_group_for_assistive_tech(api):
 
 
 async def test_the_room_group_wrapper_does_not_disturb_the_menu_layout(api):
-    """A11y-Nacharbeit (2026-09-05), Fund 2: `.tile-menu-items` ist eine
-    Flex-Spalte, deren Kinder direkt die Menue-Eintraege sind (Begruendung
-    bei der Regel selbst, style.css). Der `.tile-menu-rooms`-Wrapper fuer
-    `role="group"` ist rein semantisch und darf dieses Layout nicht
-    veraendern.
+    """A11y follow-up fix (2026-09-05), finding 2: `.tile-menu-items` is a
+    flex column whose children are directly the menu entries (reasoning at
+    the rule itself, style.css). The `.tile-menu-rooms` wrapper for
+    `role="group"` is purely semantic and must not change this layout.
 
-    Review-Fund 5 (2026-09-05, Review der Nacharbeit): urspruenglich per
-    `display: contents` geloest (genau wie einst `.room-picker` in
-    derselben Datei) - das hat aber eine bekannte WebKit-Einschraenkung:
-    Safari laesst `display: contents`-Teilbaeume teils aus dem
-    Accessibility-Baum fallen, das `role="group"` samt `aria-labelledby`
-    kaeme dort also nie an, obwohl Safari in dieser Datei an anderer Stelle
-    ausdruecklich ein Ziel ist. Die ausgelieferte Regel macht den Wrapper
-    deshalb stattdessen zu einer echten Box mit demselben Spalten-Flex,
-    demselben `gap` und denselben `align-items` wie `.tile-menu-items`
-    selbst - layoutidentisch, aber ohne die Browser-Kompatibilitaetsfrage.
-    Ohne dieses Nachziehen staenden die Raumeintraege sonst (mit `display:
-    contents` oder gaenzlich ohne Sonderbehandlung) nicht mehr auf einer
-    Ebene mit "+ Neuer Raum", Trennstrich, Export und Entfernen."""
+    Review finding 5 (2026-09-05, review of the follow-up work):
+    originally solved via `display: contents` (exactly like `.room-picker`
+    once was in the same file) - but that has a known WebKit limitation:
+    Safari partly drops `display: contents` subtrees from the
+    accessibility tree, so the `role="group"` together with
+    `aria-labelledby` would never arrive there, even though Safari is
+    explicitly a target elsewhere in this file. The delivered rule
+    therefore instead turns the wrapper into a real box with the same
+    column flex, the same `gap`, and the same `align-items` as
+    `.tile-menu-items` itself - layout-identical, but without the browser
+    compatibility issue. Without this follow-up, the room entries would
+    otherwise (with `display: contents` or with no special treatment at
+    all) no longer sit on the same level as "+ New room", the separator,
+    export, and remove."""
     client, _store, _device_id = api
     css = (await client.get("/static/style.css")).text
     rule = css.split(".tile-menu-rooms {", 1)[1].split("}", 1)[0]
@@ -4897,21 +4873,21 @@ async def test_the_room_group_wrapper_does_not_disturb_the_menu_layout(api):
 
 
 async def test_exactly_one_dialog_of_each_kind_is_delivered(api):
-    """Entwurf Abschnitt 4: EIN `<dialog>` je Zweck fuer die ganze Seite,
-    nicht eines je Kachel.
+    """Design section 4: ONE `<dialog>` per purpose for the whole page,
+    not one per tile.
 
-    Markup innerhalb `x-for` wird einmal PRO GERAET ausgeliefert - bei
-    dreissig Geraeten laegen dreissig vollstaendige Signaltabellen im
-    Dokument, und jede `id` darin dreissigfach (derselbe Fallstrick, den
-    `aria-labelledby` im Kachel-Menue schon einmal umschiffen musste). Die
-    Zaehlung auf 2 (ein Signal-Modal, ein Bedien-Modal aus Aufgabe 7) ist
-    die einzige Zusicherung, die diesen Rueckfall ueberhaupt bemerken
-    wuerde: ein `<dialog>` in der Kachel saehe im ausgelieferten Text sonst
-    genauso aus wie eines am Seitenende.
+    Markup inside `x-for` is shipped once PER DEVICE - with thirty
+    devices there would be thirty complete signal tables in the
+    document, and every `id` in it thirtyfold (the same pitfall that
+    `aria-labelledby` in the tile menu already had to dodge once). The
+    count of 2 (one signal modal, one control modal from task 7) is
+    the only assertion that would even notice this regression: a
+    `<dialog>` inside the tile would otherwise look exactly the same in
+    the shipped text as one at the end of the page.
 
-    Die Ortspruefung (nach `</main>`) belegt zusaetzlich, dass beide
-    ausserhalb der Ansichts-Sections und damit ausserhalb jeder
-    Geraeteschleife stehen."""
+    The location check (after `</main>`) additionally proves that both
+    sit outside the view sections and thus outside any
+    device loop."""
     client, _, _ = api
     markup = _without_comments((await client.get("/")).text)
     assert markup.count("<dialog") == 2
@@ -4921,61 +4897,63 @@ async def test_exactly_one_dialog_of_each_kind_is_delivered(api):
 
 
 async def test_the_signals_modal_has_exactly_one_place_that_resets_its_state(api):
-    """Entwurf Abschnitt 4: `@close` ist die EINZIGE Ruecksetzstelle.
+    """Design section 4: `@close` is the ONE AND ONLY place that resets
+    it.
 
-    Das Ereignis feuert auf jedem Schliessweg - Escape, Schliessen-Knopf,
-    Backdrop, `close()` aus JavaScript. Ein zweiter Ruecksetzer an einem
-    einzelnen Schliessweg waere genau die Verteilung auf mehrere Handler,
-    die beim Raum-Auswahlfeld sechs Reviewrunden gekostet hat; deshalb
-    zaehlt dieser Test die Vorkommen, statt nur eines zu suchen.
+    The event fires on every way of closing - Escape, the close button,
+    the backdrop, `close()` from JavaScript. A second reset spot on a
+    single way of closing would be exactly the spread across multiple
+    handlers that cost six review rounds on the room selection field;
+    that is why this test counts the occurrences instead of searching for
+    just one.
 
-    `@click.self` ist dazu Pflicht und kein Beiwerk: ein `<dialog>`
-    schliesst bei einem Klick auf den Backdrop NICHT von selbst.
+    `@click.self` is required for this and not incidental: a `<dialog>`
+    does NOT close by itself on a click on the backdrop.
 
-    Fund 12 (finale Branch-Review, 2026-09-06): `@click.self` allein
-    schliesst das Modal auch, wenn ein Mousedown IM Inhalt beginnt (etwa
-    beim Markieren eines Signaltitels) und der Mouseup beim Ueberziehen auf
-    dem Backdrop landet - das Klick-Ziel ist dann `<dialog>`, obwohl die
-    Geste im Inhalt anfing. `@mousedown` haelt seither fest, ob der
-    Mousedown SELBST schon auf dem Backdrop war; der Klick-Handler schliesst
-    nur noch, wenn beides zutrifft. `signalsModalBackdropMousedown` ist
-    dabei reine Praesentations-Buchfuehrung, nicht Teil des hier bewachten
-    Modal-Zustands - `@close` bleibt trotzdem die einzige Stelle, die
-    `signalsModalDevice` zuruecksetzt.
+    Finding 12 (final branch review, 2026-09-06): `@click.self` alone
+    also closes the modal when a mousedown STARTS inside the content
+    (e.g. while selecting a signal title) and the mouseup, from dragging
+    over, lands on the backdrop - the click target is then `<dialog>`,
+    even though the gesture started in the content. `@mousedown` has
+    since recorded whether the mousedown ITSELF already started on the
+    backdrop; the click handler now only closes if both are true.
+    `signalsModalBackdropMousedown` is purely presentation bookkeeping in
+    this, not part of the modal state being guarded here - `@close`
+    nonetheless remains the only place that resets `signalsModalDevice`.
 
-    Fund 1 (Nachpruefung der Fixes, 2026-09-06): am Mousedown-Handler darf
-    KEIN `.self` stehen, und dieser Test ist die einzige Stelle, die das
-    festhaelt. Mit `.self` ueberspringt Alpine den Ausdruck ganz, wenn das
-    Ziel nicht das `<dialog>` ist - das Feld wuerde dann nur gesetzt, nie
-    geleert, und ein Mousedown auf dem Backdrop ohne folgenden Klick darauf
-    (Escape mit gedrueckter Maustaste, Loslassen ausserhalb des Fensters)
-    liesse es dauerhaft auf `true` stehen. Der naechste Zieh-Vorgang aus dem
-    Inhalt heraus schloesse das Modal dann genau wieder so, wie Fund 12 es
-    verhindern wollte. Ohne `.self` schreibt jeder Mousedown im Teilbaum das
-    Feld neu.
+    Finding 1 (fix verification, 2026-09-06): the mousedown handler must
+    NOT carry `.self`, and this test is the only place that records that.
+    With `.self`, Alpine skips the expression entirely if the target is
+    not the `<dialog>` - the field would then only ever be set, never
+    cleared, and a mousedown on the backdrop with no following click on it
+    (Escape with the mouse button held down, releasing outside the
+    window) would leave it permanently at `true`. The next drag starting
+    from the content would then close the modal in exactly the way
+    Finding 12 was meant to prevent. Without `.self`, every mousedown in
+    the subtree rewrites the field.
 
-    `isBackdropEvent` (app.js) entscheidet, ob ein Ereignis wirklich auf dem
-    Backdrop lag: der eigene Scrollbalken des Modals gehoert ebenfalls dem
-    `<dialog>` und liefert dasselbe Ziel, ein Griff daran schloesse das
-    Modal sonst - ausgerechnet bei den langen Listen, fuer die es ihn gibt.
-    Geprueft wird an BEIDEN Enden der Geste, sonst schloesse auch ein Zug
-    vom Backdrop IN den Inhalt hinein: das Klick-Ereignis feuert am
-    naechsten gemeinsamen Vorfahren beider Ziele, und das ist dann wieder
-    das `<dialog>`.
+    `isBackdropEvent` (app.js) decides whether an event actually occurred
+    on the backdrop: the modal's own scrollbar also belongs to the
+    `<dialog>` and delivers the same target, so grabbing it would
+    otherwise close the modal - of all things, for the long lists it
+    exists for. Checked at BOTH ends of the gesture, otherwise a drag from
+    the backdrop INTO the content would also close it: the click event
+    fires at the nearest common ancestor of both targets, and that is
+    again the `<dialog>`.
 
-    Die frueher hier stehende `offsetX < clientWidth`-Bedingung ist
-    ersetzt, nicht ergaenzt: sie trennte nur einen Scrollbalken ab, der
-    PLATZ RESERVIERT, und lief bei einem ueberlagernden (macOS-
-    Voreinstellung, misst 0 px) ins Leere - dazu deckte sie weder einen
-    waagerechten Balken noch eine RTL-Anordnung ab. Der Rechteckvergleich
-    in `isBackdropEvent` braucht keine dieser Fallunterscheidungen; taucht
-    `offsetX` hier je wieder auf, ist das ein Rueckschritt.
+    The `offsetX < clientWidth` condition that used to sit here is
+    replaced, not supplemented: it only separated out a scrollbar that
+    RESERVES SPACE, and came up empty for an overlay one (macOS
+    default, measures 0px) - on top of that, it covered neither a
+    horizontal bar nor an RTL layout. The rectangle comparison
+    in `isBackdropEvent` needs none of these case distinctions; if
+    `offsetX` ever shows up here again, that is a regression.
 
-    Fund 3 (Nachpruefung, 2026-09-07): derselbe `@close`-Handler setzt seit
-    da zusaetzlich `expandedSignalKey` zurueck - dediziert geprueft in
-    `test_closing_the_signals_modal_resets_the_open_detail` weiter unten;
-    hier zaehlt nur weiterhin `signalsModalDevice = null`, um genau EINE
-    Ruecksetzstelle fuer dieses Feld zu belegen."""
+    Finding 3 (re-check, 2026-09-07): the same `@close` handler has
+    since additionally reset `expandedSignalKey` - dedicatedly checked in
+    `test_closing_the_signals_modal_resets_the_open_detail` further below;
+    here only `signalsModalDevice = null` continues to be counted, to
+    prove exactly ONE reset spot for this field."""
     client, _, _ = api
     markup = _without_comments((await client.get("/")).text)
     script = (await client.get("/static/app.js")).text
@@ -4988,8 +4966,8 @@ async def test_the_signals_modal_has_exactly_one_place_that_resets_its_state(api
     )
     assert markup.count("signalsModalDevice = null") == 1
 
-    # Der Helfer vergleicht die Lage gegen das Rechteck des Dialogs - nicht
-    # `offsetX` gegen `clientWidth`, siehe oben.
+    # The helper compares the position against the dialog's rectangle -
+    # not `offsetX` against `clientWidth`, see above.
     helper_start = script.index("isBackdropEvent(event, el) {")
     helper = script[helper_start : script.index("\n    },", helper_start)]
     assert "event.target !== el" in helper
@@ -5000,40 +4978,40 @@ async def test_the_signals_modal_has_exactly_one_place_that_resets_its_state(api
 
 
 async def test_the_two_entry_points_open_the_signals_modal(api):
-    """Entwurf Abschnitt 5: das Modal hat genau zwei Einstiege.
+    """Design section 5: the modal has exactly two entry points.
 
-    Der Kebab-Eintrag ruft ERST `closeTileMenu($el)`, dann
-    `openSignalsModal(device)` - diese Reihenfolge traegt den Fokus:
-    `closeTileMenu` setzt ihn auf das `<summary>`, und das unmittelbar
-    folgende `showModal()` merkt sich genau diesen Fokus als Rueckkehrpunkt.
-    Umgedreht landete der Fokus nach dem Schliessen des Modals im Nichts.
+    The kebab entry calls `closeTileMenu($el)` FIRST, then
+    `openSignalsModal(device)` - this order carries the focus:
+    `closeTileMenu` sets it onto the `<summary>`, and the immediately
+    following `showModal()` remembers exactly this focus as the return
+    point. Reversed, focus would land nowhere after the modal closes.
 
-    Der `+ N weitere Signale`-Link sprang bislang per `selectView('signals')`
-    in eine Liste ALLER Geraete, in der man das eigene wieder suchen musste -
-    er zeigt jetzt auf das Geraet, dessen Signale er verspricht."""
+    The `+ N more signals` link used to jump via `selectView('signals')`
+    into a list of ALL devices, in which one then had to search for one's
+    own again - it now points at the device whose signals it promises."""
     client, _, _ = api
     markup = _without_comments((await client.get("/")).text)
     assert '@click="closeTileMenu($el); openSignalsModal(device)"' in markup
     assert "x-text=\"t('web.devices.menu_signals')\"" in markup
     assert '@click.prevent="openSignalsModal(device)"' in markup
 
-    # Die Reihenfolge NUR innerhalb des Menues vergleichen: der
-    # `+ N weitere Signale`-Link steht weiter oben in derselben Kachel und
-    # ruft dieselbe Methode, ein `markup.index(...)` ueber die ganze Seite
-    # traefe also ihn statt den Menueeintrag und waere immer wahr.
+    # Compare the order ONLY within the menu: the `+ N more signals` link
+    # sits further up in the same tile and calls the same method, so a
+    # `markup.index(...)` over the whole page would hit it instead of the
+    # menu entry and would always be true.
     menu_start = markup.index('<div class="tile-menu-items">')
     menu = markup[menu_start : markup.index("</details>", menu_start)]
     assert menu.index("openSignalsModal(device)") < menu.index("exportDevice(device)")
 
 
 async def test_open_signals_modal_shows_the_dialog_only_after_alpine_rendered(api):
-    """Entwurf Abschnitt 4: `showModal()` erst im `$nextTick`.
+    """Design section 4: `showModal()` only within `$nextTick`.
 
-    `showModal()` setzt den Anfangsfokus auf das erste fokussierbare Element
-    IM Dialog - und das gibt es erst, nachdem Alpine den `x-if`-Inhalt
-    aufgebaut hat. Ohne `$nextTick` oeffnet der Dialog leer und der Fokus
-    landet auf dem `<dialog>` selbst; die erste Tab-Taste faengt dann am
-    Dokumentanfang an statt im Modal."""
+    `showModal()` sets the initial focus onto the first focusable element
+    INSIDE the dialog - and that only exists after Alpine has built the
+    `x-if` content. Without `$nextTick`, the dialog opens empty and focus
+    lands on the `<dialog>` itself; the first Tab press then starts at the
+    beginning of the document instead of in the modal."""
     client, _, _ = api
     script = (await client.get("/static/app.js")).text
     start = script.index("openSignalsModal(device) {")
@@ -5044,20 +5022,20 @@ async def test_open_signals_modal_shows_the_dialog_only_after_alpine_rendered(ap
 
 
 async def test_opening_the_signals_modal_clears_a_stale_error_from_another_device(api):
-    """Fund 2 (finale Branch-Review, 2026-09-06): `signalsError` ist
-    seitenweit, das Modal aber pro Geraet. `startApp` laedt die Signale
-    aller Geraete parallel, und jedes `loadSignals` leert `signalsError`
-    nur VOR seinem eigenen Abruf - scheitert Geraet A und laedt Geraet B
-    danach erfolgreich, bleibt Geraet As Fehler stehen. Oeffnet man danach
-    das Modal fuer ein drittes, sauber geladenes Geraet, haengt der
-    namenlose Fehler ueber dessen Liste, obwohl er nichts mit diesem Geraet
-    zu tun hat. `openSignalsModal` muss den Fehler deshalb selbst raeumen,
-    als allererste Anweisung.
+    """Finding 2 (final branch review, 2026-09-06): `signalsError` is
+    page-wide, but the modal is per device. `startApp` loads the signals
+    of all devices in parallel, and each `loadSignals` only clears
+    `signalsError` BEFORE its own fetch - if device A fails and device B
+    then loads successfully, device A's error remains. If the modal is
+    then opened for a third, cleanly loaded device, the nameless error
+    hangs over its list even though it has nothing to do with this device.
+    `openSignalsModal` must therefore clear the error itself, as the very
+    first statement.
 
-    Das ist KEIN zweiter Ruecksetzer von `signalsModalDevice` - jene Regel
-    (siehe `test_the_signals_modal_has_exactly_one_place_that_resets_its_state`)
-    betrifft ausschliesslich dieses eine Feld; `signalsError` ist
-    eigenstaendiger Zustand."""
+    This is NOT a second reset spot for `signalsModalDevice` - that rule
+    (see `test_the_signals_modal_has_exactly_one_place_that_resets_its_state`)
+    concerns exclusively that one field; `signalsError` is independent
+    state."""
     client, _, _ = api
     script = (await client.get("/static/app.js")).text
     start = script.index("openSignalsModal(device) {")
@@ -5070,11 +5048,11 @@ async def test_opening_the_signals_modal_clears_a_stale_error_from_another_devic
 
 
 async def test_removing_a_device_closes_a_signals_modal_that_shows_it(api):
-    """Entwurf Abschnitt 4, "Wenn das Geraet verschwindet".
+    """Design section 4, "When the device disappears".
 
-    Ohne diesen Ruf bliebe ein Dialog ueber einem Geraet offen stehen, das
-    es nicht mehr gibt - und der `x-if`-Waechter machte ihn zu einem leeren
-    Kasten ohne erkennbaren Grund."""
+    Without this call, a dialog would stay open over a device that no
+    longer exists - and the `x-if` guard would turn it into an empty box
+    with no discernible reason."""
     client, _, _ = api
     script = (await client.get("/static/app.js")).text
     start = script.index("async removeDevice(device) {")
@@ -5085,21 +5063,22 @@ async def test_removing_a_device_closes_a_signals_modal_that_shows_it(api):
 
 
 async def test_losing_authentication_closes_an_open_signals_modal(api):
-    """Fund 3 (finale Branch-Review, 2026-09-06): das `<dialog>` steht
-    bewusst ausserhalb von `<template x-if="stringsReady && authenticated">`
-    (siehe index.html), damit `$refs.signalsModal` immer aufloesbar ist -
-    aber nichts schloss es bisher, wenn `authenticated` auf `false`
-    kippt. Faellt die Sitzung waehrend das Modal offen ist (Bruecken-
-    Neustart via `handleLiveDisconnect` -> `loadAuthInfo`, oder eine 401
-    aus einer Modal-Aktion via `noteAuthError`), rendert Alpine den
-    Login-Bildschirm HINTER einem offenen `showModal()`-Dialog: alles
-    ausserhalb davon ist inert, Passwortfeld und Fehlerbanner unerreichbar.
+    """Finding 3 (final branch review, 2026-09-06): the `<dialog>`
+    deliberately sits outside
+    `<template x-if="stringsReady && authenticated">` (see index.html), so
+    that `$refs.signalsModal` is always resolvable - but nothing used to
+    close it when `authenticated` flips to `false`. If the session drops
+    while the modal is open (a bridge restart via
+    `handleLiveDisconnect` -> `loadAuthInfo`, or a 401 from a modal action
+    via `noteAuthError`), Alpine renders the login screen BEHIND an open
+    `showModal()` dialog: everything outside it is inert, the password
+    field and error banner unreachable.
 
-    Dieser Test belegt nur, dass beide Stellen, an denen `authenticated`
-    auf `false` gesetzt wird, `closeSignalsModal()` aufrufen - NICHT, dass
-    ein Browser daraus tatsaechlich einen erreichbaren Login-Bildschirm
-    macht; dafuer braeuchte es eine echte Rendering-Engine (siehe
-    `test_the_page_does_not_call_init_a_second_time` oben)."""
+    This test only proves that both places where `authenticated` is set
+    to `false` call `closeSignalsModal()` - NOT that a browser actually
+    turns this into a reachable login screen; that would need a real
+    rendering engine (see `test_the_page_does_not_call_init_a_second_time`
+    above)."""
     client, _, _ = api
     script = (await client.get("/static/app.js")).text
 
@@ -5115,31 +5094,31 @@ async def test_losing_authentication_closes_an_open_signals_modal(api):
     assert "this.authenticated = info.authenticated;" in load_auth_info_body
     assert "if (!this.authenticated) {" in load_auth_info_body
     assert "this.closeSignalsModal();" in load_auth_info_body
-    # Der Aufruf haengt am `if (!this.authenticated)`-Zweig, nicht am
-    # Erfolgsfall - ein Fund, der nur den blossen `in`-Test bestuende, liesse
-    # `closeSignalsModal()` auch dann durchgehen, wenn er unbedingt VOR der
-    # Bedingung stuende und das Modal bei jedem Aufruf schloesse.
+    # The call hangs off the `if (!this.authenticated)` branch, not the
+    # success case - a version that only passed the bare `in` test would
+    # let `closeSignalsModal()` through even if it sat unconditionally
+    # BEFORE the condition and closed the modal on every call.
     guard_index = load_auth_info_body.index("if (!this.authenticated) {")
     call_index = load_auth_info_body.index("this.closeSignalsModal();")
     assert guard_index < call_index
 
 
 def _signals_dialog(markup: str) -> str:
-    """Der Inhalt des Signal-Modals, ohne den Rest der Seite.
+    """The content of the signals modal, without the rest of the page.
 
-    Ein blosses `in markup` wuerde die alte Signal-Section mitzaehlen,
-    solange es sie noch gibt (Task 3 loescht sie erst danach) - und traefe
-    danach immer noch die Geraetekacheln, die dieselben Helfer benutzen."""
+    A bare `in markup` would count the old signals section too, as long as
+    it still exists (Task 3 only removes it afterwards) - and would still
+    hit the device tiles afterwards, which use the same helpers."""
     start = markup.index("<dialog")
     return markup[start : markup.index("</dialog>", start)]
 
 
 async def test_the_signals_modal_carries_the_complete_signal_row(api):
-    """Entwurf Abschnitt 2: die Signalzeile zieht 1:1 um, ohne
-    Funktionsverlust - Titel, Export, Resend und Rohwert-Schreiben
-    inbegriffen. Genau diese vier Schreibwege sind das, was die alte
-    Ansicht als einzige konnte; faellt einer beim Umzug herunter, ist er
-    nirgends mehr erreichbar."""
+    """Design section 2: the signal row moves over 1:1, with no loss of
+    functionality - title, export, resend, and raw-value write included.
+    Exactly these four write paths are what the old view was capable of
+    on its own; if one falls off during the move, it is no longer
+    reachable anywhere."""
     client, _, _ = api
     dialog = _signals_dialog(_without_comments((await client.get("/")).text))
     assert '@change="saveTitle(signal)"' in dialog
@@ -5152,13 +5131,13 @@ async def test_the_signals_modal_carries_the_complete_signal_row(api):
 
 
 async def test_the_signals_error_banner_lives_inside_the_modal(api):
-    """Entwurf Abschnitt 4, Punkt 2: `signalsError` steht IM Modal.
+    """Design section 4, point 2: `signalsError` sits INSIDE the modal.
 
-    Ein `<dialog>` im Top-Layer verdeckt alles darunter samt Backdrop - ein
-    Fehlerbanner ausserhalb waere waehrend der einzigen Aktion, die es
-    ausloesen kann (Titel speichern, Haken setzen, Rohwert schreiben),
-    unsichtbar. Ein unsichtbarer Fehler ist nach Spec 8.1 schlimmer als
-    keiner."""
+    A `<dialog>` in the top layer covers everything below it including
+    the backdrop - an error banner outside it would be invisible during
+    the one action that can trigger it (saving a title, setting the
+    checkbox, writing a raw value). Per Spec 8.1, an invisible error is
+    worse than none."""
     client, _, _ = api
     dialog = _signals_dialog(_without_comments((await client.get("/")).text))
     assert 'x-show="signalsError"' in dialog
@@ -5166,20 +5145,19 @@ async def test_the_signals_error_banner_lives_inside_the_modal(api):
 
 
 async def test_both_signal_groups_share_one_details_template(api):
-    """Entwurf Abschnitt 4, Punkt 5: EINE Vorlage fuer beide Gruppen.
+    """Design section 4, point 5: ONE template for both groups.
 
-    Zwei Formen (Block hier, `<details>` dort) hiessen zwei Zweige und in
-    jedem eine eigene Kopie der Signalzeilen-Vorlage - genau die
-    Verdopplung, die `signalGroupsFor` abgeschafft hat (51 doppelte Zeilen,
-    siehe dessen Kommentar in app.js).
+    Two forms (a block here, `<details>` there) would mean two branches
+    and, in each, its own copy of the signal-row template - exactly the
+    duplication `signalGroupsFor` abolished (51 duplicate lines, see its
+    comment in app.js).
 
-    Der Startzustand laeuft ueber `x-init` und NICHT ueber ein gebundenes
-    `:open`: Alpine wertet Bindungen bei jeder Aenderung ihrer
-    Abhaengigkeiten neu aus, und `signalGroupsFor` haengt an
-    `signalsByDevice` - ein gespeicherter Signaltitel schriebe ein `:open`
-    neu und klappte die gerade geoeffnete Expertengruppe wortlos wieder zu.
-    Dieser Test ist die einzige Bremse gegen ein spaeteres, gut gemeintes
-    Vereinfachen zu `:open`."""
+    The initial state runs via `x-init` and NOT via a bound `:open`:
+    Alpine re-evaluates bindings on every change to their dependencies,
+    and `signalGroupsFor` depends on `signalsByDevice` - a saved signal
+    title would rewrite an `:open` and silently close the expert group
+    that was just opened. This test is the only brake against a later,
+    well-meaning simplification to `:open`."""
     client, _, _ = api
     dialog = _signals_dialog(_without_comments((await client.get("/")).text))
     assert 'x-for="group in signalGroupsFor(signalsModalDevice)"' in dialog
@@ -5191,29 +5169,29 @@ async def test_both_signal_groups_share_one_details_template(api):
 
 
 async def test_the_signals_modal_head_ships_a_labelled_heading_and_a_close_button(api):
-    """Fund 4 und Fund 5 (finale Branch-Review, 2026-09-06): weder die
-    Ueberschrift noch der Schliessen-Knopf noch das `#i-close`-Symbol waren
-    bisher irgendwo verankert - ein Edit, der den Knopf loescht (den
-    einzigen immer erreichbaren Ausweg aus dem Dialog ausser Escape), liefe
-    an dieser Suite ungebremst vorbei.
+    """Finding 4 and finding 5 (final branch review, 2026-09-06): neither
+    the heading nor the close button nor the `#i-close` symbol had been
+    anchored anywhere so far - an edit that deletes the button (the only
+    always-reachable way out of the dialog besides Escape) would run
+    right past this suite unimpeded.
 
-    Zugleich der Beleg fuer Fund 4: das `<dialog>` traegt
-    `aria-labelledby="signals-modal-heading"`, und genau diese `id` sitzt
-    an der `<h2>` - ohne das haette eine Screenreader-Ansage "Dialog" ohne
-    erkennbares Subjekt. Anders als das `aria-labelledby` am Kachel-Menue
-    (das seine id aus `device.id` ableiten muss, weil es einmal PRO KACHEL
-    existiert) ist eine feste id hier korrekt, weil es dieses `<dialog>`
-    nur ein einziges Mal im Dokument gibt.
+    Also the proof for finding 4: the `<dialog>` carries
+    `aria-labelledby="signals-modal-heading"`, and exactly this `id` sits
+    on the `<h2>` - without it, a screen-reader announcement would say
+    "dialog" with no discernible subject. Unlike the `aria-labelledby` on
+    the tile menu (which must derive its id from `device.id`, because it
+    exists once PER TILE), a fixed id is correct here, because this
+    `<dialog>` exists only a single time in the document.
 
-    Fund 2 (Nachpruefung der Fixes, 2026-09-06): geprueft wird BEIDE Seiten
-    des Icons - der `<use href="#i-close">` im Dialog UND die
-    `<symbol id="i-close">`-Definition im Sprite-Block oben. `#i-close` hat
-    sonst keinen Verwender; ohne die zweite Zusicherung liesse sich das
-    Symbol loeschen, ohne dass diese Suite etwas merkt, und der Knopf
-    zeichnete stillschweigend nichts (ein `<use>` auf eine fehlende id
-    bleibt leer, ohne Konsolenmeldung). Dasselbe Paar prueft
-    `test_the_tile_menu_has_its_own_icon_symbol` weiter oben aus demselben
-    Grund."""
+    Finding 2 (fix verification, 2026-09-06): BOTH sides of the icon are
+    checked - the `<use href="#i-close">` in the dialog AND the
+    `<symbol id="i-close">` definition in the sprite block above.
+    `#i-close` otherwise has no user; without the second assertion, the
+    symbol could be deleted without this suite noticing anything, and the
+    button would silently draw nothing (a `<use>` pointing at a missing id
+    stays empty, with no console message). The test
+    `test_the_tile_menu_has_its_own_icon_symbol` further above checks the
+    same pair for the same reason."""
     client, _, _ = api
     markup = _without_comments((await client.get("/")).text)
     dialog = _signals_dialog(markup)
@@ -5229,23 +5207,23 @@ async def test_the_signals_modal_head_ships_a_labelled_heading_and_a_close_butto
 
 
 async def test_the_signal_group_summary_suppresses_the_default_marker_and_ships_a_chevron(api):
-    """Fund 1 (Review der Nacharbeit, 2026-09-06): der Kommentar am
-    `.signal-group`-Block in `style.css` behauptete, der Standard-Marker
-    eines `<summary>` bleibe dort absichtlich sichtbar - dabei unterdrueckte
-    keine der Regeln ihn: kein `list-style: none`, keine
-    `::-webkit-details-marker`-Regel, kein Chevron. Ausgeliefert wurde also
-    das browsereigene Aufklapp-Dreieck (Firefox: Umriss, WebKit: gefuellt) -
-    das Gegenteil dessen, was der Kommentar behauptete.
+    """Finding 1 (review of the follow-up work, 2026-09-06): the comment
+    on the `.signal-group` block in `style.css` claimed that a
+    `<summary>`'s default marker deliberately remained visible there -
+    when in fact none of the rules suppressed it: no `list-style: none`,
+    no `::-webkit-details-marker` rule, no chevron. What was delivered was
+    therefore the browser's own disclosure triangle (Firefox: outline,
+    WebKit: filled) - the opposite of what the comment claimed.
 
-    Dieser Test verankert das Gegenstueck: dieselbe doppelte Unterdrueckung
-    wie bei `.tile-menu > summary` und `.projectsync-device summary`, plus
-    den ersetzenden Chevron (`#i-chevron`), der sich beim Aufklappen dreht.
-    Er belegt nur, dass Markup und Stylesheet die dafuer noetigen Knoten
-    bzw. Regeln tragen - nicht, dass eine Rendering-Engine daraus
-    tatsaechlich einen unsichtbaren Standardmarker und einen sichtbaren,
-    rotierenden Pfeil macht; dafuer braeuchte es einen echten Browser. Ein
-    kuenftiger Edit, der nur eine Haelfte der Doppelung entfernt und den
-    Kommentar stehen laesst, faellt hier durch."""
+    This test anchors the correct counterpart: the same double
+    suppression as with `.tile-menu > summary` and
+    `.projectsync-device summary`, plus the replacement chevron
+    (`#i-chevron`), which rotates on opening. It proves only that the
+    markup and stylesheet carry the nodes and rules needed for that - not
+    that a rendering engine actually turns this into an invisible default
+    marker and a visible, rotating arrow; that would need a real browser.
+    A future edit that removes only one half of the duplication and
+    leaves the comment standing fails here."""
     client, _, _ = api
     markup = _without_comments((await client.get("/")).text)
     dialog = _signals_dialog(markup)
@@ -5253,7 +5231,7 @@ async def test_the_signal_group_summary_suppresses_the_default_marker_and_ships_
     assert 'href="#i-chevron"' in dialog
 
     css = (await client.get("/static/style.css")).text
-    block_start = css.index("/* Die beiden Signalgruppen im Modal.")
+    block_start = css.index("/* The two signal groups in the modal.")
     block = css[block_start:]
     assert ".signal-group > summary {" in block
     assert "list-style: none;" in block
@@ -5265,18 +5243,17 @@ async def test_the_signal_group_summary_suppresses_the_default_marker_and_ships_
 
 
 async def test_the_signals_view_is_gone_from_navigation_and_markup(api):
-    """Entwurf Abschnitt 3: der Reiter wird ersatzlos aufgeloest.
+    """Design section 3: the tab is dissolved without replacement.
 
-    Geprueft wird nicht nur der Nav-Knopf, sondern auch, dass NIRGENDWO
-    mehr auf den Ansichtswert `'signals'` geschaltet wird - ein
-    stehengebliebener `selectView('signals')` waere ein Klick, der die
-    Anwendung in eine Ansicht schickt, die es nicht mehr gibt: alle
-    Sections blieben ausgeblendet, die Seite waere leer, ohne
-    Fehlermeldung.
+    Checked is not only the nav button, but also that NOWHERE does
+    anything still switch to the view value `'signals'` - a leftover
+    `selectView('signals')` would be a click that sends the app into a
+    view that no longer exists: all sections would stay hidden, the page
+    would be empty, with no error message.
 
-    `showExpertSignals` faellt mit: der Auf-/Zu-Zustand lebt jetzt im DOM
-    (`<details>` im Modal), ein globales Feld dafuer waere eine zweite
-    Wahrheit ohne Leser."""
+    `showExpertSignals` falls with it: the open/closed state now lives in
+    the DOM (`<details>` in the modal), a global field for it would be a
+    second source of truth with no reader."""
     client, _, _ = api
     page = (await client.get("/")).text
     script = (await client.get("/static/app.js")).text
@@ -5289,13 +5266,13 @@ async def test_the_signals_view_is_gone_from_navigation_and_markup(api):
 
 
 async def test_the_dropped_signal_keys_are_gone_from_the_translation_table(api):
-    """Die drei Schluessel des alten Reiters haben keinen Leser mehr.
+    """The three keys of the old tab have no reader left.
 
-    `expert_collapsed_hint` faellt dabei ersatzlos statt umzuziehen: "12
-    Expertensignale ausgeblendet" sagt dasselbe wie "Experte (12)" im
-    `<summary>`, nur nicht an der Stelle, an der man klickt. Ein
-    stehengelassener Schluessel waere nicht bloss tot - er verwiese in
-    seinem eigenen Text auf einen Schalter, den es nicht mehr gibt."""
+    `expert_collapsed_hint` falls away without replacement rather than
+    moving: "12 expert signals hidden" says the same thing as "Expert
+    (12)" in the `<summary>`, just not at the place where you click. A key
+    left standing would not merely be dead - its own text would refer to a
+    toggle that no longer exists."""
     client, _, _ = api
     strings = (await client.get("/api/i18n")).json()["strings"]
     for key in (
@@ -5310,21 +5287,22 @@ async def test_the_dropped_signal_keys_are_gone_from_the_translation_table(api):
 
 
 # ---------------------------------------------------------------------------
-# Suchfeld der Geraeteansicht (Entwurf vom 2026-09-06). Das Feld fiel durch
-# das CSS-Raster - die Formularregel listet text, number, password und
-# select, aber nicht search -, weshalb der Browser es selbst zeichnete.
+# Search field of the device view (design from 2026-09-06). The field fell
+# through the CSS grid - the form rule lists text, number, password, and
+# select, but not search - which is why the browser drew it itself.
 # ---------------------------------------------------------------------------
 
 
 async def test_the_search_field_ships_the_words_for_counter_and_clear_button(api):
-    """Der Zaehler traegt Text, das Loeschkreuz traegt keinen und braucht
-    deshalb einen zugaenglichen Namen - beide muessen uebersetzt beim
-    Browser ankommen.
+    """The counter carries text, the clear cross carries none and
+    therefore needs an accessible name - both must arrive at the browser
+    translated.
 
-    `{count}` bleibt dabei UNAUFGELOEST: aufgeloest wird es in app.js
-    (`t(key, values)`), wenn die Zahl feststeht. Der Server kennt sie nicht,
-    und `GET /api/i18n` liefert deshalb die rohe Vorlage - genau das belegt
-    der Vergleich auf die Zeichenkette samt geschweifter Klammern."""
+    `{count}` remains UNRESOLVED here: it is resolved in app.js
+    (`t(key, values)`) once the number is known. The server does not know
+    it, and `GET /api/i18n` therefore delivers the raw template - exactly
+    that is what the comparison against the string, braces included,
+    proves."""
     client, _, _ = api
     strings = (await client.get("/api/i18n")).json()["strings"]
     assert strings["web.devices.search_count"] == "{count} found"
@@ -5332,14 +5310,14 @@ async def test_the_search_field_ships_the_words_for_counter_and_clear_button(api
 
 
 async def test_the_search_field_has_a_magnifier_of_its_own(api):
-    """Die Lupe kommt aus dem Inline-Sprite wie jedes andere Symbol -
-    dieselbe Begruendung wie beim eingecheckten vendor/alpine.min.js: die
-    Oberflaeche laeuft offline.
+    """The magnifier comes from the inline sprite like every other symbol
+    - the same reasoning as for the checked-in vendor/alpine.min.js: the
+    UI runs offline.
 
-    Das Loeschkreuz bekommt dagegen KEIN eigenes Symbol, es benutzt das
-    vorhandene `#i-close`. Zwei gleiche Formen waeren zwei Orte, an die man
-    sich beim naechsten Strichstaerken-Dreh erinnern muss - und an einen
-    davon erinnert man sich nicht."""
+    The clear cross, by contrast, gets NO symbol of its own, it uses the
+    existing `#i-close`. Two identical shapes would be two places to
+    remember the next time the stroke weight changes - and one of them
+    would be forgotten."""
     client, _, _ = api
     page = _without_comments((await client.get("/")).text)
     assert 'id="i-search"' in page
@@ -5347,11 +5325,11 @@ async def test_the_search_field_has_a_magnifier_of_its_own(api):
 
 
 async def test_the_search_field_carries_the_frame_and_the_input_does_not(api):
-    """Der Rahmen sitzt am Container, nicht am Feld.
+    """The border sits on the container, not on the field.
 
-    Traegen beide einen, liegt ein Rahmen im anderen - und der Fokusring
-    (naechster Test) haette nichts, woran er sich festmachen koennte, das
-    Lupe und Kreuz mit einschliesst."""
+    If both carried one, a border would sit inside the other one - and
+    the focus ring (next test) would have nothing to attach to that
+    encloses the magnifier and the cross too."""
     client, _, _ = api
     css = (await client.get("/static/style.css")).text
     field = css.split(".search-field {", 1)[1].split("}", 1)[0]
@@ -5363,10 +5341,11 @@ async def test_the_search_field_carries_the_frame_and_the_input_does_not(api):
 
 
 async def test_the_search_focus_ring_wraps_the_whole_group(api):
-    """`:focus-within` am Container statt `:focus` am Feld: der Ring soll
-    Lupe, Zaehler und Kreuz mit einschliessen, nicht nur das Eingabefeld in
-    ihrer Mitte. Der browsereigene Umriss am Feld muss dafuer weichen, sonst
-    stuenden beide."""
+    """`:focus-within` on the container instead of `:focus` on the field:
+    the ring should enclose the magnifier, the counter, and the cross too,
+    not only the input field in the middle of them. The browser's own
+    outline on the field must give way for that, otherwise both would
+    show at once."""
     client, _, _ = api
     css = (await client.get("/static/style.css")).text
     ring = css.split(".search-field:focus-within {", 1)[1].split("}", 1)[0]
@@ -5376,14 +5355,15 @@ async def test_the_search_focus_ring_wraps_the_whole_group(api):
 
 
 async def test_the_browser_does_not_add_a_second_clear_cross(api):
-    """WebKit legt in ein `input[type="search"]` sein eigenes Loeschkreuz -
-    daneben stuende unseres ein zweites Mal.
+    """WebKit places its own clear cross inside an
+    `input[type="search"]` - ours would sit right next to it a second
+    time.
 
-    Abgeschaltet wird es mit `-webkit-appearance` UND `appearance`: das
-    Pseudoelement ist herstellerspezifisch, und die Zusicherung auf die
-    zweite Form braucht den Zeilenanfang - `"appearance: none"` ist eine
-    Teilzeichenkette von `"-webkit-appearance: none"` und waere sonst schon
-    von der ersten Zeile erfuellt."""
+    It is turned off with `-webkit-appearance` AND `appearance`: the
+    pseudo-element is vendor-specific, and the assertion on the second
+    form needs the start of the line - `"appearance: none"` is a
+    substring of `"-webkit-appearance: none"` and would otherwise already
+    be satisfied by the first line."""
     client, _, _ = api
     css = (await client.get("/static/style.css")).text
     rule = css.split("::-webkit-search-cancel-button {", 1)[1].split("}", 1)[0]
@@ -5392,31 +5372,31 @@ async def test_the_browser_does_not_add_a_second_clear_cross(api):
 
 
 async def test_the_counter_and_the_cross_appear_only_with_a_query(api):
-    """Beide haengen an `deviceSearch` und tragen `x-cloak`: bei leerem Feld
-    sind sie weg, und beim ersten Zeichnen blitzen sie nicht auf, bevor
-    Alpine initialisiert hat.
+    """Both depend on `deviceSearch` and carry `x-cloak`: with an empty
+    field they are gone, and on the first draw they do not flash up
+    before Alpine has initialised.
 
-    Der Zaehler liest `visibleDevices().length` - also das, was tatsaechlich
-    unter der Leiste steht, einschliesslich eines aktiven Raumfilters. Die
-    Suchlogik selbst bleibt unberuehrt.
+    The counter reads `visibleDevices().length` - i.e. what actually sits
+    below the bar, including an active room filter. The search logic
+    itself remains untouched.
 
-    Zwei `aria-label`: eines am Eingabefeld (es traegt nur einen Platzhalter,
-    und der verschwindet genau dann, wenn jemand etwas eingegeben hat), eines
-    am Kreuz (es traegt gar kein Wort).
+    Two `aria-label`s: one on the input field (it only carries a
+    placeholder, and that disappears the moment someone types something),
+    one on the cross (it carries no word at all).
 
-    Das Kreuz muss den Fokus zurueck ins Feld legen: `x-show` setzt beim
-    Leeren `display: none` auf das Element, das gerade den Fokus traegt,
-    und der Browser wirft ihn dann auf `<body>`. Das native
-    Loeschkreuz von WebKit - `::-webkit-search-cancel-button`, andernorts in
-    dieser Datei bewusst abgeschaltet - hat genau das getan: den Fokus im
-    Feld gehalten. Unser eigenes Kreuz muss dasselbe leisten, sonst
-    verliert eine Tastaturbedienung durch das Loeschen den Anschluss und
-    muesste sich von ganz oben wieder durch die Seite tabben.
+    The cross must put focus back into the field: on clearing, `x-show`
+    sets `display: none` on the element that currently holds focus, and
+    the browser then throws it onto `<body>`. WebKit's native clear cross
+    - `::-webkit-search-cancel-button`, deliberately turned off elsewhere
+    in this file - did exactly that: kept focus in the field. Our own
+    cross must achieve the same, otherwise keyboard operation loses its
+    place through the clearing and would have to tab through the page
+    again from the very top.
 
-    `aria-live="polite"` am Zaehler: er beantwortet fuer Screenreader-
-    Nutzer die Frage, auf die er auch visuell antwortet - wie viele
-    Treffer nach der letzten Eingabe uebrig sind, bis hinunter zu null.
-    Ohne die Live-Region bliebe das stumm."""
+    `aria-live="polite"` on the counter: for screen-reader users it
+    answers the same question it also answers visually - how many matches
+    remain after the last keystroke, down to zero. Without the live
+    region this would stay silent."""
     client, _, _ = api
     page = _without_comments((await client.get("/")).text)
     field = page.split('<div class="search-field">', 1)[1].split("</div>", 1)[0]
@@ -5434,17 +5414,17 @@ async def test_the_counter_and_the_cross_appear_only_with_a_query(api):
 
 
 async def test_the_search_field_moves_left_when_there_are_no_rooms(api):
-    """Der Abstandhalter, der das Feld nach rechts schiebt, existiert nur
-    zusammen mit den Chips, an denen vorbeizuschieben waere.
+    """The spacer that pushes the field to the right exists only together
+    with the chips it would need to push past.
 
-    Ohne Raeume blendet sich die Chip-Leiste aus (`x-if="hasAnyRoom()"`).
-    Stuende der Abstandhalter dann weiter im Markup - so war es -, bliebe
-    ein einzelner Kasten rechts in einer sonst leeren Zeile stehen. Mit
-    eigenem `x-if` verschwindet er mit den Chips, und das Feld rueckt an die
-    linke Kante, auf eine Sichtachse mit dem Kachelraster darunter.
+    With no rooms, the chip bar hides itself (`x-if="hasAnyRoom()"`). If
+    the spacer then remained in the markup - as it used to - a single box
+    would be left standing on the right in an otherwise empty row. With
+    its own `x-if`, it disappears along with the chips, and the field
+    moves to the left edge, onto a sightline with the tile grid below it.
 
-    Zwei `x-if="hasAnyRoom()"` in der Leiste sind also richtig und kein
-    Versehen: eines fuer die Chips, eines fuer den Abstandhalter."""
+    Two `x-if="hasAnyRoom()"` in the bar are therefore correct and not an
+    oversight: one for the chips, one for the spacer."""
     client, _, _ = api
     page = _without_comments((await client.get("/")).text)
     bar = page.split('<div class="room-bar"', 1)[1].split('<div class="search-field">', 1)[0]
@@ -5456,29 +5436,29 @@ async def test_the_search_field_moves_left_when_there_are_no_rooms(api):
 
 
 # ---------------------------------------------------------------------------
-# Aufgabe 5: Die Batteriezeile der Kachel. Gegenbuchung zur Cluster-
-# Rangliste (Aufgabe 4): mit Rang 90 stuende der Batteriestand hinter allen
-# sechzehn anderen funktionalen Signalen des Tasters und fiele damit aus den
-# sechs Vorschauzeilen - er waere auf der Kachel gar nicht mehr zu sehen.
+# Task 5: The battery row of the tile. Counterweight to the cluster
+# ranking (task 4): at rank 90, the battery level would come after all
+# sixteen other functional signals of the button and would thus fall out
+# of the six preview rows - it would no longer be visible on the tile at all.
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.skipif(NODE is None, reason="node wird fuer diesen Test gebraucht")
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
 def test_the_battery_never_opens_the_value_grid_and_is_never_counted_twice():
-    """Die drei Zusicherungen der Batteriezeile an EINEM Aufbau, weil sie
-    zusammengehoeren: der Batteriestand fuehrt nicht, er steht nicht in der
-    Vorschau, und er zaehlt nicht als "weiteres".
+    """The three assertions of the battery row in ONE setup, because they
+    belong together: the battery level does not lead, it is not in the
+    preview, and it does not count as "more".
 
-    Der Aufbau ist der Taster: 17 funktionale Signale in der Reihenfolge,
-    in der die Cluster-Rangliste sie liefert - sechzehn Switch-Signale,
-    zuletzt die Batterie. Sechs Vorschauzeilen plus eine Fusszeile lassen
-    zehn uebrig. Nennt die Kachel elf, ist die Batterie doppelt gezaehlt -
-    genau der Fehler, den der Canvas-Entwurf hatte.
+    The setup is the button: 17 functional signals in the order the
+    cluster ranking delivers them - sixteen switch signals,
+    the battery last. Six preview rows plus one footer row leave
+    ten remaining. If the tile says eleven, the battery is counted twice -
+    exactly the bug the canvas design had.
 
-    Als node-Lauf statt als Zeichenketten-Suche in `app.js`: eine Suche
-    belegt nur, DASS eine Zeile ausgeliefert wird. Am 2026-09-05 haben drei
-    solche Tests einen Critical durchgelassen, weil sie exakt die
-    Zeichenketten prueften, die den Fehler erzeugten."""
+    As a node run instead of a string search in `app.js`: a search
+    only proves THAT a row is shipped. On 2026-09-05, three
+    such tests let a critical bug through because they checked exactly
+    the strings that produced the bug."""
     values = _app_state(
         """
         const signals = [];
@@ -5508,10 +5488,10 @@ def test_the_battery_never_opens_the_value_grid_and_is_never_counted_twice():
     assert values["remaining"] == 10
 
 
-@pytest.mark.skipif(NODE is None, reason="node wird fuer diesen Test gebraucht")
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
 def test_a_mains_powered_device_has_no_battery_row():
-    """Ohne PowerSource-Signal darf die Kachel keine Fusszeile zeigen - und
-    der Zaehler muss sich genauso verhalten wie vor dieser Aenderung."""
+    """Without a PowerSource signal, the tile must not show a footer row -
+    and the counter must behave exactly as it did before this change."""
     values = _app_state(
         """
         state.signalsByDevice = { 1: [
@@ -5531,15 +5511,15 @@ def test_a_mains_powered_device_has_no_battery_row():
     assert values["remaining"] == 0
 
 
-@pytest.mark.skipif(NODE is None, reason="node wird fuer diesen Test gebraucht")
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
 def test_a_device_whose_only_functional_signal_is_the_battery_shows_an_empty_grid():
-    """Der Randfall, an dem der Hinweis "keine funktionalen Signale" falsch
-    waere: es GIBT eines, es steht nur in der Fusszeile.
+    """The edge case where the "no functional signals" hint would be
+    wrong: there IS one, it just sits in the footer row.
 
-    Das Werteraster ist hier leer, obwohl `functionalSignalsFor` ein Signal
-    liefert - `previewSignalsFor` nimmt den Batteriestand ja heraus. Genau
-    deshalb haengt der Hinweis im Markup an `functionalSignalsFor` und nicht
-    an den Rasterzeilen, siehe
+    The value grid is empty here even though `functionalSignalsFor`
+    returns a signal - `previewSignalsFor` takes the battery level out
+    after all. That is exactly why the hint in the markup is tied to
+    `functionalSignalsFor` and not to the grid rows, see
     `test_the_no_functional_signals_hint_asks_the_list_not_the_grid`."""
     values = _app_state(
         """
@@ -5561,19 +5541,19 @@ def test_a_device_whose_only_functional_signal_is_the_battery_shows_an_empty_gri
     assert values["remaining"] == 0
 
 
-@pytest.mark.skipif(NODE is None, reason="node wird fuer diesen Test gebraucht")
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
 def test_a_device_with_two_power_source_endpoints_keeps_both_out_of_the_grid():
-    """Der Randfall eines zusammengesetzten Geraets oder einer Bruecke mit
-    zwei Batterien unter einem Datensatz: zwei Signale auf Cluster 47, auf
-    verschiedenen Endpunkten.
+    """The edge case of a composite device or a bridge with two batteries
+    under one record: two signals on cluster 47, on different endpoints.
 
-    `batterySignalFor` waehlt per `.find()` nur das erstplatzierte davon -
-    das zweite bliebe, wenn die Vorschaumenge nur DIESES eine ausschliesst
-    (Schluesselvergleich statt Cluster-Filter), unbemerkt in der Vorschau
-    stehen und koennte als Leitwert enden. Zusicherung hier: der Leitwert
-    ist das Nutzsignal, kein Signal der Vorschaumenge traegt
-    `cluster_id === 47`, und `batterySignalFor` liefert das erstplatzierte
-    der beiden PowerSource-Signale."""
+    `batterySignalFor` picks only the first-ranked one of these via
+    `.find()` - the second one would, if the preview set only excludes
+    THIS one (key comparison instead of cluster filter), remain
+    unnoticed in the preview and could end up as the primary signal.
+    Assertion here: the primary signal is the useful signal, no signal
+    of the preview set carries `cluster_id === 47`, and
+    `batterySignalFor` returns the first-ranked of the two
+    PowerSource signals."""
     values = _app_state(
         """
         state.signalsByDevice = { 1: [
@@ -5606,70 +5586,72 @@ async def test_the_tile_has_a_battery_row_with_its_own_symbol(api):
 
 
 async def test_the_no_functional_signals_hint_asks_the_list_not_the_grid(api):
-    """Der Hinweis muss an `functionalSignalsFor` haengen, nicht an den
-    Rasterzeilen.
+    """The hint must be tied to `functionalSignalsFor`, not to the
+    grid rows.
 
-    Der Grund ist die Batteriezeile: `previewSignalsFor` nimmt den
-    Batteriestand aus dem Werteraster heraus, ein Geraet mit NUR einem
-    Batteriesignal hat dort also null Zeilen bei einem funktionalen Signal.
-    Ueber die Rasterzeilen gefragt behauptete der Hinweis dann "keine
-    funktionalen Signale", waehrend die Fusszeile darunter eines zeigt.
+    The reason is the battery row: `previewSignalsFor` takes the
+    battery level out of the value grid, so a device with ONLY a
+    battery signal has zero rows there for one functional signal.
+    Asked via the grid rows, the hint would then claim "no
+    functional signals", while the footer row below shows one.
 
-    Die Bedingung fragte frueher `!leadSignalFor(device.id)` und nach dem
-    Batterie-Umbau `!leadSignalFor(...) && !batterySignalFor(...)`. Mit dem
-    Wegfall des Leitwerts ist beides hinfaellig - `functionalSignalsFor`
-    beantwortet dieselbe Frage direkt und deckt den Batterie-Randfall von
-    sich aus ab."""
+    The condition used to ask `!leadSignalFor(device.id)` and, after the
+    battery rework, `!leadSignalFor(...) && !batterySignalFor(...)`. With
+    the removal of the primary signal, both are moot -
+    `functionalSignalsFor` answers the same question directly and covers
+    the battery edge case on its own."""
     client, _, _ = api
     page = _without_comments((await client.get("/")).text)
 
     hint = page[page.index("no_functional_signals") - 400 : page.index("no_functional_signals")]
     assert "functionalSignalsFor(device.id).length === 0" in hint
-    # Weder ueber die Rasterzeilen noch ueber den entfallenen Leitwert.
+    # Neither via the grid rows nor via the removed primary signal.
     assert "firstSignalsFor" not in hint
     assert "leadSignalFor" not in hint
 
 
 async def test_the_signal_rows_and_the_header_share_one_grid(api):
-    """Was heute fehlt und weshalb nichts fluchtet: die Zeile ist ein
-    `flex-wrap`-Container ohne Spaltenmasse. Bei `multipress_ongoing`
-    rutschte "periodisch erneut senden" allein in die naechste Zeile.
+    """What is missing today and why nothing lines up: the row is a
+    `flex-wrap` container with no column dimensions. With `multipress_ongoing`,
+    "periodisch erneut senden" slid into the next line by itself.
 
-    200px statt vormals 150px fuer die Schluessel-Spalte (Aufgabe 13, Fund:
-    der alte Kommentar behauptete eine Messung, die nie stattfand - 150px
-    ueberliefen bei `d4_1_multipress_ongoing`, dem tatsaechlich laengsten
-    Schluessel der vier Demo-Geraete, gemessen 183px scrollWidth gegen
-    148px clientWidth). Diese Zusicherung MUSS mitgezogen werden, sonst
-    haette der Umbau eine Kopf- und eine Datenzeile mit verschiedenen
-    Vorlagen hinterlassen - genau die Abweichung, die dieser Test
-    ueberhaupt sperrt.
+    200px instead of the previous 150px for the key column (task 13,
+    finding: the old comment claimed a measurement that never took place -
+    150px overflowed for `d4_1_multipress_ongoing`, the actually longest
+    key of the four demo devices, measured at 183px scrollWidth against
+    148px clientWidth). This assertion MUST be carried along, otherwise
+    the rework would have left a header row and a data row with different
+    templates - exactly the divergence this test exists to
+    block.
 
-    Fund (Abschlusspruefung): `page.count("signal-grid") >= 2` zaehlt nur
-    einen Teilstring. Allein `class="signal-grid signal-grid-head"`
-    liefert zwei Treffer, weil "signal-grid-head" mit "signal-grid"
-    beginnt - die Datenzeile koennte ihre Rasterklasse also ganz verlieren
-    (Ausgangszustand des Umbaus) und der zaehlende Assert bliebe gruen.
-    Ebenso pruefte die zweite Zusicherung nur, dass die Spaltenmasse
-    IRGENDWO im CSS stehen, nicht dass Kopf UND Zeile sie ueber dieselbe
-    Regel beziehen - ein spaeterer `.signal-row-cells { grid-template-
-    columns: ... }`-Override waere unsichtbar geblieben. Diese Fassung
-    verlangt beide Klassen einzeln am jeweiligen Element und bindet die
-    Spaltenmasse an den Regelkoerper von `.signal-grid` allein, mit einer
-    Gegenprobe, dass keine der beiden Modifikator-Klassen sie ausserhalb
-    der Medienabfrage nochmal selbst definiert.
+    Finding (final review): `page.count("signal-grid") >= 2` only counts
+    a substring. `class="signal-grid signal-grid-head"` alone
+    produces two hits, because "signal-grid-head" starts with "signal-grid"
+    - the data row could thus lose its grid class entirely
+    (the starting state of the rework) and the counting assert would stay
+    green. Likewise, the second assertion only checked that the column
+    dimensions appear SOMEWHERE in the CSS, not that the header AND the
+    row get them from the same rule - a later
+    `.signal-row-cells { grid-template-columns: ... }` override would have
+    stayed invisible. This version requires both classes individually on
+    their respective element and ties the column dimensions to the rule
+    body of `.signal-grid` alone, with a counter-check that neither of the
+    two modifier classes defines them again itself outside the
+    media query.
 
-    Fund (Nachpruefung vor dem Merge): `rule_body` benutzte `css.index`, das
-    nur die ERSTE Regel mit diesem Selektor findet. Ein spaeterer Override
-    derselben Klasse - genau der Fall, gegen den diese Gegenprobe antreten
-    soll - steht aber am Ende der Datei und gewinnt dort die Kaskade,
-    unabhaengig davon, ob die erste Fassung sauber ist. Beleg: haengt man
-    `.signal-row-cells { grid-template-columns: 40px 1fr; }` ans Ende von
-    `style.css`, bleibt die alte Fassung dieses Tests gruen, obwohl Kopf-
-    und Datenzeile danach nachweislich verschiedene Spaltenmasse haben.
-    `rule_bodies_outside_media` sammelt deshalb ALLE Regelkoerper fuer
-    einen Selektor (nach Entfernen der `@media`-Bloecke, in denen `.signal-
-    grid` bewusst eine andere Vorlage fuer den schmalen Fall traegt), und
-    die Gegenprobe prueft jeden davon."""
+    Finding (re-check before the merge): `rule_body` used `css.index`,
+    which only finds the FIRST rule with this selector. A later override
+    of the same class - exactly the case this counter-check is meant to
+    guard against - sits at the end of the file though, and wins the
+    cascade there, regardless of whether the first version is clean.
+    Proof: appending `.signal-row-cells { grid-template-columns: 40px 1fr; }`
+    to the end of `style.css` leaves the old version of this test green,
+    even though the header and data row demonstrably have different
+    column dimensions after that. `rule_bodies_outside_media` therefore
+    collects ALL rule bodies for a selector (after removing the `@media`
+    blocks in which `.signal-grid` deliberately carries a different
+    template for the narrow case), and the counter-check verifies each
+    one."""
     client, _, _ = api
     page = _without_comments((await client.get("/")).text)
     css = (await client.get("/static/style.css")).text
@@ -5678,9 +5660,10 @@ async def test_the_signal_rows_and_the_header_share_one_grid(api):
     assert 'class="signal-grid signal-row-cells"' in page
 
     def _without_media_queries(css: str) -> str:
-        """`css` ohne jeden `@media`-Block, per Klammerzaehlung entfernt -
-        ein einfaches `css.index("}")` braeche bei der ERSTEN Regel im
-        Block ab, nicht am Blockende, weil Regeln selbst auch `{ }` tragen."""
+        """`css` with every `@media` block removed, stripped by brace
+        counting - a plain `css.index("}")` would stop at the FIRST rule
+        inside the block, not at the block's end, because rules
+        themselves also carry `{ }`."""
         pieces = []
         pos = 0
         while True:
@@ -5702,9 +5685,9 @@ async def test_the_signal_rows_and_the_header_share_one_grid(api):
         return "".join(pieces)
 
     def rule_bodies_outside_media(selector: str, css: str) -> list[str]:
-        """ALLE Regelkoerper fuer `selector` ausserhalb jeder Medienabfrage -
-        nicht nur der erste (siehe Docstring oben: ein Override am
-        Dateiende blieb sonst unsichtbar)."""
+        """ALL rule bodies for `selector` outside every media query -
+        not only the first one (see the docstring above: an override at
+        the end of the file would otherwise stay invisible)."""
         bodies = []
         pos = 0
         while True:
@@ -5721,10 +5704,10 @@ async def test_the_signal_rows_and_the_header_share_one_grid(api):
     grid_bodies = rule_bodies_outside_media(".signal-grid {", css_outside_media)
     assert len(grid_bodies) == 1
     assert "grid-template-columns: 58px minmax(0, 1fr) 200px 70px 76px 28px" in grid_bodies[0]
-    # Bei JEDER Fassung von `.signal-grid-head`/`.signal-row-cells` ausserhalb
-    # der Medienabfrage duerfen die Spaltenmasse nicht eigenstaendig
-    # auftauchen, sonst koennten Kopf und Zeile ueber je eine eigene Regel
-    # auseinanderlaufen, ohne dass es hier auffiele.
+    # In EVERY version of `.signal-grid-head`/`.signal-row-cells` outside
+    # the media query, the column dimensions must not appear
+    # independently, otherwise the header and row could drift apart via
+    # their own separate rule without this catching it.
     for body in rule_bodies_outside_media(".signal-grid-head {", css_outside_media):
         assert "grid-template-columns" not in body
     for body in rule_bodies_outside_media(".signal-row-cells {", css_outside_media):
@@ -5732,30 +5715,29 @@ async def test_the_signal_rows_and_the_header_share_one_grid(api):
 
 
 async def test_the_key_pill_wraps_instead_of_touching_the_value_column(api):
-    """Fund (Aufgabe 13): 200px reichen fuer die heutigen Schluessel, aber
-    `.key` selbst hatte weder `white-space` noch `overflow` - ein noch
-    laengerer Schluessel (z. B. eine dreistellige Geraete-ID) wuerde die
-    Spalte erneut sprengen, unsichtbar fuer eine Messung, die nur auf
-    abweichende Spaltenkanten prueft. Die Absicherung sitzt bewusst an
-    `.signal-grid .key`, nicht an `.key` global: dieselbe Klasse traegt
-    auch die Firmware-Dateinamen im Diagnose-Tab und den
-    Kommissionierungscode im Kopf (`class="key"` an anderer Stelle in
-    `index.html`) - eine globale Regel haette dort mitgewirkt, ohne dass
-    dieser Test das je gesehen haette.
+    """Finding (task 13): 200px is enough for today's keys, but
+    `.key` itself had neither `white-space` nor `overflow` - an even
+    longer key (e.g. a three-digit device ID) would blow up the
+    column again, invisible to a measurement that only checks for
+    diverging column edges. The safeguard deliberately sits on
+    `.signal-grid .key`, not on `.key` globally: the same class also
+    carries the firmware filenames in the diagnostics tab and the
+    commissioning code in the header (`class="key"` elsewhere in
+    `index.html`) - a global rule would have affected those too, without
+    this test ever having seen it.
 
-    `overflow-wrap: break-word` statt `text-overflow: ellipsis`: `.key`
-    traegt `user-select: all`, die Pille ist zum Kopieren gedacht, und es
-    gibt im Signal-Modal keinen zweiten Ort, der denselben Schluessel
-    ungekuerzt zeigt. Eine Ellipse waere beim Kopieren vollstaendig, aber
-    beim Ablesen eine stille Verstuemmelung - deshalb Umbruch, nicht
-    Kappung."""
+    `overflow-wrap: break-word` instead of `text-overflow: ellipsis`:
+    `.key` carries `user-select: all`, the pill is meant for copying, and
+    there is no second place in the signal modal that shows the same key
+    unabridged. An ellipsis would be complete when copied, but a silent
+    mutilation when read - hence wrapping, not truncation."""
     client, _, _ = api
     css = (await client.get("/static/style.css")).text
 
-    # Bindung an den Regelkoerper des eigenen Selektors (`.signal-grid
-    # .key`), nicht an ein Stichwort-Fenster - sonst waere der Test auch
-    # dann gruen, wenn `overflow-wrap` zufaellig in einer benachbarten,
-    # unbeteiligten Regel stuende.
+    # Bound to the rule body of its own selector (`.signal-grid
+    # .key`), not to a keyword window - otherwise the test would stay
+    # green even if `overflow-wrap` happened to sit in a neighboring,
+    # unrelated rule.
     start = css.index(".signal-grid .key {")
     open_brace = css.index("{", start)
     close_brace = css.index("}", open_brace)
@@ -5766,37 +5748,38 @@ async def test_the_key_pill_wraps_instead_of_touching_the_value_column(api):
 
 
 async def test_both_boolean_columns_are_checkboxes(api):
-    """Das Bedienelement folgt dem BEHAELTER, nicht der Bedeutung: in einer
-    Tabelle Haekchen, weil sie in einer Spalte fluchten und leise bleiben -
-    eine Spalte aus 17 Schiebeschaltern waere eine deutlich lautere Textur,
-    und Lautstaerke ist genau das Problem dieses Modals."""
+    """The control follows the CONTAINER, not the meaning: in a
+    table, checkboxes, because they line up in a column and stay quiet -
+    a column of 17 toggle switches would be a distinctly louder texture,
+    and loudness is exactly this modal's problem."""
     client, _, _ = api
     page = _without_comments((await client.get("/")).text)
 
     modal = page[page.index('class="signals-modal"') :]
     for handler in ("toggleExported(signal)", "toggleResend(signal)"):
-        # Das Bedienelement, das den Handler traegt: vom Handler
-        # rueckwaerts bis zum oeffnenden Tag. So prueft der Test das
-        # tatsaechliche Element und nicht irgendein `type="checkbox"`
-        # anderswo im Modal.
+        # The control that carries the handler: from the handler
+        # backwards to the opening tag. This way, the test checks the
+        # actual element and not just any `type="checkbox"`
+        # elsewhere in the modal.
         end = modal.index(handler)
         element = modal[modal.rindex("<", 0, end) : end]
         assert 'type="checkbox"' in element, handler
 
 
 async def test_the_boolean_columns_keep_a_label_for_assistive_technology(api):
-    """Die Beschriftung steht als Spaltenkopf einmal statt siebzehnmal neben
-    einem Kaestchen - ein Screenreader liest aber die Zeile, nicht die
-    Tabelle. Beide Kaestchen brauchen deshalb weiterhin ihren eigenen Namen.
+    """The label sits as a column header once instead of seventeen times
+    next to a checkbox - but a screen reader reads the row, not the
+    table. Both checkboxes therefore still need their own name.
 
-    Fund (Abschlusspruefung): die alte Fassung war asymmetrisch scharf -
-    fuer die Export-Spalte prueft sie `:aria-label` direkt AM Element, fuer
-    Resend genuegte eine lose Textsuche auf der ganzen Seite. Der
-    Resend-Schluessel steht dort ohnehin dreimal (Kaestchen, versteckte
-    Beschriftung fuer den schmalen Fall, Tooltip), ein geloeschtes
-    `:aria-label` am Resend-Kaestchen selbst haette der Test also nie
-    bemerkt. Diese Fassung bindet beide Spalten gleich scharf: vom Handler
-    rueckwaerts zum Element, das ihn traegt - dasselbe Muster wie in
+    Finding (final review): the old version was asymmetrically strict -
+    for the export column it checks `:aria-label` directly ON the
+    element, for resend a loose text search across the whole page was
+    enough. The resend key appears there three times anyway (checkbox,
+    hidden label for the narrow case, tooltip), so a deleted
+    `:aria-label` on the resend checkbox itself would never have been
+    noticed by the test. This version ties both columns down equally
+    strictly: from the handler backwards to the element that carries it
+    - the same pattern as in
     `test_both_boolean_columns_are_checkboxes`."""
     client, _, _ = api
     page = _without_comments((await client.get("/")).text)
@@ -5812,14 +5795,14 @@ async def test_the_boolean_columns_keep_a_label_for_assistive_technology(api):
 
 
 async def test_the_resend_column_is_explained_once_above_the_table(api):
-    """Fund (Abschlusspruefung): die alte Fassung pruefte nur, DASS der
-    Schluessel irgendwo auf der Seite steht - weder "einmal" noch "ueber
-    der Tabelle", obwohl der Name genau das verspricht. Der Erklaersatz
-    koennte als Beschriftung neben jedem der siebzehn Kaestchen stehen -
-    genau der Zustand, den der Umbau abgeschafft hat - und der alte Assert
-    bliebe gruen, weil er nur Existenz sieht. Diese Fassung zaehlt die
-    Treffer (genau einer) und bindet die Position an die Tabelle: der Satz
-    muss vor dem Spaltenkopf stehen."""
+    """Finding (final review): the old version only checked THAT the
+    key appears somewhere on the page - neither "once" nor "above
+    the table", even though the name promises exactly that. The
+    explanation sentence could sit as a label next to each of the
+    seventeen checkboxes - exactly the state the rework abolished -
+    and the old assert would stay green, because it only sees existence.
+    This version counts the hits (exactly one) and ties the position to
+    the table: the sentence must come before the column header."""
     client, _, _ = api
     page = _without_comments((await client.get("/")).text)
 
@@ -5830,15 +5813,15 @@ async def test_the_resend_column_is_explained_once_above_the_table(api):
 
 
 async def test_the_raw_write_field_lives_in_the_row_detail(api):
-    """Nachfolger von `test_the_raw_write_strip_still_works_alongside_the_grid`
-    (Aufgabe 7): der Streifen dort war ausdruecklich uebergangsweise, sein
-    endgueltiger Platz ist der Aufklapper aus Aufgabe 8. Bedienlogik und
-    Handler bleiben unveraendert, nur der Ort und die Sichtbarkeitsbedingung
-    aendern sich - letztere jetzt als `isAttributeSignal(signal)`-Aufruf
-    statt einem zweiten Mal ausgeschriebenem `signal.kind === 'attribute'`.
-    `test_the_raw_write_field_is_no_longer_a_row_of_its_own` ergaenzt dazu
-    die strukturelle Gegenprobe: dasselbe Feld liegt NICHT als eigenes
-    Geschwister der Rasterzeile daneben."""
+    """Successor to `test_the_raw_write_strip_still_works_alongside_the_grid`
+    (task 7): the strip there was explicitly transitional, its
+    final place is the disclosure from task 8. Control logic and
+    handler stay unchanged, only the location and the visibility
+    condition change - the latter now as an `isAttributeSignal(signal)`
+    call instead of `signal.kind === 'attribute'` spelled out a second
+    time. `test_the_raw_write_field_is_no_longer_a_row_of_its_own` adds
+    the structural counter-check to this: the same field does NOT sit
+    next to it as its own sibling of the grid row."""
     client, _, _ = api
     dialog = _signals_dialog(_without_comments((await client.get("/")).text))
     detail = dialog[dialog.index('class="signal-detail"') :]
@@ -5851,24 +5834,25 @@ async def test_the_raw_write_field_lives_in_the_row_detail(api):
     assert "x-text=\"t('web.signals.raw_write_submit')\"" in detail
 
 
-@pytest.mark.skipif(NODE is None, reason="node wird fuer diesen Test gebraucht")
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
 def test_only_one_signal_detail_is_open_at_a_time():
-    """Anders als beim Kachel-Menue und den Signalgruppen lebt dieser
-    Zustand in Alpine, nicht im DOM: es gibt genau EINEN Wert fuer das ganze
-    Modal, kein Auf/Zu je Element.
+    """Unlike the tile menu and the signal groups, this state lives in
+    Alpine, not in the DOM: there is exactly ONE value for the whole
+    modal, no open/closed per element.
 
-    Fund (Abschlusspruefung): die alte Fassung prueft nur zwei
-    Zeichenketten - dass `expandedSignalKey` mit `null` startet und dass im
-    Rumpf von `toggleSignalDetails` IRGENDWO `this.expandedSignalKey = `
-    vorkommt. Ein `toggleSignalDetails`, das zu `this.expandedSignalKey =
-    signal.key` verkuerzt wuerde (ohne den Vergleich, der es zum echten
-    Umschalter macht), oeffnete den Kebab nur noch und schloesse nie - der
-    Kebab bliebe dann fuer immer offen, sobald man ihn einmal geklickt hat.
-    Beide alten Asserts haetten das nicht bemerkt, weil sie nur Text sehen,
-    kein Verhalten. Diese Fassung fuehrt `toggleSignalDetails` echt aus
-    (ueber `_app_state`, wie beim Lade-Guard oben in dieser Datei) und
-    prueft die drei Faelle, die den Umschalter ausmachen: zweimal auf
-    dasselbe Signal (auf/zu), danach auf ein anderes Signal (Wechsel)."""
+    Finding (final review): the old version only checked two
+    strings - that `expandedSignalKey` starts at `null` and that
+    `this.expandedSignalKey = ` occurs SOMEWHERE in the body of
+    `toggleSignalDetails`. A `toggleSignalDetails` shortened to
+    `this.expandedSignalKey = signal.key` (without the comparison that
+    makes it a real toggle) would only ever open the kebab and never
+    close it - the kebab would then stay open forever once clicked
+    once. Neither of the old asserts would have noticed that, because
+    they only see text, not behavior. This version actually runs
+    `toggleSignalDetails` (via `_app_state`, as with the loading guard
+    above in this file) and checks the three cases that make up the
+    toggle: twice on the same signal (open/close), then on a different
+    signal (switch)."""
     values = _app_state(
         """
         const signalA = { key: "a" };
@@ -5889,27 +5873,26 @@ def test_only_one_signal_detail_is_open_at_a_time():
 
     assert initial is None
     assert after_first_a == "a"
-    # Der zweite Klick auf DASSELBE Signal muss schliessen - genau die
-    # Umschalt-Haelfte, an der eine blosse Zuweisung vorbeigeschummelt
-    # haette.
-    assert after_second_a is None, "ein zweiter Klick auf dasselbe Signal muss schliessen"
+    # The second click on the SAME signal must close - exactly the
+    # toggle half that a plain assignment would have snuck past.
+    assert after_second_a is None, "a second click on the same signal must close it"
     assert after_third_a == "a"
-    # Ein Klick auf ein ANDERES Signal wechselt, statt ein zweites zu
-    # oeffnen - der Zustand ist ein einzelner Wert, kein Set, also hoechstens
-    # eines gleichzeitig offen.
+    # A click on a DIFFERENT signal switches instead of opening a
+    # second one - the state is a single value, not a set, so at most
+    # one is open at a time.
     assert after_b == "b"
 
 
 async def test_closing_the_signals_modal_resets_the_open_detail(api):
-    """Fund 3 (Nachpruefung, 2026-09-07): `@close="signalsModalDevice = null"`
-    fasste `expandedSignalKey` bisher nicht an - schloss jemand das Modal
-    mit offenem Aufklapper und oeffnete danach dasselbe Geraet erneut, stand
-    der Aufklapper sofort wieder offen, ohne dass der Kebab dafuer geklickt
-    wurde. `@close` ist laut dem Kommentar am `<dialog>` (index.html) der
-    einzige Schliessweg, den ALLE Wege durchlaufen (Escape, Backdrop,
-    Schliessen-Knopf, `close()` aus JavaScript ueber `closeSignalsModal()`)
-    - der Reset gehoert deshalb genau dorthin, nicht an eine einzelne
-    Schliessstelle."""
+    """Finding 3 (re-check, 2026-09-07): `@close="signalsModalDevice = null"`
+    used to leave `expandedSignalKey` untouched - if someone closed the
+    modal with a disclosure open and then reopened the same device, the
+    disclosure would immediately be open again, without the kebab having
+    been clicked for it. Per the comment on the `<dialog>` (index.html),
+    `@close` is the ONE closing path that ALL routes go through (Escape,
+    backdrop, close button, `close()` from JavaScript via
+    `closeSignalsModal()`) - the reset therefore belongs exactly there,
+    not at a single closing spot."""
     client, _, _ = api
     markup = _without_comments((await client.get("/")).text)
 
@@ -5917,55 +5900,56 @@ async def test_closing_the_signals_modal_resets_the_open_detail(api):
 
 
 async def test_the_raw_write_field_is_no_longer_a_row_of_its_own(api):
-    """Fund 2 (Nachpruefung, 2026-09-07): dieser Test pruefte zuvor nur die
-    Ab-/Anwesenheit einer Zeichenkette
-    (`'x-show="signal.kind === \\'attribute\\'"' not in page`) - keine
-    Struktur, obwohl der Name "keine eigene Zeile mehr" verspricht. Diese
-    Fassung sichert das strukturell zu: das Rohwert-Eingabefeld liegt
-    INNERHALB des `.signal-detail`-Bereichs, nicht als eigenes Geschwister
-    der Rasterzeile (`.signal-grid.signal-row-cells`) daneben.
+    """Finding 2 (re-check, 2026-09-07): this test previously only checked
+    the presence/absence of a string
+    (`'x-show="signal.kind === \\'attribute\\'"' not in page`) - no
+    structure, even though the name promises "no longer its own row".
+    This version verifies that structurally: the raw-write input field
+    sits INSIDE the `.signal-detail` area, not as its own sibling next
+    to the grid row (`.signal-grid.signal-row-cells`).
 
-    Fund (Abschlusspruefung): das zweite Pruefenster war `dialog[detail_
-    start:]` - nach HINTEN offen bis zum Ende des ganzen Dialogs, nicht auf
-    das Ende von `.signal-detail` begrenzt. Ein ZUSAETZLICH zwischen
-    Rasterzeile und Aufklapper eingefuegtes Rohwertfeld - die alte
-    Fehlerposition aus Aufgabe 7 - verletzte damit keine der beiden
-    Zusicherungen: das erste Fenster reichte nur bis zum eigenen `</div>`
-    der Rasterzeile (das neue Feld liegt DAHINTER), das zweite begann erst
-    bei `class="signal-detail"` (das neue Feld liegt DAVOR) - die Luecke
-    dazwischen sah keines der beiden Fenster.
+    Finding (final review): the second check window was `dialog[detail_
+    start:]` - open at the BACK end all the way to the end of the whole
+    dialog, not bounded to the end of `.signal-detail`. A raw-write field
+    inserted ADDITIONALLY between the grid row and the disclosure - the
+    old bug position from task 7 - therefore violated neither of the two
+    assertions: the first window only reached to the grid row's own
+    `</div>` (the new field sits AFTER that), the second only started at
+    `class="signal-detail"` (the new field sits BEFORE that) - neither
+    window saw the gap in between.
 
-    Diese Fassung schliesst die Luecke, indem das erste Fenster bis
-    `detail_start` reicht statt nur bis zum eigenen `</div>` der
-    Rasterzeile - alles zwischen Rasterzeile und Aufklapper zaehlt jetzt
-    als "darf das Feld nicht enthalten". Das zweite Fenster wird zusaetzlich
-    ans eigene `</div>` von `.signal-detail` gekappt (Klammertiefe zaehlen,
-    Muster aus `test_the_signal_table_stacks_on_a_narrow_screen`, noetig
-    wegen des verschachtelten `<div class="row">` darin) statt offen bis
-    zum Dialogende zu lesen - sonst haette JEDE spaetere Fundstelle im Rest
-    des Dialogs die Zusicherung erfuellt, selbst wenn das Feld aus
-    `.signal-detail` HERAUSgewandert waere.
+    This version closes the gap by having the first window reach up to
+    `detail_start` instead of only to the grid row's own `</div>` -
+    everything between the grid row and the disclosure now counts as
+    "must not contain the field". The second window is additionally
+    capped at `.signal-detail`'s own `</div>` (counting brace depth, the
+    pattern from `test_the_signal_table_stacks_on_a_narrow_screen`,
+    necessary because of the nested `<div class="row">` inside it)
+    instead of reading open all the way to the end of the dialog -
+    otherwise ANY later match in the rest of the dialog would have
+    satisfied the assertion, even if the field had wandered OUT of
+    `.signal-detail`.
 
-    Kein reiner Wiederholung von `test_the_raw_write_field_lives_in_the_
-    row_detail`: jener Test prueft nur Anwesenheit im (offenen)
-    Aufklapper-Fenster, dieser hier ergaenzt dazu die Abwesenheit
-    zwischen Rasterzeile und Aufklapper UND die scharfe obere Grenze -
-    beide Haelften zusammen sichern "kein eigenes Geschwister mehr" zu."""
+    Not a pure repeat of `test_the_raw_write_field_lives_in_the_
+    row_detail`: that test only checks presence within the (open)
+    disclosure window, this one adds to that the absence between the
+    grid row and the disclosure AND the strict upper bound -
+    both halves together guarantee "no longer its own sibling"."""
     client, _, _ = api
     dialog = _signals_dialog(_without_comments((await client.get("/")).text))
 
     row_start = dialog.index('class="signal-grid signal-row-cells"')
     detail_start = dialog.index('class="signal-detail"', row_start)
-    # Nicht nur die Rasterzeile selbst, sondern ALLES bis zum Aufklapper -
-    # die alte Fehlerposition war ein Rohwertfeld als eigenes Geschwister
-    # GENAU dazwischen, und ein bei der Rasterzeile endendes Fenster haette
-    # das nicht gesehen.
+    # Not just the grid row itself, but EVERYTHING up to the disclosure -
+    # the old bug position was a raw-write field as its own sibling
+    # EXACTLY in between, and a window ending at the grid row would not
+    # have seen that.
     assert "raw_write_placeholder" not in dialog[row_start:detail_start]
 
-    # Auf das eigene </div> von .signal-detail kappen statt offen bis zum
-    # Dialogende zu lesen. Innerhalb liegt ein verschachteltes
-    # <div class="row"> (das Rohwertfeld selbst) - deshalb Klammertiefe
-    # zaehlen, nicht einfach den naechsten </div> nehmen.
+    # Cap at .signal-detail's own </div> instead of reading open to the
+    # end of the dialog. Inside sits a nested
+    # <div class="row"> (the raw-write field itself) - hence counting
+    # brace depth instead of simply taking the next </div>.
     open_tag_start = dialog.rindex("<div", 0, detail_start)
     body_start = dialog.index(">", open_tag_start) + 1
     depth = 1
@@ -5978,24 +5962,26 @@ async def test_the_raw_write_field_is_no_longer_a_row_of_its_own(api):
                 break
         else:
             depth += 1
-    assert depth == 0, "kein schliessendes </div> fuer .signal-detail gefunden"
+    assert depth == 0, "no closing </div> found for .signal-detail"
     detail = dialog[detail_start:pos]
 
     assert "raw_write_placeholder" in detail
 
 
 async def test_the_detail_spells_out_the_path(api):
-    """Der Pfad `1/59/1` bekommt endlich einen Ort, an dem genug Platz ist,
-    ihn auszuschreiben, statt ihn als Raetsel neben den Namen zu stellen.
+    """The path `1/59/1` finally gets a place where there is enough
+    room to spell it out, instead of putting it as a riddle next to the
+    name.
 
-    Fund 1 (Nachpruefung, 2026-09-07): die Zerlegung des Pfads
-    (`signal.path.split('/')[2]` fuer das Element) stand zuvor als Ausdruck
-    mitten im Markup - Wissen ueber das Pfadformat, das bei einer Aenderung
-    des Formats im Markup gesucht werden muesste statt an einer Stelle in
-    `app.js`. Ein Test, der nur `GET /` prueft, haette einen Helfer in
-    `app.js` nicht gesehen - dieser Test prueft deshalb wie
-    `test_only_one_signal_detail_is_open_at_a_time` direkt `app.js` und
-    zusaetzlich die Bindung im Markup."""
+    Finding 1 (re-check, 2026-09-07): the parsing of the path
+    (`signal.path.split('/')[2]` for the element) used to sit as an
+    expression right in the markup - knowledge about the path format that
+    would have to be searched for in the markup on a format change,
+    instead of in one place in `app.js`. A test that only checks
+    `GET /` would not have seen a helper in `app.js` - this test
+    therefore, like `test_only_one_signal_detail_is_open_at_a_time`,
+    checks `app.js` directly and additionally the binding in the
+    markup."""
     client, _, _ = api
     script = (await client.get("/static/app.js")).text
     page = _without_comments((await client.get("/")).text)
@@ -6011,37 +5997,37 @@ async def test_the_detail_spells_out_the_path(api):
 
 
 async def test_the_row_kebab_is_the_only_thing_left_in_the_28px_column(api):
-    """Pflichtergebnis aus der Pruefung von Aufgabe 7: die Warnpille mit
-    `signal.reason` sass in der 28-px-Rasterspalte und brach dort bei jedem
-    Geraet mit einem TEXT- oder listwertigen Signal um (`.badge` hatte kein
-    `overflow-wrap`, `.signal-grid > * { min-width: 0 }` liess die Zelle
-    schrumpfen) - gemessen 744px `scrollWidth` gegen 719px `clientWidth`.
-    Die Pille wohnt jetzt im Aufklapper; die Rasterzeile traegt in ihrer
-    letzten Zelle nur noch den Kebab-Knopf.
+    """Mandatory result from checking task 7: the warning pill with
+    `signal.reason` used to sit in the 28px grid column and wrap there
+    for every device with a TEXT- or list-valued signal (`.badge` had no
+    `overflow-wrap`, `.signal-grid > * { min-width: 0 }` let the cell
+    shrink) - measured at 744px `scrollWidth` against 719px `clientWidth`.
+    The pill now lives in the disclosure; the grid row carries only the
+    kebab button in its last cell.
 
-    Fund (Abschlusspruefung): die alte Fassung prueft nur die Abwesenheit
-    ZWEIER konkreter Zeichenketten (die Warnpille, `signal.reason`) - der
-    Name verspricht aber "nur der Kebab", nicht "diese zwei Dinge nicht".
-    Ein beliebiges DRITTES Element in der letzten Zelle (ein neues Badge,
-    ein Icon, ein zweiter Knopf) waere unbemerkt geblieben. Diese Fassung
-    schneidet die letzte Zelle exakt: alles nach der Resend-Zelle (dem
-    letzten bekannten Geschwister davor) bis zum Ende der Rasterzeile muss
-    GENAU ein Element sein, und das muss der Kebab-Knopf sein."""
+    Finding (final review): the old version only checked the absence
+    of TWO concrete strings (the warning pill, `signal.reason`) - the
+    name promises "only the kebab", though, not "not these two things".
+    Any arbitrary THIRD element in the last cell (a new badge,
+    an icon, a second button) would have gone unnoticed. This version
+    cuts the last cell exactly: everything after the resend cell (the
+    last known sibling before it) up to the end of the grid row must
+    be EXACTLY one element, and that must be the kebab button."""
     client, _, _ = api
     dialog = _signals_dialog(_without_comments((await client.get("/")).text))
 
-    # Innerhalb der Rasterzeile steht kein verschachteltes `<div>` (Zellen
-    # sind `<label>`, `<input>`, `<span>`, `<button>`) - das naechste
-    # `</div>` schliesst also genau diese Zeile, nicht irgendein Kindelement.
+    # Inside the grid row there is no nested `<div>` (cells
+    # are `<label>`, `<input>`, `<span>`, `<button>`) - the next
+    # `</div>` therefore closes exactly this row, not some child element.
     row_start = dialog.index('class="signal-grid signal-row-cells"')
     row_end = dialog.index("</div>", row_start)
     row = dialog[row_start:row_end]
 
     assert "signal-more" in row
 
-    # Von der Resend-Zelle (letztes bekanntes Geschwister vor der letzten
-    # Spalte) bis zum Ende der Zeile darf NUR noch der Kebab-Knopf stehen -
-    # keine Warnpille, kein sonstiges Element, egal wie es heisst.
+    # From the resend cell (the last known sibling before the last
+    # column) to the end of the row, ONLY the kebab button may remain -
+    # no warning pill, no other element, whatever it may be called.
     resend_close = row.index("</label>", row.index("toggleResend(signal)"))
     tail = row[resend_close + len("</label>") :]
     assert tail.lstrip().startswith("<button"), tail
@@ -6051,23 +6037,25 @@ async def test_the_row_kebab_is_the_only_thing_left_in_the_28px_column(api):
 
 
 async def test_the_pill_fix_sits_on_the_pill_not_on_the_container(api):
-    """Fund (Nachpruefung vor dem Merge): ein frueherer Anlauf loeste die
-    gestreckte Warnpille (`.badge.warn`, `signal.reason`) mit `align-items:
-    flex-start` an `.signal-detail` selbst - das trifft aber ALLE Kinder,
-    nicht nur die Pille. Eines davon ist `.row`, das Rohwert-Feld
-    (`input[type="text"]`) darunter: unter `flex-start` verliert auch DAS
-    seine gestreckte Breite und faellt auf sein `min-width: 12rem` zurueck.
-    Gemessen im Wegwerf-Harness (echtes `index.html`/`style.css`, Signal
-    mit `exportable: false` und Text aus `_UNEXPORTABLE_REASONS`): `.row`
-    schrumpft von voller Aufklapperbreite (695.6px) auf 406.6px, das Feld
-    darin von rund 630px auf den 192px-Boden.
+    """Finding (re-check before the merge): an earlier attempt fixed
+    the stretched warning pill (`.badge.warn`, `signal.reason`) with
+    `align-items: flex-start` on `.signal-detail` itself - but that
+    affects ALL children, not only the pill. One of them is `.row`, the
+    raw-write field (`input[type="text"]`) below it: under `flex-start`,
+    THAT also loses its stretched width and falls back to its
+    `min-width: 12rem`. Measured in the throwaway harness (real
+    `index.html`/`style.css`, a signal with `exportable: false` and text
+    from `_UNEXPORTABLE_REASONS`): `.row` shrinks from full disclosure
+    width (695.6px) to 406.6px, the field inside it from around 630px to
+    the 192px floor.
 
-    Ein Test kann diese Breiten nicht nachmessen (kein Browser-Layout in
-    der Testsuite) - er kann aber festhalten, WO die Loesung sitzen muss:
-    an der Pille selbst (`align-self: flex-start`), nicht am Container.
-    `.signal-detail` bleibt bei der Vorgabe `stretch` (kein eigenes
-    `align-items`), sonst waeren wir wieder beim Container-Fix und `.row`
-    schrumpfte erneut - genau das soll dieser Test sperren."""
+    A test cannot measure these widths (no browser layout in the
+    test suite) - but it can pin down WHERE the fix has to sit: on the
+    pill itself (`align-self: flex-start`), not on the container.
+    `.signal-detail` stays at the default `stretch` (no own
+    `align-items`), otherwise we would be back at the container fix and
+    `.row` would shrink again - exactly what this test is meant to
+    block."""
     client, _, _ = api
     css = (await client.get("/static/style.css")).text
 
@@ -6075,26 +6063,27 @@ async def test_the_pill_fix_sits_on_the_pill_not_on_the_container(api):
     open_brace = css.index("{", container_start)
     close_brace = css.index("}", open_brace)
     container_body = css[open_brace:close_brace]
-    # Der Regelkoerper traegt selbst einen Kommentar, der zur Begruendung
-    # `align-items: flex-start` als Zitat nennt (genau der verworfene
-    # Ansatz) - erst die Kommentare raus, sonst faende die blosse
-    # Zeichenkettensuche ihr eigenes Zitat und der Test waere nie rot.
+    # The rule body itself carries a comment that quotes `align-items:
+    # flex-start` as justification (exactly the discarded approach) -
+    # strip the comments first, otherwise a plain string search would
+    # find its own quote and the test would never go red.
     container_declarations = re.sub(r"/\*.*?\*/", "", container_body, flags=re.DOTALL)
     assert "align-items" not in container_declarations, (
-        "align-items am Container trifft auch .row (Rohwert-Feld) mit, nicht nur die Pille"
+        "align-items on the container also hits .row (raw-write field), not just the pill"
     )
 
-    # Der Selektor, der `align-self: flex-start` tatsaechlich traegt - nicht
-    # per `css.index(".signal-detail .badge {")` gesucht, das faende die
-    # FALSCHE der beiden gleichlautenden Selektorzeilen (die andere gehoert
-    # zur `margin: 0`-Regel fuer `.hint` UND `.badge` zusammen). Stattdessen
-    # von der Deklaration selbst rueckwaerts zu ihrem eigenen Selektor.
+    # The selector that actually carries `align-self: flex-start` - not
+    # found via `css.index(".signal-detail .badge {")`, which would find
+    # the WRONG one of the two identically worded selector lines (the
+    # other belongs to the `margin: 0` rule shared by `.hint` AND
+    # `.badge`). Instead, going backwards from the declaration itself to
+    # its own selector.
     align_self_pos = css.index("align-self: flex-start;")
     badge_open_brace = css.rindex("{", 0, align_self_pos)
     prev_close_brace = css.rindex("}", 0, badge_open_brace)
-    # Der Begruendungskommentar vor der Regel steht in derselben Luecke -
-    # raus damit, sonst bleibt vom Selektor nicht die letzte, sondern die
-    # erste (Kommentar-)Zeile uebrig.
+    # The justification comment before the rule sits in the same gap -
+    # strip it, otherwise what remains of the selector is not the
+    # last line but the first (comment) line.
     preceding = re.sub(
         r"/\*.*?\*/", "", css[prev_close_brace + 1 : badge_open_brace], flags=re.DOTALL
     )
@@ -6103,12 +6092,12 @@ async def test_the_pill_fix_sits_on_the_pill_not_on_the_container(api):
 
 
 async def test_the_kebab_button_is_named_and_reports_its_state(api):
-    """Fund (Abschlusspruefung): die alte Fassung prueft nur, DASS
-    `:aria-expanded=` und `:aria-label=` als Attributnamen vorkommen - nicht
-    WORAN sie haengen. Ein `:aria-expanded="true"` (an eine Konstante
-    gebunden, meldet also immer denselben Zustand) waere gruen geblieben.
-    Diese Fassung bindet beide an den konkreten Ausdruck, den der Knopf
-    tatsaechlich tragen muss."""
+    """Finding (final review): the old version only checked THAT
+    `:aria-expanded=` and `:aria-label=` occur as attribute names - not
+    WHAT they are bound to. An `:aria-expanded="true"` (bound to a
+    constant, i.e. always reporting the same state) would have stayed
+    green. This version ties both to the concrete expression the button
+    actually has to carry."""
     client, _, _ = api
     dialog = _signals_dialog(_without_comments((await client.get("/")).text))
 
@@ -6122,22 +6111,22 @@ async def test_the_kebab_button_is_named_and_reports_its_state(api):
 
 
 async def test_the_modal_leads_with_the_number_the_user_came_for(api):
-    """Man oeffnet dieses Modal, um zu sehen und zu aendern, was nach Loxone
-    geht. Diese Zahl stand bisher nirgends.
+    """You open this modal to see and change what goes to Loxone.
+    This number used to appear nowhere.
 
-    Fund (Abschlusspruefung): die alte Fassung prueft weder POSITION
-    ("leads with") noch den NENNER (`total:`) - die Zusammenfassung haette
-    ans Ende des Modals rutschen oder den falschen Nenner zeigen koennen,
-    ohne dass der Test das bemerkt haette. Diese Fassung bindet die Zahl an
-    ihre Position vor dem Spaltenkopf und sichert beide Haelften des
-    Bruchs einzeln zu.
+    Finding (final review): the old version checked neither POSITION
+    ("leads with") nor the DENOMINATOR (`total:`) - the summary could
+    have slid to the end of the modal or shown the wrong denominator
+    without the test noticing. This version ties the number to its
+    position before the column header and asserts both halves of the
+    fraction individually.
 
-    Entscheidung (bewusst, nicht aendern): der Nenner zaehlt ALLE Signale
-    ueber `signalCount`, nicht nur die funktionalen - am Taster steht
-    "17 von 173", nicht "12 von 17" wie im Entwurf skizziert. Beides ist
-    wahr; der Code zaehlt bewusst alle, weil das Modal auch die
-    Expertengruppe fuehrt und ein freigeschaltetes Expertensignal wirklich
-    mitgehen soll."""
+    Decision (deliberate, do not change): the denominator counts ALL
+    signals via `signalCount`, not only the functional ones - on the
+    button it reads "17 of 173", not "12 of 17" as sketched in the
+    design. Both are true; the code deliberately counts all of them,
+    because the modal also carries the expert group, and an enabled
+    expert signal really should be included."""
     client, _, _ = api
     page = _without_comments((await client.get("/")).text)
 
@@ -6150,28 +6139,29 @@ async def test_the_modal_leads_with_the_number_the_user_came_for(api):
 
 
 async def test_the_deselect_all_button_calls_the_correct_function_with_the_device_id(api):
-    """Die Kopfzeile zeigt die Exportzahl und daneben einen "Alle abwaehlen"-
-    Knopf (Task 9, Entwurf 2026-09-07, Abschnitt 4.2). Ein fehlerhafter
-    Funktionsaufruf (vertauschte Variable, falsche Methode, vergessenes
-    Argument) bliebe im Text-Test gruen - der Knopf selbst laeuft nie, ohne
-    Browser-Engine naemlich nur sein Markup. Belegt wird deshalb, dass die
-    ausgelieferte Datei die korrekte Bindung traegt: der Aufruf heisst
-    `deselectAllSignals(signalsModalDevice)` (das Geraet-Argument nicht
-    vergessen, nicht vertauscht) und die Beschriftung kommt aus dem
-    Uebersetzungsschluessel `web.signals.deselect_all`.
+    """The header row shows the export count and, next to it, a
+    "deselect all" button (task 9, design 2026-09-07, section 4.2). A
+    faulty function call (swapped variable, wrong method, forgotten
+    argument) would stay green in a text test - the button itself never
+    runs, since without a browser engine there is only its markup. What
+    is proven, therefore, is that the shipped file carries the correct
+    binding: the call is named `deselectAllSignals(signalsModalDevice)`
+    (the device argument not forgotten, not swapped) and the label comes
+    from the translation key `web.signals.deselect_all`.
 
-    Ein eigener Test, weil er eine andere Frage als
-    `test_the_modal_leads_with_the_number_the_user_came_for` beantwortet:
-    "haengt der Knopf am richtigen Aufruf" vs. "steht die Zahl im Kopf"."""
+    A separate test, because it answers a different question than
+    `test_the_modal_leads_with_the_number_the_user_came_for`:
+    "is the button tied to the right call" vs. "does the number appear
+    in the header"."""
     client, _, _ = api
     dialog = _signals_dialog(_without_comments((await client.get("/")).text))
 
-    # Die `signals-summary` Div findet, in der der Knopf sitzt.
+    # Find the `signals-summary` div the button sits in.
     summary_start = dialog.index('class="signals-summary"')
     summary_section_end = dialog.index("</div>", summary_start)
     summary_section = dialog[summary_start:summary_section_end]
 
-    # Den "Alle abwaehlen"-Knopf selbst schneiden, nicht die ganze Div.
+    # Cut out the "deselect all" button itself, not the whole div.
     button_text_idx = summary_section.index("deselectAllSignals")
     button_start = summary_section.rindex("<button", 0, button_text_idx)
     button_end = summary_section.index("</button>", button_text_idx)
@@ -6181,14 +6171,15 @@ async def test_the_deselect_all_button_calls_the_correct_function_with_the_devic
     assert "x-text=\"t('web.signals.deselect_all')\"" in button
 
 
-@pytest.mark.skipif(NODE is None, reason="node wird fuer diesen Test gebraucht")
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
 def test_deselect_all_empties_the_selection_instead_of_inverting_it():
-    """Ein `toggleExported` ueber ALLE Signale haette die Auswahl invertiert -
-    der Knopf heisst aber "alle abwaehlen", nicht "umkehren". Ein zweiter
-    Klick muss deshalb nichts mehr tun.
+    """A `toggleExported` over ALL signals would have inverted the
+    selection - but the button is named "deselect all", not "invert". A
+    second click must therefore do nothing more.
 
-    `toggleExported` wird hier ersetzt, weil es die Route ruft: geprueft
-    wird die Auswahl-Regel dieser Schleife, nicht der Schreibweg."""
+    `toggleExported` is replaced here because it calls the route: what
+    is checked is the selection rule of this loop, not the write
+    path."""
     values = _app_state(
         """
         state.signalsByDevice = { 1: [
@@ -6202,9 +6193,9 @@ def test_deselect_all_empties_the_selection_instead_of_inverting_it():
           signal.exported = !signal.exported;
         };
         const before = state.exportedSignalCount(1);
-        // Async-IIFE, weil `node -e` als CommonJS laeuft und dort kein
-        // `await` auf oberster Ebene erlaubt ist - `deselectAllSignals`
-        // ist async.
+        // Async IIFE, because `node -e` runs as CommonJS and top-level
+        // `await` is not allowed there - `deselectAllSignals`
+        // is async.
         (async () => {
           await state.deselectAllSignals(1);
           const firstRun = touched.slice();
@@ -6220,31 +6211,30 @@ def test_deselect_all_empties_the_selection_instead_of_inverting_it():
         """
     )
 
-    # "c" ist zwar `exported`, passt aber auf keinen Loxone-Eingang - es
-    # zaehlt nicht mit, genauso wie `to_inputs` es server-seitig auslaesst.
+    # "c" is `exported`, but does not map to any Loxone input - it
+    # does not count, just as `to_inputs` leaves it out server-side.
     assert values["before"] == 1
     assert values["total"] == 3
     assert values["after"] == 0
-    # "b" war bereits aus und darf nicht angefasst worden sein.
+    # "b" was already off and must not have been touched.
     assert "b" not in values["firstRun"]
     assert values["secondRunTouched"] == 0
 
 
 async def test_the_signal_table_stacks_on_a_narrow_screen(api):
-    """Sechs Spalten passen unter etwa 640 px nicht. Ohne diesen Umbruch
-    franst die Tabelle dort wieder aus - also genau der Zustand, den der
-    ganze Umbau beseitigt hat, nur auf einem Telefon.
+    """Six columns do not fit under about 640px. Without this wrap
+    the table would fray out there again - exactly the state the
+    whole rework eliminated, just on a phone.
 
-    Prueft nicht nur, DASS "display: none" irgendwo im Umkreis der
-    Medienabfrage steht, sondern dass es im REGELKOERPER von
-    `.signal-grid-head` selbst steht: ein Stichwort-Fenster von 900
-    Zeichen waere auch dann gruen, wenn ein CSS den Spaltenkopf gar
-    nicht ausblendet, weil "display: none" zufaellig in einer
-    benachbarten, unbeteiligten Regel auftaucht (diese Fassung tut das
-    tatsaechlich - die Kaestchen-Spalten selbst tragen `display: flex`,
-    nicht `none`, das koennte man aber nicht am blossen Fenster
-    ablesen). Diese Fassung bindet jede erwartete Deklaration an ihren
-    eigenen Selektor."""
+    Checks not only THAT "display: none" appears somewhere in the
+    vicinity of the media query, but that it sits in the RULE BODY of
+    `.signal-grid-head` itself: a keyword window of 900 characters would
+    stay green even if a CSS did not hide the column header at all,
+    because "display: none" happens to appear in a neighboring,
+    unrelated rule (this version actually does that - the checkbox
+    columns themselves carry `display: flex`, not `none`, but that could
+    not be read off from a mere window). This version ties every
+    expected declaration to its own selector."""
     client, _, _ = api
     css = (await client.get("/static/style.css")).text
 
@@ -6252,9 +6242,9 @@ async def test_the_signal_table_stacks_on_a_narrow_screen(api):
     media_start = css.index("@media (max-width: 640px)")
     body_start = css.index("{", media_start) + 1
 
-    # Klammertiefe zaehlen statt eine feste Zeichenzahl zu raten - liefert
-    # exakt den Koerper der Medienabfrage, unabhaengig davon, wie lang die
-    # Regeln darin sind oder in welcher Reihenfolge sie stehen.
+    # Count brace depth instead of guessing a fixed character count -
+    # yields exactly the body of the media query, regardless of how
+    # long the rules inside it are or in what order they appear.
     depth = 1
     i = body_start
     while depth:
@@ -6271,32 +6261,32 @@ async def test_the_signal_table_stacks_on_a_narrow_screen(api):
         close_brace = media_body.index("}", open_brace)
         return media_body[open_brace:close_brace]
 
-    # Der Spaltenkopf verschwindet: ueber einer gestapelten Karte
-    # beschriftet er nichts mehr.
+    # The column header disappears: above a stacked card it no
+    # longer labels anything.
     assert "display: none" in rule_body(".signal-grid-head")
-    # Die Zeile wird zur gestapelten Karte statt der sechs festen Spalten.
+    # The row becomes a stacked card instead of the six fixed columns.
     assert "grid-template-columns: auto minmax(0, 1fr)" in rule_body(".signal-grid {")
-    # Die beiden Haekchenspalten bleiben sichtbar und bedienbar - sie
-    # verschwinden nicht mit dem Kopf, sie ruecken nur linksbuendig.
+    # The two checkbox columns stay visible and usable - they
+    # do not disappear with the header, they just shift to the left.
     assert "justify-content: flex-start" in rule_body(".signal-grid .col-center")
 
 
 async def test_the_checkbox_labels_become_visible_only_below_640px(api):
-    """Pruefungsfund: der Kommentar ueber der Medienabfrage behauptete,
-    `title` erscheine dort als sichtbarer Text neben dem Kaestchen - es
-    gab aber nirgends ein `content: attr(title)` o.ae., `title` blieb ein
-    reiner Hover-Tooltip, den ein Touch-Nutzer nie zu sehen bekommt. Der
-    Fix zeigt echten Text: ein `<span class="col-center-label">` mit
-    demselben Uebersetzungsschluessel wie das `aria-label` des Kaestchens,
-    per Grundregel verborgen und nur innerhalb der 640px-Medienabfrage
-    gezeigt - umgekehrt zum Spaltenkopf, der genau dort verschwindet."""
+    """Review finding: the comment above the media query claimed that
+    `title` would appear there as visible text next to the checkbox - but
+    there was no `content: attr(title)` or similar anywhere, `title`
+    stayed a plain hover tooltip that a touch user never gets to see.
+    The fix shows real text: a `<span class="col-center-label">` with the
+    same translation key as the checkbox's `aria-label`, hidden by
+    default and only shown within the 640px media query - the reverse of
+    the column header, which disappears exactly there."""
     client, _, _ = api
     dialog = _signals_dialog(_without_comments((await client.get("/")).text))
     css = (await client.get("/static/style.css")).text
 
-    # Beide Labels tragen den Span mit demselben Schluessel wie ihr
-    # `aria-label`, innerhalb desselben `<label>` wie das Kaestchen - kein
-    # neuer Uebersetzungsschluessel, dieselbe Auskunft an einem zweiten Ort.
+    # Both labels carry the span with the same key as their
+    # `aria-label`, inside the same `<label>` as the checkbox - no
+    # new translation key, the same information in a second place.
     for key in ("export_checkbox", "resend_checkbox"):
         label_start = dialog.index(f"aria-label=\"t('web.signals.{key}')\"")
         label_start = dialog.rindex("<label", 0, label_start)
@@ -6306,7 +6296,7 @@ async def test_the_checkbox_labels_become_visible_only_below_640px(api):
         assert 'aria-hidden="true"' in label
         assert f"x-text=\"t('web.signals.{key}')\"" in label
 
-    # Grundregel: verborgen, solange der Spaltenkopf beschriftet.
+    # Default rule: hidden as long as the column header is labeling.
     base_start = css.index(".signal-grid .col-center-label")
     media_start = css.index("@media (max-width: 640px)")
     assert base_start < media_start
@@ -6314,8 +6304,8 @@ async def test_the_checkbox_labels_become_visible_only_below_640px(api):
     base_close = css.index("}", base_open)
     assert "display: none" in css[base_open:base_close]
 
-    # Medienabfrage: hier gezeigt, an derselben Klammertiefe wie die
-    # Nachbarregeln - Muster aus
+    # Media query: shown here, at the same brace depth as the
+    # neighboring rules - pattern from
     # `test_the_signal_table_stacks_on_a_narrow_screen`.
     body_start = css.index("{", media_start) + 1
     depth = 1
@@ -6335,12 +6325,12 @@ async def test_the_checkbox_labels_become_visible_only_below_640px(api):
 
 
 async def test_the_value_grid_now_carries_every_functional_signal(api):
-    """Entwurf 2026-09-07, Abschnitt 2: der herausgehobene Leitwert
-    entfaellt, alle funktionalen Signale stehen gleichrangig im
-    Werteraster. `restSignalsFor` lieferte die Kurzliste OHNE ihren ersten
-    Eintrag - genau der stand oben in der Kopfzeile. Mit dem Wegfall der
-    Kopfzeilen-Anzeige muss das Raster wieder ueber die volle Liste
-    laufen, sonst verschwaende das erste Signal ersatzlos."""
+    """Design 2026-09-07, section 2: the highlighted primary signal
+    is removed, all functional signals sit at equal rank in the
+    value grid. `restSignalsFor` used to deliver the short list WITHOUT
+    its first entry - that one sat above in the header row. With the
+    header row display removed, the grid must run over the full list
+    again, otherwise the first signal would vanish without replacement."""
     client, _, _ = api
     markup = _without_comments((await client.get("/")).text)
     assert 'x-for="signal in firstSignalsFor(device.id)"' in markup
@@ -6348,10 +6338,10 @@ async def test_the_value_grid_now_carries_every_functional_signal(api):
 
 
 async def test_the_tile_header_no_longer_carries_a_lead_value(api):
-    """Weder die Klassen noch der Aufruf duerfen ausgeliefert werden. Der
-    Test laeuft ueber `_without_comments`, weil die Begruendung im Markup
-    den Leitwert weiterhin beim Namen nennt - und zwar gerade, um zu
-    erklaeren, warum er dort nicht mehr steht."""
+    """Neither the classes nor the call may be shipped. The
+    test runs through `_without_comments`, because the justification in
+    the markup still names the primary signal explicitly - precisely to
+    explain why it no longer appears there."""
     client, _, _ = api
     markup = _without_comments((await client.get("/")).text)
     assert "lead-value" not in markup
@@ -6360,31 +6350,29 @@ async def test_the_tile_header_no_longer_carries_a_lead_value(api):
 
 
 async def test_the_offline_pill_sits_in_the_header_not_under_the_name(api):
-    """Die Pille rueckt auf den Platz des Leitwerts: drittes Kind von
-    `.device-head`, nicht mehr Kind von `.device-ident` unter dem Namen
-    (Entwurf, Abschnitt 5). Keine eigene Positionsregel noetig: `.device-
-    ident` traegt `flex: 1 1 auto` und verbraucht den freien Platz in der
-    Flex-Kopfzeile, damit steht die Pille rechts - ohne dass ihr eigenes
-    `margin-left: auto` (style.css) dabei etwas beitraegt (Nachtrag
-    2026-09-07, siehe Spec Abschnitt 5).
+    """The pill moves to the primary signal's former place: third child
+    of `.device-head`, no longer a child of `.device-ident` under the
+    name (design, section 5). No separate positioning rule needed:
+    `.device-ident` carries `flex: 1 1 auto` and consumes the free space
+    in the flex header row, which puts the pill on the right - without
+    its own `margin-left: auto` (style.css) contributing anything to
+    that (addendum 2026-09-07, see spec section 5).
 
-    Belegt wird die Verschachtelung ueber die Reihenfolge im
-    ausgelieferten Markup: zwischen dem Namensfeld und der Pille MUSS ein
-    schliessendes `</span>` liegen - das von `.device-ident`. Steht die
-    Pille noch drin, fehlt es."""
+    The nesting is proven via the order in the shipped markup: between
+    the name field and the pill there MUST be a closing `</span>` - the
+    one belonging to `.device-ident`. If the pill still sits inside it,
+    that closing tag is missing."""
     client, _, _ = api
     markup = _without_comments((await client.get("/")).text)
     name_end = markup.index('@change="saveLabel(device)"')
     pill = markup.index('<span class="status-pill off"', name_end)
-    assert "</span>" in markup[name_end:pill], (
-        "die Offline-Pille steht noch innerhalb von `.device-ident`"
-    )
+    assert "</span>" in markup[name_end:pill], "the offline pill is still inside `.device-ident`"
 
 
 async def test_the_missing_signals_hint_no_longer_asks_for_a_lead(api):
-    """Der Hinweis unterscheidet "geladen, aber leer" von "laedt noch"
-    (Spec 8.1). Sein Aufhaenger war `!leadSignalFor(device.id)`; ohne
-    Leitwert fragt er die Liste direkt."""
+    """The hint distinguishes "loaded but empty" from "still loading"
+    (spec 8.1). Its trigger used to be `!leadSignalFor(device.id)`;
+    without a primary signal it asks the list directly."""
     client, _, _ = api
     markup = _without_comments((await client.get("/")).text)
     assert (
@@ -6393,43 +6381,43 @@ async def test_the_missing_signals_hint_no_longer_asks_for_a_lead(api):
 
 
 async def test_the_lead_helpers_are_gone_from_the_script(api):
-    """Entwurf 2026-09-07, Abschnitt 10: beide Methoden entfallen
-    ersatzlos, nachdem das Markup sie nicht mehr aufruft. Eine ungenutzte
-    Methode in `app.js` ist kein harmloser Rest - sie laedt den naechsten
-    Umbau dazu ein, den Leitwert wieder einzufuehren, ohne den Entwurf
-    gelesen zu haben."""
+    """Design 2026-09-07, section 10: both methods are removed without
+    replacement, now that the markup no longer calls them. An unused
+    method in `app.js` is not a harmless leftover - it invites the next
+    rework to reintroduce the primary signal without having read the
+    design."""
     client, _, _ = api
     script = (await client.get("/static/app.js")).text
-    # Auf die DEFINITION ankern, nicht auf den blossen Namen: der Kommentar
-    # an `signalIsFresh` nennt `leadSignalFor` weiterhin - und zwar gerade,
-    # um zu erklaeren, warum dessen Null-Duldsamkeit stehen bleibt, obwohl
-    # der Aufrufer weg ist. Anders als beim Markup gibt es fuer `app.js`
-    # keinen `_without_comments`-Helfer.
+    # Anchored on the DEFINITION, not on the mere name: the comment
+    # on `signalIsFresh` still names `leadSignalFor` - precisely to
+    # explain why its null tolerance remains even though the caller is
+    # gone. Unlike the markup, there is no `_without_comments` helper
+    # for `app.js`.
     assert "leadSignalFor(deviceId) {" not in script
     assert "restSignalsFor(deviceId) {" not in script
     assert "this.firstSignalsFor(deviceId).slice(1)" not in script
 
 
 async def test_the_lead_rules_are_gone_from_the_stylesheet(api):
-    """Entwurf 2026-09-07, Abschnitt 10. Beide Klassen stehen in keinem
-    Markup mehr; ihre Regeln - samt der langen Begruendung zu
-    `flex: 0 0 auto` gegen `flex: 0 1 auto` und zum `padding-block` fuer
-    Unterlaengen - beschreiben ein Element, das es nicht mehr gibt."""
+    """Design 2026-09-07, section 10. Neither class appears in any
+    markup anymore; their rules - including the long justification for
+    `flex: 0 0 auto` versus `flex: 0 1 auto` and for the `padding-block`
+    for descenders - describe an element that no longer exists."""
     client, _, _ = api
     css = (await client.get("/static/style.css")).text
-    # Auf den Selektor mit oeffnender Klammer ankern, nicht auf den blossen
-    # Klassennamen: der Kommentar an `.device-head .device-name` nennt
-    # `.lead-value` weiterhin - er erklaert, warum der Name dort frueher nur
-    # 65 px bekam. Ein Stylesheet hat keinen `_without_comments`-Helfer.
+    # Anchored on the selector with its opening brace, not on the mere
+    # class name: the comment on `.device-head .device-name` still
+    # names `.lead-value` - it explains why the name there used to get
+    # only 65px. A stylesheet has no `_without_comments` helper.
     assert ".lead-value {" not in css
     assert ".lead-value small {" not in css
     assert ".lead-label {" not in css
 
 
 async def test_the_control_modal_is_delivered(api):
-    """Belegt NUR die Auslieferung. Ob die Alpine-Ausdruecke darin
-    tatsaechlich binden, kann dieser Test nicht sagen - das prueft der
-    Browser-Durchgang in einer spaeteren Aufgabe."""
+    """Proves ONLY delivery. Whether the Alpine expressions in it
+    actually bind cannot be said by this test - that is checked by the
+    browser pass in a later task."""
     client, _, _ = api
     script = (await client.get("/static/app.js")).text
     assert "openControlModal" in script
@@ -6441,63 +6429,64 @@ async def test_the_control_modal_is_delivered(api):
     assert 'x-ref="controlModal"' in page
     assert '@close="controlModalDevice = null"' in page
     assert "openControlModal(device)" in page
-    # Deviation vom Aufgaben-Brief (Projektentscheidung): der Prozent-Regler
-    # traegt seine Beschriftung ueber `command.slug`, nicht ueber einen
-    # festen Uebersetzungsschluessel - die eingecheckte Testleuchte
-    # (`ikea_kajplats_cws_lamp.json`) hat zwei Prozent-Kommandos, die sich
-    # sonst nicht unterscheiden liessen.
+    # Deviation from the task brief (project decision): the percent
+    # slider carries its label via `command.slug`, not via a
+    # fixed translation key - the checked-in test lamp
+    # (`ikea_kajplats_cws_lamp.json`) has two percent commands that
+    # could not otherwise be distinguished.
     assert "web.devices.control_brightness" not in page
     assert "web.devices.control_brightness" not in script
 
 
 async def test_the_checkbox_hit_targets_reach_24px(api):
-    """WCAG 2.2 AA, Erfolgskriterium 2.5.8 (Target Size Minimum): 24x24
-    CSS-Pixel Trefferflaeche. Eine Pruefung fand ein Kaestchen mit
-    gemessen 13 px Breite auf einem schmalen Fenster - der nackte
-    `<input type="checkbox">` steht in `style.css` ohne eigene Regel auf
-    reinem Browser-Standard.
+    """WCAG 2.2 AA, success criterion 2.5.8 (Target Size Minimum): 24x24
+    CSS-pixel hit target. A review found a checkbox measured at
+    13px width on a narrow window - the bare
+    `<input type="checkbox">` sits in `style.css` with no rule of its
+    own, on plain browser default.
 
-    Dieser Test kann NICHT selbst messen (keine Layout-Engine hier) -
-    das Ausmessen lief in einem Wegwerf-Harness ausserhalb des Repos
-    (echtes Markup aus `index.html` herausgeschnitten, echtes `style.css`,
-    ueber http mit Alpine geladen, `label.getBoundingClientRect()`
-    gemessen, nicht die des `<input>`). Ergebnis vorher/nachher (Desktop
-    px, unter 640 px identisch fuer die vier Text-Label-Zeilen, da sie an
-    keiner Medienabfrage haengen):
+    This test cannot measure it itself (no layout engine here) -
+    the measuring ran in a throwaway harness outside the repo
+    (real markup cut out of `index.html`, real `style.css`,
+    loaded with Alpine over http, `label.getBoundingClientRect()`
+    measured, not the `<input>`'s). Result before/after (desktop
+    px, identical under 640px for the four text-label rows, since they
+    are not tied to any media query):
       - projectSync.includeNewDevices: 204x21.5 -> 200x24
       - exportIncludeSystem:           208x21.5 -> 204x24
       - exportOnlyPending:             131x21.5 -> 128x24
       - hideNoise:                     166x21.5 -> 162x24
-      - Signal-Modal Export-Spalte:     58x19   ->  58x24 (Desktop),
-                                         99x21   ->  99x24 (< 640 px)
-      - Signal-Modal Periodisch-Spalte: 76x19   ->  76x24 (Desktop),
-                                        193x21   -> 193x24 (< 640 px)
-    Alle sechs waren waagerecht schon VORHER ueber 24 px - vier durch den
-    Text neben dem Kaestchen, die beiden Signal-Modal-Spalten durch die
-    feste Spaltenbreite aus `grid-template-columns` (Desktop) bzw. den
-    sichtbaren `.col-center-label`-Text (< 640 px). Nur die Hoehe fehlte,
-    darum setzen beide Regeln unten NUR `min-height`, kein `min-width` -
-    eine wirkungslose Regel waere Ballast. Das Signal-Modal-Raster blieb
-    dabei fluchtend (linke Kantenabweichung weiterhin 0 gegen den Kopf,
-    siehe `test_the_signal_rows_and_the_header_share_one_grid`) und ohne
-    waagerechten Ueberlauf (`scrollWidth - clientWidth` weiterhin 0), in
-    beiden Breiten.
+      - Signal modal export column:     58x19   ->  58x24 (desktop),
+                                         99x21   ->  99x24 (< 640px)
+      - Signal modal resend column:    76x19   ->  76x24 (desktop),
+                                        193x21   -> 193x24 (< 640px)
+    All six were already horizontally over 24px BEFORE - four via the
+    text next to the checkbox, the two signal-modal columns via the
+    fixed column width from `grid-template-columns` (desktop) or the
+    visible `.col-center-label` text (< 640px). Only the height was
+    missing, which is why both rules below set ONLY `min-height`, no
+    `min-width` - an ineffective rule would be dead weight. The
+    signal-modal grid stayed aligned throughout (left edge deviation
+    still 0 against the header, see
+    `test_the_signal_rows_and_the_header_share_one_grid`) and without
+    horizontal overflow (`scrollWidth - clientWidth` still 0), at both
+    widths.
 
-    Die Loesung sitzt am `<label>`, nicht am `<input>`: ein Label, das
-    sein Kaestchen umschliesst, leitet die Aktivierung von jeder Stelle
-    seiner Flaeche weiter - es IST also schon die Trefferflaeche, ihr
-    fehlte nur das Mindestmass. Ein groesseres Kaestchen saehe neben dem
-    14-px-Text klobig aus und haette das Aussehen der ganzen Oberflaeche
-    veraendert."""
+    The fix sits on the `<label>`, not on the `<input>`: a label that
+    wraps its checkbox forwards activation from anywhere in
+    its area - it therefore already IS the hit target, it was
+    just missing the minimum size. A larger checkbox would have looked
+    clunky next to the 14px text and would have changed the look of the
+    entire UI."""
     client, _, _ = api
     page = _without_comments((await client.get("/")).text)
     css = (await client.get("/static/style.css")).text
 
-    # Die vier Text-Label-Kaestchen tragen jetzt `checkbox-label` - nicht
-    # `.row label` allgemein, denn dieselbe Zeilenklasse traegt anderswo
-    # auch Textfeld-, Datei- und Auswahllabels (z. B. die Bruecken-IP),
-    # deren Layout hier nicht mitgezogen werden soll. `:has()` bewusst
-    # vermieden (Projekt-Vorgabe).
+    # The four text-label checkboxes now carry `checkbox-label` - not
+    # `.row label` in general, because the same row class elsewhere also
+    # carries text-field, file, and select labels (e.g. the bridge IP),
+    # whose layout is not meant to be dragged along here. `:has()`
+    # deliberately avoided (project guideline).
     for model in (
         'x-model="projectSync.includeNewDevices"',
         'x-model="exportIncludeSystem"',
@@ -6510,23 +6499,23 @@ async def test_the_checkbox_hit_targets_reach_24px(api):
         opening_tag = page[label_start:label_end]
         assert 'class="checkbox-label"' in opening_tag, model
 
-    # Bindung an den Regelkoerper des eigenen Selektors, nicht an ein
-    # Stichwort-Fenster - siehe `test_the_key_pill_wraps_instead_of_
-    # touching_the_value_column` fuer dasselbe Muster.
+    # Bound to the rule body of its own selector, not to a
+    # keyword window - see `test_the_key_pill_wraps_instead_of_
+    # touching_the_value_column` for the same pattern.
     start = css.index(".checkbox-label {")
     open_brace = css.index("{", start)
     close_brace = css.index("}", open_brace)
     checkbox_label_rule = css[open_brace:close_brace]
     assert "min-height: 24px" in checkbox_label_rule
     assert "align-items: center" in checkbox_label_rule
-    # Kein `min-width`: der Text neben dem Kaestchen traegt die Breite
-    # schon laengst ueber 24 px, siehe Docstring-Messung oben.
+    # No `min-width`: the text next to the checkbox has long carried
+    # the width past 24px already, see the docstring measurement above.
     assert "min-width" not in checkbox_label_rule
 
-    # `.signal-grid .col-center` traegt zusaetzlich eine Regel INNERHALB
-    # der 640-px-Medienabfrage (justify-content, gap) - `css.index` findet
-    # die ERSTE, die ausserhalb liegende Basisregel, in der `min-height`
-    # jetzt stehen muss.
+    # `.signal-grid .col-center` additionally carries a rule INSIDE
+    # the 640px media query (justify-content, gap) - `css.index` finds
+    # the FIRST, the base rule outside it, where `min-height`
+    # must now sit.
     media_start = css.index("@media (max-width: 640px)")
     start = css.index(".signal-grid .col-center {")
     assert start < media_start

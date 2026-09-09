@@ -1,5 +1,5 @@
 /*
- * loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+ * loxmatter - connects Matter devices to a Loxone Miniserver.
  * Copyright (C) 2026 Lucien Kerl
  *
  * This program is free software: you can redistribute it and/or modify
@@ -16,12 +16,12 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-/* Stil der loxmatter-Oberflaeche (Task 7, Phase 5).
+/* Style of the loxmatter UI (Task 7, Phase 5).
  *
- * Bewusst schmucklos: dies ist ein Inbetriebnahme- und Diagnosewerkzeug
- * (Spec 8.2), kein Smart-Home-Erlebnis. Klarheit vor Wirkung - Farbe wird
- * nur eingesetzt, wo sie eine Bedeutung traegt (online/offline, Erfolg/
- * Fehler), nicht als Dekoration.
+ * Deliberately unadorned: this is a commissioning and diagnostics tool
+ * (Spec 8.2), not a smart-home experience. Clarity over impact - colour is
+ * only used where it carries meaning (online/offline, success/
+ * failure), not as decoration.
  */
 
 :root {
@@ -31,10 +31,10 @@
   --border: #d7dbe0;
   --text: #1c2126;
   --text-muted: #5b6572;
-  /* Kupfer/Amber statt Gruen (Geraete-Dashboard-Entwurf, freigegeben nach
-     Vorlage): bewusst getrennt von --ok, das gruen bleibt - eine Kupfer-
-     Primaertaste neben einer gruenen "online"-Markierung soll nicht wie
-     derselbe Zustand aussehen. */
+  /* Copper/amber instead of green (device dashboard design, approved per
+     the template): deliberately separate from --ok, which stays green - a copper
+     primary button next to a green "online" marker should not look like
+     the same state. */
   --accent: #a15a2c;
   --accent-contrast: #ffffff;
   --danger: #9a2f2f;
@@ -43,14 +43,14 @@
   --ok-bg: #e8f3ee;
   --warn: #8a5a00;
   --warn-bg: #fdf3e0;
-  /* Offline-Status einer Geraetekarte (Abschnitt 3 des Entwurfs) - eigene
-     Farbe statt --danger, das an anderer Stelle (Verbindungsstatus oben in
-     der Kopfzeile) weiterhin Rot bleibt. */
+  /* Offline status of a device card (Section 3 of the design) - its own
+     colour instead of --danger, which elsewhere (the connection status up in
+     the header) stays red. */
   --off: #5b6572;
   --off-bg: #e7e9ec;
-  /* Getoenter Hintergrund fuer das Typ-Icon einer Geraetekarte - aus der
-     Akzentfarbe abgeleitet, nicht aus --ok: das Icon zeigt "das ist ein
-     Geraet", keinen Status. */
+  /* Tinted background for a device card's type icon - derived from the
+     accent colour, not from --ok: the icon shows "this is a
+     device", not a status. */
   --type-bg: #f4e6da;
   --type-fg: #a15a2c;
   --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
@@ -82,9 +82,9 @@
   box-sizing: border-box;
 }
 
-/* Alpine entfernt dieses Attribut erst nach der Initialisierung - ohne
- * diese Regel bliebe ein per x-show/x-if verstecktes Element beim ersten
- * Zeichnen kurz sichtbar. */
+/* Alpine only removes this attribute after initialization - without
+ * this rule, an element hidden via x-show/x-if would stay briefly visible
+ * during the first paint. */
 [x-cloak] {
   display: none !important;
 }
@@ -122,8 +122,8 @@ header.app-header h1 {
   font-weight: 600;
 }
 
-/* Zeichen und Schriftzug als ein Block, damit `space-between` der Kopfzeile
-   ihn als Ganzes nach links schiebt (siehe den Kommentar an <div class="brand">
+/* Mark and wordmark as one block, so that the header's `space-between`
+   pushes it left as a whole (see the comment on <div class="brand">
    in index.html). */
 header.app-header .brand {
   display: flex;
@@ -131,9 +131,9 @@ header.app-header .brand {
   gap: 0.6rem;
 }
 
-/* Die Masse stehen doppelt - hier und als Attribute im Markup. Die Attribute
-   halten den Platz frei, bevor das Bild da ist; diese Regel setzt sie
-   durch, falls das SVG doch einmal mit eigener Groesse kaeme. */
+/* The dimensions are given twice - here and as attributes in the markup. The
+   attributes reserve the space before the image is there; this rule enforces
+   them in case the SVG should ever come with its own size. */
 header.app-header .brand-mark {
   width: 24px;
   height: 24px;
@@ -148,14 +148,14 @@ nav.tabs {
   border-bottom: 1px solid var(--border);
 }
 
-/* Die Reiterleiste ganz oben besteht seit der URL-Navigation aus `<a>`- und
-   nicht mehr aus `<button>`-Elementen (siehe <nav class="tabs"> in
-   index.html) - `text-decoration: none` kommt deshalb dazu, sonst erbte der
-   Reiter die Unterstreichung der Dokument-Linkfarbe.
+/* The tab bar at the very top has consisted of `<a>` elements rather than
+   `<button>` elements since the URL navigation (see <nav class="tabs"> in
+   index.html) - `text-decoration: none` is added for that reason, otherwise the
+   tab would inherit the underline of the document link colour.
 
-   Die Knopf-Fassung bleibt trotzdem stehen: die Sprachumschaltung in den
-   Einstellungen borgt sich dieselbe `nav.tabs`-Leiste fuer zwei Knoepfe, die
-   die Sprache umschalten statt zu navigieren - dort waere ein Link falsch. */
+   The button variant still stays around, though: the language switch in the
+   settings borrows the same `nav.tabs` bar for two buttons that
+   switch the language instead of navigating - a link would be wrong there. */
 nav.tabs a,
 nav.tabs button {
   background: none;
@@ -163,15 +163,15 @@ nav.tabs button {
   border-bottom: 3px solid transparent;
   padding: 0.6rem 0.9rem;
   font-size: 0.95rem;
-  /* Dieselbe Zeilenhoehe, die die Reiter als Knoepfe ueber die allgemeine
-     `button`-Regel weiter unten bekamen. Ein Link erbt stattdessen die 1.5
-     des Dokuments und machte die Leiste rund vier Pixel hoeher - die
-     Screenshots in docs/screenshots/ (byte-genau reproduzierbar, siehe
-     scripts/capture_screenshots.py) verschoben sich dadurch komplett. */
+  /* The same line height that the tabs got as buttons via the general
+     `button` rule further below. A link instead inherits the document's
+     1.5, which made the bar about four pixels taller - the
+     screenshots in docs/screenshots/ (byte-exactly reproducible, see
+     scripts/capture_screenshots.py) shifted completely as a result. */
   line-height: 1.3;
-  /* Ebenfalls aus der allgemeinen `button`-Regel uebernommen: sie rundet die
-     Enden des 3-px-Unterstrichs des aktiven Reiters leicht ab. Ein Link
-     brachte das nicht mit, und der Unterstrich sprang von rund auf eckig. */
+  /* Also taken over from the general `button` rule: it slightly rounds the
+     ends of the active tab's 3px underline. A link did not bring
+     that along, and the underline jumped from round to square. */
   border-radius: 5px;
   color: var(--text-muted);
   text-decoration: none;
@@ -220,35 +220,36 @@ main {
   margin-top: 0.5rem;
 }
 
-/* WCAG 2.2 AA, Erfolgskriterium 2.5.8 (Target Size Minimum): 24x24 CSS-
-   Pixel Trefferflaeche. Eine Pruefung fand ein Kaestchen mit gemessen
-   13 px Breite - dem nackten `<input type="checkbox">`, der ohne eigene
-   Regel auf reinem Browser-Standard steht. Nicht das Kaestchen wird
-   vergroessert (saehe neben 14-px-Text klobig aus und aendert das
-   Aussehen der ganzen Oberflaeche), sondern das umschliessende `<label>`:
-   ein Label, das sein Eingabefeld umschliesst, leitet die Aktivierung von
-   jeder Stelle seiner Flaeche weiter - es IST also schon die
-   Trefferflaeche, ihr fehlt nur das Mindestmass.
+/* WCAG 2.2 AA, success criterion 2.5.8 (target size minimum): a 24x24 CSS
+   pixel hit area. A check found a checkbox measuring
+   13px wide - the bare `<input type="checkbox">`, which has no rule of
+   its own and sits at plain browser default. It is not the checkbox that
+   gets enlarged (it would look clunky next to 14px text and change the
+   appearance of the whole UI), but the enclosing `<label>`: a label
+   that wraps its input forwards activation from
+   anywhere on its area - so it ALREADY IS the hit area, it merely
+   lacks the minimum size.
 
-   `.checkbox-label` markiert genau die vier textbeschrifteten Kaestchen
-   in `index.html` (Projektdatei-Sync, Export-Ansicht x2, Systemansicht) -
-   nicht `.row label` allgemein, denn dieselbe Klasse traegt in anderen
-   `.row`-Zeilen auch Textfeld-, Datei- und Auswahllabels (z. B. die
-   Bruecken-IP), die dieses Mass nicht brauchen und deren Layout hier
-   nicht mitgezogen werden soll. `:has()` bewusst vermieden (Projekt-
-   Vorgabe), deshalb die eigene Klasse statt eines Selektors auf das
-   Kaestchen im Inneren.
+   `.checkbox-label` marks exactly the four text-labelled checkboxes
+   in `index.html` (project-file sync, export view x2, system view) -
+   not `.row label` in general, because the same class also carries
+   text-field, file, and select labels in other `.row` rows
+   (e.g. the bridge IP), which do not need this size and whose layout
+   should not be dragged along here. `:has()` deliberately avoided
+   (project guideline), hence the dedicated class instead of a selector on
+   the checkbox inside.
 
-   Waagerecht war im Wegwerf-Harness (Kopie aus `index.html`, echtes
-   `style.css`) schon vorher genug Platz - der Text daneben allein misst
-   zwischen 131 px und 208 px, weit ueber 24 px, `min-width` bliebe hier
-   Ballast. Gemessen wurde die Hoehe des `<label>.getBoundingClientRect()`
-   selbst, nicht die des `<input>`: 21,5 px vorher (Desktop wie unter
-   640 px, unveraendert - die Zeile haengt an keiner Medienabfrage), damit
-   unter der 24-px-Schwelle. `display: flex` + `align-items: center`
-   halten Kaestchen und Text zentriert, sobald `min-height` die Box um
-   die fehlenden 2,5 px wachsen laesst - ohne das faellt der Inhalt sonst
-   an den oberen Rand der neu gewonnenen Hoehe. */
+   Horizontally there was already enough room in the throwaway harness
+   (a copy from `index.html`, the real `style.css`) beforehand - the text
+   next to it alone measures between 131px and 208px, far above 24px,
+   so `min-width` would be dead weight here. What was measured was the
+   height of the `<label>` itself via `.getBoundingClientRect()`, not that
+   of the `<input>`: 21.5px beforehand (desktop as well as below
+   640px, unchanged - the row does not hang off any media query), so
+   below the 24px threshold. `display: flex` + `align-items: center`
+   keep the checkbox and text centered once `min-height` grows the box by
+   the missing 2.5px - without that, the content would otherwise sit at
+   the top edge of the newly gained height. */
 .checkbox-label {
   display: flex;
   align-items: center;
@@ -272,10 +273,10 @@ main {
   background: var(--danger);
 }
 
-/* Dieselben fuenf Status-Eimer wie `projectSyncStatusBucket` in app.js -
-   ein Punkt in derselben Farbe wie der linke Rahmen der zugehoerigen
-   `.projectsync-entry`, fuer die Zaehl-Chips in der Gesamt-Uebersicht und
-   im Kartenkopf jedes Geraets (Projektdatei-Sync, Abschnitt weiter unten). */
+/* The same five status buckets as `projectSyncStatusBucket` in app.js -
+   a dot in the same colour as the left border of the matching
+   `.projectsync-entry`, for the count chips in the overall summary and
+   in each device's card header (project file sync, section further down). */
 .dot.is-new {
   background: var(--ok);
 }
@@ -354,9 +355,9 @@ select {
   font-size: 0.9rem;
 }
 
-/* Ohne das bleibt ein Browser-Standard von rund 20 Zeichen Breite -
- * spuerbar zu wenig fuer einen Geraetenamen oder Signaltitel, der dann
- * abgeschnitten aussieht, obwohl der gebundene Wert vollstaendig ist. */
+/* Without this, a browser default of around 20 characters wide remains -
+ * noticeably too little for a device name or signal title, which then
+ * looks truncated even though the bound value is complete. */
 input[type="text"] {
   flex: 1 1 auto;
   min-width: 12rem;
@@ -419,9 +420,9 @@ button:disabled {
   color: var(--warn);
 }
 
-/* Projektdatei-Sync (Abschnitt weiter unten): `orphaned` bekommt dieselbe
-   neutrale Farbe wie eine offline-Geraetekarte - kein Fehler, nur "gehoert
-   zu nichts Bekanntem mehr". */
+/* Project file sync (section further down): `orphaned` gets the same
+   neutral colour as an offline device card - not an error, just "no longer
+   belongs to anything known". */
 .badge.off {
   background: var(--off-bg);
   color: var(--off);
@@ -446,10 +447,10 @@ button:disabled {
   border: 1px solid var(--ok);
 }
 
-/* Fehlt bislang: der Einrichtungsbildschirm braucht eine dritte Banner-Farbe
-   fuer die Warnung vor einer noch offenen Ersteinrichtung - weder Fehler
-   (rot) noch Erfolg (gruen). Dieselben `--warn`-Variablen wie `.badge.warn`
-   oben. */
+/* Missing until now: the setup screen needs a third banner colour
+   for the warning about a still-open initial setup - neither error
+   (red) nor success (green). The same `--warn` variables as `.badge.warn`
+   above. */
 .banner.warn {
   background: var(--warn-bg);
   color: var(--warn);
@@ -594,17 +595,17 @@ button:disabled {
 }
 
 /* ---------------------------------------------------------------------
- * Einlern-Karte (Entwurf "Code zuerst" mit Ablaufanzeige, 2026-09-07).
+ * Commissioning card (design "Code first" with progress display, 2026-09-07).
  *
- * Vorher: vier gleich breite Felder in einer `.row`, darunter drei Absaetze
- * Hilfe. Der Pairing-Code - das einzige Pflichtfeld - hatte dasselbe
- * Gewicht wie der Thread-Datensatz, den fast niemand je ausfuellt.
+ * Before: four equally wide fields in a `.row`, with three paragraphs of
+ * help below. The pairing code - the only required field - carried the same
+ * weight as the Thread dataset, which almost nobody ever fills in.
  * ------------------------------------------------------------------- */
 
-/* Sichtbare Beschriftung ueber einem Feld. Die Karte trug ihre
- * Beschriftungen vorher nur im `placeholder` - der verschwindet, sobald
- * jemand tippt, und ist fuer einen Screenreader keine Beschriftung,
- * sondern ein Beispiel. */
+/* Visible label above a field. The card previously carried its
+ * labels only in the `placeholder` - which disappears as soon as
+ * someone types, and is not a label to a screen reader,
+ * but an example. */
 .field-label {
   display: block;
   font-size: 0.72rem;
@@ -615,11 +616,11 @@ button:disabled {
   margin-bottom: 0.3rem;
 }
 
-/* Feld und Aufkleber-Skizze nebeneinander (Entwurf vom 2026-09-07,
- * Abschnitt 7). Die Skizze steht dauerhaft da: sie kostet keinen
- * Lesevorgang, wer sie nicht braucht ueberliest sie, und sie ersetzt den
- * frueheren Klammerzusatz im Platzhalter - der Text wird also nicht mehr,
- * sondern weniger. */
+/* Field and sticker sketch side by side (design of 2026-09-07,
+ * section 7). The sketch stays there permanently: it costs no
+ * reading effort, whoever does not need it skims past it, and it replaces
+ * the earlier parenthetical in the placeholder - so the text becomes not
+ * more, but less. */
 .code-with-sticker {
   display: flex;
   gap: 1.25rem;
@@ -635,18 +636,18 @@ button:disabled {
   flex: 0 0 auto;
 }
 
-/* Unter dieser Breite wandert die Skizze unter das Feld statt daneben.
+/* Below this width the sketch moves under the field instead of beside it.
  *
- * Die Schwelle ist NICHT dieselbe wie beim Umbruch von Feld und Knopf
- * weiter unten (480px) - hier geht es um eine andere Enge. `.code-sticker`
- * (fest 188px breit) und `.code-detect` sind beide unschrumpfbar
- * (`flex-shrink: 0`), das Eingabefeld ist also der einzige Nachgeber in
- * dieser Zeile. Zwischen 480px und ~640px reichte der uebrige Platz fuer
- * Chip und Knopf nicht mehr, ohne dass das Feld schon selbst umgebrochen
- * waere (siehe der Umbruch weiter unten) - das Feld schrumpfte auf nahezu
- * null, lange bevor es an der Reihe war. 700px raeumt der Skizze den Weg,
- * bevor es dazu kommt: das Feld behaelt dann in der ganzen Spanne bis
- * dorthin reichlich Breite fuer sich allein. */
+ * The threshold is NOT the same as the one for wrapping the field and
+ * button further below (480px) - this is about a different kind of
+ * tightness. `.code-sticker` (fixed 188px wide) and `.code-detect` are
+ * both unshrinkable (`flex-shrink: 0`), so the input field is the only one
+ * that yields in this row. Between 480px and ~640px the remaining space
+ * for the chip and button was no longer enough, without the field itself
+ * already having wrapped (see the wrap further below) - the field shrank
+ * to almost nothing, long before it was its turn. 700px clears the way
+ * for the sketch before it comes to that: the field then keeps
+ * generous width to itself across the whole span down to there. */
 @media (max-width: 700px) {
   .code-with-sticker {
     flex-wrap: wrap;
@@ -654,10 +655,10 @@ button:disabled {
   }
 }
 
-/* Feld und Knopf teilen sich EINE Umrandung: `Enter` im Feld und ein Klick
- * auf den Knopf tun dasselbe, also sollen sie auch wie ein Bedienelement
- * aussehen. `:focus-within` traegt den Fokusrahmen deshalb die aeussere
- * Umrandung, nicht das Feld darin. */
+/* Field and button share ONE border: `Enter` in the field and a click
+ * on the button do the same thing, so they should also look like one
+ * control. `:focus-within` therefore puts the focus ring on the outer
+ * border, not on the field inside it. */
 .code-field {
   display: flex;
   align-items: stretch;
@@ -672,12 +673,12 @@ button:disabled {
   border-color: var(--accent);
 }
 
-/* Spezifitaet mit Absicht ueber `input[type="text"]` weiter oben (dort
- * 0-1-1, hier 0-2-0): ohne den Klassen-Vorfahren gewaenne die
- * Attributregel und das Feld behielte im gemeinsamen Rahmen seinen
- * eigenen. Aus demselben Grund faellt hier `min-width: 12rem`, das dort
- * fuer Geraetenamen steht, wieder auf 0 zurueck - der Rahmen darum gibt
- * die Breite vor. */
+/* Specificity deliberately above `input[type="text"]` further up (there
+ * 0-1-1, here 0-2-0): without the class ancestor, the
+ * attribute rule would win and the field would keep its own border within
+ * the shared one. For the same reason `min-width: 12rem`, which stands
+ * there for device names, falls back to 0 here again - the border around it
+ * dictates the width. */
 .code-field .code-input {
   flex: 1 1 auto;
   min-width: 0;
@@ -686,9 +687,9 @@ button:disabled {
   border-radius: 0;
   padding: 0.35rem 0;
   color: var(--text);
-  /* Monospace ist hier kein Stilmittel: genau so steht der Code auf dem
-   * Aufkleber, und beim Abtippen sind 0 und O sonst nicht zu
-   * unterscheiden. Die Sperrung gibt langen MT:-Codes Luft. */
+  /* Monospace is not a stylistic device here: that is exactly how the code
+   * appears on the label, and when typing it in, 0 and O are otherwise not
+   * distinguishable. The letter spacing gives long MT: codes room to breathe. */
   font-family: var(--mono);
   font-size: 1.05rem;
   letter-spacing: 0.045em;
@@ -698,13 +699,14 @@ button:disabled {
   outline: none;
 }
 
-/* Der Chip im Eingabefeld (Entwurf vom 2026-09-07). Er benennt, was das Feld
- * erkannt hat. Bei leerem Feld bleibt er stehen und wird nur unsichtbar -
- * entfernt aenderte er die Breite des Feldes beim ersten Tastendruck.
+/* The chip in the input field (design of 2026-09-07). It names what the
+ * field has recognized. With an empty field it stays in place and only
+ * becomes invisible - removed, it would change the field's width on the
+ * first keystroke.
  *
- * Die drei Farben tragen dieselbe Bedeutung wie ueberall sonst in dieser
- * Oberflaeche (--ok gelungen, --warn unfertig, --danger falsch); es kommt
- * keine neue hinzu. */
+ * The three colors carry the same meaning as everywhere else in this
+ * UI (--ok succeeded, --warn incomplete, --danger wrong); no new one
+ * is added. */
 .code-field .code-detect {
   display: inline-flex;
   align-items: center;
@@ -737,8 +739,8 @@ button:disabled {
   color: var(--danger);
 }
 
-/* Die beiden Bauformen als Beispiel. Ersetzt den frueheren Klammerzusatz im
- * Platzhalter: der nannte die Bauform, das hier zeigt sie. */
+/* The two forms as an example. Replaces the earlier parenthetical in the
+ * placeholder: that named the form, this shows it. */
 .code-examples {
   display: flex;
   flex-wrap: wrap;
@@ -763,12 +765,12 @@ button:disabled {
   border-radius: 4px;
 }
 
-/* Auf einem Telefon - und genau dort steht man, wenn man den Code vom
- * Aufkleber abliest - blieben Feld und Knopf sonst in einer Zeile, und
- * das Feld schrumpfte auf ein Drittel: ein 22 Zeichen langer MT:-Code
- * liefe darin waagerecht davon. Unter dieser Breite bekommt das Feld die
- * ganze Zeile und der Knopf die naechste, beide weiter innerhalb
- * derselben Umrandung. */
+/* On a phone - and that is exactly where you stand when reading the code off
+ * the label - the field and button would otherwise stay on one line, and
+ * the field would shrink to a third: a 22-character MT: code
+ * would run off it horizontally. Below this width, the field gets the
+ * whole line and the button the next one, both still within
+ * the same border. */
 @media (max-width: 480px) {
   .code-field {
     flex-wrap: wrap;
@@ -783,7 +785,7 @@ button:disabled {
   }
 }
 
-/* Die leise zweite Zeile: Raum, Raumhinweis und die beiden Klappen. */
+/* The quiet second line: room, room hint, and the two disclosures. */
 .commission-meta {
   display: flex;
   align-items: center;
@@ -800,25 +802,25 @@ button:disabled {
   color: var(--text-muted);
 }
 
-/* Wie beim Codefeld: die globale `input[type="text"]`-Regel gibt jedem
- * Textfeld 12rem Mindestbreite, damit ein Geraetename nicht abgeschnitten
- * aussieht. Ein Raumname braucht das nicht und draengte damit die Klappen
- * in die naechste Zeile. */
+/* Like with the code field: the global `input[type="text"]` rule gives every
+ * text field a 12rem minimum width, so that a device name does not look
+ * truncated. A room name does not need that, and it pushed the disclosures
+ * onto the next line. */
 .commission-meta .new-room-input {
   flex: 0 1 11rem;
   min-width: 0;
 }
 
-/* Die beiden Klappen stehen UNTEREINANDER in einer eigenen Zeile, nicht
- * neben dem Raumfeld in derselben.
+/* The two disclosures stand ON TOP OF EACH OTHER in their own row, not
+ * next to the room field in the same one.
  *
- * Erster Anlauf war genau das - eine Reihe, die Klappen per Fuellstueck
- * ans rechte Ende geschoben. Im Browser zeigte sich, warum das nicht
- * traegt: ein aufgeklapptes `<details>` ist ein hohes Flex-Element und
- * riss die Zeile auseinander - die aufgeklappte Klappe rutschte nach
- * unten, die zweite blieb mittig neben deren Erklaertext haengen. Ein
- * Auf- und Zuklappen darf nicht verschieben, was um es herum steht, und
- * am wenigsten die Schaltflaeche, die man gerade angeklickt hat. */
+ * The first attempt was exactly that - one row, with the disclosures pushed
+ * to the right end via a filler. In the browser it became clear why that
+ * does not hold up: an open `<details>` is a tall flex item and
+ * tore the row apart - the open disclosure slid down,
+ * and the second one stayed stuck in the middle next to its explanatory
+ * text. Opening and closing one must not move what stands around it, and
+ * least of all the control that was just clicked. */
 .commission-help {
   display: flex;
   flex-direction: column;
@@ -827,9 +829,10 @@ button:disabled {
   margin-top: 0.7rem;
 }
 
-/* Die beiden `<details>`. Der Standard-Marker faellt weg und wird durch
- * einen eigenen Winkel ersetzt, wie schon beim Kachel-Menue und bei den
- * Signalgruppen im Modal - dieselbe Geste soll ueberall gleich aussehen. */
+/* The two `<details>`. The default marker is dropped and replaced by
+ * a custom chevron, as already done for the tile menu and the
+ * signal groups in the modal - the same gesture should look the same
+ * everywhere. */
 .commission-disclosure {
   font-size: 0.85rem;
 }
@@ -868,16 +871,16 @@ button:disabled {
   color: var(--text);
 }
 
-/* Der aufgeklappte Inhalt bekommt eine eigene Flaeche: er gehoert zur
- * Klappe darueber, nicht zur Zeile, aus der er herauswaechst. */
+/* The expanded content gets its own surface: it belongs to the
+ * disclosure above it, not to the row it grows out of. */
 .disclosure-body {
   margin-top: 0.6rem;
   padding: 0.7rem 0.8rem;
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: 6px;
-  /* Ueber diese Breite hinaus wird ein Fliesstext muehsam zu lesen - und
-   * die beiden Saetze hier sind der laengste Fliesstext der Oberflaeche. */
+  /* Beyond this width, running text becomes tiresome to read - and
+   * the two sentences here are the longest running text in the UI. */
   max-width: 62ch;
 }
 
@@ -890,11 +893,11 @@ button:disabled {
   margin: 0.5rem 0 0;
 }
 
-/* --- Ablaufanzeige ---------------------------------------------------
+/* --- Progress display ---------------------------------------------------
  *
- * Sie ersetzt das Formular fuer die Dauer eines Laufs. Einlernen dauert
- * zwanzig bis sechzig Sekunden; vorher war das ein grau werdender Knopf,
- * also von einer haengenden Seite nicht zu unterscheiden.
+ * It replaces the form for the duration of a run. Commissioning takes
+ * twenty to sixty seconds; before this it was just a button turning grey,
+ * i.e. indistinguishable from a hung page.
  * ------------------------------------------------------------------- */
 
 .commission-subject {
@@ -922,9 +925,9 @@ button:disabled {
   padding-bottom: 0;
 }
 
-/* Die Schiene zwischen den Punkten. Sie faerbt sich mit, sobald ein
- * Schritt durch ist - das ist die eigentliche Auskunft dieser Anzeige:
- * wie weit es gekommen ist. */
+/* The track between the dots. It colours in as soon as a
+ * step is done - that is the actual information this display conveys:
+ * how far it has gotten. */
 .commission-step::before {
   content: "";
   position: absolute;
@@ -974,9 +977,9 @@ button:disabled {
   background: var(--accent);
 }
 
-/* Der Haken im gefuellten Punkt. `--accent-contrast` ist genau die Farbe,
- * die auch die Schrift auf der Primaertaste traegt - dieselbe Flaeche,
- * dieselbe Gegenfarbe. */
+/* The check mark inside the filled dot. `--accent-contrast` is exactly the
+ * colour that the text on the primary button also carries - the same
+ * surface, the same contrasting colour. */
 .commission-step.done .step-marker::after {
   content: "";
   position: absolute;
@@ -1004,9 +1007,9 @@ button:disabled {
   }
 }
 
-/* Ein sich drehender Ring ist genau die Art Dauerbewegung, die
- * `prefers-reduced-motion` meint. Der laufende Schritt bleibt trotzdem als
- * solcher erkennbar - gestrichelt statt offen. */
+/* A spinning ring is exactly the kind of continuous motion that
+ * `prefers-reduced-motion` means. The running step still stays
+ * recognisable as such - dashed instead of open. */
 @media (prefers-reduced-motion: reduce) {
   .commission-step.running .step-marker {
     animation: none;
@@ -1015,9 +1018,9 @@ button:disabled {
   }
 }
 
-/* Zurueck zum Formular. Bewusst ein stiller Textknopf: der Lauf ist zu
- * Ende, die Karte hat nichts mehr anzubieten, was eine Primaertaste wert
- * waere. */
+/* Back to the form. Deliberately a quiet text button: the run is
+ * over, the card has nothing left to offer that would be worth a primary
+ * button. */
 .commission-restart {
   margin-top: 1rem;
   background: none;
@@ -1032,9 +1035,9 @@ button:disabled {
   color: var(--text);
 }
 
-/* Kopfzeile rechts: Abmelde-Knopf und Live-Status nebeneinander, bei
- * schmalem Fenster untereinander - `flex-wrap`, damit keins der beiden das
- * andere aus der Kopfzeile draengt. */
+/* Header right side: logout button and live status side by side, stacked
+ * on a narrow window - `flex-wrap`, so that neither of the two
+ * pushes the other out of the header. */
 .header-right {
   display: flex;
   align-items: center;
@@ -1051,8 +1054,8 @@ button:disabled {
   color: var(--text-muted);
 }
 
-/* Der Einrichtungs- und der Login-Bildschirm: eine schmale Spalte in der
-   Seitenmitte, damit klar ist, dass hier nichts anderes zu tun ist. */
+/* The setup and the login screen: a narrow column in the
+   middle of the page, to make clear that there is nothing else to do here. */
 .auth-screen {
   max-width: 26rem;
   margin: 4rem auto;
@@ -1061,11 +1064,11 @@ button:disabled {
   gap: 0.75rem;
 }
 
-/* Das Zeichen ueber der Ueberschrift. `align-self: start` statt `center`:
-   Ueberschrift, Felder und Knopf dieser Spalte sind alle linksbuendig, ein
-   zentriertes Bild daraus haette als einziges Element keine gemeinsame Kante
-   mit ihnen. Der zusaetzliche Abstand nach unten bindet es an die
-   Ueberschrift, statt es gleich weit von ihr und vom Seitenrand zu halten. */
+/* The mark above the heading. `align-self: start` instead of `center`:
+   the heading, fields and button of this column are all left-aligned, a
+   centred image among them would be the only element with no shared edge
+   with them. The extra space below binds it to the
+   heading, instead of keeping it equally far from it and from the page edge. */
 .auth-screen .auth-mark {
   align-self: start;
   width: 64px;
@@ -1105,33 +1108,33 @@ button:disabled {
 .value {
   font-family: var(--mono);
   font-weight: 600;
-  /* Polster und Radius stehen IMMER, nicht erst bei `.value-fresh`
-     (2026-09-03): kaemen sie mit der Hervorhebung dazu, aenderte sich die
-     Breite der Zelle, und wir haetten das Zappeln zurueck, das die
-     Altersangabe hier verursacht hat. */
+  /* Padding and radius are ALWAYS present, not only once `.value-fresh`
+     (2026-09-03) applies: if they only arrived with the highlight, the
+     width of the cell would change, and we would have the jitter back that
+     the age indicator here used to cause. */
   padding: 0 0.25rem;
   border-radius: 3px;
   background: transparent;
-  /* Nur der Weg ZURUECK ist eine Blende. Das Aufleuchten selbst kommt
-     sofort - siehe `.value-fresh`. */
+  /* Only the way BACK is a fade. The lighting-up itself happens
+     instantly - see `.value-fresh`. */
   transition:
     background-color 1.4s ease-out,
     color 1.4s ease-out;
 }
 
-/* Ein Wert, der gerade eben eingetroffen ist. Traegt die Aufmerksamkeit,
-   die vorher eine mitlaufende Sekundenangabe tragen sollte - nur ohne dass
-   sich am Aufbau der Zeile etwas bewegt. `transition: none` macht das
-   Aufleuchten schlagartig; verschwindet die Klasse wieder, greift die
-   Blende von `.value` oben. */
+/* A value that has just arrived. Carries the attention
+   that a running seconds indicator used to carry before - just without
+   anything in the layout of the row moving. `transition: none` makes the
+   lighting-up instant; once the class disappears again, the
+   fade from `.value` above takes over. */
 .value-fresh {
   transition: none;
   background: var(--ok-bg);
   color: var(--ok);
 }
 
-/* Wer Bewegung im Betriebssystem abbestellt hat, bekommt hier keine.
-   Die Hervorhebung bleibt - sie ist die Information, nicht die Blende. */
+/* Whoever has turned off motion at the OS level gets none here.
+   The highlight stays - it is the information, not the fade. */
 @media (prefers-reduced-motion: reduce) {
   .value {
     transition: none;
@@ -1174,12 +1177,12 @@ footer.hint-block {
   word-break: break-all;
 }
 
-/* Kurzmeldungen als Overlay (2026-09-03).
+/* Toasts as an overlay (2026-09-03).
 
-   `position: fixed` ist hier die ganze Idee: die Meldung liegt ausserhalb
-   des Textflusses und verschiebt deshalb nichts. Die vorherige Fassung
-   blendete eine Zeile ueber der Geraeteliste ein - beim Schalten sprang
-   die ganze Seite, und der naechste Klick ging daneben. */
+   `position: fixed` is the whole idea here: the message sits outside
+   the text flow and therefore shifts nothing. The previous version
+   faded in a line above the device list - toggling it made
+   the whole page jump, and the next click missed. */
 .toasts {
   position: fixed;
   right: 1rem;
@@ -1188,8 +1191,8 @@ footer.hint-block {
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
-  /* Die Leiste selbst faengt keine Klicks ab - nur die Meldungen darin,
-     damit ein Klick daneben weiter die Seite darunter erreicht. */
+  /* The bar itself does not capture any clicks - only the messages inside it,
+     so that a click next to them still reaches the page underneath. */
   pointer-events: none;
   max-width: min(28rem, calc(100vw - 2rem));
 }
@@ -1219,14 +1222,14 @@ footer.hint-block {
   color: var(--danger);
 }
 
-/* Lebenszeichen neben der Verbindungsanzeige: bewusst zurueckhaltend, es
-   ist eine Beruhigung, keine Meldung. */
+/* Sign of life next to the connection indicator: deliberately restrained, it
+   is a reassurance, not a message. */
 .heartbeat {
   color: var(--text-muted);
 }
 
-/* Geraete-Dashboard-Entwurf (2026-09-03): Icons, Status-Pille und
-   Wert-Chips fuer die immer offene Geraetekarte. */
+/* Device dashboard design (2026-09-03): icons, status pill and
+   value chips for the always-open device card. */
 
 .icon {
   width: 1.1em;
@@ -1273,32 +1276,33 @@ footer.hint-block {
   color: var(--off);
 }
 
-/* Linker Farbstreifen an einer Geraetekarte - traegt dieselbe Bedeutung
-   wie die Status-Pille daneben, bewusst redundant: faellt beim schnellen
-   Scrollen ueber viele Geraete auf, ohne dass die Pille gelesen werden
-   muss. Grundzustand (kein Modifikator) ist gruen = unauffaellig.
+/* Left colour stripe on a device card - carries the same meaning
+   as the status pill next to it, deliberately redundant: stands out when
+   scrolling quickly over many devices, without the pill having to be
+   read. The base state (no modifier) is green = unremarkable.
 
-   `overflow: visible` (nicht `hidden`!) ist hier Absicht, nicht Unterlass:
-   das Kachel-Menue (`.tile-menu-items`, weiter unten) haengt absolut
-   positioniert an dieser Karte und oeffnet nach oben ueber ihren Rand
-   hinaus - bei `overflow: hidden` schneidet die Karte die oberen Zeilen
-   des Menues ab, sobald es hoeher wird als der Platz ab dem Kebab-Icon
-   nach oben (kurze Kacheln, viele Raeume in der Liste). Der Radius des
-   Farbstreifens haengt deshalb NICHT mehr am Karten-Clip: siehe
-   `.device-card::before` unten, das jetzt selbst gerundet ist. Wer das
-   hier aus Versehen wieder auf `hidden` zuruecksetzt, kappt das Menue
-   wortlos - kein Fehler, keine Warnung, nur ein halb gezeichnetes Menue. */
+   `overflow: visible` (not `hidden`!) is deliberate here, not an oversight:
+   the tile menu (`.tile-menu-items`, further below) hangs absolutely
+   positioned off this card and opens upward beyond its edge
+   - with `overflow: hidden` the card would clip the top rows
+   of the menu as soon as it grows taller than the space above the kebab icon
+   (short tiles, many rooms in the list). The radius of the
+   colour stripe therefore no longer depends on the card's clip: see
+   `.device-card::before` below, which is now rounded itself. Whoever
+   accidentally resets this back to `hidden` clips the menu
+   silently - no error, no warning, just a half-drawn menu. */
 .device-card {
   position: relative;
   overflow: visible;
   padding-left: calc(1rem + 4px);
 }
 
-/* Radius nur auf der linken Seite (`8px 0 0 8px`), passend zum Radius der
-   `.card`-Karte selbst: frueher hat der `overflow: hidden` der Karte
-   diese eckigen Ecken automatisch rundgeschnitten, das faellt mit dessen
-   Entfernung (s.o.) weg. Ohne diesen Radius haette der Streifen wieder
-   eckige Ecken oben/unten links, obwohl die Karte drumherum rund ist. */
+/* Radius only on the left side (`8px 0 0 8px`), matching the radius of the
+   `.card` card itself: previously the card's `overflow: hidden`
+   automatically rounded off these square corners; that goes away with its
+   removal (see above). Without this radius the stripe would again have
+   square corners top/bottom left, even though the card around it is
+   rounded. */
 .device-card::before {
   content: "";
   position: absolute;
@@ -1314,75 +1318,75 @@ footer.hint-block {
   background: var(--warn);
 }
 
-/* Fund 3 (Nacharbeit 2026-09-05): dieselbe Zeile setzte bislang zusaetzlich
- * `opacity: 0.75` - das war KEIN eigener Effekt fuer den Streifen, sondern
- * nur der Nebeneffekt der (unten entfernten) Karten-weiten Regel, die den
- * Streifen als Nachfahren mit dimmte. Jetzt, wo die Dimmung gezielt auf den
- * Kachel-INHALT wandert (Begruendung dort) statt auf die Karte selbst, muss
- * der Streifen sein 75 % explizit selbst mitbringen, sonst saehe er in
- * einer offline Kachel ploetzlich saettigter aus als vorher - unveraendertes
- * Aussehen war hier das Ziel, keine Verbesserung. */
+/* Finding 3 (follow-up 2026-09-05): this same rule used to also set
+ * `opacity: 0.75` - that was NOT a dedicated effect for the stripe, but
+ * merely a side effect of the (below, removed) card-wide rule, which dimmed
+ * the stripe along with it as a descendant. Now that the dimming moves
+ * specifically onto the tile CONTENT (reasoning there) instead of onto the
+ * card itself, the stripe has to explicitly bring its own 75% along,
+ * otherwise it would suddenly look more saturated in an offline tile than
+ * before - unchanged appearance was the goal here, not an improvement. */
 .device-card.is-offline::before {
   background: var(--off);
   opacity: 0.75;
 }
 
-/* Fund 3 (Nacharbeit 2026-09-05): `opacity` auf `.device-card` selbst
- * spannt einen Deckkraft-Kontext ueber die GESAMTE Karte auf, das
- * Kachel-Menue (`.tile-menu-items`) eingeschlossen - es haengt als
- * Nachfahre in `.device-foot`. Ein offline Geraet dimmte damit sein
- * eigenes, absolut ueber die Nachbarkachel schwebendes Menue mit auf 75 %,
- * durch das dann die Nachbarkachel sichtbar durchschien - obwohl das Menue
- * selbst voellig unabhaengig vom Online-Zustand ist und, einmal geoeffnet,
- * gerade gelesen werden soll. Die Absicht der Regel ("dieses Geraet ist
- * offline, sein INHALT ist gedaempft") gilt dem Kacheln-Inhalt, nicht dem
- * transienten Bedienelement - deshalb wandert die Dimmung von der Karte auf
- * deren Kinder, mit EINER Ausnahme:
+/* Finding 3 (follow-up 2026-09-05): `opacity` on `.device-card` itself
+ * opens an opacity context over the ENTIRE card, the
+ * tile menu (`.tile-menu-items`) included - it hangs as a
+ * descendant inside `.device-foot`. An offline device thereby dimmed its
+ * own menu, floating absolutely over the neighbouring tile, to 75% too,
+ * through which the neighbouring tile then visibly showed through - even
+ * though the menu itself is completely independent of the online state and,
+ * once opened, is meant to be read right now. The intent of the rule ("this
+ * device is offline, its CONTENT is muted") applies to the tile's content,
+ * not to the transient control - hence the dimming moves from the card onto
+ * its children, with ONE exception:
  *
- * `.device-card` hat (Stand dieser Nacharbeit) sieben direkte Kinder:
- * `.device-head`, `.value-rows`, zwei bedingt sichtbare `.hint`-Absaetze,
- * `.device-commands`, `.device-foot` und einen dritten `.hint`-Absatz fuer
- * den Export-Hinweis ganz unten. `.tile-menu` selbst steckt NICHT direkt in
- * der Karte, sondern im `.device-foot` neben dem Export-Hinweis-Span - die
- * erste Regel dimmt deshalb alle Kinder ausser `.device-foot` selbst
- * pauschal, die zweite steigt eine Ebene tiefer und dimmt innerhalb von
- * `.device-foot` alles ausser `.tile-menu`.
+ * `.device-card` has (as of this follow-up) seven direct children:
+ * `.device-head`, `.value-rows`, two conditionally visible `.hint` paragraphs,
+ * `.device-commands`, `.device-foot` and a third `.hint` paragraph for
+ * the export hint right at the bottom. `.tile-menu` itself does NOT sit
+ * directly in the card, but inside `.device-foot` next to the export-hint
+ * span - the first rule therefore dims all children except `.device-foot`
+ * itself across the board, the second one descends one level deeper and
+ * dims everything within `.device-foot` except `.tile-menu`.
  *
- * Review-Fund 2 (2026-09-05, Review der Nacharbeit): `:not(.tile-menu)`
- * schliesst das GESAMTE `<details>` aus, nicht nur die transiente,
- * sich oeffnende Liste - eingeschlossen dessen permanent sichtbaren
- * `<summary>`-Kebab. Gemessen an einer offline Karte: `.device-foot`
- * Opacity 1, `.tile-menu > summary` Opacity 1, waehrend der `.hint`
- * daneben bei 0.75 lag - der Kebab-Rahmen (`1px solid var(--border)`)
- * wirkte dadurch heller als alles drumherum. Der Ausloeser laesst sich
- * nicht einfach aus dem `:not()` streichen, das traefe ihn wieder ueber
- * seine Kindschaft von `.device-foot` (unveraendert); er braucht
- * stattdessen dieselbe Behandlung wie der Farbstreifen weiter oben
- * (`.device-card.is-offline::before`): eine eigene, auf genau ihn
- * gezielte Opacity-Regel, weiter unten bei `.tile-menu > summary`
- * definiert. Damit tragen inzwischen VIER Regeln je ihren Teil der
- * 75 % Dimmung - die direkten Kartenkinder ausser `.device-foot`, die
- * Kinder von `.device-foot` ausser `.tile-menu`, der Farbstreifen
- * `::before` und der Kebab-Ausloeser `.tile-menu > summary` -, nicht
- * eine einzelne kartenweite Opacity: NUR so bleibt `.tile-menu-items`
- * (die schwebende Liste selbst) als einziges Element unangetastet.
+ * Review finding 2 (2026-09-05, review of the follow-up): `:not(.tile-menu)`
+ * excludes the ENTIRE `<details>`, not only the transient,
+ * opening list - including its permanently visible
+ * `<summary>` kebab. Measured on an offline card: `.device-foot`
+ * opacity 1, `.tile-menu > summary` opacity 1, while the `.hint`
+ * next to it sat at 0.75 - the kebab border (`1px solid var(--border)`)
+ * thereby looked lighter than everything around it. The trigger cannot
+ * simply be struck from the `:not()`, that would catch it again via
+ * its being a child of `.device-foot` (unchanged); it needs
+ * the same treatment instead as the colour stripe further up
+ * (`.device-card.is-offline::before`): its own opacity rule targeted
+ * specifically at it, defined further below at `.tile-menu > summary`.
+ * With that, FOUR rules now each carry their part of the
+ * 75% dimming - the direct card children except `.device-foot`, the
+ * children of `.device-foot` except `.tile-menu`, the colour stripe
+ * `::before`, and the kebab trigger `.tile-menu > summary` -, not
+ * a single card-wide opacity: ONLY this way does `.tile-menu-items`
+ * (the floating list itself) stay the sole untouched element.
  *
- * Review-Fund 4 (2026-09-05, Review der Nacharbeit): dieses Verlegen der
- * Opacity von der Karte auf ihre Kinder ist nicht nur eine Sichtbarkeits-
- * Frage fuer das Menue, sondern auch eine STACKING-Voraussetzung fuer den
- * `z-index`-Sieg von `.tile-menu-items` gegen die Kopfzeile (Fund 1 der
- * Nacharbeit, Begruendung dort): ein `z-index` gilt nur innerhalb des
- * Stacking-Kontexts seines Erzeugers, und `opacity` (wie jeder der oben
- * an `.device-card`, `.device-foot` oder `.tile-menu` verbotenen
- * Nebeneffekte: `filter`, `transform`, `backdrop-filter`, `will-change`,
- * `isolation`, `contain: paint`) spannt genau so einen Kontext auf. Vor
- * dieser Nacharbeit sass die Opacity auf `.device-card` und sperrte damit
- * `.tile-menu-items` in ihren Kontext ein - gemessen lieferte
- * `document.elementFromPoint` an der Menue-Oberkante die Kopfzeile,
- * SELBST mit `z-index: 20`. Kaeme irgendwo zwischen `.device-card` und
- * `.tile-menu-items` erneut einer dieser Nebeneffekte hinzu, faengt sich
- * das Menue wieder unter der Kopfzeile - der z-index-Test in test_web.py
- * meldet das NICHT, er vergleicht nur zwei Zahlen im Stylesheet. */
+ * Review finding 4 (2026-09-05, review of the follow-up): this moving of the
+ * opacity from the card onto its children is not just a visibility
+ * question for the menu, but also a STACKING prerequisite for the
+ * `z-index` win of `.tile-menu-items` against the header (finding 1 of the
+ * follow-up, reasoning there): a `z-index` only applies within the
+ * stacking context of its creator, and `opacity` (like every one of the
+ * side effects forbidden above on `.device-card`, `.device-foot` or
+ * `.tile-menu`: `filter`, `transform`, `backdrop-filter`, `will-change`,
+ * `isolation`, `contain: paint`) opens exactly such a context. Before
+ * this follow-up, the opacity sat on `.device-card` and thereby locked
+ * `.tile-menu-items` into its context - measured,
+ * `document.elementFromPoint` at the top of the menu returned the header,
+ * EVEN with `z-index: 20`. Should any of these side effects be added again
+ * anywhere between `.device-card` and `.tile-menu-items`, the menu would
+ * get caught under the header again - the z-index test in test_web.py
+ * does NOT catch that, it only compares two numbers in the stylesheet. */
 .device-card.is-offline > *:not(.device-foot) {
   opacity: 0.75;
 }
@@ -1391,12 +1395,12 @@ footer.hint-block {
   opacity: 0.75;
 }
 
-/* `.value-chips` (der Flex-Container um die Chips der Kachel) ist mit dem
- * Umbau auf `.value-rows` (weiter unten) entfallen - die Kachel zeigt ihre
- * Werte seither als fluchtendes Raster statt als maeandernde Chips.
- * `.value-chip` (der einzelne Chip) bleibt dagegen bestehen:
- * `.projectsync-unchanged-chips .value-chip` nutzt ihn weiterhin fuer die
- * eingeklappten unveraenderten Signale der Projektdatei-Sync-Karte. */
+/* `.value-chips` (the flex container around the tile's chips) is gone
+ * with the rework onto `.value-rows` (further below) - the tile has since
+ * shown its values as an aligned grid instead of meandering chips.
+ * `.value-chip` (the individual chip) remains, however:
+ * `.projectsync-unchanged-chips .value-chip` still uses it for the
+ * collapsed unchanged signals of the project-file-sync card. */
 .value-chip {
   display: flex;
   align-items: baseline;
@@ -1407,13 +1411,13 @@ footer.hint-block {
   padding: 0.35rem 0.7rem;
 }
 
-/* Projektdatei-Sync (ueberarbeitet nach Nutzerwunsch: "schneller und
- * sauberer Ueberblick"): eine Gesamt-Uebersicht (`.projectsync-summary`)
- * ueber allem, darunter je Geraet eine aufklappbare Karte
- * (`.projectsync-device`, ein natives `<details>`) statt einer langen
- * flachen Tabelle - Aufbau und Gruppierung in `projectSyncGroupedEntries`
- * (app.js), ein Abbild derselben Verschachtelung, in der die Signale
- * nachher in Loxone Config als virtuelle Ein-/Ausgaenge stehen. */
+/* Project file sync (reworked at the user's request: "faster and
+ * cleaner overview"): an overall summary (`.projectsync-summary`)
+ * over everything, below that an expandable card per device
+ * (`.projectsync-device`, a native `<details>`) instead of a long
+ * flat table - structure and grouping in `projectSyncGroupedEntries`
+ * (app.js), a mirror of the same nesting in which the signals
+ * later sit in Loxone Config as virtual inputs/outputs. */
 
 .projectsync-summary {
   display: flex;
@@ -1449,10 +1453,10 @@ footer.hint-block {
   margin-top: 0.6rem;
 }
 
-/* `<details>`/`<summary>` tragen von Haus aus einen browserabhaengigen
-   Aufklapp-Marker (Firefox: Dreieck davor, WebKit: eigenes Symbol) - beide
-   werden hier abgeschaltet und durch dasselbe Pfeil-Icon wie der Rest der
-   Oberflaeche ersetzt (`.chevron` unten), das sich beim Aufklappen dreht. */
+/* `<details>`/`<summary>` natively carry a browser-dependent
+   disclosure marker (Firefox: a triangle in front, WebKit: its own symbol) -
+   both are turned off here and replaced with the same arrow icon as the rest
+   of the UI (`.chevron` below), which rotates when expanded. */
 .projectsync-device summary {
   display: flex;
   align-items: center;
@@ -1513,11 +1517,11 @@ footer.hint-block {
   margin-bottom: 0.4rem;
 }
 
-/* Eine Zeile fuer alles ausser `unchanged` (`projectSyncSplitBySignificance`
-   trennt das vorher) - der linke Rahmen traegt dieselbe Farbe wie der
-   zugehoerige Zaehl-Punkt (`.dot.is-*`), fuer denselben Wiedererkennungs-
-   effekt beim schnellen Ueberfliegen wie der farbige Rand einer
-   Geraetekarte (`.device-card::before`). */
+/* A row for everything except `unchanged` (`projectSyncSplitBySignificance`
+   separates that beforehand) - the left border carries the same colour as the
+   matching count dot (`.dot.is-*`), for the same recognition
+   effect on a quick skim as the coloured edge of a
+   device card (`.device-card::before`). */
 .projectsync-entry {
   border-left: 3px solid var(--border);
   padding: 0.35rem 0 0.35rem 0.65rem;
@@ -1559,11 +1563,11 @@ footer.hint-block {
   margin: 0.2rem 0 0;
 }
 
-/* Attribut-Differenz eines `updated`-Eintrags (Review-Fix Important #6,
-   jetzt strukturiert statt Fliesstext): Alt-Wert durchgestrichen/gedaempft,
-   Neu-Wert kraeftig - dieselbe Farbsprache wie ein hinzugefuegter/entfernter
-   Diff in einer Versionsverwaltung, fuer ein technisches Publikum die
-   vertrauteste Art, "davor -> danach" zu lesen. */
+/* Attribute diff of an `updated` entry (Review-Fix Important #6,
+   now structured instead of running text): old value struck through/muted,
+   new value bold - the same colour language as an added/removed
+   diff in a version control system, for a technical audience the
+   most familiar way to read "before -> after". */
 .projectsync-diff {
   list-style: none;
   margin: 0.4rem 0 0;
@@ -1604,12 +1608,12 @@ footer.hint-block {
   font-weight: 600;
 }
 
-/* Unveraenderte Signale: eingeklappt hinter einer Zaehl-Zusammenfassung,
-   danach nur noch schlichte Chips ohne Status-Badge - sie sind bereits
-   korrekt und sollen den Blick auf das Neue/Geaenderte oben nicht
-   verstellen. Derselbe `.value-chip`-Baustein wie im Geraete-Dashboard
-   (Aufgabe 8), hier fuer denselben Zweck wiederverwendet: viele kleine,
-   gleich aussehende Fakten kompakt nebeneinander. */
+/* Unchanged signals: collapsed behind a count summary,
+   after that only plain chips without a status badge - they are already
+   correct and should not distract the eye from what is new/changed above.
+   The same `.value-chip` building block as in the device dashboard
+   (Task 8), reused here for the same purpose: many small,
+   similar-looking facts arranged compactly side by side. */
 .projectsync-unchanged-disclosure {
   margin-top: 0.6rem;
 }
@@ -1642,27 +1646,27 @@ footer.hint-block {
   color: var(--text-muted);
 }
 
-/* Geraete-Tab: Raumleiste, Raster, Kachel (Entwurf 2026-09-05).
+/* Devices tab: room bar, grid, tile (design 2026-09-05).
  *
- * Das Raster ist der eigentliche Punkt: eine Kachel war bisher so breit
- * wie das Fenster und so hoch wie ihr Inhalt - zwoelf Geraete waren zwoelf
- * Bildschirmhoehen. `auto-fill` mit einer Untergrenze statt eigener
- * Breakpoints: 260 px stammt aus einer Messung, bei der die Kopfzeile
- * noch den Leitwert trug - ab dieser Breite brachen damals weder sie noch
- * die Wertespalte um. Mit dessen Wegfall (Entwurf 2026-09-07) ist die
- * Kopfzeile schmaler geworden, die Untergrenze also eher grosszuegig als
- * knapp bemessen; neu vermessen wurde sie deswegen nicht. Daraus ergeben
- * sich vier Spalten auf dem Desktop, zwei auf dem Tablet, eine auf dem
- * Telefon, ohne dass eine Media Query die Zahlen ein zweites Mal
- * festlegt.
+ * The grid is the actual point: until now, a tile was as wide as the
+ * window and as tall as its content - twelve devices were twelve
+ * screen heights. `auto-fill` with a lower bound instead of its own
+ * breakpoints: 260px comes from a measurement taken while the header
+ * still carried the primary signal - from this width on, back then,
+ * neither it nor the value column wrapped. With that dropped (design
+ * 2026-09-07) the header has become narrower, so the lower bound is
+ * measured generously rather than tightly; it was therefore not
+ * re-measured. That yields four columns on the desktop, two on the
+ * tablet, one on the phone, without a media query fixing the numbers a
+ * second time.
  *
- * Nacharbeit 2026-09-05, Fund 2: `align-items: start` liess jede Kachel
- * auf ihrer eigenen Inhaltshoehe stehen - in einer Reihe mit
- * unterschiedlich vielen Signalen/Kommandos ergab das sichtbar
- * unterschiedlich hohe Kacheln (gemessen: 277px neben 271px in derselben
- * Reihe). Eine Geraetetabelle liest sich als Raster, nicht als Treppe;
- * `align-items: stretch` dehnt jedes Grid-Item stattdessen auf die Hoehe
- * der hoechsten Kachel seiner Reihe. */
+ * Follow-up 2026-09-05, finding 2: `align-items: start` left every tile
+ * standing at its own content height - in a row with
+ * differing numbers of signals/commands that produced visibly
+ * differently tall tiles (measured: 277px next to 271px in the same
+ * row). A device table should read as a grid, not as a staircase;
+ * `align-items: stretch` instead stretches every grid item to the height
+ * of the tallest tile in its row. */
 .device-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
@@ -1670,39 +1674,39 @@ footer.hint-block {
   align-items: stretch;
 }
 
-/* Reines `stretch` (s.o.) dehnt nur die Karte, nicht ihren Inhalt - die
- * zusaetzliche Hoehe blieb bislang als Leerraum UNTER der Fusszeile
- * stehen, waehrend die kuerzere Nachbarkachel ihre Fusszeile direkt unters
- * letzte Kommando zeichnet (gemessen: zwei Fusszeilen derselben Reihe
- * 14px versetzt, mit ungleich viel Leerraum darunter). Die Karte wird
- * deshalb selbst zur Flex-Spalte, und `.device-foot` bekommt
- * `margin-top: auto`, das den gesamten uebrigen Freiraum VOR sich
- * aufsaugt statt ihn hinter der Fusszeile liegen zu lassen - gleiche
- * Kachelhoehe bedeutet damit auch fluchtende Fusszeilen, nicht nur
- * fluchtende untere Kachelraender. `display: flex` gehoert NICHT zu den
- * an `.device-card` verbotenen Nebeneffekten (`opacity`/`filter`/
- * `transform`, Begruendung dort) und spannt keinen eigenen Stacking-
- * Kontext auf - der Farbstreifen (`.device-card::before`, `position:
- * absolute`, `top`/`bottom` auf 0) haengt an der Hoehe seines
- * Elternelements, nicht an dessen Layout-Modus, und bleibt darum
- * unveraendert ueber die volle (jetzt gestreckte) Kartenhoehe gespannt -
- * das ist nach dieser Aenderung erneut zu pruefen, nicht nur zu
- * behaupten.
+/* Plain `stretch` (see above) only stretches the card, not its content - the
+ * extra height used to stay as empty space BELOW the footer,
+ * while the shorter neighbouring tile draws its footer directly under its
+ * last command (measured: two footers of the same row
+ * offset by 14px, with unequal amounts of empty space below them). The card
+ * therefore becomes a flex column itself, and `.device-foot` gets
+ * `margin-top: auto`, which soaks up all the remaining free space in front
+ * of itself instead of leaving it behind the footer - equal
+ * tile height thus also means aligned footers, not just
+ * aligned bottom tile edges. `display: flex` is NOT among the
+ * side effects forbidden on `.device-card` (`opacity`/`filter`/
+ * `transform`, reasoning there) and does not open its own stacking
+ * context - the colour stripe (`.device-card::before`, `position:
+ * absolute`, `top`/`bottom` at 0) depends on the height of its
+ * parent element, not on its layout mode, and therefore stays
+ * unchanged spanning the full (now stretched) card height -
+ * that needs to be re-verified after this change, not just
+ * asserted.
  *
- * Fund 2 (Review vom 2026-09-05): `display: flex` hat einen zweiten,
- * unbeabsichtigten Nebeneffekt - Margin-Collapsing gilt nur zwischen
- * BLOCK-Boxen im normalen Fluss, ein Flex-Container erzeugt fuer seine
- * direkten Kinder aber Flex-Items, die per Spezifikation nie kollabieren.
- * `.value-rows` (`margin: 0.5rem 0`) und die bedingt sichtbaren
- * `<p class="hint">`-Absaetze direkt darunter (UA-Standardmargin) haben
- * bislang aus genau diesem Kollabieren ihren Abstand gezogen - gemessen
- * VOR dieser Karte-wird-Flex-Aenderung 13.12px (`max(8px, 13.12px)`),
- * seither 21.12px (`8px + 13.12px`, siehe die gezielte Korrektur bei
- * `.value-rows` unten). `.device-foot { margin-top: auto }` (s.u.) federt
- * das bei der Fusszeile selbst ab, weil es den gesamten Freiraum ohnehin
- * aufsaugt - bei `.value-rows` und den Hinweis-Absaetzen faellt dieselbe
- * Kollabier-Aufhebung aber niemandem automatisch zum Opfer, sie muss
- * gezielt nachgebildet werden. */
+ * Finding 2 (review from 2026-09-05): `display: flex` has a second,
+ * unintended side effect - margin collapsing only applies between
+ * BLOCK boxes in normal flow, but a flex container turns its
+ * direct children into flex items, which per spec never collapse.
+ * `.value-rows` (`margin: 0.5rem 0`) and the conditionally visible
+ * `<p class="hint">` paragraphs directly below it (UA default margin) have
+ * until now drawn their spacing from exactly this collapsing - measured
+ * BEFORE this card-becomes-flex change, 13.12px (`max(8px, 13.12px)`),
+ * since then 21.12px (`8px + 13.12px`, see the targeted fix at
+ * `.value-rows` below). `.device-foot { margin-top: auto }` (see below)
+ * absorbs that for the footer itself, because it soaks up all the free
+ * space anyway - for `.value-rows` and the hint paragraphs the same
+ * collapsing removal does not automatically fall on anyone, it has to be
+ * reproduced deliberately. */
 .device-grid .device-card {
   margin-bottom: 0;
   display: flex;
@@ -1728,11 +1732,11 @@ footer.hint-block {
   align-items: center;
 }
 
-/* Schluckt den freien Rest der Zeile und schiebt das Suchfeld damit nach
- * rechts an den Chips vorbei. Steht als eigene Klasse statt als
- * `style`-Attribut im Markup, weil das Element inzwischen unter einem
- * `x-if` haengt - dort gehoert die Begruendung ins Markup, das Mass ins
- * Stylesheet. */
+/* Soaks up the remaining free space of the row and thereby pushes the search
+ * field past the chips to the right. Exists as its own class rather than as
+ * a `style` attribute in the markup, because the element now sits under an
+ * `x-if` - the reasoning belongs in the markup there, the measurement in the
+ * stylesheet. */
 .room-spacer {
   flex: 1 1 auto;
 }
@@ -1756,8 +1760,8 @@ footer.hint-block {
   font-size: 0.75rem;
 }
 
-/* Das Eingabefeld beim Umbenennen uebernimmt die Groesse der Ueberschrift,
- * die es ersetzt - sonst springt die Zeile beim Klick auf den Stift. */
+/* The input field when renaming takes over the size of the heading
+ * it replaces - otherwise the row jumps when clicking the pencil. */
 .room-rename-input {
   font-size: 0.75rem;
   letter-spacing: 0.08em;
@@ -1765,17 +1769,17 @@ footer.hint-block {
   padding: 0.05rem 0.3rem;
 }
 
-/* Suchfeld der Raumleiste (Entwurf Suchfeld-Optik, 2026-09-06). Vorher war
- * das ein nacktes `input[type="search"]`: die Formularregel weiter oben in
- * dieser Datei listet text, number, password und select - `search` steht
- * nicht darunter, und der Browser zeichnete das Feld deshalb selbst. Im
- * Dunkelmodus griff dabei keine der Projektfarben.
+/* Room bar's search field (search-field look design, 2026-09-06). Previously
+ * this was a bare `input[type="search"]`: the form rule further up in
+ * this file lists text, number, password and select - `search` is
+ * not among them, and the browser therefore drew the field itself. In
+ * dark mode none of the project colours applied to it.
  *
- * Der Rahmen sitzt HIER, am Container - das Eingabefeld darin ist rand- und
- * hintergrundlos (s.u.). So liegen Lupe, Zaehler und Kreuz mit im Rahmen,
- * ohne dass eines davon absolut positioniert werden muesste: jedes Polster,
- * das zur Icongroesse passen muss, waere eine Kopplung, die beim naechsten
- * Schriftgroessen-Dreh bricht. */
+ * The border sits HERE, on the container - the input field inside it is
+ * border- and background-less (see below). This way the magnifying glass,
+ * counter and cross sit within the border, without any of them having to be
+ * positioned absolutely: any padding that has to match the icon size would
+ * be a coupling that breaks at the next font-size change. */
 .search-field {
   display: flex;
   align-items: center;
@@ -1784,23 +1788,24 @@ footer.hint-block {
   border: 1px solid var(--border);
   border-radius: 5px;
   padding: 0.15rem 0.4rem;
-  /* Waechst in den freien Rest der Zeile, gedeckelt bei 22rem. Wer den
-   * Deckel hebt, bekommt auf einem breiten Fenster ein Suchfeld ueber vier
-   * Kacheln - schlechter als der einsame Kasten, den es zu beseitigen
-   * gilt. */
+  /* Grows into the free rest of the row, capped at 22rem. Whoever
+   * lifts the cap gets a search field spanning four
+   * tiles on a wide window - worse than the lone box it is
+   * meant to get rid of. */
   flex: 1 1 12rem;
   max-width: 22rem;
 }
 
-/* Der Ring gehoert an die Gruppe, nicht an ihre Mitte: am `input:focus`
- * umschloesse er nur das Eingabefeld und liesse Lupe und Kreuz draussen. */
+/* The ring belongs on the group, not on its centre: on `input:focus`
+ * it would only enclose the input field and leave the magnifying glass and
+ * cross outside. */
 .search-field:focus-within {
   border-color: var(--accent);
 }
 
-/* Ohne `pointer-events: none` faengt die Lupe Klicks ab, die dem Feld
- * gelten - sie sieht aus wie Teil des Feldes und soll sich auch so
- * verhalten. */
+/* Without `pointer-events: none` the magnifying glass would capture clicks
+ * meant for the field - it looks like part of the field and should also
+ * behave that way. */
 .search-icon {
   color: var(--text-muted);
   pointer-events: none;
@@ -1822,17 +1827,17 @@ footer.hint-block {
   outline: none;
 }
 
-/* WebKit legt sein eigenes Loeschkreuz ins Feld - daneben stuende unseres
- * ein zweites Mal. Beide Schreibweisen, weil das Pseudoelement selbst
- * herstellerspezifisch ist. */
+/* WebKit puts its own clear cross into the field - ours would stand
+ * next to it a second time. Both spellings, because the pseudo-element
+ * itself is vendor-specific. */
 .search-field input[type="search"]::-webkit-search-cancel-button {
   -webkit-appearance: none;
   appearance: none;
 }
 
-/* `tabular-nums`: ohne das wechselt die Ziffernbreite von 9 auf 10 und
- * schiebt das Kreuz daneben mit - dasselbe Zappeln, das die Altersangabe an
- * der Signalzeile schon einmal gekostet hat (siehe `.value-fresh`). */
+/* `tabular-nums`: without this the digit width changes from 9 to 10 and
+ * shifts the cross next to it along with it - the same jitter that the age
+ * indicator on the signal row already cost once (see `.value-fresh`). */
 .search-count {
   font-size: 0.72rem;
   color: var(--text-muted);
@@ -1840,9 +1845,9 @@ footer.hint-block {
   font-variant-numeric: tabular-nums;
 }
 
-/* Knopf ohne Knopfoptik - der Rahmen der Gruppe steht schon. `line-height:
- * 0`, damit die Zeilenhoehe des leeren Knopftextes das Icon nicht nach
- * unten aus der Achse schiebt. */
+/* A button without button styling - the group's border is already there.
+ * `line-height: 0`, so that the line height of the empty button text does
+ * not push the icon down off the axis. */
 .search-clear {
   border: none;
   background: none;
@@ -1863,11 +1868,11 @@ footer.hint-block {
   margin: 1rem 0 0.4rem;
 }
 
-/* Kopfzeile: Icon links, Name in der Mitte, Status-Pille rechts (nur
- * wenn das Geraet offline ist), alle auf einer Sichtachse. `min-width: 0`
- * an der Mitte, damit ein langer Geraetename kuerzt statt die Pille aus
- * der Kachel zu schieben - ohne diese Zeile gewinnt in einem Flex-Element
- * der Inhalt gegen jede Breitenangabe. */
+/* Header row: icon on the left, name in the middle, status pill on the
+ * right (only when the device is offline), all on one visual axis.
+ * `min-width: 0` on the middle, so a long device name truncates instead
+ * of pushing the pill out of the tile - without this line, in a flex
+ * item the content wins against any width setting. */
 .device-head {
   display: flex;
   align-items: flex-start;
@@ -1877,50 +1882,50 @@ footer.hint-block {
 .device-ident {
   flex: 1 1 auto;
   min-width: 0;
-  /* `.device-ident` ist ein <span> - ohne `display: flex` rendert es
-   * inline und schiebt dem `<input>` fremden Zeilenabstand unter. */
+  /* `.device-ident` is a <span> - without `display: flex` it renders
+   * inline and sneaks foreign line spacing under the `<input>`. */
   display: flex;
 }
 
-/* `.device-head .device-name` statt nur `.device-name`: die generische
- * Regel `input[type="text"] { min-width: 12rem }` weiter oben in dieser
- * Datei hat als Typ-plus-Attribut-Selektor dieselbe Spezifitaet wie eine
- * Klasse plus eins - eine einfache Klassenregel verliert gegen sie. Der
- * Nachfahren-Selektor hebt die Regel darueber, ohne sich auf die
- * Reihenfolge in der Datei zu verlassen. */
-/* Fund 1 (Review vom 2026-09-05): ein `<input>` clippt seinen Text intern
- * am Rand der Content-Box, sobald er nicht mehr hineinpasst - ganz ohne
- * dass CSS das ausdruecklich anfordert, und ganz ohne jedes Zeichen, das
- * anzeigt, dass Text fehlt. An der dokumentierten Grid-Untergrenze
- * (261 px) bekam dieses Feld frueher nur 65 px, weil `.lead-value`
- * daneben die halbe Kopfzeile beanspruchte und nicht schrumpfte; seit
- * dessen Wegfall (Entwurf 2026-09-07) hat der Name die Kopfzeile
- * abzueglich Icon-Kachel und Abstaenden fuer sich - ausser bei einem
- * offline stehenden Geraet, wo die Status-Pille denselben Platz belegt
- * (index.html, `.device-head`). Kuerzen muss er damit nur noch bei
- * aussergewoehnlich langen Namen, offline etwas frueher - die beiden
- * Eigenschaften am Ende dieser Regel sorgen dafuer, dass es das sichtbar
- * tut statt einen Namen mitten im Buchstaben
- * verschwinden zu lassen. Ein zusaetzliches `white-space: nowrap` fuer die
- * Ellipse ist bei `<input>` unnoetig - ein Textfeld umbricht ohnehin nie,
- * das ist bereits sein natives Verhalten. */
+/* `.device-head .device-name` instead of just `.device-name`: the
+ * generic rule `input[type="text"] { min-width: 12rem }` further up in
+ * this file has, as a type-plus-attribute selector, the same specificity
+ * as a class plus one - a plain class rule loses against it. The
+ * descendant selector outranks the rule above it, without relying on the
+ * order in the file. */
+/* Finding 1 (review of 2026-09-05): an `<input>` clips its text internally
+ * at the edge of the content box as soon as it no longer fits - entirely
+ * without CSS explicitly requesting that, and entirely without any
+ * indication that text is missing. At the documented grid lower bound
+ * (261px), this field used to get only 65px, because `.lead-value`
+ * next to it claimed half the header and did not shrink; since that was
+ * dropped (design 2026-09-07) the name has the header to itself minus
+ * the icon tile and spacing - except for a device that is
+ * offline, where the status pill occupies the same space
+ * (index.html, `.device-head`). It therefore now only has to truncate
+ * for exceptionally long names, a bit sooner when offline - the two
+ * properties at the end of this rule ensure that it does that visibly
+ * instead of letting a name vanish mid-letter. An additional
+ * `white-space: nowrap` for the ellipsis is unnecessary on an `<input>` -
+ * a text field never wraps anyway, that is already its native
+ * behavior. */
 .device-head .device-name {
   font-weight: 600;
   border: 1px solid transparent;
   background: transparent;
   padding: 0.1rem 0.2rem;
   width: 100%;
-  /* `min-width: 0` MUSS hier stehen, nicht nur am umschliessenden
-   * `.device-ident` (2026-09-05, an den README-Screenshots aufgefallen).
-   * Ein `<input>` bringt aus seinem Standard-`size=20` eine intrinsische
-   * Mindestbreite mit - hier gemessene 192 px -, und `width: 100%` drueckt
-   * es darunter nicht. Das Feld lief deshalb aus seinem bereits korrekt
-   * auf 142 px geschrumpften Elternelement heraus und schob sich unter den
-   * Leitwert: bei 300 px breiten Kacheln, also im normalen Desktop-Fall
-   * mit drei bis vier Spalten, ueberlappten beide um 23 bis 43 px. Bei
-   * breiten Kacheln faellt es nicht auf, weil dort ohnehin Platz ist -
-   * genau deshalb hat es keine der Pruefungen an einer einzelnen Kachel
-   * gezeigt. */
+  /* `min-width: 0` MUST be here, not only on the enclosing
+   * `.device-ident` (2026-09-05, noticed on the README screenshots).
+   * An `<input>` brings along an intrinsic minimum width from its default
+   * `size=20` - measured here at 192px -, and `width: 100%` does not push
+   * it below that. The field therefore ran out of its parent element,
+   * which had already correctly shrunk to 142px, and slid under the
+   * primary signal: on 300px-wide tiles, i.e. in the normal desktop case
+   * with three to four columns, the two overlapped by 23 to 43px. On
+   * wide tiles it does not stand out, because there is room to spare anyway
+   * - exactly why none of the checks on a single tile
+   * showed it. */
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1932,21 +1937,21 @@ footer.hint-block {
   background: var(--surface);
 }
 
-/* Werteraster statt Chips: die Werte fluchten ueber alle Kacheln hinweg in
- * einer Spalte, statt als unterschiedlich breite Chips zu maeandern - man
- * scannt eine Spalte statt zwoelf Bausteine. */
-/* `fit-content(9rem)` statt nacktem `auto` an der zweiten Spalte: eine
- * `auto`-Spalte waechst auf die volle Max-Content-Breite ihres Inhalts,
- * VOELLIG unabhaengig von `min-width` auf dem Grid-Item - das begrenzt nur
- * die Minimalgroesse, nicht die maximale. Ein einzelner sehr langer
- * (`white-space: nowrap`, siehe `.value-rows .value` unten) Wert wuerde die
- * Spalte also auf seine volle Breite aufblasen und der `1fr`-Spalte
- * daneben den Rest wegnehmen (bis auf 0px, gemessen) - `min-width: 0` auf
- * `.value-key` haette das nicht verhindert, weil das Problem in der
- * Spaltenbreite selbst liegt, nicht im Item. `fit-content(9rem)` deckelt
- * genau diese Spaltenbreite: kurze Werte (`42.3 W`) bekommen weiterhin nur
- * so viel Platz wie sie brauchen, ein pathologisch langer Wert wird bei
- * 9rem gekappt, statt die Titel-Spalte zu verdraengen. */
+/* Value grid instead of chips: the values line up in one column across
+ * all tiles, instead of meandering as differently wide chips - you
+ * scan one column instead of twelve individual blocks. */
+/* `fit-content(9rem)` instead of a bare `auto` on the second column: an
+ * `auto` column grows to the full max-content width of its content,
+ * ENTIRELY independent of `min-width` on the grid item - that only
+ * limits the minimum size, not the maximum. A single very long
+ * (`white-space: nowrap`, see `.value-rows .value` below) value would
+ * inflate the column to its full width and take the rest away from
+ * the `1fr` column next to it (down to 0px, measured) - `min-width: 0`
+ * on `.value-key` would not have prevented that, because the problem
+ * lies in the column width itself, not in the item. `fit-content(9rem)`
+ * caps exactly this column width: short values (`42.3 W`) still get
+ * only as much room as they need, a pathologically long value gets
+ * cut off at 9rem instead of displacing the title column. */
 .value-rows {
   display: grid;
   grid-template-columns: minmax(0, 1fr) fit-content(9rem);
@@ -1954,29 +1959,30 @@ footer.hint-block {
   margin: 0.5rem 0;
 }
 
-/* Fund 2 (Review vom 2026-09-05): die Korrektur zum Margin-Collapsing, das
- * `.device-card` als Flex-Spalte (s. Kommentar dort) fuer ihre direkten
- * Kinder abgeschafft hat. Betroffen sind ausschliesslich die beiden
- * bedingt sichtbaren `<p class="hint">`-Absaetze zwischen `.value-rows`
- * und `.device-commands` (index.html: "Signale laden" bzw. "keine
- * funktionalen Signale") - der `+`-Kettenselektor trifft ausdruecklich nur
- * diese zwei, nicht den dritten `.hint`-Absatz ganz unten in der Karte
- * (Miniserver-Hinweis nach `.device-foot`), dessen Abstand von dieser
- * Aenderung unberuehrt bleiben soll.
+/* Finding 2 (review from 2026-09-05): the fix for the margin collapsing
+ * that `.device-card` as a flex column (see the comment there) abolished
+ * for its direct children. Affected are exclusively the two
+ * conditionally visible `<p class="hint">` paragraphs between `.value-rows`
+ * and `.device-commands` (index.html: "Loading signals" and "no
+ * functional signals") - the `+` chain selector explicitly matches only
+ * these two, not the third `.hint` paragraph right at the bottom of the card
+ * (the Miniserver hint after `.device-foot`), whose spacing is meant to
+ * stay unaffected by this change.
  *
- * Im Browser gemessen: `.value-rows` traegt `margin-bottom: 0.5rem`
- * (8px), der UA-Standard eines `<p>` bei dessen `font-size: 0.82rem`
- * `margin-block: 1em` (13.12px). Vor dem Flex-Umbau kollabierten beide zu
- * `max(8px, 13.12px)` = 13.12px, seither addieren sie sich zu 21.12px.
- * Ein blindes `margin: 0` auf dem Absatz waere zwar der simpelste Reset,
- * liesse die Luecke aber bei 8px stehen - kleiner als vorher, nicht "wie
- * vorher". Stattdessen traegt NUR `margin-top` exakt die Differenz
- * (13.12px - 8px = 5.12px = 0.32rem): zusammen mit `.value-rows`' eigenen
- * 8px ergibt das wieder 13.12px, ohne dass hier eine zweite, unabhaengige
- * Zahl geraten wird. `margin-bottom` bleibt bewusst unangetastet - der
- * naechste Nachbar (`.device-commands`) traegt kein eigenes `margin-top`,
- * dort kollabierte ohnehin nur MIT einer Null (`max(13.12px, 0)` =
- * `13.12px + 0` sind identisch), das war also nie zusaetzlich betroffen. */
+ * Measured in the browser: `.value-rows` carries `margin-bottom: 0.5rem`
+ * (8px), a `<p>`'s UA default at its `font-size: 0.82rem` is
+ * `margin-block: 1em` (13.12px). Before the flex rework, the two collapsed
+ * to `max(8px, 13.12px)` = 13.12px, since then they add up to 21.12px.
+ * A blind `margin: 0` on the paragraph would be the simplest reset,
+ * but would leave the gap at 8px - smaller than before, not "like
+ * before". Instead, ONLY `margin-top` carries exactly the difference
+ * (13.12px - 8px = 5.12px = 0.32rem): together with `.value-rows`'s own
+ * 8px that adds back up to 13.12px, without a second, independent
+ * number being guessed here. `margin-bottom` is deliberately left
+ * untouched - the next sibling (`.device-commands`) carries no
+ * `margin-top` of its own, there it only ever collapsed WITH a zero
+ * (`max(13.12px, 0)` = `13.12px + 0` are identical anyway), so it was
+ * never additionally affected. */
 .value-rows + p.hint,
 .value-rows + p.hint + p.hint {
   margin-top: 0.32rem;
@@ -1986,25 +1992,25 @@ footer.hint-block {
   display: contents;
 }
 
-/* `min-width: 0` auf beiden Rasterzellen ist trotz der Spaltendeckelung
- * oben noetig: das automatische Minimum eines Grid-Items ist sonst seine
- * Inhaltsbreite (dieselbe Falle wie beim `.device-name`-Eingabefeld an
- * anderer Stelle in diesem Projekt) - ohne das wuerde `.value-key` selbst
- * bei ausreichend Platz in der `1fr`-Spalte nie unter seine eigene
- * Inhaltsbreite schrumpfen und den Umbruch unten nie ausloesen. Das faellt
- * erst seit `.device-card` `overflow: visible` setzt (Begruendung dort,
- * wegen des Kachel-Menues) wirklich auf: vorher hat die Karte selbst das
- * Ergebnis stillschweigend abgeschnitten, jetzt laeuft es sichtbar in die
- * Nachbarkachel. Reale Werte sind kurz (`42.3 W`, `true`), aber
- * Signaltitel sind vom Nutzer frei vergeben - dieser Guard ist die
- * Absicherung fuer den Tag, an dem einer lang und unteilbar ist. */
+/* `min-width: 0` on both grid cells is necessary despite the column
+ * capping above: a grid item's automatic minimum is otherwise its
+ * content width (the same trap as with the `.device-name` input field
+ * elsewhere in this project) - without it `.value-key` would, even
+ * with enough room in the `1fr` column, never shrink below its own
+ * content width and never trigger the wrap below. This has only really
+ * become noticeable since `.device-card` sets `overflow: visible`
+ * (reasoning there, because of the tile menu): before, the card itself
+ * silently clipped the result, now it visibly runs into the
+ * neighbouring tile. Real values are short (`42.3 W`, `true`), but
+ * signal titles are freely assigned by the user - this guard is the
+ * safeguard for the day one is long and unbreakable. */
 .value-key {
   font-size: 0.75rem;
   color: var(--text-muted);
   min-width: 0;
-  /* Der Titel ist Fliesstext, kein Einzelwert - zwei Zeilen sind lesbar,
-     `break-word` verhindert nur, dass ein einzelnes langes Wort ohne
-     Leerzeichen (z.B. ein technischer Signalname) die Zeile sprengt. */
+  /* The title is running text, not a single value - two lines are readable,
+     `break-word` only prevents a single long word without
+     a space (e.g. a technical signal name) from bursting the row. */
   overflow-wrap: break-word;
 }
 
@@ -2013,26 +2019,27 @@ footer.hint-block {
   font-size: 0.75rem;
   text-align: right;
   min-width: 0;
-  /* Der Wert ist ein einzelner Messpunkt, kein Text zum Weiterlesen -
-     Umbruch wuerde ihn in der schmalen Spalte optisch zerreissen
-     (`42.3` in Zeile eins, `W` in Zeile zwei) und die Rasterzeilen
-     ungleich hoch machen. Kappen mit Ellipse haelt die Zeile einzeilig
-     und die Spalte fluchtend; die Signalliste (View "signals") zeigt
-     denselben Wert ungekuerzt, falls der Ellipse-Rest nicht reicht. */
+  /* The value is a single measurement point, not text to keep reading -
+     wrapping would visually tear it apart in the narrow column
+     (`42.3` in line one, `W` in line two) and make the grid rows
+     unequally tall. Capping with an ellipsis keeps the row single-line
+     and the column aligned; the signal list (view "signals") shows
+     the same value uncut, in case what is left after the ellipsis is not
+     enough. */
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-/* Der Batteriestand als eigene Zeile am Fuss der Vorschau (Entwurf
-   2026-09-07, Abschnitt 6). Gestrichelt abgesetzt, nicht mit einer
-   durchgezogenen Linie: die gepunktete Trennung signalisiert "gehoert
-   dazu, ist aber eine andere Art von Angabe" statt einer harten Grenze
-   zwischen zwei unabhaengigen Bloecken.
+/* The battery level as its own row at the foot of the preview (design
+   2026-09-07, section 6). Set off with a dashed line, not a
+   solid one: the dotted separation signals "belongs here, but is a
+   different kind of information" instead of a hard boundary
+   between two independent blocks.
 
-   `margin-top` steht auf dem Element, nicht als `margin-bottom` der
-   Vorschau: ein netzbetriebenes Geraet blendet diese Zeile per `x-show`
-   aus, und ein Aussenmass am Nachbarn bliebe dann als Luecke stehen. */
+   `margin-top` sits on the element itself, not as `margin-bottom` of
+   the preview: a mains-powered device hides this row via `x-show`,
+   and an outer dimension on the neighbor would then remain as a gap. */
 .device-battery {
   display: flex;
   align-items: baseline;
@@ -2054,9 +2061,9 @@ footer.hint-block {
   flex: 1 1 auto;
 }
 
-/* Rechtsbuendig wie in `.value-rows`, damit die Zahl mit den Werten
-   darueber fluchtet - die Zeile ist ein Flex-Container und erbt deren
-   Rasterausrichtung nicht. */
+/* Right-aligned as in `.value-rows`, so the number lines up with the
+   values above it - this row is a flex container and does not inherit
+   their grid alignment. */
 .device-battery .value {
   flex: 0 0 auto;
   font-size: 0.75rem;
@@ -2073,20 +2080,20 @@ footer.hint-block {
   border-top: 1px solid var(--border);
 }
 
-/* `.row + .row { margin-top: 0.5rem }` (weiter oben in dieser Datei) ist
- * fuer VERTIKAL gestapelte Zeilen gedacht. Jeder Befehl steckt in einem
- * eigenen `<span class="row">`-Wrapper (index.html), hier aber NEBENEINANDER
- * in derselben Flex-Zeile von `.device-commands` (`align-items: center`) -
- * ein Top-Margin schiebt so einen Wrapper nicht nach unten, sondern
- * innerhalb der zentrierten Zeile aus der Mitte nach OBEN. Gemessen: der
- * Knopf im ersten (margin-losen) Wrapper stand bei `top: 976.1`, die
- * beiden folgenden bei `top: 980.1` - 4px versetzt trotz identischer
- * Knopfhoehe (30.9px bei allen drei). Der Wrapper braucht den Rest von
- * `.row` weiterhin (Flex, `gap`, Zentrierung der Inline-Werteingabe bei
- * `command.takes_value`) - nur nicht dessen Stapel-Margin, die hier keine
- * stapelnden Zeilen vorfindet. Deshalb ein gezielter Override statt einer
- * Streichung an `.row + .row` selbst: der bleibt fuer jede vertikale
- * Verwendung anderswo unangetastet. */
+/* `.row + .row { margin-top: 0.5rem }` (further up in this file) is
+ * meant for VERTICALLY stacked rows. Every command sits in its own
+ * `<span class="row">` wrapper (index.html), but here SIDE BY SIDE
+ * in the same flex row of `.device-commands` (`align-items: center`) -
+ * a top margin does not push such a wrapper down there, but
+ * shifts it UPWARD out of the centre within the centred row. Measured: the
+ * button in the first (margin-less) wrapper sat at `top: 976.1`, the
+ * following two at `top: 980.1` - offset by 4px despite identical
+ * button height (30.9px on all three). The wrapper still needs the rest of
+ * `.row` (flex, `gap`, centring of the inline value input for
+ * `command.takes_value`) - just not its stacking margin, which finds no
+ * stacking rows here. Hence a targeted override instead of
+ * removing it from `.row + .row` itself: that stays untouched for every
+ * vertical use elsewhere. */
 .device-commands > .row + .row {
   margin-top: 0;
 }
@@ -2102,54 +2109,54 @@ footer.hint-block {
   font-size: 0.7rem;
 }
 
-/* Die Pille rutscht ans SEHENDE Ende der Fusszeile, ohne im Markup zu
- * wandern (2026-09-06).
+/* The pill slides to the VISUAL end of the footer, without moving in the
+ * markup (2026-09-06).
  *
- * Der Grund ist der Umbruch: bei der ueblichen Desktopbreite - drei
- * Spalten, rund 300 px je Kachel - passen Export-Hinweis und Pille
- * zusammen nicht mehr in eine Zeile, und bei DOM-Reihenfolge
- * (Hinweis, Pille, Abstandhalter, Kebab) landete der Kebab allein in
- * einer zweiten Zeile und hing dort verloren unter dem Text. Weil die
- * meisten Geraete "seit dem Export geaendert" sind, war das der
- * Normalfall, nicht die Ausnahme. Mit `order: 1` teilt sich der Kebab die
- * erste Zeile mit dem Hinweis (der Abstandhalter schiebt ihn nach
- * rechts), und die Pille bricht als Ganzes darunter um.
+ * The reason is the wrap: at the usual desktop width - three
+ * columns, roughly 300px per tile - the export hint and pill
+ * together no longer fit into one row, and with DOM order
+ * (hint, pill, spacer, kebab), the kebab landed alone on
+ * a second row and hung there, lost below the text. Because
+ * most devices are "changed since the export", that was the
+ * normal case, not the exception. With `order: 1` the kebab shares
+ * the first row with the hint (the spacer pushes it to the
+ * right), and the pill wraps as a whole below that.
  *
- * BEWUSST `order` statt einer anderen Markup-Reihenfolge: im Markup
- * stehen Hinweis und Pille absichtlich nebeneinander, damit sie in dieser
- * Folge vorgelesen werden ("Zuletzt exportiert am ... und seither
- * geaendert") - dieselbe Begruendung wie beim Umzug der Pille hierher.
- * Die sonst berechtigte Sorge, dass `order` Seh- und Tab-Reihenfolge
- * auseinanderlaufen laesst, greift hier nicht: in der Fusszeile ist
- * einzig der Kebab fokussierbar, es gibt also gar keine zweite
- * Reihenfolge, die abweichen koennte.
+ * DELIBERATELY `order` instead of a different markup order: in the markup,
+ * the hint and pill deliberately stand next to each other, so that they are
+ * read out in this order ("Last exported on ... and changed
+ * since") - the same reasoning as when the pill was moved here.
+ * The otherwise legitimate concern that `order` lets visual and tab
+ * order drift apart does not apply here: in the footer,
+ * only the kebab is focusable, so there is no second
+ * order that could diverge.
  *
- * `flex-basis: 100%` gehoert zwingend dazu, `order` allein reicht NICHT.
- * Ohne die Basis haengt das Ergebnis an der Kachelbreite: passt alles in
- * eine Zeile - gemessen ab etwa 460 px, also im einspaltigen Layout -,
- * dann steht der Kebab ploetzlich MITTEN in der Fusszeile zwischen
- * Hinweis und Pille (gemessen 172 px vom rechten Rand), weil die Pille
- * ihn nach `order` ueberholt. Mit der vollen Basis bricht die Pille
- * immer auf eine eigene Zeile um, und die Aufteilung ist bei jeder
- * Breite dieselbe: oben Hinweis links und Kebab rechts, darunter die
- * Pille. Gemessen bei 300 px, 460 px und 526 px Kachelbreite - Kebab
- * jeweils 17 px vom rechten Rand, Pille 21 px vom linken, kein
- * Ueberlauf. Der Preis ist eine Zeile Hoehe auch dort, wo Platz waere;
- * das ist der Gegenwert fuer eine Fusszeile, die sich nicht je nach
- * Fensterbreite anders sortiert. */
+ * `flex-basis: 100%` is mandatory alongside it, `order` alone is NOT
+ * enough. Without the basis, the result depends on the tile width: if
+ * everything fits into one row - measured from about 460px, i.e. in the
+ * single-column layout - then the kebab suddenly stands IN THE MIDDLE of
+ * the footer between the hint and the pill (measured 172px from the right
+ * edge), because the pill overtakes it via `order`. With the full basis,
+ * the pill always wraps onto its own row, and the split is the same at
+ * every width: hint on the left and kebab on the right up top, the
+ * pill below. Measured at 300px, 460px and 526px tile width - kebab
+ * 17px from the right edge each time, pill 21px from the left, no
+ * overflow. The price is one row of height even where there would be room;
+ * that is the trade-off for a footer that does not rearrange itself
+ * depending on window width. */
 .device-foot > .status-pill {
   order: 1;
   flex-basis: 100%;
 }
 
-/* `.status-pill` ist auf die Kopfzeile zugeschnitten (0.78rem, groszuegiges
- * Padding, `margin-left: auto` fuer die Ausrichtung neben `.device-ident`)
- * - in der 0.7rem-Fusszeile einer 260 px-Kachel (Pille-in-die-Fusszeile-
- * Umbau, 2026-09-06) waere das zu grob und der Auto-Rand wuerde sich mit
- * dem eigenen Abstands-Element (`<span style="flex: 1 1 auto">`) um denselben
- * Freiraum streiten. Kleinere Schrift/Polsterung, kein Auto-Rand: die Pille
- * fuegt sich neben `.hint` ein, statt sich selbst an den rechten Rand zu
- * schieben. */
+/* `.status-pill` is tailored to the header (0.78rem, generous
+ * padding, `margin-left: auto` for alignment next to `.device-ident`)
+ * - in the 0.7rem footer of a 260px tile (pill-into-footer
+ * rework, 2026-09-06), that would be too coarse and the auto margin would
+ * fight its own spacer element (`<span style="flex: 1 1 auto">`) over the
+ * same free space. Smaller font/padding, no auto margin: the pill
+ * fits in next to `.hint`, instead of pushing itself to the right
+ * edge on its own. */
 .device-foot .status-pill {
   font-size: 0.68rem;
   padding: 0.18rem 0.5rem;
@@ -2157,44 +2164,45 @@ footer.hint-block {
   margin-left: 0;
 }
 
-/* Review-Fund 3 (2026-09-05, Review der Nacharbeit): `.device-commands`
- * und `.device-foot` ziehen beide dasselbe `border-top: 1px solid
- * var(--border)`. Bei einem offline Geraet dimmt die erste Trennlinie mit
- * - `.device-commands` ist ein direktes Kartenkind und faellt komplett
- * unter `.device-card.is-offline > *:not(.device-foot)` (Begruendung
- * dort) -, die zweite nicht: `.device-foot` selbst ist von genau dieser
- * Regel ausgenommen (nur seine KINDER ausser `.tile-menu` werden gedimmt,
- * das Element bleibt bei Opacity 1), sein eigener Rahmen malt also ein
- * paar Pixel unter einem gedimmten in voller Staerke weiter.
- * `.device-foot` insgesamt auf `opacity` zu setzen scheidet aus - das
- * traefe `.tile-menu` als seinen Nachfahren gleich mit und risse genau
- * das Loch wieder auf, das die Ausnahme oben stopft. `color-mix` dimmt
- * deshalb NUR die Randfarbe selbst: das betrifft ausschliesslich den
- * 1px-Rahmen, nicht die Deckkraft des Elements oder seiner Kinder -
- * `.tile-menu` bleibt unberuehrt, und beide Trennlinien zeigen wieder
- * dieselbe Staerke. */
+/* Review finding 3 (2026-09-05, review of the follow-up): `.device-commands`
+ * and `.device-foot` both draw the same `border-top: 1px solid
+ * var(--border)`. On an offline device, the first divider dims along
+ * - `.device-commands` is a direct card child and falls entirely
+ * under `.device-card.is-offline > *:not(.device-foot)` (reasoning
+ * there) -, the second does not: `.device-foot` itself is exempted from
+ * exactly this rule (only its CHILDREN except `.tile-menu` are dimmed,
+ * the element itself stays at opacity 1), so its own border keeps drawing
+ * at full strength a few pixels below a dimmed one.
+ * Setting `opacity` on `.device-foot` as a whole is out - that
+ * would hit `.tile-menu` as its descendant right along with it and tear
+ * open exactly the hole the exception above plugs. `color-mix` therefore
+ * only dims the border colour itself: that affects exclusively the
+ * 1px border, not the opacity of the element or its children -
+ * `.tile-menu` stays untouched, and both dividers show
+ * the same strength again. */
 .device-card.is-offline .device-foot {
   border-top-color: color-mix(in srgb, var(--border) 75%, transparent);
 }
 
-/* Kachel-Menue (Entwurf Kebab-Menue, 2026-09-05).
+/* Tile menu (kebab menu design, 2026-09-05).
  *
- * `position: relative` am `<details>`, `absolute` an der Liste: das Menue
- * darf die Kachel ueberragen, ohne die Fusszeile hoeher zu machen. Es
- * oeffnet nach OBEN (`bottom: 100%`), weil die Fusszeile am unteren Rand
- * der Kachel sitzt - nach unten wuerde es die naechste Kachelreihe
- * verdecken statt freien Platz zu nutzen. Das "ueberragen" traegt nur,
- * weil `.device-card` bewusst `overflow: visible` setzt (Begruendung
- * dort) - ohne das wird genau dieses Ueberragen wieder abgeschnitten. */
+ * `position: relative` on the `<details>`, `absolute` on the list: the menu
+ * is allowed to extend beyond the tile without making the footer taller. It
+ * opens UPWARD (`bottom: 100%`), because the footer sits at the bottom edge
+ * of the tile - opening downward would cover the
+ * next tile row instead of using free space. This "extending beyond" only
+ * works because `.device-card` deliberately sets `overflow: visible`
+ * (reasoning there) - without that, exactly this overhang would get
+ * clipped again. */
 .tile-menu {
   position: relative;
   flex: none;
 }
 
-/* Der Standard-Marker eines `<summary>` (Dreieck bzw. Disclosure-Pfeil)
- * muss zweifach abgeschaltet werden: `list-style` greift in Firefox und
- * Chrome, das `::-webkit-details-marker`-Pseudoelement in aelteren
- * WebKit-Fassungen. */
+/* A `<summary>`'s default marker (triangle or disclosure arrow)
+ * has to be turned off twice: `list-style` applies in Firefox and
+ * Chrome, the `::-webkit-details-marker` pseudo-element in older
+ * WebKit versions. */
 .tile-menu > summary {
   list-style: none;
   cursor: pointer;
@@ -2217,63 +2225,63 @@ footer.hint-block {
   color: var(--accent);
 }
 
-/* Review-Fund 2 (2026-09-05, Review der Nacharbeit): eigene Dimmung fuer
- * den Kebab-Ausloeser, weil `.device-card.is-offline .device-foot >
- * *:not(.tile-menu)` (Begruendung dort) das GANZE `<details>` ausnimmt,
- * nicht nur die transiente Liste - dieser `<summary>` blieb dadurch bei
- * offline Geraeten auf voller Deckkraft haengen, sichtbar heller als der
- * Rest der Fusszeile. Direkt auf `summary` statt auf `.tile-menu`, weil
- * `opacity` auf `.tile-menu` selbst wieder einen Deckkraft-Kontext um die
- * schwebende Liste (`.tile-menu-items`, sein Geschwister-Div) aufspannen
- * wuerde - derselbe Fehler, der frueher (vor dieser Nacharbeit) durch die
- * Opacity auf `.device-card` entstand (Begruendung an der Regel oben). */
+/* Review finding 2 (2026-09-05, review of the follow-up): dedicated
+ * dimming for the kebab trigger, because `.device-card.is-offline
+ * .device-foot > *:not(.tile-menu)` (reasoning there) exempts the WHOLE
+ * `<details>`, not just the transient list - this `<summary>` thereby
+ * stayed at full opacity on offline devices, visibly lighter than the
+ * rest of the footer. Directly on `summary` instead of on `.tile-menu`,
+ * because `opacity` on `.tile-menu` itself would again open an opacity
+ * context around the floating list (`.tile-menu-items`, its sibling div)
+ * - the same mistake that previously (before this follow-up) arose from
+ * the opacity on `.device-card` (reasoning at the rule above). */
 .device-card.is-offline .tile-menu > summary {
   opacity: 0.75;
 }
 
-/* Fund 1 (Nacharbeit 2026-09-05): `z-index: 5` lag unter dem `z-index: 10`
- * des sticky `header.app-header` (Zeile ~116) - fuer eine Kachel in der
- * ersten Reihe schiebt sich der nach OBEN oeffnende Menue-Rand unter die
- * Kopfzeile. Im Browser gemessen: Menue-Oberkante bei y=48, Kopfzeile-
- * Unterkante bei y=56, `document.elementFromPoint` an der Menue-Oberkante
- * liefert die Kopfzeile statt des Menues - die Kopfzeile ist obenauf
- * gezeichnet und "schluckt" den ersten Eintrag optisch wie auch fuer
- * Klicks. `z-index: 20` gewinnt bewusst gegen die Kopfzeile: das Menue ist
- * ein transientes, vom Nutzer selbst geoeffnetes Bedienelement, das er
- * gerade aktiv anschaut - die Kopfzeile ist dauerhaftes Chrome, das er nie
- * gezielt "ansteuert". Wer hier eine der beiden Zahlen anhebt, ohne dieses
- * Verhaeltnis zu kennen, riskiert das Gegenteil: eine Kopfzeile, die wieder
- * ueber jedem offenen Menue schwebt.
+/* Finding 1 (follow-up 2026-09-05): `z-index: 5` sat below the `z-index: 10`
+ * of the sticky `header.app-header` (line ~116) - for a tile in the
+ * first row, the menu edge opening UPWARD slides under the
+ * header. Measured in the browser: menu top edge at y=48, header
+ * bottom edge at y=56, `document.elementFromPoint` at the top of the menu
+ * returns the header instead of the menu - the header is drawn
+ * on top and visually "swallows" the first entry as well as
+ * clicks. `z-index: 20` deliberately wins against the header: the menu is
+ * a transient control, opened by the user themselves, that they are
+ * actively looking at right now - the header is permanent chrome that
+ * they never deliberately "navigate to". Whoever raises one of the two
+ * numbers here without knowing this relationship risks the opposite: a
+ * header that once again floats over every open menu.
  *
- * Review-Fund 4 (2026-09-05, Review der Nacharbeit): dieser Vergleich
- * gewinnt NUR, solange kein Vorfahre von `.tile-menu-items` zwischen ihr
- * und `.device-card` einen eigenen Stacking-Kontext aufspannt - ein
- * `z-index` kann nie aus dem Stacking-Kontext seines Erzeugers ausbrechen,
- * er gilt nur INNERHALB davon. Gemessen mit `opacity: 0.75` auf
- * `.device-card` (dem Vor-Nacharbeit-Zustand): `document.elementFromPoint`
- * an der Menue-Oberkante lieferte trotzdem die Kopfzeile, SELBST mit
- * `z-index: 20` hier - die Opacity der Karte sperrte das Menue in ihren
- * eigenen Kontext ein, in dem "20 gegen 10" nie ankam. Dieser Vergleich
- * funktioniert also nur, weil die Offline-Dimmung (Begruendung bei
- * `.device-card.is-offline > *:not(.device-foot)`, unten in dieser Datei)
- * die Opacity von der Karte weg auf ihre Kinder verlegt hat. Kommt hier,
- * an `.device-foot` oder an `.tile-menu` selbst je wieder `opacity`,
- * `filter`, `transform`, `backdrop-filter`, `will-change`, `isolation`
- * oder `contain: paint` hinzu, faengt sich das Menue erneut unter der
- * Kopfzeile - OHNE dass ein Test das meldet: der z-index-Test in
- * test_web.py vergleicht nur zwei Zahlen im Stylesheet, er kennt keine
- * Stacking-Kontexte. */
-/* Fund 2 (Nacharbeit 2026-09-05): `.tile-menu-item` ist `white-space:
- * nowrap`, die Liste selbst hatte nur ein `min-width`, keine Obergrenze -
- * ein langer Raumname (Nutzer duerfen Raeume frei benennen) blies die
- * shrink-to-fit-Box auf seine volle Wortbreite auf, und weil sie an
- * `right: 0` verankert ist, wuchs sie dabei nach LINKS. Gemessen bei
- * 375 px Breite mit dem Raumnamen "Werkstatt im Untergeschoss hinter der
- * Heizung und dem Regal": Menue 384 px breit, linke Kante bei x=-46, das
- * Dokument scrollte horizontal. `max-width` deckelt die Box, `.tile-menu-
- * item` (unten) kuerzt seinen Text darin mit Ellipse - dieselbe Behandlung
- * wie an `.value-rows .value` weiter oben in dieser Datei, aus demselben
- * Grund: ein nutzerdefinierter Name ist Fliesstext ohne Laengengrenze. */
+ * Review finding 4 (2026-09-05, review of the follow-up): this comparison
+ * only wins as long as no ancestor of `.tile-menu-items` between it
+ * and `.device-card` opens its own stacking context - a
+ * `z-index` can never break out of the stacking context of its creator,
+ * it only applies WITHIN it. Measured with `opacity: 0.75` on
+ * `.device-card` (the pre-follow-up state): `document.elementFromPoint`
+ * at the top of the menu still returned the header, EVEN with
+ * `z-index: 20` here - the card's opacity locked the menu into its
+ * own context, in which "20 against 10" never arrived. This comparison
+ * therefore only works because the offline dimming (reasoning at
+ * `.device-card.is-offline > *:not(.device-foot)`, below in this file)
+ * moved the opacity away from the card onto its children. Should
+ * `opacity`, `filter`, `transform`, `backdrop-filter`, `will-change`,
+ * `isolation` or `contain: paint` ever be added again here, on
+ * `.device-foot` or on `.tile-menu` itself, the menu would get caught
+ * under the header again - WITHOUT any test reporting it: the z-index
+ * test in test_web.py only compares two numbers in the stylesheet, it
+ * knows no stacking contexts. */
+/* Finding 2 (follow-up 2026-09-05): `.tile-menu-item` is `white-space:
+ * nowrap`, the list itself only had a `min-width`, no upper bound -
+ * a long room name (users are free to name rooms anything) inflated the
+ * shrink-to-fit box to its full word width, and because it is anchored to
+ * `right: 0`, it grew LEFTWARD as it did. Measured at
+ * 375px width with the room name "Workshop in the basement behind the
+ * heater and the shelf": menu 384px wide, left edge at x=-46, the
+ * document scrolled horizontally. `max-width` caps the box, `.tile-menu-
+ * item` (below) truncates its text inside it with an ellipsis - the same
+ * treatment as on `.value-rows .value` further up in this file, for the
+ * same reason: a user-defined name is running text with no length limit. */
 .tile-menu-items {
   position: absolute;
   right: 0;
@@ -2295,35 +2303,35 @@ footer.hint-block {
   box-shadow: 0 6px 20px rgb(0 0 0 / 18%);
 }
 
-/* Fund 2 (Nacharbeit 2026-09-05): umschliesst die Raumliste (Ueberschrift,
- * Eintraege, "+ Neuer Raum" samt Textfeld) fuer ein `role="group"`, das sie
- * per `aria-labelledby` mit ihrer Ueberschrift verbindet (Begruendung im
- * Markup, index.html). Ein rein semantischer Wrapper darf das sichtbare
- * Layout nicht veraendern - `.tile-menu-items` (oben) ist eine Flex-Spalte
- * mit `gap: 1px` und `align-items: stretch`, deren Kinder direkt die
- * Menue-Eintraege sind, und genau das muss so bleiben.
+/* Finding 2 (follow-up 2026-09-05): wraps the room list (heading,
+ * entries, "+ New room" with its text field) for a `role="group"` that
+ * connects it to its heading via `aria-labelledby` (reasoning in the
+ * markup, index.html). A purely semantic wrapper must not change the
+ * visible layout - `.tile-menu-items` (above) is a flex column
+ * with `gap: 1px` and `align-items: stretch`, whose children are directly
+ * the menu entries, and that has to stay exactly that way.
  *
- * Review-Fund 5 (2026-09-05, Review der Nacharbeit): `display: contents`
- * war das urspruengliche Mittel dafuer (dasselbe wie einst bei
- * `.room-picker` in dieser Datei, inzwischen entfernt), hat aber eine
- * bekannte WebKit-Einschraenkung: aeltere und teils auch aktuelle
- * Safari-Fassungen lassen einen `display: contents`-Teilbaum aus dem
- * Accessibility-Baum herausfallen - das `role="group"` und dessen
- * `aria-labelledby` (Begruendung im Markup) kaemen bei Safari-Nutzern
- * dann nie an, obwohl das Markup dafuer korrekt ist. Diese Datei begruendet
- * an anderer Stelle bereits gezielt fuer macOS Safari, Safari ist also
- * ausdruecklich ein Ziel, keine Nebenbemerkung.
+ * Review finding 5 (2026-09-05, review of the follow-up): `display: contents`
+ * was the original means for this (the same as once used for
+ * `.room-picker` in this file, since removed), but has a
+ * known WebKit limitation: older, and in some cases even current,
+ * Safari versions drop a `display: contents` subtree out of the
+ * accessibility tree - the `role="group"` and its
+ * `aria-labelledby` (reasoning in the markup) would then never reach
+ * Safari users, even though the markup for it is correct. This file
+ * elsewhere already reasons specifically about macOS Safari, so Safari is
+ * explicitly a target, not an afterthought.
  *
- * Statt diese Browser-Kompatibilitaetsfrage zu tragen (und zu hoffen, dass
- * sie sich nicht auswirkt), wird der Wrapper stattdessen selbst zu einer
- * echten Box mit demselben Spalten-Flex, demselben `gap` und denselben
- * `align-items` wie sein Elternelement `.tile-menu-items` - das
- * Layoutergebnis ist ununterscheidbar (dieselbe Anordnung, derselbe
- * Abstand), aber der Wrapper haengt nicht mehr davon ab, ob eine
- * Browser-Engine ihn aus dem Accessibility-Baum entfernt. `min-width: 0`
- * verhindert, dass der Wrapper als Flex-Item seines Elternteils auf seine
- * Inhaltsbreite aufblaeht - dieselbe Falle wie bei `.value-key`/`.device-
- * name` an anderer Stelle in dieser Datei. */
+ * Instead of carrying this browser-compatibility issue (and hoping that
+ * it does not have an effect), the wrapper instead becomes a
+ * real box itself with the same column flex, the same `gap` and the same
+ * `align-items` as its parent element `.tile-menu-items` - the
+ * layout result is indistinguishable (the same arrangement, the same
+ * spacing), but the wrapper no longer depends on whether a
+ * browser engine removes it from the accessibility tree. `min-width: 0`
+ * prevents the wrapper, as a flex item of its parent, from inflating to its
+ * content width - the same trap as with `.value-key`/`.device-
+ * name` elsewhere in this file. */
 .tile-menu-rooms {
   display: flex;
   flex-direction: column;
@@ -2341,24 +2349,24 @@ footer.hint-block {
   border-radius: 4px;
   font-size: 0.8rem;
   white-space: nowrap;
-  /* Kappt zusammen mit dem `max-width` an `.tile-menu-items` (Begruendung
-   * dort) einen zu langen Raumnamen. Export und Entfernen sind davon in
-   * den HEUTIGEN Uebersetzungen nicht betroffen - ihr Text ist kurz genug,
-   * um in eine Zeile zu passen.
+  /* Caps, together with the `max-width` on `.tile-menu-items` (reasoning
+   * there), a room name that is too long. Export and remove are not
+   * affected by this in the CURRENT translations - their text is short
+   * enough to fit into one line.
    *
-   * Review-Fund 6 (2026-09-05, Review der Nacharbeit): das ist eine
-   * Eigenschaft der aktuellen Uebersetzungen (`strings.yaml`), keine
-   * Eigenschaft dieser Regel - `overflow: hidden; text-overflow: ellipsis`
-   * gilt fuer JEDEN `.tile-menu-item`, unabhaengig von seinem Text. Eine
-   * kuenftige, laengere Uebersetzung von `web.devices.export` oder
-   * `web.devices.remove` (oder eine andere Sprache mit laengeren Woertern)
-   * wuerde genauso gekappt wie ein langer Raumname - das ist dann
-   * beabsichtigtes Verhalten dieser Regel, kein Fehler, der hier behoben
-   * werden muesste.
+   * Review finding 6 (2026-09-05, review of the follow-up): that is a
+   * property of the current translations (`strings.yaml`), not a
+   * property of this rule - `overflow: hidden; text-overflow: ellipsis`
+   * applies to EVERY `.tile-menu-item`, regardless of its text. A
+   * future, longer translation of `web.devices.export` or
+   * `web.devices.remove` (or a different language with longer words)
+   * would get capped just the same as a long room name - that would then
+   * be intended behaviour of this rule, not a bug that would need to be
+   * fixed here.
    *
-   * `position: relative` dient als Bezugsrahmen fuer das absolut
-   * positionierte Haekchen von `.is-current::after` weiter unten -
-   * Begruendung dort, dieser Regel faellt nur die Elternrolle zu. */
+   * `position: relative` serves as the reference frame for the absolutely
+   * positioned check mark from `.is-current::after` further below -
+   * reasoning there, this rule only carries the parent role. */
   overflow: hidden;
   text-overflow: ellipsis;
 }
@@ -2379,34 +2387,34 @@ footer.hint-block {
   color: var(--text-muted);
 }
 
-/* Das Haekchen steht in `::after`, nicht im Text: der Eintrag traegt
- * seine Bedeutung im Raumnamen, das Haekchen bestaetigt sie nur.
- * `aria-current` im Markup sagt dasselbe fuer alles, was die Seite nicht
- * sieht.
+/* The check mark sits in `::after`, not in the text: the entry carries
+ * its meaning in the room name, the check mark only confirms it.
+ * `aria-current` in the markup says the same thing for everything the page
+ * does not see.
  *
- * Review-Fund 1 (2026-09-05, Review der Nacharbeit): das Haekchen sass
- * bislang als normaler Text am ZEILENENDE - genau dort, wo
- * `.tile-menu-item`s `overflow: hidden; text-overflow: ellipsis`
- * (Begruendung an der Regel selbst) abschneidet. Im Browser gemessen mit
- * dem Raumnamen "Werkstatt im Untergeschoss hinter der Heizung und dem
- * Regal": `clientWidth` 246px, `scrollWidth` 413px, das `::after` lag
- * 167px hinter der Clip-Kante - unsichtbar. Der Eintrag zeigte "Werkstatt
- * im Untergeschoss hinter der He..." ganz ohne Haekchen, waehrend ein
- * kurzer aktueller Eintrag ("Kueche") daneben weiterhin sein "Kueche ✓"
- * zeigte - `aria-current`, `font-weight` und `color` blieben in beiden
- * Faellen unveraendert, nur die eine sichtbare Bestaetigung der Bedeutung
- * fehlte lautlos.
+ * Review finding 1 (2026-09-05, review of the follow-up): the check mark
+ * used to sit as plain text at the END OF THE LINE - exactly where
+ * `.tile-menu-item`'s `overflow: hidden; text-overflow: ellipsis`
+ * (reasoning on the rule itself) cuts off. Measured in the browser with
+ * the room name "Workshop in the basement behind the heater and the
+ * shelf": `clientWidth` 246px, `scrollWidth` 413px, the `::after` sat
+ * 167px behind the clip edge - invisible. The entry showed "Workshop
+ * in the basement behind the he..." with no check mark at all, while a
+ * short, current entry ("Kitchen") next to it still showed its
+ * "Kitchen ✓" - `aria-current`, `font-weight` and `color` stayed unchanged
+ * in both cases, only the one visible confirmation of the meaning
+ * was silently missing.
  *
- * Der Fix holt das Haekchen aus dem geclippten Textfluss heraus, statt
- * die Kappung selbst anzufassen: `position: absolute` bindet es an
- * `.tile-menu-item`s eigenes `position: relative` (s.o.) und legt es IN
- * dessen Padding-Box - absolut positionierte Kinder haengen nicht mehr am
- * Inhaltsfluss, den `text-overflow: ellipsis` kappt, `overflow: hidden`
- * schneidet also nur noch den Text, nicht mehr das Haekchen.
- * `padding-right` auf `.is-current` reserviert dafuer sichtbaren Platz,
- * damit der gekuerzte Text nicht darunter weiterlaeuft; ein NICHT
- * aktueller Eintrag behaelt sein schmaleres Standard-Padding und sieht
- * unveraendert aus. */
+ * The fix takes the check mark out of the clipped text flow, instead of
+ * touching the clipping itself: `position: absolute` binds it to
+ * `.tile-menu-item`'s own `position: relative` (see above) and places it
+ * INSIDE its padding box - absolutely positioned children no longer depend
+ * on the content flow that `text-overflow: ellipsis` clips,
+ * `overflow: hidden` therefore only cuts the text now, no longer the
+ * check mark. `padding-right` on `.is-current` reserves visible space for
+ * that, so that the truncated text does not run underneath it; an entry
+ * that is NOT current keeps its narrower default padding and looks
+ * unchanged. */
 .tile-menu-item.is-current {
   padding-right: 1.4rem;
   font-weight: 600;
@@ -2432,17 +2440,17 @@ footer.hint-block {
   margin: 0.25rem 0;
 }
 
-/* Signal-Modal (Entwurf "Signale als Modal", 2026-09-05).
+/* Signal modal (design "Signals as a modal", 2026-09-05).
  *
- * `max-height` plus `overflow: auto` statt einer festen Hoehe: ein Geraet
- * mit vierzig Attributen soll im Modal scrollen, nicht ueber den unteren
- * Bildschirmrand hinauswachsen, wo der Schliessen-Knopf dann unerreichbar
- * waere.
+ * `max-height` plus `overflow: auto` instead of a fixed height: a device
+ * with forty attributes should scroll within the modal, not grow past the
+ * bottom edge of the screen, where the close button would then be
+ * unreachable.
  *
- * Der `::backdrop` bekommt KEINE Farbe aus den Themenvariablen: er liegt
- * im Top-Layer, ausserhalb des Dokumentbaums, und erbt von dort keine
- * `:root`-Variablen zuverlaessig. Ein fester halbtransparenter Schwarzton
- * wirkt in beiden Themen. */
+ * The `::backdrop` gets NO colour from the theme variables: it sits
+ * in the top layer, outside the document tree, and does not reliably
+ * inherit `:root` variables from there. A fixed, semi-transparent shade of
+ * black works in both themes. */
 .signals-modal {
   width: min(46rem, 92vw);
   max-height: 85vh;
@@ -2487,10 +2495,10 @@ footer.hint-block {
   border-color: var(--border);
 }
 
-/* Die Zusammenfassung im Kopf: die Exportzahl links, "Alle abwaehlen"
- * rechtsbuendig ueber den flexiblen Zwischenraum (wie beim Modal-Kopf
- * darueber). Eigener Rahmen, damit die Zahl sich von der Signaltabelle
- * darunter abhebt. */
+/* The summary in the head: the export count on the left, "Deselect all"
+ * right-aligned via the flexible spacer (as with the modal head
+ * above). Its own frame, so the number stands out from the signal table
+ * below it. */
 .signals-summary {
   display: flex;
   align-items: center;
@@ -2503,10 +2511,10 @@ footer.hint-block {
   border-radius: 8px;
 }
 
-/* Bedien-Modal (Aufgabe 7): eine Zeile je Regler, Beschriftung ueber dem
- * Regler statt daneben - auf schmalen Fenstern bleibt der Regler sonst zu
- * kurz zum Zielen. Nutzt dieselbe `.signals-modal`-Rahmung wie das
- * Signal-Modal, siehe dort. */
+/* Control modal (task 7): one row per slider, label above the
+ * slider instead of next to it - on narrow windows the slider would
+ * otherwise stay too short to aim at. Uses the same `.signals-modal`
+ * framing as the signal modal, see there. */
 .control-row {
   display: flex;
   flex-direction: column;
@@ -2518,17 +2526,17 @@ footer.hint-block {
   width: 100%;
 }
 
-/* Farbflaeche: waagerecht der Farbton, senkrecht die Saettigung. Zwei
-   uebereinanderliegende Verlaeufe statt eines Bildes - so bleibt die
-   Flaeche skalierbar und kommt ohne eine Datei aus, die ausgeliefert
-   werden muesste. */
+/* Color area: horizontally the hue, vertically the saturation. Two
+   stacked gradients instead of an image - this way the area stays
+   scalable and needs no file that would have to be shipped. */
 .colour-field {
   height: 140px;
   border-radius: 8px;
   cursor: crosshair;
   touch-action: none;
-  /* Bezugsrahmen fuer `.colour-marker` - ohne das saesse der Punkt relativ
-     zum naechsten positionierten Vorfahren, also irgendwo im Modal. */
+  /* Reference frame for `.colour-marker` - without this the dot would
+     sit relative to the nearest positioned ancestor, i.e. somewhere in
+     the modal. */
   position: relative;
   background:
     linear-gradient(to top, rgba(255, 255, 255, 0.95), rgba(255, 255, 255, 0)),
@@ -2538,11 +2546,11 @@ footer.hint-block {
     );
 }
 
-/* Zeigt, welche Farbe eingestellt ist. Zwei Ringe statt einer Umrandung:
-   ein einzelner heller Rand verschwindet ueber Weiss, ein einzelner dunkler
-   ueber Blau - zusammen bleibt der Punkt auf jedem Untergrund sichtbar.
-   `pointer-events: none`, damit ein Klick AUF den Marker die Flaeche
-   darunter trifft und nicht ins Leere geht. */
+/* Shows which color is set. Two rings instead of one border:
+   a single light border disappears over white, a single dark one
+   over blue - together the dot stays visible on any background.
+   `pointer-events: none`, so a click ON the marker hits the area
+   beneath it instead of going nowhere. */
 .colour-marker {
   position: absolute;
   width: 16px;
@@ -2569,13 +2577,13 @@ footer.hint-block {
   font-weight: 600;
 }
 
-/* Die beiden Signalgruppen im Modal. Der Standard-Marker eines `<summary>`
- * muss zweifach abgeschaltet werden: `list-style` greift in Firefox und
- * Chrome, das `::-webkit-details-marker`-Pseudoelement in aelteren
- * WebKit-Fassungen - dieselbe Doppelung wie bei `.tile-menu > summary`
- * und `.projectsync-device summary`. An dessen Stelle tritt derselbe
- * Chevron (`#i-chevron`), der sich beim Aufklappen um 90 Grad dreht -
- * so sieht der Marker in beiden Browserfamilien gleich aus. */
+/* The two signal groups in the modal. A `<summary>`'s default marker has to
+ * be switched off twice: `list-style` takes effect in Firefox and Chrome,
+ * the `::-webkit-details-marker` pseudo-element in older WebKit versions -
+ * the same doubling as for `.tile-menu > summary` and
+ * `.projectsync-device summary`. The same chevron (`#i-chevron`) takes its
+ * place, turning 90 degrees when the group expands - so the marker looks
+ * the same in both browser families. */
 .signal-group {
   margin-top: 1rem;
 }
@@ -2609,28 +2617,29 @@ footer.hint-block {
   transform: rotate(90deg);
 }
 
-/* Ein Raster fuer Kopfzeile UND Datenzeile (Entwurf 2026-09-07,
-   Abschnitt 7.2). Die beiden MUESSEN dieselbe Vorlage tragen - genau das
-   fehlte bisher, und deshalb fluchtete nichts: die alte `.row` war ein
-   `flex-wrap`-Container ohne Spaltenmasse, bei `multipress_ongoing` rutschte
-   die zweite Beschriftung allein in die naechste Zeile.
+/* One grid for the header row AND the data row (design 2026-09-07,
+   section 7.2). The two MUST carry the same template - exactly that
+   was missing before, and that is why nothing lined up: the old `.row`
+   was a `flex-wrap` container with no column dimensions, and with
+   `multipress_ongoing` the second label alone slipped to the next line.
 
-   Fund (Aufgabe 13): die vormals 150 px der Schluessel-Spalte waren NICHT
-   gemessen, nur geschaetzt - der Kommentar behauptete es trotzdem. `.key`
-   traegt weder `white-space` noch `overflow`, die Pille lief also innerhalb
-   ihrer eigenen Zelle ueber, ohne das Raster selbst zu verschieben (deshalb
-   fiel es der frueheren "keine abweichenden Spaltenkanten"-Messung nicht
-   auf). Tatsaechlich gemessen an den 17 funktionalen Signalen des Tasters
-   (`ikea_bilresa_button.json`, ueber `Store.register_signals` erzeugt):
-   laengster Schluessel `d4_1_multipress_ongoing` mit 23 Zeichen, `.key`
-   dafuer `scrollWidth` 183 px gegen `clientWidth` 148 px bei 150 px
-   Spaltenbreite - mindestens 185 px (inkl. Rahmen) waeren noetig gewesen.
-   200 px geben etwas Luft ueber diesem Minimum und tragen auch noch eine
-   zweistellige Geraete-ID (`d12_...`, 24 Zeichen) ohne die Absicherung
-   unten anzurufen; eine dreistellige ID (`d103_...`) faengt erst diese
-   Absicherung auf. Die dadurch schmalere Namensspalte (`minmax(0, 1fr)`)
-   bleibt bei rund 209 px komfortabel oberhalb der 200-px-Untergrenze aus
-   der Aufgabe. */
+   Finding (task 13): the previous 150px of the key column was NOT
+   measured, only estimated - the comment claimed otherwise anyway.
+   `.key` carries neither `white-space` nor `overflow`, so the pill
+   overflowed within its own cell without shifting the grid itself
+   (which is why the earlier "no diverging column edges" measurement
+   did not catch it). Actually measured on the button's 17 functional
+   signals (`ikea_bilresa_button.json`, produced via
+   `Store.register_signals`): the longest key `d4_1_multipress_ongoing`
+   at 23 characters, for which `.key`'s `scrollWidth` is 183px against a
+   `clientWidth` of 148px at a 150px column width - at least 185px
+   (including border) would have been needed. 200px gives some
+   headroom above this minimum and also carries a two-digit device ID
+   (`d12_...`, 24 characters) without invoking the safeguard
+   below; only a three-digit ID (`d103_...`) triggers that
+   safeguard. The name column, narrower as a result (`minmax(0, 1fr)`),
+   stays comfortably above the task's 200px lower bound at around
+   209px. */
 .signal-grid {
   display: grid;
   grid-template-columns: 58px minmax(0, 1fr) 200px 70px 76px 28px;
@@ -2643,19 +2652,19 @@ footer.hint-block {
   min-width: 0;
 }
 
-/* Absicherung gegen einen Schluessel, der selbst diese 200 px sprengt (eine
-   noch laengere Kombination aus Geraete-ID, Endpunkt und Slug, als die
-   heutigen Geraete erzeugen): Umbruch statt Kappen. `.key` traegt
-   `user-select: all` - die Pille ist zum Kopieren gedacht, UND es gibt
-   nirgends sonst im Modal einen Ort, der denselben Schluessel ungekuerzt
-   zeigt (anders als z. B. `.value-rows .value`, dessen Ellipse die
-   Signalliste als Ausweichort hat, siehe dort). `text-overflow: ellipsis`
-   waere deshalb beim Kopieren zwar vollstaendig, aber beim Ablesen eine
-   stille Verstuemmelung, die niemand bemerkt - genau das Gegenteil dessen,
-   wofuer die Pille da ist. `overflow-wrap: break-word` bricht den
-   Schluessel notfalls mitten im Wort um (er hat ohnehin keine Leerzeichen)
-   und macht nur die eine betroffene Zeile hoeher - `align-items: center`
-   am Raster haelt die uebrigen Zellen dabei fluchtend. */
+/* Safeguard against a key that even blows past this 200px (an even
+   longer combination of device ID, endpoint, and slug than today's
+   devices produce): wrap instead of cutting off. `.key` carries
+   `user-select: all` - the pill is meant for copying, AND there is
+   nowhere else in the modal that shows the same key uncut
+   (unlike, say, `.value-rows .value`, whose ellipsis has the
+   signal list as a fallback location, see there). `text-overflow:
+   ellipsis` would therefore be complete when copying, but a
+   silent mutilation when reading that no one notices - exactly the
+   opposite of what the pill is for. `overflow-wrap: break-word` wraps
+   the key mid-word if necessary (it has no spaces anyway)
+   and only makes the one affected row taller - `align-items: center`
+   on the grid keeps the remaining cells aligned in the process. */
 .signal-grid .key {
   overflow-wrap: break-word;
 }
@@ -2679,28 +2688,30 @@ footer.hint-block {
   border-bottom: 1px solid var(--border);
 }
 
-/* Nicht `.signal-row-cells:last-child`: seit dem Umbau auf `.signal-row-
-   wrap` (Entwurf 2026-09-07, Abschnitt 7.2) hat die Rasterzeile IMMER ein
-   zweites Geschwister, `.signal-detail` - `x-show` blendet ihn nur aus,
-   entfernt ihn nicht aus dem DOM. `.signal-row-cells` ist damit nie
-   `:last-child` und die Regel griff nie. Die letzte ZEILE einer Gruppe ist
-   stattdessen der letzte `.signal-row-wrap` unter `<details class=
-   "signal-group">` (Summary und Hinweistext davor sind eigene Elemente,
-   keine `.signal-row-wrap`) - deshalb hier so selektiert.
+/* Not `.signal-row-cells:last-child`: since the rework onto
+   `.signal-row-wrap` (design 2026-09-07, section 7.2), the grid row
+   ALWAYS has a second sibling, `.signal-detail` - `x-show` only hides
+   it, it does not remove it from the DOM. `.signal-row-cells` is
+   therefore never `:last-child` and the rule never applied. The last ROW
+   of a group is instead the last `.signal-row-wrap` under
+   `<details class="signal-group">` (the summary and the note before it
+   are their own elements, not `.signal-row-wrap`) - which is why it is
+   selected this way here.
 
-   Das AENDERT das ausgelieferte Aussehen gegenueber der toten Regel davor
-   (die griff ja nie): die letzte Zeile jeder Gruppe verliert jetzt
-   tatsaechlich ihren unteren Rahmen. `.signal-group` traegt selbst keinen
-   Rahmen, die Gruppentrennung ruht danach allein auf `margin-top: 1rem`
-   (oben an `.signal-group`). Im Wegwerf-Harness mit zwei Gruppen a zwei
-   Zeilen gegengeprueft (echtes Markup samt echtem `style.css`, beide
-   Faelle nebeneinander verglichen - einmal mit, einmal ohne diese Regel):
-   die letzte Zeile der ersten Gruppe verschwimmt NICHT mit der Ueberschrift
-   der naechsten. `margin-top` samt der fett gesetzten `<summary>`
-   (`font-weight: 600`, siehe `.signal-group > summary` oben) traegt die
-   Trennung allein bereits deutlich - der fehlende Rahmen fiel im
-   Seitenvergleich kaum auf. Entscheidung: Regel bleibt, kein zusaetzlicher
-   Ersatz noetig. */
+   This CHANGES the shipped appearance compared to the dead rule before
+   it (which, after all, never applied): the last row of each group now
+   actually loses its bottom border. `.signal-group` itself carries no
+   border, so the group separation afterward rests solely on
+   `margin-top: 1rem` (above, on `.signal-group`). Cross-checked in the
+   throwaway harness with two groups of two rows each (real markup
+   plus real `style.css`, both cases compared side by side - once with,
+   once without this rule): the last row of the first group does NOT
+   blur together with the heading of the next. `margin-top` together
+   with the bold `<summary>` (`font-weight: 600`, see
+   `.signal-group > summary` above) already carries the separation
+   clearly on its own - the missing border was barely noticeable in the
+   side-by-side comparison. Decision: rule stays, no additional
+   replacement needed. */
 .signal-row-wrap:last-child .signal-row-cells {
   border-bottom: none;
 }
@@ -2709,25 +2720,26 @@ footer.hint-block {
   text-align: right;
 }
 
-/* WCAG 2.2 AA, Erfolgskriterium 2.5.8 (24x24 px Trefferflaeche) - dieselbe
-   Begruendung wie bei `.checkbox-label` oben: nicht das Kaestchen waechst,
-   das umschliessende `<label class="col-center">` tut es, denn es leitet
-   die Aktivierung schon von jeder Stelle seiner Flaeche weiter. `margin:
-   0` verhindert, dass das Kaestchen aus der Mitte rutscht, `align-items:
-   center` haelt es zentriert, sobald `min-height` die Zeile hoeher macht.
+/* WCAG 2.2 AA, success criterion 2.5.8 (24x24px hit area) - the same
+   reasoning as with `.checkbox-label` above: it is not the checkbox that
+   grows, the enclosing `<label class="col-center">` does, since it
+   already forwards activation from anywhere on its area. `margin:
+   0` prevents the checkbox from slipping out of the center,
+   `align-items: center` keeps it centered once `min-height` makes the
+   row taller.
 
-   Nur `min-height`, bewusst KEIN `min-width`: die Breite sitzt hier
-   strukturell fest, nicht am Inhalt - im breiten Fall ueber die feste
-   Spaltenbreite aus `grid-template-columns` (58 px/76 px, siehe oben),
-   der Grid-Standard `justify-items: stretch` zieht das Label auf die
-   volle Spalte; im schmalen Fall (Medienabfrage unten) ueber den
-   sichtbaren Text (kuerzeste Uebersetzung "export", 6 Zeichen). Im
-   Wegwerf-Harness (echtes Markup samt echtem CSS, beide Breiten)
-   gemessen: 58/76 px (Desktop) bzw. 99/193 px (< 640 px) - beides schon
-   vorher weit ueber 24 px, ein `min-width` bliebe hier also Ballast. Nur
-   die Hoehe war knapp: 19 px (Desktop), 21 px (< 640 px), gegen 24 px
-   `min-height` fuer beide Faelle - die Medienabfrage aendert die Hoehe
-   nicht, nur `justify-content` und `gap`. */
+   Only `min-height`, deliberately NO `min-width`: the width here sits
+   structurally fixed, not on the content - in the wide case via the
+   fixed column width from `grid-template-columns` (58px/76px, see
+   above), the grid default `justify-items: stretch` pulls the label to
+   the full column; in the narrow case (media query below) via the
+   visible text (shortest translation "export", 6 characters). Measured
+   in the throwaway harness (real markup plus real CSS, both widths):
+   58/76px (desktop) and 99/193px (< 640px) - both already far above
+   24px beforehand, so a `min-width` would be dead weight here. Only
+   the height was tight: 19px (desktop), 21px (< 640px), against 24px
+   `min-height` for both cases - the media query does not change the
+   height, only `justify-content` and `gap`. */
 .signal-grid .col-center {
   display: flex;
   justify-content: center;
@@ -2736,16 +2748,16 @@ footer.hint-block {
   min-height: 24px;
 }
 
-/* Beschriftung der beiden Haekchen fuer den schmalen Fall (siehe
-   Medienabfrage unten) - hier im breiten Fall verborgen, weil der
-   Spaltenkopf schon beschriftet. */
+/* Label for the two checkboxes for the narrow case (see the
+   media query below) - hidden here in the wide case, because the
+   column header already labels it. */
 .signal-grid .col-center-label {
   display: none;
 }
 
-/* Die generische Regel `input[type="text"] { min-width: 12rem }` weiter oben
-   gewinnt sonst gegen die Rasterspalte und sprengt sie - dieselbe Falle wie
-   bei `.device-head .device-name`, Begruendung dort. */
+/* The generic rule `input[type="text"] { min-width: 12rem }` further up
+   would otherwise win against the grid column and blow it out - the
+   same trap as with `.device-head .device-name`, reasoning there. */
 .signal-grid .signal-title {
   width: 100%;
   min-width: 0;
@@ -2755,66 +2767,70 @@ footer.hint-block {
   background: var(--bg);
 }
 
-/* Eingerueckt bis zur Namensspalte (58 px Haekchen + 0.5 rem Abstand), damit
-   der Aufklapper sichtbar zu SEINER Zeile gehoert und nicht zur Tabelle.
+/* Indented to the name column (58px checkbox + 0.5rem gap), so the
+   disclosure visibly belongs to ITS row and not to the table.
 
-   Hier wohnt seit Aufgabe 8 auch die Warnpille mit `signal.reason`: in der
-   28-px-Kebab-Spalte des Rasters (`.signal-grid`) brach ein laengerer Text
-   (z. B. "Text - ein virtueller UDP-Eingang kennt nur Zahlen und digitale
-   Werte" aus `_UNEXPORTABLE_REASONS`, `api/devices.py`) mangels Platz um und
-   sprengte damit das gemessene Fluchten der Tabelle (scrollWidth 744px
-   gegen clientWidth 719px). Hier im Aufklapper ist die verfuegbare Breite
-   die halbe Modalbreite statt 28px, normales Wortumbruch-Verhalten reicht
-   also aus - kein `overflow-wrap` noetig. */
+   Since task 8, the warning pill with `signal.reason` also lives here:
+   in the 28px kebab column of the grid (`.signal-grid`), a longer text
+   (e.g. "Text - a virtual UDP input only knows numbers and digital
+   values" from `_UNEXPORTABLE_REASONS`, `api/devices.py`) wrapped for
+   lack of room and thereby blew out the table's measured alignment
+   (scrollWidth 744px against clientWidth 719px). Here in the
+   disclosure the available width is half the modal width instead of
+   28px, so normal word-wrap behavior is enough - no `overflow-wrap`
+   needed. */
 .signal-detail {
   padding: 0.2rem 0 0.7rem calc(58px + 0.5rem);
   display: flex;
   flex-direction: column;
-  /* KEIN `align-items: flex-start` hier (frueherer Versuch, hat sich als
-     Fehlgriff erwiesen): das loeste zwar die Warnpille, zog aber JEDES
-     Kind auf seine eigene Breite - auch `.row`, das Rohwert-Feld
-     (`input[type="text"]`) darunter. Gemessen im Wegwerf-Harness (echtes
-     `index.html`/`style.css`, Signal mit `exportable: false` und Text aus
-     `_UNEXPORTABLE_REASONS`): `.row` fiel von voller Aufklapperbreite auf
-     406.6px, das Feld darin auf sein `min-width: 12rem` (192px) - nach
-     Flexbox SS 9.9.1 ist die "desired flex fraction" 0, sobald der
-     max-content-Beitrag der Items ihrer Flex-Basisgroesse entspricht,
-     `flex-grow` am `input` vergroessert die max-content-Breite von `.row`
-     also NICHT. Vorgabe `stretch` bleibt deshalb hier stehen, sie ist fuer
-     `.row` richtig; die Warnpille loest ihr eigenes Problem gezielt ueber
-     `align-self` an sich selbst (siehe `.signal-detail .badge` unten),
-     ohne die Geschwister mitzuziehen. */
+  /* NO `align-items: flex-start` here (an earlier attempt that turned out
+     to be a mistake): it did solve the warning pill, but pulled EVERY
+     child to its own width - including `.row`, the raw-value field
+     (`input[type="text"]`) below it. Measured in the throwaway harness
+     (real `index.html`/`style.css`, a signal with `exportable: false` and
+     text from `_UNEXPORTABLE_REASONS`): `.row` dropped from the full
+     disclosure width to 406.6px, the field inside it to its
+     `min-width: 12rem` (192px) - per Flexbox SS 9.9.1 the "desired flex
+     fraction" is 0 as soon as the items' max-content contribution
+     matches their flex basis size, so `flex-grow` on the `input` does
+     NOT increase `.row`'s max-content width. The `stretch` default
+     therefore stays here, it is correct for `.row`; the warning pill
+     solves its own problem specifically via `align-self` on itself
+     (see `.signal-detail .badge` below), without dragging its
+     siblings along. */
   gap: 0.45rem;
 }
 
-/* `.hint` und `.badge` sind beides `<p>`-Elemente und bringen deshalb den
-   Browser-Vorgabewert `margin: 1em 0` mit - hier ungewollt, denn den
-   Abstand zwischen den Kindern setzt bereits `gap` oben. Ungekuerzt kommt
-   dieser Vorgabewert zum `gap` hinzu (gemessen 19.7px Abstand vor der
-   Pille statt der beabsichtigten 7.2px `gap`), da Flex-Items ihre Raender
-   nicht wie Blockelemente zusammenfallen lassen. */
+/* `.hint` and `.badge` are both `<p>` elements and therefore bring
+   along the browser default `margin: 1em 0` - unwanted here, since the
+   gap between the children is already set by `gap` above. Left
+   unreset, this default adds on top of the `gap` (measured 19.7px of
+   space before the pill instead of the intended 7.2px `gap`), because
+   flex items do not collapse their margins the way block elements
+   do. */
 .signal-detail .hint,
 .signal-detail .badge {
   margin: 0;
 }
 
-/* `align-self` statt `align-items` am Container (siehe Begruendung an
-   `.signal-detail` oben): NUR dieses eine Kind soll seine eigene
-   Querbreite behalten. Nicht die Blockifizierung selbst haengt an
-   `align-self` - ein Flex-Item wird IMMER blockifiziert, auch mit
-   `flex-start` (gemessen: `getComputedStyle(...).display` bleibt `block`).
-   Was `align-self` steuert, ist die QUERGROESSE: nur bei `stretch` fuellt
-   das Item die Containerbreite, jeder andere Wert sizt es auf seinen
-   Inhalt - `flex-start` hier allein loest also dieselbe Pille, ohne `.row`
-   daneben zu beruehren. Gemessen im selben Harness-Durchlauf (1280px
-   Viewport, gleicher Signal-Fixture): unter reinem `stretch` (kein
-   `align-items`/`align-self` irgendwo) waere die Pille 629.6px breit bei
-   695.6px Containerbreite - genau der Ausgangsbefund, der `align-items:
-   flex-start` am Container ueberhaupt erst ausgeloest hat. Mit `align-
-   self` NUR hier bleibt die Pille bei 440.6px (ihr Inhalt, unveraendert
-   gegenueber der Container-Loesung), aber `.row` ist wieder bei voller
-   Aufklapperbreite (695.6px) und das Rohwert-Feld darin bei 415.0px statt
-   der zuvor gemessenen 192px (sein `min-width`-Boden). */
+/* `align-self` instead of `align-items` on the container (see the
+   reasoning on `.signal-detail` above): ONLY this one child should
+   keep its own cross-axis width. Blockification itself does not depend
+   on `align-self` - a flex item is ALWAYS blockified, even with
+   `flex-start` (measured: `getComputedStyle(...).display` stays `block`).
+   What `align-self` controls is the CROSS SIZE: only with `stretch`
+   does the item fill the container width, any other value sizes it to
+   its content - `flex-start` here alone thus solves the same pill,
+   without touching `.row` next to it. Measured in the same harness run
+   (1280px viewport, the same signal fixture): under plain `stretch`
+   (no `align-items`/`align-self` anywhere) the pill would be 629.6px
+   wide at a 695.6px container width - exactly the original finding
+   that triggered `align-items: flex-start` on the container in the
+   first place. With `align-self` ONLY here, the pill stays at 440.6px
+   (its content, unchanged compared to the container-based fix), but
+   `.row` is back at the full disclosure width (695.6px) and the
+   raw-value field inside it at 415.0px instead of the previously
+   measured 192px (its `min-width` floor). */
 .signal-detail .badge {
   align-self: flex-start;
 }
@@ -2832,25 +2848,26 @@ footer.hint-block {
   color: var(--accent);
 }
 
-/* Sechs Spalten passen hier nicht (Entwurf 2026-09-07, Abschnitt 10). Die
-   Zeile wird zur gestapelten Karte, und der Spaltenkopf verschwindet -
-   ueber einer gestapelten Karte beschriftet er nichts mehr, er stuende nur
-   als Reihe von fuenf Woertern ohne Bezug da.
+/* Six columns do not fit here (design 2026-09-07, section 10). The
+   row becomes a stacked card, and the column header disappears -
+   above a stacked card it no longer labels anything, it would just
+   stand there as a row of five unrelated words.
 
-   Damit die Haekchen ohne Spaltenkopf ihre Bedeutung behalten, braucht es
-   hier eine ECHTE sichtbare Beschriftung: `title` ist nur ein Hover-Tooltip
-   und auf einem Telefon - genau der Zielgruppe dieser Medienabfrage - gibt
-   es kein Hover, ein `content: attr(title)` o.ae. existiert hier nicht und
-   haette daran auch nichts geaendert. Deshalb traegt jedes Kaestchen im
-   Markup laengst einen zweiten `<span class="col-center-label">` mit
-   demselben Uebersetzungsschluessel wie sein `aria-label` (kein zweiter
-   Schluessel), oben per Grundregel verborgen. Hier wird er gezeigt, `.col-
-   center` bekommt dafuer einen kleinen Abstand und wird linksbuendig, damit
-   Haekchen und Text nebeneinander stehen statt zu ueberlappen. Der Span
-   traegt `aria-hidden="true"`: er wiederholt nur sichtbar, was das
-   Kaestchen mit `aria-label` schon als Namen hat - ohne das wuerde
-   Hilfstechnik denselben Namen zweimal vorlesen oder je nach Browser sogar
-   widerspruechlich zusammensetzen. */
+   For the checkboxes to keep their meaning without a column header,
+   this needs a REAL visible label here: `title` is only a hover tooltip,
+   and on a phone - exactly the target audience of this media query -
+   there is no hover, a `content: attr(title)` or similar does not exist
+   here and would not have changed anything about that. That is why
+   every checkbox in the markup has long carried a second
+   `<span class="col-center-label">` with the same translation key as
+   its `aria-label` (not a second key), hidden above by the base rule.
+   Here it is shown, and `.col-center` gets a small gap for it and
+   becomes left-aligned, so the checkbox and text sit side by side
+   instead of overlapping. The span carries `aria-hidden="true"`: it
+   only visibly repeats what the checkbox already has as a name via
+   `aria-label` - without that, assistive technology would read out the
+   same name twice, or, depending on the browser, even concatenate them
+   contradictorily. */
 @media (max-width: 640px) {
   .signal-grid-head {
     display: none;
@@ -2862,8 +2879,8 @@ footer.hint-block {
     padding: 0.5rem 0;
   }
 
-  /* Name und Schluessel bekommen die volle Breite, die drei kurzen Zellen
-     teilen sich die Zeile darunter. */
+  /* The name and key get the full width, the three short cells
+     share the row below it. */
   .signal-grid .signal-title,
   .signal-grid .key {
     grid-column: 1 / -1;

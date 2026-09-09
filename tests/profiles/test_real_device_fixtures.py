@@ -1,4 +1,4 @@
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -14,7 +14,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Prueft die Tabelle an den echten Geraeten aus Phase 1."""
+"""Checks the table against the real devices from phase 1."""
 
 import json
 from pathlib import Path
@@ -32,34 +32,34 @@ def load(name: str) -> NodeSnapshot:
 
 
 def test_plug_matches_the_breakdown_recorded_in_spec_6_6():
-    """Spec 6.6, Tabelle: 102 analog, 7 digital, 13 Text, 37 nicht abbildbar -
-    plus Aufgabe 5: der Zaehlerstand (2/145/1) ist eine Struktur mit
-    numerischem Element und wandert seither von NONE zu ANALOG (103/36)."""
+    """Spec 6.6, table: 102 analog, 7 digital, 13 text, 37 not mappable -
+    plus task 5: the meter reading (2/145/1) is a struct with a numeric
+    element and has since moved from NONE to ANALOG (103/36)."""
     snap = load("ikea_grillplats_plug.json")
     signals = extract_signals(snap)
-    zaehlung = {kind: 0 for kind in Exportability}
+    counts = {kind: 0 for kind in Exportability}
     for ref in signals:
-        zaehlung[lookup(ref, snap.attributes.get(ref.path)).exportability] += 1
+        counts[lookup(ref, snap.attributes.get(ref.path)).exportability] += 1
 
     assert len(signals) == 159
-    assert zaehlung[Exportability.ANALOG] == 103
-    assert zaehlung[Exportability.DIGITAL] == 7
-    assert zaehlung[Exportability.TEXT] == 13
-    assert zaehlung[Exportability.NONE] == 36  # 32 Listen/Structs - 1 + 5 Nullwerte
+    assert counts[Exportability.ANALOG] == 103
+    assert counts[Exportability.DIGITAL] == 7
+    assert counts[Exportability.TEXT] == 13
+    assert counts[Exportability.NONE] == 36  # 32 lists/structs - 1 + 5 null values
 
 
 def test_only_110_of_the_plugs_signals_reach_a_udp_input():
-    """Nicht 45, sondern 49 fallen weg - die 5 Nullwerte kommen zu den
-    verbleibenden 44 Listen/Structs dazu (Aufgabe 5 zieht den Zaehlerstand
-    aus seiner Struktur und macht ihn abbildbar)."""
+    """Not 45 but 49 drop out - the 5 null values are added to the
+    remaining 44 lists/structs (task 5 pulls the meter reading out of its
+    struct and makes it mappable)."""
     snap = load("ikea_grillplats_plug.json")
-    abbildbar = [
+    exportable = [
         ref
         for ref in extract_signals(snap)
         if lookup(ref, snap.attributes.get(ref.path)).exportability
         in (Exportability.ANALOG, Exportability.DIGITAL)
     ]
-    assert len(abbildbar) == 110
+    assert len(exportable) == 110
 
 
 def test_plug_power_attribute_carries_kw():
@@ -76,19 +76,19 @@ def test_every_button_event_is_named():
 
 
 def test_rgbw_lamp_accepts_move_to_hue_and_saturation():
-    """Der Beleg, auf dem die Freischaltung von (768, 6) steht (Spec 4.1).
+    """The evidence on which the enabling of (768, 6) rests (spec 4.1).
 
-    Schlaegt dieser Test fehl, ist der Entwurf falsch - dann erwartet die
-    Leuchte MoveToColor (7, xy) und es fehlt eine Farbraumumrechnung, die
-    es im Projekt nirgends gibt (Spec 10.2)."""
+    If this test fails, the design is wrong - then the lamp
+    expects MoveToColor (7, xy) and there is a missing color-space
+    conversion that does not exist anywhere in the project (spec 10.2)."""
     snap = load("ikea_kajplats_cws_lamp.json")
     accepted = snap.attributes["1/768/65529"]
     assert 6 in accepted
 
 
 def test_both_lamps_report_their_physical_colour_temperature_limits():
-    """Ohne diese beiden Attribute bliebe `range` leer und der
-    Kelvin-Regler unbegrenzt (Spec 6.4)."""
+    """Without these two attributes, `range` would stay empty and the
+    kelvin slider unbounded (spec 6.4)."""
     for name in ("ikea_kajplats_ws_lamp.json", "ikea_kajplats_cws_lamp.json"):
         snap = load(name)
         assert isinstance(snap.attributes["1/768/16395"], int)
@@ -96,22 +96,22 @@ def test_both_lamps_report_their_physical_colour_temperature_limits():
 
 
 def test_the_ws_lamp_has_no_hue_saturation_command():
-    """Belegt die Abstufung aus Spec 6.3: die WS-Leuchte bekommt keine
-    Tableiste, weil sie kein Hue/Sat-Kommando hat - nicht, weil der Code
-    ihr Modell kennt.
+    """Proves the distinction from spec 6.3: the WS lamp gets no
+    color tab because it has no hue/sat command - not because the code
+    knows its model.
 
-    Sie fuehrt sehr wohl MoveToColor (7) und damit den XY-Farbraum
-    (FeatureMap 24 = XY|CT). Der bleibt bewusst ungenutzt: eine
-    xy-Umrechnung gibt es im Projekt nicht, und fuer eine Weisston-Leuchte
-    waere sie ein Bedienelement fuer eine Faehigkeit, die niemand von ihr
-    erwartet."""
+    It does support MoveToColor (7) and thus the XY color space
+    (FeatureMap 24 = XY|CT). That stays deliberately unused: an
+    xy conversion does not exist in the project, and for a white-tone
+    lamp it would be a control for a capability that nobody expects
+    from it."""
     accepted = load("ikea_kajplats_ws_lamp.json").attributes["1/768/65529"]
     assert 6 not in accepted
     assert 10 in accepted
-    assert 7 in accepted  # XY vorhanden, aber nicht freigeschaltet
+    assert 7 in accepted  # XY present, but not enabled
 
 
 def test_the_cws_lamp_advertises_the_full_colour_feature_set():
-    """FeatureMap 31 = HS|EHUE|ColorLoop|XY|CT - die Grundlage dafuer, dass
-    genau diese Leuchte beide Reiter bekommt und die WS-Leuchte nicht."""
+    """FeatureMap 31 = HS|EHUE|ColorLoop|XY|CT - the basis for
+    exactly this lamp getting both tabs and the WS lamp not."""
     assert load("ikea_kajplats_cws_lamp.json").attributes["1/768/65532"] == 31

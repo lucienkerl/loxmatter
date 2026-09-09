@@ -1,4 +1,4 @@
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -14,31 +14,31 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Uebersetzt gespeicherte Signale in Loxone-Eingangsobjekte.
+"""Translates stored signals into Loxone input objects.
 
-Zwei Regeln aus der Spec pragen dieses Modul:
+Two rules from the spec shape this module:
 
-Spec 6.3 — ein Matter-Event hat in Loxone kein Zuhause. Ein virtueller
-UDP-Eingang kennt nur Werte. Jedes Event wird deshalb zu zwei Objekten: einem
-digitalen Impuls, der die Flanke erzeugt, und einem monotonen Zaehler, der ein
-verlorenes UDP-Paket ueberlebt, weil er dann nur springt statt zu verschlucken.
+Spec 6.3 — a Matter event has no home in Loxone. A virtual UDP input only
+knows values. Every event therefore becomes two objects: a digital pulse
+that produces the edge, and a monotonic counter that survives a lost UDP
+packet, because it then only jumps instead of swallowing it.
 
-Spec 6.6 — Listen, Strukturen, Nullwerte und Texte werden hier verworfen. Sie
-bleiben in der Ablage und in der Oberflaeche sichtbar, aber sie koennen kein
-Loxone-Objekt werden.
+Spec 6.6 — lists, structs, null values and text are discarded here. They
+remain visible in storage and in the interface, but they cannot become a
+Loxone object.
 
-Spec 7.3 — die Einheit eines Signals wandert nicht mehr in den Kommentar,
-sondern wird ueber `profiles.table.unit_format` in einen Loxone-Formatstring
-uebersetzt (`unit_format`-Feld). Digitale Eingaenge und Events tragen dort
-immer `""`: ein Formatstring mit Nachkommastellen ergibt fuer einen Impuls
-oder einen Zaehler keinen Sinn.
+Spec 7.3 — a signal's unit no longer travels in the comment; instead it is
+translated into a Loxone format string via `profiles.table.unit_format`
+(the `unit_format` field). Digital inputs and events always carry `""`
+there: a format string with decimal places makes no sense for a pulse or
+a counter.
 
-Spec 6.2 — der Geraete-Praefix ``d<device_id>`` kommt hier nicht aus einer
-Vermutung ueber die Signalliste, sondern vom Aufrufer, der ihn von `Store`
-kennt. Und weil der Zaehler-Schluessel eines Events (`<key>_n`) frei erfunden
-und nirgends reserviert ist, prueft `to_inputs` vor der Rueckgabe, dass kein
-Schluessel doppelt vergeben wird — sonst haetten zwei Loxone-Objekte densel-
-ben UDP-Namen und Loxone Config wuerde das nicht melden.
+Spec 6.2 — the device prefix ``d<device_id>`` does not come here from a
+guess about the signal list, but from the caller, who knows it from
+`Store`. And because an event's counter key (`<key>_n`) is made up freely
+here and reserved nowhere, `to_inputs` checks before returning that no key
+is assigned twice — otherwise two Loxone objects would share the same UDP
+name, and Loxone Config would not report that.
 """
 
 from __future__ import annotations
@@ -54,28 +54,28 @@ from loxmatter.profiles.table import Exportability, unit_format
 
 @dataclass(frozen=True)
 class LoxoneInput:
-    """Ein virtueller UDP-Eingang, wie er in der Vorlage landet.
+    """A virtual UDP input, as it ends up in the template.
 
-    Zu `analog` und `check_suffix` (beide am Miniserver geprueft,
-    2026-09-03): ein DIGITALER Eingang loest aus, sobald sein
-    Erkennungsmuster passt - den Wert hinter dem Doppelpunkt wertet Loxone
-    dabei nicht aus. Das hat zwei Folgen, die im Betrieb auffielen:
+    On `analog` and `check_suffix` (both checked against the Miniserver,
+    2026-09-03): a DIGITAL input fires as soon as its detection pattern
+    matches - Loxone does not evaluate the value after the colon while
+    doing so. That has two consequences that showed up in operation:
 
-    * Ein Zustand wie `onoff` schickt `key:1` und `key:0`. Auf ein Muster
-      mit `\v` passen beide, der Eingang stand also immer auf Ein.
-    * Ein Ereignis schickt einen Impuls, also ebenfalls `key:1` und kurz
-      darauf `key:0`. Ein Tastendruck loeste damit ZWEIMAL aus.
+    * A state like `onoff` sends `key:1` and `key:0`. A pattern with `\v`
+      matches both, so the input was always on.
+    * An event sends a pulse, so also `key:1` and shortly after `key:0`.
+      A button press thus fired TWICE.
 
-    Deshalb:
+    Hence:
 
-    * **Zustaende sind analog.** Loxone liest die Zahl, 1 und 0 werden
-      unterscheidbar. Ein analoger Eingang mit 0/1 treibt jeden Baustein,
-      der einen Zustand erwartet.
-    * **Ereignisse bleiben digital**, aber ihr Muster endet auf `:1` statt
-      auf `:\v`. Nur die steigende Flanke passt, die Null wird ignoriert,
-      und der Impuls loest genau einmal aus. Das geht ausschliesslich bei
-      Signalen, die von sich aus einen Impuls erzeugen - bei einem Zustand
-      waere die Null gerade die Information, die verloren ginge.
+    * **States are analog.** Loxone reads the number, 1 and 0 become
+      distinguishable. An analog input with 0/1 drives any block that
+      expects a state.
+    * **Events stay digital**, but their pattern ends on `:1` instead of
+      `:\v`. Only the rising edge matches, the zero is ignored, and the
+      pulse fires exactly once. That works only for signals that produce
+      a pulse on their own - for a state, the zero would be exactly the
+      information that would get lost.
     """
 
     key: str
@@ -83,52 +83,51 @@ class LoxoneInput:
     comment: str
     analog: bool
     unit_format: str
-    # Was hinter "key:" im Erkennungsmuster steht. "\\v" liest den Wert aus
-    # (Zustaende und Zaehler), "1" passt nur auf die steigende Flanke
-    # (Ereignisse).
+    # What follows "key:" in the detection pattern. "\\v" reads out the
+    # value (states and counters), "1" matches only the rising edge
+    # (events).
     check_suffix: str = "\\v"
 
 
 def to_inputs(
     signals: Sequence[StoredSignal], device_id: int, device_label: str
 ) -> list[LoxoneInput]:
-    """Erzeugt die Eingangsobjekte eines Geraets, inklusive Online-Signal.
+    """Produces a device's input objects, including the online signal.
 
-    Bricht laut ab, statt falsch verdrahtete Vorlagen zu erzeugen:
+    Aborts loudly instead of producing wrongly wired templates:
 
-    - jedes Signal muss zu ``device_id`` gehoeren (Praefix ``d<device_id>_``).
-      Ein Signal eines anderen Geraets in dieser Liste ist ein Aufrufer-Fehler
-      und darf nicht stillschweigend ein falsch beschriftetes Geraet ergeben.
-    - kein Schluessel darf zweimal vergeben werden. Der Zaehler-Schluessel
-      eines Events (``<key>_n``) wird hier frei erfunden und ist in `Store`
-      nirgends reserviert — trifft ihn ein spaeterer `clusters.yaml`-Slug
-      zufaellig, waeren das zwei `LoxoneInput`s mit identischem Schluessel,
-      also zwei Loxone-Objekte, die denselben UDP-Namen abhoeren.
+    - every signal must belong to ``device_id`` (prefix ``d<device_id>_``).
+      A signal from a different device in this list is a caller bug and
+      must not silently produce a mislabelled device.
+    - no key may be assigned twice. An event's counter key (``<key>_n``)
+      is made up freely here and reserved nowhere in `Store` — if a later
+      `clusters.yaml` slug happened to collide with it, that would be two
+      `LoxoneInput`s with an identical key, i.e. two Loxone objects
+      listening on the same UDP name.
 
-    ``signal.exported`` entscheidet, ob ein Signal ueberhaupt ein
-    `LoxoneInput` erzeugt (Review-Fix Important #3, 2026-09-02): vorher
-    filterte diese Funktion ausschliesslich nach `exportability`, und das
-    `exported`-Flag aus `PATCH /api/signals/{key}` (Spec 5) veraenderte die
-    API-Antwort, aber nie eine erzeugte Vorlage — das Abschalten eines
-    Signals in der Oberflaeche hatte auf den Export schlicht keine Wirkung.
-    Ein Event mit `exported=False` erzeugt deshalb weder Impuls noch
-    Zaehler. Das Online-Signal des Geraets bleibt davon ausdruecklich
-    unberuehrt: es gehoert nicht zu einem einzelnen Signal, sondern zum
-    Geraet selbst (Spec 6.5), und `StoredSignal` traegt dafuer gar kein
-    `exported`-Flag.
+    ``signal.exported`` decides whether a signal produces a `LoxoneInput`
+    at all (review fix important #3, 2026-09-02): previously this function
+    filtered exclusively on `exportability`, and the `exported` flag from
+    `PATCH /api/signals/{key}` (spec 5) changed the API response but never
+    a generated template — turning a signal off in the interface simply
+    had no effect on the export. An event with `exported=False` therefore
+    produces neither a pulse nor a counter. The device's online signal is
+    explicitly unaffected by this: it does not belong to a single signal
+    but to the device itself (spec 6.5), and `StoredSignal` carries no
+    `exported` flag for it at all.
     """
     prefix = f"d{device_id}_"
     inputs: list[LoxoneInput] = []
-    # Schluessel -> deutschsprachige Herkunftsbeschreibung, fuer die Meldung
-    # bei einer Kollision.
+    # Key -> description of where it came from, for the message on a
+    # collision.
     origins: dict[str, str] = {}
 
     def emit(entry: LoxoneInput, origin: str) -> None:
         if entry.key in origins:
             raise ValueError(
-                f"Schluessel-Kollision beim Export: {entry.key!r} wird sowohl von "
-                f"{origins[entry.key]} als auch von {origin} erzeugt — das ergaebe "
-                f"zwei Loxone-Objekte fuer denselben UDP-Namen."
+                f"Key collision during export: {entry.key!r} is produced by both "
+                f"{origins[entry.key]} and {origin} — that would result in "
+                f"two Loxone objects for the same UDP name."
             )
         origins[entry.key] = origin
         inputs.append(entry)
@@ -136,8 +135,8 @@ def to_inputs(
     for signal in signals:
         if not signal.key.startswith(prefix):
             raise ValueError(
-                f"Signal {signal.key!r} gehoert nicht zu Geraet {device_id} "
-                f"(erwartetes Praefix {prefix!r})."
+                f"Signal {signal.key!r} does not belong to device {device_id} "
+                f"(expected prefix {prefix!r})."
             )
 
         if not signal.exported:
@@ -147,9 +146,9 @@ def to_inputs(
 
         if signal.ref.kind is SignalKind.EVENT:
             emit(
-                # Digital, aber das Muster passt nur auf die steigende
-                # Flanke: der Impuls loest damit genau einmal aus statt
-                # zweimal (siehe LoxoneInput).
+                # Digital, but the pattern matches only the rising edge:
+                # the pulse thus fires exactly once instead of twice (see
+                # LoxoneInput).
                 LoxoneInput(
                     signal.key,
                     signal.title,
@@ -158,7 +157,7 @@ def to_inputs(
                     "",
                     check_suffix="1",
                 ),
-                f"dem Impuls von {signal.key!r}",
+                f"the pulse of {signal.key!r}",
             )
             emit(
                 LoxoneInput(
@@ -168,22 +167,22 @@ def to_inputs(
                     True,
                     "",
                 ),
-                f"dem Zaehler von {signal.key!r}",
+                f"the counter of {signal.key!r}",
             )
             continue
 
         if signal.exportability in (Exportability.ANALOG, Exportability.DIGITAL):
-            # Auch das Boolesche analog: ein digitaler Eingang koennte 1 und
-            # 0 nicht unterscheiden (siehe LoxoneInput). Die Einheit bleibt
-            # dabei die des Signals - ein Zustand hat keine.
+            # The boolean is also analog: a digital input could not
+            # distinguish 1 and 0 (see LoxoneInput). The unit remains that
+            # of the signal - a state has none.
             emit(
                 LoxoneInput(signal.key, signal.title, comment, True, unit_format(signal.unit)),
-                f"dem Signal {signal.key!r}",
+                f"signal {signal.key!r}",
             )
 
     online_key = f"d{device_id}_online"
     emit(
-        # Ein Zustand, kein Impuls - also analog (siehe LoxoneInput).
+        # A state, not a pulse - so analog (see LoxoneInput).
         LoxoneInput(
             online_key,
             i18n.t("export.signals.online_title", device_label=device_label),
@@ -191,6 +190,6 @@ def to_inputs(
             True,
             "",
         ),
-        "dem Online-Signal",
+        "the online signal",
     )
     return inputs

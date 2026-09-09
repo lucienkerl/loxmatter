@@ -1,4 +1,4 @@
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -14,57 +14,54 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Ein einziger echter WebSocket-Handshake gegen einen echten `uvicorn`
-(Review-Fix Important #1, 2026-09-02).
+"""A single real WebSocket handshake against a real `uvicorn`
+(review fix Important #1, 2026-09-02).
 
-**Warum dieser Test noetig ist, obwohl `tests/api/test_live.py` schon acht
-gruene Tests fuer `/api/live` hat:** jene Tests laufen alle ueber
-`_InProcessWebSocket` (siehe `tests/api/conftest.py`) - eine ASGI-App, direkt
-als `asyncio.Task` angetrieben, ganz ohne einen echten Server dazwischen.
-Das war beim Aufspueren dieses Fehlers bereits der Fall: `uvicorn` allein
-(ohne das "standard"-Extra) bringt gar keine WebSocket-Implementierung mit,
-`GET /api/live` antwortete gegen einen echten `uvicorn.run` dieses Dienstes
-mit 404 "Unsupported upgrade request" - und trotzdem blieb die komplette
-Testsuite gruen, weil der In-Prozess-Pfad uvicorns eigene HTTP/WebSocket-
-Weiche schlicht nie durchlaeuft. `websockets>=12` in `pyproject.toml` (siehe
-Kommentar dort) ist seither die einzige Absicherung dagegen - eine
-Abhaengigkeits-Aktualisierung, ein Aufraeumen ("importiert ja niemand
-`websockets` direkt") oder ein Wechsel von `uvicorn[standard]` auf blosses
-`uvicorn` wuerde die Live-Aktualisierung der WebUI erneut lautlos
-zerstoeren, und `uv run pytest` wuerde es nicht bemerken - denn genau das
-ist ja passiert.
+**Why this test is needed even though `tests/api/test_live.py` already has
+eight green tests for `/api/live`:** those tests all run over
+`_InProcessWebSocket` (see `tests/api/conftest.py`) - an ASGI app, driven
+directly as an `asyncio.Task`, with no real server in between at all. That
+was already the case when this bug was discovered: `uvicorn` alone (without
+the "standard" extra) ships no WebSocket implementation at all, `GET
+/api/live` answered a real `uvicorn.run` of this service with 404
+"Unsupported upgrade request" - and yet the entire test suite stayed green,
+because the in-process path simply never runs through uvicorn's own
+HTTP/WebSocket switch. `websockets>=12` in `pyproject.toml` (see the comment
+there) has since been the only safeguard against this - a dependency
+update, a cleanup ("nobody imports `websockets` directly anyway"), or a
+switch from `uvicorn[standard]` to plain `uvicorn` would silently break the
+WebUI's live update again, and `uv run pytest` would not notice - because
+that is exactly what happened.
 
-Dieser Test schliesst exakt diese Luecke: er startet einen ECHTEN
-`uvicorn.Server` auf einem Loopback-Port und fuehrt darueber einen echten
-WebSocket-Handshake (RFC 6455) gegen `/api/live` aus - **ohne selbst eine
-WebSocket-Client-Bibliothek zu benutzen** (siehe `_perform_raw_handshake`
-unten). Das ist bewusst so: benutzte der Client hier stattdessen das
-`websockets`-Paket, wuerde ein aus dem Environment entferntes `websockets`
-schon den TEST-CLIENT an einem `ImportError` scheitern lassen, lange bevor
-der eigentliche Server (uvicorn) ueberhaupt gefragt wird - der Test wuerde
-zwar rot, aber aus dem falschen Grund, und ein Wechsel des Testclients auf
-eine andere Bibliothek koennte die Luecke wieder oeffnen. Ein rohes
-TCP-Socket mit von Hand gebauten Upgrade-Headern haengt an nichts, was die
-Abwesenheit von `websockets` selbst verdecken koennte - faellt `uvicorn`
-mangels `websockets` (und ohne `wsproto`, das dieses Projekt ebenfalls
-nicht installiert) auf keine WebSocket-Implementierung zurueck, antwortet
-der Server mit `404`, und genau das faengt die Assertion unten ab.
+This test closes exactly that gap: it starts a REAL `uvicorn.Server` on a
+loopback port and runs a real WebSocket handshake (RFC 6455) against
+`/api/live` over it - **without using a WebSocket client library itself**
+(see `_perform_raw_handshake` below). That's deliberate: if the client used
+the `websockets` package here instead, a `websockets` removed from the
+environment would already make the TEST CLIENT fail with an `ImportError`,
+long before the actual server (uvicorn) is even asked - the test would go
+red, but for the wrong reason, and switching the test client to a different
+library could reopen the gap. A raw TCP socket with hand-built upgrade
+headers depends on nothing that could itself mask the absence of
+`websockets` - if `uvicorn` falls back to no WebSocket implementation for
+lack of `websockets` (and without `wsproto`, which this project also
+doesn't install), the server answers with `404`, and that's exactly what
+the assertion below catches.
 
-**Bindet an `127.0.0.1`, Port `0`.** `127.0.0.1` verlaesst nie diese
-Maschine - kein Netzwerkzugriff im Sinne des Projekt-Constraints (siehe
-Aufgabenstellung). Port `0` laesst das Betriebssystem einen freien Port
-zuteilen (`socket.getsockname()` liefert ihn danach), damit dieser Test nie
-mit einem bereits belegten Port kollidiert, egal wie oft oder parallel er
-laeuft.
+**Binds to `127.0.0.1`, port `0`.** `127.0.0.1` never leaves this machine -
+no network access in the sense of the project constraint (see the task
+brief). Port `0` lets the operating system assign a free port
+(`socket.getsockname()` returns it afterward), so this test never collides
+with an already-occupied port, no matter how often or how parallel it runs.
 
-**Als eigener Marker (`slow`), aber ohne Default-Ausschluss.** Das Starten
-und Stoppen eines echten `uvicorn`-Prozesses (im Thread) kostet spuerbar
-mehr als die Millisekunden eines In-Prozess-Tests - ein Test, der dafuer
-extra ausgewaehlt werden muesste (`-m slow`, oder umgekehrt bewusst
-uebersprungen `-m "not slow"`), waere aber ein Test, der vergessen wird.
-Der Marker existiert deshalb nur, damit CI ihn bei Bedarf gezielt
-herausfiltern oder gezielt isoliert erneut laufen lassen kann - `uv run
-pytest` ohne Filter fuehrt ihn immer mit aus."""
+**As its own marker (`slow`), but without a default exclusion.** Starting
+and stopping a real `uvicorn` process (in a thread) noticeably costs more
+than the milliseconds of an in-process test - but a test that had to be
+specifically opted into (`-m slow`, or conversely deliberately skipped with
+`-m "not slow"`) would be a test that gets forgotten. The marker therefore
+exists only so CI can specifically filter it out or specifically isolate
+and rerun it when needed - `uv run pytest` with no filter always runs it
+along with everything else."""
 
 from __future__ import annotations
 
@@ -87,9 +84,9 @@ SHUTDOWN_TIMEOUT_S = 5.0
 
 
 class _NullSender:
-    """Wie `_NullSender` in `conftest.py` - reines Fuellmaterial fuer
-    `Runtime.__init__`, dieser Test prueft nur den Handshake, keinen
-    Datenfluss ueber die UDP-Bruecke."""
+    """Like `_NullSender` in `conftest.py` - pure filler for
+    `Runtime.__init__`, this test only checks the handshake, not any data
+    flow over the UDP bridge."""
 
     async def send(self, key: str, value: float | bool, *, force: bool = False) -> bool:
         return True
@@ -101,15 +98,14 @@ class _NullSender:
 def _perform_raw_handshake_response(
     host: str, port: int, path: str, *, timeout: float, subprotocols: str | None = None
 ) -> str:
-    """Fuehrt den WebSocket-Handshake (RFC 6455) selbst aus, ueber ein rohes
-    TCP-Socket - siehe Modul-Docstring fuer den Grund, warum kein
-    WebSocket-Client hier zum Einsatz kommt. Liefert die VOLLSTAENDIGE
-    Antwort (Statuszeile und Kopfzeilen) zurueck.
+    """Performs the WebSocket handshake (RFC 6455) itself, over a raw TCP
+    socket - see the module docstring for why no WebSocket client is used
+    here. Returns the FULL response (status line and headers).
 
-    `subprotocols` setzt den `Sec-WebSocket-Protocol`-Header - genau das,
-    was ein Browser aus `new WebSocket(url, ["bearer", token])` macht und
-    was `loxone.server.build_api_guard` als zweiten Uebertragungsweg fuer
-    das Token liest (Review-Fix Fix 1c, 2026-09-03)."""
+    `subprotocols` sets the `Sec-WebSocket-Protocol` header - exactly what a
+    browser does with `new WebSocket(url, ["bearer", token])` and what
+    `loxone.server.build_api_guard` reads as the second transmission path
+    for the token (review fix Fix 1c, 2026-09-03)."""
     key = base64.b64encode(os.urandom(16)).decode("ascii")
     protocol_header = (
         f"Sec-WebSocket-Protocol: {subprotocols}\r\n" if subprotocols is not None else ""
@@ -133,9 +129,9 @@ def _perform_raw_handshake_response(
 def _perform_raw_handshake(
     host: str, port: int, path: str, *, timeout: float, subprotocols: str | None = None
 ) -> str:
-    """Nur die Statuszeile der Antwort (z. B. "HTTP/1.1 101 Switching
-    Protocols" im Erfolgsfall, "HTTP/1.1 404 Not Found" beim hier
-    untersuchten Regressionsfall)."""
+    """Only the status line of the response (e.g. "HTTP/1.1 101 Switching
+    Protocols" on success, "HTTP/1.1 404 Not Found" for the regression case
+    examined here)."""
     response = _perform_raw_handshake_response(
         host, port, path, timeout=timeout, subprotocols=subprotocols
     )
@@ -144,16 +140,16 @@ def _perform_raw_handshake(
 
 @contextlib.contextmanager
 def _running_server(app: object) -> Iterator[int]:
-    """Startet einen echten `uvicorn` auf `127.0.0.1` mit einem vom
-    Betriebssystem zugeteilten Port und liefert diesen Port - siehe
-    Modul-Docstring zu beidem. Als Kontextmanager, seit ein zweiter Test
-    (der Token-Handshake unten) denselben Aufbau braucht: zwei Kopien
-    dieses Auf- und Abbaus wuerden frueher oder spaeter auseinanderlaufen."""
+    """Starts a real `uvicorn` on `127.0.0.1` with a port assigned by the
+    operating system and returns that port - see the module docstring for
+    both. As a context manager, ever since a second test (the token
+    handshake below) needs the same setup: two copies of this setup and
+    teardown would sooner or later drift apart."""
     config = uvicorn.Config(app, host="127.0.0.1", port=0, log_level="warning")
     server = uvicorn.Server(config)
-    # `bind_socket()` bindet bereits (mit vom Betriebssystem zugeteiltem
-    # Port, da `port=0`) - der tatsaechliche Port steht danach in
-    # `sock.getsockname()`, lange bevor `server.run()` ueberhaupt startet.
+    # `bind_socket()` already binds (with a port assigned by the operating
+    # system, since `port=0`) - the actual port is then in
+    # `sock.getsockname()`, long before `server.run()` even starts.
     sock = config.bind_socket()
     port: int = sock.getsockname()[1]
 
@@ -163,9 +159,7 @@ def _running_server(app: object) -> Iterator[int]:
         deadline = time.monotonic() + STARTUP_TIMEOUT_S
         while not server.started:
             if time.monotonic() > deadline:
-                raise TimeoutError(
-                    f"uvicorn ist nicht innerhalb von {STARTUP_TIMEOUT_S}s gestartet"
-                )
+                raise TimeoutError(f"uvicorn did not start within {STARTUP_TIMEOUT_S}s")
             time.sleep(0.01)
         yield port
     finally:
@@ -175,26 +169,26 @@ def _running_server(app: object) -> Iterator[int]:
 
 @pytest.mark.slow
 def test_a_real_uvicorn_upgrades_api_live_to_a_websocket(plug_store, no_invoke):
-    """Regression fuer den 404-Fehlschlag aus dem Modul-Docstring: ein echter
-    `uvicorn`-Server muss `GET /api/live` per Upgrade auf `101 Switching
-    Protocols` beantworten, nicht mit `404 Unsupported upgrade request`.
+    """Regression for the 404 failure from the module docstring: a real
+    `uvicorn` server must answer `GET /api/live` with an upgrade to `101
+    Switching Protocols`, not with `404 Unsupported upgrade request`.
 
-    Bewusst ein GEWOEHNLICHER (nicht-async) Testkoerper: `uvicorn.Server.run`
-    baut sich seine eigene `asyncio`-Ereignisschleife in einem eigenen
-    Thread auf (siehe `capture_signals` in `uvicorn/server.py` - Signale
-    werden dort ausdruecklich nur im Hauptthread behandelt, ein Serverlauf
-    im Nebenthread ist also unterstuetzt), unabhaengig von der Schleife, die
-    `pytest-asyncio` fuer async-Tests dieser Suite aufspannt."""
+    Deliberately an ORDINARY (non-async) test body: `uvicorn.Server.run`
+    builds its own `asyncio` event loop in its own thread (see
+    `capture_signals` in `uvicorn/server.py` - signals are explicitly
+    handled only in the main thread there, so a server run in a side
+    thread is supported), independent of the loop `pytest-asyncio` sets up
+    for the async tests in this suite."""
     store, _device_id = plug_store
-    # Seit Task 8 laesst der Waechter nichts mehr ohne Nachweis durch - hier
-    # ein Token statt einer angemeldeten Sitzung, bewusst: `Store` gehoert
-    # laut eigenem Moduldocstring "genau einem Thread und genau einer
-    # Event-Loop", `server.run()` unten laeuft aber in einem EIGENEN Thread
-    # (siehe Docstring dieser Funktion). Ein Sitzungscookie wuerde den
-    # Waechter `store.auth.session_expires_at` aus genau diesem fremden
-    # Thread aufrufen lassen und mit `sqlite3.ProgrammingError` abstuerzen;
-    # der Token-Vergleich (`_tokens_match`) ist reiner String-Vergleich und
-    # ruehrt den Store gar nicht erst an.
+    # Since Task 8, the guard lets nothing through without proof - here a
+    # token instead of a signed-in session, deliberately: `Store` belongs,
+    # per its own module docstring, to "exactly one thread and exactly one
+    # event loop", but `server.run()` below runs in its OWN thread (see
+    # this function's docstring). A session cookie would make the guard
+    # call `store.auth.session_expires_at` from exactly that foreign
+    # thread and crash with `sqlite3.ProgrammingError`; the token
+    # comparison (`_tokens_match`) is a pure string comparison and doesn't
+    # touch the store at all.
     runtime = Runtime(store, _NullSender())
     app = build_app(store, no_invoke, runtime, api_token="secret")
 
@@ -206,17 +200,17 @@ def test_a_real_uvicorn_upgrades_api_live_to_a_websocket(plug_store, no_invoke):
             timeout=STARTUP_TIMEOUT_S,
             subprotocols="bearer, secret",
         )
-        assert "101" in status_line, f"WebSocket-Upgrade fehlgeschlagen: {status_line!r}"
+        assert "101" in status_line, f"WebSocket upgrade failed: {status_line!r}"
 
 
 @pytest.mark.slow
 def test_a_real_uvicorn_upgrades_api_diagnostics_live_to_a_websocket(plug_store, no_invoke):
-    """Dieselbe Regression wie oben, fuer die zweite WebSocket-Route dieser
-    Bruecke (Task 4, Phase 5, Spec 10.5): `/api/diagnostics/live` haengt am
-    selben `uvicorn`-Aufbau, eine fehlende `websockets`-Installation traefe
-    beide Routen gleichermassen - dieser Test deckt sie unabhaengig voneinander
-    ab, damit ein Regressions-Fund an der einen die andere nicht ungeprueft
-    laesst."""
+    """The same regression as above, for this bridge's second WebSocket
+    route (Task 4, Phase 5, Spec 10.5): `/api/diagnostics/live` hangs off
+    the same `uvicorn` setup, a missing `websockets` installation would hit
+    both routes equally - this test covers them independently of each
+    other, so that a regression found in one doesn't leave the other
+    unchecked."""
     store, _device_id = plug_store
     runtime = Runtime(store, _NullSender())
     app = build_app(store, no_invoke, runtime, api_token="secret")
@@ -229,21 +223,21 @@ def test_a_real_uvicorn_upgrades_api_diagnostics_live_to_a_websocket(plug_store,
             timeout=STARTUP_TIMEOUT_S,
             subprotocols="bearer, secret",
         )
-        assert "101" in status_line, f"WebSocket-Upgrade fehlgeschlagen: {status_line!r}"
+        assert "101" in status_line, f"WebSocket upgrade failed: {status_line!r}"
 
 
 @pytest.mark.slow
 def test_a_real_uvicorn_accepts_the_token_from_the_websocket_subprotocol(plug_store, no_invoke):
-    """Der Weg, den die Browser-Oberflaeche bei gesetztem Token geht - hier
-    einmal gegen einen ECHTEN Server statt gegen die ASGI-App direkt
-    (Review-Fix Fix 1c, 2026-09-03).
+    """The path the browser UI takes when a token is configured - here for
+    once against a REAL server instead of against the ASGI app directly
+    (review fix Fix 1c, 2026-09-03).
 
-    Der In-Prozess-Test in `tests/api/test_security.py` fuellt das
-    Scope-Feld `subprotocols` von Hand; nur hier leitet es tatsaechlich
-    `uvicorn` aus dem `Sec-WebSocket-Protocol`-Header ab, und nur hier
-    zeigt sich, ob die Antwort das gewaehlte Subprotokoll enthaelt - ohne
-    das bricht ein Browser den Handshake nach RFC 6455 ab, und die
-    Testsuite haette es (wie schon einmal beim 404 oben) nicht bemerkt."""
+    The in-process test in `tests/api/test_security.py` fills the scope
+    field `subprotocols` by hand; only here does `uvicorn` actually derive
+    it from the `Sec-WebSocket-Protocol` header, and only here does it show
+    whether the response contains the chosen subprotocol - without that, a
+    browser aborts the handshake per RFC 6455, and the test suite would not
+    have noticed (as already happened once before with the 404 above)."""
     store, _device_id = plug_store
     runtime = Runtime(store, _NullSender())
     app = build_app(store, no_invoke, runtime, api_token="secret")
@@ -265,9 +259,9 @@ def test_a_real_uvicorn_accepts_the_token_from_the_websocket_subprotocol(plug_st
         )
 
     status_line = accepted.split("\r\n", 1)[0]
-    assert "101" in status_line, f"Handshake mit Token fehlgeschlagen: {status_line!r}"
-    # Der Marker muss zurueckkommen, das Token darf NIRGENDS in der Antwort
-    # stehen - weder im Subprotokoll-Header noch sonstwo.
+    assert "101" in status_line, f"Handshake with token failed: {status_line!r}"
+    # The marker must come back, the token must appear NOWHERE in the
+    # response - neither in the subprotocol header nor anywhere else.
     assert "sec-websocket-protocol: bearer" in accepted.lower(), accepted
     assert "secret" not in accepted
 

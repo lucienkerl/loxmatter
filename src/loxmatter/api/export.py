@@ -1,4 +1,4 @@
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -14,74 +14,72 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Export ueber die API (Spec 8, Task 5) - dieselben Vorlagen wie
-`loxmatter export` auf der Kommandozeile, aus demselben `Store`.
+"""Export via the API (Spec 8, Task 5) - the same templates as `loxmatter
+export` on the command line, from the same `Store`.
 
-`build_export_router` baut einen `APIRouter` mit Praefix `/api/export`,
-eingebunden in `loxone.server.build_app` neben den Routen aus den vorigen
-Tasks dieser Phase.
+`build_export_router` builds an `APIRouter` with prefix `/api/export`,
+wired into `loxone.server.build_app` alongside the routes from the
+previous tasks of this phase.
 
-**Dieselbe Datenbank wie die Kommandozeile - keine eigene.** Dieses Modul
-nimmt einen bereits geoeffneten `Store` entgegen, genau wie
-`api.devices.build_device_router`; es oeffnet nirgends selbst eine
-Verbindung zu einer Datei. Die eigentliche Garantie liegt deshalb nicht
-hier, sondern in der Verdrahtung: `loxone.server.build_app` reicht
-denselben `store`, den `loxmatter run` beim Start ueber
-`cli._resolve_store_path` geoeffnet hat, an ALLE Router weiter - diesen
-hier eingeschlossen. Waere die WebUI stattdessen mit einer eigenen, zweiten
-`Store`-Instanz auf einem anderen Pfad verdrahtet, vergaebe sie fuer
-dasselbe Matter-Geraet einen zweiten Satz Signalschluessel (Spec 6.2) - ein
-Nutzer, der einmal per CLI und einmal per WebUI exportiert, bekaeme zwei
-Vorlagen, die wie dieselbe aussehen, aber unterschiedlich verdrahtet sind.
+**The same database as the command line - not one of its own.** This
+module receives an already-opened `Store`, just like
+`api.devices.build_device_router`; it never opens a connection to a file
+itself anywhere. The actual guarantee therefore does not lie here but in
+the wiring: `loxone.server.build_app` passes the same `store` that
+`loxmatter run` opened at startup via `cli._resolve_store_path` on to ALL
+routers - this one included. If the WebUI were instead wired up with its
+own, second `Store` instance on a different path, it would assign a
+second set of signal keys (Spec 6.2) for the same Matter device - a user
+who exports once via CLI and once via WebUI would get two templates that
+look like the same one but are wired differently.
 `tests/api/test_export_api.py::test_api_export_writes_the_same_database_as_the_cli`
-belegt das end-to-end: derselbe Datenbankpfad, einmal ueber `loxmatter
-export` befuellt, einmal ueber diesen Router gelesen, erzeugt byteidentische
-Vorlagen - nicht nur denselben `device_id`.
+proves this end-to-end: the same database path, populated once via
+`loxmatter export` and read once via this router, produces byte-identical
+templates - not just the same `device_id`.
 
-Weil der Router direkt aus `Store` liest (`store.signals`/`store.commands`),
-nicht aus einem frischen Matter-Abbild, braucht er `export.commands` nicht -
-die Kommandos stehen bereits als `StoredCommand` in der Datenbank, angelegt
-beim Einlernen (`api.devices.commission_device`) oder beim letzten
-`loxmatter export`-Lauf.
+Because the router reads directly from `Store` (`store.signals`/
+`store.commands`), not from a fresh Matter snapshot, it does not need
+`export.commands` - the commands already exist as `StoredCommand` in the
+database, created during commissioning (`api.devices.commission_device`)
+or during the last `loxmatter export` run.
 
-**Entscheidung 1 - ein Download zaehlt als Export.** `GET
-/api/export/download` ruft fuer jedes ausgelieferte Geraet
-`Store.mark_exported` auf, `GET /api/export/preview` nie (siehe
-`test_preview_does_not_write_anything`). Eine Vorschau ist unzweideutig
-folgenlos; ein heruntergeladenes ZIP ist dagegen dasselbe Artefakt, das
-`loxmatter export` auf der Kommandozeile erzeugt und das dort unbestritten
-als "exportiert" zaehlt (`cli.py`s `export`-Kommando ruft `mark_exported`
-aus demselben Grund auf). Der Nachteil: eine Nutzerin, die dieselbe ZIP-Datei
-zweimal herunterlaedt, ohne etwas zu aendern, sieht `exported_at` beide Male
-weiterspringen, obwohl sich nichts geaendert hat. Die Alternative -
-`exported_at` nur bei einer tatsaechlichen inhaltlichen Aenderung
-fortschreiben - wuerde denselben Vergleich brauchen, den
-`changed_since_export` unten ohnehin zieht, und liefe darauf hinaus, einen
-Download klammheimlich zu einer Vorschau zu machen, sobald "nichts neu" ist.
-Ein Download, der manchmal zaehlt und manchmal nicht, waere schwerer zu
-erklaeren als ein Zeitstempel, der bei einem folgenlosen erneuten Download
-harmlos vorspringt.
+**Decision 1 - a download counts as an export.** `GET
+/api/export/download` calls `Store.mark_exported` for every device
+delivered, `GET /api/export/preview` never (see
+`test_preview_does_not_write_anything`). A preview is unambiguously
+without consequence; a downloaded ZIP, on the other hand, is the same
+artifact that `loxmatter export` produces on the command line and that
+unquestionably counts as "exported" there (`cli.py`'s `export` command
+calls `mark_exported` for the same reason). The downside: a user who
+downloads the same ZIP file twice without changing anything sees
+`exported_at` jump forward both times, even though nothing changed. The
+alternative - advancing `exported_at` only on an actual content change -
+would need the same comparison that `changed_since_export` below already
+performs anyway, and would amount to quietly turning a download into a
+preview as soon as "nothing new" applies. A download that sometimes
+counts and sometimes does not would be harder to explain than a timestamp
+that harmlessly jumps forward on a consequence-free repeat download.
 
-Wann genau `mark_exported` faellt, ist dabei nicht beliebig: `download`
-markiert erst, NACHDEM das ZIP im Speicher vollstaendig aufgebaut ist - nie
-Geraet fuer Geraet waehrend des Aufbaus (Review-Fix Important #1,
-2026-09-02). Ein Fehler zwischen zwei Geraeten (ein Rendern, das wirft, ein
-`store.commands`/`store.signals`, das scheitert, ein `forget_device` aus
-einer parallelen Anfrage) darf kein Geraet als exportiert zuruecklassen,
-dessen Vorlage der Client mangels 500er-Antwort nie bekommen hat - siehe den
-Docstring von `download` unten. Dieselbe Ueberlegung stand schon hinter dem
-verzoegerten `mark_exported`-Aufruf in `cli.py`s `export`-Kommando.
+Exactly when `mark_exported` is invoked is not arbitrary here: `download`
+only marks AFTER the ZIP has been fully built in memory - never device by
+device during the build (review fix Important #1, 2026-09-02). An error
+between two devices (a render that throws, a `store.commands`/
+`store.signals` that fails, a `forget_device` from a concurrent request)
+must not leave any device marked as exported whose template the client
+never received for lack of a 500 response - see the docstring of
+`download` below. The same consideration already stood behind the
+deferred `mark_exported` call in `cli.py`'s `export` command.
 
-**Entscheidung 2 - der Port kommt aus der Anfrage, nicht aus dem Code.**
-`download` verlangt `port` (UDP, VirtualInUdp) und `listen` (HTTP, die
-Kommando-URLs in VirtualOut) als Query-Parameter, mit denselben Vorgaben wie
-`cli.py`s `export --port`/`--listen`: `port` faellt auf
-`model.store.DEFAULT_UDP_PORT` (7000) zurueck, `listen` auf 8080 - beides
-nur Defaults, nie fest verdrahtet. Ein `loxmatter run --listen 9090` ohne
-passenden `listen`-Wert hier erzeugte Vorlagen, deren Ausgangsbefehle ins
-Leere liefen, ohne dass der Miniserver das je meldet (derselbe Fehler, den
-Review-Fix I3 in `export.documents.render_system_templates` schon einmal
-behoben hat).
+**Decision 2 - the port comes from the request, not from the code.**
+`download` requires `port` (UDP, VirtualInUdp) and `listen` (HTTP, the
+command URLs in VirtualOut) as query parameters, with the same defaults
+as `cli.py`'s `export --port`/`--listen`: `port` falls back to
+`model.store.DEFAULT_UDP_PORT` (7000), `listen` to 8080 - both only
+defaults, never hard-wired. A `loxmatter run --listen 9090` without a
+matching `listen` value here would produce templates whose output
+commands go nowhere, without the Miniserver ever reporting that (the same
+fault that review fix I3 in `export.documents.render_system_templates`
+already fixed once).
 """
 
 from __future__ import annotations
@@ -114,32 +112,32 @@ from loxmatter.model.store import (
 )
 from loxmatter.profiles.table import is_exportable
 
-# Oeffentlich, weil die Oberflaeche denselben Dateinamen vergeben muss:
-# seit die Downloads ueber `fetch` statt ueber einen Link laufen, benennt
-# der Browser die Datei selbst (siehe `web/app.js`, `download`).
+# Public, because the UI has to assign the same file name: ever since
+# downloads run via `fetch` instead of a link, the browser names the file
+# itself (see `web/app.js`, `download`).
 ARCHIVE_NAME = "loxmatter-export.zip"
-# Sprachneutral (Review-Fix Important, Whole-Branch-Review 2026-09-04): der
-# Dateiname bleibt EIN fester Wert unabhaengig von der UI-Sprache, nur der
-# Inhalt (`_readme_text()`) ist uebersetzt. Ein Dateiname, der sich mit der
-# UI-Sprache aendert, wuerde jedes Skript, das die ZIP-Struktur erwartet,
-# unnoetig erschweren - hiess bis zu diesem Fix immer `Import-Anleitung.txt`,
-# auch im englischsprachigen Export.
+# Language-neutral (review fix Important, whole-branch review 2026-09-04):
+# the file name stays ONE fixed value regardless of the UI language, only
+# the content (`_readme_text()`) is translated. A file name that changes
+# with the UI language would needlessly complicate every script that
+# expects the ZIP structure - was always called `Import-Anleitung.txt`
+# until this fix, even in the English-language export.
 _README_NAME = "README.txt"
 
 
 def _readme_text() -> str:
-    """Wie die alte Modul-Konstante `_README_TEXT`, aber pro Aufruf neu
-    aufgeloest statt beim Modulimport eingefroren - dieselbe Begruendung wie
-    beim Entfernen von `_ALREADY_SET_UP_DETAIL` in `api/auth.py` (Task 4)."""
+    """Like the old module constant `_README_TEXT`, but resolved fresh per
+    call instead of frozen at module import - the same rationale as for
+    removing `_ALREADY_SET_UP_DETAIL` in `api/auth.py` (Task 4)."""
     return i18n.t("api.export.readme_text").replace("\n", "\r\n")
 
 
 def _loxone_commands(commands: Sequence[StoredCommand]) -> list[LoxoneCommand]:
-    """Baut `LoxoneCommand`s aus bereits gespeicherten Kommandos - dieselbe
-    Zusammensetzung wie in `cli.py`s `export`-Kommando, hier auf
-    `StoredCommand` statt `DeviceCommand` angewandt, weil dieser Router aus
-    dem `Store` liest statt aus einem frischen Matter-Abbild (siehe
-    Modul-Docstring)."""
+    """Builds `LoxoneCommand`s from already-stored commands - the same
+    composition as in `cli.py`'s `export` command, applied here to
+    `StoredCommand` instead of `DeviceCommand`, because this router reads
+    from the `Store` instead of from a fresh Matter snapshot (see module
+    docstring)."""
     return to_outputs(commands)
 
 
@@ -147,20 +145,19 @@ def _device_preview(device: StoredDevice, store: Store) -> ExportDeviceOut:
     signals = store.signals(device.id)
     commands = store.commands(device.id)
     inputs = to_inputs(signals, device.id, device.label)
-    # `is_exportable` statt einer hier notierten Umkehrung (Review-Fix
-    # Fix 8, 2026-09-03): bis dahin stand die Regel "Text, Listen,
-    # Strukturen und Nullwerte ergeben keinen Loxone-Eingang" (Spec 6.6)
-    # als `(Exportability.NONE, Exportability.TEXT)` sowohl hier als auch
-    # in `cli.py` - zwei von Hand kopierte Umkehrungen genau des Helfers,
-    # den es dafuer schon gab. Waere die Aufzaehlung um einen kuenftigen
-    # `Exportability`-Wert erweitert worden, haetten CLI und API
-    # unterschiedlich viele "uebersprungene" Signale gemeldet, ohne dass
-    # ein Test das bemerkt.
+    # `is_exportable` instead of an inversion noted here (review fix
+    # Fix 8, 2026-09-03): until then the rule "text, lists, structs and
+    # null values produce no Loxone input" (Spec 6.6) stood as
+    # `(Exportability.NONE, Exportability.TEXT)` both here and in
+    # `cli.py` - two hand-copied inversions of exactly the helper that
+    # already existed for this. Had the enum been extended with a future
+    # `Exportability` value, CLI and API would have reported different
+    # numbers of "skipped" signals without any test noticing.
     skipped = sum(1 for s in signals if not is_exportable(s.exportability))
-    # hidden_count (Aufgabe 8): wie viele Signale die Oberflaeche im
-    # zugeklappten "Experte"-Block versteckt - `StoredSignal.functional`
-    # kommt unveraendert aus `Store.register_signals`
-    # (`profiles.relevance.is_functional`), keine zweite Berechnung hier.
+    # hidden_count (Task 8): how many signals the UI hides in the
+    # collapsed "expert" block - `StoredSignal.functional` comes
+    # unchanged from `Store.register_signals`
+    # (`profiles.relevance.is_functional`), no second computation here.
     hidden_count = sum(1 for s in signals if not s.functional)
     return ExportDeviceOut(
         device_id=device.id,
@@ -175,17 +172,17 @@ def _device_preview(device: StoredDevice, store: Store) -> ExportDeviceOut:
 
 
 def _changed_since_export(device: StoredDevice) -> bool:
-    """Ob sich das Geraet seit seinem letzten Export geaendert hat.
+    """Whether the device has changed since its last export.
 
-    Ein unbekanntes `updated_at` (Alt-Datenbank vor `_migrate_to_v2`, siehe
-    dort) gilt als "geaendert" - die vorsichtigere der beiden moeglichen
-    Annahmen, siehe `StoredDevice.updated_at`.
+    An unknown `updated_at` (legacy database predating `_migrate_to_v2`,
+    see there) counts as "changed" - the more cautious of the two possible
+    assumptions, see `StoredDevice.updated_at`.
 
-    Eigene Funktion, seit `download?only_pending=true` dieselbe Frage
-    beantwortet bekommen muss wie `GET /api/export/status` (Review-Fix
-    Fix 4, 2026-09-03). Zwei Fassungen dieser Bedingung waeren genau der
-    Fehler, den die Oberflaeche vorher hatte: die Tabelle zeigte eine
-    Auswahl, das ZIP enthielt eine andere."""
+    A dedicated function, ever since `download?only_pending=true` had to
+    get the same question answered as `GET /api/export/status` (review fix
+    Fix 4, 2026-09-03). Two versions of this condition would be exactly
+    the fault the UI previously had: the table showed one selection, the
+    ZIP contained another."""
     return (
         device.exported_at is None
         or device.updated_at is None
@@ -210,97 +207,95 @@ def build_export_router(store: Store) -> APIRouter:
     async def preview(
         bridge_ip: str = Query(
             ...,
-            description="IP der Bruecke, aus Sicht des Miniservers - wie bei /download,"
-            " damit dieselbe Anfrage vorab gegen 422 geprueft werden kann.",
+            description="IP of the bridge, as seen by the Miniserver - same as for /download,"
+            " so the same request can be checked against 422 up front.",
         ),
         system: bool = Query(
-            False, description="Auch die geraeteunabhaengigen Systemvorlagen mitzaehlen."
+            False, description="Also count the device-independent system templates."
         ),
     ) -> ExportPreviewOut:
-        """Was ein Download erzeugen wuerde - ohne etwas zu schreiben.
+        """What a download would produce - without writing anything.
 
-        Ruft `Store.mark_exported` nie auf (siehe Modul-Docstring,
-        Entscheidung 1) und veraendert auch sonst keine Zeile. `bridge_ip`
-        selbst geht in keine der Zahlen unten ein - es zaehlt nur mit, damit
-        eine fehlende Angabe hier ebenso als 422 auffaellt wie spaeter bei
-        `/download`, statt erst nach dem Klick auf "Herunterladen". Es
-        taucht deshalb bewusst in keinem Feld von `ExportPreviewOut` auf,
-        obwohl es Pflichtparameter ist."""
+        Never calls `Store.mark_exported` (see module docstring,
+        decision 1), and otherwise changes no row either. `bridge_ip`
+        itself does not feed into any of the numbers below - it only
+        counts so that a missing value here shows up as a 422 just as it
+        does later for `/download`, instead of only after clicking
+        "Download". It therefore deliberately does not appear in any
+        field of `ExportPreviewOut`, even though it is a required
+        parameter."""
         devices = [_device_preview(device, store) for device in store.devices()]
         system_files = ["VIU_Matter_System.xml", "VO_Matter_System.xml"] if system else []
         return ExportPreviewOut(devices=devices, system_files=system_files)
 
     @router.get("/download")
     async def download(
-        bridge_ip: str = Query(..., description="IP der Bruecke, aus Sicht des Miniservers"),
-        port: int = Query(DEFAULT_UDP_PORT, description="UDP-Port, auf dem der Miniserver lauscht"),
+        bridge_ip: str = Query(..., description="IP of the bridge, as seen by the Miniserver"),
+        port: int = Query(DEFAULT_UDP_PORT, description="UDP port the Miniserver listens on"),
         listen: int = Query(
             DEFAULT_LISTEN_PORT,
-            description="HTTP-Port in der erzeugten Kommando-URL (VO-Vorlage) - muss mit"
-            " dem --listen von `loxmatter run` uebereinstimmen (siehe Modul-Docstring,"
-            " Entscheidung 2).",
+            description="HTTP port in the generated command URL (VO template) - must match"
+            " the --listen of `loxmatter run` (see module docstring, decision 2).",
         ),
         system: bool = Query(
-            False, description="Auch die geraeteunabhaengigen Systemvorlagen einschliessen."
+            False, description="Also include the device-independent system templates."
         ),
         only_pending: bool = Query(
             False,
-            description="Nur Geraete, die seit ihrem letzten Export geaendert wurden"
-            " (dieselbe Bedingung wie `changed_since_export` in /status). Die uebrigen"
-            " kommen weder ins Archiv noch bekommen sie ein neues `exported_at`. Wird"
-            " ignoriert, wenn `device_id` gesetzt ist.",
+            description="Only devices that have changed since their last export (the same"
+            " condition as `changed_since_export` in /status). The rest go neither into the"
+            " archive nor get a new `exported_at`. Ignored if `device_id` is set.",
         ),
         device_id: int | None = Query(
             None,
-            description="Nur dieses eine Geraet exportieren (Geraete-Dashboard-Entwurf,"
-            " Abschnitt 6, Export-Knopf an der Geraetekarte) - ignoriert `only_pending`."
-            " 404, wenn das Geraet nicht (mehr) existiert.",
+            description="Export only this one device (device dashboard design,"
+            " 2026-09-03, section 6, export button on the device card) - ignores"
+            " `only_pending`. 404 if the device no longer exists.",
         ),
     ) -> Response:
-        """Baut das ZIP im Speicher - keine temporaere Datei, kein
-        Zwischenzustand auf der Platte.
+        """Builds the ZIP in memory - no temporary file, no intermediate
+        state on disk.
 
-        Markiert jedes ausgelieferte Geraet ueber `Store.mark_exported` als
-        exportiert (Entscheidung 1 im Modul-Docstring) - aber ERST, nachdem
-        das Archiv vollstaendig aufgebaut ist, nicht Geraet fuer Geraet
-        waehrend des Aufbaus (Review-Fix Important #1, 2026-09-02).
-        Waere zwischen zwei Geraeten ein Fehler aufgetreten - ein Rendern,
-        das wirft, ein `store.commands`/`store.signals`, das scheitert, ein
-        `forget_device` aus einer parallelen Anfrage -, haette FastAPI 500
-        geantwortet und der Client kein ZIP erhalten, waehrend jedes bis
-        dahin verarbeitete Geraet trotzdem dauerhaft als exportiert
-        vermerkt gewesen waere: `GET /api/export/status` haette es
-        anschliessend als "seither unveraendert" gemeldet, obwohl niemand
-        die zugehoerige Vorlage je bekommen hat. Dieselbe Disziplin wie in
-        `cli.py`s `export`-Kommando, das seinen `Store.mark_exported`-Aufruf
-        aus genau diesem Grund erst nach beiden erfolgreichen
-        `write_bytes`-Aufrufen ausfuehrt. Die Kurzanleitung liegt IMMER bei,
-        unabhaengig von `system` und selbst dann, wenn kein einziges Geraet
-        registriert ist - eine leere Installation liefert so ein gueltiges,
-        nicht-leeres ZIP statt eines leeren Archivs oder eines
-        Serverfehlers.
+        Marks every device delivered as exported via `Store.mark_exported`
+        (decision 1 in the module docstring) - but ONLY AFTER the archive
+        has been fully built, not device by device during the build
+        (review fix Important #1, 2026-09-02). Had an error occurred
+        between two devices - a render that throws, a
+        `store.commands`/`store.signals` that fails, a `forget_device`
+        from a concurrent request -, FastAPI would have responded with
+        500 and the client would have received no ZIP, while every device
+        processed up to that point would nonetheless have been
+        permanently marked as exported: `GET /api/export/status` would
+        then have reported it as "unchanged since" even though no one
+        ever received the associated template. The same discipline as in
+        `cli.py`'s `export` command, which for exactly this reason
+        executes its `Store.mark_exported` call only after both
+        successful `write_bytes` calls. The short guide is ALWAYS
+        included, regardless of `system` and even when not a single
+        device is registered - an empty installation thus delivers a
+        valid, non-empty ZIP instead of an empty archive or a server
+        error.
 
-        **`only_pending` (Review-Fix Fix 4, 2026-09-03).** Der Filter „nur
-        noch nicht exportierte Geraete" der Oberflaeche galt vorher nur
-        fuer die Vorschautabelle; dieser Endpunkt kannte ihn gar nicht und
-        lieferte immer alle Geraete - und markierte auch alle als
-        exportiert. Wer filterte, ein ausstehendes Geraet sah und
-        herunterlud, bekam damit das volle Archiv und einen Filter, der
-        danach dauerhaft leer blieb. Jetzt entscheidet derselbe Parameter
-        ueber beides. Weil `mark_exported` unten nur ueber
-        `exported_device_ids` laeuft - also ueber die tatsaechlich
-        geschriebenen Geraete -, bekommt ein uebersprungenes Geraet auch
-        keinen neuen Zeitstempel und bleibt in `GET /api/export/status`
-        korrekt als ausstehend stehen. Die Systemvorlagen haengen weiterhin
-        allein an `system`: sie gehoeren zu keinem Geraet und koennen
-        deshalb auch nicht "seit dem letzten Export unveraendert" sein.
+        **`only_pending` (review fix Fix 4, 2026-09-03).** The UI's "only
+        devices not yet exported" filter previously applied only to the
+        preview table; this endpoint did not know it at all and always
+        delivered all devices - and also marked all of them as exported.
+        Anyone who filtered, saw a pending device, and downloaded it thus
+        got the full archive and a filter that then stayed permanently
+        empty. Now the same parameter decides both. Because
+        `mark_exported` below only runs over `exported_device_ids` - i.e.
+        over the devices actually written -, a skipped device also gets
+        no new timestamp and correctly remains pending in `GET
+        /api/export/status`. The system templates still depend solely on
+        `system`: they belong to no device and can therefore not be
+        "unchanged since the last export" either.
 
-        **`device_id` (Geraete-Dashboard-Entwurf, 2026-09-03, Abschnitt 6).**
-        Gesetzt, beschraenkt sich die Auswahl auf genau dieses eine Geraet,
-        unabhaengig von `only_pending` - der Export-Knopf an einer
-        Geraetekarte fragt nie, ob das Geraet "ansteht", er exportiert das
-        eine Geraet, das gerade sichtbar ist. Ein unbekanntes oder
-        entferntes Geraet ergibt 404, geprueft VOR dem Aufbau des Archivs."""
+        **`device_id` (device dashboard design, 2026-09-03, section 6).**
+        When set, the selection is restricted to exactly this one device,
+        independent of `only_pending` - the export button on a device
+        card never asks whether the device is "pending", it exports the
+        one device that is currently visible. An unknown or removed
+        device yields 404, checked BEFORE the archive is built."""
         if device_id is not None:
             try:
                 store.device(device_id)
@@ -308,8 +303,8 @@ def build_export_router(store: Store) -> APIRouter:
                 raise HTTPException(status_code=404, detail=str(exc)) from exc
 
         buffer = io.BytesIO()
-        # Gesammelt statt sofort vermerkt (siehe oben) - erst nach dem
-        # vollstaendigen Aufbau des Archivs unten abgearbeitet.
+        # Collected instead of recorded immediately (see above) - only
+        # processed below after the archive has been fully built.
         exported_device_ids: list[int] = []
         with zipfile.ZipFile(buffer, mode="w", compression=zipfile.ZIP_DEFLATED) as archive:
             if system:
@@ -331,11 +326,12 @@ def build_export_router(store: Store) -> APIRouter:
                     filename_for("VIU", device.id, device.label),
                     render_virtual_in_udp(device.label, bridge_ip, port, inputs),
                 )
-                # Ohne Ausgangsbefehle waere die VO-Vorlage leer bis auf ihr
-                # Grundgeruest - ein Import in Loxone Config braechte nichts
-                # ausser eine leere Vorlage im Baum. Das Online-Signal macht
-                # die VIU-Vorlage dagegen nie leer (siehe `to_inputs`), sie
-                # entsteht deshalb immer.
+                # Without output commands the VO template would be empty
+                # apart from its basic skeleton - an import into Loxone
+                # Config would bring nothing but an empty template in the
+                # tree. The online signal, on the other hand, never lets
+                # the VIU template be empty (see `to_inputs`), so it is
+                # always produced.
                 if commands:
                     archive.writestr(
                         filename_for("VO", device.id, device.label),
@@ -345,10 +341,10 @@ def build_export_router(store: Store) -> APIRouter:
 
             archive.writestr(_README_NAME, _readme_text())
 
-        # Das Archiv ist an dieser Stelle vollstaendig - jetzt erst zaehlt
-        # der Export (siehe Docstring oben). Ein Fehler weiter oben haette
-        # diese Zeile nie erreicht, und keines der bis dahin verarbeiteten
-        # Geraete waere faelschlich als exportiert markiert.
+        # The archive is complete at this point - only now does the
+        # export count (see docstring above). An error further up would
+        # never have reached this line, and none of the devices processed
+        # up to that point would be wrongly marked as exported.
         for device_id_written in exported_device_ids:
             store.mark_exported(device_id_written)
 
@@ -360,10 +356,10 @@ def build_export_router(store: Store) -> APIRouter:
 
     @router.get("/status")
     async def status() -> list[ExportStatusOut]:
-        """Pro aktivem Geraet: wann zuletzt exportiert, seither geaendert
-        (siehe `_status_for`). Ein entferntes Geraet (`forget_device`) taucht
-        hier nicht auf - `store.devices()` filtert es bereits aus, dieselbe
-        Regel wie bei `GET /api/devices`."""
+        """Per active device: when last exported, changed since (see
+        `_status_for`). A removed device (`forget_device`) does not
+        appear here - `store.devices()` already filters it out, the same
+        rule as for `GET /api/devices`."""
         return [_status_for(device) for device in store.devices()]
 
     return router

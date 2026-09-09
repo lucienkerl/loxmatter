@@ -1,4 +1,4 @@
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -14,16 +14,16 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""`POST /api/rooms/rename` (Task 5, Geraete-Tab-Entwurf).
+"""`POST /api/rooms/rename` (Task 5, device-tab design).
 
-Es gibt keine eigene Raum-Ressource (Entwurf 3.2) - deshalb auch keine
-eigene `test_devices.py`-Nachbarschaft fuer `GET /api/rooms`, die es nicht
-gibt. Diese Datei prueft ausschliesslich die eine Route, die es fuer
-Raeume gibt: das Umbenennen ueber alle Geraete eines Raums hinweg.
+There is no separate room resource (design 3.2) - therefore no separate
+`test_devices.py` namespace for `GET /api/rooms`, which does not exist.
+This file checks exclusively the one route that exists for rooms: renaming
+across all devices of a room.
 
-Die `api`-Fixture ist dieselbe wie in `test_devices.py` - eigenstaendig
-nachgebaut statt importiert, wie es die anderen API-Testdateien
-(`test_export_api.py`, `test_language.py`, ...) ebenfalls jeweils tun."""
+The `api` fixture is the same as in `test_devices.py` - built independently
+rather than imported, as the other API test files (`test_export_api.py`,
+`test_language.py`, ...) also do respectively."""
 
 import httpx2 as httpx
 import pytest
@@ -67,9 +67,9 @@ async def test_renaming_a_room_moves_every_device(api):
 
 
 async def test_renaming_an_unknown_room_is_a_404(api):
-    """Analog zu `GET /devices/{id}` fuer ein entferntes Geraet: was nicht da
-    ist, wird nicht stillschweigend zu einem Erfolg mit null Aenderungen -
-    sonst saehe ein Tippfehler im Quellnamen wie ein geglueckter Vorgang aus."""
+    """Analogous to `GET /devices/{id}` for a removed device: what does not
+    exist is not silently turned into a success with zero changes - otherwise
+    a typo in the source name would look like a successful operation."""
     client, _store, _device_id, _fake = api
     response = await client.post("/api/rooms/rename", json={"from": "Keller", "to": "Bad"})
     assert response.status_code == 404
@@ -84,10 +84,10 @@ async def test_renaming_to_an_empty_name_is_a_422(api):
 
 
 async def test_renaming_a_room_with_surrounding_whitespace_in_the_source_still_matches(api):
-    """Regressionstest zur `_normalized_room`-Korrektur in `Store.rename_room`
-    (Review-Fund Task 2): `from` kommt hier als Freitext aus dem JSON-Koerper,
-    nicht als aus dem Speicher zurueckgelesener Wert - " Küche " traf vor der
-    Korrektur null Zeilen und waere faelschlich als 404 durchgekommen."""
+    """Regression test for the `_normalized_room` fix in `Store.rename_room`
+    (Review-Found Task 2): `from` comes here as free text from the JSON body,
+    not as a value read back from storage - " Küche " matched zero rows before
+    the fix and would have incorrectly passed as a 404."""
     client, store, device_id, _fake = api
     store.set_room(device_id, "Küche")
     response = await client.post(

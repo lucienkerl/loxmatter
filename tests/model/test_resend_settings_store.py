@@ -1,4 +1,4 @@
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -14,14 +14,15 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Tests fuer `ResendSettingsStore` - das Intervall des periodischen
-Resends, gehalten in derselben `setting`-Tabelle wie `LocaleStore.language`
-(siehe dortiges test_locale_store.py fuer das gleiche Muster)."""
+"""Tests for `ResendSettingsStore` - the interval of the periodic resend,
+held in the same `setting` table as `LocaleStore.language` (see
+test_locale_store.py there for the same pattern)."""
 
 from __future__ import annotations
 
 import pytest
 
+from loxmatter import i18n
 from loxmatter.model.resend_settings_store import (
     DEFAULT_RESEND_INTERVAL_SECONDS,
     MIN_RESEND_INTERVAL_SECONDS,
@@ -51,16 +52,16 @@ def test_set_interval_rejects_a_value_below_the_minimum(tmp_path):
     try:
         with pytest.raises(ValueError):
             store.resend_settings.set_interval_seconds(MIN_RESEND_INTERVAL_SECONDS - 1)
-        # Kein Teil-Erfolg: der Vorgabewert gilt weiterhin.
+        # No partial success: the default value still applies.
         assert store.resend_settings.get_interval_seconds() == DEFAULT_RESEND_INTERVAL_SECONDS
     finally:
         store.close()
 
 
 def test_an_unparsable_stored_value_falls_back_to_the_default(tmp_path):
-    """Kann nur durch eine manuelle Aenderung der Datenbank entstehen (der
-    einzige Schreibpfad, set_interval_seconds, validiert vorher) - aber
-    get_interval_seconds soll trotzdem nie werfen (finaler Review)."""
+    """Can only arise from a manual change to the database (the only write
+    path, set_interval_seconds, validates beforehand) - but
+    get_interval_seconds should still never raise (final review)."""
     store = Store(tmp_path / "t.sqlite")
     try:
         store._db.execute(
@@ -85,3 +86,24 @@ def test_interval_survives_reopening_the_same_database(tmp_path):
         assert reopened.resend_settings.get_interval_seconds() == 120.0
     finally:
         reopened.close()
+
+
+def test_the_interval_error_follows_the_selected_language(tmp_path):
+    """The message reaches the client as an HTTPException detail
+    (`api/settings.py` catches the ValueError), so it is user-facing and has
+    to switch with the language rather than being one hard-coded sentence."""
+    store = Store(tmp_path / "t.sqlite")
+    try:
+        i18n.set_language("en")
+        with pytest.raises(ValueError) as english:
+            store.resend_settings.set_interval_seconds(1.0)
+        i18n.set_language("de")
+        with pytest.raises(ValueError) as german:
+            store.resend_settings.set_interval_seconds(1.0)
+    finally:
+        store.close()
+
+    assert str(english.value) and str(german.value)
+    assert str(english.value) != str(german.value)
+    assert "at least" in str(english.value)
+    assert "mindestens" in str(german.value)

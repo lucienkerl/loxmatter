@@ -1,4 +1,4 @@
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -14,50 +14,48 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Tests fuer die Token-Absicherung der `/api`-Routen (Task 8, Phase 5, Spec 9).
+"""Tests for the token protection of the `/api` routes (Task 8, Phase 5, Spec 9).
 
-Die Kernfrage dieser Datei: schuetzt `build_api_guard` genau das, was Spec 9
-verlangt - jede Route unter `/api`, einschliesslich der WebSocket-Route
-`/api/live` und `GET /api/diagnostics/fabric-backup` - und laesst dabei
-`/cmd` und `/resync` unveraendert offen, weil der Miniserver keinen Header
-mitschicken kann?
+The core question of this file: does `build_api_guard` protect exactly what
+Spec 9 demands - every route under `/api`, including the WebSocket route
+`/api/live` and `GET /api/diagnostics/fabric-backup` - while leaving `/cmd`
+and `/resync` open, unchanged, because the Miniserver can't send along a
+header?
 
-Sieben Gruppen:
+Seven groups:
 
-- `test_guard_*` - `build_api_guard` selbst, ganz ohne FastAPI-App: die
-  reine Entscheidungslogik (seit Task 8 gibt es keinen offenen Zustand mehr -
-  ohne gueltige Sitzung entscheidet ausschliesslich der exakt passende
-  `Authorization`-Header, und ganz ohne Token bleibt jede Anfrage ohne
-  Sitzung abgelehnt).
-- `test_*` mit `secured_client`/`open_client` - dieselbe Aufgabe wie oben,
-  aber durch die tatsaechliche ASGI-App hindurch: jede der sechs `/api`-
-  Router UND `/cmd`/`/resync` einzeln angefragt, damit ein Router, der aus
-  Versehen ohne `dependencies=api_guard` eingebunden wuerde, hier auffiele
-  statt sich auf den Router-Praefix zu verlassen.
-- `test_websocket_*` - `/api/live` und, seit Task 4 dieser Phase,
-  `/api/diagnostics/live` sind keine gewoehnlichen Routen: die Ablehnung
-  passiert VOR `websocket.accept()`, ueber die ASGI-„Denial
-  Response"-Erweiterung (siehe `_websocket_handshake_status` unten und
-  `build_api_guard`s Docstring in `loxone/server.py`). Seit Review-Fix
-  Fix 1c (2026-09-03) kommt hier der zweite Uebertragungsweg dazu: ein
-  Browser-`WebSocket` kann keinen `Authorization`-Header setzen und schickt
-  das Token deshalb als Subprotokoll `bearer, <Token>` mit.
-- `test_normalize_api_token_*` / `test_whitespace_*` - ein Token aus reinem
-  Leerraum ist kein Token (Review-Fix Fix 2, 2026-09-03).
-- `test_warn_if_no_password_*` - die Warnung aus `cli.py`, die einen Betrieb
-  ohne Passwort sichtbar machen soll (Task 8: nicht mehr das Token - ein
-  konfiguriertes Token bringt sie nicht zum Schweigen).
+- `test_guard_*` - `build_api_guard` itself, with no FastAPI app at all: the
+  pure decision logic (since Task 8 there is no more open state - without a
+  valid session, only the exact matching `Authorization` header decides, and
+  with no token at all, every request without a session stays rejected).
+- `test_*` with `secured_client`/`open_client` - the same job as above, but
+  through the actual ASGI app: each of the six `/api` routers AND
+  `/cmd`/`/resync` requested individually, so that a router accidentally
+  wired up without `dependencies=api_guard` would show up here instead of
+  relying on the router prefix.
+- `test_websocket_*` - `/api/live` and, since Task 4 of this phase,
+  `/api/diagnostics/live` are not ordinary routes: rejection happens BEFORE
+  `websocket.accept()`, via the ASGI "denial response" extension (see
+  `_websocket_handshake_status` below and `build_api_guard`'s docstring in
+  `loxone/server.py`). Since review fix Fix 1c (2026-09-03), the second
+  transmission path is added here too: a browser `WebSocket` cannot set an
+  `Authorization` header and instead sends the token as the subprotocol
+  `bearer, <Token>`.
+- `test_normalize_api_token_*` / `test_whitespace_*` - a token made of pure
+  whitespace is not a token (review fix Fix 2, 2026-09-03).
+- `test_warn_if_no_password_*` - the warning from `cli.py` that is meant to
+  make an operation without a password visible (Task 8: no longer the
+  token - a configured token no longer silences it).
 - `test_without_a_password_*` / `test_a_password_alone_is_enough` /
-  `test_a_valid_token_wins_*` (Task 8) - die eigentliche Verschaerfung
-  dieses Tasks: ohne jeden Nachweis (weder Sitzung noch Token) endet JEDE
-  `/api`-Route mit 401, `/cmd`/`/resync`/`/health` bleiben unveraendert
-  offen, und die Reihenfolge der beiden Nachweise (Cookie zuerst, Token
-  zusaetzlich) bleibt auch bei einem gleichzeitig ungueltigen Cookie
-  erhalten.
+  `test_a_valid_token_wins_*` (Task 8) - the actual tightening in this task:
+  with no proof at all (neither session nor token), EVERY `/api` route ends
+  in 401, `/cmd`/`/resync`/`/health` stay open unchanged, and the order of
+  the two proofs (cookie first, token in addition) is preserved even with a
+  simultaneously invalid cookie.
 - `test_fabric_backup_is_served_after_a_login_without_any_token` (Task 9,
-  WebUI-Login) - der frueher hier eigens getestete 403 ohne konfiguriertes
-  Token ist entfallen: ein Login ist der staerkere Ausweis, die Route
-  verhaelt sich seither wie jede andere `/api`-Route (siehe
+  WebUI login) - the 403 without a configured token that used to be tested
+  here specifically has gone away: a login is the stronger proof, and the
+  route now behaves like any other `/api` route (see
   `api.diagnostics.fabric_backup`).
 """
 
@@ -86,11 +84,10 @@ from loxmatter.model.store import Store
 
 
 class FakeSender:
-    """Wie in tests/loxone/test_server.py - genuegt fuer `Runtime`, ohne
-    einen echten UDP-Socket zu oeffnen. Gebraucht hier (statt der
-    einfacheren `FakeRuntime` aus conftest.py), weil `/resync` echte
-    `Runtime.resend_all()`-Unterstuetzung braucht, `FakeRuntime` das aber
-    nicht implementiert."""
+    """Like in tests/loxone/test_server.py - enough for `Runtime` without
+    opening a real UDP socket. Needed here (instead of the simpler
+    `FakeRuntime` from conftest.py) because `/resync` needs real
+    `Runtime.resend_all()` support, which `FakeRuntime` doesn't implement."""
 
     async def send(self, key: str, value: object, *, force: bool = False) -> bool:
         return True
@@ -100,24 +97,24 @@ class FakeSender:
 
 
 def _matter_data_dir(tmp_path: Path) -> Path:
-    """Wie in tests/api/test_diagnostics.py - ein Verzeichnis mit einer
-    harmlosen Testdatei, steht fuer das matter-server-Datenverzeichnis,
-    ohne echtes Schluesselmaterial zu beruehren."""
+    """Like in tests/api/test_diagnostics.py - a directory with a harmless
+    test file, standing in for the matter-server data directory without
+    touching any real key material."""
     directory = tmp_path / "matter-data"
     directory.mkdir()
-    (directory / "credentials.json").write_text('{"fixture": "keine echten Schluessel"}')
+    (directory / "credentials.json").write_text('{"fixture": "no real keys"}')
     return directory
 
 
 async def _build_client(
     tmp_path: Path, no_invoke: Any, *, api_token: str | None
 ) -> AsyncIterator[tuple[httpx.AsyncClient, Any, int, Store]]:
-    """Baut Store, eine ECHTE `Runtime` (fuer `/resync`) und die App mit dem
-    gegebenen `api_token` - gemeinsamer Aufbau fuer `secured_client` und
-    `open_client` unten, die sich nur in `api_token` unterscheiden.
+    """Builds a store, a REAL `Runtime` (for `/resync`) and the app with the
+    given `api_token` - the shared setup for `secured_client` and
+    `open_client` below, which differ only in `api_token`.
 
-    Gibt seit dem WebUI-Login auch den `Store` mit heraus: die Tests
-    brauchen ihn, um ein Passwort zu setzen und sich anzumelden."""
+    Since the WebUI login, also hands out the `Store`: the tests need it to
+    set a password and log in."""
     store = Store(tmp_path / "t.sqlite")
     snapshot = load_snapshot("ikea_grillplats_plug.json")
     device_id = store.register_device(snapshot)
@@ -140,48 +137,47 @@ async def _build_client(
 
 @pytest.fixture
 async def secured_client(tmp_path, no_invoke):
-    """Die App mit gesetztem Token `"secret"` - fuer jeden Test, der
-    pruefen will, dass der Waechter tatsaechlich greift. `client=None`
-    (kein Matter-Client): Einlernen/Entfernen sind nicht Gegenstand dieser
-    Datei, die beiden Routen dafuer antworten unveraendert mit 503 (siehe
-    server.py-Moduldocstring)."""
+    """The app with the token `"secret"` set - for every test that wants to
+    check that the guard actually kicks in. `client=None` (no Matter
+    client): commissioning/removal are not the subject of this file, the
+    two routes for that keep answering with 503 unchanged (see the
+    server.py module docstring)."""
     async for item in _build_client(tmp_path, no_invoke, api_token="secret"):
         yield item
 
 
 @pytest.fixture
 async def open_client(tmp_path, no_invoke):
-    """Dieselbe App, aber ohne konfiguriertes `LOXMATTER_API_TOKEN` - eine
-    Installation, die ausschliesslich auf die Anmeldung setzt. Anders als
-    der Name nahelegt, ist das seit Task 8 (Spec 4) kein offener Zustand:
-    ohne Anmeldung antwortet jede `/api`-Route weiterhin mit 401 (siehe
-    `test_without_a_password_every_api_route_is_closed` unten) - "offen"
-    heisst hier nur "kein zweiter, tokenbasierter Nachweis daneben"."""
+    """The same app, but with no `LOXMATTER_API_TOKEN` configured - an
+    installation relying purely on login. Unlike the name suggests, this is
+    not an open state since Task 8 (Spec 4): without a login, every `/api`
+    route still answers with 401 (see
+    `test_without_a_password_every_api_route_is_closed` below) - "open"
+    here only means "no second, token-based proof alongside it"."""
     async for item in _build_client(tmp_path, no_invoke, api_token=None):
         yield item
 
 
 # ---------------------------------------------------------------------------
-# build_api_guard selbst - ohne FastAPI-App, reine Entscheidungslogik.
+# build_api_guard itself - with no FastAPI app, pure decision logic.
 # ---------------------------------------------------------------------------
 
 
 @pytest.fixture
 def guard_store(tmp_path):
-    """Ein leerer Store fuer die Tests, die `build_api_guard` direkt aufrufen -
-    ohne Passwort und ohne Sitzung, damit dort weiterhin allein das Token
-    ueber Durchlassen oder Ablehnen entscheidet."""
+    """An empty store for the tests that call `build_api_guard` directly -
+    no password and no session, so that only the token decides between
+    passing through and rejecting there."""
     store = Store(tmp_path / "guard.sqlite")
     yield store
     store.close()
 
 
 class _FakeConnection:
-    """Genuegt `guard` als `conn`-Argument in den `test_guard_*`-Tests unten -
-    die pruefen ausschliesslich die Token-Logik und brauchen dafuer nur ein
-    Objekt mit `.cookies`, keine echte `HTTPConnection` aus einer laufenden
-    App (die gibt es hier, anders als bei `secured_client`/`open_client`,
-    nicht)."""
+    """Satisfies `guard` as the `conn` argument in the `test_guard_*` tests
+    below - which check only the token logic and only need an object with
+    `.cookies` for that, not a real `HTTPConnection` from a running app
+    (which doesn't exist here, unlike with `secured_client`/`open_client`)."""
 
     def __init__(self) -> None:
         self.cookies: dict[str, str] = {}
@@ -190,22 +186,23 @@ class _FakeConnection:
 async def _call_guard(
     guard: Any, *, authorization: str | None = None, subprotocol: str | None = None
 ) -> None:
-    """Ruft den Waechter direkt auf - mit BEIDEN Headerparametern, immer.
+    """Calls the guard directly - with BOTH header parameters, always.
 
-    Ein weggelassener Parameter bekaeme sonst FastAPIs `Header(...)`-Objekt
-    als Wert (der Default der Signatur), nicht `None`: ausserhalb einer
-    laufenden App loest niemand die Abhaengigkeit auf. Dieser Helfer haelt
-    diese Falle an genau einer Stelle statt in jedem Test."""
+    An omitted parameter would otherwise get FastAPI's `Header(...)` object
+    as its value (the signature's default), not `None`: outside a running
+    app, nothing resolves the dependency. This helper contains that trap in
+    exactly one place instead of in every test."""
     await guard(_FakeConnection(), authorization=authorization, sec_websocket_protocol=subprotocol)
 
 
 async def test_guard_rejects_everything_when_no_token_is_configured_and_no_session_exists(
     guard_store,
 ):
-    """Task 8: der bis dahin offene Zustand (kein Token konfiguriert -> der
-    Waechter laesst durch) entfaellt ersatzlos. Ohne Sitzung UND ohne Token
-    bleibt jede Anfrage abgelehnt, ganz gleich, was im Authorization-Header
-    steht - `guard_store` hat weder ein Passwort noch eine Sitzung."""
+    """Task 8: the previously open state (no token configured -> the guard
+    lets it through) is gone with nothing to replace it. Without a session
+    AND without a token, every request stays rejected, no matter what the
+    Authorization header says - `guard_store` has neither a password nor a
+    session."""
     guard = build_api_guard(None, guard_store)
     with pytest.raises(HTTPException) as excinfo:
         await _call_guard(guard)
@@ -231,36 +228,36 @@ async def test_guard_rejects_a_wrong_token(guard_store):
 
 async def test_guard_accepts_the_exact_bearer_token(guard_store):
     guard = build_api_guard("secret", guard_store)
-    await _call_guard(guard, authorization="Bearer secret")  # wirft nicht
+    await _call_guard(guard, authorization="Bearer secret")  # does not raise
 
 
 async def test_guard_rejects_a_non_ascii_token_with_401_not_a_crash(guard_store):
-    """`secrets.compare_digest` wirft bei `str`-Argumenten `TypeError`, sobald
-    eines davon Nicht-ASCII enthaelt (Review-Fix Fix 2). Ein Angreifer koennte
-    damit sonst mit einem einzigen Umlaut im Header einen 500er statt eines
-    401 ausloesen - der Waechter vergleicht deshalb UTF-8-Bytes."""
+    """`secrets.compare_digest` raises `TypeError` on `str` arguments as soon
+    as one of them contains non-ASCII (review fix Fix 2). An attacker could
+    otherwise trigger a 500 instead of a 401 with a single umlaut in the
+    header - the guard therefore compares UTF-8 bytes."""
     guard = build_api_guard("secret", guard_store)
     with pytest.raises(HTTPException) as excinfo:
-        await _call_guard(guard, authorization="Bearer gehe\u00dfimnis")
+        await _call_guard(guard, authorization="Bearer geheßimnis")
     assert excinfo.value.status_code == 401
 
 
 async def test_guard_accepts_a_non_ascii_token_that_actually_matches(guard_store):
-    """Die Kehrseite des Tests darueber: ein Nicht-ASCII-Token wird nicht
-    pauschal abgelehnt, es wird nur nicht mehr zum Absturz."""
-    guard = build_api_guard("gehe\u00dfimnis", guard_store)
-    await _call_guard(guard, authorization="Bearer gehe\u00dfimnis")  # wirft nicht
+    """The flip side of the test above: a non-ASCII token isn't rejected
+    outright, it just no longer causes a crash."""
+    guard = build_api_guard("geheßimnis", guard_store)
+    await _call_guard(guard, authorization="Bearer geheßimnis")  # does not raise
 
 
 # ---------------------------------------------------------------------------
-# Der zweite Uebertragungsweg: Sec-WebSocket-Protocol (Review-Fix Fix 1c).
-# Ein Browser-`WebSocket` kann keinen `Authorization`-Header setzen.
+# The second transmission path: Sec-WebSocket-Protocol (review fix Fix 1c).
+# A browser `WebSocket` cannot set an `Authorization` header.
 # ---------------------------------------------------------------------------
 
 
 async def test_guard_accepts_the_token_from_the_websocket_subprotocol(guard_store):
     guard = build_api_guard("secret", guard_store)
-    await _call_guard(guard, subprotocol="bearer, secret")  # wirft nicht
+    await _call_guard(guard, subprotocol="bearer, secret")  # does not raise
 
 
 async def test_guard_rejects_a_wrong_token_in_the_websocket_subprotocol(guard_store):
@@ -271,8 +268,8 @@ async def test_guard_rejects_a_wrong_token_in_the_websocket_subprotocol(guard_st
 
 
 async def test_guard_rejects_a_subprotocol_without_the_bearer_marker(guard_store):
-    """Nur die Form `bearer, <Token>` gilt - ein einzelner Wert ist kein
-    Token, auch wenn er zufaellig dem Geheimnis gleicht."""
+    """Only the form `bearer, <Token>` counts - a single value is not a
+    token, even if it happens to match the secret."""
     guard = build_api_guard("secret", guard_store)
     with pytest.raises(HTTPException) as excinfo:
         await _call_guard(guard, subprotocol="secret")
@@ -287,14 +284,14 @@ async def test_guard_rejects_a_subprotocol_with_more_than_two_values(guard_store
 
 
 async def test_an_authorization_header_still_wins_over_a_wrong_subprotocol(guard_store):
-    """Der `Authorization`-Header bleibt der Hauptweg: ist er korrekt, kommt
-    der Aufruf durch, gleich was im Subprotokoll steht."""
+    """The `Authorization` header stays the main path: if it's correct, the
+    call goes through no matter what's in the subprotocol."""
     guard = build_api_guard("secret", guard_store)
     await _call_guard(guard, authorization="Bearer secret", subprotocol="bearer, falsch")
 
 
 # ---------------------------------------------------------------------------
-# Ein Token aus reinem Leerraum ist kein Token (Review-Fix Fix 2).
+# A token made of pure whitespace is not a token (review fix Fix 2).
 # ---------------------------------------------------------------------------
 
 
@@ -306,22 +303,21 @@ def test_normalize_api_token_treats_whitespace_only_as_no_token():
 
 
 def test_normalize_api_token_strips_the_outer_whitespace_of_a_real_token():
-    """Ein `LOXMATTER_API_TOKEN` mit angehaengtem Zeilenumbruch soll das
-    Geheimnis ohne den Zeilenumbruch sein - ein Geheimnis, das sich nicht in
-    einem HTTP-Header uebertragen laesst, waere keins."""
+    """A `LOXMATTER_API_TOKEN` with a trailing newline should be the secret
+    without the newline - a secret that can't be carried in an HTTP header
+    wouldn't be one."""
     assert normalize_api_token("  secret\n") == "secret"
 
 
 async def test_a_whitespace_only_token_behaves_like_no_token_at_all(guard_store):
-    """Der urspruenglich gemeldete Fehler: der Waechter hielt Leerraum fuer
-    ein echtes Geheimnis, das kein HTTP-Header je uebertragen konnte, und
-    sperrte den Dienst dauerhaft - ohne dass die Startwarnung darauf
-    hingewiesen haette. Seit Task 8 bedeutet "kein Token" nicht mehr offen,
-    sondern denselben 401 wie ganz ohne Token (siehe
+    """The originally reported bug: the guard treated whitespace as a real
+    secret that no HTTP header could ever carry, and locked the service
+    permanently - without the startup warning ever pointing that out. Since
+    Task 8, "no token" no longer means open, but the same 401 as with no
+    token at all (see
     `test_guard_rejects_everything_when_no_token_is_configured_and_no_
-    session_exists` oben) - ein Leerraum-Token darf sich davon nicht
-    unterscheiden, sonst waeren Waechter und `normalize_api_token` wieder
-    auseinandergelaufen."""
+    session_exists` above) - a whitespace token must not differ from that,
+    or the guard and `normalize_api_token` would drift apart again."""
     guard = build_api_guard("   ", guard_store)
     with pytest.raises(HTTPException) as excinfo:
         await _call_guard(guard)
@@ -329,20 +325,20 @@ async def test_a_whitespace_only_token_behaves_like_no_token_at_all(guard_store)
 
 
 async def test_a_token_with_a_trailing_newline_is_usable_over_http(tmp_path, no_invoke):
-    """Der Fall aus der kopierten `.env`: das Token traegt einen
-    Zeilenumbruch, der Browser kann ihn nicht mitschicken. Nach der
-    Normalisierung passt das abgeschnittene Geheimnis."""
+    """The case from the copy-pasted `.env`: the token carries a newline
+    that the browser can't send along. After normalization, the trimmed
+    secret matches."""
     async for client, _, _, _ in _build_client(tmp_path, no_invoke, api_token="secret\n"):
         response = await client.get("/api/devices", headers={"Authorization": "Bearer secret"})
         assert response.status_code == 200
 
 
 # ---------------------------------------------------------------------------
-# Ohne Token, aber angemeldet: jede /api-Route ist offen - auch die
-# Fabric-Sicherung (Task 8: der Zustand OHNE Anmeldung ist inzwischen
-# ausnahmslos 401, siehe oben `test_without_a_password_every_api_route_is_
-# closed`. Diese Tests hier pruefen die verbliebene Frage - reicht die
-# Anmeldung allein, ohne Token, fuer die vier gewoehnlichen `/api`-Router?).
+# No token, but signed in: every /api route is open - even the fabric
+# backup (Task 8: the state WITHOUT a login is now, without exception, 401,
+# see `test_without_a_password_every_api_route_is_closed` above. These tests
+# here check the remaining question - is being signed in alone, without a
+# token, enough for the four ordinary `/api` routers?).
 # ---------------------------------------------------------------------------
 
 
@@ -375,9 +371,9 @@ async def test_without_a_token_a_signed_in_diagnostics_commands_is_open(open_cli
 
 
 async def test_the_other_api_routes_stay_open_for_a_signed_in_client_without_a_token(open_client):
-    """Die Gegenprobe zu den vier Tests darueber: jede weitere `/api`-Route
-    bleibt fuer eine angemeldete Sitzung offen, auch ohne konfiguriertes
-    Token - nichts an dieser Sitzung ist auf ein Token angewiesen."""
+    """The counter-check to the four tests above: every other `/api` route
+    stays open for a signed-in session, even without a configured token -
+    nothing about this session depends on a token."""
     client, _, device_id, store = open_client
     await authenticate(store, client)
     for path in (
@@ -392,14 +388,13 @@ async def test_the_other_api_routes_stay_open_for_a_signed_in_client_without_a_t
 
 
 # ---------------------------------------------------------------------------
-# Mit Token: jeder der sechs /api-Router verlangt ihn einzeln - nicht nur
-# "irgendeine" Route, jede. Ein Router, der versehentlich ohne
-# dependencies=api_guard eingebunden wuerde, faellt hier auf, statt sich
-# darauf zu verlassen, dass der Praefix /api schon irgendwie schuetzt. Vier
-# davon als gewoehnliche HTTP-Tests direkt unten (devices, export, control,
-# diagnostics) - die beiden WebSocket-Router (`/api/live`,
-# `/api/diagnostics/live`) folgen demselben Prinzip in der Gruppe
-# `test_websocket_*` weiter unten, siehe Moduldocstring oben.
+# With a token: each of the six /api routers requires it individually - not
+# just "some" route, every one. A router accidentally wired up without
+# dependencies=api_guard shows up here instead of relying on the /api prefix
+# somehow protecting it already. Four of them as ordinary HTTP tests right
+# below (devices, export, control, diagnostics) - the two WebSocket routers
+# (`/api/live`, `/api/diagnostics/live`) follow the same principle in the
+# `test_websocket_*` group further down, see the module docstring above.
 # ---------------------------------------------------------------------------
 
 
@@ -450,9 +445,9 @@ async def test_with_wrong_token_is_rejected_too(secured_client):
 
 
 async def test_the_401_detail_explains_how_to_sign_in(secured_client):
-    """Task 6: `build_api_guard`s 401-Text ueber `i18n.t`. Ueber den echten
-    ASGI-App-Pfad (nicht `_call_guard` weiter oben, das `guard` direkt
-    aufruft, ohne die `sync_language`-Middleware zu durchlaufen)."""
+    """Task 6: `build_api_guard`'s 401 text via `i18n.t`. Through the real
+    ASGI app path (not `_call_guard` further up, which calls `guard`
+    directly, without going through the `sync_language` middleware)."""
     client, _, _, _ = secured_client
     response = await client.get("/api/devices")
     assert response.status_code == 401
@@ -463,9 +458,9 @@ async def test_the_401_detail_explains_how_to_sign_in(secured_client):
 
 
 async def test_the_401_detail_is_german_when_the_language_is_de(secured_client):
-    """Deutscher Begleittest zu test_the_401_detail_explains_how_to_sign_in -
-    `store.locale.set_language`, nicht `i18n.set_language` direkt: die
-    sync_language-Middleware liest bei jeder Anfrage aus dem Store neu."""
+    """German companion test to test_the_401_detail_explains_how_to_sign_in -
+    `store.locale.set_language`, not `i18n.set_language` directly: the
+    sync_language middleware reads from the store fresh on every request."""
     client, _, _, store = secured_client
     store.locale.set_language("de")
     response = await client.get("/api/devices")
@@ -478,18 +473,18 @@ async def test_the_401_detail_is_german_when_the_language_is_de(secured_client):
 
 
 # ---------------------------------------------------------------------------
-# Die Fabric-Sicherung: der eigentliche Grund fuer diese Phase (siehe
-# Spec 4.1). Ein eigener Test, nicht nur einer von vielen /api-Routen, weil
-# genau diese Route der Anlass fuer Task 8 ist.
+# The fabric backup: the actual reason for this phase (see Spec 4.1). A
+# dedicated test, not just one of many /api routes, because this exact route
+# is the reason for Task 8.
 # ---------------------------------------------------------------------------
 
 
 async def test_fabric_backup_is_401_without_a_header_even_with_a_configured_directory(
     secured_client,
 ):
-    """`matter_data_dir` ist gesetzt (siehe `_build_client`) - ohne Token
-    waere die Route also tatsaechlich in der Lage, echte Daten
-    auszuliefern. Genau das darf ohne Header nicht passieren."""
+    """`matter_data_dir` is set (see `_build_client`) - so without a token
+    the route would actually be able to serve real data. Exactly that must
+    not happen without a header."""
     client, _, _, _ = secured_client
     response = await client.get("/api/diagnostics/fabric-backup")
     assert response.status_code == 401
@@ -505,18 +500,18 @@ async def test_fabric_backup_is_reachable_with_the_correct_header(secured_client
 
 
 # ---------------------------------------------------------------------------
-# Das Sitzungs-Cookie: der zweite Nachweis neben dem Token (Task 6, Phase 6).
-# Additiv - der Waechter laesst zusaetzlich Cookies durch, ohne dem Token
-# etwas wegzunehmen.
+# The session cookie: the second proof alongside the token (Task 6, Phase 6).
+# Additive - the guard lets cookies through in addition, without taking
+# anything away from the token.
 # ---------------------------------------------------------------------------
 
 
 async def test_a_session_cookie_opens_every_api_router(secured_client):
-    """Der zweite Nachweis neben dem Token: wer angemeldet ist, kommt ohne
-    `Authorization`-Header durch die hier geprueften Router-Gruppen (device-,
-    export- und diagnostics-Router) - eine Stichprobe von dreien, nicht eine
-    vollstaendige Aufzaehlung aller sechs `/api`-Router wie bei den
-    Token-Tests weiter oben."""
+    """The second proof alongside the token: whoever is signed in gets
+    through the router groups checked here (device, export and diagnostics
+    routers) without an `Authorization` header - a sample of three, not a
+    complete enumeration of all six `/api` routers as in the token tests
+    further up."""
     client, _app, device_id, store = secured_client
     store.auth.set_password_hash(hash_password("ein-gutes-passwort"))
     assert (
@@ -530,7 +525,7 @@ async def test_a_session_cookie_opens_every_api_router(secured_client):
         "/api/diagnostics/system",
     ]:
         response = await client.get(path)
-        assert response.status_code == 200, f"{path} verlangte trotz Sitzung eine Anmeldung"
+        assert response.status_code == 200, f"{path} required a login despite the session"
 
 
 async def test_an_invalid_session_cookie_does_not_open_anything(secured_client):
@@ -540,17 +535,17 @@ async def test_an_invalid_session_cookie_does_not_open_anything(secured_client):
 
 
 async def test_the_token_still_works_next_to_the_cookie(secured_client):
-    """Der Weg fuer Skripte bleibt unveraendert - er ist der Grund, warum
-    das Token ueberhaupt bestehen bleibt."""
+    """The path for scripts stays unchanged - it's the reason the token
+    exists at all."""
     client, _app, _device_id, _store = secured_client
     response = await client.get("/api/devices", headers={"Authorization": "Bearer secret"})
     assert response.status_code == 200
 
 
 # ---------------------------------------------------------------------------
-# /cmd und /resync: der Miniserver-Pfad. Muss UNVERAENDERT offen bleiben,
-# auch wenn ein Token konfiguriert ist - der Miniserver kann keinen Header
-# mitschicken (siehe build_api_guard-Docstring, loxone/server.py).
+# /cmd and /resync: the Miniserver path. Must stay open UNCHANGED, even when
+# a token is configured - the Miniserver cannot send along a header (see the
+# build_api_guard docstring, loxone/server.py).
 # ---------------------------------------------------------------------------
 
 
@@ -567,12 +562,12 @@ async def test_with_token_resync_route_stays_open(secured_client):
 
 
 async def test_the_webui_resync_route_is_not_open(secured_client):
-    """Gegenprobe zum Test darueber: derselbe volle Resend, aber ueber die
-    Route der Oberflaeche (`POST /api/diagnostics/resync`, der Resync-Knopf
-    im System-Tab). Die bleibt verschlossen. Die Ausnahme gilt dem
-    Miniserver, der keinen Header schicken kann - nicht der Wirkung
-    "alle Werte erneut senden": waere die Wirkung der Grund, muesste jede
-    `/cmd`-artige Route offen sein."""
+    """Counter-check to the test above: the same full resend, but via the
+    UI's route (`POST /api/diagnostics/resync`, the resync button in the
+    system tab). That one stays closed. The exception is for the
+    Miniserver, which cannot send a header - not for the effect "resend
+    every value" - if the effect were the reason, every `/cmd`-like route
+    would have to be open."""
     client, _, _, _ = secured_client
     response = await client.post("/api/diagnostics/resync")
     assert response.status_code == 401
@@ -587,19 +582,19 @@ async def test_the_webui_resync_route_opens_with_a_token(secured_client):
 
 
 async def test_with_token_health_route_stays_open(secured_client):
-    """`/health` liegt wie `/cmd`/`/resync` ausserhalb von `/api` - kein
-    Diagnose-Endpunkt, der Bestandsdaten preisgibt, muss also ebenfalls
-    unabhaengig vom Token erreichbar bleiben."""
+    """`/health` lies outside `/api`, like `/cmd`/`/resync` - no diagnostics
+    endpoint that reveals stored data, so it too must stay reachable
+    independent of the token."""
     client, _, _, _ = secured_client
     response = await client.get("/health")
     assert response.status_code == 200
 
 
 # ---------------------------------------------------------------------------
-# /api/live: keine gewoehnliche Route. Die Ablehnung passiert VOR dem
-# WebSocket-Handshake (ASGI-„Denial Response"), nicht durch ein Annehmen
-# und anschliessendes Schliessen - deshalb ein eigener, roher ASGI-Aufruf
-# statt httpx2, das keinen abgelehnten Handshake abbilden kann.
+# /api/live: not an ordinary route. Rejection happens BEFORE the WebSocket
+# handshake (ASGI "denial response"), not by accepting and then closing -
+# hence a dedicated, raw ASGI call instead of httpx2, which cannot represent
+# a rejected handshake.
 # ---------------------------------------------------------------------------
 
 
@@ -609,19 +604,19 @@ async def _websocket_handshake(
     headers: list[tuple[bytes, bytes]],
     subprotocols: list[str] | None = None,
 ) -> dict[str, Any]:
-    """Fuehrt nur den WebSocket-Handshake gegen `app` aus und liefert die
-    ERSTE Nachricht zurueck, die die App sendet - entweder ein
-    `websocket.accept` (mit dem gewaehlten Subprotokoll darin) oder ein
-    `websocket.http.response.start` der ASGI-„Denial Response"-Erweiterung.
+    """Runs only the WebSocket handshake against `app` and returns the FIRST
+    message the app sends - either a `websocket.accept` (with the chosen
+    subprotocol in it) or a `websocket.http.response.start` from the ASGI
+    "denial response" extension.
 
-    `subprotocols` fuellt das gleichnamige Scope-Feld, das ein echter Server
-    aus dem `Sec-WebSocket-Protocol`-Header ableitet; der Header selbst muss
-    zusaetzlich in `headers` stehen, weil der Waechter ihn dort liest (genau
-    wie bei einem echten Browser-Handshake).
+    `subprotocols` fills the scope field of the same name, which a real
+    server derives from the `Sec-WebSocket-Protocol` header; the header
+    itself must additionally be present in `headers`, because the guard
+    reads it there (exactly as with a real browser handshake).
 
-    Kein Text-/JSON-Versand, kein Ping/Pong: mehr als den Handshake selbst
-    braucht kein Test dieser Datei - Live-Werte NACH einem Accept prueft
-    bereits tests/api/test_live.py."""
+    No text/JSON send, no ping/pong: no test in this file needs more than
+    the handshake itself - live values AFTER an accept are already checked
+    by tests/api/test_live.py."""
     to_app: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
     from_app: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
 
@@ -656,7 +651,7 @@ async def _websocket_handshake(
         return message
 
     assert message["type"] == "websocket.http.response.start", message
-    await from_app.get()  # websocket.http.response.body - Rumpf abholen, Task sauber beenden
+    await from_app.get()  # websocket.http.response.body - drain the body, end the task cleanly
     await asyncio.wait_for(task, timeout=2)
     return message
 
@@ -667,8 +662,8 @@ async def _websocket_handshake_status(
     headers: list[tuple[bytes, bytes]],
     subprotocols: list[str] | None = None,
 ) -> int | None:
-    """Wie `_websocket_handshake`, aber nur die Frage "angenommen?" -
-    `None` heisst angenommen, sonst der abweisende Statuscode."""
+    """Like `_websocket_handshake`, but only the question "accepted?" -
+    `None` means accepted, otherwise the rejecting status code."""
     message = await _websocket_handshake(app, path, headers, subprotocols)
     if message["type"] == "websocket.accept":
         return None
@@ -679,9 +674,9 @@ async def _websocket_handshake_status(
 def _bearer_subprotocol_handshake(
     token: str,
 ) -> tuple[list[tuple[bytes, bytes]], list[str]]:
-    """Baut Header UND Scope-Feld so, wie ein Browser sie fuer
-    `new WebSocket(url, ["bearer", token])` erzeugt - beides aus einer
-    Quelle, damit die beiden nicht auseinanderlaufen koennen."""
+    """Builds the header AND the scope field the way a browser produces them
+    for `new WebSocket(url, ["bearer", token])` - both from one source, so
+    the two can't drift apart."""
     values = ["bearer", token]
     return [(b"sec-websocket-protocol", ", ".join(values).encode())], values
 
@@ -703,17 +698,18 @@ async def test_websocket_live_is_accepted_with_the_correct_header(secured_client
 async def test_websocket_live_is_rejected_without_a_header_when_no_token_is_configured(
     open_client,
 ):
-    """Task 8: kein Token konfiguriert heisst nicht mehr automatisch offen -
-    ohne Sitzungscookie im Handshake bleibt auch `/api/live` bei 401."""
+    """Task 8: no token configured no longer automatically means open -
+    without a session cookie in the handshake, `/api/live` too stays at
+    401."""
     _, app, _, _ = open_client
     status = await _websocket_handshake_status(app, "/api/live", headers=[])
     assert status == 401
 
 
 async def test_websocket_live_is_accepted_with_the_token_in_the_subprotocol(secured_client):
-    """Der Weg, den die Oberflaeche tatsaechlich geht: ein Browser kann bei
-    `new WebSocket(...)` keinen `Authorization`-Header setzen (Review-Fix
-    Fix 1c, 2026-09-03)."""
+    """The path the UI actually takes: a browser cannot set an
+    `Authorization` header on `new WebSocket(...)` (review fix Fix 1c,
+    2026-09-03)."""
     _, app, _, _ = secured_client
     headers, subprotocols = _bearer_subprotocol_handshake("secret")
     status = await _websocket_handshake_status(app, "/api/live", headers, subprotocols)
@@ -728,10 +724,10 @@ async def test_websocket_live_is_rejected_with_a_wrong_token_in_the_subprotocol(
 
 
 async def test_websocket_live_echoes_the_bearer_marker_never_the_token(secured_client):
-    """RFC 6455: der Browser bricht den Handshake ab, wenn der Server das
-    angebotene Subprotokoll nicht zurueckgibt. Zurueck darf aber
-    ausschliesslich der Marker - das Token wuerde sonst in jedem Proxy- und
-    Browser-Protokoll auf dem Weg landen."""
+    """RFC 6455: the browser aborts the handshake if the server doesn't
+    return the offered subprotocol. But only the marker may be returned -
+    the token would otherwise end up in every proxy and browser log along
+    the way."""
     _, app, _, _ = secured_client
     headers, subprotocols = _bearer_subprotocol_handshake("secret")
     message = await _websocket_handshake(app, "/api/live", headers, subprotocols)
@@ -740,14 +736,14 @@ async def test_websocket_live_echoes_the_bearer_marker_never_the_token(secured_c
 
 
 async def test_websocket_live_answers_without_a_subprotocol_when_none_was_offered(secured_client):
-    """Die Gegenprobe zu `test_websocket_live_echoes_the_bearer_marker_never_
-    the_token` oben: ein Client ohne Subprotokoll-Angebot darf keins
-    zurueckbekommen - ein nicht angebotenes Subprotokoll ist nach RFC 6455
-    ebenso ein Handshake-Fehler. Seit Task 8 braucht auch dieser Handshake
-    einen gueltigen Nachweis, um ueberhaupt bis zum Accept zu kommen - hier
-    das Sitzungscookie, derselbe Weg wie bei
+    """The counter-check to
+    `test_websocket_live_echoes_the_bearer_marker_never_the_token` above: a
+    client that offered no subprotocol must not get one back - an unoffered
+    subprotocol is, under RFC 6455, just as much a handshake error. Since
+    Task 8, this handshake too needs valid proof to even reach the accept -
+    here the session cookie, the same path as
     `test_the_live_websocket_connects_with_a_cookie_and_no_subprotocol`
-    unten (dort ohne Interesse am Subprotokoll-Feld selbst)."""
+    below (there without interest in the subprotocol field itself)."""
     client, app, _device_id, store = secured_client
     store.auth.set_password_hash(hash_password("ein-gutes-passwort"))
     login = await client.post("/auth/login", json={"password": "ein-gutes-passwort"})
@@ -763,10 +759,10 @@ async def test_websocket_live_answers_without_a_subprotocol_when_none_was_offere
 
 
 async def test_websocket_diagnostics_live_is_rejected_with_401_without_a_header(secured_client):
-    """`/api/diagnostics/live` (Task 4, Phase 5, Spec 10.5) ist eine zweite
-    WebSocket-Route neben `/api/live` - derselbe Waechter, dieselbe
-    ASGI-„Denial Response"-Pruefung, damit ein aus Versehen ohne
-    `dependencies=api_guard` eingebundener Router hier auffiele."""
+    """`/api/diagnostics/live` (Task 4, Phase 5, Spec 10.5) is a second
+    WebSocket route alongside `/api/live` - the same guard, the same ASGI
+    "denial response" check, so that a router accidentally wired up without
+    `dependencies=api_guard` would show up here."""
     _, app, _, _ = secured_client
     status = await _websocket_handshake_status(app, "/api/diagnostics/live", headers=[])
     assert status == 401
@@ -799,10 +795,11 @@ async def test_websocket_diagnostics_live_is_rejected_with_a_wrong_token_in_the_
 
 
 async def test_the_live_websocket_connects_with_a_cookie_and_no_subprotocol(secured_client):
-    """Der Punkt, an dem der Umweg ueber das Subprotokoll ueberfluessig wird:
-    das Cookie reist beim Handshake von selbst mit, weil dieser WebSocket
-    denselben Ursprung hat wie die Seite. Genau darauf verlaesst sich
-    `app.js`, seit dort `new WebSocket(url)` ohne zweites Argument steht."""
+    """The point where the detour via the subprotocol becomes unnecessary:
+    the cookie travels along with the handshake on its own, because this
+    WebSocket has the same origin as the page. `app.js` relies exactly on
+    that, ever since it started using `new WebSocket(url)` with no second
+    argument."""
     client, app, _device_id, store = secured_client
     store.auth.set_password_hash(hash_password("ein-gutes-passwort"))
     login = await client.post("/auth/login", json={"password": "ein-gutes-passwort"})
@@ -815,18 +812,18 @@ async def test_the_live_websocket_connects_with_a_cookie_and_no_subprotocol(secu
         "/api/live",
         headers=[(b"cookie", f"loxmatter_session={session_id}".encode())],
     )
-    assert status is None, "Der Handshake wurde trotz gueltiger Sitzung abgelehnt"
+    assert status is None, "The handshake was rejected despite a valid session"
 
 
 # ---------------------------------------------------------------------------
-# Die Warnung im Log (cli.py) - sichtbar fuer einen Betrieb ohne Passwort
-# (Task 8: nicht mehr fuer einen Betrieb ohne Token - siehe
-# `_warn_if_no_password`-Docstring in cli.py).
+# The warning in the log (cli.py) - visible for an operation without a
+# password (Task 8: no longer for an operation without a token - see the
+# `_warn_if_no_password` docstring in cli.py).
 # ---------------------------------------------------------------------------
 
 
 def test_warn_if_no_password_logs_a_clear_warning(caplog, tmp_path):
-    store = Store(tmp_path / "t.sqlite")  # kein Passwort vergeben
+    store = Store(tmp_path / "t.sqlite")  # no password set
     try:
         with caplog.at_level(logging.WARNING):
             _warn_if_no_password(store)
@@ -838,10 +835,10 @@ def test_warn_if_no_password_logs_a_clear_warning(caplog, tmp_path):
 
 
 def test_warn_if_no_password_logs_a_clear_warning_in_german(caplog, tmp_path):
-    """Deutsches Gegenstueck zu `test_warn_if_no_password_logs_a_clear_warning`
-    oben."""
+    """German counterpart to test_warn_if_no_password_logs_a_clear_warning
+    above."""
     i18n.set_language("de")
-    store = Store(tmp_path / "t.sqlite")  # kein Passwort vergeben
+    store = Store(tmp_path / "t.sqlite")  # no password set
     try:
         with caplog.at_level(logging.WARNING):
             _warn_if_no_password(store)
@@ -864,31 +861,31 @@ def test_warn_if_no_password_stays_silent_once_one_is_set(caplog, tmp_path):
 
 
 def test_warn_if_no_password_takes_an_already_open_store_not_a_path() -> None:
-    """Fund F: `_warn_if_no_password` nahm frueher einen Pfad entgegen und
-    oeffnete daraus eine ZWEITE `Store`-Verbindung - direkt nachdem `run`
-    bereits eine geoeffnet hatte, die es drei Zeilen spaeter an `_run`
-    weiterreicht. Das bedeutete einen doppelten `_migrate`-Lauf, eine zweite
-    Sperrdomaene auf derselben Datei und eine Oeffnung ohne den Schutz des
-    `try`/`except`, das die erste umgibt. Die Signatur soll das nicht wieder
-    zulassen: ein `Store`, kein `Path`.
+    """Finding F: `_warn_if_no_password` used to take a path and open a
+    SECOND `Store` connection from it - right after `run` had already
+    opened one that it passes on to `_run` three lines later. That meant a
+    duplicate `_migrate` run, a second lock domain on the same file, and an
+    open with none of the protection of the `try`/`except` that surrounds
+    the first. The signature is meant to prevent that from happening
+    again: a `Store`, not a `Path`.
 
-    Zusammen mit den Tests oben deckt das auch ab, dass ein konfiguriertes
-    Token die Warnung weiterhin nicht zum Schweigen bringen kann - seit
-    Task 8 gibt es dafuer gar keinen Parameter mehr, ueber den ein Aufrufer
-    das versuchen koennte."""
+    Together with the tests above, this also covers that a configured
+    token still cannot silence the warning - since Task 8 there is no
+    parameter left at all through which a caller could even try that."""
     assert list(inspect.signature(_warn_if_no_password).parameters) == ["store"]
 
 
 # ---------------------------------------------------------------------------
-# Task 8: Ohne Passwort liefert `/api` nichts mehr aus - der bislang offene
-# Zustand (kein Token -> Waechter laesst durch) entfaellt ersatzlos.
+# Task 8: without a password, `/api` no longer serves anything - the
+# previously open state (no token -> guard lets it through) is gone with
+# nothing to replace it.
 # ---------------------------------------------------------------------------
 
 
 async def test_without_a_password_every_api_route_is_closed(open_client):
-    """Die Verschaerfung aus Spec 4: bis hierher war genau dieser Zustand -
-    kein Passwort, kein Token - vollstaendig offen, mit nichts als einer
-    Warnung im Log."""
+    """The tightening from Spec 4: until now, exactly this state - no
+    password, no token - was completely open, with nothing but a warning in
+    the log."""
     client, _app, device_id, _store = open_client
     for path in [
         "/api/devices",
@@ -898,29 +895,29 @@ async def test_without_a_password_every_api_route_is_closed(open_client):
         "/api/diagnostics/fabric-backup",
     ]:
         response = await client.get(path)
-        assert response.status_code == 401, f"{path} lieferte ohne Passwort noch Daten aus"
+        assert response.status_code == 401, f"{path} still served data without a password"
 
 
 async def test_without_a_password_the_miniserver_routes_stay_open(open_client):
-    """`/cmd` und `/resync` bleiben in JEDEM Zustand offen - der Miniserver
-    kann weder Header noch Cookie mitschicken."""
+    """`/cmd` and `/resync` stay open in EVERY state - the Miniserver can
+    send neither a header nor a cookie."""
     client, _app, _device_id, _store = open_client
     assert (await client.get("/resync")).status_code == 200
     assert (await client.get("/health")).status_code == 200
 
 
 async def test_without_a_password_a_configured_token_still_works(secured_client):
-    """Der Bestandsfall unmittelbar nach dem Update: das Passwort fehlt
-    noch, das Token steht in der `.env` - Skripte duerfen dadurch nicht
-    abreissen."""
+    """The existing-installation case right after the update: the password
+    is still missing, the token is in the `.env` - scripts must not break
+    because of this."""
     client, _app, _device_id, _store = secured_client
     response = await client.get("/api/devices", headers={"Authorization": "Bearer secret"})
     assert response.status_code == 200
 
 
 async def test_a_password_alone_is_enough(open_client):
-    """Kein Token konfiguriert, aber angemeldet - der Normalfall nach der
-    Ersteinrichtung."""
+    """No token configured, but signed in - the normal case after initial
+    setup."""
     client, _app, _device_id, store = open_client
     store.auth.set_password_hash(hash_password("ein-gutes-passwort"))
     await client.post("/auth/login", json={"password": "ein-gutes-passwort"})
@@ -928,11 +925,11 @@ async def test_a_password_alone_is_enough(open_client):
 
 
 async def test_a_valid_token_wins_even_with_an_invalid_cookie_alongside(secured_client):
-    """Die Reihenfolge der beiden Nachweise (Review-Fund zu Task 6): das
-    Cookie wird zuerst geprueft, aber ein ungueltiges oder fremdes Cookie
-    darf einen gleichzeitig gueltigen Token-Header nicht ausstechen - sonst
-    koennte ein manipulierter Cookie-Wert ein Skript aussperren, das sich
-    korrekt mit `Authorization: Bearer <Token>` ausweist."""
+    """The order of the two proofs (review finding for Task 6): the cookie
+    is checked first, but an invalid or foreign cookie must not be able to
+    outweigh a simultaneously valid token header - otherwise a tampered
+    cookie value could lock out a script that correctly identifies itself
+    with `Authorization: Bearer <Token>`."""
     client, _app, _device_id, _store = secured_client
     client.cookies.set(SESSION_COOKIE, "erfunden")
     response = await client.get("/api/devices", headers={"Authorization": "Bearer secret"})
@@ -940,9 +937,9 @@ async def test_a_valid_token_wins_even_with_an_invalid_cookie_alongside(secured_
 
 
 async def test_fabric_backup_is_served_after_a_login_without_any_token(open_client):
-    """Nach dem Login ist auch die Fabric-Sicherung frei (Spec 11): ein Login
-    ist der staerkere Ausweis, und ein zweites Geheimnis danach schuetzte
-    nichts, das nicht schon geschuetzt waere."""
+    """After login, the fabric backup is free too (Spec 11): a login is the
+    stronger proof, and a second secret afterward would protect nothing
+    that wasn't already protected."""
     client, _app, _device_id, store = open_client
     store.auth.set_password_hash(hash_password("ein-gutes-passwort"))
     await client.post("/auth/login", json={"password": "ein-gutes-passwort"})

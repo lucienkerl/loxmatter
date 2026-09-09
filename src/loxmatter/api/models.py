@@ -1,4 +1,4 @@
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -14,11 +14,11 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Antwortmodelle der REST-API.
+"""Response models of the REST API.
 
-Bewusst getrennt von den Speichermodellen in `model.store`: was die
-Oberflaeche sieht, ist eine Sicht auf den Zustand, keine Abbildung der
-Tabellen. Aendert sich das Schema, aendert sich nicht zwangslaeufig die API.
+Deliberately separate from the storage models in `model.store`: what the
+UI sees is a view of the state, not a mapping of the tables. If the schema
+changes, the API does not necessarily change along with it.
 """
 
 from __future__ import annotations
@@ -29,22 +29,22 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class SignalOut(BaseModel):
-    """`exportable`/`reason` (Spec 6.6) und `exported` (vom Nutzer umschaltbar,
-    siehe `model.store.StoredSignal.exported`) sagen, was TECHNISCH auf einen
-    Loxone-Eingang passt und was DAVON in den naechsten Export soll -
-    `functional` (Aufgabe 8) beantwortet eine dritte, unabhaengige Frage: ob
-    `profiles.relevance.is_functional` dieses Signal fuer den GERAETETYP als
-    gewollt einstuft. Die Oberflaeche nutzt allein dieses Feld, um die
-    Signalliste in "Funktional" und "Experte" zu gliedern (`api.devices.
-    _signal_out` liest es unveraendert aus `StoredSignal.functional`) - eine
-    zweite Berechnung der Regel gibt es weder in der API-Schicht noch in
-    JavaScript.
+    """`exportable`/`reason` (Spec 6.6) and `exported` (user-toggleable, see
+    `model.store.StoredSignal.exported`) say what TECHNICALLY fits a
+    Loxone input and which OF THOSE should go into the next export -
+    `functional` (Task 8) answers a third, independent question: whether
+    `profiles.relevance.is_functional` classifies this signal as intended
+    for the DEVICE TYPE. The UI uses only this field to divide the signal
+    list into "Functional" and "Expert" (`api.devices._signal_out` reads
+    it unchanged from `StoredSignal.functional`) - there is no second
+    computation of the rule, neither in the API layer nor in JavaScript.
 
-    `resend` (Entwurf periodischer Resend, 2026-09-04) ist eine VIERTE,
-    wieder unabhaengige Frage: ob der periodische Timer (`Runtime.
-    resend_marked`) dieses Signal auch ohne Aenderung erneut senden soll.
-    Betrifft `/resync` und den Bridge-Start (`Runtime.resend_all`) nicht -
-    die ignorieren dieses Feld bewusst, siehe dortigen Docstring."""
+    `resend` (periodic resend design, 2026-09-04) is a FOURTH, again
+    independent question: whether the periodic timer (`Runtime.
+    resend_marked`) should resend this signal again even without a
+    change. Does not affect `/resync` or bridge startup
+    (`Runtime.resend_all`) - those deliberately ignore this field, see
+    the docstring there."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -59,29 +59,29 @@ class SignalOut(BaseModel):
     exported: bool
     functional: bool
     resend: bool
-    # endpoint/cluster_id (Entwurf 2026-09-07, Abschnitt 7.4): `path` traegt
-    # dieselben Zahlen als "1/59/2", aber als Text. Die Oberflaeche
-    # gruppiert nach Endpunkt und erkennt den Batteriestand an Cluster 47 -
-    # beides aus `path` zu parsen hiesse, `matter.paths` ein zweites Mal in
-    # JavaScript zu pflegen. `endpoint_label` ist der sprechende Name
-    # desselben Endpunkts ("Taste 1"), uebersetzt aus `profiles.endpoints`;
-    # ohne nachgetragene Geraetetypen steht dort "Endpunkt 1".
+    # endpoint/cluster_id (design 2026-09-07, section 7.4): `path` carries
+    # the same numbers as "1/59/2", but as text. The UI groups by
+    # endpoint and recognizes the battery level by cluster 47 -
+    # parsing both from `path` would mean maintaining `matter.paths` a
+    # second time, in JavaScript. `endpoint_label` is the human-readable
+    # name of that same endpoint ("Button 1"), translated from
+    # `profiles.endpoints`; without backfilled device types it reads
+    # "Endpoint 1" there.
     endpoint: int
     cluster_id: int
     endpoint_label: str
 
 
 class DeviceOut(BaseModel):
-    """`signal_count`/`exportable_count` sagen, wie viele Signale es gibt und
-    wie viele davon technisch auf einen Loxone-Eingang passen (Spec 6.6) -
-    beide unabhaengig davon, ob sie tatsaechlich als Vorlage exportiert
-    wuerden. `next_export_count` (Nachbesserung Fix 7, Phase 6) ist die
-    davon verschiedene Zahl, die die Gerätekachel bis dahin gar nicht zeigte:
-    wie viele `LoxoneInput`s (inklusive Online-Signal) der naechste Export
-    tatsaechlich erzeugt (`export.signals.to_inputs`, gefiltert auf
-    `exported`) - fuer die Steckdose der Testvorlage etwa 159 Signale, 110
-    exportierbar, aber nur 6 im naechsten Export (5 funktionale plus das
-    Online-Signal)."""
+    """`signal_count`/`exportable_count` say how many signals exist and how
+    many of them technically fit a Loxone input (Spec 6.6) - both
+    regardless of whether they would actually be exported as a template.
+    `next_export_count` (follow-up Fix 7, Phase 6) is the distinct number
+    that the device tile did not show at all until then: how many
+    `LoxoneInput`s (including the online signal) the next export would
+    actually produce (`export.signals.to_inputs`, filtered on `exported`)
+    - for the test template's plug, about 159 signals, 110 exportable, but
+    only 6 in the next export (5 functional plus the online signal)."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -89,35 +89,41 @@ class DeviceOut(BaseModel):
     node_id: int
     label: str
     online: bool
+    # When something last arrived from this device at all; `None` if
+    # nothing has come since the bridge started. `online` alone does not
+    # answer the question that stayed open on 8 September 2026: a device
+    # that only sends on change and is currently quiet looks exactly there
+    # like one from which nothing has come for days.
+    last_heard: str | None
     signal_count: int
     exportable_count: int
     next_export_count: int
-    # Raum und Kategorie (Entwurf Geraete-Tab, 2026-09-05). `room` ist der
-    # frei gewaehlte Name, `None` heisst "Ohne Raum". `category` ist die
-    # Kennung aus `profiles.categories.Category` (`socket`, `light`, …),
-    # NICHT der uebersetzte Name - den setzt die Oberflaeche selbst ueber
-    # `t("web.devices.category." + category)`, damit die Suche nach
-    # "Steckdose" bzw. "socket" in der jeweils angezeigten Sprache trifft.
-    # `category_rank` kommt aus derselben Quelle wie die Kategorie, statt
-    # die Reihenfolge ein zweites Mal in JavaScript zu fuehren.
+    # Room and category (device-tab design, 2026-09-05). `room` is the
+    # freely chosen name, `None` means "No room". `category` is the id
+    # from `profiles.categories.Category` (`socket`, `light`, …), NOT the
+    # translated name - the UI sets that itself via
+    # `t("web.devices.category." + category)`, so that searching for
+    # "Steckdose" or "socket" matches in whichever language is displayed.
+    # `category_rank` comes from the same source as the category, instead
+    # of maintaining the order a second time in JavaScript.
     room: str | None
     category: str
     category_rank: int
 
 
 class SignalPatch(BaseModel):
-    """Was sich an einem Signal ueberhaupt aendern laesst.
+    """What can be changed on a signal at all.
 
-    Spec 6.2: der Schluessel ist die Verdrahtung in Loxone. Waere er hier
-    aenderbar, koennte ein Klick in der Oberflaeche einen Baustein im Haus
-    still totlegen - deshalb kennt dieses Modell gar kein `key`-Feld. Ein
-    mitgeschicktes `key` landet bei Pydantic niemals auf dem Objekt und wird
-    von `devices.rename_signal` entsprechend nie gelesen, geschweige denn
-    angewendet - das ist keine Frage der Sorgfalt im Handler, sondern eine,
-    die dieses Modell strukturell unmoeglich macht. Grund ist Pydantic v2s
-    eigener Default fuer unbekannte Felder, `extra="ignore"` (Berichtigung
-    M1, Review 2026-09-02: hier stand faelschlich `extra="allow"` als
-    Default - das Gegenteil, es wuerde unbekannte Felder gerade behalten).
+    Spec 6.2: the key is the wiring in Loxone. If it were changeable here,
+    a click in the UI could silently kill a component in the house dead -
+    which is why this model has no `key` field at all. A `key` sent along
+    anyway never lands on the object with Pydantic and is accordingly
+    never read by `devices.rename_signal`, let alone applied - that is not
+    a matter of care in the handler, but one this model makes structurally
+    impossible. The reason is Pydantic v2's own default for unknown
+    fields, `extra="ignore"` (correction M1, review 2026-09-02: this
+    incorrectly said `extra="allow"` as the default - the opposite, which
+    would actually keep unknown fields).
     """
 
     model_config = ConfigDict(frozen=True)
@@ -128,20 +134,21 @@ class SignalPatch(BaseModel):
 
 
 class DevicePatch(BaseModel):
-    """`PATCH /api/devices/{device_id}` - Label und Raum, sonst nichts.
+    """`PATCH /api/devices/{device_id}` - label and room, nothing else.
 
-    Hiess bis zum Geraete-Tab-Entwurf `DeviceRename` und konnte nur das
-    Label; der Name zieht mit der Faehigkeit mit. Weder `node_id` noch `id`
-    gehoeren hier her, aus demselben Grund wie bei `SignalPatch`: was das
-    Modell nicht kennt, kann eine Route nicht versehentlich uebernehmen
-    (Pydantic v2 verwirft unbekannte Felder per `extra="ignore"`).
+    Was called `DeviceRename` up to the device-tab design and could only
+    do the label; the name has moved along with the capability. Neither
+    `node_id` nor `id` belong here, for the same reason as with
+    `SignalPatch`: a route cannot accidentally pick up what the model
+    does not know about (Pydantic v2 discards unknown fields via
+    `extra="ignore"`).
 
-    `None` heisst "unveraendert" - fuer BEIDE Felder, wie bei `SignalPatch`.
-    Fuer den Raum braucht es deshalb einen zweiten Weg, ihn zu ENTFERNEN:
-    das ist der Leerstring `""`, den `Store.set_room` ueber
-    `_normalized_room` zu `NULL` macht. Ein Name aus reinem Leerraum geht
-    denselben Weg - er hat dieselbe eindeutige Bedeutung und ist deshalb
-    kein 422 wert."""
+    `None` means "unchanged" - for BOTH fields, as with `SignalPatch`. The
+    room therefore needs a second way to REMOVE it: that is the empty
+    string `""`, which `Store.set_room` turns into `NULL` via
+    `_normalized_room`. A name made of pure whitespace takes the same
+    path - it has the same unambiguous meaning and is therefore not worth
+    a 422."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -152,10 +159,10 @@ class DevicePatch(BaseModel):
 class RoomRename(BaseModel):
     """`POST /api/rooms/rename`.
 
-    Die Felder heissen innen `from_room`/`to_room`, weil `from` ein
-    Python-Schluesselwort ist; nach aussen tragen sie ueber `alias` die
-    kurzen Namen, die im JSON stehen. `populate_by_name` erlaubt beides,
-    damit ein Test das Modell auch direkt mit den Python-Namen bauen kann."""
+    The fields are named `from_room`/`to_room` internally because `from`
+    is a Python keyword; externally they carry the short names that
+    appear in the JSON via `alias`. `populate_by_name` allows both, so a
+    test can also build the model directly with the Python names."""
 
     model_config = ConfigDict(frozen=True, populate_by_name=True)
 
@@ -164,12 +171,12 @@ class RoomRename(BaseModel):
 
 
 class ControlRange(BaseModel):
-    """Grenzen eines Reglers, in der Einheit, die die Oberflaeche anzeigt.
+    """Limits of a slider, in the unit the UI displays.
 
-    Heute nur fuer die Farbtemperatur, in Kelvin. Die Umrechnung aus Mired
-    passiert im Server und nicht im JavaScript: sie ist ein Kehrwert, bei
-    dem Min und Max tauschen - eine Falle, die man nicht zweimal aufstellen
-    will (Entwurf 2026-09-07, Abschnitt 5.5)."""
+    Today only for the color temperature, in Kelvin. The conversion from
+    mired happens in the server and not in JavaScript: it is a
+    reciprocal, where min and max swap - a trap you don't want to set
+    twice (design 2026-09-07, section 5.5)."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -178,18 +185,18 @@ class ControlRange(BaseModel):
 
 
 class CommandOut(BaseModel):
-    """Ein Bedienelement fuer `GET /api/devices/{device_id}/controls` (Task 4).
+    """A control for `GET /api/devices/{device_id}/controls` (Task 4).
 
-    Traegt bewusst nur, was ein Klick braucht - der Schluessel zum Ausloesen
-    und der Slug als Beschriftung. `takes_value` sagt der Oberflaeche, ob ein
-    einfacher Knopf reicht (z. B. `on`) oder ein Regler noetig ist (z. B.
+    Deliberately carries only what a click needs - the key to trigger it
+    and the slug as a label. `takes_value` tells the UI whether a
+    simple button is enough (e.g. `on`) or a slider is needed (e.g.
     `level`).
 
-    `control` sagt, WELCHES Bedienelement gebaut werden soll (`none`,
-    `percent`, `kelvin`, `hue_sat`, `unknown`) - siehe
-    `profiles.table.command_control`. `takes_value` bleibt daneben
-    bestehen, weil es etwas anderes beantwortet: ob der EXPORT einen
-    analogen oder digitalen Ausgang erzeugt."""
+    `control` says WHICH control should be built (`none`,
+    `percent`, `kelvin`, `hue_sat`, `unknown`) - see
+    `profiles.table.command_control`. `takes_value` continues to exist
+    alongside it because it answers something different: whether the
+    EXPORT produces an analog or digital output."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -201,17 +208,16 @@ class CommandOut(BaseModel):
 
 
 class ControlsOut(BaseModel):
-    """Antwort von `GET /api/devices/{device_id}/controls` (Task 4).
+    """Response of `GET /api/devices/{device_id}/controls` (Task 4).
 
-    `hidden_raw_commands` (Review-Fix Minor #4, 2026-09-02): wie viele
-    Kommandos des Geraets herausgefiltert wurden, weil `profiles.table.
-    command_slug` sie nicht kennt (siehe `CommandOut` oben und der
-    Docstring der Route). Der Filter selbst bleibt richtig - ein Knopf ohne
-    erkennbare Bedeutung waere nutzlos -, aber ohne diese Zahl verschwindet
-    ein unbekanntes Kommando fuer eine Person, die ein fremdes Geraet
-    diagnostiziert, spurlos. Mit ihr laesst sich die Oberflaeche schreiben:
-    "N weitere Kommandos vorhanden, aber nicht benannt" statt stillschweigend
-    nichts zu zeigen."""
+    `hidden_raw_commands` (review fix Minor #4, 2026-09-02): how many of
+    the device's commands were filtered out because `profiles.table.
+    command_slug` does not know them (see `CommandOut` above and the
+    route's docstring). The filter itself remains correct - a button with
+    no recognisable meaning would be useless -, but without this number
+    an unknown command vanishes without a trace for a person diagnosing a
+    foreign device. With it, the UI can say: "N more commands present but
+    not named" instead of silently showing nothing."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -220,40 +226,40 @@ class ControlsOut(BaseModel):
 
 
 class ValueIn(BaseModel):
-    """Rumpf von `POST /api/commands/{key}` und `POST /api/signals/{key}/write`
-    (Task 4) - derselbe String-Wert, den `/cmd/{key}/{value}` (Phase 4) als
-    Pfad-Segment entgegennimmt. Ein Wert, ein Typ, an beiden Stellen (Spec 4.2)."""
+    """Body of `POST /api/commands/{key}` and `POST /api/signals/{key}/write`
+    (Task 4) - the same string value that `/cmd/{key}/{value}` (Phase 4)
+    accepts as a path segment. One value, one type, in both places (Spec 4.2)."""
 
     model_config = ConfigDict(frozen=True)
 
     value: str
 
 
-# Alles, was NICHT Ziffer, Leerraum oder Bindestrich ist, macht den Wert zu
-# einem QR-Inhalt (`MT:...`, Base38). Ein Bindestrich DARIN traegt Bedeutung
-# und darf nicht wegfallen - deshalb entscheidet dieses Muster zuerst, bevor
-# ueberhaupt etwas geschnitten wird.
+# Anything that is NOT a digit, whitespace, or hyphen makes the value a
+# QR payload (`MT:...`, base38). A hyphen INSIDE it carries meaning
+# and must not be dropped - which is why this pattern decides first, before
+# anything is stripped at all.
 #
-# Diese Regel steht ZWEIMAL: hier und als `isPairingQrCode`/
-# `normalizePairingCode` in `web/app.js`. Das ist Absicht - dort formatiert
-# die Oberflaeche waehrend des Tippens, hier normalisiert die Route fuer
-# JEDEN Aufrufer. Wer eine der beiden Fassungen aendert, aendert die andere.
+# This rule exists TWICE: here and as `isPairingQrCode`/
+# `normalizePairingCode` in `web/app.js`. That is deliberate - there the
+# UI formats while typing, here the route normalizes for
+# EVERY caller. Whoever changes one of the two versions changes the other.
 _COMMISSION_QR_PAYLOAD = re.compile(r"[^0-9\s-]")
 _COMMISSION_CODE_SEPARATORS = re.compile(r"[\s-]")
 
 
 class CommissionRequest(BaseModel):
-    """`POST /api/devices/commission` - der Pairing-Code vom Geraet oder
-    seiner Verpackung (Spec 7.1). Zwei Bauformen: der Zahlencode (11-stellig,
-    auf dem Geraet als `1234-567-8901` aufgedruckt, seltener 21-stellig) oder
-    der Text hinter dem QR-Code (`MT:...`).
+    """`POST /api/devices/commission` - the pairing code from the device or
+    its packaging (spec 7.1). Two forms: the numeric code (11 digits,
+    printed on the device as `1234-567-8901`, more rarely 21 digits) or
+    the text behind the QR code (`MT:...`).
 
-    `code` wird beim Eintreffen normalisiert, siehe `_strip_separators`.
+    `code` is normalized on arrival, see `_strip_separators`.
 
-    `thread_dataset` ist optional: nur Thread-Geraete brauchen ihn, und nur
-    dann, bevor `commission_with_code` ueberhaupt versucht wird (siehe
-    `BridgeMatterClient.commission_with_code` - ohne vorherigen
-    `set_thread_dataset`-Aufruf scheitert ein Thread-Geraet mit "Required
+    `thread_dataset` is optional: only Thread devices need it, and only
+    before `commission_with_code` is even attempted (see
+    `BridgeMatterClient.commission_with_code` - without a prior
+    `set_thread_dataset` call a Thread device fails with "Required
     network information not provided").
     """
 
@@ -261,31 +267,31 @@ class CommissionRequest(BaseModel):
 
     code: str
     thread_dataset: str | None = None
-    # Raum (Entwurf Geraete-Tab, 2026-09-05, Abschnitt 6.7): optional, weil
-    # ein Geraet ohne Raumwahl unter "Ohne Raum" landet und sich jederzeit
-    # nachtraeglich zuordnen laesst. Scheitert das Einlernen, entsteht kein
-    # Geraet und damit auch kein Raum.
+    # Room (device-tab design, 2026-09-05, section 6.7): optional, because
+    # a device without a chosen room lands under "No room" and can be
+    # assigned one at any later time. If commissioning fails, no device is
+    # created and therefore no room either.
     room: str | None = None
 
     @field_validator("code")
     @classmethod
     def _strip_separators(cls, value: str) -> str:
-        """Nimmt den Code so entgegen, wie er auf dem Geraet steht.
+        """Accepts the code exactly as it appears on the device.
 
-        Dort steht er gruppiert - `1234-567-8901` - und genau so tippt ihn
-        jeder ab. Auf dem Weg zum Matter-Stack schneidet die Trenner sonst
-        niemand weg: `api.devices` reicht den Wert unveraendert an
-        `BridgeMatterClient.commission_with_code` weiter, und
-        `MatterClient.commission_with_code` setzt ihn ebenso unveraendert in
-        den WebSocket-Befehl (geprueft gegen die installierte Fassung,
+        There it appears grouped - `1234-567-8901` - and that is exactly how
+        everyone types it. On the way to the Matter stack no one else
+        strips the separators: `api.devices` passes the value unchanged to
+        `BridgeMatterClient.commission_with_code`, and
+        `MatterClient.commission_with_code` likewise puts it unchanged into
+        the WebSocket command (checked against the installed version,
         `matter_server/client/client.py:140`).
 
-        Der Validator NORMALISIERT NUR, er validiert nicht (Entwurf
-        Abschnitt 8): ueber die gueltigen Bauformen entscheidet der
-        Matter-Stack. Laege die Regel hier, koennte diese Bruecke einen Code
-        ablehnen, den der Stack angenommen haette - ohne einen Weg daran
-        vorbei. Trenner zu schneiden ist verlustfrei, eine Laengenregel
-        waere eine Wette.
+        The validator ONLY NORMALIZES, it does not validate (design
+        section 8): the Matter stack decides which forms are valid.
+        If the rule lived here, this bridge could reject a code
+        that the stack would have accepted - with no way around it.
+        Stripping separators is lossless, a length rule
+        would be a gamble.
         """
         text = value.strip()
         if _COMMISSION_QR_PAYLOAD.search(text):
@@ -294,24 +300,24 @@ class CommissionRequest(BaseModel):
 
 
 class ExportDeviceOut(BaseModel):
-    """Ein Geraet in der Antwort von `GET /api/export/preview` (Task 5).
+    """A device in the response of `GET /api/export/preview` (Task 5).
 
-    Spiegelt die Ausgabe von `loxmatter export` auf der Kommandozeile
-    (`cli.py`) als Zahlen statt als Terminalzeilen: `inputs` und `commands`
-    sind die Anzahl der Objekte, die in den beiden Vorlagendateien
-    entstuenden, `skipped` die Signale, die keinen Loxone-Eingang ergeben
-    (Listen, Strukturen, Texte, Nullwerte - Spec 6.6), unabhaengig vom
-    `exported`-Flag. `viu_filename`/`vo_filename` sind dieselben Namen, die
-    auch im ZIP von `GET /api/export/download` landen (`filename_for`) - so
-    kann die Oberflaeche vor dem Herunterladen bereits zeigen, welche
-    Dateien entstehen.
+    Mirrors the output of `loxmatter export` on the command line
+    (`cli.py`) as numbers instead of terminal lines: `inputs` and
+    `commands` are the number of objects that would result in the two
+    template files, `skipped` the signals that produce no Loxone input
+    (lists, structs, text, null values - Spec 6.6), regardless of the
+    `exported` flag. `viu_filename`/`vo_filename` are the same names that
+    also end up in the ZIP of `GET /api/export/download` (`filename_for`)
+    - so the UI can already show which files will be produced before the
+    download.
 
-    `hidden_count` (Aufgabe 8): wie viele Signale dieses Geraets die
-    Signalliste standardmaessig im zugeklappten "Experte"-Block versteckt,
-    weil `profiles.relevance.is_functional` sie nicht als gewollt einstuft
-    (`StoredSignal.functional`) - unabhaengig davon, ob sie technisch
-    exportierbar waeren. Fuer die Steckdose der Testvorlage sind das 154 von
-    159 Signalen."""
+    `hidden_count` (Task 8): how many of this device's signals the signal
+    list hides by default in the collapsed "expert" block, because
+    `profiles.relevance.is_functional` does not classify them as intended
+    (`StoredSignal.functional`) - regardless of whether they would be
+    technically exportable. For the test template's plug, that is 154 of
+    159 signals."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -326,8 +332,8 @@ class ExportDeviceOut(BaseModel):
 
 
 class ExportPreviewOut(BaseModel):
-    """Antwort von `GET /api/export/preview` (Task 5) - reine Vorschau, kein
-    Schreibzugriff (siehe `api.export.preview`)."""
+    """Response of `GET /api/export/preview` (Task 5) - a pure preview, no
+    write access (see `api.export.preview`)."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -336,14 +342,14 @@ class ExportPreviewOut(BaseModel):
 
 
 class ExportStatusOut(BaseModel):
-    """Ein Geraet in der Antwort von `GET /api/export/status` (Task 5).
+    """A device in the response of `GET /api/export/status` (Task 5).
 
-    `exported_at` ist `None`, solange ein Geraet noch nie ueber `GET
-    /api/export/download` (API) oder `loxmatter export` (CLI) exportiert
-    wurde - beide schreiben denselben Zeitstempel in dieselbe Datenbank
-    (siehe `model.store.Store.mark_exported`). `changed_since_export` ist in
-    diesem Fall ebenfalls `True`: ohne einen vorherigen Export gibt es nichts,
-    wogegen der aktuelle Stand unveraendert sein koennte."""
+    `exported_at` is `None` as long as a device has never been exported
+    via `GET /api/export/download` (API) or `loxmatter export` (CLI) -
+    both write the same timestamp into the same database (see
+    `model.store.Store.mark_exported`). `changed_since_export` is also
+    `True` in that case: without a previous export there is nothing the
+    current state could be unchanged against."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -354,10 +360,10 @@ class ExportStatusOut(BaseModel):
 
 
 class BridgeSettingsOut(BaseModel):
-    """Antwort von `GET`/`PATCH /api/settings` (Geraete-Dashboard-Entwurf,
-    Abschnitt 4). `bridge_ip`/`saved_at` sind `None`, solange niemand die
-    Verbindung zum Miniserver eingerichtet hat - der Fall, in dem die
-    Oberflaeche den Export-Knopf an jeder Geraetekarte deaktiviert."""
+    """Response of `GET`/`PATCH /api/settings` (device dashboard design,
+    section 4). `bridge_ip`/`saved_at` are `None` as long as no one has
+    set up the connection to the Miniserver - the case in which the UI
+    disables the export button on every device card."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -368,11 +374,11 @@ class BridgeSettingsOut(BaseModel):
 
 
 class BridgeSettingsIn(BaseModel):
-    """Rumpf von `PATCH /api/settings` - alle drei Felder zusammen, kein
-    Teil-Update: sie gehoeren fachlich zusammen (dieselbe virtuelle
-    Verbindung), ein Teil-Update koennte sonst eine gueltige IP mit einem
-    inzwischen falschen Port stehen lassen. `min_length=1` auf `bridge_ip`
-    ergibt 422 bei leerem Feld, ohne einen eigenen Validator."""
+    """Body of `PATCH /api/settings` - all three fields together, no
+    partial update: they belong together functionally (the same virtual
+    connection), a partial update could otherwise leave a valid IP paired
+    with a now-wrong port. `min_length=1` on `bridge_ip` yields 422 for an
+    empty field, without a dedicated validator."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -382,9 +388,9 @@ class BridgeSettingsIn(BaseModel):
 
 
 class ProjectSyncEntryOut(BaseModel):
-    """Eine Zeile im Diff-Plan von `POST /api/export/project-sync` (Entwurf
-    Abschnitt 5/7). `changes` ist ausserhalb von `status == "updated"` immer
-    leer."""
+    """A row in the diff plan of `POST /api/export/project-sync` (design
+    section 5/7). `changes` is always empty outside of
+    `status == "updated"`."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -398,10 +404,10 @@ class ProjectSyncEntryOut(BaseModel):
 
 
 class ProjectSyncMiniserverOut(BaseModel):
-    """Ein in der hochgeladenen Projektdatei gefundener Miniserver
-    (`projectsync.index.MiniserverCandidate`) - fuellt das Auswahlfeld in der
-    WebUI, wenn die Datei mehr als einen konfiguriert (Nutzerwunsch: den
-    gewuenschten Miniserver auswaehlen statt seine IP von Hand abzutippen)."""
+    """A Miniserver found in the uploaded project file
+    (`projectsync.index.MiniserverCandidate`) - fills the selection field
+    in the WebUI when the file configures more than one (user request:
+    select the desired Miniserver instead of typing its IP by hand)."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -410,18 +416,17 @@ class ProjectSyncMiniserverOut(BaseModel):
 
 
 class ProjectSyncPlanOut(BaseModel):
-    """Antwort von `POST /api/export/project-sync` - Plan und beide
-    gepatchten Datei-Varianten in einer Antwort (Entwurf Abschnitt 4/7): kein
-    zweiter Server-Roundtrip, der "Bestaetigen"-Schritt ist rein
-    clientseitig.
+    """Response of `POST /api/export/project-sync` - plan and both patched
+    file variants in one response (design section 4/7): no second server
+    round trip, the "confirm" step is purely client-side.
 
-    **Zwei Antwortformen** (Nutzerwunsch nach dem Review): traegt die Datei
-    mehr als einen Miniserver und wurde keiner ausgewaehlt, liefert der
-    Endpunkt statt eines Plans `needs_miniserver_selection=True` plus
-    `available_miniservers` - alle anderen Felder bleiben dann leer/`None`.
-    Die WebUI zeigt in diesem Fall ein Auswahlfeld statt des Plans und
-    fragt mit derselben Datei (im Browser bereits vorhanden, kein erneuter
-    Datei-Dialog) und der gewaehlten `miniserver_ip` erneut an."""
+    **Two response shapes** (user request after the review): if the file
+    carries more than one Miniserver and none was selected, the endpoint
+    returns, instead of a plan, `needs_miniserver_selection=True` plus
+    `available_miniservers` - all other fields then stay empty/`None`.
+    The WebUI shows a selection field instead of the plan in this case
+    and requests again with the same file (already present in the
+    browser, no repeated file dialog) and the chosen `miniserver_ip`."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -430,18 +435,17 @@ class ProjectSyncPlanOut(BaseModel):
     entries: list[ProjectSyncEntryOut] = Field(default_factory=list)
     has_changes: bool = False
     patched_conservative_base64: str | None = None
-    # `None`, wenn die experimentelle Variante fuer diese Datei nicht gebaut
-    # werden konnte (z. B. fehlender `VirtualInCaption`-Abschnitt, Entwurf
-    # Abschnitt 8). Der Plan und die konservative Variante bleiben davon
-    # unberuehrt - die Oberflaeche zeigt dann nur den Grund statt des
-    # Download-Angebots.
+    # `None` if the experimental variant could not be built for this file
+    # (e.g. missing `VirtualInCaption` section, design section 8). The
+    # plan and the conservative variant remain unaffected by that - the
+    # UI then shows only the reason instead of the download offer.
     patched_with_new_devices_base64: str | None = None
     new_devices_unavailable_reason: str | None = None
 
 
 class ResendIntervalOut(BaseModel):
-    """Antwort von `GET`/`PATCH /api/settings/resend-interval` (Entwurf
-    periodischer Resend, 2026-09-04, Abschnitt 5)."""
+    """Response of `GET`/`PATCH /api/settings/resend-interval` (periodic
+    resend design, 2026-09-04, section 5)."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -449,10 +453,10 @@ class ResendIntervalOut(BaseModel):
 
 
 class ResendIntervalIn(BaseModel):
-    """Rumpf von `PATCH /api/settings/resend-interval`. `gt=0` faengt einen
-    nicht-positiven Wert bereits hier ab (422 ohne eigenen Validator); die
-    tatsaechliche Untergrenze (`MIN_RESEND_INTERVAL_SECONDS`) prueft
-    `ResendSettingsStore.set_interval_seconds` selbst, siehe dort."""
+    """Body of `PATCH /api/settings/resend-interval`. `gt=0` catches a
+    non-positive value here already (422 without a dedicated validator);
+    the actual lower bound (`MIN_RESEND_INTERVAL_SECONDS`) is checked by
+    `ResendSettingsStore.set_interval_seconds` itself, see there."""
 
     model_config = ConfigDict(frozen=True)
 

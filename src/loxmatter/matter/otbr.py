@@ -1,4 +1,4 @@
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -14,47 +14,46 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Der aktive Thread-Datensatz, gelesen aus dem Border Router.
+"""The active Thread dataset, read from the border router.
 
-**Warum es dieses Modul gibt.** matter-server haelt die Thread-Zugangsdaten
-ausschliesslich im Arbeitsspeicher: `_thread_credentials_set: bool = False`
-im Konstruktor von `matter_server/server/device_controller.py`, auf `True`
-gesetzt allein durch `set_thread_operational_dataset()`. Nichts davon wird
-je auf die Platte geschrieben - im Datenverzeichnis des Dienstes
-(`vendor_info`/`last_node_id`/`nodes`) steht kein Datensatz. Jeder Neustart
-von matter-server loescht sie also, ohne dass irgendetwas es meldet.
+**Why this module exists.** matter-server keeps the Thread credentials
+exclusively in memory: `_thread_credentials_set: bool = False` in the
+constructor of `matter_server/server/device_controller.py`, set to `True`
+only by `set_thread_operational_dataset()`. None of it is ever written to
+disk - the service's data directory (`vendor_info`/`last_node_id`/`nodes`)
+holds no dataset. Every restart of matter-server therefore erases it,
+without anything reporting so.
 
-Sichtbar wurde das am 2026-09-04: matter-server war am Vortag um 12:55 neu
-gestartet, und seither scheiterte jedes Einlernen eines Thread-Geraets. Im
-Log des Dienstes stand die Ursache im Klartext -
+This became visible on 2026-09-04: matter-server had been restarted the
+previous day at 12:55, and since then every commissioning of a Thread
+device had failed. The service's log stated the cause in plain text -
 
     Required network information not provided in commissioning parameters
     Parameters supplied: wifi (no) thread (no)
     Device supports: wifi (no) thread(yes)
 
-- in der Oberflaeche dagegen nur "Commission with code failed for node 7".
-BLE-Verbindung, Pairing-Code und die gesicherte Sitzung zum Geraet waren
-allesamt in Ordnung; es fehlte einzig das Netz, in das das Geraet gehoert
-haette. Die Oberflaeche hatte den Datensatz zwar als Eingabefeld, aber
-optional und nach jedem Einlernen wieder geleert (`api/devices.py` schickte
-ihn nur, wenn dort etwas stand) - solange matter-server durchlief, war das
-harmlos, danach nicht mehr.
+- the UI, by contrast, showed only "Commission with code failed for node 7".
+The BLE connection, pairing code and the secured session to the device were
+all fine; the only thing missing was the network the device should have
+belonged to. The UI did have the dataset as an input field, but it was
+optional and cleared again after every commissioning (`api/devices.py`
+only sent it when something was entered there) - as long as matter-server
+kept running, that was harmless, but not after a restart.
 
-**Warum aus OTBR und nicht aus einem eigenen Speicher.** Der Border Router
-ist die Stelle, an der der Datensatz ohnehin schon liegt, und er ist die
-einzige, die ihn nach einem Netzwechsel von selbst richtig hat. Ein zweiter,
-in dieser Bruecke gespeicherter Datensatz waere ab dem naechsten `docker
-compose down` von OTBR ohne Volume (siehe Kommentar bei `otbr-state` in
-`deploy/testhost/docker-compose.yml`) stillschweigend falsch - und ein
-falscher Datensatz scheitert spaeter und undurchsichtiger als gar keiner.
+**Why from OTBR and not from a store of our own.** The border router is
+the place where the dataset already lives anyway, and it is the only one
+that has it correct on its own after a network change. A second dataset
+stored in this bridge would become silently wrong from the next `docker
+compose down` of OTBR without a volume (see the comment on `otbr-state`
+in `deploy/testhost/docker-compose.yml`) - and a wrong dataset fails later
+and less transparently than none at all.
 
-**Warum ueber HTTP und nicht ueber `ot-ctl`.** Genau dieselbe Begruendung wie
-bei `_check_thread()` in `api/diagnostics.py`: dieser Dienst laeuft in einem
-eigenen Container und hat keinen Zugriff auf den von OTBR. OTBRs
-REST-Schnittstelle dagegen lauscht auf 127.0.0.1:8081 im Netzwerk-
-Namensraum des Hosts, den beide mit `network_mode: host` teilen - gemessen
-aus dem laufenden loxmatter-Container heraus (Status 200, 222 Hex-Zeichen),
-nicht vermutet.
+**Why over HTTP and not over `ot-ctl`.** Exactly the same reasoning as for
+`_check_thread()` in `api/diagnostics.py`: this service runs in its own
+container and has no access to OTBR's. OTBR's REST interface, on the other
+hand, listens on 127.0.0.1:8081 in the host's network namespace, which
+both share via `network_mode: host` - measured from the running
+loxmatter container (status 200, 222 hex characters), not assumed.
 """
 
 from __future__ import annotations
@@ -65,91 +64,91 @@ from typing import Any, Final
 
 from loxmatter import i18n
 
-# OTBRs REST-Schnittstelle auf demselben Host. Nicht konfigurierbar ueber
-# einen CLI-Schalter, sondern ueber die Umgebung (siehe `_base_url`): der
-# Regelfall braucht keine Angabe, und ein Schalter waere ein weiterer
-# uebersetzter Hilfetext fuer eine Einstellung, die in diesem Stack nie
-# jemand setzt.
+# OTBR's REST interface on the same host. Not configurable via a CLI flag,
+# but via the environment (see `_base_url`): the common case needs no
+# setting at all, and a flag would be one more translated help text for a
+# setting nobody in this stack ever sets.
 DEFAULT_OTBR_URL: Final = "http://127.0.0.1:8081"
 
 _OTBR_URL_ENV: Final = "LOXMATTER_OTBR_URL"
 
-# Der Pfad ist Teil von OTBRs REST-API, nicht von uns gewaehlt.
+# The path is part of OTBR's REST API, not chosen by us.
 _ACTIVE_DATASET_PATH: Final = "/node/dataset/active"
 
-# Ohne diesen Header antwortet OTBR mit einer JSON-Struktur (Kanal, PAN-ID,
-# Schluessel als Einzelfelder); `set_thread_operational_dataset` nimmt aber
-# nur das Hex-TLV entgegen, das `text/plain` liefert.
+# Without this header OTBR answers with a JSON structure (channel, PAN ID,
+# key as separate fields); `set_thread_operational_dataset` only accepts
+# the hex TLV that `text/plain` delivers.
 _PLAIN_TEXT: Final = {"Accept": "text/plain"}
 
-# Der Border Router steht im selben Haus, meist auf demselben Rechner - eine
-# Antwort, die laenger braucht, kommt nicht mehr.
+# The border router sits in the same house, usually on the same machine -
+# a response that takes longer than this is not coming.
 _TIMEOUT_SECONDS: Final = 5.0
 
 _HEX_DIGITS: Final = frozenset("0123456789abcdefABCDEF")
 
 
 class ThreadDatasetUnavailableError(RuntimeError):
-    """Der Border Router konnte keinen aktiven Thread-Datensatz nennen.
+    """The border router could not name an active Thread dataset.
 
-    Kein Grund, das Einlernen abzubrechen: ein WiFi-Geraet braucht gar
-    keinen (siehe `api/devices.py`, wo dieser Fehler zu einem Hinweis wird
-    und nicht zu einem Abbruch). Fuer ein Thread-Geraet dagegen ist es die
-    Ursache, die sonst erst 40 Sekunden spaeter als "Commission with code
-    failed" ankommt - deshalb traegt die Ausnahme den Grund im Klartext.
+    No reason to abort commissioning: a WiFi device needs none at all (see
+    `api/devices.py`, where this error becomes a note rather than an
+    abort). For a Thread device, on the other hand, this is the cause that
+    would otherwise only arrive 40 seconds later as "Commission with code
+    failed" - which is why the exception carries the reason in plain text.
     """
 
 
 def _base_url() -> str:
-    """Zur Aufrufzeit gelesen, nicht beim Import: sonst waere die Adresse in
-    Tests nur noch ueber ein Neuladen des Moduls zu beeinflussen."""
+    """Read at call time, not at import: otherwise the address could only
+    be influenced in tests by reloading the module."""
     return os.environ.get(_OTBR_URL_ENV) or DEFAULT_OTBR_URL
 
 
 def _default_session_factory() -> Any:
-    # Lazy importiert wie in `matter/client.py`: Tests mit einer eigenen
-    # Sitzung sollen aiohttp nie laden muessen.
+    # Lazily imported like in `matter/client.py`: tests with their own
+    # session should never need to load aiohttp.
     import aiohttp
 
     return aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=_TIMEOUT_SECONDS))
 
 
 def validated_dataset(body: str, url: str) -> str:
-    """Prueft eine Zeichenkette darauf, ob sie ein Thread-Datensatz sein kann.
+    """Check a string for whether it could be a Thread dataset.
 
-    Oeffentlich, nicht modulprivat: zwei Aufrufer, eine Regel -
-    `fetch_active_dataset` unten mit der Antwort des Border Routers, und
-    `api/devices.py` mit dem von Hand in die Oberflaeche eingetragenen
-    Datensatz. Eine zweite, nur aehnliche Pruefung dort waere genau die
-    Doppelung, die frueher oder spaeter auseinanderlaeuft.
+    Public, not module-private: two callers, one rule -
+    `fetch_active_dataset` below with the border router's response, and
+    `api/devices.py` with the dataset entered by hand into the UI. A
+    second, merely similar check there would be exactly the duplication
+    that drifts apart sooner or later.
 
-    `url` benennt in den Fehlermeldungen allein die HERKUNFT der geprueften
-    Zeichenkette und ist deshalb nicht zwingend eine Adresse; die Route in
-    `api/devices.py` formuliert ihre Meldung an den Bedienenden ohnehin
-    selbst. Der Datensatz selbst taucht in KEINER Meldung dieser Funktion
-    auf - er enthaelt den Netzwerkschluessel des Thread-Netzes.
+    In the error messages, `url` names only the ORIGIN of the checked
+    string and is therefore not necessarily an address; the route in
+    `api/devices.py` composes its message to the operator itself anyway.
+    The dataset itself appears in NONE of this function's messages - it
+    contains the network key of the Thread network.
     """
     dataset = body.strip()
     if not dataset:
         raise ThreadDatasetUnavailableError(i18n.t("api.errors.thread_dataset_empty", url=url))
     if not set(dataset) <= _HEX_DIGITS:
-        # Zeigt bewusst NICHT die Antwort selbst: waere sie doch ein
-        # Datensatz, stuende damit ein Credential im Log. Die Vorlage in
-        # `strings.yaml` nennt deshalb in BEIDEN Sprachen nur die Laenge.
+        # Deliberately does NOT show the response itself: if it were in
+        # fact a dataset, a credential would end up in the log. The
+        # template in `strings.yaml` therefore names only the length, in
+        # BOTH languages.
         raise ThreadDatasetUnavailableError(
             i18n.t("api.errors.thread_dataset_not_hex", url=url, length=len(dataset))
         )
     if len(dataset) % 2 != 0:
-        # Auch hier nicht die Zeichenkette selbst, nur ihre Laenge: jedes
-        # Zeichen fuer sich ist Hex, es koennte also durchaus ein - um genau
-        # ein Zeichen beschnittener - echter Datensatz sein.
+        # Here too, not the string itself, only its length: each character
+        # on its own is hex, so it could well be a genuine dataset -
+        # truncated by exactly one character.
         #
-        # Ohne diese Pruefung reicht `set_thread_dataset` das weiter, und
-        # matter-servers `bytes.fromhex` scheitert dort mit "odd-length
-        # string". Das kommt als `UnknownError` zurueck - ein `MatterError`,
-        # aber kein `MatterUnavailableError`, an dessen `except` in
-        # `api/devices.py` es also vorbeifaellt: HTTP 500 statt einer Meldung,
-        # die sagt, was zu tun ist.
+        # Without this check, `set_thread_dataset` would pass this through,
+        # and matter-server's `bytes.fromhex` would fail there with
+        # "odd-length string". That comes back as `UnknownError` - a
+        # `MatterError`, but not a `MatterUnavailableError`, so it slips
+        # past the `except` in `api/devices.py`: HTTP 500 instead of a
+        # message that says what to do.
         raise ThreadDatasetUnavailableError(
             i18n.t("api.errors.thread_dataset_odd_length", url=url, length=len(dataset))
         )
@@ -161,12 +160,12 @@ async def fetch_active_dataset(
     *,
     session_factory: Callable[[], Any] | None = None,
 ) -> str:
-    """Holt den aktiven Thread-Datensatz als Hex-TLV vom Border Router.
+    """Fetch the active Thread dataset as a hex TLV from the border router.
 
-    Der Rueckgabewert ist ein Credential - der Netzwerkschluessel des
-    Thread-Netzes steckt darin. Er gehoert weder in ein Log noch in eine
-    Fehlermeldung (siehe `deploy/testhost/README.md`); die Ausnahmen dieses
-    Moduls nennen deshalb nur Adresse, Status und Laenge.
+    The return value is a credential - it contains the network key of the
+    Thread network. It belongs in neither a log nor an error message (see
+    `deploy/testhost/README.md`); this module's exceptions therefore name
+    only address, status and length.
     """
     url = (base_url or _base_url()).rstrip("/") + _ACTIVE_DATASET_PATH
     session = (session_factory or _default_session_factory)()
@@ -176,11 +175,11 @@ async def fetch_active_dataset(
                 status = response.status
                 body = await response.text()
         except Exception as exc:
-            # `Exception` und nicht nur `aiohttp.ClientError`: dieses Modul
-            # importiert aiohttp bewusst nicht selbst (siehe
-            # `_default_session_factory`), und ein nicht erreichbarer Border
-            # Router ist fuer den Aufrufer derselbe Fall wie ein
-            # antwortender ohne Netz - ein Grund, kein Absturz.
+            # `Exception` and not just `aiohttp.ClientError`: this module
+            # deliberately does not import aiohttp itself (see
+            # `_default_session_factory`), and an unreachable border
+            # router is, for the caller, the same case as one that
+            # responds without a network - a reason, not a crash.
             raise ThreadDatasetUnavailableError(
                 i18n.t("api.errors.thread_dataset_unreachable", url=url, exc=exc)
             ) from exc

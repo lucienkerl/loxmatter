@@ -1,4 +1,4 @@
-# i18n Phase B+C: API + WebUI + Export-Vorlagen — Implementation Plan
+# i18n Phase B+C: API + WebUI + Export Templates — Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -35,7 +35,7 @@
 | `src/loxmatter/matter/client.py`, `src/loxmatter/commands/translate.py` | Modified: exception messages that reach `HTTPException(detail=str(exc))` migrated to `t()`. |
 | `src/loxmatter/export/documents.py`, `src/loxmatter/export/signals.py` | Modified: template `title`/`comment` field text migrated to `i18n.t("export.*", ...)`. |
 | `src/loxmatter/web/vendor/i18n.js` (or similar — exact name decided in Task 9) | New. The client-side `t()` helper + Alpine store, no build step, plain `<script>` include. |
-| `src/loxmatter/web/index.html` | Modified: static text nodes become `x-text="t('web.xyz')"` (or `:attr="t(...)"`); `x-cloak` added to the app shell; the empty "Weitere Einstellungen" settings card becomes the EN/DE language toggle. |
+| `src/loxmatter/web/index.html` | Modified: static text nodes become `x-text="t('web.xyz')"` (or `:attr="t(...)"`); `x-cloak` added to the app shell; the empty `Weitere Einstellungen` settings card becomes the EN/DE language toggle. |
 | `src/loxmatter/web/app.js` | Modified: `init()` fetches `GET /api/i18n` first; every dynamic user-facing string routes through the same `t()`. |
 | `tests/...` | Modified/new throughout, mirroring Phase A's pattern: existing assertions on literal German text move to English, German companions added via `i18n.set_language("de")` (server-side) or a fetched-strings fixture (client-side, exact approach decided per task). |
 
@@ -57,7 +57,7 @@
 Create `tests/api/test_language.py`. First check the existing test fixture setup other `tests/api/*.py` files use (look at `tests/api/conftest.py` and e.g. `tests/api/test_web.py` for how a test builds an app/client against a `Store` — copy that exact setup pattern, do not invent a new one). Using that pattern:
 
 ```python
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -73,9 +73,9 @@ Create `tests/api/test_language.py`. First check the existing test fixture setup
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Tests fuer GET /api/i18n (ungeschuetzt) und PATCH /api/language
-(geschuetzt) sowie die sync_language-Middleware, die die gespeicherte
-Spracheinstellung bei jeder Anfrage frisch liest."""
+"""Tests for GET /api/i18n (unprotected) and PATCH /api/language
+(protected), as well as the sync_language middleware, which reads
+the stored language setting fresh on every request."""
 
 from __future__ import annotations
 
@@ -88,8 +88,8 @@ from loxmatter import i18n
 
 
 def test_get_i18n_works_without_a_session(client):
-    """Die dritte, bewusste Ausnahme von der Anmeldepflicht (Spec-Abschnitt
-    5) - ohne Cookie, ohne Token, trotzdem 200."""
+    """The third, deliberate exception to the login requirement (spec
+    section 5) - no cookie, no token, still 200."""
     response = client.get("/api/i18n")
     assert response.status_code == 200
     body = response.json()
@@ -109,9 +109,9 @@ def test_patch_language_requires_a_session(client):
 
 
 def test_patch_language_persists_and_is_reflected_by_the_next_request(authenticated_client, store):
-    """Beweist die Middleware, nicht nur die Route: eine ZWEITE, unabhaengige
-    Anfrage (hier /api/i18n, das keine Anmeldung braucht) muss die neue
-    Sprache sehen - nicht nur store.locale direkt."""
+    """Proves the middleware, not just the route: a SECOND, independent
+    request (here /api/i18n, which needs no login) must see the new
+    language - not just store.locale directly."""
     response = authenticated_client.patch("/api/language", json={"language": "de"})
     assert response.status_code == 200
     assert store.locale.get_language() == "de"
@@ -126,20 +126,20 @@ def test_patch_language_rejects_an_unsupported_value(authenticated_client):
 
 
 def test_sync_language_middleware_sees_a_change_made_directly_through_the_store(client, store):
-    """Die Luecke aus Spec-Abschnitt 4: eine Aenderung, die NICHT ueber
-    PATCH /api/language lief (hier direkt ueber store.locale, wie es
-    `loxmatter set-language` in einem anderen Prozess taete), muss die
-    NAECHSTE Anfrage trotzdem sehen."""
+    """The gap from spec section 4: a change that did NOT go through
+    PATCH /api/language (here directly via store.locale, as `loxmatter
+    set-language` would in a different process) must still be seen by
+    the NEXT request."""
     store.locale.set_language("de")
     response = client.get("/api/i18n")
     assert response.json()["language"] == "de"
 
 
 def test_a_request_does_not_leak_language_state_to_i18n_t_outside_the_request():
-    """Nach jeder Anfrage soll die globale i18n-Sprache wieder auf den von
-    tests/conftest.pys reset_language-Fixture gesetzten Wert stehen - dieser
-    Test dokumentiert nur die Erwartung; reset_language selbst erledigt die
-    eigentliche Absicherung."""
+    """After every request, the global i18n language should be back to
+    the value set by tests/conftest.py's reset_language fixture - this
+    test only documents the expectation; reset_language itself does the
+    actual enforcement."""
     assert i18n.current_language() == i18n.DEFAULT_LANGUAGE
 ```
 
@@ -155,7 +155,7 @@ Expected: FAIL with `ModuleNotFoundError: No module named 'loxmatter.api.languag
 Create `src/loxmatter/api/language.py`:
 
 ```python
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -171,22 +171,22 @@ Create `src/loxmatter/api/language.py`:
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Die gemeinsame Spracheinstellung ueber die API - Phase B+C, Spec-Abschnitt 5.
+"""The shared language setting via the API - Phase B+C, spec section 5.
 
-Zwei getrennte Router, weil sie unterschiedlich geschuetzt werden muessen
-(`loxone.server.build_app` bindet sie deshalb mit unterschiedlichem
-`dependencies=`-Argument ein, siehe dort):
+Two separate routers, because they must be protected differently
+(`loxone.server.build_app` therefore wires them in with a different
+`dependencies=` argument, see there):
 
-- `build_i18n_router`: `GET /api/i18n` - UNGESCHUETZT. Die Ersteinrichtungs-
-  und Anmeldeseite braucht diese Texte, um sich ueberhaupt anzuzeigen, bevor
-  jemand angemeldet sein kann - dieselbe Notwendigkeit wie bei `/auth-info`
-  (siehe `api/auth.py`), nur fuer Uebersetzungen statt Zugangsstatus.
-- `build_language_router`: `PATCH /api/language` - geschuetzt wie jede
-  andere `/api`-Route, die den Zustand der Installation aendert.
+- `build_i18n_router`: `GET /api/i18n` - UNPROTECTED. The initial-setup
+  and login page needs this text in order to render at all before
+  anyone can be logged in - the same necessity as with `/auth-info`
+  (see `api/auth.py`), just for translations instead of access status.
+- `build_language_router`: `PATCH /api/language` - protected like every
+  other `/api` route that changes the installation's state.
 
-Liest `i18n`s eigene, bereits durch die Namensraum-Konvention (`web.*`)
-gefilterte Teilmenge - kein zweiter, eigener Satz Uebersetzungen fuer den
-Client, dieselbe `strings.yaml` wie ueberall sonst."""
+Reads `i18n`'s own subset, already filtered by the namespace convention
+(`web.*`) - no second, separate set of translations for the
+client, the same `strings.yaml` as everywhere else."""
 
 from __future__ import annotations
 
@@ -211,13 +211,13 @@ class LanguageOut(BaseModel):
 
 
 def _web_strings() -> dict[str, str]:
-    """Alle `web.*`-Schluessel, aufgeloest in der aktuellen Sprache.
+    """All `web.*` keys, resolved in the current language.
 
-    `i18n._STRINGS` traegt jeden Schluessel des gesamten Projekts
-    (`cli.*`, `api.*`, `web.*`, `export.*`, `test.*`) - diese Funktion
-    filtert auf genau den Namensraum, den der Client braucht, und laesst
-    `i18n.t()` selbst die Aufloesung (inkl. Ruecksicherungsfall) erledigen,
-    statt die Tabelle hier ein zweites Mal auszulesen."""
+    `i18n._STRINGS` carries every key of the entire project
+    (`cli.*`, `api.*`, `web.*`, `export.*`, `test.*`) - this function
+    filters down to exactly the namespace the client needs, and lets
+    `i18n.t()` itself handle the resolution (including the fallback
+    case), instead of reading the table a second time here."""
     return {key: i18n.t(key) for key in i18n.strings_with_prefix("web.")}
 
 
@@ -255,10 +255,10 @@ def build_language_router(store: Store) -> APIRouter:
 
 ```python
 def strings_with_prefix(prefix: str) -> list[str]:
-    """Alle Schluessel, die mit `prefix` beginnen - fuer `api/language.py`s
-    `GET /api/i18n`, das nur den `web.*`-Namensraum an den Client
-    ausliefert, nicht die gesamte Tabelle (CLI-Hilfetexte, API-
-    Fehlermeldungen etc. gehen den Browser nichts an)."""
+    """All keys that start with `prefix` - for `api/language.py`'s
+    `GET /api/i18n`, which delivers only the `web.*` namespace to the
+    client, not the whole table (CLI help text, API error messages,
+    etc. are none of the browser's business)."""
     return [key for key in _STRINGS if key.startswith(prefix)]
 ```
 
@@ -296,7 +296,7 @@ docstring's claim that registering FIRST makes a middleware the outermost
 layer — reflects Task 1's original (incorrect) understanding of Starlette's
 middleware semantics. The real semantics are the opposite: the LAST
 `@app.middleware("http")` registered ends up outermost (see the corrected
-"Middleware-Registrierungsreihenfolge" reference section below). The shipped
+"Middleware Registration Order" reference section below). The shipped
 code in `server.py` now registers `_sync_language` AFTER `_record_command`,
 not before, and its docstring there states the corrected semantics. This
 snippet is left as historical record of what Task 1 actually executed at the
@@ -313,20 +313,20 @@ Inside `build_app`, insert the middleware as the FIRST thing registered — befo
     async def _sync_language(
         request: Request, call_next: Callable[[Request], Awaitable[StarletteResponse]]
     ) -> StarletteResponse:
-        """Liest die gespeicherte Spracheinstellung bei JEDER Anfrage frisch
-        (Spec-Abschnitt 4) - registriert als ALLERERSTE Middleware, damit sie
-        vor `_record_command` und vor jeder Route (einschliesslich des
-        Anmelde-Waechters, dessen 401-Text ebenfalls uebersetzt ist) laeuft.
-        Middleware-Registrierungsreihenfolge in Starlette: die zuerst per
-        `@app.middleware("http")` registrierte Funktion wird zur AEUSSEREN
-        Schicht und sieht eine Anfrage deshalb zuerst - siehe die
-        ausfuehrliche Herleitung im Implementierungsplan dieser Aufgabe,
-        Abschnitt "Middleware-Registrierungsreihenfolge".
+        """Reads the stored language setting fresh on EVERY request
+        (spec section 4) - registered as the VERY FIRST middleware, so it
+        runs before `_record_command` and before every route (including
+        the login guard, whose 401 text is also translated).
+        Middleware registration order in Starlette: the function
+        registered first via `@app.middleware("http")` becomes the
+        OUTER layer and therefore sees a request first - see the
+        detailed derivation in this task's implementation plan,
+        section "Middleware Registration Order".
 
-        `store.locale.get_language()` wirft nie (Phase A) - kein try/except
-        noetig, anders als `_append_command_log` weiter unten, das einen
-        echten Fehlschlag beim Schreiben in einen fremden Ringpuffer
-        abfaengt."""
+        `store.locale.get_language()` never raises (Phase A) - no
+        try/except needed, unlike `_append_command_log` further below,
+        which catches a real failure when writing into a foreign ring
+        buffer."""
         i18n.set_language(store.locale.get_language())
         return await call_next(request)
 
@@ -348,11 +348,11 @@ Then, near the other `app.include_router(...)` calls, add both new routers — `
 (insert the `build_language_router` line among the other guarded routers — exact position among them doesn't matter, FastAPI doesn't care about router registration order for routes with distinct paths)
 
 ```python
-    # OHNE `dependencies=api_guard` - genau wie `/health`, `/cmd` und
-    # `/resync` weiter unten, UND wie `build_auth_router` direkt darueber.
-    # Siehe api/language.py-Moduldocstring: die Ersteinrichtungs-/
-    # Anmeldeseite braucht diese Uebersetzungen, um sich ueberhaupt
-    # anzuzeigen, bevor jemand angemeldet sein kann.
+    # WITHOUT `dependencies=api_guard` - just like `/health`, `/cmd`, and
+    # `/resync` further below, AND like `build_auth_router` directly above.
+    # See the api/language.py module docstring: the initial-setup/login
+    # page needs these translations in order to render at all before
+    # anyone can be logged in.
     app.include_router(build_auth_router(store))
     app.include_router(build_i18n_router(store))
 ```
@@ -395,100 +395,100 @@ EOF
 
 ---
 
-## Middleware-Registrierungsreihenfolge (Referenz fuer Task 1)
+## Middleware Registration Order (Reference for Task 1)
 
-**Korrektur (Whole-Branch-Review, 2026-09-04):** Der urspruengliche Text
-dieses Abschnitts behauptete "Zuerst registriert = laeuft zuerst" und liess
-Task 1 `_sync_language` deshalb VOR `_record_command` registrieren. Das ist
-falsch herum - siehe unten fuer die tatsaechlichen Starlette-Semantiken und
-den Review-Fix (`_sync_language` wird in `server.py` inzwischen ALS LETZTE
-der beiden Middlewares registriert, nicht als erste). Der Fehler in der
-urspruenglichen Herleitung: `@app.middleware("http")` ruft intern
-`add_middleware` auf, und `Starlette.add_middleware` fuegt jede neue
-Middleware mit `self.user_middleware.insert(0, ...)` VORNE in die Liste ein
-- `user_middleware` ist bei zwei Registrierungen `A` (zuerst), `B` (danach)
-also `[B, A]`, NICHT `[A, B]` wie unten angenommen.
+**Correction (Whole-Branch-Review, 2026-09-04):** The original text of
+this section claimed "registered first = runs first" and had Task 1
+register `_sync_language` BEFORE `_record_command` because of that. That is
+backward - see below for the actual Starlette semantics and the
+review fix (`_sync_language` is now registered in `server.py` as the LAST
+of the two middlewares, not the first). The error in the
+original derivation: `@app.middleware("http")` internally calls
+`add_middleware`, and `Starlette.add_middleware` inserts every new
+middleware at the FRONT of the list with `self.user_middleware.insert(0, ...)`
+- with two registrations `A` (first), `B` (after), `user_middleware` is
+therefore `[B, A]`, NOT `[A, B]` as assumed below.
 
-Starlette baut den Middleware-Stapel in `Starlette.build_middleware_stack()`
-so auf: `app = router`, dann fuer jedes Element von
-`reversed([ServerError] + user_middleware + [ExceptionMiddleware])` wird die
-jeweilige Middleware um `app` HERUM gelegt (`app = cls(app=app, ...)`). Mit
-`user_middleware = [B, A]` (siehe oben) ergibt `reversed(...)` die
-Wickel-Reihenfolge `ServerError, A, B, ExceptionMiddleware` - die Schicht-
-Reihenfolge von aussen nach innen ist damit `ServerError → B → A →
-ExceptionMiddleware → router`. Eine eingehende Anfrage durchlaeuft die
-Schichten von aussen nach innen - `B`s Code vor seinem `await
-call_next(...)` laeuft deshalb VOR `A`s entsprechendem Code, obwohl `A`
-ZUERST registriert wurde. **Zuletzt registriert = aeusserste Schicht = laeuft
-zuerst.** Verifiziert per `TestClient`-Probe (zwei Middlewares, Aufrufreihen-
-folge geloggt: `second-in, first-in, handler, first-out, second-out` fuer
-zwei nacheinander per `@app.middleware("http")` registrierte Funktionen
-`first`, `second`) sowie per `app.user_middleware[0]`, das nach zwei
-Registrierungen die ZULETZT registrierte Funktion enthaelt. `_sync_language`
-muss deshalb NACH `_record_command` registriert werden, nicht davor - so ist
-es in `server.py` inzwischen umgesetzt, mit einem Test
+Starlette builds the middleware stack in `Starlette.build_middleware_stack()`
+like this: `app = router`, then for each element of
+`reversed([ServerError] + user_middleware + [ExceptionMiddleware])`, that
+middleware is wrapped AROUND `app` (`app = cls(app=app, ...)`). With
+`user_middleware = [B, A]` (see above), `reversed(...)` gives the
+wrapping order `ServerError, A, B, ExceptionMiddleware` - the layer
+order from outside to inside is thus `ServerError → B → A →
+ExceptionMiddleware → router`. An incoming request passes through the
+layers from outside to inside - `B`'s code before its `await
+call_next(...)` therefore runs BEFORE `A`'s corresponding code, even though
+`A` was registered FIRST. **Registered last = outermost layer = runs
+first.** Verified via a `TestClient` probe (two middlewares, call order
+logged: `second-in, first-in, handler, first-out, second-out` for two
+functions `first`, `second` registered one after the other via
+`@app.middleware("http")`), and via `app.user_middleware[0]`, which after
+two registrations holds the LAST-registered function. `_sync_language`
+must therefore be registered AFTER `_record_command`, not before - that is
+how it is now implemented in `server.py`, with a test
 (`test_sync_language_is_the_outermost_middleware` in
-`tests/loxone/test_server.py`), der `app.user_middleware[0]` genau darauf
-prueft.
+`tests/loxone/test_server.py`) that checks `app.user_middleware[0]` for
+exactly that.
 
-(Randbemerkung, nicht sicherheitsrelevant fuer diese Aufgabe: FastAPIs
-`Depends(...)`-Abhaengigkeiten, also auch `build_api_guard`, loesen erst
-WAEHREND der Routenbehandlung auf, die selbst innerhalb JEDER Middleware
-liegt - der Waechter saehe die richtige Sprache also auch, wenn die
-Registrierungsreihenfolge der beiden Middlewares vertauscht waere. Die
-Reihenfolge oben ist trotzdem wichtig und sollte nicht aus Bequemlichkeit
-vertauscht werden: `_record_command`s Ringpuffer-Eintraege selbst tragen
-keinen uebersetzten Text, aber ein kuenftiger Diagnose-Text dort sollte
-sich auf eine bereits aufgeloeste Sprache verlassen koennen, ohne dass
-jemand die Registrierungsreihenfolge erneut nachvollziehen muss.)
+(Side note, not security-relevant for this task: FastAPI's
+`Depends(...)` dependencies, and therefore also `build_api_guard`, only
+resolve DURING route handling, which itself sits inside EVERY middleware
+- the guard would therefore see the correct language even if the
+registration order of the two middlewares were swapped. The order above
+is nevertheless important and should not be swapped out of convenience:
+`_record_command`'s ring-buffer entries themselves carry no translated
+text, but a future diagnostic text there should be able to rely on an
+already-resolved language without anyone having to re-derive the
+registration order.)
 
 ---
 
-## Task 2: Exception-Texte, die ueber `detail=str(exc)` in HTTP-Antworten landen
+## Task 2: Exception Text That Lands in HTTP Responses via `detail=str(exc)`
 
-**Warum diese Aufgabe vor den einzelnen API-Routern kommt:** mehrere
-`HTTPException(detail=str(exc))`-Stellen in `api/control.py`,
-`api/devices.py`, `api/export.py` geben nur eine Ausnahme weiter, deren
-deutscher Text an einer ANDEREN Stelle entsteht - `model/store.py`
+**Why this task comes before the individual API routers:** several
+`HTTPException(detail=str(exc))` spots in `api/control.py`,
+`api/devices.py`, `api/export.py` merely pass along an exception whose
+German text originates at a DIFFERENT spot - `model/store.py`
 (`UnknownDeviceError`, `UnknownCommandError`), `commands/translate.py`
-(`UnsupportedValueError`, dreimal), `matter/client.py`
-(`MatterUnavailableError`, sechsmal, `CommissioningError`, einmal). Diese
-Aufgabe migriert die Texte AN IHRER QUELLE - die `api/*.py`-Aufrufstellen,
-die nur `str(exc)` weiterreichen, brauchen dadurch KEINE eigene Aenderung:
-sobald die Ausnahme selbst einen uebersetzten Text traegt, liefert
-`str(exc)` ihn automatisch weiter (`UnknownDeviceError.__str__`/
-`UnknownCommandError.__str__` geben `str(self.args[0])` unveraendert
-zurueck, siehe `model/store.py`).
+(`UnsupportedValueError`, three times), `matter/client.py`
+(`MatterUnavailableError`, six times, `CommissioningError`, once). This
+task migrates the text AT ITS SOURCE - the `api/*.py` call sites,
+which only pass along `str(exc)`, therefore need NO change of their own:
+as soon as the exception itself carries translated text,
+`str(exc)` automatically passes it along (`UnknownDeviceError.__str__`/
+`UnknownCommandError.__str__` return `str(self.args[0])` unchanged,
+see `model/store.py`).
 
-**Bewusst NICHT migriert** (siehe Global Constraints, "Internal
-invariant-violation exceptions"): `model/store.py`s beide
-`ValueError`s in `_assign_key`/`register_commands` (Schluessel-Kollision)
-werden aktuell in KEINEM `api/*.py`-Aufrufer abgefangen - ein Aufruf
-propagiert bis zu FastAPIs Standard-500-Handler, der `detail` gar nicht
-uebersetzt ausliefert. Ebenfalls nicht migriert: `Store.udp_port()`s
-`KeyError` (kein Aufrufer in `api/*.py`, nicht HTTP-erreichbar). Beide sind
-ein vorbestehender Befund (unbehandelte Ausnahme bei einer Schluessel-
-Kollision landet als nackter 500 statt eines aussagekraeftigen Fehlers),
-kein Uebersetzungsproblem - der Umsetzer soll das NICHT im Rahmen dieser
-Aufgabe beheben, nur nicht faelschlich fuer bereits erledigt halten.
+**Deliberately NOT migrated** (see Global Constraints, "Internal
+invariant-violation exceptions"): `model/store.py`'s two
+`ValueError`s in `_assign_key`/`register_commands` (key collision)
+are currently not caught by ANY `api/*.py` caller - a call
+propagates up to FastAPI's default 500 handler, which does not deliver
+`detail` translated at all. Also not migrated: `Store.udp_port()`'s
+`KeyError` (no caller in `api/*.py`, not reachable via HTTP). Both are
+a pre-existing finding (an unhandled exception on a key
+collision lands as a bare 500 instead of a meaningful error),
+not a translation problem - the implementer should NOT fix this within
+this task, just not mistakenly consider it already done.
 
 **Files:**
 - Modify: `src/loxmatter/model/store.py:836` (`UnknownDeviceError`), `src/loxmatter/model/store.py:1178` (`UnknownCommandError`)
 - Modify: `src/loxmatter/commands/translate.py:84,91,132-134`
-- Modify: `src/loxmatter/matter/client.py:242,244-248,330,355,387,438-440,470` (`MatterUnavailableError`) und `:389` (`CommissioningError`)
+- Modify: `src/loxmatter/matter/client.py:242,244-248,330,355,387,438-440,470` (`MatterUnavailableError`) and `:389` (`CommissioningError`)
 - Modify: `src/loxmatter/i18n/strings.yaml`
-- Create: `tests/model/test_store_error_messages.py`, `tests/commands/test_translate_error_messages.py`, `tests/matter/test_client_error_messages.py` (drei kleine, fokussierte Dateien statt eine grosse — jede prueft nur die Uebersetzung an ihrer eigenen Quelle, unabhaengig von den API-Routern, die diese Ausnahmen spaeter fangen)
+- Create: `tests/model/test_store_error_messages.py`, `tests/commands/test_translate_error_messages.py`, `tests/matter/test_client_error_messages.py` (three small, focused files instead of one large one — each only tests the translation at its own source, independent of the API routers that catch these exceptions later)
 
 **Interfaces:**
 - Consumes: `loxmatter.i18n.t` (Phase A).
-- Produces: keine neue oeffentliche Schnittstelle — jede betroffene Ausnahme traegt ab dieser Aufgabe einen `i18n.t(...)`-Text statt eines hartkodierten deutschen. Spaetere Aufgaben (3-6), die dieselben Ausnahmen in `api/*.py` fangen, brauchen an den reinen `detail=str(exc)`-Stellen NICHTS zu aendern.
+- Produces: no new public interface — as of this task, every affected exception carries `i18n.t(...)` text instead of a hardcoded German one. Later tasks (3-6), which catch these same exceptions in `api/*.py`, need to change NOTHING at the plain `detail=str(exc)` spots.
 
 - [ ] **Step 1: Write the failing tests**
 
 Create `tests/model/test_store_error_messages.py` (read `tests/model/test_store.py` first for the existing fixture/import pattern used there — mirror it, do not invent a new setup):
 
 ```python
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -504,10 +504,10 @@ Create `tests/model/test_store_error_messages.py` (read `tests/model/test_store.
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Tests fuer die uebersetzten Texte von UnknownDeviceError/UnknownCommandError -
-str(exc) reicht diesen Text unveraendert in eine HTTP-Antwort weiter
-(siehe api/control.py, api/devices.py, api/export.py), diese Tests pruefen
-aber nur die Ausnahme selbst, unabhaengig von der API."""
+"""Tests for the translated text of UnknownDeviceError/UnknownCommandError -
+str(exc) passes this text unchanged into an HTTP response
+(see api/control.py, api/devices.py, api/export.py), but these tests only
+check the exception itself, independent of the API."""
 
 from __future__ import annotations
 
@@ -560,7 +560,7 @@ def test_unknown_command_error_is_english_by_default(tmp_path):
 Create `tests/commands/test_translate_error_messages.py`:
 
 ```python
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -576,7 +576,7 @@ Create `tests/commands/test_translate_error_messages.py`:
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Tests fuer die uebersetzten UnsupportedValueError-Texte in
+"""Tests for the translated UnsupportedValueError text in
 commands/translate.py."""
 
 from __future__ import annotations
@@ -619,7 +619,7 @@ def test_unsupported_command_error_is_english_by_default():
 Create `tests/matter/test_client_error_messages.py`:
 
 ```python
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -1232,9 +1232,9 @@ Both its call sites below now call `i18n.t("api.auth.fail_already_set_up")` dire
 
 ```python
     def _require_length(password: str) -> None:
-        """Eigene Pruefung statt `Field(min_length=...)` am Modell: die
-        Meldung landet in der Oberflaeche und soll dort auf Deutsch stehen
-        und sagen, was zu tun ist - nicht als pydantic-Fehlerliste."""
+        """Own check instead of `Field(min_length=...)` on the model: the
+        message lands in the UI and should read in German there
+        and say what to do - not as a pydantic error list."""
         if len(password) < MIN_PASSWORD_LENGTH:
             raise HTTPException(
                 status_code=422,
@@ -1244,10 +1244,10 @@ Both its call sites below now call `i18n.t("api.auth.fail_already_set_up")` dire
 →
 ```python
     def _require_length(password: str) -> None:
-        """Eigene Pruefung statt `Field(min_length=...)` am Modell: die
-        Meldung landet in der Oberflaeche und soll dort in der eingestellten
-        Sprache stehen und sagen, was zu tun ist - nicht als pydantic-
-        Fehlerliste."""
+        """Own check instead of `Field(min_length=...)` on the model: the
+        message lands in the UI and should read in the configured
+        language there and say what to do - not as a pydantic
+        error list."""
         if len(password) < MIN_PASSWORD_LENGTH:
             raise HTTPException(
                 status_code=422,
@@ -1802,9 +1802,9 @@ Diese ZIP-Datei enthaelt Loxone-Vorlagen, erzeugt von loxmatter.
 with a function (a module-level constant can no longer work here, since the text must resolve in whatever language is current at ZIP-build time — see Task 1's `sync_language` middleware, which is what makes this correct for a request handled by the already-running server):
 ```python
 def _readme_text() -> str:
-    """Wie die alte Modul-Konstante `_README_TEXT`, aber pro Aufruf neu
-    aufgeloest statt beim Modulimport eingefroren - dieselbe Begruendung wie
-    beim Entfernen von `_ALREADY_SET_UP_DETAIL` in `api/auth.py` (Task 4)."""
+    """Like the old module constant `_README_TEXT`, but resolved fresh per
+    call instead of frozen at module import - the same reasoning as
+    removing `_ALREADY_SET_UP_DETAIL` in `api/auth.py` (Task 4)."""
     return i18n.t("api.export.readme_text").replace("\n", "\r\n")
 ```
 Then change the one call site:
@@ -1895,7 +1895,7 @@ EOF
 
 ---
 
-## Task 7: Export-Vorlagen — Phase C (`export/documents.py`, `export/signals.py`)
+## Task 7: Export Templates — Phase C (`export/documents.py`, `export/signals.py`)
 
 **Scope note:** `f"Matter — {device_label}"` (both `Title` fields in `documents.py`) is NOT migrated — "Matter" is a protocol/product name, not German prose, and `device_label` is user data; there is no translatable text in that template. The `origin` strings passed to `emit()` in `signals.py` (`f"dem Impuls von {signal.key!r}"` etc.) are NOT migrated either — per the Global Constraints, these only ever surface inside the internal key-collision `ValueError` that Task 2 deliberately left untranslated (not HTTP-reachable, an invariant check).
 
@@ -2117,7 +2117,7 @@ At the end of `to_inputs`, the online signal:
 ```python
     online_key = f"d{device_id}_online"
     emit(
-        # Ein Zustand, kein Impuls - also analog (siehe LoxoneInput).
+        # A state, not a pulse - so analog (see LoxoneInput).
         LoxoneInput(online_key, f"{device_label} erreichbar", device_label, True, ""),
         "dem Online-Signal",
     )
@@ -2126,7 +2126,7 @@ At the end of `to_inputs`, the online signal:
 ```python
     online_key = f"d{device_id}_online"
     emit(
-        # Ein Zustand, kein Impuls - also analog (siehe LoxoneInput).
+        # A state, not a pulse - so analog (see LoxoneInput).
         LoxoneInput(
             online_key,
             i18n.t("export.signals.online_title", device_label=device_label),
@@ -2172,22 +2172,22 @@ EOF
 
 ---
 
-## Task 8: WebUI-Uebersetzungsmechanismus (`app.js`, `index.html`)
+## Task 8: WebUI Translation Mechanism (`app.js`, `index.html`)
 
-**Design, verifiziert gegen die tatsaechliche Struktur der Dateien (nicht angenommen):** `index.html:55` traegt `<body x-data="app()">` - EIN Alpine-Bauteil fuer die ganze Seite, `app.js:231-232` definiert `function app() { return {...} }`. Die Skripte laden in dieser Reihenfolge (`index.html:758-759`, beide `defer`): `app.js` zuerst (legt die globale Funktion `app()` an), danach `alpine.min.js` (ruft sie auf). Die Seite kennt bereits GENAU das Muster, das dieser Uebersetzungsmechanismus braucht: `authReady` (`app.js:240`) verhindert das Aufblitzen des falschen Bildschirms, bis `/auth-info` geantwortet hat - `<template x-if="authReady && ...">` (`index.html:77,107`) zeigt bis dahin nichts. Dieselbe Technik uebernimmt diese Aufgabe fuer die Uebersetzungen: `stringsReady`, gesetzt von einer neuen `loadI18n()`, nach demselben Muster wie `loadAuthInfo()` (`app.js:424-442`).
+**Design, verified against the actual structure of the files (not assumed):** `index.html:55` carries `<body x-data="app()">` - ONE Alpine component for the whole page, `app.js:231-232` defines `function app() { return {...} }`. The scripts load in this order (`index.html:758-759`, both `defer`): `app.js` first (creates the global function `app()`), then `alpine.min.js` (calls it). The page already knows EXACTLY the pattern this translation mechanism needs: `authReady` (`app.js:240`) prevents the wrong screen from flashing until `/auth-info` has responded - `<template x-if="authReady && ...">` (`index.html:77,107`) shows nothing until then. This task adopts the same technique for the translations: `stringsReady`, set by a new `loadI18n()`, following the same pattern as `loadAuthInfo()` (`app.js:424-442`).
 
-**Kein neues JS-Modul, keine neue Datei:** die Kopfkommentare von `index.html` und `app.js` erklaeren ausdruecklich "kein Bundler, kein Modul-System".
+**No new JS module, no new file:** the header comments of `index.html` and `app.js` explicitly state "no bundler, no module system".
 
-**`t()` muss GLOBAL aufrufbar sein, nicht nur eine Methode des `app()`-Objekts.** `app.js` hat neben `app()` bereits eigenstaendige Funktionen ausserhalb davon — `requestJson`/`requestDownload` (Zeile 142ff.) haben keinen Zugriff auf `this` des Alpine-Bauteils, brauchen aber selbst uebersetzten Text (`web.errors.bridge_unreachable`, `web.errors.http_status`, Aufgabe 10). `t()` wird deshalb eine **Top-Level-Funktion** in `app.js`, die eine **Modul-globale, nicht-reaktive** Variable `translationStrings` liest — kein Alpine-Feld. Das ist bewusst so und keine Inkonsistenz zum uebrigen Zustand: die Uebersetzungstabelle aendert sich innerhalb EINER Seitenanzeige nie (ein Sprachwechsel laedt laut Entwurfsgespraech die ganze Seite neu, siehe Spec Abschnitt 7) — sie braucht deshalb keine Alpine-Reaktivitaet, nur einen Ort, den jede Funktion in dieser Datei erreicht. Alpine loest `x-text="t('key')"` trotzdem korrekt auf: liegt `t` nicht auf dem Komponenten-Objekt selbst, faellt die Auswertung auf den umgebenden Skript-Scope zurueck, in dem die globale Funktion `t` sichtbar ist.
+**`t()` must be callable GLOBALLY, not just as a method of the `app()` object.** Besides `app()`, `app.js` already has stand-alone functions outside it — `requestJson`/`requestDownload` (line 142ff.) have no access to the Alpine component's `this`, but themselves need translated text (`web.errors.bridge_unreachable`, `web.errors.http_status`, Task 10). `t()` therefore becomes a **top-level function** in `app.js` that reads a **module-global, non-reactive** variable `translationStrings` — not an Alpine field. This is deliberate and not an inconsistency with the rest of the state: the translation table never changes within ONE page view (a language switch reloads the whole page per the design discussion, see spec section 7) — it therefore needs no Alpine reactivity, just a place every function in this file can reach. Alpine still resolves `x-text="t('key')"` correctly: if `t` is not on the component object itself, evaluation falls back to the surrounding script scope, where the global function `t` is visible.
 
-`stringsReady`/`language` BLEIBEN Felder auf dem `app()`-Objekt — die muessen reaktiv sein, damit `x-if="stringsReady && ..."` in `index.html` tatsaechlich neu rendert, sobald `loadI18n()` fertig ist.
+`stringsReady`/`language` STAY fields on the `app()` object — they must be reactive so that `x-if="stringsReady && ..."` in `index.html` actually re-renders as soon as `loadI18n()` finishes.
 
-**`<html lang="de">` (`index.html:35`) liegt AUSSERHALB des `x-data`-Bereichs** (der beginnt erst bei `<body>`) - Alpine-Direktiven koennen dort nicht binden. Wird deshalb ueber eine normale DOM-Zuweisung gesetzt (`document.documentElement.lang = ...`), nicht ueber `:lang="..."`.
+**`<html lang="de">` (`index.html:35`) sits OUTSIDE the `x-data` area** (which only starts at `<body>`) - Alpine directives cannot bind there. It is therefore set via a plain DOM assignment (`document.documentElement.lang = ...`), not via `:lang="..."`.
 
 **Files:**
 - Modify: `src/loxmatter/web/app.js`, `src/loxmatter/web/index.html`
 - Modify: `src/loxmatter/i18n/strings.yaml`
-- Modify: `tests/api/test_web.py` (Python-seitige Pruefung, dass der ausgelieferte `app.js`/`index.html`-Quelltext die neuen Bestandteile enthaelt — dieses Projekt hat keinen JS-Testlaeufer, `tests/api/test_web.py` prueft seit jeher nur den ausgelieferten Text, siehe dort)
+- Modify: `tests/api/test_web.py` (Python-side check that the served `app.js`/`index.html` source contains the new parts — this project has no JS test runner, `tests/api/test_web.py` has always only checked the served text, see there)
 
 **Interfaces:**
 - Consumes: `GET /api/i18n` (Task 1) — `{"language": "en"|"de", "strings": {"web.xyz": "...", ...}}`.
@@ -2218,20 +2218,20 @@ web.test.smoke:
 
 Add a module-level variable and the global `t()` function BEFORE `function app()` (i.e. near `requestJson`/`requestDownload` around line 142, at the top level of the file, NOT inside the object `app()` returns):
 ```javascript
-// Modul-global, absichtlich NICHT auf dem app()-Objekt (siehe
-// Implementierungsplan, Task 8: "t() muss global aufrufbar sein") - jede
-// Funktion in dieser Datei erreicht sie, auch requestJson/requestDownload,
-// die keinen Zugriff auf `this` des Alpine-Bauteils haben. Nicht reaktiv,
-// weil sie es nicht sein muss: ein Sprachwechsel laedt die ganze Seite neu.
+// Module-global, deliberately NOT on the app() object (see
+// implementation plan, Task 8: "t() must be callable globally") - every
+// function in this file can reach it, including requestJson/requestDownload,
+// which have no access to the Alpine component's `this`. Not reactive,
+// because it does not need to be: a language switch reloads the whole page.
 let translationStrings = {};
 
-/** Uebersetzungshelfer - liefert den zu key gehoerenden Text in der
- * aktuellen Sprache, mit {platzhalter} aus values ersetzt. Fehlt der
- * Schluessel (z. B. eine noch nicht neu geladene Seite nach einem
- * Deployment mit neuen Schluesseln), liefert t() den Schluessel selbst
- * zurueck statt abzustuerzen - sichtbar falsch statt einer kaputten
- * Seite, dieselbe Haltung wie ueberall sonst in diesem Projekt
- * ("ein Klick, der nichts bewirkt, muss als klare Absage ankommen"). */
+/** Translation helper - returns the text belonging to key in the
+ * current language, with {placeholder} substituted from values. If the
+ * key is missing (e.g. a page not yet reloaded after a
+ * deployment with new keys), t() returns the key itself
+ * instead of crashing - visibly wrong instead of a broken
+ * page, the same stance as everywhere else in this project
+ * ("a click that does nothing must arrive as a clear refusal"). */
 function t(key, values = {}) {
   const template = translationStrings[key];
   if (template === undefined) {
@@ -2245,23 +2245,23 @@ function t(key, values = {}) {
 
 Add two REACTIVE state fields next to the existing `authReady`/`passwordSet`/... block (`app.js:236-246`) — NOT `strings`, that lives in the module-level `translationStrings` above:
 ```javascript
-    // --- Uebersetzung -------------------------------------------------------
-    // Nach demselben Muster wie authReady: bis GET /api/i18n geantwortet hat,
-    // zeigt die Seite nichts - siehe stringsReady in den beiden
-    // auth-screen-templates in index.html. Die eigentliche Tabelle liegt
-    // NICHT hier, sondern im modul-globalen translationStrings (siehe t()
-    // oben) - dieses Feld existiert nur fuer x-if="stringsReady && ...".
+    // --- Translation -------------------------------------------------------
+    // Following the same pattern as authReady: until GET /api/i18n has
+    // responded, the page shows nothing - see stringsReady in the two
+    // auth-screen templates in index.html. The actual table lives
+    // NOT here, but in the module-global translationStrings (see t()
+    // above) - this field exists only for x-if="stringsReady && ...".
     stringsReady: false,
     language: "en",
 ```
 
 Add `loadI18n()` right next to `loadAuthInfo()` (after it, `app.js:442`), following the identical shape:
 ```javascript
-    /** Laedt die aktuelle Sprache und die web.*-Uebersetzungstabelle - der
-     * erste Aufruf jeder Seite, wie loadAuthInfo(), aber unabhaengig davon
-     * (siehe init(), das beide parallel startet): GET /api/i18n ist
-     * ungeschuetzt, die Ersteinrichtungs-/Anmeldeseite braucht diese Texte,
-     * bevor sich jemand angemeldet hat. */
+    /** Loads the current language and the web.* translation table - the
+     * first call on every page, like loadAuthInfo(), but independent of it
+     * (see init(), which starts both in parallel): GET /api/i18n is
+     * unprotected, the initial-setup/login page needs this text
+     * before anyone has logged in. */
     async loadI18n() {
       try {
         const info = await requestJson("GET", "/api/i18n");
@@ -2369,17 +2369,17 @@ EOF
 
 ---
 
-## Task 9: Die vollstaendige `web.*`-Uebersetzungstabelle
+## Task 9: The Complete `web.*` Translation Table
 
-Diese Aufgabe fuegt AUSSCHLIESSLICH neue Eintraege zu `strings.yaml` hinzu — keine Aufrufstellen aendern sich, das ist Aufgabe 10+. Die vollstaendige, verifizierte Zeichenketten-Inventur, gegen die diese Tabelle entstanden ist, liegt unter `.superpowers/sdd/webui-string-inventory.md` (relativ zum Repo-Wurzelverzeichnis dieses Worktrees) — jede spaetere Bindungs-Aufgabe verweist darauf fuer exakte Zeilennummern.
+This task ONLY adds new entries to `strings.yaml` — no call sites change, that's Task 10+. The complete, verified string inventory this table was built against lives at `.superpowers/sdd/webui-string-inventory.md` (relative to this worktree's repo root) — every later binding task refers to it for exact line numbers.
 
-**Entscheidungen, die diese Tabelle bereits trifft (nicht der Bindungs-Aufgabe ueberlassen):**
-- Mehrfach identisch auftretende Zeichenketten bekommen EINEN Schluessel, nicht je Fundstelle einen eigenen (Sitzungsablauf, Brücken-IP-Hinweis, "Brücke nicht erreichbar", "IP dieser Brücke"-Feldbezeichnung, "Fehler" als Systemcheck-Badge/Log-Stufe) — siehe die Inventur, Abschnitt "Duplicate literals worth collapsing".
-- Rechtschreibfehler im heutigen deutschen Quelltext (`Geraeteliste`, `unveraendert`, `geaendert`, `haelt`/`Anhaengen`/`waehrend`) werden VERBATIM in den `de`-Wert uebernommen, nicht stillschweigend korrigiert — dieselbe Zurueckhaltung wie bei jeder anderen Migration in diesem Plan (kein Refactoring bündelt eine Inhaltsaenderung).
-- `loxmatter` als Produktname (Titel, beide `<h1>`) wird NICHT uebersetzt — kein Eintrag dafuer.
-- Texte mit eingebettetem HTML (`<strong>`, ein `<span class="key">`) werden als YAML-Blockskalar (`|`) gefuehrt, damit eingebettete Anfuehrungszeichen in `class="key"` nicht maskiert werden muessen — die Bindungs-Aufgabe setzt sie ueber `x-html`, nicht `x-text`.
-- Drei Stellen mit einem eingebetteten `<a @click="...">`-Link (Bruecken-IP-Hinweis auf der Geraetekarte und im Export-Tab) werden NICHT als ein HTML-Block gefuehrt, sondern als drei Teiltexte (Praefix, Linktext, Suffix) — ein `x-html`-Block wuerde die lebendige `@click`-Direktive des Links in totes HTML einfrieren.
-- `app.js:1009`s Rueckgabe des rohen Backend-Fehlertexts bekommt KEINEN Schluessel — das ist kein Text, den diese Migration uebersetzen kann (siehe Inventur, Punkt 4).
+**Decisions this table already makes (not left to the binding task):**
+- Strings that occur multiple times identically get ONE key, not a separate one per occurrence (session-expiry flow, bridge-IP hint, `Bruecke nicht erreichbar`, `IP dieser Bruecke` field label, `Fehler` as system-check badge/log level) — see the inventory, section "Duplicate literals worth collapsing".
+- Spelling mistakes in today's German source text (`Geraeteliste`, `unveraendert`, `geaendert`, `haelt`/`Anhaengen`/`waehrend`) are carried over VERBATIM into the `de` value, not silently corrected — the same restraint as in every other migration in this plan (no refactor bundles a content change).
+- `loxmatter` as the product name (title, both `<h1>`) is NOT translated — no entry for it.
+- Text with embedded HTML (`<strong>`, a `<span class="key">`) is carried as a YAML block scalar (`|`), so embedded quotation marks in `class="key"` don't need escaping — the binding task sets them via `x-html`, not `x-text`.
+- Three spots with an embedded `<a @click="...">` link (bridge-IP hint on the device card and in the export tab) are NOT carried as one HTML block, but as three partial texts (prefix, link text, suffix) — an `x-html` block would freeze the link's live `@click` directive into dead HTML.
+- `app.js:1009`'s return of the raw backend error text gets NO key — that is not text this migration can translate (see the inventory, point 4).
 
 **Files:**
 - Modify: `src/loxmatter/i18n/strings.yaml`
@@ -2392,7 +2392,7 @@ Diese Aufgabe fuegt AUSSCHLIESSLICH neue Eintraege zu `strings.yaml` hinzu — k
 - [ ] **Step 1: Add the complete `web.*` table to `strings.yaml`**
 
 ```yaml
-# --- web.nav — Reiterleiste ---
+# --- web.nav — tab bar ---
 web.nav.devices:
   en: "Devices"
   de: "Geräte"
@@ -2409,7 +2409,7 @@ web.nav.settings:
   en: "Settings"
   de: "Einstellungen"
 
-# --- web.header / web.connection — Kopfzeile, Verbindungsstatus ---
+# --- web.header / web.connection — header bar, connection status ---
 web.header.logout:
   en: "Log out"
   de: "Abmelden"
@@ -2450,7 +2450,7 @@ web.header.unchanged_since_load:
   en: "Unchanged since the page loaded"
   de: "Seit dem Laden der Seite unveraendert"
 
-# --- web.auth — Ersteinrichtung, Anmeldung ---
+# --- web.auth — initial setup, login ---
 web.auth.setup_heading:
   en: "Set up loxmatter"
   de: "loxmatter einrichten"
@@ -2481,7 +2481,7 @@ web.auth.password_mismatch:
   en: "The two entries do not match."
   de: "Die beiden Eingaben stimmen nicht überein."
 
-# --- web.devices — Geraeteliste, Einlernen, Bedienung ---
+# --- web.devices — device list, commissioning, control ---
 web.devices.commission_heading:
   en: "Commission a new device"
   de: "Neues Gerät einlernen"
@@ -2619,7 +2619,7 @@ web.devices.commission_failed:
   en: "Commissioning failed: {message}"
   de: "Einlernen fehlgeschlagen: {message}"
 
-# --- web.signals — Signalansicht ---
+# --- web.signals — signal view ---
 web.signals.key_hint:
   en: "The key (left, greyed out) is the wiring in Loxone and cannot be changed here — doing so would silently disable a block there."
   de: "Der Schlüssel (links, grau hinterlegt) ist die Verdrahtung in Loxone und lässt sich hier nicht ändern – ein Klick würde dort einen Baustein still lahmlegen."
@@ -2669,7 +2669,7 @@ web.signals.write_success:
   en: "Written."
   de: "Geschrieben."
 
-# --- web.export — Export-Tab ---
+# --- web.export — export tab ---
 web.export.heading:
   en: "Export templates"
   de: "Vorlagen exportieren"
@@ -2742,7 +2742,7 @@ web.export.download_failed:
   en: "Download failed: {message}"
   de: "Download fehlgeschlagen: {message}"
 
-# --- web.system — Systemcheck, Live-Diagnose, Sicherung ---
+# --- web.system — system check, live diagnostics, backup ---
 web.system.checks_heading:
   en: "System check"
   de: "Systemcheck"
@@ -2827,7 +2827,7 @@ web.system.backup_error:
   en: "Backup not possible: {message}"
   de: "Sicherung nicht möglich: {message}"
 
-# --- web.settings — Einstellungen-Tab ---
+# --- web.settings — settings tab ---
 web.settings.connection_heading:
   en: "Miniserver connection"
   de: "Verbindung zum Miniserver"
@@ -2879,7 +2879,7 @@ web.settings.language_de:
   en: "German"
   de: "Deutsch"
 
-# --- web.format — gemeinsame Formatierungshelfer ---
+# --- web.format — shared formatting helpers ---
 web.format.never:
   en: "never"
   de: "noch nie"
@@ -2890,7 +2890,7 @@ web.format.false:
   en: "false"
   de: "falsch"
 
-# --- web.errors — Netzwerk-/generische Fehler ---
+# --- web.errors — network/generic errors ---
 web.errors.http_status:
   en: "HTTP {status}"
   de: "HTTP {status}"
@@ -2907,22 +2907,22 @@ Add to `tests/test_i18n.py`:
 
 ```python
 def test_web_namespace_has_no_missing_english_fallback_gaps():
-    """Jeder web.*-Schluessel muss mindestens 'en' tragen - raw_template()
-    wirft KeyError, wenn selbst 'en' fehlt (siehe dessen Implementierung,
-    hinzugefuegt beim Bugfix vor dieser Aufgabe: GET /api/i18n stuerzte
-    zuvor an genau dieser Stelle ab, weil t() hier - mit .format() und
-    ohne Platzhalterwerte - bei JEDEM web.*-Schluessel mit einem
-    {platzhalter} eine KeyError geworfen haette. raw_template() ist die
-    richtige Funktion fuer diese Pruefung: sie prueft nur "gibt es
-    ueberhaupt einen en-Eintrag", nicht "sind alle Platzhalter befuellt" -
-    letzteres ist client-seitig app.js's Aufgabe, nie serverseitig."""
+    """Every web.* key must carry at least 'en' - raw_template()
+    raises KeyError if even 'en' is missing (see its implementation,
+    added in the bugfix before this task: GET /api/i18n used to
+    crash at exactly this spot, because t() here - with .format() and
+    no placeholder values - would have thrown a KeyError for EVERY
+    web.* key with a {placeholder}. raw_template() is the
+    right function for this check: it only checks "is there
+    an en entry at all", not "are all placeholders filled" -
+    the latter is client-side app.js's job, never server-side."""
     for key in i18n.strings_with_prefix("web."):
-        assert i18n.raw_template(key)  # wirft nur, wenn 'en' fehlt - keine .format()-Falle
+        assert i18n.raw_template(key)  # only raises if 'en' is missing - no .format() trap
 
 
 def test_web_namespace_key_count_is_substantial():
-    """Grobe Bewahrung gegen ein versehentlich unvollstaendiges Einfuegen -
-    kein exakter Schwellwert, nur ein Mindestmass."""
+    """Rough safeguard against an accidentally incomplete insertion -
+    no exact threshold, just a minimum."""
     assert len(i18n.strings_with_prefix("web.")) > 100
 ```
 
@@ -2959,26 +2959,26 @@ EOF
 
 ---
 
-## Tasks 10-15: WebUI-Textmigration nach Bereich
+## Tasks 10-15: WebUI Text Migration by Area
 
-Diese sechs Aufgaben binden die in Aufgabe 9 bereits vollstaendig uebersetzten `web.*`-Schluessel an ihre tatsaechlichen Stellen in `index.html`/`app.js`. Jede Aufgabe folgt demselben Muster:
+These six tasks bind the `web.*` keys already fully translated in Task 9 to their actual spots in `index.html`/`app.js`. Every task follows the same pattern:
 
-1. **Statischer Text** (`index.html`): `x-text="t('web.xyz')"` fuer reinen Text; `x-html="t('web.xyz')"` NUR fuer die wenigen Stellen mit eingebettetem `<strong>`/`<span class="key">` (Aufgabe 9 fuehrt diese bereits als YAML-Blockskalare — erkennbar am `|` im Wert). Ein `<a @click="...">`-Link innerhalb eines Hinweistexts bleibt als eigenes Element bestehen; nur der umgebende Text und der Linktext selbst werden zu `x-text`, NICHT der ganze Absatz zu `x-html` (das wuerde die `@click`-Direktive einfrieren).
-2. **Dynamischer Text** (`app.js`): jede Zeichenkette, die frueher direkt im Code stand, wird zu einem `t('web.xyz', {platzhalter: wert})`-Aufruf an derselben Stelle — `t` ist seit Aufgabe 8 global aufrufbar, unabhaengig davon, ob die aufrufende Funktion eine Methode von `app()` ist oder eine freie Funktion wie `requestJson`.
-3. Die autoritative, vollstaendige Fundstellen-Liste ist `.superpowers/sdd/webui-string-inventory.md` (Zeilennummern koennen sich seit ihrer Erstellung geringfuegig verschoben haben — im Zweifel nach dem exakten deutschen Text suchen, nicht nach der genannten Zeilennummer).
-4. **Verifikation:** dieses Projekt hat keinen JS-Testlaeufer. Jede Aufgabe verlangt (a) eine Python-seitige Textmuster-Pruefung auf den ausgelieferten Quelltext (wie `tests/api/test_web.py` es bereits tut) UND (b) eine manuelle Pruefung im Browser (Dev-Server ueber `scripts/dev_web_server.py`, siehe Aufgabe 8 Schritt 7) — Text-Pattern-Matching allein kann eine falsch gebundene Alpine-Direktive nicht erkennen.
-5. Jede Aufgabe committet fuer sich — sechs kleinere, ueberschaubare Diffs statt eines einzigen riesigen.
+1. **Static text** (`index.html`): `x-text="t('web.xyz')"` for plain text; `x-html="t('web.xyz')"` ONLY for the few spots with embedded `<strong>`/`<span class="key">` (Task 9 already carries these as YAML block scalars — recognizable by the `|` in the value). An `<a @click="...">` link inside a hint text stays as its own element; only the surrounding text and the link text itself become `x-text`, NOT the whole paragraph into `x-html` (that would freeze the `@click` directive).
+2. **Dynamic text** (`app.js`): every string that used to sit directly in the code becomes a `t('web.xyz', {placeholder: value})` call at the same spot — `t` has been callable globally since Task 8, regardless of whether the calling function is a method of `app()` or a free function like `requestJson`.
+3. The authoritative, complete list of occurrences is `.superpowers/sdd/webui-string-inventory.md` (line numbers may have shifted slightly since it was created — when in doubt, search for the exact German text, not the stated line number).
+4. **Verification:** this project has no JS test runner. Every task requires (a) a Python-side text-pattern check on the served source (as `tests/api/test_web.py` already does) AND (b) a manual check in the browser (dev server via `scripts/dev_web_server.py`, see Task 8 Step 7) — text-pattern matching alone cannot detect a wrongly bound Alpine directive.
+5. Every task commits on its own — six smaller, manageable diffs instead of one huge one.
 
-### Task 10: Navigation, Kopfzeile, Verbindungsstatus, Formatierungs-/Fehlerhelfer, Zugangsbildschirme
+### Task 10: Navigation, Header Bar, Connection Status, Formatting/Error Helpers, Access Screens
 
-Die Grundlage: die zwei generischen Fehlerstrings (`requestJson`/`requestDownload`) beweisen, dass der globale `t()` aus einer freien Funktion heraus funktioniert; alles andere in dieser Aufgabe sind Alpine-Bindungen.
+The foundation: the two generic error strings (`requestJson`/`requestDownload`) prove that the global `t()` works from a free function; everything else in this task is Alpine bindings.
 
 **Files:**
 - Modify: `src/loxmatter/web/index.html`, `src/loxmatter/web/app.js`
 - Modify: `tests/api/test_web.py`
 
 **Interfaces:**
-- Consumes: `t()` (Aufgabe 8), alle `web.nav.*`, `web.header.*`, `web.connection.*`, `web.auth.*`, `web.format.*`, `web.errors.*` Schluessel (Aufgabe 9).
+- Consumes: `t()` (Task 8), all `web.nav.*`, `web.header.*`, `web.connection.*`, `web.auth.*`, `web.format.*`, `web.errors.*` keys (Task 9).
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -3131,7 +3131,7 @@ EOF
 )"
 ```
 
-### Task 11: Geraeteliste, Einlernen (Dashboard-Tab)
+### Task 11: Device List, Commissioning (Dashboard Tab)
 
 Follows Task 10's pattern (see its intro for methodology/verification — applies unchanged here). New pattern introduced by this task: the "set the bridge IP first" hint splits across a prefix, a clickable link, and a suffix — the link keeps its own live `@click` binding, so it does NOT collapse into one `x-html` blob.
 
@@ -3174,7 +3174,7 @@ window.confirm(t("web.devices.remove_confirm", { label: device.label, id: device
 
 - [ ] **Step 5-7:** Run tests, verify in browser (commission form, device cards, remove-confirm dialog text — the native `confirm()` dialog itself can't be styled, just confirm its text is now `t()`-sourced and reads correctly in both languages), run full suite + lint/type-check, commit as `feat(web): Geraeteliste und Einlernen uebersetzt` with the same trailer convention as prior tasks.
 
-### Task 12: Signalansicht
+### Task 12: Signal View
 
 **Files:** `src/loxmatter/web/index.html`, `src/loxmatter/web/app.js`, `tests/api/test_web.py`
 **Interfaces:** Consumes `t()`, all `web.signals.*` keys.
@@ -3187,7 +3187,7 @@ window.confirm(t("web.devices.remove_confirm", { label: device.label, id: device
 
 - [ ] **Step 5-7:** Tests, browser check (load a device's signals, toggle expert view, attempt a raw write), full suite, commit as `feat(web): Signalansicht uebersetzt`.
 
-### Task 13: Export-Tab
+### Task 13: Export Tab
 
 **Files:** `src/loxmatter/web/index.html`, `src/loxmatter/web/app.js`, `tests/api/test_web.py`
 **Interfaces:** Consumes `t()`, all `web.export.*` and `web.bridge_ip_label` keys.
@@ -3200,7 +3200,7 @@ window.confirm(t("web.devices.remove_confirm", { label: device.label, id: device
 
 - [ ] **Step 5-7:** Tests, browser check (export tab: preview, download, the include-system and only-pending checkboxes), full suite, commit as `feat(web): Export-Tab uebersetzt`.
 
-### Task 14: System-/Diagnose-Tab
+### Task 14: System/Diagnostics Tab
 
 **Files:** `src/loxmatter/web/index.html`, `src/loxmatter/web/app.js`, `tests/api/test_web.py`
 **Interfaces:** Consumes `t()`, all `web.system.*` keys.
@@ -3225,7 +3225,7 @@ The pause/clear explanation (`index.html:628-632`) has an embedded `<span class=
 
 - [ ] **Step 5-7:** Tests, browser check (system tab: run the system check, toggle log-level filter, pause/resume live diagnostics, download the fabric backup if reachable), full suite, commit as `feat(web): System-/Diagnose-Tab uebersetzt`.
 
-### Task 15: Einstellungen-Tab und Sprachumschalter
+### Task 15: Settings Tab and Language Switcher
 
 The one task in this group that adds NEW markup, not just translates existing text — the language toggle itself (Spec §7, confirmed design: EN/DE buttons, `PATCH /api/language` then `window.location.reload()`).
 
@@ -3236,7 +3236,7 @@ The one task in this group that adds NEW markup, not just translates existing te
 
 - [ ] **Step 3: Bind `index.html:695-730` (inventory §8)** — `web.settings.connection_heading` (697), `web.settings.connection_explanation` via `x-html` (698-705, has `<strong>Nicht</strong>` AND a `<span class="key">` wrapping the URL example), `web.bridge_ip_label` (708, SHARED with Task 13's export-tab label), `web.settings.bridge_ip_placeholder` as `:placeholder` (709), `web.settings.udp_port_label` (711), `web.settings.http_port_label` (713-714), `web.settings.save` (718-720), `web.settings.last_saved_prefix` (721-723, keep the following `x-text="formatTimestamp(...)"` unchanged, only translate the prefix), `web.settings.never_saved` (724-726).
 
-- [ ] **Step 4: Replace the "Weitere Einstellungen" placeholder card (`index.html:731-734`) with the language toggle**
+- [ ] **Step 4: Replace the `Weitere Einstellungen` placeholder card (`index.html:731-734`) with the language toggle**
 
 Current (per Task 9's note, this placeholder text itself never gets a translation key — it's replaced, not translated):
 ```html
@@ -3261,11 +3261,11 @@ Current (per Task 9's note, this placeholder text itself never gets a translatio
 
 Add next to `saveSettings` (the existing settings-save method, follow its exact error-handling shape):
 ```javascript
-/** Setzt die gemeinsame Spracheinstellung (PATCH /api/language, Aufgabe 1)
- * und laedt danach die ganze Seite neu - bestaetigte, einfachere Variante
- * aus dem Entwurfsgespraech (Spec Abschnitt 7): kein Sonderfall fuer
- * bereits angezeigte Toasts oder WebSocket-Zustaende, die sonst in der
- * alten Sprache stehen blieben. */
+/** Sets the shared language setting (PATCH /api/language, Task 1)
+ * and then reloads the whole page - the confirmed, simpler variant
+ * from the design discussion (spec section 7): no special case for
+ * toasts already shown or WebSocket state, which would otherwise stay
+ * in the old language. */
 async setLanguage(language) {
   if (language === this.language) {
     return;

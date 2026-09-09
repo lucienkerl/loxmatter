@@ -1,192 +1,189 @@
-# Login statt Token-Box: passwortgeschützter Zugang zur Oberfläche
+# Login instead of token box: password-protected access to the UI
 
-Entwurf, 3. September 2026. Ergänzt
-[das Hauptdokument](2026-09-01-matter-loxone-bridge-design.md), insbesondere
-dessen Abschnitte 8 (WebUI) und 9 (Absicherung), und löst die in Phase 5,
-Task 8 eingeführte Token-Eingabe ab.
+Design, September 3, 2026. Supplements
+[the main document](2026-09-01-matter-loxone-bridge-design.md), specifically
+its sections 8 (WebUI) and 9 (hardening), and replaces the token entry
+introduced in Phase 5, Task 8.
 
-## 1. Das Problem
+## 1. The problem
 
-Die Oberfläche verlangt beim ersten Aufruf ein API-Token, das der Betreiber
-zuvor selbst erzeugt (`openssl rand -hex 32`), in `.env` einträgt und dann
-im Browser noch einmal von Hand einträgt. Der Grund dafür ist strukturell,
-nicht kosmetisch: die WebUI ist eine statische Seite ohne eigene Anmeldung.
-`/` und `/static/*` hängen in `loxone/server.py` bewusst ohne
-`dependencies=api_guard`; geschützt ist ausschließlich `/api/*`. Es gibt
-keinen Login, keine Sitzung, kein Konto — **das Token ist der einzige
-Ausweis, den dieser Dienst kennt**.
+On first access, the UI demands an API token that the operator has
+previously generated themselves (`openssl rand -hex 32`), entered into
+`.env`, and then entered by hand once more in the browser. The reason for
+this is structural, not cosmetic: the WebUI is a static page with no login
+of its own. In `loxone/server.py`, `/` and `/static/*` deliberately hang
+without `dependencies=api_guard`; only `/api/*` is protected. There is no
+login, no session, no account — **the token is the only credential this
+service knows**.
 
-Daraus folgt, dass der Server das Token nicht "einfach automatisch
-übergeben" kann. Läge es in der ausgelieferten `index.html` oder hinter
-einem Bootstrap-Endpunkt, bekäme es jeder, der `http://<Host>:8080/`
-öffnet — und damit auch `GET /api/diagnostics/fabric-backup`, also die
-unersetzlichen Zugangsdaten der Matter-Fabric (Hauptdokument 4.1). Das
-Token wäre dann keines mehr.
+It follows that the server cannot "simply hand the token over
+automatically." If it sat in the delivered `index.html` or behind a
+bootstrap endpoint, anyone who opens `http://<host>:8080/` would get it —
+and with it `GET /api/diagnostics/fabric-backup` too, i.e. the
+irreplaceable access data of the Matter fabric (main document 4.1). The
+token would then no longer be one.
 
-Der Ausweg ist nicht, das Token bequemer zu verteilen, sondern ihm für den
-Browser einen echten Ausweis zur Seite zu stellen: eine Anmeldung mit
-Passwort, wie man sie von jedem anderen selbst gehosteten Dienst kennt.
+The way out is not to distribute the token more conveniently, but to give
+the browser a real credential of its own alongside it: a login with a
+password, the kind one knows from any other self-hosted service.
 
-## 2. Was dieser Entwurf nicht antastet
+## 2. What this design does not touch
 
-- **`/cmd` und `/resync` bleiben ohne jede Absicherung erreichbar.** Der
-  Miniserver ruft virtuelle Ausgänge ohne Header und ohne Cookie auf; jede
-  Prüfung dort schaltet die Loxone-Integration ab. Unverändert gegenüber
+- **`/cmd` and `/resync` remain reachable without any protection.** The
+  Miniserver calls virtual outputs without a header and without a cookie;
+  any check there would switch off the Loxone integration. Unchanged from
   Phase 5, Task 8.
-- **Das Bearer-Token bleibt.** Es ist künftig nicht mehr der Weg des
-  Browsers, sondern der von Skripten und `curl`. `LOXMATTER_API_TOKEN`,
-  `--api-token`, `normalize_api_token` und der WebSocket-Subprotokoll-Weg
-  `bearer, <Token>` bleiben serverseitig vollständig erhalten.
-- **Kein TLS.** Der Dienst spricht weiterhin HTTP auf Port 8080. Siehe 14.1.
-- **Kein Benutzername.** Ein Dienst, ein Betreiber, ein Passwort. Ein
-  Namensfeld wäre eine Eingabe ohne Entscheidung dahinter.
+- **The bearer token stays.** Going forward it is no longer the browser's
+  path but that of scripts and `curl`. `LOXMATTER_API_TOKEN`,
+  `--api-token`, `normalize_api_token`, and the WebSocket subprotocol path
+  `bearer, <token>` remain fully intact on the server side.
+- **No TLS.** The service continues to speak HTTP on port 8080. See 14.1.
+- **No username.** One service, one operator, one password. A name field
+  would be an input with no decision behind it.
 
-## 3. Verworfene Alternativen
+## 3. Discarded alternatives
 
-**Token in die Seite einbetten oder über einen Bootstrap-Endpunkt
-ausliefern — verworfen.** Siehe 1: `/` ist unauthentifiziert, also wäre das
-Token es auch.
+**Embedding the token in the page, or delivering it via a bootstrap
+endpoint — discarded.** See 1: `/` is unauthenticated, so the token would
+be too.
 
-**Einmal-Link `http://host:8080/?token=<Token>`, den die Seite in den
-`localStorage` übernimmt und aus der URL entfernt — verworfen.** Funktioniert
-und kostet wenig Code, aber das Token steht dabei in der Browser-History und
-möglicherweise im Zugriffslog; und es bleibt bei einem Geheimnis, das der
-Betreiber selbst erzeugen und transportieren muss. Ein Login löst dasselbe
-Problem, ohne dass jemals ein Geheimnis durch eine URL läuft.
+**One-time link `http://host:8080/?token=<token>`, which the page picks up
+into `localStorage` and strips from the URL — discarded.** This works and
+costs little code, but the token then sits in the browser history and
+possibly the access log; and it still leaves a secret that the operator
+must generate and transport themselves. A login solves the same problem
+without a secret ever passing through a URL.
 
-**Vertrauenswürdige Netze (`--trusted-net 192.168.1.0/24`), aus denen
-`/api` ohne Nachweis erreichbar ist — verworfen.** War zwischenzeitlich
-abgestimmt und wurde zugunsten des Logins zurückgezogen. Der Grund gegen die
-Netzausnahme: sie macht jedes Gerät im selben Netz zum Administrator,
-einschließlich Fernseher, Saugroboter und Besuchsgeräten im WLAN. Ein Login
-ist der stärkere Ausweis — und weil er stärker ist, darf er auch mehr
-freigeben (siehe 11).
+**Trusted networks (`--trusted-net 192.168.1.0/24`) from which `/api` is
+reachable without proof — discarded.** This was agreed on for a while and
+was then withdrawn in favor of the login. The reason against the network
+exception: it makes every device on the same network an administrator,
+including TVs, robot vacuums, and guest devices on the Wi-Fi. A login is
+the stronger credential — and because it is stronger, it is also allowed to
+unlock more (see 11).
 
-**Passwort aus einer Umgebungsvariable (`LOXMATTER_PASSWORD` oder
-`LOXMATTER_PASSWORD_HASH`) — verworfen.** Ziel ist eine headless aufsetzbare
-Installation, die vollständig über die Oberfläche konfiguriert wird. Ein
-Passwort, das vor dem ersten Start in einer Datei stehen muss, ist das
-Gegenteil davon.
+**Password from an environment variable (`LOXMATTER_PASSWORD` or
+`LOXMATTER_PASSWORD_HASH`) — discarded.** The goal is an installation that
+can be set up headlessly and configured entirely through the UI. A
+password that has to sit in a file before the first start is the opposite
+of that.
 
-## 4. Das Zugangsmodell
+## 4. The access model
 
-`build_api_guard` in `loxone/server.py` entscheidet künftig über zwei
-Nachweise statt über einen. Reihenfolge je Anfrage:
+`build_api_guard` in `loxone/server.py` will now decide based on two
+credentials instead of one. Order per request:
 
-1. **Gültiges Sitzungs-Cookie** → durch.
-2. **Gültiges Bearer-Token** (Header oder WebSocket-Subprotokoll, beides wie
-   bisher) → durch.
-3. **Weder noch** → 401.
+1. **Valid session cookie** → through.
+2. **Valid bearer token** (header or WebSocket subprotocol, both as
+   before) → through.
+3. **Neither** → 401.
 
-**Punkt 3 kennt keine Ausnahme mehr, und das ist die eigentliche Härtung
-dieses Entwurfs.** Heute läuft ein Dienst ohne konfiguriertes Token mit
-vollständig offenen `/api`-Routen und lediglich einer Warnung im Log — wer
-die Warnung überliest, betreibt eine offene Brücke, ohne es zu merken.
-Künftig gibt es diesen Zustand nicht: solange kein Passwort gesetzt ist,
-antwortet **jede** `/api`-Route mit 401, und die Oberfläche kann nichts
-anderes als den Einrichtungsbildschirm zeigen. Die Passwortvergabe ist
-damit Voraussetzung des Betriebs und nicht mehr eine Empfehlung, die man
-ignorieren kann.
+**Point 3 no longer knows an exception, and that is the actual hardening
+this design provides.** Today a service without a configured token runs
+with fully open `/api` routes and only a warning in the log — anyone who
+overlooks the warning is running an open bridge without noticing. Going
+forward this state no longer exists: as long as no password is set,
+**every** `/api` route responds with 401, and the UI can show nothing but
+the setup screen. Setting a password thereby becomes a precondition of
+operation, not a recommendation one can ignore.
 
-Das gilt ausdrücklich auch für **bestehende Installationen nach dem
-Update**: eine Brücke, die bisher ohne Token lief, liefert nach dem Update
-keine Gerätedaten mehr aus, bis ein Passwort vergeben ist. Ein
-konfiguriertes `LOXMATTER_API_TOKEN` kommt über Punkt 2 unverändert durch —
-Skripte und Automatisierungen brechen durch das Update also nicht ab,
-auch nicht in der Zeit vor der Passwortvergabe.
+This applies explicitly to **existing installations after the update**
+too: a bridge that previously ran without a token no longer delivers any
+device data after the update, until a password has been set. A configured
+`LOXMATTER_API_TOKEN` still passes through unchanged via point 2 — so
+scripts and automations do not break because of the update, not even
+during the time before the password is set.
 
-Der Wächter gilt unverändert für alle fünf `/api`-Router einschließlich der
-WebSocket-Route `/api/live`. Die Peer-Adresse des Aufrufers spielt in keiner
-dieser Entscheidungen eine Rolle.
+The guard applies unchanged to all five `/api` routers, including the
+WebSocket route `/api/live`. The caller's peer address plays no role in
+any of these decisions.
 
-`cli._warn_if_missing_api_token` warnt künftig, solange **kein Passwort
-gesetzt** ist, und heißt entsprechend `_warn_if_no_password`. Ein
-konfiguriertes Token bringt die Warnung nicht mehr zum Schweigen: es ist
-der Weg für Skripte, kein Ersatz für die Ersteinrichtung.
+`cli._warn_if_missing_api_token` will now warn as long as **no password is
+set**, and is renamed accordingly to `_warn_if_no_password`. A configured
+token no longer silences the warning: it is the path for scripts, not a
+substitute for initial setup.
 
-## 5. Erststart: Trust on first use
+## 5. First start: trust on first use
 
-Ist im Store kein Passwort hinterlegt, zeigt die Oberfläche einen
-Einrichtungsbildschirm, auf dem das Passwort vergeben wird — ohne weiteren
-Nachweis. Wer zuerst kommt, richtet ein.
+If no password is stored in the store, the UI shows a setup screen on
+which the password is set — without any further proof. Whoever arrives
+first does the setup.
 
-**Das gilt für jede Installation ohne Passwort, auch für eine bestehende
-nach dem Update.** Es gibt keinen Sonderfall für einen bereits
-konfigurierten `LOXMATTER_API_TOKEN`: ein Bildschirm, ein Ablauf, dieselben
-Regeln. Zwei Zustände, zwei Verhalten:
+**This applies to every installation without a password, including an
+existing one after the update.** There is no special case for an already
+configured `LOXMATTER_API_TOKEN`: one screen, one flow, the same rules.
+Two states, two behaviors:
 
-| Passwort | `POST /auth/setup` |
+| Password | `POST /auth/setup` |
 | --- | --- |
-| nicht gesetzt | offen (Trust on first use) |
-| gesetzt | 409, dauerhaft |
+| not set | open (trust on first use) |
+| set | 409, permanently |
 
-**Das ist eine bewusst getroffene Abwägung, kein Versehen.** Für die
-Neuinstallation wurde sie am 3. September 2026 gegen drei Alternativen
-entschieden: Einrichtungscode im Startlog, Zeitfenster von 15 Minuten nach
-dem Start, und Erstpasswort per CLI. Ausschlaggebend war, dass die
-Einrichtung ohne Blick in ein Log und ohne Shell auf dem Host möglich sein
-soll. Für das Bestandssystem wurde am selben Tag gegen die Variante
-entschieden, dort einmalig das vorhandene Token abzufragen — zugunsten
-eines einzigen Ablaufs ohne Sonderfall in Code und Dokumentation.
+**This is a deliberate trade-off, not an oversight.** For the fresh
+install, it was decided on September 3, 2026 against three alternatives:
+a setup code in the startup log, a 15-minute window after startup, and an
+initial password via the CLI. The deciding factor was that setup should be
+possible without looking at a log and without a shell on the host. For the
+existing system, the same day decided against the variant of querying the
+existing token once there — in favor of a single flow with no special case
+in code and documentation.
 
-Der Preis, der damit gekauft wird, ist in beiden Fällen derselbe und muss
-klar benannt sein: **zwischen dem Start ohne Passwort und der
-Passwortvergabe kann jeder, der den Dienst erreicht, ihn übernehmen.** Der
-rechtmäßige Betreiber erfährt davon erst dadurch, dass sein eigenes
-Passwort nicht angenommen wird. Wer die Brücke aufsetzt und erst Tage
-später weiterkonfiguriert, lässt dieses Fenster tagelang offen.
+The price paid for this is the same in both cases and must be stated
+clearly: **between the start without a password and the setting of the
+password, anyone who reaches the service can take it over.** The rightful
+operator only learns of this when their own password is not accepted.
+Anyone who sets up the bridge and only continues configuring it days later
+leaves this window open for days.
 
-**„Wer den Dienst erreicht" ist dabei weiter zu lesen als „wer im selben
-Netz steht"** (Nachtrag vom 3. September 2026, aus dem Abschlussreview).
-Eine fremde Webseite, deren Name nach kurzer TTL auf die LAN-Adresse der
-Brücke umschwenkt — DNS-Rebinding —, ist für den Browser des Betreibers
-derselbe Ursprung. Damit entfallen sowohl der CORS-Preflight, der einen
-fremden `Content-Type: application/json` sonst blockiert, als auch die
-Wirkung von `SameSite=Strict`: `POST /auth/setup` ist aus dem Internet
-erreichbar, sobald der Betreiber irgendeine Seite öffnet, während seine
-Brücke noch ohne Passwort läuft. Nach der Passwortvergabe bleibt die
-Wirkung eines solchen Angriffs auf `/cmd` und `/resync` beschränkt, die
-ohnehin bewusst offen sind.
+**"Whoever reaches the service" here should be read more broadly than
+"whoever is on the same network"** (addendum from September 3, 2026, from
+the closing review). A foreign website whose name switches, after a short
+TTL, to the bridge's LAN address — DNS rebinding — counts as the same
+origin as far as the operator's browser is concerned. That eliminates both
+the CORS preflight, which would otherwise block a foreign
+`Content-Type: application/json`, and the effect of `SameSite=Strict`:
+`POST /auth/setup` is reachable from the internet as soon as the operator
+opens any page while their bridge is still running without a password.
+Once the password is set, the effect of such an attack remains limited to
+`/cmd` and `/resync`, which are deliberately open anyway.
 
-Ein Test auf `Sec-Fetch-Site` (nur `same-origin` und `none` zulassen) auf
-den beiden `/auth`-Routen würde genau diese Grenze herstellen und wäre
-wenige Zeilen groß. Er wurde am 3. September 2026 **bewusst nicht**
-umgesetzt: der Betreiber richtet die Brücke unmittelbar nach dem Ausrollen
-ein, das Fenster ist damit Minuten lang, und eine weitere Prüfung auf dem
-einzigen Weg hinein ist eine weitere Stelle, an der man sich aussperren
-kann. Wer die Brücke länger unkonfiguriert stehen lässt, sollte das anders
-entscheiden.
+A check on `Sec-Fetch-Site` (allowing only `same-origin` and `none`) on the
+two `/auth` routes would establish exactly this boundary and would be a
+few lines. It was **deliberately not** implemented on September 3, 2026:
+the operator sets up the bridge immediately after rolling it out, so the
+window is minutes long, and one more check on the single way in is one
+more place where you can lock yourself out. Anyone who leaves the bridge
+unconfigured for longer should decide this differently.
 
-Beim Bestandssystem wiegt das schwerer als bei der Neuinstallation, und
-auch das gehört hierher: die Anlage war bereits abgesichert, der Betreiber
-hat keinen Anlass, nach einem Update mit einem Übernahmefenster zu rechnen,
-und er bemerkt das Update unter Umständen erst Tage später. Wer diese
-Version ausrollt, sollte sich unmittelbar danach anmelden. Das gehört
-**in den Release-Hinweis und in die README**, nicht nur in diese Spec.
+For the existing system this weighs more heavily than for the fresh
+install, and that belongs here too: the installation was already secured,
+the operator has no reason to expect a takeover window after an update,
+and they may not notice the update until days later. Anyone who rolls out
+this version should log in immediately afterward. That belongs **in the
+release notes and in the README**, not only in this spec.
 
-Was das Fenster begrenzt, und was innerhalb dieser Entscheidung liegt:
+What limits the window, and what falls within this decision:
 
-- Solange kein Passwort gesetzt ist, sind alle `/api`-Routen gesperrt
-  (Abschnitt 4). Wer den Dienst in diesem Zustand erreicht, aber die
-  Einrichtung *nicht* abschließt, sieht keine Gerätedaten, keine
-  Diagnose und keine Fabric-Sicherung. Angreifbar ist allein die
-  Übernahme selbst, nicht der Bestand.
-- Solange kein Passwort gesetzt ist, schreibt der Dienst bei **jedem** Start
-  eine deutliche Warnzeile ins Log — nicht nur beim ersten.
-- Der Einrichtungsbildschirm benennt den Zustand offen: diese Brücke ist
-  gerade für jeden im Netz übernehmbar, die Einrichtung sollte jetzt
-  abgeschlossen werden.
-- Sobald ein Passwort gesetzt ist, ist der Einrichtungsweg **dauerhaft**
-  geschlossen (`POST /auth/setup` antwortet ab dann mit 409, siehe 8).
-- Ein bereits konfiguriertes Token bleibt nach der Einrichtung gültig; die
-  Passwortvergabe entwertet es nicht.
+- As long as no password is set, all `/api` routes are locked
+  (section 4). Anyone who reaches the service in this state but does
+  *not* complete setup sees no device data, no diagnostics, and no
+  fabric backup. Only the takeover itself is exposed, not the existing
+  data.
+- As long as no password is set, the service writes a clear warning line
+  to the log on **every** start — not only the first.
+- The setup screen states the situation openly: this bridge is currently
+  takeable by anyone on the network, and setup should be completed now.
+- Once a password is set, the setup path is closed **permanently**
+  (`POST /auth/setup` responds with 409 from then on, see 8).
+- An already configured token remains valid after setup; setting the
+  password does not invalidate it.
 
-## 6. Speicherung
+## 6. Storage
 
-Der Store (`model/store.py`) hat bereits ein versioniertes Schema mit
-Migrationen (`_SCHEMA_VERSION`, `_migrate`) und liegt im persistenten Volume
-unter `LOXMATTER_STORE`. `_SCHEMA_VERSION` steht nach Phase 6 auf 3; neu
-kommt `_migrate_to_v4` hinzu, `_SCHEMA_VERSION` geht auf 4:
+The store (`model/store.py`) already has a versioned schema with
+migrations (`_SCHEMA_VERSION`, `_migrate`) and lives in the persistent
+volume under `LOXMATTER_STORE`. `_SCHEMA_VERSION` stands at 3 after
+Phase 6; newly added is `_migrate_to_v4`, and `_SCHEMA_VERSION` moves to 4:
 
 ```sql
 CREATE TABLE IF NOT EXISTS setting (
@@ -201,253 +198,261 @@ CREATE TABLE IF NOT EXISTS session (
 );
 ```
 
-`setting` trägt zunächst genau einen Schlüssel, `password_hash`. Die Tabelle
-ist trotzdem generisch angelegt, weil die restliche Konfiguration später
-denselben Weg gehen soll (14.2).
+`setting` initially carries exactly one key, `password_hash`. The table is
+nonetheless laid out generically because the remaining configuration is
+meant to take the same path later (14.2).
 
-**Passwort-Hash: `hashlib.scrypt` aus der Standardbibliothek**, abgelegt als
-`scrypt$<n>$<r>$<p>$<salt-hex>$<hash-hex>` mit n = 2^14, r = 8, p = 1,
-16 Byte Salt, 32 Byte Ausgabe. Der Speicherbedarf von 128·n·r = 16 MiB liegt
-unter der Vorgabe von `hashlib.scrypt`, `maxmem` muss also nicht angefasst
-werden. Gewählt gegenüber Argon2 (`argon2-cffi`) und bcrypt (`passlib`),
-weil beide eine neue Laufzeitabhängigkeit für genau einen Hash bedeuteten;
-scrypt ist für diesen Zweck ausreichend und schon da. Das Format trägt seine
-Parameter selbst, damit ein späterer Wechsel der Kostenfaktoren alte Hashes
-weiter prüfen kann.
+**Password hash: `hashlib.scrypt` from the standard library**, stored as
+`scrypt$<n>$<r>$<p>$<salt-hex>$<hash-hex>` with n = 2^14, r = 8, p = 1,
+16-byte salt, 32-byte output. The memory requirement of 128·n·r = 16 MiB
+falls under the default of `hashlib.scrypt`, so `maxmem` need not be
+touched. Chosen over Argon2 (`argon2-cffi`) and bcrypt (`passlib`) because
+both would have meant a new runtime dependency for exactly one hash;
+scrypt is sufficient for this purpose and already present. The format
+carries its own parameters, so that a later change of the cost factors can
+still verify old hashes.
 
-Sitzungen liegen in der Datenbank und nicht im Speicher, weil der Dienst mit
-`restart: unless-stopped` läuft: ein Neustart darf nicht jedes Mal
-ausloggen. Abgelaufene Zeilen werden bei jedem Zugriff auf die Tabelle
-mitgelöscht — kein Hintergrundjob für eine Tabelle mit einer Handvoll
-Zeilen.
+Sessions live in the database and not in memory, because the service runs
+with `restart: unless-stopped`: a restart must not log everyone out every
+time. Expired rows are deleted along with every access to the table — no
+background job for a table with a handful of rows.
 
-## 7. Die Sitzung
+## 7. The session
 
-Cookie `loxmatter_session`, Wert aus `secrets.token_hex(32)` — 32 Byte
-Zufall, hexadezimal.
-Attribute:
+Cookie `loxmatter_session`, value from `secrets.token_hex(32)` — 32 bytes
+of randomness, hexadecimal.
+Attributes:
 
-- **`HttpOnly`** — kein Skript im Ursprung kommt an den Wert. Damit entfällt
-  die XSS-Abwägung, die der `localStorage`-Kommentar in `web/app.js` heute
-  führen muss.
-- **`SameSite=Strict`** — zugleich der CSRF-Schutz: eine fremde Seite kann
-  keine zustandsändernde Anfrage in einer angemeldeten Sitzung auslösen, weil
-  der Browser das Cookie bei fremdem Ursprung gar nicht erst mitschickt. Ein
-  eigenes CSRF-Token wird deshalb nicht eingeführt. `Strict` statt `Lax`, weil
-  es keinen Anwendungsfall gibt, in dem man aus einer fremden Seite heraus in
-  diese Oberfläche verlinkt.
-- **`Path=/`**, damit auch der WebSocket-Handshake auf `/api/live` das Cookie
-  trägt.
-- **Ausdrücklich ohne `Secure`.** Der Dienst spricht HTTP; mit `Secure` würde
-  der Browser das Cookie verwerfen und niemand käme hinein. Diese Zeile ist
-  bewusst gesetzt und darf nicht "der Sicherheit halber" nachgezogen werden,
-  solange 14.1 offen ist.
+- **`HttpOnly`** — no script in the origin can get at the value. This
+  removes the XSS trade-off that the `localStorage` comment in
+  `web/app.js` has to carry today.
+- **`SameSite=Strict`** — at the same time the CSRF protection: a foreign
+  page cannot trigger a state-changing request within a logged-in session,
+  because the browser does not send the cookie along at all for a foreign
+  origin. A dedicated CSRF token is therefore not introduced. `Strict`
+  instead of `Lax`, because there is no use case in which one links into
+  this UI from a foreign page.
+- **`Path=/`**, so that the WebSocket handshake on `/api/live` carries the
+  cookie too.
+- **Explicitly without `Secure`.** The service still speaks HTTP; with
+  `Secure` the browser would discard the cookie and no one would get in.
+  This line is deliberately set and must not be added later "for the sake
+  of security" while 14.1 remains open.
 
-Laufzeit 30 Tage, bei jedem erfolgreichen Zugriff gleitend verlängert.
+Lifetime of 30 days, extended on a sliding basis with every successful
+access.
 
-## 8. Neue Routen
+## 8. New routes
 
-Alle vier hängen **außerhalb** des Wächters, neben `/health` — sie müssen
-unangemeldet erreichbar sein.
+All four hang **outside** the guard, next to `/health` — they must be
+reachable while logged out.
 
-| Route | Verhalten |
+| Route | Behavior |
 | --- | --- |
-| `GET /auth-info` | `{"password_set": bool, "authenticated": bool}`. Sagt der Oberfläche, ob sie Einrichtung, Login oder die App zeigt. Kein Geheimnis: `password_set` ist auch daran ablesbar, wie `POST /auth/login` antwortet (409 vor der Ersteinrichtung, 401 danach), `authenticated` daran, ob `/api/devices` Daten liefert. **Nicht** mehr an `/api/devices` allein — seit Abschnitt 4 antwortet die Route in beiden Zuständen mit 401 (korrigiert am 3. September 2026). Praktische Folge: ein Netzscan findet über `GET /auth-info` nicht eingerichtete Brücken, ohne Spur in einem Fehlerzähler zu hinterlassen. |
-| `POST /auth/setup` | Nimmt das neue Passwort entgegen, **solange keines gesetzt ist** — ohne weiteren Nachweis, auch wenn ein Token konfiguriert ist (5). Ist bereits eines gesetzt: 409, ohne Ausnahme. Legt bei Erfolg sofort eine Sitzung an, damit der Betreiber nicht direkt danach noch einmal tippt. |
-| `POST /auth/login` | Prüft das Passwort, legt bei Erfolg eine Sitzung an. |
-| `POST /auth/logout` | Löscht die Sitzungszeile **serverseitig** und räumt das Cookie ab. Ein Logout, der nur das Cookie löscht, lässt eine gestohlene Kennung weiterleben. |
+| `GET /auth-info` | `{"password_set": bool, "authenticated": bool}`. Tells the UI whether to show setup, login, or the app. Not a secret: `password_set` can also be read off from how `POST /auth/login` responds (409 before initial setup, 401 afterward), and `authenticated` from whether `/api/devices` delivers data. **No longer** solely from `/api/devices` — since section 4, that route responds with 401 in both states (corrected on September 3, 2026). Practical consequence: a network scan finds not-yet-set-up bridges via `GET /auth-info` without leaving a trace in any error counter. |
+| `POST /auth/setup` | Accepts the new password **as long as none is set** — without any further proof, even if a token is configured (5). If one is already set: 409, without exception. On success it immediately creates a session, so the operator does not have to type it in again right afterward. |
+| `POST /auth/login` | Checks the password, and on success creates a session. |
+| `POST /auth/logout` | Deletes the session row **server-side** and clears the cookie. A logout that only deletes the cookie lets a stolen identifier live on. |
 
-**Sperre gegen Durchprobieren.** Ein Passwort ist ratbar, ein 256-Bit-Token
-nicht — ohne Bremse wäre der neue Weg schwächer als der, den er ablöst. Nach
-fünf Fehlversuchen aus derselben Peer-Adresse wird `POST /auth/login` für
-diese Adresse auf einen Versuch je 30 Sekunden gedrosselt; ein erfolgreicher
-Login setzt den Zähler zurück. Zähler im Speicher, nicht in der Datenbank: es ist
-flüchtiger Zustand, der keinen Schreibzugriff je Fehlversuch rechtfertigt,
-und ein Neustart löscht ihn zwar — nur kann ein Angreifer keinen auslösen. Der Passwortvergleich läuft konstantzeitig
-(`secrets.compare_digest` über die Hashes).
+**Lockout against brute-forcing.** A password is guessable, a 256-bit
+token is not — without a brake, the new path would be weaker than the one
+it replaces. After five failed attempts from the same peer address,
+`POST /auth/login` is throttled for that address to one attempt per 30
+seconds; a successful login resets the counter. The counter lives in
+memory, not in the database: it is transient state that does not justify
+a write access per failed attempt, and while a restart does clear it, an
+attacker cannot trigger one. The password comparison runs in constant
+time (`secrets.compare_digest` over the hashes).
 
-Alle drei Antwortkörper der `POST`-Routen enthalten **niemals** das
-Passwort, den Hash oder Teile davon, und die Routen loggen den Klartext
-unter keinen Umständen.
+None of the three `POST` routes' response bodies **ever** contain the
+password, the hash, or parts of it, and under no circumstances do the
+routes log the plaintext.
 
-## 9. Notausgang
+## 9. Emergency exit
 
-Neuer CLI-Befehl `loxmatter set-password`, der das Passwort verdeckt abfragt
-und den Hash direkt in den Store schreibt — mit `--store-path` wie die
-übrigen Befehle. Ohne ihn wäre eine headless aufgesetzte Installation mit
-vergessenem Passwort endgültig verloren; der Betreiber hat auf dem Host
-ohnehin Zugriff auf die Datenbankdatei, der Befehl macht daraus nur einen
-benutzbaren Weg. Er löscht dabei alle bestehenden Sitzungen: wer das
-Passwort zurücksetzt, will nicht, dass eine alte Sitzung weiterläuft.
+New CLI command `loxmatter set-password`, which prompts for the password
+without echoing it and writes the hash directly into the store — with
+`--store-path` like the other commands. Without it, a headlessly set-up
+installation with a forgotten password would be lost for good; the
+operator already has access to the database file on the host anyway, and
+the command merely turns that into a usable path. In doing so it deletes
+all existing sessions: whoever resets the password does not want an old
+session to keep running.
 
-## 10. Oberfläche
+## 10. UI
 
-`web/index.html` bekommt zwei Bildschirme vor die eigentliche App, gesteuert
-durch `GET /auth-info` beim Start:
+`web/index.html` gets two screens placed in front of the actual app,
+controlled by `GET /auth-info` at startup:
 
-- **Einrichtung** — Passwort zweimal eingeben, mit dem Hinweis aus 5. Kein
-  weiteres Feld, unabhängig davon, ob ein Token konfiguriert ist.
-- **Login** — ein Feld, ein Knopf, verständliche Fehlermeldung bei falschem
-  Passwort und bei aktiver Sperre ("zu viele Versuche, in X Sekunden wieder
-  möglich").
+- **Setup** — enter the password twice, with the note from 5. No further
+  field, regardless of whether a token is configured.
+- **Login** — one field, one button, a comprehensible error message on a
+  wrong password and while the lockout is active ("too many attempts,
+  possible again in X seconds").
 
-**Die Token-Box entfällt ersatzlos.** Sie war der Anlass dieses Entwurfs.
-Damit fällt in `web/app.js` weg: `TOKEN_STORAGE_KEY`, `readStoredToken`,
-`authHeaders`, das gesamte `localStorage`-Verhalten samt seiner
-XSS-Abwägung, `saveToken`/`clearToken`/`startTokenEdit`/`cancelTokenEdit`
-und der Subprotokoll-Aufbau `new WebSocket(url, ["bearer", token])`. `fetch`
-läuft künftig mit `credentials: "same-origin"`, der WebSocket bekommt das
-Cookie beim Handshake von selbst. Serverseitig bleibt der
-Subprotokoll-Weg für Skripte erhalten (siehe 2).
+**The token box is removed with nothing replacing it.** It was the reason
+for this design. This removes from `web/app.js`: `TOKEN_STORAGE_KEY`,
+`readStoredToken`, `authHeaders`, the entire `localStorage` behavior along
+with its XSS trade-off, `saveToken`/`clearToken`/`startTokenEdit`/
+`cancelTokenEdit`, and the subprotocol construction
+`new WebSocket(url, ["bearer", token])`. `fetch` now runs with
+`credentials: "same-origin"`, and the WebSocket picks up the cookie on its
+own during the handshake. On the server side, the subprotocol path for
+scripts remains intact (see 2).
 
-`UnauthorizedError` bleibt als eigene Fehlerklasse, ändert aber die Wirkung:
-ein 401 aus einer laufenden Sitzung (abgelaufen, oder anderswo abgemeldet)
-wirft die Oberfläche zurück auf den Login-Bildschirm, statt eine
-Fehlermeldung anzuzeigen, die auf ein Feld verweist, das es nicht mehr gibt.
+`UnauthorizedError` stays as its own error class, but its effect changes:
+a 401 from a running session (expired, or logged out elsewhere) throws the
+UI back to the login screen, instead of showing an error message that
+points to a field that no longer exists.
 
-## 11. Auswirkung auf die Fabric-Sicherung
+## 11. Effect on the fabric backup
 
-`GET /api/diagnostics/fabric-backup` verweigert heute die Auslieferung,
-solange kein Token konfiguriert ist (403, Review-Fix Fix 3 vom
-2026-09-03) — die Route soll nicht ungeschützt im LAN stehen, weil hinter
-ihr die Übernahme der Fabric hängt.
+`GET /api/diagnostics/fabric-backup` today refuses delivery as long as no
+token is configured (403, review fix "Fix 3" from 2026-09-03) — the route
+is not meant to stand unprotected on the LAN, because behind it hangs the
+takeover of the fabric.
 
-**Der Zustand, gegen den diese Sperre gerichtet war, kann nicht mehr
-eintreten.** Sie verteidigte den Fall „Dienst läuft ohne jedes Zugangsmittel,
-also sind alle `/api`-Routen offen" — genau diesen Fall schafft Abschnitt 4
-ab: ohne Passwort ist jede `/api`-Route gesperrt, und wer durchkommt, hat
-ein Cookie oder ein Token vorgezeigt. Der Parameter `api_token_configured`
-und der 403-Zweig entfallen deshalb ersatzlos.
+**The state this lockout was directed against can no longer occur.** It
+defended the case "service is running with no access mechanism at all, so
+all `/api` routes are open" — section 4 abolishes exactly this case:
+without a password, every `/api` route is locked, and anyone who gets
+through has presented a cookie or a token. The parameter
+`api_token_configured` and the 403 branch are therefore removed with
+nothing replacing them.
 
-Das ist bewusst eine Entfernung und kein Übersehen. Ein unerreichbarer
-Zweig, dessen ausführlicher Docstring eine Lage beschreibt, die es nicht
-mehr gibt, führt den nächsten Leser in die Irre — er liest dort eine
-Bedingung, auf die er sich verlässt, und die nichts mehr prüft. Was den
-Schutz künftig trägt, ist der Wächter selbst, und dass er auf **jedem** der
-fünf Router hängt, prüft `tests/api/test_security.py` bereits Router für
-Router einzeln statt über den gemeinsamen Präfix.
+This is deliberately a removal and not an oversight. An unreachable branch
+whose detailed docstring describes a situation that no longer exists
+misleads the next reader — they read a condition there that they rely on,
+and that no longer checks anything. What carries the protection going
+forward is the guard itself, and the fact that it hangs on **every** one
+of the five routers is already checked by `tests/api/test_security.py`
+router by router individually rather than via the shared prefix.
 
-Nach dem Login ist der Download damit frei — ohne Token, ohne Zusatzschritt.
-Eine Ausnahme, die den Betreiber nach erfolgreicher Anmeldung noch einmal
-nach einem zweiten Geheimnis fragt, schützt nichts, das nicht schon
-geschützt wäre.
+After login, the download is therefore free — no token, no extra step. An
+exception that asks the operator for a second secret once more after a
+successful login protects nothing that was not already protected.
 
-**Der Ausweis vor dieser Route ist dabei schwächer geworden, und das gehört
-hierher** (Nachtrag vom 3. September 2026, aus dem Abschlussreview). Ein
-früherer Absatz nannte den Login den „stärkeren Ausweis" — das stimmt für
-seine *Verfügbarkeit* (es gibt jetzt immer einen), nicht für seine *Stärke*.
-Vorher stand vor `GET /api/diagnostics/fabric-backup` ein Geheimnis mit 256
-Bit Entropie, das nicht zu raten war. Jetzt steht dort ein Passwort von
-mindestens acht Zeichen, im Klartext über HTTP übertragen (14.1), gebremst
-durch eine Drosselung von rund zwei Versuchen je Minute — also etwa 2.900
-Versuche am Tag gegen den einzigen unwiderruflichen Zustand dieser
-Installation (Hauptdokument 4.1). Ein Wörterbuchpasswort fällt darunter in
-Tagen.
+**The credential guarding this route has, in the process, become weaker,
+and that belongs here too** (addendum from September 3, 2026, from the
+closing review). An earlier paragraph called the login the "stronger
+credential" — that holds for its *availability* (there is now always one),
+not for its *strength*. Previously, `GET /api/diagnostics/fabric-backup`
+was guarded by a secret with 256 bits of entropy that could not be
+guessed. Now it is guarded by a password of at least eight characters,
+transmitted in plaintext over HTTP (14.1), slowed by a throttle of roughly
+two attempts per minute — that is, about 2,900 attempts a day against the
+single irrevocable state of this installation (main document 4.1). A
+dictionary password falls to that within days.
 
-Die Entfernung des 403-Zweigs bleibt trotzdem richtig: der Zustand, gegen
-den er stand, existiert nicht mehr. Und die Mindestlänge bleibt am
-3. September 2026 bewusst bei acht Zeichen — die Alternative (zwölf) wurde
-geprüft und verworfen. Was daraus folgt, gehört in die Dokumentation und
-nicht in eine Konstante: **das Passwort dieser Brücke sollte zufällig sein,
-nicht merkbar.** Acht zufällige Zeichen tragen die obige Rechnung, acht
-gewählte nicht.
+Removing the 403 branch remains correct nonetheless: the state it stood
+against no longer exists. And the minimum length deliberately stays at
+eight characters as of September 3, 2026 — the alternative (twelve) was
+considered and discarded. What follows from this belongs in the
+documentation and not in a constant: **this bridge's password should be
+random, not memorable.** Eight random characters support the arithmetic
+above; eight chosen ones do not.
 
-Unverändert bleibt, dass `build_diagnostics_router` **weder Passwort noch
-Hash noch Token** zu sehen bekommt: was er nicht kennt, kann er nicht
-versehentlich in eine Antwort oder ins Log schreiben.
+Unchanged is that `build_diagnostics_router` **never gets to see the
+password, the hash, or the token**: what it does not know, it cannot
+accidentally write into a response or into the log.
 
-## 12. Prüfung
+## 12. Testing
 
-Neue Datei `tests/api/test_auth.py`:
+New file `tests/api/test_auth.py`:
 
-- Hash und Prüfung: richtiges Passwort passt, falsches nicht, zwei gleiche
-  Passwörter ergeben durch das Salt verschiedene Hashes, ein Hash mit
-  fremden Parametern im Präfix wird weiterhin korrekt geprüft.
-- Sitzungen: anlegen, prüfen, gleitend verlängern, Ablauf, Löschen beim
-  Logout, Aufräumen abgelaufener Zeilen.
-- Sperre: fünf Fehlversuche, dann Drosselung; erfolgreicher Login setzt
-  zurück; eine zweite Peer-Adresse ist von der Sperre der ersten nicht
-  betroffen.
-- Migration: eine Datenbank auf Schemaversion 3 wird auf 4 gehoben, ohne
-  Bestandszeilen in `device`/`signal`/`command` anzutasten.
+- Hashing and verification: the correct password matches, a wrong one
+  does not, two identical passwords produce different hashes because of
+  the salt, a hash with foreign parameters in the prefix is still checked
+  correctly.
+- Sessions: creating, checking, sliding extension, expiry, deletion on
+  logout, cleanup of expired rows.
+- Lockout: five failed attempts, then throttling; a successful login
+  resets it; a second peer address is not affected by the first one's
+  lockout.
+- Migration: a database at schema version 3 is raised to 4 without
+  touching existing rows in `device`/`signal`/`command`.
 
-`tests/api/test_security.py` wächst um:
+`tests/api/test_security.py` grows to include:
 
-- Sitzungs-Cookie kommt durch jede der fünf `/api`-Router-Gruppen.
-- Bearer-Token kommt unverändert weiter durch.
-- Weder noch → 401, **ausnahmslos**. Insbesondere der Zustand „kein
-  Passwort, kein Token": jede der fünf Router-Gruppen antwortet mit 401,
-  nicht mit Daten. Das ist der Test, der die Verschärfung aus Abschnitt 4
-  festhält — bisher war genau dieser Zustand offen.
-- Kein Passwort, aber konfiguriertes Token: `/api` bleibt mit Token
-  erreichbar. Das ist der Bestandsfall unmittelbar nach dem Update; er
-  belegt, dass Skripte das Update überstehen.
-- `POST /auth/setup` ohne gesetztes Passwort → Passwort gesetzt, auch bei
-  konfiguriertem Token und ohne diesen mitzuschicken (5).
-- `POST /auth/setup` nach gesetztem Passwort → 409, auch mit gültigem Token.
-- Ein vor der Einrichtung konfiguriertes Token bleibt nach der
-  Passwortvergabe gültig.
-- Die umbenannte Startwarnung `cli._warn_if_no_password`: warnt ohne
-  gesetztes Passwort — auch bei konfiguriertem Token —, schweigt mit.
-- Logout macht das Cookie sofort wertlos (derselbe Wert danach → 401).
-- `/api/live` verbindet mit Cookie und ohne Subprotokoll.
-- `/cmd` und `/resync` bleiben in **jedem** dieser Zustände offen.
-- `GET /api/diagnostics/fabric-backup` nach Login ohne Token → 200.
+- The session cookie gets through every one of the five `/api` router
+  groups.
+- The bearer token still gets through unchanged.
+- Neither → 401, **without exception**. In particular the state "no
+  password, no token": every one of the five router groups responds with
+  401, not with data. This is the test that pins down the hardening from
+  section 4 — until now, exactly this state was open.
+- No password, but a configured token: `/api` remains reachable with the
+  token. This is the existing-install case immediately after the update;
+  it proves that scripts survive the update.
+- `POST /auth/setup` with no password set → password set, even with a
+  configured token and without sending it along (5).
+- `POST /auth/setup` after a password is set → 409, even with a valid
+  token.
+- A token configured before setup remains valid after the password is
+  set.
+- The renamed startup warning `cli._warn_if_no_password`: warns with no
+  password set — even with a configured token — and stays silent with
+  one set.
+- Logout makes the cookie worthless immediately (the same value
+  afterward → 401).
+- `/api/live` connects with the cookie and without a subprotocol.
+- `/cmd` and `/resync` remain open in **every** one of these states.
+- `GET /api/diagnostics/fabric-backup` after login without a token → 200.
 
-## 13. Dokumentation
+## 13. Documentation
 
-Diese Änderung ist für bestehende Installationen ein Bruch — eine Brücke,
-die bisher ohne Token lief, liefert nach dem Update nichts mehr aus, bis ein
-Passwort vergeben ist (4). Das darf niemand erst am schweigenden Dienst
-bemerken. Nachzuziehen sind:
+For existing installations, this change is a breaking one — a bridge that
+previously ran without a token delivers nothing after the update until a
+password has been set (4). No one should first notice this from a silent
+service. What needs updating:
 
-- **Release-Hinweis:** was passiert, was zu tun ist (Oberfläche öffnen,
-  Passwort vergeben), und der Hinweis aus 5, das unmittelbar nach dem
-  Ausrollen zu tun und nicht auf später zu verschieben.
-- **README:** Abschnitt zur Absicherung neu — Login statt Token-Eingabe,
-  Passwortvergabe beim ersten Aufruf, `loxmatter set-password` als
-  Notausgang, und der Rat aus 14.1 zu einem Passwort, das nirgends sonst
-  benutzt wird.
-- **`deploy/testhost/.env.example`:** `LOXMATTER_API_TOKEN` verliert seine
-  Rolle als Zugang zur Oberfläche und behält nur die für Skripte. Der lange
-  Kommentar, der heute zur Eingabe in der Oberfläche anleitet, wird falsch
-  und muss ersetzt werden.
-- **`deploy/testhost/docker-compose.yml`:** derselbe Kommentar an
-  `LOXMATTER_API_TOKEN` und an der Volume-Zeile für `/matter-data` — dort
-  steht heute, dass Einhängung und Token zusammengehören. Künftig trägt das
-  Passwort diese Rolle.
-- **Moduldocstrings** von `loxone/server.py` und `api/diagnostics.py`: beide
-  beschreiben das Token als einzigen Ausweis. Beide erklären ausführlich
-  Zustände, die es nach 4 und 11 nicht mehr gibt.
+- **Release notes:** what happens, what to do (open the UI, set a
+  password), and the note from 5 that this should be done immediately
+  after rolling out, not deferred to later.
+- **README:** a new section on hardening — login instead of token entry,
+  setting the password on first access, `loxmatter set-password` as the
+  emergency exit, and the advice from 14.1 on a password that is not used
+  anywhere else.
+- **`deploy/testhost/.env.example`:** `LOXMATTER_API_TOKEN` loses its role
+  as access to the UI and keeps only the one for scripts. The long
+  comment that today guides entering it into the UI becomes wrong and
+  must be replaced.
+- **`deploy/testhost/docker-compose.yml`:** the same comment on
+  `LOXMATTER_API_TOKEN` and on the volume line for `/matter-data` —
+  today it states that mounting and the token belong together. Going
+  forward, the password carries that role.
+- **Module docstrings** of `loxone/server.py` and `api/diagnostics.py`:
+  both describe the token as the sole credential. Both explain, at
+  length, states that no longer exist after 4 and 11.
 
-## 14. Offene Punkte
+## 14. Open points
 
-**14.1 Kein TLS.** Beim Login geht das Passwort im Klartext über das Netz.
-Das ist keine Verschlechterung — der `Authorization`-Header tut das heute
-schon —, aber ein Passwort wird von Menschen wiederverwendet, ein
-dienstspezifisches Token nicht. Die Dokumentation muss deshalb ausdrücklich
-zu einem Passwort raten, das nirgends sonst benutzt wird. TLS (Zertifikat,
-Reverse-Proxy, `Secure`-Flag am Cookie) ist ein eigener Entwurf. Sobald
-dabei ein Reverse-Proxy vorgeschaltet wird: `_client_id` in `api/auth.py`
-liest die Peer-Adresse der Verbindung, und die sähe dann für jeden Aufrufer
-gleich aus — die Adresse des Proxys. Fünf Fehlversuche irgendeines
-Aufrufers sperrten dann JEDEN Betreiber gemeinsam aus, mit einer Anfrage je
-30 Sekunden dauerhaft. Dasselbe Ziel erreicht ein Unix-Socket — die übliche
-Begleitung genau dieses Reverse-Proxys — auf kürzerem Weg: dort ist
-`request.client` `None`, und `_client_id` fällt auf den festen Rückgabewert
-`"unbekannt"` zurück, den sich dann ebenfalls alle Aufrufer teilen. Dieser
-eigene Entwurf muss die `LoginThrottle` deshalb auf einen vertrauenswürdig
-ausgewerteten `X-Forwarded-For` umstellen, sonst wird die Drosselung zur
-globalen Aussperrung.
+**14.1 No TLS.** During login, the password goes over the network in
+plaintext. This is not a regression — the `Authorization` header already
+does that today — but a password gets reused by humans, whereas a
+service-specific token does not. The documentation must therefore
+explicitly advise a password that is not used anywhere else. TLS
+(certificate, reverse proxy, `Secure` flag on the cookie) is its own
+design. As soon as a reverse proxy is placed in front of it: `_client_id`
+in `api/auth.py` reads the connection's peer address, and that would then
+look the same for every caller — the proxy's address. Five failed
+attempts by any caller would then lock out EVERY operator together, with
+one request per 30 seconds, permanently. A Unix socket — the usual
+companion of exactly this kind of reverse proxy — reaches the same
+outcome by a shorter path: there, `request.client` is `None`, and
+`_client_id` falls back to the fixed return value `"unknown"`, which all
+callers then likewise share. This future design must therefore switch
+`LoginThrottle` over to a trustworthily evaluated `X-Forwarded-For`, or
+the throttling turns into a global lockout.
 
-**14.2 Restliche Konfiguration in der Oberfläche.** Miniserver-Adresse,
-matter-server-Adresse, Ports und Datenverzeichnis kommen weiterhin aus
-`docker-compose.yml` und den CLI-Optionen. Sie in die Oberfläche zu holen —
-mitsamt der Frage, welche Werte im laufenden Betrieb änderbar sind und
-welche einen Neustart brauchen — ist der eigentliche Weg zur headless
-aufgesetzten Installation und bekommt eine eigene Spec. Dieser Entwurf legt
-mit `setting` und dem Einrichtungsbildschirm die Mechanik dafür an.
+**14.2 Remaining configuration in the UI.** Miniserver address,
+matter-server address, ports, and data directory continue to come from
+`docker-compose.yml` and the CLI options. Bringing them into the UI —
+along with the question of which values are changeable during operation
+and which require a restart — is the actual path to a headlessly set-up
+installation and gets its own spec. This design lays the groundwork for
+it with `setting` and the setup screen.
 
-**14.3 Mehrere Betreiber.** Ein Passwort, kein Benutzername, keine Rollen.
-Sollte das je gebraucht werden, trägt das Schema es (`setting` wird zu einer
-`user`-Tabelle), aber es ist heute kein Ziel.
+**14.3 Multiple operators.** One password, no username, no roles. Should
+this ever be needed, the schema can carry it (`setting` becomes a `user`
+table), but it is not a goal today.

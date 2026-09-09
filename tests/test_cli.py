@@ -1,4 +1,4 @@
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -18,7 +18,7 @@ import asyncio
 import json
 import logging
 import sqlite3
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
 
@@ -54,7 +54,7 @@ def test_report_lists_attribute_and_event_signals():
     report = render_report(load())
     assert "1/6/0" in report
     assert "1/8/0" in report
-    assert "1/59/0" in report  # Event aus der EventList
+    assert "1/59/0" in report  # event from the EventList
     assert "1/59/1" in report
 
 
@@ -63,14 +63,14 @@ def test_report_hides_global_attributes():
 
 
 def test_report_flags_attributes_the_device_claimed_but_did_not_report():
-    # AttributeList nennt 0 und 16, geliefert wurde nur 0.
+    # AttributeList names 0 and 16, only 0 was delivered.
     report = render_report(load())
     assert "NOT DELIVERED" in report
     assert "1/6/16" in report
 
 
 def test_report_flags_attributes_the_device_claimed_but_did_not_report_in_german():
-    # AttributeList nennt 0 und 16, geliefert wurde nur 0.
+    # AttributeList names 0 and 16, only 0 was delivered.
     i18n.set_language("de")
     report = render_report(load())
     assert "NICHT GELIEFERT" in report
@@ -99,8 +99,8 @@ def test_report_flags_unparsable_paths_in_german():
 
 
 def test_report_flags_clusters_with_undiscoverable_events():
-    # Cluster 42 (OTA Requestor) hat mandatorische Events, aber weder eine
-    # EventList noch einen Eintrag in FEATURE_MAP_EVENTS.
+    # Cluster 42 (OTA Requestor) has mandatory events, but neither an
+    # EventList nor an entry in FEATURE_MAP_EVENTS.
     snap = NodeSnapshot.from_raw(1, {"attributes": {"0/42/0": 1}})
     report = render_report(snap)
     assert "NOT DERIVABLE" in report
@@ -108,8 +108,8 @@ def test_report_flags_clusters_with_undiscoverable_events():
 
 
 def test_report_flags_clusters_with_undiscoverable_events_in_german():
-    # Cluster 42 (OTA Requestor) hat mandatorische Events, aber weder eine
-    # EventList noch einen Eintrag in FEATURE_MAP_EVENTS.
+    # Cluster 42 (OTA Requestor) has mandatory events, but neither an
+    # EventList nor an entry in FEATURE_MAP_EVENTS.
     i18n.set_language("de")
     snap = NodeSnapshot.from_raw(1, {"attributes": {"0/42/0": 1}})
     report = render_report(snap)
@@ -118,17 +118,17 @@ def test_report_flags_clusters_with_undiscoverable_events_in_german():
 
 
 def test_report_omits_undiscoverable_events_section_when_empty():
-    # Switch (59) steht in FEATURE_MAP_EVENTS — nichts Unableitbares hier.
+    # Switch (59) is in FEATURE_MAP_EVENTS - nothing non-derivable here.
     snap = NodeSnapshot.from_raw(1, {"attributes": {"1/59/0": True}})
     assert "NICHT ABLEITBAR" not in render_report(snap)
 
 
 class _FakeUpstream:
-    """Attrappe für matter_server.client.MatterClient — offline, kein Socket.
+    """Stand-in for matter_server.client.MatterClient - offline, no socket.
 
-    start_listening() bildet den echten Vertrag nach: Sie füllt den
-    Node-Cache, meldet Bereitschaft über init_ready und blockiert danach, bis
-    sie abgebrochen wird — siehe BridgeMatterClient.connect().
+    start_listening() mirrors the real contract: it fills the
+    node cache, reports readiness via init_ready and then blocks until
+    it is cancelled - see BridgeMatterClient.connect().
     """
 
     def __init__(
@@ -147,7 +147,7 @@ class _FakeUpstream:
         if init_ready is not None and not self._never_ready:
             init_ready.set()
         try:
-            await asyncio.Event().wait()  # blockiert, bis abgebrochen
+            await asyncio.Event().wait()  # blocks until cancelled
         except asyncio.CancelledError:
             pass
 
@@ -164,10 +164,10 @@ class _FakeUpstream:
         node_filter: Any = None,
         attr_path_filter: Any = None,
     ) -> Any:
-        """Fuer `loxmatter run` (BridgeMatterClient.subscribe()) — die
-        run()-Tests unten pruefen Aufbau/Abbau, nicht die Zustellung
-        einzelner Aktualisierungen (das leistet tests/matter/test_client.py
-        bereits ausfuehrlich)."""
+        """For `loxmatter run` (BridgeMatterClient.subscribe()) - the
+        run() tests below check setup/teardown, not the delivery of
+        individual updates (tests/matter/test_client.py already
+        does that extensively)."""
         return lambda: None
 
 
@@ -267,9 +267,9 @@ def test_cli_reports_unreachable_server_in_german(monkeypatch):
 
 
 def test_cli_reports_connect_timeout_without_traceback(monkeypatch):
-    # Der Server nimmt das Websocket an, meldet aber nie Bereitschaft — genau
-    # der Fall, für den LISTENER_READY_TIMEOUT_SECONDS existiert. Klein
-    # gepatcht, damit der Test nicht wirklich zehn Sekunden wartet.
+    # The server accepts the websocket but never reports readiness - exactly
+    # the case LISTENER_READY_TIMEOUT_SECONDS exists for. Patched small
+    # so the test doesn't actually wait ten seconds.
     monkeypatch.setattr(matter_client, "LISTENER_READY_TIMEOUT_SECONDS", 0.05)
     monkeypatch.setattr(cli, "_build_client", lambda url: _fake_client(never_ready=True))
 
@@ -278,7 +278,7 @@ def test_cli_reports_connect_timeout_without_traceback(monkeypatch):
     assert result.exit_code != 0
     assert "Traceback" not in result.output
     assert "did not report readiness" in result.stderr  # cli.common.fail_matter_not_ready
-    # Von den beiden anderen Fehlerpfaden unterscheidbar:
+    # Distinguishable from the two other error paths:
     assert "unreachable" not in result.stderr
     assert "not known" not in result.stderr
 
@@ -293,22 +293,22 @@ def test_cli_reports_connect_timeout_without_traceback_in_german(monkeypatch):
     assert result.exit_code != 0
     assert "Traceback" not in result.output
     assert "keine Bereitschaft" in result.stderr
-    # Von den beiden anderen Fehlerpfaden unterscheidbar:
+    # Distinguishable from the two other error paths:
     assert "nicht erreichbar" not in result.stderr
     assert "nicht bekannt" not in result.stderr
 
 
-# --- loxmatter run: Aufbau/Abbau ohne Netz -----------------------------
+# --- loxmatter run: setup/teardown without a network -----------------------------
 #
-# Was hier NICHT geprüft wird: die Zustellung einzelner Attribut-/Event-
-# Aktualisierungen über subscribe() (siehe tests/matter/test_client.py) und
-# das eigentliche HTTP-Verhalten von build_app() (siehe tests/loxone/). Hier
-# geht es ausschließlich um _run()s eigene Verantwortung: startet es die
-# vier Ressourcen, und — wichtiger — räumt es sie in jedem Fall wieder auf.
+# What is NOT checked here: the delivery of individual attribute/event
+# updates via subscribe() (see tests/matter/test_client.py) and
+# the actual HTTP behavior of build_app() (see tests/loxone/). Here
+# it's exclusively about _run()'s own responsibility: does it start the
+# four resources, and - more importantly - does it clean them up again in every case.
 
 
 class _SpySender:
-    """Steht für UdpSender — ohne echten Socket."""
+    """Stands in for UdpSender - without a real socket."""
 
     def __init__(self, host: str, port: int) -> None:
         self.host = host
@@ -323,19 +323,26 @@ class _SpySender:
 
 
 class _SpyRuntime:
-    """Steht für Runtime — erfüllt RuntimeEventHandler und zählt Aufrufe."""
+    """Stands in for Runtime - satisfies RuntimeEventHandler and counts calls."""
 
-    def __init__(self, store: Store, sender: _SpySender) -> None:
+    def __init__(
+        self, store: Store, sender: _SpySender, *, link_ok: Callable[[], bool] = lambda: True
+    ) -> None:
         self.store = store
         self.sender = sender
+        # Held on to like store/sender above, for the same reason: a test
+        # might later want to prove WHAT cli.serve() passed as link_ok (see
+        # cli.py: `lambda: client.connected`), instead of just accepting the
+        # keyword and throwing it away.
+        self.link_ok = link_ok
         self.started = False
         self.stop_calls = 0
         self.resend_calls = 0
         self.seed_calls = 0
-        # Reihenfolge der beiden Aufrufe, damit ein Test pruefen kann, dass
-        # das Saeen VOR dem ersten Resend passiert (siehe _run-Docstring):
-        # ein Resend nach dem Saeen ist der ganze Witz von Spec 6.4, ein
-        # Resend davor faende einen noch leeren Cache vor.
+        # Order of the two calls, so a test can verify that
+        # the seeding happens BEFORE the first resend (see _run docstring):
+        # a resend after the seeding is the whole point of Spec 6.4, a
+        # resend before it would find a still-empty cache.
         self.call_order: list[str] = []
 
     async def on_attribute(self, device_id: int, path: str, raw: object) -> None:
@@ -365,8 +372,8 @@ class _SpyRuntime:
 
 
 class _SpyUvicornServer:
-    """serve() kehrt sofort zurück — wie uvicorn es nach einem ersten,
-    geordnet abgefangenen Strg-C selbst tut (Server.capture_signals)."""
+    """serve() returns immediately - as uvicorn itself does after a first,
+    cleanly caught Ctrl-C (Server.capture_signals)."""
 
     def __init__(self, config: Any) -> None:
         self.config = config
@@ -376,8 +383,8 @@ class _SpyUvicornServer:
 
 
 class _HangingUvicornServer:
-    """serve() blockiert, bis der umgebende Task abgebrochen wird — wie bei
-    echtem uvicorn, solange kein Signal eintrifft."""
+    """serve() blocks until the surrounding task is cancelled - as with
+    real uvicorn, as long as no signal arrives."""
 
     def __init__(self, config: Any) -> None:
         self.config = config
@@ -391,26 +398,74 @@ class _FailingUvicornServer:
         self.config = config
 
     async def serve(self) -> None:
-        raise OSError("Adresse bereits verwendet")
+        raise OSError("address already in use")
+
+
+class _YieldingUvicornServer:
+    """Like `_SpyUvicornServer` (serve() returns on its own), but yields to
+    the event loop exactly once beforehand.
+
+    Needed for everything concerning the supervisor task: between
+    `asyncio.ensure_future(supervise(...))` and the `finally` in `_run()`
+    there is otherwise not a single suspension point. The task would be
+    cancelled before its FIRST step, so `supervise()` would never start up -
+    and a test would see "cancelled" even if the supervisor had never been
+    started at all. That one yield lets it get going."""
+
+    def __init__(self, config: Any) -> None:
+        self.config = config
+
+    async def serve(self) -> None:
+        await asyncio.sleep(0)
+
+
+class _SpySupervisor:
+    """Stands in for `matter.supervisor.supervise` - records WITH WHAT the
+    supervisor was started, and then blocks like the original.
+
+    The blocking is not incidental: the real `supervise()` never returns on
+    its own (endless loop, see its docstring). A stand-in that returned
+    immediately would long be finished by cleanup time, and the test could
+    no longer tell whether `_run()` cancels the task or whether it had
+    already ended anyway."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[Any, Any, Any]] = []
+        # Its own task, fetched from the inside: only through it can a test
+        # check `task.cancelled()` - `_run()` holds `supervisor_task` in a
+        # local variable and never hands it out anywhere.
+        self.task: asyncio.Task[None] | None = None
+
+    async def __call__(self, client: Any, store: Any, runtime: Any) -> None:
+        self.calls.append((client, store, runtime))
+        self.task = asyncio.current_task()
+        await asyncio.Event().wait()
 
 
 def _install_run_spies(
     monkeypatch: pytest.MonkeyPatch, *, connect_error: BaseException | None = None
-) -> tuple[list[_SpySender], list[_SpyRuntime], list[BridgeMatterClient]]:
-    """Ersetzt Sender, Laufzeit und matter-Client durch Attrappen, damit
-    _run() ohne Netzwerk/Hardware getestet werden kann. uvicorn.Server bleibt
-    Sache des jeweiligen Tests (unterschiedliches Serve-Verhalten)."""
+) -> tuple[list[_SpySender], list[_SpyRuntime], list[BridgeMatterClient], _SpySupervisor]:
+    """Replaces the sender, runtime, matter client and connection supervisor
+    with stand-ins so _run() can be tested without network/hardware.
+    uvicorn.Server remains each test's own concern (different serve
+    behavior)."""
     senders: list[_SpySender] = []
     runtimes: list[_SpyRuntime] = []
     clients: list[BridgeMatterClient] = []
+    supervisor = _SpySupervisor()
 
     def make_sender(host: str, port: int) -> _SpySender:
         sender = _SpySender(host, port)
         senders.append(sender)
         return sender
 
-    def make_runtime(store: Store, sender: _SpySender) -> _SpyRuntime:
-        runtime = _SpyRuntime(store, sender)
+    def make_runtime(
+        store: Store, sender: _SpySender, *, link_ok: Callable[[], bool]
+    ) -> _SpyRuntime:
+        # Taken as a named parameter instead of **kwargs and passed on to the
+        # stand-in: should cli.serve() ever stop passing `link_ok`, a TypeError
+        # falls here instead of a silently green test.
+        runtime = _SpyRuntime(store, sender, link_ok=link_ok)
         runtimes.append(runtime)
         return runtime
 
@@ -422,7 +477,11 @@ def _install_run_spies(
     monkeypatch.setattr(cli, "UdpSender", make_sender)
     monkeypatch.setattr(cli, "Runtime", make_runtime)
     monkeypatch.setattr(cli, "_build_client", make_client)
-    return senders, runtimes, clients
+    # The real supervisor would wait endlessly in every one of these tests for
+    # a link loss that never comes - hence replaced here as well, and not in a
+    # second layer of stand-ins next to it.
+    monkeypatch.setattr(cli, "supervise", supervisor)
+    return senders, runtimes, clients, supervisor
 
 
 def _assert_store_is_closed(store: Store) -> None:
@@ -431,13 +490,13 @@ def _assert_store_is_closed(store: Store) -> None:
 
 
 def _reset_loxmatter_logger(original_handlers: list[logging.Handler], original_level: int) -> None:
-    """Stellt Handler-Liste und Stufe des Loggers `loxmatter` wieder her.
+    """Restores the handler list and level of the `loxmatter` logger.
 
-    Aus der Fixture unten ausgelagert, damit genau dieses Rueckbau-Verhalten
-    fuer sich allein testbar ist, ohne pytests Fixture-Maschinerie
-    verschachtelt anstossen zu muessen (siehe
+    Factored out of the fixture below so that exactly this teardown
+    behavior is testable on its own, without having to trigger pytest's
+    fixture machinery in a nested way (see
     `test_reset_loxmatter_logger_removes_every_leaked_log_buffer_handler`
-    unten - der Beleg, den die Nachbesserung zu Fix 1 verlangt)."""
+    below - the proof the fix for Fix 1 calls for)."""
     logger = logging.getLogger("loxmatter")
     logger.handlers[:] = original_handlers
     logger.setLevel(original_level)
@@ -445,27 +504,27 @@ def _reset_loxmatter_logger(original_handlers: list[logging.Handler], original_l
 
 @pytest.fixture(autouse=True)
 def _restore_loxmatter_logger() -> Iterator[None]:
-    """Setzt den Logger `loxmatter` nach jedem Test dieser Datei auf seinen
-    vorherigen Zustand zurueck.
+    """Resets the `loxmatter` logger to its previous state after every
+    test in this file.
 
-    Absichtlich HIER, nicht in `tests/conftest.py`: `install_log_buffer()`
-    wird ausschliesslich von `run()` aufgerufen (siehe dessen Docstring, seit
-    Nachbesserung Task 7, Fix 1 — vorher von `_run()`, gleiche Datei, gleiches
-    Argument), und nur diese Datei ruft `run()`/`_run()` direkt auf — kein
-    anderes Testmodul der Suite fasst den Logger `loxmatter` an. Eine globale,
-    prozessweite Fixture wuerde denselben Rueckbau fuer alle ueber 600
-    Tests der uebrigen Suite mitschleppen, die mit Logging nichts zu tun
-    haben; als `autouse`-Fixture DIESER Datei greift sie nur dort, wo der
-    Zustand ueberhaupt entstehen kann.
+    Deliberately HERE, not in `tests/conftest.py`: `install_log_buffer()`
+    is called exclusively by `run()` (see its docstring, since the
+    fix for Task 7, Fix 1 - previously by `_run()`, same file, same
+    argument), and only this file calls `run()`/`_run()` directly - no
+    other test module in the suite touches the `loxmatter` logger. A global,
+    process-wide fixture would drag the same teardown along for all
+    the other 600+ tests in the rest of the suite that have nothing to do
+    with logging; as an `autouse` fixture of THIS file, it only kicks in
+    where the state can arise at all.
 
-    Ohne das: jeder `run()`-Aufruf in dieser Datei haengt ueber
-    `install_log_buffer()` einen neuen `LogBufferHandler` an den
-    prozessweiten Logger `loxmatter` und setzt dessen Stufe auf `INFO` —
-    und beides ueberlebt den einzelnen Test, weil `logging.getLogger(...)`
-    denselben, modulweiten Logger liefert, gleich wie oft er aufgerufen
-    wird. Gemessen (siehe Task-Bericht): nach dieser Datei allein blieben
-    ohne Rueckbau fuenf verwaiste `LogBufferHandler` am Logger haengen, und
-    seine Stufe stand dauerhaft auf `INFO` (20) statt auf `NOTSET` (0)."""
+    Without this: every `run()` call in this file attaches, via
+    `install_log_buffer()`, a new `LogBufferHandler` to the
+    process-wide `loxmatter` logger and sets its level to `INFO` -
+    and both survive the individual test, because `logging.getLogger(...)`
+    returns the same, module-wide logger no matter how often it is
+    called. Measured (see task report): without teardown, this file alone
+    left five orphaned `LogBufferHandler`s hanging off the logger, and
+    its level stayed permanently at `INFO` (20) instead of `NOTSET` (0)."""
     logger = logging.getLogger("loxmatter")
     original_handlers = list(logger.handlers)
     original_level = logger.level
@@ -474,14 +533,14 @@ def _restore_loxmatter_logger() -> Iterator[None]:
 
 
 def test_reset_loxmatter_logger_removes_every_leaked_log_buffer_handler():
-    """Beleg statt Behauptung fuer die autouse-Fixture oben (Nachbesserung
-    Task 5, Fix 1): haengt ZWEI `LogBufferHandler` an den Logger `loxmatter`
-    an - mehr, als ein einzelner `_run()`-Aufruf je anhaengen sollte, aber
-    genau das Bild, das ein vergessenes Aufraeumen ueber mehrere Tests
-    hinweg hinterlaesst - und prueft, dass `_reset_loxmatter_logger` (die
-    von der Fixture nach jedem Test aufgerufene Rueckbau-Logik) danach
-    GENAU KEINEN mehr uebrig laesst und die Stufe auf ihren Ausgangswert
-    zurueckfaellt."""
+    """Proof instead of assertion for the autouse fixture above (fix for
+    Task 5, Fix 1): attaches TWO `LogBufferHandler`s to the `loxmatter`
+    logger - more than a single `_run()` call should ever attach, but
+    exactly the picture a forgotten cleanup leaves behind across
+    several tests - and checks that `_reset_loxmatter_logger` (the
+    teardown logic the fixture calls after every test) leaves
+    EXACTLY NONE behind afterward and the level falls back to its
+    starting value."""
     logger = logging.getLogger("loxmatter")
     original_handlers = list(logger.handlers)
     original_level = logger.level
@@ -491,7 +550,7 @@ def test_reset_loxmatter_logger_removes_every_leaked_log_buffer_handler():
     cli.install_log_buffer()
     assert (
         len([h for h in logger.handlers if isinstance(h, LogBufferHandler)]) == 2
-    )  # der zu bereinigende Ausgangszustand
+    )  # the starting state that needs cleaning up
     assert logger.level == logging.INFO
 
     _reset_loxmatter_logger(original_handlers, original_level)
@@ -502,9 +561,9 @@ def test_reset_loxmatter_logger_removes_every_leaked_log_buffer_handler():
 
 
 async def test_run_stops_everything_after_a_clean_shutdown(monkeypatch, tmp_path):
-    """uvicorn.Server.serve() kehrt nach einem ersten Strg-C geordnet
-    zurück (siehe _run-Docstring) — dieser Test bildet genau das nach."""
-    senders, runtimes, clients = _install_run_spies(monkeypatch)
+    """uvicorn.Server.serve() returns cleanly after a first Ctrl-C
+    (see _run docstring) - this test reproduces exactly that."""
+    senders, runtimes, clients, _supervisor = _install_run_spies(monkeypatch)
     monkeypatch.setattr(cli.uvicorn, "Server", _SpyUvicornServer)
     store = Store(tmp_path / "t.sqlite")
 
@@ -520,10 +579,10 @@ async def test_run_stops_everything_after_a_clean_shutdown(monkeypatch, tmp_path
 
 
 async def test_run_seeds_the_runtime_before_the_first_resend(monkeypatch, tmp_path):
-    """Live-Lauf vom 2026-09-02 (Spec 6.4): ohne ein Saeen aus dem aktuellen
-    Geraetezustand VOR dem ersten `resend_all()` findet dieser Resend einen
-    leeren Cache vor und sendet nichts."""
-    _, runtimes, _ = _install_run_spies(monkeypatch)
+    """Live run from 2026-09-02 (Spec 6.4): without a seed from the current
+    device state BEFORE the first `resend_all()`, that resend finds an
+    empty cache and sends nothing."""
+    _, runtimes, _, _ = _install_run_spies(monkeypatch)
     monkeypatch.setattr(cli.uvicorn, "Server", _SpyUvicornServer)
     store = Store(tmp_path / "t.sqlite")
 
@@ -533,25 +592,74 @@ async def test_run_seeds_the_runtime_before_the_first_resend(monkeypatch, tmp_pa
     assert runtimes[0].call_order == ["seed", "resend"]
 
 
-def test_run_installs_the_log_buffer_before_the_password_warning(monkeypatch, tmp_path):
-    """Nachbesserung Task 7, Fix 1: `install_log_buffer()` hing bis hierher
-    in `_run()`, unmittelbar vor `uvicorn.Config(...)` - also NACH
-    `client.connect()`, `subscribe()`, `runtime.start()`,
-    `seed_from_snapshot()` und `resend_all()`, und vor allem NACH der
-    Passwortwarnung aus `run()` (`_warn_if_no_password`), die synchron
-    laeuft, BEVOR `_run()` ueberhaupt beginnt. Jede dieser Zeilen war damit
-    weg, bevor der Ring existierte - allen voran der Sicherheitshinweis zum
-    fehlenden Passwort, der genau fuer die Person gedacht ist, die vor der
-    Ansicht statt einem Terminal sitzt (siehe cli.py, Docstring von `run()`).
+async def test_run_starts_the_supervisor_with_the_same_client_store_and_runtime(
+    monkeypatch, tmp_path
+):
+    """The one line the outage of 8 September 2026 is about:
+    `asyncio.ensure_future(supervise(client, store, runtime))` in `_run()`.
 
-    Dieser Test haelt eine frische, passwortlose Datenbank (Store-Vorgabe)
-    und laesst `connect()` bewusst scheitern (CannotConnect, wie
-    `test_run_prints_which_store_was_used` oben), damit er ohne Netz und
-    ohne laufenden HTTP-Server durchlaeuft - die Passwortwarnung passiert
-    lange vor diesem Fehlschlag. Der Beleg: NACH dem `run()`-Aufruf haengt
-    genau EIN `LogBufferHandler` am Logger `loxmatter`, und dessen Ring
-    enthaelt die Warnzeile - obwohl sie vor JEDEM der oben genannten
-    Schritte entstanden ist."""
+    Without it nobody notices that the websocket to matter-server has died,
+    and nothing rebuilds it - exactly the state of that evening. Until this
+    test the line was unchecked: whoever deleted it got a green suite.
+
+    What is checked is not only THAT, but WITH WHAT: the supervisor must get
+    the same three objects the rest of the service works with. Were it given
+    a second client, that one would indeed reconnect, but the runtime and the
+    HTTP layer would still hang on the dead one."""
+    _, runtimes, clients, supervisor = _install_run_spies(monkeypatch)
+    monkeypatch.setattr(cli.uvicorn, "Server", _HangingUvicornServer)
+    store = Store(tmp_path / "t.sqlite")
+
+    task = asyncio.create_task(cli._run(store, "ws://test/ws", "127.0.0.1", 7000, 8080))
+    await asyncio.sleep(0.05)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert supervisor.calls == [(clients[0], store, runtimes[0])]
+
+
+async def test_run_cancels_the_supervisor_after_a_clean_shutdown(monkeypatch, tmp_path):
+    """The supervisor waits endlessly - if it keeps running after the
+    shutdown, it holds `client` and `store` alive that `_run()` has just
+    closed, and the next rebuild attempt would run against a closed
+    database.
+
+    `_YieldingUvicornServer` instead of `_SpyUvicornServer`: see there for
+    why a test without that one yield would see "cancelled" even if the
+    supervisor had never started up. That is exactly why the first assertion
+    below comes first."""
+    _, _, _, supervisor = _install_run_spies(monkeypatch)
+    monkeypatch.setattr(cli.uvicorn, "Server", _YieldingUvicornServer)
+    store = Store(tmp_path / "t.sqlite")
+
+    await cli._run(store, "ws://test/ws", "127.0.0.1", 7000, 8080)
+
+    assert len(supervisor.calls) == 1  # it really did start up
+    assert supervisor.task is not None
+    assert supervisor.task.cancelled() is True
+
+
+def test_run_installs_the_log_buffer_before_the_password_warning(monkeypatch, tmp_path):
+    """Fix for Task 7, Fix 1: `install_log_buffer()` used to hang, until now,
+    in `_run()`, right before `uvicorn.Config(...)` - that is, AFTER
+    `client.connect()`, `subscribe()`, `runtime.start()`,
+    `seed_from_snapshot()` and `resend_all()`, and above all AFTER the
+    password warning from `run()` (`_warn_if_no_password`), which runs
+    synchronously BEFORE `_run()` even begins. Every one of these lines was
+    therefore gone before the ring even existed - first and foremost the
+    security notice about the missing password, which is meant precisely for
+    the person sitting in front of the display instead of a terminal
+    (see cli.py, docstring of `run()`).
+
+    This test holds a fresh, passwordless database (Store default)
+    and deliberately lets `connect()` fail (CannotConnect, like
+    `test_run_prints_which_store_was_used` above), so it runs through
+    without a network and without a running HTTP server - the password
+    warning happens long before this failure. The proof: AFTER the
+    `run()` call, exactly ONE `LogBufferHandler` is attached to the
+    `loxmatter` logger, and its ring contains the warning line - even
+    though it arose before EVERY one of the steps named above."""
     _install_run_spies(monkeypatch, connect_error=CannotConnect("boom"))
     monkeypatch.setattr(cli.uvicorn, "Server", _SpyUvicornServer)
     store_path = tmp_path / "run.sqlite"
@@ -562,7 +670,7 @@ def test_run_installs_the_log_buffer_before_the_password_warning(monkeypatch, tm
 
     assert (
         result.exit_code != 0
-    )  # CannotConnect -> _fail() -> Exit(1); nicht Gegenstand dieses Tests
+    )  # CannotConnect -> _fail() -> Exit(1); not the subject of this test
     log_buffer_handlers = [
         h for h in logging.getLogger("loxmatter").handlers if isinstance(h, LogBufferHandler)
     ]
@@ -574,8 +682,8 @@ def test_run_installs_the_log_buffer_before_the_password_warning(monkeypatch, tm
 
 
 def test_run_installs_the_log_buffer_before_the_password_warning_in_german(monkeypatch, tmp_path):
-    """Deutsches Gegenstueck zu `test_run_installs_the_log_buffer_before_the_
-    password_warning` oben - siehe dort fuer die ausfuehrliche Begruendung."""
+    """German counterpart to `test_run_installs_the_log_buffer_before_the_
+    password_warning` above - see there for the detailed reasoning."""
     i18n.set_language("de")
     _install_run_spies(monkeypatch, connect_error=CannotConnect("boom"))
     monkeypatch.setattr(cli.uvicorn, "Server", _SpyUvicornServer)
@@ -595,15 +703,15 @@ def test_run_installs_the_log_buffer_before_the_password_warning_in_german(monke
 
 
 def test_run_installs_the_log_buffer_exactly_once_and_passes_it_to__run(monkeypatch, tmp_path):
-    """`run()` ruft `install_log_buffer()` seit der Nachbesserung (Task 7,
-    Fix 1) an genau einer Stelle auf - als seine allererste Anweisung. Ein
-    Spion um `install_log_buffer` UND ein Spion an Stelle von `_run` halten
-    beides zugleich fest: den Aufrufzaehler UND dass GENAU der von
-    `install_log_buffer()` gelieferte Handler bei `_run()` ankommt, nicht
-    bloss irgendein `LogBufferHandler` (derselbe Fehler waere sonst
-    unsichtbar geblieben, siehe `test_run_installs_the_log_buffer_before_
-    the_password_warning` oben fuer die ausfuehrlichere Begruendung, warum
-    die Zahl der Aufrufstellen zaehlt, nicht ihre Position)."""
+    """`run()` has called `install_log_buffer()` at exactly one place -
+    as its very first instruction - since the fix for Task 7, Fix 1. A
+    spy around `install_log_buffer` AND a spy in place of `_run` capture
+    both at once: the call counter AND that EXACTLY the handler
+    delivered by `install_log_buffer()` arrives at `_run()`, not
+    just any `LogBufferHandler` (the same bug would otherwise have
+    stayed invisible, see `test_run_installs_the_log_buffer_before_
+    the_password_warning` above for the more detailed reasoning why
+    the number of call sites counts, not their position)."""
     installed: list[LogBufferHandler] = []
     original_install = cli.install_log_buffer
 
@@ -642,12 +750,12 @@ def test_run_installs_the_log_buffer_exactly_once_and_passes_it_to__run(monkeypa
 
 
 async def test__run_forwards_the_given_log_handler_to_build_app(monkeypatch, tmp_path):
-    """`_run()` selbst installiert seit der Nachbesserung (Task 7, Fix 1)
-    keinen `LogBufferHandler` mehr - das uebernimmt ausschliesslich `run()`,
-    VOR dem Aufruf (siehe dessen Docstring). `_run()`s einzige verbleibende
-    Verantwortung in dieser Sache: den erhaltenen Handler unveraendert an
-    `build_app()` durchreichen, damit die Route `/api/diagnostics/live`
-    ihren Log-Zweig bekommt."""
+    """`_run()` itself no longer installs a `LogBufferHandler` since the
+    fix for Task 7, Fix 1 - that is now handled exclusively by `run()`,
+    BEFORE the call (see its docstring). `_run()`'s only remaining
+    responsibility in this matter: pass the received handler through
+    unchanged to `build_app()`, so the `/api/diagnostics/live` route
+    gets its log branch."""
     _install_run_spies(monkeypatch)
     monkeypatch.setattr(cli.uvicorn, "Server", _SpyUvicornServer)
     captured: dict[str, Any] = {}
@@ -667,9 +775,9 @@ async def test__run_forwards_the_given_log_handler_to_build_app(monkeypatch, tmp
 
 
 async def test_run_cleans_up_when_matter_server_is_unreachable(monkeypatch, tmp_path):
-    """Scheitert schon connect(), dürfen weder Runtime noch Sender noch die
-    Datenbank offen bleiben — auch wenn runtime.start() nie lief."""
-    senders, runtimes, _clients = _install_run_spies(
+    """If connect() already fails, neither the runtime nor the sender nor
+    the database may remain open - even if runtime.start() never ran."""
+    senders, runtimes, _clients, _supervisor = _install_run_spies(
         monkeypatch, connect_error=CannotConnect("boom")
     )
     monkeypatch.setattr(cli.uvicorn, "Server", _SpyUvicornServer)
@@ -679,19 +787,19 @@ async def test_run_cleans_up_when_matter_server_is_unreachable(monkeypatch, tmp_
         await cli._run(store, "ws://test/ws", "127.0.0.1", 7000, 8080)
 
     assert runtimes[0].started is False
-    assert runtimes[0].stop_calls == 1  # sicher aufrufbar, auch ungestartet
+    assert runtimes[0].stop_calls == 1  # safe to call, even when never started
     assert senders[0].close_calls == 1
     _assert_store_is_closed(store)
 
 
 async def test_run_cleans_up_when_serve_raises(monkeypatch, tmp_path):
-    """Ein Fehler beim Start des HTTP-Servers (z. B. Port belegt) darf
-    Laufzeit, Sender, Client und Datenbank nicht offen lassen."""
-    senders, runtimes, clients = _install_run_spies(monkeypatch)
+    """An error starting the HTTP server (e.g. port in use) must not
+    leave the runtime, sender, client, or database open."""
+    senders, runtimes, clients, _supervisor = _install_run_spies(monkeypatch)
     monkeypatch.setattr(cli.uvicorn, "Server", _FailingUvicornServer)
     store = Store(tmp_path / "t.sqlite")
 
-    with pytest.raises(OSError, match="Adresse"):
+    with pytest.raises(OSError, match="address"):
         await cli._run(store, "ws://test/ws", "127.0.0.1", 7000, 8080)
 
     assert runtimes[0].stop_calls == 1
@@ -702,11 +810,11 @@ async def test_run_cleans_up_when_serve_raises(monkeypatch, tmp_path):
 
 
 async def test_run_cleans_up_on_cancellation(monkeypatch, tmp_path):
-    """Simuliert Strg-C über eine echte Task-Cancellation: serve() hängt,
-    bis der _run-Task abgebrochen wird — asyncio.run() installiert seit
-    Python 3.11 selbst einen SIGINT-Handler, der genau das tut (siehe
-    _run-Docstring)."""
-    senders, runtimes, clients = _install_run_spies(monkeypatch)
+    """Simulates Ctrl-C via a real task cancellation: serve() hangs
+    until the _run task is cancelled - asyncio.run() has itself installed
+    a SIGINT handler since Python 3.11 that does exactly that (see
+    the _run docstring)."""
+    senders, runtimes, clients, _supervisor = _install_run_spies(monkeypatch)
     monkeypatch.setattr(cli.uvicorn, "Server", _HangingUvicornServer)
     store = Store(tmp_path / "t.sqlite")
 
@@ -724,17 +832,19 @@ async def test_run_cleans_up_on_cancellation(monkeypatch, tmp_path):
 
 
 async def test_run_continues_cleanup_when_one_step_fails(monkeypatch, tmp_path):
-    """Scheitert ein Aufräumschritt (hier: runtime.stop()), müssen die
-    folgenden trotzdem laufen — jeder Schritt steht in _run() in seinem
-    eigenen try/except, genau dafür."""
-    senders, runtimes, clients = _install_run_spies(monkeypatch)
+    """If a cleanup step fails (here: runtime.stop()), the following
+    ones must still run - every step in _run() sits in its own
+    try/except for exactly that reason."""
+    senders, runtimes, clients, _supervisor = _install_run_spies(monkeypatch)
 
-    def make_broken_runtime(store: Store, sender: _SpySender) -> _SpyRuntime:
-        runtime = _SpyRuntime(store, sender)
+    def make_broken_runtime(
+        store: Store, sender: _SpySender, *, link_ok: Callable[[], bool]
+    ) -> _SpyRuntime:
+        runtime = _SpyRuntime(store, sender, link_ok=link_ok)
 
         async def broken_stop() -> None:
             runtime.stop_calls += 1
-            raise RuntimeError("Sendefehler beim letzten Full-Resend")
+            raise RuntimeError("Send error during the last full resend")
 
         runtime.stop = broken_stop  # type: ignore[method-assign]
         runtimes.append(runtime)
@@ -754,23 +864,25 @@ async def test_run_continues_cleanup_when_one_step_fails(monkeypatch, tmp_path):
 
 
 async def test_run_cleans_up_when_cancelled_during_startup(monkeypatch, tmp_path):
-    """Bricht waehrend `resend_all()` ab - also VOR `serve()`, im Unterschied zu
-    `test_run_cleans_up_on_cancellation` oben, das immer erst `serve()` erreicht
-    (dessen 0.05s-Schlaf reicht laengst, bis connect()/subscribe()/start()/
-    resend_all() der Attrappen durchgelaufen sind). Von den vier Schritten vor
-    `serve()` ist `resend_all()` gezielt gewaehlt: es ist der einzige mit einem
-    eigenen inneren `await` (hier bewusst auf ein nie gesetztes Event), an dem
-    eine Cancellation ueberhaupt landen kann - die drei anderen Fake-Aufrufe
-    kehren synchron zurueck und boeten keinen Interrupt-Punkt."""
-    senders, runtimes, clients = _install_run_spies(monkeypatch)
+    """Aborts while inside `resend_all()` - that is, BEFORE `serve()`, unlike
+    `test_run_cleans_up_on_cancellation` above, which always reaches `serve()`
+    first (its 0.05s sleep is more than enough for connect()/subscribe()/start()/
+    resend_all() of the stand-ins to run through). Of the four steps before
+    `serve()`, `resend_all()` is deliberately chosen: it is the only one with
+    its own inner `await` (here deliberately on an event that is never set)
+    where a cancellation can land at all - the three other fake calls
+    return synchronously and would offer no interrupt point."""
+    senders, runtimes, clients, _supervisor = _install_run_spies(monkeypatch)
 
-    def make_slow_runtime(store: Store, sender: _SpySender) -> _SpyRuntime:
-        runtime = _SpyRuntime(store, sender)
+    def make_slow_runtime(
+        store: Store, sender: _SpySender, *, link_ok: Callable[[], bool]
+    ) -> _SpyRuntime:
+        runtime = _SpyRuntime(store, sender, link_ok=link_ok)
 
         async def resend_all_blocks_until_cancelled() -> int:
             runtime.resend_calls += 1
             await asyncio.Event().wait()  # blockiert, bis abgebrochen
-            return 0  # pragma: no cover - wird nie erreicht
+            return 0  # pragma: no cover - never reached
 
         runtime.resend_all = resend_all_blocks_until_cancelled  # type: ignore[method-assign]
         runtimes.append(runtime)
@@ -786,8 +898,8 @@ async def test_run_cleans_up_when_cancelled_during_startup(monkeypatch, tmp_path
     with pytest.raises(asyncio.CancelledError):
         await task
 
-    # started() und der eine resend_all()-Aufruf sind gelaufen - serve() nie:
-    # sonst wuerde dies nur test_run_cleans_up_on_cancellation wiederholen.
+    # started() and the one resend_all() call ran - serve() never did:
+    # otherwise this would only repeat test_run_cleans_up_on_cancellation.
     assert runtimes[0].started is True
     assert runtimes[0].resend_calls == 1
     assert runtimes[0].stop_calls == 1
@@ -798,13 +910,13 @@ async def test_run_cleans_up_when_cancelled_during_startup(monkeypatch, tmp_path
 
 
 def test_run_prints_which_store_was_used(monkeypatch, tmp_path):
-    """Review-Fix M10, 2026-09-02: `export` gab den verwendeten Store-Pfad
-    schon aus, `run` bislang nicht — die wahrscheinlichste Fehlkonfiguration
-    (exportiert mit `--store-path`, gestartet ohne, oder umgekehrt) zeigte
-    sich sonst erst als 404 in einem Log, das niemand liest. Der Test laesst
-    `connect()` bewusst scheitern (CannotConnect), damit er ohne Netz und
-    ohne einen laufenden HTTP-Server durchläuft — die Ausgabe passiert schon
-    vor diesem Fehlschlag."""
+    """Review-Fix M10, 2026-09-02: `export` already printed the store path
+    used, `run` did not so far - the most likely misconfiguration
+    (exported with `--store-path`, started without, or vice versa) would
+    otherwise only show up as a 404 in a log nobody reads. The test
+    deliberately lets `connect()` fail (CannotConnect), so it runs through
+    without a network and without a running HTTP server - the output
+    happens well before this failure."""
     _install_run_spies(monkeypatch, connect_error=CannotConnect("boom"))
     monkeypatch.setattr(cli.uvicorn, "Server", _SpyUvicornServer)
     store_path = tmp_path / "run.sqlite"
@@ -820,10 +932,10 @@ def test_run_prints_which_store_was_used(monkeypatch, tmp_path):
 
 
 def test_fake_miniserver_rejects_a_missing_template_before_listening(tmp_path):
-    """Ein falscher --template-Pfad soll sofort scheitern, statt erst nach dem
-    Warten auf Strg-C (Review-Fix Minor #5) - `CliRunner.invoke` haengt hier
-    deshalb nicht: die Pruefung sitzt vor `asyncio.run(_fake_miniserver(...))`."""
-    missing = tmp_path / "nicht_da.xml"
+    """A wrong --template path is meant to fail immediately, instead of only
+    after waiting for Ctrl-C (Review-Fix Minor #5) - `CliRunner.invoke`
+    therefore does not hang here: the check sits before `asyncio.run(_fake_miniserver(...))`."""
+    missing = tmp_path / "missing.xml"
 
     result = CliRunner().invoke(app, ["fake-miniserver", "--template", str(missing)])
 
@@ -833,10 +945,10 @@ def test_fake_miniserver_rejects_a_missing_template_before_listening(tmp_path):
 
 
 def test_fake_miniserver_rejects_a_missing_template_before_listening_in_german(tmp_path):
-    """Deutsches Gegenstueck zu
-    `test_fake_miniserver_rejects_a_missing_template_before_listening` oben."""
+    """German counterpart to
+    `test_fake_miniserver_rejects_a_missing_template_before_listening` above."""
     i18n.set_language("de")
-    missing = tmp_path / "nicht_da.xml"
+    missing = tmp_path / "missing.xml"
 
     result = CliRunner().invoke(app, ["fake-miniserver", "--template", str(missing)])
 
@@ -846,10 +958,10 @@ def test_fake_miniserver_rejects_a_missing_template_before_listening_in_german(t
 
 
 def test_silent_keys_report_distinguishes_nothing_to_check_from_all_seen():
-    """Review-Fix Minor #4: eine Vorlage ohne Check-Attribute (z. B. eine
-    VO_-Datei) hat nichts zu pruefen - das darf nicht wie "alles gesehen"
-    aussehen, sonst liest es sich wie eine bestandene statt einer
-    ausgebliebenen Pruefung."""
+    """Review-Fix Minor #4: a template without check attributes (e.g. a
+    VO_ file) has nothing to check - that must not look like "everything
+    seen", otherwise it reads like a passed check instead of a
+    check that never happened."""
     nothing_to_check = cli._silent_keys_report("VO_x.xml", announced=set(), silent=[])
     assert "nothing to check" in nothing_to_check  # cli.fake_miniserver.report_no_check_signals
     assert "All" not in nothing_to_check
@@ -865,8 +977,8 @@ def test_silent_keys_report_distinguishes_nothing_to_check_from_all_seen():
 
 
 def test_silent_keys_report_distinguishes_nothing_to_check_from_all_seen_in_german():
-    """Deutsches Gegenstueck zu
-    `test_silent_keys_report_distinguishes_nothing_to_check_from_all_seen` oben."""
+    """German counterpart to
+    `test_silent_keys_report_distinguishes_nothing_to_check_from_all_seen` above."""
     i18n.set_language("de")
     nothing_to_check = cli._silent_keys_report("VO_x.xml", announced=set(), silent=[])
     assert "nichts zu prüfen" in nothing_to_check
@@ -881,16 +993,16 @@ def test_silent_keys_report_distinguishes_nothing_to_check_from_all_seen_in_germ
 
 
 def test_set_password_writes_a_hash_and_clears_sessions(tmp_path):
-    """Der Notausgang aus Spec 9: ein headless aufgesetzter Dienst mit
-    vergessenem Passwort waere sonst endgueltig verloren."""
+    """The emergency exit from Spec 9: a headlessly set up service with
+    a forgotten password would otherwise be permanently lost."""
     path = tmp_path / "t.sqlite"
     store = Store(path)
-    store.auth.set_password_hash(hash_password("altes-passwort"))
-    store.auth.create_session("alte-sitzung", created_at=1, expires_at=2**31)
+    store.auth.set_password_hash(hash_password("old-password"))
+    store.auth.create_session("old-session", created_at=1, expires_at=2**31)
     store.close()
 
     result = CliRunner().invoke(
-        app, ["set-password", "--store-path", str(path)], input="neues-passwort\nneues-passwort\n"
+        app, ["set-password", "--store-path", str(path)], input="new-password\nnew-password\n"
     )
     assert result.exit_code == 0
 
@@ -898,21 +1010,21 @@ def test_set_password_writes_a_hash_and_clears_sessions(tmp_path):
     try:
         stored = store.auth.password_hash()
         assert stored is not None
-        assert verify_password("neues-passwort", stored) is True
-        # Wer das Passwort zuruecksetzt, will nicht, dass eine alte Sitzung
-        # weiterlaeuft.
-        assert store.auth.session_expires_at("alte-sitzung") is None
+        assert verify_password("new-password", stored) is True
+        # Whoever resets the password doesn't want an old session to
+        # keep running.
+        assert store.auth.session_expires_at("old-session") is None
     finally:
         store.close()
-    # Das Passwort selbst darf in keiner Ausgabe stehen.
-    assert "neues-passwort" not in result.output
+    # The password itself must not appear in any output.
+    assert "new-password" not in result.output
 
 
 def test_set_password_rejects_a_short_password(tmp_path):
     path = tmp_path / "t.sqlite"
     Store(path).close()
     result = CliRunner().invoke(
-        app, ["set-password", "--store-path", str(path)], input="kurz\nkurz\n"
+        app, ["set-password", "--store-path", str(path)], input="short\nshort\n"
     )
     assert result.exit_code != 0
     store = Store(path)
@@ -923,17 +1035,17 @@ def test_set_password_rejects_a_short_password(tmp_path):
 
 
 def test_set_password_fails_loudly_instead_of_creating_a_new_database(tmp_path):
-    """Notausgang-Fund (2026-09-03): `Store(...)` legt eine fehlende Datei
-    kommentarlos neu an. Auf der Referenz-Installation liegt die eigentliche
-    Datenbank aber in einem Docker-Volume, das auf dem Host unter diesem
-    Pfad gar nicht sichtbar ist — ohne diese Pruefung traefe der Befehl dort
-    eine leere Fremddatenbank, schriebe den Hash hinein und meldete Erfolg,
-    waehrend die Bruecke unveraendert gesperrt bliebe. `set-password` setzt
-    ein Passwort ZURUECK; eine neue Datenbank anzulegen ist in keinem seiner
-    Anwendungsfaelle gewollt."""
-    path = tmp_path / "kein-solches-volume" / "loxmatter.sqlite"
+    """Emergency-exit finding (2026-09-03): `Store(...)` silently creates a
+    missing file anew. On the reference installation, though, the actual
+    database sits in a Docker volume that isn't visible at all under this
+    path on the host - without this check, the command would there hit
+    an empty, unrelated database, write the hash into it, and report success,
+    while the bridge stayed locked, unchanged. `set-password` RESETS
+    a password; creating a new database is not intended in any of its
+    use cases."""
+    path = tmp_path / "no-such-volume" / "loxmatter.sqlite"
     result = CliRunner().invoke(
-        app, ["set-password", "--store-path", str(path)], input="neues-passwort\nneues-passwort\n"
+        app, ["set-password", "--store-path", str(path)], input="new-password\nnew-password\n"
     )
     assert result.exit_code != 0
     assert not path.exists()

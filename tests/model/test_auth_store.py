@@ -1,4 +1,4 @@
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -14,11 +14,11 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Tests fuer `AuthStore` - den Teil des Stores, der den Zugang verwaltet.
+"""Tests for `AuthStore` - the part of the store that manages access.
 
-Die Kernfrage: haelt `setting` genau einen Passwort-Hash, und laesst sich
-`session` so fuehren, dass eine abgelaufene Sitzung nicht mehr gilt und eine
-geloeschte sofort weg ist?
+The core question: does `setting` hold exactly one password hash, and can
+`session` be managed so that an expired session no longer counts and a
+deleted one is gone immediately?
 """
 
 from __future__ import annotations
@@ -88,13 +88,12 @@ def test_purge_removes_only_expired_sessions(tmp_path):
 
 
 def test_reset_password_replaces_the_hash_and_clears_sessions(tmp_path):
-    """Fund G: `loxmatter set-password` darf den neuen Hash und das Abmelden
-    aller Sitzungen nicht als zwei getrennt committende Schritte absetzen -
-    scheitert der zweite, gilt das neue Passwort, waehrend eine alte Sitzung
-    weiterlaeuft. `reset_password` fasst beides in einer Transaktion
-    zusammen; dieser Test prueft nur das sichtbare Ergebnis, nicht die
-    Transaktionsgrenze selbst (die ist ohne einen fehlschlagenden zweiten
-    Schritt nicht beobachtbar)."""
+    """Finding G: `loxmatter set-password` must not issue the new hash and the
+    sign-out of all sessions as two separately committing steps - if the
+    second one fails, the new password takes effect while an old session
+    keeps working. `reset_password` combines both in one transaction; this
+    test only checks the visible outcome, not the transaction boundary
+    itself (which is not observable without a failing second step)."""
     store = Store(tmp_path / "t.sqlite")
     try:
         store.auth.set_password_hash_if_unset("alt")

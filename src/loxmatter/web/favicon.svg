@@ -1,13 +1,13 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="loxmatter">
   <!--
-    loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
-    Copyright (C) 2026 Lucien Kerl - GNU General Public License v3 oder
-    spaeter, siehe LICENSE.
+    loxmatter - connects Matter devices to a Loxone Miniserver.
+    Copyright (C) 2026 Lucien Kerl - GNU General Public License v3 or
+    later, see LICENSE.
 
-    Dasselbe Zeichen wie icon.svg, aber fuer die Groesse eines Browser-Tabs
-    nachgezogen: kuerzere Speichen, dickere Striche, groessere Punkte. Ohne
-    diese Anpassung fliessen die sechs Aussenpunkte bei 16 px zu einem Fleck
-    zusammen. Wer eine Kante verschiebt, muss beide Dateien anfassen.
+    The same mark as icon.svg, but redrawn for browser-tab size: shorter
+    spokes, thicker strokes, larger points. Without this adjustment the six
+    outer points merge into a single blob at 16 px. Anyone moving an edge
+    must touch both files.
   -->
   <rect width="512" height="512" rx="112" fill="#a15a2c"/>
   <g stroke="#f6ece3" stroke-width="34" stroke-linecap="round">

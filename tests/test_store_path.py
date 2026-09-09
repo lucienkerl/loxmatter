@@ -1,4 +1,4 @@
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -14,13 +14,13 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Tests für die Herkunft des Store-Pfads (Task: Fix Important #1).
+"""Tests for the origin of the store path (Task: Fix Important #1).
 
-`--store-path` schlägt `LOXMATTER_STORE`, das wiederum den Standard
-`~/.loxmatter/loxmatter.sqlite` schlägt (`loxmatter.cli._resolve_store_path`).
-Das autouse-Fixture aus `conftest.py` sorgt schon dafür, dass kein Test die
-echte Home-Datenbank berührt; hier wird die Rangfolge zusätzlich gezielt mit
-eigenem `monkeypatch` erzwungen, um jeden der drei Fälle einzeln zu belegen.
+`--store-path` beats `LOXMATTER_STORE`, which in turn beats the default
+`~/.loxmatter/loxmatter.sqlite` (`loxmatter.cli._resolve_store_path`).
+The autouse fixture from `conftest.py` already ensures no test touches
+the real home database; here the precedence is additionally forced with
+a dedicated `monkeypatch` to prove each of the three cases individually.
 """
 
 import json
@@ -58,7 +58,7 @@ def _run_export(store_path: Path, out_dir: Path) -> None:
     assert result.exit_code == 0, result.output
 
 
-# -- Rangfolge von _resolve_store_path -----------------------------------
+# -- Precedence of _resolve_store_path -----------------------------------
 
 
 def test_explicit_store_path_wins_over_environment_variable(tmp_path, monkeypatch):
@@ -90,7 +90,7 @@ def test_default_is_per_user_and_not_cwd_relative(tmp_path, monkeypatch):
     assert resolved.is_absolute()
 
 
-# -- Schlüsselstabilität über die CLI --------------------------------------
+# -- Key stability across the CLI --------------------------------------
 
 
 def test_same_store_reused_across_exports_keeps_keys_stable(tmp_path):
@@ -107,25 +107,25 @@ def test_same_store_reused_across_exports_keeps_keys_stable(tmp_path):
     finally:
         store.close()
 
-    # Kein zweites Gerät wurde angelegt, und die Schlüssel sind stabil —
-    # das ist der eigentliche Schließungspunkt der Phase (Spec 6.2).
+    # No second device was created, and the keys are stable - that is
+    # the actual closing point of the phase (Spec 6.2).
     text_1 = next((tmp_path / "out-1").glob("VIU_*.xml")).read_text(encoding="utf-8-sig")
     text_2 = next((tmp_path / "out-2").glob("VIU_*.xml")).read_text(encoding="utf-8-sig")
     assert text_1 == text_2
-    assert keys  # es wurden ueberhaupt Signale registriert
+    assert keys  # signals were registered at all
 
 
 def test_different_store_yields_different_device_id(tmp_path):
-    """Zwei getrennte Datenbanken kennen sich nicht: dasselbe Geraet bekommt
-    in jeder für sich eine eigene device_id vergeben — genau das Symptom,
-    das eine CWD-abhaengige Store-Wahl versehentlich ausloesen wuerde
-    (siehe Modul-Docstring)."""
+    """Two separate databases don't know about each other: the same device
+    gets its own device_id assigned in each - exactly the symptom
+    a CWD-dependent store choice would accidentally trigger
+    (see module docstring)."""
     store_a = tmp_path / "a.sqlite"
     store_b = tmp_path / "b.sqlite"
 
-    # store_b bekommt zuerst ein anderes Geraet, damit sein Zaehler nicht
-    # zufaellig wieder bei 1 startet und das Ergebnis unabhaengig vom
-    # AUTOINCREMENT-Startwert beweiskraeftig bleibt.
+    # store_b gets a different device first, so its counter doesn't
+    # happen to start at 1 again and the result stays conclusive
+    # independent of the AUTOINCREMENT starting value.
     other_raw = json.loads(
         (FIXTURE.parent / "ikea_bilresa_button.json").read_text(encoding="utf-8")
     )

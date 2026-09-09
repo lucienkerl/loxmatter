@@ -1,4 +1,4 @@
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -22,11 +22,11 @@ def text(raw: bytes) -> str:
 
 
 def test_input_template_carries_the_heartbeat_as_an_analog_value():
-    """Analog, nicht digital (2026-09-03, am Miniserver geklaert): der
-    Watchdog lebt davon, dass der Wert zwischen 1 und 0 WECHSELT. Ein
-    digitaler UDP-Eingang wertet den Wert nicht aus - er saehe nur, dass ein
-    Muster passt, und koennte den Wechsel gar nicht bemerken. Genau das soll
-    er aber: bleibt der Wert stehen, ist die Bruecke tot."""
+    """Analog, not digital (2026-09-03, clarified on the Miniserver): the
+    watchdog relies on the value ALTERNATING between 1 and 0. A digital UDP
+    input does not evaluate the value - it would only see that a pattern
+    matches, and could not notice the change at all. But that is exactly
+    what it must: if the value stops changing, the bridge is dead."""
     viu, _ = render_system_templates("192.168.1.50", 7000, 8080)
     assert 'Check="bridge_alive:\\v"' in text(viu)
     assert 'Analog="true"' in text(viu)
@@ -49,17 +49,17 @@ def test_both_are_utf8_with_bom_and_crlf():
 
 
 def test_system_templates_carry_no_device_prefix():
-    """Sie gehoeren zu keinem Geraet - ein d<id>_ waere falsch."""
+    """They belong to no device - a d<id>_ prefix would be wrong."""
     viu, vo = render_system_templates("192.168.1.50", 7000, 8080)
     assert "d1_" not in text(viu)
     assert "d1_" not in text(vo)
 
 
 def test_output_address_uses_the_given_listen_port():
-    """Review-Fix I3, 2026-09-02: vorher war der HTTP-Port hier fest auf 8080
-    verdrahtet, unabhaengig davon, mit welchem `--listen` `loxmatter run`
-    tatsaechlich startet - ein abweichender Port liess `/resync` ohne
-    jede Fehlermeldung ins Leere laufen."""
+    """Review-Fix I3, 2026-09-02: previously the HTTP port here was hardwired
+    to 8080, regardless of which `--listen` `loxmatter run` actually starts
+    with - a differing port let `/resync` run into the void without any
+    error message."""
     _, vo = render_system_templates("192.168.1.50", 7000, 9090)
     assert 'Address="http://192.168.1.50:9090"' in text(vo)
     assert "8080" not in text(vo)

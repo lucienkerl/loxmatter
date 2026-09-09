@@ -1,4 +1,4 @@
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -61,14 +61,14 @@ def test_unknown_key_raises_with_a_clear_message(store):
     registered(store, "ikea_grillplats_plug.json")
     with pytest.raises(KeyError, match="unknown command key") as excinfo:
         store.resolve_command("d1_1_gibtsnicht")
-    # Review-Fix Minor: str(KeyError(...)) haengt sonst repr()-Anfuehrungszeichen
-    # um die ganze Nachricht — das wuerde Task 6s HTTP-Body verunstalten.
+    # Review-Fix Minor: str(KeyError(...)) would otherwise wrap repr() quotes
+    # around the whole message — that would disfigure task 6's HTTP body.
     assert str(excinfo.value) == "unknown command key 'd1_1_gibtsnicht'"
 
 
 def test_unknown_key_raises_with_a_german_message(store):
-    """Deutsches Gegenstueck zu `test_unknown_key_raises_with_a_clear_message`
-    oben."""
+    """German counterpart to `test_unknown_key_raises_with_a_clear_message`
+    above."""
     i18n.set_language("de")
     registered(store, "ikea_grillplats_plug.json")
     with pytest.raises(KeyError, match="unbekannter Kommando-Schluessel") as excinfo:
@@ -102,17 +102,16 @@ def test_node_id_is_stored_so_the_runtime_can_address_the_device(store):
 
 
 def test_command_key_collision_raises_instead_of_dropping_silently(store, monkeypatch):
-    """Review-Fix Important #1: zwei Kommandos verschiedener Cluster auf
-    demselben Endpoint koennen denselben Slug bekommen — ein zukuenftiger
-    Eintrag in `clusters.yaml` fuer einen zweiten Cluster auf einem Endpoint,
-    der sich schon einen Slug mit `onoff`/`level` teilt, ist eine ganz
-    gewoehnliche Matter-Anordnung. `command_slug` wird hier gezielt auf einen
-    festen Wert gezwungen, um genau das nachzustellen: Cluster 3 (Identify)
-    bekommt auf Endpoint 1 denselben Slug "on" wie Cluster 6s Kommando 1.
-    Das darf `register_commands` nicht stillschweigend mit `INSERT OR
-    IGNORE` loesen (die Gefahr aus dem Modul-Docstring von `register_signals`)
-    — es muss laut scheitern, und das Geraet darf danach keine Kommandos aus
-    diesem gescheiterten Aufruf enthalten."""
+    """Review-Fix Important #1: two commands of different clusters on the
+    same endpoint can get the same slug — a future entry in `clusters.yaml`
+    for a second cluster on an endpoint that already shares a slug with
+    `onoff`/`level` is a perfectly ordinary Matter arrangement.
+    `command_slug` is deliberately forced to a fixed value here to reproduce
+    exactly that: cluster 3 (Identify) gets the same slug "on" on endpoint 1
+    as cluster 6's command 1. `register_commands` must not silently resolve
+    that with `INSERT OR IGNORE` (the danger from the module docstring of
+    `register_signals`) — it must fail loudly, and the device must not
+    contain any commands from this failed call afterward."""
     real_command_slug = table.command_slug
 
     def fake_command_slug(cluster_id: int, command_id: int) -> str | None:
@@ -130,18 +129,18 @@ def test_command_key_collision_raises_instead_of_dropping_silently(store, monkey
         (6, 1, "on"),
     }
 
-    with pytest.raises(ValueError, match="Schluessel-Kollision"):
+    with pytest.raises(ValueError, match="key collision"):
         store.register_commands(device_id, commands, snap.node_id)
 
     assert store.commands(device_id) == []
 
 
 def test_takes_value_change_is_picked_up_on_reregistration(store):
-    """Review-Fix Important #2: anders als bei Signalen fror `register_commands`
-    `takes_value` beim ersten Einlernen fuer immer ein. Eine Korrektur in
-    `clusters.yaml` — ein Kommando, das nachtraeglich als wertnehmend erkannt
-    wird — erreichte ein schon gespeichertes Kommando nie. Der Schluessel
-    muss dabei unveraendert bleiben (Spec 6.2)."""
+    """Review-Fix Important #2: unlike for signals, `register_commands` froze
+    `takes_value` forever on first commissioning. A correction in
+    `clusters.yaml` — a command later recognized as taking a value — never
+    reached a command that was already stored. The key must stay unchanged
+    in the process (spec 6.2)."""
     device_id, snap, first = registered(store, "ikea_grillplats_plug.json")
     on_before = next(c for c in first if c.slug == "on")
     assert on_before.takes_value is False
@@ -163,21 +162,21 @@ def test_takes_value_change_is_picked_up_on_reregistration(store):
 
 
 def test_backfill_adds_a_command_that_was_locked_when_the_device_was_learned(tmp_path):
-    """Der Fall aus dem Betrieb (8. September 2026): eine RGB-Leuchte wurde
-    eingelernt, als `MoveToHueAndSaturation` (768/6) noch gesperrt war.
+    """The case from production (September 8, 2026): an RGB lamp was
+    commissioned while `MoveToHueAndSaturation` (768/6) was still locked.
 
-    `extract_commands` verwarf den Befehl damals, und in der Tabelle steht
-    seither keine Zeile dafuer. Ein Update des Codes traegt sie nicht nach -
-    `register_commands` lief bis dahin nur beim Einlernen und beim
-    CLI-Export -, und die Kachel zeigte deshalb kein Farb-Bedienelement,
-    obwohl die Leuchte es laengst konnte.
+    `extract_commands` discarded the command back then, and the table has
+    had no row for it ever since. A code update does not backfill it -
+    `register_commands` used to run only during commissioning and on
+    CLI export -, so the tile showed no color control, even though the
+    lamp had long been capable of it.
     """
     store = Store(tmp_path / "t.sqlite")
     try:
         snapshot = load("ikea_kajplats_cws_lamp.json")
         device_id = store.register_device(snapshot)
         store.register_signals(device_id, snapshot)
-        # Der alte Stand: dieselbe Extraktion ohne das damals gesperrte Paar.
+        # The old state: the same extraction without the pair that was locked back then.
         alt = [c for c in extract_commands(snapshot) if (c.cluster_id, c.command_id) != (768, 6)]
         store.register_commands(device_id, alt, snapshot.node_id)
         assert not any(c.cluster_id == 768 and c.command_id == 6 for c in store.commands(device_id))
@@ -193,10 +192,10 @@ def test_backfill_adds_a_command_that_was_locked_when_the_device_was_learned(tmp
 
 
 def test_backfill_keeps_the_keys_of_commands_that_already_exist(tmp_path):
-    """Der Schluessel ist die Verdrahtung in Loxone und darf sich nie
-    bewegen. `backfill_commands` laeuft bei JEDEM Start - wuerde es
-    bestehende Schluessel neu vergeben, zerschoesse der erste Neustart nach
-    einem Update jede Loxone-Konfiguration."""
+    """The key is the wiring in Loxone and must never
+    move. `backfill_commands` runs on EVERY start - if it were to
+    reassign existing keys, the first restart after an
+    update would smash every Loxone configuration."""
     store = Store(tmp_path / "t.sqlite")
     try:
         snapshot = load("ikea_kajplats_cws_lamp.json")
@@ -217,13 +216,13 @@ def test_backfill_keeps_the_keys_of_commands_that_already_exist(tmp_path):
 
 
 def test_backfill_reports_nothing_to_do_when_every_command_is_present(tmp_path):
-    """Zweiter Start nach dem Update: nichts mehr nachzutragen.
+    """Second start after the update: nothing left to backfill.
 
-    Der Rueckgabewert zaehlt Geraete, bei denen ein Kommando DAZUKAM - nicht
-    Schreibvorgaenge. `backfill_commands` frischt `slug` und `takes_value`
-    bewusst bei jedem Start auf (siehe dort), damit auch eine Umbenennung in
-    `clusters.yaml` ein Bestandsgeraet erreicht; gemeldet wird trotzdem nur
-    die Aenderung, die jemanden interessiert."""
+    The return value counts devices where a command was ADDED - not
+    write operations. `backfill_commands` deliberately refreshes `slug`
+    and `takes_value` on every start (see there), so that a rename in
+    `clusters.yaml` also reaches an existing device; still, only the
+    change that someone actually cares about is reported."""
     store = Store(tmp_path / "t.sqlite")
     try:
         snapshot = load("ikea_kajplats_cws_lamp.json")
@@ -237,9 +236,9 @@ def test_backfill_reports_nothing_to_do_when_every_command_is_present(tmp_path):
 
 
 def test_backfill_leaves_a_device_missing_from_the_snapshots_untouched(tmp_path):
-    """Ein Geraet, das beim Start gerade offline ist, fehlt in
-    `client.snapshots()`. Es darf dadurch nichts verlieren - dieselbe Regel
-    wie bei `backfill_device_types`."""
+    """A device that is offline right at start is missing from
+    `client.snapshots()`. It must not lose anything because of that - the
+    same rule as for `backfill_device_types`."""
     store = Store(tmp_path / "t.sqlite")
     try:
         lampe = load("ikea_kajplats_cws_lamp.json")
@@ -253,7 +252,7 @@ def test_backfill_leaves_a_device_missing_from_the_snapshots_untouched(tmp_path)
         store.register_commands(stecker_id, extract_commands(stecker), stecker.node_id)
         stecker_vorher = len(store.commands(stecker_id))
 
-        # Nur das Abbild der Lampe liegt vor - der Stecker ist gerade offline.
+        # Only the lamp's snapshot is present - the plug is currently offline.
         assert store.backfill_commands([lampe]) == 1
         assert len(store.commands(stecker_id)) == stecker_vorher
     finally:

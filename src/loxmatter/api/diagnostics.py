@@ -1,4 +1,4 @@
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -14,83 +14,81 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Diagnose einer fremden Installation (Spec 10.5).
+"""Diagnosing an unfamiliar installation (Spec 10.5).
 
-Vier Werkzeuge, ein gemeinsamer Zweck: eine Person meldet "es geht nicht",
-und jemand anderes - ein Mitentwickler, ein Ersthelfer im Forum - muss ohne
-Zugriff auf das Haus herausfinden, warum. Ohne diese Seite bleibt nur "es
-geht nicht" als gesamte Fehlerbeschreibung.
+Four tools, one shared purpose: a person reports "it doesn't work", and
+someone else - a fellow developer, a first responder in the forum - has
+to find out why without access to the house. Without this page, "it
+doesn't work" is the entire fault description.
 
-**Der Mitschnitt gesendeter Datagramme haengt in `UdpSender`, nicht daneben.**
-Ein Mitschnitt, der VOR dem Senden ansetzt (z. B. in `Runtime.on_attribute`),
-zeigt, was gesendet werden SOLLTE. Ein Mitschnitt in `UdpSender.send` selbst
-zeigt, was tatsaechlich ueber den Draht ging - nach Entprellung, nach
-Rate-Limit, nach jedem stillen "wurde uebersprungen, weil unveraendert".
-Genau die Faelle, in denen Absicht und Wirklichkeit auseinanderlaufen, sind
-die interessanten fuer eine Diagnose - ein Mitschnitt daneben wuerde sie
-verstecken, nicht zeigen. Deshalb importiert `loxone.sender` `RingBuffer`
-von hier (siehe dort) statt umgekehrt: dieses Modul ist der im Interface-
-Vertrag benannte Ort fuer den generischen, laufzeitunabhaengigen Ringpuffer,
-den sowohl der Datagramm- als auch der Kommando-Mitschnitt (server.py)
-brauchen - eine Umkehrung der sonst ueblichen Richtung "api haengt von
-loxone ab" (siehe z. B. api/live.py, das `Runtime` importiert), hier bewusst
-in Kauf genommen, weil `RingBuffer` selbst keinerlei API-spezifisches
-Wissen traegt (kein FastAPI-Import auf Modulebene bevor jede der beiden
-Nutzstellen ihn braucht) und die Alternative - ein drittes, eigenes Modul
-nur fuer eine 15-zeilige Klasse - mehr Indirektion gekostet haette, als sie
-eingespart haette.
+**The record of sent datagrams hangs off `UdpSender`, not beside it.** A
+recording that hooks in BEFORE sending (e.g. in `Runtime.on_attribute`)
+shows what SHOULD be sent. A recording in `UdpSender.send` itself shows
+what actually went over the wire - after debouncing, after rate limiting,
+after every silent "skipped because unchanged". Exactly the cases where
+intent and reality diverge are the interesting ones for a diagnosis - a
+recording beside it would hide them, not show them. That is why
+`loxone.sender` imports `RingBuffer` from here (see there) rather than
+the other way round: this module is the place, named in the interface
+contract, for the generic, runtime-independent ring buffer that both the
+datagram and the command recording (server.py) need - a reversal of the
+otherwise usual direction "api depends on loxone" (see e.g. api/live.py,
+which imports `Runtime`), deliberately accepted here because `RingBuffer`
+itself carries no API-specific knowledge whatsoever (no FastAPI import at
+module level before either of the two use sites needs it) and the
+alternative - a third, dedicated module just for a 15-line class - would
+have cost more indirection than it saved.
 
-**Jede rote Zeile im Systemcheck traegt einen konkreten Hinweis.** Ein roter
-Punkt ohne Erklaerung verschiebt das Raetsel nur von "es geht nicht" zu "der
-Systemcheck sagt rot, aber nicht wieso" - dieselbe Sackgasse, nur eine Ebene
-tiefer. `_run_check` unten fasst deshalb JEDE Pruefung zusaetzlich in ein
-eigenes try/except: eine Pruefung, die selbst einen Programmfehler enthaelt
-(nicht nur einen erwarteten Fehlerfall wie "Miniserver nicht erreichbar"),
-wird zu genau einer roten Zeile mit Hinweis auf das Server-Log - nicht zu
-einem 500 fuer den gesamten Systemcheck. Eine Diagnose, die an ihrer eigenen
-Pruefung scheitert, waere schlimmer als gar keine (siehe
+**Every red line in the system check carries a concrete pointer.** A red
+dot with no explanation only shifts the puzzle from "it doesn't work" to
+"the system check says red, but not why" - the same dead end, just one
+level deeper. `_run_check` below therefore additionally wraps EVERY check
+in its own try/except: a check that itself contains a program bug (not
+just an expected failure case like "Miniserver unreachable") turns into
+exactly one red line pointing at the server log - not a 500 for the
+entire system check. A diagnosis that fails at its own checking would be
+worse than none at all (see
 `test_a_check_that_raises_unexpectedly_fails_gracefully`).
 
-**Die Sicherung ist kein Nebenpunkt.** Spec 4.1 nennt das matter-server-
-Datenverzeichnis (darin: die Fabric-Credentials) den einzigen unersetzlichen
-Zustand des ganzen Systems - geht es verloren, muss jedes Geraet neu
-eingelernt werden, bei Thread-Geraeten heisst das: zuruecksetzen, aus dem
-alten Netz werfen, neu koppeln. `GET /api/diagnostics/fabric-backup`
-liefert den Inhalt dieses Verzeichnisses als ZIP.
+**The backup is not a side point.** Spec 4.1 calls the matter-server data
+directory (containing the fabric credentials) the one irreplaceable
+piece of state in the whole system - if it is lost, every device has to
+be re-commissioned, and for Thread devices that means: reset, evict from
+the old network, re-pair. `GET /api/diagnostics/fabric-backup` delivers
+the content of this directory as a ZIP.
 
-Diese Datei ist Schluesselmaterial, kein Protokoll - wer sie besitzt, kann
-die Fabric uebernehmen. Zwei Konsequenzen, beide unten an der Route
-dokumentiert:
+This file is key material, not a log - whoever possesses it can take
+over the fabric. Two consequences, both documented below at the route:
 
-- **Geschuetzt seit Task 8 (Phase 5, Spec 9).** Nicht ueber einen
-  zusaetzlichen `Depends(...)`-Parameter an dieser Funktion selbst, sondern
-  einheitlich fuer den gesamten Router: `loxone.server.build_app` bindet
-  `build_diagnostics_router(...)` (wie alle fuenf `/api`-Router) ueber
-  `app.include_router(..., dependencies=[Depends(guard)])` ein, `guard` aus
-  `build_api_guard` (siehe dort). Das schuetzt jede Route dieses Routers
-  gleich - und ohne das Risiko, eine kuenftige sechste Diagnose-Route
-  versehentlich ungeschuetzt zu lassen, wie es ein Parameter je Funktion
-  haette zulassen koennen.
-- **Nichts davon wird geloggt** - weder der aufgeloeste Pfad noch die darin
-  enthaltenen Dateinamen. Ein Server-Log ist kein Ort fuer Hinweise auf
-  Schluesselmaterial, selbst nicht auf `debug`-Ebene.
+- **Protected since Task 8 (Phase 5, Spec 9).** Not via an additional
+  `Depends(...)` parameter on this function itself, but uniformly for the
+  entire router: `loxone.server.build_app` wires
+  `build_diagnostics_router(...)` in (like all five `/api` routers) via
+  `app.include_router(..., dependencies=[Depends(guard)])`, `guard` from
+  `build_api_guard` (see there). That protects every route of this router
+  alike - and without the risk of accidentally leaving a future sixth
+  diagnostics route unprotected, as a per-function parameter could have
+  allowed.
+- **None of it is logged** - neither the resolved path nor the file
+  names it contains. A server log is no place for hints about key
+  material, not even at `debug` level.
 
-Aus demselben Grund - ein Kommando-Log, das fuer jeden mitliest, der die
-Diagnoseseite oeffnen kann - traegt `GET /api/diagnostics/commands` bewusst
-NIE eine Query-Zeichenkette, nur den Pfad. Ein `/cmd/{key}/{value}`-Aufruf
-legt seinen Wert absichtlich offen im Pfad ab (das ist der Zweck dieses
-Logs: zu sehen, welcher Wert ankam) - eine Query-Zeichenkette dagegen ist
-fuer keine der heutigen Routen vorgesehen und faehrt deshalb ausschliesslich
-als Vorsichtsmassnahme mit: Task 8s Token laeuft ausdruecklich NICHT als
-Query-Parameter, sondern als `Authorization`-Header bzw. - beim
-Browser-WebSocket, der keine eigenen Kopfzeilen setzen kann - als
-Subprotokoll `bearer, <Token>` (siehe `loxone.server.build_api_guard`),
-und zwar genau deshalb: in diesem fuer jeden Diagnose-Betrachter lesbaren
-Log hat ein Geheimnis nichts zu suchen. Aus demselben,
-eher praktischen Grund (ein knapper Ringpuffer, den ein pollender
-Diagnose-Tab nicht mit sich selbst fluten soll) nimmt `server.py` Aufrufe
-von `/api/diagnostics/*` selbst gar nicht erst in den Kommando-Log auf -
-siehe dort.
+For the same reason - a command log that anyone who can open the
+diagnostics page reads along with - `GET /api/diagnostics/commands`
+deliberately NEVER carries a query string, only the path. A
+`/cmd/{key}/{value}` call deliberately exposes its value openly in the
+path (that is the purpose of this log: to see which value arrived) - a
+query string, on the other hand, is not intended for any of today's
+routes and therefore only rides along as a precaution: Task 8's token
+explicitly does NOT travel as a query parameter, but as an
+`Authorization` header or - for the browser WebSocket, which cannot set
+its own headers - as the subprotocol `bearer, <token>` (see
+`loxone.server.build_api_guard`), precisely because a secret has no
+business in this log, readable by every diagnostics viewer. For the
+same, more practical reason (a tight ring buffer that a polling
+diagnostics tab should not flood with itself), `server.py` does not even
+add calls to `/api/diagnostics/*` itself to the command log in the first
+place - see there.
 """
 
 from __future__ import annotations
@@ -114,101 +112,97 @@ from loxmatter import i18n
 from loxmatter.model.store import Store
 
 if TYPE_CHECKING:
-    # Ausschliesslich fuer Typannotationen - siehe Moduldocstring, warum
-    # `loxone.sender` NICHT auf Modulebene importiert wird (das waere ein
-    # echter Ringimport: sender.py importiert `RingBuffer` von HIER). Dank
-    # `from __future__ import annotations` wertet Python Annotationen ohnehin
-    # nur als Zeichenketten aus - dieser Block existiert einzig fuer mypy.
+    # Exclusively for type annotations - see module docstring for why
+    # `loxone.sender` is NOT imported at module level (that would be a
+    # genuine circular import: sender.py imports `RingBuffer` from HERE).
+    # Thanks to `from __future__ import annotations`, Python evaluates
+    # annotations only as strings anyway - this block exists solely for
+    # mypy.
     from loxmatter.loxone.sender import UdpSender
     from loxmatter.matter.client import BridgeMatterClient
 
 logger = logging.getLogger(__name__)
 
-# Oeffentlich, weil die Oberflaeche denselben Dateinamen vergeben muss:
-# seit die Downloads ueber `fetch` statt ueber einen Link laufen, benennt
-# der Browser die Datei selbst (siehe `web/app.js`, `download`).
+# Public, because the UI has to assign the same file name: ever since
+# downloads run via `fetch` instead of a link, the browser names the file
+# itself (see `web/app.js`, `download`).
 FABRIC_BACKUP_NAME = "matter-fabric-backup.zip"
 
 
 class RingBuffer[T]:
-    """Haelt die letzten N Eintraege, aeltere fallen heraus.
+    """Holds the last N entries, older ones fall out.
 
-    Eine Bruecke laeuft monatelang. Ein Mitschnitt, der mitwaechst, ist
-    irgendwann das groesste Objekt im Prozess - und der interessante Teil
-    ist ohnehin nur die letzten Minuten/Stunden. `collections.deque(maxlen=
-    ...)` erledigt das Verwerfen der aeltesten Eintraege bereits nativ in
-    O(1); diese Klasse fuegt nur die schmale, absichtlich MINIMALE
-    Oberflaeche hinzu, die die Diagnose-Routen brauchen (anhaengen,
-    iterieren, zaehlen, beobachten) - kein `clear()`, kein Indexzugriff,
-    nichts, das ein Aufrufer nutzen koennte, um Eintraege nachtraeglich zu
-    manipulieren.
+    A bridge runs for months. A recording that keeps growing eventually
+    becomes the largest object in the process - and the interesting part
+    is only the last few minutes/hours anyway. `collections.deque(maxlen=
+    ...)` already handles dropping the oldest entries natively in O(1);
+    this class only adds the narrow, deliberately MINIMAL surface the
+    diagnostics routes need (append, iterate, count, observe) - no
+    `clear()`, no index access, nothing a caller could use to manipulate
+    entries after the fact.
 
-    **Ein Leser, der `for entry in ring:` durchlaufen koennte, waehrend aus
-    einem anderen Thread gleichzeitig angehaengt wird, MUSS zuerst
-    `list(ring)` aufrufen, um eine Momentaufnahme zu bekommen.** `append` ist dank der
-    GIL ein atomarer, einzelner C-Aufruf (siehe
-    `diagnostics.logbuffer`-Moduldocstring) - `__iter__` unten dagegen
-    nicht: er gibt einen lebenden `deque`-Iterator zurueck, und `deque`
-    erkennt eine Mutation waehrend einer laufenden Iteration. Sobald der
-    Ring einmal voll ist, verdraengt jedes weitere `append` den aeltesten
-    Eintrag - genau das ist eine Mutation im Sinne dieser Erkennung, und
-    eine parallel laufende `for`-Schleife bricht dann mit
-    `RuntimeError('deque mutated during iteration')` ab. Solange jeder Ring
-    nur aus einem einzigen Pfad heraus beschrieben wird (bislang der Fall:
-    ein Event-Loop je Ring), tritt das nie auf. `diagnostics.logbuffer.
-    LogBufferHandler` ist der erste Schreiber, der aus BELIEBIGEN Threads
-    gleichzeitig anhaengen kann - fuer einen Ring, den er fuellt, ist eine
-    blosse `for`-Schleife deshalb nicht mehr sicher; `list(ring)` dagegen
-    schon, weil auch das ein einziger, atomarer C-Aufruf ist.
+    **A reader that could loop `for entry in ring:` while another thread
+    is concurrently appending MUST first call `list(ring)` to get a
+    snapshot.** Thanks to the GIL, `append` is a single, atomic C call
+    (see the `diagnostics.logbuffer` module docstring) - `__iter__`
+    below, however, is not: it returns a live `deque` iterator, and
+    `deque` detects a mutation during an ongoing iteration. Once the ring
+    is full, every further `append` evicts the oldest entry - that is
+    exactly a mutation as far as this detection is concerned, and a `for`
+    loop running concurrently then aborts with
+    `RuntimeError('deque mutated during iteration')`. As long as each
+    ring is written to from only a single path (the case so far: one
+    event loop per ring), this never occurs. `diagnostics.logbuffer.
+    LogBufferHandler` is the first writer that can append concurrently
+    from ARBITRARY threads - for a ring it fills, a plain `for` loop is
+    therefore no longer safe; `list(ring)`, however, still is, because
+    that too is a single, atomic C call.
 
-    **Beobachter (Task 4, Phase 5, Spec 10.5).** `add_observer`/
-    `remove_observer` benachrichtigen bei jedem `append` - dieselbe
-    Anmelde-/Abmelde-Form wie `LogBufferHandler.add_observer`, absichtlich
-    HIER statt in einer weiteren, eigenen Klasse: der Kommando-Log-Ring in
-    `loxone.server` braucht eine Beobachterkette (fuer `api.diagnostics_
-    live`), hat aber - anders als `LogBufferHandler` - keinen eigenen
-    Besitzer-Typ, an dem sie sonst haengen koennte (er ist dort eine blosse
-    lokale Variable). `UdpSender.add_datagram_observer`/
-    `remove_datagram_observer` sind seit Nachbesserung Task 7 (Fix 2) KEINE
-    zweite, eigene Umsetzung derselben Mechanik mehr, sondern duenne
-    Weiterleitungen genau auf `add_observer`/`remove_observer` hier - siehe
-    `loxone.sender`-Moduldocstring, Abschnitt "Beobachterkette". Ein
-    Beobachterfehler wird deshalb an EINER Stelle geloggt und uebersprungen
-    (unten in `append`), nicht mehr an zwei verschiedenen - anders als bei
-    `LogBufferHandler` gibt es hier kein Rekursionsrisiko durch die eigene
-    Fehlerprotokollierung, weil kein Ring dieses Projekts Logzeilen selbst
-    erzeugt.
+    **Observers (Task 4, Phase 5, Spec 10.5).** `add_observer`/
+    `remove_observer` notify on every `append` - the same register/
+    deregister shape as `LogBufferHandler.add_observer`, deliberately HERE
+    rather than in yet another, dedicated class: the command log ring in
+    `loxone.server` needs an observer chain (for `api.diagnostics_live`),
+    but - unlike `LogBufferHandler` - has no owner type of its own that it
+    could otherwise hang off (it is a mere local variable there).
+    `UdpSender.add_datagram_observer`/`remove_datagram_observer` are, as
+    of follow-up Task 7 (Fix 2), no longer a second, separate
+    implementation of the same mechanism, but thin forwards straight to
+    `add_observer`/`remove_observer` here - see the `loxone.sender`
+    module docstring, section "Observer chain". An observer error is
+    therefore logged and skipped at ONE place (below in `append`), no
+    longer at two different ones - unlike with `LogBufferHandler`, there
+    is no recursion risk here from the error logging itself, because no
+    ring in this project produces log lines itself.
 
-    **Warnung fuer kuenftige Aufrufer:** `LogBufferHandler.entries` ist
-    ebenfalls ein `RingBuffer`, oeffentlich lesbar fuer die Momentaufnahme -
-    `add_observer` NIEMALS direkt auf `log_handler.entries` aufrufen. Ein
-    dort registrierter Beobachter liefe synchron innerhalb von
-    `LogBufferHandler.emit()`, waehrend `logging.Handler.lock` gehalten
-    wird und OHNE die dortige Wiedereintrittssperre - protokolliert dieser
-    Beobachter selbst ueber denselben Logger, ist das eine echte,
-    unbegrenzte Rekursion (siehe `diagnostics.logbuffer`-Moduldocstring).
-    `LogBufferHandler.add_observer` ist der einzige sichere Weg, neue
-    Logzeilen zu beobachten.
+    **Warning for future callers:** `LogBufferHandler.entries` is also a
+    `RingBuffer`, publicly readable for the snapshot - NEVER call
+    `add_observer` directly on `log_handler.entries`. An observer
+    registered there would run synchronously inside
+    `LogBufferHandler.emit()`, while `logging.Handler.lock` is held and
+    WITHOUT the reentrancy lock in place there - if this observer itself
+    logs via the same logger, that is genuine, unbounded recursion (see
+    the `diagnostics.logbuffer` module docstring). `LogBufferHandler.
+    add_observer` is the only safe way to observe new log lines.
 
-    **Diese Warnung gilt NICHT spiegelbildlich fuer `UdpSender.datagram_log`
-    - eine fruehere Fassung dieses Docstrings behauptete das
-    faelschlich** (Review-Fix Kleinigkeit #3, 2026-09-03; als falsch erkannt
-    und richtiggestellt in der Nachbesserung Task 7, Fix 2). Seit
-    `UdpSender.add_datagram_observer` eine duenne Weiterleitung auf
-    `self._datagram_log.add_observer` ist (siehe oben), sind `sender.
-    add_datagram_observer(cb)` und `sender.datagram_log.add_observer(cb)`
-    DERSELBE Aufruf auf demselben Ring - es gibt keinen "unsicheren" und
-    keinen "sicheren" Weg mehr, zwischen denen zu unterscheiden waere. Ein
-    dort registrierter Beobachter laeuft so oder so synchron innerhalb von
-    `UdpSender.send`s `async with self._lock` (siehe dort) - ein langsamer
-    oder haengender Beobachter bremst dadurch jeden nachfolgenden Versand
-    ueber denselben `UdpSender`, unabhaengig davon, ueber welchen der beiden
-    (identischen) Wege er sich angemeldet hat. `UdpSender.
-    add_datagram_observer`/`remove_datagram_observer` bleiben trotzdem als
-    eigene, oeffentliche Methoden bestehen - nicht aus Sicherheitsgruenden,
-    sondern damit der Typ `DatagramLogEntry` in ihrer Signatur sichtbar
-    bleibt und ein Aufrufer nicht wissen muss, dass der Mitschnitt intern
-    ein `RingBuffer` ist (siehe `loxone.sender`-Moduldocstring)."""
+    **This warning does NOT apply symmetrically to `UdpSender.datagram_log`
+    - an earlier version of this docstring wrongly claimed it did**
+    (review fix Minor #3, 2026-09-03; recognised as wrong and corrected in
+    follow-up Task 7, Fix 2). Ever since `UdpSender.add_datagram_observer`
+    became a thin forward to `self._datagram_log.add_observer` (see
+    above), `sender.add_datagram_observer(cb)` and
+    `sender.datagram_log.add_observer(cb)` are THE SAME call on the same
+    ring - there is no longer an "unsafe" and a "safe" path to
+    distinguish between. An observer registered there runs synchronously
+    inside `UdpSender.send`'s `async with self._lock` either way (see
+    there) - a slow or hanging observer thereby slows down every
+    subsequent send over the same `UdpSender`, regardless of which of the
+    two (identical) paths it registered through. `UdpSender.
+    add_datagram_observer`/`remove_datagram_observer` still remain as
+    their own, public methods nonetheless - not for safety reasons, but
+    so the type `DatagramLogEntry` stays visible in their signature and a
+    caller does not need to know that the recording is internally a
+    `RingBuffer` (see the `loxone.sender` module docstring)."""
 
     def __init__(self, maxlen: int = 500) -> None:
         self._items: collections.deque[T] = collections.deque(maxlen=maxlen)
@@ -217,32 +211,29 @@ class RingBuffer[T]:
     def append(self, item: T) -> None:
         self._items.append(item)
         for observer in list(self._observers):
-            # Kopie der Liste iterieren - ein Beobachter, der sich selbst
-            # waehrend seines Aufrufs abmeldet, darf die laufende
-            # Benachrichtigung der uebrigen nicht stoeren (dasselbe Muster
-            # wie `Runtime._notify_observers`; `UdpSender.
-            # add_datagram_observer`/`remove_datagram_observer` haengen seit
-            # Nachbesserung Task 7, Fix 2 direkt an DIESEM `append`, keine
-            # eigene Kopie mehr).
+            # Iterate over a copy of the list - an observer that
+            # deregisters itself during its own call must not disrupt the
+            # ongoing notification of the rest (the same pattern as
+            # `Runtime._notify_observers`; `UdpSender.
+            # add_datagram_observer`/`remove_datagram_observer` have, as
+            # of follow-up Task 7, Fix 2, hung directly off THIS `append`,
+            # no separate copy of their own any more).
             try:
                 observer(item)
             except Exception:
-                logger.exception(
-                    "Beobachter fuer einen neuen Ringpuffer-Eintrag ist fehlgeschlagen - "
-                    "wird uebersprungen"
-                )
+                logger.exception("Observer for a new ring-buffer entry failed - skipping it")
 
     def add_observer(self, callback: Callable[[T], None]) -> None:
-        """Meldet einen Beobachter an, der jeden NEUEN Eintrag sieht - nicht
-        die bereits vorhandenen (siehe Klassendocstring). Der Beobachter
-        darf nicht blockieren: `append` laeuft im Aufrufpfad des
-        jeweiligen Schreibers (siehe dort)."""
+        """Registers an observer that sees every NEW entry - not the ones
+        already present (see class docstring). The observer must not
+        block: `append` runs in the call path of the respective writer
+        (see there)."""
         self._observers.append(callback)
 
     def remove_observer(self, callback: Callable[[T], None]) -> None:
-        """Meldet einen Beobachter wieder ab. Ein unbekannter Beobachter
-        (z. B. doppelt abgemeldet) ist kein Fehler, sondern wird still
-        ignoriert - dieselbe Regel wie bei `Runtime.remove_observer`."""
+        """Deregisters an observer again. An unknown observer (e.g.
+        deregistered twice) is not an error but is silently ignored - the
+        same rule as for `Runtime.remove_observer`."""
         try:
             self._observers.remove(callback)
         except ValueError:
@@ -257,26 +248,25 @@ class RingBuffer[T]:
 
 @dataclass(frozen=True)
 class DatagramLogEntry:
-    """Ein tatsaechlich ueber den UDP-Socket verschicktes Datagramm - siehe
-    `UdpSender.send` (Moduldocstring dort) fuer die genaue Aufzeichnungsstelle.
+    """A datagram actually sent over the UDP socket - see `UdpSender.send`
+    (module docstring there) for the exact recording point.
 
-    `value` ist bereits die fertige Textform (siehe `loxone.values.
-    format_value`), nicht der rohe `float | bool`-Wert - dieselbe Form, die
-    auch tatsaechlich auf der Leitung stand.
+    `value` is already the finished text form (see `loxone.values.
+    format_value`), not the raw `float | bool` value - the same form that
+    was actually on the wire.
 
-    `forced` uebernimmt unveraendert das `force`-Argument, mit dem `send()`
-    aufgerufen wurde (Nachbesserung Task 6, 2026-09-03): `True` heisst
-    "gesendet, obwohl sich der Wert nicht geaendert hat" - das trifft in
-    diesem Projekt auf GENAU drei Aufrufer zu, `Runtime.resend_all()`,
-    `Runtime.resend_marked()` und den Heartbeat (`Runtime._heartbeat_loop`).
-    `False` heisst dagegen "eine
-    echte Wertaenderung" - ein Impuls (`Runtime.on_event`) und sein Zaehler
-    zaehlen dazu, auch wenn beide binnen Mikrosekunden hintereinander
-    gesendet werden. Genau diese Unterscheidung ersetzt die fruehere
-    Rauschfilter-Heuristik der WebUI (`app.js`, `DATAGRAM_BURST_GAP_MS`),
-    die ausschliesslich an der Ankunftsrate im Browser gemessen hatte und
-    damit jeden schnell aufeinanderfolgenden, aber echten Wertewechsel
-    faelschlich als Rauschen einstufte."""
+    `forced` takes over unchanged the `force` argument `send()` was called
+    with (follow-up Task 6, 2026-09-03): `True` means "sent even though
+    the value did not change" - in this project that applies to EXACTLY
+    three callers, `Runtime.resend_all()`, `Runtime.resend_marked()` and
+    the heartbeat (`Runtime._heartbeat_loop`). `False`, on the other hand,
+    means "a genuine value change" - a pulse (`Runtime.on_event`) and its
+    counter count as that too, even if both are sent within microseconds
+    of each other. Exactly this distinction replaces the WebUI's earlier
+    noise-filter heuristic (`app.js`, `DATAGRAM_BURST_GAP_MS`), which
+    measured solely by arrival rate in the browser and thereby wrongly
+    classified every rapid succession of genuine value changes as
+    noise."""
 
     key: str
     value: str
@@ -286,8 +276,8 @@ class DatagramLogEntry:
 
 @dataclass(frozen=True)
 class CommandLogEntry:
-    """Ein eingehender HTTP-Aufruf mit seinem Ergebnis - siehe `server.py`,
-    Middleware `_record_command`."""
+    """An incoming HTTP call with its result - see `server.py`, middleware
+    `_record_command`."""
 
     method: str
     path: str
@@ -313,10 +303,10 @@ class CommandLogEntryOut(BaseModel):
 
 
 class SystemCheckOut(BaseModel):
-    """Eine Zeile im Systemcheck - IMMER mit `detail`, ob gruen oder rot.
-    Siehe Moduldocstring, "Jede rote Zeile...", und `test_system_check_
-    reports_each_line_with_a_verdict`, das `detail` fuer JEDE Zeile prueft,
-    nicht nur fuer fehlgeschlagene."""
+    """A row in the system check - ALWAYS with `detail`, whether green or
+    red. See module docstring, "Every red line...", and
+    `test_system_check_reports_each_line_with_a_verdict`, which checks
+    `detail` for EVERY row, not only for failed ones."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -329,14 +319,14 @@ _CheckFn = Callable[[], tuple[bool, str]]
 
 
 def _run_check(name: str, check: _CheckFn) -> SystemCheckOut:
-    """Fuehrt eine einzelne Pruefung aus und wandelt JEDE Ausnahme - nicht
-    nur die von der jeweiligen Pruefung selbst schon abgefangenen - in eine
-    rote Zeile um, statt den kompletten `GET /api/diagnostics/system`-Aufruf
-    mit 500 abbrechen zu lassen. Siehe Moduldocstring."""
+    """Runs a single check and turns EVERY exception - not only the ones
+    already caught by the check itself - into a red line, instead of
+    letting the whole `GET /api/diagnostics/system` call abort with 500.
+    See module docstring."""
     try:
         ok, detail = check()
     except Exception as exc:
-        logger.exception("Systemcheck %r ist an einem unerwarteten Fehler gescheitert", name)
+        logger.exception("System check %r failed with an unexpected error", name)
         return SystemCheckOut(
             name=name,
             ok=False,
@@ -354,52 +344,52 @@ def _check_matter_server(client: BridgeMatterClient | None) -> tuple[bool, str]:
 
 
 def _check_thread_credentials(client: BridgeMatterClient | None) -> tuple[bool, str]:
-    """Ob matter-server die Thread-Zugangsdaten gerade hat.
+    """Whether matter-server currently has the Thread credentials.
 
-    Der Check, der den Ausfall vom 2026-09-04 gezeigt haette: matter-server
-    war am Vortag um 12:55 neu gestartet worden und hatte sie damit verloren
-    - er haelt sie ausschliesslich im Arbeitsspeicher (siehe
-    `matter/otbr.py`). Nichts hat es gemeldet. Sichtbar wurde es erst, als
-    drei Einlernversuche hintereinander scheiterten, und auch dann nannte
-    die Meldung in der Oberflaeche ("Commission with code failed for node
-    7") die Ursache nicht - die stand nur im Log von matter-server.
+    The check that would have shown the 2026-09-04 outage: matter-server
+    had been restarted the previous day at 12:55 and had thereby lost them
+    - it holds them exclusively in memory (see `matter/otbr.py`). Nothing
+    reported it. It only became visible when three commissioning attempts
+    in a row failed, and even then the message in the UI ("Commission
+    with code failed for node 7") did not name the cause - that was only
+    in matter-server's log.
 
-    Seit dem Fix holt sich das Einlernen den Datensatz beim Border Router
-    selbst (siehe `api/devices.py`), dieser Punkt ist also im Regelfall
-    nicht mehr die Vorbedingung fuers Einlernen, sondern die Antwort auf die
-    Frage "steht dieser Stack fuer ein Thread-Geraet bereit?" - beantwortet,
-    bevor jemand vor einem Geraet im Pairing-Modus steht.
+    Since the fix, commissioning fetches the dataset from the Border
+    Router itself (see `api/devices.py`), so this point is, as a rule, no
+    longer the precondition for commissioning, but the answer to the
+    question "is this stack ready for a Thread device?" - answered before
+    anyone is standing in front of a device in pairing mode.
 
-    **Und deshalb eine Zustandszeile, kein Alarm.** Fehlende Zugangsdaten
-    sind der gesunde Regelzustand: nach jedem Neustart des Pi startet
-    matter-server ohne sie, niemand lernt etwas ein, und der Zustand loest
-    sich beim naechsten Einlernen von selbst auf. Ein Punkt, der dabei
-    dauerhaft rot stuende und dessen Text erklaert, dass nichts zu tun ist,
-    entwertet die roten Punkte daneben - dieselbe Ueberlegung, die den
-    `client is None`-Fall unten bewusst gruen laesst. Der Alarm, der
-    wirklich Handlung verlangt, sitzt im Punkt `thread`: er wird rot, wenn
-    gar kein Border Router laeuft - und dann bleibt auch das naechste
-    Einlernen ohne Datensatz.
+    **And therefore a state line, not an alarm.** Missing credentials are
+    the healthy normal state: after every restart of the Pi, matter-server
+    starts without them, no one commissions anything, and the state
+    resolves itself on the next commissioning. A point that would stay
+    permanently red in that situation, with text explaining that there is
+    nothing to do, devalues the red points beside it - the same
+    consideration that deliberately leaves the `client is None` case below
+    green. The alarm that genuinely calls for action sits in the `thread`
+    point: it turns red when no Border Router is running at all - and then
+    the next commissioning too remains without a dataset.
     """
     if client is None or not client.connected:
-        # Bewusst gruen: dass matter-server fehlt, sagt der Check daneben
-        # (`_check_matter_server`) bereits deutlich. Zwei rote Punkte fuer
-        # dieselbe Ursache verteilen die Aufmerksamkeit auf zwei Stellen,
-        # von denen nur eine etwas zu tun gibt.
+        # Deliberately green: that matter-server is missing is already
+        # clearly stated by the check next to it (`_check_matter_server`).
+        # Two red points for the same cause would spread attention across
+        # two places, of which only one actually gives something to do.
         return True, i18n.t("api.diagnostics.thread_credentials_not_determinable")
     if not client.thread_dataset_set:
-        # Gruen, obwohl die Daten fehlen: das ist der Zustand nach jedem
-        # Neustart von matter-server, und er verlangt fuer sich genommen
-        # keine Handlung (siehe Docstring).
+        # Green even though the data is missing: that is the state after
+        # every restart of matter-server, and on its own it calls for no
+        # action (see docstring).
         return True, i18n.t("api.diagnostics.thread_credentials_not_set")
     return True, i18n.t("api.diagnostics.thread_credentials_set")
 
 
 def _check_store(store: Store) -> tuple[bool, str]:
-    # sqlite3.Error, nicht blind `Exception` - eine unerwartete Fehlerart
-    # (ein echter Bug statt einer nicht beschreibbaren Datenbank) faellt
-    # bewusst durch bis zum Sicherheitsnetz in `_run_check`, das dann seine
-    # eigene, generischere rote Zeile erzeugt (siehe Moduldocstring).
+    # sqlite3.Error, not a blind `Exception` - an unexpected kind of error
+    # (a genuine bug rather than a non-writable database) deliberately
+    # falls through to the safety net in `_run_check`, which then produces
+    # its own, more generic red line (see module docstring).
     try:
         store.check_writable()
     except sqlite3.Error as exc:
@@ -407,32 +397,32 @@ def _check_store(store: Store) -> tuple[bool, str]:
     return True, i18n.t("api.diagnostics.writable")
 
 
-# Die Linux-Tabelle der lokalen IPv6-Adressen. Spalten: Adresse (hex, ohne
-# Doppelpunkte), Interface-Index, Praefixlaenge, SCOPE, Flags, Name.
-# Scope 0x00 heisst "global" und schliesst die Unique-Local-Adressen (fd00::/8)
-# ein - genau die, auf denen ein Thread-Netz laeuft.
+# The Linux table of local IPv6 addresses. Columns: address (hex, without
+# colons), interface index, prefix length, SCOPE, flags, name. Scope 0x00
+# means "global" and includes the unique-local addresses (fd00::/8) - the
+# very ones a Thread network runs on.
 _IF_INET6 = Path("/proc/net/if_inet6")
 
-# Der Name, unter dem OTBR seine Thread-Schnittstelle anlegt. Verschwindet
-# mit dem Agenten: stirbt er (z. B. an einem RCP-Timeout, weil das Funkmodul
-# nicht mehr antwortet), ist die Schnittstelle weg, waehrend der Container
-# weiterlaeuft - `restart: unless-stopped` greift dann nicht.
+# The name under which OTBR creates its Thread interface. Disappears along
+# with the agent: if it dies (e.g. from an RCP timeout because the radio
+# module stops responding), the interface is gone while the container keeps
+# running - `restart: unless-stopped` does not kick in then.
 _THREAD_INTERFACE_PREFIX = "wpan"
 
 
 def _routed_ipv6_addresses() -> list[tuple[str, str]] | None:
-    """Alle gerouteten (nicht link-lokalen, nicht Loopback) IPv6-Adressen
-    dieses Hosts als (Adresse, Schnittstelle) - oder None, wenn sich das auf
-    diesem System nicht feststellen laesst.
+    """All routed (not link-local, not loopback) IPv6 addresses of this
+    host as (address, interface) - or None if this cannot be determined
+    on this system.
 
-    Liest `/proc/net/if_inet6` statt einen Socket zu befragen: ein
-    `connect()`-Test braucht ein ZIEL, und welches man waehlt, entscheidet
-    schon das Ergebnis. Genau daran scheiterte die frueherer Fassung dieses
-    Checks (siehe `_check_ipv6`).
+    Reads `/proc/net/if_inet6` instead of querying a socket: a
+    `connect()` test needs a TARGET, and which one you choose already
+    decides the result. That is exactly what tripped up the earlier
+    version of this check (see `_check_ipv6`).
 
-    None (statt einer leeren Liste) heisst "nicht feststellbar" - auf einem
-    Nicht-Linux-System gibt es die Datei nicht. Das ist etwas anderes als
-    "keine gefunden" und wird von den Aufrufern auch anders behandelt.
+    None (instead of an empty list) means "cannot be determined" - on a
+    non-Linux system the file does not exist. That is different from
+    "none found" and is also handled differently by the callers.
     """
     try:
         raw = _IF_INET6.read_text(encoding="ascii")
@@ -444,9 +434,9 @@ def _routed_ipv6_addresses() -> list[tuple[str, str]] | None:
         if len(parts) < 6:
             continue
         address, scope, interface = parts[0], parts[3], parts[5]
-        # Nur Scope 00. Alles andere ist link-lokal (20), Loopback (10) oder
-        # eine der selteneren Zwischenstufen - keine davon traegt ein
-        # Thread-Netz.
+        # Only scope 00. Everything else is link-local (20), loopback (10)
+        # or one of the rarer intermediate stages - none of which carries
+        # a Thread network.
         if scope != "00":
             continue
         readable = ":".join(address[i : i + 4] for i in range(0, 32, 4))
@@ -455,18 +445,18 @@ def _routed_ipv6_addresses() -> list[tuple[str, str]] | None:
 
 
 def _check_ipv6() -> tuple[bool, str]:
-    """Ob dieser Host ueberhaupt eine geroutete IPv6-Adresse hat.
+    """Whether this host has a routed IPv6 address at all.
 
-    **Verlangt ausdruecklich KEIN globales IPv6** (2026-09-03). Die frueherer
-    Fassung tat das: sie fragte den Kernel nach der Quelladresse fuer
-    `2001:db8::1` und meldete rot, wenn keine Route dorthin existierte. Auf
-    einem gesunden Thread-Aufbau ist das der Normalfall - Thread laeuft ueber
-    Unique-Local-Adressen (fd00::/8) aus dem Praefix, das der Border Router
-    ankuendigt, und die meisten Heimnetze haben ueberhaupt kein globales
-    IPv6. Der Check meldete also einen Fehler, wo keiner war.
+    **Deliberately requires NO global IPv6** (2026-09-03). The earlier
+    version did: it asked the kernel for the source address for
+    `2001:db8::1` and reported red if no route existed to it. On a
+    healthy Thread setup that is the normal case - Thread runs over
+    unique-local addresses (fd00::/8) from the prefix the Border Router
+    announces, and most home networks have no global IPv6 at all. So the
+    check reported an error where there was none.
 
-    Jetzt zaehlt, was tatsaechlich vorhanden ist: jede Adresse mit Scope
-    "global" - ULA eingeschlossen.
+    Now what actually exists counts: every address with scope "global" -
+    ULA included.
     """
     if not socket.has_ipv6:
         return False, i18n.t("api.diagnostics.no_ipv6_support")
@@ -488,22 +478,22 @@ def _check_ipv6() -> tuple[bool, str]:
 
 
 def _check_thread() -> tuple[bool, str]:
-    """Ob eine Thread-Schnittstelle mit einer Mesh-Adresse existiert.
+    """Whether a Thread interface with a mesh address exists.
 
-    Das ist der Check, der einen echten Ausfall vom 2026-09-03 gezeigt
-    haette: das Funkmodul hoerte um 14:57 auf zu antworten, der OTBR-Agent
-    brach mit einem RCP-Timeout ab, und `wpan0` verschwand - waehrend der
-    Container weiterlief. `restart: unless-stopped` greift in diesem Fall
-    nicht, weil nicht der Container gestorben ist, sondern nur ein Prozess
-    darin. Sechseinhalb Stunden lang war kein Geraet erreichbar, und nichts
-    hat es gemeldet.
+    This is the check that would have shown a genuine outage from
+    2026-09-03: the radio module stopped responding at 14:57, the OTBR
+    agent aborted with an RCP timeout, and `wpan0` disappeared - while
+    the container kept running. `restart: unless-stopped` does not kick
+    in in this case, because it is not the container that died, only a
+    process inside it. For six and a half hours no device was reachable,
+    and nothing reported it.
 
-    Absichtlich ueber die Schnittstelle statt ueber `ot-ctl`: dieser Dienst
-    laeuft in einem eigenen Container und hat keinen Zugriff auf den von
-    OTBR. Die Schnittstelle dagegen liegt im Netzwerk-Namensraum des Hosts,
-    den beide teilen (`network_mode: host`), und ihr Verschwinden ist
-    dasselbe Signal - ohne dass dieser Dienst Rechte braucht, die er sonst
-    nirgends braucht.
+    Deliberately via the interface instead of via `ot-ctl`: this service
+    runs in its own container and has no access to OTBR's. The
+    interface, on the other hand, lives in the host's network namespace,
+    which both share (`network_mode: host`), and its disappearance is
+    the same signal - without this service needing privileges it does
+    not otherwise need anywhere.
     """
     addresses = _routed_ipv6_addresses()
     if addresses is None:
@@ -524,14 +514,14 @@ def _check_thread() -> tuple[bool, str]:
 
 
 def _check_miniserver(sender: UdpSender | None) -> tuple[bool, str]:
-    """Der Miniserver wertet UDP-Antworten nicht aus (Spec 6.1, siehe
-    server.py-Moduldocstring: "er schickt und vergisst") - eine echte
-    Erreichbarkeitspruefung gibt es fuer ein Fire-and-Forget-Protokoll ohne
-    ICMP-Auswertung (Root-Rechte, hier bewusst vermieden) nicht. Diese
-    Pruefung bestaetigt deshalb nur: es gibt einen lokalen Routing-Pfad zum
-    konfigurierten Ziel (dieselbe verbindungslose, netzwerkfreie Technik wie
-    `_check_ipv6` oben, nur mit dem tatsaechlichen Ziel statt einer
-    Dokumentations-Adresse) - keine Zustellung."""
+    """The Miniserver does not evaluate UDP responses (Spec 6.1, see the
+    server.py module docstring: "it sends and forgets") - there is no
+    genuine reachability check for a fire-and-forget protocol without
+    ICMP evaluation (root privileges, deliberately avoided here). This
+    check therefore confirms only: there is a local routing path to the
+    configured destination (the same connectionless, network-free
+    technique as `_check_ipv6` above, just with the actual destination
+    instead of a documentation address) - no delivery."""
     if sender is None:
         return False, i18n.t("api.diagnostics.no_udp_sender")
     host, port = sender.target
@@ -544,13 +534,13 @@ def _check_miniserver(sender: UdpSender | None) -> tuple[bool, str]:
 
 
 class ResendableRuntime(Protocol):
-    """Was dieser Router von der Runtime braucht: einen vollen Resend.
+    """What this router needs from the runtime: a full resend.
 
-    Schmal gehalten wie `api.devices.RuntimeValues` und
-    `api.live.ObservableRuntime` - jeder Router beschreibt hier selbst
-    seinen Bedarf, statt sich auf `loxone.runtime.Runtime` festzulegen.
-    `loxone.server._RuntimeDependency` fuehrt dieselbe Methode bereits
-    fuer `/resync`; beide Wege enden in derselben Implementierung."""
+    Kept narrow like `api.devices.RuntimeValues` and
+    `api.live.ObservableRuntime` - each router describes its own need
+    here instead of committing to `loxone.runtime.Runtime`.
+    `loxone.server._RuntimeDependency` already carries the same method
+    for `/resync`; both paths end up in the same implementation."""
 
     async def resend_all(self) -> int: ...
 
@@ -563,22 +553,22 @@ def build_diagnostics_router(
     matter_data_dir: Path | None,
     runtime: ResendableRuntime,
 ) -> APIRouter:
-    """Baut den `APIRouter` fuer `/api/diagnostics/*` (Spec 10.5).
+    """Builds the `APIRouter` for `/api/diagnostics/*` (Spec 10.5).
 
-    `client`, `sender` und `matter_data_dir` duerfen `None` sein - `build_app`
-    gibt fuer `client`/`sender` bereits `None` als Default vor (aus demselben
-    Grund, den `loxone.server` dort dokumentiert: bestehende Aufrufer sollen
-    unveraendert weiterlaufen). `None` bedeutet hier jeweils "dieser Teil der
-    Diagnose ist fuer diesen Lauf nicht verfuegbar", nicht "die Diagnose
-    insgesamt fehlt" - `/datagrams` liefert dann eine leere Liste, `/system`
-    eine rote Zeile mit Hinweis, `/fabric-backup` einen 503 statt eines
-    500/leeren ZIPs."""
+    `client`, `sender` and `matter_data_dir` may be `None` - `build_app`
+    already defaults `client`/`sender` to `None` (for the same reason
+    documented there in `loxone.server`: existing callers should keep
+    running unchanged). `None` here means in each case "this part of the
+    diagnostics is not available for this run", not "the diagnostics as a
+    whole is missing" - `/datagrams` then returns an empty list, `/system`
+    a red line with a pointer, `/fabric-backup` a 503 instead of a
+    500/empty ZIP."""
     router = APIRouter(prefix="/api/diagnostics")
 
     @router.get("/datagrams")
     async def datagrams(
         device_id: int | None = Query(
-            None, description="Nur Datagramme dieses Geraets (Schluessel-Praefix d<id>_)"
+            None, description="Only datagrams of this device (key prefix d<id>_)"
         ),
     ) -> list[DatagramLogEntryOut]:
         if sender is None:
@@ -603,15 +593,14 @@ def build_diagnostics_router(
     async def system() -> list[SystemCheckOut]:
         return [
             _run_check("matter-server", lambda: _check_matter_server(client)),
-            # Feste Kennung, keine Uebersetzung - wie "matter-server",
-            # "store", "ipv6", "thread" und "miniserver" daneben: die
-            # Oberflaeche zeigt `check.name` unveraendert an (index.html),
-            # und die Zeile darunter verweist im Fliesstext auf den
-            # Nachbarpunkt `thread`. Ein Name, der mit der Sprache wechselt,
-            # waere in einem Log oder einem Fehlerbericht nicht mehr
-            # wiederzufinden. Englisch statt des frueheren
-            # "thread-zugangsdaten", damit die Kennungen untereinander
-            # dieselbe Sprache sprechen.
+            # Fixed id, no translation - like "matter-server", "store",
+            # "ipv6", "thread" and "miniserver" next to it: the UI
+            # displays `check.name` unchanged (index.html), and the line
+            # below it refers to the neighbouring point `thread` in
+            # running text. A name that changes with the language would
+            # no longer be findable in a log or a bug report. English
+            # instead of the earlier "thread-zugangsdaten", so the ids
+            # all speak the same language among themselves.
             _run_check("thread-credentials", lambda: _check_thread_credentials(client)),
             _run_check("store", lambda: _check_store(store)),
             _run_check("ipv6", _check_ipv6),
@@ -621,72 +610,74 @@ def build_diagnostics_router(
 
     @router.post("/resync")
     async def resync() -> dict[str, int]:
-        """Der Resync-Knopf im System-Tab: schickt alle bekannten Werte erneut.
+        """The resync button in the system tab: resends all known values.
 
-        Dieselbe Wirkung wie `GET /resync` in `loxone.server` (Spec 6.4) und
-        wie der Bruecken-Start - nur ein anderer Ausloeser, deshalb dieselbe
-        Antwortform `{"sent": n}` und dieselbe Fehlermeldung. Zwei getrennte
-        Routen, weil sich die beiden Aufrufer im Zugang unterscheiden und in
-        sonst nichts: `/resync` muss offen bleiben, weil der Miniserver
-        keinen `Authorization`-Header mitschicken kann, waehrend diese Route
-        wie jede `/api`-Route hinter dem Waechter liegt (siehe
-        Moduldocstring). Ein gemeinsamer Endpunkt muesste eine der beiden
-        Eigenschaften aufgeben.
+        The same effect as `GET /resync` in `loxone.server` (Spec 6.4) and
+        as a bridge start - just a different trigger, hence the same
+        response shape `{"sent": n}` and the same error message. Two
+        separate routes, because the two callers differ in access and in
+        nothing else: `/resync` must stay open because the Miniserver
+        cannot send an `Authorization` header, while this route, like
+        every `/api` route, sits behind the guard (see module docstring).
+        A shared endpoint would have to give up one of the two
+        properties.
 
-        POST statt GET: die Route hat Wirkung. Dass `/resync` ein GET ist,
-        ist kein Vorbild, sondern eine Einschraenkung des Miniservers.
+        POST instead of GET: the route has an effect. That `/resync` is a
+        GET is not a model to follow, but a limitation of the Miniserver.
         """
         try:
             count = await runtime.resend_all()
-        except Exception as exc:  # z. B. ein UdpSender, dessen Socket schon zu ist
-            # Dieselbe Trennung wie bei `/resync` und `/cmd`: der volle
-            # Traceback ins Server-Log, die Antwort traegt nur die Meldung.
-            # Der Unterschied zwischen einem toten Sender und einem
-            # Programmfehler in `resend_all` bliebe sonst nirgends erhalten.
-            logger.exception("Full-Resend ueber /api/diagnostics/resync fehlgeschlagen")
+        except Exception as exc:  # e.g. a UdpSender whose socket is already closed
+            # The same separation as for `/resync` and `/cmd`: the full
+            # traceback into the server log, the response carries only
+            # the message. The difference between a dead sender and a
+            # program bug in `resend_all` would otherwise be preserved
+            # nowhere.
+            logger.exception("Full resend via /api/diagnostics/resync failed")
             raise HTTPException(
                 status_code=502, detail=i18n.t("api.server.fail_resync", exc=exc)
             ) from exc
-        # Englischer Schluessel im Wire-Format, wortgleich mit `/resync`:
-        # die Oberflaeche liest `sent` und macht eine Kurzmeldung daraus.
+        # English key in the wire format, identical wording to `/resync`:
+        # the UI reads `sent` and turns it into a toast.
         return {"sent": count}
 
     @router.get("/fabric-backup")
     async def fabric_backup() -> Response:
-        """**WER DIESE ROUTE ABRUFEN KANN, KANN DIE FABRIC UEBERNEHMEN.** Das
-        ist der erste Satz dieses Docstrings mit Absicht.
+        """**WHOEVER CAN CALL THIS ROUTE CAN TAKE OVER THE FABRIC.** That
+        is the first sentence of this docstring on purpose.
 
-        Der Schutz sitzt nicht an dieser Funktion, sondern einheitlich am
-        gesamten Router (`loxone.server.build_api_guard`): ohne gueltiges
-        Sitzungs-Cookie und ohne gueltiges Bearer-Token endet der Aufruf mit
-        401, bevor diese Funktion ueberhaupt laeuft.
+        The protection does not sit on this function but uniformly on the
+        entire router (`loxone.server.build_api_guard`): without a valid
+        session cookie and without a valid bearer token, the call ends
+        with 401 before this function even runs.
 
-        **Der frueher hier stehende 403-Zweig ist entfallen** (WebUI-Login,
-        Spec 11). Er verteidigte den Fall "der Dienst laeuft ohne jedes
-        Zugangsmittel, also sind alle `/api`-Routen offen" - genau diesen
-        Fall gibt es nicht mehr: ohne gesetztes Passwort laesst der Waechter
-        keine `/api`-Route zu, und wer hier ankommt, hat einen Nachweis
-        vorgezeigt. Ein unerreichbarer Zweig, dessen Docstring eine Lage
-        beschreibt, die es nicht mehr gibt, waere schlimmer als kein Zweig:
-        der naechste Leser verliesse sich auf eine Bedingung, die nichts
-        mehr prueft. Dass der Waechter tatsaechlich an JEDEM der fuenf Router
-        haengt, prueft `tests/api/test_security.py` Router fuer Router
-        einzeln, statt sich auf den gemeinsamen Praefix zu verlassen.
+        **The 403 branch that used to be here has been removed** (WebUI
+        login, Spec 11). It defended against the case "the service runs
+        with no access control at all, so every `/api` route is open" -
+        that exact case no longer exists: without a password set, the
+        guard allows no `/api` route through, and whoever arrives here has
+        presented proof. An unreachable branch whose docstring describes a
+        situation that no longer exists would be worse than no branch:
+        the next reader would rely on a condition that checks nothing any
+        more. That the guard actually hangs off EVERY one of the five
+        routers is checked router by router by
+        `tests/api/test_security.py`, instead of relying on the shared
+        prefix.
 
-        503 bleibt fuer "das Datenverzeichnis ist nicht eingehaengt bzw.
-        existiert nicht" (unten) - eine Konfigurationsluecke, die diese
-        Faehigkeit ueberhaupt erst herstellen wuerde.
+        503 remains for "the data directory is not mounted or does not
+        exist" (below) - a configuration gap that would only just create
+        this capability in the first place.
 
-        Sicherung des matter-server-Datenverzeichnisses (Spec 4.1, 8) als
-        Download.
+        Backup of the matter-server data directory (Spec 4.1, 8) as a
+        download.
 
-        Loggt bewusst NICHTS - weder den aufgeloesten Pfad noch die
-        enthaltenen Dateinamen (siehe Moduldocstring)."""
-        # Absichtlich kein `logger`-Aufruf in dieser ganzen Funktion, auch
-        # nicht in den beiden Fehlerzweigen unten: schon der konfigurierte
-        # PFAD ist ein Hinweis auf das Speicherlayout der Fabric-Credentials
-        # (siehe Moduldocstring) - selbst ein scheiternder Aufruf soll ihn
-        # nicht ins Log schreiben.
+        Deliberately logs NOTHING - neither the resolved path nor the
+        file names it contains (see module docstring)."""
+        # Deliberately no `logger` call anywhere in this whole function,
+        # not even in the two error branches below: even the configured
+        # PATH is a hint about the storage layout of the fabric
+        # credentials (see module docstring) - even a failing call should
+        # not write it to the log.
         if matter_data_dir is None:
             raise HTTPException(
                 status_code=503,

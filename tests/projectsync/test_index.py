@@ -1,8 +1,8 @@
 from loxmatter.projectsync.index import AmbiguousMiniserverError, ProjectFormatError, build_index
 
-# Zwei `LoxLIVE`-Bloecke (zwei konfigurierte Miniserver in einem Projekt) mit
-# je einem eigenen, disjunkten Eingangssignal - beweist, dass `build_index`
-# nach Aufloesung wirklich nur im GEWAEHLTEN Block sucht, nicht in beiden.
+# Two `LoxLIVE` blocks (two Miniservers configured in one project), each
+# with its own, disjoint input signal - proves that `build_index` really
+# only searches the CHOSEN block after resolution, not both.
 TWO_LOXLIVE_PROJECT = (
     '<?xml version="1.0" encoding="utf-8"?>\r\n'
     '<ControlList Version="275" NextObj="100">\r\n'
@@ -35,8 +35,8 @@ TWO_LOXLIVE_PROJECT = (
     "</ControlList>\r\n"
 )
 
-# Ein `Document`, das gar keinen `LoxLIVE`-Block enthaelt - ein technisch
-# gueltiges, aber leeres/frisch angelegtes Projekt.
+# A `Document` that contains no `LoxLIVE` block at all - a technically
+# valid, but empty/freshly created project.
 NO_LOXLIVE_PROJECT = (
     '<?xml version="1.0" encoding="utf-8"?>\r\n'
     '<ControlList Version="275" NextObj="100">\r\n'
@@ -75,9 +75,9 @@ def test_unknown_device_has_no_entry(sample_project):
 
 def test_collects_all_u_values_including_connectors(sample_project):
     index = build_index(sample_project)
-    # "1000-0003-0000-bbbbbbbbbbbbbbbb" gehoert zu einem <Co>, keinem <C> -
-    # muss trotzdem erfasst sein, sonst waere eine neu erzeugte ID nicht
-    # sicher eindeutig.
+    # "1000-0003-0000-bbbbbbbbbbbbbbbb" belongs to a <Co>, not a <C> -
+    # it must still be captured, otherwise a newly generated id would not
+    # be reliably unique.
     assert "1000-0003-0000-bbbbbbbbbbbbbbbb" in index.all_u_values
     assert "1000-0001-0000-aaaaaaaaaaaaaaaa" in index.all_u_values
 
@@ -95,9 +95,9 @@ def test_rejects_file_without_control_list():
 
 
 def test_single_loxlive_is_auto_selected_without_ip(sample_project):
-    """Genau ein `LoxLIVE`-Block in der Datei: er wird automatisch gewaehlt,
-    `miniserver_ip` bleibt optional (Entwurf, Abschnitt zur Miniserver-
-    Zuordnung)."""
+    """Exactly one `LoxLIVE` block in the file: it gets auto-selected,
+    `miniserver_ip` stays optional (draft, section on Miniserver
+    assignment)."""
     index = build_index(sample_project)
     assert index.target_loxlive.type == "LoxLIVE"
     assert index.target_loxlive.attrs["IntAddr"] == "10.0.0.10"
@@ -109,9 +109,9 @@ def test_single_loxlive_matching_ip_is_selected(sample_project):
 
 
 def test_single_loxlive_mismatched_ip_raises(sample_project):
-    """Eine explizit mitgegebene, aber nicht passende IP deutet eher auf die
-    falsche Datei hin als auf einen Grund, sie zu ignorieren - auch bei nur
-    einem `LoxLIVE`-Block in der Datei muss sie darum passen."""
+    """An explicitly supplied but non-matching IP points more to the wrong
+    file than to a reason to ignore it - so it must match even when there
+    is only one `LoxLIVE` block in the file."""
     import pytest
 
     with pytest.raises(AmbiguousMiniserverError, match="10.0.0.99"):
@@ -126,9 +126,9 @@ def test_multi_loxlive_without_ip_raises():
 
 
 def test_multi_loxlive_without_ip_carries_candidates_for_a_selection_field():
-    """`candidates` ist der Grund, warum die API bei mehreren Miniservern
-    statt einer reinen Fehlermeldung ein Auswahlfeld anbieten kann
-    (Nutzerwunsch nach dem Review: auswaehlen statt die IP abzutippen)."""
+    """`candidates` is why the API can offer a selection field instead of
+    a plain error message when there are multiple Miniservers (user request
+    after the review: choose from a list instead of typing the IP)."""
     import pytest
 
     from loxmatter.projectsync.index import MiniserverCandidate
@@ -142,9 +142,9 @@ def test_multi_loxlive_without_ip_carries_candidates_for_a_selection_field():
 
 
 def test_no_loxlive_carries_no_candidates():
-    """Ohne einen einzigen `LoxLIVE`-Block gibt es nichts zur Auswahl - die
-    API muss diesen Fall weiterhin als echte 400 behandeln, kein leeres
-    Auswahlfeld anbieten."""
+    """Without a single `LoxLIVE` block there is nothing to choose from -
+    the API must still treat this case as a real 400, not offer an empty
+    selection field."""
     import pytest
 
     with pytest.raises(AmbiguousMiniserverError) as exc_info:
@@ -153,10 +153,10 @@ def test_no_loxlive_carries_no_candidates():
 
 
 def test_multi_loxlive_with_matching_ip_scopes_to_that_block_only():
-    """Der Abgleich darf nur im gewaehlten `LoxLIVE`-Block suchen - sonst
-    koennte er im falschen Miniserver-Bereich einer Mehr-Miniserver-Datei
-    landen und dort faelschlich ein Signal finden, das eigentlich zum
-    ANDEREN Miniserver gehoert."""
+    """The matching may only search within the chosen `LoxLIVE` block -
+    otherwise it could land in the wrong Miniserver area of a
+    multi-Miniserver file and falsely find a signal there that actually
+    belongs to the OTHER Miniserver."""
     index = build_index(TWO_LOXLIVE_PROJECT, "10.0.0.20")
     assert index.target_loxlive.attrs["Title"] == "Zweiter Miniserver"
     assert "d2_1_onoff" in index.input_cmds
@@ -177,9 +177,31 @@ def test_no_loxlive_raises():
         build_index(NO_LOXLIVE_PROJECT)
 
 
-# Ein Ausgangs-Container, wie ihn dieses Projekt selbst schreibt: der
-# kombinierte Ein/Aus-Befehl steht unmittelbar vor seinem `on` und traegt
-# denselben `CmdOn` (`export.outputs.to_outputs`).
+def test_project_errors_follow_the_selected_language():
+    """The `ProjectFormatError`/`AmbiguousMiniserverError` messages reach
+    the WebUI verbatim as the HTTP detail (`api.project_sync`) - they must
+    run through i18n.t() like every other user-facing string, not sit
+    hardcoded in German."""
+    import pytest
+
+    from loxmatter import i18n
+
+    i18n.set_language("de")
+    with pytest.raises(AmbiguousMiniserverError) as german:
+        build_index(NO_LOXLIVE_PROJECT)
+
+    i18n.set_language("en")
+    with pytest.raises(AmbiguousMiniserverError) as english:
+        build_index(NO_LOXLIVE_PROJECT)
+
+    assert "keinen einzigen konfigurierten Miniserver" in str(german.value)
+    assert "not a single configured Miniserver" in str(english.value)
+    assert str(german.value) != str(english.value)
+
+
+# An output container the way this project itself writes it: the combined
+# on/off command sits immediately before its `on` and carries the same
+# `CmdOn` (`export.outputs.to_outputs`).
 PAIRED_OUTPUT_PROJECT = (
     '<?xml version="1.0" encoding="utf-8"?>\r\n'
     '<ControlList Version="275" NextObj="100">\r\n'
@@ -206,12 +228,12 @@ PAIRED_OUTPUT_PROJECT = (
 
 
 def test_paired_and_single_output_commands_do_not_collide():
-    """Anwenderbericht: nach Export und erneutem Import wollte der Sync ein
-    zweites Feld "onoff" anlegen. Ursache war eine Schluesselkollision -
-    kombinierter Ein/Aus-Befehl und einzelner `on`-Befehl tragen denselben
-    `CmdOn`, sodass einer den anderen im Index ueberschrieb. Beide muessen
-    unter ihrem EIGENEN Schluessel stehen; der kombinierte unter dem
-    Doppelschluessel, den auch `export.outputs.to_outputs` vergibt."""
+    """User report: after export and re-import, the sync wanted to create
+    a second "onoff" field. The cause was a key collision - the combined
+    on/off command and the single `on` command carry the same `CmdOn`, so
+    one overwrote the other in the index. Both must stand under their OWN
+    key; the combined one under the double key that
+    `export.outputs.to_outputs` also assigns."""
     index = build_index(PAIRED_OUTPUT_PROJECT)
     assert set(index.output_cmds) == {"d1_1_off", "d1_1_on", "d1_1_on + d1_1_off"}
     assert index.output_cmds["d1_1_on + d1_1_off"].attrs["Title"] == "onoff"

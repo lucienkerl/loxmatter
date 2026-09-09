@@ -1,4 +1,4 @@
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -14,7 +14,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Tests fuer die Bedienungs-API (Task 4, Phase 5) - siehe api/control.py."""
+"""Tests for the control API (Task 4, Phase 5) - see api/control.py."""
 
 from __future__ import annotations
 
@@ -33,9 +33,9 @@ from loxmatter.profiles.table import command_slug
 
 @pytest.fixture
 def invocations() -> list[MatterCall]:
-    """Sammelt jeden `MatterCall`, den der EINE Invoker entgegennimmt, der in
-    `api` sowohl an den Loxone-Endpunkt (`/cmd`) als auch an die
-    WebUI-Route (`/api/commands`) durchgereicht wird - Grundlage fuer
+    """Collects every `MatterCall` accepted by the ONE invoker that `api`
+    passes through to both the Loxone endpoint (`/cmd`) and the WebUI route
+    (`/api/commands`) - the basis for
     `test_the_same_translation_as_the_loxone_endpoint` (Spec 4.2)."""
     return []
 
@@ -44,10 +44,10 @@ def invocations() -> list[MatterCall]:
 async def api(
     tmp_path, invocations, fake_runtime, fake_client
 ) -> AsyncIterator[tuple[httpx.AsyncClient, Store, int]]:
-    """Wie die `api`-Fixture in `test_devices.py`, aber mit einem
-    AUFZEICHNENDEN Invoker statt `no_invoke`: `test_the_same_translation_
-    as_the_loxone_endpoint` unten braucht die tatsaechlich uebersetzten
-    `MatterCall`s, nicht nur, dass irgendein Invoker existiert."""
+    """Like the `api` fixture in `test_devices.py`, but with a RECORDING
+    invoker instead of `no_invoke`: `test_the_same_translation_as_the_loxone_
+    endpoint` below needs the actually translated `MatterCall`s, not just
+    that some invoker exists."""
     store = Store(tmp_path / "t.sqlite")
     snapshot = load_snapshot("ikea_grillplats_plug.json")
     device_id = store.register_device(snapshot)
@@ -69,7 +69,7 @@ async def api(
 async def api_button(
     tmp_path, no_invoke, fake_runtime, fake_client
 ) -> AsyncIterator[tuple[httpx.AsyncClient, Store, int]]:
-    """Ein Taster - Eingabegeraet ohne Ausgangsbefehle (Spec 6.7)."""
+    """A button - an input device with no output commands (Spec 6.7)."""
     store = Store(tmp_path / "t.sqlite")
     snapshot = load_snapshot("ikea_bilresa_button.json")
     device_id = store.register_device(snapshot)
@@ -88,8 +88,8 @@ async def api_button(
 async def api_failing_invoke(
     tmp_path, fake_runtime, fake_client
 ) -> AsyncIterator[tuple[httpx.AsyncClient, Store, int]]:
-    """Wie `api`, aber der Invoker steht fuer ein Geraet, das nicht antwortet
-    - fuer `test_a_device_that_does_not_answer_yields_502`."""
+    """Like `api`, but the invoker stands in for a device that doesn't
+    answer - for `test_a_device_that_does_not_answer_yields_502`."""
     store = Store(tmp_path / "t.sqlite")
     snapshot = load_snapshot("ikea_grillplats_plug.json")
     device_id = store.register_device(snapshot)
@@ -97,7 +97,7 @@ async def api_failing_invoke(
     store.register_commands(device_id, extract_commands(snapshot), snapshot.node_id)
 
     async def invoke(call: MatterCall) -> None:
-        raise RuntimeError("Geraet antwortet nicht")
+        raise RuntimeError("device does not respond")
 
     app = build_app(store, invoke, fake_runtime(store), client=fake_client)
     transport = httpx.ASGITransport(app=app)
@@ -111,13 +111,13 @@ async def api_failing_invoke(
 async def api_raw_commands(
     tmp_path, no_invoke, fake_runtime, fake_client
 ) -> AsyncIterator[tuple[httpx.AsyncClient, Store, int]]:
-    """Wie `api`, aber mit zusaetzlich rohen (unbenannten) Kommandos - fuer
-    `test_hidden_raw_commands_are_counted` (Review-Fix Minor #4,
-    2026-09-02). `extract_commands(snapshot, raw=True)` liefert fuer diese
-    Vorlage nachweislich mehr Kommandos als der Normalmodus (siehe
+    """Like `api`, but with additional raw (unnamed) commands - for
+    `test_hidden_raw_commands_are_counted` (review fix Minor #4,
+    2026-09-02). `extract_commands(snapshot, raw=True)` demonstrably yields
+    more commands for this template than normal mode does (see
     `tests/export/test_commands.py::test_raw_mode_adds_unknown_clusters_
-    but_not_administrative_ones`) - der Unterschied sind genau die
-    Kommandos, die `GET /api/devices/{device_id}/controls` herausfiltert."""
+    but_not_administrative_ones`) - the difference is exactly the commands
+    `GET /api/devices/{device_id}/controls` filters out."""
     store = Store(tmp_path / "t.sqlite")
     snapshot = load_snapshot("ikea_grillplats_plug.json")
     device_id = store.register_device(snapshot)
@@ -133,7 +133,7 @@ async def api_raw_commands(
 
 
 async def test_plug_offers_exactly_its_three_commands(api):
-    """Spec 6.7: Ausgangsbefehle stammen aus AcceptedCommandList, nicht aus Attributen."""
+    """Spec 6.7: output commands come from AcceptedCommandList, not from attributes."""
     client, _, device_id = api
     controls = (await client.get(f"/api/devices/{device_id}/controls")).json()
     assert sorted(c["slug"] for c in controls["commands"]) == ["off", "on", "toggle"]
@@ -141,7 +141,7 @@ async def test_plug_offers_exactly_its_three_commands(api):
 
 
 async def test_button_offers_no_controls(api_button):
-    """Ein Taster ist ein Eingabegeraet."""
+    """A button is an input device."""
     client, _, device_id = api_button
     controls = (await client.get(f"/api/devices/{device_id}/controls")).json()
     assert controls["commands"] == []
@@ -149,12 +149,12 @@ async def test_button_offers_no_controls(api_button):
 
 
 async def test_hidden_raw_commands_are_counted(api_raw_commands):
-    """Ein unbenanntes Kommando bleibt gefiltert, aber nicht spurlos
-    (Review-Fix Minor #4, 2026-09-02)."""
+    """An unnamed command stays filtered, but not without a trace (review
+    fix Minor #4, 2026-09-02)."""
     client, store, device_id = api_raw_commands
     stored = store.commands(device_id)
     named = sum(1 for c in stored if command_slug(c.cluster_id, c.command_id) is not None)
-    assert named < len(stored)  # sonst waere dieser Test nicht aussagekraeftig
+    assert named < len(stored)  # otherwise this test wouldn't be meaningful
 
     controls = (await client.get(f"/api/devices/{device_id}/controls")).json()
     assert len(controls["commands"]) == named
@@ -170,7 +170,7 @@ async def test_executing_a_command_reaches_matter(api):
 
 
 async def test_the_same_translation_as_the_loxone_endpoint(api, invocations):
-    """Spec 4.2: eine Umrechnung, zwei Aufrufer - sonst driften sie."""
+    """Spec 4.2: one conversion, two callers - otherwise they drift apart."""
     client, _, device_id = api
     key = f"d{device_id}_1_on"
     await client.post(f"/api/commands/{key}", json={"value": "1"})
@@ -190,21 +190,21 @@ async def test_a_device_that_does_not_answer_yields_502(api_failing_invoke):
     response = await client.post(f"/api/commands/d{device_id}_1_on", json={"value": "1"})
     assert response.status_code == 502
     assert "Traceback" not in response.text
-    assert response.json()["detail"] == "device unreachable: Geraet antwortet nicht"
+    assert response.json()["detail"] == "device unreachable: device does not respond"
 
 
 async def test_a_device_that_does_not_answer_yields_502_in_german(api_failing_invoke):
-    """Deutscher Begleittest zu test_a_device_that_does_not_answer_yields_502."""
+    """German companion test to test_a_device_that_does_not_answer_yields_502."""
     client, store, device_id = api_failing_invoke
     store.locale.set_language("de")
     response = await client.post(f"/api/commands/d{device_id}_1_on", json={"value": "1"})
     assert response.status_code == 502
     assert "Traceback" not in response.text
-    assert response.json()["detail"] == "Geraet nicht erreichbar: Geraet antwortet nicht"
+    assert response.json()["detail"] == "Geraet nicht erreichbar: device does not respond"
 
 
 async def test_raw_write_of_a_non_writable_attribute_is_refused(api):
-    """Lieber eine klare Absage als ein Schreibversuch, der still nichts tut."""
+    """A clear refusal beats a write attempt that silently does nothing."""
     client, store, device_id = api
     key = next(s.key for s in store.signals(device_id) if s.ref.cluster_id == 40)
     response = await client.post(f"/api/signals/{key}/write", json={"value": "42"})
@@ -217,7 +217,8 @@ async def test_raw_write_of_a_non_writable_attribute_is_refused(api):
 
 
 async def test_raw_write_of_a_non_writable_attribute_is_refused_in_german(api):
-    """Deutscher Begleittest zu test_raw_write_of_a_non_writable_attribute_is_refused."""
+    """German companion test to
+    test_raw_write_of_a_non_writable_attribute_is_refused."""
     client, store, device_id = api
     key = next(s.key for s in store.signals(device_id) if s.ref.cluster_id == 40)
     store.locale.set_language("de")
@@ -231,8 +232,8 @@ async def test_raw_write_of_a_non_writable_attribute_is_refused_in_german(api):
 
 
 async def test_raw_write_of_a_writable_attribute_is_not_yet_wired(api):
-    """Erlaubt, aber noch nicht verdrahtet - siehe Moduldocstring, Absatz
-    "Offener Punkt"."""
+    """Allowed, but not wired up yet - see the module docstring, "Open
+    point" paragraph."""
     client, store, device_id = api
     key = next(
         s.key for s in store.signals(device_id) if (s.ref.cluster_id, s.ref.element_id) == (40, 5)
@@ -245,7 +246,8 @@ async def test_raw_write_of_a_writable_attribute_is_not_yet_wired(api):
 
 
 async def test_raw_write_of_a_writable_attribute_is_not_yet_wired_in_german(api):
-    """Deutscher Begleittest zu test_raw_write_of_a_writable_attribute_is_not_yet_wired."""
+    """German companion test to
+    test_raw_write_of_a_writable_attribute_is_not_yet_wired."""
     client, store, device_id = api
     key = next(
         s.key for s in store.signals(device_id) if (s.ref.cluster_id, s.ref.element_id) == (40, 5)
@@ -275,8 +277,8 @@ async def test_writing_an_unknown_signal_yields_404_in_german(api):
 
 
 async def test_writing_a_signal_at_a_removed_device_is_refused(api):
-    """Dieselbe Pruefung wie bei PATCH /api/signals/{key} (api/devices.py,
-    Review-Fix Important #4), jetzt fuer den rohen Schreibpfad."""
+    """The same check as with PATCH /api/signals/{key} (api/devices.py,
+    review fix Important #4), now for the raw write path."""
     client, store, device_id = api
     key = store.signals(device_id)[0].key
     store.forget_device(device_id)
@@ -288,7 +290,8 @@ async def test_writing_a_signal_at_a_removed_device_is_refused(api):
 
 
 async def test_writing_a_signal_at_a_removed_device_is_refused_in_german(api):
-    """Deutscher Begleittest zu test_writing_a_signal_at_a_removed_device_is_refused."""
+    """German companion test to
+    test_writing_a_signal_at_a_removed_device_is_refused."""
     client, store, device_id = api
     key = store.signals(device_id)[0].key
     store.forget_device(device_id)
@@ -301,8 +304,8 @@ async def test_writing_a_signal_at_a_removed_device_is_refused_in_german(api):
 
 
 async def test_command_at_a_removed_device_is_refused(api):
-    """RED-Reproduktion: dieselbe Luecke wie bei Signalen (Task 2), jetzt fuer
-    Kommandos (Review-Fix Important #1, 2026-09-02)."""
+    """RED reproduction: the same gap as with signals (Task 2), now for
+    commands (review fix Important #1, 2026-09-02)."""
     client, store, device_id = api
     key = f"d{device_id}_1_on"
     store.forget_device(device_id)
@@ -314,7 +317,7 @@ async def test_command_at_a_removed_device_is_refused(api):
 
 
 async def test_command_at_a_removed_device_is_refused_in_german(api):
-    """Deutscher Begleittest zu test_command_at_a_removed_device_is_refused."""
+    """German companion test to test_command_at_a_removed_device_is_refused."""
     client, store, device_id = api
     key = f"d{device_id}_1_on"
     store.forget_device(device_id)
@@ -330,8 +333,8 @@ async def test_command_at_a_removed_device_is_refused_in_german(api):
 async def api_lamp(
     tmp_path, no_invoke, fake_runtime, fake_client
 ) -> AsyncIterator[tuple[httpx.AsyncClient, Store, int, object]]:
-    """Wie `api`, aber mit der eingecheckten RGBW-Leuchte - der einzigen
-    Vorlage, die Farb- und Farbtemperatur-Kommandos zugleich traegt."""
+    """Like `api`, but with the checked-in RGBW lamp - the only
+    template that carries both color and color-temperature commands."""
     store = Store(tmp_path / "t.sqlite")
     snapshot = load_snapshot("ikea_kajplats_cws_lamp.json")
     device_id = store.register_device(snapshot)
@@ -358,16 +361,16 @@ async def test_every_control_names_its_widget(api_lamp):
 
 
 async def test_the_kelvin_range_comes_from_the_device_in_kelvin(api_lamp):
-    """Mired -> Kelvin ist ein Kehrwert: das kleinere Mired ergibt das
-    GROESSERE Kelvin, Min und Max tauschen also (Entwurf 2026-09-07,
-    Abschnitt 5.5)."""
+    """Mired -> Kelvin is a reciprocal: the smaller mired yields the
+    LARGER kelvin, so min and max swap (design 2026-09-07,
+    section 5.5)."""
     client, store, device_id, runtime = api_lamp
     keys = {
         signal.ref.element_id: signal.key
         for signal in store.signals(device_id)
         if signal.ref.cluster_id == 768 and signal.ref.element_id in (16395, 16396)
     }
-    # Die echten Werte der eingecheckten CWS-Leuchte.
+    # The real values from the checked-in CWS lamp.
     runtime.seed(keys[16395], 153)  # 153 Mired = 6535 K
     runtime.seed(keys[16396], 555)  # 555 Mired = 1801 K
 
@@ -377,9 +380,9 @@ async def test_the_kelvin_range_comes_from_the_device_in_kelvin(api_lamp):
 
 
 async def test_without_the_limits_there_is_no_range(api_lamp):
-    """Kein Bereich ist besser als ein erfundener - die Oberflaeche faellt
-    dann auf das Zahlenfeld zurueck (Entwurf 2026-09-07, Abschnitt 9.2)."""
-    client, _store, device_id, _runtime = api_lamp  # nichts geseedet
+    """No range is better than a made-up one - the UI falls
+    back to the number field then (design 2026-09-07, section 9.2)."""
+    client, _store, device_id, _runtime = api_lamp  # nothing seeded
     response = await client.get(f"/api/devices/{device_id}/controls")
     colortemp = next(c for c in response.json()["commands"] if c["slug"] == "colortemp")
     assert colortemp["range"] is None

@@ -1,4 +1,4 @@
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -14,16 +14,16 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Die gemeinsame Spracheinstellung dieser Installation - EINE Einstellung
-fuer CLI und (ab Phase B) WebUI, kein Feld pro Nutzer oder Browser. Siehe
-docs/superpowers/specs/2026-09-03-i18n-phase-a-sprachwahl-cli-design.md,
-Abschnitt 4.
+"""The shared language setting of this installation - ONE setting for the
+CLI and (from Phase B on) the WebUI, not a field per user or browser. See
+docs/superpowers/specs/2026-09-03-i18n-phase-a-language-selection-cli-design.md,
+section 4.
 
-Eigenes Modul und eigene Klasse, analog zu `auth_store.py` und
-`settings_store.py`: die `setting`-Tabelle ist generisch angelegt, genau
-damit weitere Konfiguration wie diese hier denselben Weg gehen kann. Diese
-Klasse ist eine weitere Sicht auf dieselbe Tabelle und dieselbe Verbindung,
-kein zweiter Verbindungsaufbau."""
+Its own module and its own class, analogous to `auth_store.py` and
+`settings_store.py`: the `setting` table is generic by design, precisely so
+that further configuration like this one can go the same way. This class is
+another view onto the same table and the same connection, not a second
+connection."""
 
 from __future__ import annotations
 
@@ -35,17 +35,17 @@ _LANGUAGE_KEY = "language"
 
 
 class LocaleStore:
-    """Zugriff auf `setting` ueber die Verbindung des Stores - wie
-    `AuthStore`, nur fuer den Schluessel `"language"`."""
+    """Access to `setting` via the store's connection - like `AuthStore`,
+    just for the key `"language"`."""
 
     def __init__(self, db: sqlite3.Connection) -> None:
         self._db = db
 
     def get_language(self) -> str:
-        """Der gespeicherte Wert - `DEFAULT_LANGUAGE`, solange nichts
-        gespeichert ist oder der gespeicherte Wert (z. B. nach einer
-        kuenftigen Ruecknahme einer Sprache aus `SUPPORTED_LANGUAGES`)
-        nicht mehr unterstuetzt wird. Wirft nie."""
+        """The stored value - `DEFAULT_LANGUAGE` as long as nothing is
+        stored, or if the stored value (e.g. after a future removal of a
+        language from `SUPPORTED_LANGUAGES`) is no longer supported. Never
+        raises."""
         row = self._db.execute(
             "SELECT value FROM setting WHERE key = ?", (_LANGUAGE_KEY,)
         ).fetchone()
@@ -57,8 +57,7 @@ class LocaleStore:
     def set_language(self, language: str) -> None:
         if language not in SUPPORTED_LANGUAGES:
             raise ValueError(
-                f"nicht unterstuetzte Sprache {language!r}, erwartet eine von "
-                f"{sorted(SUPPORTED_LANGUAGES)}"
+                f"unsupported language {language!r}, expected one of {sorted(SUPPORTED_LANGUAGES)}"
             )
         self._db.execute(
             "INSERT INTO setting (key, value) VALUES (?, ?) "

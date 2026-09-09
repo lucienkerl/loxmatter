@@ -1,39 +1,39 @@
-# Loxone-Vorlagen als Prüfsteine
+# Loxone templates as touchstones
 
-Drei Dateien, mit unterschiedlicher Beweiskraft — das ist der Grund für diese
-Notiz.
+Three files, with different evidentiary weight — that's the reason for this
+note.
 
-## `VO_Funktionierend.xml` — der Goldstandard für virtuelle Ausgänge
+## `VO_working.xml` — the gold standard for virtual outputs
 
-**Von Loxone Config selbst geschrieben**, nach einem Import, der nachweislich
-funktioniert hat (Anwender, 3. September 2026). Was hier steht, ist keine
-Ableitung und keine Vermutung.
+**Written by Loxone Config itself**, after an import that provably worked
+(user, September 3, 2026). What's here is not a derivation and not a
+guess.
 
-Daraus stammen zwei Regeln, die wir vorher zweimal falsch hatten:
+Two rules come from this that we had gotten wrong twice before:
 
-- `Analog="false"` genau dann, wenn ein **Aus-Befehl** gesetzt ist. Das ist der
-  digitale Ausgang, bei dem Config den Haken „Als Digitalausgang verwenden"
-  setzt und das Feld für den Aus-Befehl überhaupt erst anbietet. Ein Ausgang
-  mit nur einem Befehl trägt `Analog="true"` — auch ohne Wert.
-- Die vier Skalierungsattribute (`SourceValLow`, `DestValLow`,
-  `SourceValHigh`, `DestValHigh`) schreibt Config **nur** bei den Ausgängen
-  ohne Aus-Befehl.
+- `Analog="false"` exactly when an **off command** is set. That's the
+  digital output, where Config sets the "Use as digital output" checkbox
+  and only then offers the field for the off command at all. An output
+  with only one command carries `Analog="true"` — even without a value.
+- Config writes the four scaling attributes (`SourceValLow`, `DestValLow`,
+  `SourceValHigh`, `DestValHigh`) **only** for outputs without an off
+  command.
 
-BOM und CRLF sind nachträglich hergestellt: der Inhalt kam als Text durch die
-Zwischenablage. Der Inhalt selbst ist unverändert.
+The BOM and CRLF were added afterward: the content came through as text
+via the clipboard. The content itself is unchanged.
 
-## `VO_Referenz.xml` — nur noch für Aufbau und Attributnamen
+## `VO_reference.xml` — only for structure and attribute names now
 
-Eine **von Hand bereinigte Ableitung** aus einer echten Installation (Phase 3).
-Sie ist nützlich für Attributnamen, ihre Reihenfolge im Dokument und den
-Aufbau — aber ihr `Analog`-Wert widerspricht dem, was Config oben schreibt.
-Im Zweifel gilt Config.
+A **manually cleaned-up derivation** from a real installation (phase 3).
+It's useful for attribute names, their order in the document, and the
+structure — but its `Analog` value contradicts what Config writes above.
+When in doubt, Config wins.
 
-Für den `Analog`-Wert **nicht** heranziehen. Genau daran ist am 3. September
-2026 eine Korrektur in die falsche Richtung gegangen.
+Do **not** use this for the `Analog` value. That's exactly where a fix
+went in the wrong direction on September 3, 2026.
 
-## `VIU_Referenz.xml` — virtuelle UDP-Eingänge
+## `VIU_reference.xml` — virtual UDP inputs
 
-Ebenfalls eine bereinigte Ableitung. Enthält kein digitales Beispiel; was über
-digitale Eingänge bekannt ist, stammt aus Beobachtungen am Miniserver und
-steht in `src/loxmatter/export/signals.py` bei `LoxoneInput`.
+Also a cleaned-up derivation. Contains no digital example; what's known
+about digital inputs comes from observations on the Miniserver and lives
+in `src/loxmatter/export/signals.py`, at `LoxoneInput`.

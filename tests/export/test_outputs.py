@@ -1,4 +1,4 @@
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -15,7 +15,7 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 
-"""Paarung von Ein und Aus zu einem kombinierten virtuellen Ausgang."""
+"""Pairing of on and off into one combined virtual output."""
 
 from __future__ import annotations
 
@@ -39,9 +39,9 @@ def command(
 
 
 def test_on_and_off_also_yield_one_combined_output():
-    """Loxone kennt fuer einen digitalen Ausgang CmdOn UND CmdOff - darauf
-    laesst sich ein Schalter direkt legen, ohne beide in der Config erst von
-    Hand zusammenzubinden."""
+    """Loxone knows CmdOn AND CmdOff for a digital output - a switch can be
+    wired to that directly, without first linking the two together by hand
+    in the Config."""
     outputs = to_outputs([command("d1_1_on", "on"), command("d1_1_off", "off")])
     combined = next(o for o in outputs if o.title == PAIRED_TITLE)
     assert combined.path == "/cmd/d1_1_on/1"
@@ -50,10 +50,10 @@ def test_on_and_off_also_yield_one_combined_output():
 
 
 def test_the_separate_outputs_survive_alongside_the_combined_one():
-    """Kein Entweder-oder: kann ein Geraet auch ausserhalb von Loxone
-    geschaltet werden, folgt der Zustand in der Config nicht mehr dem
-    tatsaechlichen - dann will man Ein und Aus einzeln ausloesen, statt an
-    einer Flanke zu haengen, die vielleicht nicht kommt."""
+    """Not an either-or: if a device can also be switched outside of Loxone,
+    the state in the Config no longer follows the actual one - then you want
+    to trigger on and off individually, instead of hanging on an edge that
+    might never come."""
     outputs = to_outputs([command("d1_1_on", "on"), command("d1_1_off", "off")])
     assert [o.title for o in outputs] == [PAIRED_TITLE, "on", "off"]
     for single in (o for o in outputs if o.title != PAIRED_TITLE):
@@ -61,9 +61,9 @@ def test_the_separate_outputs_survive_alongside_the_combined_one():
 
 
 def test_pairing_needs_the_same_endpoint_and_cluster():
-    """Der Fall, der still falsch ginge: eine Steckdosenleiste hat `on` und
-    `off` je Steckplatz. Wuerde ueber Endpunkte hinweg gepaart, schaltete
-    ein Ausgang Steckplatz 1 ein und Steckplatz 2 aus."""
+    """The case that would silently go wrong: a power strip has `on` and
+    `off` per socket. If pairing crossed endpoints, one output would switch
+    socket 1 on and socket 2 off."""
     outputs = to_outputs([command("d1_1_on", "on"), command("d1_2_off", "off", endpoint=2)])
     assert all(o.title != PAIRED_TITLE for o in outputs)
     assert all(o.off_path == "" for o in outputs)

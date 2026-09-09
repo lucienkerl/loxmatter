@@ -1,51 +1,51 @@
-# One-Liner-Installskript — Implementierungsplan
+# One-Liner Install Script — Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Ein `install.sh` im Wurzelverzeichnis richtet den Docker-Stack aus `deploy/testhost/` mit einem einzigen Befehl ein — wahlweise mit Thread-Border-Router oder als reiner WiFi/Ethernet-Betrieb.
+**Goal:** An `install.sh` at the repository root sets up the Docker stack from `deploy/testhost/` with a single command — either with a Thread border router or as a pure WiFi/Ethernet operation.
 
-**Architecture:** Ein einzelnes POSIX-`sh`-Skript in sieben Phasen: prüfen (ohne zu verändern), fehlende Pakete und Docker nachinstallieren, klonen, `.env` schreiben, Stack starten, Zustand prüfen, berichten. `otbr` wird zu einem Compose-Profil, damit der Stack ohne Funkmodul läuft. Getestet wird mit einem versiegelten `PATH` aus gefälschten Binaries, die ihre Aufrufe protokollieren.
+**Architecture:** A single POSIX `sh` script in seven phases: check (without changing anything), install missing packages and Docker, clone, write `.env`, start the stack, check state, report. `otbr` becomes a Compose profile so the stack runs without a radio module. Tested against a sealed `PATH` of fake binaries that log their calls.
 
-**Tech Stack:** POSIX `sh` (dash-kompatibel), Docker Compose (Profile), pytest mit `subprocess`, `shellcheck`, PyYAML (schon Abhängigkeit).
+**Tech Stack:** POSIX `sh` (dash-compatible), Docker Compose (profiles), pytest with `subprocess`, `shellcheck`, PyYAML (already a dependency).
 
-**Entwurf:** [docs/superpowers/specs/2026-09-05-install-oneliner-design.md](../specs/2026-09-05-install-oneliner-design.md)
+**Design:** [docs/superpowers/specs/2026-09-05-install-oneliner-design.md](../specs/2026-09-05-install-oneliner-design.md)
 
 ## Global Constraints
 
-- `install.sh` ist **reines POSIX `sh`**. Kein `[[`, keine Arrays, kein `local`, kein `set -o pipefail`, kein `source`. Prüfung: `shellcheck -s sh install.sh` muss ohne Befund durchlaufen.
-- `install.sh` ist **durchgehend englisch**, auch die Kommentare. Alle anderen Dateien behalten die Projektkonvention: deutsche Kommentare, deutsche Prosa.
-- Jede neue Shell-Datei trägt denselben GPL-3.0-or-later-Kopf wie `scripts/update.sh` (dort wortgleich abschreiben, nur die englische Beschreibungszeile darunter unterscheidet sich).
-- `set -eu` steht ganz oben. **Niemals** eine Funktion mit `[ ... ] && befehl` enden lassen — schlägt der Test fehl, ist der Rückgabewert der Funktion ungleich 0 und `set -e` beendet das ganze Skript. Immer `if ... then ... fi`.
-- Alles steht in Funktionen; die **letzte Zeile** der Datei ist `main "$@"`. Ein abgeschnittener Download definiert dann nur Funktionen und tut nichts.
-- Python-Dateien halten `line-length = 100` (ruff) und müssen `uv run ruff check .` sowie `uv run ruff format --check .` bestehen. `tests/` liegt nicht unter mypy (`files = ["src", "scripts"]`), Typannotationen sind dort also freiwillig.
-- Commit-Nachrichten deutsch, im Stil der bestehenden Historie (`fix(matter): …`, `docs(otbr): …`), mit `Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>` als letzter Zeile.
-- Konstanten, die mehrfach vorkommen: Repository `https://github.com/lucienkerl/loxmatter.git`, Docker-Installer `https://get.docker.com`, Standardverzeichnis `$HOME/loxmatter`.
+- `install.sh` is **pure POSIX `sh`**. No `[[`, no arrays, no `local`, no `set -o pipefail`, no `source`. Check: `shellcheck -s sh install.sh` must pass with no findings.
+- `install.sh` is **English throughout**, including the comments. All other files keep the project convention: German comments, German prose.
+- Every new shell file carries the same GPL-3.0-or-later header as `scripts/update.sh` (copy it there verbatim, only the English description line below it differs).
+- `set -eu` sits right at the top. **Never** end a function with `[ ... ] && command` — if the test fails, the function's return value is non-zero and `set -e` ends the whole script. Always `if ... then ... fi`.
+- Everything sits in functions; the **last line** of the file is `main "$@"`. A truncated download then only defines functions and does nothing.
+- Python files keep `line-length = 100` (ruff) and must pass `uv run ruff check .` and `uv run ruff format --check .`. `tests/` is not under mypy (`files = ["src", "scripts"]`), so type annotations are optional there.
+- Commit messages in German, in the style of the existing history (`fix(matter): …`, `docs(otbr): …`), with `Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>` as the last line.
+- Constants that occur multiple times: repository `https://github.com/lucienkerl/loxmatter.git`, Docker installer `https://get.docker.com`, default directory `$HOME/loxmatter`.
 
 ---
 
-## Dateiübersicht
+## File Overview
 
-| Datei | Verantwortung |
+| File | Responsibility |
 |---|---|
-| `install.sh` (neu) | Der gesamte Installationsablauf. Eine Datei, weil sie über `curl` als eine Datei ausgeliefert wird — eine Aufteilung wäre hier nicht möglich, sondern schädlich. |
-| `tests/test_install_script.py` (neu) | Testgerüst (versiegelter `PATH`, Stub-Binaries) und alle Verhaltenstests des Skripts. |
-| `tests/test_compose_profiles.py` (neu) | Prüft die Compose-Datei als Datenstruktur: Profil an `otbr`, kein `depends_on` auf `otbr`. |
-| `deploy/testhost/docker-compose.yml` | `otbr` bekommt `profiles: ["thread"]`; `matter-server` verliert `depends_on`. |
-| `deploy/testhost/.env.example` | Neue Variable `COMPOSE_PROFILES` mit Erklärung. |
-| `deploy/testhost/README.md` | Abschnitt „WiFi/Ethernet-only". |
-| `scripts/otbr-watchdog.sh` | Wächter davor: existiert kein `otbr`-Container, still beenden. |
-| `.github/workflows/ci.yml` | Ein `shellcheck`-Schritt. |
+| `install.sh` (new) | The entire installation flow. One file, because it is delivered as a single file via `curl` — splitting it up would not just be impossible here, but harmful. |
+| `tests/test_install_script.py` (new) | Test scaffolding (sealed `PATH`, stub binaries) and all behavioral tests for the script. |
+| `tests/test_compose_profiles.py` (new) | Checks the compose file as a data structure: profile on `otbr`, no `depends_on` on `otbr`. |
+| `deploy/testhost/docker-compose.yml` | `otbr` gets `profiles: ["thread"]`; `matter-server` loses `depends_on`. |
+| `deploy/testhost/.env.example` | New variable `COMPOSE_PROFILES` with an explanation. |
+| `deploy/testhost/README.md` | Section "WiFi/Ethernet-only". |
+| `scripts/otbr-watchdog.sh` | Guard against it: if no `otbr` container exists, exit quietly. |
+| `.github/workflows/ci.yml` | A `shellcheck` step. |
 
-Die Reihenfolge der Aufgaben ist bindend: Aufgabe 1 legt die Compose-Grundlage, auf die `install.sh` ab Aufgabe 6 schreibt.
+The order of the tasks is binding: Task 1 lays the compose foundation that `install.sh` writes to from Task 6 onward.
 
-**Keine Aufgabe für `README.md`.** Der Quickstart-Wortlaut steht fertig in
-Abschnitt 10 des Entwurfs und wird von der README-Produktseiten-Session
-übernommen; diese Arbeit fasst die README nicht an. Wer das hier ausführt,
-sucht also nicht nach einer fehlenden Dokumentationsaufgabe.
+**No task for `README.md`.** The quickstart wording is finished in
+section 10 of the design and is taken over by the README product-page
+session; this work does not touch the README. Whoever executes this
+should therefore not look for a missing documentation task.
 
 ---
 
-### Task 1: `otbr` wird ein Compose-Profil
+### Task 1: `otbr` Becomes a Compose Profile
 
 **Files:**
 - Modify: `deploy/testhost/docker-compose.yml`
@@ -55,21 +55,21 @@ sucht also nicht nach einer fehlenden Dokumentationsaufgabe.
 - Test: `tests/test_compose_profiles.py`
 
 **Interfaces:**
-- Consumes: nichts.
-- Produces: Der Compose-Dienst `otbr` läuft nur, wenn das Profil `thread` aktiv ist. Aktiviert wird es über `COMPOSE_PROFILES=thread` in `deploy/testhost/.env`. Ab Aufgabe 6 schreibt `install.sh` genau diesen Schlüssel.
+- Consumes: nothing.
+- Produces: the compose service `otbr` only runs when the `thread` profile is active. It is activated via `COMPOSE_PROFILES=thread` in `deploy/testhost/.env`. From Task 6 onward, `install.sh` writes exactly this key.
 
 - [ ] **Step 1: Write the failing test**
 
-Neue Datei `tests/test_compose_profiles.py`:
+New file `tests/test_compose_profiles.py`:
 
 ```python
-"""Die Compose-Datei muss ohne Thread-Funkmodul brauchbar bleiben.
+"""The compose file must stay usable without a Thread radio module.
 
-`otbr` reicht mit `devices: - ${RADIO_DEVICE}:${RADIO_DEVICE}` ein Geraet
-durch. Fehlt es, scheitert `docker compose up` ("error gathering device
-information") - auch bei jemandem, der ausschliesslich WLAN-Matter-Geraete
-anbinden will. Diese Tests halten fest, dass `otbr` deshalb hinter einem
-Profil steht und niemand ausserhalb dieses Profils davon abhaengt.
+`otbr` passes through a device with `devices: - ${RADIO_DEVICE}:${RADIO_DEVICE}`.
+If it's missing, `docker compose up` fails ("error gathering device
+information") - even for someone who only wants to connect WiFi Matter
+devices. These tests record that `otbr` therefore sits behind a
+profile and nothing outside that profile depends on it.
 """
 
 from pathlib import Path
@@ -88,9 +88,9 @@ def test_otbr_steht_hinter_dem_thread_profil() -> None:
 
 
 def test_kein_dienst_ausserhalb_des_profils_haengt_an_otbr() -> None:
-    # Compose bricht ab, wenn ein aktiver Dienst von einem profil-
-    # deaktivierten abhaengt. matter-server darf otbr also nicht mehr
-    # in depends_on fuehren.
+    # Compose aborts if an active service depends on one disabled by
+    # a profile. matter-server must therefore no longer carry otbr
+    # in depends_on.
     for name, service in _stack()["services"].items():
         if service.get("profiles") == ["thread"]:
             continue
@@ -98,8 +98,8 @@ def test_kein_dienst_ausserhalb_des_profils_haengt_an_otbr() -> None:
 
 
 def test_nur_otbr_braucht_das_funkmodul() -> None:
-    # Alles, was RADIO_DEVICE beruehrt, muss im Profil liegen - sonst
-    # scheitert der WiFi-Betrieb doch wieder an einem fehlenden Geraet.
+    # Anything that touches RADIO_DEVICE must sit in the profile - otherwise
+    # WiFi operation would fail again after all, on a missing device.
     for name, service in _stack()["services"].items():
         if service.get("profiles") == ["thread"]:
             continue
@@ -109,85 +109,86 @@ def test_nur_otbr_braucht_das_funkmodul() -> None:
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `uv run pytest tests/test_compose_profiles.py -v`
-Expected: `test_otbr_steht_hinter_dem_thread_profil` FAILS mit `KeyError: 'profiles'`, `test_kein_dienst_ausserhalb_des_profils_haengt_an_otbr` FAILS mit `AssertionError: matter-server`.
+Expected: `test_otbr_steht_hinter_dem_thread_profil` FAILS with `KeyError: 'profiles'`, `test_kein_dienst_ausserhalb_des_profils_haengt_an_otbr` FAILS with `AssertionError: matter-server`.
 
-- [ ] **Step 3: Compose-Datei ändern**
+- [ ] **Step 3: Change the Compose File**
 
-In `deploy/testhost/docker-compose.yml`, im Dienst `otbr` direkt unter `container_name: otbr` einfügen:
+In `deploy/testhost/docker-compose.yml`, insert directly under `container_name: otbr` in the `otbr` service:
 
 ```yaml
-    # Nur mit aktivem Profil "thread" (2026-09-05). Dieser Dienst reicht mit
-    # `devices:` unten ein echtes Geraet durch - fehlt das Funkmodul, scheitert
-    # `docker compose up` fuer den GESAMTEN Stack, auch fuer jemanden, der nur
-    # WLAN-Matter-Geraete anbinden will. Hinter einem Profil bleibt der Rest
-    # startbar; eingeschaltet wird es ueber COMPOSE_PROFILES in der .env, das
-    # Compose von sich aus liest - deshalb braucht kein spaeterer Aufruf und
-    # kein Skript ein `--profile` mitzuschleppen.
+    # Only with the "thread" profile active (2026-09-05). This service passes
+    # through a real device with `devices:` below - if the radio module is
+    # missing, `docker compose up` fails for the ENTIRE stack, even for
+    # someone who only wants to connect WiFi Matter devices. Behind a
+    # profile, the rest stays startable; it is switched on via
+    # COMPOSE_PROFILES in the .env, which Compose reads on its own - so no
+    # later invocation and no script needs to carry a `--profile` along.
     profiles: ["thread"]
 ```
 
-Im Dienst `matter-server` diese beiden Zeilen **löschen**:
+In the `matter-server` service, **delete** these two lines:
 
 ```yaml
     depends_on:
       - otbr
 ```
 
-und an ihrer Stelle den Grund festhalten:
+and record the reason in their place:
 
 ```yaml
-    # Kein `depends_on: otbr` mehr (2026-09-05): Compose bricht ab, wenn ein
-    # aktiver Dienst von einem profil-deaktivierten abhaengt. Inhaltlich
-    # folgenlos - `depends_on` steuert die Startreihenfolge, nicht die
-    # Bereitschaft, und matter-server braucht den Border Router beim Start
-    # nicht: Thread-Kommissionierung laeuft spaeter ueber das Host-Netz, in
-    # dem otbr mit `network_mode: host` ohnehin steht.
+    # No more `depends_on: otbr` (2026-09-05): Compose aborts if an
+    # active service depends on one disabled by a profile. No effect on
+    # content - `depends_on` controls start order, not readiness, and
+    # matter-server does not need the border router at startup: Thread
+    # commissioning later runs over the host network, on which otbr
+    # already sits anyway via `network_mode: host`.
 ```
 
-Der Dienst `loxmatter` behält sein `depends_on: - matter-server` unverändert — `matter-server` hat kein Profil.
+The `loxmatter` service keeps its `depends_on: - matter-server` unchanged — `matter-server` has no profile.
 
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `uv run pytest tests/test_compose_profiles.py -v`
 Expected: 3 passed.
 
-- [ ] **Step 5: `.env.example` ergänzen**
+- [ ] **Step 5: Extend `.env.example`**
 
-Ganz oben in `deploy/testhost/.env.example`, **vor** `RADIO_DEVICE`, einfügen:
+Insert at the very top of `deploy/testhost/.env.example`, **before** `RADIO_DEVICE`:
 
 ```
-# Betriebsart. Leer = nur WLAN- und Ethernet-Matter-Geraete; "thread" nimmt
-# zusaetzlich den OpenThread Border Router (Dienst `otbr`) dazu.
+# Operating mode. Empty = WiFi and Ethernet Matter devices only; "thread"
+# additionally brings in the OpenThread Border Router (service `otbr`).
 #
-# Compose liest diese Variable von sich aus aus der .env - deshalb steht die
-# Betriebsart hier und nicht als `--profile`-Argument an jedem Aufruf. Ein
-# spaeteres `docker compose up`, `scripts/update.sh` und der Watchdog treffen
-# damit von allein die richtige Auswahl.
+# Compose reads this variable from the .env on its own - that's why the
+# operating mode sits here and not as a `--profile` argument on every
+# invocation. A later `docker compose up`, `scripts/update.sh`, and the
+# watchdog thereby make the right choice on their own.
 #
-# Nachruesten: Funkmodul stecken, hier `thread` eintragen, RADIO_DEVICE unten
-# auf den richtigen Pfad setzen, `docker compose up -d` erneut.
+# Retrofitting: plug in the radio module, set `thread` here, set
+# RADIO_DEVICE below to the right path, `docker compose up -d` again.
 COMPOSE_PROFILES=thread
 
-# Nur bei COMPOSE_PROFILES=thread noetig - ohne Profil wird der otbr-Dienst
-# gar nicht erzeugt und dieser Pfad nie geoeffnet.
+# Only needed with COMPOSE_PROFILES=thread - without the profile, the
+# otbr service is not created at all and this path is never opened.
 ```
 
-- [ ] **Step 6: Watchdog absichern**
+- [ ] **Step 6: Harden the Watchdog**
 
-In `scripts/otbr-watchdog.sh`, direkt nach der Zuweisung von `STAMP` (vor `thread_is_up()`), einfügen:
+In `scripts/otbr-watchdog.sh`, insert directly after the assignment of `STAMP` (before `thread_is_up()`):
 
 ```bash
-# Im WiFi/Ethernet-only-Betrieb (COMPOSE_PROFILES ohne "thread", siehe
-# deploy/testhost/.env) gibt es diesen Dienst gar nicht. Ohne diese Bremse
-# faende der Waechter nie eine Thread-Schnittstelle, versuchte alle fuenf
-# Minuten einen Neustart und schriebe jedes Mal einen Fehlschlag ins Log -
-# aus einem Aufpasser wuerde eine Lawine.
+# In WiFi/Ethernet-only operation (COMPOSE_PROFILES without "thread", see
+# deploy/testhost/.env), this service does not exist at all. Without this
+# guard, the watchdog would never find a Thread interface, would try a
+# restart every five minutes, and would write a failure to the log every
+# time - a watchdog would turn into an avalanche.
 #
-# Die Abfrage steht bewusst getrennt von der Suche: unter `set -euo pipefail`
-# verliesse ein fehlendes oder nicht laufendes docker die Pipeline mit leerer
-# Ausgabe, `grep` faende nichts (Status 1), und `!` machte daraus eine stille
-# 0 - ein kaputtes docker saehe dann genauso aus wie "kein Thread-Betrieb",
-# und der Neustartversuch samt seinem Log-Eintrag wuerde nie erreicht.
+# The check is deliberately kept separate from the search: under
+# `set -euo pipefail`, a missing or not-running docker would leave the
+# pipeline with empty output, `grep` would find nothing (status 1), and
+# `!` would turn that into a silent 0 - a broken docker would then look
+# exactly like "no Thread operation", and the restart attempt along with
+# its log entry would never be reached.
 if ! CONTAINERS=$(docker ps -a --format '{{.Names}}' 2>&1); then
   printf '%s  docker ps fehlgeschlagen - kann otbr-Container nicht pruefen:\n' "$STAMP"
   printf '%s\n' "$CONTAINERS" | sed 's/^/    /'
@@ -198,9 +199,9 @@ if ! printf '%s\n' "$CONTAINERS" | grep -qx "$SERVICE"; then
 fi
 ```
 
-- [ ] **Step 7: deploy-README ergänzen**
+- [ ] **Step 7: Extend the Deploy README**
 
-In `deploy/testhost/README.md` einen neuen Abschnitt direkt **vor** `## Aktualisieren` einfügen:
+Insert a new section directly **before** `## Aktualisieren` in `deploy/testhost/README.md`:
 
 ```markdown
 ## WiFi/Ethernet-only (ohne Thread-Funkmodul)
@@ -226,7 +227,7 @@ setzen und `RADIO_DEVICE` auf den richtigen Pfad, dann `docker compose up -d`.
 Der `start-stop-daemon`-Workaround weiter unten wird ab dann wieder gebraucht.
 ```
 
-- [ ] **Step 8: Alles laufen lassen**
+- [ ] **Step 8: Run Everything**
 
 Run: `uv run pytest tests/test_compose_profiles.py -v && uv run ruff check . && uv run ruff format --check .`
 Expected: 3 passed, `All checks passed!`, `N files already formatted`.
@@ -253,7 +254,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 
 ---
 
-### Task 2: Skelett von `install.sh` — Optionen, Ausgabe, Trap, Plattformprüfung
+### Task 2: Skeleton of `install.sh` — Options, Output, Trap, Platform Check
 
 **Files:**
 - Create: `install.sh`
@@ -261,42 +262,42 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 - Modify: `.github/workflows/ci.yml`
 
 **Interfaces:**
-- Consumes: nichts.
-- Produces: die Shell-Funktionen `say`, `note`, `warn`, `die`, `step`, `state_summary`, `usage`, `parse_args`, `check_platform`, `main`; die Variablen `REPO_URL`, `DRY_RUN`, `TARGET_DIR`, `STEP`, `STACK_STARTED`. **Regel fuer alle folgenden Aufgaben:** eine Variable wird dort deklariert, wo sie zuerst benutzt wird - nicht vorher. `shellcheck` meldet sonst SC2034, und eine Unterdrueckung dafuer wird spaeter zur Falschaussage. Für die Tests: die pytest-Fixture `installer`, die ein Objekt mit `returncode`, `output`, `calls`, `called(prefix)`, `home` liefert.
-- Konvention für alle folgenden Aufgaben: `die` beendet mit **Exit-Code 2** (erwarteter, sauber gemeldeter Abbruch). Jeder andere Code ungleich 0 ist ein unerwarteter Fehler, den der `EXIT`-Trap mit Schritt und Zustand meldet.
+- Consumes: nothing.
+- Produces: the shell functions `say`, `note`, `warn`, `die`, `step`, `state_summary`, `usage`, `parse_args`, `check_platform`, `main`; the variables `REPO_URL`, `DRY_RUN`, `TARGET_DIR`, `STEP`, `STACK_STARTED`. **Rule for all following tasks:** a variable is declared where it is first used - not earlier. Otherwise `shellcheck` reports SC2034, and suppressing that later becomes a false statement. For the tests: the pytest fixture `installer`, which provides an object with `returncode`, `output`, `calls`, `called(prefix)`, `home`.
+- Convention for all following tasks: `die` exits with **exit code 2** (an expected, cleanly reported abort). Any other code other than 0 is an unexpected error, which the `EXIT` trap reports with the step and state.
 
-- [ ] **Step 1: Testgerüst und die ersten Tests schreiben**
+- [ ] **Step 1: Write the Test Scaffolding and the First Tests**
 
-Neue Datei `tests/test_install_script.py`:
+New file `tests/test_install_script.py`:
 
 ```python
-"""Verhaltenstests fuer install.sh.
+"""Behavioral tests for install.sh.
 
-Das Skript veraendert fremde Rechner: es installiert Pakete, ruft sudo,
-klont und startet Container. Geprueft wird deshalb, WELCHE Befehle es
-waehlt - nicht, was sie bewirken. Dazu laeuft es gegen einen versiegelten
-PATH aus zwei Verzeichnissen:
+The script changes other people's machines: it installs packages, calls
+sudo, clones, and starts containers. What's checked is therefore WHICH
+commands it chooses - not what they do. For that, it runs against a sealed
+PATH made of two directories:
 
-  bin/  gefaelschte Binaries (docker, git, sudo, apt-get, curl, uname, ip,
-        hostname, usermod). Jedes protokolliert seinen Aufruf nach $STUB_LOG
-        und endet erfolgreich. Ein Werkzeug "fehlt" schlicht dadurch, dass
-        sein Stub nicht angelegt wird - deshalb darf im PATH nichts liegen,
-        was es auf dem Testrechner echt gibt.
-  sys/  Symlinks auf genau die echten Werkzeuge, die das Skript legitim
-        braucht (sh, awk, sed, grep, ...). `id` steht bewusst NICHT dabei,
-        sondern ist ein Stub - sonst haenge das Verhalten davon ab, ob die
-        Testsuite gerade als root laeuft.
+  bin/  fake binaries (docker, git, sudo, apt-get, curl, uname, ip,
+        hostname, usermod). Each logs its call to $STUB_LOG
+        and exits successfully. A tool "is missing" simply by
+        its stub not being created - so nothing may sit in the PATH
+        that genuinely exists on the test machine.
+  sys/  symlinks to exactly the real tools the script legitimately
+        needs (sh, awk, sed, grep, ...). `id` is deliberately NOT among
+        them, but is a stub instead - otherwise behavior would depend
+        on whether the test suite is currently running as root.
 
-Die Stubs liegen zusaetzlich unveraendert in templates/. Der apt-get-Stub
-kopiert von dort nach bin/, und der curl-Stub gibt fuer get.docker.com ein
-Skript aus, das dasselbe fuer `docker` tut. Damit verhaelt sich ein Lauf, in
-dem ein Werkzeug fehlt und nachinstalliert wird, wie auf einem echten Host:
-danach ist es da.
+The stubs additionally live unchanged in templates/. The apt-get stub
+copies from there into bin/, and the curl stub outputs, for get.docker.com,
+a script that does the same for `docker`. This way a run in which a tool
+is missing and gets installed behaves like on a real host:
+it's there afterward.
 
-Die Kindprozesse laufen mit start_new_session=True, also ohne
-kontrollierendes Terminal. Damit schlaegt jedes Oeffnen von /dev/tty fehl
-und der nicht-interaktive Zweig ist deterministisch - unabhaengig davon, ob
-pytest gerade in einem Terminal oder in der CI laeuft.
+The child processes run with start_new_session=True, i.e. without a
+controlling terminal. This makes every opening of /dev/tty fail
+and the non-interactive branch deterministic - regardless of whether
+pytest is currently running in a terminal or in CI.
 """
 
 from __future__ import annotations
@@ -310,8 +311,8 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parent.parent
 INSTALLER = REPO_ROOT / "install.sh"
 
-# Echte Werkzeuge, die das Skript benutzen darf. Alles andere kommt aus
-# einem Stub oder gilt als nicht installiert.
+# Real tools the script is allowed to use. Everything else comes from
+# a stub or counts as not installed.
 SYSTEM_TOOLS = (
     "sh",
     "cat",
@@ -341,8 +342,8 @@ _IP = 'echo "default via 10.0.1.1 dev eth0 proto dhcp src 10.0.1.56"\n'
 
 _HOSTNAME = 'echo "10.0.1.56"\n'
 
-# Nicht als echtes Werkzeug: sonst haengt jeder root-Test davon ab, als wer
-# die Testsuite laeuft.
+# Not as a real tool: otherwise every root test would depend on who
+# the test suite is running as.
 _ID = "echo 1000\n"
 
 _OPENSSL = """case "${1-} ${2-}" in
@@ -351,8 +352,8 @@ esac
 exit 0
 """
 
-# Holt die "installierten" Pakete aus templates/ nach bin/ - danach sind sie
-# wirklich da, so wie nach einem echten apt-get.
+# Fetches the "installed" packages from templates/ into bin/ - after that
+# they're really there, just like after a real apt-get.
 _APT_GET = """for pkg in "$@"; do
   if [ -f "$STUB_TEMPLATES/$pkg" ]; then
     cp "$STUB_TEMPLATES/$pkg" "$STUB_BIN/$pkg"
@@ -373,8 +374,8 @@ fi
 exit 0
 """
 
-# Legt beim `clone` ein Checkout an, das die ECHTEN Stack-Dateien enthaelt -
-# so laufen die Tests gegen die tatsaechliche docker-compose.yml und .env.example.
+# On `clone`, creates a checkout that contains the REAL stack files -
+# this way the tests run against the actual docker-compose.yml and .env.example.
 _GIT = """if [ "${1-}" = "-C" ]; then shift 2; fi
 case "${1-}" in
   clone)
@@ -390,11 +391,11 @@ esac
 exit 0
 """
 
-# Die get.docker.com-Ausgabe wird vom Skript ausgefuehrt - sie legt deshalb
-# den docker-Stub an, statt nur erfolgreich zu sein. ACHTUNG: das Skript ruft
-# curl mit `-o <datei>` auf (siehe Aufgabe 4, der Download darf nicht in eine
-# Pipe gehen), der Stub muss `-o` also auswerten und dorthin schreiben, statt
-# die URL blind als letztes Argument zu lesen.
+# The get.docker.com output is executed by the script - so it creates
+# the docker stub instead of just succeeding. CAUTION: the script calls
+# curl with `-o <file>` (see Task 4, the download must not go into a
+# pipe), so the stub must evaluate `-o` and write there, instead of
+# blindly reading the URL as the last argument.
 _CURL = """for a in "$@"; do last="$a"; done
 case "$last" in
   *get.docker.com*)
@@ -473,7 +474,7 @@ def installer(tmp_path):
             path.write_text(f'#!/bin/sh\nprintf \'%s\\n\' "{name} $*" >> "$STUB_LOG"\n{body}')
             path.chmod(0o755)
 
-        # templates/ kennt alles, bin/ nur das, was auf diesem Host "da" ist.
+        # templates/ knows everything, bin/ only what "exists" on this host.
         for name, body in dict(DEFAULT_STUBS, **(stubs or {})).items():
             write(templates, name, body)
         for name, body in active.items():
@@ -532,11 +533,11 @@ def test_fremde_architektur_wird_abgewiesen(installer):
 - [ ] **Step 2: Run tests to verify they fail**
 
 Run: `uv run pytest tests/test_install_script.py -v`
-Expected: alle vier FAIL, weil `install.sh` nicht existiert (`/bin/sh: can't open …/install.sh`, Exit-Code 127).
+Expected: all four FAIL because `install.sh` does not exist (`/bin/sh: can't open …/install.sh`, exit code 127).
 
-- [ ] **Step 3: `install.sh` anlegen**
+- [ ] **Step 3: Create `install.sh`**
 
-Neue Datei `install.sh` (ausführbar). Der GPL-Kopf wird aus `scripts/update.sh` wortgleich übernommen:
+New file `install.sh` (executable). The GPL header is copied verbatim from `scripts/update.sh`:
 
 ```sh
 #!/bin/sh
@@ -572,19 +573,19 @@ Neue Datei `install.sh` (ausführbar). Der GPL-Kopf wird aus `scripts/update.sh`
 # nothing at all.
 set -eu
 
-# Jede Variable wird in der Aufgabe eingefuehrt, die sie zuerst BENUTZT.
-# shellcheck meldet sonst SC2034 (ungenutzt), und eine Unterdrueckung dafuer
-# wuerde in genau der spaeteren Aufgabe stillschweigend falsch, die die
-# Variable dann doch benutzt.
+# Every variable is introduced in the task that first USES it.
+# Otherwise shellcheck reports SC2034 (unused), and suppressing that
+# would silently become wrong in exactly the later task that does
+# use the variable.
 REPO_URL="https://github.com/lucienkerl/loxmatter.git"
 
 DRY_RUN=0
 TARGET_DIR=""
 STEP="starting up"
 STACK_STARTED=0
-# Der EXIT-Trap raeumt diese Datei weg, egal wie der Lauf endet. Sie wird
-# erst in Aufgabe 4 gefuellt, aber hier deklariert: on_exit liest sie, und
-# unter `set -u` waere sie sonst ungebunden.
+# The EXIT trap cleans up this file, no matter how the run ends. It is
+# only filled in Task 4, but declared here: on_exit reads it, and
+# under `set -u` it would otherwise be unbound.
 TEMP_FILE=""
 
 # ---------------------------------------------------------------- output --
@@ -615,8 +616,8 @@ state_summary() {
 }
 
 on_exit() {
-  # Muss die allererste Anweisung bleiben - jeder andere Befehl davor
-  # ueberschriebe den Status, der hier gemeint ist.
+  # Must remain the very first statement - any other command before it
+  # would overwrite the status meant here.
   code=$?
   if [ -n "$TEMP_FILE" ]; then
     rm -f "$TEMP_FILE"
@@ -697,10 +698,10 @@ On macOS, use the development path instead:
 
 main() {
   trap on_exit EXIT
-  # Damit ein Abbruch per Ctrl-C ueberhaupt beim EXIT-Trap ankommt und die
-  # temporaere Datei nicht liegen bleibt. 130 und 143 sind die ueblichen
-  # Status fuer SIGINT und SIGTERM - beide ungleich 2, der Trap meldet also
-  # zu Recht, an welchem Schritt es abbrach.
+  # So that an abort via Ctrl-C reaches the EXIT trap at all and the
+  # temp file isn't left behind. 130 and 143 are the usual statuses
+  # for SIGINT and SIGTERM - both not equal to 2, so the trap rightly
+  # reports which step it aborted at.
   trap 'exit 130' INT
   trap 'exit 143' TERM
   parse_args "$@"
@@ -714,7 +715,7 @@ main() {
 main "$@"
 ```
 
-- [ ] **Step 4: Ausführbar machen und Tests laufen lassen**
+- [ ] **Step 4: Make Executable and Run the Tests**
 
 ```bash
 chmod +x install.sh
@@ -722,18 +723,18 @@ uv run pytest tests/test_install_script.py -v
 ```
 Expected: 4 passed.
 
-- [ ] **Step 5: shellcheck laufen lassen**
+- [ ] **Step 5: Run shellcheck**
 
 Run: `shellcheck -s sh install.sh`
-Expected: keine Ausgabe, Exit-Code 0. Kommt ein Befund, wird er behoben — keine `# shellcheck disable`-Zeile ohne Begründung im Kommentar daneben.
+Expected: no output, exit code 0. If there is a finding, fix it — no `# shellcheck disable` line without a justification in the comment next to it.
 
-- [ ] **Step 6: CI-Schritt ergänzen**
+- [ ] **Step 6: Add the CI Step**
 
-In `.github/workflows/ci.yml`, direkt nach `- uses: actions/checkout@v4`:
+In `.github/workflows/ci.yml`, directly after `- uses: actions/checkout@v4`:
 
 ```yaml
-      # install.sh wird per `curl | sh` auf fremden Rechnern ausgefuehrt -
-      # ein Quoting-Fehler darin ist teurer als in jedem anderen Skript hier.
+      # install.sh is executed on other people's machines via `curl | sh` -
+      # a quoting mistake in it is more expensive than in any other script here.
       - run: shellcheck -s sh install.sh
 ```
 
@@ -758,32 +759,32 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 
 ---
 
-### Task 3: Phase 1 — Werkzeuge, Rechte, Betriebsart, Konfigurationsquelle
+### Task 3: Phase 1 — Tools, Privileges, Operating Mode, Configuration Source
 
 **Files:**
 - Modify: `install.sh`
 - Modify: `tests/test_install_script.py`
 
 **Interfaces:**
-- Consumes: aus Aufgabe 2 `say`, `note`, `warn`, `die`, `step`, `DRY_RUN`, `TARGET_DIR`.
-- Produces: die Funktionen `have`, `check_tty`, `ask`, `check_privileges`, `collect_missing`, `check_can_install`, `detect_radio_device`, `decide_mode`, `valid_ipv4`, `env_file_value`, `check_config_source`; die Variablen `HAVE_TTY` (0/1), `SUDO` (`""` oder `sudo`), `MISSING_PACKAGES` (leer oder durch Leerzeichen getrennte Paketnamen), `NEED_DOCKER` (0/1), `MODE` (`thread` oder `wifi`), `DETECTED_RADIO` (Pfad oder leer).
+- Consumes: from Task 2, `say`, `note`, `warn`, `die`, `step`, `DRY_RUN`, `TARGET_DIR`.
+- Produces: the functions `have`, `check_tty`, `ask`, `check_privileges`, `collect_missing`, `check_can_install`, `detect_radio_device`, `decide_mode`, `valid_ipv4`, `env_file_value`, `check_config_source`; the variables `HAVE_TTY` (0/1), `SUDO` (`""` or `sudo`), `MISSING_PACKAGES` (empty or space-separated package names), `NEED_DOCKER` (0/1), `MODE` (`thread` or `wifi`), `DETECTED_RADIO` (path or empty).
 
-**Abweichung vom Entwurf, bewusst:** Die Betriebsartfrage steht hier in Phase 1, nicht in Phase 4. Ihre Antwort entscheidet darüber, ob Phase 1 abbrechen muss (Thread ohne Funkmodul und ohne Terminal), und eine Frage verändert nichts am Host — sie darf also vor die Mutationsgrenze.
+**Deviation from the design, deliberate:** the operating-mode question sits here in Phase 1, not in Phase 4. Its answer decides whether Phase 1 must abort (Thread without a radio module and without a terminal), and a question changes nothing on the host — so it's allowed before the mutation boundary.
 
-- [ ] **Step 1: Fixture um Standardwerte ergänzen**
+- [ ] **Step 1: Extend the Fixture with Default Values**
 
-In `tests/test_install_script.py`, in `full_env`, zwei Zeilen ergänzen — ohne sie bricht ab jetzt jeder Test schon an der fehlenden Miniserver-Adresse ab:
+In `tests/test_install_script.py`, in `full_env`, add two lines — without them, every test now already aborts on the missing Miniserver address:
 
 ```python
             "LOXMATTER_DIR": str(home / "loxmatter"),
-            # Ohne Terminal muss die Adresse aus der Umgebung kommen. Tests,
-            # die genau diesen Abbruch pruefen, setzen sie auf "".
+            # Without a terminal, the address must come from the environment. Tests
+            # that specifically check for this abort set it to "".
             "MINISERVER_IP": "10.0.1.99",
 ```
 
 - [ ] **Step 2: Write the failing tests**
 
-Ans Ende von `tests/test_install_script.py` anfügen:
+Append to the end of `tests/test_install_script.py`:
 
 ```python
 def test_ohne_sudo_und_ohne_root_bricht_es_vor_dem_klonen_ab(installer):
@@ -855,11 +856,11 @@ def test_ohne_miniserver_ip_und_ohne_terminal_bricht_es_ab(installer):
 - [ ] **Step 3: Run tests to verify they fail**
 
 Run: `uv run pytest tests/test_install_script.py -v -k "sudo or werkzeuge or apt_get or root or wifi or thread or betriebsart or miniserver"`
-Expected: alle zehn FAIL — die Prüfungen gibt es noch nicht, das Skript endet nach `check_platform` mit 0.
+Expected: all ten FAIL — the checks don't exist yet, the script ends after `check_platform` with 0.
 
-- [ ] **Step 4: Zusätzliche Werkzeuge in `SYSTEM_TOOLS` aufnehmen**
+- [ ] **Step 4: Add More Tools to `SYSTEM_TOOLS`**
 
-`install.sh` benutzt ab hier `env`, `tail` und `head`. In `tests/test_install_script.py`:
+`install.sh` uses `env`, `tail`, and `head` from here on. In `tests/test_install_script.py`:
 
 ```python
 SYSTEM_TOOLS = (
@@ -886,11 +887,11 @@ SYSTEM_TOOLS = (
 )
 ```
 
-Und den `id`-Stub so ersetzen, dass er auch nach dem Namen gefragt werden kann:
+And replace the `id` stub so it can also be asked for the name:
 
 ```python
-# Nicht als echtes Werkzeug: sonst haengt jeder root-Test davon ab, als wer
-# die Testsuite laeuft. FAKE_UID=0 macht daraus einen root-Lauf.
+# Not as a real tool: otherwise every root test would depend on who
+# the test suite is running as. FAKE_UID=0 turns this into a root run.
 _ID = """case "${1-}" in
   -un|-nu|-n) echo "tester" ;;
   *) echo "${FAKE_UID-1000}" ;;
@@ -898,9 +899,9 @@ esac
 """
 ```
 
-- [ ] **Step 5: Phase 1 in `install.sh` implementieren**
+- [ ] **Step 5: Implement Phase 1 in `install.sh`**
 
-Neue Variablen zu den bestehenden oben ergänzen:
+Add new variables to the existing ones above:
 
 ```sh
 HAVE_TTY=0
@@ -911,11 +912,11 @@ MODE=""
 DETECTED_RADIO=""
 ```
 
-`DOCKER_SUDO`, `INSTALLED_DOCKER` und `STACK_DIR` gehoeren NICHT hierher — sie
-kommen in den Aufgaben, die sie zuerst benutzen (4 bzw. 5). Sonst meldet
-`shellcheck` sie hier als ungenutzt.
+`DOCKER_SUDO`, `INSTALLED_DOCKER`, and `STACK_DIR` do NOT belong here — they
+come in the tasks that first use them (4 and 5 respectively). Otherwise
+`shellcheck` reports them as unused here.
 
-Nach `check_platform` einfügen:
+Insert after `check_platform`:
 
 ```sh
 have() { command -v "$1" >/dev/null 2>&1; }
@@ -1115,13 +1116,13 @@ pass RADIO_DEVICE=/dev/ttyUSB0, or use LOXMATTER_MODE=wifi."
 }
 ```
 
-Oben zu den Konstanten ergänzen (wird in mehreren Meldungen gebraucht):
+Add to the constants above (needed in several messages):
 
 ```sh
 RAW_URL="https://raw.githubusercontent.com/lucienkerl/loxmatter/main/install.sh"
 ```
 
-`main` erweitern:
+Extend `main`:
 
 ```sh
 main() {
@@ -1149,7 +1150,7 @@ Expected: 16 passed.
 - [ ] **Step 7: shellcheck**
 
 Run: `shellcheck -s sh install.sh`
-Expected: keine Ausgabe.
+Expected: no output.
 
 - [ ] **Step 8: Commit**
 
@@ -1170,7 +1171,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 
 ---
 
-### Task 4: Phase 2 — fehlende Pakete und Docker nachinstallieren
+### Task 4: Phase 2 — Install Missing Packages and Docker
 
 **Files:**
 - Modify: `install.sh`
@@ -1178,11 +1179,11 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 
 **Interfaces:**
 - Consumes: `MISSING_PACKAGES`, `NEED_DOCKER`, `SUDO`, `DRY_RUN`, `DOCKER_INSTALL_URL`.
-- Produces: `run_root`, `dk`, `install_packages`, `install_docker`. Nach `install_docker` ist `DOCKER_SUDO` 1, wenn Docker in diesem Lauf mit `sudo` installiert wurde — das ist zugleich die Bedingung, unter der am Ende zur Neuanmeldung geraten wird (als root gibt es kein Gruppenproblem); `dk` ist ab dann der einzige erlaubte Weg, Docker aufzurufen — kein direkter `docker`-Aufruf mehr irgendwo im Skript.
+- Produces: `run_root`, `dk`, `install_packages`, `install_docker`. After `install_docker`, `DOCKER_SUDO` is 1 if Docker was installed with `sudo` in this run — that is also the condition under which re-login is advised at the end (as root there is no group problem); `dk` is from then on the only allowed way to call Docker — no direct `docker` call anywhere else in the script.
 
 - [ ] **Step 1: Write the failing tests**
 
-Ans Ende von `tests/test_install_script.py`:
+Append to the end of `tests/test_install_script.py`:
 
 ```python
 def test_nur_die_fehlenden_pakete_werden_installiert(installer):
@@ -1193,7 +1194,7 @@ def test_nur_die_fehlenden_pakete_werden_installiert(installer):
 
 
 def test_docker_kommt_nach_den_basispaketen(installer):
-    # get.docker.com braucht selbst curl - die Reihenfolge ist keine Kosmetik.
+    # get.docker.com itself needs curl - the order is not cosmetic.
     result = installer(omit=("git", "curl", "docker"))
     assert result.returncode == 0
     apt = next(i for i, c in enumerate(result.calls) if c.startswith("apt-get install"))
@@ -1228,23 +1229,23 @@ def test_dry_run_veraendert_nichts(installer):
 - [ ] **Step 2: Run tests to verify they fail**
 
 Run: `uv run pytest tests/test_install_script.py -v -k "pakete or docker or dry_run"`
-Expected: FAIL — `apt-get` wird nie aufgerufen, `usermod` nie, `would run` steht nicht in der Ausgabe.
+Expected: FAIL — `apt-get` is never called, `usermod` never, `would run` does not appear in the output.
 
-- [ ] **Step 3: Phase 2 implementieren**
+- [ ] **Step 3: Implement Phase 2**
 
-Oben zu den Variablen ergänzen — hier, weil sie erst ab dieser Aufgabe benutzt
-werden:
+Add to the variables above — here, because they are only used from this
+task onward:
 
 ```sh
 DOCKER_INSTALL_URL="https://get.docker.com"
 DOCKER_SUDO=0
 ```
 
-`dk` wird in dieser Aufgabe definiert **und** benutzt (von `install_docker`,
-siehe unten) — deshalb steht seine Definition vor `install_docker`, nicht
-dahinter.
+`dk` is both defined **and** used in this task (by `install_docker`,
+see below) — that's why its definition comes before `install_docker`,
+not after it.
 
-In `install.sh` nach `check_config_source` einfügen:
+Insert into `install.sh` after `check_config_source`:
 
 ```sh
 # ------------------------------------------------------------- phase two --
@@ -1364,7 +1365,7 @@ dk() {
 }
 ```
 
-`main` erweitern — nach `check_config_source`:
+Extend `main` — after `check_config_source`:
 
 ```sh
   install_packages
@@ -1374,14 +1375,14 @@ dk() {
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `uv run pytest tests/test_install_script.py -v`
-Expected: 26 Tests, davon 24 grün und 2 übersprungen. Die beiden übersprungenen prüfen das
-Aufräumen der temporären Datei und laufen nur unter Linux: macOS' `mktemp` ignoriert `TMPDIR`,
-die Prüfung wäre dort immer wahr und damit wertlos. In der CI (Ubuntu) laufen alle 26.
+Expected: 26 tests, 24 of them green and 2 skipped. The two skipped ones check the
+cleanup of the temporary file and only run on Linux: macOS' `mktemp` ignores `TMPDIR`,
+so the check would always be true there and thus worthless. In CI (Ubuntu) all 26 run.
 
 - [ ] **Step 5: shellcheck**
 
 Run: `shellcheck -s sh install.sh`
-Expected: keine Ausgabe. Die einzige `disable`-Zeile ist die für SC2086 am `apt-get install`, mit der Begründung darüber.
+Expected: no output. The only `disable` line is the one for SC2086 on `apt-get install`, with the justification above it.
 
 - [ ] **Step 6: Commit**
 
@@ -1403,7 +1404,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 
 ---
 
-### Task 5: Phase 3 — Klon oder vorhandenes Checkout
+### Task 5: Phase 3 — Clone or Existing Checkout
 
 **Files:**
 - Modify: `install.sh`
@@ -1411,7 +1412,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 
 **Interfaces:**
 - Consumes: `TARGET_DIR`, `REPO_URL`, `DRY_RUN`.
-- Produces: `ensure_checkout`, `offer_update`; setzt `STACK_DIR="$TARGET_DIR/deploy/testhost"` und `CHECKOUT_EXISTED` (0/1). Alle folgenden Aufgaben lesen und schreiben ausschließlich über `STACK_DIR`.
+- Produces: `ensure_checkout`, `offer_update`; sets `STACK_DIR="$TARGET_DIR/deploy/testhost"` and `CHECKOUT_EXISTED` (0/1). All following tasks read and write exclusively via `STACK_DIR`.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1448,9 +1449,9 @@ def test_erster_lauf_prueft_nicht_auf_updates(installer):
 
 
 def test_kein_update_angebot_wenn_docker_gerade_erst_kam(installer):
-    # update.sh ruft docker ohne sudo. Wurde Docker in diesem Lauf erst
-    # installiert, greift die Gruppenmitgliedschaft erst nach einer
-    # Neuanmeldung - das Angebot koennte gar nicht funktionieren.
+    # update.sh calls docker without sudo. If Docker was only just
+    # installed in this run, the group membership only takes effect
+    # after a re-login - the offer could not work at all.
     first = installer()
     assert first.returncode == 0
     second = installer(omit=("docker",), env={"FAKE_BEHIND": "3"})
@@ -1471,18 +1472,18 @@ def test_fremdes_verzeichnis_wird_abgewiesen(installer, tmp_path):
 - [ ] **Step 2: Run tests to verify they fail**
 
 Run: `uv run pytest tests/test_install_script.py -v -k "klont or verzeichnis"`
-Expected: FAIL — `git clone` wird nie aufgerufen.
+Expected: FAIL — `git clone` is never called.
 
-- [ ] **Step 3: Phase 3 implementieren**
+- [ ] **Step 3: Implement Phase 3**
 
-Oben zu den Variablen ergänzen:
+Add to the variables above:
 
 ```sh
 CHECKOUT_EXISTED=0
 STACK_DIR=""
 ```
 
-In `install.sh` nach `dk` einfügen:
+Insert into `install.sh` after `dk`:
 
 ```sh
 # ----------------------------------------------------------- phase three --
@@ -1512,10 +1513,10 @@ Move it aside, or pass --dir with a different path."
 }
 ```
 
-Direkt danach `offer_update` — es gehoert sachlich hierher: „Repository holen"
-heisst klonen **oder** das vorhandene nehmen und anbieten, es auf Stand zu
-bringen. Das gibt `CHECKOUT_EXISTED` zugleich seinen Leser in derselben
-Aufgabe, sonst meldet `shellcheck` die Variable als ungenutzt.
+Directly after that, `offer_update` — it factually belongs here: "get the
+repository" means cloning **or** taking the existing one and offering to
+bring it up to date. This also gives `CHECKOUT_EXISTED` its reader in the
+same task, otherwise `shellcheck` reports the variable as unused.
 
 ```sh
 # Only offered, never done on the way past: scripts/update.sh backs up the
@@ -1560,7 +1561,7 @@ offer_update() {
 }
 ```
 
-`main` erweitern — nach `install_docker`:
+Extend `main` — after `install_docker`:
 
 ```sh
   ensure_checkout
@@ -1570,7 +1571,7 @@ offer_update() {
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `uv run pytest tests/test_install_script.py -v`
-Expected: 34 Tests — 32 grün, 2 nur unter Linux.
+Expected: 34 tests — 32 green, 2 only on Linux.
 
 - [ ] **Step 5: Commit**
 
@@ -1588,7 +1589,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 
 ---
 
-### Task 6: Phase 4 — `.env` schreiben
+### Task 6: Phase 4 — Write `.env`
 
 **Files:**
 - Modify: `install.sh`
@@ -1596,9 +1597,9 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 
 **Interfaces:**
 - Consumes: `STACK_DIR`, `MODE`, `DETECTED_RADIO`, `HAVE_TTY`, `ask`, `env_file_value`, `dk`.
-- Produces: `env_set`, `env_file_has`, `ensure_env_value`, `ask_miniserver`, `detect_backbone_if`, `detect_bt_adapter`, `gen_token`, `configure_mode`, `configure`; setzt `ENV_FILE` und `ENV_IS_NEW`. Nach `configure` steht `MODE` endgültig fest — eine vorhandene `.env` kann ihn überschreiben.
+- Produces: `env_set`, `env_file_has`, `ensure_env_value`, `ask_miniserver`, `detect_backbone_if`, `detect_bt_adapter`, `gen_token`, `configure_mode`, `configure`; sets `ENV_FILE` and `ENV_IS_NEW`. After `configure`, `MODE` is finally settled — an existing `.env` can override it.
 
-**Die Regel „bestehende Werte nie überschreiben" gilt nur für eine `.env`, die es schon gab.** Eine frisch aus `.env.example` kopierte Datei enthält Beispielwerte (`COMPOSE_PROFILES=thread`, `RADIO_DEVICE=/dev/ttyUSB0`) — würden die als Nutzerentscheidung gelten, fragte das Skript nie etwas. `ENV_IS_NEW` trennt beides.
+**The rule "never overwrite existing values" applies only to a `.env` that already existed.** A file freshly copied from `.env.example` contains example values (`COMPOSE_PROFILES=thread`, `RADIO_DEVICE=/dev/ttyUSB0`) — if those counted as a user decision, the script would never ask anything. `ENV_IS_NEW` separates the two.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1664,7 +1665,7 @@ def test_nur_der_fehlende_schluessel_wird_ergaenzt(installer):
     second = installer(env={"MINISERVER_IP": "10.0.1.55"})
     values = _env(second)
     assert len(values["LOXMATTER_API_TOKEN"]) == 64
-    # Die vorhandene Adresse bleibt, obwohl die Umgebung eine andere nennt.
+    # The existing address stays, even though the environment names a different one.
     assert values["MINISERVER_IP"] == "10.0.1.99"
 
 
@@ -1681,18 +1682,18 @@ def test_ein_schluessel_wird_ersetzt_nicht_angehaengt(installer):
 - [ ] **Step 2: Run tests to verify they fail**
 
 Run: `uv run pytest tests/test_install_script.py -v -k "wifi_lauf or thread_lauf or miniserver_ip_kommt or token or zweiter_lauf or schluessel"`
-Expected: FAIL mit `FileNotFoundError` auf `.env` — die Datei wird noch nicht angelegt.
+Expected: FAIL with `FileNotFoundError` on `.env` — the file is not created yet.
 
-- [ ] **Step 3: Phase 4 implementieren**
+- [ ] **Step 3: Implement Phase 4**
 
-Oben zu den Variablen ergänzen:
+Add to the variables above:
 
 ```sh
 ENV_FILE=""
 ENV_IS_NEW=0
 ```
 
-Nach `ensure_checkout` einfügen:
+Insert after `ensure_checkout`:
 
 ```sh
 # ------------------------------------------------------------ phase four --
@@ -1876,7 +1877,7 @@ configure() {
 }
 ```
 
-`main` erweitern — nach `ensure_checkout`:
+Extend `main` — after `ensure_checkout`:
 
 ```sh
   configure
@@ -1885,12 +1886,12 @@ configure() {
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `uv run pytest tests/test_install_script.py -v`
-Expected: 44 Tests — 42 grün, 2 nur unter Linux.
+Expected: 44 tests — 42 green, 2 only on Linux.
 
-- [ ] **Step 5: shellcheck und Formatierung**
+- [ ] **Step 5: shellcheck and Formatting**
 
 Run: `shellcheck -s sh install.sh && uv run ruff check . && uv run ruff format --check .`
-Expected: keine Ausgabe von shellcheck, `All checks passed!`, `N files already formatted`.
+Expected: no output from shellcheck, `All checks passed!`, `N files already formatted`.
 
 - [ ] **Step 6: Commit**
 
@@ -1913,7 +1914,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 
 ---
 
-### Task 7: Phase 5 und 6 — starten, prüfen, Befunde sammeln
+### Task 7: Phases 5 and 6 — Start, Check, Collect Findings
 
 **Files:**
 - Modify: `install.sh`
@@ -1921,11 +1922,11 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 
 **Interfaces:**
 - Consumes: `STACK_DIR`, `MODE`, `dk`, `die`.
-- Produces: `add_finding`, `stack_port`, `start_stack`, `check_health`, `check_containers`, `check_rfkill`, `check_thread`, `run_checks`; setzt `STACK_STARTED=1`, `PORT` und sammelt `FINDINGS`.
+- Produces: `add_finding`, `stack_port`, `start_stack`, `check_health`, `check_containers`, `check_rfkill`, `check_thread`, `run_checks`; sets `STACK_STARTED=1`, `PORT`, and collects `FINDINGS`.
 
-- [ ] **Step 1: Docker-Stub um `compose ps` erweitern**
+- [ ] **Step 1: Extend the Docker Stub with `compose ps`**
 
-In `tests/test_install_script.py` den Docker-Stub ersetzen:
+In `tests/test_install_script.py`, replace the Docker stub:
 
 ```python
 _DOCKER = """if [ "${1-}" = "compose" ] && [ "${2-}" = "version" ]; then
@@ -1979,18 +1980,18 @@ def test_wifi_lauf_erwaehnt_thread_gar_nicht_als_problem(installer):
 - [ ] **Step 3: Run tests to verify they fail**
 
 Run: `uv run pytest tests/test_install_script.py -v -k "stack_wird or gesundheit or dienst or wpan or erwaehnt"`
-Expected: FAIL — `docker compose up` wird nie aufgerufen.
+Expected: FAIL — `docker compose up` is never called.
 
-- [ ] **Step 4: Phase 5 und 6 implementieren**
+- [ ] **Step 4: Implement Phases 5 and 6**
 
-Oben ergänzen:
+Add above:
 
 ```sh
 FINDINGS=""
 PORT=8080
 ```
 
-Nach `configure` einfügen:
+Insert after `configure`:
 
 ```sh
 # ------------------------------------------------------------ phase five --
@@ -2135,7 +2136,7 @@ run_checks() {
 }
 ```
 
-`main` erweitern — nach `configure`:
+Extend `main` — after `configure`:
 
 ```sh
   start_stack
@@ -2145,9 +2146,9 @@ run_checks() {
 - [ ] **Step 5: Run tests to verify they pass**
 
 Run: `uv run pytest tests/test_install_script.py -v`
-Expected: 49 Tests — 47 grün, 2 nur unter Linux.
+Expected: 49 tests — 47 green, 2 only on Linux.
 
-**Hinweis für die Abnahme:** `check_rfkill` lässt sich hier nicht gezielt auslösen — auf macOS fehlt `/sys` ganz, auf CI-Runnern ist `/sys/class/rfkill` üblicherweise leer. Getestet ist nur, dass die Funktion beide Fälle übersteht. Der Befund selbst zeigt sich erst auf einem echten Pi.
+**Note for acceptance:** `check_rfkill` cannot be specifically triggered here — on macOS `/sys` is missing entirely, on CI runners `/sys/class/rfkill` is usually empty. All that's tested is that the function survives both cases. The finding itself only shows up on a real Pi.
 
 - [ ] **Step 6: Commit**
 
@@ -2170,7 +2171,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 
 ---
 
-### Task 8: Phase 7 — Schlussbericht und Update-Angebot
+### Task 8: Phase 7 — Final Report and Update Offer
 
 **Files:**
 - Modify: `install.sh`
@@ -2178,7 +2179,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 
 **Interfaces:**
 - Consumes: `FINDINGS`, `PORT`, `MODE`, `TARGET_DIR`, `DOCKER_SUDO`, `STACK_DIR`.
-- Produces: `report`. Damit ist `install.sh` vollständig.
+- Produces: `report`. This completes `install.sh`.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -2199,17 +2200,17 @@ def test_thread_bericht_schlaegt_den_watchdog_vor(installer):
 def test_wifi_bericht_schlaegt_keinen_watchdog_vor(installer):
     result = installer()
     assert "otbr-watchdog.sh" not in result.output
-    assert "COMPOSE_PROFILES=thread" in result.output  # so ruestet man nach
+    assert "COMPOSE_PROFILES=thread" in result.output  # this is how you retrofit it
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
 
 Run: `uv run pytest tests/test_install_script.py -v -k "bericht or update"`
-Expected: FAIL — es gibt keinen Schlussbericht.
+Expected: FAIL — there is no final report.
 
-- [ ] **Step 3: Phase 7 implementieren**
+- [ ] **Step 3: Implement Phase 7**
 
-Nach `run_checks` einfügen:
+Insert after `run_checks`:
 
 ```sh
 # ----------------------------------------------------------- phase seven --
@@ -2250,7 +2251,7 @@ report() {
 }
 ```
 
-`main` vervollständigen — `offer_update` steht direkt nach `ensure_checkout`, damit eine Zustimmung noch vor dem Bauen wirkt:
+Complete `main` — `offer_update` sits directly after `ensure_checkout`, so a consent takes effect before the build:
 
 ```sh
 main() {
@@ -2283,9 +2284,9 @@ main "$@"
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `uv run pytest tests/test_install_script.py -v`
-Expected: 52 Tests — 50 grün, 2 nur unter Linux.
+Expected: 52 tests — 50 green, 2 only on Linux.
 
-- [ ] **Step 5: Vollständiger Durchlauf aller Prüfungen**
+- [ ] **Step 5: Full Run of All Checks**
 
 ```bash
 shellcheck -s sh install.sh
@@ -2294,7 +2295,7 @@ uv run ruff format --check .
 uv run mypy
 uv run pytest -v
 ```
-Expected: shellcheck ohne Ausgabe, `All checks passed!`, `N files already formatted`, `Success: no issues found`, alle Tests grün.
+Expected: no output from shellcheck, `All checks passed!`, `N files already formatted`, `Success: no issues found`, all tests green.
 
 - [ ] **Step 6: Commit**
 
@@ -2317,40 +2318,41 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 
 ---
 
-## Abnahme auf einem echten Host
+## Acceptance on a Real Host
 
-Die Stub-Tests prüfen die Auswahl der Befehle, nicht ihre Wirkung. Vor dem Merge auf einem Raspberry Pi durchlaufen — beide Betriebsarten, jeweils mit einem frischen Verzeichnis:
+The stub tests check the choice of commands, not their effect. Run through on a Raspberry Pi before merging — both operating modes, each with a fresh directory:
 
-1. `curl -fsSL $RAW_URL | sh -s -- --dry-run --dir ~/probe` — meldet Schritte, ändert nichts.
-2. WiFi-Modus, Funkmodul gezogen: `curl -fsSL $RAW_URL | LOXMATTER_MODE=wifi MINISERVER_IP=… sh --dir ~/probe-wifi`. Erwartung: zwei Container, `/health` antwortet, kein Thread-Befund, WebUI erreichbar.
-3. Thread-Modus mit gestecktem Modul, gegen ein frisches Verzeichnis. Erwartung: drei Container und — auf dem Pi-Kernel — der `start-stop-daemon`-Befund im Schlussbericht.
-4. Denselben Befehl ein zweites Mal: kein neuer Klon, `.env` unverändert, Update-Angebot nur, wenn `main` weiter ist.
-5. Der bestehende Produktivstack: `git pull` und `docker compose up -d` — der Dienst `otbr` muss weiterlaufen, weil seine `.env` `COMPOSE_PROFILES=thread` trägt (bzw. `install.sh` sie beim zweiten Lauf ergänzt hat).
+1. `curl -fsSL $RAW_URL | sh -s -- --dry-run --dir ~/probe` — reports steps, changes nothing.
+2. WiFi mode, radio module unplugged: `curl -fsSL $RAW_URL | LOXMATTER_MODE=wifi MINISERVER_IP=… sh --dir ~/probe-wifi`. Expectation: two containers, `/health` answers, no Thread finding, WebUI reachable.
+3. Thread mode with the module plugged in, against a fresh directory. Expectation: three containers and — on the Pi kernel — the `start-stop-daemon` finding in the final report.
+4. The same command a second time: no new clone, `.env` unchanged, update offer only if `main` is ahead.
+5. The existing production stack: `git pull` and `docker compose up -d` — the `otbr` service must keep running, because its `.env` carries `COMPOSE_PROFILES=thread` (or `install.sh` added it on the second run).
 
-Schritt 5 ist der wichtigste: er ist der einzige, der zeigt, dass die Profil-Umstellung eine laufende Installation nicht beschädigt.
+Step 5 is the most important: it is the only one that shows the profile switch does not break a running installation.
 
 ---
 
-## Abweichungen bei der Ausführung
+## Deviations During Execution
 
-Der Plan oben ist der Entwurf. Wo die Umsetzung davon abwich, geschah das auf
-einen Review-Befund hin — hier vollständig, damit niemand den Plan für den
-Stand der Dinge hält. Der Code im Repository ist maßgeblich.
+The plan above is the design. Where the implementation deviated from it, that
+happened in response to a review finding — listed here in full, so nobody
+mistakes the plan for the current state. The code in the repository is
+authoritative.
 
-| Abweichung | Grund |
+| Deviation | Reason |
 |---|---|
-| `valid_ipv4` steht in Phase 1 statt in Phase 4 | Eine ungültige Adresse muss vor dem Klonen auffallen, nicht danach. |
-| `valid_ipv4` prüft die Form per `case`, bevor es rechnet | `[ n -gt 255 ]` gibt bei einer Zahl jenseits des Integer-Bereichs einen Fehler statt „falsch" zurück — `1.2.3.999999999999999999999` galt als gültig. |
-| Der Docker-Installer wird erst heruntergeladen, dann ausgeführt | `curl … \| sh \|\| die` konnte einen fehlgeschlagenen Download nicht erkennen: ohne `pipefail` zählt der Status des letzten Befehls, und `sh` mit leerer Eingabe endet mit 0. |
-| Nach der Installation prüft `have docker`, nicht der Download | Eine abgeschnittene, aber syntaktisch gültige Datei läuft fehlerfrei durch und installiert nichts. Das Ergebnis zu prüfen deckt die ganze Klasse ab. |
-| `install_docker` prüft zum Schluss das Compose-Plugin | `collect_missing` kann das nur, wenn Docker schon da ist — nach einer frischen Installation prüfte es niemand. |
-| `TEMP_FILE` ist global und wird vom EXIT-Trap entfernt; `main` fängt `INT`/`TERM` | Sonst blieb die heruntergeladene Datei bei einem Ctrl-C liegen. |
-| `INSTALLED_DOCKER` entfällt, `DOCKER_SUDO` trägt die Bedingung | Der Rat zur Neuanmeldung gilt genau dann, wenn mit `sudo` installiert wurde — als root gibt es kein Gruppenproblem. |
-| `offer_update` steht in Phase 3 statt in Phase 7 | „Repository holen" heißt klonen **oder** das vorhandene nehmen und anbieten, es auf Stand zu bringen. Gibt `CHECKOUT_EXISTED` seinen Leser in derselben Aufgabe. |
-| `offer_update` schweigt, wenn Docker gerade erst kam | `update.sh` ruft `docker` ohne `sudo`; die Gruppenmitgliedschaft greift erst nach einer Neuanmeldung. Ein Angebot, das nicht funktionieren kann, ist schlechter als keines. |
-| `offer_update` normalisiert das `rev-list`-Ergebnis auf eine Zahl | Ein nicht-numerischer Wert hätte ein Update mit dem Müllwert angekündigt. |
-| `env_set` schreibt ohne `awk` | `awk -v value=…` verarbeitet Escapes: ein Rückwärtsstrich verschwand still, aus `\t` wurde ein Tabulator. |
-| `stack_port` verlangt genau eine `--listen`-Stelle und gibt sonst hörbar auf | Ein still falsch gelesener Port hätte `check_health` auf den falschen Port zeigen lassen — und danach dem Dienst die Schuld gegeben. |
-| Befunde werden in `run_checks` ausgegeben, `report` verweist nur darauf | Sie zweimal vollständig zu drucken, wenige Zeilen auseinander, ist Lärm statt Nachdruck. |
-| Variablen werden dort deklariert, wo sie zuerst benutzt werden | `shellcheck` meldet sonst SC2034, und eine Unterdrückung dafür wird in der Aufgabe, die die Variable dann benutzt, zur Falschaussage. |
-| Zwei Tests laufen nur unter Linux | macOS' `mktemp` ignoriert `TMPDIR`; die Prüfung wäre dort immer wahr und damit wertlos. |
+| `valid_ipv4` sits in Phase 1 instead of Phase 4 | An invalid address must be noticed before cloning, not after. |
+| `valid_ipv4` checks the shape via `case` before doing arithmetic | `[ n -gt 255 ]` returns an error rather than "false" for a number beyond the integer range — `1.2.3.999999999999999999999` counted as valid. |
+| The Docker installer is downloaded first, then executed | `curl … \| sh \|\| die` could not detect a failed download: without `pipefail`, the status of the last command counts, and `sh` with empty input ends with 0. |
+| After installation, `have docker` checks, not the download | A truncated but syntactically valid file runs without error and installs nothing. Checking the result covers the whole class of failure. |
+| `install_docker` checks the compose plugin at the end | `collect_missing` can only do that once Docker is already there — after a fresh installation, nobody checked it. |
+| `TEMP_FILE` is global and removed by the EXIT trap; `main` catches `INT`/`TERM` | Otherwise the downloaded file was left behind on a Ctrl-C. |
+| `INSTALLED_DOCKER` is dropped, `DOCKER_SUDO` carries the condition | The re-login advice applies exactly when installed with `sudo` — as root there is no group problem. |
+| `offer_update` sits in Phase 3 instead of Phase 7 | "Get the repository" means cloning **or** taking the existing one and offering to bring it up to date. Gives `CHECKOUT_EXISTED` its reader in the same task. |
+| `offer_update` stays silent if Docker was just installed | `update.sh` calls `docker` without `sudo`; the group membership only takes effect after a re-login. An offer that cannot work is worse than none. |
+| `offer_update` normalizes the `rev-list` result to a number | A non-numeric value would have announced an update with the garbage value. |
+| `env_set` writes without `awk` | `awk -v value=…` processes escapes: a backslash silently disappeared, `\t` became a tab. |
+| `stack_port` requires exactly one `--listen` spot and gives up audibly otherwise | A silently misread port would have pointed `check_health` at the wrong port — and then blamed the service afterward. |
+| Findings are printed in `run_checks`, `report` only refers to them | Printing them in full twice, a few lines apart, is noise rather than emphasis. |
+| Variables are declared where they are first used | Otherwise `shellcheck` reports SC2034, and suppressing that would become a false statement in the task that then does use the variable. |
+| Two tests only run on Linux | macOS' `mktemp` ignores `TMPDIR`; the check would always be true there and thus worthless. |

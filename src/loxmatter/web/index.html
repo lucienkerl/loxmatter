@@ -1,6 +1,6 @@
 <!doctype html>
 <!--
-  loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+  loxmatter - connects Matter devices to a Loxone Miniserver.
   Copyright (C) 2026 Lucien Kerl
 
   This program is free software: you can redistribute it and/or modify
@@ -17,50 +17,50 @@
   along with this program.  If not, see <https://www.gnu.org/licenses/>.
 -->
 <!--
-  loxmatter - Inbetriebnahme- und Diagnosewerkzeug fuer die Matter-Loxone-
-  Bruecke (Spec 8). Vier Ansichten, umgeschaltet ueber Alpine.js, ohne
-  Seitenwechsel und ohne Build-Schritt.
+  loxmatter - commissioning and diagnostics tool for the Matter-Loxone
+  bridge (Spec 8). Four views, switched via Alpine.js, with no page
+  changes and no build step.
 
-  Enthaelt eine vendorte Kopie von Alpine.js, Version 3.17.1 (MIT-Lizenz,
-  (c) Caleb Porzio), bezogen als eigenstaendige, sich selbst startende
-  Distribution (kein Modul, kein Bundler noetig) des npm-Pakets "alpinejs"
-  ueber jsDelivr (das oeffentliche Auslieferungsnetz fuer npm-Pakete) am
-  2026-09-02, unveraendert unter web/vendor/alpine.min.js abgelegt - SHA-256
+  Contains a vendored copy of Alpine.js, version 3.17.1 (MIT licence,
+  (c) Caleb Porzio), obtained as the standalone, self-starting
+  distribution (no module, no bundler needed) of the npm package "alpinejs"
+  via jsDelivr (the public delivery network for npm packages) on
+  2026-09-02, stored unchanged under web/vendor/alpine.min.js - SHA-256
   b30997fc126d808b1a9b20ab3f504ded88df957818c02d6249bba3ec114eb0ec.
 
-  Bewusst KEIN Netzwerkverweis in dieser Datei: die Bruecke laeuft in
-  Installationen ohne Internetzugang, und eine Oberflaeche, die dort auf
-  ein entferntes Skript wartet, bleibt weiss.
+  Deliberately NO network reference in this file: the bridge runs in
+  installations without internet access, and a UI that waits there for
+  a remote script stays blank.
 -->
 <html lang="de">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>loxmatter</title>
-    <!-- Eine einzige SVG-Datei statt der ueblichen PNG-Reihe: der Browser
-         skaliert sie selbst, und die Bruecke laeuft in Installationen ohne
-         Internetzugang - eine Datei weniger, die fehlen kann. Die grosse
-         Fassung liegt daneben als icon.svg (siehe die Kommentare dort). -->
+    <!-- A single SVG file instead of the usual set of PNGs: the browser
+         scales it itself, and the bridge runs in installations without
+         internet access - one fewer file that can go missing. The large
+         version sits alongside as icon.svg (see the comments there). -->
     <link rel="icon" href="/static/favicon.svg" type="image/svg+xml" />
     <link rel="stylesheet" href="/static/style.css" />
   </head>
   <!--
-    Hier steht mit Absicht KEIN `x-init="init()"` (Review-Fix Fix 2,
-    2026-09-03). Alpine 3 ruft die Methode `init()` eines mit `x-data`
-    erzeugten Datenobjekts von sich aus genau einmal auf. Ein zusaetzliches
-    `x-init="init()"` ruft sie ein zweites Mal - und `init()` startet nach
-    einer angemeldeten Sitzung den Live-WebSocket. Jeder offene Tab hielt
-    dadurch ZWEI Verbindungen, von denen nur die zuletzt geoeffnete in
-    `this.socket` steht. Die andere bekommt trotzdem jeden Wert, belegt im
-    Backend eine Queue samt zwei asyncio-Tasks und einen Beobachter und
-    bleibt fuer die Oberflaeche unsichtbar - sie stirbt erst mit dem Tab.
-    Wer hier ein `x-init` ergaenzen moechte: dafuer gibt es keinen Grund,
-    `init()` laeuft bereits.
+    There is deliberately NO `x-init="init()"` here (Review-Fix Fix 2,
+    2026-09-03). Alpine 3 calls the `init()` method of a data object
+    created with `x-data` exactly once on its own. An additional
+    `x-init="init()"` calls it a second time - and `init()` starts the
+    live WebSocket once a session is logged in. Every open tab then held
+    TWO connections, of which only the most recently opened one is
+    stored in `this.socket`. The other one still receives every value,
+    occupies a queue plus two asyncio tasks and an observer in the
+    backend, and stays invisible to the UI - it dies only when the tab
+    does. Anyone tempted to add an `x-init` here: there is no reason to,
+    `init()` already runs.
   -->
   <body x-data="app()">
-    <!-- Icon-Symbole (Geraete-Dashboard-Entwurf, Abschnitt 3) - inline SVG
-         statt einer Icon-Bibliothek: kein Netzwerkverweis, dieselbe
-         Begruendung wie beim vendorten Alpine.js oben im Kopfkommentar. -->
+    <!-- Icon symbols (device dashboard design, Section 3) - inline SVG
+         instead of an icon library: no network reference, the same
+         reasoning as for the vendored Alpine.js above in the header comment. -->
     <svg style="display: none" aria-hidden="true">
       <symbol id="i-warn" viewBox="0 0 24 24">
         <path d="M12 3.7 21 19.3H3L12 3.7z" />
@@ -73,19 +73,19 @@
         <circle cx="12" cy="19" r="1.1" fill="currentColor" stroke="none" />
         <line x1="2" y1="2" x2="22" y2="22" />
       </symbol>
-      <!-- Aufklapp-Pfeil fuer die Projektdatei-Sync-Geraetekarten
-           (`.projectsync-device`, ein natives <details>) - ersetzt dessen
-           browserabhaengigen Standard-Marker durch dasselbe Strich-Icon wie
-           die uebrigen Symbole hier. -->
+      <!-- Disclosure arrow for the project-file-sync device cards
+           (`.projectsync-device`, a native <details>) - replaces its
+           browser-dependent default marker with the same stroke icon as
+           the other symbols here. -->
       <symbol id="i-chevron" viewBox="0 0 24 24">
         <path d="M9 6l6 6-6 6" />
       </symbol>
-      <!-- Kategorie-Icons (Entwurf Geraete-Tab, 2026-09-05, Abschnitt 6.5).
-           Ein Symbol je Kategorie, "Sonstige" eingeschlossen - dort landet
-           auch jedes Geraet, dessen Typen noch nicht nachgetragen sind.
-           Weiterhin inline und ohne Icon-Bibliothek, aus demselben
-           Grund wie das eingecheckte vendor/alpine.min.js: die Oberflaeche
-           laeuft offline. -->
+      <!-- Category icons (devices tab design, 2026-09-05, Section 6.5).
+           One symbol per category, "Other" included - that is also where
+           every device whose type has not yet been added ends up.
+           Still inline and without an icon library, for the same
+           reason as the checked-in vendor/alpine.min.js: the UI
+           runs offline. -->
       <symbol id="i-cat-light" viewBox="0 0 24 24">
         <path d="M9 17.5a5.5 5.5 0 1 1 6 0V19H9v-1.5z" />
         <path d="M10 21.5h4" />
@@ -115,46 +115,45 @@
         <rect x="5" y="10.5" width="14" height="10" rx="2.5" />
         <path d="M8.5 10.5V7.8a3.5 3.5 0 0 1 7 0v2.7" />
       </symbol>
-      <!-- ACHT Symbole, nicht sieben: die Kachel bildet die Kennung stur auf
-           `#i-cat-<kennung>` ab, und `other` ist eine Kennung wie jede
-           andere. Ein `<use>` auf eine nicht vorhandene ID zeichnet
-           STILLSCHWEIGEND nichts - kein Fehler in der Konsole, nur eine
-           Kachel ohne Icon. Deshalb bekommt "Sonstige" ein eigenes Symbol,
-           statt sich auf eine Sonderbehandlung in JavaScript zu verlassen,
-           die jemand beim naechsten Umbau uebersieht. Die Form ist dieselbe
-           wie beim alten, generischen `#i-device` (Task 9 hat dessen
-           Definition entfernt, da `#i-cat-other` seine Rolle uebernommen
-           hat). -->
+      <!-- EIGHT symbols, not seven: the tile maps the identifier straight
+           onto `#i-cat-<identifier>`, and `other` is an identifier like any
+           other. A `<use>` pointing at a nonexistent ID SILENTLY draws
+           nothing - no error in the console, just a tile without an
+           icon. That is why "Other" gets its own symbol, instead of
+           relying on a special case in JavaScript that someone would
+           overlook at the next rework. The shape is the same as the old,
+           generic `#i-device` (Task 9 removed its definition, since
+           `#i-cat-other` took over its role). -->
       <symbol id="i-cat-other" viewBox="0 0 24 24">
         <rect x="4" y="4" width="16" height="16" rx="3" />
         <circle cx="12" cy="12" r="2.2" />
       </symbol>
-      <!-- Fund 6 (Review vom 2026-09-05): Umbenennen-, Export- und
-           Entfernen-Schaltflaeche in der Kachel zeigten die rohen Zeichen
-           "✎", "↓" und "🗑" statt eines Symbols aus diesem Block - "🗑"
-           rendert unter macOS/Windows als farbiges Emoji, anderswo als
-           Kaestchen, und beide Abweichungen brechen die einheitliche
-           kupfer-/gedeckte Symbolsprache der uebrigen Kachel-Icons. Gleiche
-           Strich-Technik wie die Kategorie-Icons oben: nur Pfade, keine
-           Fuellung ausser den Kreispunkten, `currentColor` uebernimmt Farbe
-           und Zustand automatisch von aussen.
+      <!-- Finding 6 (review from 2026-09-05): the rename, export and
+           remove buttons on the tile showed the raw characters
+           "✎", "↓" and "🗑" instead of a symbol from this block - "🗑"
+           renders as a coloured emoji on macOS/Windows, as a box
+           elsewhere, and both deviations break the tiles' otherwise
+           uniform copper/muted icon language. Same stroke technique
+           as the category icons above: only paths, no fill except
+           for the circle dots, `currentColor` picks up colour and
+           state automatically from outside.
 
-           Export und Entfernen hatten hier je ein eigenes Symbol
-           (`#i-export`, `#i-remove`); Task 2 (Kebab-Menue, 2026-09-05) hat
-           beide Aktionen aus der Fusszeile ins Menue verlegt und dabei zu
-           ausgeschriebenen Text-Schaltflaechen gemacht - dort ist Platz fuer
-           Beschriftung statt Icon. Die beiden Symbole sind seither tot
-           (kein `<use>` verweist mehr auf sie) und wurden mit dem
-           Abschluss-Review vom 2026-09-05 entfernt; nur Umbenennen bleibt
-           ein Icon-Knopf. -->
+           Export and remove each had their own symbol here
+           (`#i-export`, `#i-remove`); Task 2 (kebab menu, 2026-09-05) moved
+           both actions from the footer into the menu and turned them into
+           spelled-out text buttons - there is room there for a label
+           instead of an icon. The two symbols have been dead ever since
+           (no `<use>` refers to them any more) and were removed with the
+           closing review from 2026-09-05; only rename remains
+           an icon button. -->
       <symbol id="i-rename" viewBox="0 0 24 24">
         <path d="M14.5 5.5 18.5 9.5 8 20H4v-4L14.5 5.5z" />
         <path d="M12.7 7.3l4 4" />
       </symbol>
-      <!-- Lupe fuer das Suchfeld der Raumleiste (Entwurf Suchfeld-Optik,
-           2026-09-06). Gleiche Strichtechnik wie die Kategorie-Icons: nur
-           Pfade, keine Fuellung, `currentColor` uebernimmt Farbe und
-           Zustand von aussen. -->
+      <!-- Magnifying glass for the room bar's search field (search-field
+           look design, 2026-09-06). Same stroke technique as the category icons:
+           only paths, no fill, `currentColor` picks up colour and
+           state from outside. -->
       <symbol id="i-search" viewBox="0 0 24 24">
         <circle cx="11" cy="11" r="6.5" />
         <path d="M15.8 15.8 20.5 20.5" />
@@ -163,10 +162,10 @@
         <path d="M6 6l12 12" />
         <path d="M18 6L6 18" />
       </symbol>
-      <!-- Drei gefuellte Punkte statt Striche: `.icon` setzt
-           `fill: none; stroke: currentColor`, was fuer Linien-Icons stimmt,
-           einen Punkt aber unsichtbar machen wuerde. Dieselbe Ausnahme
-           macht schon `#i-offline` fuer seinen Punkt. -->
+      <!-- Three filled dots instead of strokes: `.icon` sets
+           `fill: none; stroke: currentColor`, which is correct for line icons,
+           but would make a dot invisible. `#i-offline` already makes
+           the same exception for its dot. -->
       <symbol id="i-kebab" viewBox="0 0 24 24">
         <circle cx="12" cy="5" r="1.7" fill="currentColor" stroke="none" />
         <circle cx="12" cy="12" r="1.7" fill="currentColor" stroke="none" />
@@ -178,17 +177,17 @@
         <path d="M5 12.5h4" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/>
       </symbol>
     </svg>
-    <!-- Bis `/auth-info` geantwortet hat, zeigt die Seite bewusst nichts -
-         sonst blitzte je nach Antwort der falsche Bildschirm auf. -->
+    <!-- Until `/auth-info` has answered, the page deliberately shows nothing -
+         otherwise the wrong screen would flash up depending on the response. -->
     <template x-if="stringsReady && authReady && !authenticated && !passwordSet">
       <main class="auth-screen">
-        <!-- Die grosse Fassung des Zeichens: `icon.svg` gilt laut seinem
-             eigenen Kopfkommentar ab etwa 32 px, `favicon.svg` darunter. Hier
-             sind es 64, in der Kopfzeile weiter unten 24 - deshalb dort die
-             andere Datei. `alt=""` ist Absicht: "loxmatter" steht in der
-             Ueberschrift direkt darunter (en wie de), ein Alt-Text liesse den
-             Namen zweimal vorlesen. Die Masse stehen im Markup, sonst springt
-             das Formular beim Nachladen des Bildes nach unten. -->
+        <!-- The large version of the mark: per its own header comment,
+             `icon.svg` applies from about 32px up, `favicon.svg` below that. Here
+             it is 64, in the header further down 24 - hence the other
+             file there. `alt=""` is deliberate: "loxmatter" appears in the
+             heading directly below (in en as in de), an alt text would have the
+             name read out twice. The dimensions are given in the markup, otherwise
+             the form would jump downward once the image loads. -->
         <img class="auth-mark" src="/static/icon.svg" alt="" width="64" height="64" />
         <h1 x-text="t('web.auth.setup_heading')"></h1>
         <p class="banner warn" x-html="t('web.auth.setup_warning')"></p>
@@ -224,28 +223,28 @@
       </main>
     </template>
 
-    <!-- `x-if` haengt an genau EIN Kindelement - deshalb dieser leere `<div>`
-         um Kopfzeile, Banner, Reiter und Hauptbereich, statt vier Geschwister
-         direkt ins `<template>` zu haengen (das liesse Alpine nur das erste
-         davon beachten). -->
+    <!-- `x-if` attaches to exactly ONE child element - hence this empty `<div>`
+         around the header, banner, tabs and main area, instead of hanging four
+         siblings directly inside the `<template>` (which would make Alpine consider
+         only the first of them). -->
     <template x-if="stringsReady && authenticated">
     <div>
     <header class="app-header">
-      <!-- Zeichen und Schriftzug stehen zusammen in `.brand`, damit das
-           `justify-content: space-between` der Kopfzeile weiter genau zwei
-           Bloecke sieht - als Geschwister wanderte der Schriftzug sonst in die
-           Mitte. Hier die Kleinfassung `favicon.svg`: bei 24 px fliessen die
-           sechs Aussenpunkte von `icon.svg` zu einem Fleck zusammen, siehe die
-           Kommentare in beiden Dateien. -->
+      <!-- The mark and the wordmark sit together in `.brand`, so that the
+           header's `justify-content: space-between` continues to see exactly two
+           blocks - as siblings, the wordmark would otherwise drift into the
+           middle. Here it is the small version `favicon.svg`: at 24px, `icon.svg`'s
+           six outer dots merge into a single blob, see the comments in
+           both files. -->
       <div class="brand">
         <img class="brand-mark" src="/static/favicon.svg" alt="" width="24" height="24" />
         <h1>loxmatter</h1>
       </div>
       <div class="header-right">
         <!--
-          Zugang: seit dem WebUI-Login gibt es hier kein Token-Feld mehr,
-          sondern nur den Weg hinaus. Der Weg hinein sind die beiden
-          Bildschirme unter dieser Kopfzeile.
+          Access: since the WebUI login there is no longer a token field here,
+          only the way out. The way in is the two screens below
+          this header.
         -->
         <button class="logout" x-show="authenticated" x-cloak @click="logout()"
                 x-text="t('web.header.logout')"></button>
@@ -253,11 +252,11 @@
           <span class="dot" :class="socketConnected ? 'online' : 'offline'"></span>
           <span x-text="connectionStatusText()"></span>
           <!--
-            Das Lebenszeichen (2026-09-03). Die Bruecke schickt alle 30 s
-            einen Heartbeat, auch wenn sich an keinem Geraet etwas aendert.
-            Ohne diese Anzeige war eine ruhige Anlage - eine Steckdose ohne
-            Last meldet weder Strom noch Leistung - von einer abgestuerzten
-            nicht zu unterscheiden.
+            The sign of life (2026-09-03). The bridge sends a heartbeat
+            every 30s, even when nothing changes on any device.
+            Without this indicator, a quiet installation - a plug with no
+            load reports neither current nor power - was indistinguishable
+            from a crashed one.
           -->
           <span class="heartbeat" x-show="lastHeartbeatAt" x-cloak>
             <span x-text="t('web.header.heartbeat_prefix')"></span> <span x-text="heartbeatText()"></span>
@@ -284,16 +283,16 @@
          x-text="t('web.system.update_restarting')"></div>
 
     <!--
-      Echte Links auf die Fragmente der vier Ansichten (`VIEWS` in app.js),
-      bewusst keine Knoepfe mit `@click` mehr: nur so ueberlebt der gewaehlte
-      Reiter das Neuladen der Seite, laesst sich als Lesezeichen ablegen und
-      im neuen Tab oeffnen. Den Ansichtswechsel macht weiterhin `selectView`
-      - angestossen ueber `hashchange` (siehe `applyHash` in app.js), nicht
-      ueber einen Klick-Handler an dieser Stelle. Ein zusaetzliches `@click`
-      hier waere sogar schaedlich: es liefe VOR dem Fragmentwechsel und
-      liesse `applyHash` danach nichts mehr zu tun uebrig - der Zurueck-Knopf
-      bliebe davon zwar unberuehrt, aber die beiden Wege in dieselbe Ansicht
-      wuerden auseinanderlaufen.
+      Real links to the fragments of the four views (`VIEWS` in app.js),
+      deliberately no more buttons with `@click`: only this way does the
+      selected tab survive a page reload, can be bookmarked and opened
+      in a new tab. Switching views is still done by `selectView`
+      - triggered via `hashchange` (see `applyHash` in app.js), not
+      via a click handler at this point. An additional `@click`
+      here would even be harmful: it would run BEFORE the fragment change and
+      leave `applyHash` nothing left to do afterward - the back button
+      would stay unaffected by that, but the two paths into the same view
+      would drift apart.
     -->
     <nav class="tabs">
       <a href="#/devices" :class="{ active: view === 'devices' }" :aria-current="view === 'devices' ? 'page' : null" x-text="t('web.nav.devices')"></a>
@@ -304,40 +303,40 @@
 
     <main>
       <!-- ================================================================
-           Ansicht 1: Geräte
+           View 1: Devices
            ================================================================ -->
       <section x-show="view === 'devices'">
         <div class="card">
           <h2 x-text="t('web.devices.commission_heading')"></h2>
           <div x-show="commissionStep === null">
             <!--
-              Aufbau seit dem Entwurf "Code zuerst" (2026-09-07): der
-              Pairing-Code steht allein in der ersten Zeile, alles andere
-              darunter in einer leisen zweiten. Vorher standen hier vier
-              gleich breite Felder nebeneinander und darunter drei Absaetze
-              Hilfe - 78 Woerter, dauerhaft sichtbar, geloest von den
-              Feldern, die sie erklaeren, und der laengste davon gehoerte zum
-              seltensten Feld (dem Thread-Datensatz).
+              Layout since the "Code first" design (2026-09-07): the
+              pairing code stands alone on the first line, everything else
+              below it in a quieter second one. Before this, four
+              equally wide fields sat side by side here with three paragraphs
+              of help text below - 78 words, permanently visible, detached from
+              the fields they explain, and the longest of them belonged to the
+              rarest field (the Thread dataset).
 
-              Kein Satz davon ist verlorengegangen: die beiden langen
-              Hinweise stehen jetzt in den `<details>`-Klappen unten, jeder
-              bei dem Feld, um das es geht. Der dritte (der Raumhinweis) ist
-              zum Einzeiler neben dem Auswahlfeld geworden, weil das
-              Auswahlfeld mit "Ohne Raum" die halbe Auskunft schon selbst
-              gibt.
+              Not a single sentence of it was lost: the two long
+              notes now sit in the `<details>` disclosures below, each
+              next to the field it concerns. The third one (the room note) became
+              a one-liner next to the selection field, because the
+              selection field with "No room" already gives half the information
+              itself.
             -->
             <div class="code-with-sticker">
               <div class="code-col">
                 <label class="field-label" for="commission-code"
                        x-text="t('web.devices.code_label')"></label>
                 <!--
-                  Der Code bekommt eine eigene Umrandung um Feld UND Knopf, statt
-                  beide als Geschwister in eine `.row` zu haengen: er ist das
-                  einzige Pflichtfeld dieser Karte, und `Enter` im Feld tut
-                  dasselbe wie der Knopf daneben. Die Monospace-Schrift ist
-                  nicht Dekoration - genau so steht der Code auf dem Aufkleber
-                  des Geraets, und in Proportionalschrift ist ein O von einer 0
-                  beim Abtippen nicht zu unterscheiden.
+                  The code gets its own border around field AND button, instead
+                  of hanging both as siblings in a `.row`: it is the
+                  only required field on this card, and Enter in the field does
+                  the same as the button next to it. The monospace font is
+                  not decoration - that is exactly how the code appears on the
+                  device's sticker, and in a proportional font an O cannot be
+                  told apart from a 0 when copying it out.
                 -->
                 <div class="code-field">
                   <input
@@ -355,14 +354,14 @@
                     @keydown.enter="commissionDevice()"
                   />
                   <!--
-                    Kein `inputmode="numeric"`: auf dem Telefon gaebe es die
-                    Zifferntastatur, und dort steht man beim Ablesen. Es sperrte
-                    aber das Tippen eines QR-Textes hinter eine Umschalttaste,
-                    und diese Karte hat fuer beide Bauformen genau ein Feld.
+                    No `inputmode="numeric"`: on the phone that would bring up
+                    the numeric keyboard, and there is no dash key there. But
+                    it would lock typing a QR text behind a shift key, and
+                    this card has exactly one field for both forms.
 
-                    Der Chip bleibt bei leerem Feld sichtbar-aber-leer
-                    (`visibility: hidden` in style.css) statt entfernt, damit das
-                    Feld beim ersten Tastendruck nicht seine Breite aendert.
+                    The chip stays visible-but-empty when the field is empty
+                    (`visibility: hidden` in style.css) instead of removed, so
+                    the field does not change its width on the first keystroke.
                   -->
                   <span
                     class="code-detect"
@@ -386,15 +385,15 @@
                 <p class="hint" id="code-where-hint" x-text="t('web.devices.code_where_hint')"></p>
               </div>
               <!--
-                Das QR-Quadrat ist eine Andeutung aus Rechtecken - drei
-                Suchmuster plus Rauschen -, kein lesbarer Code. Ein echter QR
-                im Bild waere eine Einladung, ihn zu scannen, und fuehrte
-                nirgendwohin.
+                The QR square is a suggestion made of rectangles - three
+                finder patterns plus noise -, not a readable code. A real QR
+                code in the image would be an invitation to scan it, and it
+                would lead nowhere.
 
-                Alle Farben kommen aus den vorhandenen Variablen, damit die
-                Skizze in beiden Themes traegt; --warn hebt die Zahl hervor
-                und traegt damit dieselbe Bedeutung wie ueberall sonst
-                ("sieh hier hin"), statt eine neue einzufuehren.
+                All colors come from the existing variables, so the sketch
+                works in both themes; --warn highlights the number and
+                thereby carries the same meaning as everywhere else
+                ("look here"), instead of introducing a new one.
               -->
               <svg class="code-sticker" width="188" height="112"
                    viewBox="0 0 188 112" role="img"
@@ -422,10 +421,10 @@
                 </g>
                 <rect x="96" y="52" width="86" height="20" rx="4"
                       fill="var(--warn-bg)" stroke="var(--warn)" stroke-width="1" />
-                <!-- font-family ausgeschrieben statt var(--mono): SVG-Praesentationsattribute
-                     loesen CSS-Variablen nicht in jeder Engine auf, und Monospace ist hier
-                     kein Stilmittel -- 0 und O muessen unterscheidbar bleiben, weil genau so
-                     der Code auf dem Aufkleber steht. -->
+                <!-- font-family spelled out instead of var(--mono): SVG presentation attributes
+                     do not resolve CSS variables in every engine, and monospace here is
+                     not a stylistic choice -- 0 and O must stay distinguishable, because that
+                     is exactly how the code appears on the sticker. -->
                 <text x="100" y="66"
                       font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace"
                       font-size="10" fill="var(--text)">1234-567-8901</text>
@@ -459,11 +458,11 @@
 
           <div class="commission-help">
             <!--
-              Zwei native `<details>` statt eines eigenen Auf-/Zu-Zustands
-              in `app()`: der Browser kann das, und ein Zustand, den
-              niemand zuruecksetzen muss, kann auch mit nichts anderem
-              auseinanderlaufen. Dieselbe Ueberlegung wie beim
-              Kachel-Menue und den Signalgruppen im Modal.
+              Two native `<details>` instead of a dedicated open/closed state
+              in `app()`: the browser can already do that, and a state
+              nobody has to reset can't drift out of sync with anything else
+              either. The same reasoning as for the tile menu and the signal
+              groups in the modal.
             -->
             <details class="commission-disclosure">
               <summary x-text="t('web.devices.code_help_summary')"></summary>
@@ -489,17 +488,17 @@
           </div>
 
           <!--
-            Die Ablaufanzeige (Entwurf "Der Ablauf wird sichtbar"). Sie
-            loest ein Problem, das kein Layout loesen kann: Einlernen
-            dauert je nach Geraet zwanzig bis sechzig Sekunden, und bis
-            hierher war das ein grau werdender Knopf - von einer haengenden
-            Seite nicht zu unterscheiden.
+            The progress display (design "The process becomes visible"). It
+            solves a problem that no layout can solve: commissioning
+            takes anywhere from twenty to sixty seconds depending on the device, and
+            until now that was just a button turning grey - indistinguishable from
+            a hung page.
 
-            ZWEI Schritte, nicht drei: mehr Abschnitte kann diese
-            Oberflaeche nicht ehrlich auseinanderhalten (siehe die
-            Begruendung bei `web.devices.commission_step_joining` in
-            strings.yaml). Ein dritter Punkt saehe besser aus und waere
-            geraten.
+            TWO steps, not three: this UI cannot honestly tell apart
+            more sections than that (see the reasoning at
+            `web.devices.commission_step_joining` in
+            strings.yaml). A third point would look nicer and would be
+            a guess.
           -->
           <div x-show="commissionStep !== null" x-cloak>
             <p class="commission-subject">
@@ -526,12 +525,11 @@
           </div>
 
           <!--
-            Die Meldung steht ausserhalb der beiden Haelften, weil sie zu
-            beiden gehoert: die Pruefung auf einen leeren Code schlaegt zu,
-            BEVOR ein Lauf beginnt (also am Formular), Erfolg und Fehlschlag
-            melden sich danach (also an der Ablaufanzeige). Zwei Kopien
-            desselben Banners waeren zwei Stellen, an denen es haengenbleiben
-            kann.
+            The message sits outside both halves, because it belongs to
+            both: the check for an empty code fires BEFORE a run begins
+            (i.e. at the form), success and failure report afterward
+            (i.e. at the progress display). Two copies of the same banner
+            would be two places where it could get stuck.
           -->
           <p
             x-show="commissionMessage"
@@ -551,12 +549,12 @@
           x-text="t('web.devices.empty')"
         ></p>
 
-        <!-- Raumleiste (Entwurf 6.3): zeigt sich gar nicht, solange kein
-             einziges Geraet einen Raum traegt - bei drei Geraeten und keinem
-             Raum waere sie eine Zeile Laerm ueber einer Liste, die ohnehin
-             auf einen Blick passt. Das Suchfeld bleibt in dem Fall trotzdem
-             erreichbar, weil es auch ohne Raeume ueber Name und Kategorie
-             sucht. -->
+        <!-- Room bar (design 6.3): does not show at all as long as not a
+             single device carries a room - with three devices and no
+             room it would be a line of noise above a list that fits in
+             one glance anyway. The search field stays reachable in that case
+             regardless, because it also searches by name and category
+             without any rooms. -->
         <div class="room-bar" x-show="devices.length > 0" x-cloak>
           <template x-if="hasAnyRoom()">
             <span class="room-chips">
@@ -574,12 +572,12 @@
                   x-text="chip.label + ' ' + chip.count"
                 ></button>
               </template>
-              <!-- `x-show="roomFilter"` ist hier genau richtig und kein
-                   Schludern: falsy sind beide Faelle, in denen es nichts
-                   umzubenennen gibt - `null` ("Alle") und `""` ("Ohne
-                   Raum"). "Ohne Raum" ist kein Raum, sondern die Menge der
-                   Geraete ohne Zuordnung; ein Name, den man aendern
-                   koennte, ist gerade das, was ihnen fehlt. -->
+              <!-- `x-show="roomFilter"` is exactly right here and not
+                   sloppiness: both cases where there is nothing to rename are
+                   falsy - `null` ("All") and `""` ("No
+                   room"). "No room" is not a room but the set of
+                   devices with no assignment; a name that could be changed
+                   is precisely what they are missing. -->
               <button
                 class="room-rename"
                 x-show="roomFilter && renamingRoom !== roomFilter"
@@ -598,25 +596,25 @@
               />
             </span>
           </template>
-          <!-- Der Abstandhalter existiert nur zusammen mit den Chips: er
-               schiebt das Suchfeld an ihnen vorbei nach rechts. Ohne
-               Raeume gibt es nichts, woran vorbeizuschieben waere - dann
-               soll das Feld an die linke Kante ruecken statt allein rechts
-               in einer leeren Zeile zu stehen. Deshalb ein eigenes `x-if`
-               und keine Zeile, die immer da ist. -->
+          <!-- The spacer only exists together with the chips: it
+               pushes the search field past them to the right. Without
+               rooms there is nothing to push past - the field should
+               then move to the left edge instead of standing alone on the right
+               in an empty row. Hence its own `x-if` rather than an element
+               that is always there. -->
           <template x-if="hasAnyRoom()"><span class="room-spacer"></span></template>
-          <!-- Der Rahmen sitzt am Container, nicht am Feld: Lupe, Zaehler
-               und Kreuz liegen mit IM Rahmen, und der Fokusring haengt per
-               :focus-within an der ganzen Gruppe statt am Eingabefeld in
-               ihrer Mitte.
+          <!-- The border sits on the container, not on the field: the magnifying glass,
+               the counter and the cross sit WITHIN the border, and the focus ring
+               hangs on the whole group via :focus-within instead of on the
+               input field at its centre.
 
-               Ein <div>, kein <label>: ein <button> innerhalb eines Labels
-               loest dessen Weiterleitung an das gelabelte Bedienelement mit
-               aus - das Loeschen soll ein Klick sein, nicht zwei
-               Ereignisse. Der Preis ist ein schmaler Streifen Polster, der
-               nicht ins Feld fokussiert; die Lupe traegt dafuer
-               `pointer-events: none` (style.css), damit wenigstens sie kein
-               Klickloch in die linke Kante schlaegt. -->
+               A <div>, not a <label>: a <button> inside a label
+               would trigger the label's forwarding to the labelled control
+               - clearing should be one click, not two
+               events. The price is a thin strip of padding that
+               does not focus into the field; the magnifying glass carries
+               `pointer-events: none` (style.css) for that, so that at least it does not
+               punch a click-hole into the left edge. -->
           <div class="search-field">
             <svg class="icon search-icon" aria-hidden="true"><use href="#i-search"></use></svg>
             <input
@@ -626,15 +624,15 @@
               :placeholder="t('web.devices.search_placeholder')"
               :aria-label="t('web.devices.search_placeholder')"
             />
-            <!-- `aria-live="polite"` nur hier, nicht an den Chips oder dem
-                 Hinweistext daneben: der Zaehler beantwortet genau die
-                 Frage, die Tippen aufwirft ("wie viele jetzt noch?"), und
-                 soll das leise nachreichen. Die uebrigen Texte aendern sich
-                 nicht als Reaktion auf Tastatureingabe und muessten sonst
-                 bei jeder Neuzeichnung erneut vorgelesen werden. Das Element
-                 bleibt bei leerem Feld im DOM (nur `display: none` per
-                 `x-show`) - die Live-Region existiert also schon, bevor ihr
-                 Inhalt sich das erste Mal aendert. -->
+            <!-- `aria-live="polite"` only here, not on the chips or the
+                 hint text next to them: the counter answers exactly the
+                 question typing raises ("how many are left now?"), and
+                 should quietly supply that. The other texts do not change
+                 in response to keyboard input and would otherwise have to
+                 be read out again on every re-render. The element
+                 stays in the DOM when the field is empty (only `display: none` via
+                 `x-show`) - so the live region already exists before its
+                 content changes for the first time. -->
             <span
               class="search-count"
               aria-live="polite"
@@ -666,10 +664,10 @@
 
         <template x-for="group in deviceGroups()" :key="group.key">
           <div>
-            <!-- Umbenennen inline, wie der Geraetename in der Kachel: der
-                 Stift tauscht die Ueberschrift gegen ein Eingabefeld.
-                 `group.key` ist "" fuer "Ohne Raum" - falsy, also kein
-                 Stift: dort gibt es keinen Namen zu aendern. -->
+            <!-- Renaming inline, like the device name in the tile: the
+                 pencil swaps the heading for an input field.
+                 `group.key` is "" for "No room" - falsy, so no
+                 pencil: there is no name to change there. -->
             <h3 class="room-heading" x-show="group.title">
               <span x-show="renamingRoom !== group.key" x-text="group.title"></span>
               <button
@@ -705,39 +703,39 @@
                         @change="saveLabel(device)"
                       />
                     </span>
-                    <!-- Die Offline-Pille steht seit dem Wegfall des
-                         Leitwerts (Entwurf 2026-09-07) HIER, auf dessen
-                         Platz, und nicht mehr in `.device-ident` unter dem
-                         Namen. Sie verdraengt damit nichts mehr: das
-                         `.lead-label`, mit dem sie sich die Zeile teilte,
-                         gibt es nicht mehr - und mit ihm die Regel "nur die
-                         Offline-Pille verdraengt das Leitwert-Label", die
-                         hier frueher zwei Absaetze Begruendung brauchte.
+                    <!-- The offline pill sits HERE, in its place, since the
+                         primary signal was dropped (design 2026-09-07), and
+                         no longer in `.device-ident` under the
+                         name. It thereby displaces nothing anymore: the
+                         `.lead-label` it used to share the row with
+                         no longer exists - and with it the rule "only the
+                         offline pill displaces the primary-signal label",
+                         which used to need two paragraphs of reasoning here.
 
-                         Keine eigene Positionsregel noetig - aber nicht aus
-                         dem Grund, der hier bis zur Nacharbeit vom
-                         2026-09-07 stand: `.status-pill` traegt zwar
-                         `margin-left: auto` (style.css), doch der traegt
-                         hier nichts bei. `.device-ident` daneben hat `flex:
-                         1 1 auto` und verbraucht beim Aufloesen der
-                         flexiblen Laengen (CSS Flexbox 9.7) bereits den
-                         gesamten freien Platz, BEVOR Auto-Raender verteilt
-                         werden (9.5) - fuer den Auto-Rand bleibt nichts
-                         mehr uebrig. Die Pille steht rechts, WEIL
-                         `.device-ident` waechst, nicht weil ihr eigener
-                         Auto-Rand greift. Genau deshalb ist `flex: 1 1
-                         auto` an `.device-ident` hier tragend und nicht
-                         entbehrlich: faellt es weg, bleibt freier Platz
-                         uebrig, und erst dann wuerde `margin-left: auto`
-                         an der Pille etwas bewirken.
+                         No dedicated positioning rule needed - but not for
+                         the reason that stood here until the 2026-09-07
+                         follow-up: `.status-pill` does carry
+                         `margin-left: auto` (style.css), but that contributes
+                         nothing here. `.device-ident` next to it has `flex:
+                         1 1 auto` and, when resolving the flexible lengths
+                         (CSS Flexbox 9.7), already consumes the
+                         entire free space BEFORE auto margins are
+                         distributed (9.5) - nothing is left over for the
+                         auto margin. The pill sits on the right BECAUSE
+                         `.device-ident` grows, not because its own
+                         auto margin kicks in. That is exactly why `flex: 1 1
+                         auto` on `.device-ident` is load-bearing here and not
+                         dispensable: remove it, and free space remains,
+                         and only then would `margin-left: auto`
+                         on the pill do anything.
 
-                         Die Geaendert-seit-Export-Pille sitzt weiterhin in
-                         der FUSSZEILE (Pille-in-die-Fusszeile-Umbau,
-                         2026-09-06) und ausdruecklich nicht hier: sie
-                         beantwortet dieselbe Frage wie `exportHintFor`
-                         direkt daneben. Die Kopfzeile bleibt dem
-                         Geraetezustand vorbehalten, nicht dem
-                         Exportzustand. -->
+                         The changed-since-export pill continues to sit in
+                         the FOOTER (pill-into-the-footer rework,
+                         2026-09-06) and deliberately not here: it
+                         answers the same question as `exportHintFor`
+                         right next to it. The header stays reserved
+                         for the device's state, not the export
+                         state. -->
                     <span class="status-pill off" x-show="!isOnline(device)">
                       <svg class="icon"><use href="#i-offline"></use></svg>
                       <span x-text="t('web.devices.offline')"></span>
@@ -745,12 +743,12 @@
                   </div>
 
                   <div class="value-rows" x-show="signalsByDevice[device.id]">
-                    <!-- `firstSignalsFor`, nicht `restSignalsFor` (Entwurf
-                         2026-09-07): das Raster zeigt die volle Kurzliste.
-                         `restSignalsFor` lieferte sie ohne ihren ersten
-                         Eintrag, weil genau der oben in der Kopfzeile stand
-                         - mit dem Wegfall der Kopfzeilen-Anzeige waere er
-                         sonst nirgends mehr zu sehen. -->
+                    <!-- `firstSignalsFor`, not `restSignalsFor` (design
+                         2026-09-07): the grid shows the full short list.
+                         `restSignalsFor` delivered it without its first
+                         entry, because exactly that one used to sit above
+                         in the header - with the header display dropped, it
+                         would otherwise no longer be visible anywhere. -->
                     <template x-for="signal in firstSignalsFor(device.id)" :key="signal.key">
                       <span class="value-row">
                         <span class="value-key" x-text="signal.title"></span>
@@ -762,10 +760,9 @@
                         ></span>
                       </span>
                     </template>
-                    <!-- Der Hinweis auf die restlichen Signale ist die letzte
-                         Rasterzeile statt eines eigenen Absatzes (Entwurf
-                         6.2) - auf einer 260 px breiten Kachel zaehlt jede
-                         Zeile. -->
+                    <!-- The note about the remaining signals is the last
+                         grid row instead of its own paragraph (design
+                         6.2) - on a tile 260px wide, every row counts. -->
                     <span class="value-row" x-show="remainingSignalCount(device.id) > 0">
                       <a
                         class="value-key"
@@ -777,19 +774,19 @@
                     </span>
                   </div>
 
-                  <!-- Der Batteriestand steht UNTER den Vorschauzeilen und
-                       unter dem "+ N weitere"-Link, nicht zwischen ihnen
-                       (Entwurf 2026-09-07, Abschnitt 6). Er ist kein
-                       Nutzsignal wie ein Tastendruck, sondern eine Angabe
-                       ueber das Geraet selbst - und mit Rang 90 waere er
-                       aus den sechs Vorschauzeilen gefallen. Eigene Zeile,
-                       eigenes Symbol, gestrichelte Trennung: immer
-                       sichtbar, nie Leitwert.
+                  <!-- The battery level sits BELOW the preview rows and
+                       below the "+ N more" link, not between them
+                       (design 2026-09-07, section 6). It is not a
+                       functional signal like a button press, but a
+                       statement about the device itself - and with rank 90
+                       it would have fallen out of the six preview rows.
+                       Its own row, its own icon, a dashed separator: always
+                       visible, never a primary signal.
 
-                       `x-show` statt `x-if`: ein netzbetriebenes Geraet
-                       hat kein PowerSource-Signal und darf nicht um eine
-                       leere Zeile hoeher werden - `.device-battery` traegt
-                       deshalb kein eigenes Aussenmass, das stehen bliebe. -->
+                       `x-show` instead of `x-if`: a mains-powered device
+                       has no PowerSource signal and must not grow taller by
+                       an empty row - `.device-battery` therefore carries no
+                       outer dimension of its own that would remain. -->
                   <div class="device-battery" x-show="batterySignalFor(device.id)" x-cloak>
                     <svg class="icon" aria-hidden="true"><use href="#i-battery"></use></svg>
                     <span class="value-key" x-text="t('web.devices.battery_label')"></span>
@@ -802,25 +799,25 @@
                   </div>
 
                   <p class="hint" x-show="!signalsByDevice[device.id]" x-text="t('web.devices.signals_loading')"></p>
-                  <!-- Fund 3: ohne diesen Hinweis blieb zwischen Kopfzeile
-                       und Befehlsleiste stillschweigend eine Luecke, sobald
-                       ein Geraet geladene, aber leere funktionale Signale
-                       hat (die `value-rows` bleiben dann ohne Inhalt) -
-                       nicht von einem noch ladenden Geraet zu
-                       unterscheiden. Die Bedingung fragte frueher
-                       `!leadSignalFor(device.id)`; ohne Leitwert fragt sie
-                       die Liste direkt, was ohnehin die ehrlichere Frage
-                       ist.
+                  <!-- Finding 3: without this note, a gap silently
+                       remained between the header and the command bar as
+                       soon as a device has loaded but empty functional
+                       signals (the `value-rows` then stay without content) -
+                       indistinguishable from a device that is still
+                       loading. The condition used to ask
+                       `!leadSignalFor(device.id)`; without a primary signal
+                       it asks the list directly, which is the more honest
+                       question anyway.
 
-                       Und sie ist seit der Batteriezeile auch die einzige
-                       richtige: `previewSignalsFor` nimmt den Batteriestand
-                       aus dem Werteraster heraus (er steht in der Fusszeile
-                       darunter), ein Geraet mit NUR einem Batteriesignal
-                       hat also leere `value-rows` bei einem funktionalen
-                       Signal. Ueber die Rasterzeilen gefragt erschiene dort
-                       faelschlich "keine funktionalen Signale"; ueber
-                       `functionalSignalsFor` gefragt bleibt der Hinweis
-                       richtig aus. -->
+                       And since the battery row it is also the only
+                       correct one: `previewSignalsFor` removes the battery
+                       level from the value grid (it sits in the footer
+                       below instead), so a device with ONLY a battery
+                       signal has empty `value-rows` despite one functional
+                       signal. Asked via the grid rows, it would wrongly
+                       show "no functional signals" there; asked via
+                       `functionalSignalsFor`, the note correctly stays
+                       hidden. -->
                   <p
                     class="hint"
                     x-show="signalsByDevice[device.id] && functionalSignalsFor(device.id).length === 0"
@@ -835,10 +832,10 @@
                         x-text="command.slug"
                       ></button>
                     </template>
-                    <!-- Wertbehaftete Kommandos ziehen ins Bedien-Modal
-                         (Aufgabe 7): die Kachel zeigt dafuer nur noch diesen
-                         einen Knopf, statt je Kommando ein nacktes
-                         Zahlenfeld zu rendern. -->
+                    <!-- Value-carrying commands move into the control modal
+                         (task 7): for those, the tile now shows only this
+                         one button, instead of rendering a bare
+                         number field per command. -->
                     <button
                       x-show="hasAdjustableControls(device.id)"
                       @click="openControlModal(device)"
@@ -850,16 +847,16 @@
                       x-show="hiddenRawCommandsFor(device.id) > 0"
                       x-text="'+' + hiddenRawCommandsFor(device.id) + ' ' + t('web.devices.more_commands_short')"
                     ></span>
-                    <!-- Fund 3: `controlsLoaded()` unterscheidet "noch nicht
-                         geladen oder Abruf fehlgeschlagen" von "geladen, aber
-                         tatsaechlich keine Befehle" - ohne diese beiden
-                         Zeilen rendert die Kachel in BEIDEN Faellen denselben
-                         leeren, umrandeten Streifen (Spec 8.1: ein
-                         Fehlschlag darf nicht als harmloser Zustand
-                         erscheinen). Der Fehlertext selbst laeuft weiterhin
-                         separat ueber das `deviceActionError`-Banner (siehe
-                         `loadControls`) - hier geht es nur um die
-                         Kachel-Anzeige. -->
+                    <!-- Finding 3: `controlsLoaded()` distinguishes "not yet
+                         loaded or the fetch failed" from "loaded, but genuinely
+                         no commands" - without these two
+                         lines the tile renders the same empty, bordered
+                         strip in BOTH cases (Spec 8.1: a
+                         failure must not look like a harmless state).
+                         The error text itself still runs separately
+                         through the `deviceActionError` banner (see
+                         `loadControls`) - here it is only about the
+                         tile display. -->
                     <span
                       class="hint"
                       x-show="!controlsLoaded(device.id)"
@@ -874,174 +871,173 @@
 
                   <div class="device-foot">
                     <span class="hint" x-text="exportHintFor(device.id)"></span>
-                    <!-- Reihenfolge bewusst: der Hinweis nennt zuerst den
-                         Exportzeitpunkt ("Zuletzt exportiert am ..." /
-                         "Noch nie exportiert"), die Pille ergaenzt direkt
-                         danach die zugehoerige Abweichung ("...und seither
-                         geaendert") - dieselbe Subjekt-Praedikat-Folge wie
-                         im Fliesstext, nicht Pille zuerst und Zeitangabe
-                         hinterher.
+                    <!-- Order deliberate: the hint first names the
+                         export time ("Last exported on ..." /
+                         "Never exported"), the pill immediately adds
+                         the associated deviation right after ("...and changed
+                         since") - the same subject-predicate order as
+                         in running text, not pill first and timestamp
+                         afterward.
 
-                         KEIN `isOnline(device) &&` mehr in der Bedingung
-                         (2026-09-06). Solange die Pille oben in der
-                         Kopfzeile stand, teilte sie sich die Zeile mit der
-                         Offline-Pille, und es konnte immer nur eine von
-                         beiden dort stehen - daher die Kopplung. Hier unten
-                         konkurriert nichts, und "seit dem Export geaendert"
-                         hat mit der momentanen Erreichbarkeit ohnehin
-                         nichts zu tun: die Aenderung ist passiert, ob das
-                         Geraet gerade antwortet oder nicht. Ein offline
-                         stehendes Geraet mit ausstehendem Export sagte das
-                         sonst NIRGENDS - auch der Randstreifen nicht, denn
-                         `deviceCardClass` koppelt `is-changed` weiterhin an
-                         `isOnline`, und zwar zu Recht: ein Streifen kann
-                         nur eine Farbe tragen. Genau diese Luecke schliesst
-                         die Pille hier. -->
+                         NO MORE `isOnline(device) &&` in the condition
+                         (2026-09-06). As long as the pill sat up in the
+                         header, it shared the line with the
+                         offline pill, and only ever one of the two could stand
+                         there - hence the coupling. Down here nothing
+                         competes, and "changed since the export"
+                         has nothing to do with current reachability
+                         anyway: the change happened whether the
+                         device is currently responding or not. An offline
+                         device with a pending export otherwise said so
+                         NOWHERE - not even the edge stripe, since
+                         `deviceCardClass` still couples `is-changed` to
+                         `isOnline`, and rightly so: a stripe can
+                         only carry one colour. That is exactly the gap
+                         the pill closes here. -->
                     <span class="status-pill warn" x-show="changedSinceExport(device.id)">
                       <svg class="icon"><use href="#i-warn"></use></svg>
                       <span x-text="t('web.devices.changed_since_export')"></span>
                     </span>
                     <span style="flex: 1 1 auto"></span>
-                    <!-- Der Auf-/Zu-Zustand liegt im DOM, nicht in Alpine:
-                         ein `<details>` braucht kein `open`-Feld je Kachel,
-                         das mit dem sichtbaren Zustand in Deckung gehalten
-                         werden muesste. Genau diese Deckungspflicht hat das
-                         Raum-Auswahlfeld sechs Reviewrunden gekostet.
-                         `<details>` schliesst allerdings NICHT von selbst
-                         bei Escape (anders als ein `<dialog>`) und auch
-                         nicht bei einem Klick daneben - beides steht
-                         deshalb hier. Dass immer nur ein Menue offen ist,
-                         faellt dabei ab: der Klick auf den Kebab einer
-                         anderen Kachel liegt ausserhalb dieses `<details>`
-                         und schliesst es ueber denselben Wachposten.
+                    <!-- The open/closed state lives in the DOM, not in Alpine:
+                         a `<details>` needs no `open` field per tile,
+                         that would have to be kept in sync with the visible
+                         state. That exact obligation to stay in sync cost the
+                         room selection field six rounds of review.
+                         However, `<details>` does NOT close on its own
+                         on Escape (unlike a `<dialog>`), nor
+                         on a click elsewhere - both are handled here
+                         for that reason. The fact that only ever one menu is open
+                         falls out of this for free: a click on the kebab of
+                         another tile lies outside this `<details>`
+                         and closes it via the same guard.
 
-                         `.window` am Escape-Listener ist Pflicht, kein
-                         Stil: ohne `.window` haengt der Listener am
-                         `<details>`-Teilbaum und feuert nur, wenn der
-                         Fokus dort drin steht. Safari auf macOS setzt den
-                         Fokus bei einem Mausklick auf `<summary>` NICHT
-                         automatisch dorthin (Standard, "Volle
-                         Tastatursteuerung" aus) - wer das Menue also per
-                         Maus oeffnet und danach Escape drueckt, feuert das
-                         Escape auf `document.body`, es erreicht das
-                         `<details>` nie, das Menue bleibt lautlos offen.
-                         `.window` haengt stattdessen am `window` und
-                         wirkt unabhaengig vom Fokus. Das `if ($el.open)`
-                         davor ist trotzdem Pflicht, seit dieser Listener
-                         auch `closeTileMenu` aufruft (Fund 3, s.u.): ohne
-                         die Wache feuert er bei JEDEM Escape/Aussenklick an
-                         JEDER Kachel (es gibt ja eine `<details>`-Instanz
-                         je Geraet) und wuerde auch an laengst geschlossenen
-                         Menues deren `<summary>` fokussieren - obwohl der
-                         Nutzer gerade voellig woanders geklickt hat. Mit
-                         der Wache reagiert nur die tatsaechlich offene
-                         Kachel, und die ist ohnehin immer nur eine (s.o.).
+                         `.window` on the Escape listener is mandatory, not
+                         a style choice: without `.window` the listener hangs off
+                         the `<details>` subtree and only fires when the
+                         focus is inside it. Safari on macOS does NOT
+                         automatically move focus there on a mouse click on `<summary>`
+                         (default, "Full Keyboard
+                         Access" off) - so whoever opens the menu with the
+                         mouse and then presses Escape fires the
+                         Escape on `document.body`, which never reaches the
+                         `<details>`, and the menu stays silently open.
+                         `.window` instead hangs off the `window` and
+                         works independently of focus. The `if ($el.open)`
+                         in front of it is nonetheless mandatory, since this listener
+                         also calls `closeTileMenu` (Finding 3, below): without
+                         the guard it would fire on EVERY Escape/outside click on
+                         EVERY tile (there is, after all, one `<details>`
+                         instance per device) and would focus the `<summary>` even
+                         of menus that have long since closed - even though the
+                         user just clicked completely somewhere else. With
+                         the guard, only the tile that is actually open
+                         reacts, and there is in any case only ever one of those (see above).
 
-                         Fund 1 (Review vom 2026-09-05): `newRoomFor`
-                         schaltet nur noch die Sichtbarkeit des
-                         Neu-Raum-Feldes, war aber sonst genau die Sorte
-                         Zustand, gegen die dieser Umbau eigentlich antritt
-                         - er blieb auf drei der vier Schliesswege
-                         (Aussenklick, Escape, Klick auf einen Raumeintrag)
-                         unveraendert stehen, weil nur Enter und das Escape
-                         IM Feld ihn zuruecksetzten. Bei Wiedereroeffnen
-                         zeigte das Menue dann ein leeres Neu-Raum-Feld statt
-                         des "+ Neuer Raum"-Knopfes. `@toggle` feuert bei
-                         JEDEM Oeffnen/Schliessen dieses `<details>`, gleich
-                         aus welchem Grund - und ist damit die eine Stelle,
-                         die `newRoomFor` kennen muss, statt der vier
-                         Handler, die es bislang kennen MUESSTEN.
+                         Finding 1 (review from 2026-09-05): `newRoomFor`
+                         now only toggles the visibility of the
+                         new-room field, but was otherwise exactly the kind of
+                         state this rework is meant to fight
+                         - it stayed unchanged across three of the four ways to close
+                         (outside click, Escape, clicking a room entry),
+                         because only Enter and the Escape INSIDE the
+                         field reset it. On reopening,
+                         the menu then showed an empty new-room field instead
+                         of the "+ New room" button. `@toggle` fires on
+                         EVERY opening/closing of this `<details>`, whatever
+                         the reason - and is thus the one place
+                         that needs to know about `newRoomFor`, instead of the four
+                         handlers that previously had to.
 
-                         Fund 3 (Re-Review 2026-09-05): das `!$el.open` aus
-                         der ersten Fassung deckte nur das Schliessen ab und
-                         liess eine Luecke: verschwindet die Kachel selbst,
-                         waehrend ihr Menue offen ist (ein Re-Render entfernt
-                         den Knoten ersatzlos), feuert nie ein `toggle` fuers
-                         Schliessen - `newRoomFor` bleibt auf der Geraete-ID
-                         stehen. Taucht dieselbe ID spaeter in einem NEUEN
-                         `<details>` wieder auf, ist dessen erstes `toggle`
-                         ein Oeffnen, und `!$el.open` verwarf genau diesen
-                         Fall - das verwaiste Feld war wieder da. Die Wache
-                         deckt Oeffnen und Schliessen deshalb jetzt
-                         gleichermassen ab: `beginNewRoom` wird ausschliesslich
-                         per Klick INNERHALB eines bereits offenen Menues
-                         erreicht, also lange NACHDEM dessen eigenes,
-                         gequeutes `toggle` (das Oeffnen) schon gelaufen ist
-                         - ein Reset beim Oeffnen kann also nie einen gerade
-                         erst gesetzten Neu-Raum-Modus wieder wegnehmen.
-                         Dieses `!$el.open` NICHT wieder einbauen, sonst ist
-                         die Luecke beim Kachel-Verschwinden zurueck.
+                         Finding 3 (re-review 2026-09-05): the `!$el.open` from
+                         the first version only covered closing and
+                         left a gap: if the tile itself disappears
+                         while its menu is open (a re-render removes
+                         the node outright), no `toggle` ever fires for
+                         closing - `newRoomFor` stays stuck on the device
+                         ID. If the same ID later reappears in a NEW
+                         `<details>`, its first `toggle` is
+                         an opening, and `!$el.open` discarded exactly this
+                         case - the orphaned field was back. The guard
+                         now covers opening and closing alike for that reason:
+                         `beginNewRoom` is reached exclusively
+                         by a click INSIDE an already open menu,
+                         i.e. long AFTER its own,
+                         queued `toggle` (the opening) has already run
+                         - so a reset on opening can never take away a
+                         new-room mode that was just set. Do
+                         NOT reintroduce this `!$el.open`, or the gap on
+                         tile disappearance is back.
 
-                         Fund 3 (Review vom 2026-09-05): ein natives
-                         `<details>` gibt beim Schliessen keinen Fokus
-                         zurueck - der gerade aktivierte Eintrag verschwindet
-                         mitsamt seinem Fokus aus dem gerenderten Baum (nur
-                         der Inhalt hinter `<summary>` wird versteckt), und
-                         die naechste Tab-Taste faengt wieder ganz oben im
-                         Dokument an statt an der Kachel weiterzumachen, an
-                         der der Nutzer gerade stand. `closeTileMenu`
-                         (app.js) schliesst das `<details>` UND fokussiert
-                         danach dessen `<summary>` (die bleibt beim
-                         Schliessen immer gerendert) - eine Funktion fuer
-                         alle Schliesswege statt eines eigenen Fokus-Rufs an
-                         jedem einzelnen Eintrag. -->
+                         Finding 3 (review from 2026-09-05): a native
+                         `<details>` does not return focus on
+                         closing - the entry that was just activated disappears
+                         along with its focus from the rendered tree (only
+                         the content behind `<summary>` is hidden), and
+                         the next Tab key starts back at the very top of the
+                         document instead of continuing at the tile
+                         where the user just was. `closeTileMenu`
+                         (app.js) closes the `<details>` AND then focuses
+                         its `<summary>` (which always stays
+                         rendered when closing) - one function for
+                         all ways of closing instead of a separate focus call at
+                         each individual entry. -->
                     <details
                       class="tile-menu"
                       @toggle="if (newRoomFor === device.id) { newRoomFor = null; newRoomDraft = '' }"
                       @click.outside="if ($el.open) closeTileMenu($el)"
                       @keydown.escape.window="if ($el.open) closeTileMenu($el)"
                     >
-                      <!-- `title` allein ist bei der Berechnung des
-                           zugaenglichen Namens nur der letzte Rueckfallwert
-                           und wird von Screenreadern nicht zuverlaessig
-                           vorgelesen - `aria-label` legt den Namen explizit
-                           fest, `title` bleibt zusaetzlich als Maus-Tooltip
-                           stehen, beide Attribute erfuellen also
-                           unterschiedliche Zwecke nebeneinander.
-                           Das `<svg>` bekommt hier als erstes Icon in
-                           dieser Datei `aria-hidden="true"`: ein
-                           dekoratives Icon in einem bereits benannten
-                           Bedienelement darf dem Accessibility-Baum keinen
-                           zweiten, konkurrierenden Namen liefern. Die
-                           anderen Icon-Knoepfe (`.room-rename` u.a.) haben
-                           das noch nicht - beim naechsten Anfassen bitte
-                           dieses Muster uebernehmen, nicht das aeltere ohne
+                      <!-- `title` alone is only the last fallback value when
+                           computing the accessible name
+                           and is not reliably read out by screen readers
+                           - `aria-label` sets the name explicitly,
+                           `title` additionally stays in place as a mouse tooltip,
+                           so both attributes serve
+                           different purposes side by side.
+                           The `<svg>` here gets `aria-hidden="true"` as the first
+                           icon in this file to do so: a
+                           decorative icon inside a control that already has a name
+                           must not give the accessibility tree a second,
+                           competing name. The other icon buttons (`.room-rename`
+                           and others) do not have this yet - please adopt this
+                           pattern the next time one of them is touched, not the older one without
                            `aria-hidden`. -->
                       <summary :title="t('web.devices.menu')" :aria-label="t('web.devices.menu')">
                         <svg class="icon" aria-hidden="true"><use href="#i-kebab"></use></svg>
                       </summary>
                       <div class="tile-menu-items">
-                        <!-- Fund 2 (Nacharbeit 2026-09-05): die Ueberschrift
-                             war bis hierher nur optisch ein Gruppenlabel -
-                             per Tab erreicht ein Screenreader-Nutzer
-                             "Kueche" ohne jede Auskunft, dass das ein Raum
-                             ist. `role="group"` plus `aria-labelledby`
-                             stellt die Verbindung programmatisch her.
-                             Die id der Ueberschrift ist bewusst PRO GERAET
-                             abgeleitet (`device.id`) statt eine feste
-                             Konstante: die ganze Seite teilt sich ein
-                             einziges `x-data` (siehe die Begruendung gegen
-                             `x-ref`/`$refs` weiter unten in dieser Datei,
-                             Fund 3), und dieses Markup wird einmal PRO
-                             Kachel gerendert - eine feste id waere im
-                             ausgelieferten Dokument so oft dupliziert wie
-                             es Kacheln gibt, `aria-labelledby` traefe dann
-                             per Spezifikation nur das erste Vorkommen und
-                             fuer jede andere Kachel ins Leere oder auf die
-                             falsche Ueberschrift. -->
+                        <!-- Finding 2 (follow-up 2026-09-05): until now the
+                             heading was only visually a group label -
+                             tabbing through, a screen reader user reaches
+                             "Kitchen" with no indication at all that this
+                             is a room. `role="group"` plus `aria-labelledby`
+                             establishes the connection programmatically.
+                             The heading's id is deliberately derived PER DEVICE
+                             (`device.id`) instead of being a fixed
+                             constant: the whole page shares a single
+                             `x-data` (see the argument against
+                             `x-ref`/`$refs` further below in this file,
+                             Finding 3), and this markup is rendered once PER
+                             tile - a fixed id would be duplicated in
+                             the delivered document as many times
+                             as there are tiles, `aria-labelledby` would then
+                             per spec only match the first occurrence and
+                             miss or hit the wrong heading for
+                             every other tile. -->
                         <div class="tile-menu-rooms" role="group" :aria-labelledby="'tile-menu-room-heading-' + device.id">
                           <p
                             class="tile-menu-heading"
                             :id="'tile-menu-room-heading-' + device.id"
                             x-text="t('web.devices.menu_room_heading')"
                           ></p>
-                          <!-- "Ohne Raum" ist hier kein Sonderfall, sondern
-                               der Normalzustand eines noch nicht zugeordneten
-                               Geraets - es traegt das Haekchen wie jeder
-                               andere Eintrag auch. Der Leerstring ist derselbe
-                               Wert, den die API fuer "Raum entfernen"
-                               erwartet, also dieselbe Kodierung auf beiden
-                               Seiten und keine Umrechnung. -->
+                          <!-- "No room" is not a special case here, but
+                               the normal state of a device that has not yet been assigned
+                               - it carries the checkmark just like any
+                               other entry. The empty string is the same
+                               value the API expects for "remove room",
+                               so it is the same encoding on both
+                               sides and no conversion. -->
                           <button
                             class="tile-menu-item"
                             :class="{ 'is-current': roomKeyOf(device) === '' }"
@@ -1050,12 +1046,12 @@
                             x-text="t('web.devices.room_none')"
                           ></button>
                           <template x-for="chip in roomChips().filter((c) => c.key !== '')" :key="chip.key">
-                            <!-- Fund 2 (Nacharbeit 2026-09-05): der Eintrag kuerzt einen langen
-                                 Raumnamen jetzt mit Ellipse (`.tile-menu-item`, style.css) - der
-                                 volle Name muss trotzdem irgendwo greifbar bleiben, deshalb hier
-                                 als natives `title`. `chip.key` ist Nutzerdaten (ein Raumname),
-                                 keine zu uebersetzende Oberflaechen-Zeichenkette - `t()` waere
-                                 hier fehl am Platz. -->
+                            <!-- Finding 2 (follow-up 2026-09-05): the entry now truncates a long
+                                 room name with an ellipsis (`.tile-menu-item`, style.css) - the
+                                 full name must still remain accessible somewhere, hence a native
+                                 `title` here. `chip.key` is user data (a room name),
+                                 not a UI string to translate - `t()` would be
+                                 out of place here. -->
                             <button
                               class="tile-menu-item"
                               :class="{ 'is-current': roomKeyOf(device) === chip.key }"
@@ -1071,62 +1067,61 @@
                             @click="beginNewRoom(device); $nextTick(() => $el.parentElement.querySelector('.tile-menu-input')?.focus())"
                             x-text="t('web.devices.room_new')"
                           ></button>
-                          <!-- Das Textfeld ist ein Kind des `<details>`, das
-                               Menue bleibt beim Tippen also offen. Escape
-                               bricht NUR den Neu-Raum-Modus ab und darf nicht
-                               bis zum `@keydown.escape` des `<details>`
-                               hochblubbern, sonst verschwaende ein Abbruch
-                               gleich das ganze Menue - daher `.stop`.
+                          <!-- The text field is a child of the `<details>`, so the
+                               menu stays open while typing. Escape
+                               only aborts the new-room mode and must not
+                               bubble up to the `@keydown.escape` of the `<details>`,
+                               otherwise an abort would make the
+                               whole menu vanish too - hence `.stop`.
 
-                               Fund 3 (Review vom 2026-09-05): der Fokus-Ruf
-                               am "+ Neuer Raum"-Knopf oben zielt bewusst per
-                               `$el.parentElement.querySelector` auf dieses
-                               Feld statt per `x-ref`/`$refs`. Ein `x-ref`
-                               registriert sich am naechsten Element mit
-                               `x-data` - und das ist in dieser Seite einzig
-                               das `<body>` ganz oben, EIN gemeinsamer Topf
-                               fuer alle Kacheln zugleich. Bei mehreren
-                               Geraeten ueberschreibt der Eintrag der zuletzt
-                               gerenderten Kachel jeden davor registrierten,
-                               und `$refs.irgendwas` zeigte dann immer auf
-                               dasselbe (i. d. R. falsche) Feld, unabhaengig
-                               davon, welche Kachel der Nutzer tatsaechlich
-                               geoeffnet hat. Die Suche ab dem geklickten
-                               Knopf ist dagegen zwangslaeufig auf dessen
-                               eigene `.tile-menu-rooms`-Gruppe beschraenkt
-                               (frueher `.tile-menu-items` direkt, seit dem
-                               `role="group"`-Wrapper fuer die Raumliste,
-                               Nacharbeit 2026-09-05, ist es dessen naechster
-                               Elternknoten - das Feld liegt weiterhin darin,
-                               die Suche findet es unveraendert).
+                               Finding 3 (review from 2026-09-05): the focus call
+                               on the "+ New room" button above deliberately targets
+                               `$el.parentElement.querySelector` on this
+                               field instead of via `x-ref`/`$refs`. An `x-ref`
+                               registers itself on the nearest element with
+                               `x-data` - and on this page that is only
+                               the `<body>` right at the top, ONE shared pot
+                               for all tiles at once. With several
+                               devices, the entry of the most recently rendered
+                               tile overwrites every one registered before it,
+                               and `$refs.whatever` would then always point at
+                               the same (usually wrong) field, regardless
+                               of which tile the user actually
+                               opened. The search starting from the clicked
+                               button is instead necessarily confined to its
+                               own `.tile-menu-rooms` group
+                               (previously `.tile-menu-items` directly; since the
+                               `role="group"` wrapper for the room list,
+                               follow-up 2026-09-05, it is that group's next
+                               parent node - the field is still inside it,
+                               the search finds it unchanged).
 
-                               Fund 2 (Re-Review 2026-09-05): `newRoomFor =
-                               null` blendet dieses Feld per `x-show` aus
-                               (`display: none`), nimmt ihm den Fokus dabei
-                               aber NICHT ab - im Browser gemessen: danach war
-                               das Feld weiterhin `document.activeElement`,
-                               unsichtbar und ohne Nachbarn zum Weiter-Tabben,
-                               das Menue blieb offen mit Fokus auf einem toten
-                               Ende. Der Escape-Handler schickt den Fokus
-                               deshalb explizit auf den "+ Neuer Raum"-Knopf,
-                               der an seiner Stelle wieder auftaucht - `x-ref`
-                               scheidet aus denselben Gruenden aus wie oben,
-                               darum dieselbe `$el.parentElement.querySelector`-
-                               Suche, nur mit der stabilen zweiten Klasse
-                               `.tile-menu-new` als Ziel.
+                               Finding 2 (re-review 2026-09-05): `newRoomFor =
+                               null` hides this field via `x-show`
+                               (`display: none`), but does NOT take its focus
+                               away - measured in the browser: afterward
+                               the field was still `document.activeElement`,
+                               invisible and with no neighbour to keep tabbing to,
+                               the menu stayed open with focus on a dead
+                               end. The Escape handler therefore explicitly sends focus
+                               to the "+ New room" button,
+                               which reappears in its place - `x-ref`
+                               is ruled out for the same reasons as above,
+                               hence the same `$el.parentElement.querySelector`
+                               search, only with the stable second class
+                               `.tile-menu-new` as the target.
 
-                               Fund 4 (Re-Review 2026-09-05): das `?.` vor
-                               `.focus()` am Fokus-Ruf des "+ Neuer Raum"-
-                               Knopfes oben laesst eine verfehlte Suche
-                               ergebnislos verpuffen statt einen `TypeError`
-                               zu werfen. Heute unerreichbar, weil dieses
-                               Feld unbedingt in derselben `.tile-menu-rooms`-
-                               Gruppe gerendert wird (nur per `x-show` versteckt,
-                               nicht per `x-if` entfernt) - derselbe Fehlgriff
-                               wie bei `closeTileMenu` (app.js, Fund 4): der
-                               Fokus-Ruf soll bei einem Fehlschlag folgenlos
-                               bleiben, nicht mit einem unbehandelten Wurf in
-                               der `$nextTick`-Mikrotask enden. -->
+                               Finding 4 (re-review 2026-09-05): the `?.` before
+                               `.focus()` on the focus call of the "+ New room"
+                               button above lets a missed search
+                               fizzle out harmlessly instead of throwing a `TypeError`.
+                               Unreachable today, because this
+                               field is unconditionally rendered in the same `.tile-menu-rooms`
+                               group (only hidden via `x-show`, not removed via `x-if`)
+                               - the same mistake as with `closeTileMenu` (app.js, Finding 4): the
+                               focus call should stay without consequence
+                               on failure, not end with an unhandled throw in
+                               the `$nextTick` microtask. -->
                           <input
                             x-show="newRoomFor === device.id"
                             x-cloak
@@ -1171,20 +1166,20 @@
       </section>
 
       <!-- ================================================================
-           Ansicht 2: Export
+           View 2: Export
            ================================================================ -->
       <section x-show="view === 'export'" x-cloak>
         <!--
-          Projektdatei-Sync (Aufgabe 12, urspruenglich unten in "System" -
-          auf Nutzerwunsch als oberster Punkt hierher verschoben, weil das
-          der kuenftig primaere Weg werden soll statt der Vorlagen-ZIPs
-          darunter): bestehende Loxone-Projektdatei hochladen, Plan
-          ansehen, gepatchte Datei herunterladen - erst NACHDEM der Plan
-          zu sehen war (Entwurf: kein Download vor dem Plan). Beide
-          gepatchten Fassungen kommen bereits in der Upload-Antwort mit
-          (siehe `downloadPatchedProject` in app.js), der Haken unten
-          waehlt nur zwischen ihnen, ohne einen zweiten Aufruf an die
-          Bruecke.
+          Project file sync (Task 12, originally further down in "System" -
+          moved up here as the topmost item at the user's request, because
+          this is meant to become the primary path going forward instead
+          of the template ZIPs below): upload an existing
+          Loxone project file, view the plan, download the patched file
+          - only AFTER the plan has been seen (design: no download before
+          the plan). Both patched versions already arrive with the
+          upload response (see `downloadPatchedProject` in app.js), the
+          checkbox below only chooses between them, without a second call to
+          the bridge.
         -->
         <div class="card">
           <h2 x-text="t('web.export.projectsync_heading')"></h2>
@@ -1208,12 +1203,12 @@
           <p x-show="projectSync.error" x-cloak class="banner danger" x-text="projectSync.error"></p>
 
           <!--
-            Nutzerwunsch nach dem Review: bei mehreren Miniservern in der
-            Datei ein Auswahlfeld statt eines Textfelds fuer die IP. Die
-            Datei liegt bereits im Speicher des Browsers (`projectSync.file`,
-            gesetzt in `uploadProjectFile`) - die Auswahl loest `confirm
-            ProjectSyncMiniserver` aus, das dieselbe Datei ein zweites Mal
-            mit der gewaehlten IP hochlaedt, ganz ohne erneuten Datei-Dialog.
+            User request after the review: with multiple Miniservers in the
+            file, a selection field instead of a text field for the IP. The
+            file already sits in the browser's memory (`projectSync.file`,
+            set in `uploadProjectFile`) - the selection triggers `confirm
+            ProjectSyncMiniserver`, which uploads the same file a second time
+            with the chosen IP, without a new file dialog at all.
           -->
           <div class="row" x-show="projectSync.needsMiniserverSelection" x-cloak>
             <label
@@ -1243,17 +1238,17 @@
           <template x-if="projectSync.plan">
             <div>
               <!--
-                Review-Fix Important #5: die Tabelle haengt jetzt an
+                Review-Fix Important #5: the table now hangs on
                 `has_changes || projectSyncHasInformationalEntries(...)`,
-                nicht mehr nur an `has_changes` - sonst blieben
-                `orphaned`/`conflict`-Eintraege unsichtbar, obwohl
-                `has_changes` sie absichtlich nicht mitzaehlt (siehe
-                `SyncPlan.has_changes` in `diff.py`). Die Bedingung ist
-                bewusst das logische Gegenteil der "Alles aktuell"-Meldung
-                darunter, damit genau eine der beiden sichtbar ist: die
-                Meldung zeigt sich nur noch, wenn wirklich gar nichts zu
-                berichten ist: keine Aenderung UND keine informativen
-                Eintraege.
+                no longer only on `has_changes` -
+                otherwise `orphaned`/`conflict` entries stayed invisible, even though
+                `has_changes` deliberately does not count them (see
+                `SyncPlan.has_changes` in `diff.py`). The condition is
+                deliberately the logical opposite of the "everything up to date" message
+                below, so that exactly one of the two is visible: the
+                message now only shows when there is genuinely nothing to
+                report at all: no change AND no informational
+                entries.
               -->
               <p
                 x-show="!projectSync.plan.has_changes && !projectSyncHasInformationalEntries(projectSync.plan.entries)"
@@ -1261,19 +1256,19 @@
                 x-text="t('web.export.projectsync_all_current')"
               ></p>
               <!--
-                Ueberarbeitet nach Nutzerwunsch ("schneller und sauberer
-                Ueberblick"): eine Gesamt-Uebersicht ganz oben, darunter je
-                Geraet eine aufklappbare Karte (`<details>`, nativ zugaenglich
-                per Tastatur/Screenreader, ganz ohne eigenes JS fuer aus-/
-                einklappen) statt einer langen flachen Tabelle. Karten mit
-                Aenderungen stehen von Anfang an offen, laengst unveraenderte
-                Geraete bleiben zu - bei einer echten, gewachsenen Datei mit
-                Dutzenden Signalen sonst zu viel auf einmal.
+                Reworked at the user's request ("faster and cleaner
+                overview"): one overall summary right at the top, below that an
+                expandable card per device (`<details>`, natively accessible
+                via keyboard/screen reader, with no dedicated JS at all for expanding/
+                collapsing) instead of one long flat table. Cards with
+                changes stand open from the start, devices that have long been
+                unchanged stay closed - otherwise too much at once for a real, grown file
+                with dozens of signals.
 
-                `projectSyncGroupedEntries` (app.js) gruppiert den vom
-                Backend gelieferten flachen Plan rein clientseitig nach
-                Geraet und dort nach Eingaengen/Ausgaengen, kein
-                Backend-Vertrag geaendert.
+                `projectSyncGroupedEntries` (app.js) groups the flat plan
+                delivered by the backend purely client-side by
+                device and, within that, by inputs/outputs, no
+                backend contract changed.
               -->
               <div
                 class="projectsync-plan"
@@ -1357,10 +1352,10 @@
                                 x-show="projectSyncEntryNote(entry)"
                                 x-text="projectSyncEntryNote(entry)"
                               ></p>
-                              <!-- Review-Fix Important #6: die vom Backend mitgelieferte
-                                   Attribut-Differenz (`entry.changes`, nur bei
-                                   `status === "updated"` befuellt) - jetzt als Liste mit
-                                   getrennt gestyltem Alt-/Neu-Wert statt Fliesstext. -->
+                              <!-- Review-Fix Important #6: the attribute diff supplied
+                                   by the backend (`entry.changes`, only populated when
+                                   `status === "updated"`) - now as a list with
+                                   separately styled old/new values instead of running text. -->
                               <ul class="projectsync-diff" x-show="entry.status === 'updated'">
                                 <template x-for="change in projectSyncChangeList(entry)" :key="change.label">
                                   <li>
@@ -1374,10 +1369,10 @@
                             </div>
                           </template>
 
-                          <!-- Unveraenderte Signale: bewusst eingeklappt und ohne
-                               Status-Badge je Zeile - sie stimmen bereits, sollen den
-                               Blick auf das Neue/Geaenderte oben nicht verstellen
-                               (Nutzerwunsch: "schneller und sauberer Ueberblick"). -->
+                          <!-- Unchanged signals: deliberately collapsed and without
+                               a status badge per row - they already match, and should
+                               not distract the eye from what is new/changed above
+                               (user request: "faster and cleaner overview"). -->
                           <details class="projectsync-unchanged-disclosure" x-show="section.unchanged.length > 0">
                             <summary>
                               <span
@@ -1398,10 +1393,10 @@
               </div>
               <!--
                 Review-Fix Important #4: `patched_with_new_devices_base64`
-                ist jetzt `null`, wenn die hochgeladene Datei keinen
-                `VirtualInCaption`/`VirtualOutCaption`-Abschnitt fuer einen
-                neuen Geraete-Container hat - der Haken wird dann deaktiviert,
-                statt einen stillen/leeren Download zuzulassen.
+                is now `null` when the uploaded file has no
+                `VirtualInCaption`/`VirtualOutCaption` section for a
+                new device container - the checkbox is then disabled,
+                instead of allowing a silent/empty download.
               -->
               <p
                 x-show="projectSync.plan.new_devices_unavailable_reason"
@@ -1468,10 +1463,10 @@
               x-text="t('web.export.preview_button')"
             ></button>
             <!--
-              Ein `<a href>` wuerde eine Fehlerantwort (401 nach abgelaufener
-              Sitzung, 422 bei leerem Pflichtfeld) als rohen Text anzeigen
-              statt in der Oberflaeche - deshalb ein Knopf, der die Datei
-              ueber `fetch()` holt (siehe `downloadExport` in app.js).
+              An `<a href>` would show an error response (401 after an expired
+              session, 422 for an empty required field) as raw text
+              instead of within the UI - hence a button that fetches the file
+              via `fetch()` (see `downloadExport` in app.js).
             -->
             <button
               class="primary"
@@ -1522,7 +1517,7 @@
       </section>
 
       <!-- ================================================================
-           Ansicht 3: System
+           View 3: System
            ================================================================ -->
       <section x-show="view === 'system'" x-cloak>
         <div class="card">
@@ -1764,11 +1759,11 @@
           <p class="hint" x-show="updateError" x-cloak x-text="updateError"></p>
         </div>
 
-        <!-- Handlung, keine Diagnose - deshalb vor den Systemchecks und
-             nicht zwischen den Log-Ansichten weiter unten. Der Knopf loest
-             denselben vollen Resend aus wie der Bruecken-Start und wie
-             /resync aus dem Config-Projekt (Spec 6.4), nur ueber
-             POST /api/diagnostics/resync, das hinter dem Waechter liegt. -->
+        <!-- Action, not diagnosis - that's why before system checks and
+             not between the log views below. The button triggers
+             the same full resend as the bridge start and as
+             /resync from the config project (Spec 6.4), just via
+             POST /api/diagnostics/resync, which is behind the guard. -->
         <div class="card">
           <h2 x-text="t('web.system.resync_heading')"></h2>
           <p class="hint" x-text="t('web.system.resync_explanation')"></p>
@@ -1802,12 +1797,12 @@
         </div>
 
         <!--
-          Live-Diagnose (Aufgabe 6, Spec 10.5): EIN WebSocket
-          (`/api/diagnostics/live`, geoeffnet/geschlossen in `selectView`,
-          app.js) fuellt die drei Straeme darunter laufend statt wie bisher
-          einmalig per GET. Diese eine Karte traegt die vier Bedienelemente
-          fuer alle drei Bereiche - kein eigenes Set je Bereich, es gibt nur
-          eine Verbindung und einen Pausenzustand fuer alle drei.
+          Live diagnostics (Task 6, Spec 10.5): ONE WebSocket
+          (`/api/diagnostics/live`, opened/closed in `selectView`,
+          app.js) continuously fills the three streams below instead of the previous
+          one-off GET. This single card carries the four controls
+          for all three areas - no separate set per area, there is only
+          one connection and one paused state for all three.
         -->
         <div class="card">
           <div class="row">
@@ -1830,13 +1825,13 @@
             </label>
             <label>
               <!--
-                Kein "Debug" hier (Nachbesserung Task 7, Fix 3f): der Ring
-                haengt serverseitig auf INFO (`install_log_buffer()` setzt
-                sowohl Handler- als auch Loggerstufe, siehe cli.py), DEBUG-
-                Zeilen kommen also nie an. Eine Option, die nie etwas
-                anderes zeigt als "Info", waere ein leeres Versprechen -
-                siehe Entwurf, Abschnitt 7, Punkt 2, fuer den (bislang
-                fehlenden) DEBUG-Schalter, der das aendern wuerde.
+                No "Debug" here (follow-up Task 7, Fix 3f): the ring
+                is pinned server-side to INFO (`install_log_buffer()` sets
+                both the handler and the logger level, see cli.py), so DEBUG
+                lines never arrive. An option that never shows
+                anything other than "Info" would be an empty promise -
+                see the design, Section 7, point 2, for the (so far
+                missing) DEBUG switch that would change that.
               -->
               <span x-text="t('web.system.log_level_label')"></span>
               <select x-model="logLevel">
@@ -1900,7 +1895,7 @@
       </section>
 
       <!-- ================================================================
-           Ansicht 4: Einstellungen
+           View 4: Settings
            ================================================================ -->
       <section x-show="view === 'settings'" x-cloak>
         <div class="card">
@@ -1986,94 +1981,94 @@
     </template>
 
     <!--
-      Signal-Modal (Entwurf "Signale als Modal", 2026-09-05). Genau EIN
-      `<dialog>` fuer die ganze Seite, bewusst ausserhalb der `x-for`-
-      Schleife der Geraetekacheln: Markup innerhalb `x-for` wird einmal PRO
-      GERAET ausgeliefert - bei dreissig Geraeten laegen dreissig
-      vollstaendige Signaltabellen im Dokument, und jede `id` darin
-      dreissigfach (derselbe Fallstrick, den `aria-labelledby` im
-      Kachel-Menue schon einmal umschiffen musste).
+      Signal modal (design "Signals as a modal", 2026-09-05). Exactly ONE
+      `<dialog>` for the whole page, deliberately outside the `x-for`
+      loop over the device tiles: markup inside `x-for` is delivered once PER
+      DEVICE - with thirty devices there would be thirty
+      complete signal tables in the document, and every `id` inside them
+      thirtyfold (the same pitfall that `aria-labelledby` in the
+      tile menu already had to steer around once).
 
-      Es steht zudem ausserhalb des Login-`<template>`, wie die
-      Kurzmeldungen darunter: so ist `$refs.signalsModal` immer aufloesbar
-      und nicht davon abhaengig, ob Alpine den angemeldeten Teilbaum gerade
-      gerendert hat.
+      It also sits outside the login `<template>`, like the
+      toasts below: this way `$refs.signalsModal` is always
+      resolvable and does not depend on whether Alpine happens to be
+      rendering the logged-in subtree right now.
 
-      `x-ref` ist hier zulaessig, obwohl der Kommentar am Kachel-Menue
-      (Fund 3) ausdruecklich davon abraet. Der dortige Einwand trifft eine
-      Registrierung, die PRO KACHEL laeuft: die Seite teilt sich ein
-      einziges `x-data` am `<body>`, und der Eintrag der zuletzt
-      gerenderten Kachel ueberschreibt jeden davor. Dieses `<dialog>` steht
-      genau einmal im Dokument - niemand kann es ueberschreiben. Dieselbe
-      Lage wie bei `x-ref="diagnosticsLogsList"` und `x-ref="datagramsList"`
-      weiter oben, die aus demselben Grund unbedenklich sind.
+      `x-ref` is permitted here, even though the comment on the tile menu
+      (Finding 3) explicitly advises against it. The objection there applies to a
+      registration that runs PER TILE: the page shares a single
+      `x-data` on the `<body>`, and the entry of the most recently
+      rendered tile overwrites every one before it. This `<dialog>` sits
+      exactly once in the document - nobody can overwrite it. The same
+      situation as with `x-ref="diagnosticsLogsList"` and `x-ref="datagramsList"`
+      further above, which are unproblematic for the same reason.
 
-      `@close` ist die EINZIGE Stelle, die `signalsModalDevice`
-      zuruecksetzt. Das Ereignis feuert auf jedem Schliessweg - Escape,
-      Schliessen-Knopf, Backdrop, `close()` aus JavaScript -, es gibt also
-      keinen Pfad, auf dem der Alpine-Zustand und der sichtbare Zustand
-      auseinanderlaufen koennen. Dieselbe Rolle, die `@toggle` beim
-      `<details>` des Kachel-Menues spielt. KEINE weiteren Ruecksetzer an
-      den einzelnen Schliesswegen ergaenzen - genau diese Verteilung auf
-      mehrere Handler war beim Raum-Auswahlfeld die Ursache von sechs
-      Reviewrunden.
+      `@close` is the ONLY place that resets
+      `signalsModalDevice`. The event fires on every way of closing - Escape,
+      the close button, the backdrop, `close()` from JavaScript - so there is also
+      no path on which the Alpine state and the visible state
+      can drift apart. The same role that `@toggle` plays for the
+      `<details>` of the tile menu. Do NOT add further resets at
+      the individual closing paths - exactly this spread across
+      several handlers was the cause of six rounds of review for the room
+      selection field.
 
-      Aus demselben Grund setzt derselbe Handler seit Fund 3 der
-      Nachpruefung (2026-09-07) zusaetzlich `expandedSignalKey` zurueck:
-      ohne das stuende beim naechsten Oeffnen desselben Geraets sofort
-      wieder derselbe Aufklapper offen, ohne dass der Kebab dafuer geklickt
-      wurde - `@close` ist ja auch fuer dieses Feld der einzige Weg, auf dem
-      ALLE Schliesspfade zusammenlaufen.
+      For the same reason, since finding 3 of the follow-up review
+      (2026-09-07) the same handler also resets `expandedSignalKey`:
+      without that, the same disclosure would immediately be open again
+      the next time the same device is opened, without the kebab menu
+      having been clicked for it - `@close` is, after all, also the one
+      place for this field where ALL closing paths converge.
 
-      Ein `<dialog>` schliesst bei einem Klick auf den Backdrop NICHT von
-      selbst (anders als es Escape tut). `@click.self` allein reicht dafuer
-      NICHT: der Klick-Ereignis-Ziel ist `<dialog>` schon dann, wenn ein
-      Mousedown IM Inhalt beginnt (etwa beim Markieren eines Signaltitels)
-      und der Mouseup beim Ueberziehen auf dem Backdrop landet - `.self`
-      prueft nur das Klick-Ziel, nicht wo die Geste angefangen hat. Deshalb
-      merkt sich `@mousedown` in `signalsModalBackdropMousedown` (app.js),
-      ob der Mousedown SELBST auf dem Backdrop lag. Der Klick-Handler
-      schliesst nur, wenn DREI Dinge zutreffen: `.self` (das Klick-Ziel ist
-      das `<dialog>`), dieses gemerkte Feld, und `isBackdropEvent` fuer den
-      Klick selbst - die Lage zaehlt also an beiden Enden der Geste, nicht
-      nur am Anfang (Begruendung dafuer weiter unten). Das Feld ist reine
-      Praesentations-Buchfuehrung fuer diese eine Geste, kein Modal-Zustand
-      wie `signalsModalDevice` - `@close` bleibt dessen einzige
-      Ruecksetzstelle, siehe oben.
+      A `<dialog>` does NOT close on its own on a click on the backdrop
+      (unlike what Escape does). `@click.self` alone is NOT enough for
+      that: the click event's target is already `<dialog>` when a
+      mousedown starts IN the content (e.g. while selecting a signal title)
+      and the mouseup, after dragging, lands on the backdrop - `.self`
+      only checks the click target, not where the gesture began. That is
+      why `@mousedown` records in `signalsModalBackdropMousedown` (app.js)
+      whether the mousedown ITSELF was on the backdrop. The click handler
+      only closes when THREE things hold: `.self` (the click target is
+      the `<dialog>`), this recorded field, and `isBackdropEvent` for the
+      click itself - so position counts at both ends of the gesture, not
+      only at the start (reasoning for that further below). The field is
+      pure presentation bookkeeping for this one gesture, not modal state
+      like `signalsModalDevice` - `@close` remains its only
+      reset point, see above.
 
-      Der Mousedown-Handler traegt bewusst KEIN `.self` (Fund 1 der
-      Nachpruefung): mit `.self` wird das Feld nur GESETZT, wenn der
-      Mousedown auf dem Backdrop lag, und nur im `@click.self` wieder
-      geleert - Alpine ueberspringt einen `.self`-Ausdruck aber vollstaendig,
-      wenn das Ziel nicht passt. Ein Mousedown auf dem Backdrop, der nie in
-      einem Klick auf dem `<dialog>` endet (Escape mit gedrueckter Taste,
-      Loslassen ausserhalb des Fensters), liesse das Feld dauerhaft auf
-      `true` stehen - und der naechste Zieh-Vorgang aus dem Inhalt heraus
-      schloesse das Modal genau wieder so, wie es dieser Umbau verhindern
-      soll. Ohne `.self` laeuft der Handler bei JEDEM Mousedown im Teilbaum
-      und schreibt das Feld jedes Mal neu; ein veralteter Wert kann eine
-      Geste nicht ueberleben.
+      The mousedown handler deliberately carries NO `.self` (Finding 1 of
+      the follow-up check): with `.self`, the field would only be SET when the
+      mousedown was on the backdrop, and only cleared again inside `@click.self`
+      - but Alpine skips a `.self` expression entirely
+      when the target does not match. A mousedown on the backdrop that never ends in
+      a click on the `<dialog>` (Escape with the button held down,
+      releasing outside the window), would leave the field permanently at
+      `true` - and the next drag starting from the content
+      would then close the modal in exactly the way this rework is meant to
+      prevent. Without `.self` the handler runs on EVERY mousedown in the subtree
+      and rewrites the field every time; a stale value cannot survive one
+      gesture.
 
-      `isBackdropEvent` (app.js) entscheidet, ob ein Mausereignis wirklich
-      auf dem Backdrop lag. Das Ziel allein reicht dafuer nicht: der eigene
-      Scrollbalken des Modals gehoert ebenfalls dem `<dialog>` und liefert
-      dasselbe Ziel - ohne die Unterscheidung schloesse ein Griff daran das
-      Modal, ausgerechnet bei den langen Listen, fuer die es ihn ueberhaupt
-      gibt (ein Geraet mit 159 Signalen). Der Helfer vergleicht deshalb die
-      Lage gegen das Rechteck des Dialogs; die Begruendung samt der
-      verworfenen `offsetX`-Variante steht bei ihm.
+      `isBackdropEvent` (app.js) decides whether a mouse event really was
+      on the backdrop. The target alone is not enough for that: the modal's own
+      scrollbar also belongs to the `<dialog>` and delivers
+      the same target - without the distinction, a grab at it would close the
+      modal, of all things for the long lists it exists for
+      in the first place (a device with 159 signals). The helper therefore compares the
+      position against the dialog's rectangle; the reasoning, including the
+      discarded `offsetX` variant, is documented at it.
 
-      Geprueft wird das an BEIDEN Enden der Geste - Mousedown wie Klick.
-      Sonst schloesse auch ein Zug vom Backdrop IN den Inhalt hinein das
-      Modal: das Klick-Ereignis feuert am naechsten gemeinsamen Vorfahren
-      von Mousedown- und Mouseup-Ziel, und das ist bei dieser Richtung
-      wieder das `<dialog>`.
+      This is checked at BOTH ends of the gesture - mousedown as well as click.
+      Otherwise a drag from the backdrop INTO the content would also close the
+      modal: the click event fires at the nearest common ancestor
+      of the mousedown and mouseup targets, and in this direction
+      that is again the `<dialog>`.
 
-      `aria-labelledby` verweist auf eine FESTE `id` an der Ueberschrift,
-      anders als das `aria-labelledby` im Kachel-Menue weiter oben, das
-      seine id aus `device.id` ableiten muss - dort gibt es die Bindung
-      einmal PRO KACHEL, hier steht das `<dialog>` genau einmal im
-      Dokument (siehe oben), eine feste id kann also nicht kollidieren.
+      `aria-labelledby` refers to a FIXED `id` on the heading,
+      unlike the `aria-labelledby` in the tile menu further above, which
+      has to derive its id from `device.id` - there, the binding
+      exists once PER TILE, here the `<dialog>` sits exactly once in the
+      document (see above), so a fixed id cannot collide.
     -->
     <dialog
       x-ref="signalsModal"
@@ -2099,8 +2094,8 @@
             ><svg class="icon" aria-hidden="true"><use href="#i-close"></use></svg></button>
           </div>
 
-          <!-- Die eine Zahl, wegen der man dieses Modal oeffnet. Sie stand
-               bisher nirgends - man musste 17 Haekchen zaehlen. -->
+          <!-- The one number this modal gets opened for. Until now it
+               appeared nowhere - you had to count 17 checkboxes. -->
           <div class="signals-summary">
             <span
               x-text="t('web.signals.export_summary', { exported: exportedSignalCount(signalsModalDevice), total: signalCount(signalsModalDevice) })"
@@ -2118,10 +2113,10 @@
             <span x-text="t('web.signals.resend_explanation')"></span>
           </p>
 
-          <!-- Bleibt als Wiederholung fuer den Fehlerfall: im Normalfall hat
-               `startApp` die Signale jedes Geraets laengst geladen, dieser
-               Knopf zeigt sich also nur, wenn genau dieser eine Abruf
-               gescheitert ist (der Grund steht im Banner darueber). -->
+          <!-- Stays as a retry for the error case: normally
+               `startApp` has long since loaded every device's signals, so this
+               button only shows up when this one particular fetch
+               has failed (the reason is in the banner above it). -->
           <button
             x-show="!signalsByDevice[signalsModalDevice]"
             @click="loadSignals(signalsModalDevice)"
@@ -2131,45 +2126,46 @@
           <template x-if="signalsByDevice[signalsModalDevice]">
             <div>
               <!--
-                EINE Vorlage fuer alle Gruppen. Der naheliegende Entwurf -
-                funktional als schlichter Block, Experte als `<details>` -
-                braeuchte zwei Zweige und in jedem eine eigene Kopie der
-                Signalzeile darunter. Genau diese Verdopplung hat
-                `signalGroupsFor` (app.js) abgeschafft: 51 byte-identische
-                Zeilen, die bei jeder Aenderung an beiden Stellen
-                nachgezogen werden mussten.
+                ONE template for all groups. The obvious design -
+                functional as a plain block, expert as a `<details>` -
+                would need two branches and, in each, its own copy of the
+                signal row below it. Exactly this duplication is what
+                `signalGroupsFor` (app.js) abolished: 51 byte-identical
+                lines that had to be updated in both places on every
+                change.
 
-                Der Auf-/Zu-Zustand lebt im DOM, nicht in Alpine - dasselbe
-                Muster wie beim Kachel-Menue, und der Grund, warum der alte
-                globale Auf-/Zu-Schalter (Aufgabe 8) ersatzlos entfaellt.
+                The open/closed state lives in the DOM, not in Alpine - the same
+                pattern as the tile menu, and the reason why the old
+                global open/close toggle (Task 8) is removed without replacement.
 
-                `x-init` statt `:open` ist Pflicht, kein Stil: Alpine wertet
-                eine BINDUNG bei jeder Aenderung ihrer Abhaengigkeiten neu
-                aus, und `signalGroupsFor` haengt an `signalsByDevice` - ein
-                gespeicherter Signaltitel schriebe ein `:open` neu und
-                klappte die gerade geoeffnete Expertengruppe wortlos wieder
-                zu. `x-init` laeuft einmal je Element; da `:key` mit
-                `group.key` stabil ist, baut Alpine den Knoten bei einem
-                Re-Render nicht neu auf, und der Klick des Nutzers bleibt
-                stehen. NICHT zu `:open` vereinfachen.
+                `x-init` instead of `:open` is mandatory, not a style choice: Alpine
+                re-evaluates a BINDING every time its dependencies change,
+                and `signalGroupsFor` depends on `signalsByDevice` - saving a
+                signal title would rewrite `:open` and
+                silently collapse the expert group that was just open again.
+                `x-init` runs once per element; since `:key` with
+                `group.key` is stable, Alpine does not rebuild the node on a
+                re-render, and the user's click stays put. Do NOT simplify this to
+                `:open`.
               -->
-              <!-- Ausserhalb der Gruppenschleife, seit die Gruppen nach
-                   Endpunkt entstehen (Entwurf 2026-09-07, Abschnitt 7.4):
-                   eine Endpunktgruppe ist nie leer, sie entsteht ja aus
-                   ihren Signalen. "Keine funktionalen Signale" heisst
-                   jetzt "es gibt gar keine Endpunktgruppe". -->
+              <!-- Outside the group loop, since the groups are built by
+                   endpoint (design 2026-09-07, section 7.4): an endpoint
+                   group is never empty, it is built from its signals
+                   after all. "No functional signals" now means
+                   "there is no endpoint group at all". -->
               <p
                 class="hint"
                 x-show="functionalSignalsFor(signalsModalDevice).length === 0"
                 x-text="t('web.signals.none_functional')"
               ></p>
-              <!-- Der Spaltenkopf klebt beim Scrollen oben: ohne ihn
-                   verlieren die beiden Haekchenspalten ihre Bedeutung,
-                   sobald er bei 173 Signalen aus dem Bild ist. Er traegt
-                   DIESELBE `grid-template-columns` wie jede Datenzeile -
-                   das ist der ganze Grund, warum die Tabelle fluchtet, und
-                   der Test `test_the_signal_rows_and_the_header_share_one_
-                   grid` sperrt genau diese Gleichheit. -->
+              <!-- The column header stays stuck at the top while
+                   scrolling: without it, the two checkbox columns lose
+                   their meaning as soon as it scrolls out of view with 173
+                   signals. It carries THE SAME `grid-template-columns` as
+                   every data row - that is the whole reason the table
+                   lines up, and the test
+                   `test_the_signal_rows_and_the_header_share_one_grid`
+                   pins exactly this equality. -->
               <div class="signal-grid signal-grid-head">
                 <span x-text="t('web.signals.col_export')"></span>
                 <span x-text="t('web.signals.col_signal')"></span>
@@ -2184,13 +2180,12 @@
                     <span x-text="group.title"></span>
                     <span class="muted" x-show="group.subtitle" x-text="group.subtitle"></span>
                     <span class="muted" x-text="'(' + group.signals.length + ')'"></span>
-                    <!-- `aria-hidden` wie am Kebab-Icon und am Schliessen-Knopf
-                         des Modals, NICHT wie am aelteren Chevron der
-                         Projektdatei-Sync-Aufklapper: ein dekoratives Icon in
-                         einem bereits benannten Bedienelement (die `<summary>`
-                         traegt Gruppentitel und Anzahl) darf dem
-                         Accessibility-Baum keinen zweiten, konkurrierenden
-                         Namen liefern. -->
+                    <!-- `aria-hidden` like on the kebab icon and the modal's close
+                         button, NOT like on the older chevron of the
+                         project-file-sync disclosures: a decorative icon in
+                         a control that already has a name (the `<summary>`
+                         carries the group title and count) must not give the
+                         accessibility tree a second, competing name. -->
                     <svg class="icon chevron" aria-hidden="true"><use href="#i-chevron"></use></svg>
                   </summary>
                   <p
@@ -2198,11 +2193,11 @@
                     x-show="group.collapsible"
                     x-text="t('web.signals.functional_vs_expert_explanation')"
                   ></p>
-                  <!-- `x-for` verlangt genau EIN Wurzelelement je Signal.
-                       Die Rasterzeile allein waere das normalerweise (siehe
-                       Entwurf 2026-09-07, Abschnitt 7.2) - der Aufklapper
-                       direkt darunter braucht deshalb diese Huelle, obwohl
-                       er selbst kein Rasterkind ist. -->
+                  <!-- `x-for` requires exactly ONE root element per signal.
+                       The grid row alone would normally be that (see
+                       design 2026-09-07, section 7.2) - the disclosure
+                       right below it therefore needs this wrapper, even
+                       though it itself is not a grid child. -->
                   <template x-for="signal in group.signals" :key="signal.key">
                     <div class="signal-row-wrap" :class="{ 'is-expanded': expandedSignalKey === signal.key }">
                       <div class="signal-grid signal-row-cells">
@@ -2215,13 +2210,14 @@
                             :title="t('web.signals.export_checkbox')"
                             @change="toggleExported(signal)"
                           />
-                          <!-- Nur unter 640px sichtbar (`.col-center-label`
-                               in style.css), dort ohne Spaltenkopf die
-                               einzige sichtbare Beschriftung des Kaestchens.
-                               `aria-hidden`, weil das Kaestchen sein
-                               `aria-label` bereits traegt - dieser Text ist
-                               dieselbe Auskunft nur ein zweites Mal sichtbar,
-                               keine zweite fuer Hilfstechnik. -->
+                          <!-- Visible only below 640px (`.col-center-label`
+                               in style.css), where, with no column header,
+                               it is the checkbox's only visible label.
+                               `aria-hidden`, because the checkbox already
+                               carries its `aria-label` - this text is the
+                               same information merely made visible a second
+                               time, not a second one for assistive
+                               technology. -->
                           <span
                             class="col-center-label"
                             aria-hidden="true"
@@ -2237,14 +2233,14 @@
                         />
                         <span class="key" :title="t('web.signals.key_tooltip')" x-text="signal.key"></span>
                         <!--
-                          Wann der Wert zuletzt kam, steht im `title` - nicht
-                          daneben im Textfluss (2026-09-03). Eine Angabe wie
-                          "vor 7 s" aendert jede Sekunde ihre Breite und
-                          schiebt damit die ganze Zeile; der Blick folgt dann
-                          der Bewegung statt der Aenderung. Die zeigt
-                          `value-fresh`: der Wert leuchtet kurz auf und
-                          verblasst wieder, ohne dass sich am Aufbau etwas
-                          bewegt.
+                          When the value last arrived is in the `title` - not
+                          next to it in the running text (2026-09-03). A note like
+                          "7s ago" changes its width every second and
+                          thereby shifts the whole row; the eye then follows
+                          the movement instead of the change. `value-fresh` shows
+                          that instead: the value briefly lights up and
+                          fades again, without anything in the layout
+                          moving.
                         -->
                         <span
                           class="value col-right"
@@ -2252,21 +2248,21 @@
                           :title="signalAgeTitle(signal)"
                           x-text="formatValue(liveValueOf(signal)) + (signal.unit ? ' ' + signal.unit : '')"
                         ></span>
-                        <!-- Dasselbe Bedienelement wie in der Export-Spalte,
-                             und das ist Absicht: beides ist ein Ja/Nein je
-                             Signal in derselben Zeile. Der erste Entwurf
-                             hatte hier einen Schiebeschalter - zwei
-                             Bedienelemente fuer denselben Fall, genau die
-                             Inkonsistenz, die dieses Modal schwer lesbar
-                             machte. Die Regel: das Bedienelement folgt dem
-                             BEHAELTER, nicht der Bedeutung. In einer Tabelle
-                             Haekchen - sie fluchten in einer Spalte und
-                             bleiben leise; eine Spalte aus 17
-                             Schiebeschaltern waere eine deutlich lautere
-                             Textur, und Lautstaerke ist genau das Problem
-                             dieses Modals. Ein Schalter gehoert in einen
-                             Detailbereich mit erklaerendem Satz daneben,
-                             nicht in eine Tabellenspalte. -->
+                        <!-- The same control as in the export column,
+                             and that is deliberate: both are a yes/no per
+                             signal in the same row. The first design
+                             had a toggle switch here - two
+                             controls for the same case, exactly the
+                             inconsistency that made this modal hard to
+                             read. The rule: the control follows the
+                             CONTAINER, not the meaning. In a table,
+                             checkboxes - they line up in a column and
+                             stay quiet; a column of 17
+                             toggle switches would be a noticeably louder
+                             texture, and loudness is exactly this modal's
+                             problem. A switch belongs in a
+                             detail area with an explanatory sentence next
+                             to it, not in a table column. -->
                         <label class="col-center">
                           <input
                             type="checkbox"
@@ -2276,26 +2272,27 @@
                             :title="t('web.signals.resend_checkbox')"
                             @change="toggleResend(signal)"
                           />
-                          <!-- Wie bei der Export-Spalte: nur unter 640px
-                               sichtbar, `aria-hidden` aus demselben Grund -
-                               das Kaestchen hat mit `aria-label` schon
-                               seinen Namen. -->
+                          <!-- Like the export column: only visible
+                               below 640px, `aria-hidden` for the same
+                               reason - the checkbox already has its
+                               name via `aria-label`. -->
                           <span
                             class="col-center-label"
                             aria-hidden="true"
                             x-text="t('web.signals.resend_checkbox')"
                           ></span>
                         </label>
-                        <!-- Die letzte Zelle traegt seit Aufgabe 8 nur noch
-                             den Kebab, nichts sonst: die Warnpille mit
-                             `signal.reason` sass hier zuvor in der 28-px-Spalte
-                             und brach dort um, sobald der Text laenger war als
-                             ein paar Zeichen (jedes Geraet mit einem TEXT- oder
-                             listwertigen Signal, siehe `_UNEXPORTABLE_REASONS`
-                             in `api/devices.py`) - gemessen 744px scrollWidth
-                             gegen 719px clientWidth im Modal. Die Pille wohnt
-                             jetzt im Aufklapper, wo Platz fuer echte Saetze
-                             ist. -->
+                        <!-- Since task 8, the last cell carries only the
+                             kebab menu, nothing else: the warning pill
+                             with `signal.reason` used to sit here in the
+                             28px column and wrapped there as soon as the
+                             text was longer than a few characters (any
+                             device with a text- or list-valued signal, see
+                             `_UNEXPORTABLE_REASONS` in `api/devices.py`) -
+                             measured at 744px scrollWidth against 719px
+                             clientWidth in the modal. The pill now lives in
+                             the disclosure, where there is room for real
+                             sentences. -->
                         <button
                           class="signal-more"
                           :aria-expanded="expandedSignalKey === signal.key"
@@ -2304,30 +2301,30 @@
                           @click="toggleSignalDetails(signal)"
                         ><svg class="icon" aria-hidden="true"><use href="#i-kebab"></use></svg></button>
                       </div>
-                      <!-- Der Aufklapper haengt UNTER genau seiner Zeile,
-                           nicht als zweite `.row` daneben: er gehoert zu
-                           diesem einen Signal, und das soll man sehen.
-                           `x-cloak` verhindert den kurzen Blitz aller
-                           Aufklapper beim ersten Rendern, bevor Alpine
-                           `x-show` ausgewertet hat. -->
+                      <!-- The disclosure hangs BELOW exactly its own row,
+                           not as a second `.row` next to it: it belongs to
+                           this one signal, and that should be visible.
+                           `x-cloak` prevents the brief flash of all
+                           disclosures on first render, before Alpine has
+                           evaluated `x-show`. -->
                       <div class="signal-detail" x-show="expandedSignalKey === signal.key" x-cloak>
-                        <!-- `signal.path` traegt dieselbe Auskunft als
-                             "1/59/1", aber das ist ein Raetsel, solange
-                             niemand sagt, welche Zahl was bedeutet - hier ist
-                             endlich Platz, es auszuschreiben. Die Zerlegung
-                             des Pfads (welches Segment das Element ist) steht
-                             in `signalOriginText` (app.js), nicht hier im
-                             Markup - Wissen ueber das Pfadformat gehoert in
-                             eine benannte Funktion, nicht in einen Ausdruck
-                             mitten im Markup (Fund 1 der Nachpruefung,
-                             2026-09-07). -->
+                        <!-- `signal.path` carries the same information as
+                             "1/59/1", but that is a puzzle as long as no
+                             one says which number means what - here there is
+                             finally room to spell it out. The decomposition
+                             of the path (which segment is the element) lives
+                             in `signalOriginText` (app.js), not here in the
+                             markup - knowledge about the path format
+                             belongs in a named function, not in an
+                             expression in the middle of the markup (finding
+                             1 of the follow-up review, 2026-09-07). -->
                         <p class="hint" x-text="signalOriginText(signal)"></p>
                         <p class="badge warn" x-show="!signal.exportable" x-text="signal.reason"></p>
-                        <!-- Nur fuer Attribute sinnvoll - ein Ereignis hat
-                             keinen gespeicherten Wert, den man ueberschreiben
-                             koennte. Die Herkunft darueber gilt fuer beide
-                             Signalarten, deshalb traegt nur DIESER Teil das
-                             `x-show`. -->
+                        <!-- Only makes sense for attributes - an event has
+                             no stored value that you could overwrite.
+                             The origin note above it applies to both
+                             signal kinds, which is why only THIS part
+                             carries the `x-show`. -->
                         <div class="row" x-show="isAttributeSignal(signal)">
                           <input
                             type="text"
@@ -2357,38 +2354,39 @@
     </dialog>
 
     <!--
-      Bedien-Modal (Aufgabe 7): Regler statt nackter Zahlenfelder fuer
-      wertbehaftete Kommandos. Aufbau, Oeffnen, Schliessen und
-      Backdrop-Klick folgen exakt dem Signal-Modal oben - siehe dessen
-      Kommentare fuer die vollstaendige Begruendung: `@close` bleibt die
-      EINZIGE Stelle, die `controlModalDevice` zuruecksetzt; `@mousedown`
-      merkt in `controlModalBackdropMousedown`, ob die Geste auf dem
-      Backdrop begann, `@click.self` prueft `isBackdropEvent` an BEIDEN
-      Enden; `x-ref` ist unbedenklich, weil dieses `<dialog>` genau einmal
-      im Dokument steht.
+      Control modal (task 7): sliders instead of bare number fields for
+      value-carrying commands. Structure, opening, closing, and
+      backdrop click follow the signal modal above exactly - see its
+      comments for the full reasoning: `@close` remains the
+      ONLY place that resets `controlModalDevice`; `@mousedown`
+      records in `controlModalBackdropMousedown` whether the gesture
+      started on the backdrop, `@click.self` checks `isBackdropEvent` at
+      BOTH ends; `x-ref` is unproblematic because this `<dialog>` sits
+      exactly once in the document.
 
-      Welches Bedienelement je Kommando entsteht, entscheidet
-      AUSSCHLIESSLICH `command.control` (`controlsByKind` filtert danach) -
-      `command.slug` dient unten nur als Beschriftung, nie als
-      Fallunterscheidung. Deshalb traegt jeder Prozent-Regler seinen
-      eigenen `command.slug` statt einer festen Uebersetzung: die
-      eingecheckte IKEA-Leuchte akzeptiert zwei Prozent-Kommandos (`level`
-      und `level_onoff`), das Modal zeichnet also zwei Regler
-      untereinander, und fuer die Diagnose zaehlt gerade, welches der
-      beiden die Leuchte tatsaechlich befolgt. Der Kelvin-Regler bleibt
-      fest beschriftet - davon gibt es je Geraet nur einen.
+      Which control gets built per command is decided
+      EXCLUSIVELY by `command.control` (`controlsByKind` filters by it) -
+      `command.slug` below only serves as a label, never as a
+      case distinction. That is why every percent slider carries its
+      own `command.slug` instead of a fixed translation: the
+      checked-in IKEA light accepts two percent commands (`level`
+      and `level_onoff`), so the modal draws two sliders
+      stacked, and for diagnosis what matters is exactly which of the
+      two the light actually follows. The Kelvin slider stays
+      fixed-labelled - there is only one of those per device.
 
-      Die Reiterleiste Weiss/Farbe erscheint nur, wenn ein Geraet BEIDE
-      Wege kann (`hasColourTabs`) - eine reine Weisston-Leuchte bekommt
-      ihren Kelvin-Regler ohne Reiter, ohne dass hier eine einzige Abfrage
-      auf Geraetetyp oder Modell stuende.
+      The white/color tab bar appears only if a device can do BOTH
+      paths (`hasColourTabs`) - a pure white-tone light gets
+      its Kelvin slider without tabs, without a single check here
+      on device type or model.
     -->
-    <!-- Zwei Klassen mit Absicht: `signals-modal` traegt allein die Rahmung
-         (style.css), die sich beide Modale teilen; `control-modal`
-         unterscheidet dieses hier ueberhaupt erst vom Signal-Modal. Ohne die
-         zweite Klasse trifft `document.querySelector('dialog.signals-modal')`
-         beide, und WELCHEN es liefert, entscheidet allein die Reihenfolge im
-         Dokument - `scripts/capture_screenshots.py` haengt daran. -->
+    <!-- Two classes deliberately: `signals-modal` alone carries the
+         framing (style.css) that both modals share; `control-modal`
+         is what distinguishes this one from the signal modal in the
+         first place. Without the second class,
+         `document.querySelector('dialog.signals-modal')` matches
+         both, and WHICH one it returns is decided solely by the order in
+         the document - `scripts/capture_screenshots.py` depends on that. -->
     <dialog
       x-ref="controlModal"
       class="signals-modal control-modal"
@@ -2421,8 +2419,8 @@
             ></button>
           </template>
 
-          <!-- Prozent-Regler: Beschriftung ist `command.slug`, NICHT eine
-               feste Uebersetzung - Begruendung im Kommentar oben am
+          <!-- Percent slider: the label is `command.slug`, NOT a
+               fixed translation - reasoning in the comment above on the
                `<dialog>`. -->
           <template x-for="command in controlsByKind(controlModalDevice, 'percent')" :key="command.key">
             <div class="control-row">
@@ -2441,9 +2439,9 @@
             </div>
           </template>
 
-          <!-- Tableiste: nur sichtbar, wenn das Geraet beide Wege kann
-               (`hasColourTabs`) - eine CCT- oder eine reine Farbleuchte
-               sieht keine Reiter. -->
+          <!-- Tab bar: only visible if the device can do both paths
+               (`hasColourTabs`) - a CCT or a pure color light
+               sees no tabs. -->
           <div class="control-tabs" x-show="hasColourTabs(controlModalDevice)">
             <button :class="{ 'is-active': controlTab === 'white' }"
                     @click="controlTab = 'white'"
@@ -2464,7 +2462,7 @@
                   :disabled="commandBusyKey === command.key || !isOnline(controlModalDeviceObject())"
                   @change="recordControlDraft(command, Number($event.target.value)); sendControl(controlModalDeviceObject(), command, $event.target.value)"
                 />
-                <!-- Hinweis fuer fehlenden Startwert, wenn der Regler sichtbar ist -->
+                <!-- Note for a missing start value, when the slider is visible -->
                 <p
                   class="hint"
                   x-show="command.range && controlDrafts.kelvin === undefined"
@@ -2490,13 +2488,13 @@
           <div x-show="!hasColourTabs(controlModalDevice) || controlTab === 'colour'">
             <template x-for="command in controlsByKind(controlModalDevice, 'hue_sat')" :key="command.key">
               <div class="control-row">
-                <!-- Der Marker sitzt IM Feld, nicht daneben: `hue` und
-                     `saturation` wurden bisher gelesen (`readStartValues`)
-                     und nirgends gezeigt - ein Farbwaehler, der die
-                     eingestellte Farbe verschweigt, ist keiner (Befund M-4,
-                     Abschluss-Review 2026-09-08). `x-show` statt eines
-                     Randfalls in der Position: fehlt der Wert, gibt es
-                     keinen Punkt, und der Hinweis darunter sagt warum. -->
+                <!-- The marker sits IN the field, not next to it: `hue`
+                     and `saturation` were, until now, read
+                     (`readStartValues`) and shown nowhere - a color picker
+                     that hides the set color is not one (finding M-4,
+                     closing review 2026-09-08). `x-show` instead of an
+                     edge case in the position: if the value is missing,
+                     there is no dot, and the note below says why. -->
                 <div
                   class="colour-field"
                   :class="{ 'is-busy': commandBusyKey === command.key || !isOnline(controlModalDeviceObject()) }"
@@ -2515,12 +2513,12 @@
             </template>
           </div>
 
-          <!-- Rueckfall auf das schlichte Zahlenfeld: nicht nur fuer
-               `control: "unknown"`, sondern fuer JEDEN `control`-Wert, den
-               diese Oberflaeche nicht kennt (`unhandledControls`, Befund
-               I-2 im Abschluss-Review 2026-09-08) - sonst verschwindet ein
-               kuenftig in `clusters.yaml` eingetragener, hier noch
-               unbekannter Wert spurlos aus dem Modal. -->
+          <!-- Fallback to the plain number field: not only for
+               `control: "unknown"`, but for EVERY `control` value this
+               UI does not know (`unhandledControls`, finding
+               I-2 in the closing review 2026-09-08) - otherwise a
+               value entered into `clusters.yaml` in the future, still
+               unknown here, would vanish without a trace from the modal. -->
           <template x-for="command in unhandledControls(controlModalDevice)" :key="command.key">
             <span class="row">
               <span x-text="command.slug"></span>
@@ -2541,10 +2539,10 @@
     </dialog>
 
     <!--
-      Kurzmeldungen als Overlay. `position: fixed` heisst: sie stehen
-      ausserhalb des Textflusses und verschieben nichts. Die vorherige
-      Fassung blendete eine Zeile ueber der Geraeteliste ein, wodurch beim
-      Schalten die ganze Seite sprang und der naechste Klick daneben ging.
+      Short messages as an overlay. `position: fixed` means: they sit
+      outside the text flow and shift nothing. The previous
+      version faded in a line above the device list, which made the
+      whole page jump on toggling, and the next click missed its target.
     -->
     <div class="toasts" aria-live="polite">
       <template x-for="toast in toasts" :key="toast.id">

@@ -1,4 +1,4 @@
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -14,14 +14,14 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Tests fuer den Uebersetzungsmechanismus selbst - nicht fuer einzelne
-CLI-Zeichenketten (die kommen in tests/test_cli.py bzw.
-tests/test_cli_language.py dazu, sobald cli.py sie tatsaechlich nutzt).
+"""Tests for the translation mechanism itself - not for individual
+CLI strings (those are added in tests/test_cli.py and
+tests/test_cli_language.py, once cli.py actually uses them).
 
-`test.*`-Schluessel in strings.yaml sind absichtlich Teil der echten Tabelle,
-nicht einer separaten Testdatei: `t()` haengt an genau einer Datei, und
-`test.english_only` braucht einen echten, dauerhaft fehlenden `de`-Eintrag,
-um den Ruecksicherungsfall zu belegen.
+`test.*` keys in strings.yaml are deliberately part of the real table,
+not a separate test file: `t()` is tied to exactly one file, and
+`test.english_only` needs a real, permanently missing `de` entry
+to prove the fallback case.
 """
 
 from __future__ import annotations
@@ -58,7 +58,7 @@ def test_t_raises_for_an_unknown_key():
 def test_set_language_rejects_an_unsupported_value():
     with pytest.raises(ValueError):
         i18n.set_language("fr")
-    # Ein fehlgeschlagener Aufruf darf die aktuelle Sprache nicht aendern.
+    # A failed call must not change the current language.
     assert i18n.current_language() == "en"
 
 
@@ -74,14 +74,14 @@ def test_strings_with_prefix_returns_only_matching_keys():
 
 
 # -----------------------------------------------------------------------------
-# raw_template() - Regressionstests fuer den Befund aus dem Aufgabe-8-Bericht
-# (siehe web.test.smoke in strings.yaml sowie api/language.py:_web_strings()):
-# t() ruft IMMER .format(**values) auf, auch mit einem leeren values - fuer
-# GET /api/i18n, das dem Browser die UNAUFGELOESTE Vorlage liefern muss (der
-# Browser fuellt {platzhalter} selbst, mit Werten wie error.message oder
-# device.label, die der Server nicht kennen kann), ist das der falsche
-# Baustein. raw_template() liefert dieselbe Ruecksicherung wie t(), nur ohne
-# das .format() am Ende.
+# raw_template() - regression tests for the finding from the task-8 report
+# (see web.test.smoke in strings.yaml as well as api/language.py:_web_strings()):
+# t() ALWAYS calls .format(**values), even with an empty values - for
+# GET /api/i18n, which must hand the browser the UNRESOLVED template (the
+# browser fills in {placeholder} itself, with values like error.message or
+# device.label that the server cannot know), that is the wrong building
+# block. raw_template() provides the same fallback as t(), just without
+# the .format() at the end.
 # -----------------------------------------------------------------------------
 
 
@@ -105,47 +105,48 @@ def test_raw_template_raises_for_an_unknown_key():
 
 
 # -----------------------------------------------------------------------------
-# web.* - Regressionstests fuer die vollstaendige WebUI-Uebersetzungstabelle
-# (Aufgabe 9): sie sollen ein versehentlich unvollstaendiges oder kaputtes
-# Einfuegen abfangen, nicht jede einzelne Zeichenkette pruefen - das macht
-# die Bindungs-Aufgabe 10+ ueber Text-Pattern-Matching auf den ausgelieferten
-# Quelltext.
+# web.* - regression tests for the complete WebUI translation table
+# (task 9): they are meant to catch an accidentally incomplete or broken
+# insert, not check every single string - that is what the binding
+# task 10+ does, through text pattern matching on the shipped
+# source.
 # -----------------------------------------------------------------------------
 
 
 def test_web_namespace_has_no_missing_english_fallback_gaps():
-    """Jeder web.*-Schluessel muss mindestens 'en' tragen - raw_template()
-    wirft KeyError, wenn selbst 'en' fehlt (siehe dessen Implementierung,
-    hinzugefuegt beim Bugfix vor dieser Aufgabe: GET /api/i18n stuerzte
-    zuvor an genau dieser Stelle ab, weil t() hier - mit .format() und
-    ohne Platzhalterwerte - bei JEDEM web.*-Schluessel mit einem
-    {platzhalter} eine KeyError geworfen haette. raw_template() ist die
-    richtige Funktion fuer diese Pruefung: sie prueft nur "gibt es
-    ueberhaupt einen en-Eintrag", nicht "sind alle Platzhalter befuellt" -
-    letzteres ist client-seitig app.js's Aufgabe, nie serverseitig."""
+    """Every web.* key must carry at least 'en' - raw_template()
+    raises KeyError if even 'en' is missing (see its implementation,
+    added in the bugfix before this task: GET /api/i18n used to crash
+    at exactly this point, because t() here - with .format() and
+    no placeholder values - would have raised a KeyError for EVERY
+    web.* key with a {placeholder}. raw_template() is the right
+    function for this check: it only checks "does an en entry exist
+    at all", not "are all placeholders filled in" - the latter is
+    client-side app.js's job, never the server's."""
     for key in i18n.strings_with_prefix("web."):
-        assert i18n.raw_template(key)  # wirft nur, wenn 'en' fehlt - keine .format()-Falle
+        assert i18n.raw_template(key)  # raises only if 'en' is missing - no .format() trap
 
 
 def test_web_namespace_key_count_is_substantial():
-    """Grobe Bewahrung gegen ein versehentlich unvollstaendiges Einfuegen -
-    kein exakter Schwellwert, nur ein Mindestmass."""
+    """Rough safeguard against an accidentally incomplete insert -
+    not an exact threshold, just a minimum."""
     assert len(i18n.strings_with_prefix("web.")) > 100
 
 
 def test_no_value_is_wrapped_in_typographic_quotes():
-    """Kein Eintrag in strings.yaml darf als Ganzes von typografischen
-    Anfuehrungszeichen umschlossen sein - weder „...“ (deutsch)
-    noch “...” (englisch). Ein Eintrag, der selbst nur ein Zitat
-    ist, kommt in dieser Tabelle nicht vor; ein Wert mit genau diesem Muster
-    ist deshalb immer ein Bug: YAML kennt „ “ ” nicht als
-    Skalar-Trennzeichen (nur gerade ASCII-Anfuehrungszeichen \" bzw. '
-    trennen einen Skalar), also werden typografische Anfuehrungszeichen, die
-    versehentlich an Stelle der YAML-Delimiter stehen, woertlich Teil des
-    Strings. Genau das ist web.devices.menu und web.devices.menu_room_heading
-    passiert - und nichts in dieser Suite haette es bemerkt, denn
-    test_web_namespace_has_no_missing_english_fallback_gaps prueft nur, DASS
-    ein 'en'-Eintrag existiert, nie WAS er enthaelt."""
+    """No entry in strings.yaml may be wrapped as a whole in typographic
+    quotation marks - neither „...“ (German)
+    nor “...” (English). An entry that is itself only a quote
+    does not occur in this table; a value with exactly this pattern
+    is therefore always a bug: YAML does not recognize „ “ ” as
+    scalar delimiters (only straight ASCII quotation marks \" or '
+    delimit a scalar), so typographic quotation marks that
+    accidentally stand in place of the YAML delimiters become literally
+    part of the string. That is exactly what happened to web.devices.menu
+    and web.devices.menu_room_heading - and nothing in this suite
+    would have noticed, because
+    test_web_namespace_has_no_missing_english_fallback_gaps only checks THAT
+    an 'en' entry exists, never WHAT it contains."""
     opening_quotes = {"„", "“"}
     closing_quotes = {"“", "”"}
     offenders = [
@@ -155,7 +156,7 @@ def test_no_value_is_wrapped_in_typographic_quotes():
         if len(value) >= 2 and value[0] in opening_quotes and value[-1] in closing_quotes
     ]
     assert not offenders, (
-        "Wert komplett in typografische Anfuehrungszeichen eingeschlossen - "
-        "vermutlich wurden sie statt gerader ASCII-Anfuehrungszeichen als "
-        "YAML-Delimiter benutzt: " + ", ".join(offenders)
+        "Value entirely wrapped in typographic quotation marks - "
+        "likely used as YAML delimiters instead of straight ASCII "
+        "quotation marks: " + ", ".join(offenders)
     )

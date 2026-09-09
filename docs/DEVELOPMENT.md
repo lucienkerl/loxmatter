@@ -11,6 +11,11 @@ uv run pytest
 
 The test suite runs without hardware and without network access.
 
+## Commit messages
+
+English, Conventional Commits — see [CLAUDE.md](../CLAUDE.md) for the full
+language rules. Subjects before September 2026 are German and stay that way.
+
 ## Checks that CI runs
 
 ```bash
@@ -18,34 +23,34 @@ uv run ruff check .
 uv run ruff format --check .
 uv run mypy
 uv run pytest -v
+uv run python scripts/check_language.py
 ```
 
-## Eine Version veröffentlichen
+## Releasing a version
 
-Ab 0.2.0 verlassen sich fremde Installationen auf Versionsnummern: die
-Oberfläche vergleicht die laufende Version mit dem letzten Release, und
-der Updater spielt genau das ein, was hier veröffentlicht wurde. Diese
-Kette wird nicht von Code getragen, sondern von Disziplin — deshalb steht
-sie hier.
+Starting from 0.2.0, external installations rely on version numbers: the
+UI compares the running version with the latest release, and
+the updater deploys exactly what was published here. This
+chain is not sustained by code, but by discipline — that's why it stands
+here.
 
-1. `CHANGELOG.md`: den Abschnitt `[Unveröffentlicht]` auf die neue Nummer
-   umschreiben, mit Datum. **Für Leute schreiben, die den Code nicht
-   kennen** — dieser Text steht im Bestätigungsdialog vor dem Update.
-2. Nummer wählen: `PATCH` für Fehlerbehebungen, `MINOR` für neue
-   Funktionen, `MAJOR` für alles, was eine bestehende Installation
-   von Hand nachziehen muss.
-3. **Steigt `_SCHEMA_VERSION` in `model/store.py`, gehört das in die
-   Notizen.** Ein Schemasprung ist der einzige Fall, in dem ein Rückfall
-   auf die vorherige Version nicht folgenlos ist (siehe [docs/superpowers/specs/2026-09-08-webui-updates-design.md, Abschnitt 8](superpowers/specs/2026-09-08-webui-updates-design.md)).
-4. `version` in `pyproject.toml` auf dieselbe Nummer anheben. Zur
-   Laufzeit liest das nichts — CI leitet die Imageversion aus dem
-   Git-Ref ab, nicht aus dieser Datei —, daher fällt ein vergessener
-   Schritt hier nirgends automatisiert auf: ein Image mit Tag `0.3.0`
-   ließe sich klaglos aus einem Paket bauen, das noch `version =
-   "0.2.0"` trägt.
-5. Commit, dann `git tag -a v0.3.0 -m "0.3.0"` und `git push --tags`.
-6. Die CI baut daraus `:0.3.0` und `:stable`. **Erst wenn beide in der
-   Registry stehen**, ist die Version veröffentlicht — vorher zeigt die
-   Oberfläche sie an, und ein Einspielen liefe ins Leere.
-7. GitHub-Release anlegen, dessen Text der Changelog-Abschnitt ist. Die
-   Oberfläche liest genau diesen Text.
+1. `CHANGELOG.md`: rewrite the `[Unreleased]` section to the new number
+   with date. **Write for people who don't know the code** — this text appears in the confirmation dialog before update.
+2. Choose the number: `PATCH` for bug fixes, `MINOR` for new
+   features, `MAJOR` for anything that requires existing installations
+   to update by hand.
+3. **If `_SCHEMA_VERSION` in `model/store.py` rises, that belongs in the
+   release notes.** A schema jump is the only case where rolling back
+   to the previous version is not consequence-free (see [docs/superpowers/specs/2026-09-08-webui-updates-design.md, section 8](superpowers/specs/2026-09-08-webui-updates-design.md)).
+4. Bump `version` in `pyproject.toml` to the same number. At
+   runtime, this reads nothing — CI derives the image version from the
+   Git ref, not from this file —, so a forgotten
+   step here never surfaces automatically: an image tagged `0.3.0`
+   could be built without complaint from a package that still carries `version =
+   "0.2.0"`.
+5. Commit, then `git tag -a v0.3.0 -m "0.3.0"` and `git push --tags`.
+6. CI builds `:0.3.0` and `:stable` from it. **Only when both are in the
+   registry** is the version released — before that, the
+   UI shows it, but a deployment would go nowhere.
+7. Create a GitHub release whose text is the changelog section. The
+   UI reads exactly this text.

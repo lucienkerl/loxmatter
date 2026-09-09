@@ -1,4 +1,4 @@
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -14,14 +14,15 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Baut Loxone-Vorlagendateien als Bytes.
+"""Builds Loxone template files as bytes.
 
-Absichtlich ohne XML-Bibliothek: Loxone Config ist beim Format waehlerisch, und
-die verifizierte Referenzimplementierung baut die Dateien ebenfalls als Text.
-Ein Serialisierer duerfte Attribute umsortieren oder die Deklaration anders
-schreiben, was hier niemand nachpruefen kann.
+Deliberately without an XML library: Loxone Config is picky about the
+format, and the verified reference implementation also builds the files
+as text. A serialiser might reorder attributes or write the declaration
+differently, and nothing here could check that.
 
-Dieses Modul kennt kein Matter. Es weiss nur, wie eine Loxone-Vorlage aussieht.
+This module knows nothing about Matter. It only knows what a Loxone
+template looks like.
 """
 
 from __future__ import annotations
@@ -36,12 +37,12 @@ Attrs = Sequence[tuple[str, str]]
 
 
 def escape_attr_value(value: str) -> str:
-    """Escaped einen Attributwert fuer doppelt gequotete XML-Attribute.
+    """Escapes an attribute value for double-quoted XML attributes.
 
-    Absichtlich keine Bibliothek: ``xml.sax.saxutils.quoteattr`` wechselt je
-    nach Inhalt zwischen einfachen und doppelten Anfuehrungszeichen und laesst
-    doppelte Anfuehrungszeichen dann unescaped. Loxone-Vorlagen quoten
-    Attribute durchgehend doppelt, deshalb hier fest verdrahtet.
+    Deliberately no library: ``xml.sax.saxutils.quoteattr`` switches
+    between single and double quotes depending on the content, and then
+    leaves double quotes unescaped. Loxone templates quote attributes with
+    double quotes throughout, so this is hard-wired here.
     """
     return (
         value.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
@@ -57,7 +58,7 @@ def render_document(
     root_attrs: Attrs,
     children: Sequence[tuple[str, Attrs]],
 ) -> bytes:
-    """Erzeugt eine Vorlagendatei: UTF-8 mit BOM, CRLF, ein Kind je Zeile."""
+    """Produces a template file: UTF-8 with BOM, CRLF, one child per line."""
     lines = [DECLARATION, f"<{root} {render_attrs(root_attrs)}>"]
     lines += [f"\t<{tag} {render_attrs(attrs)}/>" for tag, attrs in children]
     lines.append(f"</{root}>")

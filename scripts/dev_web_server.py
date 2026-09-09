@@ -1,4 +1,4 @@
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -14,21 +14,22 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Startet die WebUI mit zwei Beispielgeraeten, ohne matter-server - fuer die
-manuelle Ansicht der Geraete-Dashboard-Aenderungen im Browser (siehe
-docs/superpowers/plans/2026-09-03-geraete-dashboard-und-export.md, Task 4).
+"""Starts the WebUI with two example devices, without matter-server - for
+manually viewing the device dashboard changes in the browser (see
+docs/superpowers/plans/2026-09-03-device-dashboard-and-export.md, Task 4).
 
-Aufruf: uv run python scripts/dev_web_server.py
-Danach: http://127.0.0.1:8420 oeffnen, ein beliebiges Passwort vergeben
-(Ersteinrichtung, gilt nur fuer diesen Testlauf).
+Usage: uv run python scripts/dev_web_server.py
+Then: open http://127.0.0.1:8420, set any password
+(first-run setup, only applies to this test run).
 
-Die Datenbank liegt in einer festen Datei im Temp-Verzeichnis - ein zweiter
-Lauf findet denselben Bestand wieder, statt jedes Mal neu einzulernen.
+The database lives in a fixed file in the temp directory - a second run
+finds the same set of data again, instead of commissioning everything anew
+each time.
 
-Mit `--demo` startet stattdessen der Modus fuer die README-Screenshots: vier
-Geraete mit englischen Namen, Passwort und Bridge-Einstellungen bereits
-vorbelegt, und die Datenbank wird bei jedem Start frisch angelegt, statt den
-Bestand wiederzuverwenden.
+With `--demo`, the mode for the README screenshots starts instead: four
+devices with English names, password and bridge settings already prefilled,
+and the database is freshly created on every start instead of reusing the
+existing one.
 
 `--update-dir` (added for the updater's web UI card, design "Applying
 updates through the web UI", 2026-09-08): `build_app`'s own default for
@@ -71,29 +72,29 @@ FIXTURES = Path(__file__).parent.parent / "tests" / "fixtures" / "nodes"
 
 DEMO_PASSWORD = "loxmatter-demo"
 
-# Fester Zeitpunkt fuer alles, was im Demo-Modus einen Zeitstempel bekommt.
-# Ohne ihn trugen `settings.png` und `export.png` die Wanduhr
-# des jeweiligen Laufs, und `capture_screenshots.py` erzeugte bei jedem
-# Aufruf neue Bilddateien, die sich einzig in dieser Uhrzeit unterschieden -
-# rund 700 KB Binaerrauschen pro Lauf, in dem eine echte Layout-Aenderung
-# untergegangen waere. Der Wert selbst ist beliebig, nur eben konstant; er
-# liegt bewusst weit in der Vergangenheit, damit "zuletzt exportiert" in der
-# Oberflaeche nicht wie "gerade eben" aussieht.
+# Fixed point in time for everything that gets a timestamp in demo mode.
+# Without it, `settings.png` and `export.png` carried the wall clock of
+# each run, and `capture_screenshots.py` produced new image files on every
+# call that differed only in this timestamp - around 700 KB of binary
+# noise per run, in which a real layout change would have gone unnoticed.
+# The value itself is arbitrary, just constant; it deliberately lies far
+# in the past so "last exported" in the interface doesn't look like "just
+# now".
 DEMO_TIMESTAMP = "2026-01-15T09:30:00+00:00"
 
-# Reihenfolge bestimmt die Reihenfolge in der Geraeteliste - die Steckdose
-# zuerst, weil ihre Signalliste den Unterschied funktional/Experte am besten
-# zeigt (ueber hundert Signale, davon eine Handvoll funktional).
-# Der dritte Eintrag ist der Raum (Entwurf Geraete-Tab, 2026-09-05). Ohne
-# ihn blieben alle vier Geraete unter "No room", und die Raumleiste zeigte
-# sich gar nicht - sie erscheint erst, sobald mindestens ein Geraet einen
-# Raum traegt. Der Screenshot haette dann ausgerechnet das nicht gezeigt,
-# wofuer die Ansicht umgebaut wurde.
+# Order determines the order in the device list - the plug first, because
+# its signal list best shows the functional/expert distinction (over a
+# hundred signals, a handful of them functional).
+# The third entry is the room (device tab design, 2026-09-05). Without it
+# all four devices would stay under "No room", and the room bar wouldn't
+# show up at all - it only appears once at least one device carries a
+# room. The screenshot would then have failed to show the very thing the
+# view was rebuilt for.
 #
-# Die Kueche bekommt bewusst ZWEI Geraete: nur so ist an einer Gruppe
-# ablesbar, dass innerhalb eines Raums nach Kategorie sortiert wird - die
-# Leuchte (Rang 0) steht vor der Steckdose (Rang 1), unabhaengig von der
-# Reihenfolge in dieser Liste.
+# The kitchen deliberately gets TWO devices: only that way can a group
+# show that devices are sorted by category within a room - the lamp
+# (rank 0) comes before the plug (rank 1), regardless of the order in
+# this list.
 DEMO_DEVICES = [
     ("ikea_grillplats_plug.json", "Coffee machine", "Kitchen"),
     ("example_light.json", "Living room lamp", "Living room"),
@@ -103,9 +104,9 @@ DEMO_DEVICES = [
 
 
 def _ensure_demo_devices(store: Store) -> list[int]:
-    """Wie `_ensure_devices`, aber vier Geraete mit englischen Namen: die
-    README-Screenshots zeigen eine englische Oberflaeche, deutsche
-    Geraetenamen darin saehen nach Versehen aus."""
+    """Like `_ensure_devices`, but four devices with English names: the
+    README screenshots show an English interface, German device names in
+    it would look like an oversight."""
     if store.devices():
         return [device.id for device in store.devices()]
 
@@ -118,14 +119,14 @@ def _ensure_demo_devices(store: Store) -> list[int]:
         store.rename_device(device_id, label)
         device_ids.append(device_id)
 
-    # Ein Geraet gilt als bereits exportiert, damit die Export-Vorschau beide
-    # Faelle nebeneinander zeigt statt vier gleich aussehender Zeilen.
+    # One device counts as already exported, so the export preview shows
+    # both cases side by side instead of four identical-looking rows.
     store.mark_exported(device_ids[0])
-    # ... aber mit fester Uhrzeit statt "jetzt", siehe DEMO_TIMESTAMP. Der
-    # Store schreibt bewusst immer `now_iso()` - das ist im Betrieb richtig
-    # und soll dort nicht konfigurierbar werden, nur damit ein Demo-Modus
-    # existiert. Deshalb wird hier nachtraeglich ueberschrieben statt eine
-    # Naht in die Produktionsklasse zu schneiden.
+    # ... but with a fixed time instead of "now", see DEMO_TIMESTAMP. The
+    # store deliberately always writes `now_iso()` - that's correct in
+    # production and shouldn't become configurable there just so a demo
+    # mode can exist. So it's overwritten here after the fact instead of
+    # cutting a seam into the production class.
     store._db.execute(
         "UPDATE device SET exported_at = ? WHERE id = ?", (DEMO_TIMESTAMP, device_ids[0])
     )
@@ -139,18 +140,17 @@ def _load_snapshot(name: str) -> NodeSnapshot:
 
 
 class _SeededRuntime:
-    """Erfuellt `loxone.server._RuntimeDependency` - alles, was `build_app`
-    selbst und die Router, denen es `runtime` weiterreicht, brauchen:
-    `api.devices.RuntimeValues.last_values_for` mit ein paar erfundenen,
-    aber plausiblen Werten (genug, damit die Geraetekarten nicht nur "-"
-    zeigen), `api.live.ObservableRuntime.add_observer`/`remove_observer`
-    als No-Ops (`/api/live` ruft sie bei jedem Verbindungsaufbau bzw.
-    -abbau auf, egal ob dieser Dienst je einen Wert live nachliefert), und
-    `resend_all` als No-Op fuer `/resync`. Kein Ersatz fuer `Runtime`: es
-    gibt keine echte Live-Verbindung, die gesetzten Werte stehen fest, bis
-    dieser Prozess neu startet - ein Beobachter, der hier angemeldet wird,
-    bekommt schlicht nie eine Benachrichtigung, und `/resync` verschickt
-    nichts."""
+    """Fulfils `loxone.server._RuntimeDependency` - everything `build_app`
+    itself and the routers it hands `runtime` to need:
+    `api.devices.RuntimeValues.last_values_for`/`last_heard_for` with a
+    handful of made-up but plausible values (enough that the device cards don't just show
+    "-"), `api.live.ObservableRuntime.add_observer`/`remove_observer` as
+    no-ops (`/api/live` calls them on every connection open and close,
+    regardless of whether this service ever delivers a live value), and
+    `resend_all` as a no-op for `/resync`. Not a substitute for `Runtime`:
+    there is no real live connection, the set values stay fixed until this
+    process restarts - an observer registered here simply never gets a
+    notification, and `/resync` sends nothing."""
 
     def __init__(self, values: dict[str, float | bool]) -> None:
         self._values = values
@@ -159,13 +159,19 @@ class _SeededRuntime:
         prefix = f"d{device_id}_"
         return {k: v for k, v in self._values.items() if k.startswith(prefix)}
 
+    def last_heard_for(self, device_id: int) -> str | None:
+        """This service never hears anything real (no Matter client) - so
+        `None` here is not merely the minimum value that satisfies the
+        protocol, but the honest statement."""
+        return None
+
     async def set_online(self, device_id: int, online: bool) -> None:
-        """Wie `Runtime.set_online`, nur ohne UDP-Versand: haelt den Wert
-        unter demselben Schluessel, den die Geraetekarte liest. Gebraucht,
-        seit das Einlernen die Erreichbarkeit eines frisch eingelernten
-        Geraets selbst saeet (`api/devices.py`) - dieser Dienst lernt zwar
-        nie etwas ein (kein Matter-Client), muss `RuntimeValues` aber
-        vollstaendig erfuellen."""
+        """Like `Runtime.set_online`, just without the UDP send: holds the
+        value under the same key the device card reads. Needed since
+        commissioning itself seeds the reachability of a freshly
+        commissioned device (`api/devices.py`) - this service never
+        actually commissions anything (no Matter client), but still has
+        to fully satisfy `RuntimeValues`."""
         self._values[f"d{device_id}_online"] = online
 
     def add_observer(self, callback: Callable[[str, object], None]) -> None:
@@ -188,15 +194,15 @@ def _parse_args() -> argparse.Namespace:
         "--store-path",
         type=Path,
         default=None,
-        help="Datenbankdatei (Default: eine feste Datei im Temp-Verzeichnis).",
+        help="Database file (default: a fixed file in the temp directory).",
     )
     parser.add_argument("--port", type=int, default=8420)
     parser.add_argument(
         "--demo",
         action="store_true",
         help=(
-            "Vier Geraete mit englischen Namen, Passwort und Bridge-Einstellungen "
-            "vorbelegt, Datenbank bei jedem Start frisch - fuer die README-Screenshots."
+            "Four devices with English names, password and bridge settings "
+            "prefilled, database fresh on every start - for the README screenshots."
         ),
     )
     parser.add_argument(
@@ -221,48 +227,47 @@ def _ensure_devices(store: Store) -> list[int]:
     plug_id = store.register_device(plug)
     store.register_signals(plug_id, plug)
     store.register_commands(plug_id, extract_commands(plug), plug.node_id)
-    store.rename_device(plug_id, "Steckdose Wohnzimmer")
+    store.rename_device(plug_id, "Living room plug")
 
     button = _load_snapshot("ikea_bilresa_button.json")
     button_id = store.register_device(button)
     store.register_signals(button_id, button)
     store.register_commands(button_id, extract_commands(button), button.node_id)
-    store.rename_device(button_id, "Taster Flur")
+    store.rename_device(button_id, "Hallway button")
 
     return [plug_id, button_id]
 
 
-# Plausible Analogwerte je Einheit, fuer `_plausible_value` unten - eine
-# Einheit allein legt den Wert schon fest, ausser bei "%" und "kWh", die je
-# nach Signal ganz Verschiedenes messen (Helligkeit vs. Batteriestand,
-# Bezug vs. Einspeisung, Saettigung). Dort entscheidet zusaetzlich das
-# Schluesselende: `d<id>_<endpoint>_<slug>` ist der Normalfall aus
-# `Store._assign_key`, ein kollisionsbedingt angehaengtes Element-Id-Suffix
-# stoert `endswith` unten nicht, es faellt dann einfach auf den alten
-# Platzhalterwert zurueck. "°" und "mired" kommen in `clusters.yaml` nur je
-# einmal vor (Farbton bzw. Farbtemperatur), brauchen also keine
-# Schluessel-Unterscheidung wie "%".
+# Plausible analog values per unit, for `_plausible_value` below - a unit
+# alone already fixes the value, except for "%" and "kWh", which measure
+# quite different things depending on the signal (brightness vs. battery
+# level, import vs. export, saturation). There the key suffix decides
+# additionally: `d<id>_<endpoint>_<slug>` is the normal case from
+# `Store._assign_key`, an element-id suffix appended due to a collision
+# doesn't bother `endswith` below, it then simply falls back to the old
+# placeholder value. "°" and "mired" each occur only once in
+# `clusters.yaml` (hue and colour temperature respectively), so they need
+# no key-based distinction like "%".
 _UNIT_VALUES: dict[str, float] = {
-    "V": 230.0,  # Netzspannung
-    "A": 0.4,  # Stromaufnahme eines kleinen Geraets
-    "kW": 0.092,  # ~92 W, passt zu 230 V * 0.4 A
-    "°": 35.0,  # Farbton (Hue) - warmes Orange
-    "mired": 370.0,  # Farbtemperatur, ~2700 K (warmweiss)
+    "V": 230.0,  # mains voltage
+    "A": 0.4,  # current draw of a small device
+    "kW": 0.092,  # ~92 W, matches 230 V * 0.4 A
+    "°": 35.0,  # hue - warm orange
+    "mired": 370.0,  # colour temperature, ~2700 K (warm white)
 }
 
 
 def _plausible_value(signal: StoredSignal) -> float | None:
-    """Ein erfundener, aber zur Einheit passender Wert fuer ein Analogsignal -
-    siehe Review: 12,4 kW "Leistung" fuer eine Steckdose sah nach
-    Platzhalter aus, nicht nach Demo. Alles, was hier nicht erkannt wird,
-    behaelt den alten Platzhalterwert.
+    """A made-up but unit-appropriate value for an analog signal - see
+    review: 12.4 kW "power" for a plug looked like a placeholder, not a
+    demo. Anything not recognized here keeps the old placeholder value.
 
-    Sonderfall Farbmodus (`colormode`, Cluster 768 Attribut 8, siehe
-    `clusters.yaml`): eine Aufzaehlung, keine physikalische Groesse - dafuer
-    gibt es keinen erfundenen Bruchwert (derselbe Review-Fund: 12,4 als
-    "Farbmodus" sah kaputt aus, nicht nach Demo). `None` laesst das Signal
-    unbesetzt, `_seed_values` unten setzt dafuer keinen Wert - die
-    Geraetekarte zeigt denselben neutralen Strich wie bei
+    Special case colour mode (`colormode`, cluster 768 attribute 8, see
+    `clusters.yaml`): an enumeration, not a physical quantity - so there
+    is no made-up fractional value for it (the same review finding: 12.4
+    as "colour mode" looked broken, not like a demo). `None` leaves the
+    signal unset, `_seed_values` below then sets no value for it - the
+    device card shows the same neutral dash as for
     `VendorName`/`ProductName`."""
     if signal.unit in _UNIT_VALUES:
         return _UNIT_VALUES[signal.unit]
@@ -326,9 +331,9 @@ def _seed_demo_update_dir(update_dir: Path) -> None:
 def main() -> None:
     args = _parse_args()
 
-    # Eigene Datenbankdatei fuer den Demo-Betrieb, und die faellt bei jedem
-    # Start neu an: nur so entstehen aus demselben Aufruf zweimal dieselben
-    # Screenshots. Der normale Entwicklungsbetrieb behaelt seinen Bestand.
+    # Dedicated database file for demo operation, freshly created on every
+    # start: only that way does the same call twice produce the same
+    # screenshots. Normal development use keeps its existing data.
     default_name = "loxmatter-demo-web.sqlite" if args.demo else "loxmatter-dev-web.sqlite"
     store_path = args.store_path or Path(tempfile.gettempdir()) / default_name
     if args.demo and args.store_path is None:
@@ -350,9 +355,9 @@ def main() -> None:
     if args.demo:
         store.auth.reset_password(hash_password(DEMO_PASSWORD))
         store.settings.save(bridge_ip="192.168.1.50", udp_port=7000, listen_port=8080)
-        # Dieselbe Behandlung wie bei `exported_at` oben und aus demselben
-        # Grund: `BridgeSettingsStore.save` setzt `saved_at` auf jetzt, was im
-        # Betrieb stimmt, den Screenshot aber bei jedem Lauf veraendert.
+        # Same treatment as `exported_at` above and for the same reason:
+        # `BridgeSettingsStore.save` sets `saved_at` to now, which is
+        # correct in production but changes the screenshot on every run.
         store._db.execute(
             "INSERT INTO setting (key, value) VALUES (?, ?)"
             " ON CONFLICT(key) DO UPDATE SET value = excluded.value",
@@ -377,7 +382,7 @@ def main() -> None:
     values = _seed_values(store, device_ids)
     runtime = _SeededRuntime(values)
     app = build_app(store, _invoke, runtime, update_dir=update_dir)
-    print(f"Datenbank: {store_path}")
+    print(f"Database: {store_path}")
     print(f"Update directory: {update_dir}")
     print(f"WebUI: http://127.0.0.1:{args.port}")
     uvicorn.run(app, host="127.0.0.1", port=args.port)

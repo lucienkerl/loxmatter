@@ -1,4 +1,4 @@
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -14,11 +14,11 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Tests fuer die Login-Drosselung (Spec 8).
+"""Tests for login throttling (Spec 8).
 
-Die Kernfrage: bremst sie nach genug Fehlversuchen, laesst sie den
-rechtmaessigen Betreiber danach wieder durch, und trifft sie wirklich nur
-die Adresse, die daneben lag?
+The core question: does it slow things down after enough failed
+attempts, does it let the legitimate operator back through afterward,
+and does it really only hit the address that got it wrong?
 """
 
 from __future__ import annotations
@@ -53,8 +53,8 @@ def test_the_block_expires():
 
 
 def test_a_success_clears_the_counter():
-    """Sonst sperrte sich der Betreiber nach fuenf Vertippern selbst aus,
-    obwohl er das Passwort inzwischen richtig eingegeben hat."""
+    """Otherwise the operator would lock themselves out after five typos,
+    even though they have since entered the password correctly."""
     throttle = LoginThrottle()
     for _ in range(FAILURES_BEFORE_THROTTLING):
         throttle.record_failure("10.0.0.1", now=0.0)

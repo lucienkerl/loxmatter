@@ -7,13 +7,13 @@ def test_new_unique_id_reuses_installation_suffix_from_an_existing_id():
     existing = {"1000-0001-0000-aaaaaaaaaaaaaaaa"}
     new_id = new_unique_id(existing)
     assert new_id.endswith("-aaaaaaaaaaaaaaaa")
-    assert new_id in existing  # als vergeben markiert
+    assert new_id in existing  # marked as taken
 
 
 def test_new_unique_id_never_collides_across_many_calls():
     existing = {"1000-0001-0000-aaaaaaaaaaaaaaaa"}
     generated = {new_unique_id(existing) for _ in range(500)}
-    assert len(generated) == 500  # keine Kollision, keine ID doppelt
+    assert len(generated) == 500  # no collision, no id duplicated
 
 
 def test_new_unique_id_raises_without_any_reference_id():

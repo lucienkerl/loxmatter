@@ -1,4 +1,4 @@
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -14,10 +14,10 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Tests fuer die uebersetzten Texte von UnknownDeviceError/UnknownCommandError -
-str(exc) reicht diesen Text unveraendert in eine HTTP-Antwort weiter
-(siehe api/control.py, api/devices.py, api/export.py), diese Tests pruefen
-aber nur die Ausnahme selbst, unabhaengig von der API."""
+"""Tests for the translated texts of UnknownDeviceError/UnknownCommandError -
+str(exc) passes this text through unchanged into an HTTP response (see
+api/control.py, api/devices.py, api/export.py), but these tests only check
+the exception itself, independent of the API."""
 
 from __future__ import annotations
 

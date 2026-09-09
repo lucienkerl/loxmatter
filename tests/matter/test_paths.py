@@ -1,4 +1,4 @@
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -34,7 +34,7 @@ def test_parses_multi_digit_values():
 
 @pytest.mark.parametrize("bad", ["1/6", "1/6/0/9", "", "a/6/0", "1//0"])
 def test_rejects_malformed_paths(bad):
-    with pytest.raises(ValueError, match="Attributpfad"):
+    with pytest.raises(ValueError, match="attribute path"):
         parse_attribute_path(bad)
 
 

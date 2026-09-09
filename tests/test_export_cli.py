@@ -1,4 +1,4 @@
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -29,24 +29,22 @@ _ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;]*m")
 
 
 def _plain(output: str) -> str:
-    """Entfernt ANSI-Sequenzen aus CLI-Ausgaben, bevor auf Nachrichtentext
-    geprueft wird.
+    """Removes ANSI sequences from CLI output before checking message text.
 
-    Vorfall: `test_export_requires_node_or_fixture(_in_german)` waren fuenf
-    aufeinanderfolgende CI-Laeufe auf main rot, obwohl sie lokal in 1,8s
-    gruen liefen. Ursache ist `typer.rich_utils.FORCE_TERMINAL`, das
-    `GITHUB_ACTIONS` auswertet und Rich damit unter Actions zum Faerben
-    zwingt - lokal erkennt Rich denselben, nicht an ein TTY angehaengten
-    Stream als "kein Terminal" und laesst die Nachricht platt. Rich
-    faerbt dabei Optionsnamen wie `--node` einzeln ein ("-" und "-node"
-    bekommen getrennte Escape-Sequenzen), sodass die reine Teilstring-
-    Pruefung selbst mit `NO_COLOR` fehlschlaegt: `NO_COLOR` unterdrueckt
-    nur Farbe, nicht die Fett-Formatierung, die den Optionsnamen zerlegt.
-    Robuster als Umgebungsvariablen (die `typer.rich_utils.FORCE_TERMINAL`
-    ohnehin nur beim allerersten Import auswertet) ist es, die
-    Rich-Formatierung aus der eingefangenen Ausgabe wieder herauszunehmen,
-    bevor der Nachrichtentext geprueft wird - unabhaengig davon, ob und wie
-    eine bestimmte Rich-Version gerade faerbt."""
+    Incident: `test_export_requires_node_or_fixture(_in_german)` were five
+    consecutive CI runs on main that were red, even though they ran green locally in 1.8s.
+    Cause is `typer.rich_utils.FORCE_TERMINAL`, which
+    evaluates `GITHUB_ACTIONS` and forces Rich to color output under Actions - locally,
+    Rich sees the same stream without a TTY as "not a terminal" and leaves the message plain.
+    Rich colors option names like `--node` individually ("-" and "-node"
+    get separate escape sequences), so the pure substring
+    check fails even with `NO_COLOR`: `NO_COLOR` suppresses
+    only color, not the bold formatting that breaks up the option name.
+    More robust than environment variables (which `typer.rich_utils.FORCE_TERMINAL`
+    only evaluates at the very first import anyway) is to
+    remove the Rich formatting from the captured output
+    before the message text is checked - regardless of whether and how
+    a specific Rich version is currently coloring."""
     return _ANSI_ESCAPE.sub("", output)
 
 
@@ -102,21 +100,21 @@ def test_button_events_appear_as_pulse_and_counter(tmp_path):
         ],
     )
     text = next(tmp_path.glob("VIU_*.xml")).read_text(encoding="utf-8-sig")
-    # Der Impuls wird auf der steigenden Flanke erkannt, nicht ueber den
-    # Wert: sonst loeste ein Tastendruck zweimal aus, weil auf `...:\v`
-    # sowohl `press:1` als auch das `press:0` des Impulsendes passt (am
-    # Miniserver beobachtet, 2026-09-03).
+    # The pulse is detected on the rising edge, not via the value:
+    # otherwise a button press would fire twice, because `...:\v` matches
+    # both `press:1` and the `press:0` of the pulse's end (observed on
+    # the Miniserver, 2026-09-03).
     assert "_press:1" in text
     assert "_press:\\v" not in text
-    # Der Zaehler ist ein Wert und wird weiterhin als solcher gelesen.
+    # The counter is a value and continues to be read as such.
     assert "_press_n:\\v" in text
 
 
 def test_non_exportable_attributes_do_not_appear(tmp_path):
-    """Spec 6.6: von 159 Attributen sind nur 110 technisch abbildbar. Seit
-    Aufgabe 6 exportiert `loxmatter export` zusaetzlich nur, was
-    `profiles.relevance.is_functional` als tatsaechlich gewollt einstuft -
-    bei dieser Steckdose bleiben davon 5 uebrig (siehe
+    """Spec 6.6: of 159 attributes, only 110 can be technically mapped. Since
+    task 6, `loxmatter export` additionally exports only what
+    `profiles.relevance.is_functional` classifies as actually intended -
+    for this plug, 5 of those remain (see
     `tests/export/test_signals.py::test_plug_fixture_yields_6_inputs_with_the_relevance_default`)."""
     CliRunner().invoke(
         app,
@@ -132,11 +130,11 @@ def test_non_exportable_attributes_do_not_appear(tmp_path):
     )
     text = next(tmp_path.glob("VIU_*.xml")).read_text(encoding="utf-8-sig")
     commands = text.count("<VirtualInUdpCmd ")
-    assert commands == 5 + 1  # relevante Attribute plus Online-Signal
+    assert commands == 5 + 1  # relevant attributes plus the online signal
 
 
 def test_plug_gets_only_the_onoff_commands(tmp_path):
-    """Task 6: Ausgangsbefehle stammen aus AcceptedCommandList, nicht aus Attributen."""
+    """Task 6: output commands come from AcceptedCommandList, not from attributes."""
     CliRunner().invoke(
         app,
         [
@@ -150,22 +148,22 @@ def test_plug_gets_only_the_onoff_commands(tmp_path):
         ],
     )
     text = next(tmp_path.glob("VO_*.xml")).read_text(encoding="utf-8-sig")
-    # Drei Befehle (on, off, toggle) und zusaetzlich der kombinierte
-    # Ein/Aus-Ausgang (2026-09-03): Loxone kennt fuer einen digitalen
-    # virtuellen Ausgang CmdOn UND CmdOff, und darauf laesst sich ein
-    # Schalter direkt legen. Die einzelnen bleiben daneben stehen - fuer
-    # Geraete, die auch ausserhalb von Loxone geschaltet werden koennen,
-    # wo man Ein und Aus einzeln ausloesen will statt an einer Flanke zu
-    # haengen, die vielleicht nicht kommt.
+    # Three commands (on, off, toggle) plus the combined on/off
+    # output (2026-09-03): Loxone knows both CmdOn AND CmdOff for a
+    # digital virtual output, and a switch can be wired to that
+    # directly. The individual ones remain alongside - for
+    # devices that can also be switched outside Loxone, where you
+    # want to trigger on and off individually instead of relying on an
+    # edge that might not come.
     assert text.count("<VirtualOutCmd ") == 4
     assert 'CmdOn="/cmd/d1_1_on/1" CmdOnHTTP="" CmdOnPost="" CmdOff="/cmd/d1_1_off/1"' in text
 
 
 def test_listen_option_reaches_the_command_url(tmp_path):
-    """Review-Fix I3, 2026-09-02: `export` hatte den HTTP-Port der Kommando-URL
-    fest auf 8080 verdrahtet, unabhaengig von `run --listen`. Ohne `--listen`
-    bleibt der Default 8080 (Rueckwaertskompatibilitaet), mit einem
-    abweichenden Wert muss er in der VO-Vorlage ankommen."""
+    """Review-Fix I3, 2026-09-02: `export` had the command URL's HTTP port
+    hardwired to 8080, independent of `run --listen`. Without `--listen`
+    the default stays 8080 (backward compatibility); with a
+    different value, it must arrive in the VO template."""
     CliRunner().invoke(
         app,
         [
@@ -186,9 +184,9 @@ def test_listen_option_reaches_the_command_url(tmp_path):
 
 
 def test_button_gets_no_output_commands(tmp_path):
-    """Ein Taster ist ein Eingabegeraet - ohne Ausgangsbefehle entsteht gar
-    keine VO_-Datei. Vorher wurde eine leere Vorlage geschrieben; die haette
-    man in Loxone Config importiert, ohne dass sie irgendetwas enthielte."""
+    """A button is an input device - without output commands, no VO_
+    file is created at all. Previously an empty template was written; it
+    would have been imported into Loxone Config without containing anything."""
     result = CliRunner().invoke(
         app,
         [
@@ -265,13 +263,13 @@ def test_export_reports_what_it_skipped_in_german(tmp_path):
 
 
 def test_export_reports_how_many_signals_are_held_back_as_expert(tmp_path):
-    """Nachbesserung Fix 3 (Abschlussreview): vorher meldete `export` nur
-    "6 Eingaenge" und "49 Signale nicht exportierbar" fuer ein Geraet mit
-    159 Signalen - ueber die restlichen 104 sagte niemand etwas, und wo man
-    sie einschaltet, auch nicht. Verhalten geprueft, nicht die interne
-    Rechnung: die Zahl (154, siehe `ExportDeviceOut.hidden_count`-Docstring
-    fuer dasselbe Geraet) und ein Hinweis auf den Ort, an dem man sie
-    einzeln freischaltet, muessen in der Ausgabe stehen."""
+    """Fix 3 (final review): previously `export` only reported
+    "6 inputs" and "49 signals not exportable" for a device with
+    159 signals - nobody said anything about the remaining 104, nor where
+    to turn them on. Behavior tested, not the internal
+    calculation: the number (154, see `ExportDeviceOut.hidden_count`'s
+    docstring for the same device) and a hint at the place where they
+    can be enabled individually must appear in the output."""
     result = CliRunner().invoke(
         app,
         [
@@ -307,14 +305,14 @@ def test_export_reports_how_many_signals_are_held_back_as_expert_in_german(tmp_p
 
 
 def test_export_fails_cleanly_when_the_second_file_cannot_be_written(tmp_path, monkeypatch):
-    """Fix Important #2: ein OSError beim zweiten write_bytes darf keinen
-    Traceback zeigen, sondern muss ueber _fail() laufen — und dabei sagen,
-    welche Datei bereits geschrieben wurde und welche fehlt."""
+    """Fix Important #2: an OSError on the second write_bytes must not show
+    a traceback, but must go through _fail() - and while doing so say
+    which file was already written and which is missing."""
     original_write_bytes = Path.write_bytes
 
     def flaky_write_bytes(self: Path, data: bytes) -> int:
         if self.name.startswith("VO_"):
-            raise OSError("Kein Speicherplatz mehr auf dem Geraet")
+            raise OSError("No disk space left on the device")
         return original_write_bytes(self, data)
 
     monkeypatch.setattr(Path, "write_bytes", flaky_write_bytes)
@@ -337,23 +335,23 @@ def test_export_fails_cleanly_when_the_second_file_cannot_be_written(tmp_path, m
     written = sorted(p.name for p in tmp_path.glob("*.xml"))
     assert len(written) == 1
     assert written[0].startswith("VIU_")
-    # Die Meldung nennt die fehlgeschlagene Datei und sagt, was bereits da ist.
+    # The message names the file that failed and says what is already there.
     assert "VO_" in result.stderr
     assert "VIU_" in result.stderr
 
 
 def test_export_fails_cleanly_when_a_system_file_cannot_be_written(tmp_path, monkeypatch):
-    """Review-Fix Important #1 (2026-09-02): die beiden Systemvorlagen-Schreibvorgaenge
-    waren bare `write_bytes`-Aufrufe ohne try/except — anders als die drei
-    Geraetevorlagen-Schreibvorgaenge, die laengst ueber `_fail()` laufen. Ein
-    OSError beim Schreiben von VO_Matter_System.xml (Platte voll, schreibgeschuetztes
-    Volume — beides realistisch fuer die kommende Container-Bereitstellung) durfte
-    keinen Traceback zeigen."""
+    """Review-Fix Important #1 (2026-09-02): the two system-template write
+    operations were bare `write_bytes` calls without try/except - unlike
+    the three device-template write operations, which have long gone
+    through `_fail()`. An OSError while writing VO_Matter_System.xml (disk full,
+    read-only volume - both realistic for the upcoming container deployment) was
+    not allowed to show a traceback."""
     original_write_bytes = Path.write_bytes
 
     def flaky_write_bytes(self: Path, data: bytes) -> int:
         if self.name.startswith("VO_Matter_System"):
-            raise OSError("Kein Speicherplatz mehr auf dem Geraet")
+            raise OSError("No disk space left on the device")
         return original_write_bytes(self, data)
 
     monkeypatch.setattr(Path, "write_bytes", flaky_write_bytes)
@@ -374,22 +372,22 @@ def test_export_fails_cleanly_when_a_system_file_cannot_be_written(tmp_path, mon
     assert "Traceback" not in result.output
     written = sorted(p.name for p in tmp_path.glob("*.xml"))
     assert written == ["VIU_Matter_System.xml"]
-    # Die Meldung nennt die fehlgeschlagene Datei und sagt, was bereits da ist.
+    # The message names the file that failed and says what is already there.
     assert "VO_Matter_System" in result.stderr
     assert "VIU_Matter_System" in result.stderr
 
 
 def test_export_fails_cleanly_when_the_output_directory_cannot_be_created(tmp_path, monkeypatch):
-    """Review-Fix Important #3: `out.mkdir` war einer von drei ungeschuetzten
-    Fehlerpunkten neben den beiden `write_bytes`-Aufrufen — ein `--out` unter
-    einem schreibgeschuetzten Verzeichnis (ein Templates-Ordner ohne
-    Schreibrechte, eine eingehaengte Freigabe) darf keinen Traceback zeigen,
-    sondern muss ueber `_fail()` laufen."""
+    """Review-Fix Important #3: `out.mkdir` was one of three unguarded
+    failure points besides the two `write_bytes` calls - an `--out` under
+    a read-only directory (a templates folder without
+    write permission, a mounted share) must not show a traceback,
+    but must go through `_fail()`."""
     original_mkdir = Path.mkdir
 
     def flaky_mkdir(self: Path, *args: object, **kwargs: object) -> None:
-        if self.name == "gesperrt":
-            raise OSError("Keine Schreibrechte")
+        if self.name == "locked":
+            raise OSError("No write permission")
         return original_mkdir(self, *args, **kwargs)  # type: ignore[arg-type]
 
     monkeypatch.setattr(Path, "mkdir", flaky_mkdir)
@@ -403,20 +401,20 @@ def test_export_fails_cleanly_when_the_output_directory_cannot_be_created(tmp_pa
             "--bridge-ip",
             "192.168.1.50",
             "--out",
-            str(tmp_path / "gesperrt"),
+            str(tmp_path / "locked"),
         ],
     )
 
     assert result.exit_code == 1
     assert "Traceback" not in result.output
-    assert "gesperrt" in result.stderr
+    assert "locked" in result.stderr
 
 
 def test_export_creates_no_directory_when_neither_system_nor_source_is_given(tmp_path):
-    """Review-Fix Minor #3 (2026-09-02): `out.mkdir` lief frueher vor der
-    Parametervalidierung — ein Aufruf ohne --system, --node oder --fixture legte
-    das Zielverzeichnis trotzdem an, bevor der Nutzungsfehler geworfen wurde."""
-    out = tmp_path / "wuerde_sonst_entstehen"
+    """Review-Fix Minor #3 (2026-09-02): `out.mkdir` used to run before
+    parameter validation - a call without --system, --node, or --fixture would
+    still create the target directory before the usage error was raised."""
+    out = tmp_path / "would_otherwise_be_created"
 
     result = CliRunner().invoke(
         app,
@@ -434,9 +432,9 @@ def test_export_creates_no_directory_when_neither_system_nor_source_is_given(tmp
 
 
 def test_export_requires_node_or_fixture(tmp_path):
-    """Fix Minor #4: export teilt sich _load_snapshot mit inspect — dessen
-    Fehlerpfade sind bislang nur ueber inspect getestet, nicht ueber export
-    selbst."""
+    """Fix Minor #4: export shares _load_snapshot with inspect - its
+    error paths have so far only been tested via inspect, not via export
+    itself."""
     result = CliRunner().invoke(
         app,
         [
@@ -473,8 +471,8 @@ def test_export_requires_node_or_fixture_in_german(tmp_path):
 
 
 def test_export_reports_malformed_fixture_missing_node_id(tmp_path):
-    """Fix Minor #4: dieselbe deutsche Meldung wie bei inspect (test_cli.py),
-    hier ueber den export-Einstiegspunkt ausgeloest."""
+    """Fix Minor #4: the same German message as with inspect (test_cli.py),
+    triggered here via the export entry point."""
     broken = tmp_path / "broken.json"
     broken.write_text('{"attributes": {}}', encoding="utf-8")
 
@@ -497,10 +495,10 @@ def test_export_reports_malformed_fixture_missing_node_id(tmp_path):
 
 
 def test_export_marks_the_device_as_exported(tmp_path):
-    """Task 5, Phase 5: `GET /api/export/status` der WebUI soll "wann
-    zuletzt exportiert" unabhaengig davon beantworten, ob der letzte Export
-    per CLI oder per API lief - beide schreiben dieselbe Datenbank (siehe
-    `Store.mark_exported` und `api/export.py`)."""
+    """Task 5, Phase 5: the WebUI's `GET /api/export/status` must answer
+    "when last exported" independent of whether the last export ran
+    via the CLI or via the API - both write to the same database (see
+    `Store.mark_exported` and `api/export.py`)."""
     db_path = tmp_path / "store.sqlite"
     result = CliRunner().invoke(
         app,

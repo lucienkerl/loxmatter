@@ -1,4 +1,4 @@
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -14,7 +14,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Gerätetypen je Endpunkt aus dem Descriptor-Cluster."""
+"""Device types per endpoint from the descriptor cluster."""
 
 from __future__ import annotations
 
@@ -51,17 +51,17 @@ def test_the_plug_declares_a_utility_endpoint_and_two_application_endpoints():
 
 
 def test_the_button_declares_a_power_source_on_its_utility_endpoint():
-    """Der Batteriestand liegt nicht zufaellig auf Endpunkt 0 - das Geraet
-    deklariert dort den Geraetetyp Power Source. Genau darauf stuetzt sich
-    die Ausnahme in Task 2; ohne diese Zusicherung waere sie geraten."""
+    """The battery level isn't on endpoint 0 by accident - the device
+    declares the Power Source device type there. The exception in task 2
+    relies on exactly that; without this assertion it would be a guess."""
     types = device_types_by_endpoint(_snapshot("ikea_bilresa_button.json"))
     assert POWER_SOURCE_DEVICE_TYPE in types[0]
 
 
 def test_an_endpoint_without_a_descriptor_is_absent_rather_than_empty():
-    """Fehlt der Descriptor, soll der Aufrufer das unterscheiden koennen von
-    'Descriptor da, aber leer' - beides fuehrt spaeter zur selben
-    Entscheidung, aber aus verschiedenen Gruenden."""
+    """If the descriptor is missing, the caller should be able to tell that
+    apart from 'descriptor present but empty' - both lead to the same
+    decision later, but for different reasons."""
     snapshot = NodeSnapshot.from_raw(1, {"attributes": {"7/6/0": True}})
     assert device_types_by_endpoint(snapshot) == {}
 
@@ -69,17 +69,17 @@ def test_an_endpoint_without_a_descriptor_is_absent_rather_than_empty():
 @pytest.mark.parametrize(
     "raw",
     [
-        "kein Wörterbuch",
+        "not a dictionary",
         [{"1": 3}],
-        [{"0": "keine Zahl"}],
+        [{"0": "not a number"}],
         [None],
         42,
     ],
 )
 def test_an_unexpected_descriptor_shape_yields_no_device_types(raw):
-    """Ein nicht konformes Geraet darf keinen Absturz ausloesen. Der
-    Endpunkt gilt dann als typlos - und damit spaeter (Task 2) als
-    Nutz-Endpunkt: im Zweifel ein Eingang zu viel, nie ein fehlender Wert."""
+    """A non-conformant device must not trigger a crash. The endpoint then
+    counts as typeless - and thus later (task 2) as an application
+    endpoint: when in doubt, one input too many, never a missing value."""
     snapshot = NodeSnapshot.from_raw(1, {"attributes": {"0/29/0": raw}})
     assert device_types_by_endpoint(snapshot) == {0: frozenset()}
 
@@ -94,16 +94,16 @@ def test_a_thread_diagnostics_counter_on_the_root_endpoint_is_not_functional():
 
 
 def test_the_battery_level_on_a_root_endpoint_is_functional():
-    """Der Ausnahmefall, den der Descriptor selbst begruendet: der Taster
-    deklariert auf Endpunkt 0 zusaetzlich Power Source."""
+    """The exceptional case that the descriptor itself justifies: the
+    button additionally declares Power Source on endpoint 0."""
     ref = SignalRef(0, 47, 12, SignalKind.ATTRIBUTE)
     assert is_functional(ref, _BUTTON_TYPES) is True
 
 
 def test_the_battery_cluster_is_not_functional_where_no_power_source_is_declared():
-    """Dieselbe Cluster-Nummer auf einem Endpunkt ohne Power-Source-Typ
-    bleibt Verwaltung. Die Regel haengt am deklarierten Geraetetyp, nicht an
-    der Cluster-Nummer - sonst waere sie doch wieder nur eine Liste."""
+    """The same cluster number on an endpoint without a Power Source type
+    stays management. The rule hinges on the declared device type, not on
+    the cluster number - otherwise it would just be another list."""
     ref = SignalRef(0, 47, 12, SignalKind.ATTRIBUTE)
     assert is_functional(ref, _PLUG_TYPES) is False
 
@@ -113,16 +113,16 @@ def test_onoff_on_an_application_endpoint_is_functional():
 
 
 def test_a_generic_attribute_of_a_known_cluster_is_not_functional():
-    """StartUpOnOff (0x4003) sitzt legitim bei OnOff, will aber niemand in
-    Loxone. Die Tabelle kennt Cluster 6 und benennt dort nur Attribut 0."""
+    """StartUpOnOff (0x4003) legitimately sits under OnOff, but nobody
+    wants it in Loxone. The table knows cluster 6 and names only
+    attribute 0 there."""
     assert is_functional(SignalRef(1, 6, 0x4003, _KIND), _PLUG_TYPES) is False
 
 
 def test_every_attribute_of_an_unknown_cluster_stays_functional():
-    """Die Grundwette des Projekts (Hauptdokument 3.5): ein Geraetetyp, den
-    dieses Werkzeug nie gesehen hat, funktioniert trotzdem. Waere das hier
-    falsch, laege ein fremdes Geraet stumm - ohne dass jemand merkte, dass
-    etwas fehlt."""
+    """The project's core bet (main document 3.5): a device type this tool
+    has never seen still works. If this were wrong, an unfamiliar device
+    would sit mute - without anyone noticing that something's missing."""
     assert is_functional(SignalRef(1, 4711, 99, _KIND), _PLUG_TYPES) is True
 
 
@@ -132,27 +132,27 @@ def test_identify_groups_and_descriptor_are_never_functional():
 
 
 def test_an_endpoint_without_a_declared_type_counts_as_an_application_endpoint():
-    """Im Zweifel ein Eingang zu viel, nie ein fehlender Wert."""
+    """When in doubt, one input too many, never a missing value."""
     assert is_functional(SignalRef(9, 4711, 0, _KIND), _PLUG_TYPES) is True
 
 
 def test_events_of_a_known_cluster_stay_functional():
-    """Ein verworfenes Ereignis waere ein Tastendruck, der in Loxone nie
-    ankommt - die erste Anforderung dieses Projekts ueberhaupt."""
+    """A dropped event would be a button press that never arrives in
+    Loxone - this project's very first requirement."""
     for event_id in (1, 2, 3, 4, 5, 6):
         ref = SignalRef(1, 59, event_id, SignalKind.EVENT)
         assert is_functional(ref, _BUTTON_TYPES) is True
 
 
 def test_an_event_on_a_utility_endpoint_with_an_unknown_cluster_is_not_functional():
-    """Ein Ereignis auf dem Verwaltungs-Endpunkt ist nicht funktional, auch wenn es
-    ein Ereignis ist. Der Docstring saegt 'Ereignisse unterliegen Schicht 3 nicht',
-    aber ein Leser koennte das falsch verstehen als 'Ereignisse werden nicht von
-    Schicht 3 gefiltert' und ueberseht dadurch die Filterung durch Schicht 2
-    (Verwaltungs-Endpunkte). Wenn jemand spaeter den Sonderfall fuer Ereignisse
-    nach vorne zieht, um den Code zu 'vereinfachen', gibt das stillschweigend
-    Diagnose-Ereignisse des Verwaltungs-Endpunkts frei - ohne dass ein Test anschlaegt.
-    Dieser Test stellt sicher, dass das nicht passiert."""
+    """An event on the management endpoint is not functional, even though
+    it is an event. The docstring says 'events are not subject to layer
+    3', but a reader could misread that as 'events aren't filtered by
+    layer 3' and thereby miss the filtering by layer 2 (management
+    endpoints). If someone later pulls the special case for events
+    forward to 'simplify' the code, that silently lets through diagnostic
+    events of the management endpoint - without a test catching it. This
+    test makes sure that doesn't happen."""
     ref = SignalRef(0, 51, 0, SignalKind.EVENT)  # Cluster 51: GeneralDiagnostics
     assert is_functional(ref, _PLUG_TYPES) is False
 
@@ -160,17 +160,16 @@ def test_an_event_on_a_utility_endpoint_with_an_unknown_cluster_is_not_functiona
 def test_a_cluster_known_only_for_its_commands_keeps_its_attributes_functional(
     monkeypatch,
 ):
-    """Review-Fix 1b (Nachbesserung Phase 6, Abschlussreview): Schicht 3 fragte
-    bislang nur `knows_cluster` - wahr, sobald der Cluster IRGENDEINEN
-    Abschnitt fuehrt, auch nur `commands:`. `names_element` schlaegt dann in
-    einem fehlenden `attributes:`-Abschnitt IMMER erfolglos nach, und jedes
-    Attribut galt als nicht funktional - der Fehler, den Cluster 768
-    (ColorControl) bis zu dieser Nachbesserung tatsaechlich hatte (siehe
+    """Review-Fix 1b (follow-up fix, phase 6, final review): layer 3 used
+    to ask only `knows_cluster` - true as soon as the cluster carries ANY
+    section, even just `commands:`. `names_element` then ALWAYS fails to
+    find anything in a missing `attributes:` section, and every attribute
+    counted as not functional - the bug that cluster 768 (ColorControl)
+    actually had until this fix (see
     `test_extended_color_light_attributes_are_functional_after_the_cluster_768_fix`
-    unten). Hier mit einer synthetischen Tabelle nachgestellt statt an
-    Cluster 768 selbst, damit dieser Test die Falle STRUKTURELL festhaelt -
-    fuer jeden kuenftigen nur-Kommando-Cluster, nicht nur den einen jetzt
-    behobenen Fall."""
+    below). Reproduced here with a synthetic table instead of on cluster
+    768 itself, so this test captures the trap STRUCTURALLY - for every
+    future commands-only cluster, not just the one case now fixed."""
     monkeypatch.setattr(
         "loxmatter.profiles.table._table",
         lambda: {
@@ -185,15 +184,15 @@ def test_a_cluster_known_only_for_its_commands_keeps_its_attributes_functional(
 
 
 def test_extended_color_light_attributes_are_functional_after_the_cluster_768_fix():
-    """Belegt den Fund aus dem Abschlussreview direkt, am echten Geraet: vor
-    Review-Fix 1 stand Cluster 768 (ColorControl) nur mit `commands:` in der
-    Tabelle - jedes seiner Attribute (`CurrentHue`, `CurrentSaturation`,
-    `ColorTemperatureMireds`, `ColorMode`) galt deshalb als nicht funktional,
-    waehrend der Ausgangsbefehl fuer die Farbtemperatur laengst exportiert
-    wurde: Loxone konnte die Farbe setzen, aber nie zurueckgemeldet bekommen.
-    `tests/fixtures/nodes/ikea_kajplats_cws_lamp.json` ist die echte IKEA
-    KAJPLATS E14 CWS globe 806lm (Phase 1, siehe Kommentar dort) - loeste ab
-    Task 1 das bis dahin verwendete synthetische Abbild ab."""
+    """Proves the finding from the final review directly, on the real device: before
+    review fix 1, cluster 768 (ColorControl) was listed with only `commands:` in
+    the table - each of its attributes (`CurrentHue`, `CurrentSaturation`,
+    `ColorTemperatureMireds`, `ColorMode`) was therefore considered not functional,
+    while the output command for the color temperature had long been exported:
+    Loxone could set the color, but never get it reported back.
+    `tests/fixtures/nodes/ikea_kajplats_cws_lamp.json` is the real IKEA
+    KAJPLATS E14 CWS globe 806lm (phase 1, see the comment there) - it replaced,
+    starting with task 1, the synthetic snapshot used until then."""
     snapshot = _snapshot("ikea_kajplats_cws_lamp.json")
     types = device_types_by_endpoint(snapshot)
     # 0, 1, 7, 8 = CurrentHue, CurrentSaturation, ColorTemperatureMireds, ColorMode
@@ -203,22 +202,22 @@ def test_extended_color_light_attributes_are_functional_after_the_cluster_768_fi
 
 
 def test_an_unnamed_power_source_attribute_on_the_utility_endpoint_is_not_functional():
-    """Aufgabe 6, gefunden beim Verdrahten: Schicht 2 gab bisher bei einem
-    zutreffenden `UTILITY_ENDPOINT_KEEP_CLUSTERS`-Eintrag den ganzen Cluster
-    frei, statt wie Schicht 3 nur dessen benannte Elemente. `clusters.yaml`
-    ist eindeutig ("Nur dieses eine von 37 Attributen ist benannt") - der
-    Taster meldet unter 0/47/0 (BatChargeLevel) tatsaechlich einen Wert, und
-    der durfte trotzdem nicht durchrutschen, nur weil derselbe Cluster auch
-    den Batteriestand traegt."""
+    """Task 6, found while wiring things up: layer 2 used to release the
+    whole cluster on a matching `UTILITY_ENDPOINT_KEEP_CLUSTERS` entry,
+    instead of just its named elements the way layer 3 does. `clusters.yaml`
+    is unambiguous ("only this one of 37 attributes is named") - the
+    button actually reports a value under 0/47/0 (BatChargeLevel), and it
+    still must not slip through just because the same cluster also
+    carries the battery level."""
     ref = SignalRef(0, 47, 0, SignalKind.ATTRIBUTE)
     assert is_functional(ref, _BUTTON_TYPES) is False
 
 
 def test_the_physical_colour_temperature_limits_are_known_but_not_wanted():
-    """Zwei unveraenderliche Geraetekonstanten. Bekannt genug zum Auslesen
-    (der Kelvin-Regler braucht sie), nicht interessant genug, um als
-    virtueller Loxone-Eingang vorausgewaehlt zu werden (Entwurf
-    2026-09-07, Abschnitt 5.2)."""
+    """Two immutable device constants. Known well enough to read
+    (the kelvin slider needs them), not interesting enough to be
+    preselected as a virtual Loxone input (design
+    2026-09-07, section 5.2)."""
     device_types = {1: frozenset({269})}
     for element_id in (16395, 16396):
         ref = SignalRef(1, 768, element_id, SignalKind.ATTRIBUTE)
@@ -226,8 +225,8 @@ def test_the_physical_colour_temperature_limits_are_known_but_not_wanted():
 
 
 def test_the_ordinary_colour_attributes_stay_functional():
-    """Die Gegenprobe: `functional: false` darf nicht auf den ganzen
-    Cluster durchschlagen."""
+    """The converse check: `functional: false` must not spill over onto the
+    whole cluster."""
     device_types = {1: frozenset({269})}
     for element_id in (0, 1, 7, 8):
         ref = SignalRef(1, 768, element_id, SignalKind.ATTRIBUTE)

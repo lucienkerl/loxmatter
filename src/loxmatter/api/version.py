@@ -1,4 +1,4 @@
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -14,23 +14,23 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Die Bau-Identitaet ueber die API - Entwurf "Updates ueber die
-Oberflaeche einspielen" (2026-09-08), Abschnitt 4.
+"""Build identity via the API - draft "Deploy updates via the UI"
+(2026-09-08), section 4.
 
-`build_version_router` baut einen `APIRouter` mit Praefix `/api`, genau wie
-`api.settings.build_settings_router` - eingebunden in
-`loxone.server.build_app` hinter demselben `api_guard`.
+`build_version_router` builds an `APIRouter` with prefix `/api`, just like
+`api.settings.build_settings_router` - included in
+`loxone.server.build_app` behind the same `api_guard`.
 
-Anders als `GET /api/i18n` ist diese Route NICHT von der Anmeldepflicht
-ausgenommen: die Anmeldeseite braucht sie nicht, um sich anzuzeigen. Wer
-die Version wissen will, soll angemeldet sein - eine Versionsnummer ist
-fuer jemanden, der ohnehin schon im Netz steht, ein brauchbarer Hinweis
-darauf, welche bekannten Luecken diese Installation noch hat.
+Unlike `GET /api/i18n`, this route is NOT exempted from login requirements:
+the login page doesn't need it to display. Whoever
+wants to know the version should be logged in - a version number is
+for someone who's already on the network anyway, a useful hint
+about which known gaps this installation still has.
 
-Keine Zwischenspeicherung: `build_info()` liest `os.environ`, und das ist
-im laufenden Prozess unveraenderlich - aber die Tests setzen die Variablen
-mit `monkeypatch` pro Testfall, und ein Cache machte genau diese Tests
-voneinander abhaengig."""
+No caching: `build_info()` reads `os.environ`, and that's
+immutable in the running process - but tests set the variables
+with `monkeypatch` per test case, and a cache would make exactly these tests
+dependent on each other."""
 
 from __future__ import annotations
 

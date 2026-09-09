@@ -1,4 +1,4 @@
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -56,7 +56,7 @@ def test_level_hundred_percent_is_full():
 
 
 def test_level_is_clamped_not_wrapped():
-    """Loxone kann durch Rundung 100.4 schicken - das darf nicht zu 255 werden."""
+    """Loxone can send 100.4 due to rounding - that must not become 255."""
     assert to_matter_calls(cmd(8, 4, takes_value=True), "100.4")[0].payload["level"] == 254
     assert to_matter_calls(cmd(8, 4, takes_value=True), "-3")[0].payload["level"] == 0
 
@@ -67,8 +67,8 @@ def test_non_numeric_value_raises_a_clear_error():
 
 
 def test_non_numeric_value_raises_in_german():
-    """Deutsches Gegenstueck zu `test_non_numeric_value_raises_a_clear_error`
-    oben."""
+    """German counterpart to `test_non_numeric_value_raises_a_clear_error`
+    above."""
     i18n.set_language("de")
     with pytest.raises(UnsupportedValueError, match="keine Zahl"):
         to_matter_calls(cmd(8, 4, takes_value=True), "hell")
@@ -76,17 +76,17 @@ def test_non_numeric_value_raises_in_german():
 
 @pytest.mark.parametrize("value", ["nan", "inf", "-inf", "Infinity"])
 def test_non_finite_value_raises_a_clear_error(value: str):
-    """`float()` akzeptiert "nan"/"inf" anstandslos - das darf nicht bis zu
-    `round()` durchrutschen, wo es als englischer `ValueError` explodiert,
-    statt als `UnsupportedValueError` mit klarer Meldung."""
+    """`float()` accepts "nan"/"inf" without complaint - that must not slip
+    through to `round()`, where it explodes as an English `ValueError`
+    instead of as an `UnsupportedValueError` with a clear message."""
     with pytest.raises(UnsupportedValueError, match="is not a number"):
         to_matter_calls(cmd(8, 4, takes_value=True), value)
 
 
 @pytest.mark.parametrize("value", ["nan", "inf", "-inf", "Infinity"])
 def test_non_finite_value_raises_in_german(value: str):
-    """Deutsches Gegenstueck zu `test_non_finite_value_raises_a_clear_error`
-    oben."""
+    """German counterpart to `test_non_finite_value_raises_a_clear_error`
+    above."""
     i18n.set_language("de")
     with pytest.raises(UnsupportedValueError, match="keine Zahl"):
         to_matter_calls(cmd(8, 4, takes_value=True), value)
@@ -98,90 +98,90 @@ def test_color_temperature_converts_kelvin_to_mireds():
 
 
 def test_unknown_cluster_command_raises_rather_than_guessing():
-    """Lieber ein klarer Fehler als ein Kommando mit erfundener Nutzlast."""
+    """A clear error is better than a command with a made-up payload."""
     with pytest.raises(UnsupportedValueError, match="is not supported"):
         to_matter_calls(cmd(64999, 3, takes_value=True), "1")
 
 
 def test_unknown_cluster_command_raises_rather_than_guessing_in_german():
-    """Deutsches Gegenstueck zu
-    `test_unknown_cluster_command_raises_rather_than_guessing` oben."""
+    """German counterpart to
+    `test_unknown_cluster_command_raises_rather_than_guessing` above."""
     i18n.set_language("de")
     with pytest.raises(UnsupportedValueError, match="nicht unterstuetzt"):
         to_matter_calls(cmd(64999, 3, takes_value=True), "1")
 
 
 def test_known_cluster_with_unknown_command_raises():
-    """Cluster 768 (ColorControl) ist bekannt, Kommando 7 (MoveToColor, xy) ist
-    es hier (noch) nicht - die Bedienflaeche setzt Farbton und Saettigung ueber
-    Kommando 6, weiteres waere unbelegte Flaeche (siehe Moduldocstring von
-    translate.py). Der Fehler darf nicht nur beim voellig unbekannten Cluster
-    greifen, sondern auch bei einem bekannten Cluster mit unbekanntem
-    Kommando."""
+    """Cluster 768 (ColorControl) is known, but command 7 (MoveToColor, xy)
+    is not (yet) here - the UI sets hue and saturation via
+    command 6, anything more would be unclaimed territory (see the module
+    docstring of translate.py). The error must not only apply to a
+    completely unknown cluster, but also to a known cluster with an
+    unknown command."""
     with pytest.raises(UnsupportedValueError, match="is not supported"):
         to_matter_calls(cmd(768, 7, takes_value=True), "255,0,0")
 
 
 def test_known_cluster_with_unknown_command_raises_in_german():
-    """Deutsches Gegenstueck zu `test_known_cluster_with_unknown_command_raises`
-    oben."""
+    """German counterpart to `test_known_cluster_with_unknown_command_raises`
+    above."""
     i18n.set_language("de")
     with pytest.raises(UnsupportedValueError, match="nicht unterstuetzt"):
         to_matter_calls(cmd(768, 7, takes_value=True), "255,0,0")
 
 
 def test_onoff_cluster_with_unknown_command_raises():
-    """Cluster 6 (OnOff) ist bekannt, aber nur Kommando 0/1/2 sind es. Der
-    Dispatch darf nicht schon beim Cluster stehen bleiben - sonst bekaeme ein
-    unbekanntes OnOff-Kommando eine erfundene leere Nutzlast statt eines
-    Fehlers."""
+    """Cluster 6 (OnOff) is known, but only commands 0/1/2 are handled. The
+    dispatch must not stop at the cluster level - otherwise an unknown
+    OnOff command would get a made-up empty payload instead of an
+    error."""
     with pytest.raises(UnsupportedValueError, match="is not supported"):
         to_matter_calls(cmd(6, 99, takes_value=True), "1")
 
 
 def test_onoff_cluster_with_unknown_command_raises_in_german():
-    """Deutsches Gegenstueck zu `test_onoff_cluster_with_unknown_command_raises`
-    oben."""
+    """German counterpart to `test_onoff_cluster_with_unknown_command_raises`
+    above."""
     i18n.set_language("de")
     with pytest.raises(UnsupportedValueError, match="nicht unterstuetzt"):
         to_matter_calls(cmd(6, 99, takes_value=True), "1")
 
 
 def test_payload_builders_match_clusters_yaml_commands():
-    """Review-Fix C2, 2026-09-02: `_PAYLOAD_BUILDERS` und `clusters.yaml`
-    sind zwei unabhaengig gepflegte Erlaubnislisten fuer dasselbe - ein
-    Kommando, das die eine bedient, muss die andere kennen, sonst driften
-    sie auseinander (wie hier: (768, 10) stand in `_PAYLOAD_BUILDERS`, fehlte
-    aber in `clusters.yaml`, wodurch der Rohexport ein digitales `c768_cmd10`
-    baute, dessen Builder in Wirklichkeit einen Wert erwartete - siehe
-    Cluster-768-Eintrag in `clusters.yaml`). Dieser Test ist der Punkt: ohne
-    ihn kehrt genau diese Drift unbemerkt zurueck."""
+    """Review-Fix C2, 2026-09-02: `_PAYLOAD_BUILDERS` and `clusters.yaml`
+    are two independently maintained allow-lists for the same thing - a
+    command served by one must be known to the other, or the two drift
+    apart (as happened here: (768, 10) was in `_PAYLOAD_BUILDERS` but
+    missing from `clusters.yaml`, so the raw export built a digital
+    `c768_cmd10`, whose builder actually expected a value - see the
+    cluster-768 entry in `clusters.yaml`). This test is the point: without
+    it, exactly this drift returns unnoticed."""
     assert set(_PAYLOAD_BUILDERS) == known_command_pairs()
 
 
 def test_level_cluster_with_unknown_command_raises():
-    """Cluster 8 (LevelControl) ist bekannt, aber nur Kommando 0/4 sind es hier
-    bedient. Move/Step/Stop (u. a. Kommando-IDs 1, 2, 3, 5, 6, 7) sind reale
-    LevelControl-Kommandos, die z. B. bei Rohexport (`raw`) ohne Eintrag in
-    `clusters.yaml` auftauchen koennen - ihnen faelschlich eine
-    MoveToLevelWithOnOff-Nutzlast (level/transitionTime) unterzuschieben waere
-    genau der Fehler, den dieses Modul verhindern soll."""
+    """Cluster 8 (LevelControl) is known, but only commands 0/4 are handled
+    here. Move/Step/Stop (among others, command IDs 1, 2, 3, 5, 6, 7) are
+    real LevelControl commands that can, for instance, turn up in a raw
+    export (`raw`) without an entry in `clusters.yaml` - mistakenly giving
+    them a MoveToLevelWithOnOff payload (level/transitionTime) would be
+    exactly the error this module is meant to prevent."""
     with pytest.raises(UnsupportedValueError, match="is not supported"):
         to_matter_calls(cmd(8, 1, takes_value=True), "50")
 
 
 def test_level_cluster_with_unknown_command_raises_in_german():
-    """Deutsches Gegenstueck zu `test_level_cluster_with_unknown_command_raises`
-    oben."""
+    """German counterpart to `test_level_cluster_with_unknown_command_raises`
+    above."""
     i18n.set_language("de")
     with pytest.raises(UnsupportedValueError, match="nicht unterstuetzt"):
         to_matter_calls(cmd(8, 1, takes_value=True), "50")
 
 
 def test_a_packed_loxone_colour_becomes_hue_and_saturation():
-    """Reines Rot: Farbton 0, volle Saettigung (254). Der Weg ist
-    Loxone-Zahl -> RGB -> Hue/Sat, damit WebUI und Loxone denselben
-    Uebersetzer benutzen (Entwurf 2026-09-07, Abschnitt 6.5)."""
+    """Pure red: hue 0, full saturation (254). The path is
+    Loxone number -> RGB -> hue/sat, so that WebUI and Loxone use the same
+    translator (design 2026-09-07, section 6.5)."""
     command = cmd(768, 6, takes_value=True)
     call = to_matter_calls(command, "100")[0]
     assert call.cluster_id == 768
@@ -198,8 +198,8 @@ def test_white_has_no_saturation():
 
 
 def test_an_impossible_colour_number_is_rejected():
-    """Ein Kanal ueber 100 % kommt als 400 zurueck, nicht als erfundene
-    Farbe am Geraet."""
+    """A channel over 100% comes back as 400, not as a made-up
+    color on the device."""
     command = cmd(768, 6, takes_value=True)
     with pytest.raises(UnsupportedValueError):
         to_matter_calls(command, "999999999")
@@ -212,11 +212,11 @@ def test_colour_rejects_text():
 
 
 def test_channel_over_100_percent_names_channel_and_value():
-    """Review-Fix 2026-09-07: die Meldung darf beim Uebersetzen keine
-    Genauigkeit verlieren - eine allgemeine "ungueltiger Farbwert" waere
-    hier ausdruecklich NICHT ausreichend. 100100100 + 1 im gruenen Kanal
-    (Bit 1000) macht Gruen zu 101 %, waehrend Rot und Blau bei 100 % bleiben
-    - siehe `commands/color.py::loxone_rgb_to_rgb`."""
+    """Review-Fix 2026-09-07: the message must not lose precision when
+    translated - a generic "invalid color value" would explicitly NOT be
+    sufficient here. 100100100 + 1 in the green channel
+    (bit 1000) makes green 101%, while red and blue stay at 100%
+    - see `commands/color.py::loxone_rgb_to_rgb`."""
     command = cmd(768, 6, takes_value=True)
     with pytest.raises(UnsupportedValueError, match="green") as excinfo:
         to_matter_calls(command, "100101100")
@@ -224,11 +224,11 @@ def test_channel_over_100_percent_names_channel_and_value():
 
 
 def test_channel_over_100_percent_names_channel_and_value_in_german():
-    """Deutsches Gegenstueck zu
-    `test_channel_over_100_percent_names_channel_and_value` oben - vor
-    diesem Review-Fix war die Meldung immer Deutsch, unabhaengig von der
-    Spracheinstellung (`_payload_hue_saturation` reichte `str(exc)` aus
-    `color.py` unveraendert durch)."""
+    """German counterpart to
+    `test_channel_over_100_percent_names_channel_and_value` above - before
+    this review fix, the message was always German, regardless of the
+    language setting (`_payload_hue_saturation` passed `str(exc)` from
+    `color.py` through unchanged)."""
     i18n.set_language("de")
     command = cmd(768, 6, takes_value=True)
     with pytest.raises(UnsupportedValueError, match="gruen") as excinfo:
@@ -243,8 +243,8 @@ def test_negative_colour_number_raises_a_clear_error():
 
 
 def test_negative_colour_number_raises_in_german():
-    """Deutsches Gegenstueck zu
-    `test_negative_colour_number_raises_a_clear_error` oben."""
+    """German counterpart to
+    `test_negative_colour_number_raises_a_clear_error` above."""
     i18n.set_language("de")
     command = cmd(768, 6, takes_value=True)
     with pytest.raises(UnsupportedValueError, match="nicht negativ"):
@@ -258,8 +258,8 @@ def test_fractional_colour_number_raises_a_clear_error():
 
 
 def test_fractional_colour_number_raises_in_german():
-    """Deutsches Gegenstueck zu
-    `test_fractional_colour_number_raises_a_clear_error` oben."""
+    """German counterpart to
+    `test_fractional_colour_number_raises_a_clear_error` above."""
     i18n.set_language("de")
     command = cmd(768, 6, takes_value=True)
     with pytest.raises(UnsupportedValueError, match="ganzzahlig"):
@@ -267,14 +267,14 @@ def test_fractional_colour_number_raises_in_german():
 
 
 def test_a_lumitech_value_becomes_a_colour_temperature_command():
-    """Betriebsbefund vom 8. September 2026: der Lichtsteuerungs-Baustein
-    schickt Farbe UND Weiss ueber denselben Analogausgang. Ein Weisswert
-    muss deshalb aus DEMSELBEN Loxone-Schluessel ein anderes
-    Matter-Kommando ausloesen - MoveToColorTemperature (10) statt
+    """Operating finding from 8 September 2026: the light control block
+    sends color AND white over the same analog output. A white value
+    must therefore trigger a different
+    Matter command from the SAME Loxone key - MoveToColorTemperature (10) instead of
     MoveToHueAndSaturation (6).
 
-    201002700 = Kennung 20 | Helligkeit 100 % | 2700 K. Gemessener Wert aus
-    einer echten Anlage."""
+    201002700 = identifier 20 | brightness 100% | 2700 K. Measured value from
+    a real installation."""
     call = to_matter_calls(cmd(768, 6, takes_value=True), "201002700")[0]
     assert call.cluster_id == 768
     assert call.command_id == 10
@@ -282,9 +282,9 @@ def test_a_lumitech_value_becomes_a_colour_temperature_command():
 
 
 def test_an_rgb_value_still_becomes_a_hue_saturation_command():
-    """Die Gegenprobe: derselbe Schluessel, eine RGB-Zahl, unveraendertes
-    Verhalten. Ohne diesen Test koennte die Weiche den Farbweg kapern, ohne
-    dass es auffaellt."""
+    """The counterproof: the same key, an RGB number, unchanged
+    behavior. Without this test, the switch could hijack the color path without
+    it being noticed."""
     call = to_matter_calls(cmd(768, 6, takes_value=True), "100")[0]
     assert call.command_id == 6
     assert call.payload["hue"] == 0
@@ -302,19 +302,19 @@ def test_measured_lumitech_values_reach_their_kelvin(packed, kelvin):
 
 
 def test_a_malformed_lumitech_value_is_rejected_not_guessed():
-    """20|101|2700 - eine Helligkeit ueber 100 %. Das Format ist verletzt,
-    und eine Farbtemperatur daraus zu rechnen hiesse raten."""
+    """20|101|2700 - a brightness over 100%. The format is violated,
+    and computing a color temperature from it would be guessing."""
     with pytest.raises(UnsupportedValueError):
         to_matter_calls(cmd(768, 6, takes_value=True), "201012700")
 
 
 def test_a_colour_value_also_carries_its_brightness():
-    """Betriebsbefund vom 8. September 2026: der Helligkeitsregler der
-    Loxone-App bewirkte nichts. Loxone codiert die Helligkeit im Betrag der
-    RGB-Zahl, und die Bruecke schickte nur Hue und Saturation.
+    """Operating finding from 8 September 2026: the brightness slider of the
+    Loxone app had no effect. Loxone encodes brightness in the magnitude of the
+    RGB number, and the bridge sent only hue and saturation.
 
-    85019094 = (94,19,85) - Farbton 307 Grad bei 94 % Helligkeit. Erwartet
-    werden ZWEI Kommandos: die Farbe und der Pegel."""
+    85019094 = (94,19,85) - hue 307 degrees at 94% brightness. TWO
+    commands are expected: the color and the level."""
     calls = to_matter_calls(cmd(768, 6, takes_value=True), "85019094")
     assert [c.command_id for c in calls] == [6, 4]
     assert calls[0].cluster_id == 768
@@ -323,17 +323,17 @@ def test_a_colour_value_also_carries_its_brightness():
 
 
 def test_the_same_colour_dimmed_differs_only_in_the_level_command():
-    """Die beiden gemessenen Werte derselben Farbe: die Farbnutzlast muss
-    gleich bleiben, nur der Pegel sich unterscheiden. Faellt dieser Test,
-    faerbt die Helligkeit auf die Farbe ab."""
-    dunkel = to_matter_calls(cmd(768, 6, takes_value=True), "18004020")
-    hell = to_matter_calls(cmd(768, 6, takes_value=True), "85019094")
-    assert dunkel[0].payload["hue"] == pytest.approx(hell[0].payload["hue"], abs=2)
-    assert dunkel[1].payload["level"] < hell[1].payload["level"]
+    """The two measured values of the same color: the color payload must
+    stay the same, only the level differs. If this test fails,
+    brightness bleeds onto the color."""
+    dark = to_matter_calls(cmd(768, 6, takes_value=True), "18004020")
+    bright = to_matter_calls(cmd(768, 6, takes_value=True), "85019094")
+    assert dark[0].payload["hue"] == pytest.approx(bright[0].payload["hue"], abs=2)
+    assert dark[1].payload["level"] < bright[1].payload["level"]
 
 
 def test_a_lumitech_value_also_carries_its_brightness():
-    """200283057 = Kennung 20 | 28 % | 3057 K - zwei Kommandos, nicht eins."""
+    """200283057 = identifier 20 | 28 % | 3057 K - two commands, not one."""
     calls = to_matter_calls(cmd(768, 6, takes_value=True), "200283057")
     assert [c.command_id for c in calls] == [10, 4]
     assert calls[0].payload["colorTemperatureMireds"] == kelvin_to_mireds(3057)
@@ -341,20 +341,20 @@ def test_a_lumitech_value_also_carries_its_brightness():
 
 
 def test_the_colour_command_comes_before_the_level_command():
-    """Die Reihenfolge ist nicht beliebig: `MoveToLevelWithOnOff` schaltet
-    eine ausgeschaltete Leuchte EIN. Kaeme der Pegel zuerst, ginge sie in
-    der alten Farbe an und wechselte sichtbar nach - erst faerben, dann
-    einschalten."""
-    for wert in ("85019094", "200283057"):
-        calls = to_matter_calls(cmd(768, 6, takes_value=True), wert)
+    """The order is not arbitrary: `MoveToLevelWithOnOff` turns
+    an off lamp ON. If the level came first, it would turn on in
+    the old color and visibly change after - color first, then
+    turn on."""
+    for value in ("85019094", "200283057"):
+        calls = to_matter_calls(cmd(768, 6, takes_value=True), value)
         assert calls[0].cluster_id == 768
         assert calls[1].cluster_id == 8
 
 
 def test_brightness_zero_switches_the_lamp_off():
-    """Loxone-Wert 0 heisst aus. Vorher wurde daraus Saettigung 0, also
-    WEISS statt aus - der Fehler, den Entwurf Abschnitt 10 Punkt 5
-    beschrieb. `MoveToLevelWithOnOff` mit Pegel 0 schaltet wirklich ab."""
+    """Loxone value 0 means off. Previously this resulted in saturation 0, so
+    WHITE instead of off - the error that spec section 10 point 5
+    described. `MoveToLevelWithOnOff` with level 0 really turns off."""
     calls = to_matter_calls(cmd(768, 6, takes_value=True), "0")
     assert calls[-1].cluster_id == 8
     assert calls[-1].command_id == 4
@@ -362,52 +362,51 @@ def test_brightness_zero_switches_the_lamp_off():
 
 
 def test_commands_without_a_brightness_still_yield_exactly_one_call():
-    """Nur der Farb-Ausgang traegt zwei Bedeutungen. Alles andere bleibt
-    ein Kommando - ein zweites waere hier erfunden."""
-    for cluster, command, wert in [(6, 1, "1"), (8, 4, "50"), (768, 10, "2700")]:
-        assert len(to_matter_calls(cmd(cluster, command, takes_value=True), wert)) == 1
+    """Only the color output carries two meanings. Everything else remains
+    one command - a second would be invented here."""
+    for cluster, command, value in [(6, 1, "1"), (8, 4, "50"), (768, 10, "2700")]:
+        assert len(to_matter_calls(cmd(cluster, command, takes_value=True), value)) == 1
 
 
 def test_colour_commands_apply_even_while_the_lamp_is_off():
-    """An der Leuchte gemessen (8. September 2026): ein Farbbefehl an eine
-    AUSGESCHALTETE Leuchte verpufft. Der Wert 60100060 (gruen bei 60 %)
-    brachte sie weiss und auf 100 % hoch - die Farbe kam nie an.
+    """Measured on the lamp (8 September 2026): a color command to an
+    OFF lamp fizzles out. The value 60100060 (green at 60%)
+    turned it white and to 100% - the color never arrived.
 
-    Das ist Matter-Spezifikation, kein Geraetefehler: ColorControl-Befehle
-    wirken bei ausgeschaltetem Geraet nur, wenn das Bit `ExecuteIfOff`
-    gesetzt ist (`OptionsBitmap.kExecuteIfOff` = 1). Ohne dieses Bit
-    muesste der Pegel zuerst kommen - dann ginge die Leuchte sichtbar in
-    der ALTEN Farbe an und wechselte danach. Mit dem Bit bleibt die
-    Reihenfolge Farbe-dann-Pegel richtig und der Wechsel unsichtbar."""
-    for wert, erwartet in [("85019094", 6), ("200283057", 10)]:
-        farbe = to_matter_calls(cmd(768, 6, takes_value=True), wert)[0]
-        assert farbe.command_id == erwartet
-        assert farbe.payload["optionsMask"] == 1
-        assert farbe.payload["optionsOverride"] == 1
+    This is Matter specification, not a device error: ColorControl commands
+    work on an off device only if the `ExecuteIfOff` bit
+    is set (`OptionsBitmap.kExecuteIfOff` = 1). Without this bit,
+    the level would have to come first - then the lamp would visibly turn on in
+    the OLD color and change after. With the bit, the
+    color-then-level order stays correct and the change is invisible."""
+    for value, expected in [("85019094", 6), ("200283057", 10)]:
+        color_cmd = to_matter_calls(cmd(768, 6, takes_value=True), value)[0]
+        assert color_cmd.command_id == expected
+        assert color_cmd.payload["optionsMask"] == 1
+        assert color_cmd.payload["optionsOverride"] == 1
 
 
 def test_the_plain_colour_temperature_output_also_applies_while_off():
-    """Derselbe Grund fuer den getrennten `colortemp`-Ausgang: auch er
-    setzt eine Farbe, und auch er soll nicht verpuffen, nur weil die
-    Leuchte gerade aus ist."""
+    """Same reason for the separate `colortemp` output: it also
+    sets a color, and it too should not fizzle just because the
+    lamp is currently off."""
     call = to_matter_calls(cmd(768, 10, takes_value=True), "2700")[0]
     assert call.payload["optionsMask"] == 1
     assert call.payload["optionsOverride"] == 1
 
 
 def test_switching_off_sends_no_colour_command():
-    """Betriebsbefund vom 8. September 2026: beim Ausschalten blitzte die
-    Leuchte kurz sehr hell WEISS auf.
+    """Operating finding from 8 September 2026: when turning off, the
+    lamp briefly flashed very bright WHITE.
 
-    Loxone schickt zum Ausschalten den Wert 0. In der RGB-Codierung ist das
-    (0,0,0) - Farbton 0, **Saettigung 0**, also WEISS - und Helligkeit 0.
-    Daraus wurden zwei Kommandos: erst "faerbe weiss", dann "schalte aus".
-    Die Leuchte gehorchte dem ersten, waehrend sie noch leuchtete; weiss
-    nutzt alle LEDs, gesaettigtes Rot nur die roten, also war der Blitz
-    sogar heller als das Bild davor.
+    Loxone sends value 0 to turn off. In RGB encoding, that is
+    (0,0,0) - hue 0, **saturation 0**, so WHITE - and brightness 0.
+    This resulted in two commands: first "color white", then "turn off".
+    The lamp obeyed the first while it was still on; white uses all LEDs,
+    saturated red only the red ones, so the flash was
+    even brighter than the image before.
 
-    Bei Helligkeit 0 gibt es keine Farbe zu setzen. Es bleibt genau ein
-    Kommando: ausschalten."""
+    At brightness 0, there is no color to set. Only one command remains: turn off."""
     calls = to_matter_calls(cmd(768, 6, takes_value=True), "0")
     assert len(calls) == 1
     assert calls[0].cluster_id == 8
@@ -416,8 +415,8 @@ def test_switching_off_sends_no_colour_command():
 
 
 def test_lumitech_at_zero_brightness_also_sends_no_colour_command():
-    """Derselbe Fall auf dem Weiss-Weg: 200003691 = Kennung 20 | 0 % |
-    3691 K. Auch hier taucht im Log der Anlage die Helligkeit 0 auf."""
+    """Same case on the white path: 200003691 = identifier 20 | 0% |
+    3691 K. Here too, brightness 0 appears in the installation's log."""
     calls = to_matter_calls(cmd(768, 6, takes_value=True), "200003691")
     assert len(calls) == 1
     assert calls[0].cluster_id == 8
@@ -425,8 +424,8 @@ def test_lumitech_at_zero_brightness_also_sends_no_colour_command():
 
 
 def test_a_barely_dimmed_value_still_carries_its_colour():
-    """Die Gegenprobe: 1 ist (1,0,0) - dunkelrot bei 1 %, NICHT aus. Wer
-    die Bedingung auf 'fast null' aufweicht, verliert hier die Farbe."""
+    """The counterproof: 1 is (1,0,0) - dark red at 1%, NOT off. If
+    the condition is weakened to 'almost zero', the color is lost here."""
     calls = to_matter_calls(cmd(768, 6, takes_value=True), "1")
     assert len(calls) == 2
     assert calls[0].cluster_id == 768

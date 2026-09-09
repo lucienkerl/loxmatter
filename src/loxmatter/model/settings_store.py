@@ -1,4 +1,4 @@
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -14,19 +14,18 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Zugriff auf die Verbindungsdaten dieser Bruecke - IP und Ports, wie sie
-heute schon im Export-Tab eingegeben werden (`api/export.py`).
+"""Access to this bridge's connection data - IP and ports, as they are
+already entered today in the export tab (`api/export.py`).
 
-Eigenes Modul und eigene Klasse, analog zu `auth_store.py`: die `setting`-
-Tabelle ist generisch (Schluessel/Wert) angelegt, genau damit weitere
-Konfiguration wie diese hier denselben Weg gehen kann (siehe dortiger
-Moduldocstring, Spec 14.2 des Login-Entwurfs). Diese Klasse ist eine weitere
-Sicht auf dieselbe Tabelle und dieselbe Verbindung, kein zweiter
-Verbindungsaufbau.
+Its own module and its own class, analogous to `auth_store.py`: the
+`setting` table is generic (key/value) by design, precisely so that further
+configuration like this one can go the same way (see that module's
+docstring, Spec 14.2 of the login design). This class is another view onto
+the same table and the same connection, not a second connection.
 
-Siehe docs/superpowers/specs/2026-09-03-geraete-dashboard-und-export-design.md,
-Abschnitt 4: serverseitig statt `localStorage`, weil die Bridge-Adresse eine
-Eigenschaft der Installation ist, nicht des Browsers."""
+See docs/superpowers/specs/2026-09-03-device-dashboard-and-export-design.md,
+section 4: server-side instead of `localStorage`, because the bridge address
+is a property of the installation, not of the browser."""
 
 from __future__ import annotations
 
@@ -50,9 +49,9 @@ _ALL_KEYS = (
 
 @dataclass(frozen=True)
 class BridgeSettings:
-    """`bridge_ip`/`saved_at` sind `None`, solange niemand gespeichert hat -
-    die Ports fallen in dem Fall auf die Vorgabewerte zurueck, die beim
-    Erzeugen des Stores gesetzt wurden."""
+    """`bridge_ip`/`saved_at` are `None` as long as nobody has saved anything
+    - the ports fall back in that case to the default values that were set
+    when the store was created."""
 
     bridge_ip: str | None
     udp_port: int
@@ -61,8 +60,8 @@ class BridgeSettings:
 
 
 class BridgeSettingsStore:
-    """Zugriff auf `setting` ueber die Verbindung des Stores - wie
-    `AuthStore`, nur fuer andere Schluessel."""
+    """Access to `setting` via the store's connection - like `AuthStore`,
+    just for different keys."""
 
     def __init__(
         self, db: sqlite3.Connection, *, default_udp_port: int, default_listen_port: int
@@ -89,8 +88,8 @@ class BridgeSettingsStore:
         )
 
     def save(self, *, bridge_ip: str, udp_port: int, listen_port: int) -> BridgeSettings:
-        """Schreibt alle drei Werte und den Zeitstempel in einer Transaktion
-        - kein Teil-Update: die drei Felder gehoeren fachlich zusammen."""
+        """Writes all three values and the timestamp in one transaction -
+        no partial update: the three fields belong together by domain."""
         saved_at = now_iso()
         for key, value in (
             (_BRIDGE_IP_KEY, bridge_ip),

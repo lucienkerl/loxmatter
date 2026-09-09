@@ -1,183 +1,200 @@
-# Test-Host: matter-server + OTBR
+# Test host: matter-server + OTBR
 
-Testumgebung fuer Phase 1 (Task 6). **Nicht** der Produktions-Stack aus Spec 4.1 —
-kein Hardening, kein Deployment-Guide, keine Diagnose-Seite. Das ist Phase 6. Dieses
-Dokument haelt fest, was auf dem konkreten Host tatsaechlich funktioniert hat, als
-Rohstoff dafuer.
+Test environment for Phase 1 (Task 6). **Not** the production stack from Spec 4.1 —
+no hardening, no deployment guide, no diagnostics page. That's Phase 6. This
+document records what actually worked on the concrete host, as
+raw material for that.
 
-**Aktueller Host:** `pi@10.0.1.56` — ein Raspberry Pi 4 Model B Rev 1.5 (Debian 13
-"trixie", Raspberry Pi OS, aarch64, 8 GB RAM). Dieses Verzeichnis hiess ursprünglich
-`deploy/testvm/` und lief auf einer Ubuntu-VM (`lucienkerl@10.0.1.215`). Es wurde auf
-den Pi umgezogen, weil **die VM keinen Bluetooth-Adapter hatte** — Matter-Commissioning
-läuft über BLE, und ohne Adapter kann kein Gerät je eingelernt werden (`ls
-/sys/class/bluetooth` lieferte nichts, `bluetooth.service` war inaktiv). Der Pi hat
-einen eingebauten Adapter (`hci0`). Die VM-Historie inklusive aller dort gefundenen
-Probleme ist unten unter "Historie: die VM" festgehalten, weil die Ursachen (NAT64/
-Firewall, OTBR-Image-Variante, Baudrate) unverändert für den Pi gelten — derselbe
-Dongle, dieselbe Firmware, dasselbe Image.
+**Current host:** `pi@10.0.1.56` — a Raspberry Pi 4 Model B Rev 1.5 (Debian 13
+"trixie", Raspberry Pi OS, aarch64, 8 GB RAM). This directory used to be called
+`deploy/testvm/` and ran on an Ubuntu VM (`lucienkerl@10.0.1.215`). It was moved to
+the Pi because **the VM had no Bluetooth adapter** — Matter commissioning
+runs over BLE, and without an adapter no device can ever be commissioned (`ls
+/sys/class/bluetooth` returned nothing, `bluetooth.service` was inactive). The Pi has
+a built-in adapter (`hci0`). The VM history including every problem found there
+is recorded below under "History: the VM", because the causes (NAT64/
+firewall, OTBR image variant, baud rate) apply unchanged to the Pi — same
+dongle, same firmware, same image.
 
-## Stand: was laeuft
+## Status: what's running
 
 - `docker exec otbr ot-ctl state` → `leader`
-- RCP verbunden mit `RADIO_BAUDRATE=460800` (wie auf der VM — derselbe SONOFF Dongle
-  Plus MG24, dieselbe Firmware, unveraendert uebernommen und beim ersten Versuch
-  erfolgreich). `ot-ctl version` liefert `OPENTHREAD/; POSIX; ...`; im Syslog laufen
-  Spinel-Frames zwischen otbr-agent und dem RCP (z. B. `PROP_VALUE_GET, key:TIMESTAMP`)
-  — der Dongle antwortet.
-- `matter-server` lauscht auf `0.0.0.0:5580` und `[::]:5580`, **mit aktiviertem BLE**
-  (siehe "BLE aktivieren" unten für den Beweis).
-- Von einem Mac im selben LAN: `uv run loxmatter inspect --node 1 --url
-  ws://10.0.1.56:5580/ws` verbindet sich und liefert auf stderr:
+- RCP connected with `RADIO_BAUDRATE=460800` (as on the VM — the same SONOFF Dongle
+  Plus MG24, the same firmware, carried over unchanged and successful on the
+  first attempt). `ot-ctl version` returns `OPENTHREAD/; POSIX; ...`; in syslog,
+  Spinel frames run between otbr-agent and the RCP (e.g. `PROP_VALUE_GET, key:TIMESTAMP`)
+  — the dongle responds.
+- `matter-server` listens on `0.0.0.0:5580` and `[::]:5580`, **with BLE enabled**
+  (see "Enable BLE" below for the proof).
+- From a Mac on the same LAN: `uv run loxmatter inspect --node 1 --url
+  ws://10.0.1.56:5580/ws` connects and returns on stderr:
   ```
-  Node 1 ist am matter-server (ws://10.0.1.56:5580/ws) nicht bekannt — kommissioniert?
+  `Node 1 ist am matter-server (ws://10.0.1.56:5580/ws) nicht bekannt — kommissioniert?`
   ```
-  Exit-Code 1 — laut Definition of Done der Beweis, dass die Verbindung steht (kein
-  kommissioniertes Geraet vorhanden, das ist Aufgabe von Task 7).
+  Exit code 1 — per the Definition of Done, the proof that the connection stands (no
+  commissioned device present, that's Task 7's job).
 
 ## Deployment
 
-Der komplette Ablauf, von oben nach unten durchlaufbar. Kein `-it` verwenden — es
-gibt kein interaktives TTY über SSH `BatchMode=yes`, `docker exec` reicht. **Kein
-`sudo`** — der Pi verlangt dafür ein Passwort, das nie angefordert oder eingegeben
-wird; alles unten ist als `pi`-User machbar.
+The complete workflow, runnable top to bottom. Don't use `-it` — there's
+no interactive TTY over SSH `BatchMode=yes`, `docker exec` is enough. **No
+`sudo`** — the Pi asks for a password for that, which is never requested or
+entered; everything below can be done as the `pi` user.
 
-**Zwei zusätzliche manuelle Schritte sind auf dem Pi nötig, die auf der VM nicht
-nötig waren.** Sie stehen unten bereits an der richtigen Stelle in der Reihenfolge
-(Begründung und Details in "Bluetooth-Adapter ist rfkill-soft-blocked" und
-"start-stop-daemon haengt auf dem Pi-Kernel" weiter unten):
+**Two additional manual steps are needed on the Pi that weren't needed on
+the VM.** They're already in the right place below, in order
+(rationale and details in "Bluetooth adapter is rfkill-soft-blocked" and
+"start-stop-daemon hangs on the Pi kernel" further down):
 
-1. `hci0` per rfkill entsperren, **bevor** `matter-server` gestartet wird (Schritt 2).
-2. `otbr-agent`/`otbr-web` nach `docker compose up -d` manuell nachstarten, weil
-   `start-stop-daemon` im OTBR-Image auf diesem Kernel nie fertig wird (Schritt 4).
+1. Unblock `hci0` via rfkill, **before** `matter-server` is started (step 2).
+2. Manually restart `otbr-agent`/`otbr-web` after `docker compose up -d`, because
+   `start-stop-daemon` in the OTBR image never finishes on this kernel (step 4).
 
-**Schritt 1 — Dateien kopieren und Konfiguration anlegen:**
+**Step 1 — copy files and create the configuration:**
 
 ```bash
-# auf dem Pi (seit 2026-09-03 ein Git-Checkout, vorher per scp kopierte
-# Einzeldateien unter ~/loxmatter-testhost):
+# on the Pi (a git checkout since 2026-09-03, previously individual files
+# copied via scp under ~/loxmatter-testhost):
 git clone https://github.com/lucienkerl/loxmatter.git ~/matter-loxone
 cd ~/matter-loxone/deploy/testhost
-cp .env.example .env      # RADIO_DEVICE/RADIO_BAUDRATE/BACKBONE_IF/BLUETOOTH_ADAPTER ggf. anpassen
+cp .env.example .env      # adjust RADIO_DEVICE/RADIO_BAUDRATE/BACKBONE_IF/BLUETOOTH_ADAPTER if needed
 mkdir -p data
 
-# MINISERVER_IP muss gesetzt werden, leer ausgeliefert. LOXMATTER_API_TOKEN
-# ist optional (siehe unten) - wer es trotzdem setzen will, ERSETZT die
-# vorhandene Zeile, statt eine zweite anzuhaengen: eine zweite Definition
-# derselben Variablen waere zwar wirksam (Compose nimmt die letzte), aber
-# wer die Datei spaeter bearbeitet, aendert dann die falsche Zeile.
+# MINISERVER_IP must be set, shipped empty. LOXMATTER_API_TOKEN
+# is optional (see below) - anyone who wants to set it anyway REPLACES the
+# existing line instead of appending a second one: a second definition
+# of the same variable would technically work (Compose takes the last one),
+# but whoever edits the file later would then change the wrong line.
 sed -i "s|^LOXMATTER_API_TOKEN=.*|LOXMATTER_API_TOKEN=$(openssl rand -hex 32)|" .env
-sed -i "s|^MINISERVER_IP=.*|MINISERVER_IP=10.0.1.99|" .env   # eigene Adresse einsetzen
+sed -i "s|^MINISERVER_IP=.*|MINISERVER_IP=10.0.1.99|" .env   # substitute your own address
 ```
 
-**Zugang zur Oberfläche: ein Passwort, nicht `LOXMATTER_API_TOKEN`.** Seit
-dem WebUI-Login (Task 9/10, Phase 6) vergibt man beim ersten Öffnen von
-`http://10.0.1.56:8080/` im Browser ein Passwort — bis das geschehen ist,
-liefert **keine** `/api`-Route irgendetwas aus (HTTP 401), unabhängig davon,
-ob `LOXMATTER_API_TOKEN` gesetzt ist. Das gilt auch für die
-Fabric-Sicherung (`GET /api/diagnostics/fabric-backup`): dieser Stack läuft
-mit `network_mode: host` und hängt das matter-server-Datenverzeichnis in den
-loxmatter-Dienst ein, aber ein fehlendes Token ist dafür seit dem
-WebUI-Login nicht mehr die entscheidende Bedingung — ohne vergebenes
-Passwort antwortet ohnehin keine `/api`-Route, diese eingeschlossen; der
-frühere eigene 403-Zweig für „kein Token gesetzt" ist damit entfallen.
+**Access to the interface: a password, not `LOXMATTER_API_TOKEN`.** Since
+the WebUI login (Task 9/10, Phase 6), you set a password the first time you open
+`http://10.0.1.56:8080/` in the browser — until that happens,
+**no** `/api` route returns anything (HTTP 401), regardless of
+whether `LOXMATTER_API_TOKEN` is set. That also applies to the
+fabric backup (`GET /api/diagnostics/fabric-backup`): this stack runs
+with `network_mode: host` and mounts matter-server's data directory into the
+loxmatter service, but a missing token is no longer the decisive condition for
+that since the WebUI login — without a password set, no `/api` route
+responds anyway, this one included; the
+former dedicated 403 branch for "no token set" has therefore been dropped.
 
-`LOXMATTER_API_TOKEN` bleibt trotzdem sinnvoll gesetzt, wenn diese Instanz
-auch per Skript oder `curl` angesprochen werden soll — für den Browser
-selbst wird es nicht mehr gebraucht. `openssl rand -hex 32` ist der
-empfohlene Weg dazu — es muss in einem HTTP-Header und in einem
-WebSocket-Subprotokoll übertragbar sein, also keine Leerzeichen, kein
-Komma, ASCII; `openssl rand -hex 32` liefert nur `[0-9a-f]`.
+`LOXMATTER_API_TOKEN` nonetheless remains worth setting if this instance
+should also be reachable via script or `curl` — for the browser
+itself it's no longer needed. `openssl rand -hex 32` is the
+recommended way to generate it — it must be transmittable in an HTTP header and in a
+WebSocket subprotocol, so no spaces, no
+comma, ASCII only; `openssl rand -hex 32` produces only `[0-9a-f]`.
 
-**Passwort vergessen — der Notausgang.** `loxmatter set-password` setzt es
-neu und meldet dabei alle offenen Sitzungen ab. Auf DIESEM Stack **im
-laufenden Container** ausführen, nicht auf dem Pi selbst:
+**Forgot the password — the emergency exit.** `loxmatter set-password` resets it
+and logs out all open sessions in the process. Run this on THIS stack **inside
+the running container**, not on the Pi itself:
 
 ```bash
 docker compose exec loxmatter loxmatter set-password
 ```
 
-Der Grund, warum `uv run loxmatter set-password` auf dem Pi hier NICHT
-funktioniert: die Datenbank liegt im benannten Docker-Volume
-`loxmatter-store` (siehe `docker-compose.yml`, `LOXMATTER_STORE:
-/data/loxmatter.sqlite`) — dieser Pfad existiert nur *innerhalb* des
-Containers. Auf dem Host fehlt diese Umgebungsvariable, `set-password`
-träfe dort ersatzweise den Nutzer-Home-Standard
-(`~/.loxmatter/loxmatter.sqlite`), also eine andere, leere Datenbank —
-ohne diesen Notausgang-Fund hätte der Befehl das kommentarlos angelegt und
-Erfolg gemeldet, während die eigentliche Brücke unverändert gesperrt
-bliebe. Er bricht deshalb mit einem klaren Fehler ab, wenn die angegebene
-Datenbank nicht existiert, statt eine neue anzulegen.
+Why `uv run loxmatter set-password` does NOT work on the Pi here:
+the database lives in the named Docker volume
+`loxmatter-store` (see `docker-compose.yml`, `LOXMATTER_STORE:
+/data/loxmatter.sqlite`) — this path only exists *inside* the
+container. On the host this environment variable is missing, so `set-password`
+would instead hit the user-home default there
+(`~/.loxmatter/loxmatter.sqlite`), i.e. a different, empty database —
+without catching this emergency-exit trap, the command would have created that without comment and
+reported success, while the actual bridge stayed locked
+unchanged. It therefore aborts with a clear error if the specified
+database doesn't exist, instead of creating a new one.
 
-## WiFi/Ethernet-only (ohne Thread-Funkmodul)
+## WiFi/Ethernet-only (without a Thread radio module)
 
-Der `otbr`-Dienst steht seit dem 5. September 2026 hinter dem Compose-Profil
-`thread`. Wer nur WLAN- oder Ethernet-Matter-Geräte anbinden will, lässt
-`COMPOSE_PROFILES` in der `.env` leer — dann wird der Border Router gar nicht
-erzeugt, und `RADIO_DEVICE`, `RADIO_BAUDRATE` und `BACKBONE_IF` bleiben
-wirkungslos.
+The `otbr` service has sat behind the `thread` Compose profile since
+September 5, 2026. Anyone who only wants to connect WiFi or Ethernet Matter devices
+leaves `COMPOSE_PROFILES` empty in the `.env` — then the Border Router is never
+created, and `RADIO_DEVICE`, `RADIO_BAUDRATE` and `BACKBONE_IF` stay
+ineffective.
 
-**Warum das nötig war:** `otbr` reicht mit `devices: -
-${RADIO_DEVICE}:${RADIO_DEVICE}` ein echtes Gerät durch. Steckt kein Funkmodul,
-scheitert `docker compose up` mit „error gathering device information" — und
-zwar für den *gesamten* Stack, auch für die beiden Dienste, die das Modul nie
-gebraucht hätten.
+**Why this was necessary:** `otbr` passes through a real device via `devices: -
+${RADIO_DEVICE}:${RADIO_DEVICE}`. If no radio module is plugged in,
+`docker compose up` fails with "error gathering device information" — and
+that's for the *entire* stack, including the two services that never
+needed the module.
 
-**BLE bleibt in beiden Betriebsarten nötig.** Auch ein WLAN-Matter-Gerät wird
-über Bluetooth eingelernt; `BLUETOOTH_ADAPTER` und der rfkill-Abschnitt weiter
-unten gelten unverändert.
+**BLE remains necessary in both operating modes.** Even a WiFi Matter device is
+commissioned over Bluetooth; `BLUETOOTH_ADAPTER` and the rfkill section further
+down apply unchanged.
 
-**Nachrüsten:** Funkmodul stecken, in der `.env` `COMPOSE_PROFILES=thread`
-setzen und `RADIO_DEVICE` auf den richtigen Pfad, dann `docker compose up -d`.
-Der `start-stop-daemon`-Workaround weiter unten wird ab dann wieder gebraucht.
+**Retrofitting:** plug in the radio module, set `COMPOSE_PROFILES=thread`
+in the `.env` and point `RADIO_DEVICE` at the right path, then `docker compose up -d`.
+The `start-stop-daemon` workaround further down is needed again from that point on.
 
-## Aktualisieren
+## Updating
 
-**Bestehende Thread-Installation:** Fehlt in der `.env` `COMPOSE_PROFILES`
-(jede Installation von vor dem 5. September 2026), landet dieser Branch ohne
-erneuten Lauf des Installers stillschweigend im WiFi-Modus — der laufende
-`otbr`-Container wird dabei nicht gestoppt, aber bei der nächsten
-Konfigurationsänderung nicht mehr neu erzeugt, und ein `docker compose down
-&& up -d` bringt den Thread-Router danach nicht zurück. Wer Thread nutzt,
-trägt deshalb vor dem nächsten `docker compose up` `COMPOSE_PROFILES=thread`
-in die `.env` ein.
+> **⚠ As of 8 September 2026, a `git pull` brings an image switch.**
+> `docker-compose.yml` no longer points to `python-matter-server`, but to
+> `ghcr.io/matter-js/matterjs-server:stable`. A bare `docker compose up -d`
+> after that recreates the `matter-server` service on the new image — and
+> **executes the one-way migration of the Fabric directory**, without
+> the previously required `chown` and without backup. If it fails, the Fabric
+> is gone and every commissioned device must be reset and re-paired.
+>
+> Anyone updating from a state before this date should therefore
+> **first** work through "Migration to matterjs-server (UNTESTED)" further below — backup,
+> `chown`, then the first start — and only then continue here.
+>
+> `./scripts/update.sh` is not affected by this: it operates with `--no-deps
+> --force-recreate loxmatter` exclusively on its own service and leaves
+> `matter-server` untouched. The risk lies solely in manually running
+> `docker compose up -d`.
 
-Auf dem Rechner, auf dem die Brücke läuft:
+**Existing Thread installation:** If `COMPOSE_PROFILES` is missing from the `.env`
+(every installation before 5 September 2026), this branch silently lands in WiFi mode without
+re-running the installer — the running
+> `otbr` container is not stopped, but will not be recreated on the next
+configuration change, and a `docker compose down
+&& up -d` will not bring the Thread router back after that. Anyone using Thread
+should therefore add `COMPOSE_PROFILES=thread`
+to the `.env` before the next `docker compose up`.
+
+On the machine where the bridge runs:
 
 ```bash
 cd ~/matter-loxone && ./scripts/update.sh
 ```
 
-Holt den neuesten Stand, baut das Image, startet den Dienst neu. Nur bauen
-und neu starten, ohne zu holen: `./scripts/update.sh --no-pull`.
+Pulls the latest state, builds the image, restarts the service. Just build
+and restart without pulling: `./scripts/update.sh --no-pull`.
 
-Das Skript findet den Stack über seinen eigenen Pfad — es gibt nichts zu
-konfigurieren, solange es aus dem Repository heraus läuft.
+The script finds the stack via its own path — there's nothing to
+configure as long as it runs from inside the repository.
 
-Was es zusichert:
+What it guarantees:
 
-- **Es sichert die Signaldatenbank, bevor es irgendetwas ändert.** Darin
-  stehen die Signalschlüssel, und die sind die Verdrahtung in der
-  Loxone-Konfiguration — das Einzige, was ein misslungenes Update nicht
-  wiederherstellen könnte. Die Sicherungen liegen unter
-  `~/loxmatter-backups/`, die letzten zehn bleiben.
-- **matter-server und OTBR bleiben unangetastet** (`docker compose up
-  --no-deps`). Ohne das erzeugt Compose sie mit neu, sobald sich die
-  Projektkonfiguration geändert hat; OTBRs Thread-Zustand übersteht das zwar
-  (er liegt im Volume `otbr-state`), aber ein Neustart des Thread-Netzes
-  ohne Grund gehört nicht zu einem Update.
-- **Es bricht ab, bevor es schadet.** Schlägt die Sicherung oder der Build
-  fehl, läuft der alte Dienst unverändert weiter. Antwortet `/health` nach
-  dem Neustart nicht innerhalb von 20 Sekunden, zeigt es die letzten
-  Logzeilen und meldet einen Fehlschlag statt Erfolg.
-- Am Ende sagt es, aus welchem Commit es ausgeliefert hat und wie viele
-  Signale je Gerät exportiert werden.
+- **It backs up the signal database before it changes anything.** That's where
+  the signal keys live, and those are the wiring in the
+  Loxone configuration — the one thing a botched update couldn't
+  restore. The backups live under
+  `~/loxmatter-backups/`, the last ten are kept.
+- **matter-server and OTBR are left untouched** (`docker compose up
+  --no-deps`). Without that, Compose would recreate them too as soon as the
+  project configuration changes; OTBR's Thread state does survive that
+  (it lives in the `otbr-state` volume), but restarting the Thread network
+  for no reason isn't part of an update.
+- **It aborts before it does damage.** If the backup or the build
+  fails, the old service keeps running unchanged. If `/health` doesn't respond
+  within 20 seconds after the restart, it shows the last
+  log lines and reports a failure instead of success.
+- At the end it reports which commit it shipped from and how many
+  signals per device are exported.
 
-## BLE aktivieren
+## Enable BLE
 
-Das ist der eigentliche Zweck des Umzugs. `python-matter-server` nutzt Bluetooth nur,
-wenn es explizit angewiesen wird — ungefragt bleibt BLE-Commissioning aus, auch wenn
-ein Adapter vorhanden ist. Der Options-Name kommt aus dem Image selbst, nicht aus
-Vermutung:
+That's the actual point of the move. `python-matter-server` only uses Bluetooth
+when explicitly told to — unasked, BLE commissioning stays off even if
+an adapter is present. The option name comes from the image itself, not from
+guessing:
 
 ```
 $ docker run --rm ghcr.io/home-assistant-libs/python-matter-server:stable --help
@@ -186,21 +203,21 @@ $ docker run --rm ghcr.io/home-assistant-libs/python-matter-server:stable --help
                         commisisoning support.
 ```
 
-`hci0` ist der einzige Adapter auf dem Pi → `--bluetooth-adapter 0`. Das Image-Default-
-`CMD` ist `--storage-path /data --paa-root-cert-dir /data/credentials` (per `docker
-inspect --format '{{.Config.Cmd}}'` geprüft); `command:` in Compose überschreibt das
-CMD vollständig, deshalb übernimmt die Compose-Datei diese beiden Argumente und ergänzt
-`--bluetooth-adapter ${BLUETOOTH_ADAPTER}`. Die Adapter-ID ist wie `RADIO_DEVICE`,
-`RADIO_BAUDRATE` und `BACKBONE_IF` über `.env` konfigurierbar (`BLUETOOTH_ADAPTER`,
-Default `0` in `docker-compose.yml` falls `.env` die Variable nicht setzt) statt im
-Compose-File hartkodiert — auf einem anderen Host mit mehreren Adaptern kann `hci0`
-eine andere ID haben.
+`hci0` is the only adapter on the Pi → `--bluetooth-adapter 0`. The image's default
+`CMD` is `--storage-path /data --paa-root-cert-dir /data/credentials` (verified via `docker
+inspect --format '{{.Config.Cmd}}'`); `command:` in Compose overrides the
+CMD completely, so the compose file carries over these two arguments and adds
+`--bluetooth-adapter ${BLUETOOTH_ADAPTER}`. The adapter ID, like `RADIO_DEVICE`,
+`RADIO_BAUDRATE` and `BACKBONE_IF`, is configurable via `.env` (`BLUETOOTH_ADAPTER`,
+default `0` in `docker-compose.yml` if `.env` doesn't set the variable) instead of
+hardcoded in the compose file — on a different host with several adapters, `hci0`
+might have a different ID.
 
-**Verifikation, dass der Adapter tatsächlich ankommt — nicht optional:** Ein Stack
-ohne BLE sieht in den Logs und im WebSocket-Verhalten identisch aus wie einer mit BLE,
-bis eine Kommissionierung fehlschlägt. Der Code
-(`matter_server/server/stack.py`, `MatterStack.__init__`) loggt das explizit, aber nur
-auf `DEBUG`:
+**Verification that the adapter actually gets through — not optional:** a stack
+without BLE looks identical in the logs and WebSocket behaviour to one with BLE,
+until a commissioning attempt fails. The code
+(`matter_server/server/stack.py`, `MatterStack.__init__`) logs this explicitly, but only
+at `DEBUG`:
 
 ```python
 self.logger.debug(
@@ -210,11 +227,11 @@ self.logger.debug(
 )
 ```
 
-Der Standard-Log-Level ist `info` (`--log-level`, Default laut `--help`) — die Zeile
-erscheint im normalen Betrieb **nicht**. Verifiziert per einmaligem Lauf mit
-`--log-level debug` gegen dasselbe `./data`-Verzeichnis (Compose-Service vorher
-gestoppt, danach normal mit `docker compose up -d matter-server` wieder gestartet —
-kein `--log-level debug` im Dauerbetrieb, das wäre zu geschwätzig):
+The default log level is `info` (`--log-level`, default per `--help`) — this line
+does **not** appear in normal operation. Verified via a one-off run with
+`--log-level debug` against the same `./data` directory (the Compose service stopped
+first, then restarted normally afterwards with `docker compose up -d matter-server` —
+no `--log-level debug` in ongoing operation, that would be too chatty):
 
 ```
 $ docker compose stop matter-server
@@ -228,17 +245,22 @@ $ docker run --rm --network host --security-opt apparmor=unconfined \
   Using storage file: /data/chip.json - Bluetooth commissioning enabled: YES (adapter 0)
 ```
 
-Das ist der Beweis: `bluetooth_adapter_id` kommt als `0` im Stack an, nicht `None`
-(`None` würde `chip.native.Init(999)` aufrufen — der Code kommentiert das selbst:
-"give the fake adapter id of 999 to disable bluetooth"). Task 7 kann also tatsächlich
-über BLE kommissionieren, sofern der Adapter zum Zeitpunkt des Verbindungsversuchs
-`UP`/`Powered` ist (siehe naechster Abschnitt — das ist getrennt von dieser Prüfung).
+That's the proof: `bluetooth_adapter_id` arrives as `0` in the stack, not `None`
+(`None` would call `chip.native.Init(999)` — the code comments on this itself:
+"give the fake adapter id of 999 to disable bluetooth"). So Task 7 can actually
+commission over BLE, provided the adapter is
+`UP`/`Powered` at the moment of the connection attempt (see the next section — that's separate from this check).
 
-## Bluetooth-Adapter ist rfkill-soft-blocked (neu gegenüber der VM)
+> **As of 8 September 2026**, `matterjs-server` runs here. `--bluetooth-adapter`
+> is named the same there, but the container is unprivileged and additionally needs
+> `NOBLE_BINDINGS=dbus` — see "Migration to matterjs-server". The quote above remains
+> as evidence for the old image.
 
-`hci0` stand beim Erheben der Zielumgebung auf `DOWN`. Das war zunächst nicht weiter
-beunruhigend — die Annahme war, `bluetoothd`/`matter-server` bringt den Adapter selbst
-hoch. Das stimmt nur teilweise:
+## Bluetooth adapter is rfkill-soft-blocked (new compared to the VM)
+
+`hci0` was `DOWN` when the target environment was surveyed. That wasn't immediately
+worrying — the assumption was that `bluetoothd`/`matter-server` would bring the adapter up
+itself. That's only partly true:
 
 ```
 $ bluetoothctl show
@@ -246,36 +268,36 @@ Powered: no
 PowerState: off-blocked
 ```
 
-`off-blocked` heißt: rfkill hat den Adapter **soft-blockiert**, nicht nur
-heruntergefahren. `bluetoothctl power on` ändert daran nichts — bluetoothd verweigert
-das Power-on, solange der rfkill-Block steht. Das ist unabhängig von `matter-server`;
-selbst wenn `python-matter-server`/`bleak` beim Start versucht, den Adapter per D-Bus
-zu powern, träfe es auf dasselbe Verbot. **`matter-server` bringt `hci0` also nicht
-selbst hoch, wenn es rfkill-blockiert ist — das musste vorher geklärt werden, nicht
-nach einem fehlgeschlagenen Commissioning-Versuch entdeckt werden.**
+`off-blocked` means: rfkill has **soft-blocked** the adapter, not just
+shut it down. `bluetoothctl power on` doesn't change that — bluetoothd refuses
+the power-on as long as the rfkill block stands. This is independent of `matter-server`;
+even if `python-matter-server`/`bleak` tries to power the adapter via D-Bus at
+startup, it would hit the same refusal. **So `matter-server` does not bring `hci0` up
+itself when it's rfkill-blocked — this had to be established beforehand, not
+discovered after a failed commissioning attempt.**
 
 ```
 $ cat /sys/class/rfkill/rfkill0/name /sys/class/rfkill/rfkill0/type /sys/class/rfkill/rfkill0/soft /sys/class/rfkill/rfkill0/hard
 hci0
 bluetooth
-1        # soft-blockiert
-0        # kein Hardware-Kill-Switch
+1        # soft-blocked
+0        # no hardware kill switch
 ```
 
-`/dev/rfkill` und `/sys/class/rfkill/rfkill0/soft` gehören `root:root`, `pi` ist in
-keiner Gruppe, die Schreibzugriff hätte (`id -nG` zeigt u. a. `netdev`, `gpio`,
-`i2c`, `spi`, `docker` — keine reicht). Das Entsperren braucht also Root-Rechte, die
-laut Auftrag nicht per `sudo` beschafft werden dürfen. Der Ausweg: `pi` ist in der
-`docker`-Gruppe, und der Docker-Daemon läuft als root — ein privilegierter Container
-kann `/sys/class/rfkill/rfkill0/soft` beschreiben, ohne dass am SSH-Prompt je `sudo`
-aufgerufen wird:
+`/dev/rfkill` and `/sys/class/rfkill/rfkill0/soft` are owned by `root:root`, `pi` is in
+no group that would have write access (`id -nG` shows, among others, `netdev`, `gpio`,
+`i2c`, `spi`, `docker` — none suffices). Unblocking therefore needs root privileges, which per
+the assignment must not be obtained via `sudo`. The way out: `pi` is in the
+`docker` group, and the Docker daemon runs as root — a privileged container
+can write `/sys/class/rfkill/rfkill0/soft` without `sudo` ever being invoked
+at the SSH prompt:
 
 ```bash
 docker run --rm --privileged -v /sys:/sys alpine \
   sh -c 'echo 0 > /sys/class/rfkill/rfkill0/soft'
 ```
 
-Danach:
+After that:
 
 ```
 $ bluetoothctl show
@@ -285,24 +307,24 @@ $ hciconfig hci0
 hci0: ... UP RUNNING
 ```
 
-Der Soft-Block war ein einmaliger Werkszustand, kein wiederkehrender: Am 2026-09-01
-wurde das mit einem echten Reboot geprüft. Nach dem Neustart meldete
-`rfkill list bluetooth` weiterhin `Soft blocked: no`, und `hci0` war ohne Zutun
-`UP RUNNING` — der Unblock hält über Reboots hinweg. Dieser Schritt gehört also nur in
-die Ersteinrichtung, nicht vor jeden `docker compose up -d`; ob er nötig ist, zeigt
-`rfkill list bluetooth` (siehe Schritt 2 oben).
+The soft block was a one-time factory state, not a recurring one: on 2026-09-01
+this was verified with a real reboot. After the restart, `rfkill list bluetooth`
+still reported `Soft blocked: no`, and `hci0` was `UP RUNNING` on its own —
+the unblock survives reboots. This step therefore belongs only in
+first-time setup, not before every `docker compose up -d`; whether it's needed is shown by
+`rfkill list bluetooth` (see step 2 above).
 
-## OTBR-Wächter einrichten
+## Setting up the OTBR watchdog
 
-Der OTBR-Agent bricht ab, wenn das Funkmodul nicht mehr antwortet — ein
-RCP-Timeout, meist USB-Aussetzer oder Stromversorgung. Der **Container** läuft
-dabei weiter, weil sein Einstiegsskript nicht der Agent ist; `restart:
-unless-stopped` greift deshalb nicht, und das Image bringt keinen Aufpasser
-mit.
+The OTBR agent aborts if the radio module stops responding — an
+RCP timeout, usually a USB dropout or power supply issue. The **container** keeps running
+regardless, because its entrypoint script is not the agent; `restart:
+unless-stopped` therefore doesn't kick in, and the image ships no watchdog
+of its own.
 
-Am 3. September 2026 blieb ein solcher Ausfall sechseinhalb Stunden unbemerkt.
-Kein Gerät war in dieser Zeit erreichbar. Die letzten Zeilen des Agenten vor
-seinem Abbruch:
+On September 3, 2026, such an outage went unnoticed for six and a half hours.
+No device was reachable during that time. The last lines from the agent before
+it aborted:
 
 ```
 [W] P-RadioSpinel-: radio tx timeout
@@ -310,34 +332,34 @@ seinem Abbruch:
 [C] Platform------: HandleRcpTimeout() at radio_spinel.cpp:2054: RadioSpinelNoResponse
 ```
 
-Einrichten mit `crontab -e` und dieser Zeile:
+Set up with `crontab -e` and this line:
 
 ```
 */5 * * * * /home/pi/matter-loxone/scripts/otbr-watchdog.sh >> /home/pi/otbr-watchdog.log 2>&1
 ```
 
-Das Skript prüft, ob eine Thread-Schnittstelle (`wpan*`) mit einer
-Mesh-Adresse existiert — dieselbe Prüfung, die auch die Ansicht „System"
-anzeigt. Fehlt sie, startet es den `otbr`-Dienst neu und wartet bis zu 60
-Sekunden auf das Netz. Solange alles läuft, schreibt es nichts; die Logdatei
-enthält also genau die Vorfälle.
+The script checks whether a Thread interface (`wpan*`) with a
+mesh address exists — the same check the "System" view also shows.
+If it's missing, it restarts the `otbr` service and waits up to 60
+seconds for the network. As long as everything is running it writes nothing; the log file
+therefore contains exactly the incidents.
 
-**Es startet bewusst nicht in Schleife neu.** Hängt das Funkmodul selbst,
-brächte ein Neustart im Minutentakt nichts und flutete nur das Log. Dann muss
-jemand hinsehen — und findet im Log, was war, samt der letzten Zeilen aus dem
-OTBR-Log.
+**It deliberately does not restart in a loop.** If the radio module itself is stuck,
+restarting every minute wouldn't help and would just flood the log. At that point
+someone has to look — and finds what happened in the log, including the last lines from the
+OTBR log.
 
-Zusätzlich lohnt eine Meldung in Loxone: `d<n>_online` geht bei einem solchen
-Ausfall auf 0, und dieser Wert liegt ohnehin schon im Miniserver.
+It's also worth adding an alert in Loxone: `d<n>_online` goes to 0 during such an
+outage, and that value is already available in the Miniserver anyway.
 
-## start-stop-daemon haengt auf dem Pi-Kernel (neu gegenüber der VM)
+## start-stop-daemon hangs on the Pi kernel (new compared to the VM)
 
-Das OTBR-"test"-Image (siehe "Historie: die VM" für die Image-Variante) startet
-`otbr-agent`, `otbr-web` und `rsyslog` intern über sysvinit-Skripte, die
-`start-stop-daemon --background --make-pidfile` benutzen. Auf dem Pi hängt dieser aus
-2018 stammende Ubuntu-18.04-Unterbau (`dpkg`/`start-stop-daemon` 1.19.0.5, Image-Basis
-laut `/etc/os-release`) gegen den sehr neuen Kernel (`6.18.34+rpt-rpi-v8`, PREEMPT,
-Build vom 2026-06-09) endlos in seiner Fork-Erkennungsschleife:
+The OTBR "test" image (see "History: the VM" for the image variant) starts
+`otbr-agent`, `otbr-web` and `rsyslog` internally via sysvinit scripts that use
+`start-stop-daemon --background --make-pidfile`. On the Pi, this
+Ubuntu-18.04-era base from 2018 (`dpkg`/`start-stop-daemon` 1.19.0.5, image base
+per `/etc/os-release`) hangs endlessly in its fork-detection loop against the
+very new kernel (`6.18.34+rpt-rpi-v8`, PREEMPT, built 2026-06-09):
 
 ```
 $ docker exec otbr ps aux | grep otbr
@@ -345,19 +367,19 @@ root  84  99.1  ...  start-stop-daemon --start --quiet --pidfile /var/run/otbr-a
                       --make-pidfile -b --exec /usr/sbin/otbr-agent -- -I wpan0 -B wlan0 ...
 ```
 
-Der Log zeigt vorher brav `Starting thread border agent otbr-agent ... done.` — die
-Meldung lügt: `/proc/84/comm` bleibt `start-stop-daem`, nie `otbr-agent`. Der
-eigentliche Prozess wurde nie exec't; PID 84 (aus der Pidfile) ist der Wrapper selbst,
-`R`-State, 0 Syscalls in Bearbeitung (`/proc/84/syscall` → `running`,
-`/proc/84/wchan` → `0`) — ein reiner Busy-Loop, kein Warten auf I/O. `rsyslog` hängt
-kurzzeitig im selben Muster, kommt aber irgendwann durch; `otbr-agent`/`otbr-web` nie,
-in mehreren Minuten Wartezeit beobachtet. Ohne laufenden `otbr-agent` bleibt
-`ot-ctl state` mit `connect session failed: No such file or directory` hängen — der
-zugehörige Steuerkanal existiert schlicht nicht.
+The log dutifully shows `Starting thread border agent otbr-agent ... done.` beforehand —
+that message lies: `/proc/84/comm` stays `start-stop-daem`, never `otbr-agent`. The
+actual process was never exec'd; PID 84 (from the pidfile) is the wrapper itself,
+`R` state, 0 syscalls in progress (`/proc/84/syscall` → `running`,
+`/proc/84/wchan` → `0`) — a pure busy loop, not waiting on I/O. `rsyslog` hangs
+briefly in the same pattern, but eventually gets through; `otbr-agent`/`otbr-web` never do,
+observed over several minutes of waiting. Without a running `otbr-agent`,
+`ot-ctl state` hangs with `connect session failed: No such file or directory` — the
+corresponding control channel simply doesn't exist.
 
-**Workaround, verifiziert funktionsfähig:** die gehängten Wrapper killen und die
-Binaries direkt starten, mit denselben Argumenten, die aus der Pidfile/`ps`-Ausgabe
-des hängenden Wrappers ablesbar sind:
+**Workaround, verified to work:** kill the hung wrappers and start the
+binaries directly, with the same arguments readable from the pidfile/`ps` output
+of the hung wrapper:
 
 ```bash
 docker exec otbr sh -c 'kill -9 $(cat /var/run/otbr-agent.pid) $(cat /var/run/otbr-web.pid)'
@@ -367,13 +389,13 @@ docker exec -d otbr /usr/sbin/otbr-agent -I wpan0 -B wlan0 -d7 \
 docker exec -d otbr /usr/sbin/otbr-web -I wpan0 -d7 -a 127.0.0.1 -p 80
 ```
 
-Danach verbindet sich `ot-ctl` normal, das Thread-Netz lässt sich wie gewohnt bilden.
+After that, `ot-ctl` connects normally, and the Thread network forms as usual.
 
-**Nach einem Reboot des Pi ist die Wiederherstellung länger — vier Schritte statt zwei.**
-Am 2026-09-01 gemessen: der Container startet automatisch wieder, aber `otbr-agent` läuft
-darin gar nicht, und es gibt nichts zu killen — nur verwaiste PID-Dateien von vor dem
-Reboot. Der Thread-Datensatz selbst überlebt (Ext PAN ID unverändert), muss also nicht neu
-angelegt werden. Die Schnittstelle ist aber `detached` und muss neu gestartet werden:
+**Recovery after a Pi reboot takes longer — four steps instead of two.**
+Measured on 2026-09-01: the container restarts automatically, but `otbr-agent` doesn't run
+inside it at all, and there's nothing to kill — only orphaned PID files from before the
+reboot. The Thread dataset itself survives (Ext PAN ID unchanged), so it doesn't need to be
+recreated. But the interface is `detached` and must be restarted:
 
 ```bash
 docker exec otbr sh -c 'rm -f /var/run/otbr-agent.pid /var/run/otbr-web.pid'
@@ -384,48 +406,48 @@ docker exec otbr ot-ctl ifconfig up
 docker exec otbr ot-ctl thread start
 ```
 
-Der Zustand geht danach von `detached` nach `leader`, gemessen nach rund 15 Sekunden.
-`docker exec otbr ot-ctl state` erst danach prüfen, sonst sieht man `detached` und hält
-es für einen Fehler.
-`otbr-web` (REST-API auf Port 80, intern) wird von `matter-server`/`ot-ctl` nicht
-gebraucht — es läuft nur der Vollständigkeit halber mit, falls es später zum
-Debuggen nützlich ist.
+The state then goes from `detached` to `leader`, measured after about 15 seconds.
+Only check `docker exec otbr ot-ctl state` after that, otherwise you'll see `detached` and
+mistake it for an error.
+`otbr-web` (REST API on port 80, internal) is not needed by `matter-server`/`ot-ctl` —
+it only runs for completeness, in case it's useful for
+debugging later.
 
-**Anders als der rfkill-Fix ist das kein dauerhafter Zustand** — er muss nach jedem
-`docker compose up`/Neustart des `otbr`-Containers erneut angewendet werden, bis das
-Image selbst ersetzt wird (z. B. durch die neuere s6-overlay-"border-router"-Variante,
-die keinen sysvinit/`start-stop-daemon`-Unterbau hat — siehe Historie unten,
-Abweichung 1). Für Phase 6 ist das der klare nächste Schritt, nicht diese Task, die
-nur eine Testumgebung braucht, die zuverlässig genug für Task 7 läuft.
+**Unlike the rfkill fix, this is not a lasting state** — it has to be reapplied after
+every `docker compose up`/restart of the `otbr` container, until the
+image itself is replaced (e.g. by the newer s6-overlay "border-router" variant,
+which has no sysvinit/`start-stop-daemon` base — see the history below,
+deviation 1). For Phase 6 that's the clear next step, not this task, which
+only needs a test environment reliable enough for Task 7 to run.
 
-## `wlan0` statt `ens18`/Kabel-Interface
+## `wlan0` instead of `ens18`/a cable interface
 
-Der Pi hat kein Ethernet-Kabel gesteckt (`eth0` zeigt `NO-CARRIER`) — `wlan0` ist das
-einzige Interface mit tatsächlicher Verbindung ins LAN und deshalb das
-Backbone-Interface für OTBR (`BACKBONE_IF=wlan0` in `.env.example`, per
-`--backbone-interface` an den OTBR-Container durchgereicht). Funktional identisch zur
-Rolle von `ens18` auf der VM — der einzige Unterschied ist der Name und dass es WLAN
-statt Kabel ist; für Thread-Routing über `wpan0` spielt das keine Rolle (siehe
-"Bekannte Einschränkungen" unten, IPv6-Punkt, der unverändert von der VM gilt).
+The Pi has no Ethernet cable plugged in (`eth0` shows `NO-CARRIER`) — `wlan0` is the
+only interface with an actual connection to the LAN and therefore the
+backbone interface for OTBR (`BACKBONE_IF=wlan0` in `.env.example`, passed through to the
+OTBR container via `--backbone-interface`). Functionally identical to
+`ens18`'s role on the VM — the only difference is the name and that it's WiFi
+instead of a cable; that has no bearing on Thread routing over `wpan0` (see
+"Known limitations" below, the IPv6 point, which applies unchanged from the VM).
 
-## Baudrate
+## Baud rate
 
-**460800**, unverändert von der VM übernommen — derselbe SONOFF Dongle Plus MG24 mit
-derselben Firmware wurde einfach umgesteckt. Funktionierte auf Anhieb: RCP antwortet
-auf Spinel-Anfragen (siehe "Stand: was laeuft"), Thread-Netz bildet sich, `ot-ctl
-state` liefert `leader`. Kein zweiter Versuch mit 115200 nötig.
+**460800**, carried over unchanged from the VM — the same SONOFF Dongle Plus MG24 with
+the same firmware was simply plugged into a different machine. Worked on the first try: the RCP responds
+to Spinel requests (see "Status: what's running"), the Thread network forms, `ot-ctl
+state` reports `leader`. No second attempt at 115200 needed.
 
-## Fabric-Volume sichern (`./data`)
+## Backing up the fabric volume (`./data`)
 
-`matter-server` legt Fabric-/Node-Zustand unter `~/matter-loxone/deploy/testhost/data` ab
-(`chip.json`, `chip_*.ini`, `credentials/`, sowie eine `<NodeID>.json` pro
-committetem Node). Sicherung vom Pi:
+`matter-server` stores fabric/node state under `~/matter-loxone/deploy/testhost/data`
+(`chip.json`, `chip_*.ini`, `credentials/`, plus a `<NodeID>.json` per
+committed node). Backup from the Pi:
 
 ```bash
 ssh pi@10.0.1.56 'tar czf - -C ~/matter-loxone/deploy/testhost data' > matter-server-data-backup.tar.gz
 ```
 
-Rueckspielen (Container vorher stoppen):
+Restore (stop the container first):
 
 ```bash
 ssh pi@10.0.1.56 'cd ~/matter-loxone/deploy/testhost && docker compose stop matter-server'
@@ -433,72 +455,86 @@ cat matter-server-data-backup.tar.gz | ssh pi@10.0.1.56 'tar xzf - -C ~/matter-l
 ssh pi@10.0.1.56 'cd ~/matter-loxone/deploy/testhost && docker compose start matter-server'
 ```
 
-## Thread-Datensatz — NICHT ins Repository
+**Verify that the archive contains something** — a backup you have not verified
+is not a backup:
 
-`docker exec otbr ot-ctl dataset active -x` gibt den aktiven Thread-Operational-Dataset
-aus (hex-kodiert). Das ist ein Netzwerk-Credential (enthaelt u.a. den Network Key) —
-wer ihn hat, kann dem Thread-Netz beitreten. Er gehoert **nicht** ins Repository und
-nicht unter `deploy/`.
+```bash
+tar tzf matter-server-data-backup.tar.gz | grep chip.json
+```
 
-Abgelegt auf dem Pi unter `~/matter-loxone/deploy/testhost/thread-dataset.txt` (Modus `600`,
-nur fuer den Betreiber lesbar). `deploy/testhost/.gitignore` schliesst zusaetzlich
-`.env`, `data/` und alles, was wie ein Dataset benannt ist
-(`*.dataset`, `thread-dataset*`), von Commits aus, falls jemand versehentlich in
-diesem Verzeichnis arbeitet.
+> **As of 8 September 2026**, this exact backup is also the
+> prerequisite for the image switch to `matterjs-server`: its first start
+> migrates `./data` **one-way** to a new format. The way above is there the
+> first backup route, because it needs neither an API token nor a running service
+> — see "Migration to matterjs-server (UNTESTED)" further below and the
+> warning box in "Updating".
 
-Erneut abrufen: `ssh pi@10.0.1.56 docker exec otbr ot-ctl dataset active -x`
+## Thread dataset — NOT into the repository
 
-Fuer Task 7 (Einlernen der IKEA-Geraete) wird dieser Datensatz gebraucht — jetzt
-tatsächlich per BLE, nicht nur über das Thread-Netz.
+`docker exec otbr ot-ctl dataset active -x` prints the active Thread operational dataset
+(hex-encoded). That's a network credential (contains, among other things, the network key) —
+whoever has it can join the Thread network. It does **not** belong in the repository or
+under `deploy/`.
 
-## Bekannte Einschraenkungen (bewusst, fuer eine Testumgebung)
+Stored on the Pi under `~/matter-loxone/deploy/testhost/thread-dataset.txt` (mode `600`,
+readable only by the operator). `deploy/testhost/.gitignore` additionally
+excludes `.env`, `data/` and anything named like a dataset
+(`*.dataset`, `thread-dataset*`) from commits, in case someone accidentally works in
+this directory.
 
-- Keine legacy-Firewall auf `wpan0` (siehe Historie, VM-Abweichung 2) — kein
-  Hardening-Ziel dieser Task.
-- Kein globales IPv6 auf `wlan0` (nur link-local) — für Thread-Geräte unkritisch, wie
-  schon auf der VM: OTBR spannt auf `wpan0` ein eigenes ULA-Präfix auf, und
-  `matter-server` läuft mit `network_mode: host` daneben und erreicht die Geräte über
-  die Route dorthin. Erst Matter-über-WLAN-Geräte bräuchten globales IPv6 im LAN.
-- Der `start-stop-daemon`-Workaround (siehe oben) ist
-  **nicht persistent** — nach einem Neustart des Pi bzw. des `otbr`-Containers muss
-  er erneut angewendet werden. Für eine Testumgebung akzeptabel, für Phase 6 nicht.
+Retrieve again with: `ssh pi@10.0.1.56 docker exec otbr ot-ctl dataset active -x`
 
-## Historie: die VM
+This dataset is needed for Task 7 (commissioning the IKEA devices) — this time
+actually over BLE, not just over the Thread network.
 
-Der Host lief ursprünglich auf `lucienkerl@10.0.1.215` (Ubuntu 26.04 LTS,
-Backbone-Interface `ens18`). Abgebaut, weil dort **kein Bluetooth-Adapter** vorhanden
-war (`ls /sys/class/bluetooth` lieferte nichts, `bluetooth.service` war inaktiv) —
-Matter-Commissioning läuft über BLE, ohne Adapter war dort also nie ein Gerät
-einlernbar. Die Container wurden mit `docker compose down` in `~/loxmatter-testvm/`
-gestoppt; die Dateien und das gesicherte Dataset liegen dort unverändert, falls sie
-später gebraucht werden.
+## Known limitations (deliberate, for a test environment)
 
-Der Brief war ein Ausgangspunkt, kein verifizierter Endzustand — beide im Brief
-genannten Unklarheiten (OTBR-Aufruf, Baudrate) mussten tatsaechlich geprueft werden.
-Diese Funde gelten unveraendert fuer den Pi (derselbe Dongle, dieselbe Firmware,
-dasselbe Image):
+- No legacy firewall on `wpan0` (see history, VM deviation 2) — not a
+  hardening goal of this task.
+- No global IPv6 on `wlan0` (link-local only) — uncritical for Thread devices, as
+  already on the VM: OTBR sets up its own ULA prefix on `wpan0`, and
+  `matter-server` runs alongside it with `network_mode: host` and reaches the devices via
+  the route there. Only Matter-over-WiFi devices would need global IPv6 on the LAN.
+- The `start-stop-daemon` workaround (see above) is
+  **not persistent** — after a restart of the Pi or of the `otbr` container it
+  has to be reapplied. Acceptable for a test environment, not for Phase 6.
 
-### 1. OTBR-Image ist die "test"-Variante, nicht "border-router"
+## History: the VM
 
-`openthread/otbr:latest` (Docker Hub, Digest zum Zeitpunkt des VM-Deployments
-`sha256:ebebd9f643f0fadf60a9e46a1c81b4f4c9f320f04863e69ed95d8fde6b5de5a6`) hat als
-Entrypoint `/app/etc/docker/test/docker_entrypoint.sh` — das ist die aeltere,
-"test"-Docker-Variante aus dem `ot-br-posix`-Repo, nicht die neuere
-s6-overlay-basierte `border-router`-Variante (die andere Umgebungsvariablen wie
-`OT_RCP_DEVICE`/`OT_INFRA_IF` erwartet und `command:`-Overrides ignoriert). Das war
-vorab nicht offensichtlich — der Quellcode auf `main` im GitHub-Repo zeigt die neuere
-Variante; welche davon `:latest` auf Docker Hub tatsaechlich ist, war nur per
-`docker inspect --format '{{.Config.Entrypoint}}'` am gezogenen Image zu klaeren.
-Die Compose-Syntax (`RADIO_URL` als Env-Var, `--backbone-interface` als
-Kommandozeilenargument) passt zu dieser Variante und funktioniert unveraendert.
+The host originally ran on `lucienkerl@10.0.1.215` (Ubuntu 26.04 LTS,
+backbone interface `ens18`). Decommissioned because **no Bluetooth adapter** was
+present there (`ls /sys/class/bluetooth` returned nothing, `bluetooth.service` was inactive) —
+Matter commissioning runs over BLE, so without an adapter no device could ever be
+commissioned there. The containers were stopped with `docker compose down` in
+`~/loxmatter-testvm/`; the files and the saved dataset remain there unchanged, in case
+they're needed later.
 
-Auf dem Pi zeigte sich zusätzlich, dass genau diese "test"-Variante auf einem sehr
-neuen Kernel unzuverlässig ist (`start-stop-daemon`, siehe oben) — ein weiterer Grund,
-in Phase 6 zur `border-router`-Variante zu wechseln.
+The briefing was a starting point, not a verified end state — both ambiguities
+named in the briefing (the OTBR invocation, the baud rate) actually had to be checked.
+These findings apply unchanged to the Pi (same dongle, same firmware,
+same image):
 
-### 2. NAT64/legacy-Firewall-Setup schlaegt fehl → per Env-Var deaktiviert
+### 1. The OTBR image is the "test" variant, not "border-router"
 
-Beim ersten Start auf der VM crashte der `otbr`-Container:
+`openthread/otbr:latest` (Docker Hub, digest at the time of the VM deployment
+`sha256:ebebd9f643f0fadf60a9e46a1c81b4f4c9f320f04863e69ed95d8fde6b5de5a6`) has as
+its entrypoint `/app/etc/docker/test/docker_entrypoint.sh` — that's the older,
+"test" Docker variant from the `ot-br-posix` repo, not the newer
+s6-overlay-based `border-router` variant (which expects different environment variables like
+`OT_RCP_DEVICE`/`OT_INFRA_IF` and ignores `command:` overrides). That wasn't
+obvious in advance — the source code on `main` in the GitHub repo shows the newer
+variant; which one `:latest` on Docker Hub actually is could only be established via
+`docker inspect --format '{{.Config.Entrypoint}}'` on the pulled image.
+The compose syntax (`RADIO_URL` as an env var, `--backbone-interface` as a
+command-line argument) matches this variant and works unchanged.
+
+On the Pi it additionally turned out that this exact "test" variant is unreliable on a
+very new kernel (`start-stop-daemon`, see above) — a further reason
+to switch to the `border-router` variant in Phase 6.
+
+### 2. NAT64/legacy firewall setup fails → disabled via env var
+
+On the first start on the VM, the `otbr` container crashed:
 
 ```
 iptables v1.6.1: can't initialize iptables table `mangle': Table does not exist ...
@@ -507,55 +543,212 @@ iptables v1.6.1: can't initialize iptables table `filter': Table does not exist 
  *** ERROR:  Failed to start NAT44!
 ```
 
-Der Container hat kein `modprobe` (der vorgelagerte `sudo modprobe ip6table_filter`
-schlaegt schon mit "command not found" fehl, wird aber ignoriert), kann die
-legacy-iptables-Kernel-Tabellen (`mangle`/`nat`/`filter`) also nicht selbst
-nachladen. Das Entrypoint-Skript (`/app/script/_nat64`, `_firewall`) prueft
-vor dem NAT64/NAT44- bzw. Firewall-Setup jeweils die Env-Variablen `NAT64` bzw.
-`FIREWALL` (Default beide `1` im Image). Beide auf `"0"` gesetzt (siehe
-`docker-compose.yml`, Kommentar dort) übersprang diesen Teil vollständig, danach
-startete `otbr-agent` sauber durch.
+The container has no `modprobe` (the preceding `sudo modprobe ip6table_filter`
+already fails with "command not found", but is ignored), so it can't load the
+legacy iptables kernel tables (`mangle`/`nat`/`filter`) itself. The entrypoint script
+(`/app/script/_nat64`, `_firewall`) checks the environment variables `NAT64` and
+`FIREWALL` respectively before the NAT64/NAT44 and firewall setup (both default
+to `1` in the image). Setting both to `"0"` (see
+`docker-compose.yml`, comment there) skipped this part entirely, and after that
+`otbr-agent` started cleanly.
 
-Auf dem Pi **derselbe Befund von Anfang an übernommen** (`NAT64: "0"`, `FIREWALL:
-"0"` waren schon in der von der VM kopierten Compose-Datei) — dort trat der Crash
-deshalb gar nicht erst auf; der Log zeigt lediglich denselben harmlosen
-`sudo: modprobe: command not found`-Hinweis wie auf der VM. Der Pi hat wie die VM
-keine geladenen iptables-Module (siehe Task-Vorgabe) — dieselbe Ursache, derselbe
-Fix, präventiv angewendet statt erneut zum Absturz gebracht.
+On the Pi, **the same finding was applied from the start** (`NAT64: "0"`, `FIREWALL:
+"0"` were already in the compose file copied from the VM) — the crash therefore
+never occurred there in the first place; the log just shows the same harmless
+`sudo: modprobe: command not found` notice as on the VM. Like the VM, the Pi has
+no loaded iptables modules (see the task brief) — the same cause, the same
+fix, applied preventively instead of being driven to crash again.
 
-Für die Testumgebung unkritisch: NAT64/NAT44 übersetzt Thread-IPv6 auf IPv4-Hosts
-im LAN — hier nicht gebraucht, weder `matter-server` noch `loxmatter` müssen aus dem
-Thread-Netz heraus IPv4-Ziele erreichen. Die legacy-Firewall haette Ingress-Filterung
-fuer `wpan0` eingerichtet; ohne sie ist der Container offener als in Phase 6
-vertretbar waere — das gehoert dort ins Hardening.
+Uncritical for the test environment: NAT64/NAT44 translates Thread IPv6 to IPv4 hosts
+on the LAN — not needed here, neither `matter-server` nor `loxmatter` need to reach
+IPv4 targets from inside the Thread network. The legacy firewall would have set up
+ingress filtering for `wpan0`; without it, the container is more open than would be
+defensible in Phase 6 — that belongs in hardening there.
 
-Kleinere Randnotiz aus dem Log, ebenfalls durch `FIREWALL=0`/fehlendes `modprobe`
-bedingt und ohne Auswirkung auf den Betrieb (auf dem Pi identisch beobachtet):
+Minor side note from the log, also caused by `FIREWALL=0`/the missing `modprobe`
+and without effect on operation (observed identically on the Pi):
 
 ```
 Platform------: Got an error when executing command `ipset flush otbr-ingress-allow-dst-swap`: Resource temporarily unavailable
 Firewall - failed to update ipsets: Failed
 ```
 
-Das ist otbr-agents eigene (in-process) Firewall-Komponente, die ipset-Regeln pflegen
-will; ohne die passenden Kernel-Module bleibt das eine Warnung (`[W]`), kein
-Fataler Fehler.
+That's otbr-agent's own (in-process) firewall component, which wants to maintain ipset
+rules; without the matching kernel modules this stays a warning (`[W]`), not a
+fatal error.
 
-### 3. matter-server-Image-Pfad
+### 3. matter-server image path
 
-`ghcr.io/home-assistant-libs/python-matter-server:stable` wie im Brief — laesst
-sich weiterhin ziehen. Hinweis fuer spaeter: das Upstream-README verweist
-mittlerweile auf `ghcr.io/matter-js/python-matter-server` als Nachfolgeprojekt
-(`python-matter-server` selbst ist auf Version 8.1.2 eingefroren, keine weiteren
-Updates). Da `pyproject.toml` bereits `python-matter-server>=8.1.2` fixiert, passt
-das zusammen — nur relevant, falls das `home-assistant-libs`-Image irgendwann
-verschwindet.
+Until 8 September 2026, `ghcr.io/home-assistant-libs/python-matter-server:stable` ran here.
+The note that stood at this point named `ghcr.io/matter-js/python-matter-server`
+as the successor — **that was wrong**: this path is only a mirror of the old
+repository under the new organization and delivers the same frozen 8.1.2.
 
-## Dateien in diesem Verzeichnis
+The actual successor project is
+[`matterjs-server`](https://github.com/matter-js/matterjs-server) —
+`ghcr.io/matter-js/matterjs-server:stable`, a re-implementation on matter.js
+with the same WebSocket API. The migration is in the next section.
 
-- `docker-compose.yml` — Compose-Definition. Der Pi benutzt seit dem
-  3. September 2026 **diese Datei selbst**, aus einem Git-Checkout unter
-  `~/matter-loxone` — keine Kopie mehr, die auseinanderlaufen kann.
-- `.env.example` — Vorlage fuer `.env` auf dem Pi.
-- `.gitignore` — verhindert versehentliches Commit von `.env`, `data/` und
-  Dataset-Dateien, falls diese jemals lokal in diesem Repo-Pfad angelegt werden.
+## Migration to matterjs-server (UNTESTED)
+
+`deploy/testhost/docker-compose.yml` has pointed to
+`ghcr.io/matter-js/matterjs-server:stable` since 8 September 2026. **This migration has not yet
+run on a Pi** — it is derived from the successor's documentation, not measured.
+What stands here is the order in which it should be performed, and the two
+places where it can fail.
+
+### Before: back up the Fabric
+
+The first start migrates `./data` to the format of the new server. This migration
+is **one-way** — a path back to the old image is nowhere promised. If it fails,
+the Fabric is lost and every commissioned device must be reset and
+re-paired.
+
+**Path 1 — `tar` over SSH. This is the path that applies.** It needs neither a token
+nor a running service, only the SSH access that this document assumes
+everywhere anyway. The same command appears above under "Backing up the fabric volume
+(`./data`)", together with the restore path:
+
+```bash
+ssh pi@10.0.1.56 'tar czf - -C ~/matter-loxone/deploy/testhost data' > matter-server-data-backup.tar.gz
+tar tzf matter-server-data-backup.tar.gz | grep chip.json
+```
+
+**The second line is not optional.** If there's no output, the
+archive does not contain the Fabric state — then abort and search for the cause, rather than
+proceeding to an irreversible migration. **A backup you have not verified
+is not a backup.**
+
+**Path 2 — the `GET /api/diagnostics/fabric-backup` route.** In addition to Path 1, not instead of it.
+It delivers the same directory as a ZIP, but has two pitfalls
+that hit silently: `LOXMATTER_API_TOKEN` is in the `.env` **on the Pi** and
+is not set in the operator's shell, and since the WebUI login the
+token is per `.env.example` **optional** — on the Pi it can therefore also be empty.
+If it is empty, `curl` sends a blank `Bearer `, gets 401, and `-s -f`
+writes **neither a file nor a message**. Whoever doesn't check this proceeds with
+a non-existent backup into the migration.
+
+```bash
+LOXMATTER_API_TOKEN="$(ssh pi@10.0.1.56 \
+  'sed -n "s/^LOXMATTER_API_TOKEN=//p" ~/matter-loxone/deploy/testhost/.env')"
+[ -n "$LOXMATTER_API_TOKEN" ] || echo "Token empty — this path is not available"
+curl -sf -H "Authorization: Bearer $LOXMATTER_API_TOKEN" \
+  http://10.0.1.56:8080/api/diagnostics/fabric-backup -o matter-fabric-backup.zip
+unzip -l matter-fabric-backup.zip | grep chip.json
+```
+
+**Download the archive from the Pi**, don't leave it there. It contains the
+complete Fabric credentials and belongs neither in the repository nor in a log.
+
+### The Migration
+
+```bash
+cd ~/matter-loxone/deploy/testhost
+docker compose stop matter-server
+sudo chown -R 1000:1000 data
+sudo chmod -R u+rwX,go+rX data
+docker compose pull matter-server
+docker compose up -d matter-server
+docker compose logs -f matter-server
+```
+
+The `chown` is not a precaution, but a requirement: the old image ran
+as root and wrote the directory accordingly, the new container runs
+unprivileged as UID 1000. Without this step, it won't start.
+
+The log lines of the first start contain the migration. Only when there's no error
+there and `loxmatter` connects again (`GET /api/diagnostics/system` shows
+the `matter-server` point green — the same thing the WebUI diagnostics page
+displays; `/api/diagnostics` without `/system` is not a route and responds with 404),
+is the migration complete.
+
+### What to check afterwards
+
+Three points that don't follow from the documentation and can only be clarified on the device.
+Until they are checked, this section remains titled "UNTESTED". Point 3
+belongs in the order **before** the first `up` — it stands here because it belongs to
+the same open questions.
+
+1. **BLE commissioning.** The Compose sets `NOBLE_BINDINGS=dbus` because the
+   unprivileged container cannot open a raw HCI socket. The path via
+   BlueZ assumes that `bluetoothd` is running and `hci0` is `Powered` — on
+   this Pi the adapter was already rfkill-soft-blocked once (see section
+   above, that is independent of the server). Check by commissioning a device via the
+   pairing code in the WebUI.
+2. **Capitalization of command names.** The successor's WebSocket documentation
+   shows command names in camelCase (`moveToLevelWithOnOff`); the
+   Python client sends PascalCase (`MoveToLevelWithOnOff`) because it
+   forwards `command.__class__.__name__`. The server must accept both,
+   otherwise its own client would be broken — that is a conclusion, not a measurement.
+   Check by switching a light in the WebUI **and** adjusting its
+   brightness.
+3. **The default `CMD` of the new image.** `command:` in the Compose file
+   overrides it **completely** — if it carried something that loxmatter builds on, e.g.
+   a different `--port` (loxmatter firmly addresses `ws://127.0.0.1:5580/ws`),
+   that would silently be gone. For the old image the CMD was checked via `docker inspect`
+   (see "Enable BLE"); for this one it is not. **Before** the
+   first `up`, run and compare with the `command:` block in
+   `docker-compose.yml`:
+
+   ```bash
+   docker inspect --format '{{.Config.Cmd}}' ghcr.io/matter-js/matterjs-server:stable
+   ```
+
+   If something stands there that the Compose file doesn't carry, it belongs either in the
+   `command:` block or noted alongside with justification.
+
+### If it fails
+
+The way back, for which the backup above exists — otherwise it would be just ritual.
+**Equally untested as the migration itself**: it is derived from the steps
+that it reverses, not measured on a Pi.
+
+```bash
+cd ~/matter-loxone/deploy/testhost
+docker compose stop matter-server
+```
+
+Restore the archive (same path as under "Backing up the fabric volume (`./data`)"
+above, the detail is there). **Remove the old `data` first, don't
+just overwrite it:**
+
+```bash
+mv data data.post-migration
+cat matter-server-data-backup.tar.gz | ssh pi@10.0.1.56 'tar xzf - -C ~/matter-loxone/deploy/testhost'
+```
+
+The `mv` is not a precaution, but necessary: `tar xzf` creates and overwrites,
+but it **deletes nothing that's missing from the archive**. If you unpacked over the migrated
+directory, all files that matterjs-server created during the migration would remain —
+the old server would then find its own state alongside foreign data,
+and no one knows what it would do with that. `mv` instead of `rm`, so the migrated
+state is preserved for later troubleshooting.
+
+Then reverse the ownership — the old image ran as root, so the
+`chown` to `1000:1000` from above must become:
+
+```bash
+sudo chown -R root:root data
+```
+
+And in `docker-compose.yml` reset the `image:` line of the `matter-server`
+service to `ghcr.io/home-assistant-libs/python-matter-server:stable`.
+Then `docker compose up -d matter-server`.
+
+This restores the state **before** the migration, nothing more: everything
+commissioned or renamed since then is at the state of the archive.
+
+The reset `image:` line is then a local change to a
+versioned file — the next `git pull` will therefore abort instead of
+silently overwriting it. That is intentional: the switch should not
+come back incidentally, but deliberately and with backup (see the warning box in
+"Updating").
+
+## Files in this directory
+
+- `docker-compose.yml` — the compose definition. Since September
+  3, 2026 the Pi uses **this exact file**, from a git checkout under
+  `~/matter-loxone` — no longer a copy that can drift out of sync.
+- `.env.example` — template for `.env` on the Pi.
+- `.gitignore` — prevents accidentally committing `.env`, `data/` and
+  dataset files, in case these ever get created locally in this repo path.

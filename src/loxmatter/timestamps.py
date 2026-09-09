@@ -1,4 +1,4 @@
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -14,19 +14,19 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Ein einziger Zeitstempel-Helfer fuer die ganze Codebasis.
+"""A single timestamp helper for the whole codebase.
 
-`model.store`, `loxone.sender` und `loxone.server` trugen bislang je eine
-eigene, wortgleiche Kopie dieser Funktion - jede mit einem eigenen Kommentar,
-der begruendete, warum eine gemeinsame Abhaengigkeit angeblich mehr Kopplung
-koste, als sie einspare. Fuer eine Zeile Code, die sonst nirgends gebraucht
-wird, war das schon bei zwei Kopien eine duenne Begruendung; bei DREI
-(Review-Fix Minor, 2026-09-02) haette jede kuenftige Aenderung an der
-Zeitstempelform (z. B. an der Genauigkeit) an drei Stellen synchron bleiben
-muessen. `model.store.Store._now` bleibt als duenne, einzeilige Bruecke auf
-`now_iso` hier bestehen - nicht aus Kopplungsangst, sondern weil `self._now()`
-bereits an vielen Stellen dieser Klasse verdrahtet ist und eine reine
-Umbenennung aller Aufrufer keinen Mehrwert gegenueber der Bruecke haette."""
+`model.store`, `loxone.sender` and `loxone.server` each used to carry their
+own, word-for-word copy of this function - each with its own comment
+arguing why a shared dependency would supposedly cost more coupling than it
+saved. For a single line of code that is not needed anywhere else, that was
+already a thin justification with two copies; with THREE (review fix minor,
+2026-09-02) any future change to the timestamp format (e.g. to the
+precision) would have had to stay in sync across three places.
+`model.store.Store._now` remains here as a thin, one-line bridge to
+`now_iso` - not out of fear of coupling, but because `self._now()` is
+already wired in at many places in that class, and a plain rename of every
+caller would have offered no benefit over the bridge."""
 
 from __future__ import annotations
 
@@ -34,12 +34,12 @@ from datetime import UTC, datetime
 
 
 def now_iso() -> str:
-    """ISO-8601-Zeitstempel in UTC, mit Mikrosekunden.
+    """ISO 8601 timestamp in UTC, with microseconds.
 
-    Fest mit `timespec="microseconds"`, damit zwei kurz aufeinander
-    folgende Zeitstempel (z. B. Export, dann sofort eine Umbenennung) als
-    Text zuverlaessig in derselben Reihenfolge vergleichbar bleiben wie
-    chronologisch - ohne das liesse `datetime.isoformat()` die
-    Sekundenbruchteile bei einem zufaellig exakten Sekundenwert weg, was
-    zwei Zeitstempel unterschiedlicher Laenge ergeben koennte."""
+    Fixed at `timespec="microseconds"` so that two timestamps taken in
+    quick succession (e.g. an export, then immediately a rename) stay
+    reliably comparable as text in the same order as chronologically -
+    without this, `datetime.isoformat()` would drop the fractional seconds
+    whenever a timestamp happened to land on an exact second, which could
+    produce two timestamps of different lengths."""
     return datetime.now(UTC).isoformat(timespec="microseconds")

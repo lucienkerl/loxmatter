@@ -1,4 +1,4 @@
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -14,12 +14,12 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Tests fuer das Passwort-Hashing (Spec 6).
+"""Tests for password hashing (Spec 6).
 
-Die Kernfrage: passt das richtige Passwort, faellt jedes andere durch, und
-verkraftet `verify_password` einen kaputten oder fremden Hash, ohne zu
-werfen? Der letzte Punkt ist kein Randfall: der Wert kommt aus einer Datei,
-die ein Betreiber von Hand bearbeitet haben kann.
+The core question: does the right password match, does every other one
+fail, and does `verify_password` survive a broken or foreign hash without
+raising? The last point is not an edge case: the value comes from a file
+that an operator may have edited by hand.
 """
 
 from __future__ import annotations
@@ -40,8 +40,8 @@ def test_a_wrong_password_does_not_verify():
 
 
 def test_the_same_password_hashes_differently_every_time():
-    """Sonst waere das Salz keins - zwei Installationen mit demselben
-    Passwort haetten denselben Hash."""
+    """Otherwise the salt wouldn't be one - two installations with the same
+    password would have the same hash."""
     assert hash_password("gleiches-passwort") != hash_password("gleiches-passwort")
 
 
@@ -55,12 +55,12 @@ def test_the_stored_form_names_its_scheme_and_parameters():
 
 
 def test_a_hash_with_other_parameters_still_verifies():
-    """Der Grund, warum die Parameter im Wert stehen: ein spaeterer Wechsel
-    der Kostenfaktoren darf alte Hashes nicht entwerten.
+    """The reason the parameters live in the value: a later change to the
+    cost factors must not invalidate old hashes.
 
-    Der Vergleichswert wird hier mit ANDEREN Kostenfaktoren (n = 1024) selbst
-    gerechnet, nicht mit denen des Moduls - sonst pruefte der Test nur, dass
-    eine Konstante mit sich selbst uebereinstimmt."""
+    The comparison value here is computed with DIFFERENT cost factors
+    (n = 1024), not the module's own - otherwise the test would only check
+    that a constant matches itself."""
     salt = bytes.fromhex("00112233445566778899aabbccddeeff")
     key = hashlib.scrypt(b"geheim-und-lang", salt=salt, n=1024, r=8, p=1, dklen=32)
     stored = f"scrypt$1024$8$1${salt.hex()}${key.hex()}"

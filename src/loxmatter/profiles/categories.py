@@ -1,4 +1,4 @@
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -14,25 +14,25 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Grobe Geraetekategorie aus den Matter-Geraetetypen.
+"""Coarse device category derived from the Matter device types.
 
-Beantwortet genau eine Frage, die `relevance.py` nicht beantwortet: nicht
-"welche Signale will jemand sehen", sondern "was fuer ein Ding ist das
-ueberhaupt". Die Antwort traegt in der Oberflaeche drei Dinge auf einmal -
-die Sortierung innerhalb eines Raums, das Icon der Kachel und den
-Suchbegriff, unter dem man alle Steckdosen des Hauses findet.
+Answers exactly one question that `relevance.py` does not answer: not
+"which signals does someone want to see", but "what kind of thing is this
+in the first place". The answer carries three things at once in the UI -
+the sort order within a room, the tile's icon, and the search term under
+which one finds all plugs in the house.
 
-Warum daneben und nicht darin: `relevance.is_functional` entscheidet ueber
-ein einzelnes Signal, `category_for` ueber ein ganzes Geraet. Beide lesen
-dieselbe Quelle (`device_types_by_endpoint`), aber mit verschiedenem
-Ausgang und ohne gemeinsamen Zustand.
+Why alongside and not inside: `relevance.is_functional` decides about a
+single signal, `category_for` about an entire device. Both read the same
+source (`device_types_by_endpoint`), but with a different output and no
+shared state.
 
-**Die Quelle der Typ-Nummern** ist dieselbe wie in `relevance.py`:
-`matter_server.client.models.device_types`, laut eigenem Modul-Docstring
-maschinell erzeugt aus `zcl/data-model/chip/matter-devices.xml` der
-CSA-Spezifikation. Ein neuer Eintrag in der Tabelle unten braucht die
-Nummer aus dieser Datei, nicht aus dem Gedaechtnis;
-`test_every_mapped_type_exists_in_the_matter_table` prueft das ab.
+**The source of the type numbers** is the same as in `relevance.py`:
+`matter_server.client.models.device_types`, per its own module docstring
+machine-generated from the CSA specification's
+`zcl/data-model/chip/matter-devices.xml`. A new entry in the table below
+needs the number from that file, not from memory;
+`test_every_mapped_type_exists_in_the_matter_table` checks that.
 """
 
 from __future__ import annotations
@@ -44,19 +44,19 @@ from loxmatter.profiles.relevance import POWER_SOURCE_DEVICE_TYPE, UTILITY_DEVIC
 
 
 class Category(str, Enum):
-    """Die Reihenfolge dieser Deklaration IST der Sortierrang (siehe
-    `CATEGORY_RANK`) - bewusst nicht die alphabetische Reihenfolge der
-    uebersetzten Namen, die sich mit der Sprache aendern wuerde.
+    """The order of this declaration IS the sort rank (see
+    `CATEGORY_RANK`) - deliberately not the alphabetical order of the
+    translated names, which would change with the language.
 
-    Die Reihenfolge selbst folgt der Haeufigkeit, mit der man ein Geraet
-    dieser Art in einem Raum anfasst: Licht und Steckdose zuerst, danach die
-    Bedienelemente, ganz hinten das, was man einmal einrichtet und dann in
-    Ruhe laesst. `OTHER` steht immer am Ende - dort landet auch jedes
-    Geraet, dessen Typen noch nicht nachgetragen sind.
+    The order itself follows how often one touches a device of this kind
+    in a room: light and plug first, then the controls, and at the very
+    back what one sets up once and then leaves alone. `OTHER` always comes
+    last - a device whose types have not yet been backfilled also ends up
+    there.
 
-    `str, Enum` statt `StrEnum`, weil `Exportability` in `profiles/table.py`
-    es genauso macht - eine zweite Schreibweise fuer dieselbe Sache waere
-    ohne Gewinn."""
+    `str, Enum` instead of `StrEnum`, because `Exportability` in
+    `profiles/table.py` does the same thing - a second notation for the
+    same thing would gain nothing."""
 
     LIGHT = "light"
     SOCKET = "socket"
@@ -70,30 +70,30 @@ class Category(str, Enum):
 
 CATEGORY_RANK: dict[Category, int] = {category: rank for rank, category in enumerate(Category)}
 
-# Geraetetypen, die nichts darueber sagen, was das Geraet im Haus TUT -
-# dieselbe Menge, die `relevance.is_functional` schon als Verwaltung
-# behandelt, plus PowerSource: ein Batteriestand macht aus einem Taster
-# keine eigene Kategorie.
+# Device types that say nothing about what the device DOES in the house -
+# the same set `relevance.is_functional` already treats as management,
+# plus PowerSource: a battery level does not turn a button into its own
+# category.
 _IGNORED_DEVICE_TYPES: frozenset[int] = UTILITY_DEVICE_TYPES | {POWER_SOURCE_DEVICE_TYPE}
 
-# Zuordnung Matter-Geraetetyp -> Kategorie. Jede Nummer stammt aus
-# `matter_server.client.models.device_types` (siehe Modul-Docstring); die
-# Kommentare nennen den dortigen Klassennamen, damit ein Nachschlagen ohne
-# Umrechnung moeglich ist.
+# Mapping Matter device type -> category. Every number comes from
+# `matter_server.client.models.device_types` (see module docstring); the
+# comments name the class name there, so a lookup is possible without
+# conversion.
 #
-# Nicht aufgefuehrt und damit `OTHER`: Haushaltsgeraete (0x0070-0x007C),
-# Medien (0x0022-0x002A), Energie (0x050C-0x050F), Netzwerk-Infrastruktur
-# (0x0090, 0x0091), Bruecken-Verwaltung (0x000E Aggregator, 0x0013 Bridged
-# Node). Sie kommen an einer Loxone-Anbindung entweder gar nicht vor oder
-# haetten in einer Raumliste keinen eigenen Rang verdient.
+# Not listed and therefore `OTHER`: appliances (0x0070-0x007C), media
+# (0x0022-0x002A), energy (0x050C-0x050F), network infrastructure (0x0090,
+# 0x0091), bridge management (0x000E Aggregator, 0x0013 Bridged Node). They
+# either never occur on a Loxone connection at all, or would not have
+# earned their own rank in a room list.
 CATEGORY_BY_DEVICE_TYPE: dict[int, Category] = {
     0x0100: Category.LIGHT,  # OnOffLight
     0x0101: Category.LIGHT,  # DimmableLight
     0x010C: Category.LIGHT,  # ColorTemperatureLight
     0x010D: Category.LIGHT,  # ExtendedColorLight
-    # MountedOnOffControl / MountedDimmableLoadControl sind fest verbaute
-    # Lastschalter - in der Praxis sitzt dahinter eine Leuchte, nicht eine
-    # Steckdose (die traegt einen eigenen Typ, siehe unten).
+    # MountedOnOffControl / MountedDimmableLoadControl are permanently
+    # wired load switches - in practice a light sits behind them, not a
+    # plug (that carries its own type, see below).
     0x010F: Category.LIGHT,  # MountedOnOffControl
     0x0110: Category.LIGHT,  # MountedDimmableLoadControl
     0x010A: Category.SOCKET,  # OnOffPlugInUnit
@@ -105,7 +105,13 @@ CATEGORY_BY_DEVICE_TYPE: dict[int, Category] = {
     0x0840: Category.SWITCH,  # ControlBridge
     0x0202: Category.COVERING,  # WindowCovering
     0x0203: Category.COVERING,  # WindowCoveringController
-    0x0300: Category.CLIMATE,  # HeatingCoolingUnit
+    # 0x0300 (HeatingCoolingUnit) is deliberately absent here: the type is in the Matter
+    # Device Library continuously provisional since 1.0 and therefore not
+    # certifiable. The table from matter-python-client is generated from the
+    # specification and does not include provisional types - so
+    # `test_every_mapped_type_exists_in_the_matter_table` cannot populate this ID.
+    # A device with this type falls through `category_for` to
+    # `Category.OTHER` and remains fully usable there.
     0x0301: Category.CLIMATE,  # Thermostat
     0x0309: Category.CLIMATE,  # HeatPump
     0x002B: Category.CLIMATE,  # Fan
@@ -131,26 +137,25 @@ CATEGORY_BY_DEVICE_TYPE: dict[int, Category] = {
 
 
 def category_for(device_types: Mapping[int, frozenset[int]] | None) -> Category:
-    """Die Kategorie eines Geraets aus seinen Geraetetypen je Endpunkt.
+    """A device's category derived from its device types per endpoint.
 
-    `None` (Geraetetypen noch nicht nachgetragen, siehe
-    `Store.backfill_device_types`) ergibt `OTHER` - dieselbe Antwort wie fuer
-    ein Geraet, dessen Typen niemand zuordnen kann. Die Oberflaeche
-    unterscheidet beide Faelle nicht: in beiden steht das Geraet vollstaendig
-    bedienbar unter "Sonstige", der erste Fall behebt sich beim naechsten
-    Bruueckenstart von selbst.
+    `None` (device types not yet backfilled, see
+    `Store.backfill_device_types`) yields `OTHER` - the same answer as for
+    a device whose types nobody can map. The UI does not distinguish the
+    two cases: in both, the device is fully operable under "other", and
+    the first case resolves itself on the next bridge start.
 
-    Die Regel in vier Schritten (Entwurf 5.2):
+    The rule in four steps (design 5.2):
 
-    1. Verwaltungstypen fallen weg (`_IGNORED_DEVICE_TYPES`).
-    2. Vom Rest zaehlt der NIEDRIGSTE Endpunkt - bei Matter ueblicherweise
-       Endpunkt 1, der Anwendungs-Endpunkt. Eine Steckdose mit einem
-       Temperaturfuehler auf Endpunkt 2 bleibt eine Steckdose.
-    3. Traegt dieser Endpunkt mehrere zuordenbare Typen, gewinnt der mit dem
-       niedrigsten Rang. Damit haengt das Ergebnis nicht daran, in welcher
-       Reihenfolge das Geraet seine Typen aufzaehlt - ein `frozenset` hat
-       ohnehin keine.
-    4. Nichts Zuordenbares -> `OTHER`.
+    1. Management types are dropped (`_IGNORED_DEVICE_TYPES`).
+    2. Of the rest, the LOWEST endpoint counts - with Matter usually
+       endpoint 1, the application endpoint. A plug with a temperature
+       sensor on endpoint 2 stays a plug.
+    3. If this endpoint carries several mappable types, the one with the
+       lowest rank wins. That way the result does not depend on the order
+       in which the device enumerates its types - a `frozenset` has none
+       anyway.
+    4. Nothing mappable -> `OTHER`.
     """
     if not device_types:
         return Category.OTHER

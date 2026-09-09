@@ -1,4 +1,4 @@
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -14,88 +14,104 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Verbindung zu python-matter-server.
+"""Connection to matter-server via its WebSocket API.
 
-Bewusst dünn gehalten: holt Rohdaten und macht NodeSnapshots daraus. Die
-Zerlegung in Signale passiert in discovery.py und ist dort ohne Netz getestet.
+**Addendum (8 September 2026): the upstream now has a different name.**
+This docstring verifies its statements consistently against the then-
+installed `python-matter-server==8.1.2`. These verifications remain unchanged:
+they were verified against source code and remain correct for that version.
+Installed now is instead `matter-python-client` from
+the successor project `matterjs-server` - the same `matter_server*` package and
+the same `chip*` under the same module paths, which is why no import and
+no instruction here had to change. Every signature verified below was checked
+against the new source code; the only deviation is at
+`set_thread_dataset()`. Where "python-matter-server" stands below, it means the
+version THAT WAS MEASURED AGAINST, not the one installed today. The
+complete comparison is in the design
+docs/superpowers/specs/2026-09-08-matterjs-server-migration-design.md,
+section 2 (also there, which calls the first version had overlooked).
 
-BridgeMatterClient erzeugt die aiohttp-ClientSession selbst und bleibt damit
-ihr alleiniger Besitzer: MatterClientConnection.disconnect() aus
-python-matter-server schließt nur das Websocket, nicht die Session, die ihr
-übergeben wurde — laut aiohttp-Konvention muss das tun, wer die Session
-erzeugt hat. Deshalb hält diese Klasse die Session-Referenz selbst und
-schließt sie in disconnect() bzw. bei einem gescheiterten connect().
+Deliberately kept thin: fetches raw data and turns it into NodeSnapshots.
+The decomposition into signals happens in discovery.py and is tested there
+without a network.
 
-Der Upstream-`MatterClient` füllt seinen Node-Cache ausschließlich in
-`start_listening()` — eine langlaufende Coroutine, die den initialen
-Node-Dump holt, ein `init_ready`-Event setzt und danach weiterläuft, um
-Push-Updates zu empfangen. `connect()` startet sie deshalb als Hintergrund-
-Task und wartet auf das Bereitschafts-Event, bevor der Client sich als
-verbunden meldet; `disconnect()` bricht diesen Task wieder ab, bevor die
-Verbindung geschlossen wird.
+BridgeMatterClient creates the aiohttp ClientSession itself and thereby
+remains its sole owner: python-matter-server's
+MatterClientConnection.disconnect() only closes the websocket, not the
+session that was handed to it - by aiohttp convention, whoever created the
+session must do that. This class therefore holds the session reference
+itself and closes it in disconnect() or on a failed connect().
 
-subscribe() — eine Abweichung vom Auftrag (Task 8), belegt gegen die
-installierte python-matter-server==8.1.2:
+The upstream `MatterClient` fills its node cache exclusively in
+`start_listening()` - a long-running coroutine that fetches the initial
+node dump, sets an `init_ready` event and then keeps running to receive
+push updates. `connect()` therefore starts it as a background task and
+waits for the readiness event before the client reports itself as
+connected; `disconnect()` cancels this task again before the connection is
+closed.
+
+subscribe() - a deviation from the assignment (task 8), verified against
+the installed python-matter-server==8.1.2:
 
 `MatterClient.subscribe_events(callback, event_filter, node_filter,
-attr_path_filter)` ruft `callback` bei jedem Treffer als `callback(event,
-data)` auf — synchron, nur zwei Argumente. `node_filter`/`attr_path_filter`
-steuern ausschließlich, *ob* ein registriertes `callback` überhaupt
-aufgerufen wird (Schlüssel-Matching in `MatterClient._signal_event`), sie
-werden ihm NICHT mitgegeben. Für `EventType.NODE_EVENT` und
-`EventType.NODE_ADDED`/`NODE_UPDATED` reicht das trotzdem: `data` ist dort
-ein `MatterNodeEvent` bzw. der volle `MatterNode`, beide tragen `node_id`
-selbst. Für `EventType.ATTRIBUTE_UPDATED` dagegen ist `data` einzig der neue
-Wert — kein `node_id`, kein Attributpfad. Eine einzelne Wildcard-Subscription
-kann ein Attribut-Update deshalb nicht einem Gerät zuordnen; das ist keine
-Falllücke, sondern in `_handle_event_message`/`_signal_event` so angelegt
-(siehe `.venv/.../matter_server/client/client.py`).
+attr_path_filter)` calls `callback` on every match as `callback(event,
+data)` - synchronously, only two arguments. `node_filter`/`attr_path_filter`
+control exclusively *whether* a registered `callback` is called at all
+(key matching in `MatterClient._signal_event`), they are NOT passed to it.
+For `EventType.NODE_EVENT` and `EventType.NODE_ADDED`/`NODE_UPDATED` that
+is nonetheless enough: `data` is there a `MatterNodeEvent` or the full
+`MatterNode`, both of which carry `node_id` themselves. For
+`EventType.ATTRIBUTE_UPDATED`, however, `data` is solely the new value -
+no `node_id`, no attribute path. A single wildcard subscription therefore
+cannot attribute an attribute update to a device; this is not a gap in
+the design but built into `_handle_event_message`/`_signal_event` this
+way (see `.venv/.../matter_server/client/client.py`).
 
-Deshalb registriert `subscribe()` für Attribute genau eine Subscription pro
-bei Aufruf bekanntem (Node, Pfad)-Paar — `node_filter` und `attr_path_filter`
-legen dabei exakt fest, wofür ein Callback steht, und der Callback selbst
-schließt `node_id`/`path` als Closure ein. Node-Events und
-Erreichbarkeit laufen dagegen über je eine einzige Wildcard-Subscription,
-weil ihre `data` bereits alles Nötige trägt.
+This is why `subscribe()` registers, for attributes, exactly one
+subscription per (node, path) pair known at call time - `node_filter` and
+`attr_path_filter` exactly determine what a callback stands for, and the
+callback itself closes over `node_id`/`path` as a closure. Node events and
+reachability, by contrast, each run through a single wildcard
+subscription, because their `data` already carries everything needed.
 
-Was nach `subscribe()` dazukommt, holt `follow_node()` nach — ein Gerät,
-das erst danach eingelernt wird, ebenso wie ein bekanntes Gerät, das
-nachträglich neue Attributpfade meldet. Angestossen wird es aus der
-Dispatch-Schleife bei `NODE_ADDED`/`NODE_UPDATED` und zusätzlich von der
-Einlern-Route. Das „zusätzlich" ist nicht Gürtel-und-Hosenträger: das
-`NODE_ADDED` eines gerade eingelernten Geräts kommt nachweislich, BEVOR
-`commission_with_code` zurückkehrt und der Store dem Node eine device_id
-geben kann — die Werte dieser Meldung gehen deshalb ins Leere, und eine
-zweite folgt für ein ruhig im Netz stehendes Gerät nicht. Der Dispatch-Task
-hat zu diesem Zeitpunkt aber bereits jeden Pfad abonniert; der Nachzug der
-Route findet also einen leeren Diff vor und säet nur deshalb trotzdem, weil
-sie ihn mit `seed_even_without_new_paths=True` anfordert (die ganze
-Begründung steht bei `follow_node`). Siehe
-docs/superpowers/specs/2026-09-04-live-werte-neuer-geraete-design.md.
+Whatever is added after `subscribe()` is caught up by `follow_node()` - a
+device that is only commissioned afterwards, as well as a known device
+that subsequently reports new attribute paths. It is triggered from the
+dispatch loop on `NODE_ADDED`/`NODE_UPDATED` and additionally from the
+commissioning route. This "additionally" is not belt-and-braces: the
+`NODE_ADDED` of a device just commissioned demonstrably arrives BEFORE
+`commission_with_code` returns and the store can give the node a
+device_id - the values of this notification therefore go nowhere, and no
+second one follows for a device that is quietly sitting on the network.
+At this point, however, the dispatch task has already subscribed to every
+path; the route's follow-up call therefore finds an empty diff and still
+seeds only because it requests it with `seed_even_without_new_paths=True`
+(the full rationale is at `follow_node`). See
+docs/superpowers/specs/2026-09-04-live-values-for-new-devices-design.md.
 
-commission_with_code()/remove_node()/set_thread_dataset() — belegt gegen die
-installierte python-matter-server==8.1.2 (Task 1, Phase 5):
+commission_with_code()/remove_node()/set_thread_dataset() - verified
+against the installed python-matter-server==8.1.2 (task 1, phase 5):
 
 `MatterClient.commission_with_code(self, code: str, network_only: bool =
-False) -> MatterNodeData` — `MatterClient.remove_node(self, node_id: int) ->
-None` — `MatterClient.set_thread_operational_dataset(self, dataset: str) ->
-None`. `remove_node` und `set_thread_operational_dataset` entsprechen exakt
-der Planannahme.
+False) -> MatterNodeData` - `MatterClient.remove_node(self, node_id: int) ->
+None` - `MatterClient.set_thread_operational_dataset(self, dataset: str) ->
+None`. `remove_node` and `set_thread_operational_dataset` match the plan's
+assumption exactly.
 
-`commission_with_code` NICHT: Der Plan nahm an, der Rückgabewert trüge seine
-Rohattribute wie ein `MatterNode` aus `get_nodes()` unter `node_data.attributes`
-(siehe oben zu `snapshots()`). Tatsächlich liefert `commission_with_code`
-laut Quelltext (`dataclass_from_dict(MatterNodeData, data)`) das
-`MatterNodeData`-Dataclass selbst zurück — `node_id` und `attributes` liegen
-dort unmittelbar auf dem Objekt, keine Verschachtelung. `MatterNode` (mit
-`node_data`-Indirektion) und `MatterNodeData` (flach) sind in
-python-matter-server zwei verschiedene Typen; `get_nodes()` liefert Ersteres,
-`commission_with_code()` Letzteres. Bei ungeprüfter Übernahme der
-Plan-Annahme hätte `node.node_data.attributes` mit `AttributeError`
-fehlgeschlagen — hier immerhin laut, anders als die zwei still ausfallenden
-Fehlannahmen aus Phase 4 (siehe oben), aber ohne Nachsehen (Step 1) wäre
-auch das erst beim ersten echten Einlernversuch aufgefallen, nicht beim
-Schreiben des Codes.
+`commission_with_code` does NOT: the plan assumed the return value would
+carry its raw attributes like a `MatterNode` from `get_nodes()` under
+`node_data.attributes` (see above regarding `snapshots()`). In fact,
+`commission_with_code` returns, per the source
+(`dataclass_from_dict(MatterNodeData, data)`), the `MatterNodeData`
+dataclass itself - `node_id` and `attributes` sit directly on the object,
+no nesting. `MatterNode` (with `node_data` indirection) and `MatterNodeData`
+(flat) are two different types in python-matter-server; `get_nodes()`
+returns the former, `commission_with_code()` the latter. Uncritically
+adopting the plan's assumption would have made `node.node_data.attributes`
+fail with `AttributeError` - at least loudly, unlike the two silently
+failing wrong assumptions from phase 4 (see above), but without a
+verification pass (step 1), that too would have first surfaced during the
+first real commissioning attempt, not while writing the code.
 """
 
 from __future__ import annotations
@@ -113,42 +129,42 @@ from loxmatter.matter.models import NodeSnapshot
 
 logger = logging.getLogger(__name__)
 
-# Wie lange connect() auf das Bereitschafts-Event des Listeners wartet, bevor
-# es aufgibt. matter-server schickt den initialen Node-Dump normalerweise
-# binnen weniger Sekunden; das Vielfache dient als Sicherheitsmarge gegen
-# einen langsamen oder hängenden Server.
+# How long connect() waits for the listener's readiness event before
+# giving up. matter-server normally sends the initial node dump within a
+# few seconds; the multiple serves as a safety margin against a slow or
+# hanging server.
 LISTENER_READY_TIMEOUT_SECONDS: Final = 10.0
 
 
 class MatterUnavailableError(RuntimeError):
-    """matter-server ist nicht verbunden, kennt den gefragten Node nicht,
-    oder kennt das angeforderte Kommando nicht."""
+    """matter-server is not connected, does not know the requested node,
+    or does not know the requested command."""
 
 
 class CommissioningError(RuntimeError):
-    """Das Einlernen eines Geraets ist am Geraet selbst gescheitert (z. B.
-    falscher Code, Geraet haengt schon in einem anderen Oekosystem, Timeout
-    beim Interview).
+    """Commissioning a device failed at the device itself (e.g. wrong
+    code, device is already in another ecosystem, timeout during the
+    interview).
 
-    Ein Verbindungsverlust zu matter-server WAEHREND des Einlernens ist
-    davon ausdruecklich abgegrenzt: commission_with_code() faengt
-    `NotConnected`/`ConnectionClosed`/`CannotConnect` gesondert ab und wirft
-    dafuer `MatterUnavailableError`, denn nur so laesst sich unterscheiden,
-    ob das Geraet abgelehnt hat oder matter-server nicht erreichbar war
-    (Spec 8.1/9, Review-Fix Task 1). Die urspruengliche Ausnahme bleibt ueber
-    `__cause__` erhalten."""
+    A loss of connection to matter-server WHILE commissioning is
+    deliberately distinguished from this: commission_with_code() catches
+    `NotConnected`/`ConnectionClosed`/`CannotConnect` separately and
+    raises `MatterUnavailableError` for that, because only this way can
+    one distinguish whether the device rejected the attempt or
+    matter-server was unreachable (spec 8.1/9, review fix task 1). The
+    original exception is preserved via `__cause__`."""
 
 
 class RuntimeEventHandler(Protocol):
-    """Was `subscribe()` von seinem Aufrufer braucht — `Runtime`
-    (loxone/runtime.py) erfüllt das bereits unverändert, `_run()` kann sie
-    also direkt als `handler` übergeben, ohne einen Adapter zu schreiben.
+    """What `subscribe()` needs from its caller - `Runtime`
+    (loxone/runtime.py) already satisfies this unchanged, so `_run()` can
+    pass it directly as `handler`, without writing an adapter.
 
-    `on_node_snapshot` kam mit dem Nachziehen der Abonnements dazu
-    (`follow_node`): der Client sieht ein Gerät mit Pfaden, für die es noch
-    keine Signalzeile gibt, und kann selbst nichts damit anfangen — er kennt
-    den `Store` nicht und soll ihn nicht kennen. Der Handler dagegen hat
-    ihn."""
+    `on_node_snapshot` was added with the follow-up of subscriptions
+    (`follow_node`): the client sees a device with paths for which there
+    is no signal row yet, and cannot do anything with that itself - it
+    does not know the `Store` and is not supposed to know it. The handler,
+    on the other hand, has it."""
 
     async def on_attribute(self, device_id: int, path: str, raw: object) -> None: ...
     async def on_event(self, device_id: int, path: str) -> None: ...
@@ -177,11 +193,11 @@ class _AvailabilityUpdate:
 
 @dataclass(frozen=True)
 class _FollowNode:
-    """Anstoss zum Nachziehen der Abonnements eines Node.
+    """Trigger to catch up a node's subscriptions.
 
-    Laeuft ueber dieselbe Queue wie die Wert-Aktualisierungen, statt direkt
-    aus dem synchronen Ereignis-Rueckruf heraus: `follow_node` ist eine
-    Coroutine, und der Rueckruf kann keine erwarten (siehe
+    Runs over the same queue as the value updates, rather than directly
+    out of the synchronous event callback: `follow_node` is a coroutine,
+    and the callback cannot await one (see
     `on_node_or_availability_event`).
     """
 
@@ -192,14 +208,14 @@ _QueueItem = _AttributeUpdate | _EventUpdate | _AvailabilityUpdate | _FollowNode
 
 
 async def _cancel_and_await(task: asyncio.Task[Any]) -> None:
-    """Bricht einen Task ab und wartet sein Ende ab.
+    """Cancels a task and awaits its end.
 
-    Rein für Aufräumzwecke gedacht: Ausnahmen aus dem abgebrochenen Task
-    (typischerweise CancelledError, aber auch andere, falls der Task schon
-    vorher mit einem Fehler geendet hat) werden hier verschluckt, damit sie
-    nicht den eigentlichen, bereits laufenden Fehlerpfad überdecken — der
-    Aufrufer hat die relevante Ausnahme an der eigentlichen Fehlerquelle
-    bereits gesehen oder sieht sie dort noch.
+    Intended purely for cleanup purposes: exceptions from the cancelled
+    task (typically CancelledError, but also others if the task had
+    already ended with an error before) are swallowed here, so they do not
+    obscure the actual, already-running error path - the caller has
+    already seen the relevant exception at its actual source, or will
+    still see it there.
     """
     task.cancel()
     with contextlib.suppress(BaseException):
@@ -219,50 +235,51 @@ class BridgeMatterClient:
         self._upstream: Any | None = None
         self._http_session: Any | None = None
         self._listener_task: asyncio.Task[Any] | None = None
-        # subscribe()-Zustand: der Dispatch-Task liest _event_queue und ruft
-        # den handler auf; _unsubscribers sind die Rueckruf-Funktionen, die
-        # upstream.subscribe_events() je Registrierung zurueckgibt.
+        # subscribe() state: the dispatch task reads _event_queue and
+        # calls the handler; _unsubscribers are the callback functions
+        # upstream.subscribe_events() returns per registration.
         self._dispatch_task: asyncio.Task[None] | None = None
         self._unsubscribers: list[Callable[[], None]] = []
-        # Ob DIESE Verbindung matter-server den Thread-Datensatz schon
-        # uebergeben hat - siehe `thread_dataset_set` fuer die Begruendung,
-        # warum das nicht aus `server_info` allein ablesbar ist. Wird bei
-        # jedem connect() zurueckgesetzt: eine neue Verbindung kann einen
-        # neu gestarteten matter-server treffen, und der hat sie vergessen.
+        # Whether THIS connection has already handed matter-server the
+        # Thread dataset - see `thread_dataset_set` for why that cannot be
+        # read from `server_info` alone. Reset on every connect(): a new
+        # connection can hit a freshly restarted matter-server, and that
+        # one has forgotten it.
         self._thread_dataset_set = False
-        # subscribe()/follow_node()-Zustand. Die Menge der bereits angelegten
-        # Attribut-Abonnements ist die einzige Quelle dafuer, was "neu" heisst
-        # - ein zweites Abonnement fuer denselben (Node, Pfad) wuerde jeden
-        # Wert doppelt zustellen. Queue, Handler und die device_id-Aufloesung
-        # bleiben nach subscribe() erreichbar, weil follow_node sie braucht.
+        # subscribe()/follow_node() state. The set of already-created
+        # attribute subscriptions is the only source of what counts as
+        # "new" - a second subscription for the same (node, path) would
+        # deliver every value twice. Queue, handler and the device_id
+        # resolution remain reachable after subscribe(), because
+        # follow_node needs them.
         self._subscribed_paths: set[tuple[int, str]] = set()
-        # Nodes, denen diese Bruecke noch ein Abbild schuldet - siehe
-        # `follow_node`, wo auch steht, warum das eine ANDERE Frage
-        # beantwortet als der Schalter `seed_even_without_new_paths`.
+        # Nodes this bridge still owes a snapshot to - see `follow_node`,
+        # which also explains why that answers a DIFFERENT question than
+        # the `seed_even_without_new_paths` flag.
         self._seed_pending: set[int] = set()
         self._queue: asyncio.Queue[_QueueItem] | None = None
         self._handler: RuntimeEventHandler | None = None
         self._resolve_device_id: Callable[[int], int | None] | None = None
 
     def _default_session_factory(self, session: Any) -> Any:
-        # Lazy importiert, damit Tests matter_server nie laden müssen.
+        # Lazily imported, so tests never need to load matter_server.
         from matter_server.client.client import MatterClient
 
         return MatterClient(self._url, session)
 
     @staticmethod
     def _default_http_session_factory() -> Any:
-        # Lazy importiert, damit Tests aiohttp nie laden müssen.
+        # Lazily imported, so tests never need to load aiohttp.
         import aiohttp
 
         return aiohttp.ClientSession()
 
     async def _start_listener(self, upstream: Any) -> asyncio.Task[Any]:
-        """Startet upstream.start_listening() als Hintergrund-Task und
-        wartet, bis er den Node-Cache gefüllt und Bereitschaft signalisiert
-        hat. Scheitert der Listener oder meldet er sich nicht rechtzeitig,
-        räumt diese Methode den Task vollständig ab und wirft, statt einen
-        halb verbundenen Task zurückzugeben."""
+        """Starts upstream.start_listening() as a background task and
+        waits until it has filled the node cache and signaled readiness.
+        If the listener fails or does not report in time, this method
+        fully cleans up the task and raises, instead of returning a
+        half-connected task."""
         ready = asyncio.Event()
         listener_task: asyncio.Task[Any] = asyncio.ensure_future(upstream.start_listening(ready))
         ready_task = asyncio.ensure_future(ready.wait())
@@ -273,17 +290,17 @@ class BridgeMatterClient:
                 return_when=asyncio.FIRST_COMPLETED,
             )
             if ready_task in done:
-                # Bereitschaft gemeldet — der Listener läuft jetzt im
-                # Hintergrund weiter, um Push-Updates zu empfangen.
+                # Readiness reported - the listener now keeps running in
+                # the background to receive push updates.
                 return listener_task
 
             await _cancel_and_await(ready_task)
 
             if listener_task in done:
-                # Der Listener ist beendet, bevor er Bereitschaft gemeldet
-                # hat. .result() wirft seine ursprüngliche Ausnahme
-                # unverändert weiter (z. B. CannotConnect) — Aufrufer wie
-                # die CLI können sie damit weiterhin gezielt behandeln.
+                # The listener ended before it reported readiness.
+                # .result() re-raises its original exception unchanged
+                # (e.g. CannotConnect) - callers such as the CLI can thus
+                # keep handling it specifically.
                 listener_task.result()
                 msg = i18n.t("api.errors.listener_stopped_early")
                 raise MatterUnavailableError(msg)
@@ -295,10 +312,10 @@ class BridgeMatterClient:
             raise
 
     async def connect(self) -> None:
-        # Ein bereits verbundener Client wird bei erneutem connect() sauber
-        # getrennt, bevor neu verbunden wird — sonst würde die alte, noch
-        # offene Session beim Überschreiben von self._upstream/self._http_session
-        # unerreichbar und nie geschlossen.
+        # An already connected client is cleanly disconnected on a renewed
+        # connect() before reconnecting - otherwise the old, still-open
+        # session would become unreachable and never closed when
+        # self._upstream/self._http_session are overwritten.
         if self._upstream is not None:
             await self.disconnect()
         http_session = self._http_session_factory()
@@ -306,10 +323,10 @@ class BridgeMatterClient:
             upstream = self._session_factory(http_session)
             listener_task = await self._start_listener(upstream)
         except BaseException:
-            # BaseException statt Exception: asyncio.CancelledError erbt von
-            # BaseException, nicht von Exception. Ein während des Verbindungs-
-            # aufbaus abgebrochenes connect() (z. B. durch asyncio.wait_for)
-            # muss die Session trotzdem schließen und den Abbruch weiterreichen.
+            # BaseException rather than Exception: asyncio.CancelledError
+            # inherits from BaseException, not from Exception. A connect()
+            # cancelled during connection setup (e.g. by asyncio.wait_for)
+            # must still close the session and re-raise the cancellation.
             await http_session.close()
             raise
         self._http_session = http_session
@@ -325,10 +342,11 @@ class BridgeMatterClient:
         listener_task = self._listener_task
         dispatch_task = self._dispatch_task
         unsubscribers = self._unsubscribers
-        # Felder vor dem await auf None setzen: so ist der Client sofort als
-        # nicht verbunden erkennbar, auch wenn einer der Schritte unten eine
-        # Ausnahme wirft — disconnect() bleibt idempotent und der
-        # Objektzustand sauber, ganz gleich, wie die Trennung ausgeht.
+        # Set fields to None before the await: this way the client is
+        # immediately recognizable as not connected, even if one of the
+        # steps below raises an exception - disconnect() stays idempotent
+        # and the object state clean, no matter how the disconnection
+        # turns out.
         self._upstream = None
         self._http_session = None
         self._listener_task = None
@@ -340,17 +358,17 @@ class BridgeMatterClient:
         self._handler = None
         self._resolve_device_id = None
         if http_session is None:
-            # Invariante: Ist _upstream gesetzt, ist auch _http_session gesetzt
-            # (beide werden nur gemeinsam in connect() gesetzt). Als expliziter
-            # Fehler statt assert, damit die Prüfung auch unter `python -O`
-            # greift.
-            msg = "interner Fehler: _http_session fehlt trotz aktivem _upstream"
+            # Invariant: if _upstream is set, _http_session is set too
+            # (both are only ever set together in connect()). An explicit
+            # error rather than assert, so the check also applies under
+            # `python -O`.
+            msg = "internal error: _http_session is missing despite an active _upstream"
             raise RuntimeError(msg)
-        # Erst die Subscriptions beim Upstream abmelden (keine neuen
-        # Aktualisierungen mehr in die Queue), danach den Dispatch-Task
-        # abbrechen (nichts mehr aus der Queue verarbeiten) — beides vor dem
-        # eigentlichen Verbindungsabbau, sonst liefe der Dispatch-Task auf
-        # einem bereits getrennten upstream weiter.
+        # First unsubscribe from the upstream (no more updates into the
+        # queue), then cancel the dispatch task (nothing more processed
+        # from the queue) - both before the actual connection teardown,
+        # otherwise the dispatch task would keep running against an
+        # already-disconnected upstream.
         for unsubscribe in unsubscribers:
             unsubscribe()
         if dispatch_task is not None:
@@ -366,14 +384,65 @@ class BridgeMatterClient:
 
     @property
     def connected(self) -> bool:
-        """Ob `connect()` erfolgreich lief und `disconnect()` seither nicht
-        aufgerufen wurde - fuer den Systemcheck der Diagnose (Spec 10.5,
-        Task 6, Phase 5; siehe `api.diagnostics._check_matter_server`), der
-        einzige bisherige Aufrufer. Spiegelt exakt dieselbe Bedingung wie
-        `_require_upstream` unten (`self._upstream is not None`), nur ohne
-        zu werfen - eine Pruefung soll einen fehlenden Zustand melden
-        koennen, nicht ihn signalisieren muessen."""
-        return self._upstream is not None
+        """Whether the connection to matter-server currently HOLDS.
+
+        This used to be `self._upstream is not None` - that is, the answer
+        to "has anyone called connect()?", not to "is the connection up?".
+        The field is set once in `connect()` and cleared exclusively by
+        `disconnect()`; when the websocket died, it stayed put. On
+        8 September 2026 exactly that made an outage invisible:
+        `GET /api/diagnostics/system` reported "Connected" while no device
+        value arrived any more and every Loxone command failed with 502
+        (see the design of 2026-09-08, section 1.3).
+
+        That is why the listener task now counts as well: as long as it
+        runs, this client receives push updates; once it has ended, the
+        connection is gone, no matter what `_upstream` still holds.
+
+        Unlike before, this is therefore NOT the same condition as in
+        `_require_upstream` any more. That is deliberate: a call against a
+        dead upstream should still fail at the point where it happens, and
+        not already here.
+        """
+        return (
+            self._upstream is not None
+            and self._listener_task is not None
+            and not self._listener_task.done()
+        )
+
+    async def wait_for_link_loss(self) -> None:
+        """Returns as soon as the listener ends - for whatever reason.
+
+        The signal for a lost connection already exists: the task from
+        `upstream.start_listening()`. Until 8 September 2026 it was simply
+        never collected anywhere - no `add_done_callback`, no supervision -
+        so its exception seeped away silently and nobody noticed that the
+        bridge had gone deaf.
+
+        `asyncio.wait` instead of `await task`: an `await` on a task
+        PROPAGATES the waiter's cancellation to the task. If the supervisor
+        (see `matter/supervisor.py`) is cancelled during shutdown, it would
+        tear the listener down with it - and `disconnect()` would find it
+        already cancelled. `asyncio.wait` does not touch the tasks handed
+        to it.
+
+        The listener's exception is collected and logged, not re-raised:
+        the caller wants to know THAT the connection is gone, and should
+        not have to distinguish between reasons for the breakdown. Without
+        the `exception()` call, Python would also write "Task exception was
+        never retrieved" to the log when cleaning the task up.
+        """
+        task = self._listener_task
+        if task is None:
+            return
+        await asyncio.wait({task})
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is not None:
+            logger.warning("connection to matter-server lost: %s", exc)
+        else:
+            logger.warning("listener of matter-server ended without an error")
 
     def _require_upstream(self) -> Any:
         if self._upstream is None:
@@ -383,14 +452,15 @@ class BridgeMatterClient:
     async def snapshots(self) -> list[NodeSnapshot]:
         upstream = self._require_upstream()
         return [
-            # Die Rohattribute liegen bei matter_server.MatterNode nicht
-            # direkt auf dem Node, sondern auf node.node_data.attributes —
-            # war bislang unbeobachtbar, weil der Node-Cache vor der
-            # Listener-Anbindung immer leer war (siehe Modul-Docstring).
-            # `available` kommt bewusst mit hinein (Review-Fix C1,
-            # 2026-09-02): `Runtime.seed_from_snapshot` braucht sie, um ein
-            # Geraet beim Start korrekt als on-/offline zu saeen, statt es
-            # bis zum naechsten NODE_ADDED/NODE_UPDATED unbestimmt zu lassen.
+            # For matter_server.MatterNode, the raw attributes do not sit
+            # directly on the node, but on node.node_data.attributes -
+            # this used to be unobservable because the node cache was
+            # always empty before the listener was wired up (see the
+            # module docstring). `available` is deliberately included
+            # (review fix C1, 2026-09-02): `Runtime.seed_from_snapshot`
+            # needs it to correctly seed a device as on-/offline at
+            # startup, instead of leaving it undetermined until the next
+            # NODE_ADDED/NODE_UPDATED.
             NodeSnapshot.from_raw(
                 node.node_id,
                 {"attributes": node.node_data.attributes, "available": node.available},
@@ -405,34 +475,34 @@ class BridgeMatterClient:
         raise MatterUnavailableError(i18n.t("api.errors.unknown_node", node_id=node_id))
 
     async def commission_with_code(self, code: str) -> NodeSnapshot:
-        """Lernt ein Geraet ueber seinen Pairing-Code ein.
+        """Commissions a device via its pairing code.
 
-        Der Code ist die 11-stellige Zahl oder der 21-stellige MT:-Code vom
-        Geraet oder seiner Verpackung. Haengt das Geraet schon in einem
-        anderen Oekosystem, funktioniert der aufgedruckte Code nicht mehr -
-        dann braucht es von dort einen Multi-Admin-Code (Spec 7.1).
+        The code is the 11-digit number or the 21-character MT: code from
+        the device or its packaging. If the device is already in another
+        ecosystem, the printed code no longer works - it then needs a
+        multi-admin code from there (spec 7.1).
 
-        Der Upstream liefert hier ein `MatterNodeData` zurueck, dessen
-        `node_id`/`attributes`/`available` unmittelbar auf dem Objekt liegen
-        - anders als bei `get_nodes()` (siehe Modul-Docstring). Ein
-        Thread-Geraet scheitert hier mit "Required network information not
-        provided", solange `set_thread_dataset()` nicht vorher aufgerufen
-        wurde.
+        The upstream returns here a `MatterNodeData`, whose
+        `node_id`/`attributes`/`available` sit directly on the object -
+        unlike with `get_nodes()` (see the module docstring). A Thread
+        device fails here with "Required network information not
+        provided" as long as `set_thread_dataset()` has not been called
+        beforehand.
         """
         upstream = self._require_upstream()
 
-        # Lazy importiert wie _default_session_factory: Tests mit einem
-        # Fake-Upstream sollen matter_server nie laden müssen.
+        # Lazily imported like _default_session_factory: tests with a
+        # fake upstream should never need to load matter_server.
         from matter_server.client.exceptions import CannotConnect, ConnectionClosed, NotConnected
 
         try:
             node = await upstream.commission_with_code(code)
         except (NotConnected, ConnectionClosed, CannotConnect) as exc:
-            # Verbindungsverlust zu matter-server ist keine Ablehnung durch
-            # das Geraet — beides landete zuvor ununterscheidbar in
-            # CommissioningError (Review-Fix, siehe Task-1-Report). Fängt
-            # diesen Zweig VOR dem generischen except Exception unten ab,
-            # sonst würde er dort mitgefangen.
+            # A loss of connection to matter-server is not a rejection by
+            # the device - both used to land indistinguishably in
+            # CommissioningError (review fix, see the task 1 report).
+            # Catches this branch BEFORE the generic except Exception
+            # below, otherwise it would be caught there instead.
             msg = i18n.t("api.errors.matter_server_unreachable", exc=exc)
             raise MatterUnavailableError(msg) from exc
         except Exception as exc:
@@ -442,32 +512,31 @@ class BridgeMatterClient:
         )
 
     async def remove_node(self, node_id: int) -> None:
-        """Entfernt ein Geraet aus der Fabric."""
+        """Removes a device from the fabric."""
         await self._require_upstream().remove_node(node_id)
 
     @property
     def thread_dataset_set(self) -> bool:
-        """Ob matter-server die Thread-Zugangsdaten gerade hat.
+        """Whether matter-server currently has the Thread credentials.
 
-        Zwei Quellen, weil keine allein reicht:
+        Two sources, because neither alone is enough:
 
-        - `server_info.thread_credentials_set` sagt, was matter-server BEIM
-          VERBINDUNGSAUFBAU gemeldet hat. Der Dienst schickt zwar bei jeder
-          Aenderung ein `SERVER_INFO_UPDATED`-Ereignis
-          (`device_controller.set_thread_operational_dataset` loest es aus),
-          aber `MatterClient._handle_event_message` kennt dafuer keinen
-          Zweig - das Abbild bleibt also fuer die Dauer der Verbindung
-          stehen, auch nachdem diese Bruecke den Datensatz selbst gesetzt
-          hat. Geprueft gegen die installierte Fassung, nicht vermutet.
-        - `_thread_dataset_set` sind die eigenen, erfolgreichen Aufrufe von
-          `set_thread_dataset()` auf DIESER Verbindung.
+        - `server_info.thread_credentials_set` says what matter-server
+          reported AT CONNECTION SETUP. The service does send a
+          `SERVER_INFO_UPDATED` event on every change
+          (`device_controller.set_thread_operational_dataset` triggers
+          it), but `MatterClient._handle_event_message` has no branch for
+          it - the snapshot therefore stays as it was for the duration of
+          the connection, even after this bridge has set the dataset
+          itself. Verified against the installed version, not assumed.
+        - `_thread_dataset_set` are this connection's own, successful
+          calls to `set_thread_dataset()`.
 
-        Die Angabe ist bewusst konservativ: `False` heisst "nicht belegbar",
-        nicht "sicher nicht gesetzt". Der Aufrufer holt dann einen Datensatz
-        und setzt ihn erneut - das ist idempotent und kostet einen
-        HTTP-Aufruf, waehrend die umgekehrte Verwechslung ein Thread-Geraet
-        erst nach 40 Sekunden mit "Commission with code failed" scheitern
-        liesse.
+        The result is deliberately conservative: `False` means "cannot be
+        confirmed", not "definitely not set". The caller then fetches a
+        dataset and sets it again - that is idempotent and costs one HTTP
+        call, whereas the reverse mix-up would let a Thread device fail
+        only after 40 seconds with "Commission with code failed".
         """
         if self._thread_dataset_set:
             return True
@@ -475,46 +544,64 @@ class BridgeMatterClient:
         return bool(getattr(info, "thread_credentials_set", False))
 
     async def set_thread_dataset(self, dataset: str) -> None:
-        """Uebergibt matter-server die Thread-Zugangsdaten.
+        """Hands matter-server the Thread credentials.
 
-        Ohne diesen Schritt scheitert das Einlernen eines Thread-Geraets mit
-        "Required network information not provided" - der Controller findet
-        das Geraet per BLE, kann ihm aber kein Netz nennen.
+        Without this step, commissioning a Thread device fails with
+        "Required network information not provided" - the controller
+        finds the device via BLE, but cannot tell it about a network.
 
-        matter-server haelt sie ausschliesslich im Arbeitsspeicher (siehe
-        `matter/otbr.py` fuer den ganzen Vorgang und den Ernstfall dazu):
-        jeder Neustart des Dienstes loescht sie wieder, und diese Bruecke
-        muss sie danach erneut uebergeben.
+        matter-server holds them exclusively in memory (see
+        `matter/otbr.py` for the entire process and the failure case):
+        every restart of the service deletes them again, and this bridge
+        must hand them over again afterward.
+
+        **Update (8 September 2026): the payload changes here.**
+        This is the only call in this module where that is true - and
+        the first version of the migration design had missed exactly that
+        (corrected there meanwhile, section 2.2). The signature is called
+        `set_thread_operational_dataset(dataset, entry_id="default")` in
+        `matter-python-client`, and the client sends `dataset` **and**
+        `id=entry_id` over the wire; the old 8.1.2 sent only `dataset`.
+        The call here does not specify `entry_id`, so gets `"default"` -
+        and the version with `entry_id != "default"` is the only one that
+        requires a higher schema version.
+
+        That this also works against an old 8.1.2 server is verified, not
+        hoped for: its argument resolution runs with `strict=False`
+        (`matter_server/common/helpers/api.py:51,57`) and silently discards
+        unknown keys instead of rejecting the call. This is the point where
+        the two-part nature of this migration - first the library, then the
+        server image - could have failed.
         """
         await self._require_upstream().set_thread_operational_dataset(dataset)
         self._thread_dataset_set = True
 
     async def send_command(self, call: MatterCall) -> None:
-        """Führt einen übersetzten `MatterCall` über den Upstream aus.
+        """Executes a translated `MatterCall` over the upstream.
 
-        `MatterClient.send_device_command()` erwartet kein Tripel aus
-        Cluster-ID, Kommando-ID und einem rohen Nutzlast-Dict, sondern ein
-        Kommando-Objekt aus `chip.clusters.Objects` — dieselbe SDK-Bibliothek,
-        die `matter_server.client.client` selbst unverändert importiert
-        (siehe dortiges `from chip.clusters import Objects as Clusters`).
+        `MatterClient.send_device_command()` does not expect a triple of
+        cluster ID, command ID and a raw payload dict, but a command
+        object from `chip.clusters.Objects` - the same SDK library that
+        `matter_server.client.client` itself imports unchanged (see its
+        `from chip.clusters import Objects as Clusters`).
         `chip.clusters.ClusterObjects.ALL_ACCEPTED_COMMANDS[cluster_id]
-        [command_id]` ist die von der SDK selbst geführte, vollständige
-        Tabelle dieser Klassen — genau die Quelle, die auch matter-server
-        intern für dieselbe Zuordnung nutzt. Sie wird erst durch den Import
-        von `chip.clusters.Objects` gefüllt (Seiteneffekt der
-        Klassendefinitionen darin), deshalb der explizite Import hier statt
-        eines bloßen `from chip.clusters import ClusterObjects`.
+        [command_id]` is the complete table of these classes maintained by
+        the SDK itself - precisely the source matter-server also uses
+        internally for the same mapping. It is only populated by the
+        import of `chip.clusters.Objects` (a side effect of the class
+        definitions in it), hence the explicit import here rather than a
+        plain `from chip.clusters import ClusterObjects`.
 
-        Die Feldnamen aus `commands/translate.py` (z. B. `level`,
-        `transitionTime`, `colorTemperatureMireds`) sind bewusst identisch zu
-        den Dataclass-Feldern der jeweiligen Kommando-Klasse benannt — siehe
-        `test_send_command_passes_the_payload_as_command_fields`.
+        The field names from `commands/translate.py` (e.g. `level`,
+        `transitionTime`, `colorTemperatureMireds`) are deliberately named
+        identically to the dataclass fields of the respective command
+        class - see `test_send_command_passes_the_payload_as_command_fields`.
         """
         upstream = self._require_upstream()
 
-        # Lazy importiert wie _default_session_factory: Tests mit einem
-        # Fake-Upstream sollen chip.clusters nie laden müssen.
-        import chip.clusters.Objects  # noqa: F401 — nur fuer den Seiteneffekt gebraucht
+        # Lazily imported like _default_session_factory: tests with a
+        # fake upstream should never need to load chip.clusters.
+        import chip.clusters.Objects  # noqa: F401 — needed only for the side effect
         from chip.clusters import ClusterObjects
 
         cluster_commands = ClusterObjects.ALL_ACCEPTED_COMMANDS.get(call.cluster_id)
@@ -537,21 +624,21 @@ class BridgeMatterClient:
         node_id: int,
         paths: Iterable[str],
     ) -> int:
-        """Legt je ein Attribut-Abonnement pro noch nicht abonniertem
-        (Node, Pfad)-Paar an und liefert deren Anzahl.
+        """Creates one attribute subscription per not-yet-subscribed
+        (node, path) pair and returns their count.
 
-        Eine Stelle fuer beide Aufrufer (`subscribe` und `follow_node`): zwei
-        Stellen, die dasselbe Registrierungsschema nachbilden, driften ueber
-        kurz oder lang auseinander - und das faellt hier nicht auf, weil ein
-        fehlendes Abonnement kein Fehler ist, sondern Stille.
+        One spot for both callers (`subscribe` and `follow_node`): two
+        spots that rebuild the same registration scheme drift apart
+        sooner or later - and that would not be noticed here, because a
+        missing subscription is not an error, just silence.
 
-        `queue` kommt als Parameter statt aus `self._queue`, damit `subscribe`
-        sie uebergeben kann, bevor sie im Feld steht - und damit hier keine
-        Nicht-`None`-Pruefung noetig ist, deren Einengung ueber die Closure
-        unten ohnehin nicht traegt.
+        `queue` comes in as a parameter instead of from `self._queue`, so
+        that `subscribe` can pass it before it is stored in the field -
+        and so that no not-`None` check is needed here, whose narrowing
+        would not carry through the closure below anyway.
         """
-        # Lazy importiert wie ueberall in dieser Datei: Tests mit einem
-        # Fake-Upstream sollen matter_server nie laden muessen.
+        # Lazily imported like everywhere in this file: tests with a fake
+        # upstream should never need to load matter_server.
         from matter_server.common.models import EventType
 
         added = 0
@@ -559,9 +646,9 @@ class BridgeMatterClient:
             if (node_id, path) in self._subscribed_paths:
                 continue
 
-            # default-Argumente binden node_id/path pro Schleifendurchlauf,
-            # statt den Namen aus dem umschliessenden Scope zu spaet
-            # auszuwerten (klassische Closure-Falle in einer Schleife).
+            # Default arguments bind node_id/path per loop iteration,
+            # instead of evaluating the name from the enclosing scope too
+            # late (the classic closure trap in a loop).
             def on_attribute_event(
                 _event: Any, data: Any, node_id: int = node_id, path: str = path
             ) -> None:
@@ -584,31 +671,32 @@ class BridgeMatterClient:
         resolve_device_id: Callable[[int], int | None],
         handler: RuntimeEventHandler,
     ) -> None:
-        """Meldet Attribut- und Event-Änderungen sowie Erreichbarkeit an `handler`.
+        """Reports attribute and event changes as well as reachability to `handler`.
 
-        `resolve_device_id` bildet eine Node-ID auf die stabile `device_id`
-        des Stores ab (z. B. `Store.device_id_for_node`) — genau diese
-        Abbildung passiert hier, BEVOR `handler` etwas sieht, denn die
-        Schlüssel in Loxone hängen an der `device_id`, nicht an der Node-ID
-        (siehe Modul-Docstring, `Store` und Task-8-Report). Liefert
-        `resolve_device_id` `None` (Node noch nicht exportiert/registriert
-        oder inzwischen entfernt), wird die Aktualisierung verworfen — wie
-        `Runtime._signal_for` es für einen unbekannten Signal-Pfad bereits
-        tut.
+        `resolve_device_id` maps a node ID to the store's stable
+        `device_id` (e.g. `Store.device_id_for_node`) - exactly this
+        mapping happens here, BEFORE `handler` sees anything, because the
+        keys in Loxone hang off the `device_id`, not the node ID (see the
+        module docstring, `Store` and the task 8 report). If
+        `resolve_device_id` returns `None` (node not yet exported/
+        registered, or removed in the meantime), the update is discarded -
+        the same way `Runtime._signal_for` already does for an unknown
+        signal path.
 
-        `handler` erfüllt `RuntimeEventHandler` — `Runtime` selbst passt
-        unverändert.
+        `handler` satisfies `RuntimeEventHandler` - `Runtime` itself fits
+        unchanged.
 
-        Siehe Modul-Docstring für die Begründung des Registrierungsschemas
-        (eine Wildcard-Subscription für Node-Events/Erreichbarkeit, eine
-        Subscription je bei Aufruf bekanntem Attributpfad) und seine Grenze.
+        See the module docstring for the rationale of the registration
+        scheme (one wildcard subscription for node events/reachability,
+        one subscription per attribute path known at call time) and its
+        limit.
         """
         upstream = self._require_upstream()
         if self._dispatch_task is not None:
             raise MatterUnavailableError(i18n.t("api.errors.subscribe_already_called"))
 
-        # Lazy importiert wie _default_session_factory: Tests mit einem
-        # Fake-Upstream sollen matter_server nie laden müssen.
+        # Lazily imported like _default_session_factory: tests with a
+        # fake upstream should never need to load matter_server.
         from matter_server.common.models import EventType
 
         queue: asyncio.Queue[_QueueItem] = asyncio.Queue()
@@ -622,12 +710,13 @@ class BridgeMatterClient:
                 )
             elif event in (EventType.NODE_ADDED, EventType.NODE_UPDATED):
                 queue.put_nowait(_AvailabilityUpdate(data.node_id, data.available))
-                # Zusaetzlich zum Erreichbarkeits-Update, nicht statt seiner:
-                # beide Meldungen tragen dieselbe Ursache, aber der eine Weg
-                # setzt `d<id>_online`, der andere zieht Abonnements nach.
+                # In addition to the reachability update, not instead of
+                # it: both notifications carry the same cause, but one
+                # path sets `d<id>_online`, the other catches up
+                # subscriptions.
                 queue.put_nowait(_FollowNode(data.node_id))
             elif event is EventType.NODE_REMOVED:
-                # data ist hier die blanke Node-ID (kein Node-Objekt) — siehe
+                # data here is the bare node ID (not a node object) - see
                 # MatterClient._handle_event_message.
                 queue.put_nowait(_AvailabilityUpdate(data, False))
 
@@ -637,9 +726,9 @@ class BridgeMatterClient:
         self._handler = handler
         self._resolve_device_id = resolve_device_id
 
-        # Attribut-Updates: siehe Modul-Docstring, warum das nur pro bekanntem
-        # (Node, Pfad)-Paar geht. Was nach diesem Aufruf dazukommt, holt
-        # `follow_node` nach.
+        # Attribute updates: see the module docstring for why this only
+        # works per (node, path) pair known at this point. Whatever is
+        # added after this call is caught up by `follow_node`.
         for node in upstream.get_nodes():
             self._subscribe_attribute_paths(
                 upstream, queue, node.node_id, node.node_data.attributes
@@ -650,93 +739,93 @@ class BridgeMatterClient:
         )
 
     async def follow_node(self, node_id: int, *, seed_even_without_new_paths: bool = False) -> None:
-        """Zieht die Attribut-Abonnements eines Node nach.
+        """Catches up a node's attribute subscriptions.
 
-        Zwei Aufrufer, ein Vorgang: die Einlern-Route (`api/devices.py`) nach
-        dem Registrieren eines neuen Geräts, und `_dispatch_loop` bei
-        `NODE_ADDED`/`NODE_UPDATED` für ein Gerät, das nachträglich neue
-        Pfade meldet.
+        Two callers, one operation: the commissioning route
+        (`api/devices.py`) after registering a new device, and
+        `_dispatch_loop` on `NODE_ADDED`/`NODE_UPDATED` for a device that
+        subsequently reports new paths.
 
-        **Warum die Route nicht einfach auf das Ereignis warten kann:**
-        matter-server meldet `NODE_ADDED` noch WÄHREND `commission_with_code`
-        läuft (`device_controller._setup_node` signalisiert es vor der
-        Rückkehr des Aufrufs). Zu diesem Zeitpunkt kennt der Store den Node
-        noch nicht, `resolve_device_id` liefert `None`, und für ein ruhig im
-        Netz stehendes Gerät folgt keine zweite Meldung. Am 2026-09-04 am
-        laufenden Stack aufgezeichnet: Node 8 war um 11:15:33 fertig
-        eingelernt, samt "Subscription succeeded" - alles davon vor der
-        Rückkehr an die Route.
+        **Why the route cannot simply wait for the event:** matter-server
+        reports `NODE_ADDED` while `commission_with_code` is still running
+        (`device_controller._setup_node` signals it before the call
+        returns). At this point the store does not yet know the node,
+        `resolve_device_id` returns `None`, and for a device quietly
+        sitting on the network no second notification follows. Recorded
+        on 2026-09-04 on the running stack: node 8 finished commissioning
+        at 11:15:33, complete with "Subscription succeeded" - all of it
+        before the return to the route.
 
-        Der leere Diff ist der Regelfall und kostet nichts: `NODE_UPDATED`
-        feuert auch bei jedem Wechsel der Erreichbarkeit und nach jeder
-        Re-Subscription, und für ein Gerät ohne neue Pfade endet der Vorgang
-        vor dem Handler (und damit vor dem Store).
+        The empty diff is the normal case and costs nothing: `NODE_UPDATED`
+        also fires on every change of reachability and after every
+        re-subscription, and for a device with no new paths, the process
+        ends before the handler (and thus before the store).
 
-        **`seed_even_without_new_paths` überspringt genau diesen frühen
-        Ausstieg** — und ohne den Schalter fände das Säen eines frisch
-        eingelernten Geräts nie statt. Der Ablauf, der das erzwingt:
+        **`seed_even_without_new_paths` skips exactly this early exit** -
+        and without the flag, seeding a freshly commissioned device would
+        never take place. The sequence of events that forces this:
 
-        1. Die Route wartet noch auf `commission_with_code`.
-        2. matter-server schickt `NODE_ADDED` über denselben Websocket, BEVOR
-           das Kommando-Ergebnis kommt; `MatterClient._handle_event_message`
-           legt den Node samt vollständiger `attributes` in seinen Cache und
-           ruft erst danach die Rückrufe auf.
-        3. Der Dispatch-Task läuft, während die Route noch wartet: sein
-           `follow_node` findet den Node im Cache und abonniert ALLE seine
-           Pfade. `resolve_device_id` liefert `None` (der Store kennt den
-           Node noch nicht), der Handler bleibt also außen vor.
-        4. Die Route kehrt zurück, registriert das Gerät und zieht nach —
-           jetzt ist der Diff leer, `added == 0`, und der frühe Ausstieg
-           käme vor `resolve_device_id`.
+        1. The route is still waiting on `commission_with_code`.
+        2. matter-server sends `NODE_ADDED` over the same websocket BEFORE
+           the command result arrives; `MatterClient._handle_event_message`
+           puts the node, complete with full `attributes`, into its cache
+           and only then calls the callbacks.
+        3. The dispatch task runs while the route is still waiting: its
+           `follow_node` finds the node in the cache and subscribes to ALL
+           of its paths. `resolve_device_id` returns `None` (the store
+           does not yet know the node), so the handler is left out.
+        4. The route returns, registers the device, and catches up -
+           now the diff is empty, `added == 0`, and the early exit would
+           come before `resolve_device_id`.
 
-        Für den Aufruf aus der Route gilt der Zweck des frühen Ausstiegs
-        (keine Store-Schreiblast durch die häufigen `NODE_UPDATED`) nicht: er
-        geschieht einmal pro Einlernen, und das Säen ist dort der eigentliche
-        Sinn des Aufrufs. Ohne es zeigt ein frisch eingelerntes Gerät für
-        jeden statischen Pfad — Spannung ohne Last, Batteriestand, der
-        Aus-Zustand einer Steckdose — weiterhin einen Strich, bis der Wert
-        sich zum ersten Mal ändert; bei manchen nie, weil matter-server
-        unveränderte Werte unterdrückt.
+        For the call from the route, the purpose of the early exit (no
+        store write load from the frequent `NODE_UPDATED`) does not apply:
+        it happens once per commissioning, and seeding is the actual point
+        of the call there. Without it, a freshly commissioned device would
+        keep showing a dash for every static path - voltage with no load,
+        battery level, a plug's off state - until the value changes for
+        the first time; for some, never, because matter-server suppresses
+        unchanged values.
 
-        Geforct wird dabei das Säen, nicht das Erfinden einer device_id:
-        kennt der Store den Node nicht, bleibt der Handler auch mit dem
-        Schalter außen vor.
+        What is forced here is the seeding, not the invention of a
+        device_id: if the store does not know the node, the handler is
+        left out even with the flag.
 
-        **`_seed_pending` beantwortet eine andere Frage als der Schalter** —
-        beide werden gebraucht, keines ersetzt das andere. Der Schalter ist
-        der Aufrufer, der weiß, dass er das Gerät gerade registriert hat; die
-        Menge ist die Brücke, die sich merkt, dass sie einem Node noch ein
-        Abbild schuldet. Ein Node kommt hinein, wenn er (noch) keiner
-        device_id zuzuordnen war oder wenn der Handler beim Säen geworfen
-        hat, und verlässt sie erst, wenn das Abbild angekommen ist — deshalb
-        führt auch ein leerer Diff ohne Schalter bis zum Handler, solange die
-        Schuld offen ist.
+        **`_seed_pending` answers a different question than the flag** -
+        both are needed, neither replaces the other. The flag is the
+        caller that knows it has just registered the device; the set is
+        the bridge that remembers it still owes a node a snapshot. A node
+        enters it when it could not (yet) be matched to a device_id, or
+        when the handler threw while seeding, and only leaves it once the
+        snapshot has arrived - which is why even an empty diff without the
+        flag leads through to the handler, as long as the debt is
+        outstanding.
 
-        Ohne die Menge trüge die Selbstheilungs-Zusage der Einlern-Route nur
-        halb: sie gilt für ein `follow_node`, das scheitert, BEVOR es
-        abonniert hat. Scheitert es DANACH — `resolve_device_id` liest aus
-        SQLite, der Handler schreibt dorthin, beides kann unter der
-        Schreiblast der Resend-Schleife auffliegen —, fände jeder spätere
-        Aufruf aus der Dispatch-Schleife einen leeren Diff vor und kehrte vor
-        dem Handler um. Das Gerät bliebe dauerhaft ohne Startwerte, und
-        niemand erführe davon.
+        Without the set, the commissioning route's self-healing promise
+        would only hold halfway: it applies to a `follow_node` that fails
+        BEFORE it has subscribed. If it fails AFTER that -
+        `resolve_device_id` reads from SQLite, the handler writes there,
+        both can be hit by the write load of the resend loop - every
+        later call from the dispatch loop would find an empty diff and
+        turn back before the handler. The device would permanently stay
+        without startup values, and no one would find out.
 
-        `_subscribed_paths` bleibt davon unangetastet: die Abonnements beim
-        Upstream bestehen weiter, und würde man ihre Buchführung verwerfen,
-        legte der nächste Aufruf ein ZWEITES Abonnement je Pfad an — jeder
-        Wert käme doppelt an, bei einem Ereignissignal zählte zusätzlich der
-        Zähler doppelt hoch.
+        `_subscribed_paths` remains untouched by this: the subscriptions
+        with the upstream persist, and if their bookkeeping were
+        discarded, the next call would create a SECOND subscription per
+        path - every value would arrive twice, and for an event signal
+        the counter would additionally count up twice.
 
-        Vor `subscribe()` aufgerufen tut die Methode nichts, statt zu werfen:
-        die Einlern-Route ruft sie bedingungslos, und ein Aufbau ohne
-        Subscription soll daran nicht scheitern.
+        Called before `subscribe()`, the method does nothing rather than
+        raising: the commissioning route calls it unconditionally, and a
+        setup without a subscription should not fail because of that.
         """
         queue = self._queue
         handler = self._handler
         resolve_device_id = self._resolve_device_id
         if queue is None or handler is None or resolve_device_id is None:
             logger.debug(
-                "follow_node(%s) ohne vorheriges subscribe() - nichts nachzuziehen", node_id
+                "follow_node(%s) without a prior subscribe() - nothing to catch up", node_id
             )
             return
 
@@ -744,7 +833,7 @@ class BridgeMatterClient:
         node = next((n for n in upstream.get_nodes() if n.node_id == node_id), None)
         if node is None:
             logger.info(
-                "Node %s ist matter-server nicht bekannt - keine Abonnements nachgezogen", node_id
+                "node %s is not known to matter-server - no subscriptions caught up", node_id
             )
             return
 
@@ -755,19 +844,20 @@ class BridgeMatterClient:
 
         device_id = resolve_device_id(node_id)
         if device_id is None:
-            # Die Abonnements bleiben bestehen, und die Schuld wird vermerkt:
-            # sobald der Store den Node kennt, holt der nächste `follow_node`
-            # das Abbild nach — auch ohne neuen Pfad und ohne den Schalter.
+            # The subscriptions remain in place, and the debt is noted:
+            # once the store knows the node, the next `follow_node` will
+            # catch up the snapshot - even without a new path and without
+            # the flag.
             self._seed_pending.add(node_id)
-            logger.debug("Node %s ist keinem Gerät zugeordnet - nur abonniert", node_id)
+            logger.debug("node %s is not matched to a device - only subscribed", node_id)
             return
 
-        # Erst eintragen, dann säen, und nur nach Gelingen wieder austragen:
-        # wirft der Handler — er schreibt über `Runtime.on_node_snapshot` in
-        # den Store — oder wird der Aufruf abgebrochen, bleibt die Schuld
-        # stehen, und der nächste `follow_node` holt sie nach. Die Ausnahme
-        # läuft unverändert weiter; was mit ihr geschieht, entscheidet der
-        # Aufrufer.
+        # Register first, then seed, and only clear the entry after
+        # success: if the handler throws - it writes into the store via
+        # `Runtime.on_node_snapshot` - or the call is cancelled, the debt
+        # stays outstanding, and the next `follow_node` catches it up. The
+        # exception propagates unchanged; what happens to it is the
+        # caller's decision.
         self._seed_pending.add(node_id)
         await handler.on_node_snapshot(
             device_id,
@@ -785,15 +875,15 @@ class BridgeMatterClient:
             item = await queue.get()
             try:
                 if isinstance(item, _FollowNode):
-                    # VOR der device_id-Aufloesung: `follow_node` legt
-                    # Abonnements auch fuer einen Node an, den der Store
-                    # (noch) nicht kennt, und entscheidet selbst, ob der
-                    # Handler etwas zu sehen bekommt.
+                    # BEFORE the device_id resolution: `follow_node` also
+                    # creates subscriptions for a node the store does not
+                    # (yet) know, and decides itself whether the handler
+                    # gets to see anything.
                     await self.follow_node(item.node_id)
                     continue
                 device_id = resolve_device_id(item.node_id)
                 if device_id is None:
-                    logger.debug("Aktualisierung fuer unbekannte Node %s verworfen", item.node_id)
+                    logger.debug("discarding update for unknown node %s", item.node_id)
                     continue
                 if isinstance(item, _AttributeUpdate):
                     await handler.on_attribute(device_id, item.path, item.raw)
@@ -804,7 +894,6 @@ class BridgeMatterClient:
             except asyncio.CancelledError:
                 raise
             except Exception:
-                # Ein Fehler bei einer einzelnen Aktualisierung darf die
-                # Zustellung nicht insgesamt beenden — analog zu
-                # Runtime._heartbeat_loop/_resend_loop.
-                logger.exception("Zustellung einer Matter-Aktualisierung fehlgeschlagen")
+                # A failure on a single update must not end delivery as a
+                # whole - analogous to Runtime._heartbeat_loop/_resend_loop.
+                logger.exception("delivery of a Matter update failed")

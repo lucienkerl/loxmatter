@@ -10,13 +10,13 @@ FIXTURES = Path(__file__).parents[1] / "fixtures" / "nodes"
 
 
 def load_snapshot(name: str) -> NodeSnapshot:
-    # `tests/api/conftest.py` definiert eine gleichnamige Hilfsfunktion, aber
-    # `from conftest import load_snapshot` funktioniert nur fuer Testdateien,
-    # die selbst in `tests/api/` liegen: Pytest reiht ohne `__init__.py` das
-    # Verzeichnis JEDER Testdatei vorn in sys.path ein, und dieses Modul hier
-    # liegt in `tests/projectsync/`, das bereits eine eigene `conftest.py`
-    # hat - "conftest" loest also dorthin auf, nicht nach `tests/api/`.
-    # Deshalb dieselbe lokale Ladefunktion wie in
+    # `tests/api/conftest.py` defines a helper function with the same name,
+    # but `from conftest import load_snapshot` only works for test files
+    # that themselves live in `tests/api/`: without an `__init__.py`, pytest
+    # puts EVERY test file's directory at the front of sys.path, and this
+    # module here lives in `tests/projectsync/`, which already has its own
+    # `conftest.py` - so "conftest" resolves there, not to `tests/api/`.
+    # Hence the same local loading function as in
     # `tests/model/test_store_commands.py`.
     raw = json.loads((FIXTURES / name).read_text(encoding="utf-8"))
     return NodeSnapshot.from_raw(raw["node_id"], raw)
@@ -31,11 +31,10 @@ def _plug_store(tmp_path):
     return store
 
 
-# Ein wohlgeformtes Projekt, in dem noch nie ein virtueller EINGANG angelegt
-# wurde - es fehlt also der `VirtualInCaption`-Abschnitt. Realistischer Fall
-# fuer jemanden, der bislang nur Vorlagen fuer Ausgaenge importiert hat;
-# `apply_plan` legt diesen Abschnitt im experimentellen Pfad selbst mit an
-# (Entwurf Abschnitt 8).
+# A well-formed project in which no virtual INPUT has ever been created -
+# so the `VirtualInCaption` section is missing. A realistic case for
+# someone who has so far only imported templates for outputs; `apply_plan`
+# creates this section itself in the experimental path (draft section 8).
 NO_VIRTUAL_IN_CAPTION_PROJECT = (
     '<?xml version="1.0" encoding="utf-8"?>\r\n'
     '<ControlList Version="275" NextObj="100">\r\n'
@@ -55,7 +54,7 @@ def test_run_sync_returns_plan_and_both_file_variants(tmp_path, sample_project):
     result = run_sync(
         sample_project.encode("utf-8"), store, bridge_ip="10.0.0.5", port=7000, listen=8080
     )
-    assert result.plan.entries  # nicht leer - die Steckdose hat Signale
+    assert result.plan.entries  # not empty - the outlet has signals
     assert result.patched_with_new_devices is not None
     assert result.patched_conservative != result.patched_with_new_devices
     assert result.new_devices_unavailable_reason is None
@@ -63,13 +62,12 @@ def test_run_sync_returns_plan_and_both_file_variants(tmp_path, sample_project):
 
 
 def test_missing_caption_is_auto_created_for_the_experimental_variant(tmp_path):
-    """Fehlt der `VirtualInCaption`-Abschnitt, legt `apply_plan` ihn im
-    experimentellen Pfad (`include_new_devices=True`) inzwischen selbst mit
-    an (Entwurf Abschnitt 8, Nutzerwunsch nach dem Review) - kein manuelles
-    Vorbereiten in Loxone Config mehr noetig, nur um den Pfad ueberhaupt zu
-    erreichen. Die konservative Variante bleibt davon unberuehrt: sie legt
-    nie einen Container an, kann also gar nicht an einer fehlenden Caption
-    haengen."""
+    """If the `VirtualInCaption` section is missing, `apply_plan` now
+    creates it itself in the experimental path (`include_new_devices=True`,
+    draft section 8, user request after the review) - no more manual
+    preparation in Loxone Config just to reach the path at all. The
+    conservative variant is unaffected by this: it never creates a
+    container, so it cannot possibly get stuck on a missing caption."""
     store = _plug_store(tmp_path)
     result = run_sync(
         NO_VIRTUAL_IN_CAPTION_PROJECT.encode("utf-8"),
@@ -99,30 +97,30 @@ def test_run_sync_raises_project_format_error_for_garbage(tmp_path):
 
 
 def test_run_sync_raises_project_format_error_for_non_utf8_upload(tmp_path):
-    """Wer eine falsche Datei hochlaedt (Bild, ZIP, UTF-16-Export), bekommt
-    beim Dekodieren einen `UnicodeDecodeError` - der ist keine
-    `ProjectFormatError` und schlug bis in den Endpunkt als HTTP 500 durch.
-    Erwartet ist die uebliche klare Meldung (Entwurf Abschnitt 8)."""
+    """Whoever uploads the wrong file (image, ZIP, UTF-16 export) gets a
+    `UnicodeDecodeError` while decoding - that is not a `ProjectFormatError`
+    and propagated all the way to the endpoint as an HTTP 500. Expected is
+    the usual clear message (draft section 8)."""
     import pytest
 
     from loxmatter.projectsync.index import ProjectFormatError
 
     store = _plug_store(tmp_path)
-    # UTF-16-kodiertes "<ControlList/>" - gueltiger Text, nur eben nicht UTF-8.
+    # UTF-16-encoded "<ControlList/>" - valid text, just not UTF-8.
     utf16 = "<ControlList/>".encode("utf-16")
     with pytest.raises(ProjectFormatError, match="UTF-8"):
         run_sync(utf16, store, bridge_ip="10.0.0.5", port=7000, listen=8080)
     store.close()
 
 
-# Enthaelt schon einen `VirtualUdpIn`-Container fuer Geraet 1 (Praefix `d1_`,
-# mit `d1_1_onoff`), aber KEIN einziges `U`-Attribut irgendwo im Dokument.
-# `export.signals.to_inputs` erzeugt fuer JEDES Geraet zusaetzlich ein
-# Online-Signal (`d1_online`) - das fehlt hier im Container, erzwingt also
-# einen `NEW_SIGNAL`-Eintrag in einem bereits BESTEHENDEN Container. Anders
-# als `NO_VIRTUAL_IN_CAPTION_PROJECT` oben (das einen `NEW_DEVICE`/
-# `MissingCaptionError`-Pfad braucht) reicht das schon mit
-# `include_new_devices=False` - `NEW_SIGNAL` ist von diesem Flag unabhaengig.
+# Already contains a `VirtualUdpIn` container for device 1 (prefix `d1_`,
+# with `d1_1_onoff`), but NOT A SINGLE `U` attribute anywhere in the
+# document. `export.signals.to_inputs` additionally generates an online
+# signal (`d1_online`) for EVERY device - that is missing here in the
+# container, so it forces a `NEW_SIGNAL` entry in an already EXISTING
+# container. Unlike `NO_VIRTUAL_IN_CAPTION_PROJECT` above (which needs a
+# `NEW_DEVICE`/`MissingCaptionError` path), this already works with
+# `include_new_devices=False` - `NEW_SIGNAL` is independent of this flag.
 NO_U_ATTR_PROJECT = (
     '<?xml version="1.0" encoding="utf-8"?>\r\n'
     '<ControlList Version="275" NextObj="100">\r\n'
@@ -144,20 +142,20 @@ NO_U_ATTR_PROJECT = (
 
 
 def test_run_sync_propagates_project_format_error_from_id_generation(tmp_path):
-    """Finding N1, Punkt 3 aus dem Re-Review: ein `ProjectFormatError` aus
-    `_installation_suffix` (kein `U`-Wert im erwarteten Format in der Datei)
-    soll bewusst NICHT wie `MissingCaptionError` degradiert werden, sondern
-    bis zum Aufrufer durchschlagen - `api.project_sync` faengt es zur
-    verstaendlichen 400 ab. Anders als eine fehlende Caption (nur eine Grenze
-    des experimentellen Pfades) heisst dieser Fehler "das ID-Format der Datei
-    ist grundsaetzlich nicht erkennbar" (Entwurf Abschnitt 10) und soll darum
-    den ganzen Upload scheitern lassen.
+    """Finding N1, point 3 from the re-review: a `ProjectFormatError` from
+    `_installation_suffix` (no `U` value in the expected format in the
+    file) should deliberately NOT be degraded like `MissingCaptionError`,
+    but should propagate through to the caller - `api.project_sync` catches
+    it into an understandable 400. Unlike a missing caption (only a
+    boundary of the experimental path), this error means "the file's id
+    format is fundamentally unrecognizable" (draft section 10) and should
+    therefore fail the whole upload.
 
-    Wichtig: dieser Fehler tritt schon bei der KONSERVATIVEN Variante auf
-    (`include_new_devices=False`), die in `run_sync` VOR der experimentellen
-    Variante berechnet wird und durch kein `try` geschuetzt ist - er kann
-    also gar nicht erst bis zum `except MissingCaptionError`-Block der
-    experimentellen Variante gelangen."""
+    Important: this error already occurs in the CONSERVATIVE variant
+    (`include_new_devices=False`), which `run_sync` computes BEFORE the
+    experimental variant and which is not protected by any `try` - so it
+    cannot even reach the experimental variant's `except
+    MissingCaptionError` block in the first place."""
     import pytest
 
     from loxmatter.projectsync.index import ProjectFormatError

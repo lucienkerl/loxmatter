@@ -30,7 +30,7 @@ understands. That held without exception for attributes in testing; event detect
 FeatureMap-based and cluster-specific instead, since neither test device advertised an
 `EventList`. Details, numbers and the consequences are in the design spec's validation
 section,
-[section 3.5](docs/superpowers/specs/2026-09-01-matter-loxone-bridge-design.md#35-abbildung-generisch-statt-kuratiert).
+[section 3.5](docs/superpowers/specs/2026-09-01-matter-loxone-bridge-design.md#35-mapping-generic-not-curated).
 
 ## ✨ What you can do
 
@@ -294,15 +294,17 @@ can claim the bridge. Set it within minutes of the first start, not days.
 ## 🧰 Tech stack
 
 Python 3.12+ with FastAPI and uvicorn for the HTTP service, Typer for the CLI,
-[`python-matter-server`](https://github.com/home-assistant-libs/python-matter-server)
+[`matter-python-client`](https://github.com/matter-js/matterjs-server/tree/main/python_client)
 for the Matter side, SQLite for stored devices and settings. The web interface is plain
 HTML, CSS and Alpine.js — no build step, nothing fetched from a CDN at runtime.
 
 ## Contributing
 
 Issues and pull requests are welcome. Please run the checks from
-[docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) before opening one; the commit messages in
-this repository are written in German.
+[docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) before opening one. Everything here is
+written in English — code, comments, documents and commit messages; the conventions
+are in [CLAUDE.md](CLAUDE.md). Commit subjects before September 2026 are German and
+stay that way: they are a record of what happened.
 
 ## License
 

@@ -1,4 +1,4 @@
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -14,16 +14,16 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Attributpfade von matter-server parsen.
+"""Parse attribute paths from matter-server.
 
-matter-server adressiert Attribute als "<endpoint>/<cluster>/<attribute>",
-z.B. "1/6/0" für OnOff.OnOff auf Endpoint 1.
+matter-server addresses attributes as "<endpoint>/<cluster>/<attribute>",
+e.g. "1/6/0" for OnOff.OnOff on endpoint 1.
 """
 
 from __future__ import annotations
 
-# Globale Attribute nach Matter-Spezifikation. Sie beschreiben das Gerät,
-# statt einen Messwert zu tragen, und werden nicht zu Loxone-Signalen.
+# Global attributes per the Matter specification. They describe the device
+# rather than carrying a measured value, and do not become Loxone signals.
 GENERATED_COMMAND_LIST_ID = 0xFFF8
 ACCEPTED_COMMAND_LIST_ID = 0xFFF9
 EVENT_LIST_ID = 0xFFFA
@@ -44,12 +44,12 @@ GLOBAL_ATTRIBUTE_IDS: frozenset[int] = frozenset(
 
 
 def parse_attribute_path(path: str) -> tuple[int, int, int]:
-    """Zerlegt "1/6/0" in (endpoint, cluster_id, attribute_id)."""
+    """Split "1/6/0" into (endpoint, cluster_id, attribute_id)."""
     parts = path.split("/")
     if len(parts) != 3:
-        raise ValueError(f"unerwarteter Attributpfad: {path!r}")
+        raise ValueError(f"unexpected attribute path: {path!r}")
     try:
         endpoint, cluster_id, attribute_id = (int(part) for part in parts)
     except ValueError as exc:
-        raise ValueError(f"unerwarteter Attributpfad: {path!r}") from exc
+        raise ValueError(f"unexpected attribute path: {path!r}") from exc
     return endpoint, cluster_id, attribute_id

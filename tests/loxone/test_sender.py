@@ -1,4 +1,4 @@
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -25,7 +25,7 @@ from loxmatter.loxone.sender import UdpSender
 
 @pytest.fixture
 def receiver():
-    """Ein UDP-Socket auf 127.0.0.1 - verlaesst die Maschine nicht."""
+    """A UDP socket on 127.0.0.1 - never leaves the machine."""
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.bind(("127.0.0.1", 0))
     sock.setblocking(False)
@@ -52,7 +52,7 @@ async def test_sends_the_expected_datagram(receiver):
 
 
 async def test_unchanged_value_is_not_resent(receiver):
-    """Entprellung: ein Sensor, der jede Sekunde denselben Wert meldet, flutet nicht."""
+    """Debouncing: a sensor that reports the same value every second does not flood."""
     host, port = receiver.getsockname()
     sender = UdpSender(host, port)
     assert await sender.send("d1_1_temp", 21.5) is True
@@ -73,7 +73,7 @@ async def test_changed_value_is_sent(receiver):
 
 
 async def test_force_resends_an_unchanged_value(receiver):
-    """Der Full-Resend nach einem Miniserver-Neustart muss die Entprellung umgehen."""
+    """The full resend after a Miniserver restart must bypass debouncing."""
     host, port = receiver.getsockname()
     sender = UdpSender(host, port)
     await sender.send("d1_1_temp", 21.5)
@@ -82,23 +82,22 @@ async def test_force_resends_an_unchanged_value(receiver):
 
 
 async def test_the_forced_field_reflects_why_a_datagram_was_sent_not_when(receiver):
-    """Haelt den Fall fest, der die fruehere Zeitheuristik der WebUI
-    widerlegte (Nachbesserung Task 6, 2026-09-03): `Runtime.on_event`
-    (loxone/runtime.py) schickt einen Impuls und seinen Zaehler unmittelbar
-    hintereinander, ohne `force` - zwei echte Wertaenderungen, Mikrosekunden
-    auseinander. Eine Heuristik auf die Ankunftsrate haette beide als
-    Rauschen markiert; `DatagramLogEntry.forced` unterscheidet stattdessen
-    korrekt danach, WARUM gesendet wurde: `False` fuer jede echte
-    Wertaenderung (auch dicht aufeinanderfolgende), `True` nur fuer die
-    beiden `force=True`-Aufrufer, Heartbeat und Full-Resend."""
+    """Records the case that disproved the WebUI's earlier time heuristic
+    (follow-up fix task 6, 2026-09-03): `Runtime.on_event` (loxone/runtime.py)
+    sends a pulse and its counter immediately one after the other, without
+    `force` - two real value changes, microseconds apart. A heuristic based
+    on arrival rate would have marked both as noise; `DatagramLogEntry.forced`
+    instead correctly distinguishes by WHY it was sent: `False` for every
+    real value change (even closely spaced ones), `True` only for the two
+    `force=True` callers, heartbeat and full resend."""
     host, port = receiver.getsockname()
     sender = UdpSender(host, port)
 
-    # Impuls und Zaehler, wie Runtime.on_event sie verschickt - direkt
-    # hintereinander, ohne jede Wartezeit dazwischen.
+    # Pulse and counter, as Runtime.on_event sends them - directly one
+    # after the other, with no wait in between.
     await sender.send("d1_1_press", True)
     await sender.send("d1_1_press_n", 1)
-    # Heartbeat und Full-Resend - die einzigen beiden Aufrufer, die force=True setzen.
+    # Heartbeat and full resend - the only two callers that set force=True.
     await sender.send("bridge_alive", True, force=True)
     await sender.send("d1_1_press", True, force=True)
 
@@ -107,7 +106,7 @@ async def test_the_forced_field_reflects_why_a_datagram_was_sent_not_when(receiv
 
 
 async def test_rate_limit_staggers_a_burst(receiver):
-    """Spec 6.4: gestaffelt auf etwa 50 Datagramme pro Sekunde."""
+    """Spec 6.4: staggered to about 50 datagrams per second."""
     host, port = receiver.getsockname()
     sender = UdpSender(host, port, rate_limit=100.0)
     start = asyncio.get_running_loop().time()
@@ -121,15 +120,37 @@ async def test_rate_limit_staggers_a_burst(receiver):
 async def test_send_after_close_raises():
     sender = UdpSender("127.0.0.1", 7000)
     await sender.close()
-    with pytest.raises(RuntimeError, match="geschlossen"):
+    with pytest.raises(RuntimeError, match="closed"):
         await sender.send("d1_1_temp", 21.5)
 
 
+async def test_the_closed_message_follows_the_selected_language():
+    """The "closed" message must run through i18n.t() like every other
+    user-facing string - not sit hardcoded in German, unreachable by the
+    language switcher."""
+    from loxmatter import i18n
+
+    sender = UdpSender("127.0.0.1", 7000)
+    await sender.close()
+
+    i18n.set_language("en")
+    with pytest.raises(RuntimeError) as english:
+        await sender.send("d1_1_temp", 21.5)
+
+    i18n.set_language("de")
+    with pytest.raises(RuntimeError) as german:
+        await sender.send("d1_1_temp", 21.5)
+    i18n.set_language("en")
+
+    assert str(english.value) and str(german.value)
+    assert str(english.value) != str(german.value)
+    assert str(german.value) == "UdpSender ist geschlossen"
+
+
 async def test_close_during_in_flight_send_does_not_crash(receiver):
-    """Ein close() waehrend eines im Rate-Limit-Schlaf parkierten Sendevorgangs
-    darf niemals einen AttributeError durch einen bereits geschlossenen Socket
-    ausloesen - entweder schliesst der Sendevorgang sauber ab, oder er sieht das
-    dokumentierte RuntimeError."""
+    """A close() while a send is parked in the rate-limit sleep must never
+    trigger an AttributeError from an already-closed socket - either the
+    send completes cleanly, or it sees the documented RuntimeError."""
     host, port = receiver.getsockname()
     sender = UdpSender(host, port, rate_limit=10.0)
     await sender.send("d1_1_a", 1)
@@ -157,9 +178,9 @@ async def test_close_is_idempotent():
 
 
 def test_a_datagram_observer_sees_every_send():
-    """Auch das, was die Laufzeit-Beobachter auslassen: den Full-Resend und
-    das Absenken eines Impulses. Das ist der Grund, warum der Mitschnitt am
-    Sender haengt und nicht an der Laufzeit."""
+    """Also what the runtime observers miss: the full resend and the
+    falling edge of a pulse. That is why the recording hangs off the
+    sender, not the runtime."""
     sender = UdpSender("127.0.0.1", 7000)
     seen: list[str] = []
 
@@ -175,9 +196,9 @@ def test_a_datagram_observer_sees_every_send():
 
 
 def test_a_throwing_observer_does_not_break_the_send_path():
-    """Ein Diagnosewerkzeug, das den Pfad anhaelt, den es beobachtet, waere
-    schlimmer als gar keins - dieselbe Begruendung wie beim Mitschreiben
-    selbst (siehe `_record_sent`)."""
+    """A diagnostic tool that halts the path it observes would be worse
+    than none at all - the same reasoning as for the recording itself
+    (see `_record_sent`)."""
 
     def _throwing_observer(entry: DatagramLogEntry) -> None:
         raise RuntimeError("kaputt")

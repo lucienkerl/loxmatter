@@ -1,4 +1,4 @@
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -14,13 +14,13 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Ersetzt den Loxone Miniserver beim Entwickeln.
+"""Stands in for the Loxone Miniserver during development.
 
-Der dritte Punkt unten ist der eigentliche Gewinn: er vergleicht, welche
-Signale eine erzeugte Vorlage ankuendigt, mit denen, die tatsaechlich ein
-Datagramm geschickt haben. Ein exportiertes Signal, das nie feuert, ist ein
-Mapping-Fehler - und ohne diesen Abgleich faellt er erst in Loxone auf, wo er
-wie ein Geraetefehler aussieht.
+The third point below is the real payoff: it compares which signals a
+generated template announces against the ones that actually sent a
+datagram. An exported signal that never fires is a mapping bug - and
+without this comparison it would only show up in Loxone, where it looks
+like a device fault.
 """
 
 from __future__ import annotations
@@ -30,8 +30,8 @@ import re
 from collections.abc import Callable
 from pathlib import Path
 
-# Liest genau das Attribut, das render_virtual_in_udp schreibt (siehe
-# export/documents.py): Check="<schluessel>:\v".
+# Reads exactly the attribute that render_virtual_in_udp writes (see
+# export/documents.py): Check="<key>:\v".
 _CHECK = re.compile(r'Check="([^:"]+):\\v"')
 
 
@@ -53,12 +53,12 @@ class _DatagramProtocol(asyncio.DatagramProtocol):
 
 
 class FakeMiniserver:
-    """Nimmt UDP-Datagramme entgegen wie der echte Miniserver - ohne ihn.
+    """Accepts UDP datagrams like the real Miniserver - without needing one.
 
-    `on_received`/`on_malformed` sind fuer `loxmatter fake-miniserver`
-    gedacht (Echtzeit-Ausgabe mit Zeitstempel) - `received`/`malformed`
-    bleiben die primaere, im Test abgefragte Quelle und wachsen immer,
-    unabhaengig davon, ob ein Callback gesetzt ist.
+    `on_received`/`on_malformed` are meant for `loxmatter fake-miniserver`
+    (real-time output with timestamps) - `received`/`malformed` remain the
+    primary source queried in tests, and keep growing regardless of
+    whether a callback is set.
     """
 
     def __init__(
@@ -95,17 +95,17 @@ class FakeMiniserver:
             self._transport = None
 
     def announced_keys(self, template: Path) -> set[str]:
-        """Signale, die die Vorlage per `Check`-Attribut ankuendigt.
+        """Signals the template announces via the `Check` attribute.
 
-        Getrennt von `silent_keys` gehalten, damit ein Aufrufer (siehe
-        `loxmatter fake-miniserver`) unterscheiden kann, ob eine Vorlage
-        schlicht KEIN Check-Attribut traegt (z. B. eine VO_-Datei oder eine
-        leere Vorlage) - dann gibt es nichts zu pruefen - statt das mit dem
-        Fall zu verwechseln, dass alle angekuendigten Signale gesehen wurden.
+        Kept separate from `silent_keys` so a caller (see `loxmatter
+        fake-miniserver`) can distinguish a template that simply carries NO
+        Check attribute at all (e.g. a VO_ file or an empty template) -
+        where there is nothing to check - from being confused with the
+        case where all announced signals were seen.
         """
         return set(_CHECK.findall(template.read_text(encoding="utf-8-sig")))
 
     def silent_keys(self, template: Path) -> list[str]:
-        """Signale, die die Vorlage ankuendigt, die aber nie ein Datagramm schickten."""
+        """Signals the template announces but that never sent a datagram."""
         seen = {key for key, _ in self.received}
         return sorted(self.announced_keys(template) - seen)

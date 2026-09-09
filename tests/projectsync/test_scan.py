@@ -61,12 +61,11 @@ def test_parse_root_raises_on_missing_control_list():
 
 
 def test_unterminated_attribute_value_raises_project_format_error():
-    """Ein abgeschnittenes Tag (Anfuehrungszeichen nie geschlossen, Datei
-    danach zu Ende) liess die Zeichenschleife in `_find_tag_close` bislang
-    ueber das Textende hinauslaufen und einen nackten `IndexError` werfen -
-    der bis in den Upload-Endpunkt als HTTP 500 durchschlug. Erwartet ist
-    stattdessen eine klare Meldung (Entwurf Abschnitt 8: "klare
-    Fehlermeldung, kein Absturz")."""
+    """A truncated tag (quote never closed, file ends right after) used to
+    let the character loop in `_find_tag_close` run past the end of the
+    text and raise a bare `IndexError` - which propagated all the way to
+    the upload endpoint as an HTTP 500. Expected instead is a clear message
+    (draft section 8: "clear error message, no crash")."""
     import pytest
 
     from loxmatter.projectsync.scan import ProjectFormatError
@@ -77,12 +76,12 @@ def test_unterminated_attribute_value_raises_project_format_error():
 
 
 def test_scan_children_handles_unescaped_gt_in_attribute_value():
-    # XML erlaubt ein woertliches '>' in einem Attributwert, ohne dass es als
-    # `&gt;` escaped werden muss (nur '<', '&' und das Anfuehrungszeichen
-    # selbst muessen escaped werden). Ein Titel wie 'Temp > 20' ist also
-    # gueltiges, unescaped XML, das eine Loxone-Projektdatei so enthalten
-    # darf. Ein naives `text.index(">", open_start)` faende das '>' mitten im
-    # Attributwert statt das wirkliche Tag-Ende.
+    # XML allows a literal '>' in an attribute value without it having to be
+    # escaped as `&gt;` (only '<', '&' and the quote character itself must
+    # be escaped). A title like 'Temp > 20' is therefore valid, unescaped
+    # XML that a Loxone project file may contain as such. A naive
+    # `text.index(">", open_start)` would find the '>' in the middle of the
+    # attribute value instead of the real end of the tag.
     doc = (
         '<C Type="VirtualUdpIn" IName="VUI1" U="u-container" Title="Temp > 20">'
         '<C Type="VirtualUdpInCmd" IName="VCI1" U="u-cmd1" Title="An"/>'

@@ -1,4 +1,4 @@
-# Lokale Deployment-Konfiguration und Laufzeitdaten - nicht Teil des Repos.
+# Local deployment configuration and runtime data - not part of the repo.
 .env
 data/
 *.dataset
