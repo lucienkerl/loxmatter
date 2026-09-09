@@ -610,6 +610,11 @@ api.settings.resend_interval_too_small:
   en: "resend interval must be at least {minimum}s, got: {value}"
   de: "Resend-Intervall muss mindestens {minimum}s betragen, angegeben: {value}"
 
+# api.update - WebUI updates design (2026-09-08), sections 7, 10 and 11.
+api.update.check_unavailable:
+  en: "Could not check for updates ({reason}). If this bridge has no internet access, that is expected, not an error."
+  de: "Konnte nicht auf Updates prüfen ({reason}). Falls diese Brücke keinen Internetzugang hat, ist das erwartet, kein Fehler."
+
 projectsync.not_utf8:
   en: "The uploaded file is not a valid UTF-8 text file - a Loxone project file is saved as UTF-8."
   de: "Die hochgeladene Datei ist keine gueltige UTF-8-Textdatei - eine Loxone-Projektdatei wird als UTF-8 gespeichert."

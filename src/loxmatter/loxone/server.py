@@ -82,6 +82,14 @@ with 401, not openly (see `build_api_guard`, discussed there at length).
 The warning in the log has since concerned the missing password, no
 longer the missing token (see `cli._warn_if_no_password`).
 
+**`update_base` is new in task 7 of the WebUI updates phase (self-update
+via the interface, spec 2026-09-08).** Where `api.update.build_update_router`
+reads `state.json` and writes `request.json` - optional with default
+`None`, meaning `update.protocol.UPDATE_DIR` (`/data/update`), for the
+same reason as `matter_data_dir` above: every existing call keeps running
+unchanged. A test passes its own `tmp_path`-backed directory here instead
+of touching the real `/data` mount.
+
 **Command log (spec 10.5).** The `_record_command` middleware below
 records EVERY incoming HTTP call on this app - method, path, status code,
 timestamp - for `GET /api/diagnostics/commands`. Two deliberate
@@ -143,6 +151,7 @@ from loxmatter.api.language import build_i18n_router, build_language_router
 from loxmatter.api.live import BEARER_SUBPROTOCOL, ObservableRuntime, build_live_router
 from loxmatter.api.project_sync import build_project_sync_router
 from loxmatter.api.settings import build_settings_router
+from loxmatter.api.update import build_update_router
 from loxmatter.api.version import build_version_router
 from loxmatter.auth.sessions import SESSION_COOKIE, session_is_valid
 from loxmatter.commands.translate import MatterCall, UnsupportedValueError, to_matter_calls
@@ -151,6 +160,7 @@ from loxmatter.loxone.sender import UdpSender
 from loxmatter.matter.client import BridgeMatterClient
 from loxmatter.model.store import Store
 from loxmatter.timestamps import now_iso
+from loxmatter.update.protocol import UPDATE_DIR
 
 Invoker = Callable[[MatterCall], Awaitable[None]]
 
@@ -375,6 +385,7 @@ def build_app(
     api_token: str | None = None,
     log_handler: LogBufferHandler | None = None,
     thread_dataset_source: ThreadDatasetSource | None = None,
+    update_base: Path | None = None,
 ) -> FastAPI:
     app = FastAPI(title="loxmatter", docs_url=None, redoc_url=None)
     command_log: RingBuffer[CommandLogEntry] = RingBuffer(maxlen=COMMAND_LOG_SIZE)
@@ -471,14 +482,15 @@ def build_app(
             i18n.set_language(store.locale.get_language())
         return await call_next(request)
 
-    # `dependencies=api_guard` on each of the nine `/api` routers (task 8,
+    # `dependencies=api_guard` on each of the ten `/api` routers (task 8,
     # phase 5, see `build_api_guard` above; the eighth since `POST
     # /api/export/project-sync`, task 11, phase 6, the ninth since
-    # `build_language_router`, this task): this protects without
-    # exception every route of these nine routers, including the
-    # WebSocket routes `/api/live` and `/api/diagnostics/live` - and
-    # explicitly NOT `/cmd`, `/resync`, `/health`, `/` and `/static`,
-    # which are mounted further below without `dependencies`.
+    # `build_language_router`, the tenth since `build_update_router`, task
+    # 7 of the WebUI updates phase): this protects without exception every
+    # route of these ten routers, including the WebSocket routes
+    # `/api/live` and `/api/diagnostics/live` - and explicitly NOT `/cmd`,
+    # `/resync`, `/health`, `/` and `/static`, which are mounted further
+    # below without `dependencies`.
     app.include_router(
         build_device_router(store, client, runtime, thread_dataset_source),
         dependencies=api_guard,
@@ -488,6 +500,10 @@ def build_app(
     app.include_router(build_settings_router(store), dependencies=api_guard)
     app.include_router(build_language_router(store), dependencies=api_guard)
     app.include_router(build_version_router(), dependencies=api_guard)
+    app.include_router(
+        build_update_router(store, base=update_base or UPDATE_DIR),
+        dependencies=api_guard,
+    )
     app.include_router(build_live_router(runtime), dependencies=api_guard)
     # The same `invoke` as below at `/cmd/{key}/{value}` - see the
     # api/control.py module docstring: one translation, two callers, or

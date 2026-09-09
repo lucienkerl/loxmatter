@@ -1,0 +1,179 @@
+# loxmatter - connects Matter devices to a Loxone Miniserver.
+# Copyright (C) 2026 Lucien Kerl
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+"""Tests for GET /api/update/status, GET /api/update/check and
+POST /api/update/apply - WebUI updates design (2026-09-08), sections 7,
+10 and 11.
+
+`api` builds the app with its own, throwaway `update` directory (via
+`build_app`'s `update_base`) instead of the real `/data/update` mount -
+tests write `state.json` into it directly with `update.protocol.write_state`
+to control exactly what the route reads, the same way `test_settings_api.py`
+writes straight to the store instead of going through a second route.
+
+`GET /api/update/check` reaches GitHub and is deliberately not exercised
+here beyond the guard test: it has no dedicated test in this task's brief,
+and a test that actually hit the network would be flaky in CI for reasons
+that have nothing to do with this route's own logic."""
+
+from __future__ import annotations
+
+from collections.abc import AsyncIterator
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+
+import httpx2 as httpx
+import pytest
+from conftest import authenticate
+
+from loxmatter.loxone.server import build_app
+from loxmatter.model.store import Store
+from loxmatter.update.protocol import UpdateState, read_request, write_state
+
+
+@pytest.fixture
+async def api(
+    tmp_path, no_invoke, fake_runtime
+) -> AsyncIterator[tuple[httpx.AsyncClient, Store, Path]]:
+    store = Store(tmp_path / "t.sqlite")
+    update_dir = tmp_path / "update"
+    app = build_app(store, no_invoke, fake_runtime(store), update_base=update_dir)
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        await authenticate(store, client)
+        yield client, store, update_dir
+    store.close()
+
+
+@pytest.fixture
+async def api_without_session(
+    tmp_path, no_invoke, fake_runtime
+) -> AsyncIterator[httpx.AsyncClient]:
+    store = Store(tmp_path / "t.sqlite")
+    app = build_app(store, no_invoke, fake_runtime(store), update_base=tmp_path / "update")
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        yield client
+    store.close()
+
+
+def _write_state(update_dir, *, phase, updater_seen_at, **overrides) -> None:
+    fields = {
+        "id": "req-1",
+        "phase": phase,
+        "steps": ["backup"],
+        "from_version": "0.2.0",
+        "to_version": "0.3.0",
+        "error": None,
+        "rolled_back": False,
+        "healthy": False,
+        "updater_seen_at": updater_seen_at,
+    }
+    fields.update(overrides)
+    write_state(update_dir, UpdateState(**fields))
+
+
+async def test_status_says_no_updater_when_the_stamp_is_missing_or_stale(api):
+    """Design section 11. `state.json` absent, or `updater_seen_at` older
+    than a few loop intervals, both mean the same thing to an operator:
+    there is nothing here that could perform an update. The interface must
+    say so plainly rather than offering a button that does nothing."""
+    client, _, update_dir = api
+
+    missing = await client.get("/api/update/status")
+    assert missing.status_code == 200
+    assert missing.json()["updater_present"] is False
+
+    stale_stamp = (datetime.now(UTC) - timedelta(hours=1)).isoformat(timespec="microseconds")
+    _write_state(update_dir, phase="idle", updater_seen_at=stale_stamp)
+    stale = await client.get("/api/update/status")
+    assert stale.status_code == 200
+    assert stale.json()["updater_present"] is False
+
+
+async def test_status_reports_the_phase_from_the_file(api):
+    """Not from the bridge's memory. This route answers correctly one
+    second after the bridge itself was restarted by an update - which is
+    the entire reason the state is a file."""
+    client, _, update_dir = api
+
+    fresh_stamp = datetime.now(UTC).isoformat(timespec="microseconds")
+    _write_state(
+        update_dir,
+        phase="pull",
+        updater_seen_at=fresh_stamp,
+        steps=["backup", "pull"],
+        from_version="0.2.0",
+        to_version="0.3.0",
+    )
+
+    response = await client.get("/api/update/status")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["updater_present"] is True
+    assert body["phase"] == "pull"
+    assert body["steps"] == ["backup", "pull"]
+    assert body["from_version"] == "0.2.0"
+    assert body["to_version"] == "0.3.0"
+    assert body["updater_seen_at"] == fresh_stamp
+
+
+async def test_apply_writes_a_request_and_returns_its_id(api, monkeypatch):
+    client, _, update_dir = api
+    monkeypatch.setenv("LOXMATTER_VERSION", "0.2.0")
+
+    response = await client.post(
+        "/api/update/apply", json={"channel": "stable", "target": "v0.3.0"}
+    )
+    assert response.status_code == 200
+    request_id = response.json()["id"]
+    assert request_id
+
+    written = read_request(update_dir)
+    assert written is not None
+    assert written.id == request_id
+    assert written.channel == "stable"
+    assert written.target == "v0.3.0"
+
+
+async def test_apply_refuses_a_target_the_rules_reject(api, monkeypatch):
+    """The rules live in the updater and are enforced there. Checking them
+    here too is not duplication for its own sake: a request that the
+    sidecar will refuse should fail while the operator is still looking at
+    the screen, not silently two seconds later in a file they never open."""
+    client, _, update_dir = api
+    monkeypatch.setenv("LOXMATTER_VERSION", "0.5.0")
+
+    response = await client.post(
+        "/api/update/apply", json={"channel": "stable", "target": "v0.1.0"}
+    )
+    assert response.status_code == 400
+    # Refused before anything reached disk - the sidecar never sees a
+    # request the rules would have rejected too.
+    assert read_request(update_dir) is None
+
+
+async def test_every_update_route_is_behind_the_api_guard(api_without_session):
+    """Session or token, like everything under /api. No second password
+    prompt - the same session already downloads the Fabric backup, and a
+    prompt here would claim a boundary that does not exist elsewhere."""
+    client = api_without_session
+
+    assert (await client.get("/api/update/status")).status_code == 401
+    assert (await client.get("/api/update/check")).status_code == 401
+    assert (
+        await client.post("/api/update/apply", json={"channel": "stable", "target": "v9.9.9"})
+    ).status_code == 401

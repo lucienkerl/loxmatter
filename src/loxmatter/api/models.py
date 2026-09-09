@@ -28,6 +28,7 @@ import re
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from loxmatter.model.update_settings_store import UpdateChannel
+from loxmatter.update.protocol import UpdatePhase
 
 
 class SignalOut(BaseModel):
@@ -483,3 +484,82 @@ class UpdateChannelIn(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     channel: UpdateChannel
+
+
+class UpdateStatusOut(BaseModel):
+    """Response of `GET /api/update/status` (WebUI updates design,
+    2026-09-08, sections 7 and 11).
+
+    `running_version`/`running_commit` come from `build_info()`, not from
+    `to_version` below - they answer "what is actually running", the one
+    thing only the image's own baked-in environment can answer (see
+    `version.build_info`'s docstring). `to_version` is the updater's own
+    bookkeeping about what it last aimed for; the two are expected to
+    agree once an update finishes, but when they do not, that mismatch is
+    real information about a desynchronised installation, not something to
+    hide by only ever showing one of them.
+
+    Every other field below is a plain copy of `update.protocol.UpdateState`
+    - or, while `state.json` does not exist yet, the values that state
+    would have on a bridge nothing has ever tried to update: `phase="idle"`,
+    empty `steps`, no error, nothing rolled back, not healthy (there was
+    never anything to be healthy).
+
+    `updater_present` is computed, not read: `True` only while
+    `updater_seen_at` is fresher than a few loop passes of the sidecar (see
+    `api.update`'s module docstring) - design section 11's distinction
+    between "no update running" and "no updater installed"."""
+
+    model_config = ConfigDict(frozen=True)
+
+    updater_present: bool
+    running_version: str
+    running_commit: str | None
+    id: str | None
+    phase: UpdatePhase
+    steps: list[str]
+    from_version: str | None
+    to_version: str | None
+    error: str | None
+    rolled_back: bool
+    healthy: bool
+    updater_seen_at: str | None
+
+
+class UpdateCheckOut(BaseModel):
+    """Response of `GET /api/update/check`. `error` is set instead of the
+    route failing outright when GitHub could not be reached - a bridge
+    behind a firewall is not broken, and the tile has to say something
+    sensible (see `api.update`'s module docstring)."""
+
+    model_config = ConfigDict(frozen=True)
+
+    channel: str
+    running_version: str
+    available: bool
+    latest: str | None
+    error: str | None
+
+
+class UpdateApplyIn(BaseModel):
+    """Body of `POST /api/update/apply`. Deliberately as unstructured as
+    `update.protocol.UpdateRequest` itself - the actual shape checking
+    (is `target` even a version or a commit) happens in `rules.check_request`,
+    not here, so that the bridge's route and the sidecar's own check can
+    never drift into checking two different things."""
+
+    model_config = ConfigDict(frozen=True)
+
+    channel: UpdateChannel
+    target: str = Field(min_length=1)
+
+
+class UpdateApplyOut(BaseModel):
+    """What the operator's browser needs back once a request has been
+    accepted and written - the fresh `id`, so a later status poll can (in
+    principle) tell "this is the request I just made" from "someone else's,
+    or a stale one"."""
+
+    model_config = ConfigDict(frozen=True)
+
+    id: str
