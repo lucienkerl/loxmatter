@@ -131,6 +131,7 @@ def sealed(tmp_path):
         )
         return result, log.read_text(encoding="utf-8") if log.exists() else ""
 
+    run.bindir = bindir
     return run
 
 
@@ -172,3 +173,67 @@ def test_no_cache_ohne_build_wird_abgewiesen(sealed):
     result, _ = sealed("--no-pull", "--no-cache")
     assert result.returncode != 0
     assert "--build" in result.stderr
+
+
+# ------------------------------------------------ Boundary-crossing fix --
+# Critical 4 from a whole-branch review: the documented migration path
+# for an existing installation ("git pull && ./scripts/update.sh",
+# README.md/CHANGELOG.md) only ever touched $SERVICE (loxmatter) - it
+# never brought up the stack, so loxmatter-updater was never created on
+# an installation that predates it. See
+# .superpowers/sdd/final-fix-boundary-report.md for the full write-up.
+
+
+def test_der_updater_sidecar_wird_erstellt(sealed):
+    _, calls = sealed("--no-pull")
+    assert "compose up -d --no-deps loxmatter-updater" in calls
+
+
+def test_das_erstellen_des_sidecars_laesst_die_nachbardienste_in_ruhe(sealed):
+    # --no-deps here too: matter-server and OTBR must not restart just
+    # because the sidecar is being brought up for the first time - same
+    # reasoning as the bridge's own restart (see the block comment at the
+    # top of this file), and loxmatter-updater itself carries no
+    # `depends_on` in the compose file, so this is defensive rather than
+    # load-bearing today, but it must stay true regardless of that.
+    _, calls = sealed("--no-pull")
+    sidecar_line = next(
+        line for line in calls.splitlines() if "compose up" in line and "loxmatter-updater" in line
+    )
+    assert "--no-deps" in sidecar_line
+
+
+def test_ein_fehlschlag_beim_sidecar_bricht_das_skript_nicht_ab(sealed):
+    # Best-effort, deliberately: by the time this step runs, the bridge
+    # itself has already been updated and confirmed healthy. A registry
+    # hiccup fetching the SIDECAR's own image must not turn an otherwise-
+    # successful bridge update into a reported failure.
+    docker_path = sealed.bindir / "docker"
+    docker_path.write_text(
+        "#!/bin/sh\n"
+        'printf "%s %s\\n" "docker" "$*" >> "$STUB_LOG"\n'
+        'case "$*" in\n'
+        "  *loxmatter-updater*) exit 1 ;;\n"
+        "  run*)\n"
+        '    hostdir=""\n'
+        '    for a in "$@"; do\n'
+        '      case "$a" in *:/backup) hostdir="${a%:/backup}" ;; esac\n'
+        "    done\n"
+        '    prev=""\n'
+        '    for a in "$@"; do\n'
+        '      if [ "$prev" = "czf" ]; then\n'
+        '        case "$a" in /backup/*) a="$hostdir/${a#/backup/}" ;; esac\n'
+        '        : > "$a"\n'
+        "      fi\n"
+        '      prev="$a"\n'
+        "    done\n"
+        "    ;;\n"
+        "esac\n"
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    docker_path.chmod(0o755)
+    result, calls = sealed("--no-pull")
+    assert result.returncode == 0, result.stderr
+    assert "compose up -d --no-deps loxmatter-updater" in calls
+    assert "Could not start loxmatter-updater" in result.stdout

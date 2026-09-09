@@ -100,6 +100,12 @@ if docker volume inspect "$VOLUME" >/dev/null 2>&1; then
     || die "Sicherung fehlgeschlagen - es wird nichts geaendert."
   printf '  %s\n' "$BACKUPS/store-$STAMP.tgz"
   # Alte Sicherungen aufraeumen, aber nie die letzten zehn.
+  # shellcheck disable=SC2012  # filenames are self-generated (store-<UTC
+  # timestamp>.tgz, written above by this same script), not attacker- or
+  # user-supplied, so sorting them by mtime through `ls -t` is safe here
+  # in a way it would not be in general - the same reasoning
+  # deploy/updater/update-once.sh already carries at its own identical
+  # pruning line.
   ls -1t "$BACKUPS"/store-*.tgz 2>/dev/null | tail -n +11 | xargs -r rm --
 else
   printf '\nKein Datenbank-Volume gefunden (%s) - erster Lauf?\n' "$VOLUME"
@@ -159,6 +165,51 @@ if [ "$OK" -ne 1 ]; then
   die "Der Dienst ist oben, meldet sich aber nicht gesund."
 fi
 printf '  %s\n' "$(curl -fsS -m 3 "$URL")"
+
+# English (branch convention for this fix, unlike the rest of this file):
+# the documented migration path for an EXISTING installation is exactly
+# "git pull && ./scripts/update.sh" (README.md, CHANGELOG.md) - and until
+# this step existed, that command never created loxmatter-updater. Every
+# call above this point names $SERVICE (loxmatter) explicitly with
+# --no-deps, by design (see the block comment at the top of this file:
+# matter-server and OTBR must never restart on an update, since OTBR's
+# Thread state lives in a volume and a Thread-network restart is not part
+# of an update). Compose only ever creates or recreates what is actually
+# NAMED in a command, plus dependencies (suppressed here by --no-deps) -
+# a service nobody named is simply never brought up. So an installation
+# that predates the updater sidecar (design "Applying updates through the
+# web UI", 2026-09-08) never got it from following that instruction: the
+# bridge updated, the git checkout gained the service definition, and
+# nothing here ever ran `docker compose up` against it. The System tab
+# kept reporting no updater present, forever, on every installation that
+# did exactly what it was told to do.
+#
+# Named explicitly, with the same --no-deps as every other compose call
+# in this file: loxmatter-updater carries no `depends_on` of its own in
+# the compose file, so --no-deps changes nothing about ITS startup, but
+# keeps this call honest about the same rule the rest of this script
+# already follows, rather than relying on that being true only by
+# accident of the current compose file's shape. No --force-recreate: an
+# already-running sidecar with an unchanged image and config must not be
+# interrupted mid-cycle (it could be mid-update itself) for a call whose
+# only job is to create the ones that do not exist yet - Compose's
+# default "missing" pull policy already covers the creation case, since
+# a service that has never run has no local image to compare against and
+# gets pulled unconditionally.
+#
+# Best-effort, deliberately not `die`d: by this point the bridge itself
+# has already been updated and confirmed healthy (the health wait above
+# would have aborted the script otherwise). A registry hiccup fetching
+# the SIDECAR's own image must not turn an otherwise-successful bridge
+# update into a reported failure - the System tab already tells an
+# operator plainly when no updater is present, so a sidecar that could
+# not be created here stays visible on its own, not lost inside a
+# success message that then lies about it.
+say "Ensuring the updater sidecar is present"
+if ! (cd "$STACK" && docker compose up -d --no-deps loxmatter-updater); then
+  printf '\033[33m  Could not start loxmatter-updater - the bridge above is unaffected. Retry by hand:\033[0m\n'
+  printf '  cd %s && docker compose up -d --no-deps loxmatter-updater\n' "$STACK"
+fi
 
 say "Stand der Geraete"
 docker exec "$SERVICE" python3 -c "
