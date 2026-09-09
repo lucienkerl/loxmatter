@@ -25,6 +25,7 @@ from __future__ import annotations
 import json
 import sys
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import pytest
 
@@ -293,18 +294,42 @@ def test_a_request_file_without_a_usable_id_does_not_block_a_new_request(tmp_pat
 def test_the_job_is_written_atomically(tmp_path, monkeypatch):
     """The sidecar reads every two seconds. If it saw the file half
     written, it would reject a valid request as invalid - and because it
-    touches each id only once, that request would never come again."""
+    touches each id only once, that request would never come again.
+
+    Merely observing that `os.replace` gets called at all is not enough:
+    that alone is equally satisfied by writing straight to the final
+    path and then following it with a no-op self-replace,
+    `os.replace(request.json, request.json)` - no temp file, no atomicity,
+    and the sidecar could still observe a half-written request.json mid
+    write. The two assertions below rule that mutation out specifically:
+    the destination must not already exist the moment `os.replace` is
+    called (ruling out "written directly, then replaced onto itself"),
+    and source and destination must be different paths (ruling out a
+    self-replace even if the destination happened to be empty first)."""
     gesehen = []
+    final = tmp_path / "request.json"
     echtes_replace = __import__("os").replace
 
     def spion(src, dst):
-        gesehen.append((str(src), str(dst)))
+        # If request.json already exists at this point, the body was
+        # written directly to its final path before this call rather
+        # than to a separate temp file - exactly the mutation this test
+        # exists to catch.
+        assert not final.exists(), "request.json must not exist yet when os.replace is called"
+        gesehen.append((Path(src), Path(dst)))
         echtes_replace(src, dst)
 
     monkeypatch.setattr("loxmatter.update.os.replace", spion)
     _state(tmp_path)
-    request_update(tmp_path, channel="stable", target="0.3.0")
+    job_id = request_update(tmp_path, channel="stable", target="0.3.0")
     assert gesehen, "request.json must land in place via os.replace"
+    src, dst = gesehen[0]
+    assert dst == final
+    assert src != dst, (
+        "os.replace must rename a distinct temp file onto the destination, not replace it onto itself"
+    )
+    assert not src.exists(), "the temp file must be gone once the rename has happened"
+    assert json.loads(final.read_text(encoding="utf-8"))["id"] == job_id
 
 
 def test_the_log_returns_the_last_lines(tmp_path):
