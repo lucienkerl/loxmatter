@@ -57,12 +57,12 @@ class FakeCommands:
         self._fail_times = fail_times
         self._fail_counts: dict[str, int] = {}
         # The 1-based call indices at which `healthy()` raises instead of
-        # answering - see the tests for findings (a) and (b), which each
+        # answering - see the health-poll escape tests, which each
         # need the raise to land at a different point in the poll.
         self._healthy_raises_on = healthy_raises_on
         self._log_raises = log_raises
         # `base` lets `recreate` read the state file mid-flight - see the
-        # test for finding (g), which needs to observe a write that
+        # mid-run state test, which needs to observe a write that
         # happened *during* the run rather than trusting a post-hoc read.
         self._base = base
         self.phase_at_recreate: str | None = None
@@ -103,12 +103,12 @@ class FakeCommands:
     @property
     def health_asked(self) -> int:
         """Total `healthy()` calls across both the main wait and the
-        rollback's own confirmation poll - see the test for finding (o),
+        rollback's own confirmation poll - see the deadline test,
         which pins how many of those the deadline comparison allows."""
         return self._health_asked
 
     def write_image_tag(self, tag: str) -> None:
-        # Through `_record`, not a bare append (finding (m)): otherwise
+        # Through `_record`, not a bare append: otherwise
         # `fail_on` can never target this call, and the "nothing was
         # restored" branch of `roll_back`'s failure message - the one
         # that fires when even the tag write fails - is unreachable from
@@ -166,7 +166,7 @@ def test_a_healthy_update_walks_the_five_steps_in_order(tmp_path):
         "checkout:v0.3.0",
         # `checkout` gets the git-form target; `pull` and the tag write
         # get the Docker form CI actually publishes for a stable release
-        # - the `v` stripped (finding 1). See `rules.image_tag`.
+        # - the `v` stripped. See `rules.image_tag`.
         "pull:ghcr.io/lucienkerl/loxmatter:0.3.0",
         "tag:0.3.0",
         "recreate",
@@ -194,7 +194,7 @@ def test_the_state_file_is_written_during_pull_not_only_at_the_end(tmp_path):
 
 
 def test_a_successful_run_records_exactly_the_steps_constant_in_order(tmp_path):
-    """`STEPS` (finding (h)) is what the web interface tile will read; pin
+    """`STEPS` is what the web interface tile will read; pin
     it against what `run_update` actually records so the constant and the
     literals `done.append(...)` uses cannot silently drift apart."""
     commands = FakeCommands()

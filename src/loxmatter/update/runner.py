@@ -108,7 +108,7 @@ def run_update(
         )
         try:
             write_state(base, state)
-        except Exception:  # noqa: BLE001, S110 - see finding (c): best effort, not an escape
+        except Exception:  # noqa: BLE001, S110 - best effort, never an escape
             # `write_state` can fail the same way `commands.log` can - a
             # full disk mid-update is an ordinary failure, not an
             # exceptional one. `run_update`'s contract with every caller
@@ -128,7 +128,7 @@ def run_update(
         )
         # Both of these are read BEFORE anything is written, and they are
         # two different strings - see `read_git_ref` in the Protocol
-        # above. Reading them inside this same `try` matters (finding 2):
+        # above. Reading them inside this same `try` matters:
         # like `check_request`, they run before the first command, so a
         # failure here must read like a rejection too.
         previous_tag = commands.read_image_tag()
@@ -139,7 +139,7 @@ def run_update(
         # it found it.
         _log(commands, f"refused: {rejected.reason}")
         return publish("failed", error=rejected.reason)
-    except Exception as failure:  # noqa: BLE001 - see finding 2
+    except Exception as failure:  # noqa: BLE001 - nothing has run yet, see below
         # `is_ancestor` shells out to git on the `dev` channel (there is
         # no `commands.py` yet to catch its failures for us), and
         # `read_image_tag`/`read_git_ref` read files that may not be
@@ -237,7 +237,7 @@ def run_update(
         publish("pull")
 
         # `image_tag`, not `request.target` - see its docstring in
-        # `rules.py`. Writing the git-form target here was finding 1: the
+        # `rules.py`. Writing the git-form target here was a real bug: the
         # tag that lands in `.env` has to be the Docker form CI actually
         # published, the same tag `pull` two lines up just used.
         commands.write_image_tag(image_tag(request.target))
@@ -255,7 +255,7 @@ def run_update(
     if not _wait_for_health(commands, sleep, deadline_seconds):
         # `_wait_for_health` already treats a raising `healthy()` as "not
         # healthy" (see its docstring) - that is what makes this branch
-        # the right response to the exact failure finding (a) describes:
+        # the right response to the failure this poll exists to detect:
         # a real `healthy()` polling `/health` over HTTP raises rather
         # than returning `False` while the bridge is down, which is
         # precisely the condition this poll exists to detect.
@@ -285,7 +285,7 @@ def _wait_for_health(
     unreachable bridge must read as "not healthy", which for the main
     caller means a rollback runs at all, and for `roll_back` means
     `healthy=False` is published instead of the exception escaping
-    `run_update` and leaving `state.json` frozen (findings (a) and (b)).
+    `run_update` and leaving `state.json` frozen.
     """
     waited = 0.0
     while waited < deadline_seconds:

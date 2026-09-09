@@ -81,7 +81,7 @@ def test_an_unknown_channel_is_rejected():
 
 
 def test_an_unknown_channel_is_rejected_even_with_a_commit_target():
-    """Bite check for rule 1 (finding (d)): with a version-shaped target,
+    """Bite check for rule 1: with a version-shaped target,
     the dev branch's own "the channel is dev" message happens to reject
     the request too, so `test_an_unknown_channel_is_rejected` alone would
     not notice the channel check being deleted if it matched loosely on
@@ -110,7 +110,7 @@ def test_an_unknown_channel_is_rejected_even_with_a_commit_target():
         "v0.3",
         "$(whoami)",
         "abc",  # too short for a SHA
-        "0.3.0",  # a real version, but missing the "v" - see finding (k)
+        "0.3.0",  # a real version, but missing the "v" that tags carry
     ],
 )
 def test_a_target_that_is_not_a_version_or_a_sha_is_rejected(channel, target):
