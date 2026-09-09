@@ -2257,6 +2257,88 @@ def test_a_signal_during_the_rollback_health_wait_leaves_an_honest_failed_state(
     assert (unhealthy_service.update_dir / "LETZTER-FEHLSCHLAG.txt").exists()
 
 
+def test_a_signals_failure_file_uses_real_host_paths_too(unhealthy_service):
+    # Important 5, the sibling of Important 2 (`write_failure_file()`'s
+    # own host-path fix, `test_the_failure_file_uses_a_real_host_path_
+    # when_docker_can_resolve_it` above) on the SIGTERM path instead:
+    # `on_signal()` wrote its OWN copy of the same "cd $STACK && docker
+    # compose logs .../cd $REPO && ./scripts/update.sh ..." lines,
+    # straight from $STACK/$REPO - the CONTAINER paths - rather than
+    # through `host_path_for()` like every other failure path in this
+    # file. Those commands fail at the very first `cd` on the host,
+    # silently, exactly the bug `host_path_for()` exists to fix
+    # elsewhere - and this is the ONE failure file written for someone
+    # who by definition has no web interface left (a signal killed the
+    # process that would otherwise be answering it), so a command that
+    # cannot actually be pasted is worse here than almost anywhere else.
+    #
+    # Every OTHER docker stub in this file (including `unhealthy_service`'s
+    # own default, inherited from `updater`) answers `docker inspect
+    # loxmatter-updater` with an IDENTITY mount mapping - container and
+    # host paths coincide, so this exact bug is invisible to any test that
+    # does not deliberately model a real split. Reuses the non-identity
+    # docker stub shape `test_the_failure_file_uses_a_real_host_path_when_
+    # docker_can_resolve_it` above already introduced for exactly that
+    # reason, here answering BOTH `docker inspect` calls this pass makes
+    # (`running_version()` for $SERVICE, `host_path_for()` for
+    # loxmatter-updater) rather than just the second.
+    host_checkout = "/home/pi/loxmatter-checkout"
+    docker_path = unhealthy_service.bindir / "docker"
+    docker_path.write_text(
+        "#!/bin/sh\n"
+        'printf "%s %s\\n" "docker" "$*" >> "$STUB_LOG"\n'
+        'case "$1" in\n'
+        "  inspect)\n"
+        '    if [ "$2" = "loxmatter-updater" ]; then\n'
+        f'      printf "%s %s\\n" "$LOXMATTER_REPO" "{host_checkout}"\n'
+        f'      printf "%s %s\\n" "$LOXMATTER_STACK" "{host_checkout}/deploy/testhost"\n'
+        "    else\n"
+        '      printf "LOXMATTER_VERSION=0.2.0\\n"\n'
+        "    fi\n"
+        "    ;;\n"
+        "esac\n",
+        encoding="utf-8",
+    )
+    docker_path.chmod(0o755)
+    _write_request(unhealthy_service, target="0.3.0")
+    proc = unhealthy_service.popen()
+    try:
+        deadline = time.monotonic() + 10
+        reached_rollback = False
+        state_file = unhealthy_service.update_dir / "state.json"
+        while time.monotonic() < deadline:
+            if state_file.is_file():
+                try:
+                    current = json.loads(state_file.read_text(encoding="utf-8"))
+                except json.JSONDecodeError:
+                    current = None
+                if current is not None and current.get("phase") == "rollback":
+                    reached_rollback = True
+                    break
+            time.sleep(0.05)
+        assert reached_rollback, "the run never reached the rollback phase in time"
+        os.kill(proc.pid, signal.SIGTERM)
+        proc.wait(timeout=10)
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait()
+
+    text = (unhealthy_service.update_dir / "LETZTER-FEHLSCHLAG.txt").read_text(encoding="utf-8")
+    assert f"cd {host_checkout}/deploy/testhost && docker compose logs" in text
+    assert f"cd {host_checkout} && ./scripts/update.sh --no-pull" in text
+    # Scoped to the two RUNNABLE command lines specifically, not the log
+    # excerpt at the end of the file - that tail legitimately still shows
+    # the container-side `-f $STACK/docker-compose.yml` compose() always
+    # logs by design (see its own comment: `-f` deliberately stays a
+    # container path, only `--project-directory` moves to the host), a
+    # record of what THIS container did, not a command for a person to
+    # run themselves.
+    manual_section = text.split("Check by hand:")[1].split("Last lines of the log")[0]
+    assert str(unhealthy_service.stack) not in manual_section
+    assert str(unhealthy_service.stack.parent.parent) not in manual_section
+
+
 def test_the_rollback_falls_back_to_from_for_an_unidentified_v_prefixed_running_version(updater):
     # Minor. The acceptance check normalises $RUNNING through
     # "${RUNNING#v}" before comparing it against the ''|unbekannt|dev
