@@ -55,6 +55,7 @@ pyproject.toml - sie wird nur zum Neuerzeugen dieser Bilder gebraucht.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -74,6 +75,17 @@ PASSWORD = "loxmatter-demo"
 # siehe dort `_seed_demo_update_dir`) - dieses Skript will einen laufenden
 # Job zeigen, siehe `_seed_update_dir()` unten.
 UPDATE_DIR = Path(tempfile.gettempdir()) / "loxmatter-screenshot-update"
+
+# Fixed build info for reproducible screenshots. These values follow the
+# same pattern as DEMO_TIMESTAMP in dev_web_server.py: without them, the
+# bridge would display "dev" and warn "This bridge was built from a working
+# copy, not from a published version" - a development artifact that doesn't
+# belong on the product page's marketing screenshot. Using fixed values
+# ensures the screenshot shows a released version and remains identical
+# across runs.
+DEMO_VERSION = "0.3.0"
+DEMO_COMMIT = "a1b2c3d"
+DEMO_BUILT_AT = "2026-01-15T09:30:00Z"
 
 # `main` ist per CSS auf 960 px begrenzt, ein breiteres Fenster erzeugt also
 # nur grauen Rand. 820 px lassen die Inhaltsspalte selbst die Breite bestimmen
@@ -449,6 +461,16 @@ def capture(page: Page) -> None:
 
 def main() -> int:
     _seed_update_dir(UPDATE_DIR)
+    # Set up environment with fixed build info for reproducible screenshots.
+    # Inherit parent's environment first, then override with demo values.
+    env = os.environ.copy()
+    env.update(
+        {
+            "LOXMATTER_VERSION": DEMO_VERSION,
+            "LOXMATTER_COMMIT": DEMO_COMMIT,
+            "LOXMATTER_BUILT_AT": DEMO_BUILT_AT,
+        }
+    )
     server = subprocess.Popen(
         [
             sys.executable,
@@ -458,7 +480,8 @@ def main() -> int:
             str(PORT),
             "--update-dir",
             str(UPDATE_DIR),
-        ]
+        ],
+        env=env,
     )
     try:
         time.sleep(4)
