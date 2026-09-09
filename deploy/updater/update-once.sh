@@ -969,19 +969,34 @@ compose() {
 # maintainer's own notes) as long enough to look like a hang. A
 # one-second poll bounds that same unavoidable "sleep before the first
 # check" tax to at most one second instead.
-compose_pull_with_heartbeat() {
-  resolve_compose_project_dir
-  compose pull "$1" &
-  pull_pid=$!
-  while kill -0 "$pull_pid" 2>/dev/null; do
+#
+# Generalised into `with_heartbeat()` below, not left as a pull-only
+# mechanism: `git fetch`, the `tar czf` backup and every
+# `compose ... --force-recreate` have the identical shape - a single
+# blocking call, run from this same pass, whose own wall-clock time can
+# plausibly exceed the 30-second staleness window (`_MAX_SILENT_SECONDS`,
+# update.py) on a loaded Pi - and each left the heartbeat frozen for its
+# entire duration until this fix, exactly as the pull once did. Kept as
+# a thin wrapper around `with_heartbeat` rather than inlining
+# `compose pull "$1"` at its one call site, so this function's own name
+# stays what every existing caller and test already expects.
+with_heartbeat() {
+  "$@" &
+  wh_pid=$!
+  while kill -0 "$wh_pid" 2>/dev/null; do
     sleep 1
-    if kill -0 "$pull_pid" 2>/dev/null; then
+    if kill -0 "$wh_pid" 2>/dev/null; then
       refresh_heartbeat || true
     fi
   done
-  pull_rc=0
-  wait "$pull_pid" || pull_rc=$?
-  return "$pull_rc"
+  wh_rc=0
+  wait "$wh_pid" || wh_rc=$?
+  return "$wh_rc"
+}
+
+compose_pull_with_heartbeat() {
+  resolve_compose_project_dir
+  with_heartbeat compose pull "$1"
 }
 
 # Escapes sed's own replacement metacharacters - backslash, ampersand, and
@@ -1395,7 +1410,15 @@ fi
 # fast is exactly that, not a step the web UI's four-item list claims a
 # name for). `set_state pull ""` now sits where the pull actually is,
 # right before `compose_pull_with_heartbeat` further down.
-if ! run_git fetch --tags --force origin; then
+#
+# `with_heartbeat`, not a bare `run_git`: "typically sub-second against a
+# local remote", two paragraphs up, is the ordinary case, not a
+# guarantee - a slow uplink (this pass's own fetch reaches the real,
+# possibly distant `origin`, unlike the mostly-local operations
+# elsewhere in this file) can still cost more than the 30-second
+# staleness window, and until this fix nothing refreshed the heartbeat
+# for its entire duration.
+if ! with_heartbeat run_git fetch --tags --force origin; then
   set_state failed "git fetch failed"
   exit 0
 fi
@@ -1436,7 +1459,13 @@ fi
 # list already claims to mean "downloading the image".
 set_state backup ""
 STAMP="$(date -u +%Y-%m-%d-%H%M%S)"
-if ! run tar czf "$BACKUP_DIR/store-$STAMP.tgz" -C /data loxmatter.sqlite; then
+# `with_heartbeat`, not a bare `run`: "seconds at most", in the comment
+# above, is the ordinary case on the maintainer's own test Pi - a
+# database that has grown large, or a `gzip` pass competing with
+# everything else for one of an ARM board's few cores, both push a plain
+# `tar czf` past the 30-second staleness window on its own, with no loop
+# of its own (unlike `wait_healthy`) to hang a heartbeat refresh off.
+if ! with_heartbeat run tar czf "$BACKUP_DIR/store-$STAMP.tgz" -C /data loxmatter.sqlite; then
   set_state failed "backup failed - nothing was changed"
   exit 0
 fi
@@ -1521,9 +1550,26 @@ fi
 # 3. Replace it. --no-deps: matter-server and OTBR stay untouched, and the
 # sidecar does not replace itself before `done` is written - see the
 # self-replacement at the very end of the success branch below.
+#
+# `with_heartbeat`, not a bare `compose`: `--force-recreate` stops the
+# old container (SIGTERM, then a grace period - 10s by default in
+# docker-compose.yml, before the daemon escalates to SIGKILL) and only
+# THEN starts the new one - the new container is not even created yet
+# when this call is 10 seconds in, let alone answering. Without a
+# refresh spanning this whole call, that ordinary grace period alone can
+# already outlast the 30-second staleness window before `wait_healthy`
+# below ever gets a chance to start refreshing on its own.
+# `resolve_compose_project_dir` first, same reasoning as
+# `compose_pull_with_heartbeat` above (its own comment covers why: a
+# background subshell that resolved it for the first time would only
+# memoize it for ITSELF) - a no-op here in practice, since the pull just
+# above already resolved and memoized it in this same process, but
+# spelled out at each backgrounding call site rather than relied on as
+# an accident of call order.
 set_state recreate ""
 RECREATE_OK=true
-if ! compose up -d --no-deps --force-recreate "$SERVICE"; then
+resolve_compose_project_dir
+if ! with_heartbeat compose up -d --no-deps --force-recreate "$SERVICE"; then
   # Proven with a `compose up` stub that exits 1: unlike the pull failure
   # above, "the running service is unchanged" is not true here -
   # `--force-recreate` removes the old container before creating its
@@ -1777,7 +1823,14 @@ else
   # tag. Whatever mismatch that leaves in docker-compose.yml is a smaller
   # problem than not attempting the recreate at all.
   run_git checkout --detach "$GIT_BEFORE" || true
-  compose up -d --no-deps --force-recreate "$SERVICE" || true
+  # The same `--force-recreate` gap as the forward path's own recreate
+  # above (see that call's comment for the SIGTERM-grace-period
+  # mechanics) - a rollback is no faster to stop and start a container
+  # than the update that led to it, and this call runs entirely under
+  # phase "rollback", not "recreate", so nothing else here refreshes the
+  # heartbeat until `wait_healthy` below starts its own loop.
+  resolve_compose_project_dir
+  with_heartbeat compose up -d --no-deps --force-recreate "$SERVICE" || true
 
   # Exactly once. No second attempt, no flapping: if the cause were not
   # the image itself (a dead matter-server, say), every further attempt

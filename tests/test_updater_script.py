@@ -826,6 +826,120 @@ def test_the_heartbeat_keeps_advancing_through_a_long_image_pull(updater):
     )
 
 
+def test_the_heartbeat_keeps_advancing_through_a_long_git_fetch(updater):
+    # Important 1 was never actually complete: `compose_pull_with_
+    # heartbeat` fixed the image pull, but `git fetch --tags --force
+    # origin` (the very first network call this pass makes, further up in
+    # update-once.sh, under phase "queued") is exactly the same shape - a
+    # single blocking call with no loop of its own - and nothing refreshed
+    # the heartbeat for its entire duration either. A slow uplink is the
+    # realistic trigger here (the fetch reaches the real, possibly
+    # distant `origin`, unlike most other operations in this file), and
+    # crossing the 30-second staleness window mid-fetch made the bridge
+    # show `updateStalled()`'s red banner - telling an operator to
+    # "restart the updater sidecar" while a healthy update was still
+    # under way.
+    #
+    # Same technique as the image-pull test above: the fake `git` binary
+    # snapshots state.json immediately before and after sleeping through
+    # the one call whose arguments contain "fetch", long enough (7s) to
+    # span several of `with_heartbeat`'s own 1s refresh polls.
+    before = updater.update_dir / "state-before-fetch.json"
+    after = updater.update_dir / "state-after-fetch.json"
+    git_path = updater.bindir / "git"
+    git_path.write_text(
+        "#!/bin/sh\n"
+        'printf "%s %s\\n" "git" "$*" >> "$STUB_LOG"\n'
+        'case " $* " in\n'
+        f'  *" fetch "*) cp "$LOXMATTER_UPDATE_DIR/state.json" "{before}" 2>/dev/null\n'
+        "    sleep 7\n"
+        f'    cp "$LOXMATTER_UPDATE_DIR/state.json" "{after}" 2>/dev/null ;;\n'
+        "esac\n"
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    git_path.chmod(0o755)
+    _write_request(updater, target="0.3.0")
+    _, _calls, state = updater(_timeout=30)
+    assert state["phase"] == "done"
+    assert before.is_file() and after.is_file(), "the git fetch never ran"
+    before_state = json.loads(before.read_text(encoding="utf-8"))
+    after_state = json.loads(after.read_text(encoding="utf-8"))
+    assert after_state["updater_seen_at"] > before_state["updater_seen_at"], (
+        "the heartbeat must advance WHILE the fetch is still running, not only once it has returned"
+    )
+
+
+def test_the_heartbeat_keeps_advancing_through_a_long_backup(updater):
+    # The same gap, on the `tar czf` backup: run before the pull, under
+    # phase "backup", and just as capable of outlasting 30 seconds - a
+    # database that has grown large, or `gzip` sharing an ARM core's
+    # attention with everything else this pass is doing, are the ordinary
+    # triggers on a Pi, not an edge case.
+    before = updater.update_dir / "state-before-backup.json"
+    after = updater.update_dir / "state-after-backup.json"
+    tar_path = updater.bindir / "tar"
+    tar_path.write_text(
+        "#!/bin/sh\n"
+        'printf "%s %s\\n" "tar" "$*" >> "$STUB_LOG"\n'
+        'case " $* " in\n'
+        f'  *" czf "*) cp "$LOXMATTER_UPDATE_DIR/state.json" "{before}" 2>/dev/null\n'
+        "    sleep 7\n"
+        f'    cp "$LOXMATTER_UPDATE_DIR/state.json" "{after}" 2>/dev/null ;;\n'
+        "esac\n"
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    tar_path.chmod(0o755)
+    _write_request(updater, target="0.3.0")
+    _, _calls, state = updater(_timeout=30)
+    assert state["phase"] == "done"
+    assert before.is_file() and after.is_file(), "the backup never ran"
+    before_state = json.loads(before.read_text(encoding="utf-8"))
+    after_state = json.loads(after.read_text(encoding="utf-8"))
+    assert after_state["updater_seen_at"] > before_state["updater_seen_at"], (
+        "the heartbeat must advance WHILE the backup is still running, not only once it has returned"
+    )
+
+
+def test_the_heartbeat_keeps_advancing_through_a_long_recreate(updater):
+    # The same gap again, on `compose up -d --no-deps --force-recreate` -
+    # the most misleading of the three to leave frozen: `--force-recreate`
+    # stops the OLD container (SIGTERM, then a grace period - 10s by
+    # default) before the new one is even created, let alone answering,
+    # so this call alone can already outlast the 30-second staleness
+    # window before `wait_healthy` gets a chance to start refreshing on
+    # its own. `updateStalled()` firing here (app.js) told an operator to
+    # "check the host or restart the updater sidecar" - i.e. to send
+    # SIGTERM into the very recreate this banner was describing.
+    before = updater.update_dir / "state-before-recreate.json"
+    after = updater.update_dir / "state-after-recreate.json"
+    docker_path = updater.bindir / "docker"
+    docker_path.write_text(
+        _docker_stub_source(
+            compose_case=(
+                'case " $* " in\n'
+                f'      *" up "*) cp "$LOXMATTER_UPDATE_DIR/state.json" "{before}" 2>/dev/null\n'
+                "        sleep 7\n"
+                f'        cp "$LOXMATTER_UPDATE_DIR/state.json" "{after}" 2>/dev/null ;;\n'
+                "    esac\n"
+                "    exit 0 ;;"
+            )
+        ),
+        encoding="utf-8",
+    )
+    docker_path.chmod(0o755)
+    _write_request(updater, target="0.3.0")
+    _, _calls, state = updater(_timeout=30)
+    assert state["phase"] == "done"
+    assert before.is_file() and after.is_file(), "the recreate never ran"
+    before_state = json.loads(before.read_text(encoding="utf-8"))
+    after_state = json.loads(after.read_text(encoding="utf-8"))
+    assert after_state["updater_seen_at"] > before_state["updater_seen_at"], (
+        "the heartbeat must advance WHILE the recreate is still running, not only once it has returned"
+    )
+
+
 def test_the_restart_leaves_the_neighboring_services_alone(updater):
     _write_request(updater, target="0.3.0")
     _, calls, _ = updater()
@@ -981,6 +1095,19 @@ def test_wait_healthy_is_bounded_by_wall_clock_not_curl_duration(updater):
     # call this file has no other way to interrupt (see that function's
     # own comment). The bound below still sits far under what the OLD,
     # iteration-counting bug this test exists to catch would produce.
+    #
+    # Widened again for the same reason, multiplied: `with_heartbeat`
+    # (the fetch/backup/recreate windows this same fix now also covers -
+    # see its own comment) is the identical background-and-poll
+    # mechanism, so THIS one pass - which reaches the fetch, the backup,
+    # the pull, the initial recreate AND the rollback's own recreate, all
+    # five backed by `with_heartbeat` - can accumulate up to five of
+    # those same ~1s poll taxes on top of the two wall-clock-bounded
+    # waits above, not just the pull's one. Bounded generously rather
+    # than tightly for exactly that reason: this test's own claim is
+    # "bounded by the clock", not "fast", and a machine under load adds
+    # process-spawn overhead on top of the disclosed poll tax that has
+    # nothing to do with either fix.
     curl_path = updater.bindir / "curl"
     curl_path.write_text("#!/bin/sh\nsleep 2\nexit 1\n", encoding="utf-8")
     curl_path.chmod(0o755)
@@ -990,9 +1117,10 @@ def test_wait_healthy_is_bounded_by_wall_clock_not_curl_duration(updater):
     elapsed = time.monotonic() - start
     assert state["phase"] == "failed"
     assert state["rolled_back"] is True
-    assert elapsed < 12, (
-        f"took {elapsed:.1f}s - two wall-clock-bounded 2s waits plus one "
-        "1s-granularity pull poll should stay well under this"
+    assert elapsed < 20, (
+        f"took {elapsed:.1f}s - two wall-clock-bounded 2s waits plus up to five "
+        "1s-granularity with_heartbeat polls (fetch, backup, pull, and two "
+        "recreates) should stay well under this"
     )
 
 
@@ -1503,6 +1631,14 @@ def test_a_recreate_failure_also_rolls_back_without_a_pointless_wait(updater):
     # Matches " up " as a whole token in the full argument string - see
     # test_a_failed_restart_hands_off_to_rollback_instead_of_stranding_the_tag's
     # comment above for why not a positional "$2".
+    #
+    # The bound below accounts for `with_heartbeat` wrapping the fetch,
+    # the backup, the pull AND both `compose up` attempts (initial and
+    # rollback) - up to five ~1s poll taxes (see that function's own
+    # comment for why an already-instant command still costs one), none
+    # of them the "pointless wait" this test exists to prove was
+    # skipped: that wait is `wait_healthy`'s own HEALTH_TIMEOUT-bounded
+    # loop, never entered at all for the doomed initial attempt.
     docker_path = updater.bindir / "docker"
     docker_path.write_text(
         _docker_stub_source(compose_case='case " $* " in *" up "*) exit 1 ;; esac; exit 0 ;;'),
@@ -1518,7 +1654,7 @@ def test_a_recreate_failure_also_rolls_back_without_a_pointless_wait(updater):
     # No `set_state health ""` for the doomed initial attempt - a
     # skipped, pointless wait, not merely a short one.
     assert len(_compose_calls(calls, "up")) == 2
-    assert elapsed < 5, f"took {elapsed:.1f}s - the initial wait should have been skipped entirely"
+    assert elapsed < 10, f"took {elapsed:.1f}s - the initial wait should have been skipped entirely"
 
 
 def test_the_sidecar_replaces_itself_only_after_success(updater):
