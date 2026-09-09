@@ -39,9 +39,12 @@ import httpx2 as httpx
 import pytest
 from conftest import authenticate
 
+from loxmatter.api.update import _STALE_AFTER_SECONDS
 from loxmatter.loxone.server import build_app
 from loxmatter.model.store import Store
+from loxmatter.update.commands import _HEALTH_TIMEOUT_SECONDS
 from loxmatter.update.protocol import UpdateState, read_request, write_state
+from loxmatter.update.runner import HEALTH_REFRESH_POLLS, POLL_SECONDS
 
 
 @pytest.fixture
@@ -164,6 +167,35 @@ async def test_apply_refuses_a_target_the_rules_reject(api, monkeypatch):
     # Refused before anything reached disk - the sidecar never sees a
     # request the rules would have rejected too.
     assert read_request(update_dir) is None
+
+
+def test_the_stale_after_threshold_leaves_headroom_over_the_worst_case_refresh_interval():
+    """Two constants that live in different modules with nothing else
+    tying them together: `runner.HEALTH_REFRESH_POLLS`/`runner.
+    POLL_SECONDS` (how often `_wait_for_health` republishes `state.json`
+    during a health wait) and this module's own `_STALE_AFTER_SECONDS`
+    (how old that stamp may get before `_updater_present` calls the
+    updater gone). If this test ever fails, it means the worst-case time
+    between two refreshes has crept up to meet - or pass - the staleness
+    threshold, and the failure an operator sees is `GET /update/status`
+    reporting `updater_present: false`, with the interface telling them
+    to use the console, in the middle of an update proceeding completely
+    normally - the exact false message this whole staleness mechanism
+    exists to avoid producing.
+
+    The worst case per poll is `POLL_SECONDS` (the health check's own
+    subprocess call, bounded by `commands.py`'s `_HEALTH_TIMEOUT_SECONDS`
+    backstop - see there) plus the `sleep(POLL_SECONDS)` `_wait_for_health`
+    always pays regardless of how long the poll took. This is not four
+    separate numbers asserted to look right in isolation - every one of
+    them is imported from the module that actually defines it, so a
+    change to any of the three that erodes the real margin fails here,
+    not silently."""
+    worst_case_refresh_interval_seconds = HEALTH_REFRESH_POLLS * (
+        POLL_SECONDS + _HEALTH_TIMEOUT_SECONDS
+    )
+    minimum_headroom_seconds = 10.0
+    assert _STALE_AFTER_SECONDS >= worst_case_refresh_interval_seconds + minimum_headroom_seconds
 
 
 async def test_every_update_route_is_behind_the_api_guard(api_without_session):

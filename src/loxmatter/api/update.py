@@ -47,12 +47,26 @@ that has stopped moving is exactly as informative as a missing file: both
 mean there is nothing here that could act on a request. `_updater_present`
 below treats a stamp older than `_STALE_AFTER_SECONDS` the same as a
 missing `state.json`. The exact multiplier of `LOOP_INTERVAL_SECONDS` is a
-judgment call, not a value the design or the plan pins down anywhere -
-see this module's test file and the task report for the reasoning; five
-intervals (ten seconds against a two-second loop) is generous enough to
-absorb one missed tick without mistaking a slow pass for a dead sidecar,
-and still short enough that an operator does not wait long for an honest
-answer.
+judgment call, not a value the design or the plan pins down anywhere - see
+this module's test file and the task report for the reasoning.
+
+Fifteen intervals (thirty seconds against a two-second loop), not five: a
+health-check poll inside `runner._wait_for_health` republishes `state.json`
+only every `runner.HEALTH_REFRESH_POLLS` polls (`runner.py:56`), and each
+of those polls can itself cost up to `2 * runner.POLL_SECONDS` once
+`commands.DockerCommands.healthy()`'s subprocess call is bounded rather
+than unbounded (see `commands.py`'s `_HEALTH_TIMEOUT_SECONDS`) - a
+worst case of sixteen seconds between refreshes during an otherwise
+perfectly healthy update. Five intervals (ten seconds) left that six
+seconds of *negative* margin, not the two seconds the old comment here
+claimed on the assumption that a poll costs nothing: an update running
+completely normally could make this route say "no updater installed" mid-
+update, the exact false message this whole mechanism exists to avoid.
+Thirty seconds clears the sixteen-second worst case with real headroom
+while staying short enough that an operator does not wait long for an
+honest answer; `tests/api/test_update.py` pins the relationship against
+`runner.HEALTH_REFRESH_POLLS`/`runner.POLL_SECONDS` directly, so the two
+sides cannot drift apart again with nothing checking.
 
 **`GET /update/check` never raises for network reasons.** An installation
 behind a firewall, or one whose operator switched the outbound check off
@@ -88,8 +102,10 @@ from loxmatter.version import BuildInfo, build_info
 
 #: See this module's docstring: a judgment call the design and the plan
 #: leave open, expressed as a multiple of the sidecar's own loop interval
-#: rather than an independently invented number of seconds.
-_STALE_AFTER_SECONDS = 5 * LOOP_INTERVAL_SECONDS
+#: rather than an independently invented number of seconds. Fifteen, not
+#: five - the margin over the health-wait refresh cadence in `runner.py`
+#: has to survive a bounded-but-nonzero poll cost, not just a sleep.
+_STALE_AFTER_SECONDS = 15 * LOOP_INTERVAL_SECONDS
 
 #: `IMAGE_REPOSITORY` is a Docker reference ("ghcr.io/lucienkerl/loxmatter"),
 #: not a GitHub API path - the registry host differs from the source

@@ -23,6 +23,7 @@ hundred times first.
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 
 from loxmatter.update.protocol import UpdateRequest, read_state
@@ -669,3 +670,30 @@ def test_the_stamp_advances_during_a_long_rollback_wait(tmp_path):
     # phase it started with, not `health`; only `updater_seen_at` moves.
     assert all(phase == "rollback" for phase in rollback_phases)
     assert rollback_stamps[-1] != rollback_stamps[0]
+
+
+def test_a_subprocess_timeout_reaches_the_rollback_path_like_any_other_failure(tmp_path):
+    """`_run_subprocess` (`commands.py`) now enforces a `timeout` on
+    every call it makes; a command that outlives it raises
+    `subprocess.TimeoutExpired`, a `SubprocessError` and therefore an
+    `Exception`. The claim behind giving it no new plumbing here is that
+    `run_update`'s existing `except Exception` around the four steps
+    (see the module docstring: "any failed step rolls back") already
+    catches it - this drives that claim directly rather than assuming
+    it, with a fake `pull` that raises `TimeoutExpired` the way a real
+    stalled `docker pull` would once its `timeout` elapsed. No real
+    subprocess and no real sleep anywhere in this test."""
+
+    class TimingOutOnPull(FakeCommands):
+        def pull(self, image: str) -> None:
+            self.calls.append(f"pull:{image}")
+            raise subprocess.TimeoutExpired(cmd=["docker", "pull", image], timeout=300.0)
+
+    commands = TimingOutOnPull()
+    state = run(commands, tmp_path)
+
+    assert state.phase == "failed"
+    assert state.rolled_back is True
+    assert commands.calls.count("recreate") == 1
+    assert state.error is not None
+    assert "timed out" in state.error.lower()

@@ -45,14 +45,24 @@ POLL_SECONDS = 2.0
 #: How often `_wait_for_health` republishes `state.json` while it polls,
 #: expressed as a multiple of `POLL_SECONDS`. The wait can run for the
 #: whole two-minute deadline without a single publish otherwise, and
-#: `api/update.py`'s `_updater_present` treats a stamp older than five
-#: `LOOP_INTERVAL_SECONDS` (ten seconds) as "no updater installed" -
-#: exactly the wrong answer while an update is running normally.
-#: Refreshing on every poll would mean up to sixty extra atomic writes
-#: into the shared directory on an SD card over one wait, for a value
-#: nothing reads that often; every fourth poll (eight seconds) still
-#: clears the ten-second staleness margin by two seconds, enough to
-#: absorb one slow write without the wait reading as a dead updater.
+#: `api/update.py`'s `_updater_present` treats a stamp older than
+#: `_STALE_AFTER_SECONDS` as "no updater installed" - exactly the wrong
+#: answer while an update is running normally. Refreshing on every poll
+#: would mean up to sixty extra atomic writes into the shared directory
+#: on an SD card over one wait, for a value nothing reads that often.
+#:
+#: The worst-case time between two refreshes is not simply
+#: `HEALTH_REFRESH_POLLS * POLL_SECONDS`: each poll also pays for
+#: `commands.DockerCommands.healthy()`'s own subprocess call, which
+#: `commands.py`'s `_HEALTH_TIMEOUT_SECONDS` bounds at `POLL_SECONDS`
+#: itself as a backstop (curl's own `--max-time` is tighter in the normal
+#: case - see there). So one poll can cost up to `2 * POLL_SECONDS`
+#: before `_wait_for_health`'s `sleep(POLL_SECONDS)` even runs, and four
+#: of those is up to sixteen seconds - `api/update.py`'s
+#: `_STALE_AFTER_SECONDS` has to clear that with real headroom, not the
+#: two seconds the previous, unbounded-poll version of this comment
+#: assumed; `tests/api/test_update.py` pins the relationship so the two
+#: constants cannot drift apart with nothing checking again.
 HEALTH_REFRESH_POLLS = 4
 
 #: The four steps the interface names while it waits. `fetch` and

@@ -59,6 +59,7 @@ from pathlib import Path
 
 from loxmatter.timestamps import now_iso
 from loxmatter.update.protocol import log_path
+from loxmatter.update.runner import POLL_SECONDS
 
 #: `Commands.pull`, `Commands.write_image_tag` and this module's own
 #: `read_image_tag` all key off this one variable name in `.env` - see
@@ -91,6 +92,68 @@ _BACKUPS_TO_KEEP = 10
 #: for several updates' worth of lines without needing rotation.
 _LOG_CAP_BYTES = 256 * 1024
 
+#: Every subprocess call below carries one of these, chosen per command
+#: rather than as one number for all of them (see `_run_subprocess`) - an
+#: unattended loop that lets ANY of them hang forever gets stuck in
+#: whatever phase it was in, with no rollback and no further log line,
+#: until a person notices and restarts the container.
+#:
+#: `git fetch` and `docker pull` are the only two commands here that move
+#: data over the operator's own internet connection rather than talking
+#: to a local daemon or repository - on the slow rural link this ships
+#: to, a real image pull legitimately takes minutes. Generous, but not
+#: unbounded: a connection that goes fully dead (the half-open-socket
+#: case this whole fix exists for) still ends inside five minutes instead
+#: of sitting in `phase="pull"` forever.
+_NETWORK_TIMEOUT_SECONDS = 300.0
+
+#: Everything else that shells out here - `git checkout`, `git
+#: rev-parse`, `git merge-base --is-ancestor`, `docker compose ps` and
+#: `docker inspect` - talks only to the local checkout or the local
+#: Docker socket, never the network, so none of them has a legitimate
+#: reason to take more than a second or two in practice. 30s is headroom
+#: for a Raspberry Pi under I/O pressure (a concurrent backup, an SD card
+#: having a slow moment), not a number chosen to accommodate real work -
+#: a command that is still running after 30s of purely local work is
+#: hung, not slow.
+_LOCAL_TIMEOUT_SECONDS = 30.0
+
+#: `docker compose up -d --no-deps loxmatter` (`recreate`). The image it
+#: starts was already pulled by `pull` earlier in the same run (`compose
+#: up` resolves it from `.env`, already rewritten - see `recreate`'s own
+#: docstring), so this is container stop/start and network
+#: reconfiguration, not an image fetch - no reason to share
+#: `_NETWORK_TIMEOUT_SECONDS`'s five minutes. Longer than
+#: `_LOCAL_TIMEOUT_SECONDS` because Compose can be slow to tear down a
+#: container that is not exiting cleanly, but still well short of
+#: `runner.DEADLINE_SECONDS` (120s), the health wait that follows it.
+_RECREATE_TIMEOUT_SECONDS = 60.0
+
+#: `tar czf` of the sqlite store in `backup()`. Bounded by disk I/O and
+#: how large the store has grown, not by anything off the Pi - generous
+#: compared to `_LOCAL_TIMEOUT_SECONDS` for that reason, but nowhere near
+#: `_NETWORK_TIMEOUT_SECONDS`: a backup reads and writes the same local
+#: volume, it does not wait on a remote host.
+_BACKUP_TIMEOUT_SECONDS = 120.0
+
+#: `curl`'s own bound on one health-check attempt (see `healthy()`) -
+#: half of `runner.POLL_SECONDS`. `_wait_for_health` calls
+#: `sleep(POLL_SECONDS)` after every poll regardless of how long
+#: `healthy()` took, so a poll that used its whole budget still leaves as
+#: much time again before the next one starts - "fits `POLL_SECONDS`"
+#: without letting one hung connection attempt eat the interval it is
+#: supposed to occupy.
+_HEALTH_CURL_MAX_TIME_SECONDS = POLL_SECONDS / 2
+
+#: Backstop for the health check's own `_run_subprocess` call, in case
+#: `curl` somehow does not honour `--max-time` above (a killed process, a
+#: platform quirk) - not the primary bound, `_HEALTH_CURL_MAX_TIME_SECONDS`
+#: is. Capped at `POLL_SECONDS` itself so that even in that pathological
+#: case, one poll's subprocess call cannot outlast the interval
+#: `_wait_for_health`'s own `waited += POLL_SECONDS` arithmetic assumes
+#: it stays within.
+_HEALTH_TIMEOUT_SECONDS = POLL_SECONDS
+
 #: `_cap_log` trims down to this many bytes, not all the way up to
 #: `_LOG_CAP_BYTES` - trimming to the cap itself would leave the file
 #: right back at the trigger threshold, so the very next line appended
@@ -107,6 +170,11 @@ _LOG_TRIM_BYTES = _LOG_CAP_BYTES * 3 // 4
 #: either lets that exception propagate (the happy-path steps, exactly
 #: like `run_update` expects - see its module docstring) or catches it
 #: itself where "did this fail" IS the answer (`healthy`, `is_ancestor`).
+#: `timeout` is a required keyword for the same reason `check=True` is not
+#: optional: `subprocess.TimeoutExpired` is a `SubprocessError`, itself an
+#: `Exception`, so it propagates and is caught exactly like any other
+#: failure above - no caller needs to know the difference between "the
+#: command failed" and "the command never finished".
 Runner = Callable[..., str]
 
 
@@ -128,17 +196,26 @@ def _clean_tag_value(value: str) -> str:
     return value
 
 
-def _run_subprocess(argv: list[str], *, cwd: Path | None = None) -> str:
+def _run_subprocess(argv: list[str], *, cwd: Path | None = None, timeout: float) -> str:
     # `argv` is built from fixed strings and caller-supplied refs/tags/
     # images that `rules.py` has already validated (or, for `checkout`, a
     # value read back out of `.env`/`git` itself) - never raw request
     # data.
+    #
+    # `timeout` has no default: every call site below picks one of the
+    # constants above rather than falling back to a value that fits no
+    # command in particular. Without it, a stalled `docker pull` (a
+    # half-open connection, the ordinary way a network hangs rather than
+    # fails outright) leaves `subprocess.run` blocked forever - and with
+    # it, this sidecar wedged in whatever phase it was in, publishing
+    # nothing further, with no rollback and no human watching to notice.
     result = subprocess.run(
         argv,
         cwd=cwd,
         check=True,
         capture_output=True,
         text=True,
+        timeout=timeout,
     )
     return result.stdout
 
@@ -175,7 +252,10 @@ class DockerCommands:
         stamp = now_iso().replace("+00:00", "").replace(":", "-")
         path = _BACKUP_DIR / f"store-{stamp}.tgz"
         path.parent.mkdir(parents=True, exist_ok=True)
-        self._run(["tar", "czf", str(path), "-C", str(_DATA_DIR), _STORE_FILE])
+        self._run(
+            ["tar", "czf", str(path), "-C", str(_DATA_DIR), _STORE_FILE],
+            timeout=_BACKUP_TIMEOUT_SECONDS,
+        )
         self._prune_backups()
         return str(path)
 
@@ -193,10 +273,18 @@ class DockerCommands:
             stale.unlink(missing_ok=True)
 
     def fetch(self) -> None:
-        self._run(["git", "fetch", "--tags", "--prune", "origin"], cwd=self._repo_dir)
+        self._run(
+            ["git", "fetch", "--tags", "--prune", "origin"],
+            cwd=self._repo_dir,
+            timeout=_NETWORK_TIMEOUT_SECONDS,
+        )
 
     def checkout(self, ref: str) -> None:
-        self._run(["git", "checkout", "--detach", ref], cwd=self._repo_dir)
+        self._run(
+            ["git", "checkout", "--detach", ref],
+            cwd=self._repo_dir,
+            timeout=_LOCAL_TIMEOUT_SECONDS,
+        )
 
     def pull(self, image: str) -> None:
         # `docker pull <image>`, not `docker compose pull loxmatter`: the
@@ -207,7 +295,7 @@ class DockerCommands:
         # the full, already-resolved registry reference; using it directly
         # is the only way `pull` fetches the version this update is
         # actually going to.
-        self._run(["docker", "pull", image])
+        self._run(["docker", "pull", image], timeout=_NETWORK_TIMEOUT_SECONDS)
 
     def recreate(self) -> None:
         # `--no-deps` for two reasons (addendum 16.2): the updater must
@@ -224,6 +312,7 @@ class DockerCommands:
         self._run(
             ["docker", "compose", "up", "-d", "--no-deps", "loxmatter"],
             cwd=self._stack_dir,
+            timeout=_RECREATE_TIMEOUT_SECONDS,
         )
 
     def read_running_identity(self) -> tuple[str, str]:
@@ -250,11 +339,16 @@ class DockerCommands:
         never in a permissive guess.
         """
         container_id = self._run(
-            ["docker", "compose", "ps", "-q", "loxmatter"], cwd=self._stack_dir
+            ["docker", "compose", "ps", "-q", "loxmatter"],
+            cwd=self._stack_dir,
+            timeout=_LOCAL_TIMEOUT_SECONDS,
         ).strip()
         if not container_id:
             raise RuntimeError("the loxmatter container is not running")
-        raw = self._run(["docker", "inspect", "--format", "{{json .Config.Env}}", container_id])
+        raw = self._run(
+            ["docker", "inspect", "--format", "{{json .Config.Env}}", container_id],
+            timeout=_LOCAL_TIMEOUT_SECONDS,
+        )
         entries = json.loads(raw)
         env = dict(entry.split("=", 1) for entry in entries if "=" in entry)
         # A hand-built image (no build arguments passed) still carries
@@ -275,7 +369,16 @@ class DockerCommands:
         # (`run_update` does, as a safety net - see its docstring - but
         # the meaning belongs at the point that actually calls `/health`).
         try:
-            self._run(["curl", "-fsS", self._health_url])
+            self._run(
+                [
+                    "curl",
+                    "-fsS",
+                    "--max-time",
+                    str(_HEALTH_CURL_MAX_TIME_SECONDS),
+                    self._health_url,
+                ],
+                timeout=_HEALTH_TIMEOUT_SECONDS,
+            )
         except Exception:  # noqa: BLE001 - any failure means "not healthy"
             return False
         return True
@@ -285,6 +388,7 @@ class DockerCommands:
             self._run(
                 ["git", "merge-base", "--is-ancestor", older, newer],
                 cwd=self._repo_dir,
+                timeout=_LOCAL_TIMEOUT_SECONDS,
             )
         except Exception:  # noqa: BLE001 - a non-zero exit means "no"
             return False
@@ -330,7 +434,9 @@ class DockerCommands:
         return _DEFAULT_TAG
 
     def read_git_ref(self) -> str:
-        return self._run(["git", "rev-parse", "HEAD"], cwd=self._repo_dir).strip()
+        return self._run(
+            ["git", "rev-parse", "HEAD"], cwd=self._repo_dir, timeout=_LOCAL_TIMEOUT_SECONDS
+        ).strip()
 
     def log(self, line: str) -> None:
         path = log_path(self._base)

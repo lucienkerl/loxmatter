@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -65,6 +66,36 @@ class CwdRecordingRunner:
 
     def __call__(self, argv: list[str], *, cwd: Path | None = None, **_kwargs: object) -> str:
         self.calls.append((argv, cwd))
+        if argv[:5] == ["docker", "compose", "ps", "-q", "loxmatter"]:
+            return "container123"
+        if argv[:2] == ["docker", "inspect"]:
+            return json.dumps(["LOXMATTER_VERSION=0.2.0", "LOXMATTER_COMMIT=abc1234"])
+        return ""
+
+
+class TimingOutRunner:
+    """Every call raises `subprocess.TimeoutExpired` - the way the real
+    `_run_subprocess` behaves once a command outlives the `timeout` it was
+    given, without this test ever having to let a real subprocess block
+    for that long."""
+
+    def __call__(self, argv: list[str], **_kwargs: object) -> str:
+        raise subprocess.TimeoutExpired(cmd=argv, timeout=1.0)
+
+
+class TimeoutRecordingRunner:
+    """Like `CwdRecordingRunner`, but keeps `timeout` instead of `cwd` -
+    proves timeouts are chosen per command (`fetch`/`pull` get a
+    network-scale budget, `checkout`/`rev-parse`/`is_ancestor`/`docker
+    inspect`/`docker compose ps` get a local-scale one, `recreate` and
+    `backup` each get their own) rather than one number shared by every
+    subprocess call in this module."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[list[str], float | None]] = []
+
+    def __call__(self, argv: list[str], *, timeout: float | None = None, **_kwargs: object) -> str:
+        self.calls.append((argv, timeout))
         if argv[:5] == ["docker", "compose", "ps", "-q", "loxmatter"]:
             return "container123"
         if argv[:2] == ["docker", "inspect"]:
@@ -651,3 +682,126 @@ def test_cap_log_does_nothing_under_the_cap(tmp_path):
     commands.log("also short")
     text = (base / "log.txt").read_text(encoding="utf-8")
     assert len(text.splitlines()) == 2
+
+
+def test_run_subprocess_raises_when_the_command_exceeds_its_timeout():
+    """The real implementation, not an injected fake: `_run_subprocess`
+    used to call `subprocess.run` with no `timeout` at all, so a stalled
+    command (a `docker pull` on a half-open connection) blocked forever -
+    no rollback, no further log line, nothing but a wedged process until
+    a human noticed. `sleep 5` outlives a `timeout=0.05` easily;
+    `subprocess.run` kills the child and raises the moment its own
+    timeout elapses, so this does not block for anywhere near 5 real
+    seconds - the assertion is what proves the `timeout` argument is
+    actually wired to `subprocess.run`, not merely accepted and ignored."""
+    with pytest.raises(subprocess.TimeoutExpired):
+        commands_module._run_subprocess(["sleep", "5"], timeout=0.05)
+
+
+def test_a_timed_out_call_propagates_rather_than_being_swallowed(tmp_path):
+    """Every happy-path step (`pull` here, standing in for the rest) lets
+    whatever `run` raises propagate unchanged - `run_update` depends on
+    that (see `runner.py`'s module docstring: "any failed step rolls
+    back"). `subprocess.TimeoutExpired` is a new possibility now that
+    every call carries a `timeout`; nothing in this method catches it
+    specifically, so it must reach the caller exactly like any other
+    failure - unlike `healthy()`/`is_ancestor()`, which deliberately turn
+    any exception, timeouts included, into `False`."""
+    commands = DockerCommands(
+        repo_dir=tmp_path,
+        stack_dir=tmp_path,
+        env_path=tmp_path / ".env",
+        health_url="http://x/health",
+        base=tmp_path / "update",
+        run=TimingOutRunner(),
+    )
+    with pytest.raises(subprocess.TimeoutExpired):
+        commands.pull("ghcr.io/lucienkerl/loxmatter:0.3.0")
+
+
+def test_each_command_gets_a_timeout_matched_to_what_it_actually_does(tmp_path, monkeypatch):
+    """`_run_subprocess`'s `timeout` has no default (see its own
+    docstring) - every call site in this module picks one of the module
+    constants, chosen for what that particular command actually talks to
+    (see each constant's own comment). This walks every method that
+    shells out and checks it asked for the constant its own reasoning
+    claims, not a single number shared by all of them: `git fetch`/
+    `docker pull` (the operator's own internet connection) get
+    `_NETWORK_TIMEOUT_SECONDS`; `git checkout`/`git rev-parse`/`git
+    merge-base --is-ancestor`/`docker compose ps`/`docker inspect` (the
+    local checkout or the local Docker socket) get
+    `_LOCAL_TIMEOUT_SECONDS`; `recreate` and `backup` each get their own,
+    distinct from both.
+
+    `_DATA_DIR`/`_BACKUP_DIR` are module constants pointed at `tmp_path`
+    the same way `test_backup_writes_a_timestamped_archive_and_prunes_old_ones`
+    does - `backup()`'s real `/data/backups` is not writable from a test."""
+    monkeypatch.setattr(commands_module, "_DATA_DIR", tmp_path / "data")
+    monkeypatch.setattr(commands_module, "_BACKUP_DIR", tmp_path / "data" / "backups")
+    recorder = TimeoutRecordingRunner()
+    commands = DockerCommands(
+        repo_dir=tmp_path,
+        stack_dir=tmp_path,
+        env_path=tmp_path / ".env",
+        health_url="http://x/health",
+        base=tmp_path / "update",
+        run=recorder,
+    )
+
+    commands.fetch()
+    commands.pull("ghcr.io/lucienkerl/loxmatter:0.3.0")
+    commands.checkout("v0.3.0")
+    commands.read_git_ref()
+    commands.is_ancestor("abc1234", "def5678")
+    commands.read_running_identity()
+    commands.recreate()
+    commands.backup()
+
+    def timeout_for(prefix: tuple[str, ...]) -> float | None:
+        matches = [t for argv, t in recorder.calls if tuple(argv[: len(prefix)]) == prefix]
+        assert matches, f"no recorded call starts with {prefix!r}"
+        return matches[0]
+
+    assert timeout_for(("git", "fetch")) == commands_module._NETWORK_TIMEOUT_SECONDS
+    assert timeout_for(("docker", "pull")) == commands_module._NETWORK_TIMEOUT_SECONDS
+    assert timeout_for(("git", "checkout")) == commands_module._LOCAL_TIMEOUT_SECONDS
+    assert timeout_for(("git", "rev-parse")) == commands_module._LOCAL_TIMEOUT_SECONDS
+    assert timeout_for(("git", "merge-base")) == commands_module._LOCAL_TIMEOUT_SECONDS
+    assert timeout_for(("docker", "compose", "ps")) == commands_module._LOCAL_TIMEOUT_SECONDS
+    assert timeout_for(("docker", "inspect")) == commands_module._LOCAL_TIMEOUT_SECONDS
+    assert timeout_for(("docker", "compose", "up")) == commands_module._RECREATE_TIMEOUT_SECONDS
+    assert timeout_for(("tar", "czf")) == commands_module._BACKUP_TIMEOUT_SECONDS
+
+    # The network budget is strictly the largest - "docker pull on a slow
+    # rural connection legitimately takes minutes" would not hold if a
+    # local, no-network command shared it.
+    assert commands_module._NETWORK_TIMEOUT_SECONDS > commands_module._RECREATE_TIMEOUT_SECONDS
+    assert commands_module._RECREATE_TIMEOUT_SECONDS > commands_module._LOCAL_TIMEOUT_SECONDS
+
+
+def test_healthy_bounds_both_curl_and_the_subprocess_call_around_it(tmp_path):
+    """Two layers, both required (see `_HEALTH_CURL_MAX_TIME_SECONDS`'s
+    own comment): `curl --max-time` bounds one connection attempt, and
+    `_run_subprocess`'s own `timeout` is the backstop in case `curl`
+    somehow does not honour it. This pins that `healthy()` actually asks
+    for both, not just one of them."""
+    recorder = TimeoutRecordingRunner()
+    commands = DockerCommands(
+        repo_dir=tmp_path,
+        stack_dir=tmp_path,
+        env_path=tmp_path / ".env",
+        health_url="http://host.docker.internal:8080/health",
+        base=tmp_path / "update",
+        run=recorder,
+    )
+    commands.healthy()
+
+    argv, timeout = recorder.calls[0]
+    assert argv[0] == "curl"
+    assert "--max-time" in argv
+    max_time_value = argv[argv.index("--max-time") + 1]
+    assert max_time_value == str(commands_module._HEALTH_CURL_MAX_TIME_SECONDS)
+    assert timeout == commands_module._HEALTH_TIMEOUT_SECONDS
+    # The curl-level bound is the tighter one - the subprocess timeout is
+    # only a backstop for a curl that ignores its own `--max-time`.
+    assert commands_module._HEALTH_CURL_MAX_TIME_SECONDS < commands_module._HEALTH_TIMEOUT_SECONDS
