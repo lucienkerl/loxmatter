@@ -107,6 +107,25 @@ async def test_a_corrupted_state_file_is_read_as_absent_not_as_a_crash(api):
     assert response.json()["updater_present"] is False
 
 
+async def test_a_state_directory_is_also_read_as_absent_not_as_a_crash(api):
+    """The sibling case `test_a_corrupted_state_file_is_read_as_absent_not_as_a_crash`
+    does not cover: `state.json` existing as a DIRECTORY instead of a file
+    (mount weirdness, an operator mistake) raises `IsADirectoryError` from
+    `Path.read_text()` - an `OSError` subclass already caught by
+    `update.read_state`'s own `except (OSError, json.JSONDecodeError)` (see
+    `tests/test_update_module.py::test_a_state_directory_instead_of_a_file_counts_as_no_state`
+    for that unit-level pin). Nothing here was broken before this test was
+    added - it closes the gap at the ROUTER boundary, proving `/status`
+    itself does not layer its own, more fragile handling on top of
+    `read_state`'s guarantee for this specific failure mode too."""
+    client, update_dir = api
+    (update_dir / "state.json").mkdir()
+    response = await client.get("/api/update/status")
+    assert response.status_code == 200
+    assert response.json()["state"] is None
+    assert response.json()["updater_present"] is False
+
+
 async def test_without_a_sidecar_no_job_is_accepted(api):
     """503 and not 200: otherwise the bridge would write a job into a
     volume nobody reads, and the web UI would show progress that never
