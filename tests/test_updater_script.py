@@ -162,6 +162,14 @@ def updater(tmp_path):
             "LOXMATTER_STACK": str(stack),
             "LOXMATTER_REPO": str(tmp_path / "repo"),
             "LOXMATTER_HEALTH_TIMEOUT": "3",
+            # Off by default: most tests below never intend to exercise
+            # self-replacement, and it defaults ON in production
+            # ("${LOXMATTER_UPDATER_SELF_REPLACE:-1}" in update-once.sh).
+            # Left on, a successful run here would add an unrelated
+            # `compose up ... loxmatter-updater` line to every such test's
+            # call log. Tests that specifically cover self-replacement
+            # override this back to "1" via **extra_env.
+            "LOXMATTER_UPDATER_SELF_REPLACE": "0",
             **extra_env,
         }
         result = subprocess.run(
@@ -285,18 +293,24 @@ def test_a_dev_target_with_an_embedded_newline_is_rejected(updater):
 # dev-channel request meets in this half of the script - nothing else
 # would notice if it were wrong, or missing, without these three.
 def test_a_valid_dev_target_is_accepted(updater):
-    # Validating a dev target still never needs a `docker inspect` call:
-    # that read only answers "what is running", needed for the stable
-    # channel's semver comparison (Rule 3) - the dev channel's own
-    # forward-only equivalent (Task 3's ancestry check) reads via `git`
-    # instead. Since Task 3, though, an accepted request no longer stops
-    # at "queued": the flow runs it straight through, so this well-formed
-    # commit target does end up making `docker compose pull`/`up` calls -
-    # what this test still pins down is that no INSPECT call happens.
+    # The dev channel's own forward-only equivalent (Task 3's ancestry
+    # check) reads via `git`, not `docker inspect` - Rule 3's semver
+    # comparison, the only thing that ever needed that read, applies to
+    # the stable channel alone. Task 4 changed what this test may claim,
+    # though: `docker inspect` is no longer stable-channel-exclusive.
+    # $RUNNING is now computed for every request whose shape has already
+    # passed validation (see the comment above `RUNNING="$(running_version)"`
+    # in update-once.sh) - it is the honest rollback target if THIS
+    # update fails later, dev channel included, and a dev-channel rollback
+    # referencing an unset $RUNNING under `set -eu` would otherwise crash
+    # instead of rolling back. So one `inspect` call is now expected here
+    # too; what this test still pins down is that it is the only kind of
+    # docker call a well-formed dev request causes before the recreate -
+    # never a mutating one, and never more than once.
     _auftrag(updater, channel="dev", target="abcdef1")
     _, calls, state = updater()
     assert state["phase"] == "done"
-    assert "docker inspect" not in calls
+    assert calls.count("docker inspect") == 1
 
 
 def test_a_malformed_dev_target_is_rejected(updater):
@@ -718,6 +732,15 @@ def test_wait_healthy_is_bounded_by_wall_clock_not_curl_duration(updater):
     # iterations at ~3s each (2s curl + 1s sleep) for roughly 6s total,
     # while a wall-clock-bounded loop stops within about a second of the
     # 2s deadline regardless of how long any single curl call takes.
+    #
+    # With Task 4's rollback now appended, an unhealthy update no longer
+    # ends the pass at "rollback" (a hand-off phase, not a terminal one) -
+    # it runs the rollback's OWN wait_healthy immediately afterward, which
+    # this same wedged curl also fails. Two wall-clock-bounded waits now
+    # happen in this one pass instead of one; the bound below is widened
+    # accordingly, but the claim is unchanged: bounded by the clock, not
+    # by how long any single curl call takes, regardless of how many such
+    # waits a pass contains.
     curl_path = updater.bindir / "curl"
     curl_path.write_text("#!/bin/sh\nsleep 2\nexit 1\n", encoding="utf-8")
     curl_path.chmod(0o755)
@@ -725,21 +748,32 @@ def test_wait_healthy_is_bounded_by_wall_clock_not_curl_duration(updater):
     start = time.monotonic()
     _, _, state = updater(LOXMATTER_HEALTH_TIMEOUT="2", _timeout=30)
     elapsed = time.monotonic() - start
-    assert state["phase"] == "rollback"
-    assert elapsed < 6, f"took {elapsed:.1f}s - the old iteration-counting loop took ~6-9s here"
+    assert state["phase"] == "failed"
+    assert state["rolled_back"] is True
+    assert elapsed < 8, (
+        f"took {elapsed:.1f}s - two wall-clock-bounded 2s waits should stay well under this"
+    )
 
 
 def test_a_failed_restart_hands_off_to_rollback_instead_of_stranding_the_tag(updater):
-    # Important 3. Proven against the unpatched script with a `compose
-    # up` stub that exits 1: the run ended `phase: failed`, `error:
-    # restart failed`, and .env was left reading the NEW tag forever -
-    # neither restored (as the pull-failure path does) nor handed to the
-    # rollback Task 4 attaches after `set_state rollback ""`. Since
+    # Important 3, before Task 4 existed. Proven against the unpatched
+    # script with a `compose up` stub that exits 1: the run ended `phase:
+    # failed`, `error: restart failed`, and .env was left reading the NEW
+    # tag forever - neither restored (as the pull-failure path does) nor
+    # handed to any rollback, because none existed yet. Since
     # `--force-recreate` removes the old container before creating its
     # replacement, the service can genuinely be down at this point, and
-    # only a further `compose up` - what the rollback performs, against
-    # the OLD image - can recover it; restoring just the tag would not
-    # restart anything by itself.
+    # only a further `compose up` - what the rollback now performs,
+    # against the OLD image - can recover it; restoring just the tag
+    # would not restart anything by itself.
+    #
+    # With Task 4's rollback appended, this fixture's run no longer stops
+    # at the hand-off: it continues into the rollback within the SAME
+    # pass and completes it, so .env ends up back on the concrete version
+    # that was actually RUNNING (0.2.0, from the `inspect` stub below) -
+    # not the un-recreated 0.3.0 target this update never reached, and
+    # not restored on the assumption that the rollback might still be a
+    # separate step.
     docker_path = updater.bindir / "docker"
     docker_path.write_text(
         "#!/bin/sh\n"
@@ -753,8 +787,9 @@ def test_a_failed_restart_hands_off_to_rollback_instead_of_stranding_the_tag(upd
     docker_path.chmod(0o755)
     _auftrag(updater, target="0.3.0")
     _, _calls, state = updater()
-    assert state["phase"] == "rollback"
-    assert (updater.stack / ".env").read_text(encoding="utf-8") == "LOXMATTER_IMAGE_TAG=0.3.0\n"
+    assert state["phase"] == "failed"
+    assert state["rolled_back"] is True
+    assert (updater.stack / ".env").read_text(encoding="utf-8") == "LOXMATTER_IMAGE_TAG=0.2.0\n"
 
 
 def test_a_tag_write_that_cannot_be_made_is_recorded_as_a_failure(updater):
@@ -816,19 +851,27 @@ def test_a_pull_failure_that_cannot_restore_the_tag_is_recorded_as_a_failure(upd
 
 
 def test_an_unhealthy_service_falls_through_to_rollback_not_done(updater):
-    # Kills three of Important 5's five surviving mutants at once:
-    # `wait_healthy() { return 0; ... }` (the health gate deleted
+    # Originally killed three of Important 5's five surviving mutants at
+    # once: `wait_healthy() { return 0; ... }` (the health gate deleted
     # entirely), `curl -fsS` weakened to `curl -sS` (an HTTP 500 then
     # counts as healthy), and the final `set_state rollback ""` replaced
-    # with `:` (the hand-off this task exists to produce for Task 4).
-    # This curl stub only SUCCEEDS when invoked WITHOUT `-f` - i.e. it
-    # plays a real curl seeing an HTTP 500: with `-f` present (the
-    # correct code), that is a failure; drop `-f` (one of the mutants)
-    # and the identical response counts as success. Under the "return 0"
-    # mutant curl is never even consulted; under the "set_state rollback"
-    # -> ":" mutant, phase is left at whatever `set_state health ""` (the
-    # immediately preceding write) set it to. All three converge on the
-    # same wrong answer this test rules out: phase != "rollback".
+    # with `:` (the hand-off Task 4 continues below it). This curl stub
+    # only SUCCEEDS when invoked WITHOUT `-f` - i.e. it plays a real curl
+    # seeing an HTTP 500: with `-f` present (the correct code), that is a
+    # failure; drop `-f` (one of the mutants) and the identical response
+    # counts as success.
+    #
+    # Now that the rollback is appended and runs in the SAME pass, the
+    # first two mutants still turn this test red exactly as before:
+    # either one makes the INITIAL health check falsely report healthy,
+    # and the run takes the success branch straight to "done" instead of
+    # ever reaching the rollback. The third mutant (the intermediate
+    # `set_state rollback ""` neutered to `:`) can no longer be told
+    # apart from correct behaviour by the FINAL state alone: the rollback
+    # code runs unconditionally regardless of that one write, and its own
+    # terminal `set_state failed` overwrites whatever came before it -
+    # an intrinsic consequence of the rollback now actually existing, not
+    # a loss of coverage for the two mutants this assertion still catches.
     curl_path = updater.bindir / "curl"
     curl_path.write_text(
         '#!/bin/sh\ncase "$*" in\n  *-f*) exit 1 ;;\n  *) exit 0 ;;\nesac\n',
@@ -837,7 +880,8 @@ def test_an_unhealthy_service_falls_through_to_rollback_not_done(updater):
     curl_path.chmod(0o755)
     _auftrag(updater, target="0.3.0")
     _, _calls, state = updater()
-    assert state["phase"] == "rollback"
+    assert state["phase"] == "failed"
+    assert state["rolled_back"] is True
 
 
 def test_the_checkout_uses_the_v_prefixed_ref(updater):
@@ -1020,3 +1064,183 @@ def test_a_missing_ref_is_still_reported_as_not_found(updater):
     assert state["phase"] == "failed"
     assert "not found in the repository" in state["error"]
     assert "checkout --detach" not in calls
+
+
+# ------------------------------------------------------------------ Task 4 --
+# The rollback, the plain-text file, and the self-replacement. See
+# update-once.sh's own "rollback" section for the reasoning; the tests
+# below only cover what that reasoning implies is observable.
+
+
+@pytest.fixture
+def kranker_dienst(updater, tmp_path):
+    """The same environment, but `curl` never responds healthy - the case
+    the rollback exists for."""
+    curl = tmp_path / "bin" / "curl"
+    curl.write_text(
+        '#!/bin/sh\nprintf "curl %s\\n" "$*" >> "$STUB_LOG"\nexit 7\n', encoding="utf-8"
+    )
+    curl.chmod(0o755)
+    return updater
+
+
+def test_an_unhealthy_service_is_rolled_back(kranker_dienst):
+    # The rollback is a hand-off ("rollback" is not a terminal phase, see
+    # the comment above the first `set_state rollback ""` in
+    # update-once.sh) - once it runs, the pass ends `failed`, not
+    # `rollback`, with `rolled_back` recording that the attempt was made.
+    _auftrag(kranker_dienst, target="0.3.0")
+    _, _, state = kranker_dienst()
+    assert state["phase"] == "failed"
+    assert state["rolled_back"] is True
+
+
+def test_the_rollback_checks_out_head_when_git_before_could_not_be_determined(kranker_dienst):
+    # Found by manual verification, not by reading the code: this
+    # fixture's default `git` stub always "succeeds" (exit 0) with NO
+    # output at all - unlike a real `git rev-parse HEAD`, which never
+    # succeeds without printing a SHA. `GIT_BEFORE="$(git ... || echo
+    # HEAD)"` only substitutes the fallback on a NON-ZERO exit; a `git`
+    # that exits 0 with empty stdout sails straight through it, and
+    # GIT_BEFORE ends up "" - proven end to end against the unpatched
+    # line: the rollback's own checkout call read literally `git ...
+    # checkout --detach ` (trailing space, no argument at all). Fixed by
+    # capturing the raw output and falling back through `${:-HEAD}`
+    # instead, the same idiom current_tag() and running_version() already
+    # use above for exactly this "succeeded but unusable" shape.
+    _auftrag(kranker_dienst, target="0.3.0")
+    _, calls, _state = kranker_dienst()
+    checkouts = [line for line in calls.splitlines() if "checkout --detach" in line]
+    assert len(checkouts) == 2, checkouts
+    assert checkouts[-1].endswith("checkout --detach HEAD"), checkouts[-1]
+
+
+def test_the_rollback_restores_the_old_tag(kranker_dienst):
+    # BACK comes from $RUNNING (this fixture's `docker inspect` stub
+    # always answers "0.2.0"), not from $FROM - see the rollback
+    # section's own comment on why a moving alias in .env would be the
+    # wrong thing to write back. In this fixture the two happen to agree,
+    # since the seeded .env already reads 0.2.0; the distinction matters
+    # once .env starts out on the "stable" alias, which is the normal
+    # case on every fresh installation (see the comment on current_tag()).
+    _auftrag(kranker_dienst, target="0.3.0")
+    kranker_dienst()
+    assert "LOXMATTER_IMAGE_TAG=0.2.0" in (kranker_dienst.stack / ".env").read_text(
+        encoding="utf-8"
+    )
+
+
+def test_the_rollback_runs_exactly_once(kranker_dienst):
+    # No flapping: two `up` calls (update and rollback), no more. If the
+    # cause were not the image itself, a third attempt would only add
+    # more downtime without changing the outcome.
+    _auftrag(kranker_dienst, target="0.3.0")
+    _, calls, _state = kranker_dienst()
+    assert len([line for line in calls.splitlines() if "compose up" in line]) == 2
+
+
+def test_the_rollback_does_not_touch_the_database(kranker_dienst):
+    # Spec section 8: the old version runs on the new schema
+    # (`_migrate` returns immediately once version >= _SCHEMA_VERSION).
+    # Restoring the backup is the more destructive step and stays an
+    # explicit action in the web UI.
+    _auftrag(kranker_dienst, target="0.3.0")
+    _, calls, _state = kranker_dienst()
+    # Check specifically for the unpacking, not for an arbitrary "-x": that
+    # would otherwise trip on any future call that happens to carry an
+    # -x flag, and the test would go red for a reason that has nothing to
+    # do with its claim.
+    tar_aufrufe = [line for line in calls.splitlines() if line.startswith("tar ")]
+    assert tar_aufrufe, "the backup itself must have taken place"
+    for line in tar_aufrufe:
+        assert " -x" not in line and "xzf" not in line, line
+
+
+def test_a_failure_leaves_a_readable_file(kranker_dienst):
+    _auftrag(kranker_dienst, target="0.3.0")
+    kranker_dienst()
+    text = (kranker_dienst.update_dir / "LETZTER-FEHLSCHLAG.txt").read_text(encoding="utf-8")
+    assert "0.2.0" in text
+    assert "0.3.0" in text
+    assert "scripts/update.sh" in text
+
+
+def test_a_successful_update_leaves_no_failure_file(updater):
+    # A stale file from an earlier failed attempt must not survive a
+    # later success - otherwise an operator reads yesterday's rollback
+    # story while today's update went through cleanly. Pre-seeding one
+    # here is what makes this test able to fail at all: a fresh run that
+    # never creates the file in the first place would satisfy the bare
+    # "does not exist" assertion whether or not `rm -f "$FAILURE"` in the
+    # success branch actually runs.
+    (updater.update_dir / "LETZTER-FEHLSCHLAG.txt").write_text("stale", encoding="utf-8")
+    _auftrag(updater, target="0.3.0")
+    updater()
+    assert not (updater.update_dir / "LETZTER-FEHLSCHLAG.txt").exists()
+
+
+def test_a_recreate_failure_also_rolls_back_without_a_pointless_wait(updater):
+    # The `RECREATE_OK` branch in update-once.sh: when `compose up` fails
+    # outright (the container was never even created), waiting the full
+    # health timeout before rolling back would only cost time - the
+    # rollback below is what update-once.sh's own comment calls "the only
+    # thing left that can bring the house back up", and it should start
+    # at once. This docker stub fails every `compose up` call (both the
+    # initial recreate and the rollback's own retry) but leaves `inspect`
+    # and every other subcommand alone; the default curl stub (always
+    # healthy) is left in place, so a successful ROLLBACK recreate would
+    # otherwise look "healthy" regardless of what docker itself reported -
+    # exactly why HEALTHY here reflects curl, not docker's exit code.
+    docker_path = updater.bindir / "docker"
+    docker_path.write_text(
+        "#!/bin/sh\n"
+        'printf "%s %s\\n" "docker" "$*" >> "$STUB_LOG"\n'
+        'case "$1" in\n'
+        '  inspect) printf "LOXMATTER_VERSION=0.2.0\\n" ;;\n'
+        '  compose) [ "$2" = "up" ] && exit 1; exit 0 ;;\n'
+        "esac\n",
+        encoding="utf-8",
+    )
+    docker_path.chmod(0o755)
+    _auftrag(updater, target="0.3.0")
+    start = time.monotonic()
+    _, calls, state = updater(_timeout=30)
+    elapsed = time.monotonic() - start
+    assert state["phase"] == "failed"
+    assert state["rolled_back"] is True
+    # No `set_state health ""` for the doomed initial attempt - a
+    # skipped, pointless wait, not merely a short one.
+    assert len([line for line in calls.splitlines() if "compose up" in line]) == 2
+    assert elapsed < 5, f"took {elapsed:.1f}s - the initial wait should have been skipped entirely"
+
+
+def test_the_sidecar_replaces_itself_only_after_success(updater):
+    _auftrag(updater, target="0.3.0")
+    _, calls, _ = updater(LOXMATTER_UPDATER_SELF_REPLACE="1")
+    zeilen = calls.splitlines()
+    eigen = next(i for i, line in enumerate(zeilen) if "loxmatter-updater" in line)
+    fremd = next(
+        i
+        for i, line in enumerate(zeilen)
+        if "compose up" in line and "loxmatter-updater" not in line
+    )
+    assert fremd < eigen
+
+
+def test_after_a_failure_it_does_not_replace_itself(kranker_dienst):
+    _auftrag(kranker_dienst, target="0.3.0")
+    _, calls, _ = kranker_dienst(LOXMATTER_UPDATER_SELF_REPLACE="1")
+    assert "loxmatter-updater" not in calls
+
+
+def test_self_replacement_is_off_by_default_in_this_fixture(updater):
+    # Documents the fixture default added for Task 4 (see the `updater`
+    # fixture's own comment): without an explicit override, a successful
+    # update never touches loxmatter-updater, so every other test in this
+    # file can assert on the ONE `compose up` line it actually cares
+    # about without also accounting for a self-replacement it never asked
+    # about.
+    _auftrag(updater, target="0.3.0")
+    _, calls, state = updater()
+    assert state["phase"] == "done"
+    assert "loxmatter-updater" not in calls

@@ -40,7 +40,6 @@ HEALTH_TIMEOUT="${LOXMATTER_HEALTH_TIMEOUT:-120}"
 REQUEST="$UPDATE_DIR/request.json"
 STATE="$UPDATE_DIR/state.json"
 LOG="$UPDATE_DIR/log.txt"
-# shellcheck disable=SC2034  # consumed by Task 4's rollback bookkeeping
 FAILURE="$UPDATE_DIR/LETZTER-FEHLSCHLAG.txt"
 ENV_FILE="$STACK/.env"
 
@@ -343,6 +342,29 @@ if [ "${#TARGET}" -gt 128 ]; then
 fi
 
 FROM="$(current_tag)"
+# Captured before ANY checkout happens - Task 3's own checkout (further
+# down, of $REF) is the first thing that would move $REPO's working tree.
+# Task 4's rollback checks the repository back out to exactly this commit
+# again: the Compose file must match the running image (a new release can
+# add a service or a variable the old one does not know), so rolling the
+# image back without also rolling the checkout back can leave the old
+# image started against a Compose file it was never meant to run under.
+# Falls back to the literal string "HEAD" whenever $REPO does not (yet)
+# answer `rev-parse` with something usable - `git checkout --detach HEAD`
+# is then a well-defined no-op, the safest thing to attempt when there is
+# no real answer to "checked out before". Two failure shapes, not one, and
+# both need the same fallback: `git` can exit non-zero (no repository
+# there at all), or it can exit 0 with EMPTY output - proven against this
+# file's own test fixtures, whose default `git` stub does exactly that
+# (unlike a real `git rev-parse HEAD`, which never succeeds without
+# printing a SHA). `... || echo HEAD` alone only catches the first shape;
+# a `git` that "succeeds" silently sailed straight through it and left
+# GIT_BEFORE empty, so the rollback's own `git checkout --detach ""`
+# further down would fail as well. Following the same
+# capture-then-${:-default} idiom current_tag() and running_version()
+# already use above closes both shapes in one place.
+git_before_raw="$(git -C "$REPO" rev-parse HEAD 2>/dev/null || true)"
+GIT_BEFORE="${git_before_raw:-HEAD}"
 TO="$TARGET"
 ROLLED=false
 HEALTHY=true
@@ -395,18 +417,31 @@ if [ "$CHANNEL" = "stable" ]; then
   TO="$TARGET"
 fi
 
+# What is running right now. Needed for the stable channel's forward-only
+# check just below, AND - regardless of channel - as the honest rollback
+# target if this update fails later: a rollback must write back the
+# concrete version that was actually running, never the possibly-aliased
+# $FROM (see running_version()'s own comment, and Task 4's rollback
+# section at the end of this file). Computing it once, here, unconditional
+# on channel, is what makes it available to a failed dev-channel update
+# too - it used to be read only inside the stable branch below, which left
+# a dev-channel rollback referencing an unset $RUNNING under `set -eu`.
+#
+# Fetched here, deliberately AFTER the channel/pattern/newline checks
+# above and not before: a malformed or malicious request never earns a
+# docker call at all, and only a request whose SHAPE has already been
+# accepted triggers the one read-only `docker inspect` needed to answer
+# "what is running right now" - the dev channel's own remaining check
+# (ancestry, once the target has been fetched) still runs later and can
+# still reject, but by then this call has cost nothing extra: it is a
+# read, not a mutation.
+RUNNING="$(running_version)"
+
 # Rule 3: forward only. In the stable channel by semantic version;
 # `sort -V` from coreutils, busybox's sort cannot do that reliably. The
 # dev channel has no ordering over SHAs - there Task 3 instead checks
 # ancestry, once the refs have been fetched.
-#
-# RUNNING is fetched here, deliberately AFTER the channel/pattern checks
-# above and not before: a malformed or malicious request never earns a
-# docker call at all, and only a well-formed candidate for the stable
-# channel triggers the one read-only `docker inspect` needed to answer
-# "what is running right now".
 if [ "$CHANNEL" = "stable" ]; then
-  RUNNING="$(running_version)"
   # Compared against the RUNNING version, not against the tag in the
   # .env - see running_version() above. A tag can be named "stable" and
   # thereby not be a version at all.
@@ -733,9 +768,10 @@ if ! compose pull "$SERVICE"; then
 fi
 
 # 3. Replace it. --no-deps: matter-server and OTBR stay untouched, and the
-# sidecar does not replace itself - that would terminate it in the middle
-# of its own request.
+# sidecar does not replace itself before `done` is written - see the
+# self-replacement at the very end of the success branch below.
 set_state recreate ""
+RECREATE_OK=true
 if ! compose up -d --no-deps --force-recreate "$SERVICE"; then
   # Proven with a `compose up` stub that exits 1: unlike the pull failure
   # above, "the running service is unchanged" is not true here -
@@ -747,63 +783,205 @@ if ! compose up -d --no-deps --force-recreate "$SERVICE"; then
   # a watchdog happens to run `docker compose up` again, and if that
   # ever happens it starts the NEW, unhealthy image, because .env would
   # still read it. What actually recovers this is a further `compose up`
-  # attempt against the OLD, known-good image, which is exactly what
-  # Task 4's rollback performs - so hand off to it here instead of just
+  # attempt against the OLD, known-good image, which is exactly what the
+  # rollback below performs - so hand off to it instead of just
   # recording "failed" and stopping. Deliberately NOT restoring $FROM
-  # first: Task 4's rollback computes its own tag from $RUNNING (see the
+  # first: the rollback computes its own tag from $RUNNING (see the
   # comment on `set_tag "$FROM"` above for why $FROM - possibly the
   # alias "stable" - is the wrong value for that), so writing $FROM here
   # would only be overwritten a moment later by the rollback anyway.
-  log "docker compose up failed for $TO - handing off to the same rollback phase a failed health check reaches, since --force-recreate can already have removed the old container"
-  set_state rollback ""
-  exit 0
+  #
+  # RECREATE_OK, not a further `exit 0`: by the time `compose up` can
+  # fail here, `--force-recreate` has already removed the old container,
+  # so waiting HEALTH_TIMEOUT seconds below for a container that was
+  # never even created would only spend time without learning anything.
+  # The rollback further down is the only thing that can still recover
+  # this pass, and it should start at once, not after a wait already
+  # known to be pointless.
+  log "docker compose up failed for $TO - handing off to the same rollback the failed-health path reaches below, since --force-recreate can already have removed the old container"
+  RECREATE_OK=false
 fi
 
-# 4. Wait for the first healthy beat.
-set_state health ""
-if wait_healthy; then
-  # Never sweep away the last ten, as in scripts/update.sh - but only
-  # NOW, once this update has actually reached "done", not immediately
-  # after every backup as before. Pruning used to run right after the
-  # tar call above regardless of what happened afterward, so a run of
-  # ten FAILED attempts (each still makes exactly one backup, per step
-  # 1's "before anything risky" reasoning) counted toward the very same
-  # ten-file budget as genuine successes, and could evict the one backup
-  # that matters most: the one taken just before a schema-raising
-  # release - precisely the copy an operator would reach for if that
-  # release needs reverting further back than this file's own rollback
-  # goes. Deferring the prune to a confirmed success means a streak of
-  # failures never touches the backup directory at all; it only shrinks
-  # once an update actually sticks.
-  #
-  # shellcheck disable=SC2012  # filenames are self-generated (store-<UTC
-  # timestamp>.tgz, written above by this same script) rather than
-  # attacker- or user-supplied, so sorting them by mtime through `ls -t`
-  # is safe here in a way it would not be in general. scripts/update.sh
-  # already carries this exact pattern, unchecked; `find` has no equally
-  # simple, equally portable stand-in for "sorted by modification time"
-  # across the GNU/BSD/busybox sort/find/stat variance this project
-  # already has to mind.
-  ls -1t "$BACKUP_DIR"/store-*.tgz 2>/dev/null | tail -n +11 | while read -r old; do rm -f "$old"; done
+if [ "$RECREATE_OK" = true ]; then
+  # 4. Wait for the first healthy beat.
+  set_state health ""
+  if wait_healthy; then
+    # Never sweep away the last ten, as in scripts/update.sh - but only
+    # NOW, once this update has actually reached "done", not immediately
+    # after every backup as before. Pruning used to run right after the
+    # tar call above regardless of what happened afterward, so a run of
+    # ten FAILED attempts (each still makes exactly one backup, per step
+    # 1's "before anything risky" reasoning) counted toward the very same
+    # ten-file budget as genuine successes, and could evict the one backup
+    # that matters most: the one taken just before a schema-raising
+    # release - precisely the copy an operator would reach for if that
+    # release needs reverting further back than this file's own rollback
+    # goes. Deferring the prune to a confirmed success means a streak of
+    # failures never touches the backup directory at all; it only shrinks
+    # once an update actually sticks.
+    #
+    # shellcheck disable=SC2012  # filenames are self-generated (store-<UTC
+    # timestamp>.tgz, written above by this same script) rather than
+    # attacker- or user-supplied, so sorting them by mtime through `ls -t`
+    # is safe here in a way it would not be in general. scripts/update.sh
+    # already carries this exact pattern, unchecked; `find` has no equally
+    # simple, equally portable stand-in for "sorted by modification time"
+    # across the GNU/BSD/busybox sort/find/stat variance this project
+    # already has to mind.
+    ls -1t "$BACKUP_DIR"/store-*.tgz 2>/dev/null | tail -n +11 | while read -r old; do rm -f "$old"; done
 
-  # Quoted "done": shellcheck (SC1010) reads a bare `done` here as the
-  # loop-closing reserved word rather than a plain argument, even though
-  # this position (a command's second argument) is not one where POSIX
-  # actually gives it that meaning. Quoting settles the ambiguity for the
-  # reader and the linter alike, same as any other phase name would need
-  # if it happened to collide with a keyword.
-  set_state "done" ""
-  log "Update to $TO complete"
-  exit 0
+    # A previous pass may have left this behind; a clean success means
+    # the story it told is over. Written even though nothing here reads
+    # it back - the file exists for a human on the other end of an SSH
+    # session, not for this script.
+    rm -f "$FAILURE"
+
+    # Quoted "done": shellcheck (SC1010) reads a bare `done` here as the
+    # loop-closing reserved word rather than a plain argument, even though
+    # this position (a command's second argument) is not one where POSIX
+    # actually gives it that meaning. Quoting settles the ambiguity for the
+    # reader and the linter alike, same as any other phase name would need
+    # if it happened to collide with a keyword.
+    set_state "done" ""
+    log "Update to $TO complete"
+
+    # Last, and only after a successful update: the sidecar checks
+    # whether its own pinned image is out of date and triggers its own
+    # replacement, detached. AFTER writing `done`, never before - doing
+    # this earlier would terminate the sidecar in the middle of writing
+    # the state the web UI is currently reading, and a successful update
+    # would look like a stuck one instead of a finished one.
+    #
+    # Detached via `-d`: the call that replaces this very container must
+    # not wait inside it for its own end. `--no-deps`, the same as every
+    # other compose call in this file: the bridge and its neighbours are
+    # not this call's business.
+    if [ "${LOXMATTER_UPDATER_SELF_REPLACE:-1}" = "1" ]; then
+      compose up -d --no-deps loxmatter-updater || true
+    fi
+
+    exit 0
+  fi
 fi
 
 # `healthy: true` here is only set_state's own default (HEALTHY is
 # initialised ahead of the validation section, above, and never touched
 # since) - it is NOT a claim that anything is healthy, only that nothing
-# has said otherwise yet. This "rollback" phase is a hand-off, not a
-# terminal state: Task 4 picks up immediately after this line, and it is
-# Task 4's job to set HEALTHY to what actually happened (healthy again
-# after rolling back, or not). Flagged here so that whoever writes
-# Task 4 does not mistake this particular `healthy: true` for a claim
-# already made.
+# has said otherwise yet. The rollback below sets HEALTHY to what
+# actually happened (healthy again after rolling back, or not) before its
+# own, terminal `set_state failed`.
+if [ "$RECREATE_OK" = true ]; then
+  ROLLBACK_REASON="update to $TO not healthy after ${HEALTH_TIMEOUT}s"
+else
+  ROLLBACK_REASON="docker compose up failed for $TO"
+fi
 set_state rollback ""
+
+# --------------------------------------------------------------- rollback --
+# Reached from two places above: `compose up` failing outright, or the
+# freshly-recreated container never reporting healthy. Either way,
+# `--force-recreate` has already run - the old container is gone - so a
+# further `compose up`, against the OLD, known-good image, is the only
+# thing left that can bring the house back up.
+#
+# What deliberately does NOT happen here: the database is not restored.
+# `_migrate` in model/store.py returns immediately once
+# `version >= _SCHEMA_VERSION` - so the old version starts up fine on the
+# new schema, and since every migration so far is an ALTER TABLE ADD
+# COLUMN (which SQLite requires to be nullable or carry a default), the
+# old version goes on writing valid rows into it. The image rollback
+# alone is enough to bring the house back up.
+#
+# Restoring the backup would be the more destructive step: it discards
+# everything written since the backup was taken. That is not something to
+# do automatically at two in the morning when nobody is watching it - it
+# stays a separate, explicit action in the web UI that a human has to
+# confirm.
+#
+# WHERE the rollback lands is not the same as WHERE the update came from.
+# If the .env held a moving alias ("stable", the normal case on every
+# fresh installation since 0.2.0), that alias in the registry may by now
+# point AT THE FAILED VERSION - it was resolved once, at pull time, and
+# the registry does not stand still. Writing it back verbatim would mean
+# fetching exactly the build that just failed to become healthy on the
+# very next `compose pull`, with nothing left on disk to say a rollback
+# ever happened.
+#
+# What gets written back is therefore the concrete version that was
+# RUNNING before this pass touched anything ($RUNNING, computed above,
+# before `--force-recreate` ever ran). Only when that could not be
+# determined does the old, possibly-aliased .env entry ($FROM) remain the
+# only information left to fall back on.
+case "$RUNNING" in
+  ''|unbekannt|dev) BACK="$FROM" ;;
+  *)                BACK="${RUNNING#v}" ;;
+esac
+log "$ROLLBACK_REASON - rolling back to $BACK"
+ROLLED=true
+set_state rollback ""
+
+if ! set_tag "$BACK"; then
+  # Same class of failure as the two set_tag guards further up (writing
+  # the new tag; restoring $FROM after a failed pull), at the point where
+  # it matters most: without a rewritten .env, the `compose up` below
+  # would just recreate the SAME broken image all over again - not a
+  # rollback at all, just the exact failure repeated once more, still
+  # inside this one pass (see "exactly once" below). Nothing past this
+  # point can still help, so nothing past this point is attempted.
+  HEALTHY=false
+  set_state failed "version $TO did not become healthy, and the rollback tag could not be written into $ENV_FILE either - it may still read $TO"
+else
+  # Best-effort: the Compose file at $GIT_BEFORE is what actually matched
+  # $BACK, but even a checkout that fails here (a dirty working tree, a
+  # ref this shallow clone never fetched) should not stop the one thing
+  # that matters most - recreating the container against the now-restored
+  # tag. Whatever mismatch that leaves in docker-compose.yml is a smaller
+  # problem than not attempting the recreate at all.
+  run git -C "$REPO" checkout --detach "$GIT_BEFORE" || true
+  compose up -d --no-deps --force-recreate "$SERVICE" || true
+
+  # Exactly once. No second attempt, no flapping: if the cause were not
+  # the image itself (a dead matter-server, say), every further attempt
+  # here would only add more downtime without changing the outcome.
+  if wait_healthy; then
+    HEALTHY=true
+  else
+    HEALTHY=false
+  fi
+
+  set_state failed "version $TO did not become healthy after ${HEALTH_TIMEOUT}s"
+fi
+
+# If even the rollback did not become healthy, the web UI is probably not
+# reachable at all - then this file is the only answer someone finds who
+# checks in over SSH after all. It is written on a successful rollback
+# too: anyone who wants to know why their version is the old one again
+# should be able to read up on it without needing the web UI at all.
+#
+# The restore commands below reach into $BACKUP_DIR through
+# loxmatter-updater specifically, not loxmatter: by the time an operator
+# runs them, loxmatter has just been asked to `stop`, and a stopped
+# container cannot be `exec`ed into. loxmatter-updater keeps running
+# throughout and shares the same volume at /data (see docker-compose.yml).
+{
+  printf 'loxmatter - last failed update attempt\n\n'
+  printf 'Time:           %s\n' "$(now)"
+  printf 'Attempted:      %s -> %s (channel %s)\n' "$FROM" "$TO" "$CHANNEL"
+  printf 'Rolled back to: %s\n' "$BACK"
+  printf 'Healthy again:  %s\n\n' "$([ "$HEALTHY" = true ] && echo yes || echo NO)"
+  printf 'Signal database: NOT restored automatically (see model/store.py -\n'
+  printf 'an older version starts up fine on a newer schema). A backup taken\n'
+  printf 'just before this attempt is available if you need to go further\n'
+  printf 'back than the image rollback above went:\n'
+  printf '  %s/store-%s.tgz\n\n' "$BACKUP_DIR" "$STAMP"
+  printf 'Manual next steps:\n'
+  printf '  cd %s && docker compose logs --tail 100 %s\n' "$STACK" "$SERVICE"
+  printf '  cd %s && ./scripts/update.sh --no-pull\n\n' "$REPO"
+  printf 'To restore that backup instead (discards every signal learned\n'
+  printf 'since it was taken - only if you are sure):\n'
+  printf '  cd %s && docker compose stop %s\n' "$STACK" "$SERVICE"
+  printf "  docker exec loxmatter-updater sh -c 'tar xzf %s/store-%s.tgz -C /data'\n" "$BACKUP_DIR" "$STAMP"
+  printf '  cd %s && docker compose start %s\n\n' "$STACK" "$SERVICE"
+  printf 'Last lines of the log:\n'
+  tail -n 40 "$LOG" 2>/dev/null || true
+} > "$FAILURE"
