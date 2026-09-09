@@ -1563,6 +1563,20 @@
             </div>
           </template>
 
+          <!-- The updater sidecar's own version vs. this running bridge's
+               - see `updaterVersionBehind()` (app.js) for the full
+               reasoning. Independent of `versionInfo` above (this bridge's
+               OWN identity) and of the four-state update flow further
+               down (installing a NEW bridge version) - this is about the
+               sidecar drifting behind the bridge it already serves, which
+               nothing catches on its own now that it no longer replaces
+               its own container. Says NOTHING when the sidecar reports no
+               version at all (a sidecar from before this field existed) -
+               `updaterVersionBehind()` itself already reads `false` in
+               that case, so no separate gate is needed here. -->
+          <p class="banner warn" x-show="updaterVersionBehind()" x-cloak
+             x-text="t('web.system.updater_behind', { updater_version: updateStatus?.state?.updater_version, version: versionInfo?.version })"></p>
+
           <!--
             Channel setting - design section 9: which upstream the check
             (and any subsequent apply) compares against, persisted like

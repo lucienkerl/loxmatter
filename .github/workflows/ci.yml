@@ -106,6 +106,28 @@ jobs:
       packages: write
     steps:
       - uses: actions/checkout@v4
+      - id: meta
+        # The version baked into THIS image (LOXMATTER_UPDATER_VERSION,
+        # compared by the web UI against the bridge's own LOXMATTER_VERSION
+        # - see deploy/updater/Dockerfile and update-once.sh) must read the
+        # same way the bridge's own does, or every comparison would first
+        # have to normalise one side. The `image` job above strips the
+        # leading "v" off the tag for exactly this value (its own `version`
+        # output, `steps.meta.outputs.version` there); this job's `if:`
+        # above already guarantees `github.ref` is `refs/tags/v...` (never
+        # the "dev" fallback the other job also has to handle on a plain
+        # push to main), so the strip alone is enough here.
+        #
+        # The image TAG itself (`ghcr.io/.../loxmatter-updater:${{
+        # github.ref_name }}` below, i.e. "v0.3.3") is left as-is,
+        # deliberately: it is a separate question from the version baked
+        # INTO the image, nothing in this repository parses or compares
+        # that tag (deploy/testhost/docker-compose.yml pins this service to
+        # `:stable`, never to a version tag), and changing a published tag
+        # scheme is a larger, riskier move than this fix calls for.
+        run: |
+          set -eu
+          echo "version=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
       - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3
@@ -121,3 +143,5 @@ jobs:
           tags: |
             ghcr.io/lucienkerl/loxmatter-updater:${{ github.ref_name }}
             ghcr.io/lucienkerl/loxmatter-updater:stable
+          build-args: |
+            LOXMATTER_UPDATER_VERSION=${{ steps.meta.outputs.version }}

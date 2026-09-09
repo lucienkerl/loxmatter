@@ -3065,6 +3065,32 @@ function app() {
       return ["queued", "backup", "pull", "recreate", "health", "rollback"].includes(phase);
     },
 
+    /** Whether the UPDATER SIDECAR ITSELF (not the bridge, and nothing to
+     * do with `updateRunning()`) is reporting an older version than the
+     * bridge it serves. The sidecar no longer replaces its own container
+     * after a successful update (removed - see the incident recorded in
+     * update-once.sh, near the end of the success branch: measured to
+     * corrupt its own container instead of updating it), so nothing keeps
+     * these two in step on its own any more - this is the replacement
+     * signal, and the card (index.html) shows the one command that fixes
+     * it when this reads `true`.
+     *
+     * `false`, not "unknown", whenever either version is missing: a
+     * sidecar built before `updater_version` existed reports `null` (see
+     * `update.py`'s own docstring on that field) and must not be nagged
+     * about a problem it cannot report on, and `versionInfo` itself is
+     * `null` until `GET /api/version` has answered at least once. A plain
+     * string comparison is enough for the case where both ARE present -
+     * both sides derive their version the same way (CI strips the leading
+     * "v" from the release tag for both the bridge and the sidecar image,
+     * see .github/workflows/ci.yml), so no further normalising is needed
+     * here. */
+    updaterVersionBehind() {
+      const updaterVersion = this.updateStatus?.state?.updater_version;
+      const bridgeVersion = this.versionInfo?.version;
+      return Boolean(updaterVersion) && Boolean(bridgeVersion) && updaterVersion !== bridgeVersion;
+    },
+
     /** Whether `state.json` still claims a job is running while the
      * sidecar itself has gone silent - `updater_present` (see
      * `update.py`'s own docstring and `_MAX_SILENT_SECONDS`) already
@@ -3256,6 +3282,24 @@ function app() {
         // Fetch the version once more after the end: the card up top
         // should show the new number, not the one the page loaded with.
         this.versionInfo = await this.request("GET", "/api/version");
+        // Review finding, 2026-09-09: `updateAvailable` used to keep
+        // holding whatever offer this same job had just accepted -
+        // nothing re-ran `loadUpdateCheck()` when a job ended, so the card
+        // kept showing "Version X available" and an "Install update"
+        // button right beside the "Now running: X" banner this very block
+        // just made accurate above. This `this.updateTimer` truthy check
+        // is exactly the "a job WAS running and just reached a terminal
+        // phase" transition (see the comment above `updateRunning()`), so
+        // it covers `done` (offer installed, almost certainly gone now)
+        // AND `failed`/`rollback`'s own end state (the offer may well
+        // still be valid, and the whole point of refreshing here is
+        // letting the user retry with a check that reflects reality,
+        // rather than leave them looking at a now-stale offer either way).
+        // A plain rejection never runs this branch at all if it never
+        // passed through a running phase - `updateStatus?.state?.phase
+        // === 'rejected'` (index.html) already renders on its own from
+        // `updateStatus` alone, no offer refresh needed for that case.
+        await this.loadUpdateCheck();
       }
     },
 
@@ -4061,6 +4105,32 @@ function app() {
 
       socket.addEventListener("open", () => {
         this.socketConnected = true;
+        // Clears a stale "bridge unreachable" banner (review finding,
+        // 2026-09-09): `handleLiveDisconnect()` (below) calls
+        // `loadAuthInfo()` on every drop, and DURING an outage that call's
+        // own request can fail outright (the HTTP server is gone along
+        // with this socket) - its generic catch then lands the
+        // `web.errors.bridge_unreachable` text in `authError`, and nothing
+        // ever ran `loadAuthInfo()` again to clear it once the socket
+        // alone reconnected: this `open` handler used to only flip
+        // `socketConnected` and backfill devices. The header then read
+        // "Live connection active" right next to a red banner about an
+        // outage that had already ended - not specific to updates, any
+        // transient network drop left the same stale text.
+        //
+        // Guarded by `this.authenticated` rather than cleared
+        // unconditionally, to keep this from ever touching a GENUINE auth
+        // failure: `noteAuthError` and `handleLiveDisconnect`'s own `if
+        // (!this.authenticated)` branch a few lines below both flip
+        // `authenticated` to `false` before putting such a message into
+        // `authError`, and a socket rejected for an invalid session never
+        // reaches `open` in the first place (`build_api_guard`,
+        // loxone/server.py, closes the handshake before that event can
+        // fire) - so a message still sitting in `authError` at this exact
+        // point can only be the stale connection text above.
+        if (this.authenticated) {
+          this.authError = null;
+        }
         // On a RE-connection, fetch the server's `last_heard` again
         // (final review, A2). Everything sent while the socket was down
         // never reached this tab, and `deviceHeardAt` is the tab's own

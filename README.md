@@ -264,6 +264,22 @@ you would rather not have it on your host, delete the service from the
 compose file — the bridge notices it is gone and points you back to the
 console path above.
 
+**It does not keep itself up to date.** It comes with the stack, the same
+way `matter-server` and the Thread border router do, and it installs
+updates *for the bridge* — it does not install them for itself. A
+container cannot correctly replace itself with `docker compose up` run
+from inside it: this was tried and measured to fail — the container that
+must carry out the remaining steps of that command is one of the things
+being stopped, and a Raspberry Pi run of exactly this left the host with
+no running updater at all and a stray, half-created container next to it,
+recoverable only from the console. When your updater sidecar falls behind
+the bridge it serves, **System → Version** in the web UI says so and
+gives you the one command to run:
+
+```bash
+cd ~/loxmatter/deploy/testhost && docker compose pull loxmatter-updater && docker compose up -d --no-deps loxmatter-updater
+```
+
 ## 🗺 Status
 
 **Built:** commissioning, signal extraction, the template export, the runtime path in

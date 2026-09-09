@@ -501,6 +501,29 @@ async def test_the_system_view_shows_the_running_version(api):
     assert "t('web.system.version_built_at', { built_at: versionInfo.built_at })" in page
 
 
+async def test_the_system_view_shows_when_the_updater_sidecar_is_behind(api):
+    """The updater sidecar no longer replaces its own container after a
+    successful update (removed - see the incident recorded in
+    update-once.sh's own comment, near the end of the success branch:
+    measured on the maintainer's Pi to corrupt its own container instead
+    of updating it). Without that, a sidecar can silently drift behind the
+    bridge it serves - this banner (`updaterVersionBehind()` in app.js) is
+    the replacement signal, and this is the same kind of proof as
+    `test_the_system_view_shows_the_running_version` right above: the
+    markup and the binding are actually delivered, not that Alpine renders
+    them correctly at runtime."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+    script = (await client.get("/static/app.js")).text
+    assert "updaterVersionBehind()" in script
+    assert 'x-show="updaterVersionBehind()"' in page
+    assert (
+        "t('web.system.updater_behind', "
+        "{ updater_version: updateStatus?.state?.updater_version, "
+        "version: versionInfo?.version })" in page
+    )
+
+
 async def test_the_update_card_offers_its_four_states_and_the_confirmation(api):
     """Task 9 (design "Applying updates through the web UI", 2026-09-08,
     section 9): the four states plus the confirmation step all live in the
@@ -1936,6 +1959,46 @@ def test_updatestalled_is_true_only_while_running_with_no_recent_heartbeat():
         False,  # running, heartbeat present - a healthy job in progress
         False,  # not running at all - an end state, not a stall
         False,  # no state ever loaded
+    ]
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_updater_version_behind_says_nothing_for_an_unknown_version():
+    """`updaterVersionBehind()` (app.js) must read `false` - not "unknown
+    but assume the worst" - whenever either side of the comparison is
+    missing. The case this exists for: every sidecar built before
+    `updater_version` existed reports `null` for it forever (see
+    `update.py`'s own docstring on that field) - if this read `true` for
+    that case, every installation running an update-once.sh from before
+    this change would be told its updater is "behind" some version it
+    never actually reported, permanently, with no command that could ever
+    fix it (there is nothing wrong to fix - the sidecar just predates the
+    field). The bridge's own `versionInfo` being not-yet-loaded (`null`
+    until `GET /api/version` first answers) must fail exactly the same
+    way, not throw."""
+    values = _app_state(
+        """
+        function behindFor(updaterVersion, bridgeVersion) {
+          state.updateStatus = { state: { updater_version: updaterVersion } };
+          state.versionInfo = bridgeVersion === undefined ? null : { version: bridgeVersion };
+          return state.updaterVersionBehind();
+        }
+        console.log(JSON.stringify([
+          behindFor("0.3.2", "0.3.3"),
+          behindFor("0.3.3", "0.3.3"),
+          behindFor(null, "0.3.3"),
+          behindFor("0.3.2", undefined),
+          behindFor(null, undefined),
+        ]));
+        """
+    )
+
+    assert values == [
+        True,  # the sidecar reports a real, older version - the case to surface
+        False,  # both agree - nothing to say
+        False,  # sidecar predates the field - unknown is not stale
+        False,  # bridge's own version not loaded yet
+        False,  # neither side known
     ]
 
 
@@ -6997,3 +7060,179 @@ def test_the_shipped_live_handler_does_not_credit_the_online_key():
     assert values["heartbeat_seen"] is True
     assert values["after_state"] == "number"
     assert values["text_after_state"] == "Last heard just now"
+
+
+# ---------------------------------------------------------------------------
+# Stale banners after a real bridge restart (session of 9 September 2026,
+# System tab after a browser update to 0.3.2). Both bugs below were visible
+# at once on the same screenshot: a red "bridge unreachable" banner next to
+# a header already reading "Live connection active", and a yellow "Version
+# X available"/"Install update" card next to the green "Now running: X" -
+# offering to install the version already running.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_a_successful_reconnection_clears_a_stale_bridge_unreachable_banner():
+    """Bug 1. During the bridge's own restart (an update, or any ordinary
+    outage), `handleLiveDisconnect()`'s own `loadAuthInfo()` call fails
+    outright - the HTTP server is gone along with the WebSocket - and its
+    generic catch lands `t("web.errors.bridge_unreachable")` in `authError`
+    (`requestJson`'s network-error catch, `loadAuthInfo`'s own catch).
+    `authenticated` stays untouched by that failure (it is not an
+    `UnauthorizedError`), so `handleLiveDisconnect` falls through to
+    `scheduleReconnect()` instead of giving up.
+
+    Nothing ever cleared the banner again once the bridge came back:
+    `loadAuthInfo()` only clears `authError` on ITS OWN success, and once
+    the socket alone reconnects successfully, nothing calls `loadAuthInfo()`
+    a further time - `connectLive()`'s `open` handler used to only flip
+    `socketConnected` and backfill devices. The header therefore read "Live
+    connection active" right next to a red banner about an outage that had
+    already ended.
+
+    A successful `open` is proof enough on its own that the message can only
+    be this stale CONNECTION text, never a genuine auth failure:
+    `build_api_guard` (loxone/server.py) rejects an unauthorized WebSocket
+    handshake before it ever reaches `open`, and a genuine auth failure
+    always flips `this.authenticated` to `false` first (`noteAuthError`,
+    `handleLiveDisconnect`'s own `if (!this.authenticated)` branch) and
+    sends the page to the login screen well before any reconnection could
+    succeed. The fix clears `authError` in the `open` handler only while
+    `this.authenticated` is still `true` - the same distinction
+    `handleLiveDisconnect` already draws a few lines away, not a blanket
+    clear.
+
+    Two scenarios against the real, shipped `connectLive()`, in one node
+    process:
+      1. The outage case above - `authenticated` stays `true` throughout,
+         and the stale message must be gone once `open` fires.
+      2. The genuine-auth case, played directly against the same `open`
+         handler to pin the guard itself: with `authenticated` already
+         `false` and a real session-expired message in `authError` (exactly
+         what `handleLiveDisconnect`'s own branch sets), `open` firing must
+         leave it completely alone.
+
+    Before the fix, `connection_error_cleared` below reads the stale
+    "bridge unreachable" sentence instead of `None`.
+    """
+    values = _app_state(
+        """
+        globalThis.window = {
+          location: { protocol: "http:", host: "example.invalid" },
+          setTimeout: () => 0,
+          clearTimeout: () => {},
+        };
+        const sockets = [];
+        globalThis.WebSocket = class {
+          constructor() {
+            this.listeners = {};
+            sockets.push(this);
+          }
+          addEventListener(type, handler) {
+            (this.listeners[type] = this.listeners[type] || []).push(handler);
+          }
+          close() {}
+        };
+        const openSocket = (socket) => {
+          for (const handler of socket.listeners.open || []) handler();
+        };
+
+        const out = {};
+
+        // Scenario 1: an outage that has just ended. `socketEverConnected`
+        // stays false so the `open` handler does not also reach for
+        // `loadDevices()`/`this.request`, which is not this test's concern.
+        state.authenticated = true;
+        state.authError = "The bridge is unreachable \\u2013 it may not be running.";
+        state.connectLive();
+        openSocket(sockets[0]);
+        out.connection_error_cleared = state.authError;
+        out.socket_connected = state.socketConnected;
+
+        // Scenario 2: a genuine auth failure must survive the exact same
+        // handler untouched.
+        state.authenticated = false;
+        state.authError = "Your session has expired. Please log in again.";
+        state.connectLive();
+        openSocket(sockets[1]);
+        out.auth_error_survives = state.authError;
+
+        console.log(JSON.stringify(out));
+        """
+    )
+
+    assert values["connection_error_cleared"] is None
+    assert values["socket_connected"] is True
+    assert values["auth_error_survives"] == "Your session has expired. Please log in again."
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_the_update_check_is_refreshed_once_the_update_reaches_a_terminal_state():
+    """Bug 2. `loadUpdateStatus()` used to never re-run `loadUpdateCheck()`,
+    so once an accepted update finished, `updateAvailable` still held the
+    offer the user had just accepted: the card rendered "Version X
+    available" and an "Install update" button right beside the green "Now
+    running: X" banner (the whole-branch review's own Minor finding, left
+    unfixed until this session's screenshot showed exactly that).
+
+    `loadUpdateStatus()` already has the one place a "was running, now
+    isn't" transition is detected: the `allowStop` branch at its very end,
+    which also re-fetches `versionInfo` for the same reason (the card
+    should show the NEW number, not the one the page loaded with). This
+    test plays two consecutive polls through the real, shipped
+    `loadUpdateStatus()` - one mid-job, one landing on `done` - and checks
+    that `loadUpdateCheck()` (stubbed to prove it is INVOKED, not merely
+    that state ends up looking plausible) fires exactly once, at the
+    transition, not on every poll.
+
+    A failed update gets the same refresh (not only `done`): the offer may
+    still be valid and the user may want to retry, per this task's own
+    brief - both `done` and `failed` are covered by the same "was running,
+    now the timer would otherwise stop" branch, deliberately not narrowed
+    to `phase === 'done'` alone.
+    """
+    values = _app_state(
+        """
+        let phase = "pull";
+        let updateCheckCalls = 0;
+        state.updateAvailable = { target: "1.1.0", error: null };
+        state.updateStatus = null;
+        state.request = async (method, path) => {
+          if (path === "/api/update/status") {
+            return {
+              state: { phase, id: "job-1", from: "1.0.0", to: "1.1.0",
+                       error: null, rolled_back: false, healthy: true },
+              updater_present: true, log: [], channel: "stable", check_enabled: true,
+            };
+          }
+          if (path === "/api/version") {
+            return { version: "1.1.0" };
+          }
+          throw new Error("unexpected request " + method + " " + path);
+        };
+        state.loadUpdateCheck = async () => {
+          updateCheckCalls += 1;
+          state.updateAvailable = { target: null, error: null };
+        };
+        (async () => {
+          // Mid-job: no transition yet, must not refresh the offer.
+          await state.loadUpdateStatus();
+          const callsWhileRunning = updateCheckCalls;
+
+          // The next poll lands on the terminal state.
+          phase = "done";
+          await state.loadUpdateStatus();
+
+          console.log(JSON.stringify({
+            callsWhileRunning,
+            callsAfterDone: updateCheckCalls,
+            updateAvailableAfterDone: state.updateAvailable,
+          }));
+        })();
+        """
+    )
+
+    assert values["callsWhileRunning"] == 0
+    assert values["callsAfterDone"] == 1
+    assert values["updateAvailableAfterDone"] == {"target": None, "error": None}

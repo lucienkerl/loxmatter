@@ -33,4 +33,26 @@ RUN apk add --no-cache \
 COPY entrypoint.sh update-once.sh /opt/loxmatter/
 RUN chmod +x /opt/loxmatter/entrypoint.sh /opt/loxmatter/update-once.sh
 
+# Build identity, mirroring the bridge's own Dockerfile (see its
+# LOXMATTER_VERSION ARG/ENV pair and the comment there) - until now this
+# image carried NONE of that, so a running sidecar had no way to say what
+# version of itself it was. That silence stopped being harmless once the
+# sidecar's self-replacement was removed (update-once.sh, near the end of
+# the success branch - measured on the maintainer's Pi to corrupt its own
+# container instead of updating it): without a self-replacement, a
+# sidecar can now drift arbitrarily far behind the bridge it serves with
+# nothing to notice. ENV, not just ARG, for the same reason the bridge's
+# own comment gives - `docker inspect`/the container's own environment
+# can read an ENV, never a build-time-only ARG, and this sidecar reads
+# its own version the same way (see `UPDATER_VERSION` in update-once.sh).
+#
+# The default "dev" is for a manual build of a current checkout with no
+# build-arg supplied, same as the bridge - it honestly reports itself as
+# unpublished rather than claiming a version it does not have. A sidecar
+# built before this ARG existed at all carries no such ENV in the first
+# place, and no default here can retroactively give it one - update-once.sh
+# treats that absence as "unknown", never as "dev" or "current".
+ARG LOXMATTER_UPDATER_VERSION=dev
+ENV LOXMATTER_UPDATER_VERSION=${LOXMATTER_UPDATER_VERSION}
+
 ENTRYPOINT ["/opt/loxmatter/entrypoint.sh"]

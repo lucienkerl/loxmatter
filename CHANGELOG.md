@@ -8,6 +8,44 @@ people who don't know the code.
 
 ## [Unreleased]
 
+## [0.3.4] — 2026-09-09
+
+### Fixed
+
+- **The updater's version could go missing, or go stale, on the System
+  tab.** The card that says when the updater has fallen behind the bridge
+  only updated when an update actually ran — so a freshly installed
+  updater could sit there for minutes with no version shown at all, and an
+  updater later replaced by a newer one could keep reporting the old
+  version long after it was gone. The updater now reports its own version
+  on every check-in, not only when it does work, so the card always
+  reflects what is actually running.
+
+## [0.3.3] — 2026-09-09
+
+### Changed
+
+- **The updater no longer tries to update itself.** After installing an
+  update for the bridge, it used to also try refreshing its own container
+  — and that was measured to fail: a container cannot correctly replace
+  itself while it is the very thing running the command that would do it.
+  On a real test this left the installation with no updater running at
+  all, and a second, half-finished container next to it that only the
+  console could clean up — the worst outcome for a feature whose whole
+  point is to avoid the console. The updater now leaves itself alone and
+  only ever installs updates for the bridge, exactly as reliably as
+  before.
+
+### Added
+
+- **System → Version now says when the updater itself is out of date.**
+  Since the updater no longer refreshes itself (see above), it can quietly
+  fall behind the bridge it serves. The System tab now compares the two
+  and, only when they actually disagree, shows the one command that brings
+  the updater back in step. An installation whose updater predates this
+  check simply sees nothing extra — no false alarm over a fact it cannot
+  yet report.
+
 ## [0.3.2] — 2026-09-09
 
 ### Fixed

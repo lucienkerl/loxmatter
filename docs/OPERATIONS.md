@@ -142,6 +142,45 @@ cd ~/loxmatter && git pull && ./scripts/update.sh
 This is also the answer if the web UI itself is unreachable: the console
 path only needs a host shell, not a running bridge.
 
+## Keeping the updater sidecar itself current
+
+`loxmatter-updater` installs updates for the bridge; it does not install
+updates for itself. An earlier design had it try — pull its own pinned
+image after a successful update and `docker compose up -d` to recreate its
+own container — and that was removed after being measured to fail on the
+maintainer's own Raspberry Pi: a container cannot correctly replace
+itself with `docker compose up` run from inside it, because the process
+that must carry out the remaining steps of that command is one of the
+things the command stops. The reproduction left `loxmatter-updater`
+Exited (0) and a second, stray container (`<hash>_loxmatter-updater`)
+Created but never started — no running updater, and a half-created
+container next to it, recoverable only from the console. `restart:
+unless-stopped` did not help: the container had been explicitly stopped,
+not crashed.
+
+So the sidecar's own image only ever changes when told to, the same as
+any other service in the compose file. It writes its own version into
+`state.json` (`updater_version`); **System → Version** in the web UI
+compares that against the running bridge's own version and, only when
+the two disagree, shows which command brings the updater back in step:
+
+```bash
+cd ~/loxmatter/deploy/testhost && docker compose pull loxmatter-updater && docker compose up -d --no-deps loxmatter-updater
+```
+
+A sidecar built before this field existed reports no version at all —
+the card says nothing in that case rather than guess, since an unknown
+version is not the same fact as a stale one.
+
+`./scripts/update.sh` (the console path above) does **not** do this by
+itself: it runs `docker compose up -d --no-deps loxmatter-updater` with
+no preceding `pull` and no `--force-recreate`, deliberately, only to
+bring the sidecar into existence on an installation that predates it —
+an already-running sidecar on an older image is left exactly as it was,
+since Compose's default pull policy never asks the registry for an image
+it already has locally. The two-command block above is the only thing
+that actually refreshes an already-present sidecar's image.
+
 ## Access control
 
 The service binds to `0.0.0.0` by default (`--host`) so that the Miniserver

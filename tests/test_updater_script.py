@@ -254,14 +254,6 @@ def updater(tmp_path):
             "LOXMATTER_STACK": str(stack),
             "LOXMATTER_REPO": str(tmp_path / "repo"),
             "LOXMATTER_HEALTH_TIMEOUT": "3",
-            # Off by default: most tests below never intend to exercise
-            # self-replacement, and it defaults ON in production
-            # ("${LOXMATTER_UPDATER_SELF_REPLACE:-1}" in update-once.sh).
-            # Left on, a successful run here would add an unrelated
-            # `compose up ... loxmatter-updater` line to every such test's
-            # call log. Tests that specifically cover self-replacement
-            # override this back to "1" via **extra_env.
-            "LOXMATTER_UPDATER_SELF_REPLACE": "0",
             **extra_env,
         }
 
@@ -340,6 +332,75 @@ def test_the_heartbeat_is_written_on_every_pass(updater):
     )
     _, _, state = updater()
     assert state["updater_seen_at"] > alt
+
+
+def test_a_heartbeat_only_pass_adds_a_missing_updater_version(updater):
+    # Observed on the maintainer's own Pi: a 0.3.2 sidecar (no
+    # `updater_version` field at all - the field did not exist yet) wrote
+    # state.json, then a 0.3.3 sidecar replaced it and ran for minutes
+    # doing nothing but refresh_heartbeat()'s own heartbeat-only passes,
+    # no job ever arriving. Because `refresh_heartbeat` used to touch
+    # `updater_seen_at` alone, that field stayed permanently absent - the
+    # System tab could not tell the updater had a version at all until
+    # some job happened to run. `refresh_heartbeat` must assert
+    # `updater_version` from the RUNNING container's own build-time value
+    # even when nothing else about the pass changes: this state.json has
+    # no such key at all (mirrors a pre-0.3.3 writer, not merely a null
+    # value), no request.json exists, and no docker call may happen - a
+    # pure heartbeat pass, exactly like the maintainer's Pi.
+    state_file = updater.update_dir / "state.json"
+    state_file.write_text(
+        json.dumps(
+            {
+                "id": None,
+                "phase": "idle",
+                "from": None,
+                "to": None,
+                "error": None,
+                "rolled_back": False,
+                "rolled_back_to": None,
+                "healthy": True,
+                "updater_seen_at": "2000-01-01T00:00:00Z",
+            }
+        ),
+        encoding="utf-8",
+    )
+    _, calls, state = updater(LOXMATTER_UPDATER_VERSION="0.3.3")
+    assert "docker" not in calls, "this must be a pure heartbeat pass, no job involved"
+    assert state["updater_version"] == "0.3.3"
+
+
+def test_a_heartbeat_only_pass_corrects_a_stale_updater_version(updater):
+    # The sharper case from the same defect: once a job HAS written
+    # `updater_version` into state.json, replacing the sidecar container
+    # with a newer (or older) one must not leave the OLD value sitting
+    # there until the next job runs - that would have the System tab
+    # assert a version that is not actually running, either hiding a real
+    # lag or reporting one that does not exist. A heartbeat-only pass (no
+    # request.json, no docker call) from a container whose OWN
+    # LOXMATTER_UPDATER_VERSION disagrees with what is already on disk
+    # must correct it.
+    state_file = updater.update_dir / "state.json"
+    state_file.write_text(
+        json.dumps(
+            {
+                "id": None,
+                "phase": "idle",
+                "from": None,
+                "to": None,
+                "error": None,
+                "rolled_back": False,
+                "rolled_back_to": None,
+                "healthy": True,
+                "updater_seen_at": "2000-01-01T00:00:00Z",
+                "updater_version": "0.3.2",
+            }
+        ),
+        encoding="utf-8",
+    )
+    _, calls, state = updater(LOXMATTER_UPDATER_VERSION="0.3.3")
+    assert "docker" not in calls, "this must be a pure heartbeat pass, no job involved"
+    assert state["updater_version"] == "0.3.3"
 
 
 def test_a_target_containing_a_semicolon_is_rejected(updater):
@@ -1724,78 +1785,70 @@ def test_a_recreate_failure_also_rolls_back_without_a_pointless_wait(updater):
     assert elapsed < 5, f"took {elapsed:.1f}s - the initial wait should have been skipped entirely"
 
 
-def test_the_sidecar_replaces_itself_only_after_success(updater):
-    _write_request(updater, target="0.3.0")
-    _, calls, _ = updater(LOXMATTER_UPDATER_SELF_REPLACE="1")
-    zeilen = calls.splitlines()
-    # Restricted to lines starting "docker compose" specifically, not any
-    # line merely MENTIONING "loxmatter-updater" - compose()'s own
-    # host_path_for() fix now makes a `docker inspect loxmatter-updater
-    # --format ...` call as the FIRST thing any compose() invocation does
-    # (cached for the rest of the pass, see that function's comment), and
-    # that line would otherwise be mistaken for "own" self-replacement
-    # activity even though it runs ahead of the ordinary update's own
-    # first `compose pull loxmatter`, not as part of replacing the
-    # sidecar itself.
-    eigen = next(
-        i
-        for i, line in enumerate(zeilen)
-        if line.startswith("docker compose") and "loxmatter-updater" in line
-    )
-    fremd = next(
-        i
-        for i, line in enumerate(zeilen)
-        if line.startswith("docker compose") and "loxmatter-updater" not in line
-    )
-    assert fremd < eigen
-
-
-def test_after_a_failure_it_does_not_replace_itself(unhealthy_service):
-    # "loxmatter-updater" alone is no longer a safe substring to forbid
-    # outright: the Stufe-2 fix for the plain-text file's unusable
-    # commands (host_path_for(), in update-once.sh) makes a READ-ONLY
-    # `docker inspect loxmatter-updater --format ...` call on every
-    # failure, rollback included, to resolve $STACK/$REPO back to a host
-    # path - that call is expected here, and is not a self-replacement.
-    # What this test actually claims is narrower and still holds: no
-    # MUTATING `docker compose ... loxmatter-updater` call (a pull or an
-    # up) ever runs on a failed pass.
-    _write_request(unhealthy_service, target="0.3.0")
-    _, calls, _ = unhealthy_service(LOXMATTER_UPDATER_SELF_REPLACE="1")
-    self_replace_calls = [
-        line
-        for line in calls.splitlines()
-        if line.startswith("docker compose") and "loxmatter-updater" in line
-    ]
-    assert self_replace_calls == []
-
-
-def test_self_replacement_is_off_by_default_in_this_fixture(updater):
-    # Documents the fixture default added for Task 4 (see the `updater`
-    # fixture's own comment): without an explicit override, a successful
-    # update never touches loxmatter-updater, so every other test in this
-    # file can assert on the ONE `compose up` line it actually cares
-    # about without also accounting for a self-replacement it never asked
-    # about.
-    #
-    # "loxmatter-updater" alone is no longer a safe substring to forbid
-    # outright - see test_after_a_failure_it_does_not_replace_itself's own
-    # comment just above: compose()'s host_path_for() fix makes a
-    # READ-ONLY `docker inspect loxmatter-updater --format ...` call on
-    # EVERY compose() invocation now, including the ordinary `loxmatter`
-    # pull/up this test's own successful update makes. What still holds,
-    # and is what this test actually claims, is narrower: no MUTATING
-    # `docker compose ... loxmatter-updater` call (a pull or an up) ever
-    # runs when self-replacement is off.
+# These next two tests used to assert the OPPOSITE: that a successful
+# update recreated the sidecar's own `loxmatter-updater` container
+# (formerly `test_the_sidecar_replaces_itself_only_after_success`, which
+# checked that its "own" `docker compose ... loxmatter-updater` line
+# sorted after the update's "foreign" one), and that a self-replacement
+# ran strictly after `done` was recorded (formerly
+# `test_the_self_replacement_runs_strictly_after_done_is_recorded`, which
+# snapshotted state.json at the instant that call fired). That mechanism
+# was removed outright from update-once.sh - see the comment recording
+# the incident, near the end of the success branch there: measured on the
+# maintainer's Raspberry Pi to leave the installation with no running
+# updater at all and a stray, half-created container next to it. A
+# container cannot correctly replace itself with `docker compose up` run
+# from inside it.
+#
+# What is worth pinning now is the inverted property - "an update never
+# recreates the updater" - and a plain absence needs no ordering evidence
+# to prove, only that the line never appears at all; this single test
+# below stands in for both former ones (and for the narrower
+# `test_the_self_replacement_pulls_before_recreating`, which asserted the
+# internal pull-before-up ordering of the very calls this test now proves
+# never happen at all).
+def test_the_sidecar_never_touches_its_own_service_on_success(updater):
     _write_request(updater, target="0.3.0")
     _, calls, state = updater()
     assert state["phase"] == "done"
-    self_replace_calls = [
+    # Restricted to lines starting "docker compose" specifically, not any
+    # line merely MENTIONING "loxmatter-updater" - compose()'s own
+    # host_path_for() fix makes a READ-ONLY `docker inspect
+    # loxmatter-updater --format ...` call as the FIRST thing any
+    # compose() invocation does (cached for the rest of the pass, see that
+    # function's own comment), and that line would otherwise be mistaken
+    # for a mutating call against the sidecar's own service even though it
+    # only ever resolves a host path.
+    mutating_self_calls = [
         line
         for line in calls.splitlines()
         if line.startswith("docker compose") and "loxmatter-updater" in line
     ]
-    assert self_replace_calls == []
+    assert mutating_self_calls == []
+
+
+def test_the_sidecar_never_touches_its_own_service_after_a_failure(unhealthy_service):
+    # Same property as test_the_sidecar_never_touches_its_own_service_on_success
+    # above, through the rollback path instead of the success path -
+    # formerly `test_after_a_failure_it_does_not_replace_itself`, which
+    # already asserted non-occurrence (nothing to invert there) but still
+    # exercised the now-removed `LOXMATTER_UPDATER_SELF_REPLACE=1` switch.
+    #
+    # "loxmatter-updater" alone is still not a safe substring to forbid
+    # outright, for the same reason as the sibling test above: a
+    # READ-ONLY `docker inspect loxmatter-updater --format ...` call runs
+    # on every failure, rollback included, to resolve $STACK/$REPO back to
+    # a host path - that call is expected here. What this test actually
+    # claims is narrower: no MUTATING `docker compose ... loxmatter-updater`
+    # call (a pull or an up) ever runs on a failed pass.
+    _write_request(unhealthy_service, target="0.3.0")
+    _, calls, _ = unhealthy_service()
+    mutating_self_calls = [
+        line
+        for line in calls.splitlines()
+        if line.startswith("docker compose") and "loxmatter-updater" in line
+    ]
+    assert mutating_self_calls == []
 
 
 # ------------------------------------------------------ Task 4 Stufe 2 --
@@ -1979,31 +2032,6 @@ def test_the_failure_file_says_so_plainly_when_the_host_path_cannot_be_resolved(
     assert "host path unknown" in text
 
 
-def test_the_self_replacement_pulls_before_recreating(updater):
-    # Important 3. Proven against the unpatched script: `compose up -d`
-    # ALONE never asks the registry anything - Compose's default pull
-    # policy is `missing`, and the sidecar's own pinned image is already
-    # present locally the instant it is running at all, so the whole
-    # block was a silent no-op on every run, self-replacement in name
-    # only. `compose pull` first is what actually contacts the registry;
-    # `up -d` afterward only recreates when that pull actually changed
-    # the local image.
-    _write_request(updater, target="0.3.0")
-    _, calls, _ = updater(LOXMATTER_UPDATER_SELF_REPLACE="1")
-    lines = calls.splitlines()
-    pull_idx = next(
-        i
-        for i, line in enumerate(lines)
-        if _is_compose_call(line, "pull") and "loxmatter-updater" in line
-    )
-    up_idx = next(
-        i
-        for i, line in enumerate(lines)
-        if _is_compose_call(line, "up") and "loxmatter-updater" in line
-    )
-    assert pull_idx < up_idx
-
-
 def test_the_rollback_uses_running_not_the_env_alias_when_they_disagree(unhealthy_service):
     # Important 4. Replacing the whole `case "$RUNNING" in ...` block that
     # computes $BACK with a bare `BACK="$FROM"` - the exact regression the
@@ -2075,89 +2103,63 @@ def test_rolled_back_to_is_null_when_no_rollback_happens(updater):
     assert state["rolled_back_to"] is None
 
 
-def test_the_self_replacement_runs_strictly_after_done_is_recorded(updater):
-    # Important 5. Moving the self-replacement block to BEFORE
-    # `set_state "done" ""` - exactly the ordering the code comment above
-    # it says must never happen (it would terminate the sidecar mid-write
-    # of the very state the web UI is currently reading) - left every
-    # other test in this file passing: the only existing coverage
-    # compares `compose up` INDICES within the call log, which that move
-    # does not change at all (the self-replacement's own `compose up`
-    # line still sorts after the update's `compose up` line regardless of
-    # which `set_state` calls happened around either of them).
-    #
-    # The docker stub below, on the specific call this file makes to
-    # replace ITSELF (a `compose` call whose arguments mention
-    # "loxmatter-updater"), snapshots state.json to a SIDE file at the
-    # moment that call actually runs - a direct, timestamped witness of
-    # what the state machine had recorded AT THAT INSTANT, not just what
-    # it is once the whole pass has finished.
-    snapshot = updater.update_dir / "state-at-self-replace.json"
-    docker_path = updater.bindir / "docker"
-    docker_path.write_text(
-        _docker_stub_source(
-            compose_case=(
-                'case "$*" in\n'
-                f'      *loxmatter-updater*) cp "$LOXMATTER_UPDATE_DIR/state.json" "{snapshot}" 2>/dev/null ;;\n'
-                "    esac\n"
-                "    exit 0 ;;"
-            )
-        ),
-        encoding="utf-8",
-    )
-    docker_path.chmod(0o755)
-    _write_request(updater, target="0.3.0")
-    _, _calls, state = updater(LOXMATTER_UPDATER_SELF_REPLACE="1")
-    assert state["phase"] == "done"
-    assert snapshot.is_file(), "self-replacement never ran"
-    snap_state = json.loads(snapshot.read_text(encoding="utf-8"))
-    assert snap_state["phase"] == "done"
-
-
 def test_a_signal_after_done_is_recorded_does_not_overwrite_it(updater):
     # The reported bug, reproduced from the real state.json a successful
     # update on the maintainer's Pi left behind: version 0.3.1 was running
     # - the update genuinely succeeded - but the card read "Update failed".
     #
-    # The mechanism: the success path writes `set_state "done" ""`, and
-    # only THEN - deliberately, so a genuinely finished write is never torn
-    # - does the self-replacement recreate this very container (see the
-    # block comment above `compose pull loxmatter-updater` further down in
-    # update-once.sh). Docker sends SIGTERM to PID 1 to do that recreate;
-    # entrypoint.sh forwards it here; and the trap used to write
+    # The mechanism, AS IT EXISTED AT THE TIME: the success path writes
+    # `set_state "done" ""`, and only THEN - deliberately, so a genuinely
+    # finished write is never torn - did the sidecar's own self-replacement
+    # recreate this very container. Docker sends SIGTERM to PID 1 to do
+    # that; entrypoint.sh forwards it here; and the trap used to write
     # `set_state failed "interrupted by a signal ..."` unconditionally,
     # overwriting the "done" it had itself just recorded one moment
-    # earlier. Two individually-correct pieces of code collide: the
-    # self-replacement sits after `done` precisely so it cannot corrupt a
-    # write in progress, and the trap exists so a genuine interruption is
+    # earlier. Two individually-correct pieces of code collided: the
+    # self-replacement sat after `done` precisely so it could not corrupt
+    # a write in progress, and the trap exists so a genuine interruption is
     # recorded - neither anticipated that a *deliberate* self-termination
     # is indistinguishable, from inside the trap, from an unwanted one.
     #
-    # Reproduced here without a real Docker daemon at all: the FAKE
-    # `docker` binary, on exactly the self-replacement's own
-    # `up -d --no-deps loxmatter-updater` call (the one that stands in for
-    # Docker recreating this container), sends a REAL SIGTERM to its own
-    # parent - this very update-once.sh process - while that process is
-    # genuinely blocked waiting for the call to return. That is exactly
-    # the timing entrypoint.sh's forwarded SIGTERM has in production: it
-    # arrives while the self-replacement's own `compose up -d` is still
-    # the foreground command.
-    docker_path = updater.bindir / "docker"
-    docker_path.write_text(
-        _docker_stub_source(
-            compose_case=(
-                'case "$*" in\n'
-                '      *"up -d --no-deps loxmatter-updater"*) '
-                'kill -TERM "$PPID" 2>/dev/null || true ;;\n'
-                "    esac\n"
-                "    exit 0 ;;"
-            )
-        ),
+    # The self-replacement itself is gone now (removed outright - see
+    # update-once.sh's own comment on the incident, near the end of the
+    # success branch: measured on this same Pi to corrupt its own
+    # container instead of updating it), but the WINDOW it exposed is not
+    # a property only self-replacement could open: an ordinary `docker
+    # stop` (an operator stopping the stack) or entrypoint.sh's own
+    # 600-second worker timeout can land in the exact same narrow gap
+    # between `done` being written and this pass's own `exit 0`, for
+    # entirely mundane reasons that have nothing to do with self-
+    # replacement. This test still has to prove that gap is safe -
+    # reproduced here without a self-replacement and without a real
+    # Docker daemon at all: `log()` (update-once.sh) is the one external
+    # command still invoked AFTER `set_state "done" ""` - the very next
+    # line is `log "Update to $TO complete"`, and `log()` itself shells
+    # out to `tail` to truncate log.txt. A fake `tail` binary below sends
+    # a REAL SIGTERM to its own parent - this very update-once.sh process
+    # - the instant it sees that specific line appear in the log content
+    # it is asked to tail, while that process is genuinely blocked
+    # waiting for `tail` to return. No other `log()` call in a successful
+    # run ever produces that exact text (checked against update-once.sh:
+    # "complete" appears in exactly one `log` call, this one), so the
+    # signal fires exactly once, exactly where "done" has already been
+    # durably written but the pass has not yet reached its own `exit 0` -
+    # the same timing the old self-replacement-triggered SIGTERM had.
+    real_tail = shutil.which("tail")
+    assert real_tail is not None, "this test needs a real 'tail' on PATH"
+    tail_path = updater.bindir / "tail"
+    tail_path.write_text(
+        "#!/bin/sh\n"
+        f'out="$("{real_tail}" "$@")"\n'
+        'printf "%s\\n" "$out"\n'
+        'case "$out" in\n'
+        '  *"complete"*) kill -TERM "$PPID" 2>/dev/null || true ;;\n'
+        "esac\n",
         encoding="utf-8",
     )
-    docker_path.chmod(0o755)
+    tail_path.chmod(0o755)
     _write_request(updater, target="0.3.0")
-    _, _calls, state = updater(LOXMATTER_UPDATER_SELF_REPLACE="1", _timeout=15)
+    _, _calls, state = updater(_timeout=15)
     assert state["phase"] == "done"
     assert state["error"] is None
     assert not (updater.update_dir / "LETZTER-FEHLSCHLAG.txt").exists(), (

@@ -36,6 +36,22 @@ SERVICE="${LOXMATTER_SERVICE:-loxmatter}"
 IMAGE="${LOXMATTER_IMAGE:-ghcr.io/lucienkerl/loxmatter}"
 HEALTH_URL="${LOXMATTER_HEALTH_URL:-http://host.docker.internal:8080/health}"
 HEALTH_TIMEOUT="${LOXMATTER_HEALTH_TIMEOUT:-120}"
+# Baked in at build time by deploy/updater/Dockerfile's own ARG/ENV pair
+# (mirroring the bridge's own LOXMATTER_VERSION, see that Dockerfile),
+# never set by docker-compose.yml - this is the one thing the sidecar
+# knows about ITSELF that is worth reporting: the web UI compares this
+# against the running bridge's version and says so when they differ (see
+# `set_state` below, and `src/loxmatter/update.py`/`api/update.py` on the
+# bridge side). Empty, not defaulted to "dev" here, is deliberate: every
+# sidecar built before this field existed has no such ENV at all, and an
+# empty string is what `set_state`'s own "empty means null" convention
+# (already used for FROM/TO/etc.) turns into `updater_version: null` in
+# state.json - the honest "this sidecar predates the field" answer, not a
+# claim of "dev" it never made. `deploy/updater/Dockerfile`'s own ARG
+# default of "dev" only applies to a MANUAL build of a CURRENT checkout
+# without CI's build-arg - a sidecar from before this change was never
+# built with the ARG at all, so no default there can reach it.
+UPDATER_VERSION="${LOXMATTER_UPDATER_VERSION:-}"
 
 REQUEST="$UPDATE_DIR/request.json"
 STATE="$UPDATE_DIR/state.json"
@@ -107,9 +123,11 @@ log() {
 # safe.directory=$REPO` on every single invocation - not a one-time
 # `git config --global --add safe.directory`, which would write into
 # root's own $HOME/.gitconfig inside this CONTAINER's own ephemeral
-# filesystem and be gone the moment the container is recreated, an
-# ordinary event (the self-replacement at the end of every successful
-# update does exactly that).
+# filesystem and be gone the moment the container is recreated - not a
+# rare event: `restart: unless-stopped` after a host reboot, or an
+# operator refreshing this sidecar's own image by hand (see the removed
+# self-replacement's own comment, near the end of the success branch
+# below, for why that refresh is manual now) both do exactly that.
 #
 # Fixing only that trades one failure for a worse one: once git actually
 # runs, `fetch` and `checkout` write .git/index, FETCH_HEAD and the
@@ -243,10 +261,23 @@ set_state() {
   # trap, same as FROM/TO/JOB_ID already are, so a signal arriving mid-
   # rollback-health-wait does not lose the value the earlier `set_state
   # rollback ""` call already recorded.
+  #
+  # $UPDATER_VERSION (top of file) is this sidecar's OWN version, baked
+  # in at build time - unlike every other field above, it never changes
+  # within a single container's lifetime, so every `set_state` call
+  # writes the same value regardless of phase. Empty (never defaulted
+  # here) means null, the same "empty means null" convention as
+  # FROM/TO/ROLLED_BACK_TO - the honest answer for a sidecar built before
+  # this field existed. Unlike FROM/TO/ROLLED_BACK_TO, `refresh_heartbeat`
+  # below does NOT merely preserve whatever this call already wrote here -
+  # it re-asserts $UPDATER_VERSION on every heartbeat too. See that
+  # function's own comment for why: this field describes the CONTAINER
+  # that is running right now, not the job, and a heartbeat always knows
+  # that for certain.
   if STATE_JSON="$(jq -n \
        --arg id "${JOB_ID:-}" --arg phase "$1" --arg error "${2:-}" \
        --arg from "${FROM:-}" --arg to "${TO:-}" --arg seen "$(now)" \
-       --arg back "${ROLLED_BACK_TO:-}" \
+       --arg back "${ROLLED_BACK_TO:-}" --arg updater_version "${UPDATER_VERSION:-}" \
        --argjson rolled "${ROLLED:-false}" --argjson healthy "${HEALTHY:-true}" \
        '{id: (if $id == "" then null else $id end),
          phase: $phase,
@@ -256,7 +287,8 @@ set_state() {
          rolled_back: $rolled,
          rolled_back_to: (if $back == "" then null else $back end),
          healthy: $healthy,
-         updater_seen_at: $seen}')" \
+         updater_seen_at: $seen,
+         updater_version: (if $updater_version == "" then null else $updater_version end)}')" \
     && [ -n "$STATE_JSON" ]; then
     write_state "$STATE_JSON"
   else
@@ -265,18 +297,46 @@ set_state() {
   fi
 }
 
-# Refreshes ONLY `updater_seen_at` in the existing $STATE, leaving every
-# other field - phase, id, error, ... - exactly as it already reads. This
-# is the fix for Important 1: the bridge treats the sidecar as absent
-# after 30 seconds of silence (`_MAX_SILENT_SECONDS` in update.py), but
-# `updater_seen_at` used to be written only by `write_state` - i.e. at
-# pass start and at each `set_state` call - and nothing refreshed it
-# WITHIN a phase. Proven against the unpatched script with a `docker
-# compose pull` stub that took 8 seconds: the timestamp froze for the
-# whole pull. On a Pi an arm64 image pull takes minutes and the health
-# wait can hold one phase for up to 120 seconds - most of a SUCCESSFUL
-# update used to spend most of its time looking, to the web UI, exactly
-# like a crashed sidecar.
+# Refreshes `updater_seen_at` - and, since this fix, `updater_version` -
+# in the existing $STATE, leaving every other field - phase, id, from,
+# to, error, rolled_back_to, ... - exactly as it already reads. The
+# `updater_seen_at` half is the fix for Important 1: the bridge treats the
+# sidecar as absent after 30 seconds of silence (`_MAX_SILENT_SECONDS` in
+# update.py), but `updater_seen_at` used to be written only by
+# `write_state` - i.e. at pass start and at each `set_state` call - and
+# nothing refreshed it WITHIN a phase. Proven against the unpatched script
+# with a `docker compose pull` stub that took 8 seconds: the timestamp
+# froze for the whole pull. On a Pi an arm64 image pull takes minutes and
+# the health wait can hold one phase for up to 120 seconds - most of a
+# SUCCESSFUL update used to spend most of its time looking, to the web UI,
+# exactly like a crashed sidecar.
+#
+# `updater_version` is asserted here - overwritten from $UPDATER_VERSION,
+# never merely left alone - for the opposite reason FROM/TO/ROLLED_BACK_TO
+# are left alone: those describe THE JOB, which a heartbeat must not
+# invent or lose, but $UPDATER_VERSION describes the CONTAINER that is
+# running THIS PASS, which every heartbeat knows for certain regardless of
+# whether a job is even in progress. Preserving it like the job fields
+# used to be exactly wrong, in both directions, both proven on the
+# maintainer's own Pi:
+#   * a state.json last written by a pre-0.3.3 sidecar (no such field at
+#     all) stayed without `updater_version` forever after a 0.3.3 sidecar
+#     replaced it and ran for minutes doing nothing but heartbeats - the
+#     System tab could not tell the updater had a version until some job
+#     happened to run and call `set_state`.
+#   * once a job HAS written a version, replacing the sidecar with a
+#     newer one leaves the OLD value in state.json until the next job -
+#     state.json would then assert a version that is not the one actually
+#     running, either hiding a real lag or reporting one that does not
+#     exist.
+# Every heartbeat is a container that has just, by definition, proven it
+# is alive and knows its own $UPDATER_VERSION - so every heartbeat is as
+# good an authority on that one field as `set_state` itself, and asserting
+# it here rather than trusting whatever an earlier (possibly different)
+# container once wrote is what keeps it honest between jobs, not just at
+# the moment one finishes. "Empty means null" applies here exactly as it
+# does in `set_state`, for the same reason: a sidecar built before this
+# field existed still has nothing truthful to assert.
 #
 # Deliberately NOT `set_state` itself: `set_state` rebuilds state.json
 # from this script's own JOB_ID/FROM/TO/etc. variables, which is exactly
@@ -287,7 +347,8 @@ set_state() {
 # already correctly on disk with whatever this call site happens to
 # think the phase is. The SIGTERM trap test relies on state.json reading
 # "rollback" for that entire second wait; a heartbeat helper that can
-# only ever touch the timestamp is what keeps that true.
+# only ever touch the timestamp (and, now, the running container's own
+# version) is what keeps that true.
 #
 # Best-effort, like `log()`: a momentary read/write hiccup here (the
 # volume briefly unwritable) must not abort a pass that is otherwise
@@ -295,9 +356,10 @@ set_state() {
 # below) already recovers a state.json that stays broken across passes.
 # Callers wrap this in `|| true` for exactly that reason.
 refresh_heartbeat() {
-  if REFRESHED="$(jq --arg seen "$(now)" \
+  if REFRESHED="$(jq --arg seen "$(now)" --arg updater_version "${UPDATER_VERSION:-}" \
        'if (type == "object" and has("phase"))
         then .updater_seen_at = $seen
+             | .updater_version = (if $updater_version == "" then null else $updater_version end)
         else empty end' \
        "$STATE" 2>/dev/null)" \
     && [ -n "$REFRESHED" ]; then
@@ -383,9 +445,9 @@ refresh_heartbeat() {
 # POSIX awk.
 #
 # Piped through `awk` rather than left bare: a `docker inspect` that
-# fails (daemon unreachable, no container by this name yet - the
-# self-replacement service is a later task) must not make the ASSIGNMENT
-# this runs inside fail under `set -eu`, the same reasoning
+# fails (daemon unreachable, no container named `loxmatter-updater` yet -
+# a fresh install.sh run this early in its own bootstrap) must not make
+# the ASSIGNMENT this runs inside fail under `set -eu`, the same reasoning
 # current_tag()/running_version() already document above for ending a
 # substitution on a command that itself always exits 0 - `awk` does, even
 # reading nothing at all.
@@ -474,24 +536,26 @@ on_signal() {
 
   # The missing invariant this guard restores: once a pass has reached a
   # terminal outcome, a signal arriving afterwards cannot change what
-  # happened. Proven end to end from a real update on the maintainer's
-  # Pi: the success path writes `set_state "done" ""` and only THEN -
-  # deliberately, so the write above can never be torn - lets the
-  # self-replacement below (`compose pull loxmatter-updater` /
-  # `compose up -d --no-deps loxmatter-updater`) recreate this very
-  # container. Docker sends SIGTERM to PID 1 to do that; entrypoint.sh
-  # forwards it here; and this trap, unconditionally, used to write
-  # `set_state failed "interrupted by a signal ..."` straight over the
-  # "done" it had itself recorded one moment earlier - and the block
-  # below used to write LETZTER-FEHLSCHLAG.txt beside a successful
-  # update. Two individually-correct decisions collide: the
-  # self-replacement is placed after `done` precisely so it cannot
-  # corrupt a write in progress, and this trap exists so a genuine
-  # interruption is recorded truthfully - neither anticipated that a
-  # *deliberate* self-termination is, from inside the trap, indistinguishable
-  # from an unwanted one. It surfaces only when the sidecar's own image
-  # actually changed, so it hits the first update after any release that
-  # also rebuilt the sidecar - which is most of them.
+  # happened. First proven end to end from a real update on the
+  # maintainer's Pi, from a cause that no longer exists in this file: the
+  # success path writes `set_state "done" ""`, and this sidecar used to
+  # let a self-replacement step right after it (`compose pull
+  # loxmatter-updater` / `compose up -d --no-deps loxmatter-updater`)
+  # recreate its own container - which is what SIGTERM'd it one moment
+  # after `done` was written. This trap, unconditionally at the time,
+  # wrote `set_state failed "interrupted by a signal ..."` straight over
+  # the "done" it had itself recorded a moment earlier, and the block
+  # below wrote LETZTER-FEHLSCHLAG.txt beside a successful update. The
+  # self-replacement step itself was later removed outright - see its own
+  # comment, near the end of the success branch further down, for why
+  # (measured on this same Pi: it cannot correctly replace the process
+  # running it) - but the guard below stays. A `docker stop` or
+  # entrypoint.sh's own 600-second worker timeout can still land in the
+  # narrow window between `done` being written and this pass's own `exit
+  # 0` for entirely ordinary reasons (an operator stopping the stack, a
+  # host shutdown), and the same corruption - a genuinely finished update
+  # reported as failed - would follow just as surely without this case
+  # arm.
   #
   # `done`, `failed` and `rejected` are the three terminal phases -
   # mirrored from `_TERMINAL_PHASES` in `src/loxmatter/update.py`, which
@@ -967,13 +1031,15 @@ run() {
 # created it EMPTY rather than erroring - the fabric backup route (`GET
 # /api/diagnostics/fabric-backup`, which reads through that exact mount)
 # went dead from that point on, with nothing in this script or state.json
-# ever indicating it. The self-replacement further down resolved `../..`
-# the same way - an empty host `/repo` - so every update AFTER the first
-# one failed at `git fetch` ("$STACK is not a directory", from a checkout
-# that was never actually there). The self-replacement's own "only
-# recreate when the image changed" reasoning (see its comment further
-# down) was ALSO silently false the whole time: the WRONG mount source it
-# resolved differs from the correct one on every single run, so Compose's
+# ever indicating it. The self-replacement step this sidecar carried at
+# the time (since removed outright - see its own comment near the end of
+# the success branch further down, for why) resolved `../..` the same way
+# - an empty host `/repo` - so every update AFTER the first one failed at
+# `git fetch` ("$STACK is not a directory", from a checkout that was
+# never actually there). That self-replacement's own "only recreate when
+# the image changed" reasoning was ALSO silently false the whole time:
+# the WRONG mount source it resolved differs from the correct one on
+# every single run, so Compose's
 # own config-hash comparison never agreed with itself between runs and it
 # recreated unconditionally regardless of whether the image had actually
 # moved.
@@ -1022,8 +1088,8 @@ run() {
 #
 # Resolved (and refused, see below) only ONCE per pass, on this
 # function's first call - not once per invocation. There can be several
-# in one pass (pull, the initial recreate, a rollback's own recreate, the
-# self-replacement's pull/up), the mounts underneath this sidecar do not
+# in one pass (pull, the initial recreate, a rollback's own recreate),
+# the mounts underneath this sidecar do not
 # change mid-pass, and re-querying the daemon for the identical answer
 # every time would be a socket round trip this sidecar does not need -
 # it would also turn a single unresolved-mount problem into a separate
@@ -1044,8 +1110,9 @@ run() {
 # forking the actual pull into a background subshell. A subshell (what
 # `&` always creates) that resolved this for the first time would only
 # ever memoize it for ITSELF - every LATER compose() call in this same
-# pass (the recreate right after the pull returns; the self-replacement
-# pull/up at the very end) runs back in THIS process, not that subshell,
+# pass (the recreate right after the pull returns; a rollback's own
+# recreate, should the first one fail) runs back in THIS process, not
+# that subshell,
 # and would silently pay for a second `docker inspect loxmatter-updater`
 # round trip the memoization above exists specifically to avoid (see its
 # own comment) - and, had $STACK been unresolvable, log the "could not
@@ -1676,9 +1743,10 @@ if ! compose_pull_with_heartbeat "$SERVICE"; then
   exit 0
 fi
 
-# 3. Replace it. --no-deps: matter-server and OTBR stay untouched, and the
-# sidecar does not replace itself before `done` is written - see the
-# self-replacement at the very end of the success branch below.
+# 3. Replace it. --no-deps: matter-server and OTBR stay untouched, and
+# this call never touches the `loxmatter-updater` service itself - see
+# the comment near the end of the success branch below for why the
+# sidecar no longer replaces itself at all, ever.
 #
 # `with_heartbeat`, not a bare `compose`: `--force-recreate` stops the
 # old container (SIGTERM, then a grace period - 10s by default in
@@ -1771,62 +1839,57 @@ if [ "$RECREATE_OK" = true ]; then
     set_state "done" ""
     log "Update to $TO complete"
 
-    # Last, and only after a successful update: the sidecar pulls its own
-    # pinned image and, only if that pull actually changed something,
-    # lets `compose up -d` recreate itself, detached. AFTER writing
-    # `done`, never before - doing this earlier would terminate the
-    # sidecar in the middle of writing the state the web UI is currently
-    # reading, and a successful update would look like a stuck one
-    # instead of a finished one.
+    # REMOVED (measured on the maintainer's Raspberry Pi, reproduced
+    # deterministically): this used to be the point where, after writing
+    # `done`, the sidecar pulled its own pinned image and - only if that
+    # pull actually changed something - let `compose up -d --no-deps
+    # loxmatter-updater` recreate its own container, detached.
     #
-    # `compose up -d` ALONE - what this used to be - does not do what the
-    # paragraph above claims. Compose's default pull policy is `missing`:
-    # `up` only pulls an image it does not already have locally. This
-    # sidecar is pinned to a moving tag (":stable", typically) that IS
-    # already present locally the moment it is running at all, so `up -d`
-    # on its own never even asks the registry whether ":stable" has moved
-    # - it is a silent no-op every single time, self-replacement in name
-    # only. `compose pull` first is what actually asks the registry and
-    # updates the local image if it has moved; `up -d` afterward compares
-    # the (possibly now-updated) image against the running container and
-    # recreates it ONLY when that comparison actually differs - so an
-    # already-current image still costs one network round trip but never
-    # an unnecessary recreate.
+    # A container cannot replace itself with `docker compose up` executed
+    # INSIDE it: the process carrying out the remaining steps of that
+    # command is one of the things being stopped. Forcing the recreate
+    # (`--force-recreate`) to remove the doubt about whether Compose would
+    # even consider the image "changed" reproduced the failure every
+    # time:
     #
-    # A failed pull (no network, registry unreachable) is intentionally
-    # NOT `set_state failed` - the update this pass exists to report on
-    # already succeeded and is already `done`; a sidecar that cannot
-    # currently reach the registry for its OWN image should keep running
-    # on its current one, not report the bridge's update as broken.
+    #   * The `docker exec` running this script died with exit 137
+    #     (SIGKILL) - the container runtime tore down the very process
+    #     that was still inside `compose up`, mid-command.
+    #   * update-once.sh's own log ends at "Container loxmatter-updater
+    #     Recreate" - Compose's own progress line for the step it was
+    #     doing when it died. No exit line was ever written after it;
+    #     there was nothing left running to write one.
+    #   * Afterwards TWO containers existed where one should: the
+    #     original `loxmatter-updater`, left behind in `Exited (0)`
+    #     (Compose had already stopped it, the first half of a recreate),
+    #     and a second one, `60112d04be65_loxmatter-updater` - the
+    #     replacement Compose had started creating - stuck in `Created`,
+    #     never started, because the process that would have started it
+    #     no longer existed to do so.
+    #   * `restart: unless-stopped` (docker-compose.yml) correctly did
+    #     NOT bring anything back: the container had been explicitly
+    #     stopped, not crashed, and that policy deliberately does not
+    #     override an intentional stop. There was nothing left in the
+    #     stack that still held the Docker socket, or that entrypoint.sh's
+    #     poll loop could still be running inside.
     #
-    # Detached via `-d`: the call that replaces this very container must
-    # not wait inside it for its own end. `--no-deps`, the same as every
-    # other compose call in this file: the bridge and its neighbours are
-    # not this call's business.
+    # The result is not merely "the self-update did not happen" - it is
+    # an installation left with NO running updater at all and a stray
+    # half-created container next to it, recoverable only from the
+    # console (`docker rm` the stray, `docker compose up -d
+    # loxmatter-updater` by hand). That is the worst possible outcome for
+    # a feature whose entire purpose was to avoid needing the console.
     #
-    # This call is what SIGTERMs the worker one moment after `done` above
-    # - see the SIGTERM trap's own comment for why that is now harmless
-    # (state.json and LETZTER-FEHLSCHLAG.txt both stay exactly as `done`
-    # left them). Considered, and rejected for this fix: deferring the
-    # recreate itself - e.g. leaving a marker for entrypoint.sh to act on
-    # between passes, once no job is in flight, instead of recreating
-    # inline here - so the worker is never killed mid-exit at all. That
-    # would remove a real, if now harmless, oddity (this process's own
-    # exit path is a signal delivery, not a plain return) and is worth
-    # doing eventually, but it is a materially larger change - a second
-    # coordination channel between this script and entrypoint.sh, with
-    # its own failure modes to reason through - for no reported bug it
-    # would additionally fix: the terminal-phase guard above already
-    # makes the one observable symptom (a false "Update failed") go away
-    # on its own. Not implemented here.
-    if [ "${LOXMATTER_UPDATER_SELF_REPLACE:-1}" = "1" ]; then
-      if compose pull loxmatter-updater; then
-        compose up -d --no-deps loxmatter-updater || true
-      else
-        log "self-replacement: compose pull loxmatter-updater failed - staying on the currently running image"
-      fi
-    fi
-
+    # Decided instead: the sidecar never touches its own service. It
+    # keeps running whatever image it was started with until an operator
+    # (or a future, differently-architected mechanism - e.g. a THIRD
+    # party recreating it from outside, never itself) refreshes it. What
+    # replaces this is an honest signal: the sidecar writes its own
+    # version into state.json (see `set_state`'s `updater_version` field
+    # below), the web UI compares it with the running bridge, and the
+    # System tab card says so - and gives the one command that refreshes
+    # it - when the two disagree, instead of silently drifting apart with
+    # no way to notice short of reading state.json by hand.
     exit 0
   fi
 fi
