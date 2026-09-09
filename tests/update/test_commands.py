@@ -508,6 +508,42 @@ def test_cap_log_keeps_only_complete_lines_within_the_cap(tmp_path):
     assert all(entry in (b"0123456789", b"LAST-LINE") for entry in lines)
 
 
+def test_cap_log_trims_to_the_trim_target_not_just_under_the_cap(tmp_path):
+    """The test above only asserts the result stays `<= _LOG_CAP_BYTES`
+    - a `_cap_log` that seeked back `_LOG_CAP_BYTES` instead of
+    `_LOG_TRIM_BYTES` (no headroom at all, the very next `log()` call
+    would trip the cap again) would satisfy that just as well. This pins
+    the actual seek target by recomputing, from the same known input and
+    the module's own `_LOG_TRIM_BYTES`, exactly which bytes should
+    survive."""
+    base = tmp_path / "update"
+    commands = DockerCommands(
+        compose_dir=tmp_path,
+        env_path=tmp_path / ".env",
+        health_url="http://x/health",
+        base=base,
+        run=RecordingRunner(),
+    )
+    path = base / "log.txt"
+    path.parent.mkdir(parents=True)
+    line = b"0123456789\n"
+    repeats = (commands_module._LOG_CAP_BYTES // len(line)) + 10
+    content = line * repeats + b"LAST-LINE\n"
+    path.write_bytes(content)
+
+    commands._cap_log(path)
+
+    capped = path.read_bytes()
+    seek_pos = len(content) - commands_module._LOG_TRIM_BYTES
+    tail = content[seek_pos:]
+    newline = tail.find(b"\n")
+    expected = tail[newline + 1 :] if newline != -1 else tail
+    assert capped == expected
+    # Comfortably below the cap, not merely at or under it - the
+    # headroom `_LOG_TRIM_BYTES` exists to buy.
+    assert len(capped) < commands_module._LOG_CAP_BYTES
+
+
 def test_cap_log_does_nothing_under_the_cap(tmp_path):
     base = tmp_path / "update"
     commands = DockerCommands(
