@@ -5412,6 +5412,17 @@ async def test_the_live_handler_credits_the_right_device(api):
     crediting it to anyone would make EVERY tile claim it had just been
     heard from - and the one statement this feature exists to make would
     become a lie on every card at once.
+
+    `d<id>_online` is the second key that must not count, and unlike the
+    heartbeat the key pattern does NOT exclude it (final review, A1). The
+    server draws that line deliberately: `Runtime._mark_heard` is called
+    from `on_attribute`, `on_node_snapshot` and `on_event`, and NOT from
+    `set_online`, because reachability is matter-server's bookkeeping
+    about a node, not the node saying anything. `set_online` nonetheless
+    ends in `_notify_observers("d<id>_online", ...)`, so the key reaches
+    this handler verbatim - and the tile would render the Offline pill
+    and "Last heard just now" on the same card, at the precise moment
+    this feature exists to serve.
     """
     client, _, _ = api
     script = (await client.get("/static/app.js")).text
@@ -5426,6 +5437,9 @@ async def test_the_live_handler_credits_the_right_device(api):
 
     assert "const owner = /^d(\\d+)_/.exec(message.key);" in body
     assert "this.deviceHeardAt[Number(owner[1])] = now;" in body
+    # The exclusion itself, pinned character for character: a matching
+    # `owner` alone must NOT be enough to credit the device.
+    assert "if (owner && message.key !== `d${owner[1]}_online`) {" in body
 
 
 async def test_the_tile_takes_the_later_of_the_served_and_the_live_timestamp(api):
@@ -5462,6 +5476,14 @@ async def test_the_last_heard_line_is_translated_and_states_the_never_case(api):
     assert 'return t("web.devices.never_heard");' in body
     assert 'return t("web.devices.last_heard", { text: this.sinceTextCoarse(at) });' in body
     assert "Last heard" not in body
+    # The German that actually SHIPS (strings.yaml, `web.devices.last_heard`).
+    # Until the final review this line read "Zuletzt gehoert" - the
+    # transliteration that commit 8870425 had already replaced in the
+    # shipped string, so the assertion could no longer fail and someone
+    # hardcoding the real German would have sailed straight past it. The
+    # old spelling stays below as a second guard: nobody should reach for
+    # it here either.
+    assert "Zuletzt gehört" not in body
     assert "Zuletzt gehoert" not in body
 
 

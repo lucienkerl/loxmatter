@@ -3655,8 +3655,22 @@ function app() {
         // not count here: it arrives every 30 seconds regardless, and
         // crediting it would make every tile claim it had just been heard
         // from.
+        //
+        // `d<id>_online` is the second key that must not count, and the
+        // key pattern does NOT exclude it on its own (final review, A1;
+        // the design reasoned only about the heartbeat and assumed it
+        // did). Reachability is matter-server's bookkeeping ABOUT a node,
+        // not the node saying anything - which is why `Runtime` calls
+        // `_mark_heard` from `on_attribute`, `on_node_snapshot` and
+        // `on_event`, but deliberately not from `set_online`
+        // (loxone/runtime.py). `set_online` still notifies its observers,
+        // so `d<id>_online` reaches this handler verbatim; without the
+        // exclusion below the tile would render the Offline pill and
+        // "Last heard just now" on the same card, at the exact moment
+        // this line exists to serve. The client's definition of "heard"
+        // is hereby the same as `Runtime._mark_heard`'s.
         const owner = /^d(\d+)_/.exec(message.key);
-        if (owner) {
+        if (owner && message.key !== `d${owner[1]}_online`) {
           this.deviceHeardAt[Number(owner[1])] = now;
         }
         // The heartbeat does not belong to any device (Spec 6.5) and is
