@@ -8,6 +8,17 @@ people who don't know the code.
 
 ## [Unreleased]
 
+## [0.3.1] — 2026-09-09
+
+### Fixed
+
+- **A rollback now names the version it restored.** When an update does not
+  come up healthy, the bridge returns to the version that was running before
+  — and said so on screen by naming the update channel it came from, usually
+  "stable", rather than the version itself. The channel is not a version, and
+  this is the one message that has to be exact. The plain-text report the
+  updater leaves behind was already correct; the screen now agrees with it.
+
 ## [0.3.0] — 2026-09-09
 
 ### Added
