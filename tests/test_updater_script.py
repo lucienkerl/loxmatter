@@ -352,6 +352,28 @@ def test_a_request_with_an_empty_id_is_rejected(updater):
     assert "docker" not in calls
 
 
+@pytest.mark.parametrize("evil_id", [".", ".."])
+def test_a_dot_or_dotdot_id_is_rejected_not_silently_swallowed(updater, evil_id):
+    # Found while implementing the Stufe-2 Important 6 fix (the durable
+    # "handled/<job-id>" marker), not by the review itself: "." and ".."
+    # each pass the id character class untouched (both are made up
+    # entirely of "." and "-", characters the class already allows), but
+    # once id is used as a PATH SEGMENT - the marker this test's own
+    # fixture never sees directly - "handled/." names the handled/
+    # directory ITSELF and "handled/.." names $LOXMATTER_UPDATE_DIR, both
+    # of which always exist. Without the fix, `[ -e "$HANDLED_MARKER" ]`
+    # for either is therefore ALWAYS true, and a request carrying one of
+    # these ids would be silently treated as already-handled on every
+    # single pass, forever - never even reaching this rejection, in
+    # violation of this file's own "a request is not readable" doctrine
+    # that a rejection must be recorded, not silently skipped.
+    _auftrag(updater, id=evil_id)
+    _, calls, state = updater()
+    assert state["phase"] == "rejected"
+    assert state["error"] == 'id must not be "." or ".."'
+    assert "docker" not in calls
+
+
 def test_an_unknown_channel_is_rejected(updater):
     _auftrag(updater, channel="beliebig")
     _, calls, state = updater()

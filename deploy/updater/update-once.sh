@@ -369,9 +369,23 @@ TARGET="$(jq -r '.target // empty' "$REQUEST" 2>/dev/null || true)"
 # falls through to $LAST - correct, since a request that was never
 # actually accepted (Rule 0/1/2 reject it further down) can never have
 # earned a marker in the first place.
+#
+# "." and ".." are excluded here too, defensively, even though Rule 0
+# below now also rejects both outright as an id (see its own comment) -
+# this check runs BEFORE Rule 0 has had a chance to, on the same raw,
+# not-yet-validated $JOB_ID an unreadable or malformed request carries.
+# "$UPDATE_DIR/handled/." names the handled/ directory ITSELF, and
+# "$UPDATE_DIR/handled/.." names $UPDATE_DIR - both always exist, so
+# `[ -e "$HANDLED_MARKER" ]` for either would ALWAYS be true, and a
+# request with id "." or ".." would be silently treated as
+# already-handled forever, never even reaching Rule 0's rejection below -
+# exactly the "request is not readable" doctrine above exists to prevent
+# for other malformed shapes (a rejection must be recorded, not silently
+# skipped). Excluding both here, too, is what lets Rule 0 actually see
+# and reject such a request instead of it being swallowed a step earlier.
 HANDLED_MARKER=""
 case "$JOB_ID" in
-  *[!A-Za-z0-9._-]*) ;;
+  .|..|*[!A-Za-z0-9._-]*) ;;
   *) HANDLED_MARKER="$UPDATE_DIR/handled/$JOB_ID" ;;
 esac
 LAST="$(jq -r '.id // empty' "$STATE" 2>/dev/null || true)"
@@ -422,7 +436,19 @@ fi
 # not per VALUE (see the TARGET newline comment further down for the full
 # mechanism) - blocks the newline and every other injection vector in the
 # same motion, since `case` matches the WHOLE word including newlines.
+#
+# "." and ".." are rejected explicitly, ON TOP OF the class: both are
+# made up entirely of "." and "-" - characters the class above already
+# allows - so the class alone would accept them. id is now also used as a
+# PATH SEGMENT (the "handled/<job-id>" marker further up, this task's own
+# Important 6 fix), and "$UPDATE_DIR/handled/." names the handled/
+# directory ITSELF while "$UPDATE_DIR/handled/.." names $UPDATE_DIR - a
+# marker write onto either is `: > /some/directory`, which fails EISDIR
+# and would take the whole script down under `set -eu` the moment an id
+# of exactly "." or ".." was ever accepted.
 case "$JOB_ID" in
+  .|..)
+    JOB_ID="" FROM="" TO="" reject "id must not be \".\" or \"..\"" ;;
   *[!A-Za-z0-9._-]*)
     JOB_ID="" FROM="" TO="" reject "id contains an invalid character" ;;
 esac
