@@ -114,6 +114,7 @@ def test_the_state_is_read_in_full(tmp_path):
         rolled_back=True,
         rolled_back_to="0.2.0",
         healthy=True,
+        updater_version="0.3.2",
         **{"from": "stable", "to": "0.3.0"},
     )
     state = read_state(tmp_path)
@@ -131,6 +132,29 @@ def test_the_state_is_read_in_full(tmp_path):
     # regression that silently read `from` back out under this field's
     # name cannot pass unnoticed.
     assert state.rolled_back_to == "0.2.0"
+    # The sidecar's own baked-in version - distinct from `to_version`
+    # ("0.3.0" above, the BRIDGE version this update was applying) on
+    # purpose, so a regression that read one back under the other's name
+    # cannot pass unnoticed either.
+    assert state.updater_version == "0.3.2"
+
+
+def test_an_absent_updater_version_reads_as_none_not_a_claim_of_currentness(tmp_path):
+    # The bootstrapping case: every sidecar in the field predates
+    # `updater_version` and will never write it at all - state.json simply
+    # has no such key, not an explicit `null` (update-once.sh's `set_state`
+    # only started writing this key with this change; an older
+    # update-once.sh's own `jq -n` call builds an object without it, and
+    # `raw.get("updater_version")` on that object is Python's `None` the
+    # same way a missing "rolled_back_to" already is). `read_state` must
+    # not distinguish that from an explicit `null` gone through
+    # `_as_optional_str`; both mean "this sidecar has nothing to say
+    # about its own version" - see the module docstring's own paragraph on
+    # this field for why treating that as "up to date" (or "behind") would
+    # both be a lie no measurement backs.
+    _state(tmp_path, phase="idle")
+    state = read_state(tmp_path)
+    assert state.updater_version is None
 
 
 def test_rolled_back_to_defaults_to_none(tmp_path):

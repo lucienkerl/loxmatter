@@ -36,6 +36,22 @@ SERVICE="${LOXMATTER_SERVICE:-loxmatter}"
 IMAGE="${LOXMATTER_IMAGE:-ghcr.io/lucienkerl/loxmatter}"
 HEALTH_URL="${LOXMATTER_HEALTH_URL:-http://host.docker.internal:8080/health}"
 HEALTH_TIMEOUT="${LOXMATTER_HEALTH_TIMEOUT:-120}"
+# Baked in at build time by deploy/updater/Dockerfile's own ARG/ENV pair
+# (mirroring the bridge's own LOXMATTER_VERSION, see that Dockerfile),
+# never set by docker-compose.yml - this is the one thing the sidecar
+# knows about ITSELF that is worth reporting: the web UI compares this
+# against the running bridge's version and says so when they differ (see
+# `set_state` below, and `src/loxmatter/update.py`/`api/update.py` on the
+# bridge side). Empty, not defaulted to "dev" here, is deliberate: every
+# sidecar built before this field existed has no such ENV at all, and an
+# empty string is what `set_state`'s own "empty means null" convention
+# (already used for FROM/TO/etc.) turns into `updater_version: null` in
+# state.json - the honest "this sidecar predates the field" answer, not a
+# claim of "dev" it never made. `deploy/updater/Dockerfile`'s own ARG
+# default of "dev" only applies to a MANUAL build of a CURRENT checkout
+# without CI's build-arg - a sidecar from before this change was never
+# built with the ARG at all, so no default there can reach it.
+UPDATER_VERSION="${LOXMATTER_UPDATER_VERSION:-}"
 
 REQUEST="$UPDATE_DIR/request.json"
 STATE="$UPDATE_DIR/state.json"
@@ -245,10 +261,20 @@ set_state() {
   # trap, same as FROM/TO/JOB_ID already are, so a signal arriving mid-
   # rollback-health-wait does not lose the value the earlier `set_state
   # rollback ""` call already recorded.
+  #
+  # $UPDATER_VERSION (top of file) is this sidecar's OWN version, baked
+  # in at build time - unlike every other field above, it never changes
+  # within a single container's lifetime, so every `set_state` call
+  # writes the same value regardless of phase. Empty (never defaulted
+  # here) means null, the same "empty means null" convention as
+  # FROM/TO/ROLLED_BACK_TO - the honest answer for a sidecar built before
+  # this field existed. `refresh_heartbeat` below only ever rewrites
+  # `updater_seen_at` on an EXISTING state.json, so it preserves whatever
+  # this call already wrote here without needing to know about it.
   if STATE_JSON="$(jq -n \
        --arg id "${JOB_ID:-}" --arg phase "$1" --arg error "${2:-}" \
        --arg from "${FROM:-}" --arg to "${TO:-}" --arg seen "$(now)" \
-       --arg back "${ROLLED_BACK_TO:-}" \
+       --arg back "${ROLLED_BACK_TO:-}" --arg updater_version "${UPDATER_VERSION:-}" \
        --argjson rolled "${ROLLED:-false}" --argjson healthy "${HEALTHY:-true}" \
        '{id: (if $id == "" then null else $id end),
          phase: $phase,
@@ -258,7 +284,8 @@ set_state() {
          rolled_back: $rolled,
          rolled_back_to: (if $back == "" then null else $back end),
          healthy: $healthy,
-         updater_seen_at: $seen}')" \
+         updater_seen_at: $seen,
+         updater_version: (if $updater_version == "" then null else $updater_version end)}')" \
     && [ -n "$STATE_JSON" ]; then
     write_state "$STATE_JSON"
   else

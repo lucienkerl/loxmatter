@@ -206,6 +206,14 @@ def build_update_router(store: Store, update_dir: Path) -> APIRouter:
                 "rolled_back": state.rolled_back,
                 "rolled_back_to": state.rolled_back_to,
                 "healthy": state.healthy,
+                # The sidecar's own baked-in version, `None` on one built
+                # before this field existed - see `UpdateState.updater_version`
+                # and the module docstring in `loxmatter/update.py`. The web
+                # UI compares this against `versionInfo.version` (the
+                # running bridge's own, from `GET /api/version`) and says
+                # nothing at all when this is `None`: an unknown version is
+                # not a stale one.
+                "updater_version": state.updater_version,
             },
             "updater_present": update_files.updater_present(state, now=datetime.now(UTC)),
             "log": update_files.read_log(update_dir),

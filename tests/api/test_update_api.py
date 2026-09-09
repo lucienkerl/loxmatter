@@ -93,6 +93,25 @@ async def test_with_a_sidecar_the_status_reports_it(api):
     body = (await client.get("/api/update/status")).json()
     assert body["updater_present"] is True
     assert body["state"]["phase"] == "idle"
+    # No `updater_version` given to `_heartbeat` here - the fixture
+    # mirrors a state.json with no such key at all, the bootstrapping
+    # case (a sidecar built before this field existed). The route must
+    # pass that through as `null`, not omit the key or invent a value -
+    # see `test_the_status_route_reports_the_sidecars_own_version` below
+    # for the field actually being present.
+    assert body["state"]["updater_version"] is None
+
+
+async def test_the_status_route_reports_the_sidecars_own_version(api):
+    # `_status()` (api/update.py) must forward `updater_version` from
+    # `update.read_state` verbatim - the web UI's `updaterVersionBehind()`
+    # (app.js) reads it straight off this JSON body, and a route that
+    # silently dropped the field would leave that comparison permanently
+    # blind despite the sidecar actually reporting a value.
+    client, update_dir = api
+    _heartbeat(update_dir, updater_version="0.3.2")
+    body = (await client.get("/api/update/status")).json()
+    assert body["state"]["updater_version"] == "0.3.2"
 
 
 async def test_a_corrupted_state_file_is_read_as_absent_not_as_a_crash(api):
@@ -577,5 +596,6 @@ def test_the_interface_knows_every_text_of_the_update_card():
         "web.system.update_channel_dev",
         "web.system.update_channel_dev_warning",
         "web.system.update_behind",
+        "web.system.updater_behind",
     ):
         assert i18n.raw_template(key), key

@@ -3065,6 +3065,32 @@ function app() {
       return ["queued", "backup", "pull", "recreate", "health", "rollback"].includes(phase);
     },
 
+    /** Whether the UPDATER SIDECAR ITSELF (not the bridge, and nothing to
+     * do with `updateRunning()`) is reporting an older version than the
+     * bridge it serves. The sidecar no longer replaces its own container
+     * after a successful update (removed - see the incident recorded in
+     * update-once.sh, near the end of the success branch: measured to
+     * corrupt its own container instead of updating it), so nothing keeps
+     * these two in step on its own any more - this is the replacement
+     * signal, and the card (index.html) shows the one command that fixes
+     * it when this reads `true`.
+     *
+     * `false`, not "unknown", whenever either version is missing: a
+     * sidecar built before `updater_version` existed reports `null` (see
+     * `update.py`'s own docstring on that field) and must not be nagged
+     * about a problem it cannot report on, and `versionInfo` itself is
+     * `null` until `GET /api/version` has answered at least once. A plain
+     * string comparison is enough for the case where both ARE present -
+     * both sides derive their version the same way (CI strips the leading
+     * "v" from the release tag for both the bridge and the sidecar image,
+     * see .github/workflows/ci.yml), so no further normalising is needed
+     * here. */
+    updaterVersionBehind() {
+      const updaterVersion = this.updateStatus?.state?.updater_version;
+      const bridgeVersion = this.versionInfo?.version;
+      return Boolean(updaterVersion) && Boolean(bridgeVersion) && updaterVersion !== bridgeVersion;
+    },
+
     /** Whether `state.json` still claims a job is running while the
      * sidecar itself has gone silent - `updater_present` (see
      * `update.py`'s own docstring and `_MAX_SILENT_SECONDS`) already

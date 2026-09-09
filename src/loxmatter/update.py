@@ -33,11 +33,27 @@ update-once.sh` (the only other participant in this protocol) rather than
 taken as given, since that script has been through several review rounds
 since this module was first sketched. It matches: state.json's fields are
 exactly `id`, `phase`, `from`, `to`, `error`, `rolled_back`,
-`rolled_back_to`, `healthy` and `updater_seen_at` (see `set_state()`
-there), and the phases that count as
+`rolled_back_to`, `healthy`, `updater_seen_at` and `updater_version` (see
+`set_state()` there), and the phases that count as
 "still running" are exactly `queued`, `backup`, `pull`, `recreate`,
 `health` and `rollback` - every other phase (`idle`, `rejected`, `done`,
 `failed`) is an end state that allows a new request.
+
+`updater_version` is the one field above that never changes within a
+sidecar's own lifetime - it is the version baked into the sidecar's own
+image at build time (`deploy/updater/Dockerfile`'s own `ARG`/`ENV` pair,
+mirroring the bridge's `LOXMATTER_VERSION`), not anything about the
+update this state describes. `None` on a sidecar built before this field
+existed - see `set_state`'s own "empty means null" handling of it - and
+that is deliberately not the same thing as an unknown VALUE the sidecar
+reported: it is the honest "this sidecar cannot say" that must not be
+treated as though it said "current" or "behind" either way. The sidecar
+no longer replaces its own container after a successful update (removed
+- see the incident recorded in `update-once.sh`'s own comment, near the
+end of the success branch); without that, a sidecar can now silently
+fall behind the bridge it serves, and this field, compared against the
+running bridge's own version by the web UI, is what makes that visible
+instead of invisible.
 
 `phase` alone is not the whole story, though: the sidecar only updates
 `state.json` from its two-second poll loop, so there is a real window -
@@ -134,6 +150,12 @@ class UpdateState:
     rolled_back_to: str | None
     healthy: bool
     updater_seen_at: str | None
+    # The sidecar's OWN version, baked into its image at build time - see
+    # the module docstring's own paragraph on this field. `None` on a
+    # sidecar built before this field existed, which is not the same
+    # thing as "up to date": `api/update.py` and the web UI must not
+    # treat an absent value as a claim either way.
+    updater_version: str | None
 
 
 def _as_optional_str(value: object) -> str | None:
@@ -186,6 +208,7 @@ def read_state(update_dir: Path) -> UpdateState | None:
         # same thing it means there: nothing has said otherwise yet.
         healthy=bool(raw.get("healthy", True)),
         updater_seen_at=_as_optional_str(raw.get("updater_seen_at")),
+        updater_version=_as_optional_str(raw.get("updater_version")),
     )
 
 

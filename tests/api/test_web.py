@@ -501,6 +501,29 @@ async def test_the_system_view_shows_the_running_version(api):
     assert "t('web.system.version_built_at', { built_at: versionInfo.built_at })" in page
 
 
+async def test_the_system_view_shows_when_the_updater_sidecar_is_behind(api):
+    """The updater sidecar no longer replaces its own container after a
+    successful update (removed - see the incident recorded in
+    update-once.sh's own comment, near the end of the success branch:
+    measured on the maintainer's Pi to corrupt its own container instead
+    of updating it). Without that, a sidecar can silently drift behind the
+    bridge it serves - this banner (`updaterVersionBehind()` in app.js) is
+    the replacement signal, and this is the same kind of proof as
+    `test_the_system_view_shows_the_running_version` right above: the
+    markup and the binding are actually delivered, not that Alpine renders
+    them correctly at runtime."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+    script = (await client.get("/static/app.js")).text
+    assert "updaterVersionBehind()" in script
+    assert 'x-show="updaterVersionBehind()"' in page
+    assert (
+        "t('web.system.updater_behind', "
+        "{ updater_version: updateStatus?.state?.updater_version, "
+        "version: versionInfo?.version })" in page
+    )
+
+
 async def test_the_update_card_offers_its_four_states_and_the_confirmation(api):
     """Task 9 (design "Applying updates through the web UI", 2026-09-08,
     section 9): the four states plus the confirmation step all live in the
@@ -1834,6 +1857,46 @@ def test_updatestalled_is_true_only_while_running_with_no_recent_heartbeat():
         False,  # running, heartbeat present - a healthy job in progress
         False,  # not running at all - an end state, not a stall
         False,  # no state ever loaded
+    ]
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_updater_version_behind_says_nothing_for_an_unknown_version():
+    """`updaterVersionBehind()` (app.js) must read `false` - not "unknown
+    but assume the worst" - whenever either side of the comparison is
+    missing. The case this exists for: every sidecar built before
+    `updater_version` existed reports `null` for it forever (see
+    `update.py`'s own docstring on that field) - if this read `true` for
+    that case, every installation running an update-once.sh from before
+    this change would be told its updater is "behind" some version it
+    never actually reported, permanently, with no command that could ever
+    fix it (there is nothing wrong to fix - the sidecar just predates the
+    field). The bridge's own `versionInfo` being not-yet-loaded (`null`
+    until `GET /api/version` first answers) must fail exactly the same
+    way, not throw."""
+    values = _app_state(
+        """
+        function behindFor(updaterVersion, bridgeVersion) {
+          state.updateStatus = { state: { updater_version: updaterVersion } };
+          state.versionInfo = bridgeVersion === undefined ? null : { version: bridgeVersion };
+          return state.updaterVersionBehind();
+        }
+        console.log(JSON.stringify([
+          behindFor("0.3.2", "0.3.3"),
+          behindFor("0.3.3", "0.3.3"),
+          behindFor(null, "0.3.3"),
+          behindFor("0.3.2", undefined),
+          behindFor(null, undefined),
+        ]));
+        """
+    )
+
+    assert values == [
+        True,  # the sidecar reports a real, older version - the case to surface
+        False,  # both agree - nothing to say
+        False,  # sidecar predates the field - unknown is not stale
+        False,  # bridge's own version not loaded yet
+        False,  # neither side known
     ]
 
 
