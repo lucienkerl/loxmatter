@@ -381,8 +381,10 @@ def test_a_half_written_file_is_never_observed(tmp_path):
     call, no temporary file is left behind, so no reader could have found
     one to parse.
     """
-    write_json_atomically(request_path(tmp_path), {"id": "x"})
-    leftovers = [p.name for p in tmp_path.iterdir() if p.name != request_path(tmp_path).name]
+    base = tmp_path / "update"
+    base.mkdir()
+    write_json_atomically(request_path(base), {"id": "x"})
+    leftovers = [p.name for p in base.iterdir() if p.name != request_path(base).name]
     assert leftovers == []
 
 
@@ -409,6 +411,14 @@ def test_the_written_file_is_plain_readable_json(tmp_path):
     payload = json.loads(request_path(tmp_path).read_text(encoding="utf-8"))
     assert payload == {"id": "a", "channel": "dev", "target": "abc1234", "requested_at": "t"}
 ```
+
+> **Correction (9 September 2026).** This test originally used `tmp_path`
+> itself as the base and counted everything in it. The autouse fixture in
+> `tests/conftest.py` already creates `fake-home` there, so the count could
+> never be empty, and the implementer's way out was a second autouse fixture
+> that deleted the parent's directory while `Path.home` still pointed at it -
+> a dangling pointer for every later test in this package. The base is now a
+> subdirectory the test owns. Corrected in `8deb220`.
 
 - [ ] **Step 2: Run them to verify they fail**
 
