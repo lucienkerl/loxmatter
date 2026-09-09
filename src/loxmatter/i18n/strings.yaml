@@ -1282,6 +1282,9 @@ web.system.update_rolled_back:
 web.system.update_no_updater:
   en: "This installation has no updater. Update from the console: git pull && ./scripts/update.sh"
   de: "Diese Installation hat keinen Updater. Aktualisieren über die Konsole: git pull && ./scripts/update.sh"
+web.system.update_channel_label:
+  en: "Update channel"
+  de: "Update-Kanal"
 web.system.update_channel_stable:
   en: "Stable"
   de: "Stabil"

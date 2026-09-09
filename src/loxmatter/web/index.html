@@ -1544,6 +1544,52 @@
           </template>
 
           <!--
+            Channel setting - design section 9: which upstream the check
+            (and any subsequent apply) compares against, persisted like
+            every other setting (`store.update_settings`) instead of only
+            living in this page's own state - `updateStatus.channel`
+            comes straight from `GET /api/update/status`. Same
+            `nav.tabs`/`button.active` markup as the language toggle
+            further down (its own card, `web.settings.language_heading`):
+            that is the one existing example in this interface of a
+            small button-row toggle with an active state, and inventing
+            a second shape for the same idea would be exactly the kind
+            of drift this file's conventions are meant to avoid.
+
+            Disabled while a job is being confirmed or is running:
+            switching what the NEXT check compares against, mid-decision
+            or mid-installation of THIS one, answers a question nobody
+            asked yet, and `setUpdateChannel` immediately re-runs the
+            check against whatever channel was just chosen.
+          -->
+          <div class="row">
+            <span x-text="t('web.system.update_channel_label')"></span>
+            <nav class="tabs">
+              <button
+                :class="{ active: updateStatus?.channel === 'stable' }"
+                @click="setUpdateChannel('stable')"
+                :disabled="updateRunning() || updateConfirming"
+                x-text="t('web.system.update_channel_stable')"
+              ></button>
+              <button
+                :class="{ active: updateStatus?.channel === 'dev' }"
+                @click="setUpdateChannel('dev')"
+                :disabled="updateRunning() || updateConfirming"
+                x-text="t('web.system.update_channel_dev')"
+              ></button>
+            </nav>
+          </div>
+          <!-- The one thing the maintainer's own brief insists must not
+               be buried: switching to Development installs whatever
+               currently sits on main, untested intermediate states
+               included. A `banner warn`, not a `hint`, and shown right
+               under the switch itself - not only inside the confirmation
+               dialog three states down, which someone choosing the
+               channel today may never even reach in this session. -->
+          <p class="banner warn" x-show="updateStatus?.channel === 'dev'" x-cloak
+             x-text="t('web.system.update_channel_dev_warning')"></p>
+
+          <!--
             The update flow - design "Applying updates through the web UI"
             (2026-09-08), section 9. Four states, all in this one card, no
             fifth tab and no global banner (a state that may stand for days

@@ -565,6 +565,59 @@ async def test_the_update_card_offers_its_four_states_and_the_confirmation(api):
     assert "async setUpdateChannel(channel)" in script
 
 
+async def test_the_update_card_offers_a_channel_switch_with_a_visible_dev_warning(api):
+    """Gap flagged by the update card's own implementer: the design's very
+    first decision for this feature (section 9) gives the operator a
+    choice of channel - Stable compares against the latest GitHub
+    release, Development compares the running commit against `main` - and
+    `PATCH /api/update/settings` plus `store.update_settings` plus
+    `app.js`'s own `setUpdateChannel()` all already existed to serve that
+    choice, but nothing in the markup ever called it: the setting was
+    unreachable from the interface.
+
+    Reuses the exact `nav.tabs`/`button.active` shape the language toggle
+    already established (`test_the_settings_tab_has_a_language_toggle`) -
+    the one existing precedent in this file for a small button-row toggle
+    with an active state - rather than inventing a second one.
+
+    The warning is the one thing this task's own brief calls out by name:
+    switching to Development means installing whatever currently sits on
+    main, untested intermediate states included, and it must be visible
+    the moment that channel is chosen, not only inside the confirmation
+    dialog three states further down, which someone choosing the channel
+    today may never even reach in this session."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+
+    assert "t('web.system.update_channel_label')" in page
+
+    assert ":class=\"{ active: updateStatus?.channel === 'stable' }\"" in page
+    assert "@click=\"setUpdateChannel('stable')\"" in page
+    assert "t('web.system.update_channel_stable')" in page
+
+    assert ":class=\"{ active: updateStatus?.channel === 'dev' }\"" in page
+    assert "@click=\"setUpdateChannel('dev')\"" in page
+    assert "t('web.system.update_channel_dev')" in page
+
+    # Both buttons must actually sit inside a `nav.tabs`, not just carry
+    # the right attributes floating loose in the page somewhere else.
+    stable_idx = page.index("setUpdateChannel('stable')")
+    nav_start = page.rindex("<nav", 0, stable_idx)
+    nav_end = page.index("</nav>", stable_idx)
+    channel_nav = page[nav_start:nav_end]
+    assert 'class="tabs"' in channel_nav
+    assert "setUpdateChannel('dev')" in channel_nav
+
+    # The warning: bound to the channel actually being "dev", not shown
+    # unconditionally and not left as dead, untranslated text.
+    warning_idx = page.index("t('web.system.update_channel_dev_warning')")
+    warning_tag_start = page.rindex("<p", 0, warning_idx)
+    warning_tag_end = page.index(">", warning_idx)
+    warning_tag = page[warning_tag_start:warning_tag_end]
+    assert "x-show=\"updateStatus?.channel === 'dev'\"" in warning_tag
+    assert "banner warn" in warning_tag
+
+
 async def test_the_disconnect_banner_gets_a_different_text_during_an_update(api):
     """Design section 9, state 3: a planned restart must not look like an
     outage. The existing danger banner keeps its text for a genuine
