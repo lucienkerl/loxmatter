@@ -830,6 +830,12 @@ web.devices.changed_since_export:
 web.devices.offline:
   en: "Offline"
   de: "Offline"
+web.devices.last_heard:
+  en: "Last heard {text}"
+  de: "Zuletzt gehoert {text}"
+web.devices.never_heard:
+  en: "Not heard since the bridge started"
+  de: "Seit dem Start der Bruecke nichts gehoert"
 web.devices.remove:
   en: "Remove"
   de: "Entfernen"

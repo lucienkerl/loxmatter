@@ -526,6 +526,14 @@ function app() {
     // difference visible between "nothing is changing" and "nothing is
     // arriving" - for a plug socket with no load, both look the same.
     liveSeenAt: {},
+    // When something last arrived from a device, by device id. The
+    // per-signal `liveSeenAt` above cannot answer this: asking "when did
+    // I last hear from this DEVICE" would mean scanning every one of its
+    // ~170 signal keys on every redraw, once a second, per tile.
+    //
+    // Never reset, exactly like `liveSeenAt` - a reconnect of the live
+    // socket does not unmake the fact that something arrived earlier.
+    deviceHeardAt: {},
     lastHeartbeatAt: null,
     // Ticks every second so the "... ago" labels keep up. Without this
     // field, Alpine would see no reason to redraw them.
@@ -2000,6 +2008,57 @@ function app() {
         return t("web.header.time_ago_minutes", { minutes });
       }
       return t("web.header.time_ago_hours", { hours: Math.round(minutes / 60) });
+    },
+
+    /**
+     * When this device was last heard from, in milliseconds - the LATER
+     * of two sources, or `null` when neither has anything.
+     *
+     * `device.last_heard` comes from the server, once, with
+     * `GET /api/devices`. On its own it would go stale in the tile while
+     * values stream into that very tile: confidently wrong, which is
+     * worse than saying nothing. `deviceHeardAt` carries the live side.
+     *
+     * The served value is therefore only the starting point, for the
+     * window between page load and the first live message from this
+     * device - which is precisely the gap it exists to fill, because the
+     * live bookkeeping starts empty on every page load and the server's
+     * does not.
+     */
+    lastHeardAt(device) {
+      const live = this.deviceHeardAt[device.id];
+      const served = device.last_heard ? Date.parse(device.last_heard) : NaN;
+      const candidates = [];
+      if (live !== undefined) {
+        candidates.push(live);
+      }
+      if (!Number.isNaN(served)) {
+        candidates.push(served);
+      }
+      return candidates.length ? Math.max(...candidates) : null;
+    },
+
+    /**
+     * The tile's line. A fact, not a judgement.
+     *
+     * No threshold and no colour anywhere near this: a silent window
+     * contact is normal, and so is a silent button or leak detector. Any
+     * staleness rule would fire first and most often on exactly the
+     * devices that prompted this line, and a warning that cries wolf on
+     * healthy hardware gets the next real one ignored too.
+     *
+     * The `null` branch is the valuable one. "Nothing since the bridge
+     * started" is unambiguous - not "offline", not "no data" - and it is
+     * the sentence that would have shortened 8 September, when a window
+     * contact that only reports on change looked exactly like a button
+     * whose subscription had been dead for five days.
+     */
+    lastHeardText(device) {
+      const at = this.lastHeardAt(device);
+      if (at === null) {
+        return t("web.devices.never_heard");
+      }
+      return t("web.devices.last_heard", { text: this.sinceTextCoarse(at) });
     },
 
     /** When ANYTHING last came in over the line - the heartbeat
@@ -3589,6 +3648,17 @@ function app() {
         this.liveValues[message.key] = message.value;
         const now = Date.now();
         this.liveSeenAt[message.key] = now;
+        // Which device a message belongs to is in its key: signal keys
+        // start with `d<device id>_`. The heartbeat (`bridge_alive`)
+        // matches no device on purpose - see the comment below for why it
+        // is the honest sign of life, and exactly for that reason it must
+        // not count here: it arrives every 30 seconds regardless, and
+        // crediting it would make every tile claim it had just been heard
+        // from.
+        const owner = /^d(\d+)_/.exec(message.key);
+        if (owner) {
+          this.deviceHeardAt[Number(owner[1])] = now;
+        }
         // The heartbeat does not belong to any device (Spec 6.5) and is
         // exactly for that reason the honest sign of life: it arrives
         // even when nothing changes on any device.

@@ -5402,3 +5402,64 @@ async def test_the_coarse_age_helper_never_speaks_in_seconds(api):
     # And no hardcoded translation, in either language.
     assert "just now" not in body
     assert "gerade eben" not in body
+
+
+async def test_the_live_handler_credits_the_right_device(api):
+    """A live message names its device in its key: `d<id>_<rest>`.
+
+    The heartbeat (`bridge_alive`) belongs to no device (Spec 6.5) and
+    must not count. It arrives every 30 seconds no matter what, so
+    crediting it to anyone would make EVERY tile claim it had just been
+    heard from - and the one statement this feature exists to make would
+    become a lie on every card at once.
+    """
+    client, _, _ = api
+    script = (await client.get("/static/app.js")).text
+    # `app.js` has two `socket.addEventListener("message", ...)` blocks -
+    # this one, and `connectDiagnosticsLive`'s, which comes first in the
+    # file. Anchor on `connectLive()` itself so `.index` cannot land on
+    # the wrong one.
+    connect_live = script.index("connectLive() {")
+    start = script.index('socket.addEventListener("message"', connect_live)
+    end = script.index("\n      });", start)
+    body = script[start:end]
+
+    assert "const owner = /^d(\\d+)_/.exec(message.key);" in body
+    assert "this.deviceHeardAt[Number(owner[1])] = now;" in body
+
+
+async def test_the_tile_takes_the_later_of_the_served_and_the_live_timestamp(api):
+    """`device.last_heard` arrives once, with GET /api/devices.
+
+    Shown on its own it would say "12m ago" while values stream into the
+    very same tile - confidently wrong, which is worse than silent. The
+    served value is only the starting point for the window between page
+    load and the first live message from that device.
+    """
+    client, _, _ = api
+    script = (await client.get("/static/app.js")).text
+    start = script.index("lastHeardAt(device) {")
+    end = script.index("\n    },", start)
+    body = script[start:end]
+
+    assert "const live = this.deviceHeardAt[device.id];" in body
+    assert "Date.parse(device.last_heard)" in body
+    assert "Math.max(...candidates)" in body
+
+
+async def test_the_last_heard_line_is_translated_and_states_the_never_case(api):
+    """Both branches carry i18n keys, and the `null` case has its own
+    sentence rather than an empty line: "nothing since the bridge
+    started" is the statement that would have shortened 8 September, and
+    it must not be silently indistinguishable from a device heard from a
+    second ago."""
+    client, _, _ = api
+    script = (await client.get("/static/app.js")).text
+    start = script.index("lastHeardText(device) {")
+    end = script.index("\n    },", start)
+    body = script[start:end]
+
+    assert 'return t("web.devices.never_heard");' in body
+    assert 'return t("web.devices.last_heard", { text: this.sinceTextCoarse(at) });' in body
+    assert "Last heard" not in body
+    assert "Zuletzt gehoert" not in body
