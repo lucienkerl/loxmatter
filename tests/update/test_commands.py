@@ -18,8 +18,10 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
+import loxmatter.update.commands as commands_module
 from loxmatter.update.commands import DockerCommands
 
 
@@ -48,6 +50,7 @@ def make(tmp_path: Path) -> tuple[DockerCommands, RecordingRunner]:
         compose_dir=tmp_path,
         env_path=env,
         health_url="http://host.docker.internal:8080/health",
+        base=tmp_path / "update",
         run=runner,
     )
     return commands, runner
@@ -79,6 +82,62 @@ def test_writing_the_tag_replaces_the_line_in_place(tmp_path):
     assert "MINISERVER_IP=10.0.0.1" in text
 
 
+def test_writing_the_tag_appends_it_when_the_key_is_absent(tmp_path):
+    """`.env.example` ships without a trailing blank line and, before the
+    first update, without `LOXMATTER_IMAGE_TAG` ever having been written
+    at all - Compose's own `:-stable` default covers that case. Deleting
+    this append branch and always falling through to "replace" would
+    leave nothing written and `pull` fetching a version Compose never
+    deploys, silently: the operator sees "done"."""
+    env = tmp_path / ".env"
+    env.write_text("MINISERVER_IP=10.0.0.1\n", encoding="utf-8")
+    commands = DockerCommands(
+        compose_dir=tmp_path,
+        env_path=env,
+        health_url="http://x/health",
+        base=tmp_path / "update",
+        run=RecordingRunner(),
+    )
+    commands.write_image_tag("v0.3.0")
+    text = env.read_text(encoding="utf-8")
+    assert text == "MINISERVER_IP=10.0.0.1\nLOXMATTER_IMAGE_TAG=v0.3.0\n"
+
+
+def test_writing_the_tag_adds_a_missing_trailing_newline_before_appending(tmp_path):
+    """A `.env` saved without a final newline (common - many editors only
+    add one on the next save) must not be corrupted into
+    `MINISERVER_IP=10.0.0.1LOXMATTER_IMAGE_TAG=v0.3.0` on the same line."""
+    env = tmp_path / ".env"
+    env.write_text("MINISERVER_IP=10.0.0.1", encoding="utf-8")
+    commands = DockerCommands(
+        compose_dir=tmp_path,
+        env_path=env,
+        health_url="http://x/health",
+        base=tmp_path / "update",
+        run=RecordingRunner(),
+    )
+    commands.write_image_tag("v0.3.0")
+    assert env.read_text(encoding="utf-8") == "MINISERVER_IP=10.0.0.1\nLOXMATTER_IMAGE_TAG=v0.3.0\n"
+
+
+def test_writing_the_tag_creates_a_missing_parent_directory(tmp_path):
+    """`write_image_tag` already handles the file not existing (falls back
+    to an empty starting text) - but without creating the parent
+    directory first, the final `write_text` still raises when that
+    directory is also missing, defeating the case the method exists to
+    cover."""
+    env = tmp_path / "nested" / "deeper" / ".env"
+    commands = DockerCommands(
+        compose_dir=tmp_path,
+        env_path=env,
+        health_url="http://x/health",
+        base=tmp_path / "update",
+        run=RecordingRunner(),
+    )
+    commands.write_image_tag("v0.3.0")
+    assert env.read_text(encoding="utf-8") == "LOXMATTER_IMAGE_TAG=v0.3.0\n"
+
+
 def test_reading_the_tag_comes_back(tmp_path):
     commands, _ = make(tmp_path)
     commands.write_image_tag("v0.3.0")
@@ -91,12 +150,79 @@ def test_a_missing_tag_line_reads_as_stable(tmp_path):
     env = tmp_path / ".env"
     env.write_text("MINISERVER_IP=10.0.0.1\n", encoding="utf-8")
     commands = DockerCommands(
-        compose_dir=tmp_path, env_path=env, health_url="http://x/health", run=RecordingRunner()
+        compose_dir=tmp_path,
+        env_path=env,
+        health_url="http://x/health",
+        base=tmp_path / "update",
+        run=RecordingRunner(),
     )
     assert commands.read_image_tag() == "stable"
 
 
-def test_checkout_fetches_tags_first(tmp_path):
+def test_reading_the_tag_strips_a_trailing_carriage_return(tmp_path):
+    """A `.env` saved with CRLF line endings by a Windows editor must
+    still yield a bare tag - one with a trailing `\\r` resolves to no
+    published image at `pull`/`checkout`, and a rollback would write that
+    same broken value straight back."""
+    env = tmp_path / ".env"
+    env.write_bytes(b"LOXMATTER_IMAGE_TAG=v0.3.0\r\nMINISERVER_IP=10.0.0.1\r\n")
+    commands = DockerCommands(
+        compose_dir=tmp_path,
+        env_path=env,
+        health_url="http://x/health",
+        base=tmp_path / "update",
+        run=RecordingRunner(),
+    )
+    assert commands.read_image_tag() == "v0.3.0"
+
+
+def test_reading_the_tag_strips_surrounding_quotes(tmp_path):
+    """`LOXMATTER_IMAGE_TAG="0.3.0"` is valid shell and a style some
+    editors add on their own - the quotes are not part of the tag."""
+    env = tmp_path / ".env"
+    env.write_text('LOXMATTER_IMAGE_TAG="0.3.0"\n', encoding="utf-8")
+    commands = DockerCommands(
+        compose_dir=tmp_path,
+        env_path=env,
+        health_url="http://x/health",
+        base=tmp_path / "update",
+        run=RecordingRunner(),
+    )
+    assert commands.read_image_tag() == "0.3.0"
+
+
+def test_reading_the_tag_from_a_missing_file_reads_as_stable(tmp_path):
+    """No `.env` at all (a fresh checkout, before the first `docker
+    compose up`) is not an error - Compose's own default applies."""
+    commands = DockerCommands(
+        compose_dir=tmp_path,
+        env_path=tmp_path / "does-not-exist" / ".env",
+        health_url="http://x/health",
+        base=tmp_path / "update",
+        run=RecordingRunner(),
+    )
+    assert commands.read_image_tag() == "stable"
+
+
+def test_pulling_uses_the_full_image_reference_not_compose_pull(tmp_path):
+    """The one method this task deliberately diverged from the plan on
+    (`docker pull <image>`, not `docker compose pull loxmatter` - see the
+    method's own docstring for why) had no test at all: replacing the
+    body with `pass` left every other test green."""
+    commands, runner = make(tmp_path)
+    commands.pull("ghcr.io/lucienkerl/loxmatter:0.3.0")
+    assert runner.commands == [["docker", "pull", "ghcr.io/lucienkerl/loxmatter:0.3.0"]]
+
+
+def test_each_git_step_issues_its_own_command(tmp_path):
+    """Named for what this actually checks: `fetch()` and `checkout()`
+    each issue the one command they own. Nothing in `commands.py`
+    sequences the two - `runner.run_update` does, and that sequencing is
+    `test_runner.py`'s job, not this module's. The previous name
+    ("fetches tags first") claimed a guarantee this test cannot make: it
+    calls both methods itself, in the order the test wrote them, and
+    would pass just as well if `checkout` ran before `fetch` inside
+    `commands.py` for some other caller."""
     commands, runner = make(tmp_path)
     commands.fetch()
     commands.checkout("v0.3.0")
@@ -125,7 +251,11 @@ def test_the_env_edit_leaves_comments_blank_lines_and_embedded_equals_alone(tmp_
         encoding="utf-8",
     )
     commands = DockerCommands(
-        compose_dir=tmp_path, env_path=env, health_url="http://x/health", run=RecordingRunner()
+        compose_dir=tmp_path,
+        env_path=env,
+        health_url="http://x/health",
+        base=tmp_path / "update",
+        run=RecordingRunner(),
     )
     commands.write_image_tag("v0.4.0")
     text = env.read_text(encoding="utf-8")
@@ -151,6 +281,7 @@ def test_healthy_is_false_on_a_connection_failure_not_a_raised_exception(tmp_pat
         compose_dir=tmp_path,
         env_path=tmp_path / ".env",
         health_url="http://host.docker.internal:8080/health",
+        base=tmp_path / "update",
         run=RaisingRunner(),
     )
     assert commands.healthy() is False
@@ -171,6 +302,7 @@ def test_read_git_ref_returns_the_stripped_commit(tmp_path):
         compose_dir=tmp_path,
         env_path=tmp_path / ".env",
         health_url="http://x/health",
+        base=tmp_path / "update",
         run=FixedRunner(),
     )
     assert commands.read_git_ref() == "abc1234"
@@ -189,6 +321,113 @@ def test_is_ancestor_true_on_success_false_on_failure(tmp_path):
         compose_dir=tmp_path,
         env_path=tmp_path / ".env",
         health_url="http://x/health",
+        base=tmp_path / "update",
         run=RaisingRunner(),
     )
     assert failing.is_ancestor("abc1234", "def5678") is False
+
+
+def test_backup_writes_a_timestamped_archive_and_prunes_old_ones(tmp_path, monkeypatch):
+    """No committed test exercised `backup()` at all before this - the
+    reviewer could delete its body and every other test would stay green.
+    Pruning matches `scripts/update.sh`'s own rule: keep the most recent
+    (here 2, to keep the fixture small - `_BACKUPS_TO_KEEP` is 10 in
+    production), delete the rest, because the volume being backed up is
+    the same one the backups are written into.
+
+    `_DATA_DIR`/`_BACKUP_DIR` are module constants, not constructor
+    arguments (see the module docstring for why) - `monkeypatch` is the
+    only way to point them at `tmp_path` for a test."""
+    data_dir = tmp_path / "data"
+    backup_dir = data_dir / "backups"
+    monkeypatch.setattr(commands_module, "_DATA_DIR", data_dir)
+    monkeypatch.setattr(commands_module, "_BACKUP_DIR", backup_dir)
+    monkeypatch.setattr(commands_module, "_BACKUPS_TO_KEEP", 2)
+
+    # Three pre-existing backups, given distinct mtimes (the recording
+    # runner never actually writes the archive `backup()` names, so
+    # pruning has to be exercised against files already on disk) so "the
+    # two most recent" has an unambiguous answer.
+    backup_dir.mkdir(parents=True)
+    now = os.stat(tmp_path).st_mtime
+    old_files = [backup_dir / f"store-old-{index}.tgz" for index in range(3)]
+    for index, stale in enumerate(old_files):
+        stale.write_bytes(b"x")
+        stamp = now - (100 - index)  # index 2 is the most recent of the three
+        os.utime(stale, (stamp, stamp))
+
+    commands, runner = make(tmp_path)
+    path = commands.backup()
+
+    assert path.startswith(str(backup_dir))
+    assert runner.commands == [
+        ["tar", "czf", path, "-C", str(data_dir), "loxmatter.sqlite"],
+    ]
+    # The two most recent of the three pre-existing backups survive;
+    # `store-old-0.tgz`, the oldest, is pruned away.
+    remaining = sorted(p.name for p in backup_dir.glob("store-*.tgz"))
+    assert remaining == ["store-old-1.tgz", "store-old-2.tgz"]
+
+
+def test_log_appends_a_timestamped_line_under_the_injected_base(tmp_path):
+    """`log()` used to hard-code `protocol.UPDATE_DIR`, ignoring the
+    `base` the rest of the sidecar honours - `LOXMATTER_UPDATE_BASE` could
+    move `state.json` without moving `log.txt` to match. Injecting `base`
+    through the constructor (like `env_path`/`health_url`) is also what
+    makes this method testable at all; it had no coverage before."""
+    base = tmp_path / "somewhere-else"
+    commands = DockerCommands(
+        compose_dir=tmp_path,
+        env_path=tmp_path / ".env",
+        health_url="http://x/health",
+        base=base,
+        run=RecordingRunner(),
+    )
+    commands.log("hello")
+    text = (base / "log.txt").read_text(encoding="utf-8")
+    assert text.endswith(" hello\n")
+    assert len(text.splitlines()) == 1
+
+
+def test_cap_log_keeps_only_complete_lines_within_the_cap(tmp_path):
+    """`_cap_log`'s seek-and-truncate is the most intricate logic in the
+    file and had no test at all. The seek almost certainly lands inside a
+    line; the trim must drop exactly that partial fragment and nothing
+    else - every surviving line has to be one that was written whole, and
+    the newest line (last written) must always be among them."""
+    base = tmp_path / "update"
+    commands = DockerCommands(
+        compose_dir=tmp_path,
+        env_path=tmp_path / ".env",
+        health_url="http://x/health",
+        base=base,
+        run=RecordingRunner(),
+    )
+    path = base / "log.txt"
+    path.parent.mkdir(parents=True)
+    line = b"0123456789\n"
+    repeats = (commands_module._LOG_CAP_BYTES // len(line)) + 10
+    path.write_bytes(line * repeats + b"LAST-LINE\n")
+
+    commands._cap_log(path)
+
+    capped = path.read_bytes()
+    assert len(capped) <= commands_module._LOG_CAP_BYTES
+    lines = capped.splitlines()
+    assert lines[-1] == b"LAST-LINE"
+    assert all(entry in (b"0123456789", b"LAST-LINE") for entry in lines)
+
+
+def test_cap_log_does_nothing_under_the_cap(tmp_path):
+    base = tmp_path / "update"
+    commands = DockerCommands(
+        compose_dir=tmp_path,
+        env_path=tmp_path / ".env",
+        health_url="http://x/health",
+        base=base,
+        run=RecordingRunner(),
+    )
+    commands.log("short")
+    commands.log("also short")
+    text = (base / "log.txt").read_text(encoding="utf-8")
+    assert len(text.splitlines()) == 2

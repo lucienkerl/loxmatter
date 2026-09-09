@@ -24,13 +24,17 @@ out to a real `docker` would not run in CI, so the committed tests
 (`tests/update/test_commands.py`) never do; only the throwaway exercise
 recorded in the task report calls a real daemon.
 
-`compose_dir`, `env_path` and `health_url` are constructor arguments
-because they differ between a test's `tmp_path` and the real mount point
-inside the sidecar container. `/data/backups` and `/data/update/log.txt`
-are not: this container always has `/data` mounted at that fixed path (the
-same volume the bridge itself holds its database in - see
-`deploy/testhost/docker-compose.yml`), so there is nothing to inject there
-and no committed test exercises either method.
+`compose_dir`, `env_path`, `health_url` and `base` are constructor
+arguments because they differ between a test's `tmp_path` and the real
+mount point inside the sidecar container - `base` is where `log()` writes
+`log.txt`, the same directory `run_update` passes to `write_state` (see
+`__main__.py`), so the two cannot silently drift apart when
+`LOXMATTER_UPDATE_BASE` moves one of them. `/data/backups` is not
+injected: this container always has `/data` mounted at that fixed path
+(the same volume the bridge itself holds its database in - see
+`deploy/testhost/docker-compose.yml`), independently of where the request/
+state/log directory lives, and no committed test exercises `backup()`'s
+path for that reason.
 """
 
 from __future__ import annotations
@@ -40,7 +44,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from loxmatter.timestamps import now_iso
-from loxmatter.update.protocol import UPDATE_DIR, log_path
+from loxmatter.update.protocol import log_path
 
 #: `Commands.pull`, `Commands.write_image_tag` and this module's own
 #: `read_image_tag` all key off this one variable name in `.env` - see
@@ -61,6 +65,12 @@ _DATA_DIR = Path("/data")
 _BACKUP_DIR = _DATA_DIR / "backups"
 _STORE_FILE = "loxmatter.sqlite"
 
+#: `scripts/update.sh`'s own rule (`ls -1t ... | tail -n +11 | xargs rm`),
+#: matched here because `backup()` writes into the volume it protects - on
+#: a Pi that volume is the whole disk, and an update that never deletes an
+#: old backup would eventually fail by filling it.
+_BACKUPS_TO_KEEP = 10
+
 #: `log.txt` is capped rather than left to grow forever - the SD card in a
 #: Raspberry Pi is small, and a full one is exactly the kind of ordinary
 #: failure an update has to survive (see `runner._log`). 256 KiB is enough
@@ -74,6 +84,21 @@ _LOG_CAP_BYTES = 256 * 1024
 #: like `run_update` expects - see its module docstring) or catches it
 #: itself where "did this fail" IS the answer (`healthy`, `is_ancestor`).
 Runner = Callable[..., str]
+
+
+def _clean_tag_value(value: str) -> str:
+    """`.env` is hand-edited more than any other file this module
+    touches. A value saved with CRLF line endings, or wrapped in quotes
+    (`LOXMATTER_IMAGE_TAG="0.3.0"` - valid shell, and a style some
+    editors add on their own), must resolve to the same tag `pull`/
+    `checkout` accept unquoted - otherwise a rollback writes the
+    surrounding characters straight back into `.env`, and the tag that
+    is meant to describe what is running never again resolves to a
+    published image."""
+    value = value.rstrip("\r")
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+        value = value[1:-1]
+    return value
 
 
 def _run_subprocess(argv: list[str], *, cwd: Path | None = None) -> str:
@@ -102,12 +127,14 @@ class DockerCommands:
         compose_dir: Path,
         env_path: Path,
         health_url: str,
+        base: Path,
         *,
         run: Runner = _run_subprocess,
     ) -> None:
         self._compose_dir = compose_dir
         self._env_path = env_path
         self._health_url = health_url
+        self._base = base
         self._run = run
 
     def backup(self) -> str:
@@ -118,7 +145,21 @@ class DockerCommands:
         path = _BACKUP_DIR / f"store-{stamp}.tgz"
         path.parent.mkdir(parents=True, exist_ok=True)
         self._run(["tar", "czf", str(path), "-C", str(_DATA_DIR), _STORE_FILE])
+        self._prune_backups()
         return str(path)
+
+    def _prune_backups(self) -> None:
+        """Delete everything but the `_BACKUPS_TO_KEEP` most recent
+        backups - see the constant's own comment for why this exists at
+        all. Sorted by mtime, not by the timestamp in the filename: both
+        agree in the normal case, but mtime is what `ls -1t` in
+        `scripts/update.sh` actually goes by, and matching that proven
+        behaviour matters more here than matching the stamp."""
+        backups = sorted(
+            _BACKUP_DIR.glob("store-*.tgz"), key=lambda entry: entry.stat().st_mtime, reverse=True
+        )
+        for stale in backups[_BACKUPS_TO_KEEP:]:
+            stale.unlink(missing_ok=True)
 
     def fetch(self) -> None:
         self._run(["git", "fetch", "--tags", "--prune", "origin"], cwd=self._compose_dir)
@@ -143,6 +184,12 @@ class DockerCommands:
         # recreated at all - since 8 September that service points at
         # matterjs-server, whose first start migrates the Fabric directory
         # one way.
+        #
+        # No `--force-recreate`, unlike `scripts/update.sh`. Defensible
+        # rather than an oversight: `write_image_tag` always changes the
+        # image reference in `.env` before every call to `recreate` (see
+        # `runner.run_update` and its `roll_back`), so Compose already
+        # sees a config diff and recreates without needing to be forced.
         self._run(
             ["docker", "compose", "up", "-d", "--no-deps", "loxmatter"],
             cwd=self._compose_dir,
@@ -175,6 +222,12 @@ class DockerCommands:
         # second definition of the same variable would technically work
         # (Compose takes the last) but would mislead whoever edits the
         # file by hand afterwards into changing the wrong line.
+        #
+        # `mkdir` first, like `backup()` and `log()` - without it, a
+        # missing parent directory turns the `FileNotFoundError` this
+        # method already handles on READ into an unhandled one on WRITE,
+        # for a case this method exists specifically to cover.
+        self._env_path.parent.mkdir(parents=True, exist_ok=True)
         try:
             text = self._env_path.read_text(encoding="utf-8")
         except FileNotFoundError:
@@ -199,14 +252,14 @@ class DockerCommands:
             return _DEFAULT_TAG
         for line in text.splitlines():
             if line.startswith(_TAG_PREFIX):
-                return line[len(_TAG_PREFIX) :]
+                return _clean_tag_value(line[len(_TAG_PREFIX) :])
         return _DEFAULT_TAG
 
     def read_git_ref(self) -> str:
         return self._run(["git", "rev-parse", "HEAD"], cwd=self._compose_dir).strip()
 
     def log(self, line: str) -> None:
-        path = log_path(UPDATE_DIR)
+        path = log_path(self._base)
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("a", encoding="utf-8") as handle:
             handle.write(f"{now_iso()} {line}\n")

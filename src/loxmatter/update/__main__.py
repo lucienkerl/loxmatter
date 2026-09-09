@@ -150,7 +150,9 @@ def main() -> None:
     compose_dir = _path_from_env("LOXMATTER_COMPOSE_DIR", DEFAULT_COMPOSE_DIR)
     env_path = _path_from_env("LOXMATTER_ENV_PATH", compose_dir / ".env")
     health_url = os.environ.get("LOXMATTER_HEALTH_URL", "").strip() or DEFAULT_HEALTH_URL
-    commands = DockerCommands(compose_dir=compose_dir, env_path=env_path, health_url=health_url)
+    commands = DockerCommands(
+        compose_dir=compose_dir, env_path=env_path, health_url=health_url, base=base
+    )
 
     while True:
         try:
