@@ -290,7 +290,7 @@ def updater(tmp_path):
     return run
 
 
-def _auftrag(updater, **fields) -> None:
+def _write_request(updater, **fields) -> None:
     body = {
         "id": "auftrag-1",
         "channel": "stable",
@@ -338,7 +338,7 @@ def test_the_heartbeat_is_written_on_every_pass(updater):
 
 
 def test_a_target_containing_a_semicolon_is_rejected(updater):
-    _auftrag(updater, target="0.3.0; rm -rf /")
+    _write_request(updater, target="0.3.0; rm -rf /")
     _, calls, state = updater()
     assert state["phase"] == "rejected"
     assert "docker" not in calls
@@ -348,7 +348,7 @@ def test_a_target_with_a_foreign_registry_is_rejected(updater):
     # The image name is assembled inside the script, never taken over
     # verbatim. A target that looks like an image is therefore simply
     # not a valid target.
-    _auftrag(updater, target="evil.example.com/loxmatter:latest")
+    _write_request(updater, target="evil.example.com/loxmatter:latest")
     _, calls, state = updater()
     assert state["phase"] == "rejected"
     assert "docker" not in calls
@@ -368,21 +368,21 @@ def test_a_target_with_a_foreign_registry_is_rejected(updater):
 # now be rejected before a single docker call, same as any other
 # malformed target.
 def test_a_target_with_an_embedded_newline_is_rejected(updater):
-    _auftrag(updater, target="0.3.0\nrm -rf /")
+    _write_request(updater, target="0.3.0\nrm -rf /")
     _, calls, state = updater()
     assert state["phase"] == "rejected"
     assert "docker" not in calls
 
 
 def test_a_foreign_registry_target_with_an_embedded_newline_is_rejected(updater):
-    _auftrag(updater, target="evil.example.com/loxmatter:latest\n0.3.0")
+    _write_request(updater, target="evil.example.com/loxmatter:latest\n0.3.0")
     _, calls, state = updater()
     assert state["phase"] == "rejected"
     assert "docker" not in calls
 
 
 def test_a_dev_target_with_an_embedded_newline_is_rejected(updater):
-    _auftrag(updater, channel="dev", target="abcdef1\n; wget evil")
+    _write_request(updater, channel="dev", target="abcdef1\n; wget evil")
     _, calls, state = updater()
     assert state["phase"] == "rejected"
     assert "docker" not in calls
@@ -411,14 +411,14 @@ def test_a_valid_dev_target_is_accepted(updater):
     # test still pins down is that BOTH are read-only: never a mutating
     # `docker inspect`, and never more of them than these two expected
     # ones.
-    _auftrag(updater, channel="dev", target="abcdef1")
+    _write_request(updater, channel="dev", target="abcdef1")
     _, calls, state = updater()
     assert state["phase"] == "done"
     assert calls.count("docker inspect") == 2
 
 
 def test_a_malformed_dev_target_is_rejected(updater):
-    _auftrag(updater, channel="dev", target="not-a-commit-sha")
+    _write_request(updater, channel="dev", target="not-a-commit-sha")
     _, calls, state = updater()
     assert state["phase"] == "rejected"
     assert "docker" not in calls
@@ -437,7 +437,7 @@ def test_an_unparseable_request_is_rejected(updater):
 
 
 def test_a_request_with_an_empty_id_is_rejected(updater):
-    _auftrag(updater, id="")
+    _write_request(updater, id="")
     _, calls, state = updater()
     assert state["phase"] == "rejected"
     assert "docker" not in calls
@@ -458,7 +458,7 @@ def test_a_dot_or_dotdot_id_is_rejected_not_silently_swallowed(updater, evil_id)
     # single pass, forever - never even reaching this rejection, in
     # violation of this file's own "a request is not readable" doctrine
     # that a rejection must be recorded, not silently skipped.
-    _auftrag(updater, id=evil_id)
+    _write_request(updater, id=evil_id)
     _, calls, state = updater()
     assert state["phase"] == "rejected"
     assert state["error"] == 'id must not be "." or ".."'
@@ -466,7 +466,7 @@ def test_a_dot_or_dotdot_id_is_rejected_not_silently_swallowed(updater, evil_id)
 
 
 def test_an_unknown_channel_is_rejected(updater):
-    _auftrag(updater, channel="beliebig")
+    _write_request(updater, channel="beliebig")
     _, calls, state = updater()
     assert state["phase"] == "rejected"
     assert "docker" not in calls
@@ -479,7 +479,7 @@ def test_an_older_version_is_rejected(updater):
     # so answering "is 0.1.0 newer than what's running" costs one
     # `docker inspect` (see running_version()). That call is legitimate;
     # what must not happen is anything that changes host state.
-    _auftrag(updater, target="0.1.0")
+    _write_request(updater, target="0.1.0")
     _, calls, state = updater()
     assert state["phase"] == "rejected"
     assert _mutating_docker_calls(calls) == []
@@ -489,14 +489,14 @@ def test_the_same_version_is_rejected(updater):
     # Same reasoning as test_an_older_version_is_rejected above: a
     # well-formed target that ties the running version also needs the one
     # read-only `docker inspect` to know that it ties.
-    _auftrag(updater, target="0.2.0")
+    _write_request(updater, target="0.2.0")
     _, calls, state = updater()
     assert state["phase"] == "rejected"
     assert _mutating_docker_calls(calls) == []
 
 
 def test_a_valid_target_is_accepted(updater):
-    _auftrag(updater, target="0.3.0")
+    _write_request(updater, target="0.3.0")
     _, calls, state = updater()
     assert state["phase"] != "rejected"
     assert "docker" in calls
@@ -522,17 +522,17 @@ def test_the_same_job_is_not_run_twice(updater):
     # above), not a bare substring - see its own docstring for why a
     # literal "compose pull" no longer appears now that compose() carries
     # `-f`/`--project-directory` between "compose" and the subcommand.
-    _auftrag(updater, target="0.3.0")
-    _, erste_calls, erste = updater()
-    assert erste["phase"] == "done"
-    assert erste["to"] == "0.3.0"
-    assert len(_compose_calls(erste_calls, "pull")) == 1
+    _write_request(updater, target="0.3.0")
+    _, first_calls, first_state = updater()
+    assert first_state["phase"] == "done"
+    assert first_state["to"] == "0.3.0"
+    assert len(_compose_calls(first_calls, "pull")) == 1
 
-    _auftrag(updater, target="0.4.0")  # same id "auftrag-1", new target
-    _, zweite_calls, zweite = updater()
-    assert zweite["id"] == "auftrag-1"
-    assert zweite["to"] == "0.3.0"
-    assert len(_compose_calls(zweite_calls, "pull")) == 1
+    _write_request(updater, target="0.4.0")  # same id "auftrag-1", new target
+    _, second_calls, second_state = updater()
+    assert second_state["id"] == "auftrag-1"
+    assert second_state["to"] == "0.3.0"
+    assert len(_compose_calls(second_calls, "pull")) == 1
 
 
 # ---------------------------------------------------------- Stufe 2 round --
@@ -560,7 +560,7 @@ def test_an_oversized_target_is_rejected_without_corrupting_state(updater):
     # threshold, so it is the length cap specifically - not the pattern
     # check - that has to stop it here.
     huge_target = "0.3." + "0" * 600000
-    _auftrag(updater, target=huge_target)
+    _write_request(updater, target=huge_target)
     result, calls, state = updater()
     assert result.returncode == 0
     assert state is not None
@@ -572,7 +572,7 @@ def test_an_oversized_target_is_rejected_without_corrupting_state(updater):
 def test_an_oversized_id_is_rejected(updater):
     # Critical, the id half: unbounded, an id reaches the exact same
     # set_state E2BIG failure the target-length test above exercises.
-    _auftrag(updater, id="x" * 200)
+    _write_request(updater, id="x" * 200)
     result, calls, state = updater()
     assert result.returncode == 0
     assert state["phase"] == "rejected"
@@ -589,7 +589,7 @@ def test_an_id_with_an_embedded_newline_does_not_forge_a_log_line(updater):
     # perfect forged "accepted" line, and the request still reached
     # phase: queued. The log must contain ONLY the real rejection line.
     evil_id = "a1\n2026-01-01T00:00:00Z Request evil accepted: 0.2.0 -> 9.9.9 (stable)"
-    _auftrag(updater, id=evil_id)
+    _write_request(updater, id=evil_id)
     result, calls, state = updater()
     assert result.returncode == 0
     assert state["phase"] == "rejected"
@@ -666,7 +666,7 @@ def test_reject_records_state_before_logging(updater):
     # (mutant), the wedge happens before set_state ever runs, and
     # state.json is left exactly as the heartbeat wrote it moments earlier
     # ("idle") - never "rejected".
-    _auftrag(updater, channel="invalid-channel")
+    _write_request(updater, channel="invalid-channel")
     os.mkfifo(updater.update_dir / "log.txt")
     with pytest.raises(subprocess.TimeoutExpired):
         updater(_timeout=2)
@@ -682,7 +682,7 @@ def test_an_unwritable_log_does_not_prevent_a_rejection_from_being_recorded(upda
     # blocking, so it is `|| true` specifically - not ordering - that has
     # to keep the failure from propagating through `set -eu` and killing
     # the script after set_state already ran.
-    _auftrag(updater, channel="invalid-channel")
+    _write_request(updater, channel="invalid-channel")
     log_path = updater.update_dir / "log.txt"
     log_path.write_text("", encoding="utf-8")
     log_path.chmod(0o444)
@@ -703,7 +703,7 @@ def test_a_leading_v_is_stripped_from_the_target(updater):
     # Since Task 3's flow now runs an accepted request through to
     # completion in the same pass, this ends at "done", not "queued" -
     # what still pins down the normalisation is `to` and the .env write.
-    _auftrag(updater, target="v0.3.0")
+    _write_request(updater, target="v0.3.0")
     _, calls, state = updater()
     assert state["phase"] == "done"
     assert state["to"] == "0.3.0"
@@ -719,7 +719,7 @@ def test_a_leading_v_is_stripped_from_the_target(updater):
 
 
 def test_the_flow_keeps_its_order(updater):
-    _auftrag(updater, target="0.3.0")
+    _write_request(updater, target="0.3.0")
     _, calls, state = updater()
     lines = calls.splitlines()
     tar_idx = next(i for i, line in enumerate(lines) if line.startswith("tar "))
@@ -763,7 +763,7 @@ def test_the_image_pull_reports_phase_pull_not_backup(updater):
         encoding="utf-8",
     )
     docker_path.chmod(0o755)
-    _auftrag(updater, target="0.3.0")
+    _write_request(updater, target="0.3.0")
     _, _calls, state = updater()
     assert state["phase"] == "done"
     assert snapshot.is_file(), "the image pull never ran"
@@ -810,7 +810,7 @@ def test_the_heartbeat_keeps_advancing_through_a_long_image_pull(updater):
         encoding="utf-8",
     )
     docker_path.chmod(0o755)
-    _auftrag(updater, target="0.3.0")
+    _write_request(updater, target="0.3.0")
     _, _calls, state = updater(_timeout=30)
     assert state["phase"] == "done"
     assert before.is_file() and after.is_file(), "the image pull never ran"
@@ -822,7 +822,7 @@ def test_the_heartbeat_keeps_advancing_through_a_long_image_pull(updater):
 
 
 def test_the_restart_leaves_the_neighboring_services_alone(updater):
-    _auftrag(updater, target="0.3.0")
+    _write_request(updater, target="0.3.0")
     _, calls, _ = updater()
     up = _compose_calls(calls, "up")[0]
     assert "--no-deps" in up
@@ -836,14 +836,14 @@ def test_the_image_name_does_not_come_from_the_job(updater):
     # it cannot show up there. It shows up in the script's OWN log
     # (log.txt) instead, precisely because that is the one place meant to
     # record it for an operator without ever handing it to a command.
-    _auftrag(updater, target="0.3.0")
+    _write_request(updater, target="0.3.0")
     updater()
     log_text = (updater.update_dir / "log.txt").read_text(encoding="utf-8")
     assert "ghcr.io/lucienkerl/loxmatter" in log_text
 
 
 def test_the_tag_lands_in_the_env_file(updater):
-    _auftrag(updater, target="0.3.0")
+    _write_request(updater, target="0.3.0")
     updater()
     assert "LOXMATTER_IMAGE_TAG=0.3.0" in (updater.stack / ".env").read_text(encoding="utf-8")
 
@@ -856,7 +856,7 @@ def test_the_env_file_keeps_its_other_lines(updater):
         "MINISERVER_IP=10.0.1.9\nLOXMATTER_IMAGE_TAG=0.2.0\nRADIO_DEVICE=/dev/ttyUSB0\n",
         encoding="utf-8",
     )
-    _auftrag(updater, target="0.3.0")
+    _write_request(updater, target="0.3.0")
     updater()
     text = env.read_text(encoding="utf-8")
     assert "MINISERVER_IP=10.0.1.9" in text
@@ -866,7 +866,7 @@ def test_the_env_file_keeps_its_other_lines(updater):
 
 
 def test_a_backup_is_made_before_the_pull(updater):
-    _auftrag(updater, target="0.3.0")
+    _write_request(updater, target="0.3.0")
     _, calls, _ = updater()
     tar_line = next(line for line in calls.splitlines() if line.startswith("tar"))
     assert "store-" in tar_line
@@ -898,7 +898,7 @@ def test_a_dev_target_that_is_not_a_descendant_is_rejected(updater):
         encoding="utf-8",
     )
     git_path.chmod(0o755)
-    _auftrag(updater, channel="dev", target="abcdef1")
+    _write_request(updater, channel="dev", target="abcdef1")
     _, calls, state = updater()
     assert state["phase"] == "rejected"
     assert state["error"] == "not a descendant of the running state"
@@ -935,7 +935,7 @@ def test_an_env_file_with_no_trailing_newline_and_no_tag_line_keeps_its_other_va
     (updater.stack / ".env").write_text(
         "MINISERVER_IP=10.0.1.9\nLOXMATTER_API_TOKEN=deadbeefcafe", encoding="utf-8"
     )
-    _auftrag(updater, target="0.3.0")
+    _write_request(updater, target="0.3.0")
     _, _calls, state = updater()
     assert state["phase"] == "done"
     lines = (updater.stack / ".env").read_text(encoding="utf-8").splitlines()
@@ -979,7 +979,7 @@ def test_wait_healthy_is_bounded_by_wall_clock_not_curl_duration(updater):
     curl_path = updater.bindir / "curl"
     curl_path.write_text("#!/bin/sh\nsleep 2\nexit 1\n", encoding="utf-8")
     curl_path.chmod(0o755)
-    _auftrag(updater, target="0.3.0")
+    _write_request(updater, target="0.3.0")
     start = time.monotonic()
     _, _, state = updater(LOXMATTER_HEALTH_TIMEOUT="2", _timeout=30)
     elapsed = time.monotonic() - start
@@ -1041,7 +1041,7 @@ def test_the_heartbeat_keeps_advancing_through_a_long_health_wait(updater):
         encoding="utf-8",
     )
     curl_path.chmod(0o755)
-    _auftrag(updater, target="0.3.0")
+    _write_request(updater, target="0.3.0")
     _, _calls, state = updater(LOXMATTER_HEALTH_TIMEOUT="5", _timeout=30)
     assert state["phase"] == "failed"
     assert state["rolled_back"] is True
@@ -1087,7 +1087,7 @@ def test_a_failed_restart_hands_off_to_rollback_instead_of_stranding_the_tag(upd
         encoding="utf-8",
     )
     docker_path.chmod(0o755)
-    _auftrag(updater, target="0.3.0")
+    _write_request(updater, target="0.3.0")
     _, _calls, state = updater()
     assert state["phase"] == "failed"
     assert state["rolled_back"] is True
@@ -1107,7 +1107,7 @@ def test_a_tag_write_that_cannot_be_made_is_recorded_as_a_failure(updater):
     # container still ran the old image.
     updater.stack.chmod(0o555)
     try:
-        _auftrag(updater, target="0.3.0")
+        _write_request(updater, target="0.3.0")
         result, calls, state = updater()
     finally:
         updater.stack.chmod(0o755)
@@ -1138,7 +1138,7 @@ def test_a_pull_failure_that_cannot_restore_the_tag_is_recorded_as_a_failure(upd
         encoding="utf-8",
     )
     docker_path.chmod(0o755)
-    _auftrag(updater, target="0.3.0")
+    _write_request(updater, target="0.3.0")
     try:
         result, _calls, state = updater()
     finally:
@@ -1177,7 +1177,7 @@ def test_an_unhealthy_service_falls_through_to_rollback_not_done(updater):
         encoding="utf-8",
     )
     curl_path.chmod(0o755)
-    _auftrag(updater, target="0.3.0")
+    _write_request(updater, target="0.3.0")
     _, _calls, state = updater()
     assert state["phase"] == "failed"
     assert state["rolled_back"] is True
@@ -1195,7 +1195,7 @@ def test_the_checkout_uses_the_v_prefixed_ref(updater):
     # `v` produces "checkout --detach 0.3.0" instead - the exact
     # substring below, "v" included, distinguishes both from the correct
     # call.
-    _auftrag(updater, target="0.3.0")
+    _write_request(updater, target="0.3.0")
     _, calls, _state = updater()
     assert "checkout --detach v0.3.0" in calls
 
@@ -1205,7 +1205,7 @@ def test_the_target_is_fetched_before_checkout(updater):
     # checkout could then only ever succeed against whatever the
     # repository already happened to have locally, silently, with
     # nothing here to notice a target that was never actually fetched.
-    _auftrag(updater, target="0.3.0")
+    _write_request(updater, target="0.3.0")
     _, calls, _state = updater()
     assert "fetch --tags --force origin" in calls
     assert calls.index("fetch --tags --force origin") < calls.index("checkout --detach v0.3.0")
@@ -1229,7 +1229,7 @@ def test_set_tag_escapes_sed_metacharacters_in_the_restored_tag(updater):
         encoding="utf-8",
     )
     docker_path.chmod(0o755)
-    _auftrag(updater, target="0.3.0")
+    _write_request(updater, target="0.3.0")
     _, _calls, state = updater()
     assert state["phase"] == "failed"
     assert (updater.stack / ".env").read_text(encoding="utf-8") == "LOXMATTER_IMAGE_TAG=a|b\n"
@@ -1243,7 +1243,7 @@ def test_set_tag_preserves_the_env_files_mode(updater):
     # whatever the process umask allows, discarding whatever an operator
     # (or install.sh) had deliberately set.
     (updater.stack / ".env").chmod(0o600)
-    _auftrag(updater, target="0.3.0")
+    _write_request(updater, target="0.3.0")
     updater()
     mode = (updater.stack / ".env").stat().st_mode & 0o777
     assert mode == 0o600
@@ -1259,7 +1259,7 @@ def test_set_tag_preserves_a_symlinked_env_file(updater):
     env_path = updater.stack / ".env"
     env_path.unlink()
     env_path.symlink_to(real_env)
-    _auftrag(updater, target="0.3.0")
+    _write_request(updater, target="0.3.0")
     updater()
     assert env_path.is_symlink()
     assert env_path.resolve() == real_env.resolve()
@@ -1304,7 +1304,7 @@ def test_a_failed_update_does_not_prune_backups(updater):
     )
     docker_path.chmod(0o755)
 
-    _auftrag(updater, target="0.3.0")
+    _write_request(updater, target="0.3.0")
     _, _calls, state = updater()
     assert state["phase"] == "failed"
     for p in alte_dateien:
@@ -1332,7 +1332,7 @@ def test_a_checkout_refused_by_local_modifications_is_reported_distinctly(update
         encoding="utf-8",
     )
     git_path.chmod(0o755)
-    _auftrag(updater, target="0.3.0")
+    _write_request(updater, target="0.3.0")
     _, _calls, state = updater()
     assert state["phase"] == "failed"
     assert "not found in the repository" not in state["error"]
@@ -1363,7 +1363,7 @@ def test_a_missing_ref_is_still_reported_as_not_found(updater):
         encoding="utf-8",
     )
     git_path.chmod(0o755)
-    _auftrag(updater, target="0.3.0")
+    _write_request(updater, target="0.3.0")
     _, calls, state = updater()
     assert state["phase"] == "failed"
     assert "not found in the repository" in state["error"]
@@ -1377,7 +1377,7 @@ def test_a_missing_ref_is_still_reported_as_not_found(updater):
 
 
 @pytest.fixture
-def kranker_dienst(updater, tmp_path):
+def unhealthy_service(updater, tmp_path):
     """The same environment, but `curl` never responds healthy - the case
     the rollback exists for."""
     curl = tmp_path / "bin" / "curl"
@@ -1388,18 +1388,18 @@ def kranker_dienst(updater, tmp_path):
     return updater
 
 
-def test_an_unhealthy_service_is_rolled_back(kranker_dienst):
+def test_an_unhealthy_service_is_rolled_back(unhealthy_service):
     # The rollback is a hand-off ("rollback" is not a terminal phase, see
     # the comment above the first `set_state rollback ""` in
     # update-once.sh) - once it runs, the pass ends `failed`, not
     # `rollback`, with `rolled_back` recording that the attempt was made.
-    _auftrag(kranker_dienst, target="0.3.0")
-    _, _, state = kranker_dienst()
+    _write_request(unhealthy_service, target="0.3.0")
+    _, _, state = unhealthy_service()
     assert state["phase"] == "failed"
     assert state["rolled_back"] is True
 
 
-def test_the_rollback_checks_out_head_when_git_before_could_not_be_determined(kranker_dienst):
+def test_the_rollback_checks_out_head_when_git_before_could_not_be_determined(unhealthy_service):
     # Found by manual verification, not by reading the code: this
     # fixture's default `git` stub always "succeeds" (exit 0) with NO
     # output at all - unlike a real `git rev-parse HEAD`, which never
@@ -1412,14 +1412,14 @@ def test_the_rollback_checks_out_head_when_git_before_could_not_be_determined(kr
     # capturing the raw output and falling back through `${:-HEAD}`
     # instead, the same idiom current_tag() and running_version() already
     # use above for exactly this "succeeded but unusable" shape.
-    _auftrag(kranker_dienst, target="0.3.0")
-    _, calls, _state = kranker_dienst()
+    _write_request(unhealthy_service, target="0.3.0")
+    _, calls, _state = unhealthy_service()
     checkouts = [line for line in calls.splitlines() if "checkout --detach" in line]
     assert len(checkouts) == 2, checkouts
     assert checkouts[-1].endswith("checkout --detach HEAD"), checkouts[-1]
 
 
-def test_the_rollback_restores_the_old_tag(kranker_dienst):
+def test_the_rollback_restores_the_old_tag(unhealthy_service):
     # BACK comes from $RUNNING (this fixture's `docker inspect` stub
     # always answers "0.2.0"), not from $FROM - see the rollback
     # section's own comment on why a moving alias in .env would be the
@@ -1427,29 +1427,29 @@ def test_the_rollback_restores_the_old_tag(kranker_dienst):
     # since the seeded .env already reads 0.2.0; the distinction matters
     # once .env starts out on the "stable" alias, which is the normal
     # case on every fresh installation (see the comment on current_tag()).
-    _auftrag(kranker_dienst, target="0.3.0")
-    kranker_dienst()
-    assert "LOXMATTER_IMAGE_TAG=0.2.0" in (kranker_dienst.stack / ".env").read_text(
+    _write_request(unhealthy_service, target="0.3.0")
+    unhealthy_service()
+    assert "LOXMATTER_IMAGE_TAG=0.2.0" in (unhealthy_service.stack / ".env").read_text(
         encoding="utf-8"
     )
 
 
-def test_the_rollback_runs_exactly_once(kranker_dienst):
+def test_the_rollback_runs_exactly_once(unhealthy_service):
     # No flapping: two `up` calls (update and rollback), no more. If the
     # cause were not the image itself, a third attempt would only add
     # more downtime without changing the outcome.
-    _auftrag(kranker_dienst, target="0.3.0")
-    _, calls, _state = kranker_dienst()
+    _write_request(unhealthy_service, target="0.3.0")
+    _, calls, _state = unhealthy_service()
     assert len(_compose_calls(calls, "up")) == 2
 
 
-def test_the_rollback_does_not_touch_the_database(kranker_dienst):
+def test_the_rollback_does_not_touch_the_database(unhealthy_service):
     # Spec section 8: the old version runs on the new schema
     # (`_migrate` returns immediately once version >= _SCHEMA_VERSION).
     # Restoring the backup is the more destructive step and stays an
     # explicit action in the web UI.
-    _auftrag(kranker_dienst, target="0.3.0")
-    _, calls, _state = kranker_dienst()
+    _write_request(unhealthy_service, target="0.3.0")
+    _, calls, _state = unhealthy_service()
     # Check specifically for the unpacking, not for an arbitrary "-x": that
     # would otherwise trip on any future call that happens to carry an
     # -x flag, and the test would go red for a reason that has nothing to
@@ -1460,10 +1460,10 @@ def test_the_rollback_does_not_touch_the_database(kranker_dienst):
         assert " -x" not in line and "xzf" not in line, line
 
 
-def test_a_failure_leaves_a_readable_file(kranker_dienst):
-    _auftrag(kranker_dienst, target="0.3.0")
-    kranker_dienst()
-    text = (kranker_dienst.update_dir / "LETZTER-FEHLSCHLAG.txt").read_text(encoding="utf-8")
+def test_a_failure_leaves_a_readable_file(unhealthy_service):
+    _write_request(unhealthy_service, target="0.3.0")
+    unhealthy_service()
+    text = (unhealthy_service.update_dir / "LETZTER-FEHLSCHLAG.txt").read_text(encoding="utf-8")
     assert "0.2.0" in text
     assert "0.3.0" in text
     assert "scripts/update.sh" in text
@@ -1478,7 +1478,7 @@ def test_a_successful_update_leaves_no_failure_file(updater):
     # "does not exist" assertion whether or not `rm -f "$FAILURE"` in the
     # success branch actually runs.
     (updater.update_dir / "LETZTER-FEHLSCHLAG.txt").write_text("stale", encoding="utf-8")
-    _auftrag(updater, target="0.3.0")
+    _write_request(updater, target="0.3.0")
     updater()
     assert not (updater.update_dir / "LETZTER-FEHLSCHLAG.txt").exists()
 
@@ -1504,7 +1504,7 @@ def test_a_recreate_failure_also_rolls_back_without_a_pointless_wait(updater):
         encoding="utf-8",
     )
     docker_path.chmod(0o755)
-    _auftrag(updater, target="0.3.0")
+    _write_request(updater, target="0.3.0")
     start = time.monotonic()
     _, calls, state = updater(_timeout=30)
     elapsed = time.monotonic() - start
@@ -1517,7 +1517,7 @@ def test_a_recreate_failure_also_rolls_back_without_a_pointless_wait(updater):
 
 
 def test_the_sidecar_replaces_itself_only_after_success(updater):
-    _auftrag(updater, target="0.3.0")
+    _write_request(updater, target="0.3.0")
     _, calls, _ = updater(LOXMATTER_UPDATER_SELF_REPLACE="1")
     zeilen = calls.splitlines()
     # Restricted to lines starting "docker compose" specifically, not any
@@ -1542,7 +1542,7 @@ def test_the_sidecar_replaces_itself_only_after_success(updater):
     assert fremd < eigen
 
 
-def test_after_a_failure_it_does_not_replace_itself(kranker_dienst):
+def test_after_a_failure_it_does_not_replace_itself(unhealthy_service):
     # "loxmatter-updater" alone is no longer a safe substring to forbid
     # outright: the Stufe-2 fix for the plain-text file's unusable
     # commands (host_path_for(), in update-once.sh) makes a READ-ONLY
@@ -1552,8 +1552,8 @@ def test_after_a_failure_it_does_not_replace_itself(kranker_dienst):
     # What this test actually claims is narrower and still holds: no
     # MUTATING `docker compose ... loxmatter-updater` call (a pull or an
     # up) ever runs on a failed pass.
-    _auftrag(kranker_dienst, target="0.3.0")
-    _, calls, _ = kranker_dienst(LOXMATTER_UPDATER_SELF_REPLACE="1")
+    _write_request(unhealthy_service, target="0.3.0")
+    _, calls, _ = unhealthy_service(LOXMATTER_UPDATER_SELF_REPLACE="1")
     self_replace_calls = [
         line
         for line in calls.splitlines()
@@ -1579,7 +1579,7 @@ def test_self_replacement_is_off_by_default_in_this_fixture(updater):
     # and is what this test actually claims, is narrower: no MUTATING
     # `docker compose ... loxmatter-updater` call (a pull or an up) ever
     # runs when self-replacement is off.
-    _auftrag(updater, target="0.3.0")
+    _write_request(updater, target="0.3.0")
     _, calls, state = updater()
     assert state["phase"] == "done"
     self_replace_calls = [
@@ -1623,7 +1623,7 @@ def test_the_rollback_does_not_claim_success_when_the_tag_write_fails(updater):
     )
     curl_path.chmod(0o755)
     try:
-        _auftrag(updater, target="0.3.0")
+        _write_request(updater, target="0.3.0")
         _, calls, state = updater(_timeout=30)
     finally:
         updater.stack.chmod(0o755)
@@ -1637,7 +1637,7 @@ def test_the_rollback_does_not_claim_success_when_the_tag_write_fails(updater):
     assert "Rolled back to:" not in text
 
 
-def test_the_failure_file_uses_a_real_host_path_when_docker_can_resolve_it(kranker_dienst):
+def test_the_failure_file_uses_a_real_host_path_when_docker_can_resolve_it(unhealthy_service):
     # Important 2. Proven against the unpatched script: four of the five
     # printed commands began `cd $STACK`/`cd $REPO` - CONTAINER paths
     # (/repo/deploy/testhost, /repo), bind-mounted from the host's
@@ -1650,7 +1650,7 @@ def test_the_failure_file_uses_a_real_host_path_when_docker_can_resolve_it(krank
     # daemon would once the self-replacement service (a later task)
     # exists: one "container-path host-path" line per bind mount.
     host_checkout = "/home/pi/loxmatter-checkout"
-    docker_path = kranker_dienst.bindir / "docker"
+    docker_path = unhealthy_service.bindir / "docker"
     docker_path.write_text(
         "#!/bin/sh\n"
         'printf "%s %s\\n" "docker" "$*" >> "$STUB_LOG"\n'
@@ -1667,9 +1667,9 @@ def test_the_failure_file_uses_a_real_host_path_when_docker_can_resolve_it(krank
         encoding="utf-8",
     )
     docker_path.chmod(0o755)
-    _auftrag(kranker_dienst, target="0.3.0")
-    kranker_dienst()
-    text = (kranker_dienst.update_dir / "LETZTER-FEHLSCHLAG.txt").read_text(encoding="utf-8")
+    _write_request(unhealthy_service, target="0.3.0")
+    unhealthy_service()
+    text = (unhealthy_service.update_dir / "LETZTER-FEHLSCHLAG.txt").read_text(encoding="utf-8")
     assert f"cd {host_checkout}/deploy/testhost && docker compose logs" in text
     assert f"cd {host_checkout} && ./scripts/update.sh --no-pull" in text
     # Bounded to the RUNNABLE command lines specifically, not the log
@@ -1678,11 +1678,11 @@ def test_the_failure_file_uses_a_real_host_path_when_docker_can_resolve_it(krank
     # log of what THIS container did, not a command for the operator to
     # run themselves).
     manual_section = text.split("Manual next steps")[1].split("Last lines of the log")[0]
-    assert str(kranker_dienst.stack) not in manual_section
-    assert str(kranker_dienst.stack.parent.parent) not in manual_section
+    assert str(unhealthy_service.stack) not in manual_section
+    assert str(unhealthy_service.stack.parent.parent) not in manual_section
 
 
-def test_the_failure_file_resolves_a_host_path_for_a_path_under_a_mount(kranker_dienst):
+def test_the_failure_file_resolves_a_host_path_for_a_path_under_a_mount(unhealthy_service):
     # The test directly above stubs `docker inspect` into reporting
     # $LOXMATTER_STACK as a mount destination IN ITS OWN RIGHT - which is
     # not what the real stack does. `deploy/testhost/docker-compose.yml`
@@ -1703,7 +1703,7 @@ def test_the_failure_file_resolves_a_host_path_for_a_path_under_a_mount(kranker_
     # mount's Source, so a single /repo mount is enough to resolve both
     # /repo itself and everything under it.
     host_checkout = "/home/pi/loxmatter-checkout"
-    docker_path = kranker_dienst.bindir / "docker"
+    docker_path = unhealthy_service.bindir / "docker"
     docker_path.write_text(
         "#!/bin/sh\n"
         'printf "%s %s\\n" "docker" "$*" >> "$STUB_LOG"\n'
@@ -1719,15 +1719,15 @@ def test_the_failure_file_resolves_a_host_path_for_a_path_under_a_mount(kranker_
         encoding="utf-8",
     )
     docker_path.chmod(0o755)
-    _auftrag(kranker_dienst, target="0.3.0")
-    kranker_dienst()
-    text = (kranker_dienst.update_dir / "LETZTER-FEHLSCHLAG.txt").read_text(encoding="utf-8")
+    _write_request(unhealthy_service, target="0.3.0")
+    unhealthy_service()
+    text = (unhealthy_service.update_dir / "LETZTER-FEHLSCHLAG.txt").read_text(encoding="utf-8")
     assert f"cd {host_checkout}/deploy/testhost && docker compose logs" in text
     assert f"cd {host_checkout} && ./scripts/update.sh --no-pull" in text
     assert "host path unknown" not in text
 
 
-def test_the_failure_file_says_so_plainly_when_the_host_path_cannot_be_resolved(kranker_dienst):
+def test_the_failure_file_says_so_plainly_when_the_host_path_cannot_be_resolved(unhealthy_service):
     # Important 2, the other half: the commands must not silently print
     # the unusable container path as if it were fine; they must say
     # plainly that the host path is unknown.
@@ -1749,7 +1749,7 @@ def test_the_failure_file_says_so_plainly_when_the_host_path_cannot_be_resolved(
     # that only PARTIALLY knows its own mounts, which is enough to prove
     # host_path_for()'s per-path fallback still says so plainly for the
     # one it cannot answer.
-    docker_path = kranker_dienst.bindir / "docker"
+    docker_path = unhealthy_service.bindir / "docker"
     docker_path.write_text(
         "#!/bin/sh\n"
         'printf "%s %s\\n" "docker" "$*" >> "$STUB_LOG"\n'
@@ -1765,9 +1765,9 @@ def test_the_failure_file_says_so_plainly_when_the_host_path_cannot_be_resolved(
         encoding="utf-8",
     )
     docker_path.chmod(0o755)
-    _auftrag(kranker_dienst, target="0.3.0")
-    kranker_dienst()
-    text = (kranker_dienst.update_dir / "LETZTER-FEHLSCHLAG.txt").read_text(encoding="utf-8")
+    _write_request(unhealthy_service, target="0.3.0")
+    unhealthy_service()
+    text = (unhealthy_service.update_dir / "LETZTER-FEHLSCHLAG.txt").read_text(encoding="utf-8")
     assert "host path unknown" in text
 
 
@@ -1780,7 +1780,7 @@ def test_the_self_replacement_pulls_before_recreating(updater):
     # only. `compose pull` first is what actually contacts the registry;
     # `up -d` afterward only recreates when that pull actually changed
     # the local image.
-    _auftrag(updater, target="0.3.0")
+    _write_request(updater, target="0.3.0")
     _, calls, _ = updater(LOXMATTER_UPDATER_SELF_REPLACE="1")
     lines = calls.splitlines()
     pull_idx = next(
@@ -1796,7 +1796,7 @@ def test_the_self_replacement_pulls_before_recreating(updater):
     assert pull_idx < up_idx
 
 
-def test_the_rollback_uses_running_not_the_env_alias_when_they_disagree(kranker_dienst):
+def test_the_rollback_uses_running_not_the_env_alias_when_they_disagree(unhealthy_service):
     # Important 4. Replacing the whole `case "$RUNNING" in ...` block that
     # computes $BACK with a bare `BACK="$FROM"` - the exact regression the
     # design's longest comment in update-once.sh exists to prevent - left
@@ -1811,10 +1811,10 @@ def test_the_rollback_uses_running_not_the_env_alias_when_they_disagree(kranker_
     # would instead write back the literal string "stable", pointing the
     # next pull at whatever "stable" now resolves to in the registry -
     # possibly the very release that just failed.
-    (kranker_dienst.stack / ".env").write_text("LOXMATTER_IMAGE_TAG=stable\n", encoding="utf-8")
-    _auftrag(kranker_dienst, target="0.3.0")
-    kranker_dienst()
-    assert (kranker_dienst.stack / ".env").read_text(encoding="utf-8") == (
+    (unhealthy_service.stack / ".env").write_text("LOXMATTER_IMAGE_TAG=stable\n", encoding="utf-8")
+    _write_request(unhealthy_service, target="0.3.0")
+    unhealthy_service()
+    assert (unhealthy_service.stack / ".env").read_text(encoding="utf-8") == (
         "LOXMATTER_IMAGE_TAG=0.2.0\n"
     )
 
@@ -1850,7 +1850,7 @@ def test_the_self_replacement_runs_strictly_after_done_is_recorded(updater):
         encoding="utf-8",
     )
     docker_path.chmod(0o755)
-    _auftrag(updater, target="0.3.0")
+    _write_request(updater, target="0.3.0")
     _, _calls, state = updater(LOXMATTER_UPDATER_SELF_REPLACE="1")
     assert state["phase"] == "done"
     assert snapshot.is_file(), "self-replacement never ran"
@@ -1858,7 +1858,7 @@ def test_the_self_replacement_runs_strictly_after_done_is_recorded(updater):
     assert snap_state["phase"] == "done"
 
 
-def test_a_corrupted_state_file_does_not_replay_a_completed_rollback(kranker_dienst):
+def test_a_corrupted_state_file_does_not_replay_a_completed_rollback(unhealthy_service):
     # Important 6. Exactly-once used to rest SOLELY on state.json's own
     # "id" field, and request.json is never consumed or removed. Proven
     # against the unpatched script: complete a rollback (two recreates),
@@ -1873,18 +1873,18 @@ def test_a_corrupted_state_file_does_not_replay_a_completed_rollback(kranker_die
     # The fix's guard (the "handled/<job-id>" marker, written the moment
     # a request is ACCEPTED) is independent of state.json entirely, so
     # this corruption must no longer be able to trigger a replay.
-    _auftrag(kranker_dienst, target="0.3.0")
-    _, first_calls, state = kranker_dienst()
+    _write_request(unhealthy_service, target="0.3.0")
+    _, first_calls, state = unhealthy_service()
     assert state["phase"] == "failed"
     assert state["rolled_back"] is True
 
-    (kranker_dienst.update_dir / "state.json").write_text("garbage{", encoding="utf-8")
-    _, second_calls, second_state = kranker_dienst()
+    (unhealthy_service.update_dir / "state.json").write_text("garbage{", encoding="utf-8")
+    _, second_calls, second_state = unhealthy_service()
     assert second_state["phase"] == "idle"
     assert second_calls == first_calls, "the corrupted-state pass must do nothing at all"
 
 
-def test_a_signal_during_the_rollback_health_wait_leaves_an_honest_failed_state(kranker_dienst):
+def test_a_signal_during_the_rollback_health_wait_leaves_an_honest_failed_state(unhealthy_service):
     # Important 7. There was no `trap` anywhere in this file. Proven
     # against the unpatched script: sending SIGTERM - what entrypoint.sh
     # forwards, from `docker stop` and from its own 600s parent `timeout`
@@ -1899,15 +1899,15 @@ def test_a_signal_during_the_rollback_health_wait_leaves_an_honest_failed_state(
     #
     # Sends a REAL signal to a REAL running process, mid-wait - polling
     # state.json until it reports phase "rollback" (the second, long
-    # health wait happens entirely within that phase; kranker_dienst's
+    # health wait happens entirely within that phase; unhealthy_service's
     # curl always fails, so the window is the full HEALTH_TIMEOUT=3s),
     # then delivering SIGTERM exactly then.
-    _auftrag(kranker_dienst, target="0.3.0")
-    proc = kranker_dienst.popen()
+    _write_request(unhealthy_service, target="0.3.0")
+    proc = unhealthy_service.popen()
     try:
         deadline = time.monotonic() + 10
         reached_rollback = False
-        state_file = kranker_dienst.update_dir / "state.json"
+        state_file = unhealthy_service.update_dir / "state.json"
         while time.monotonic() < deadline:
             if state_file.is_file():
                 try:
@@ -1930,7 +1930,7 @@ def test_a_signal_during_the_rollback_health_wait_leaves_an_honest_failed_state(
     assert final_state["phase"] == "failed"
     assert final_state["healthy"] is not True
     assert "interrupt" in (final_state["error"] or "").lower()
-    assert (kranker_dienst.update_dir / "LETZTER-FEHLSCHLAG.txt").exists()
+    assert (unhealthy_service.update_dir / "LETZTER-FEHLSCHLAG.txt").exists()
 
 
 def test_the_rollback_falls_back_to_from_for_an_unidentified_v_prefixed_running_version(updater):
@@ -1950,23 +1950,23 @@ def test_the_rollback_falls_back_to_from_for_an_unidentified_v_prefixed_running_
         '#!/bin/sh\nprintf "curl %s\\n" "$*" >> "$STUB_LOG"\nexit 7\n', encoding="utf-8"
     )
     curl_path.chmod(0o755)
-    _auftrag(updater, channel="dev", target="abcdef1")
+    _write_request(updater, channel="dev", target="abcdef1")
     updater()
     assert (updater.stack / ".env").read_text(encoding="utf-8") == "LOXMATTER_IMAGE_TAG=0.2.0\n"
 
 
-def test_a_dev_channel_update_is_rolled_back_when_unhealthy(kranker_dienst):
+def test_a_dev_channel_update_is_rolled_back_when_unhealthy(unhealthy_service):
     # Minor: no test drove a dev-channel update all the way into the
     # rollback before. Exercises $RUNNING being computed unconditionally
     # on channel (an earlier fix in this same section) together with the
     # rollback actually running for a dev-channel request.
-    _auftrag(kranker_dienst, channel="dev", target="abcdef1")
-    _, _calls, state = kranker_dienst()
+    _write_request(unhealthy_service, channel="dev", target="abcdef1")
+    _, _calls, state = unhealthy_service()
     assert state["phase"] == "failed"
     assert state["rolled_back"] is True
 
 
-def test_no_further_recreates_on_the_pass_after_a_rollback(kranker_dienst):
+def test_no_further_recreates_on_the_pass_after_a_rollback(unhealthy_service):
     # Minor: no test asserted zero further recreates on the very next
     # pass after a rollback (distinct from
     # test_a_corrupted_state_file_does_not_replay_a_completed_rollback
@@ -1974,11 +1974,11 @@ def test_no_further_recreates_on_the_pass_after_a_rollback(kranker_dienst):
     # is the plain, uncorrupted redundant-safety case: request.json
     # unchanged, state.json's id intact, dedup alone must already refuse
     # to redo the mutating half of the flow.
-    _auftrag(kranker_dienst, target="0.3.0")
-    _, first_calls, state = kranker_dienst()
+    _write_request(unhealthy_service, target="0.3.0")
+    _, first_calls, state = unhealthy_service()
     assert state["phase"] == "failed"
     assert state["rolled_back"] is True
-    _, second_calls, second_state = kranker_dienst()
+    _, second_calls, second_state = unhealthy_service()
     assert second_state["id"] == state["id"]
     assert len(_compose_calls(second_calls, "up")) == len(_compose_calls(first_calls, "up"))
     assert len(_compose_calls(second_calls, "pull")) == len(_compose_calls(first_calls, "pull"))
@@ -2008,7 +2008,7 @@ def test_a_stale_failure_file_is_cleared_when_a_different_request_is_accepted(up
         encoding="utf-8",
     )
     git_path.chmod(0o755)
-    _auftrag(updater, target="0.3.0")
+    _write_request(updater, target="0.3.0")
     _, _calls, state = updater()
     assert state["phase"] == "failed"
     assert state["error"] == "git fetch failed"
@@ -2059,7 +2059,7 @@ def test_compose_resolves_the_host_path_not_the_container_path(updater):
         encoding="utf-8",
     )
     docker_path.chmod(0o755)
-    _auftrag(updater, target="0.3.0")
+    _write_request(updater, target="0.3.0")
     _, calls, state = updater()
     assert state["phase"] == "done"
     pull_line = _compose_calls(calls, "pull")[0]
@@ -2092,7 +2092,7 @@ def test_compose_refuses_when_the_host_path_cannot_be_resolved(updater):
         encoding="utf-8",
     )
     docker_path.chmod(0o755)
-    _auftrag(updater, target="0.3.0")
+    _write_request(updater, target="0.3.0")
     _, calls, state = updater()
     assert state["phase"] == "failed"
     assert not _compose_calls(calls, "pull")
@@ -2138,7 +2138,7 @@ def test_git_calls_carry_safe_directory_and_chown_the_checkout_back(updater):
         '#!/bin/sh\nprintf "chown %s\\n" "$*" >> "$STUB_LOG"\nexit 0\n', encoding="utf-8"
     )
     chown_path.chmod(0o755)
-    _auftrag(updater, target="0.3.0")
+    _write_request(updater, target="0.3.0")
     _, calls, state = updater()
     assert state["phase"] == "done"
     git_calls = [line for line in calls.splitlines() if line.startswith("git ")]
@@ -2173,7 +2173,7 @@ def test_a_broken_git_surfaces_as_a_failure_instead_of_a_silent_head_fallback(up
         encoding="utf-8",
     )
     git_path.chmod(0o755)
-    _auftrag(updater, target="0.3.0")
+    _write_request(updater, target="0.3.0")
     _, calls, state = updater()
     assert state["phase"] == "failed"
     assert "could not determine the currently checked-out commit" in state["error"]
