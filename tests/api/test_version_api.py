@@ -99,7 +99,11 @@ async def test_the_ui_knows_all_texts_of_the_version_card():
     from loxmatter import i18n
 
     for key in (
-        "web.system.version_heading",
+        # The card's own heading key is `update_heading`, not
+        # `version_heading`: the update tile took the card over and the
+        # design titles it "Version & updates" (section 9), so the two
+        # headings became one rather than stacking on the same card.
+        "web.system.update_heading",
         "web.system.version_running",
         "web.system.version_commit",
         "web.system.version_built_at",
