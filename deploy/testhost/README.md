@@ -196,9 +196,10 @@ Since 9 September 2026, `docker-compose.yml` also runs a service
 update be started from the WebUI instead of the console path above (draft
 "Deploy updates via the UI", `docs/superpowers/specs/2026-09-08-webui-updates-design.md`).
 It exists because a process cannot restart its own container: whatever
-called `up -d --force-recreate loxmatter` would be ended by that same call
-before it finished. Something outside the bridge has to hold the socket
-and do it instead.
+called `up -d --no-deps loxmatter` — the same command `recreate()`
+(`src/loxmatter/update/commands.py`) actually runs — would be ended by
+that same call before it finished. Something outside the bridge has to
+hold the socket and do it instead.
 
 **This container is root-equivalent on the host through the Docker
 socket.** Anyone who can run a command in it can run any command on the
@@ -211,11 +212,33 @@ work program, and the three rules in `loxmatter/update/rules.py` that let
 a request through the bridge's `/api` reach at most a published, newer
 loxmatter version — never an arbitrary image, never an arbitrary command.
 
-**No published image yet.** The CI job that builds
-`ghcr.io/lucienkerl/loxmatter-updater` has not run against this branch, so
-`docker-compose.yml` currently references the `:dev` tag that job will
-push on its first run against `main`, not a pinned digest — see the
-comment above the service for what to do once that digest exists.
+**No pinned image yet.** `docker-compose.yml` references
+`ghcr.io/lucienkerl/loxmatter-updater:dev`, the tag the CI job that
+builds it pushes on every push to `main` — not a fixed release, and not
+necessarily an image this branch's checkout has ever caused to be built.
+That is why the service also carries a `build:` block alongside `image:`
+(the same pattern `loxmatter` above uses): `up` pulls `:dev` when GHCR
+has it, and falls back to building from `deploy/updater/Dockerfile`
+locally when it does not, so starting this service does not depend on
+that CI job having run first — see the comment above the service.
+
+**Turning it on.** `git pull && ./scripts/update.sh` (the "Updating"
+section above) brings `docker-compose.yml` up to date with the service
+defined, but does not start it — `scripts/update.sh` names `loxmatter`
+alone (`SERVICE="loxmatter"`) and never touches the sidecar. Start it
+with:
+
+```bash
+cd ~/matter-loxone/deploy/testhost
+docker compose up -d --no-deps loxmatter-updater
+```
+
+**Not** a bare `docker compose up -d`. Without `--no-deps` that recreates
+every service the compose file lists, `matter-server` included — and
+recreating `matter-server` is precisely the one-way Fabric migration this
+document's "Updating" section warns about above. `--no-deps
+loxmatter-updater` creates or restarts only the sidecar and leaves the
+other three services exactly as they are.
 
 **Running without it.** Delete the `loxmatter-updater` service — the
 bridge notices the resulting stale `updater_seen_at`, hides the update

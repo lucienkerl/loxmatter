@@ -357,14 +357,26 @@ services:
     # from loxmatter-store, hides the button, and names the console path
     # instead (`git pull && ./scripts/update.sh`, see "Updating" below).
     #
-    # No digest yet (9 September 2026): the CI job that builds
+    # `:dev` is what the CI job that builds
     # ghcr.io/lucienkerl/loxmatter-updater (`.github/workflows/ci.yml`,
-    # job `updater-image`) has not run against this branch, so the image
-    # exists at no tag and no digest. `:dev` is the tag that job pushes on
-    # its first run against `main` - replace this with `@sha256:...` once
-    # that digest exists. A digest invented now would look pinned while
-    # actually pointing at nothing.
+    # job `updater-image`) pushes on every push to `main` - not a
+    # snapshot frozen at some "first run", but whatever `main` currently
+    # points at, overwritten again on the next push. That is why no
+    # digest is pinned here: unlike `loxmatter` above, which ships from
+    # tagged releases (`refs/tags/v*`, each producing a fixed
+    # `:<version>`/`:stable` pair the job never touches again), this
+    # service has no release channel yet, so there is nothing stable to
+    # pin `@sha256:...` to.
+    #
+    # `build:` below is the same fallback `loxmatter` above already
+    # relies on (see `test_the_build_path_remains_alongside`) - without
+    # it, a host that cannot pull this image (no registry access, or this
+    # job never having run against the checkout's branch) gets a `compose
+    # up` that fails outright for the whole stack, `install.sh` included.
     image: ghcr.io/lucienkerl/loxmatter-updater:dev
+    build:
+      context: ../..
+      dockerfile: deploy/updater/Dockerfile
     container_name: loxmatter-updater
     restart: unless-stopped
     # Reaches the bridge's `/health` on the HOST, not in this container's

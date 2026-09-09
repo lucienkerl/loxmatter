@@ -52,13 +52,23 @@ class CwdRecordingRunner:
     the two constructor arguments from one who got them right - this
     runner is what makes that distinguishable (see
     `test_git_commands_run_in_repo_dir_and_compose_commands_in_stack_dir`
-    below)."""
+    below).
+
+    `docker compose ps -q loxmatter` and `docker inspect` get canned
+    answers rather than the blank `RecordingRunner` returns: a blank `ps`
+    reads as "the container is not running" to `read_running_identity`,
+    which raises before that call's `cwd` is ever recorded - the one
+    thing this runner exists to check."""
 
     def __init__(self) -> None:
         self.calls: list[tuple[list[str], Path | None]] = []
 
     def __call__(self, argv: list[str], *, cwd: Path | None = None, **_kwargs: object) -> str:
         self.calls.append((argv, cwd))
+        if argv[:5] == ["docker", "compose", "ps", "-q", "loxmatter"]:
+            return "container123"
+        if argv[:2] == ["docker", "inspect"]:
+            return json.dumps(["LOXMATTER_VERSION=0.2.0", "LOXMATTER_COMMIT=abc1234"])
         return ""
 
 
@@ -251,8 +261,12 @@ def test_git_commands_run_in_repo_dir_and_compose_commands_in_stack_dir(tmp_path
     this file passes the same `tmp_path` for both, which cannot catch a
     caller that swapped the two constructor arguments; this one uses two
     genuinely different directories and would fail if `fetch`/`checkout`/
-    `is_ancestor`/`read_git_ref` ran in `stack_dir` or `recreate` ran in
-    `repo_dir`."""
+    `is_ancestor`/`read_git_ref` ran in `stack_dir`, `recreate` ran in
+    `repo_dir`, or `read_running_identity`'s `docker compose ps` ran in
+    `repo_dir` - the last of which no test caught before this one: a
+    `docker compose ps -q loxmatter` run from the repository root finds no
+    compose file, the call raises, and no update would ever run, silently,
+    on a change that every other test in this file still passed."""
     repo_dir = tmp_path / "repo"
     stack_dir = tmp_path / "repo" / "deploy" / "testhost"
     repo_dir.mkdir()
@@ -272,14 +286,18 @@ def test_git_commands_run_in_repo_dir_and_compose_commands_in_stack_dir(tmp_path
     commands.is_ancestor("abc1234", "def5678")
     commands.read_git_ref()
     commands.recreate()
+    commands.read_running_identity()
 
     assert stack_dir != repo_dir
     git_calls = runner.calls[:4]
     compose_call = runner.calls[4]
+    ps_call = runner.calls[5]
     assert [argv[0] for argv, _cwd in git_calls] == ["git", "git", "git", "git"]
     assert all(cwd == repo_dir for _argv, cwd in git_calls)
     assert compose_call[0][:2] == ["docker", "compose"]
     assert compose_call[1] == stack_dir
+    assert ps_call[0][:3] == ["docker", "compose", "ps"]
+    assert ps_call[1] == stack_dir
 
 
 def test_the_env_edit_leaves_comments_blank_lines_and_embedded_equals_alone(tmp_path):

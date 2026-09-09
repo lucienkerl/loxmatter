@@ -27,6 +27,8 @@ from pathlib import Path
 
 import yaml
 
+from loxmatter.update.__main__ import DEFAULT_REPO_DIR
+
 COMPOSE = Path(__file__).resolve().parent.parent / "deploy" / "testhost" / "docker-compose.yml"
 
 
@@ -58,17 +60,25 @@ def test_the_updater_mounts_the_socket_the_store_and_the_checkout() -> None:
     Without `loxmatter-store:/data` it cannot see the request the bridge
     wrote or report state back to it, so the two sides would each wait on
     a file the other never sees. And the checkout must land at
-    `/checkout`, never at `/app`: `/app` is where the sidecar image keeps
-    its own code (`WORKDIR /app` in deploy/updater/Dockerfile), and a bind
-    mount there shadows `loxmatter/` - the entrypoint dies with
-    `ModuleNotFoundError` before running a line, invisible except as a
-    restart loop and an update button that never works. This was verified
-    against the real image, both ways.
+    `DEFAULT_REPO_DIR` (`/checkout`), never at `/app`: `/app` is where the
+    sidecar image keeps its own code (`WORKDIR /app` in
+    deploy/updater/Dockerfile), and a bind mount there shadows
+    `loxmatter/` - the entrypoint dies with `ModuleNotFoundError` before
+    running a line, invisible except as a restart loop and an update
+    button that never works. This was verified against the real image,
+    both ways.
+
+    The checkout mount is checked against `DEFAULT_REPO_DIR` itself, not
+    against a second, hand-typed `"/checkout"` literal: a literal here
+    would pass unchanged if `DEFAULT_REPO_DIR` in `__main__.py` were ever
+    repointed at `/app` - the exact mistake `read_running_identity`'s
+    `docker compose ps` would then silently run from the wrong directory
+    for, with the compose file itself never in disagreement to catch it.
     """
     mounts = set(_updater()["volumes"])
     assert "/var/run/docker.sock:/var/run/docker.sock" in mounts
     assert "loxmatter-store:/data" in mounts
-    assert any(mount.endswith(":/checkout") for mount in mounts)
+    assert any(mount.endswith(f":{DEFAULT_REPO_DIR}") for mount in mounts)
     assert not any(mount.endswith(":/app") for mount in mounts)
 
 

@@ -58,6 +58,20 @@ def test_the_build_path_remains_alongside() -> None:
     assert _stack()["services"]["loxmatter"]["build"]["context"] == "../.."
 
 
+def test_the_updater_has_the_same_build_fallback() -> None:
+    # `loxmatter-updater` names ghcr.io/lucienkerl/loxmatter-updater:dev,
+    # which the CI job that publishes it (`.github/workflows/ci.yml`,
+    # `updater-image`) may never have run against this checkout's branch -
+    # an image at no tag and no digest anywhere Compose can reach.
+    # Without the same `build:` fallback `loxmatter` above has, `up -d`
+    # over the whole stack fails outright (`install.sh:770` `die`s on
+    # that), and `install.sh:756-758`'s own comment says the design
+    # depends on this fallback existing.
+    build = _stack()["services"]["loxmatter-updater"]["build"]
+    assert build["context"] == "../.."
+    assert build["dockerfile"] == "deploy/updater/Dockerfile"
+
+
 def test_the_running_version_is_at_exactly_one_place() -> None:
     # Stage 2 relies on this: the fallback writes ONE line back to .env.
     # If the tag appears at a second place, only the
