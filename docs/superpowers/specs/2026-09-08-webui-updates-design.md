@@ -294,6 +294,19 @@ connection, and whoever runs a bridge in their home should be able to
 forbid it. Without internet, a quiet note ("last checked on …"), not a red
 state. A device without internet access is not an error here.
 
+> **Decision (9 September 2026, stage 2).** The off-switch was put to the
+> maintainer when stage 2 shipped, and deliberately not built: the check
+> stays always on. So the outbound connection is unconditional — one HTTPS
+> request to the GitHub API, cached for fifteen minutes, made only while
+> someone has the System tab open. The rest of this paragraph holds as
+> written: the result is cached, an unreachable GitHub is a quiet note
+> rather than a red state, and no part of the tile depends on the network
+> to render.
+>
+> This is a standing deviation from the paragraph above, not an omission
+> waiting to be closed. Anyone reintroducing the switch is reopening a
+> decision, not fixing a gap.
+
 ## 10. Access and security boundary
 
 `GET /api/update/status`, `GET /api/update/check` and
@@ -530,3 +543,55 @@ say why in the plan rather than letting duplication happen by default.
 The 120 seconds are not a new number either way: they come from that script,
 with its measured rationale from 8 September (20 s was too tight; one run
 went over and reported a healthy service as sick).
+
+## 17. What stage 2 shipped without (9 September 2026)
+
+Stage 2 is merged and works: the sidecar, the file protocol, the three rules,
+the state machine with its rollback, the bridge's three routes and the tile.
+This section is the honest ledger of what this document asks for and that
+code does not do, so nobody has to re-derive it by reading both.
+
+Each item was found during implementation or in review, and each was left out
+deliberately rather than forgotten. None of them is load-bearing for an update
+to succeed; the first two are what an operator misses when one fails.
+
+- **The plain-text failure file's siblings.** `LAST-FAILURE.txt` is written
+  (section 8), but no HTTP route serves `log.txt` or the backup archive, so
+  section 9 state 4's buttons for the full log and the backup, and state 2's
+  log tail, are not in the tile. Reaching either means SSH.
+- **A failed command's own words.** `_run_subprocess` captures output but the
+  exception it raises carries only an exit status, so `state.error` and
+  `log.txt` say "returned non-zero exit status 1" rather than "manifest
+  unknown" or "no space left on device". For a feature whose premise is an
+  operator who does not open a terminal, this is the sentence they get.
+- **The schema-version pre-check** of section 8's "pre-check before step 1".
+  The confirmation cannot show it in any case: the dialog appears before the
+  request is written, and the bridge has no Docker socket to inspect the
+  target image with. Answering it would need a round trip through the shared
+  directory that the file protocol does not have.
+- **Change notes and "N commits behind"** (section 9). `UpdateCheckOut`
+  carries no field for them.
+- **The sidecar replacing itself** after `done` (section 8, last paragraph).
+  The one container this feature cannot update is the one that performs
+  updates; it is replaced by `docker compose up -d --no-deps
+  loxmatter-updater` from the console.
+- **Digest pinning** of the sidecar image (sections 6 and 10). The compose
+  file names `:dev` because CI had never published the image when stage 2 was
+  written. Section 10 counts digest pinning among four things that make the
+  Docker socket acceptable in this container; three of the four hold.
+- **`GET /api/version` naming matter-server's and otbr's running images**
+  (section 4). It returns the bridge's own build identity only; there is no
+  channel through which the bridge could ask the sidecar.
+- **A dev build offered a stable update** is told "Up to date." rather than
+  section 10's sentence about running a development version newer than the
+  latest release. `_parse_semver("dev")` yields nothing to compare.
+
+There is also a class of coupling this feature carries without a check: a
+constant, path, name or set that appears in two places and must agree. The
+image's `COPY` list against the update package's import graph; the health port
+against the bridge's `--listen`; `runner.STEPS` against the tile's own copy
+and its four string keys; the `loxmatter` service name; `sha[:7]` against
+whatever length `git rev-parse --short` returns. Six defects of exactly this
+shape were found and fixed while stage 2 was built, every one of them by a
+person comparing two files rather than by a test. The ones listed here are
+the ones still standing.
