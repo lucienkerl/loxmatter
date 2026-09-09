@@ -516,12 +516,9 @@ async def test_the_system_view_shows_when_the_updater_sidecar_is_behind(api):
     page = (await client.get("/")).text
     script = (await client.get("/static/app.js")).text
     assert "updaterVersionBehind()" in script
+    assert "updaterRefreshMessage()" in script
     assert 'x-show="updaterVersionBehind()"' in page
-    assert (
-        "t('web.system.updater_behind', "
-        "{ updater_version: updateStatus?.state?.updater_version, "
-        "version: versionInfo?.version })" in page
-    )
+    assert 'x-text="updaterRefreshMessage()"' in page
 
 
 async def test_the_update_card_offers_its_four_states_and_the_confirmation(api):
@@ -1963,43 +1960,104 @@ def test_updatestalled_is_true_only_while_running_with_no_recent_heartbeat():
 
 
 @pytest.mark.skipif(NODE is None, reason="node is required for this test")
-def test_updater_version_behind_says_nothing_for_an_unknown_version():
+def test_updater_version_behind_says_nothing_for_an_unknown_digest():
     """`updaterVersionBehind()` (app.js) must read `false` - not "unknown
-    but assume the worst" - whenever either side of the comparison is
-    missing. The case this exists for: every sidecar built before
-    `updater_version` existed reports `null` for it forever (see
-    `update.py`'s own docstring on that field) - if this read `true` for
-    that case, every installation running an update-once.sh from before
-    this change would be told its updater is "behind" some version it
-    never actually reported, permanently, with no command that could ever
-    fix it (there is nothing wrong to fix - the sidecar just predates the
-    field). The bridge's own `versionInfo` being not-yet-loaded (`null`
-    until `GET /api/version` first answers) must fail exactly the same
-    way, not throw."""
+    but assume the worst" - whenever either side of the DIGEST comparison
+    is missing. The comparison moved from version STRINGS to digests
+    (review fix: CI baked the release version into every updater image
+    unconditionally, so a version-string comparison flagged "newer" on
+    every single release, including one that never touched
+    deploy/updater/ at all). The case this test exists for: a sidecar
+    built before `updater_digest` existed, one built locally (no
+    `RepoDigests` entry), checking switched off, or GHCR unreachable right
+    now, all report `null` for one side or the other - if this read `true`
+    for any of those, the card would nag with a command that fixes
+    nothing."""
     values = _app_state(
         """
-        function behindFor(updaterVersion, bridgeVersion) {
-          state.updateStatus = { state: { updater_version: updaterVersion } };
-          state.versionInfo = bridgeVersion === undefined ? null : { version: bridgeVersion };
+        function behindFor(updaterDigest, publishedDigest) {
+          state.updateStatus = {
+            state: { updater_digest: updaterDigest },
+            published_updater_digest: publishedDigest,
+          };
           return state.updaterVersionBehind();
         }
         console.log(JSON.stringify([
-          behindFor("0.3.2", "0.3.3"),
-          behindFor("0.3.3", "0.3.3"),
-          behindFor(null, "0.3.3"),
-          behindFor("0.3.2", undefined),
-          behindFor(null, undefined),
+          behindFor("sha256:aaa", "sha256:bbb"),
+          behindFor("sha256:aaa", "sha256:aaa"),
+          behindFor(null, "sha256:bbb"),
+          behindFor("sha256:aaa", null),
+          behindFor(null, null),
         ]));
         """
     )
 
     assert values == [
-        True,  # the sidecar reports a real, older version - the case to surface
+        True,  # the running sidecar's image is not what GHCR serves any more
         False,  # both agree - nothing to say
-        False,  # sidecar predates the field - unknown is not stale
-        False,  # bridge's own version not loaded yet
+        False,  # sidecar predates the field, or was built locally - unknown is not stale
+        False,  # GHCR unreachable, or checking switched off
         False,  # neither side known
     ]
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_updater_refresh_message_carries_the_reported_host_path():
+    """`updaterRefreshMessage()` must print the "refresh the updater"
+    command against the sidecar's OWN reported host path
+    (`updater_stack_host_path`), not a value this file guesses - the
+    defect this whole feature replaces: the card used to hardcode
+    `~/loxmatter/deploy/testhost`, which is wrong on any checkout not
+    literally named `loxmatter` (the maintainer's own is
+    `~/matter-loxone`)."""
+    values = _app_state(
+        """
+        state.updateStatus = {
+          state: {
+            updater_version: "0.3.3",
+            updater_stack_host_path: "/home/pi/matter-loxone/deploy/testhost",
+          },
+        };
+        state.versionInfo = { version: "0.3.4" };
+        console.log(JSON.stringify(state.updaterRefreshMessage()));
+        """,
+        translations={
+            "web.system.updater_behind": (
+                "still on {updater_version}, this bridge on {version} - cd {path}"
+            ),
+            "web.system.updater_behind_unknown_path": "must not be used here",
+        },
+    )
+
+    assert (
+        values == "still on 0.3.3, this bridge on 0.3.4 - cd /home/pi/matter-loxone/deploy/testhost"
+    )
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_updater_refresh_message_degrades_when_the_host_path_is_unresolved():
+    """The sibling case: `update-once.sh`'s `host_path_for()` (via
+    entrypoint.sh's one-time resolution) could not resolve
+    `$LOXMATTER_STACK` at all - the message must not fabricate a path by
+    substituting an empty/`null` one into the normal template, it must
+    switch to the dedicated fallback string that says so in words."""
+    values = _app_state(
+        """
+        state.updateStatus = {
+          state: { updater_version: "0.3.3", updater_stack_host_path: null },
+        };
+        state.versionInfo = { version: "0.3.4" };
+        console.log(JSON.stringify(state.updaterRefreshMessage()));
+        """,
+        translations={
+            "web.system.updater_behind": "must not be used here - {path}",
+            "web.system.updater_behind_unknown_path": (
+                "still on {updater_version}, this bridge on {version} - path unknown"
+            ),
+        },
+    )
+
+    assert values == "still on 0.3.3, this bridge on 0.3.4 - path unknown"
 
 
 @pytest.mark.skipif(NODE is None, reason="node wird fuer diesen Test gebraucht")

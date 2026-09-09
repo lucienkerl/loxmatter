@@ -72,6 +72,93 @@ WORKER="${WORKER:-/opt/loxmatter/update-once.sh}"
 # being there, and still reporting, when the bridge is not.
 WORKER_TIMEOUT_SECONDS="${WORKER_TIMEOUT_SECONDS:-600}"
 
+# This container's own image, by digest - resolved exactly ONCE, here,
+# before the poll loop below ever starts $WORKER for the first time, and
+# exported so every pass reads it as a plain environment variable
+# (update-once.sh's own $UPDATER_DIGEST - see its comment there for why
+# that script never resolves this itself: doing so on every pass would
+# touch `docker` unconditionally even on a pass that only rejects a
+# malformed request, and `tests/test_updater_script.py` pins down that
+# such a pass makes no docker call at all). Describes THIS CONTAINER's
+# own identity, not any one job - the same reasoning `Dockerfile`'s
+# LOXMATTER_UPDATER_VERSION ARG/ENV pair already follows for the sibling
+# field baked in at build time; a digest cannot be baked in the same way
+# (the registry only assigns one after a push), so it is resolved here,
+# at container start, instead.
+#
+# `docker inspect <container>` never carries `.RepoDigests` itself - only
+# `docker inspect <image>` does, and only once that image was actually
+# PULLED from a registry rather than built locally (`docker build`, a
+# maintainer's own checkout), which answers `[]`, not an error. Two
+# calls, the same shape update-once.sh's own `running_version()`/
+# `host_path_for()` already make: the first names the (opaque, local)
+# image id this container was created from, the second reads THAT
+# image's own `RepoDigests`. Either step failing (daemon unreachable,
+# no such container yet) leaves `UPDATER_DIGEST` empty - "unknown", not a
+# fabricated value - which `set -u` alone cannot turn fatal here since
+# every step below is already guarded by `|| true`/a redirected stderr.
+UPDATER_DIGEST=""
+updater_image_id="$(docker inspect loxmatter-updater --format '{{.Image}}' 2>/dev/null || true)"
+if [ -n "$updater_image_id" ]; then
+  UPDATER_DIGEST="$(docker inspect "$updater_image_id" \
+      --format '{{range .RepoDigests}}{{println .}}{{end}}' 2>/dev/null \
+    | sed -n -E 's/^.*@(sha256:[0-9a-f]+)$/\1/p' | head -1)"
+fi
+export LOXMATTER_UPDATER_DIGEST="$UPDATER_DIGEST"
+
+# $LOXMATTER_STACK's own HOST path - resolved once, the same way and for
+# the same reason as $UPDATER_DIGEST above (see that comment): a fact
+# about this container's own identity, exported so update-once.sh reads
+# it as a plain environment variable ($UPDATER_STACK_HOST_PATH) instead
+# of resolving it itself on every pass.
+STACK="${LOXMATTER_STACK:-/repo/deploy/testhost}"
+
+# The HOST path of $STACK, resolved through the mount table - duplicated
+# from update-once.sh's own `host_path_for()` (see that function's own,
+# much longer comment for the full reasoning: longest-prefix match over
+# `docker inspect`'s own Mounts list, the "/" edge case, why `awk` and
+# not `grep`/`sed`) rather than shared through a third, sourced file -
+# this project keeps each script a single, self-contained work program
+# (see this script's own module docstring, "deliberately thin", and
+# update-once.sh's own top-of-file comment on itself), and splitting a
+# dozen lines into a lib file sourced by both was judged not worth the
+# added indirection for two callers. `tests/test_updater_entrypoint.py`
+# and `tests/test_updater_script.py` each pin this exact algorithm
+# independently, so the two copies drifting apart would be caught on
+# either side, not silently.
+STACK_HOST_PATH="$(docker inspect loxmatter-updater \
+    --format '{{range .Mounts}}{{.Destination}} {{.Source}}
+{{end}}' 2>/dev/null \
+  | awk -v dest="$STACK" '
+      {
+        d = $1
+        src = $0
+        sub(/^[^ ]*/, "", src)
+        sub(/^ /, "", src)
+        dn = d
+        if (dn == "/") { dn = "" } else { sub(/\/$/, "", dn) }
+        matched = 0
+        if (dest == dn) {
+          matched = 1
+          rest = ""
+        } else if (index(dest, dn "/") == 1) {
+          matched = 1
+          rest = substr(dest, length(dn) + 1)
+        }
+        if (matched) {
+          dlen = length(dn)
+          if (!found || dlen > best_len) {
+            found = 1
+            best_len = dlen
+            best_source = src
+            best_rest = rest
+          }
+        }
+      }
+      END { if (found) print best_source best_rest }
+    ')"
+export LOXMATTER_STACK_HOST_PATH="$STACK_HOST_PATH"
+
 while [ "$terminated" -eq 0 ]; do
   timeout "$WORKER_TIMEOUT_SECONDS" "$WORKER" &
   child_pid=$!

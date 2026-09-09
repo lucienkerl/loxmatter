@@ -1300,18 +1300,39 @@ web.system.version_dev_hint:
 web.system.version_dev_channel_hint:
   en: "dev is the rolling channel, built from the latest main after every merge — expect breakage. Switch to stable for a tested release."
   de: "dev ist der rollende Kanal, gebaut aus dem jeweils neuesten main nach jedem Merge — Aussetzer sind zu erwarten. Für eine getestete Version auf stable wechseln."
-# Shown only when the sidecar reports a version at all AND it differs from
-# the running bridge's own - never for a sidecar that predates this field
-# (see `updater_version` in update.py/api/update.py): an unknown version
-# is not a stale one, and must say nothing rather than guess. The command
-# is the one that actually refreshes an already-present sidecar's image -
+# Shown only when the sidecar's own image DIGEST differs from what GHCR
+# currently serves under `:stable` (`updaterVersionBehind()` in app.js) -
+# never for a sidecar that predates that field, one built locally, checking
+# switched off, or GHCR unreachable right now: an unknown digest is not a
+# stale one, and must say nothing rather than guess. `{updater_version}`/
+# `{version}` still name what a version-string comparison used to decide
+# on its own (see that method's own comment for why a version alone is the
+# wrong trigger - CI bakes it into every release regardless of whether
+# deploy/updater/ actually changed); only the DECISION to show this moved.
+#
+# `{path}` is the sidecar's own `$LOXMATTER_STACK`, resolved to a HOST path
+# (`updater_stack_host_path` - update-once.sh's `host_path_for()`, see its
+# own comment) - never a value this file guesses. The command is the one
+# that actually refreshes an already-present sidecar's image -
 # `./scripts/update.sh` deliberately does not (see docs/OPERATIONS.md,
 # "Keeping the updater sidecar itself current"), and the sidecar can no
 # longer refresh itself at all (removed - see update-once.sh's own
 # comment on the incident this closed).
 web.system.updater_behind:
-  en: "The updater sidecar is still on {updater_version}, this bridge on {version}. Refresh it: cd ~/loxmatter/deploy/testhost && docker compose pull loxmatter-updater && docker compose up -d --no-deps loxmatter-updater"
-  de: "Der Updater-Sidecar läuft noch auf {updater_version}, diese Brücke auf {version}. Ihn aktualisieren: cd ~/loxmatter/deploy/testhost && docker compose pull loxmatter-updater && docker compose up -d --no-deps loxmatter-updater"
+  en: "The updater sidecar is still on {updater_version}, this bridge on {version}. Refresh it: cd {path} && docker compose pull loxmatter-updater && docker compose up -d --no-deps loxmatter-updater"
+  de: "Der Updater-Sidecar läuft noch auf {updater_version}, diese Brücke auf {version}. Ihn aktualisieren: cd {path} && docker compose pull loxmatter-updater && docker compose up -d --no-deps loxmatter-updater"
+# The sibling of `web.system.updater_behind` above for when the sidecar's
+# own mount table did not resolve `$LOXMATTER_STACK` to a host path at all
+# (the daemon unreachable, or this sidecar's mounts not shaped the way
+# `host_path_for()` expects - see that function's own comment in
+# update-once.sh) - a container path (e.g. `/repo/deploy/testhost`) is
+# never printed here as a fallback: it does not exist on the host and the
+# command would just fail at the `cd`, silently, the exact defect this
+# whole feature replaces a DOCUMENTATION GUESS for. Names where to run the
+# command in words instead of inventing a path nothing backs.
+web.system.updater_behind_unknown_path:
+  en: "The updater sidecar is still on {updater_version}, this bridge on {version}. Refresh it: from your loxmatter checkout's deploy/testhost directory (the host path could not be determined automatically), run: docker compose pull loxmatter-updater && docker compose up -d --no-deps loxmatter-updater"
+  de: "Der Updater-Sidecar läuft noch auf {updater_version}, diese Brücke auf {version}. Ihn aktualisieren: im deploy/testhost-Verzeichnis Ihres loxmatter-Checkouts (der Host-Pfad konnte nicht automatisch ermittelt werden) ausführen: docker compose pull loxmatter-updater && docker compose up -d --no-deps loxmatter-updater"
 web.system.update_available:
   en: "Version {version} available"
   de: "Version {version} verfügbar"
