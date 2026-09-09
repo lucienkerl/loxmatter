@@ -8,6 +8,8 @@ people who don't know the code.
 
 ## [Unreleased]
 
+## [0.3.5] — 2026-09-10
+
 ### Fixed
 
 - **The "updater is out of date" warning could fire on a release that
