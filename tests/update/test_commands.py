@@ -45,12 +45,30 @@ class RaisingRunner:
         raise RuntimeError(f"{argv[0]} is unreachable")
 
 
+class CwdRecordingRunner:
+    """Like `RecordingRunner`, but keeps the one thing that one throws
+    away: `cwd`. Every other test in this file passes the same `tmp_path`
+    for `repo_dir` and `stack_dir`, which cannot tell a caller who swapped
+    the two constructor arguments from one who got them right - this
+    runner is what makes that distinguishable (see
+    `test_git_commands_run_in_repo_dir_and_compose_commands_in_stack_dir`
+    below)."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[list[str], Path | None]] = []
+
+    def __call__(self, argv: list[str], *, cwd: Path | None = None, **_kwargs: object) -> str:
+        self.calls.append((argv, cwd))
+        return ""
+
+
 def make(tmp_path: Path) -> tuple[DockerCommands, RecordingRunner]:
     env = tmp_path / ".env"
     env.write_text("LOXMATTER_IMAGE_TAG=stable\nMINISERVER_IP=10.0.0.1\n", encoding="utf-8")
     runner = RecordingRunner()
     commands = DockerCommands(
-        compose_dir=tmp_path,
+        repo_dir=tmp_path,
+        stack_dir=tmp_path,
         env_path=env,
         health_url="http://host.docker.internal:8080/health",
         base=tmp_path / "update",
@@ -95,7 +113,8 @@ def test_writing_the_tag_appends_it_when_the_key_is_absent(tmp_path):
     env = tmp_path / ".env"
     env.write_text("MINISERVER_IP=10.0.0.1\n", encoding="utf-8")
     commands = DockerCommands(
-        compose_dir=tmp_path,
+        repo_dir=tmp_path,
+        stack_dir=tmp_path,
         env_path=env,
         health_url="http://x/health",
         base=tmp_path / "update",
@@ -113,7 +132,8 @@ def test_writing_the_tag_adds_a_missing_trailing_newline_before_appending(tmp_pa
     env = tmp_path / ".env"
     env.write_text("MINISERVER_IP=10.0.0.1", encoding="utf-8")
     commands = DockerCommands(
-        compose_dir=tmp_path,
+        repo_dir=tmp_path,
+        stack_dir=tmp_path,
         env_path=env,
         health_url="http://x/health",
         base=tmp_path / "update",
@@ -131,7 +151,8 @@ def test_writing_the_tag_creates_a_missing_parent_directory(tmp_path):
     cover."""
     env = tmp_path / "nested" / "deeper" / ".env"
     commands = DockerCommands(
-        compose_dir=tmp_path,
+        repo_dir=tmp_path,
+        stack_dir=tmp_path,
         env_path=env,
         health_url="http://x/health",
         base=tmp_path / "update",
@@ -153,7 +174,8 @@ def test_a_missing_tag_line_reads_as_stable(tmp_path):
     env = tmp_path / ".env"
     env.write_text("MINISERVER_IP=10.0.0.1\n", encoding="utf-8")
     commands = DockerCommands(
-        compose_dir=tmp_path,
+        repo_dir=tmp_path,
+        stack_dir=tmp_path,
         env_path=env,
         health_url="http://x/health",
         base=tmp_path / "update",
@@ -168,7 +190,8 @@ def test_reading_the_tag_strips_surrounding_quotes(tmp_path):
     env = tmp_path / ".env"
     env.write_text('LOXMATTER_IMAGE_TAG="0.3.0"\n', encoding="utf-8")
     commands = DockerCommands(
-        compose_dir=tmp_path,
+        repo_dir=tmp_path,
+        stack_dir=tmp_path,
         env_path=env,
         health_url="http://x/health",
         base=tmp_path / "update",
@@ -181,7 +204,8 @@ def test_reading_the_tag_from_a_missing_file_reads_as_stable(tmp_path):
     """No `.env` at all (a fresh checkout, before the first `docker
     compose up`) is not an error - Compose's own default applies."""
     commands = DockerCommands(
-        compose_dir=tmp_path,
+        repo_dir=tmp_path,
+        stack_dir=tmp_path,
         env_path=tmp_path / "does-not-exist" / ".env",
         health_url="http://x/health",
         base=tmp_path / "update",
@@ -218,6 +242,46 @@ def test_each_git_step_issues_its_own_command(tmp_path):
     ]
 
 
+def test_git_commands_run_in_repo_dir_and_compose_commands_in_stack_dir(tmp_path):
+    """The point of the `compose_dir` split (see the module docstring):
+    `repo_dir` and `stack_dir` are two different directories in the real
+    deployment - `repo_dir` the whole checkout, `stack_dir` `deploy/
+    testhost` two levels below it - and every git call must run in the
+    first, every `docker compose` call in the second. Every other test in
+    this file passes the same `tmp_path` for both, which cannot catch a
+    caller that swapped the two constructor arguments; this one uses two
+    genuinely different directories and would fail if `fetch`/`checkout`/
+    `is_ancestor`/`read_git_ref` ran in `stack_dir` or `recreate` ran in
+    `repo_dir`."""
+    repo_dir = tmp_path / "repo"
+    stack_dir = tmp_path / "repo" / "deploy" / "testhost"
+    repo_dir.mkdir()
+    stack_dir.mkdir(parents=True)
+    runner = CwdRecordingRunner()
+    commands = DockerCommands(
+        repo_dir=repo_dir,
+        stack_dir=stack_dir,
+        env_path=stack_dir / ".env",
+        health_url="http://x/health",
+        base=tmp_path / "update",
+        run=runner,
+    )
+
+    commands.fetch()
+    commands.checkout("v0.3.0")
+    commands.is_ancestor("abc1234", "def5678")
+    commands.read_git_ref()
+    commands.recreate()
+
+    assert stack_dir != repo_dir
+    git_calls = runner.calls[:4]
+    compose_call = runner.calls[4]
+    assert [argv[0] for argv, _cwd in git_calls] == ["git", "git", "git", "git"]
+    assert all(cwd == repo_dir for _argv, cwd in git_calls)
+    assert compose_call[0][:2] == ["docker", "compose"]
+    assert compose_call[1] == stack_dir
+
+
 def test_the_env_edit_leaves_comments_blank_lines_and_embedded_equals_alone(tmp_path):
     """A real `.env` also carries the Miniserver address, an API token and
     commentary - none of them can be collateral damage of an image-tag
@@ -237,7 +301,8 @@ def test_the_env_edit_leaves_comments_blank_lines_and_embedded_equals_alone(tmp_
         encoding="utf-8",
     )
     commands = DockerCommands(
-        compose_dir=tmp_path,
+        repo_dir=tmp_path,
+        stack_dir=tmp_path,
         env_path=env,
         health_url="http://x/health",
         base=tmp_path / "update",
@@ -264,7 +329,8 @@ def test_healthy_is_false_on_a_connection_failure_not_a_raised_exception(tmp_pat
     report" should find the answer in `healthy()`, not have to know about
     a fallback three modules away."""
     commands = DockerCommands(
-        compose_dir=tmp_path,
+        repo_dir=tmp_path,
+        stack_dir=tmp_path,
         env_path=tmp_path / ".env",
         health_url="http://host.docker.internal:8080/health",
         base=tmp_path / "update",
@@ -285,7 +351,8 @@ def test_read_git_ref_returns_the_stripped_commit(tmp_path):
             return "abc1234\n"
 
     commands = DockerCommands(
-        compose_dir=tmp_path,
+        repo_dir=tmp_path,
+        stack_dir=tmp_path,
         env_path=tmp_path / ".env",
         health_url="http://x/health",
         base=tmp_path / "update",
@@ -304,7 +371,8 @@ def test_is_ancestor_true_on_success_false_on_failure(tmp_path):
     assert runner.commands == [["git", "merge-base", "--is-ancestor", "abc1234", "def5678"]]
 
     failing = DockerCommands(
-        compose_dir=tmp_path,
+        repo_dir=tmp_path,
+        stack_dir=tmp_path,
         env_path=tmp_path / ".env",
         health_url="http://x/health",
         base=tmp_path / "update",
@@ -335,7 +403,8 @@ def test_read_running_identity_reads_version_and_commit_from_the_container_env(t
             )
 
     commands = DockerCommands(
-        compose_dir=tmp_path,
+        repo_dir=tmp_path,
+        stack_dir=tmp_path,
         env_path=tmp_path / ".env",
         health_url="http://x/health",
         base=tmp_path / "update",
@@ -357,7 +426,8 @@ def test_read_running_identity_raises_when_the_container_is_not_running(tmp_path
             return ""
 
     commands = DockerCommands(
-        compose_dir=tmp_path,
+        repo_dir=tmp_path,
+        stack_dir=tmp_path,
         env_path=tmp_path / ".env",
         health_url="http://x/health",
         base=tmp_path / "update",
@@ -385,7 +455,8 @@ def test_read_running_identity_falls_back_to_dev_when_the_env_keys_are_absent(tm
             return json.dumps(["PATH=/usr/bin"])
 
     commands = DockerCommands(
-        compose_dir=tmp_path,
+        repo_dir=tmp_path,
+        stack_dir=tmp_path,
         env_path=tmp_path / ".env",
         health_url="http://x/health",
         base=tmp_path / "update",
@@ -407,7 +478,8 @@ def test_read_running_identity_propagates_a_failing_docker_inspect(tmp_path):
             raise RuntimeError("docker inspect: no such object")
 
     commands = DockerCommands(
-        compose_dir=tmp_path,
+        repo_dir=tmp_path,
+        stack_dir=tmp_path,
         env_path=tmp_path / ".env",
         health_url="http://x/health",
         base=tmp_path / "update",
@@ -467,7 +539,8 @@ def test_log_appends_a_timestamped_line_under_the_injected_base(tmp_path):
     makes this method testable at all; it had no coverage before."""
     base = tmp_path / "somewhere-else"
     commands = DockerCommands(
-        compose_dir=tmp_path,
+        repo_dir=tmp_path,
+        stack_dir=tmp_path,
         env_path=tmp_path / ".env",
         health_url="http://x/health",
         base=base,
@@ -487,7 +560,8 @@ def test_cap_log_keeps_only_complete_lines_within_the_cap(tmp_path):
     the newest line (last written) must always be among them."""
     base = tmp_path / "update"
     commands = DockerCommands(
-        compose_dir=tmp_path,
+        repo_dir=tmp_path,
+        stack_dir=tmp_path,
         env_path=tmp_path / ".env",
         health_url="http://x/health",
         base=base,
@@ -518,7 +592,8 @@ def test_cap_log_trims_to_the_trim_target_not_just_under_the_cap(tmp_path):
     survive."""
     base = tmp_path / "update"
     commands = DockerCommands(
-        compose_dir=tmp_path,
+        repo_dir=tmp_path,
+        stack_dir=tmp_path,
         env_path=tmp_path / ".env",
         health_url="http://x/health",
         base=base,
@@ -547,7 +622,8 @@ def test_cap_log_trims_to_the_trim_target_not_just_under_the_cap(tmp_path):
 def test_cap_log_does_nothing_under_the_cap(tmp_path):
     base = tmp_path / "update"
     commands = DockerCommands(
-        compose_dir=tmp_path,
+        repo_dir=tmp_path,
+        stack_dir=tmp_path,
         env_path=tmp_path / ".env",
         health_url="http://x/health",
         base=base,

@@ -99,7 +99,10 @@ LOOP_INTERVAL_SECONDS = 2.0
 #: about.
 DEFAULT_BASE = protocol.UPDATE_DIR
 
-#: The mounted checkout `fetch`/`checkout` run against.
+#: The mounted checkout `fetch`/`checkout`/`merge-base --is-ancestor`/
+#: `rev-parse HEAD` run against - `DockerCommands`'s `repo_dir` (see
+#: `commands.py`'s module docstring for why that is a different directory
+#: from `DEFAULT_STACK_DIR` below, not another name for the same one).
 #:
 #: Deliberately NOT `/app`, which is where this image keeps its own code
 #: (see `deploy/updater/Dockerfile`). Mounting the host checkout over
@@ -111,7 +114,18 @@ DEFAULT_BASE = protocol.UPDATE_DIR
 #: container with a checkout bind-mounted at `/app` does not. The two
 #: paths must stay apart, and `deploy/testhost/docker-compose.yml` mounts
 #: the checkout here.
-DEFAULT_COMPOSE_DIR = Path("/checkout")
+DEFAULT_REPO_DIR = Path("/checkout")
+
+#: Where `docker-compose.yml` and `.env` actually live - `DockerCommands`'s
+#: `stack_dir`, and `env_path`'s default parent just below. `docker
+#: compose up`/`ps` need this directory, not `DEFAULT_REPO_DIR`: Compose
+#: looks for its config file next to where it runs, and the checkout's
+#: root has no `docker-compose.yml` of its own. Derived from
+#: `DEFAULT_REPO_DIR` rather than written out separately, the same way
+#: `scripts/update.sh` derives its `STACK` from its `REPO` - one path
+#: written once, so the two constants cannot drift to disagree about
+#: where the checkout root is.
+DEFAULT_STACK_DIR = DEFAULT_REPO_DIR / "deploy" / "testhost"
 
 #: Reaches the bridge on the *host's* network: `loxmatter` in
 #: `deploy/testhost/docker-compose.yml` runs with `network_mode: host`,
@@ -350,11 +364,16 @@ def _log_best_effort(commands: LoopCommands, line: str) -> None:
 
 def main() -> None:
     base = _path_from_env("LOXMATTER_UPDATE_BASE", DEFAULT_BASE)
-    compose_dir = _path_from_env("LOXMATTER_COMPOSE_DIR", DEFAULT_COMPOSE_DIR)
-    env_path = _path_from_env("LOXMATTER_ENV_PATH", compose_dir / ".env")
+    repo_dir = _path_from_env("LOXMATTER_REPO_DIR", DEFAULT_REPO_DIR)
+    stack_dir = _path_from_env("LOXMATTER_STACK_DIR", DEFAULT_STACK_DIR)
+    env_path = _path_from_env("LOXMATTER_ENV_PATH", stack_dir / ".env")
     health_url = os.environ.get("LOXMATTER_HEALTH_URL", "").strip() or DEFAULT_HEALTH_URL
     commands = DockerCommands(
-        compose_dir=compose_dir, env_path=env_path, health_url=health_url, base=base
+        repo_dir=repo_dir,
+        stack_dir=stack_dir,
+        env_path=env_path,
+        health_url=health_url,
+        base=base,
     )
 
     # Repair a corrupt or unreadable `state.json` before anything else

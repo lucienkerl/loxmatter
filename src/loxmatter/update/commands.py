@@ -24,18 +24,31 @@ out to a real `docker` would not run in CI, so the committed tests
 (`tests/update/test_commands.py`) never do; only the throwaway exercise
 recorded in the task report calls a real daemon.
 
-`compose_dir`, `env_path`, `health_url` and `base` are constructor
-arguments because they differ between a test's `tmp_path` and the real
-mount point inside the sidecar container - `base` is where `log()` writes
-`log.txt`, the same directory `run_update` passes to `write_state` (see
-`__main__.py`), so the two cannot silently drift apart when
-`LOXMATTER_UPDATE_BASE` moves one of them. `/data/backups` is not
+`repo_dir`, `stack_dir`, `env_path`, `health_url` and `base` are
+constructor arguments because they differ between a test's `tmp_path` and
+the real mount points inside the sidecar container - `base` is where
+`log()` writes `log.txt`, the same directory `run_update` passes to
+`write_state` (see `__main__.py`), so the two cannot silently drift apart
+when `LOXMATTER_UPDATE_BASE` moves one of them. `/data/backups` is not
 injected: this container always has `/data` mounted at that fixed path
 (the same volume the bridge itself holds its database in - see
 `deploy/testhost/docker-compose.yml`), independently of where the request/
 state/log directory lives, and no committed test exercises `backup()`'s
 path for that reason.
-"""
+
+`repo_dir` and `stack_dir` are two different directories, not one path
+under two names. `git` (`fetch`, `checkout`, `merge-base --is-ancestor`,
+`rev-parse HEAD`) needs the repository work tree - `repo_dir`. `docker
+compose` (`up`, `ps`) needs the directory holding `docker-compose.yml` -
+`stack_dir`, `deploy/testhost` two levels below the repository root.
+`write_image_tag`/`read_image_tag` rewrite `.env`, which lives in
+`stack_dir` too, hence `env_path` defaulting there in `__main__.py`. A
+single `compose_dir` for both used to happen to work, because `git`
+walks up from a subdirectory to find `.git` - but it worked by accident,
+and a caller that later mounted only `deploy/testhost` (a reasonable-
+looking simplification) would have broken every git command with no
+obvious cause. `scripts/update.sh`'s own `REPO`/`STACK` split is the
+model this mirrors."""
 
 from __future__ import annotations
 
@@ -140,14 +153,16 @@ class DockerCommands:
 
     def __init__(
         self,
-        compose_dir: Path,
+        repo_dir: Path,
+        stack_dir: Path,
         env_path: Path,
         health_url: str,
         base: Path,
         *,
         run: Runner = _run_subprocess,
     ) -> None:
-        self._compose_dir = compose_dir
+        self._repo_dir = repo_dir
+        self._stack_dir = stack_dir
         self._env_path = env_path
         self._health_url = health_url
         self._base = base
@@ -178,10 +193,10 @@ class DockerCommands:
             stale.unlink(missing_ok=True)
 
     def fetch(self) -> None:
-        self._run(["git", "fetch", "--tags", "--prune", "origin"], cwd=self._compose_dir)
+        self._run(["git", "fetch", "--tags", "--prune", "origin"], cwd=self._repo_dir)
 
     def checkout(self, ref: str) -> None:
-        self._run(["git", "checkout", "--detach", ref], cwd=self._compose_dir)
+        self._run(["git", "checkout", "--detach", ref], cwd=self._repo_dir)
 
     def pull(self, image: str) -> None:
         # `docker pull <image>`, not `docker compose pull loxmatter`: the
@@ -208,7 +223,7 @@ class DockerCommands:
         # sees a config diff and recreates without needing to be forced.
         self._run(
             ["docker", "compose", "up", "-d", "--no-deps", "loxmatter"],
-            cwd=self._compose_dir,
+            cwd=self._stack_dir,
         )
 
     def read_running_identity(self) -> tuple[str, str]:
@@ -235,7 +250,7 @@ class DockerCommands:
         never in a permissive guess.
         """
         container_id = self._run(
-            ["docker", "compose", "ps", "-q", "loxmatter"], cwd=self._compose_dir
+            ["docker", "compose", "ps", "-q", "loxmatter"], cwd=self._stack_dir
         ).strip()
         if not container_id:
             raise RuntimeError("the loxmatter container is not running")
@@ -269,7 +284,7 @@ class DockerCommands:
         try:
             self._run(
                 ["git", "merge-base", "--is-ancestor", older, newer],
-                cwd=self._compose_dir,
+                cwd=self._repo_dir,
             )
         except Exception:  # noqa: BLE001 - a non-zero exit means "no"
             return False
@@ -315,7 +330,7 @@ class DockerCommands:
         return _DEFAULT_TAG
 
     def read_git_ref(self) -> str:
-        return self._run(["git", "rev-parse", "HEAD"], cwd=self._compose_dir).strip()
+        return self._run(["git", "rev-parse", "HEAD"], cwd=self._repo_dir).strip()
 
     def log(self, line: str) -> None:
         path = log_path(self._base)

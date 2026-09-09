@@ -350,10 +350,10 @@ def _run_main_until_stopped(
     """Drive the real `main()` - not `run_once` - for exactly `passes`
     iterations of its `while True`, then stop it with `_StopLoop` instead
     of letting it run forever. `DockerCommands` is replaced so `main`'s
-    own construction of it (`compose_dir=/checkout` by default, no `tmp_path`
-    involved) never touches the filesystem; `time.sleep` is replaced so
-    the test does not wait 2 real seconds per pass and so it has a way to
-    end the loop at all.
+    own construction of it (`repo_dir=/checkout`, `stack_dir=/checkout/
+    deploy/testhost` by default, no `tmp_path` involved) never touches the
+    filesystem; `time.sleep` is replaced so the test does not wait 2 real
+    seconds per pass and so it has a way to end the loop at all.
     """
     monkeypatch.setattr(main_module, "DockerCommands", lambda **_kwargs: commands)
     monkeypatch.setenv("LOXMATTER_UPDATE_BASE", str(base))
@@ -378,6 +378,92 @@ def test_default_base_is_the_shared_update_dir_protocol_names(monkeypatch: pytes
     update")` instead - the plan's resolution is the other way around:
     `protocol` keeps the one definition, and `__main__` aliases it."""
     assert main_module.DEFAULT_BASE is protocol.UPDATE_DIR
+
+
+def test_main_points_env_path_at_the_stack_dir_not_the_repo_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The defect this pins: `DockerCommands` used to take one
+    `compose_dir` for both `git` (which needs the repository root) and
+    `docker compose`/`.env` (which need `deploy/testhost`, two
+    directories below it) - and `env_path` defaulted to `compose_dir /
+    ".env"`. With the real default (`/checkout`) that pointed
+    `write_image_tag`/`read_image_tag` at `/checkout/.env`, a file that
+    has never existed; the real one is `deploy/testhost/.env` -
+    `.env.example` ships there, not at the repository root. `main` now
+    builds `repo_dir` and `stack_dir` separately and must default
+    `env_path` under the stack directory, the same directory `docker
+    compose` itself runs in.
+
+    No `tmp_path` is passed into `DockerCommands` here on purpose - this
+    test is about what `main` computes with NO override in the
+    environment at all, which is exactly the gap the real deployment
+    would have hit silently.
+    """
+    captured: dict[str, object] = {}
+
+    def fake_docker_commands(**kwargs: object) -> FakeCommands:
+        captured.update(kwargs)
+        return FakeCommands()
+
+    monkeypatch.setattr(main_module, "DockerCommands", fake_docker_commands)
+    monkeypatch.setenv("LOXMATTER_UPDATE_BASE", str(tmp_path))
+    monkeypatch.delenv("LOXMATTER_REPO_DIR", raising=False)
+    monkeypatch.delenv("LOXMATTER_STACK_DIR", raising=False)
+    monkeypatch.delenv("LOXMATTER_ENV_PATH", raising=False)
+    sleep_calls = 0
+
+    def fake_sleep(_seconds: float) -> None:
+        nonlocal sleep_calls
+        sleep_calls += 1
+        raise _StopLoop
+
+    monkeypatch.setattr(main_module.time, "sleep", fake_sleep)
+    with pytest.raises(_StopLoop):
+        main_module.main()
+
+    assert captured["repo_dir"] == main_module.DEFAULT_REPO_DIR
+    assert captured["stack_dir"] == main_module.DEFAULT_STACK_DIR
+    # The point of the fix: two different directories, and `.env` under
+    # the second one, not the first.
+    assert captured["stack_dir"] != captured["repo_dir"]
+    assert captured["env_path"] == main_module.DEFAULT_STACK_DIR / ".env"
+    assert captured["env_path"] != main_module.DEFAULT_REPO_DIR / ".env"
+
+
+def test_main_honours_separate_repo_and_stack_dir_overrides(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`LOXMATTER_REPO_DIR` and `LOXMATTER_STACK_DIR` are two independent
+    overrides (the same `_path_from_env` pattern the old, single
+    `LOXMATTER_COMPOSE_DIR` used) - setting one must not change what the
+    other resolves to, and `env_path`'s default must follow whichever
+    `stack_dir` was actually given, not the module's own default
+    constant."""
+    captured: dict[str, object] = {}
+
+    def fake_docker_commands(**kwargs: object) -> FakeCommands:
+        captured.update(kwargs)
+        return FakeCommands()
+
+    repo_dir = tmp_path / "checkout"
+    stack_dir = tmp_path / "elsewhere" / "stack"
+    monkeypatch.setattr(main_module, "DockerCommands", fake_docker_commands)
+    monkeypatch.setenv("LOXMATTER_UPDATE_BASE", str(tmp_path))
+    monkeypatch.setenv("LOXMATTER_REPO_DIR", str(repo_dir))
+    monkeypatch.setenv("LOXMATTER_STACK_DIR", str(stack_dir))
+    monkeypatch.delenv("LOXMATTER_ENV_PATH", raising=False)
+
+    def fake_sleep(_seconds: float) -> None:
+        raise _StopLoop
+
+    monkeypatch.setattr(main_module.time, "sleep", fake_sleep)
+    with pytest.raises(_StopLoop):
+        main_module.main()
+
+    assert captured["repo_dir"] == repo_dir
+    assert captured["stack_dir"] == stack_dir
+    assert captured["env_path"] == stack_dir / ".env"
 
 
 def test_main_leaves_a_healthy_state_file_alone_at_startup(
