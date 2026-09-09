@@ -41,6 +41,12 @@ from conftest import load_snapshot
 
 from loxmatter.api.diagnostics import FABRIC_BACKUP_NAME
 from loxmatter.api.export import ARCHIVE_NAME
+
+# The private helper on purpose, not a second dict comprehension over the
+# same keys: the tests at the end of this file run the shipped `app.js`
+# with the table the browser really gets from `GET /api/i18n`, and a local
+# copy would keep agreeing with itself if that endpoint ever changed.
+from loxmatter.api.language import _web_strings
 from loxmatter.export.commands import extract_commands
 from loxmatter.loxone.server import build_app
 from loxmatter.model.store import Store
@@ -728,21 +734,39 @@ async def test_the_highlight_cannot_change_the_width_of_a_cell(api):
 # spot check for `if (!signal)` would stay green even if the condition
 # does the wrong thing. Alpine still does not run along with it; the unit
 # under test is the state object delivered by `app()`.
+#
+# Correction (final review of "last heard on the device card", 9
+# September 2026): no longer the only place. The last-heard section at
+# the end of this file runs `app.js` too, through the same `_app_state`
+# below - see the section comment there for why that one had to run
+# rather than read. The sentence above stands as the record of when this
+# harness was the exception rather than a tool.
 # ---------------------------------------------------------------------------
 
 NODE = shutil.which("node")
 
 
-def _app_state(setup: str = "") -> dict:
+def _app_state(setup: str = "", translations: dict[str, str] | None = None) -> dict:
     """Loads `app.js` in node, calls `app()`, and runs `setup` on it.
 
     `app.js` is a simple script with no module system (deliberately, see
     the header of the file) - hence `new Function` instead of an import.
+
+    `translations` fills the module-global `translationStrings` the same
+    way `loadI18n()` does at runtime, with a single assignment. It has to
+    happen INSIDE the function body: `translationStrings` is a `let` in
+    `app.js`'s own scope, so `setup` - which runs outside that body -
+    cannot reach it. Without a table, `t()` falls back to returning the
+    key, which is fine for a helper whose result is a boolean or a number
+    and useless for one whose result is a sentence: two different
+    timestamps would both render as "web.devices.last_heard".
     """
+    fill_strings = f"translationStrings = {json.dumps(translations)};\n" if translations else ""
+    tail = json.dumps("\n" + fill_strings + "return app();")
     script = f"""
       const fs = require("node:fs");
       const src = fs.readFileSync({str(WEB_DIR / "app.js")!r}, "utf8");
-      const state = new Function(src + "\\nreturn app();")();
+      const state = new Function(src + {tail})();
       {setup}
     """
     # `check=False`, because the line below reports the same failure with
@@ -5541,3 +5565,160 @@ async def test_the_tile_shows_the_last_heard_line_between_head_and_values(api):
     foot = page.index('<div class="device-foot">')
 
     assert head < line < values < foot
+
+
+# ---------------------------------------------------------------------------
+# "Last heard ..." - the shipped file, executed (final review, A3).
+#
+# Every other check on this line in this file reads DELIVERED TEXT: that
+# `lastHeardText` names its i18n keys, that the tile carries the binding,
+# that the live handler excludes `d<id>_online`. Those prove the right
+# characters left the server. They cannot prove the code does the right
+# thing - an assertion on a condition's source text stays green however
+# the condition behaves, and the two tests below are about behaviour that
+# a copy of the source could not have shown: which of two timestamps
+# wins, and which keys count as the device speaking.
+#
+# The design (§8.2) asked for the expressions to be evaluated against a
+# real DOM; the plan settled for a throwaway harness over three copied
+# function bodies, which proved something about the copy. These tests run
+# the real, shipped `src/loxmatter/web/app.js` instead, through the same
+# `_app_state` as the tile-header section further up. Still no Alpine and
+# still no DOM - the unit under test is the object `app()` returns, and
+# the bindings in `index.html` stay pinned by the delivery tests above.
+# The one thing this buys over the surrounding convention is the one
+# thing that mattered here: a wrong condition FAILS instead of reading
+# correctly.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_the_shipped_last_heard_line_takes_the_newer_of_the_two_sources():
+    """Runs `lastHeardText` on the object `app()` actually returns.
+
+    Three cases, and the label is a different sentence in each - which is
+    why this test feeds the real translation table (`_web_strings`, what
+    `GET /api/i18n` sends the browser). Without it `t()` falls back to
+    returning the key and both timestamp cases would render as
+    "web.devices.last_heard", i.e. the test would pass no matter which
+    source won.
+
+    The `null` case is the one this feature exists for: a device from
+    which nothing has been heard must say so, not fall back to an empty
+    line that looks like a device heard from a second ago.
+    """
+    values = _app_state(
+        setup="""
+        // A fixed instant instead of the clock: the label must not depend
+        // on how long node took to start.
+        const now = 1757400000000;
+        state.nowTick = now;
+        const iso = (ms) => new Date(ms).toISOString();
+        const out = {};
+
+        // Neither source has anything.
+        out.never = state.lastHeardText({ id: 1 });
+
+        // The SERVED value is the newer one - the live bookkeeping of
+        // this tab is three hours behind it.
+        state.deviceHeardAt[2] = now - 3 * 3600 * 1000;
+        out.served_newer = state.lastHeardText({ id: 2, last_heard: iso(now - 120000) });
+
+        // And the other way round: the page was loaded three hours ago
+        // and this device has just reported.
+        state.deviceHeardAt[3] = now;
+        out.live_newer = state.lastHeardText({ id: 3, last_heard: iso(now - 3 * 3600 * 1000) });
+
+        console.log(JSON.stringify(out));
+        """,
+        translations=_web_strings(),
+    )
+
+    assert values["never"] == "Not heard since the bridge started"
+    assert values["served_newer"] == "Last heard 2m ago"
+    assert values["live_newer"] == "Last heard just now"
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_the_shipped_live_handler_does_not_credit_the_online_key():
+    """The scenario of 8 September, played through the shipped handler.
+
+    matter-server marks the dead button's node unavailable, `set_online`
+    puts `d5_online=false` on the socket, and before the exclusion the
+    tile answered that with "Last heard just now" - next to the Offline
+    pill, on the same card. `Runtime._mark_heard` never ran for that
+    message; only the browser counted it.
+
+    This is the assertion the source-text check cannot make: it runs the
+    handler, hands it the three kinds of message that reach it, and asks
+    the tile's own sentence afterwards.
+    """
+    values = _app_state(
+        setup="""
+        // `connectLive()` is browser code: it reads `window.location` to
+        // build the URL and calls `new WebSocket(...)`. node ships a REAL
+        // global WebSocket that would try to open a real connection, so
+        // both are stubbed - the stub only records its listeners, and
+        // `state.socketEverConnected` stays false, so the `open` handler
+        // does not reach for `fetch` either.
+        const sockets = [];
+        globalThis.window = {
+          location: { protocol: "http:", host: "example.invalid" },
+          setTimeout: () => 0,
+          clearTimeout: () => {},
+        };
+        globalThis.WebSocket = class {
+          constructor() {
+            this.listeners = {};
+            sockets.push(this);
+          }
+          addEventListener(type, handler) {
+            (this.listeners[type] = this.listeners[type] || []).push(handler);
+          }
+          close() {}
+        };
+
+        state.connectLive();
+        const socket = sockets[0];
+        const deliver = (key, value) => {
+          for (const handler of socket.listeners.message || []) {
+            handler({ data: JSON.stringify({ key, value }) });
+          }
+        };
+        const out = {};
+
+        // Reachability: matter-server's bookkeeping ABOUT the node, not
+        // the node saying anything.
+        deliver("d5_online", false);
+        out.after_online = state.deviceHeardAt[5] ?? null;
+        state.nowTick = Date.now();
+        out.text_after_online = state.lastHeardText({ id: 5 });
+
+        // The heartbeat belongs to no device at all (Spec 6.5).
+        deliver("bridge_alive", true);
+        out.after_heartbeat = state.deviceHeardAt[5] ?? null;
+        out.heartbeat_seen = state.lastHeartbeatAt !== null;
+
+        // An actual attribute report from that same device - this one
+        // counts, and it is the only one that does.
+        deliver("d5_state", true);
+        out.after_state = typeof state.deviceHeardAt[5];
+        state.nowTick = Date.now();
+        out.text_after_state = state.lastHeardText({ id: 5 });
+
+        console.log(JSON.stringify(out));
+        """,
+        translations=_web_strings(),
+    )
+
+    assert values["after_online"] is None
+    assert values["after_heartbeat"] is None
+    # The sentence the card shows in exactly the state that cost hours on
+    # 8 September: the device is offline AND nothing has been heard from
+    # it. Before the exclusion this read "Last heard just now".
+    assert values["text_after_online"] == "Not heard since the bridge started"
+    # The heartbeat still arrives and is still recorded - just not against
+    # any device.
+    assert values["heartbeat_seen"] is True
+    assert values["after_state"] == "number"
+    assert values["text_after_state"] == "Last heard just now"

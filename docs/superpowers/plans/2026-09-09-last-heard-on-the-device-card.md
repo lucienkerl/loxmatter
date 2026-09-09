@@ -27,6 +27,26 @@ There is no JS test runner and no node step in CI. The established pattern — s
 
 It does **not** prove the code runs. That gap is closed once, by hand, in Task 3: a throwaway node harness that actually evaluates the helpers. Its output is recorded in the report, and the harness is not committed — adding a JS test runner and a CI step for it is a separate decision, not this feature's to make.
 
+> **Correction (final review, 9 September 2026).** Two things above are
+> wrong, and the second one made the first one's conclusion unnecessary.
+>
+> 1. This repository *does* already run `app.js` in a committed test —
+>    `test_the_signal_helpers_tolerate_null_without_throwing`
+>    (`tests/api/test_web.py`), through the `_app_state` helper, which loads
+>    the shipped file in `node` and calls `app()`. No runner, no bundler, no
+>    CI step: `subprocess.run([node, "-e", ...])` plus a `skipif` when node
+>    is missing. The claim that only text assertions existed was never true;
+>    the paragraph above reads the convention off one half of it.
+> 2. Because that harness exists, "the harness is not committed" is no
+>    longer a decision worth defending. The final review's finding A3 closed
+>    the gap for good instead of restating it: the two tests in the
+>    "last heard … the shipped file, executed" section at the end of
+>    `tests/api/test_web.py` exercise `lastHeardText` and the live message
+>    handler on the real object `app()` returns.
+>
+> Both paragraphs stay as written — they are the reasoning the plan was
+> executed under, and the throwaway harness *was* thrown away.
+
 ## Files
 
 | File | Role | Task |
@@ -604,3 +624,23 @@ EOF
 | 8. Bindings actually run | Task 3, step 6 (harness) |
 | 8. Server side already covered | no task — `test_the_device_list_carries_last_heard_from_the_runtime` exists |
 | 9. Not part of this design | no task — deliberate |
+
+> **Correction (final review, 9 September 2026).** Two rows above were
+> untrue as written, and they stay as the record of what was claimed.
+>
+> - *"8. Bindings actually run"* → Task 3, step 6 (harness). The design
+>   (§8.2) requires the Alpine expressions be evaluated **against a real
+>   DOM**. Step 6 ran a plain node harness over three copied function
+>   bodies — no DOM, no Alpine, no `x-text` — so it could not have covered
+>   this row at all. That requirement is still **not** met and is not
+>   claimed to be: the tests added by finding A3 run the shipped `app.js`
+>   without Alpine and without a DOM. What runs the bindings themselves
+>   remains the delivery assertions, which prove the markup carries them.
+> - *"8. Helpers behave"* and the harness half of *"5. Later of served and
+>   live; heartbeat excluded"* → now covered permanently, and against the
+>   actual file, by `test_the_shipped_last_heard_line_takes_the_newer_of_
+>   the_two_sources` and
+>   `test_the_shipped_live_handler_does_not_credit_the_online_key`
+>   (`tests/api/test_web.py`). Row 5 also understated the design: the
+>   heartbeat is not the only key that must be excluded — `d<id>_online`
+>   matches the device key pattern and had to be excluded too (finding A1).
