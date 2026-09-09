@@ -118,6 +118,29 @@ const UPDATE_STEPS = ["backup", "pull", "recreate", "health"];
 // happened.
 const UPDATE_POLL_INTERVAL_MS = 2000;
 
+// The shape a `stable`-channel target takes (`v0.3.0`, the git tag) -
+// distinguishes it from a `dev`-channel target (a bare commit SHA) without
+// needing the channel itself, which `UpdateStatusOut` does not carry (see
+// `updateVersionMismatch()` below for why that matters).
+const UPDATE_STABLE_TARGET_PATTERN = /^v\d+\.\d+\.\d+$/;
+
+/**
+ * The Docker tag CI actually publishes for a `stable`-channel target -
+ * mirrors `rules.image_tag`'s version branch in
+ * `src/loxmatter/update/rules.py`, which is the one authority for this
+ * derivation (read its docstring before touching this function). A
+ * release tag is pushed as the image tag with its leading "v" stripped
+ * (`v0.3.0` -> `:0.3.0`), never as the tag verbatim - `updateVersionMismatch()`
+ * would otherwise compare a git ref against a Docker version string and
+ * report a mismatch on every single healthy update, on the `stable`
+ * channel, forever. `tests/api/test_web.py` pins this against the exact
+ * pairs production actually produces, so a change here that drifts from
+ * `rules.image_tag` fails a test instead of shipping quietly.
+ */
+function updateImageTagFromTarget(target) {
+  return target.replace(/^v/, "");
+}
+
 // Running number for toast messages. Module-wide instead of in the
 // state, because it only needs to tell the messages apart and no one
 // else cares about it.
@@ -740,6 +763,16 @@ function app() {
     // tab watched happen" (show the result) from "a finished update from
     // who knows when, discovered on a fresh page load" (fall through to the
     // ordinary up-to-date/available check instead of resurfacing it).
+    //
+    // Deliberately session-only, in memory - NOT backed by browser-side
+    // persistent storage: `test_no_secret_travels_in_a_url_or_local_storage`
+    // (test_web.py) bans that API from this file outright, a blanket rule
+    // rather than a secrets-only one (see its own docstring). That leaves
+    // a real gap this field cannot close on its own - a reload right
+    // after the bridge returns, or a second tab, restarts it at `false`
+    // and the terminal phase currently on screen falls through to
+    // "confirm"/"none" instead of "result" - recorded rather than
+    // silently worked around; see this task's report.
     updateSawActive: false,
     // Wall-clock timestamps this tab keeps for the two numbers the API
     // itself cannot supply - `update.protocol.UpdateState` carries no
@@ -3196,17 +3229,42 @@ function app() {
         this.updateSawActive = true;
         this.updateResultDurationSeconds = null;
         this.scheduleUpdatePoll();
-      } else if (
-        UPDATE_TERMINAL_PHASES.includes(status.phase) &&
-        this.updateSawActive &&
-        this.updateResultDurationSeconds === null
-      ) {
-        // Freeze the duration the first time a terminal phase is seen -
-        // recomputing it on every later poll would keep counting past the
-        // moment the update actually finished.
-        this.updateResultDurationSeconds = this.updateRunStartedAt
-          ? Math.max(0, Math.round((Date.now() - this.updateRunStartedAt) / 1000))
-          : null;
+        return;
+      }
+      if (UPDATE_TERMINAL_PHASES.includes(status.phase)) {
+        // The optimistic flag must not survive past a terminal phase
+        // either: a poll can land here directly from "idle" if the sidecar
+        // finished an update inside the same ~2s window as the very first
+        // poll `applyUpdate()` fires (fast rollback, tiny image) - without
+        // this, `updateApplyPending` would stay true for the rest of the
+        // tab's life, and `isUpdateInProgress()` would keep claiming an
+        // update is running long after one last existed.
+        this.updateApplyPending = false;
+        if (this.updateSawActive && this.updateResultDurationSeconds === null) {
+          // Freeze the duration the first time a terminal phase is seen -
+          // recomputing it on every later poll would keep counting past
+          // the moment the update actually finished.
+          this.updateResultDurationSeconds = this.updateRunStartedAt
+            ? Math.max(0, Math.round((Date.now() - this.updateRunStartedAt) / 1000))
+            : null;
+        }
+        // No reschedule: the update this loop exists to watch has
+        // settled. A tab left open for a week must not keep polling every
+        // `UPDATE_POLL_INTERVAL_MS` after the one update it ever saw is
+        // long finished - the NEXT update starts its own loop, from
+        // `applyUpdate()` or from a fresh `loadSystem()`.
+        return;
+      }
+      // Idle, from the tile's point of view - UNLESS the optimistic flag
+      // from `applyUpdate()` is still up: this branch is what the request
+      // in the critical-path bug report actually hits, because the very
+      // first poll after a POST fires within milliseconds, and the
+      // sidecar only reads `request.json` on its own next pass, up to
+      // `LOOP_INTERVAL_SECONDS` (`update/__main__.py`) later. Without this
+      // reschedule no timer is EVER set for that gap: `state.json` still
+      // reads "idle", so neither branch above runs.
+      if (this.updateApplyPending) {
+        this.scheduleUpdatePoll();
       }
     },
 
@@ -3269,7 +3327,9 @@ function app() {
      * a TERMINAL phase only shows as "result" if this tab actually watched
      * it happen (`updateSawActive`) - otherwise a page opened long after a
      * past update falls through to the ordinary available/up-to-date
-     * check instead of resurfacing old news.
+     * check instead of resurfacing old news. `updateSawActive` does not
+     * survive a reload or a second tab (see its own comment for why) - a
+     * known, recorded gap, not an oversight.
      */
     updateTileState() {
       const status = this.updateStatus;
@@ -3284,6 +3344,22 @@ function app() {
         // no sidecar, not "nothing to update" - the tile names the console
         // path instead of offering a button nothing would answer.
         return "no_updater";
+      }
+      if (!status && !this.updateReachable) {
+        // The very first `GET /api/update/status` this tab attempted
+        // already failed - `updateStatus` was never set, so `updater_present`
+        // is unknown, not false. Offering "Update now" (the "confirm"
+        // block below) here would be a guess dressed up as a button; "no
+        // updater" would be the wrong guess in the other direction.
+        return "status_unknown";
+      }
+      if (this.updateCheck && this.updateCheck.error) {
+        // Design section 9: "without internet, a quiet note ... not a red
+        // state" - and specifically not "Up to date.", a claim about
+        // currency this bridge could not possibly back up right now. The
+        // note itself is `updateCheck.error`, rendered unconditionally
+        // above this tile's four states in index.html.
+        return "check_failed";
       }
       if (this.updateCheck && this.updateCheck.available) {
         return "confirm";
@@ -3300,6 +3376,15 @@ function app() {
         return "done";
       }
       if (status.phase === step) {
+        return "current";
+      }
+      if (status.phase === "rollback" && step === "recreate") {
+        // `rollback` is not one of `UPDATE_STEPS` (see `UPDATE_ACTIVE_PHASES`'s
+        // own comment: it swaps the container again, exactly like
+        // `recreate`, just back to the old image) - without this, the
+        // step list freezes with nothing marked "current" for the entire
+        // rollback, at exactly the moment the operator most wants to see
+        // that something is still happening.
         return "current";
       }
       return "pending";
@@ -3336,13 +3421,36 @@ function app() {
      * agree once an update finishes. This is deliberately not resolved
      * behind the operator's back: a disagreement is real information about
      * a desynchronised installation.
+     *
+     * `to_version` is `request.target` verbatim (a git ref: `v0.3.0` on
+     * `stable`, a bare commit SHA on `dev`), not a Docker tag and not
+     * `running_version`'s own format - comparing the two strings as-is
+     * would flag every healthy update as a mismatch (see
+     * `updateImageTagFromTarget`'s comment for the full story and why this
+     * codebase has made that mistake before). `UpdateStatusOut` carries no
+     * `channel` field, so the two forms are told apart by what `to_version`
+     * itself looks like, via `UPDATE_STABLE_TARGET_PATTERN` - not by
+     * `updateCheck.channel` or `updateChannel.channel`, either of which
+     * could have been switched after this particular update was requested.
      */
     updateVersionMismatch() {
       const status = this.updateStatus;
       if (!status || !status.to_version || !status.running_version) {
         return false;
       }
-      return status.to_version !== status.running_version;
+      if (UPDATE_STABLE_TARGET_PATTERN.test(status.to_version)) {
+        return updateImageTagFromTarget(status.to_version) !== status.running_version;
+      }
+      // `dev`: `to_version` is the short commit SHA `checkForUpdate` sent
+      // as `target` (`_query_github`'s `sha[:7]`), the same 7-character
+      // form `running_commit` carries (`git rev-parse --short HEAD`, both
+      // `version.py` and `.github/workflows/ci.yml`) - compare against
+      // that, not against `running_version`, which stays the literal
+      // "dev" and would never match any commit.
+      if (!status.running_commit) {
+        return false;
+      }
+      return status.to_version !== status.running_commit;
     },
 
     /**
@@ -4051,6 +4159,15 @@ function app() {
         // identical request per page load would buy nothing.
         if (this.socketEverConnected) {
           this.loadDevices();
+          // The bridge answering the WebSocket handshake again is exactly
+          // the "the bridge came back" moment `pollUpdateStatus()`'s own
+          // retry loop otherwise waits to notice on its own schedule - a
+          // tab that never opened the System tab (so `loadSystem()` never
+          // started the loop) or whose last poll's timer has not fired
+          // yet would otherwise sit on a stale `updateStatus`/`updateReachable`
+          // and keep the connection banner on the generic "lost" wording,
+          // or the tile on "Updating…", after the bridge is already back.
+          this.pollUpdateStatus();
         }
         this.socketEverConnected = true;
         this.reconnectDelayMs = RECONNECT_DELAY_INITIAL_MS;

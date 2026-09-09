@@ -1590,14 +1590,34 @@
           <p class="hint" x-show="updateChannelDraft === 'dev'" x-cloak
              x-text="t('web.system.update_channel_dev_hint')"></p>
           <p class="hint danger-text" x-show="updateChannelError" x-cloak x-text="updateChannelError"></p>
-          <p class="hint danger-text" x-show="updateCheck && updateCheck.error" x-cloak
-             x-text="updateCheck.error"></p>
+          <!--
+            Design section 9: "without internet, a quiet note ... not a red
+            state - a device without internet access is not an error here."
+            `danger-text` here would read as a fault for a firewalled
+            bridge doing exactly what its operator configured it to do.
+            The ternary (not `updateCheck.error` directly) guards the null
+            dereference `x-show` alone does not: `x-show` only sets
+            `display`, it does not stop Alpine from evaluating the child
+            expression, and `updateCheck` is `null` until the System tab
+            has loaded once - see the neighbouring bindings just below for
+            the same pattern already in use here.
+          -->
+          <p class="hint" x-show="updateCheck && updateCheck.error" x-cloak
+             x-text="updateCheck ? updateCheck.error : ''"></p>
 
           <!-- Outside the four states: no updater at all (design section
                11) - hides the button, names the console path, must not
                read as a fault. -->
           <p class="hint" x-show="updateTileState() === 'no_updater'" x-cloak
              x-text="t('web.system.update_no_updater')"></p>
+
+          <!-- Outside the four states: the very first status read failed,
+               so whether an updater is even installed is unknown - must
+               not fall through to "confirm" (an "Update now" button that
+               might answer to nothing) or "none" ("Up to date.", a claim
+               about currency this tab cannot back up). -->
+          <p class="hint" x-show="updateTileState() === 'status_unknown'" x-cloak
+             x-text="t('web.system.update_status_unknown')"></p>
 
           <!-- Outside the four states: checked, nothing to do. -->
           <p class="hint" x-show="updateTileState() === 'none'" x-cloak
@@ -1632,6 +1652,13 @@
                 </li>
               </template>
             </ul>
+            <!-- `rollback` is not one of the four named steps above (it
+                 re-runs "Restart" against the OLD image, see
+                 `updateStepStatus()`'s own comment) - without this, the
+                 list alone gives no sign a rollback, rather than an
+                 ordinary update, is under way. -->
+            <p class="hint" x-show="updateStatus && updateStatus.phase === 'rollback'" x-cloak
+               x-text="t('web.system.update_rollback_hint')"></p>
           </div>
 
           <!-- State 3: Bridge away - fed from the last state.json this tab

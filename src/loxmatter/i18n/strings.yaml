@@ -669,7 +669,7 @@ web.connection.lost_banner:
 # run - not a fault, see index.html and app.js's `isUpdateInProgress()`.
 web.connection.update_banner:
   en: "The bridge is restarting for an update — this is expected, not a fault. It reconnects automatically once it is back."
-  de: "Die Brücke startet für ein Update neu — das ist erwartet, kein Fehler. Sie verbindet sich automatisch neu, sobald sie wieder da ist."
+  de: "Die Brücke startet gerade für ein Update neu — das gehört dazu, es ist kein Fehler. Sie verbindet sich automatisch wieder, sobald sie zurück ist."
 web.header.toast_dismiss_tooltip:
   en: "Click to dismiss"
   de: "Zum Ausblenden anklicken"
@@ -1335,6 +1335,9 @@ web.system.update_channel_error:
 web.system.update_no_updater:
   en: "No updater is installed on this bridge. Run git pull && ./scripts/update.sh on the console once to add it."
   de: "Auf dieser Brücke ist kein Updater installiert. Einmal git pull && ./scripts/update.sh auf der Konsole ausführen, um ihn hinzuzufügen."
+web.system.update_status_unknown:
+  en: "Update status could not be loaded yet — retrying."
+  de: "Der Updatestatus konnte noch nicht geladen werden — ein neuer Versuch läuft."
 web.system.update_up_to_date:
   en: "Up to date."
   de: "Aktuell."
@@ -1361,7 +1364,10 @@ web.system.update_apply_error:
   de: "Update konnte nicht gestartet werden: {message}"
 web.system.update_running_heading:
   en: "Updating…"
-  de: "Aktualisiere…"
+  de: "Wird aktualisiert…"
+web.system.update_rollback_hint:
+  en: "The update did not pass its health check — the previous version is being restored."
+  de: "Das Update hat die Gesundheitsprüfung nicht bestanden — die vorherige Version wird wiederhergestellt."
 web.system.update_step_backup:
   en: "Back up"
   de: "Sichern"
@@ -1379,7 +1385,7 @@ web.system.update_away_heading:
   de: "Die Brücke startet neu"
 web.system.update_away_text:
   en: "This is expected — the update is recreating the bridge's container. The interface will reconnect on its own once it is back."
-  de: "Das ist erwartet — das Update erstellt den Container der Brücke neu. Die Oberfläche verbindet sich von selbst neu, sobald sie wieder da ist."
+  de: "Ganz normal beim Update — der Container der Brücke wird gerade neu erstellt. Die Oberfläche verbindet sich von selbst wieder, sobald sie zurück ist."
 web.system.update_away_seconds:
   en: "{seconds}s of about 120s"
   de: "{seconds} s von etwa 120 s"
@@ -1394,13 +1400,13 @@ web.system.update_result_failure_heading:
   de: "Update fehlgeschlagen"
 web.system.update_result_failure_text:
   en: "The update did not come back healthy and was rolled back. The bridge is running {version} again."
-  de: "Das Update kam nicht gesund zurück und wurde zurückgerollt. Die Brücke läuft wieder auf {version}."
+  de: "Die Gesundheitsprüfung nach dem Update ist fehlgeschlagen, deshalb wurde zurückgerollt. Die Brücke läuft wieder mit {version}."
 web.system.update_result_error_detail:
   en: "Reported reason: {reason}"
   de: "Gemeldeter Grund: {reason}"
 web.system.update_mismatch_warning:
   en: "The updater aimed for {to_version}, but the bridge is running {running_version}. Worth investigating before trusting this installation."
-  de: "Der Updater hat auf {to_version} gezielt, aber die Brücke läuft auf {running_version}. Das lohnt eine Prüfung, bevor man dieser Installation vertraut."
+  de: "Der Updater wollte auf {to_version} aktualisieren, tatsächlich läuft die Brücke aber mit {running_version}. Das sollte geprüft werden, bevor man dieser Installation vertraut."
 web.system.update_duration_seconds:
   en: "{seconds}s"
   de: "{seconds} s"

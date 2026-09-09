@@ -552,6 +552,26 @@ async def test_the_four_update_states_are_present_and_mutually_exclusive(api):
         assert f"x-show=\"updateTileState() === '{expected}'\"" in page
 
 
+async def test_the_unreachable_github_note_is_not_red_and_guards_against_null(api):
+    """Design section 9: "without internet, a quiet note ... not a red
+    state - a device without internet access is not an error here." The
+    shipped binding gave `updateCheck.error` `class="hint danger-text"`
+    (the same red styling as an actual fault elsewhere on this tab) and
+    read `updateCheck.error` directly under an `x-show` that does not stop
+    Alpine from evaluating it - `updateCheck` is `null` until the System
+    tab has loaded once, so that threw on every single page load (see
+    `test_the_signal_helpers_tolerate_null_without_throwing` above for the
+    same class of bug, in a different binding)."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+    assert "x-text=\"updateCheck ? updateCheck.error : ''\"" in page
+    assert 'x-text="updateCheck.error"' not in page
+    error_line = next(
+        line for line in page.splitlines() if 'x-show="updateCheck && updateCheck.error"' in line
+    )
+    assert "danger-text" not in error_line
+
+
 async def test_the_confirmation_names_the_minute_of_silence(api):
     """Task 8 brief, step 4: "the confirmation text names the minute of
     silence - the design calls this the honest message, and an interface
@@ -936,6 +956,44 @@ def test_the_shipped_update_tile_state_picks_the_right_block_for_each_state_json
 
 
 @pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_the_shipped_tile_state_tells_a_failed_check_apart_from_up_to_date():
+    """`GET /api/update/check` never raises for network reasons - a
+    firewalled bridge gets back `available: false, error: "..."` (see
+    `api/update.py`'s module docstring). Before this fix, `updateTileState()`
+    read that the same way as "checked, nothing available" and returned
+    "none", so the tile asserted "Up to date." - a claim about currency it
+    could not possibly back up. A checked-and-current bridge must still
+    say so."""
+    values = _app_state(
+        setup="""
+        const base = {
+          updater_present: true, running_version: "0.3.0", running_commit: "abc1234",
+          id: null, phase: "idle", steps: [], from_version: null, to_version: null,
+          error: null, rolled_back: false, healthy: false, updater_seen_at: "2026-09-09T10:00:00+00:00",
+        };
+        state.updateStatus = base;
+        state.updateReachable = true;
+
+        state.updateCheck = {
+          channel: "stable", running_version: "0.3.0", available: false,
+          latest: null, error: "GitHub konnte nicht erreicht werden.",
+        };
+        const checkFailed = state.updateTileState();
+
+        state.updateCheck = {
+          channel: "stable", running_version: "0.3.0", available: false,
+          latest: null, error: null,
+        };
+        const upToDate = state.updateTileState();
+
+        console.log(JSON.stringify({ checkFailed, upToDate }));
+        """
+    )
+    assert values["upToDate"] == "none"
+    assert values["checkFailed"] != "none"
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
 def test_the_shipped_step_status_reflects_completed_and_current_steps():
     """`updateStepStatus()` turns `state.steps` (completed) and
     `state.phase` (current) into "done"/"current"/"pending" per named step
@@ -1017,7 +1075,23 @@ def test_the_shipped_result_state_reports_duration_without_a_server_field_and_sh
     both exercised together: `UpdateStatusOut` carries no duration field at
     all (`updateDurationText` is purely the browser's own stopwatch), and a
     disagreement between `to_version` and `running_version` is surfaced by
-    `updateVersionMismatch()`, not silently resolved."""
+    `updateVersionMismatch()`, not silently resolved.
+
+    The four pairs fed to `updateVersionMismatch()` below are the shapes
+    production actually produces, not `to_version == running_version`
+    verbatim (a pair no real installation ever has, see
+    `updateImageTagFromTarget`'s comment in app.js): on `stable`,
+    `to_version` is the git tag CI required a leading "v" on
+    (`rules._VERSION`) and `running_version` is that same release with the
+    "v" stripped, the way CI's own build args set `LOXMATTER_VERSION`
+    (`.github/workflows/ci.yml`); on `dev`, `to_version` is the short SHA
+    `checkForUpdate` sent as `target` and `running_commit` is the same
+    short form `git rev-parse --short HEAD` produces. Feeding the OLD
+    pair here (`to_version: "0.4.0"`, no leading "v") would have kept this
+    test green while the shipped function reported a mismatch on every
+    single healthy update - that was the third instance of the same
+    git-ref-vs-Docker-tag confusion this branch had already made twice
+    elsewhere (see rules.py's `image_tag` docstring)."""
     values = _app_state(
         setup="""
         const out = {};
@@ -1025,10 +1099,22 @@ def test_the_shipped_result_state_reports_duration_without_a_server_field_and_sh
         out.long = state.updateDurationText(125);
         out.none = state.updateDurationText(null);
 
-        state.updateStatus = { to_version: "0.4.0", running_version: "0.4.0" };
-        out.matching = state.updateVersionMismatch();
-        state.updateStatus = { to_version: "0.4.0", running_version: "0.3.0" };
-        out.mismatched = state.updateVersionMismatch();
+        // Stable: the tag CI publishes is the target with "v" stripped.
+        state.updateStatus = { to_version: "v0.4.0", running_version: "0.4.0" };
+        out.stable_matching = state.updateVersionMismatch();
+        state.updateStatus = { to_version: "v0.4.0", running_version: "0.3.0" };
+        out.stable_mismatched = state.updateVersionMismatch();
+
+        // Dev: compare against `running_commit`, never against the
+        // literal "dev" `running_version` carries on this channel.
+        state.updateStatus = {
+          to_version: "abc1234", running_version: "dev", running_commit: "abc1234",
+        };
+        out.dev_matching = state.updateVersionMismatch();
+        state.updateStatus = {
+          to_version: "abc1234", running_version: "dev", running_commit: "deadbee",
+        };
+        out.dev_mismatched = state.updateVersionMismatch();
 
         console.log(JSON.stringify(out));
         """,
@@ -1037,8 +1123,10 @@ def test_the_shipped_result_state_reports_duration_without_a_server_field_and_sh
     assert values["short"] == "47s"
     assert values["long"] == "2m 5s"
     assert values["none"] == ""
-    assert values["matching"] is False
-    assert values["mismatched"] is True
+    assert values["stable_matching"] is False
+    assert values["stable_mismatched"] is True
+    assert values["dev_matching"] is False
+    assert values["dev_mismatched"] is True
 
 
 @pytest.mark.skipif(NODE is None, reason="node is required for this test")
@@ -1051,7 +1139,16 @@ def test_the_shipped_apply_update_sends_the_checked_channel_and_target_unchanged
     accepts), so the confirm button passes it through rather than
     reconstructing it. Also checks the optimistic bookkeeping
     (`updateApplyPending`/`updateSawActive`) `updateTileState()` depends on
-    for the gap before the sidecar's next poll."""
+    for the gap before the sidecar's next poll.
+
+    Runs the REAL `pollUpdateStatus()` `applyUpdate()` triggers instead of
+    stubbing it away: the fetch mock answers `/api/update/status` with
+    "idle", the exact reading `state.json` has at the instant this poll
+    fires (the sidecar's own loop is 2s, the poll fires in milliseconds -
+    see this task's report). The previous version of this test stubbed
+    `pollUpdateStatus` into a no-op, which is precisely what let the
+    critical defect through: nothing here ever checked whether a follow-up
+    poll actually got scheduled for that idle reading."""
     values = _app_state(
         # `applyUpdate()` is async, and node refuses a top-level `await`
         # alongside this harness's own `require()` (CommonJS/ESM
@@ -1060,22 +1157,45 @@ def test_the_shipped_apply_update_sends_the_checked_channel_and_target_unchanged
         setup="""
         (async () => {
         const calls = [];
+        const scheduled = [];
+        // Records that a timer was requested, without a real one running
+        // in the background of a `node -e` script that exits right after
+        // `console.log` - the retry LOGIC (does `scheduleUpdatePoll()` get
+        // called at all) is what this test checks, not the real 2s wait.
+        globalThis.window = {
+          setTimeout: (fn, ms) => { scheduled.push(ms); return scheduled.length; },
+          clearTimeout: () => {},
+        };
         globalThis.fetch = async (path, options) => {
           calls.push({ path, body: options.body ? JSON.parse(options.body) : null });
-          return { ok: true, status: 200, json: async () => ({ id: "req-1" }) };
+          if (path === "/api/update/apply") {
+            return { ok: true, status: 200, json: async () => ({ id: "req-1" }) };
+          }
+          return {
+            ok: true, status: 200, json: async () => ({
+              updater_present: true, running_version: "0.3.0", running_commit: "abc1234",
+              id: null, phase: "idle", steps: [], from_version: null, to_version: null,
+              error: null, rolled_back: false, healthy: false, updater_seen_at: null,
+            }),
+          };
         };
-        // Isolates this test from the follow-up poll it triggers - that
-        // behaviour belongs to the poll tests, not this one.
-        state.pollUpdateStatus = async () => {};
         state.updateCheck = {
           channel: "dev", running_version: "0.3.0-abc1234", available: true,
           latest: "abc1234", error: null,
         };
         await state.applyUpdate();
+        // `applyUpdate()` deliberately does not `await` the follow-up
+        // `pollUpdateStatus()` it fires (see its own comment: optimistic,
+        // the sidecar notices on its own schedule) - a real
+        // `setTimeout(…, 0)` (node's own, not the stubbed `window` one)
+        // flushes the microtask queue so that background poll's own
+        // `await fetch(...)` has actually settled before this checks it.
+        await new Promise((resolve) => setTimeout(resolve, 0));
         console.log(JSON.stringify({
           calls,
           pending: state.updateApplyPending,
           sawActive: state.updateSawActive,
+          timerScheduled: scheduled.length > 0,
         }));
         })();
         """
@@ -1084,6 +1204,12 @@ def test_the_shipped_apply_update_sends_the_checked_channel_and_target_unchanged
     assert apply_call["body"] == {"channel": "dev", "target": "abc1234"}
     assert values["pending"] is True
     assert values["sawActive"] is True
+    # The assertion the old, fully-stubbed version of this test could not
+    # make: without the fix, `pollUpdateStatus()` sees "idle", matches
+    # neither the active nor the terminal branch, and returns without ever
+    # calling `scheduleUpdatePoll()` - no timer, and the tile never checks
+    # again for the rest of the tab's life.
+    assert values["timerScheduled"] is True
 
 
 @pytest.mark.skipif(NODE is None, reason="node is required for this test")
@@ -1094,7 +1220,12 @@ def test_the_shipped_poll_marks_the_bridge_away_on_a_network_failure_and_keeps_t
     only ever throwing for that reason) - exactly the "the bridge's own web
     server is down for a minute" case (design section 9, state 3). The
     LAST status this tab did read must survive that failure unchanged:
-    "fed from the last state.json the interface managed to read"."""
+    "fed from the last state.json the interface managed to read".
+
+    Runs the REAL `scheduleUpdatePoll()` instead of stubbing it into a
+    no-op: the previous version of this test could not have noticed
+    deleting the entire retry mechanism, because nothing here ever
+    inspected `updatePollTimer`."""
     values = _app_state(
         # Same IIFE reason as the `applyUpdate()` test above:
         # `pollUpdateStatus()` is async, and a top-level `await` alongside
@@ -1102,6 +1233,11 @@ def test_the_shipped_poll_marks_the_bridge_away_on_a_network_failure_and_keeps_t
         setup="""
         (async () => {
         let calls = 0;
+        const scheduled = [];
+        globalThis.window = {
+          setTimeout: (fn, ms) => { scheduled.push(ms); return scheduled.length; },
+          clearTimeout: () => {},
+        };
         const goodStatus = {
           updater_present: true, running_version: "0.3.0", running_commit: "abc",
           id: "x", phase: "recreate", steps: ["backup", "pull"], from_version: "0.3.0",
@@ -1115,25 +1251,182 @@ def test_the_shipped_poll_marks_the_bridge_away_on_a_network_failure_and_keeps_t
           }
           throw new Error("network down");
         };
-        // Isolates this test from the retry timer - `scheduleUpdatePoll`
-        // itself is not under test here.
-        state.scheduleUpdatePoll = () => {};
         await state.pollUpdateStatus();
-        const afterFirst = { reachable: state.updateReachable, phase: state.updateStatus.phase };
+        const afterFirst = {
+          reachable: state.updateReachable,
+          phase: state.updateStatus.phase,
+          timerScheduled: state.updatePollTimer !== null,
+        };
+        state.updatePollTimer = null; // simulate that timer having fired
         await state.pollUpdateStatus();
         console.log(JSON.stringify({
           afterFirst,
           reachableAfterFailure: state.updateReachable,
           statusSurvived: state.updateStatus.phase,
           awaySinceSet: state.updateAwaySince !== null,
+          timerScheduledAfterFailure: state.updatePollTimer !== null,
         }));
         })();
         """
     )
-    assert values["afterFirst"] == {"reachable": True, "phase": "recreate"}
+    assert values["afterFirst"] == {"reachable": True, "phase": "recreate", "timerScheduled": True}
     assert values["reachableAfterFailure"] is False
     assert values["statusSurvived"] == "recreate"
     assert values["awaySinceSet"] is True
+    assert values["timerScheduledAfterFailure"] is True
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_the_shipped_update_loop_survives_the_idle_race_and_stops_after_a_terminal_phase():
+    """The full click-to-result sequence the critical defect broke,
+    end to end, against the REAL `pollUpdateStatus()`/`scheduleUpdatePoll()`
+    - no stub anywhere in this test stands between "the operator clicked
+    Update now" and "the tile stops polling again": `applyUpdate()`'s own
+    immediate poll (lands on "idle" - the sidecar has not read
+    `request.json` yet), the sidecar's next pass going active, a network
+    blip mid-update ("bridge away"), and the terminal phase that ends the
+    loop.
+
+    Before the fix: `applyUpdate()`'s own poll saw "idle", matched neither
+    the active nor the terminal branch of `pollUpdateStatus()`, and
+    returned without calling `scheduleUpdatePoll()` at all - no timer was
+    EVER set, so `applyUpdatePending` also stayed true forever (nothing
+    ever polled again to clear it), and a later, wholly unrelated
+    disconnect would have shown "The bridge is restarting for an update"
+    on a genuine fault."""
+    values = _app_state(
+        setup="""
+        (async () => {
+        const scheduled = [];
+        globalThis.window = {
+          setTimeout: (fn, ms) => { scheduled.push(ms); return scheduled.length; },
+          clearTimeout: () => {},
+        };
+        const base = {
+          updater_present: true, running_version: "0.3.0", running_commit: "abc1234",
+          id: null, phase: "idle", steps: [], from_version: null, to_version: null,
+          error: null, rolled_back: false, healthy: false, updater_seen_at: null,
+        };
+        const idleStatus = { ...base };
+        const activeStatus = {
+          ...base, id: "req-1", phase: "recreate", steps: ["backup", "pull"],
+          from_version: "0.3.0", to_version: "0.4.0",
+        };
+        const doneStatus = { ...activeStatus, phase: "done", steps: ["backup", "pull", "recreate", "health"], running_version: "0.4.0" };
+        // Consumed in order, one per GET /api/update/status - see the
+        // matching step below for what each one simulates.
+        const statusQueue = [idleStatus, activeStatus, "network-fail", doneStatus];
+        globalThis.fetch = async (path) => {
+          if (path === "/api/update/apply") {
+            return { ok: true, status: 200, json: async () => ({ id: "req-1" }) };
+          }
+          const next = statusQueue.shift();
+          if (next === "network-fail") {
+            throw new Error("network down");
+          }
+          return { ok: true, status: 200, json: async () => next };
+        };
+
+        const out = {};
+        state.updateCheck = {
+          channel: "stable", running_version: "0.3.0", available: true,
+          latest: "v0.4.0", error: null,
+        };
+
+        // `scheduleUpdatePoll()` guards against a SECOND timer while one
+        // is already pending (`if (this.updatePollTimer !== null) return`)
+        // - exactly what the real timer callback's own
+        // `this.updatePollTimer = null` (app.js) clears before it calls
+        // `pollUpdateStatus()` again. Driving the sequence by calling
+        // `pollUpdateStatus()` directly (instead of actually waiting out
+        // real timers) has to repeat that same reset between steps, or
+        // every step after the first would silently no-op against a timer
+        // "still pending" from the step before - and each step below
+        // therefore checks the scheduled COUNT growing, not merely being
+        // non-zero, so a step that silently failed to reschedule cannot
+        // hide behind an earlier step's count.
+
+        // 1. Click "Update now" - the POST, then the immediate poll that
+        // lands on "idle" (the critical race). `applyUpdate()` does not
+        // `await` that poll (see its own comment), so a real
+        // `setTimeout(…, 0)` flushes it before this reads the result.
+        await state.applyUpdate();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        out.afterApplyPending = state.updateApplyPending;
+        out.afterApplyTimerScheduled = scheduled.length > 0;
+
+        // 2. The sidecar's own loop has now picked the request up.
+        state.updatePollTimer = null;
+        const beforeActive = scheduled.length;
+        await state.pollUpdateStatus();
+        out.afterActivePhase = state.updateStatus.phase;
+        out.afterActiveTileState = state.updateTileState();
+        out.afterActivePending = state.updateApplyPending;
+        out.afterActiveTimerScheduled = scheduled.length > beforeActive;
+
+        // 3. A network blip mid-update - "bridge away" (design section 9,
+        // state 3), not a fault.
+        state.updatePollTimer = null;
+        const beforeAway = scheduled.length;
+        await state.pollUpdateStatus();
+        out.reachableDuringAway = state.updateReachable;
+        out.tileDuringAway = state.updateTileState();
+        out.awayTimerScheduled = scheduled.length > beforeAway;
+
+        // 4. The bridge is back and the update has finished.
+        state.updatePollTimer = null;
+        const beforeFinal = scheduled.length;
+        await state.pollUpdateStatus();
+        out.finalPhase = state.updateStatus.phase;
+        out.finalTileState = state.updateTileState();
+        out.finalPending = state.updateApplyPending;
+        // The loop must NOT keep scheduling forever after a finished
+        // update - a tab left open for a week must not still be polling.
+        out.timerScheduledAfterTerminal = scheduled.length > beforeFinal;
+
+        console.log(JSON.stringify(out));
+        })();
+        """
+    )
+    assert values["afterApplyPending"] is True
+    assert values["afterApplyTimerScheduled"] is True
+    assert values["afterActivePhase"] == "recreate"
+    assert values["afterActiveTileState"] == "running"
+    assert values["afterActivePending"] is False
+    assert values["afterActiveTimerScheduled"] is True
+    assert values["reachableDuringAway"] is False
+    assert values["tileDuringAway"] == "away"
+    assert values["awayTimerScheduled"] is True
+    assert values["finalPhase"] == "done"
+    assert values["finalTileState"] == "result"
+    assert values["finalPending"] is False
+    assert values["timerScheduledAfterTerminal"] is False
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_the_shipped_load_system_starts_the_update_tiles_own_loads():
+    """`loadSystem()` (System tab opened, or the "Refresh" button) must
+    kick off all three of the update tile's own loads - the channel, the
+    check, and the status poll - deliberately OUTSIDE the version/system-
+    check try/finally above them in app.js, so a broken system check does
+    not also blank the tile. A source-text check cannot tell "these three
+    lines are called" from "these three lines used to be called" - this
+    runs the shipped `loadSystem()` and asks the three functions
+    themselves whether they were invoked, and in which order."""
+    values = _app_state(
+        setup="""
+        (async () => {
+        state.request = async () => ({});
+        const calls = [];
+        state.loadUpdateChannel = async () => { calls.push("channel"); };
+        state.checkForUpdate = async () => { calls.push("check"); };
+        state.pollUpdateStatus = async () => { calls.push("poll"); };
+        await state.loadSystem();
+        console.log(JSON.stringify(calls));
+        })();
+        """
+    )
+    assert values == ["channel", "check", "poll"]
 
 
 @pytest.mark.skipif(NODE is None, reason="node is required for this test")
