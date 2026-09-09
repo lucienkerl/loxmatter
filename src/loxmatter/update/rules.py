@@ -41,10 +41,16 @@ _CHANNELS = frozenset({"stable", "dev"})
 # `checkout`/`pull` - an avoidable trip through the rollback path.
 _VERSION = re.compile(r"^v(\d+)\.(\d+)\.(\d+)$")
 # `running_version` is not a target - it never goes near a command line -
-# and it does not carry the `v` that release tags do: it comes straight
-# out of `pyproject.toml`'s bare `version = "0.2.0"`. `_VERSION` above
-# must stay strict for targets, so the running version gets its own,
-# deliberately lenient pattern.
+# and it does not carry the `v` that release tags do: it comes from
+# `LOXMATTER_VERSION` in the *running container's* environment
+# (`commands.read_running_identity`, via `docker inspect` - see that
+# method's docstring for why the checkout on disk, which can be moved or
+# advanced without ever having been shipped, is the wrong source). CI
+# passes it bare (`VERSION="0.3.0"`, not `v0.3.0` - see
+# `.github/workflows/ci.yml`), so `_VERSION` above, which requires the
+# `v` release tags carry, cannot also match it. `_VERSION` must stay
+# strict for targets, so the running version gets its own, deliberately
+# lenient pattern.
 _RUNNING_VERSION = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)$")
 # CI publishes `sha-<short>`, where `<short>` is `git rev-parse --short
 # HEAD` - 7 characters at the time of writing (see
