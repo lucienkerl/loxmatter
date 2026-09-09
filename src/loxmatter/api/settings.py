@@ -36,7 +36,6 @@ from loxmatter.api.models import (
     UpdateChannelOut,
 )
 from loxmatter.model.store import Store
-from loxmatter.model.update_settings_store import UpdateSettingsStore
 
 
 def _settings_out(store: Store) -> BridgeSettingsOut:
@@ -55,11 +54,6 @@ def _resend_interval_out(store: Store) -> ResendIntervalOut:
 
 def build_settings_router(store: Store) -> APIRouter:
     router = APIRouter(prefix="/api")
-    # A view onto the store's own connection, built once here - like
-    # `store.resend_settings`, but this store is also consumed on its own
-    # by the updater sidecar (which has no `Store` at all), so it takes a
-    # bare connection rather than living as a `Store` attribute.
-    update_settings = UpdateSettingsStore(store._db)
 
     @router.get("/settings")
     async def get_settings() -> BridgeSettingsOut:
@@ -88,11 +82,11 @@ def build_settings_router(store: Store) -> APIRouter:
 
     @router.get("/settings/update-channel")
     async def get_update_channel() -> UpdateChannelOut:
-        return UpdateChannelOut(channel=update_settings.get_channel().value)
+        return UpdateChannelOut(channel=store.update_settings.get_channel().value)
 
     @router.put("/settings/update-channel")
     async def save_update_channel(patch: UpdateChannelIn) -> UpdateChannelOut:
-        update_settings.set_channel(patch.channel)
-        return UpdateChannelOut(channel=update_settings.get_channel().value)
+        store.update_settings.set_channel(patch.channel)
+        return UpdateChannelOut(channel=store.update_settings.get_channel().value)
 
     return router

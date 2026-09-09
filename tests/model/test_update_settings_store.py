@@ -19,12 +19,7 @@
 from __future__ import annotations
 
 from loxmatter.model.store import Store
-from loxmatter.model.update_settings_store import UpdateChannel, UpdateSettingsStore
-
-
-def make_store(tmp_path) -> UpdateSettingsStore:
-    store = Store(tmp_path / "s.sqlite")
-    return UpdateSettingsStore(store._db)
+from loxmatter.model.update_settings_store import UpdateChannel
 
 
 def test_the_default_channel_is_stable(tmp_path):
@@ -33,13 +28,20 @@ def test_the_default_channel_is_stable(tmp_path):
     The other way round would be the dangerous default: an operator who
     never opened the setting would be riding every commit on main.
     """
-    assert make_store(tmp_path).get_channel() is UpdateChannel.STABLE
+    store = Store(tmp_path / "s.sqlite")
+    try:
+        assert store.update_settings.get_channel() is UpdateChannel.STABLE
+    finally:
+        store.close()
 
 
 def test_a_saved_channel_comes_back(tmp_path):
-    settings = make_store(tmp_path)
-    settings.set_channel(UpdateChannel.DEV)
-    assert settings.get_channel() is UpdateChannel.DEV
+    store = Store(tmp_path / "s.sqlite")
+    try:
+        store.update_settings.set_channel(UpdateChannel.DEV)
+        assert store.update_settings.get_channel() is UpdateChannel.DEV
+    finally:
+        store.close()
 
 
 def test_an_unknown_stored_value_falls_back_to_stable(tmp_path):
@@ -50,9 +52,12 @@ def test_an_unknown_stored_value_falls_back_to_stable(tmp_path):
     value was meant to be, following released versions is the choice that
     cannot surprise anyone.
     """
-    settings = make_store(tmp_path)
-    settings._db.execute(
-        "INSERT OR REPLACE INTO setting (key, value) VALUES (?, ?)",
-        ("update_channel", "nightly"),
-    )
-    assert settings.get_channel() is UpdateChannel.STABLE
+    store = Store(tmp_path / "s.sqlite")
+    try:
+        store._db.execute(
+            "INSERT OR REPLACE INTO setting (key, value) VALUES (?, ?)",
+            ("update_channel", "nightly"),
+        )
+        assert store.update_settings.get_channel() is UpdateChannel.STABLE
+    finally:
+        store.close()
