@@ -750,11 +750,21 @@ async def test_the_update_polling_only_runs_while_a_job_is_in_progress(api):
     assert "idle" not in running_body
     assert "rejected" not in running_body
 
-    load_status_start = script.index("async loadUpdateStatus() {")
+    # `startUpdateTimer()` (Critical 3) is the ONE place that ever creates
+    # the interval - both `loadUpdateStatus()` and `applyUpdate()` (see
+    # its own test above) go through it rather than assigning
+    # `this.updateTimer` themselves, which is what keeps arming
+    # idempotent everywhere it happens.
+    start_timer_start = script.index("startUpdateTimer() {")
+    start_timer_end = script.index("\n    },", start_timer_start)
+    start_timer_body = script[start_timer_start:start_timer_end]
+    assert "this.updateTimer = setInterval(() => this.loadUpdateStatus(), 2000)" in start_timer_body
+    assert "!this.updateTimer" in start_timer_body  # never a second interval
+
+    load_status_start = script.index("async loadUpdateStatus({ allowStop = true } = {}) {")
     load_status_end = script.index("\n    },", load_status_start)
     load_status_body = script[load_status_start:load_status_end]
-    assert "this.updateTimer = setInterval(() => this.loadUpdateStatus(), 2000)" in load_status_body
-    assert "!this.updateTimer" in load_status_body  # never a second interval
+    assert "this.startUpdateTimer()" in load_status_body
     assert "this.stopUpdateTimer()" in load_status_body
 
     # Leaving the System tab must stop the timer too - the leak this
@@ -1187,6 +1197,160 @@ def test_a_cold_load_during_the_restart_window_still_starts_the_update_poll():
     # own state) rather than being forced to some other value by a
     # failure in a completely different fetch.
     assert values["versionInfo"] is None
+
+
+@pytest.mark.skipif(NODE is None, reason="node wird fuer diesen Test gebraucht")
+def test_apply_update_arms_the_poll_timer_even_though_the_immediate_read_is_stale():
+    """Critical 3. `applyUpdate()` used to call `loadUpdateStatus()` once,
+    immediately after the POST, and rely on THAT call's own internal
+    "start the timer if a phase is running" branch to arm the poll. At
+    the instant of that call, `state.json` can still hold the PREVIOUS
+    end state - the sidecar's own loop only wakes once every two seconds
+    (update-once.sh, driven by entrypoint.sh) - so `updateRunning()` read
+    `false`, the timer was never armed, and nothing else ever called
+    `loadUpdateStatus()` again on its own: `loadSystem()` only runs on a
+    tab switch or a manual "Refresh", and the reconnect handlers never
+    touch the System tab at all.
+
+    Proven end to end in the unpatched code with the exact stub below
+    (POST succeeds, the immediate status GET answers with a stale "idle"
+    state - no request/sidecar change involved, purely a timing window):
+    `state.updateTimer` stayed `null` after `applyUpdate()` returned, and
+    the card would have kept showing "Install update" while the job
+    silently ran. Fixed by arming the timer in `applyUpdate()` itself,
+    unconditionally, right after the POST succeeds - independent of
+    whatever phase this immediate read happens to return."""
+    values = _app_state(
+        """
+        state.updateAvailable = { target: "1.1.0", error: null };
+        state.updateConfirming = true;
+        state.updateError = null;
+        let statusCalls = 0;
+        state.request = async (method, path) => {
+          if (method === "POST" && path === "/api/update/apply") {
+            return { id: "job-1" };
+          }
+          if (method === "GET" && path === "/api/update/status") {
+            statusCalls += 1;
+            // The sidecar has not woken up yet - state.json still reads
+            // the END state from BEFORE this request, exactly the
+            // staleness window Critical 3 is about.
+            return {
+              state: { phase: "idle", id: null, from: null, to: null,
+                       error: null, rolled_back: false, healthy: true },
+              updater_present: true, log: [], channel: "stable", check_enabled: true,
+            };
+          }
+          throw new Error("unexpected request " + method + " " + path);
+        };
+        (async () => {
+          await state.applyUpdate();
+          const timerWasArmed = state.updateTimer !== null;
+          state.stopUpdateTimer();
+          console.log(JSON.stringify({
+            timerWasArmed,
+            statusCalls,
+            updateError: state.updateError,
+            updateConfirming: state.updateConfirming,
+          }));
+        })();
+        """
+    )
+
+    assert values["timerWasArmed"] is True
+    assert values["statusCalls"] == 1
+    assert values["updateError"] is None
+    assert values["updateConfirming"] is False
+
+
+@pytest.mark.skipif(NODE is None, reason="node wird fuer diesen Test gebraucht")
+def test_apply_update_keeps_the_timer_armed_when_the_immediate_read_fails_outright():
+    """Critical 3, the other half named in this task's own brief: what the
+    poll timer must do if the FIRST status read after a successful POST
+    fails outright (a transient network hiccup, not a 401 - that path is
+    already covered by `test_an_expired_session_stops_the_update_poll_
+    instead_of_retrying_forever` below). The POST already succeeded, so
+    the sidecar already has a job queued regardless of whether this one
+    read can currently reach the bridge - the timer armed in
+    `applyUpdate()` must survive that failed read exactly as it survives
+    a stale-but-successful one, and its own next tick two seconds later
+    is what gets a real answer.
+
+    `state.authenticated` is set `true` here (unlike this file's default
+    `app()` state) precisely so the failure below is NOT mistaken for an
+    expired session - `loadUpdateStatus()`'s own `!this.authenticated`
+    branch would otherwise stop the timer for an unrelated reason and
+    this test would pass for the wrong cause."""
+    values = _app_state(
+        """
+        state.authenticated = true;
+        state.updateAvailable = { target: "1.1.0", error: null };
+        state.updateConfirming = true;
+        state.updateError = null;
+        state.request = async (method, path) => {
+          if (method === "POST" && path === "/api/update/apply") {
+            return { id: "job-1" };
+          }
+          if (method === "GET" && path === "/api/update/status") {
+            throw new Error("network hiccup");
+          }
+          throw new Error("unexpected request " + method + " " + path);
+        };
+        (async () => {
+          await state.applyUpdate();
+          const timerWasArmed = state.updateTimer !== null;
+          state.stopUpdateTimer();
+          console.log(JSON.stringify({ timerWasArmed, authenticated: state.authenticated }));
+        })();
+        """
+    )
+
+    assert values["timerWasArmed"] is True
+    assert values["authenticated"] is True
+
+
+@pytest.mark.skipif(NODE is None, reason="node wird fuer diesen Test gebraucht")
+def test_apply_update_does_not_arm_a_second_timer_when_one_is_already_running():
+    """Critical 3's own explicit caveat: arming must stay idempotent. A
+    session that opened the System tab while a PREVIOUS job was still
+    running already has a timer armed by the time anyone could click
+    "Install update" again (the button is disabled while `updateRunning()`
+    - but this proves the underlying arming logic itself is safe, not
+    just the button). `startUpdateTimer()`'s own guard
+    (`if (!this.updateTimer)`) must leave an EXISTING timer's identity
+    untouched rather than replace it with a second `setInterval` - two
+    timers polling the same endpoint would double the request rate and
+    leave the first one uncleared forever."""
+    values = _app_state(
+        """
+        state.updateAvailable = { target: "1.1.0", error: null };
+        state.updateConfirming = true;
+        state.updateError = null;
+        const existingTimer = setInterval(() => {}, 999999);
+        state.updateTimer = existingTimer;
+        state.request = async (method, path) => {
+          if (method === "POST" && path === "/api/update/apply") {
+            return { id: "job-1" };
+          }
+          if (method === "GET" && path === "/api/update/status") {
+            return {
+              state: { phase: "backup", id: "job-1", from: "1.0.0", to: "1.1.0",
+                       error: null, rolled_back: false, healthy: true },
+              updater_present: true, log: [], channel: "stable", check_enabled: true,
+            };
+          }
+          throw new Error("unexpected request " + method + " " + path);
+        };
+        (async () => {
+          await state.applyUpdate();
+          const sameTimer = state.updateTimer === existingTimer;
+          state.stopUpdateTimer();
+          console.log(JSON.stringify({ sameTimer }));
+        })();
+        """
+    )
+
+    assert values["sameTimer"] is True
 
 
 @pytest.mark.skipif(NODE is None, reason="node wird fuer diesen Test gebraucht")

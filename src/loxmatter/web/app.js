@@ -2947,7 +2947,44 @@ function app() {
       }
     },
 
-    async loadUpdateStatus() {
+    /** Arms the poll timer if it is not already running - idempotent, so
+     * every caller (the interval-driven arm below AND `applyUpdate`'s own
+     * unconditional call, see there) can call this without first checking
+     * `this.updateTimer` itself, and without ever ending up with two
+     * `setInterval`s ticking against the same state. */
+    startUpdateTimer() {
+      if (!this.updateTimer) {
+        this.updateTimer = setInterval(() => this.loadUpdateStatus(), 2000);
+      }
+    },
+
+    /**
+     * `allowStop` exists for exactly one caller: `applyUpdate`'s own
+     * immediate read right after the POST (Critical 3). The sidecar's
+     * loop wakes at most every two seconds (update-once.sh's own
+     * `entrypoint.sh` cadence), so `state.json` - and with it this very
+     * read - can still report the PREVIOUS end state (`idle`/`done`/
+     * `failed`) for up to that long after the POST already succeeded.
+     * `updateRunning()` reading `false` off that stale state must not be
+     * mistaken for "nothing is running" - the POST already got a 2xx,
+     * meaning the job was accepted. Proven end to end in a node harness
+     * replaying the real methods: with the timer armed only through the
+     * branch below (i.e. only once THIS function itself already sees a
+     * running phase), the only requests after the click were the POST
+     * and one status GET, `setInterval` was called zero times, and the
+     * card kept showing "Install update" while the job actually ran -
+     * worse, `updateRunning()` staying `false` also un-suppressed the
+     * red "connection lost" banner, the exact outcome the update-specific
+     * banner exists to prevent.
+     *
+     * `applyUpdate` arms the timer itself, unconditionally, BEFORE this
+     * call - so the stop branch below, reached on this same stale read,
+     * must not undo that arming. Every OTHER caller (the timer's own
+     * interval tick, and the cold-load path through `loadSystem`) has no
+     * such freshly-armed timer to protect and keeps the default
+     * `allowStop: true` - once the job it already knows about genuinely
+     * ends, THAT read is exactly what should turn the timer back off. */
+    async loadUpdateStatus({ allowStop = true } = {}) {
       try {
         this.updateStatus = await this.request("GET", "/api/update/status");
         this.updateError = null;
@@ -2980,10 +3017,10 @@ function app() {
           this.updateError = error.message;
         }
       }
-      if (this.updateRunning() && !this.updateTimer) {
-        this.updateTimer = setInterval(() => this.loadUpdateStatus(), 2000);
+      if (this.updateRunning()) {
+        this.startUpdateTimer();
       }
-      if (!this.updateRunning() && this.updateTimer) {
+      if (allowStop && !this.updateRunning() && this.updateTimer) {
         this.stopUpdateTimer();
         // Fetch the version once more after the end: the card up top
         // should show the new number, not the one the page loaded with.
@@ -3008,7 +3045,25 @@ function app() {
         // actual validation in the sidecar, and the one thing this route
         // must not do is offer a free-text field that reaches it.
         await this.request("POST", "/api/update/apply", { target: this.updateAvailable.target });
-        await this.loadUpdateStatus();
+        // Critical 3: arm the timer HERE, unconditionally, the moment the
+        // POST itself succeeds - not by relying on the `loadUpdateStatus`
+        // call right below to notice a running phase and arm it as a side
+        // effect. `startUpdateTimer` is idempotent (see its own comment),
+        // so this can never end up racing a SECOND `setInterval` against
+        // whatever the cold-load/interval path already armed.
+        this.startUpdateTimer();
+        // `allowStop: false`: the read below can still land on the
+        // sidecar's PREVIOUS end state (see `loadUpdateStatus`'s own
+        // comment on this parameter) - including a read that fails
+        // outright, e.g. a transient network hiccup right after the
+        // POST. Either way `updateRunning()` off that stale/missing read
+        // may say `false`, but the timer just armed above must survive
+        // it regardless: the POST already succeeded, a job is queued,
+        // and the timer's own next tick (in 2s, `allowStop` defaulting
+        // back to `true` there) is what correctly turns it off once the
+        // sidecar's real state - not this stale one - says the job is
+        // over.
+        await this.loadUpdateStatus({ allowStop: false });
       } catch (error) {
         // `error.message` is already the specific, human sentence the
         // backend chose for this exact refusal (busy, no updater, disk
