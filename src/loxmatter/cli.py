@@ -585,8 +585,12 @@ async def _run(
     `log_handler` of `None`, as received by every caller of `_run()` that
     passes none, e.g. a test)."""
     sender = UdpSender(miniserver, port)
-    runtime = Runtime(store, sender)
     client = _build_client(url)
+    # `lambda: client.connected`, NOT `client.connected`: the second form
+    # would be a bool evaluated once, and the heartbeat would thereby hang
+    # forever on the state of the moment of startup. `mypy --strict`
+    # rejects it.
+    runtime = Runtime(store, sender, link_ok=lambda: client.connected)
 
     async def invoke(call: MatterCall) -> None:
         await client.send_command(call)

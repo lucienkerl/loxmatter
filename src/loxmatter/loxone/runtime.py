@@ -74,11 +74,22 @@ class Runtime:
         *,
         heartbeat_seconds: float = 30.0,
         resend_poll_seconds: float = 5.0,
+        link_ok: Callable[[], bool] = lambda: True,
     ) -> None:
         self._store = store
         self._sender = sender
         self._heartbeat_seconds = heartbeat_seconds
         self._resend_poll_seconds = resend_poll_seconds
+        # Whether the connection to matter-server is currently holding -
+        # asked afresh by the heartbeat on EVERY beat (see
+        # `_heartbeat_loop`). The annotation `Callable[[], bool]` is a
+        # load-bearing safeguard here, not a formality: `cli.serve()`
+        # passes `lambda: client.connected`, and `client.connected` on its
+        # own - a property, hence a bool evaluated once - would thereby be
+        # a type error that `mypy --strict` rejects in CI. Without this
+        # annotation the heartbeat would silently hang on the state of the
+        # moment of startup and would never fall silent.
+        self._link_ok = link_ok
         self._last_values: dict[str, float | bool] = {}
         self._counters: dict[str, int] = {}
         self._heartbeat_on = False
@@ -503,18 +514,38 @@ class Runtime:
     async def _heartbeat_loop(self) -> None:
         while True:
             try:
-                self._heartbeat_on = not self._heartbeat_on
-                await self._sender.send(HEARTBEAT_KEY, self._heartbeat_on, force=True)
-                # Also to the UI (2026-09-03). Previously the heartbeat
-                # went only to Loxone, and a bridge on which nothing is
-                # currently changing - a plug with no load reports neither
-                # current nor power - was indistinguishable in the live
-                # view from a crashed one: no value was moving, and no one
-                # could tell whether nothing was happening or nothing was
-                # arriving. The heartbeat is precisely the signal that
-                # answers this question; withholding it from the UI was a
-                # gap, not a decision.
-                self._notify_observers(HEARTBEAT_KEY, self._heartbeat_on)
+                # No pulse without a Matter connection (8 September 2026):
+                # the heartbeat is the watchdog input in Loxone. If it
+                # keeps pulsing while the bridge is deaf, Loxone reports
+                # "all well" - and that is exactly why an outage lasting
+                # hours went unnoticed by everyone.
+                #
+                # This is something DIFFERENT from the failure case below:
+                # if SENDING fails, the loop carries on and keeps pulsing,
+                # so that the error becomes visible. If the CONNECTION is
+                # missing, it falls silent, so that the error becomes
+                # visible. Two states, two right answers - the difference
+                # is what the pulse makes a statement about.
+                #
+                # The toggle of `_heartbeat_on` sits INSIDE the condition
+                # on purpose: otherwise the phase would keep advancing
+                # during the outage and the first pulse afterwards would
+                # come out on the same value as the last one before it by
+                # chance - for an edge-triggered watchdog that would be a
+                # swallowed beat.
+                if self._link_ok():
+                    self._heartbeat_on = not self._heartbeat_on
+                    await self._sender.send(HEARTBEAT_KEY, self._heartbeat_on, force=True)
+                    # Also to the UI (2026-09-03). Previously the heartbeat
+                    # went only to Loxone, and a bridge on which nothing is
+                    # currently changing - a plug with no load reports neither
+                    # current nor power - was indistinguishable in the live
+                    # view from a crashed one: no value was moving, and no one
+                    # could tell whether nothing was happening or nothing was
+                    # arriving. The heartbeat is precisely the signal that
+                    # answers this question; withholding it from the UI was a
+                    # gap, not a decision.
+                    self._notify_observers(HEARTBEAT_KEY, self._heartbeat_on)
             except asyncio.CancelledError:
                 raise
             except Exception:

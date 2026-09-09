@@ -22,7 +22,7 @@ from pathlib import Path
 import pytest
 
 from loxmatter.export.commands import extract_commands
-from loxmatter.loxone.runtime import Runtime
+from loxmatter.loxone.runtime import HEARTBEAT_KEY, Runtime
 from loxmatter.matter.discovery import extract_signals
 from loxmatter.matter.models import NodeSnapshot, SignalKind, SignalRef
 from loxmatter.model.store import Store
@@ -702,3 +702,60 @@ async def test_on_node_snapshot_invalidates_before_seeding_a_stale_cache(environ
     await runtime.on_node_snapshot(device_id, snapshot)
 
     assert key in runtime._last_values
+
+
+async def test_the_heartbeat_stays_silent_without_a_matter_link(tmp_path):
+    """Without a Matter connection `bridge_alive` must NOT pulse.
+
+    The heartbeat is the watchdog input in Loxone. If it keeps pulsing
+    while the bridge is deaf, Loxone reports "all well" - that is exactly
+    what happened on 8 September 2026, and it is why the outage went
+    unnoticed by everyone for hours.
+    """
+    store = Store(tmp_path / "s.sqlite")
+    sender = FakeSender()
+    runtime = Runtime(store, sender, heartbeat_seconds=0.01, link_ok=lambda: False)
+    await runtime.start()
+    await asyncio.sleep(0.05)
+    await runtime.stop()
+
+    assert HEARTBEAT_KEY not in sender
+
+
+async def test_the_heartbeat_pulses_with_a_matter_link(tmp_path):
+    """Counter-check - otherwise the test above only proves nothing happens."""
+    store = Store(tmp_path / "s.sqlite")
+    sender = FakeSender()
+    runtime = Runtime(store, sender, heartbeat_seconds=0.01, link_ok=lambda: True)
+    await runtime.start()
+    await asyncio.sleep(0.05)
+    await runtime.stop()
+
+    assert HEARTBEAT_KEY in sender
+
+
+async def test_the_heartbeat_falls_silent_when_the_link_drops(tmp_path):
+    """`link_ok` is asked afresh on EVERY beat, not once at construction.
+
+    Were `cli.serve()` to pass `client.connected` instead of
+    `lambda: client.connected` by accident - a property, hence a bool
+    evaluated once - the heartbeat would hang forever on the state of the
+    moment of startup and would never fall silent. `mypy --strict` now
+    rejects that as a type error; this test covers the same gap on the
+    behavioural side.
+    """
+    store = Store(tmp_path / "s.sqlite")
+    sender = FakeSender()
+    alive = [True]
+    runtime = Runtime(store, sender, heartbeat_seconds=0.01, link_ok=lambda: alive[0])
+    await runtime.start()
+    await asyncio.sleep(0.05)
+    assert HEARTBEAT_KEY in sender
+
+    alive[0] = False
+    before = len([k for k in sender if k == HEARTBEAT_KEY])
+    await asyncio.sleep(0.05)
+    after = len([k for k in sender if k == HEARTBEAT_KEY])
+    await runtime.stop()
+
+    assert after == before

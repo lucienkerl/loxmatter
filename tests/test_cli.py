@@ -18,7 +18,7 @@ import asyncio
 import json
 import logging
 import sqlite3
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
 
@@ -325,9 +325,16 @@ class _SpySender:
 class _SpyRuntime:
     """Stands in for Runtime - satisfies RuntimeEventHandler and counts calls."""
 
-    def __init__(self, store: Store, sender: _SpySender) -> None:
+    def __init__(
+        self, store: Store, sender: _SpySender, *, link_ok: Callable[[], bool] = lambda: True
+    ) -> None:
         self.store = store
         self.sender = sender
+        # Held on to like store/sender above, for the same reason: a test
+        # might later want to prove WHAT cli.serve() passed as link_ok (see
+        # cli.py: `lambda: client.connected`), instead of just accepting the
+        # keyword and throwing it away.
+        self.link_ok = link_ok
         self.started = False
         self.stop_calls = 0
         self.resend_calls = 0
@@ -394,23 +401,71 @@ class _FailingUvicornServer:
         raise OSError("address already in use")
 
 
+class _YieldingUvicornServer:
+    """Like `_SpyUvicornServer` (serve() returns on its own), but yields to
+    the event loop exactly once beforehand.
+
+    Needed for everything concerning the supervisor task: between
+    `asyncio.ensure_future(supervise(...))` and the `finally` in `_run()`
+    there is otherwise not a single suspension point. The task would be
+    cancelled before its FIRST step, so `supervise()` would never start up -
+    and a test would see "cancelled" even if the supervisor had never been
+    started at all. That one yield lets it get going."""
+
+    def __init__(self, config: Any) -> None:
+        self.config = config
+
+    async def serve(self) -> None:
+        await asyncio.sleep(0)
+
+
+class _SpySupervisor:
+    """Stands in for `matter.supervisor.supervise` - records WITH WHAT the
+    supervisor was started, and then blocks like the original.
+
+    The blocking is not incidental: the real `supervise()` never returns on
+    its own (endless loop, see its docstring). A stand-in that returned
+    immediately would long be finished by cleanup time, and the test could
+    no longer tell whether `_run()` cancels the task or whether it had
+    already ended anyway."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[Any, Any, Any]] = []
+        # Its own task, fetched from the inside: only through it can a test
+        # check `task.cancelled()` - `_run()` holds `supervisor_task` in a
+        # local variable and never hands it out anywhere.
+        self.task: asyncio.Task[None] | None = None
+
+    async def __call__(self, client: Any, store: Any, runtime: Any) -> None:
+        self.calls.append((client, store, runtime))
+        self.task = asyncio.current_task()
+        await asyncio.Event().wait()
+
+
 def _install_run_spies(
     monkeypatch: pytest.MonkeyPatch, *, connect_error: BaseException | None = None
-) -> tuple[list[_SpySender], list[_SpyRuntime], list[BridgeMatterClient]]:
-    """Replaces the sender, runtime, and matter client with stand-ins so
-    _run() can be tested without network/hardware. uvicorn.Server remains
-    each test's own concern (different serve behavior)."""
+) -> tuple[list[_SpySender], list[_SpyRuntime], list[BridgeMatterClient], _SpySupervisor]:
+    """Replaces the sender, runtime, matter client and connection supervisor
+    with stand-ins so _run() can be tested without network/hardware.
+    uvicorn.Server remains each test's own concern (different serve
+    behavior)."""
     senders: list[_SpySender] = []
     runtimes: list[_SpyRuntime] = []
     clients: list[BridgeMatterClient] = []
+    supervisor = _SpySupervisor()
 
     def make_sender(host: str, port: int) -> _SpySender:
         sender = _SpySender(host, port)
         senders.append(sender)
         return sender
 
-    def make_runtime(store: Store, sender: _SpySender) -> _SpyRuntime:
-        runtime = _SpyRuntime(store, sender)
+    def make_runtime(
+        store: Store, sender: _SpySender, *, link_ok: Callable[[], bool]
+    ) -> _SpyRuntime:
+        # Taken as a named parameter instead of **kwargs and passed on to the
+        # stand-in: should cli.serve() ever stop passing `link_ok`, a TypeError
+        # falls here instead of a silently green test.
+        runtime = _SpyRuntime(store, sender, link_ok=link_ok)
         runtimes.append(runtime)
         return runtime
 
@@ -422,7 +477,11 @@ def _install_run_spies(
     monkeypatch.setattr(cli, "UdpSender", make_sender)
     monkeypatch.setattr(cli, "Runtime", make_runtime)
     monkeypatch.setattr(cli, "_build_client", make_client)
-    return senders, runtimes, clients
+    # The real supervisor would wait endlessly in every one of these tests for
+    # a link loss that never comes - hence replaced here as well, and not in a
+    # second layer of stand-ins next to it.
+    monkeypatch.setattr(cli, "supervise", supervisor)
+    return senders, runtimes, clients, supervisor
 
 
 def _assert_store_is_closed(store: Store) -> None:
@@ -504,7 +563,7 @@ def test_reset_loxmatter_logger_removes_every_leaked_log_buffer_handler():
 async def test_run_stops_everything_after_a_clean_shutdown(monkeypatch, tmp_path):
     """uvicorn.Server.serve() returns cleanly after a first Ctrl-C
     (see _run docstring) - this test reproduces exactly that."""
-    senders, runtimes, clients = _install_run_spies(monkeypatch)
+    senders, runtimes, clients, _supervisor = _install_run_spies(monkeypatch)
     monkeypatch.setattr(cli.uvicorn, "Server", _SpyUvicornServer)
     store = Store(tmp_path / "t.sqlite")
 
@@ -523,7 +582,7 @@ async def test_run_seeds_the_runtime_before_the_first_resend(monkeypatch, tmp_pa
     """Live run from 2026-09-02 (Spec 6.4): without a seed from the current
     device state BEFORE the first `resend_all()`, that resend finds an
     empty cache and sends nothing."""
-    _, runtimes, _ = _install_run_spies(monkeypatch)
+    _, runtimes, _, _ = _install_run_spies(monkeypatch)
     monkeypatch.setattr(cli.uvicorn, "Server", _SpyUvicornServer)
     store = Store(tmp_path / "t.sqlite")
 
@@ -531,6 +590,54 @@ async def test_run_seeds_the_runtime_before_the_first_resend(monkeypatch, tmp_pa
 
     assert runtimes[0].seed_calls == 1
     assert runtimes[0].call_order == ["seed", "resend"]
+
+
+async def test_run_starts_the_supervisor_with_the_same_client_store_and_runtime(
+    monkeypatch, tmp_path
+):
+    """The one line the outage of 8 September 2026 is about:
+    `asyncio.ensure_future(supervise(client, store, runtime))` in `_run()`.
+
+    Without it nobody notices that the websocket to matter-server has died,
+    and nothing rebuilds it - exactly the state of that evening. Until this
+    test the line was unchecked: whoever deleted it got a green suite.
+
+    What is checked is not only THAT, but WITH WHAT: the supervisor must get
+    the same three objects the rest of the service works with. Were it given
+    a second client, that one would indeed reconnect, but the runtime and the
+    HTTP layer would still hang on the dead one."""
+    _, runtimes, clients, supervisor = _install_run_spies(monkeypatch)
+    monkeypatch.setattr(cli.uvicorn, "Server", _HangingUvicornServer)
+    store = Store(tmp_path / "t.sqlite")
+
+    task = asyncio.create_task(cli._run(store, "ws://test/ws", "127.0.0.1", 7000, 8080))
+    await asyncio.sleep(0.05)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert supervisor.calls == [(clients[0], store, runtimes[0])]
+
+
+async def test_run_cancels_the_supervisor_after_a_clean_shutdown(monkeypatch, tmp_path):
+    """The supervisor waits endlessly - if it keeps running after the
+    shutdown, it holds `client` and `store` alive that `_run()` has just
+    closed, and the next rebuild attempt would run against a closed
+    database.
+
+    `_YieldingUvicornServer` instead of `_SpyUvicornServer`: see there for
+    why a test without that one yield would see "cancelled" even if the
+    supervisor had never started up. That is exactly why the first assertion
+    below comes first."""
+    _, _, _, supervisor = _install_run_spies(monkeypatch)
+    monkeypatch.setattr(cli.uvicorn, "Server", _YieldingUvicornServer)
+    store = Store(tmp_path / "t.sqlite")
+
+    await cli._run(store, "ws://test/ws", "127.0.0.1", 7000, 8080)
+
+    assert len(supervisor.calls) == 1  # it really did start up
+    assert supervisor.task is not None
+    assert supervisor.task.cancelled() is True
 
 
 def test_run_installs_the_log_buffer_before_the_password_warning(monkeypatch, tmp_path):
@@ -669,7 +776,7 @@ async def test__run_forwards_the_given_log_handler_to_build_app(monkeypatch, tmp
 async def test_run_cleans_up_when_matter_server_is_unreachable(monkeypatch, tmp_path):
     """If connect() already fails, neither the runtime nor the sender nor
     the database may remain open - even if runtime.start() never ran."""
-    senders, runtimes, _clients = _install_run_spies(
+    senders, runtimes, _clients, _supervisor = _install_run_spies(
         monkeypatch, connect_error=CannotConnect("boom")
     )
     monkeypatch.setattr(cli.uvicorn, "Server", _SpyUvicornServer)
@@ -687,7 +794,7 @@ async def test_run_cleans_up_when_matter_server_is_unreachable(monkeypatch, tmp_
 async def test_run_cleans_up_when_serve_raises(monkeypatch, tmp_path):
     """An error starting the HTTP server (e.g. port in use) must not
     leave the runtime, sender, client, or database open."""
-    senders, runtimes, clients = _install_run_spies(monkeypatch)
+    senders, runtimes, clients, _supervisor = _install_run_spies(monkeypatch)
     monkeypatch.setattr(cli.uvicorn, "Server", _FailingUvicornServer)
     store = Store(tmp_path / "t.sqlite")
 
@@ -706,7 +813,7 @@ async def test_run_cleans_up_on_cancellation(monkeypatch, tmp_path):
     until the _run task is cancelled - asyncio.run() has itself installed
     a SIGINT handler since Python 3.11 that does exactly that (see
     the _run docstring)."""
-    senders, runtimes, clients = _install_run_spies(monkeypatch)
+    senders, runtimes, clients, _supervisor = _install_run_spies(monkeypatch)
     monkeypatch.setattr(cli.uvicorn, "Server", _HangingUvicornServer)
     store = Store(tmp_path / "t.sqlite")
 
@@ -727,10 +834,12 @@ async def test_run_continues_cleanup_when_one_step_fails(monkeypatch, tmp_path):
     """If a cleanup step fails (here: runtime.stop()), the following
     ones must still run - every step in _run() sits in its own
     try/except for exactly that reason."""
-    senders, runtimes, clients = _install_run_spies(monkeypatch)
+    senders, runtimes, clients, _supervisor = _install_run_spies(monkeypatch)
 
-    def make_broken_runtime(store: Store, sender: _SpySender) -> _SpyRuntime:
-        runtime = _SpyRuntime(store, sender)
+    def make_broken_runtime(
+        store: Store, sender: _SpySender, *, link_ok: Callable[[], bool]
+    ) -> _SpyRuntime:
+        runtime = _SpyRuntime(store, sender, link_ok=link_ok)
 
         async def broken_stop() -> None:
             runtime.stop_calls += 1
@@ -762,10 +871,12 @@ async def test_run_cleans_up_when_cancelled_during_startup(monkeypatch, tmp_path
     its own inner `await` (here deliberately on an event that is never set)
     where a cancellation can land at all - the three other fake calls
     return synchronously and would offer no interrupt point."""
-    senders, runtimes, clients = _install_run_spies(monkeypatch)
+    senders, runtimes, clients, _supervisor = _install_run_spies(monkeypatch)
 
-    def make_slow_runtime(store: Store, sender: _SpySender) -> _SpyRuntime:
-        runtime = _SpyRuntime(store, sender)
+    def make_slow_runtime(
+        store: Store, sender: _SpySender, *, link_ok: Callable[[], bool]
+    ) -> _SpyRuntime:
+        runtime = _SpyRuntime(store, sender, link_ok=link_ok)
 
         async def resend_all_blocks_until_cancelled() -> int:
             runtime.resend_calls += 1
