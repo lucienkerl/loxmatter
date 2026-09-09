@@ -570,6 +570,7 @@ def test_the_interface_knows_every_text_of_the_update_card():
         "web.system.update_done",
         "web.system.update_failed",
         "web.system.update_rolled_back",
+        "web.system.update_rejected",
         "web.system.update_no_updater",
         "web.system.update_channel_stable",
         "web.system.update_channel_dev",

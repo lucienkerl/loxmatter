@@ -1292,6 +1292,9 @@ web.system.update_failed:
 web.system.update_rolled_back:
   en: "Version {version} did not report healthy. It was rolled back on its own; {from_version} is running again. The database was not touched."
   de: "Version {version} meldete sich nicht gesund. Es wurde selbsttätig zurückgesetzt, {from_version} läuft wieder. Die Datenbank wurde nicht angefasst."
+web.system.update_rejected:
+  en: "The update was refused: {message}"
+  de: "Das Update wurde abgelehnt: {message}"
 web.system.update_no_updater:
   en: "This installation has no updater. Update from the console: git pull && ./scripts/update.sh"
   de: "Diese Installation hat keinen Updater. Aktualisieren über die Konsole: git pull && ./scripts/update.sh"

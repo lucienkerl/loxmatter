@@ -1725,6 +1725,21 @@
               <button @click="downloadFabricBackup()" x-text="t('web.system.backup_download')"></button>
             </div>
           </template>
+          <!-- `rejected` (update-once.sh's `reject()`): the sidecar
+               already decided the request BEFORE ever touching anything
+               (spec section 10 / reject()'s own "state before log"
+               doctrine) - already running, a target that does not state
+               a version, an older version than what is running. Until
+               now this phase was rendered NOWHERE and `state.error` was
+               never displayed at all, so a rejected request produced no
+               feedback whatsoever - worse still combined with Critical 3
+               (the poll never even armed to notice the rejection landed).
+               `state.error` is exactly the human sentence reject() wrote
+               for this specific refusal - shown as-is, the same
+               "backend's own wording, not a rewrite of it" rule
+               `updateError` below already follows for a 409/503. -->
+          <p class="banner danger" x-show="updateStatus?.state?.phase === 'rejected'" x-cloak
+             x-text="t('web.system.update_rejected', { message: updateStatus.state.error })"></p>
 
           <p class="hint" x-show="updateError" x-cloak x-text="updateError"></p>
         </div>
