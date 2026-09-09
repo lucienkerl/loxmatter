@@ -1460,6 +1460,17 @@ Expected: `ModuleNotFoundError: No module named 'loxmatter.update.commands'`.
 
 `git` and `docker compose` run with `cwd=compose_dir`. `write_image_tag` rewrites `.env` line by line, replacing the one that starts with `LOXMATTER_IMAGE_TAG=` and leaving every other line byte-for-byte; if no such line exists it appends one. `log(line)` appends to `log_path`, capped — read the last N bytes and rewrite when the file grows past a limit.
 
+> **Correction (9 September 2026).** `compose_dir` is one parameter doing two
+> jobs, and they are not the same directory. The git commands need the
+> repository work tree; `docker compose` and `.env` need the directory holding
+> `docker-compose.yml`, which is `deploy/testhost` two levels below it. With a
+> single path, `env_path` resolved to `/checkout/.env` — a file that does not
+> exist, since `deploy/testhost/.env.example` is what ships. `scripts/update.sh`
+> has kept the two apart as `REPO` and `STACK` all along. `DockerCommands` now
+> takes `repo_dir` and `stack_dir`; the signature in this task's Produces line
+> and the `compose_dir=` arguments in the code above are superseded. Corrected
+> in `53b77a4` and `2cd253e`.
+
 - [ ] **Step 3: Run them to verify they pass**
 
 ```bash
