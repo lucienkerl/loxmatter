@@ -24,9 +24,14 @@ boundary that does exist is here.
 
 from __future__ import annotations
 
+import ast
+import inspect
+
 import pytest
 
+from loxmatter import i18n
 from loxmatter.model.update_settings_store import UpdateChannel
+from loxmatter.update import rules as rules_module
 from loxmatter.update.protocol import UpdateRequest
 from loxmatter.update.rules import (
     _CHANNELS,
@@ -222,3 +227,109 @@ def test_the_updater_accepts_every_channel_the_web_interface_offers():
     refuses - this test is that tie. Do not "fix" the duplication by
     making one import the other; keep the sets in sync by hand instead."""
     assert _CHANNELS == {channel.value for channel in UpdateChannel}
+
+
+def _i18n_keys_check_request_can_raise() -> frozenset[str]:
+    """Every `i18n_key=` literal passed to a `RequestRejected(...)` call
+    inside `rules.py`, found by walking the module's own source rather
+    than a second, hand-typed copy of the same six strings living here -
+    which is exactly how five of the six went untested for a typo (a
+    reviewer typo'd `target_not_descendant` alone and 646 tests still
+    passed; then typo'd four others at once and 646 still passed). A
+    seventh `raise` added to `check_request` later, with a key nothing
+    below happens to cover, fails
+    `test_every_rejection_branch_is_exercised_and_resolves` the moment it
+    lands, because this function - not a list someone has to remember to
+    extend - is what that test compares against."""
+    tree = ast.parse(inspect.getsource(rules_module))
+    keys: set[str] = set()
+    for node in ast.walk(tree):
+        if not (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "RequestRejected"
+        ):
+            continue
+        for keyword in node.keywords:
+            if keyword.arg == "i18n_key" and isinstance(keyword.value, ast.Constant):
+                keys.add(keyword.value.value)
+    return frozenset(keys)
+
+
+#: One `check_request` call per branch that raises `RequestRejected`,
+#: crafted to trip exactly that branch (and, where an earlier branch would
+#: otherwise fire first, no other) - in the order the branches appear in
+#: `rules.py`. Scenarios, not key strings: the keys asserted against below
+#: come out of the exception each of these actually raises, not out of a
+#: list typed here.
+_REJECTION_SCENARIOS: list[dict[str, object]] = [
+    # rule 1: an unrecognised channel.
+    {"channel": "nightly", "target": "v0.3.0", "is_ancestor": always_ancestor},
+    # rule 2, shared gate: neither a version nor a commit shape, on a
+    # channel that would otherwise accept either.
+    {"channel": "stable", "target": "not-a-version-or-a-sha!", "is_ancestor": always_ancestor},
+    # stable-only: a valid commit SHA passes the shared gate above, but
+    # `stable` demands a version.
+    {"channel": "stable", "target": "deadbeef", "is_ancestor": always_ancestor},
+    # stable-only: a valid version, but not newer than what is running.
+    {"channel": "stable", "target": "v0.1.0", "is_ancestor": always_ancestor},
+    # dev-only: a valid version passes the shared gate, but `dev` demands
+    # a commit.
+    {"channel": "dev", "target": "v0.3.0", "is_ancestor": always_ancestor},
+    # dev-only: a valid commit SHA that does not descend from the running
+    # commit.
+    {"channel": "dev", "target": "deadbee", "is_ancestor": never_ancestor},
+]
+
+
+@pytest.mark.parametrize("scenario", _REJECTION_SCENARIOS)
+def test_every_rejection_reason_resolves_through_i18n(scenario):
+    """`i18n.t()` raises `KeyError` for a key it does not know, and
+    `api/update.py`'s `apply_update` calls it from inside the `except
+    RequestRejected` handler with no `try` of its own around that call -
+    so a typo in one of the six `api.update.rejected.*` keys, or a
+    mismatch between `i18n_values` and the placeholders `strings.yaml`
+    actually names, turns a 400-with-a-reason into an unhandled 500,
+    strictly worse than the untranslated English string it replaced.
+    Every scenario drives `check_request` for real and resolves the
+    exception it actually raises - nothing here hand-types a key."""
+    with pytest.raises(RequestRejected) as excinfo:
+        check_request(
+            request(channel=scenario["channel"], target=scenario["target"]),
+            running_version="0.2.0",
+            running_commit="abc1234",
+            is_ancestor=scenario["is_ancestor"],
+        )
+    resolved = i18n.t(excinfo.value.i18n_key, **excinfo.value.i18n_values)
+    assert resolved
+    # A value `strings.yaml` names but `i18n_values` never supplies would
+    # leave a literal "{placeholder}" sitting in the resolved string
+    # instead of raising - `str.format` only raises for a placeholder
+    # `values` did NOT cover, not for one it did not need. This is not a
+    # possible failure mode of `str.format` on its own, but it is exactly
+    # the kind of "quietly wrong instead of loudly wrong" this test exists
+    # to rule out for every one of the six keys, not just the one that
+    # happens to be exercised elsewhere.
+    assert "{" not in resolved and "}" not in resolved
+
+
+def test_every_rejection_branch_is_exercised_and_resolves():
+    """Bite check for the parametrised test above: without this, a new
+    `raise RequestRejected(...)` added to `check_request` - a seventh
+    rejection - could be added with no scenario in `_REJECTION_SCENARIOS`
+    covering it, and nobody would notice, because the parametrised test
+    only proves what it is handed resolves - never that it was handed
+    everything. Comparing the keys `_REJECTION_SCENARIOS` actually
+    exercises against every key `rules.py` can raise (found by reading its
+    source, not by a second list here) closes that."""
+    exercised: set[str] = set()
+    for scenario in _REJECTION_SCENARIOS:
+        with pytest.raises(RequestRejected) as excinfo:
+            check_request(
+                request(channel=scenario["channel"], target=scenario["target"]),
+                running_version="0.2.0",
+                running_commit="abc1234",
+                is_ancestor=scenario["is_ancestor"],
+            )
+        exercised.add(excinfo.value.i18n_key)
+    assert exercised == _i18n_keys_check_request_can_raise()
