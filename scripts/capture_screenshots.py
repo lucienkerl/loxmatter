@@ -83,7 +83,11 @@ UPDATE_DIR = Path(tempfile.gettempdir()) / "loxmatter-screenshot-update"
 # belong on the product page's marketing screenshot. Using fixed values
 # ensures the screenshot shows a released version and remains identical
 # across runs.
-DEMO_VERSION = "0.3.0"
+# DEMO_VERSION must match the "from" value in _seed_update_dir() below:
+# the card displays "Running: <DEMO_VERSION>" above an update from that
+# version to "to". Keeping them in sync prevents the screenshot from
+# contradicting itself (showing a version as both running and being installed).
+DEMO_VERSION = "0.2.0"
 DEMO_COMMIT = "a1b2c3d"
 DEMO_BUILT_AT = "2026-01-15T09:30:00Z"
 
