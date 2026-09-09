@@ -54,6 +54,7 @@ from loxmatter.model.auth_store import AuthStore
 from loxmatter.model.locale_store import LocaleStore
 from loxmatter.model.resend_settings_store import ResendSettingsStore
 from loxmatter.model.settings_store import BridgeSettingsStore
+from loxmatter.model.update_settings_store import UpdateSettingsStore
 from loxmatter.profiles.relevance import (
     ROOT_NODE_DEVICE_TYPE,
     UTILITY_ENDPOINT_KEEP_CLUSTERS,
@@ -889,6 +890,8 @@ class Store:
         self.locale = LocaleStore(self._db)
         # Sicht auf dieselbe Verbindung - siehe `resend_settings_store.py`.
         self.resend_settings = ResendSettingsStore(self._db)
+        # Same connection again - see `update_settings_store.py`.
+        self.update_settings = UpdateSettingsStore(self._db)
 
     def close(self) -> None:
         self._db.close()
