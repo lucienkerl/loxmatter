@@ -3639,6 +3639,27 @@ function app() {
 
       socket.addEventListener("open", () => {
         this.socketConnected = true;
+        // On a RE-connection, fetch the server's `last_heard` again
+        // (final review, A2). Everything sent while the socket was down
+        // never reached this tab, and `deviceHeardAt` is the tab's own
+        // bookkeeping: it cannot know what it missed, and nothing else
+        // backfills it - `loadDevices()` otherwise runs only from
+        // `startApp()` and after commissioning or removal. A window
+        // contact that reports once during a two-hour outage would
+        // otherwise leave its tile reading "Last heard 3h ago"
+        // indefinitely, with the staleness banner already cleared: the
+        // same wasted investigation this line was built to prevent,
+        // pointing the other way. The server's `Runtime._last_heard`
+        // does know, and `lastHeardAt` takes the LATER of the two
+        // sources, so the refresh can only ever move a label forward.
+        //
+        // Read BEFORE `socketEverConnected` is set below, so this is the
+        // previous connection state, not this one: on the very first
+        // connection `startApp()` has just loaded the list and a second
+        // identical request per page load would buy nothing.
+        if (this.socketEverConnected) {
+          this.loadDevices();
+        }
         this.socketEverConnected = true;
         this.reconnectDelayMs = RECONNECT_DELAY_INITIAL_MS;
       });

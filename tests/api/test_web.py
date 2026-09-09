@@ -5442,6 +5442,39 @@ async def test_the_live_handler_credits_the_right_device(api):
     assert "if (owner && message.key !== `d${owner[1]}_online`) {" in body
 
 
+async def test_a_reconnection_refetches_the_served_last_heard(api):
+    """`deviceHeardAt` is the tab's own bookkeeping and cannot know what
+    it missed.
+
+    Nothing backfills it: `loadDevices()` runs from `startApp()` and
+    after commissioning or removal, never on reconnect. A window contact
+    that reports once during a two-hour socket outage would therefore
+    leave its tile reading "Last heard 3h ago" indefinitely, with the
+    staleness banner already cleared - the same wasted investigation this
+    feature was built to prevent, pointing the other way (final review,
+    A2).
+
+    The guard reads `socketEverConnected` BEFORE the assignment below it,
+    so it is the state of the PREVIOUS connection: on the first one
+    `startApp()` has just loaded the list.
+    """
+    client, _, _ = api
+    script = (await client.get("/static/app.js")).text
+    # Anchor on `connectLive()` - `connectDiagnosticsLive` has an `open`
+    # listener of its own, and it comes first in the file.
+    connect_live = script.index("connectLive() {")
+    start = script.index('socket.addEventListener("open"', connect_live)
+    end = script.index("\n      });", start)
+    body = script[start:end]
+
+    assert "if (this.socketEverConnected) {" in body
+    assert "this.loadDevices();" in body
+    # Order matters: read as the previous state, set afterwards.
+    assert body.index("if (this.socketEverConnected) {") < body.index(
+        "this.socketEverConnected = true;"
+    )
+
+
 async def test_the_tile_takes_the_later_of_the_served_and_the_live_timestamp(api):
     """`device.last_heard` arrives once, with GET /api/devices.
 
