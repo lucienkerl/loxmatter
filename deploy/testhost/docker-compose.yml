@@ -264,6 +264,93 @@ services:
     depends_on:
       - matter-server
 
+  # The updater sidecar (design "Applying updates through the web UI",
+  # 2026-09-08, section 6). It exists because the bridge cannot replace
+  # itself: the process that would invoke `up -d --force-recreate` would
+  # be exactly the one that call terminates.
+  #
+  # THIS CONTAINER IS ROOT-EQUIVALENT ON THE HOST. The Docker socket
+  # grants that, and nothing softens it. It is secured through narrowness,
+  # not through privileges:
+  #
+  #   - No `network_mode: host` and no `ports:`. It sits on Compose's
+  #     default network - reachable outward (git fetch), not from the
+  #     LAN. That is exactly what distinguishes it from the three other
+  #     services here and the reason it is allowed to hold the socket.
+  #   - No network service: communication with the bridge runs
+  #     exclusively through files in loxmatter-store (/data/update/).
+  #   - A single fixed work program. It never executes text from the
+  #     request (see update-once.sh).
+  #
+  # Anyone who does not want this can strike this service. The bridge
+  # notices via the stale heartbeat, hides the button, and names the
+  # console route - no dead button, no message that sounds like a defect.
+  loxmatter-updater:
+    image: ghcr.io/lucienkerl/loxmatter-updater:stable
+    container_name: loxmatter-updater
+    restart: unless-stopped
+    # So that `curl http://host.docker.internal:8080/health` reaches the
+    # service on the host: from inside this container, 127.0.0.1 would be
+    # itself, not the bridge. Needed only because this service deliberately
+    # does NOT run with network_mode: host the way `loxmatter` does above -
+    # see the narrowness argument in the block comment above.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      # Root-equivalent - see above.
+      - /var/run/docker.sock:/var/run/docker.sock
+      # The checkout: the Compose file must match the target version, a
+      # new release can need a new service or a new variable. Writable,
+      # because `git checkout` writes into it, and update-once.sh's
+      # `set_tag` writes the running image tag back into
+      # $LOXMATTER_STACK/.env (a subdirectory of this same mount, see
+      # LOXMATTER_STACK below) - the one place that tag lives, per the
+      # `loxmatter` service's own `image:` line above.
+      - ../..:/repo
+      # The same volume as the bridge (`loxmatter-store:/data` on the
+      # `loxmatter` service above): this is where the request, state,
+      # log, and backups live, AND where update-once.sh finds
+      # /data/loxmatter.sqlite to tar into a backup - that file only
+      # exists here because LOXMATTER_STORE on the bridge points at
+      # exactly this volume, at exactly that filename.
+      - loxmatter-store:/data
+    environment:
+      LOXMATTER_UPDATE_DIR: /data/update
+      LOXMATTER_BACKUP_DIR: /data/backups
+      # A subdirectory of the /repo mount above, not a mount point of its
+      # own - update-once.sh's `compose()` helper `cd`s here before every
+      # `docker compose` call, exactly as an operator would from the host.
+      # One consequence worth stating plainly: update-once.sh's
+      # `host_path_for` resolves a container path back to a host path by
+      # asking `docker inspect loxmatter-updater` for a mount whose
+      # DESTINATION matches verbatim - it does not walk up to a parent
+      # mount. /repo matches exactly (see the volume above) and resolves
+      # correctly; this path does not, being a subdirectory rather than a
+      # mount destination of its own, so LETZTER-FEHLSCHLAG.txt's "cd
+      # $host_stack" line falls back to that function's own "host path
+      # unknown - run docker inspect" text for the stack directory
+      # specifically, even though the repository checkout itself (/repo)
+      # resolves fine right next to it. A second bind mount of the same
+      # host directory onto this exact path would satisfy the lookup, but
+      # would also double-mount overlapping trees under two container
+      # paths for no purpose beyond flattering one diagnostic string -
+      # not a trade worth making. The fallback text plus the correctly
+      # resolved /repo line already give an operator reading the file
+      # enough to find the stack directory by hand.
+      LOXMATTER_STACK: /repo/deploy/testhost
+      LOXMATTER_REPO: /repo
+      # Must match the `loxmatter` service's own key above - `running_version()`
+      # runs `docker inspect "$LOXMATTER_SERVICE"`, and `compose()` runs
+      # `docker compose ... "$LOXMATTER_SERVICE"`, both against this name.
+      LOXMATTER_SERVICE: loxmatter
+      # Same base name as the `loxmatter` service's own `image:` above,
+      # without a tag - update-once.sh only logs this, the tag it actually
+      # deploys always comes from that service's own `.env` line (see the
+      # comment on its `image:` above).
+      LOXMATTER_IMAGE: ghcr.io/lucienkerl/loxmatter
+      LOXMATTER_HEALTH_URL: http://host.docker.internal:8080/health
+      LOXMATTER_HEALTH_TIMEOUT: "120"
+
 volumes:
   # Der Thread-Zustand von OTBR (siehe dort, ausfuehrliche Begruendung).
   otbr-state:

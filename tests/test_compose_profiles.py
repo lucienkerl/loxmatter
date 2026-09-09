@@ -64,3 +64,36 @@ def test_die_laufende_version_steht_an_genau_einer_stelle() -> None:
     # eine zurueck und die andere nicht.
     source = COMPOSE.read_text(encoding="utf-8")
     assert source.count("LOXMATTER_IMAGE_TAG") == 1
+
+
+def test_the_updater_has_no_network_open_to_the_outside() -> None:
+    # The load-bearing safeguard for this container: it holds the Docker
+    # socket and is thereby root-equivalent on the host. Unlike the three
+    # other services, it therefore does NOT sit on the host network and
+    # publishes no port.
+    updater = _stack()["services"]["loxmatter-updater"]
+    assert "ports" not in updater
+    assert updater.get("network_mode") != "host"
+
+
+def test_only_the_updater_has_the_docker_socket() -> None:
+    for name, service in _stack()["services"].items():
+        socket = any("docker.sock" in str(v) for v in service.get("volumes", []))
+        assert socket == (name == "loxmatter-updater"), name
+
+
+def test_the_updater_sees_the_same_database_as_the_bridge() -> None:
+    # Communication runs through files in exactly this volume.
+    updater = _stack()["services"]["loxmatter-updater"]
+    assert any(str(v).startswith("loxmatter-store:") for v in updater["volumes"])
+
+
+def test_the_updater_reaches_the_host_health_route() -> None:
+    # It sits on Compose's default network; 127.0.0.1 there would be itself.
+    updater = _stack()["services"]["loxmatter-updater"]
+    assert any("host-gateway" in str(h) for h in updater["extra_hosts"])
+
+
+def test_the_updater_is_pinned() -> None:
+    image = _stack()["services"]["loxmatter-updater"]["image"]
+    assert "@sha256:" in image or ":latest" not in image
