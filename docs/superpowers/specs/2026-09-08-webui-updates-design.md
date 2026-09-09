@@ -304,13 +304,28 @@ security that does not exist elsewhere.
 **The real boundary is in the updater, not in login.** Three rules,
 all enforced in the sidecar:
 
-1. `channel` is an enum. `target` must match `^v?\d+\.\d+\.\d+$` or
+1. `channel` is an enum. `target` must match `^v\d+\.\d+\.\d+$` or
    `^[0-9a-f]{7,40}$`. Anything else: request rejected, nothing
    executed.
 2. The **image name is not taken from the request**, but is
-   hard-coded in the script: `ghcr.io/lucienkerl/loxmatter:` plus the
-   checked target. The git ref is verified against the refs fetched from `origin`,
-   and `origin` points to the project repository.
+   hard-coded in `rules.py`: `ghcr.io/lucienkerl/loxmatter:` plus a tag
+   *derived* from the checked target. The git ref is verified against the refs
+   fetched from `origin`, and `origin` points to the project repository.
+
+> **Correction (9 September 2026).** Two things here were wrong, and the
+> second would have broken every update. The target pattern requires the
+> leading `v`: releases are tagged `v0.3.0`, and accepting `0.3.0` let a
+> request through the rules only to fail at `checkout` — a trip through the
+> rollback path for a request that could have been refused outright.
+>
+> And the tag is **not** the target concatenated onto the image name. A
+> target is a git ref; the Docker tag is a different string, and section 5
+> above already says which ones CI publishes: `v0.3.0` is pushed as
+> `:0.3.0`, a dev commit as `:sha-<short>`. Appending the target verbatim
+> would have referenced `:v0.3.0` and `:deadbee`, neither of which exists,
+> so every update would have failed at `pull` and gone through the rollback.
+> `rules.image_tag` now derives the tag from the target's form; see its
+> docstring.
 3. **Only forward.** In the *Stable* channel, a request cannot name a version
    below the running one (comparison by semantic version).
    In the *Development* channel there is no ordering over SHAs, so

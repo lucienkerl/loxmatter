@@ -254,11 +254,10 @@ def run_update(
 
     if not _wait_for_health(commands, sleep, deadline_seconds):
         # `_wait_for_health` already treats a raising `healthy()` as "not
-        # healthy" (see its docstring) - that is what makes this branch
-        # the right response to the failure this poll exists to detect:
-        # a real `healthy()` polling `/health` over HTTP raises rather
-        # than returning `False` while the bridge is down, which is
-        # precisely the condition this poll exists to detect.
+        # healthy" (see its docstring), and that is what makes this branch
+        # reachable at all: a real `healthy()` polling `/health` over HTTP
+        # raises rather than returning `False` while the bridge is down,
+        # which is precisely the condition this poll exists to detect.
         return roll_back(f"the bridge did not answer /health within {deadline_seconds:.0f}s")
 
     done.append("health")
