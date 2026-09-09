@@ -26,8 +26,10 @@ from __future__ import annotations
 
 import pytest
 
+from loxmatter.model.update_settings_store import UpdateChannel
 from loxmatter.update.protocol import UpdateRequest
 from loxmatter.update.rules import (
+    _CHANNELS,
     IMAGE_REPOSITORY,
     RequestRejected,
     check_request,
@@ -205,3 +207,18 @@ def test_a_dev_target_becomes_the_sha_prefixed_tag_ci_publishes():
     tag."""
     assert image_tag("deadbee") == "sha-deadbee"
     assert image_reference("deadbee") == f"{IMAGE_REPOSITORY}:sha-deadbee"
+
+
+def test_the_updater_accepts_every_channel_the_web_interface_offers():
+    """`UpdateChannel` (`loxmatter/model/update_settings_store.py`) is what
+    the web interface lets an operator choose; `_CHANNELS` here is what the
+    updater accepts. The two are deliberately not the same name imported
+    twice: this rules module must not import the database layer at all, so
+    that the sidecar image (`deploy/updater/Dockerfile`) can copy
+    `loxmatter/update/` without also carrying `loxmatter/model/` into the
+    one container that holds the Docker socket. Nothing else ties the two
+    sets together, so if a channel were ever added to one and not the
+    other, the interface would silently offer a channel this updater
+    refuses - this test is that tie. Do not "fix" the duplication by
+    making one import the other; keep the sets in sync by hand instead."""
+    assert _CHANNELS == {channel.value for channel in UpdateChannel}

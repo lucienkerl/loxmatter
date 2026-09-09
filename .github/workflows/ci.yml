@@ -92,3 +92,62 @@ jobs:
             LOXMATTER_COMMIT=${{ steps.meta.outputs.commit }}
             LOXMATTER_BUILT_AT=${{ steps.meta.outputs.built_at }}
             LOXMATTER_SCHEMA_VERSION=${{ steps.meta.outputs.schema }}
+
+  # Builds and publishes the updater sidecar (draft "Deploy updates via the
+  # UI", 2026-09-08, section 5) - the small Alpine image in
+  # deploy/updater/Dockerfile that holds the Docker socket and performs the
+  # restart the bridge cannot do for itself. `needs: test` for the same
+  # reason as the `image` job above: a build that skipped the test suite
+  # must not land under a tag anyone can deploy - doubly so for the one
+  # image that is root-equivalent on the host.
+  updater-image:
+    needs: test
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - id: meta
+        run: |
+          set -eu
+          case "$GITHUB_REF" in
+            refs/tags/v*) version="${GITHUB_REF#refs/tags/v}" ;;
+            *)            version="dev" ;;
+          esac
+          {
+            echo "version=$version"
+            echo "commit=$(git rev-parse --short HEAD)"
+          } >> "$GITHUB_OUTPUT"
+      - id: tags
+        # Same reasoning as the `image` job's `tags` step: version comes
+        # from a Git tag (refs/tags/v...), and `git check-ref-format`
+        # allows backticks, $(...) and quotes in it. Via env: it only ever
+        # arrives as a variable value, never as shell source - this job
+        # also has packages: write.
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
+          COMMIT: ${{ steps.meta.outputs.commit }}
+        run: |
+          set -eu
+          image="ghcr.io/lucienkerl/loxmatter-updater"
+          if [ "$VERSION" = "dev" ]; then
+            echo "list=$image:dev,$image:sha-$COMMIT" >> "$GITHUB_OUTPUT"
+          else
+            echo "list=$image:$VERSION,$image:stable" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/updater/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.tags.outputs.list }}
