@@ -19,6 +19,9 @@
 from __future__ import annotations
 
 import json
+import os
+
+import pytest
 
 from loxmatter.update.protocol import (
     UpdateRequest,
@@ -118,6 +121,33 @@ def test_a_phase_outside_the_known_set_reads_as_none(tmp_path):
         encoding="utf-8",
     )
     assert read_state(tmp_path) is None
+
+
+def test_a_failed_replace_leaves_no_tmp_file_behind(tmp_path, monkeypatch):
+    """`os.replace` can itself fail - a misconfigured mount making the
+    rename cross a filesystem boundary, say. The `.tmp` sibling this
+    function writes before renaming must not be left in the directory for
+    the sidecar to trip over on its next poll, and the original error
+    must still reach the caller rather than being swallowed alongside it.
+
+    The base is a subdirectory rather than `tmp_path` itself for the same
+    reason as `test_a_half_written_file_is_never_observed` above: the
+    autouse fixture in the parent conftest already puts a fake home in
+    `tmp_path`, and counting leftovers only means something in a
+    directory this test owns.
+    """
+    base = tmp_path / "update"
+    base.mkdir()
+
+    def raiser(_src: object, _dst: object) -> None:
+        raise OSError(18, "Invalid cross-device link")
+
+    monkeypatch.setattr(os, "replace", raiser)
+
+    with pytest.raises(OSError):
+        write_json_atomically(request_path(base), {"id": "x"})
+
+    assert list(base.iterdir()) == []
 
 
 def test_the_written_file_is_plain_readable_json(tmp_path):
