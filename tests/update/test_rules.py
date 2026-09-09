@@ -59,7 +59,13 @@ def test_a_stable_request_for_a_newer_version_passes():
 
 
 def test_an_unknown_channel_is_rejected():
-    with pytest.raises(RequestRejected, match="channel"):
+    # Matching on "unknown channel" rather than just "channel": the dev
+    # branch's own message ("target %r is a version, but the channel is
+    # dev") also contains the word "channel", so a looser match would
+    # still pass with this rule deleted entirely, as long as the target
+    # looked like a version - see the sibling test below for the case
+    # that actually requires this rule to be present.
+    with pytest.raises(RequestRejected, match="unknown channel"):
         check_request(
             request(channel="nightly"),
             running_version="0.2.0",
@@ -68,6 +74,26 @@ def test_an_unknown_channel_is_rejected():
         )
 
 
+def test_an_unknown_channel_is_rejected_even_with_a_commit_target():
+    """Bite check for rule 1 (finding (d)): with a version-shaped target,
+    the dev branch's own "the channel is dev" message happens to reject
+    the request too, so `test_an_unknown_channel_is_rejected` alone would
+    not notice the channel check being deleted if it matched loosely on
+    "channel". A commit-SHA target does not trip that branch's own check
+    at all: with the channel rule gone, `channel="nightly"` and a SHA
+    target with `is_ancestor` always true is accepted outright - deleting
+    rules.py:75-76 and running this reproduces exactly that.
+    """
+    with pytest.raises(RequestRejected, match="unknown channel"):
+        check_request(
+            request(channel="nightly", target="deadbeef"),
+            running_version="0.2.0",
+            running_commit="abc1234",
+            is_ancestor=always_ancestor,
+        )
+
+
+@pytest.mark.parametrize("channel", ["stable", "dev"])
 @pytest.mark.parametrize(
     "target",
     [
@@ -78,15 +104,29 @@ def test_an_unknown_channel_is_rejected():
         "v0.3",
         "$(whoami)",
         "abc",  # too short for a SHA
+        "0.3.0",  # a real version, but missing the "v" - see finding (k)
     ],
 )
-def test_a_target_that_is_not_a_version_or_a_sha_is_rejected(target):
+def test_a_target_that_is_not_a_version_or_a_sha_is_rejected(channel, target):
     """The target reaches a command line. Anything that is not plainly a
     version or a commit is refused before it can get there - this is the
-    rule that stops the route being a shell."""
-    with pytest.raises(RequestRejected, match="target"):
+    rule that stops the route being a shell.
+
+    Matching on the gate's own wording ("neither a version nor a commit")
+    rather than the word "target" is what makes this test notice the gate
+    being gone: the stable branch's own message (rules.py:85, for a
+    target that parses but isn't a version) also contains "target", so a
+    looser match kept passing with the shared gate deleted - because on
+    `stable` every one of these targets still gets rejected by that
+    branch's own check. Parametrising over `dev` too is what actually
+    proves the gate matters: `dev` has no target-pattern check of its own
+    to fall back on, so with the gate gone these same seven strings -
+    `"$(whoami)"` and `"v0.3.0; rm -rf /"` among them - are accepted
+    there outright.
+    """
+    with pytest.raises(RequestRejected, match="neither a version nor a commit"):
         check_request(
-            request(target=target),
+            request(channel=channel, target=target),
             running_version="0.2.0",
             running_commit="abc1234",
             is_ancestor=always_ancestor,

@@ -31,11 +31,21 @@ from collections.abc import Callable
 from loxmatter.update.protocol import UpdateRequest
 
 #: Hard-coded, never taken from the request (rule 2). The request may
-#: contribute a tag, and only one that passed `_TARGET` below.
+#: contribute a tag, and only one that passed `_VERSION` or `_SHA` below.
 IMAGE_REPOSITORY = "ghcr.io/lucienkerl/loxmatter"
 
 _CHANNELS = frozenset({"stable", "dev"})
-_VERSION = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)$")
+# Releases are tagged `v`-prefixed (see docs/DEVELOPMENT.md); requiring
+# the `v` here means a target like "0.3.0" is refused by this rule
+# instead of passing all three checks and only then failing at
+# `checkout`/`pull` - an avoidable trip through the rollback path.
+_VERSION = re.compile(r"^v(\d+)\.(\d+)\.(\d+)$")
+# `running_version` is not a target - it never goes near a command line -
+# and it does not carry the `v` that release tags do: it comes straight
+# out of `pyproject.toml`'s bare `version = "0.2.0"`. `_VERSION` above
+# must stay strict for targets, so the running version gets its own,
+# deliberately lenient pattern.
+_RUNNING_VERSION = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)$")
 _SHA = re.compile(r"^[0-9a-f]{7,40}$")
 
 
@@ -52,8 +62,8 @@ def image_reference(target: str) -> str:
     return f"{IMAGE_REPOSITORY}:{target}"
 
 
-def _version_tuple(value: str) -> tuple[int, int, int] | None:
-    match = _VERSION.match(value)
+def _version_tuple(value: str, pattern: re.Pattern[str] = _VERSION) -> tuple[int, int, int] | None:
+    match = pattern.match(value)
     if match is None:
         return None
     return (int(match.group(1)), int(match.group(2)), int(match.group(3)))
@@ -83,7 +93,7 @@ def check_request(
     if request.channel == "stable":
         if target_version is None:
             raise RequestRejected(f"target {target!r} is not a version, but the channel is stable")
-        current = _version_tuple(running_version)
+        current = _version_tuple(running_version, _RUNNING_VERSION)
         # An unparsable running version means we cannot prove the request
         # goes forward. Refusing is the only safe reading: the whole point
         # of the rule is that it never lets anything move backwards.
