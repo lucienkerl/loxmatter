@@ -429,3 +429,84 @@ rollback.
 There is nothing to update as long as there is no published version
 to update to. Whoever starts with stage 2 builds a button they cannot trigger,
 and tests the rollback against an image that does not exist.
+
+---
+
+## 16. Addendum before stage 2 (9 September 2026)
+
+Stage 1 shipped on 8 September and `v0.2.0` is tagged, so `:stable` exists
+and stage 2 has something to update to — the precondition section 15 names is
+met. Four things changed in the day between, none of which overturns a
+decision above. They are recorded here rather than edited into the sections
+they touch: this repository sets a correction beside a claim instead of
+rewriting the record.
+
+### 16.1 The repository is English now
+
+Since 8 September, 23:29, a `CLAUDE.md` requires English for everything —
+code, comments, test names, design documents and commit messages. The `de:`
+values in `src/loxmatter/i18n/strings.yaml` stay German, **with** umlauts for
+`web.*` keys, because those are the shipped product.
+
+Section 12 ("Text") is unaffected in substance; only the language of the
+implementation changes.
+
+### 16.2 The updater performs git checkouts, and matter-server moved
+
+`deploy/testhost/docker-compose.yml` no longer references
+`python-matter-server` (archived at 8.1.2) but
+`ghcr.io/matter-js/matterjs-server:stable`. That switch has **not run on a
+Pi yet** and is marked UNTESTED; its first start migrates the Fabric
+directory one way.
+
+This matters here because step 2 of section 8 checks out the target ref,
+which **rewrites `docker-compose.yml` on disk**. The updater itself is safe:
+`up -d --no-deps loxmatter` recreates only the bridge, and matter-server is
+never touched. But a bare `docker compose up -d` typed afterwards would
+recreate it — and fire the one-way migration without the required `chown`
+and without a backup.
+
+The updater therefore makes git checkouts routine on a checkout where that
+hazard is armed. Two consequences for stage 2:
+
+- The `recreate` step keeps `--no-deps`, and the reason is now twofold: not
+  ending the updater mid-request (section 8), **and** not touching
+  matter-server.
+- Whatever the updater writes to `log.txt` must make the checked-out ref
+  visible, so that someone reading the log afterwards can see that the
+  compose file on disk changed under them.
+
+The migration itself is not this specification's business. See
+`docs/superpowers/specs/2026-09-08-matterjs-server-migration-design.md` and
+the "Migration to matterjs-server (UNTESTED)" section of
+`deploy/testhost/README.md`.
+
+### 16.3 The `.env` rewrite is the product's, not the operator's
+
+The operator has stated a product principle: **as little hand-editing of
+`.env` as possible; configuration belongs in the UI.**
+
+That does not contradict section 5. There, the *updater* rewrites
+`LOXMATTER_IMAGE_TAG`, and the rollback is the updater writing the previous
+line back. The value stays in `.env` for the reason section 5 gives — it is
+not version-controlled, so a `git checkout` does not touch it, which is
+exactly what a deployed version pointer needs.
+
+What the principle rules out is a human opening the file. Section 9 already
+places the channel in the SQLite database "like everything else", and stage 2
+must not introduce a second setting that only exists as an environment
+variable.
+
+This is recorded because the two statements look contradictory at a glance,
+and the next reader should not have to re-derive that they are not.
+
+### 16.4 `scripts/update.sh` already exists
+
+The console path from stage 1 does backup, pull, recreate and the 120-second
+health wait — the same five steps the sidecar performs. Stage 2 must decide
+deliberately whether the two share one implementation or stay separate, and
+say why in the plan rather than letting duplication happen by default.
+
+The 120 seconds are not a new number either way: they come from that script,
+with its measured rationale from 8 September (20 s was too tight; one run
+went over and reported a healthy service as sick).
