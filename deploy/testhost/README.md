@@ -217,11 +217,10 @@ loxmatter version — never an arbitrary image, never an arbitrary command.
 push on its first run against `main`, not a pinned digest — see the
 comment above the service for what to do once that digest exists.
 
-**Running without it.** Delete the `loxmatter-updater` service (and,
-if nothing else needs it, the `LOXMATTER_COMPOSE_DIR` line has no other
-purpose) — the bridge notices the resulting stale `updater_seen_at`,
-hides the update button, and names the console path above instead. No
-dead button, no message that sounds like a defect.
+**Running without it.** Delete the `loxmatter-updater` service — the
+bridge notices the resulting stale `updater_seen_at`, hides the update
+button, and names the console path above instead. No dead button, no
+message that sounds like a defect.
 
 ## Enable BLE
 

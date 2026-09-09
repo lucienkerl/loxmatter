@@ -401,21 +401,21 @@ services:
       # the state and log the sidecar writes back, and the sidecar's own
       # backups all live under here, alongside the signal database.
       - loxmatter-store:/data
-    environment:
-      # `DEFAULT_COMPOSE_DIR` (src/loxmatter/update/__main__.py) is
-      # `/checkout` - the checkout's root - and `DockerCommands` runs
-      # every `git fetch`/`git checkout`, every `docker compose ...` call
-      # and the `.env` rewrite all in that one directory
-      # (src/loxmatter/update/commands.py). `git` needs the root, which is
-      # why the mount above carries the whole repository; but
-      # `docker-compose.yml` and `.env` live in `deploy/testhost`, two
-      # directories below that root. This variable repoints `compose_dir`
-      # there - a real subdirectory of the mounted checkout, so `git`
-      # still finds `.git` by walking up, and exactly the directory
-      # `docker compose` and the `.env` rewrite need directly. Without it,
-      # `git fetch`/`git checkout` succeed and every `docker compose`
-      # call fails - "no configuration file provided" - on every request.
-      LOXMATTER_COMPOSE_DIR: /checkout/deploy/testhost
+    # No environment override needed here. `DockerCommands`
+    # (src/loxmatter/update/commands.py) takes `repo_dir` and `stack_dir`
+    # as two separate directories - `git` needs the repository work tree,
+    # `docker compose` and the `.env` rewrite need `deploy/testhost`, two
+    # levels below it - and `__main__.py`'s defaults already point at the
+    # right one of each: `repo_dir` at `/checkout`, matching the mount
+    # above, and `stack_dir` derived from that as `/checkout/deploy/
+    # testhost`. Earlier this service repointed a single `compose_dir` at
+    # `deploy/testhost` via `LOXMATTER_COMPOSE_DIR` - it happened to work
+    # because `git` walks up from a subdirectory to find `.git`, but it
+    # worked by accident, and mounting only `deploy/testhost` in a future
+    # simplification would have broken every git command with no obvious
+    # cause. `LOXMATTER_REPO_DIR`/`LOXMATTER_STACK_DIR` remain as
+    # overrides (same `_path_from_env` pattern) for anyone whose checkout
+    # does not land at `/checkout` - not needed here, because it does.
 
 volumes:
   # OTBR's Thread state (see there for the full rationale).

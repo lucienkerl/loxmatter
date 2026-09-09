@@ -94,17 +94,20 @@ def test_the_updater_restarts_itself_after_a_crash_or_reboot() -> None:
     assert _updater()["restart"] == "unless-stopped"
 
 
-def test_the_updater_resolves_compose_commands_against_deploy_testhost() -> None:
-    """`DockerCommands` (src/loxmatter/update/commands.py) runs every
-    `git fetch`/`git checkout` AND every `docker compose ...` call, plus
-    every `.env` read, in the one directory `compose_dir` names. `git`
-    needs the repository's `.git`, which sits two directories above
-    `deploy/testhost` - so the checkout mount below carries the whole
-    repository, not just this directory. But `docker-compose.yml` and
-    `.env` live in `deploy/testhost`, not at the repository root that
-    `DEFAULT_COMPOSE_DIR` (`/checkout`) names by default. Without this
-    override, `docker compose up -d --no-deps loxmatter` and the `.env`
-    rewrite both run in the wrong directory and fail on every request -
-    `git` would still work, `docker compose` would not.
+def test_the_updater_needs_no_directory_override() -> None:
+    """`DockerCommands` (src/loxmatter/update/commands.py) used to take a
+    single `compose_dir` for both `git` (needs the repository root) and
+    `docker compose`/`.env` (need `deploy/testhost`, two directories
+    below it) - and this service worked around that by repointing the
+    whole thing at `deploy/testhost` via `LOXMATTER_COMPOSE_DIR`. That
+    happened to work for `git` (it walks up to find `.git`) but left a
+    parameter whose name lied about what it held, and would have broken
+    every git command the moment someone mounted only `deploy/testhost`
+    here instead of the whole repository.
+
+    `DockerCommands` now takes `repo_dir` and `stack_dir` separately, and
+    `__main__`'s defaults derive both correctly from `/checkout` - the
+    mount below - on their own. No override belongs here anymore; one
+    reappearing would be a sign the defaults broke again.
     """
-    assert _updater()["environment"]["LOXMATTER_COMPOSE_DIR"] == "/checkout/deploy/testhost"
+    assert "environment" not in _updater()
