@@ -1061,12 +1061,55 @@ set_tag() {
   # it; the redirection below then only overwrites that same temp file's
   # CONTENT, and the closing `mv` (a rename, same filesystem) keeps the
   # mode it already has.
-  cp -p "$set_tag_target" "$set_tag_target.tmp"
+  #
+  # Its own exit status is checked here too - see the paragraph below the
+  # `if`/`else` for why that matters for every write in this function,
+  # not only the two named there. A `cp -p` that fails partway (the same
+  # full-disk trigger as the rest of this function) can leave
+  # $set_tag_target.tmp missing or truncated; the `sed` branch overwrites
+  # it wholesale regardless (its `>` redirection does not care what was
+  # there before), but the append branch below only ever APPENDS onto
+  # whatever `cp -p` left - a failed copy there would seed it from an
+  # empty or partial base, and the small appends that follow (a newline,
+  # one short line) can succeed even when the disk had no room left for
+  # the original's full content moments earlier.
+  if ! cp -p "$set_tag_target" "$set_tag_target.tmp"; then
+    rm -f "$set_tag_target.tmp"
+    return 1
+  fi
 
+  # Every write below is checked against its OWN exit status before the
+  # closing `mv` is ever reached - not assumed to have succeeded because
+  # `set -eu` is in effect. It is not, here: every call site is
+  # `if ! set_tag ...` (see the three further down), and POSIX/bash both
+  # exempt the ENTIRE body of a function called as an `if`'s own
+  # condition from `errexit` - a failing `sed` or `printf` inside this
+  # function does not stop the script, it just leaves its own exit status
+  # sitting there, unchecked, for whoever wrote the NEXT line to have
+  # remembered to look at.
+  #
+  # Reproduced end to end with `sed` stubbed to emit exactly one line and
+  # exit 4 ("No space left on device", a full SD card being the ordinary
+  # trigger on a Pi - and a full disk is exactly when someone reaches for
+  # an update): before this check, `set_tag` still returned 0 (the
+  # function's own exit status is the LAST command's, and `mv` - moving
+  # whatever truncated garbage `sed` managed to write - succeeded on its
+  # own terms), $ENV_FILE lost everything after that one line (the API
+  # token, the Thread dataset, the radio device, the image tag itself),
+  # and the update proceeded to recreate the bridge against it while
+  # state.json went on to report "done".
   if grep -q '^LOXMATTER_IMAGE_TAG=' "$set_tag_target" 2>/dev/null; then
     set_tag_replacement="$(sed_escape_replacement "$1")"
-    sed "s|^LOXMATTER_IMAGE_TAG=.*|LOXMATTER_IMAGE_TAG=$set_tag_replacement|" "$set_tag_target" \
-      > "$set_tag_target.tmp"
+    if ! sed "s|^LOXMATTER_IMAGE_TAG=.*|LOXMATTER_IMAGE_TAG=$set_tag_replacement|" "$set_tag_target" \
+        > "$set_tag_target.tmp"; then
+      # Refusing HERE, before the `mv` two paragraphs down, is what
+      # actually fixes this: $set_tag_target itself is never touched by
+      # anything above this line, so the ORIGINAL file - API token,
+      # Thread dataset, radio device and all - is exactly as it was
+      # before this call. Only the doomed `.tmp` copy is discarded.
+      rm -f "$set_tag_target.tmp"
+      return 1
+    fi
   else
     # A hand-edited or hand-migrated .env commonly has no trailing
     # newline - a plain `printf` without one, or `$(...)` command
@@ -1086,10 +1129,21 @@ set_tag() {
     # rather than re-derived. `cp -p` above already copied
     # $set_tag_target's existing content onto $set_tag_target.tmp, so
     # only the missing newline and the new line need appending here.
+    #
+    # Both appends below are checked the same way `sed` above now is -
+    # the identical full-disk trigger can fail either one, and an
+    # unchecked failure here would report success over a `.env` missing
+    # its closing line just as silently.
     if [ -s "$set_tag_target" ] && [ "$(tail -c 1 "$set_tag_target")" != "" ]; then
-      printf '\n' >> "$set_tag_target.tmp"
+      if ! printf '\n' >> "$set_tag_target.tmp"; then
+        rm -f "$set_tag_target.tmp"
+        return 1
+      fi
     fi
-    printf 'LOXMATTER_IMAGE_TAG=%s\n' "$1" >> "$set_tag_target.tmp"
+    if ! printf 'LOXMATTER_IMAGE_TAG=%s\n' "$1" >> "$set_tag_target.tmp"; then
+      rm -f "$set_tag_target.tmp"
+      return 1
+    fi
   fi
 
   mv "$set_tag_target.tmp" "$set_tag_target"

@@ -1369,6 +1369,74 @@ def test_set_tag_escapes_sed_metacharacters_in_the_restored_tag(updater):
     assert not (updater.stack / ".env.tmp").exists()
 
 
+def test_a_failed_sed_does_not_corrupt_the_env_file(updater):
+    # Item 4. `set_tag()` never checked `sed`'s own exit status before
+    # `mv`-ing its output over $ENV_FILE - and `set -eu` does not save it:
+    # every call site is `if ! set_tag ...` (the three further down in
+    # update-once.sh), and POSIX/bash both exempt the WHOLE body of a
+    # function called as an `if`'s own condition from `errexit`. A `sed`
+    # that fails partway through - the maintainer's own reproduction,
+    # reused here almost verbatim:
+    #
+    #   $ sh settag.sh env2 0.3.2
+    #   sed: couldn't flush stdout: No space left on device
+    #   rc=0
+    #   $ cat env2
+    #   MINISERVER_IP=192.168.1.77
+    #
+    # ...used to still let `set_tag` return 0 (the function's own exit
+    # status is its LAST command's - `mv`, moving whatever truncated
+    # garbage `sed` managed to write, which itself succeeds on its own
+    # terms), and the update proceeded to recreate the bridge against a
+    # `.env` that had just lost its API token, Thread dataset, radio
+    # device and image tag - while state.json went on to report success.
+    # A full SD card is the ordinary trigger on a Pi, and a full disk is
+    # exactly when someone reaches for an update.
+    #
+    # The `sed` stub below fails ONLY the one substitution call `set_tag`
+    # itself makes (matched on "LOXMATTER_IMAGE_TAG=" appearing in the
+    # substitution expression, `$1`) - every OTHER `sed` call this pass
+    # makes (`current_tag()`'s own read of the pre-existing tag,
+    # `sed_escape_replacement()`) falls through to the real binary
+    # unmodified, so this test still exercises a genuine pass rather than
+    # a script that cannot run past its very first `sed` invocation.
+    real_sed = shutil.which("sed")
+    assert real_sed, "this test needs a real sed on PATH to fall through to"
+    env_file = updater.stack / ".env"
+    env_file.write_text(
+        "MINISERVER_IP=192.168.1.77\n"
+        "LOXMATTER_API_TOKEN=deadbeefcafe\n"
+        "RADIO_DEVICE=/dev/ttyACM0\n"
+        "LOXMATTER_IMAGE_TAG=0.2.0\n",
+        encoding="utf-8",
+    )
+    original = env_file.read_text(encoding="utf-8")
+    sed_path = updater.bindir / "sed"
+    sed_path.write_text(
+        "#!/bin/sh\n"
+        'printf "%s %s\\n" "sed" "$*" >> "$STUB_LOG"\n'
+        'case "$1" in\n'
+        "  *LOXMATTER_IMAGE_TAG=*)\n"
+        '    printf "%s\\n" "MINISERVER_IP=192.168.1.77"\n'
+        "    exit 4 ;;\n"
+        "esac\n"
+        f'exec "{real_sed}" "$@"\n',
+        encoding="utf-8",
+    )
+    sed_path.chmod(0o755)
+    _write_request(updater, target="0.3.0")
+    _, _calls, state = updater()
+    assert state["phase"] == "failed"
+    assert "could not write the new image tag" in (state["error"] or "")
+    assert env_file.read_text(encoding="utf-8") == original, (
+        "a failed sed must leave the ORIGINAL .env completely untouched - "
+        "not the truncated output sed managed to emit before failing"
+    )
+    assert not (updater.stack / ".env.tmp").exists(), (
+        "the doomed temp file must be cleaned up, not left behind for a later pass to mv by accident"
+    )
+
+
 def test_set_tag_preserves_the_env_files_mode(updater):
     # Minor 7, the mode half. Measured on the unpatched function:
     # 0600 -> 0644 and 0444 -> 0644 after an update - `mv`ing a
