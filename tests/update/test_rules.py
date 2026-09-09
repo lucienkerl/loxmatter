@@ -27,7 +27,13 @@ from __future__ import annotations
 import pytest
 
 from loxmatter.update.protocol import UpdateRequest
-from loxmatter.update.rules import IMAGE_REPOSITORY, RequestRejected, check_request, image_reference
+from loxmatter.update.rules import (
+    IMAGE_REPOSITORY,
+    RequestRejected,
+    check_request,
+    image_reference,
+    image_tag,
+)
 
 
 def request(**overrides: str) -> UpdateRequest:
@@ -180,4 +186,22 @@ def test_the_image_name_never_comes_from_the_request():
     """Design section 10, rule 2. The repository is hard-coded here; the
     request contributes only the tag, and only after passing the pattern
     above. A request naming a foreign registry has nowhere to put it."""
-    assert image_reference("v0.3.0") == f"{IMAGE_REPOSITORY}:v0.3.0"
+    assert image_reference("v0.3.0") == f"{IMAGE_REPOSITORY}:0.3.0"
+
+
+def test_a_stable_target_becomes_the_tag_ci_publishes_for_a_release():
+    """Finding 1: `.github/workflows/ci.yml` computes
+    `version="${GITHUB_REF#refs/tags/v}"` from the tag `v0.3.0` and pushes
+    `ghcr.io/lucienkerl/loxmatter:0.3.0` - never `:v0.3.0`. The `v` that
+    makes a target a valid git ref is exactly the character that must not
+    reach the Docker tag."""
+    assert image_tag("v0.3.0") == "0.3.0"
+    assert image_reference("v0.3.0") == f"{IMAGE_REPOSITORY}:0.3.0"
+
+
+def test_a_dev_target_becomes_the_sha_prefixed_tag_ci_publishes():
+    """Finding 1: a dev build pushes `:dev` and `:sha-<commit>` - the
+    bare commit SHA that `checkout` uses as a git ref is never itself a
+    published tag."""
+    assert image_tag("deadbee") == "sha-deadbee"
+    assert image_reference("deadbee") == f"{IMAGE_REPOSITORY}:sha-deadbee"
