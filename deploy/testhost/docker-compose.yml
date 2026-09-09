@@ -328,6 +328,95 @@ services:
     depends_on:
       - matter-server
 
+  loxmatter-updater:
+    # The sidecar that lets the WebUI update the bridge (draft "Deploy
+    # updates via the UI", 2026-09-08, section 6). It exists because a
+    # process cannot restart its own container: whatever called
+    # `up -d --no-deps --force-recreate loxmatter` would be ended by that
+    # same call before it finished. Something outside the bridge has to
+    # hold the socket and do it instead - this is that something, and
+    # nothing else.
+    #
+    # THIS CONTAINER IS ROOT-EQUIVALENT ON THE HOST THROUGH THE DOCKER
+    # SOCKET. Anyone who can run a command in it can run any command on
+    # the host as root. It is not secured by permissions inside the
+    # container - there are none worth having - but by tightness around
+    # it: no `ports:`, no `network_mode: host` (unlike every other
+    # service above, which has one or the other and is reachable across
+    # the LAN - that difference is the entire argument for letting this
+    # one hold the socket), a single fixed work program
+    # (`loxmatter.update`, see deploy/updater/Dockerfile), and the three
+    # rules in `loxmatter/update/rules.py` that let a request through the
+    # bridge's `/api` reach at most a published, newer loxmatter version -
+    # never an arbitrary image, never an arbitrary command. Do not add a
+    # port, do not add host networking, and do not let this image grow a
+    # second job.
+    #
+    # Removable: deleting this service only loses the update button
+    # (design section 11) - the bridge reads a stale `updater_seen_at`
+    # from loxmatter-store, hides the button, and names the console path
+    # instead (`git pull && ./scripts/update.sh`, see "Updating" below).
+    #
+    # No digest yet (9 September 2026): the CI job that builds
+    # ghcr.io/lucienkerl/loxmatter-updater (`.github/workflows/ci.yml`,
+    # job `updater-image`) has not run against this branch, so the image
+    # exists at no tag and no digest. `:dev` is the tag that job pushes on
+    # its first run against `main` - replace this with `@sha256:...` once
+    # that digest exists. A digest invented now would look pinned while
+    # actually pointing at nothing.
+    image: ghcr.io/lucienkerl/loxmatter-updater:dev
+    container_name: loxmatter-updater
+    restart: unless-stopped
+    # Reaches the bridge's `/health` on the HOST, not in this container's
+    # own network: `loxmatter` above runs with `network_mode: host` and is
+    # therefore not a resolvable Compose service name from here - this
+    # service deliberately sits on the ordinary Compose network instead
+    # (see the no-ports/no-host-network point above). `host.docker.internal`
+    # only resolves to the host on Linux, which is what the Pi is, because
+    # this entry names the gateway explicitly. Without it,
+    # `healthy()` (src/loxmatter/update/commands.py) returns `False` for
+    # the whole rollback deadline and every update rolls back, on a
+    # perfectly healthy bridge.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      # Root-equivalent already, see above - one more mount changes
+      # nothing about that.
+      - /var/run/docker.sock:/var/run/docker.sock
+      # The whole repository, not just this directory: `git fetch`/`git
+      # checkout` (design section 8) need the repository's `.git`, which
+      # sits two directories above `deploy/testhost`. Same source
+      # directory as `loxmatter`'s `build: context: ../..` above. Mounted
+      # writable because `git checkout` writes into it.
+      #
+      # NEVER at /app - that's where this image keeps its own code
+      # (deploy/updater/Dockerfile, `WORKDIR /app`). A bind mount there
+      # shadows `loxmatter/` and the entrypoint dies with
+      # `ModuleNotFoundError: No module named 'loxmatter'` before running
+      # a line - with `restart: unless-stopped`, a restart loop and an
+      # update button that never works. Checked against the real image,
+      # both ways.
+      - ../..:/checkout
+      # Same volume as `loxmatter` above: the request the bridge writes,
+      # the state and log the sidecar writes back, and the sidecar's own
+      # backups all live under here, alongside the signal database.
+      - loxmatter-store:/data
+    environment:
+      # `DEFAULT_COMPOSE_DIR` (src/loxmatter/update/__main__.py) is
+      # `/checkout` - the checkout's root - and `DockerCommands` runs
+      # every `git fetch`/`git checkout`, every `docker compose ...` call
+      # and the `.env` rewrite all in that one directory
+      # (src/loxmatter/update/commands.py). `git` needs the root, which is
+      # why the mount above carries the whole repository; but
+      # `docker-compose.yml` and `.env` live in `deploy/testhost`, two
+      # directories below that root. This variable repoints `compose_dir`
+      # there - a real subdirectory of the mounted checkout, so `git`
+      # still finds `.git` by walking up, and exactly the directory
+      # `docker compose` and the `.env` rewrite need directly. Without it,
+      # `git fetch`/`git checkout` succeed and every `docker compose`
+      # call fails - "no configuration file provided" - on every request.
+      LOXMATTER_COMPOSE_DIR: /checkout/deploy/testhost
+
 volumes:
   # OTBR's Thread state (see there for the full rationale).
   otbr-state:

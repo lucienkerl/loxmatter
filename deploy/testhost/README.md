@@ -189,6 +189,40 @@ What it guarantees:
 - At the end it reports which commit it shipped from and how many
   signals per device are exported.
 
+## The updater sidecar
+
+Since 9 September 2026, `docker-compose.yml` also runs a service
+`loxmatter-updater` alongside the three above — the sidecar that lets an
+update be started from the WebUI instead of the console path above (draft
+"Deploy updates via the UI", `docs/superpowers/specs/2026-09-08-webui-updates-design.md`).
+It exists because a process cannot restart its own container: whatever
+called `up -d --force-recreate loxmatter` would be ended by that same call
+before it finished. Something outside the bridge has to hold the socket
+and do it instead.
+
+**This container is root-equivalent on the host through the Docker
+socket.** Anyone who can run a command in it can run any command on the
+host as root. It is not secured by permissions inside the container —
+there are none worth having — but by tightness around it: no `ports:`, no
+`network_mode: host` (unlike the three services above, which have one or
+the other and are reachable across the LAN — that difference is the
+entire argument for letting this one hold the socket), a single fixed
+work program, and the three rules in `loxmatter/update/rules.py` that let
+a request through the bridge's `/api` reach at most a published, newer
+loxmatter version — never an arbitrary image, never an arbitrary command.
+
+**No published image yet.** The CI job that builds
+`ghcr.io/lucienkerl/loxmatter-updater` has not run against this branch, so
+`docker-compose.yml` currently references the `:dev` tag that job will
+push on its first run against `main`, not a pinned digest — see the
+comment above the service for what to do once that digest exists.
+
+**Running without it.** Delete the `loxmatter-updater` service (and,
+if nothing else needs it, the `LOXMATTER_COMPOSE_DIR` line has no other
+purpose) — the bridge notices the resulting stale `updater_seen_at`,
+hides the update button, and names the console path above instead. No
+dead button, no message that sounds like a defect.
+
 ## Enable BLE
 
 That's the actual point of the move. `python-matter-server` only uses Bluetooth
