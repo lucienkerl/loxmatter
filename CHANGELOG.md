@@ -8,6 +8,8 @@ people who don't know the code.
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-09-09
+
 ### Added
 
 - **System → Version can now install updates by itself.** It shows what
@@ -25,6 +27,28 @@ people who don't know the code.
   Afterwards, updates work from the browser like any newer installation.
   Without that service — or after removing it — the System tab still
   names the running version and points back to the console path.
+- **Device cards show when a device was last heard from**, as a coarse age
+  that never counts seconds. A device that has never reported says so.
+
+### Changed
+
+- The bridge now talks to matter.js (`matterjs-server`) through
+  `matter-python-client`, replacing `python-matter-server`. **This has not
+  been run on real hardware yet.** It does not reach an existing
+  installation by itself: every update path recreates only the bridge and
+  the updater, never matter-server, so the change sits in your checkout
+  until you deliberately bring the whole stack up with
+  `docker compose up -d`. Read `deploy/testhost/docker-compose.yml` before
+  you do — the new container runs unprivileged and needs a one-time
+  ownership change on its data directory.
+
+### Fixed
+
+- **The bridge notices when its link to matter-server drops and rebuilds
+  it.** Until now a matter-server restart left the bridge quietly inert
+  while diagnostics still reported a healthy connection. The heartbeat to
+  the Miniserver now falls silent while there is no Matter link, instead
+  of pretending everything is fine.
 
 ## [0.2.0] — 2026-09-08
 
