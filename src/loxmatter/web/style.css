@@ -457,6 +457,143 @@ button:disabled {
 }
 
 /* ---------------------------------------------------------------------
+ * The update card's confirmation and running states (design "Applying
+ * updates through the web UI", 2026-09-08, section 9). `index.html`
+ * already used the classes `confirm`, `steps` (with `done`/`now` on the
+ * `<li>`) and `notes` when that card was first built; none of the three
+ * had a rule here, so the running state - the one someone stares at
+ * while the bridge itself is down - rendered as an unstyled list with no
+ * way to tell which of the four steps was current.
+ * ------------------------------------------------------------------- */
+
+/* Sets the confirmation apart as its own decision point inside the
+ * card, the same way `.field-label`'s block below sets a form field
+ * apart - a neutral border, not `--warn`: the actual warning already has
+ * its own `.banner.warn` one line inside this box, and wrapping a
+ * warning-coloured box around a warning banner would just be the same
+ * colour twice. */
+.confirm {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.8rem;
+  margin-bottom: 1rem;
+}
+
+.confirm h3 {
+  margin-top: 0;
+}
+
+.steps {
+  list-style: none;
+  margin: 0 0 0.6rem;
+  padding: 0;
+  font-size: 0.9rem;
+}
+
+.steps li {
+  position: relative;
+  padding: 0.3rem 0 0.3rem 1.6rem;
+  color: var(--text-muted);
+}
+
+/* The marker every step gets, `done`/`now` included - drawn as a
+ * pseudo-element instead of a second element in the markup, since
+ * `index.html`'s `<li>` carries nothing but its own text (unlike
+ * `.commission-step`'s dedicated `<span class="step-marker">`, added for
+ * a different flow that this one predates and should not be made to
+ * depend on). */
+.steps li::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0.62rem;
+  width: 0.7rem;
+  height: 0.7rem;
+  border-radius: 50%;
+  border: 1.5px solid var(--border);
+  background: var(--surface);
+}
+
+/* `done` and `now` must both read without colour (task requirement,
+ * also WCAG 1.4.1): `done` gets a filled marker plus a checkmark drawn
+ * from two border lines - the same technique `.commission-step.done
+ * .step-marker::after` already uses below for the pairing flow - and
+ * `now` gets bold text plus a spinning ring, so a single frozen
+ * screenshot still shows which step is current even in greyscale. A
+ * step that is neither stays a plain, muted, empty ring - "not reached
+ * yet", the one state that needs no emphasis of its own. */
+.steps li.done {
+  color: var(--text);
+}
+
+.steps li.done::before {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+
+.steps li.done::after {
+  content: "";
+  position: absolute;
+  left: 0.16rem;
+  top: 0.7rem;
+  width: 0.16rem;
+  height: 0.32rem;
+  border-right: 1.5px solid var(--accent-contrast);
+  border-bottom: 1.5px solid var(--accent-contrast);
+  transform: rotate(42deg);
+}
+
+.steps li.now {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.steps li.now::before {
+  border-color: var(--accent);
+  border-top-color: transparent;
+  animation: update-step-spin 0.8s linear infinite;
+}
+
+@keyframes update-step-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Same accommodation as `.commission-step.running .step-marker` below:
+ * a spinning ring is exactly the sustained motion
+ * `prefers-reduced-motion` asks for less of. The current step stays
+ * distinguishable without it - dashed instead of a closed ring. */
+@media (prefers-reduced-motion: reduce) {
+  .steps li.now::before {
+    animation: none;
+    border-style: dashed;
+    border-top-color: var(--accent);
+  }
+}
+
+/* The release notes on offer (state 1) and the log tail on a failure
+ * (state 4) - both plain, server-supplied text that can run to several
+ * lines and must keep its own line breaks (`white-space: pre-wrap`,
+ * `<pre>` already keeps them, this only adds wrapping so a long line
+ * does not force the card wider than the page). Boxed and scrollable
+ * rather than left to grow the card without bound: `update.read_log`
+ * already caps itself at 40 lines, but a release's own notes text on
+ * GitHub carries no such limit from this bridge's side. */
+.notes {
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  white-space: pre-wrap;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.6rem 0.8rem;
+  margin: 0.4rem 0;
+  max-height: 12rem;
+  overflow-y: auto;
+}
+
+/* ---------------------------------------------------------------------
  * Einlern-Karte (Entwurf "Code zuerst" mit Ablaufanzeige, 2026-09-07).
  *
  * Vorher: vier gleich breite Felder in einer `.row`, darunter drei Absaetze
