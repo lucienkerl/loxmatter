@@ -342,6 +342,49 @@ on_signal() {
   trap '' TERM INT HUP
 
   sig_phase="$(jq -r '.phase // "unknown"' "$STATE" 2>/dev/null || echo unknown)"
+
+  # The missing invariant this guard restores: once a pass has reached a
+  # terminal outcome, a signal arriving afterwards cannot change what
+  # happened. Proven end to end from a real update on the maintainer's
+  # Pi: the success path writes `set_state "done" ""` and only THEN -
+  # deliberately, so the write above can never be torn - lets the
+  # self-replacement below (`compose pull loxmatter-updater` /
+  # `compose up -d --no-deps loxmatter-updater`) recreate this very
+  # container. Docker sends SIGTERM to PID 1 to do that; entrypoint.sh
+  # forwards it here; and this trap, unconditionally, used to write
+  # `set_state failed "interrupted by a signal ..."` straight over the
+  # "done" it had itself recorded one moment earlier - and the block
+  # below used to write LETZTER-FEHLSCHLAG.txt beside a successful
+  # update. Two individually-correct decisions collide: the
+  # self-replacement is placed after `done` precisely so it cannot
+  # corrupt a write in progress, and this trap exists so a genuine
+  # interruption is recorded truthfully - neither anticipated that a
+  # *deliberate* self-termination is, from inside the trap, indistinguishable
+  # from an unwanted one. It surfaces only when the sidecar's own image
+  # actually changed, so it hits the first update after any release that
+  # also rebuilt the sidecar - which is most of them.
+  #
+  # `done`, `failed` and `rejected` are the three terminal phases -
+  # mirrored from `_TERMINAL_PHASES` in `src/loxmatter/update.py`, which
+  # is this pair's authoritative list (that module's own docstring names
+  # the same three as "an end state"); `tests/test_updater_script.py`
+  # checks this exact case arm against that constant so the two files
+  # cannot silently drift apart. `idle` is deliberately NOT included: it
+  # is the resting default before any request exists, not the outcome of
+  # a finished pass, so a signal arriving while idle is still recorded
+  # exactly as it always was - there is nothing finished there to
+  # protect. A signal in any RUNNING phase (`queued`, `backup`, `pull`,
+  # `recreate`, `health`, `rollback`) also falls through unchanged below -
+  # that is what this trap exists for, and a rollback interrupted midway
+  # is precisely the case it must keep reporting (see the block comment
+  # above this function for that exact scenario, proven end to end).
+  case "$sig_phase" in
+    done|failed|rejected)
+      log "signal received while phase was already terminal ('$sig_phase') - the pass had already finished; leaving state.json and any failure report exactly as they are"
+      exit 143
+      ;;
+  esac
+
   JOB_ID="$(jq -r '.id // empty' "$STATE" 2>/dev/null || true)"
   FROM="$(jq -r '.from // empty' "$STATE" 2>/dev/null || true)"
   TO="$(jq -r '.to // empty' "$STATE" 2>/dev/null || true)"
@@ -1554,6 +1597,22 @@ if [ "$RECREATE_OK" = true ]; then
     # not wait inside it for its own end. `--no-deps`, the same as every
     # other compose call in this file: the bridge and its neighbours are
     # not this call's business.
+    #
+    # This call is what SIGTERMs the worker one moment after `done` above
+    # - see the SIGTERM trap's own comment for why that is now harmless
+    # (state.json and LETZTER-FEHLSCHLAG.txt both stay exactly as `done`
+    # left them). Considered, and rejected for this fix: deferring the
+    # recreate itself - e.g. leaving a marker for entrypoint.sh to act on
+    # between passes, once no job is in flight, instead of recreating
+    # inline here - so the worker is never killed mid-exit at all. That
+    # would remove a real, if now harmless, oddity (this process's own
+    # exit path is a signal delivery, not a plain return) and is worth
+    # doing eventually, but it is a materially larger change - a second
+    # coordination channel between this script and entrypoint.sh, with
+    # its own failure modes to reason through - for no reported bug it
+    # would additionally fix: the terminal-phase guard above already
+    # makes the one observable symptom (a false "Update failed") go away
+    # on its own. Not implemented here.
     if [ "${LOXMATTER_UPDATER_SELF_REPLACE:-1}" = "1" ]; then
       if compose pull loxmatter-updater; then
         compose up -d --no-deps loxmatter-updater || true

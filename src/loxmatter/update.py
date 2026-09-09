@@ -81,6 +81,21 @@ from pathlib import Path
 # is not needlessly blocked.
 _RUNNING_PHASES = frozenset({"queued", "backup", "pull", "recreate", "health", "rollback"})
 
+# The three phases in which a pass has reached a definite, unchangeable
+# outcome. This is the authoritative list update-once.sh's SIGTERM trap
+# (`on_signal()` there) mirrors, in its own `case "$sig_phase" in
+# done|failed|rejected)` guard - a signal arriving once a pass has already
+# reached one of these must not overwrite it (see that function's own
+# comment for the collision this fixes: the sidecar's self-replacement,
+# after a successful update, recreates its own container and so receives
+# its own SIGTERM one moment after writing "done"). Deliberately excludes
+# `idle`: idle is the resting default before any request exists, not the
+# outcome of a pass, so a signal arriving while idle is recorded exactly
+# the way a signal in a running phase is - there is nothing finished there
+# to protect. `tests/test_updater_script.py` checks the shell script's
+# case arm against this exact set so the two cannot silently drift apart.
+_TERMINAL_PHASES = frozenset({"done", "failed", "rejected"})
+
 # The sidecar refreshes its heartbeat every two seconds (update-once.sh's
 # main loop, driven by entrypoint.sh). Thirty seconds of silence is
 # generous enough to absorb one slow pass on a loaded Pi, and short enough

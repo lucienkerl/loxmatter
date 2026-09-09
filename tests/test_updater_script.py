@@ -35,12 +35,15 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import signal
 import subprocess
 import time
 from pathlib import Path
 
 import pytest
+
+from loxmatter.update import _TERMINAL_PHASES
 
 ROOT = Path(__file__).resolve().parent.parent
 SCRIPT = ROOT / "deploy" / "updater" / "update-once.sh"
@@ -1904,6 +1907,73 @@ def test_the_self_replacement_runs_strictly_after_done_is_recorded(updater):
     assert snapshot.is_file(), "self-replacement never ran"
     snap_state = json.loads(snapshot.read_text(encoding="utf-8"))
     assert snap_state["phase"] == "done"
+
+
+def test_a_signal_after_done_is_recorded_does_not_overwrite_it(updater):
+    # The reported bug, reproduced from the real state.json a successful
+    # update on the maintainer's Pi left behind: version 0.3.1 was running
+    # - the update genuinely succeeded - but the card read "Update failed".
+    #
+    # The mechanism: the success path writes `set_state "done" ""`, and
+    # only THEN - deliberately, so a genuinely finished write is never torn
+    # - does the self-replacement recreate this very container (see the
+    # block comment above `compose pull loxmatter-updater` further down in
+    # update-once.sh). Docker sends SIGTERM to PID 1 to do that recreate;
+    # entrypoint.sh forwards it here; and the trap used to write
+    # `set_state failed "interrupted by a signal ..."` unconditionally,
+    # overwriting the "done" it had itself just recorded one moment
+    # earlier. Two individually-correct pieces of code collide: the
+    # self-replacement sits after `done` precisely so it cannot corrupt a
+    # write in progress, and the trap exists so a genuine interruption is
+    # recorded - neither anticipated that a *deliberate* self-termination
+    # is indistinguishable, from inside the trap, from an unwanted one.
+    #
+    # Reproduced here without a real Docker daemon at all: the FAKE
+    # `docker` binary, on exactly the self-replacement's own
+    # `up -d --no-deps loxmatter-updater` call (the one that stands in for
+    # Docker recreating this container), sends a REAL SIGTERM to its own
+    # parent - this very update-once.sh process - while that process is
+    # genuinely blocked waiting for the call to return. That is exactly
+    # the timing entrypoint.sh's forwarded SIGTERM has in production: it
+    # arrives while the self-replacement's own `compose up -d` is still
+    # the foreground command.
+    docker_path = updater.bindir / "docker"
+    docker_path.write_text(
+        _docker_stub_source(
+            compose_case=(
+                'case "$*" in\n'
+                '      *"up -d --no-deps loxmatter-updater"*) '
+                'kill -TERM "$PPID" 2>/dev/null || true ;;\n'
+                "    esac\n"
+                "    exit 0 ;;"
+            )
+        ),
+        encoding="utf-8",
+    )
+    docker_path.chmod(0o755)
+    _write_request(updater, target="0.3.0")
+    _, _calls, state = updater(LOXMATTER_UPDATER_SELF_REPLACE="1", _timeout=15)
+    assert state["phase"] == "done"
+    assert state["error"] is None
+    assert not (updater.update_dir / "LETZTER-FEHLSCHLAG.txt").exists(), (
+        "a completed, successful update must not leave a failure report behind"
+    )
+
+
+def test_the_terminal_phase_guard_matches_update_py(updater):
+    # Anti-drift check for the invariant above: update-once.sh cannot
+    # import loxmatter.update._TERMINAL_PHASES directly (they run in
+    # different processes, one of them POSIX sh), so the two lists are
+    # kept honest by comparing them here instead - textually, against the
+    # exact `case "$sig_phase" in ...)` arm on_signal() uses to decide
+    # which phases a signal must leave untouched. A future edit that adds
+    # or removes a terminal phase in one file without the other fails this
+    # test rather than silently reopening the collision above.
+    script_text = SCRIPT.read_text(encoding="utf-8")
+    match = re.search(r'case "\$sig_phase" in\n\s*([a-z|]+)\)', script_text)
+    assert match, "on_signal() must guard on sig_phase with a case arm"
+    guarded_phases = set(match.group(1).split("|"))
+    assert guarded_phases == set(_TERMINAL_PHASES)
 
 
 def test_a_corrupted_state_file_does_not_replay_a_completed_rollback(unhealthy_service):
