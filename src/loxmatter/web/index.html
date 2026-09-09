@@ -268,9 +268,20 @@
 
     <p class="banner danger" x-show="authError" x-cloak x-text="authError"></p>
 
-    <div class="banner danger" x-show="!socketConnected && socketEverConnected" x-cloak
+    <div class="banner danger" x-show="!socketConnected && socketEverConnected && !updateRunning()" x-cloak
          x-text="t('web.connection.lost_banner')">
     </div>
+
+    <!--
+      A planned restart must not read as an outage (design "Applying
+      updates through the web UI", 2026-09-08, section 9, state 3). The
+      bridge really is unreachable for this window - the same condition
+      the banner above already reports on - but here the socket dropping
+      is expected, driven by state.json rather than a fault, so it gets
+      its own text instead of the alarming one above.
+    -->
+    <div class="banner warn" x-show="!socketConnected && updateRunning()" x-cloak
+         x-text="t('web.system.update_restarting')"></div>
 
     <!--
       Echte Links auf die Fragmente der vier Ansichten (`VIEWS` in app.js),
@@ -1531,6 +1542,93 @@
                  x-text="t('web.system.version_dev_channel_hint')"></p>
             </div>
           </template>
+
+          <!--
+            The update flow - design "Applying updates through the web UI"
+            (2026-09-08), section 9. Four states, all in this one card, no
+            fifth tab and no global banner (a state that may stand for days
+            does not deserve one). Nothing here disables anything else in
+            the interface while a job runs (spec section 9): the connection
+            banner below explains the one failure mode a mid-update click
+            elsewhere would actually hit.
+          -->
+
+          <!-- No sidecar reachable: not a dead button, but the console path. -->
+          <p class="hint" x-show="updateStatus && !updateStatus.updater_present && !updateRunning()" x-cloak
+             x-text="t('web.system.update_no_updater')"></p>
+
+          <!-- 1: An update is ready. -->
+          <template x-if="updateStatus?.updater_present && !updateRunning() && updateAvailable?.target">
+            <div>
+              <p class="banner warn"
+                 x-text="updateStatus.channel === 'dev'
+                   ? t('web.system.update_behind', { behind: updateAvailable.behind })
+                   : t('web.system.update_available', { version: updateAvailable.target })"></p>
+              <pre class="notes" x-show="updateAvailable.notes" x-cloak x-text="updateAvailable.notes"></pre>
+              <button @click="updateConfirming = true" x-text="t('web.system.update_apply')"></button>
+            </div>
+          </template>
+
+          <!-- Up to date, or checking is off, or the check itself failed
+               (no internet, GitHub unreachable) - three different reasons
+               to show no button, none of them a fault of this bridge. -->
+          <p class="hint" x-show="!updateRunning() && updateAvailable && !updateAvailable.target && !updateAvailable.error"
+             x-cloak x-text="t('web.system.update_up_to_date', { checked_at: updateAvailable.checked_at })"></p>
+          <p class="hint" x-show="!updateRunning() && updateAvailable?.error" x-cloak
+             x-text="updateAvailable.error"></p>
+
+          <!-- 2: Confirmation. -->
+          <template x-if="updateConfirming">
+            <div class="confirm">
+              <h3 x-text="t('web.system.update_confirm_title', { version: updateAvailable.target })"></h3>
+              <p class="banner warn" x-text="t('web.system.update_confirm_downtime')"></p>
+              <div class="row">
+                <button @click="updateConfirming = false" x-text="t('web.system.update_cancel')"></button>
+                <button @click="applyUpdate()" x-text="t('web.system.update_apply')"></button>
+              </div>
+            </div>
+          </template>
+
+          <!-- 3: Running - including the moment the bridge is gone. The
+               connection banner (below the header, outside this card)
+               carries the "bridge is restarting" text for that window;
+               this card keeps showing the steps from state.json, which the
+               sidecar - not the bridge - keeps writing throughout. -->
+          <template x-if="updateRunning()">
+            <div>
+              <h3 x-show="updateStatus.state.phase !== 'health'" x-cloak
+                  x-text="t('web.system.update_available', { version: updateStatus.state.to })"></h3>
+              <h3 x-show="updateStatus.state.phase === 'health'" x-cloak
+                  x-text="t('web.system.update_restarting')"></h3>
+              <ul class="steps">
+                <li :class="{ done: ['pull','recreate','health'].includes(updateStatus.state.phase), now: updateStatus.state.phase === 'backup' }"
+                    x-text="t('web.system.update_step_backup')"></li>
+                <li :class="{ done: ['recreate','health'].includes(updateStatus.state.phase), now: updateStatus.state.phase === 'pull' }"
+                    x-text="t('web.system.update_step_pull')"></li>
+                <li :class="{ done: updateStatus.state.phase === 'health', now: updateStatus.state.phase === 'recreate' }"
+                    x-text="t('web.system.update_step_recreate')"></li>
+                <li :class="{ now: updateStatus.state.phase === 'health' }"
+                    x-text="t('web.system.update_step_health')"></li>
+              </ul>
+              <p class="hint" x-show="updateStatus.state.phase === 'health'" x-cloak
+                 x-text="t('web.system.update_restarting_hint')"></p>
+            </div>
+          </template>
+
+          <!-- 4: Result. -->
+          <p class="banner ok" x-show="updateStatus?.state?.phase === 'done'" x-cloak
+             x-text="t('web.system.update_done', { version: updateStatus.state.to })"></p>
+          <template x-if="updateStatus?.state?.phase === 'failed'">
+            <div>
+              <p class="banner danger" x-text="t('web.system.update_failed')"></p>
+              <p x-show="updateStatus.state.rolled_back" x-cloak
+                 x-text="t('web.system.update_rolled_back', { version: updateStatus.state.to, from_version: updateStatus.state.from })"></p>
+              <pre class="notes" x-text="updateStatus.log.slice(-8).join('\n')"></pre>
+              <button @click="downloadFabricBackup()" x-text="t('web.system.backup_download')"></button>
+            </div>
+          </template>
+
+          <p class="hint" x-show="updateError" x-cloak x-text="updateError"></p>
         </div>
 
         <!-- Handlung, keine Diagnose - deshalb vor den Systemchecks und

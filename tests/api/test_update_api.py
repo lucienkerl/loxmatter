@@ -526,3 +526,41 @@ async def test_a_mid_transfer_failure_reaches_the_route_as_a_calm_error(api, mon
     body = response.json()
     assert body["target"] is None
     assert body["error"]
+
+
+def test_the_interface_knows_every_text_of_the_update_card():
+    """Task 9: the whole update card - all four states, the confirmation,
+    and the disconnect banner's second text - reads exclusively through
+    `t()`. This is the one check that the strings actually exist; whether
+    each is wired to the right binding is covered by the markup/script
+    tests in `tests/api/test_web.py` (`test_the_update_card_offers_its_
+    four_states_and_the_confirmation`,
+    `test_the_disconnect_banner_gets_a_different_text_during_an_update`,
+    `test_the_update_polling_only_runs_while_a_job_is_in_progress`)."""
+    from loxmatter import i18n
+
+    for key in (
+        "web.system.update_available",
+        "web.system.update_up_to_date",
+        "web.system.update_apply",
+        "web.system.update_cancel",
+        "web.system.update_confirm_title",
+        "web.system.update_confirm_downtime",
+        "web.system.update_confirm_schema",
+        "web.system.update_step_backup",
+        "web.system.update_step_pull",
+        "web.system.update_step_recreate",
+        "web.system.update_step_health",
+        "web.system.update_restarting",
+        "web.system.update_restarting_hint",
+        "web.system.update_done",
+        "web.system.update_failed",
+        "web.system.update_rolled_back",
+        "web.system.update_no_updater",
+        "web.system.update_channel_stable",
+        "web.system.update_channel_dev",
+        "web.system.update_channel_dev_warning",
+        "web.system.update_check_disabled",
+        "web.system.update_behind",
+    ):
+        assert i18n.raw_template(key), key

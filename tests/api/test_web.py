@@ -499,6 +499,125 @@ async def test_the_system_view_shows_the_running_version(api):
     assert "t('web.system.version_built_at', { built_at: versionInfo.built_at })" in page
 
 
+async def test_the_update_card_offers_its_four_states_and_the_confirmation(api):
+    """Task 9 (design "Applying updates through the web UI", 2026-09-08,
+    section 9): the four states plus the confirmation step all live in the
+    same card as the version block above, keyed off `updateStatus` and
+    `updateAvailable` - same kind of proof as
+    `test_the_system_view_shows_the_running_version`: that the markup and
+    the bindings are actually delivered, not that Alpine renders them
+    correctly at runtime (that is the manual browser check).
+
+    Also covers the one thing the brief's own Step 5 sample never renders:
+    a failed `applyUpdate()`/`loadUpdateStatus()` sets `updateError`, and
+    without a binding for it the card would silently swallow a 409/503
+    from `/api/update/apply` - see `api/update.py`'s module docstring for
+    why that message is worth showing verbatim."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+    script = (await client.get("/static/app.js")).text
+
+    # State 0 (no sidecar) and state 1 (ready).
+    assert 'x-show="updateStatus && !updateStatus.updater_present && !updateRunning()"' in page
+    assert "t('web.system.update_no_updater')" in page
+    assert (
+        'x-if="updateStatus?.updater_present && !updateRunning() && updateAvailable?.target"'
+        in page
+    )
+    assert "t('web.system.update_available', { version: updateAvailable.target })" in page
+    assert "t('web.system.update_behind', { behind: updateAvailable.behind })" in page
+    assert "t('web.system.update_up_to_date', { checked_at: updateAvailable.checked_at })" in page
+
+    # State 2 (confirmation).
+    assert 'x-if="updateConfirming"' in page
+    assert "t('web.system.update_confirm_title', { version: updateAvailable.target })" in page
+    assert "t('web.system.update_confirm_downtime')" in page
+    assert '@click="applyUpdate()"' in page
+    assert '@click="updateConfirming = false"' in page
+
+    # State 3 (running, including the health phase where the bridge itself
+    # is gone).
+    assert 'x-if="updateRunning()"' in page
+    assert "t('web.system.update_restarting')" in page
+    assert "t('web.system.update_step_backup')" in page
+    assert "t('web.system.update_step_pull')" in page
+    assert "t('web.system.update_step_recreate')" in page
+    assert "t('web.system.update_step_health')" in page
+    assert "t('web.system.update_restarting_hint')" in page
+
+    # State 4 (result).
+    assert "updateStatus?.state?.phase === 'done'" in page
+    assert "t('web.system.update_done', { version: updateStatus.state.to })" in page
+    assert "updateStatus?.state?.phase === 'failed'" in page
+    assert "t('web.system.update_failed')" in page
+    assert (
+        "t('web.system.update_rolled_back', "
+        "{ version: updateStatus.state.to, from_version: updateStatus.state.from })" in page
+    )
+
+    # The one gap in the brief's own sample: a visible spot for `updateError`.
+    assert 'x-show="updateError"' in page
+    assert 'x-text="updateError"' in page
+
+    assert "async loadUpdateStatus()" in script
+    assert "async loadUpdateCheck()" in script
+    assert "async applyUpdate()" in script
+    assert "async setUpdateChannel(channel)" in script
+
+
+async def test_the_disconnect_banner_gets_a_different_text_during_an_update(api):
+    """Design section 9, state 3: a planned restart must not look like an
+    outage. The existing danger banner keeps its text for a genuine
+    outage but is silenced during an update (`&& !updateRunning()`), and a
+    second, calmer banner takes over for exactly that window."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+
+    assert 'x-show="!socketConnected && socketEverConnected && !updateRunning()"' in page, (
+        "the genuine-outage banner must not also fire during a planned restart"
+    )
+    assert 'x-show="!socketConnected && updateRunning()"' in page
+    # It must use the update-specific text, not the generic outage one.
+    restart_banner_start = page.index('x-show="!socketConnected && updateRunning()"')
+    restart_banner_end = page.index("</div>", restart_banner_start)
+    assert "t('web.system.update_restarting')" in page[restart_banner_start:restart_banner_end]
+
+
+async def test_the_update_polling_only_runs_while_a_job_is_in_progress(api):
+    """The status route is polled every two seconds ONLY while a job is
+    running (design section 9: a request per second for a value that
+    changes maybe ten times a year would be waste on a Pi) - and the timer
+    must stop on every path out: the job finishing, a poll failing outside
+    a running job, and the System tab itself being left. A test that only
+    checked `setInterval` exists would miss a timer nothing ever clears."""
+    client, _, _ = api
+    script = (await client.get("/static/app.js")).text
+
+    running_start = script.index("updateRunning() {")
+    running_end = script.index("\n    },", running_start)
+    running_body = script[running_start:running_end]
+    for phase in ("queued", "backup", "pull", "recreate", "health", "rollback"):
+        assert f'"{phase}"' in running_body
+    # End states must NOT count as running - a stray "idle"/"done"/"failed"/
+    # "rejected" here would leave the timer running forever after a job ends.
+    assert "idle" not in running_body
+    assert "rejected" not in running_body
+
+    load_status_start = script.index("async loadUpdateStatus() {")
+    load_status_end = script.index("\n    },", load_status_start)
+    load_status_body = script[load_status_start:load_status_end]
+    assert "this.updateTimer = setInterval(() => this.loadUpdateStatus(), 2000)" in load_status_body
+    assert "!this.updateTimer" in load_status_body  # never a second interval
+    assert "this.stopUpdateTimer()" in load_status_body
+
+    # Leaving the System tab must stop the timer too - the leak this
+    # task's self-review calls out by name.
+    select_view_start = script.index("async selectView(view) {")
+    select_view_end = script.index("\n    },", select_view_start)
+    select_view_body = script[select_view_start:select_view_end]
+    assert "this.stopUpdateTimer()" in select_view_body
+
+
 async def test_the_device_tile_no_longer_promises_a_ranking_it_does_not_have(api):
     """Review-Fix Fix 9 (2026-09-03) hatte die Ueberschrift „Wichtigste
     Werte“ absichtlich in „Signale (Anfang der Liste)“ umbenannt, weil die

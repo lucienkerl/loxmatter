@@ -665,6 +665,26 @@ function app() {
     // Die Bau-Identitaet (GET /api/version). `null`, solange der System-Tab
     // nicht geoeffnet war - die Karte zeigt dann nichts statt "undefined".
     versionInfo: null,
+    // The update state, exactly as the sidecar writes it to state.json -
+    // see api/update.py's `_status()` for the exact shape. `null` until
+    // the first `GET /api/update/status` answers.
+    updateStatus: null,
+    // `GET /api/update/check`'s answer - `target: null` means "up to
+    // date" or "checking is disabled" (the two are told apart by
+    // `updateStatus.check_enabled`, not by this object's `error` text).
+    updateAvailable: null,
+    updateConfirming: false,
+    updateError: null,
+    // The timer runs ONLY while a job is in progress (see
+    // `updateRunning()`). Polling continuously would mean a request every
+    // two seconds on a Pi for a value that changes maybe ten times a
+    // year - the rest of the System tab already gets its live data from
+    // the diagnostics socket instead, and this follows the same
+    // restraint. Cleared both when the job ends (`loadUpdateStatus`) and
+    // when the System tab itself is left (`selectView`) - a timer that
+    // only stopped on the first path would keep polling from a tab
+    // nobody is looking at.
+    updateTimer: null,
     systemChecks: [],
     systemError: null,
     diagnosticsBusy: false,
@@ -1066,6 +1086,13 @@ function app() {
         this.connectDiagnosticsLive();
       } else {
         this.disconnectDiagnosticsLive();
+        // Same reasoning as the diagnostics socket right above: a job in
+        // progress is followed only while "System" is the open tab. Without
+        // this, leaving the tab mid-update would keep polling every two
+        // seconds from a card nobody can see - the exact leak this task's
+        // self-review calls out. Re-entering the tab restarts it, since
+        // `loadSystem()` (below) calls `loadUpdateStatus()` again.
+        this.stopUpdateTimer();
       }
       if (view === "export") {
         await this.loadExportStatus();
@@ -2848,12 +2875,89 @@ function app() {
         // Karte im Tab, und sie soll nicht erst erscheinen, wenn die
         // Pruefungen (die echte Netzarbeit machen) durch sind.
         this.versionInfo = await this.request("GET", "/api/version");
+        await this.loadUpdateStatus();
+        await this.loadUpdateCheck();
         this.systemChecks = await this.request("GET", "/api/diagnostics/system");
       } catch (error) {
         this.systemError = t("web.system.load_error", { message: error.message });
       } finally {
         this.diagnosticsBusy = false;
       }
+    },
+
+    /** The phases in which the sidecar is still doing something - copied
+     * one-to-one from `update.py`'s own `_RUNNING_PHASES` (that module's
+     * docstring is explicit that `rejected`/`idle`/`done`/`failed` are
+     * end states, `rollback` is not). Outside of these, the timer rests. */
+    updateRunning() {
+      const phase = this.updateStatus?.state?.phase;
+      return ["queued", "backup", "pull", "recreate", "health", "rollback"].includes(phase);
+    },
+
+    stopUpdateTimer() {
+      if (this.updateTimer) {
+        clearInterval(this.updateTimer);
+        this.updateTimer = null;
+      }
+    },
+
+    async loadUpdateStatus() {
+      try {
+        this.updateStatus = await this.request("GET", "/api/update/status");
+        this.updateError = null;
+      } catch (error) {
+        // During the restart the bridge itself is gone - that is the
+        // normal case for this flow, not an error (the connection banner
+        // in index.html carries the message for it). The last known
+        // state stays on screen and the timer keeps trying. Only a
+        // failure OUTSIDE a running job - the bridge is simply down, or
+        // there never was a job - is worth `updateError`.
+        if (!this.updateRunning()) {
+          this.updateError = error.message;
+        }
+      }
+      if (this.updateRunning() && !this.updateTimer) {
+        this.updateTimer = setInterval(() => this.loadUpdateStatus(), 2000);
+      }
+      if (!this.updateRunning() && this.updateTimer) {
+        this.stopUpdateTimer();
+        // Fetch the version once more after the end: the card up top
+        // should show the new number, not the one the page loaded with.
+        this.versionInfo = await this.request("GET", "/api/version");
+      }
+    },
+
+    async loadUpdateCheck() {
+      try {
+        this.updateAvailable = await this.request("GET", "/api/update/check");
+      } catch (error) {
+        this.updateAvailable = { target: null, error: error.message };
+      }
+    },
+
+    async applyUpdate() {
+      this.updateConfirming = false;
+      this.updateError = null;
+      try {
+        // `target` comes from `updateAvailable`, not from anything typed
+        // in this dialog - Section 10 of the update design puts the
+        // actual validation in the sidecar, and the one thing this route
+        // must not do is offer a free-text field that reaches it.
+        await this.request("POST", "/api/update/apply", { target: this.updateAvailable.target });
+        await this.loadUpdateStatus();
+      } catch (error) {
+        // `error.message` is already the specific, human sentence the
+        // backend chose for this exact refusal (busy, no updater, disk
+        // full - see api/update.py's module docstring for why a 409 and
+        // a 503 each carry their own text rather than a generic one) -
+        // showing it as-is is the useful answer, not a rewrite of it.
+        this.updateError = error.message;
+      }
+    },
+
+    async setUpdateChannel(channel) {
+      this.updateStatus = await this.request("PATCH", "/api/update/settings", { channel });
+      await this.loadUpdateCheck();
     },
 
     // Ebenfalls kein `<a href>` mehr (siehe `downloadExport`): ein
