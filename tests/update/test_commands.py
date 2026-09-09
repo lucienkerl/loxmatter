@@ -162,23 +162,6 @@ def test_a_missing_tag_line_reads_as_stable(tmp_path):
     assert commands.read_image_tag() == "stable"
 
 
-def test_reading_the_tag_strips_a_trailing_carriage_return(tmp_path):
-    """A `.env` saved with CRLF line endings by a Windows editor must
-    still yield a bare tag - one with a trailing `\\r` resolves to no
-    published image at `pull`/`checkout`, and a rollback would write that
-    same broken value straight back."""
-    env = tmp_path / ".env"
-    env.write_bytes(b"LOXMATTER_IMAGE_TAG=v0.3.0\r\nMINISERVER_IP=10.0.0.1\r\n")
-    commands = DockerCommands(
-        compose_dir=tmp_path,
-        env_path=env,
-        health_url="http://x/health",
-        base=tmp_path / "update",
-        run=RecordingRunner(),
-    )
-    assert commands.read_image_tag() == "v0.3.0"
-
-
 def test_reading_the_tag_strips_surrounding_quotes(tmp_path):
     """`LOXMATTER_IMAGE_TAG="0.3.0"` is valid shell and a style some
     editors add on their own - the quotes are not part of the tag."""
@@ -384,17 +367,22 @@ def test_read_running_identity_raises_when_the_container_is_not_running(tmp_path
         commands.read_running_identity()
 
 
-def test_read_running_identity_falls_back_to_dev_for_a_hand_built_image(tmp_path):
-    """`Dockerfile`'s `ARG LOXMATTER_VERSION=dev` means a hand-built image
-    (no build arguments passed) reports `LOXMATTER_VERSION=dev` and
-    `LOXMATTER_COMMIT=` (empty) - the honest, non-error case for a
-    development build, not something to raise on."""
+def test_read_running_identity_falls_back_to_dev_when_the_env_keys_are_absent(tmp_path):
+    """A foreign or very old image - one whose `Config.Env` never carried
+    `LOXMATTER_VERSION`/`LOXMATTER_COMMIT` at all - is the case the
+    method's own docstring names for this fallback, and the only one that
+    actually reaches it: `env.get("LOXMATTER_VERSION") or "dev"` only
+    falls back when the key is missing from the dict entirely. A
+    hand-built image using the current `Dockerfile` is not that case - its
+    `ARG LOXMATTER_VERSION=dev` default means the key IS present, already
+    holding the string `"dev"`, so supplying it explicitly (as this test
+    used to) exercises plain pass-through, not the fallback."""
 
     class FixedRunner:
         def __call__(self, argv: list[str], **_kwargs: object) -> str:
             if argv == ["docker", "compose", "ps", "-q", "loxmatter"]:
                 return "abc123\n"
-            return json.dumps(["LOXMATTER_VERSION=dev", "LOXMATTER_COMMIT="])
+            return json.dumps(["PATH=/usr/bin"])
 
     commands = DockerCommands(
         compose_dir=tmp_path,

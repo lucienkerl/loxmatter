@@ -40,11 +40,6 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Literal, get_args
 
-#: Where the two sides meet inside the container. Tests pass their own
-#: base directory instead; nothing in this module reads this constant on
-#: its own.
-UPDATE_DIR = Path("/data/update")
-
 #: The eight values the plan's interface list names. Defined once here and
 #: used both for `UpdateState.phase` and for `run_update`'s `publish`
 #: helper (`runner.py`), so a typo in either place is a `mypy` error

@@ -78,6 +78,16 @@ _BACKUPS_TO_KEEP = 10
 #: for several updates' worth of lines without needing rotation.
 _LOG_CAP_BYTES = 256 * 1024
 
+#: `_cap_log` trims down to this many bytes, not all the way up to
+#: `_LOG_CAP_BYTES` - trimming to the cap itself would leave the file
+#: right back at the trigger threshold, so the very next line appended
+#: crosses it again and the whole file gets rewritten once more. A
+#: caller that logs the same persisting failure on many passes (the
+#: Docker socket staying unreachable, say) would then pay that rewrite
+#: on every single call once the file is near the cap. Leaving headroom
+#: means many lines append for free before a rewrite is needed again.
+_LOG_TRIM_BYTES = _LOG_CAP_BYTES * 3 // 4
+
 #: What `run` is called with, and what it returns - stdout, on success.
 #: `check=True` in the real implementation below means a non-zero exit
 #: raises rather than returning an error code; every caller in this module
@@ -89,14 +99,17 @@ Runner = Callable[..., str]
 
 def _clean_tag_value(value: str) -> str:
     """`.env` is hand-edited more than any other file this module
-    touches. A value saved with CRLF line endings, or wrapped in quotes
-    (`LOXMATTER_IMAGE_TAG="0.3.0"` - valid shell, and a style some
-    editors add on their own), must resolve to the same tag `pull`/
-    `checkout` accept unquoted - otherwise a rollback writes the
-    surrounding characters straight back into `.env`, and the tag that
-    is meant to describe what is running never again resolves to a
-    published image."""
-    value = value.rstrip("\r")
+    touches. A value wrapped in quotes (`LOXMATTER_IMAGE_TAG="0.3.0"` -
+    valid shell, and a style some editors add on their own) must resolve
+    to the same tag `pull`/`checkout` accept unquoted - otherwise a
+    rollback writes the surrounding characters straight back into
+    `.env`, and the tag that is meant to describe what is running never
+    again resolves to a published image.
+
+    CRLF line endings do not reach here: the only caller splits `.env`
+    with `str.splitlines()`, which already treats `\\r\\n` as one line
+    boundary, so `value` never carries a trailing `\\r` for this
+    function to strip."""
     if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
         value = value[1:-1]
     return value
@@ -324,7 +337,7 @@ class DockerCommands:
         if size <= _LOG_CAP_BYTES:
             return
         with path.open("rb") as handle:
-            handle.seek(-_LOG_CAP_BYTES, 2)
+            handle.seek(-_LOG_TRIM_BYTES, 2)
             tail = handle.read()
         # The seek almost certainly landed inside a line - drop the
         # partial fragment before it so the cap boundary is a line
