@@ -44,6 +44,12 @@ RUN apk add --no-cache \
     curl \
     python3
 
+# `/app` holds this image's own code and must never be mounted over: the
+# host checkout the updater runs `git fetch`/`checkout` against belongs at
+# `/checkout` (see `DEFAULT_COMPOSE_DIR` in `loxmatter/update/__main__.py`
+# and the mount in `deploy/testhost/docker-compose.yml`). A bind mount here
+# shadows `loxmatter/` and the entrypoint dies with `ModuleNotFoundError`
+# before running anything.
 WORKDIR /app
 
 # Exactly the modules `loxmatter.update.__main__` reaches by import, and

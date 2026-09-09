@@ -350,7 +350,7 @@ def _run_main_until_stopped(
     """Drive the real `main()` - not `run_once` - for exactly `passes`
     iterations of its `while True`, then stop it with `_StopLoop` instead
     of letting it run forever. `DockerCommands` is replaced so `main`'s
-    own construction of it (`compose_dir=/app` by default, no `tmp_path`
+    own construction of it (`compose_dir=/checkout` by default, no `tmp_path`
     involved) never touches the filesystem; `time.sleep` is replaced so
     the test does not wait 2 real seconds per pass and so it has a way to
     end the loop at all.

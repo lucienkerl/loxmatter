@@ -100,7 +100,18 @@ LOOP_INTERVAL_SECONDS = 2.0
 DEFAULT_BASE = protocol.UPDATE_DIR
 
 #: The mounted checkout `fetch`/`checkout` run against.
-DEFAULT_COMPOSE_DIR = Path("/app")
+#:
+#: Deliberately NOT `/app`, which is where this image keeps its own code
+#: (see `deploy/updater/Dockerfile`). Mounting the host checkout over
+#: `/app` shadows `loxmatter/` inside the container, and `python3 -m
+#: loxmatter.update` then dies with `ModuleNotFoundError: No module named
+#: 'loxmatter'` before it reaches a single line of this file - a restart
+#: loop with no update ever running. Checked, not reasoned about: a
+#: container built from that Dockerfile imports fine, and the same
+#: container with a checkout bind-mounted at `/app` does not. The two
+#: paths must stay apart, and `deploy/testhost/docker-compose.yml` mounts
+#: the checkout here.
+DEFAULT_COMPOSE_DIR = Path("/checkout")
 
 #: Reaches the bridge on the *host's* network: `loxmatter` in
 #: `deploy/testhost/docker-compose.yml` runs with `network_mode: host`,
