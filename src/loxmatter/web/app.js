@@ -707,12 +707,21 @@ function app() {
     // succeeds; cleared together, by `loadUpdateStatus()`, the instant
     // `state.json`'s own `id` finally matches `updateApplyJobId` (see
     // `UPDATE_APPLY_GRACE_MS` for why a match can take a few seconds) -
-    // or left alone once `updateApplyDeadline` passes without a match,
-    // which is exactly what `updateNeverCollected()` reads. `null` means
-    // "no apply is currently awaiting pickup": either none was ever made,
-    // or the last one was already resolved one way or the other.
+    // or, if `updateApplyDeadline` passes without a match, by that same
+    // function's own deadline check, which is also where `updateApplyMissed`
+    // below gets set. `null` means "no apply is currently awaiting pickup":
+    // either none was ever made, or the last one was already resolved one
+    // way or the other.
     updateApplyJobId: null,
     updateApplyDeadline: null,
+    // The reactive half of `updateNeverCollected()` (see that method's own
+    // comment for why a plain `Date.now()` comparison cannot drive an
+    // `x-show` on its own). Written exactly once, by `loadUpdateStatus()`,
+    // the instant it notices `updateApplyDeadline` has passed with the job
+    // still unclaimed - and cleared by `applyUpdate()` at the start of the
+    // NEXT attempt, so a retry does not inherit the previous attempt's
+    // banner before its own outcome is known.
+    updateApplyMissed: false,
     systemChecks: [],
     systemError: null,
     diagnosticsBusy: false,
@@ -2994,9 +3003,24 @@ function app() {
      * "was running, then went quiet mid-step", worded and rendered (see
      * index.html) around an actual step list this request never reached -
      * conflating the two would either show step progress that never
-     * happened or a message that refers to a step nobody can see. */
+     * happened or a message that refers to a step nobody can see.
+     *
+     * Reads `updateApplyMissed`, NOT a fresh `Date.now()` comparison against
+     * `updateApplyDeadline` - the two were equivalent right up until the
+     * moment this predicate actually flips, which is precisely the moment
+     * that equivalence stops helping: Alpine's `x-show="updateNeverCollected()"`
+     * (index.html) only re-evaluates when a reactive property IT read on a
+     * PREVIOUS run later changes, and `Date.now()` is never such a
+     * property. The one poll where a time-based version of this method
+     * would first return `true` is also the poll where `loadUpdateStatus()`
+     * lets the timer stop (nothing left to await) - so no future tick would
+     * ever call this method again to notice, and the banner would stay
+     * hidden behind the value computed one poll earlier: `false`. Reading a
+     * plain boolean field instead means the ONE write to it, made below in
+     * `loadUpdateStatus()` at the exact moment the deadline passes, is
+     * itself the reactive event Alpine's `x-show` needs. */
     updateNeverCollected() {
-      return this.updateApplyDeadline !== null && Date.now() >= this.updateApplyDeadline;
+      return this.updateApplyMissed;
     },
 
     stopUpdateTimer() {
@@ -3090,6 +3114,27 @@ function app() {
           this.updateError = error.message;
         }
       }
+      // The reactive write `updateNeverCollected()` reads (see that
+      // method's own comment). Placed here, ahead of the stop-timer
+      // decision just below, because this IS "the same place that decides
+      // to stop the timer" for exactly this case: a poll that still finds
+      // `updateApplyJobId` set (no id match arrived, in the `try` above or
+      // any earlier one) with `updateApplyDeadline` now in the past is
+      // about to let `updateAwaitingPickup()` read `false` and, with
+      // `updateRunning()` also `false` (nothing ever started), fall into
+      // the stop branch below - the last moment ANY code runs for this
+      // apply attempt. `Date.now()` is read here, this one time, by
+      // ordinary function-call code that unconditionally executes on every
+      // poll; the write it produces is what makes the fact durable and
+      // Alpine-visible, not the read itself. Independent of whether the
+      // `try` above succeeded: a bridge that stops answering entirely is
+      // exactly as "never collected" as one that answers but never shows
+      // the job.
+      if (this.updateApplyJobId !== null && this.updateApplyDeadline !== null && Date.now() >= this.updateApplyDeadline) {
+        this.updateApplyMissed = true;
+        this.updateApplyJobId = null;
+        this.updateApplyDeadline = null;
+      }
       // `updateAwaitingPickup()` alongside `updateRunning()` in both
       // branches below is this fix's own core: a poll landing before the
       // sidecar has caught up sees `updateRunning()` read `false` off the
@@ -3122,6 +3167,15 @@ function app() {
     async applyUpdate() {
       this.updateConfirming = false;
       this.updateError = null;
+      // A fresh attempt starts here, before the POST even lands - clear the
+      // PREVIOUS attempt's `updateApplyMissed` now rather than wait for
+      // this attempt to resolve one way or the other. Otherwise a retry
+      // that is itself picked up promptly would still render the "never
+      // collected" banner (index.html) for the up-to-`UPDATE_APPLY_GRACE_MS`
+      // stretch until the id-match branch below clears `updateApplyJobId`/
+      // `updateApplyDeadline` - a true fact about the LAST attempt wrongly
+      // presented as still true about this one.
+      this.updateApplyMissed = false;
       try {
         // `target` comes from `updateAvailable`, not from anything typed
         // in this dialog - Section 10 of the update design puts the

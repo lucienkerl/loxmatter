@@ -1616,6 +1616,163 @@ def test_apply_grace_clears_the_instant_the_sidecars_own_job_id_is_seen():
 
 
 @pytest.mark.skipif(NODE is None, reason="node wird fuer diesen Test gebraucht")
+def test_update_apply_missed_is_written_reactively_not_left_to_a_clock_read():
+    """Alpine bug found live in the browser: `x-show="updateNeverCollected()"`
+    (index.html, state 3b) only re-evaluates when a property IT read on a
+    PREVIOUS run later changes - and a `Date.now()` comparison is never such
+    a property. Before this fix, `updateNeverCollected()` computed
+    `updateApplyDeadline !== null && Date.now() >= updateApplyDeadline`
+    fresh on every call. The one poll where that expression would first
+    flip to `true` is the SAME poll where `loadUpdateStatus()` lets the
+    timer stop (`updateRunning()` and `updateAwaitingPickup()` both `false`
+    - nothing left to await) - so no later tick ever calls the method again
+    to notice the flip, and Alpine kept rendering the value from one poll
+    earlier: `false`. Proven in a live browser: `updateNeverCollected()`
+    called by hand from the console read `true`, while the `<p>` it drives
+    stayed `display: none` and the card had fallen back to "Install
+    update", as if the accepted request had never happened.
+
+    A test that merely calls `updateNeverCollected()` again right after the
+    deadline passes - see `test_apply_grace_clears...` above - would NOT
+    have caught this: the predicate itself was already correct, it simply
+    never gets asked again once the timer stops. What must be asserted
+    instead is `updateApplyMissed`, the plain boolean field the fixed
+    `updateNeverCollected()` now reads (and the one a real `x-show` would
+    track): `loadUpdateStatus()` must WRITE it, once, the instant it
+    notices the deadline has passed - the write itself is what makes the
+    fact durable and reactive, not any later re-read of the clock."""
+    values = _app_state(
+        """
+        let now = 1_700_000_000_000;
+        Date.now = () => now;
+
+        state.updateAvailable = { target: "1.1.0", error: null };
+        state.updateConfirming = true;
+        state.updateError = null;
+        state.request = async (method, path) => {
+          if (method === "POST" && path === "/api/update/apply") {
+            return { id: "job-1" };
+          }
+          if (method === "GET" && path === "/api/update/status") {
+            // A different id throughout: the sidecar never picks this up.
+            return {
+              state: { phase: "idle", id: "stale-id", from: null, to: null,
+                       error: null, rolled_back: false, healthy: true },
+              updater_present: true, log: [], channel: "stable", check_enabled: true,
+            };
+          }
+          if (method === "GET" && path === "/api/version") {
+            return { version: "1.0.0" };
+          }
+          throw new Error("unexpected request " + method + " " + path);
+        };
+        (async () => {
+          await state.applyUpdate();
+
+          // Still within the grace window: the flag must not be set yet.
+          now += 2500;
+          await state.loadUpdateStatus();
+          const notYetMissedMidway = state.updateApplyMissed;
+
+          // The one poll that crosses UPDATE_APPLY_GRACE_MS - this is the
+          // write under test.
+          now += 30000;
+          await state.loadUpdateStatus();
+          const missedRightAfterTheCrossingPoll = state.updateApplyMissed;
+
+          // A real page left sitting on this exact moment gets no further
+          // loadUpdateStatus() calls at all - the timer already stopped.
+          // Null out updateApplyDeadline itself (what the OLD, time-derived
+          // updateNeverCollected() compared against) and move the clock on
+          // regardless, with no further poll: if updateApplyMissed were
+          // still secretly reading the clock rather than holding a written
+          // value, this would either throw (deadline gone) or read false
+          // (comparison against null). A plain boolean survives both.
+          state.updateApplyDeadline = null;
+          now += 1_000_000;
+
+          console.log(JSON.stringify({
+            notYetMissedMidway,
+            missedRightAfterTheCrossingPoll,
+            stillMissedWithNoFurtherPollOrDeadlineField: state.updateApplyMissed,
+            neverCollectedStillReadsTheFlag: state.updateNeverCollected(),
+            timerStoppedAfterTheCrossingPoll: state.updateTimer === null,
+          }));
+        })();
+        """
+    )
+
+    assert values["notYetMissedMidway"] is False
+    assert values["missedRightAfterTheCrossingPoll"] is True
+    assert values["stillMissedWithNoFurtherPollOrDeadlineField"] is True
+    assert values["neverCollectedStillReadsTheFlag"] is True
+    assert values["timerStoppedAfterTheCrossingPoll"] is True
+
+
+@pytest.mark.skipif(NODE is None, reason="node wird fuer diesen Test gebraucht")
+def test_update_apply_missed_does_not_haunt_the_card_past_the_next_attempt():
+    """The other risk in the same fix: `updateApplyMissed` (see the
+    previous test) must not stay `true` forever once it stops being true.
+    `applyUpdate()` clears it itself, at the very start of a NEW attempt,
+    before that attempt's own POST even lands - otherwise a retry that IS
+    picked up promptly would still render the stale "never collected"
+    banner (index.html, state 3b) for up to another `UPDATE_APPLY_GRACE_MS`,
+    a true fact about the PREVIOUS attempt presented as still true about
+    this one."""
+    values = _app_state(
+        """
+        let now = 1_700_000_000_000;
+        Date.now = () => now;
+        let matchIncomingId = false;
+
+        state.updateAvailable = { target: "1.1.0", error: null };
+        state.updateConfirming = true;
+        state.updateError = null;
+        state.request = async (method, path) => {
+          if (method === "POST" && path === "/api/update/apply") {
+            return { id: "job-1" };
+          }
+          if (method === "GET" && path === "/api/update/status") {
+            return {
+              state: { phase: "idle", id: matchIncomingId ? "job-1" : "stale-id",
+                       from: null, to: null, error: null, rolled_back: false,
+                       healthy: true },
+              updater_present: true, log: [], channel: "stable", check_enabled: true,
+            };
+          }
+          if (method === "GET" && path === "/api/version") {
+            return { version: "1.0.0" };
+          }
+          throw new Error("unexpected request " + method + " " + path);
+        };
+        (async () => {
+          // First attempt: never collected.
+          await state.applyUpdate();
+          now += 30000;
+          await state.loadUpdateStatus();
+          const missedAfterFirstAttempt = state.updateApplyMissed;
+
+          // Second attempt: picked up right away this time.
+          matchIncomingId = true;
+          await state.applyUpdate();
+          const missedRightAfterSecondAttemptStarts = state.updateApplyMissed;
+          await state.loadUpdateStatus();
+
+          console.log(JSON.stringify({
+            missedAfterFirstAttempt,
+            missedRightAfterSecondAttemptStarts,
+            missedAfterSecondAttemptResolves: state.updateApplyMissed,
+          }));
+        })();
+        """
+    )
+
+    assert values["missedAfterFirstAttempt"] is True
+    assert values["missedRightAfterSecondAttemptStarts"] is False
+    assert values["missedAfterSecondAttemptResolves"] is False
+
+
+@pytest.mark.skipif(NODE is None, reason="node wird fuer diesen Test gebraucht")
 def test_updatestalled_is_true_only_while_running_with_no_recent_heartbeat():
     """Review fix, Important 2: a crashed sidecar (OOM, a full disk) still
     leaves `state.json`'s `phase` on whatever it was mid-job - nothing is
