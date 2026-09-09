@@ -624,6 +624,7 @@ def test_run_installs_the_log_buffer_exactly_once_and_passes_it_to__run(monkeypa
         host: str = "0.0.0.0",
         api_token: str | None = None,
         log_handler: LogBufferHandler | None = None,
+        update_dir: Path = Path("/data/update"),
     ) -> None:
         received["log_handler"] = log_handler
 

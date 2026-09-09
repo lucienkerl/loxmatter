@@ -482,6 +482,12 @@ def run(
         "--matter-data-dir",
         help=i18n.t("cli.run.help_matter_data_dir"),  # noqa: B008
     ),
+    update_dir: Path = typer.Option(  # noqa: B008
+        Path("/data/update"),
+        "--update-dir",
+        envvar="LOXMATTER_UPDATE_DIR",
+        help=i18n.t("cli.run.help_update_dir"),  # noqa: B008
+    ),
 ) -> None:
     log_handler = install_log_buffer()
     resolved_store_path = _resolve_store_path(store_path)
@@ -503,7 +509,18 @@ def run(
 
     _warn_if_no_password(store)
     asyncio.run(
-        _run(store, url, miniserver, port, listen, matter_data_dir, host, api_token, log_handler)
+        _run(
+            store,
+            url,
+            miniserver,
+            port,
+            listen,
+            matter_data_dir,
+            host,
+            api_token,
+            log_handler,
+            update_dir=update_dir,
+        )
     )
 
 
@@ -517,6 +534,11 @@ async def _run(
     host: str = "0.0.0.0",  # Standard wie in `run` — der Miniserver muss den Dienst erreichen
     api_token: str | None = None,
     log_handler: LogBufferHandler | None = None,
+    # Task 8, Stufe 2: derselbe Default wie `build_app`s eigener - siehe
+    # dort. Ein eigenes Schluesselwort statt eines weiteren positionalen
+    # Parameters, damit die bestehenden Testaufrufe von `_run(...)` ohne
+    # dieses Argument unveraendert weiterlaufen.
+    update_dir: Path = Path("/data/update"),
 ) -> None:
     """Baut Sender, Laufzeit und Client auf `store` auf und hält sie am Laufen.
 
@@ -635,6 +657,7 @@ async def _run(
                 matter_data_dir=matter_data_dir,
                 api_token=api_token,
                 log_handler=log_handler,
+                update_dir=update_dir,
             ),
             host=host,
             port=listen,

@@ -144,6 +144,7 @@ from loxmatter.api.language import build_i18n_router, build_language_router
 from loxmatter.api.live import BEARER_SUBPROTOCOL, ObservableRuntime, build_live_router
 from loxmatter.api.project_sync import build_project_sync_router
 from loxmatter.api.settings import build_settings_router
+from loxmatter.api.update import build_update_router
 from loxmatter.api.version import build_version_router
 from loxmatter.auth.sessions import SESSION_COOKIE, session_is_valid
 from loxmatter.commands.translate import MatterCall, UnsupportedValueError, to_matter_calls
@@ -379,6 +380,13 @@ def build_app(
     api_token: str | None = None,
     log_handler: LogBufferHandler | None = None,
     thread_dataset_source: ThreadDatasetSource | None = None,
+    # Default matches the sidecar's own default and the volume mount in
+    # deploy/testhost/docker-compose.yml. A parameter, not a module
+    # constant, so the tests can point it at a `tmp_path` directory
+    # instead - without this, every test of these routes would need a
+    # `monkeypatch` on a shared constant, and two tests running side by
+    # side would step on each other's files.
+    update_dir: Path = Path("/data/update"),
 ) -> FastAPI:
     app = FastAPI(title="loxmatter", docs_url=None, redoc_url=None)
     command_log: RingBuffer[CommandLogEntry] = RingBuffer(maxlen=COMMAND_LOG_SIZE)
@@ -477,11 +485,12 @@ def build_app(
             i18n.set_language(store.locale.get_language())
         return await call_next(request)
 
-    # `dependencies=api_guard` auf jedem der neun `/api`-Router (Task 8,
+    # `dependencies=api_guard` auf jedem der zehn `/api`-Router (Task 8,
     # Phase 5, siehe `build_api_guard` oben; achter seit `POST
     # /api/export/project-sync`, Task 11, Phase 6, neunter seit
-    # `build_language_router`, dieser Aufgabe): das schuetzt ausnahmslos
-    # jede Route dieser neun Router, inklusive der WebSocket-Routen
+    # `build_language_router`, zehnter seit `build_update_router`, Task 8
+    # dieser Stufe 2): das schuetzt ausnahmslos jede Route dieser zehn
+    # Router, inklusive der WebSocket-Routen
     # `/api/live` und `/api/diagnostics/live` - und ausdruecklich NICHT
     # `/cmd`, `/resync`, `/health`, `/` und `/static`, die weiter unten ohne
     # `dependencies` eingehaengt werden.
@@ -492,6 +501,10 @@ def build_app(
     app.include_router(build_export_router(store), dependencies=api_guard)
     app.include_router(build_project_sync_router(store), dependencies=api_guard)
     app.include_router(build_settings_router(store), dependencies=api_guard)
+    # Task 8, Stufe 2: same guard as every other `/api` router - see
+    # `api/update.py`'s module docstring for why an update to a published
+    # version deliberately gets no SECOND password prompt on top of it.
+    app.include_router(build_update_router(store, update_dir), dependencies=api_guard)
     app.include_router(build_language_router(store), dependencies=api_guard)
     app.include_router(build_version_router(), dependencies=api_guard)
     app.include_router(build_live_router(runtime), dependencies=api_guard)

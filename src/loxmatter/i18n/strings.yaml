@@ -181,6 +181,9 @@ cli.run.help_api_token:
 cli.run.help_matter_data_dir:
   en: "matter-server data directory (storage-path), mounted read-only into this service — basis for `GET /api/diagnostics/fabric-backup` (Spec 4.1, Task 6, Phase 5). Without it, the route responds with 503 instead of a backup. See deploy/testhost/docker-compose.yml for the corresponding volume mount."
   de: "matter-server-Datenverzeichnis (storage-path), read-only in diesen Dienst eingehängt — Grundlage für `GET /api/diagnostics/fabric-backup` (Spec 4.1, Task 6, Phase 5). Ohne Angabe antwortet die Route mit 503 statt einer Sicherung. Siehe deploy/testhost/docker-compose.yml für die dazugehörige Volume-Einhängung."
+cli.run.help_update_dir:
+  en: "Directory where this bridge and the update sidecar exchange request/state files (design \"Applying updates through the web UI\", section 7) — the same shared volume as --store-path in the reference deployment, a subdirectory of it. The default matches the sidecar's own default; change both together, or not at all. Alternative via the LOXMATTER_UPDATE_DIR environment variable."
+  de: "Verzeichnis, über das diese Brücke und der Update-Beiwagen Anfrage-/Zustandsdateien austauschen (Entwurf \"Updates über die Oberfläche einspielen\", Abschnitt 7) — dasselbe gemeinsame Volume wie --store-path im Referenz-Deployment, ein Unterverzeichnis davon. Der Standard entspricht dem des Beiwagens; beide nur gemeinsam ändern. Alternative über die Umgebungsvariable LOXMATTER_UPDATE_DIR."
 cli.run.warn_no_password:
   en: "No password has been set for this bridge yet. Until it is, nobody can sign in through the interface — and anyone who can reach the port can complete the initial setup and take over the bridge. Open the interface now and set a password."
   de: "Für diese Brücke ist noch kein Passwort vergeben. Bis das geschehen ist, lässt sich niemand über die Oberfläche anmelden — und jeder, der den Port erreicht, kann die Ersteinrichtung abschließen und die Brücke damit übernehmen. Öffne die Oberfläche jetzt und vergib ein Passwort."
@@ -555,6 +558,18 @@ api.server.fail_login_required:
 api.server.fail_resync:
   en: "Full resend failed: {exc}"
   de: "Full-Resend fehlgeschlagen: {exc}"
+
+# api.update — /api/update/* (api/update.py), design "Applying updates
+# through the web UI" (2026-09-08), sections 9-10.
+api.update.check_disabled:
+  en: "Checking for updates is turned off in Settings."
+  de: "Die Suche nach Updates ist in den Einstellungen ausgeschaltet."
+api.update.fail_no_updater:
+  en: "No update helper is currently reachable, so the update button cannot do anything right now. Check that the loxmatter-updater service is running."
+  de: "Der Update-Helfer ist gerade nicht erreichbar, die Aktualisierung kann deshalb derzeit nichts bewirken. Prüfen Sie, ob der Dienst loxmatter-updater läuft."
+api.update.fail_busy:
+  en: "An update is already running — please wait for it to finish before starting another one."
+  de: "Es läuft bereits eine Aktualisierung — bitte warten Sie, bis sie abgeschlossen ist, bevor Sie eine weitere starten."
 
 # --- web.nav — Reiterleiste ---
 web.nav.devices:
