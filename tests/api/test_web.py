@@ -5374,3 +5374,31 @@ async def test_the_checkbox_hit_targets_reach_24px(api):
     assert "min-height: 24px" in col_center_rule
     assert "align-items: center" in col_center_rule
     assert "min-width" not in col_center_rule
+
+
+async def test_the_coarse_age_helper_never_speaks_in_seconds(api):
+    """`sinceTextCoarse` is the label that sits IN the tile's text flow.
+
+    `sinceText` next to it stays as it is: it feeds a tooltip, where a
+    width that changes every second costs nothing. In the flow it does -
+    the tile carried such a label once and moved it into the tooltip on
+    purpose, because a value counting up from "7s ago" shoves the row
+    sideways and draws the eye to the motion instead of the change (see
+    `signalSeenText` in app.js).
+
+    So this helper must NOT reach for `web.header.time_ago_seconds`.
+    """
+    client, _, _ = api
+    script = (await client.get("/static/app.js")).text
+    start = script.index("sinceTextCoarse(timestamp) {")
+    end = script.index("\n    },", start)
+    body = script[start:end]
+
+    assert 'return t("web.header.time_ago_just_now");' in body
+    assert 'return t("web.header.time_ago_minutes", { minutes });' in body
+    assert 'return t("web.header.time_ago_hours", { hours: Math.round(minutes / 60) });' in body
+    # The whole point of the helper: no per-second branch.
+    assert "time_ago_seconds" not in body
+    # And no hardcoded translation, in either language.
+    assert "just now" not in body
+    assert "gerade eben" not in body

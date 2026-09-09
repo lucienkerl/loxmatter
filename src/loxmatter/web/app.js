@@ -1970,6 +1970,38 @@ function app() {
       return t("web.header.time_ago_hours", { hours: Math.round(minutes / 60) });
     },
 
+    /**
+     * Like `sinceText`, but never in seconds: "just now", "3m ago",
+     * "2h ago".
+     *
+     * The difference is not cosmetic. `sinceText` feeds a `title`, where a
+     * label that changes width every second costs nothing. This one sits
+     * in the tile's text flow, and the tile has been here before: a
+     * per-signal age used to stand next to the value and was moved into
+     * the tooltip precisely because counting up from "7s ago" changes the
+     * label's width and shoves the row back and forth, drawing the eye to
+     * the motion instead of to the change that matters (see
+     * `signalSeenText`).
+     *
+     * Under a minute this is therefore a fixed string; from there it
+     * changes at most once a minute. Reads `nowTick`, so Alpine redraws
+     * it on its own.
+     */
+    sinceTextCoarse(timestamp) {
+      if (!timestamp) {
+        return null;
+      }
+      const seconds = Math.max(0, Math.round((this.nowTick - timestamp) / 1000));
+      if (seconds < 60) {
+        return t("web.header.time_ago_just_now");
+      }
+      const minutes = Math.round(seconds / 60);
+      if (minutes < 60) {
+        return t("web.header.time_ago_minutes", { minutes });
+      }
+      return t("web.header.time_ago_hours", { hours: Math.round(minutes / 60) });
+    },
+
     /** When ANYTHING last came in over the line - the heartbeat
      * included. This is the value that tells "nothing is changing" apart
      * from "nothing is arriving". */
