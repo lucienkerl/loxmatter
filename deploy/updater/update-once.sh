@@ -801,14 +801,61 @@ wait_healthy() {
 # Asks the docker daemon itself, over the socket this sidecar already
 # holds, rather than assume any particular layout - it is the one party
 # that actually knows what is mounted where. `--format` prints one
-# "destination source" line per mount; `awk` picks the line whose
-# destination matches $1 verbatim. Piped through `awk` rather than left
-# bare: a `docker inspect` that fails (daemon unreachable, no container by
-# this name yet - the self-replacement service is a later task) must not
-# make the ASSIGNMENT this runs inside fail under `set -eu`, the same
-# reasoning current_tag()/running_version() already document above for
-# ending a substitution on a command that itself always exits 0 - `awk`
-# does, even reading nothing at all.
+# "destination source" line per mount.
+#
+# The lookup below matches by LONGEST-PREFIX, not by an exact match on
+# $1 - a previous version of this function used
+# `awk -v dest="$1" '$1 == dest {...}'`, which only ever resolves a path
+# that is ITSELF a mount destination. $LOXMATTER_STACK
+# (/repo/deploy/testhost by default) is not one - only /repo is actually
+# mounted (see docker-compose.yml's `../..:/repo`), and /repo/deploy/testhost
+# is a subdirectory of it. Proven end to end against the exact-match
+# version: four of the five commands LETZTER-FEHLSCHLAG.txt prints start
+# `cd $STACK`, and every one of them fell back to "host path unknown"
+# even though the real host path was perfectly knowable - the /repo
+# mount's Source plus "/deploy/testhost". Only the fifth command (`cd
+# $REPO`, which resolves exactly since /repo IS a mount destination) came
+# out runnable. Restoring one out of five is not restoring the artefact
+# this file exists to be: something pasteable over SSH when the web UI
+# itself is unreachable.
+#
+# The fix: for each mount, ask whether its Destination is a PATH-SEGMENT
+# prefix of $1 (either an exact match, or $1 continues past it with a
+# "/"), keep the longest such Destination across all mounts, and append
+# whatever of $1 remains after stripping that prefix onto the matching
+# mount's Source. Three edge cases this has to get right:
+#
+#   * "/repo" must not be treated as a prefix of "/repository" - a plain
+#     `index($1, dest) == 1` substring test would accept that, silently
+#     resolving one mount's path as if it were inside a different one
+#     that merely happens to share a longer common spelling. The
+#     boundary check requires the character right after the shared
+#     prefix to be "/" (or nothing, for an exact match).
+#   * When mounts nest (a mount at /repo AND a more specific one at
+#     /repo/deploy, say), the LONGEST matching Destination has to win -
+#     otherwise a subdirectory that has its own, more specific mount
+#     would incorrectly resolve through the outer one instead.
+#   * A Destination of "/" (a mount of the whole container root - not
+#     something this project's own compose files do, but a general
+#     function should not assume its caller's layout) needs no special
+#     case at all if the prefix logic above is right: normalising it to
+#     the empty string before the "/"-boundary check makes it a prefix of
+#     every absolute path, at length 0 - the lowest possible priority, so
+#     any more specific mount still wins the longest-match comparison.
+#
+# Written for POSIX/busybox awk, not GNU awk specifically (the sidecar's
+# Alpine base has busybox awk, not gawk) - no gawk-only extensions
+# (`gensub`, `length()` on an array, gawk's own multi-char `RS`). Just
+# `index`, `substr`, `length`, `sub` and plain scalar bookkeeping, all
+# POSIX awk.
+#
+# Piped through `awk` rather than left bare: a `docker inspect` that
+# fails (daemon unreachable, no container by this name yet - the
+# self-replacement service is a later task) must not make the ASSIGNMENT
+# this runs inside fail under `set -eu`, the same reasoning
+# current_tag()/running_version() already document above for ending a
+# substitution on a command that itself always exits 0 - `awk` does, even
+# reading nothing at all.
 #
 # Falls back to $2 when nothing matches - a container path backed by a
 # named volume ($BACKUP_DIR, in the caller below) has no host directory
@@ -819,7 +866,40 @@ host_path_for() {
   host_path_for_raw="$(docker inspect loxmatter-updater \
       --format '{{range .Mounts}}{{.Destination}} {{.Source}}
 {{end}}' 2>/dev/null \
-    | awk -v dest="$1" '$1 == dest { $1 = ""; sub(/^ /, ""); print; exit }')"
+    | awk -v dest="$1" '
+        {
+          d = $1
+          src = $0
+          sub(/^[^ ]*/, "", src)
+          sub(/^ /, "", src)
+
+          # Normalise a Destination of "/" to the empty string - see the
+          # block comment above for why that gives it the lowest possible
+          # priority (length 0) instead of a special case.
+          dn = d
+          if (dn == "/") { dn = "" } else { sub(/\/$/, "", dn) }
+
+          matched = 0
+          if (dest == dn) {
+            matched = 1
+            rest = ""
+          } else if (index(dest, dn "/") == 1) {
+            matched = 1
+            rest = substr(dest, length(dn) + 1)
+          }
+
+          if (matched) {
+            dlen = length(dn)
+            if (!found || dlen > best_len) {
+              found = 1
+              best_len = dlen
+              best_source = src
+              best_rest = rest
+            }
+          }
+        }
+        END { if (found) print best_source best_rest }
+      ')"
   printf '%s' "${host_path_for_raw:-$2}"
 }
 

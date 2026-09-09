@@ -1387,6 +1387,51 @@ def test_the_failure_file_uses_a_real_host_path_when_docker_can_resolve_it(krank
     assert str(kranker_dienst.stack.parent.parent) not in manual_section
 
 
+def test_the_failure_file_resolves_a_host_path_for_a_path_under_a_mount(kranker_dienst):
+    # The test directly above stubs `docker inspect` into reporting
+    # $LOXMATTER_STACK as a mount destination IN ITS OWN RIGHT - which is
+    # not what the real stack does. `deploy/testhost/docker-compose.yml`
+    # bind-mounts only `../..:/repo`; $LOXMATTER_STACK
+    # (/repo/deploy/testhost by default) is a SUBDIRECTORY of that one
+    # mount, never a `Destination` of its own. Proven against the
+    # exact-match `awk -v dest="$1" '$1 == dest {...}'` this replaces:
+    # with a mount table shaped like the real one - one bind mount, at
+    # /repo, nothing separately mounted at /repo/deploy/testhost - that
+    # version never matched the stack path at all, so
+    # LETZTER-FEHLSCHLAG.txt's "cd $host_stack" line fell back to "host
+    # path unknown" for the ONE directory an operator most needs (it is
+    # where `docker compose logs`/`./scripts/update.sh` actually have to
+    # run from), even though the real host path was fully knowable - the
+    # /repo mount's own Source plus "/deploy/testhost". host_path_for()
+    # now finds the longest mount Destination that is a path-segment
+    # prefix of the requested path and appends the remainder onto that
+    # mount's Source, so a single /repo mount is enough to resolve both
+    # /repo itself and everything under it.
+    host_checkout = "/home/pi/loxmatter-checkout"
+    docker_path = kranker_dienst.bindir / "docker"
+    docker_path.write_text(
+        "#!/bin/sh\n"
+        'printf "%s %s\\n" "docker" "$*" >> "$STUB_LOG"\n'
+        'case "$1" in\n'
+        "  inspect)\n"
+        '    if [ "$2" = "loxmatter-updater" ]; then\n'
+        f'      printf "%s %s\\n" "$LOXMATTER_REPO" "{host_checkout}"\n'
+        "    else\n"
+        '      printf "LOXMATTER_VERSION=0.2.0\\n"\n'
+        "    fi\n"
+        "    ;;\n"
+        "esac\n",
+        encoding="utf-8",
+    )
+    docker_path.chmod(0o755)
+    _auftrag(kranker_dienst, target="0.3.0")
+    kranker_dienst()
+    text = (kranker_dienst.update_dir / "LETZTER-FEHLSCHLAG.txt").read_text(encoding="utf-8")
+    assert f"cd {host_checkout}/deploy/testhost && docker compose logs" in text
+    assert f"cd {host_checkout} && ./scripts/update.sh --no-pull" in text
+    assert "host path unknown" not in text
+
+
 def test_the_failure_file_says_so_plainly_when_the_host_path_cannot_be_resolved(kranker_dienst):
     # Important 2, the other half: this file's default docker stub cannot
     # answer the Mounts question at all (no `--format` handling) - the
