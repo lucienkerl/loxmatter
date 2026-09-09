@@ -8,6 +8,8 @@ people who don't know the code.
 
 ## [Unreleased]
 
+## [0.3.3] — 2026-09-09
+
 ### Changed
 
 - **The updater no longer tries to update itself.** After installing an

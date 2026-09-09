@@ -1,6 +1,6 @@
 [project]
 name = "loxmatter"
-version = "0.3.2"
+version = "0.3.3"
 description = "Connects Matter devices (Thread, Wi-Fi or Ethernet) to a Loxone Miniserver"
 readme = "README.md"
 license = "GPL-3.0-or-later"
