@@ -8,6 +8,8 @@ people who don't know the code.
 
 ## [Unreleased]
 
+## [0.3.4] — 2026-09-09
+
 ### Fixed
 
 - **The updater's version could go missing, or go stale, on the System
