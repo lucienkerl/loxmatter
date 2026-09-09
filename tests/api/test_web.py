@@ -618,6 +618,35 @@ async def test_the_update_card_offers_a_channel_switch_with_a_visible_dev_warnin
     assert "banner warn" in warning_tag
 
 
+async def test_the_up_to_date_hint_is_suppressed_without_an_updater(api):
+    """Also-look-at fix: with no sidecar reachable, the card used to show
+    both 'This installation has no updater...' AND 'Up to date. Last
+    checked ...' at once - the second line true (checking still works
+    without a sidecar, it just cannot install anything) but useless noise
+    next to the first, since there is no button either message could ever
+    lead to. The up-to-date hint now also requires
+    `updateStatus?.updater_present`; the two hints can therefore never
+    both show at the same time (`!updateStatus.updater_present` in the
+    first is the logical negation of the second's added clause). The
+    error hint (no internet, checking switched off) is deliberately left
+    ungated: that is real, independent information about the check
+    itself, not a claim about whether anything could be installed."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+
+    up_to_date_idx = page.index("t('web.system.update_up_to_date'")
+    tag_start = page.rindex("<p", 0, up_to_date_idx)
+    tag_end = page.index(">", up_to_date_idx)
+    up_to_date_tag = page[tag_start:tag_end]
+    assert "updateStatus?.updater_present" in up_to_date_tag
+    assert "!updateAvailable.target" in up_to_date_tag
+
+    error_idx = page.index('x-show="!updateRunning() && updateAvailable?.error"')
+    error_tag_end = page.index(">", error_idx)
+    error_tag = page[error_idx:error_tag_end]
+    assert "updateStatus?.updater_present" not in error_tag
+
+
 async def test_the_disconnect_banner_gets_a_different_text_during_an_update(api):
     """Design section 9, state 3: a planned restart must not look like an
     outage. The existing danger banner keeps its text for a genuine

@@ -1617,8 +1617,18 @@
 
           <!-- Up to date, or checking is off, or the check itself failed
                (no internet, GitHub unreachable) - three different reasons
-               to show no button, none of them a fault of this bridge. -->
-          <p class="hint" x-show="!updateRunning() && updateAvailable && !updateAvailable.target && !updateAvailable.error"
+               to show no button, none of them a fault of this bridge.
+
+               Gated on `updateStatus?.updater_present` (added alongside
+               the channel switch above): without a sidecar to install
+               anything through, "up to date" is not information, it is
+               noise sitting right next to "this installation has no
+               updater" above - both true, only one of them useful. The
+               error line stays ungated: an unreachable GitHub or a
+               disabled check is a real, independent fact worth showing
+               even without a sidecar, since it explains why the check
+               itself has nothing to say. -->
+          <p class="hint" x-show="!updateRunning() && updateStatus?.updater_present && updateAvailable && !updateAvailable.target && !updateAvailable.error"
              x-cloak x-text="t('web.system.update_up_to_date', { checked_at: updateAvailable.checked_at })"></p>
           <p class="hint" x-show="!updateRunning() && updateAvailable?.error" x-cloak
              x-text="updateAvailable.error"></p>
