@@ -115,6 +115,8 @@ def run_update(
         phase: UpdatePhase,
         *,
         error: str | None = None,
+        error_i18n_key: str | None = None,
+        error_i18n_values: dict[str, str] | None = None,
         rolled_back: bool = False,
         healthy: bool = False,
     ) -> UpdateState:
@@ -128,6 +130,8 @@ def run_update(
             rolled_back=rolled_back,
             healthy=healthy,
             updater_seen_at=now_iso(),
+            error_i18n_key=error_i18n_key,
+            error_i18n_values=error_i18n_values or {},
         )
         try:
             write_state(base, state)
@@ -173,8 +177,26 @@ def run_update(
         # Before the first command, so a rejected request has taken no
         # backup and pulled no image - it left the installation exactly as
         # it found it.
+        #
+        # `rejected.reason` (English) is what `log.txt` gets, same as
+        # every other line `_log` writes - unlocalised, per CLAUDE.md.
+        # `rejected.i18n_key`/`i18n_values` are the same refusal for the
+        # operator; `state.json` is the only channel from this sidecar
+        # process to the bridge that can resolve them into the operator's
+        # own language (this process has no database, and therefore no
+        # idea which language is selected - see `UpdateState`'s own
+        # docstring), so both travel through here rather than only the
+        # English one. This is the ONE call to `publish` in this whole
+        # function that has a key to give: every other failure below is
+        # free-form exception text with nothing in `strings.yaml` to
+        # resolve against.
         _log(commands, f"refused: {rejected.reason}")
-        return publish("failed", error=rejected.reason)
+        return publish(
+            "failed",
+            error=rejected.reason,
+            error_i18n_key=rejected.i18n_key,
+            error_i18n_values=rejected.i18n_values,
+        )
     except Exception as failure:  # noqa: BLE001 - nothing has run yet, see below
         # `is_ancestor` shells out to git on the `dev` channel (there is
         # no `commands.py` yet to catch its failures for us), and
@@ -257,9 +279,19 @@ def run_update(
 
     try:
         _log(commands, f"backing up before {request.target}")
+        # Published before `commands.backup()` runs, not after it and
+        # `done.append("backup")` the way every other step here is: `phase`
+        # already means "this step is under way" to every other consumer -
+        # `app.js`'s `UPDATE_ACTIVE_PHASES` lists `"backup"` as an active
+        # phase, and it is `done`/`steps`, not `phase`, that records
+        # completion (see `UpdateState`'s own docstring). Publishing first
+        # covers `commands.backup()`'s own duration with a live stamp
+        # instead of leaving `state.json` on the *previous* run's terminal
+        # phase for the whole of it - see `api/update.py`'s
+        # `_BUSY_BOUND_SECONDS["backup"]`, widened to match.
+        publish("backup")
         commands.backup()
         done.append("backup")
-        publish("backup")
 
         commands.fetch()
         commands.checkout(request.target)
@@ -323,17 +355,6 @@ def _wait_for_health(
     `deadline_seconds`: a caller asking for a 120s deadline
     (`DEADLINE_SECONDS`) can get up to 240s of actual wall clock against
     a bridge that never answers, before this function gives up.
-
-    A raising `healthy()` is treated as a `False` for that one poll, not
-    as a reason to stop polling or to let the exception through. A real
-    `healthy()` calls `/health` over HTTP, and while the bridge is down -
-    the exact condition this whole function exists to detect - that call
-    raises `ConnectionError` instead of returning `False`. Both callers
-    (the main wait and `roll_back`'s own confirmation) rely on this: an
-    unreachable bridge must read as "not healthy", which for the main
-    caller means a rollback runs at all, and for `roll_back` means
-    `healthy=False` is published instead of the exception escaping
-    `run_update` and leaving `state.json` frozen.
 
     A raising `healthy()` is treated as a `False` for that one poll, not
     as a reason to stop polling or to let the exception through. A real

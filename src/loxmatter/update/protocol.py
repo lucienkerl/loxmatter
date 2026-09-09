@@ -36,7 +36,7 @@ from __future__ import annotations
 import json
 import os
 from collections.abc import Mapping, Sequence
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Literal, get_args
 
@@ -94,7 +94,29 @@ class UpdateState:
     `updater_seen_at` is rewritten on every pass of the loop even when
     nothing is happening. It is how the bridge tells "no update running"
     from "no updater installed" (design section 11).
-    """
+
+    `error` stays English and unabbreviated, same reasoning as
+    `rules.RequestRejected.reason`: it is what `runner._log` writes into
+    `log.txt`, which CLAUDE.md says is never localised. `error_i18n_key`/
+    `error_i18n_values` are the same failure for the operator - set only
+    when the failure IS one of the six known `rules.check_request`
+    rejections (`runner.run_update`'s `except RequestRejected` branch is
+    the only place that has a key to give), `None`/empty for every other
+    failure this file can describe (a step that raised, a health check
+    that timed out, a rollback that itself failed) - free-form exception
+    text with no translation to offer, which stays English same as
+    `error` itself. `api/update.py`'s `_status_out` resolves the pair
+    through `i18n.t()` in the operator's selected language before the
+    interface ever sees it; `state.json` is the only channel between the
+    sidecar (which has no database, and therefore no idea which language
+    is selected) and the bridge (which does), so both representations
+    have to travel through this file the same way `RequestRejected`
+    itself carries both.
+
+    Defaulted, not required: every other constructor of this dataclass
+    (`_repair_state`'s fresh `idle` state, every test written before this
+    pair existed) has nothing translatable to report and should not have
+    to say so at every call site."""
 
     id: str | None
     phase: UpdatePhase
@@ -105,6 +127,8 @@ class UpdateState:
     rolled_back: bool
     healthy: bool
     updater_seen_at: str
+    error_i18n_key: str | None = None
+    error_i18n_values: Mapping[str, str] = field(default_factory=dict)
 
 
 def write_json_atomically(path: Path, payload: Mapping[str, object]) -> None:
@@ -185,6 +209,17 @@ def read_state(base: Path) -> UpdateState | None:
         steps = payload.get("steps", [])
         if not isinstance(steps, list):
             return None
+        # Absent on any `state.json` written before this pair existed -
+        # an older sidecar image, or any of the fixtures/tests that predate
+        # it. Same tolerance as `steps` above: the wrong shape reads as
+        # "nothing translatable to report", not as a reason to treat the
+        # whole file as unreadable.
+        error_i18n_key = payload.get("error_i18n_key")
+        if error_i18n_key is not None and not isinstance(error_i18n_key, str):
+            error_i18n_key = None
+        error_i18n_values = payload.get("error_i18n_values") or {}
+        if not isinstance(error_i18n_values, dict):
+            error_i18n_values = {}
         return UpdateState(
             id=payload.get("id"),
             phase=phase,
@@ -195,6 +230,8 @@ def read_state(base: Path) -> UpdateState | None:
             rolled_back=bool(payload.get("rolled_back", False)),
             healthy=bool(payload.get("healthy", False)),
             updater_seen_at=str(payload["updater_seen_at"]),
+            error_i18n_key=error_i18n_key,
+            error_i18n_values={str(k): str(v) for k, v in error_i18n_values.items()},
         )
     except KeyError:
         return None

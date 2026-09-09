@@ -103,7 +103,23 @@ one of those phases, up to a bound computed from the same subprocess
 timeouts that bound the step itself - see `_BUSY_BOUND_SECONDS` below for
 the derivation, one phase at a time. The bound is still finite: a
 genuinely wedged updater (a step that started and then the container
-died, say) ages past it and reads as absent, same as before."""
+died, say) ages past it and reads as absent, same as before.
+
+**`GET /update/status`'s `error` is localised, not a raw copy of
+`state.json`'s.** On the `dev` channel this route's own pre-check cannot
+enforce the ancestry rule (see `_no_git_access` below), so a request that
+fails it is refused only by the sidecar - `runner.run_update`'s own
+`check_request` call, which is where `RequestRejected`'s `i18n_key`/
+`i18n_values` come from in the first place (design section 10's ancestry
+rule, enforced there and only there). `state.json` is the one channel
+back to this process, so those two travel through it alongside the
+English `error` `log.txt` also gets - see `UpdateState`'s own docstring.
+`_localized_error` resolves them into the operator's selected language
+before this route ever returns them; a failure with no key (almost every
+other failure `run_update` can report - a step that raised, a health
+check that timed out) falls back to the same English text the interface
+has always shown for those, which CLAUDE.md does not require a
+translation for since none of it is prose this codebase itself wrote."""
 
 from __future__ import annotations
 
@@ -127,6 +143,7 @@ from loxmatter.model.update_settings_store import UpdateChannel
 from loxmatter.timestamps import now_iso
 from loxmatter.update.__main__ import LOOP_INTERVAL_SECONDS
 from loxmatter.update.commands import (
+    _BACKUP_TIMEOUT_SECONDS,
     _GIT_FETCH_TIMEOUT_SECONDS,
     _HEALTH_TIMEOUT_SECONDS,
     _IMAGE_PULL_TIMEOUT_SECONDS,
@@ -181,10 +198,13 @@ _HEALTH_REFRESH_WORST_CASE_SECONDS = HEALTH_REFRESH_POLLS * (POLL_SECONDS + _HEA
 #: `commands.py` timeouts for the steps between the `publish()` call that
 #: writes that phase and the next `publish()` call after it.
 #:
-#: - `"backup"`: published once the backup step itself has completed;
-#:   `fetch()`, `checkout()` and `pull()` all run before the next publish
-#:   (`"pull"`) - `_GIT_FETCH_TIMEOUT_SECONDS` + `_LOCAL_TIMEOUT_SECONDS`
-#:   + `_IMAGE_PULL_TIMEOUT_SECONDS`. By far the largest bound here,
+#: - `"backup"`: published BEFORE `commands.backup()` runs (see
+#:   `runner.run_update`), so the window this bound has to cover starts
+#:   there, not after it - `_BACKUP_TIMEOUT_SECONDS` itself, plus
+#:   `fetch()`, `checkout()` and `pull()`, all of which also run before
+#:   the next publish (`"pull"`) - `_BACKUP_TIMEOUT_SECONDS` +
+#:   `_GIT_FETCH_TIMEOUT_SECONDS` + `_LOCAL_TIMEOUT_SECONDS` +
+#:   `_IMAGE_PULL_TIMEOUT_SECONDS`. By far the largest bound here,
 #:   because `_IMAGE_PULL_TIMEOUT_SECONDS` is: a real image pull on the
 #:   slow rural link this ships to legitimately takes most of it.
 #: - `"pull"`: `write_image_tag()` is a plain local file edit with no
@@ -217,7 +237,8 @@ _HEALTH_REFRESH_WORST_CASE_SECONDS = HEALTH_REFRESH_POLLS * (POLL_SECONDS + _HEA
 _BUSY_MARGIN_SECONDS = 15.0
 _BUSY_BOUND_SECONDS: dict[UpdatePhase, float] = {
     "backup": (
-        _GIT_FETCH_TIMEOUT_SECONDS
+        _BACKUP_TIMEOUT_SECONDS
+        + _GIT_FETCH_TIMEOUT_SECONDS
         + _LOCAL_TIMEOUT_SECONDS
         + _IMAGE_PULL_TIMEOUT_SECONDS
         + _BUSY_MARGIN_SECONDS
@@ -233,19 +254,28 @@ _BUSY_BOUND_SECONDS: dict[UpdatePhase, float] = {
     ),
 }
 
-#: Not covered by `_BUSY_BOUND_SECONDS` above, and worth naming rather
-#: than leaving implicit: `commands.DockerCommands.backup()` itself
-#: (bounded by `commands._BACKUP_TIMEOUT_SECONDS`, 120s) runs BEFORE
-#: `run_update`'s first `publish()` call, so while it is in progress
-#: `state.json` still carries whatever phase the PREVIOUS run left it in
-#: - `"idle"`/`"done"`/`"failed"`, all terminal. A backup slower than
-#: `_STALE_AFTER_SECONDS` can therefore still read as "no updater
-#: installed" for the tail of that window. Smaller and rarer than the
-#: window this fix targets (120s at most, against the pull window's
-#: twenty minutes) and left as a known gap here rather than closed by
-#: moving `publish()` earlier in `runner.py`, which would change what
-#: "phase" means for every consumer of `state.json`, not just this route
-#: - a larger change than this fix warrants on its own.
+#: Still not covered by `_BUSY_BOUND_SECONDS` above, and worth naming
+#: rather than leaving implicit: `commands.DockerCommands.backup()` itself
+#: now runs AFTER `run_update`'s first `publish()` call (`runner.py`
+#: publishes `phase="backup"` before calling it - see the comment there),
+#: so `"backup"`'s bound above already covers it. What is NOT covered is
+#: everything that runs before that first `publish()`: `update.__main__
+#: .run_once` reads `commands.read_running_identity()` (two subprocess
+#: calls, `commands._LOCAL_TIMEOUT_SECONDS` each) before it ever calls
+#: `run_update`, and `run_update` itself then calls `commands
+#: .read_git_ref()` (another `_LOCAL_TIMEOUT_SECONDS`) - and, on the `dev`
+#: channel, `check_request`'s own `is_ancestor` (one more) - before
+#: reaching the code above at all. That prelude used to total up to 210s
+#: on `stable` / 240s on `dev` together with `backup()` itself; moving the
+#: publish closed the `backup()` portion (120s) but not this one, which
+#: remains open at up to roughly 90s on `stable` / 120s on `dev` - state.json
+#: still carries whatever phase the PREVIOUS run left it in for that long,
+#: and a second `POST /apply` arriving in it is still wrongly accepted.
+#: Left as a known, smaller gap here: closing it would mean publishing a
+#: stamp before `run_update` is even called (from `run_once` itself, or
+#: from a route-side marker `apply_update` writes synchronously) rather
+#: than a one-line move inside `run_update` - a larger change than this
+#: fix's scope.
 
 #: `IMAGE_REPOSITORY` is a Docker reference ("ghcr.io/lucienkerl/loxmatter"),
 #: not a GitHub API path - the registry host differs from the source
@@ -368,6 +398,34 @@ def _update_in_progress(state: UpdateState | None) -> bool:
     return state.phase in _BUSY_BOUND_SECONDS and _updater_present(state)
 
 
+def _localized_error(state: UpdateState) -> str | None:
+    """`state.error` (English, unabbreviated - the same text `log.txt`
+    holds, see `UpdateState`'s own docstring) resolved into the operator's
+    selected language wherever the sidecar left a translation key to
+    resolve it with. `state.json` is the only channel from that process
+    to this one - it has no database of its own, so it cannot know which
+    language is selected - which is why the key travels as data instead
+    of the sidecar (or `runner.py`) trying to guess.
+
+    Falls back to the raw English `state.error` for every failure that
+    carries no key: most of them (a step that raised, a health check that
+    timed out, a rollback that itself failed) are free-form exception
+    text with nothing in `strings.yaml` to resolve against, by design -
+    only the six known `rules.check_request` rejections ever carry one
+    (see `runner.run_update`'s `except RequestRejected` branch). The same
+    fallback also covers a key that fails to resolve - a `state.json`
+    written by a sidecar image ahead of, or behind, this bridge's own
+    `strings.yaml`, say - `i18n.t()` raising `KeyError` here must not turn
+    a routine `GET /update/status` into a 500 over a rejection message
+    that would otherwise have displayed just fine in English."""
+    if state.error_i18n_key is None:
+        return state.error
+    try:
+        return i18n.t(state.error_i18n_key, **state.error_i18n_values)
+    except KeyError:
+        return state.error
+
+
 def _status_out(state: UpdateState | None, info: BuildInfo) -> UpdateStatusOut:
     if state is None:
         return UpdateStatusOut(
@@ -393,7 +451,7 @@ def _status_out(state: UpdateState | None, info: BuildInfo) -> UpdateStatusOut:
         steps=list(state.steps),
         from_version=state.from_version,
         to_version=state.to_version,
-        error=state.error,
+        error=_localized_error(state),
         rolled_back=state.rolled_back,
         healthy=state.healthy,
         updater_seen_at=state.updater_seen_at,

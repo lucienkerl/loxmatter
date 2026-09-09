@@ -26,6 +26,7 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
+from loxmatter import i18n
 from loxmatter.update.protocol import UpdateRequest, read_state
 from loxmatter.update.runner import HEALTH_REFRESH_POLLS, POLL_SECONDS, STEPS, run_update
 
@@ -67,6 +68,7 @@ class FakeCommands:
         # happened *during* the run rather than trusting a post-hoc read.
         self._base = base
         self.phase_at_recreate: str | None = None
+        self.phase_at_backup: str | None = None
 
     def _record(self, name: str) -> None:
         self.calls.append(name)
@@ -77,6 +79,9 @@ class FakeCommands:
                 raise RuntimeError(f"{name} failed")
 
     def backup(self) -> str:
+        if self._base is not None and self.phase_at_backup is None:
+            state = read_state(self._base)
+            self.phase_at_backup = state.phase if state is not None else None
         self._record("backup")
         return "/data/backups/store-x.tgz"
 
@@ -194,6 +199,24 @@ def test_the_state_file_is_written_during_pull_not_only_at_the_end(tmp_path):
     assert written.steps == ["backup", "pull", "recreate", "health"]
 
 
+def test_the_state_file_shows_backup_in_progress_before_backup_runs(tmp_path):
+    """The double-apply gap this closes: before this fix, `publish("backup")`
+    ran AFTER `commands.backup()` completed, so for the whole 120s
+    `commands.backup()` can legitimately take, `state.json` still carried
+    whatever phase the PREVIOUS run left it in - a terminal one - and
+    `api/update.py`'s `_update_in_progress` read that as "nothing running",
+    letting a second `POST /apply` through mid-backup. `FakeCommands.backup`
+    reads `state.json` the moment it is called, the same way `recreate`
+    already does for `test_the_state_file_is_written_during_pull_not_only_
+    at_the_end` above - if `publish("backup")` ever moves back below
+    `commands.backup()`, this observes the stale phase from before the run
+    started (`None`, since a fresh `tmp_path` has never had a state file)
+    instead of `"backup"`, and fails."""
+    commands = FakeCommands(base=tmp_path)
+    run(commands, tmp_path)
+    assert commands.phase_at_backup == "backup"
+
+
 def test_a_successful_run_records_exactly_the_steps_constant_in_order(tmp_path):
     """`STEPS` is what the web interface tile will read; pin
     it against what `run_update` actually records so the constant and the
@@ -243,6 +266,57 @@ def test_a_rejected_request_executes_nothing(tmp_path):
     assert state.phase == "failed"
     assert state.error is not None and "older" in state.error
     assert commands.calls == []
+
+
+def test_a_rejected_request_publishes_a_translation_key_alongside_the_english_reason(tmp_path):
+    """The `dev`-channel ancestry rule (design section 10) is enforced only
+    by the sidecar - the bridge's own pre-check cannot ask a descendant
+    question, see `api/update.py`'s `_no_git_access` - so a `dev` request
+    that fails it is refused here, inside `run_update`, not at `POST
+    /apply`. `state.json` is the operator's only window onto that refusal,
+    and it must carry enough to show it in their own language, not just
+    the English `rejected.reason` that also goes to `log.txt`.
+    """
+    commands = FakeCommands()
+    state = run_update(
+        UpdateRequest(id="x", channel="dev", target="deadbee", requested_at="t"),
+        commands,
+        base=tmp_path,
+        running_version="0.2.0",
+        running_commit="abc1234",
+        is_ancestor=lambda _a, _b: False,
+        sleep=lambda _seconds: None,
+    )
+    assert state.phase == "failed"
+    assert state.error_i18n_key == "api.update.rejected.target_not_descendant"
+    assert state.error_i18n_values == {"target": "deadbee", "running_commit": "abc1234"}
+    # Resolves cleanly in both languages - this is the pair `_status_out`
+    # (`api/update.py`) later feeds to `i18n.t()` on the operator's behalf.
+    for language in ("en", "de"):
+        i18n.set_language(language)
+        try:
+            resolved = i18n.t(state.error_i18n_key, **state.error_i18n_values)
+        finally:
+            i18n.set_language("en")
+        assert "deadbee" in resolved
+
+    written = read_state(tmp_path)
+    assert written is not None
+    assert written.error_i18n_key == state.error_i18n_key
+    assert written.error_i18n_values == state.error_i18n_values
+
+
+def test_a_step_failure_publishes_no_translation_key(tmp_path):
+    """Free-form exception text (a step that raised, here) has nothing in
+    `strings.yaml` to resolve against - `error_i18n_key` must stay `None`
+    rather than carrying over a stale value from an earlier publish, so
+    `_localized_error` falls back to the English `error` instead of trying
+    to resolve a key that was never meant for this failure."""
+    commands = FakeCommands(fail_on="recreate", fail_times=2)
+    state = run(commands, tmp_path)
+    assert state.phase == "failed"
+    assert state.error_i18n_key is None
+    assert state.error_i18n_values == {}
 
 
 def test_a_failing_step_rolls_back_too(tmp_path):
