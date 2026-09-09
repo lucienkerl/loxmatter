@@ -85,6 +85,18 @@ def test_an_unreadable_state_file_counts_as_no_state(tmp_path):
         path.chmod(0o644)
 
 
+def test_a_state_directory_instead_of_a_file_counts_as_no_state(tmp_path):
+    # write_state's own guard in update-once.sh refuses to write onto a
+    # path where state.json exists but is not a regular file, which
+    # means state.json staying a directory (mount weirdness, an operator
+    # mistake) is a state this side can actually encounter in the wild.
+    # `.read_text()` on a directory raises `IsADirectoryError`, a subclass
+    # of `OSError` - already caught by read_state's except clause, but
+    # not previously exercised by name.
+    (tmp_path / "state.json").mkdir()
+    assert read_state(tmp_path) is None
+
+
 def test_the_state_is_read_in_full(tmp_path):
     # The sidecar's own state.json (update-once.sh, set_state()) carries
     # the version fields under the literal keys "from" and "to" - "from"
@@ -159,6 +171,27 @@ def test_updater_present_with_a_timestamp_from_the_future_is_false(tmp_path):
     # exactly the false positive this function exists to prevent: a
     # button that writes into a volume nobody is reading anymore.
     _state(tmp_path, updater_seen_at=(JETZT + timedelta(minutes=10)).strftime("%Y-%m-%dT%H:%M:%SZ"))
+    assert updater_present(read_state(tmp_path), now=JETZT) is False
+
+
+def test_updater_present_is_true_at_exactly_the_30_second_boundary(tmp_path):
+    # The comparison is `<=`, inclusive - a heartbeat exactly 30 seconds
+    # old is still "present", not yet "stale". Only tested one second on
+    # either side before this (5s fresh, 90s stale); the boundary itself
+    # was unexercised.
+    _state(tmp_path)
+    assert updater_present(read_state(tmp_path), now=JETZT + timedelta(seconds=30)) is True
+
+
+def test_an_empty_updater_seen_at_means_no_sidecar(tmp_path):
+    # `not state.updater_seen_at` is one branch shared by both `None` and
+    # `""` - only the `None` case (an absent key, via
+    # test_without_state_there_is_no_sidecar's state=None and the missing
+    # field elsewhere) was covered. An empty string is what
+    # `_as_optional_str` would hand back for a state.json where the key
+    # is present but explicitly blank - distinct from "absent" on disk,
+    # same outcome here.
+    _state(tmp_path, updater_seen_at="")
     assert updater_present(read_state(tmp_path), now=JETZT) is False
 
 
@@ -338,4 +371,12 @@ def test_the_log_returns_the_last_lines(tmp_path):
 
 
 def test_without_a_log_the_list_is_empty(tmp_path):
+    assert read_log(tmp_path) == []
+
+
+def test_a_log_directory_instead_of_a_file_is_read_as_empty(tmp_path):
+    # Same reasoning as the state.json directory case: `.read_text()` on
+    # a directory raises `IsADirectoryError`, already caught by
+    # read_log's `except OSError`, but not previously exercised by name.
+    (tmp_path / "log.txt").mkdir()
     assert read_log(tmp_path) == []
