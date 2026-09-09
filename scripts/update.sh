@@ -74,6 +74,55 @@ command -v docker >/dev/null || die "docker is not installed."
 
 if [ "$PULL" -eq 1 ]; then
   say "Fetching the latest state"
+  # deploy/updater/update-once.sh checks out an exact, pinned COMMIT,
+  # detached - both on the success path (`git checkout --detach "$REF"`,
+  # the release tag or dev SHA the request named) and on every rollback
+  # (`git checkout --detach "$GIT_BEFORE"`, the commit that matched the
+  # image actually running before the attempt). Nothing there, and
+  # nothing in entrypoint.sh's SIGTERM path either, ever puts the
+  # checkout back on a branch afterward - so a checkout left this way by
+  # any update the web UI ever ran (successful, rolled back, or killed
+  # mid-flight) is exactly the state this script finds here, reliably.
+  # `git pull --ff-only` alone has no branch to fast-forward and fails
+  # outright:
+  #
+  #   $ git checkout --detach v0.3.1 && git pull --ff-only
+  #   You are not currently on a branch.
+  #   Please specify which branch you want to merge with.
+  #
+  # ...which used to surface here as "local changes in the way?" with no
+  # local changes anywhere - on the one path OPERATIONS.md promises
+  # "works regardless of what state the updater left things in", and the
+  # one this feature's own `web.system.update_no_updater` string points
+  # an operator at directly when the sidecar itself is gone.
+  #
+  # Fixed HERE, in the console script, rather than by having
+  # update-once.sh leave a branch checked out: that script only ever
+  # knows a single pinned commit, never a branch. For the stable channel
+  # that commit is a release tag, ordinarily reachable from `main`'s own
+  # history - but for the dev channel it is an arbitrary, ancestry-
+  # checked SHA that need not be any branch's tip at all, and an
+  # unattended process has no principled way to decide which local
+  # branch such a commit "belongs to". Recovering here instead means
+  # this script stays correct regardless of HOW HEAD ended up detached -
+  # a completed update, a rollback, a signal, or a human poking around
+  # by hand - rather than depending on the updater always leaving things
+  # in one particular shape.
+  #
+  # `install.sh` always clones with `--branch main` (`ensure_checkout`),
+  # so a local "main" exists on every installation this script supports
+  # and update-once.sh's own `--detach` calls never delete or move it -
+  # only HEAD stops pointing at it. `git checkout main` moves HEAD (and
+  # the working tree) back onto it FIRST, refusing exactly the way
+  # `pull --ff-only` already would if that would overwrite an actual
+  # uncommitted local change (the one case this must not paper over) -
+  # and only then does the unchanged `pull --ff-only` below run, with
+  # its own original safety intact: a `main` that has genuinely diverged
+  # forward (extra local commits) still fails loudly here, not silently.
+  if ! git -C "$REPO" symbolic-ref -q HEAD >/dev/null; then
+    git -C "$REPO" checkout main \
+      || die "could not switch back to main from a detached HEAD - local changes in the way?"
+  fi
   git -C "$REPO" pull --ff-only || die "git pull failed - local changes in the way?"
 fi
 printf '  %s (%s)\n' "$REPO" "$(git -C "$REPO" rev-parse --short HEAD 2>/dev/null || echo 'no commit')"

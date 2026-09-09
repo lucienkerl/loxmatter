@@ -175,6 +175,62 @@ def test_no_cache_without_build_is_rejected(sealed):
     assert "--build" in result.stderr
 
 
+# --------------------------------------------- Detached-HEAD recovery --
+# deploy/updater/update-once.sh only ever checks out an exact, pinned
+# COMMIT, detached - both the target of a successful update and the
+# commit a rollback restores - and never puts the checkout back on a
+# branch afterward (neither does entrypoint.sh's SIGTERM path). Every
+# update the web UI ever runs therefore leaves $REPO on a detached HEAD,
+# and `git pull --ff-only` on its own has no branch to fast-forward:
+#
+#   $ git checkout --detach v0.3.1 && git pull --ff-only
+#   You are not currently on a branch.
+#   Please specify which branch you want to merge with.
+#
+# ...which used to surface here as "local changes in the way?" with no
+# local changes anywhere - on the one path OPERATIONS.md promises "works
+# regardless of what state the updater left things in".
+#
+# The stub below plays the part of a real git closely enough to prove the
+# fix bites: it tracks "on a branch or not" itself (a marker file,
+# starting absent - i.e. detached), fails `pull --ff-only` with the exact
+# message a real detached-HEAD git prints for as long as that marker is
+# missing, and only `checkout main` (this fix's own recovery step) ever
+# creates it. A generic always-succeeds stub (used everywhere else in
+# this file) cannot distinguish the two cases at all and would pass
+# whether or not the fix is present.
+def test_a_detached_checkout_is_returned_to_main_before_pulling(sealed):
+    marker = sealed.bindir.parent / "on-a-branch"
+    git_path = sealed.bindir / "git"
+    git_path.write_text(
+        "#!/bin/sh\n"
+        'printf "%s %s\\n" "git" "$*" >> "$STUB_LOG"\n'
+        '[ "$1" = "-C" ] && shift 2\n'
+        'case "$1 $2" in\n'
+        '  "symbolic-ref -q")\n'
+        f'    [ -f "{marker}" ] && exit 0\n'
+        "    exit 1 ;;\n"
+        '  "checkout main")\n'
+        f'    : > "{marker}"\n'
+        "    exit 0 ;;\n"
+        '  "pull --ff-only")\n'
+        f'    if [ ! -f "{marker}" ]; then\n'
+        "      echo 'You are not currently on a branch.' >&2\n"
+        "      echo 'Please specify which branch you want to merge with.' >&2\n"
+        "      exit 1\n"
+        "    fi\n"
+        "    exit 0 ;;\n"
+        "  *) exit 0 ;;\n"
+        "esac\n",
+        encoding="utf-8",
+    )
+    git_path.chmod(0o755)
+    result, calls = sealed()
+    assert result.returncode == 0, result.stderr
+    assert "checkout main" in calls
+    assert calls.index("checkout main") < calls.index("pull --ff-only")
+
+
 # ------------------------------------------------ Boundary-crossing fix --
 # Critical 4 from a whole-branch review: the documented migration path
 # for an existing installation ("git pull && ./scripts/update.sh",
