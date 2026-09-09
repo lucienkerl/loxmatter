@@ -683,6 +683,12 @@ web.header.time_ago_minutes:
 web.header.time_ago_hours:
   en: "{hours}h ago"
   de: "vor {hours} h"
+web.header.time_ago_days:
+  en: "{days}d ago"
+  de: "vor {days} Tagen"
+web.header.time_ago_just_now:
+  en: "just now"
+  de: "gerade eben"
 web.header.last_updated:
   en: "Last updated {text}"
   de: "Zuletzt aktualisiert {text}"
@@ -848,6 +854,12 @@ web.devices.changed_since_export:
 web.devices.offline:
   en: "Offline"
   de: "Offline"
+web.devices.last_heard:
+  en: "Last heard {text}"
+  de: "Zuletzt gehört {text}"
+web.devices.never_heard:
+  en: "Not heard since the bridge started"
+  de: "Seit dem Start der Brücke nichts gehört"
 web.devices.remove:
   en: "Remove"
   de: "Entfernen"

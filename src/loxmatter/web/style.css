@@ -1352,6 +1352,19 @@ footer.hint-block {
  * itself across the board, the second one descends one level deeper and
  * dims everything within `.device-foot` except `.tile-menu`.
  *
+ * Correction (final review, 2026-09-09): the enumeration above is out of
+ * date, and nothing tests it - this comment is the only record of it, so
+ * the count is corrected here rather than silently rewritten. It is NINE
+ * direct children now, not seven: `.device-head`, `.device-heard` (the
+ * "Last heard ..." line, 2026-09-09), `.value-rows`, `.device-battery`
+ * (2026-09-07), the `.hint` for "signals loading", the `.hint` for "no
+ * functional signals", `.device-commands`, `.device-foot`, and the
+ * `.hint` for the export hint at the bottom. Both rules below are
+ * unaffected: `> *:not(.device-foot)` catches every new child by
+ * construction, which is exactly why two of them could arrive without
+ * anything noticing. `.tile-menu` still sits inside `.device-foot`, so
+ * the reasoning above holds unchanged - only the number was stale.
+ *
  * Review finding 2 (2026-09-05, review of the follow-up): `:not(.tile-menu)`
  * excludes the ENTIRE `<details>`, not only the transient,
  * opening list - including its permanently visible
@@ -1393,6 +1406,28 @@ footer.hint-block {
 
 .device-card.is-offline .device-foot > *:not(.tile-menu) {
   opacity: 0.75;
+}
+
+/* `.hint` already carries the size and the muted colour; this rule only
+ * takes away the paragraph's default margins, which would otherwise open
+ * a gap the 260px tile cannot spare.
+ *
+ * Correction (final review, 2026-09-09): the sentence above described
+ * `margin: 0 0 0.35rem`, and for the bottom half it was not true.
+ * `.device-card` is a flex column (see `.value-rows + p.hint` further
+ * down, which exists solely because of this), so margins do NOT collapse
+ * between its children: the 0.35rem ADDED to `.value-rows`'s own
+ * `margin: 0.5rem 0` and made the gap below this line 0.85rem, not a
+ * removal of anything. Of the two ways out the review offered - measure
+ * the 0.35rem and justify it, or drop it - this takes the second: the
+ * declaration is now `margin: 0`, and the distance to the values is the
+ * 0.5rem `.value-rows` was already bringing. Everything below this line
+ * therefore sits exactly where it sat before the line existed, which is
+ * what "a gap the 260px tile cannot spare" was after in the first place.
+ * `margin-top` was 0 before and stays 0: this line belongs to the head
+ * above it. */
+.device-heard {
+  margin: 0;
 }
 
 /* `.value-chips` (the flex container around the tile's chips) is gone

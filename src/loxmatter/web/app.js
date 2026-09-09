@@ -544,6 +544,14 @@ function app() {
     // difference visible between "nothing is changing" and "nothing is
     // arriving" - for a plug socket with no load, both look the same.
     liveSeenAt: {},
+    // When something last arrived from a device, by device id. The
+    // per-signal `liveSeenAt` above cannot answer this: asking "when did
+    // I last hear from this DEVICE" would mean scanning every one of its
+    // ~170 signal keys on every redraw, once a second, per tile.
+    //
+    // Never reset, exactly like `liveSeenAt` - a reconnect of the live
+    // socket does not unmake the fact that something arrived earlier.
+    deviceHeardAt: {},
     lastHeartbeatAt: null,
     // Ticks every second so the "... ago" labels keep up. Without this
     // field, Alpine would see no reason to redraw them.
@@ -820,6 +828,16 @@ function app() {
       // call Alpine exactly once. The tick costs nothing as long as no
       // one is logged in: it writes to a field that only the app's header
       // reads.
+      //
+      // Correction (final review, 2026-09-09): the last sentence is no
+      // longer true. Since the "Last heard ..." line, `nowTick` is read
+      // by every device tile as well, once a second (`lastHeardText` ->
+      // `sinceTextCoarse`). The conclusion holds anyway, for a different
+      // reason than the one given: `sinceTextCoarse` returns the SAME
+      // string for a whole minute, so Alpine re-evaluates the expression
+      // but rewrites no text - which is precisely why that helper exists
+      // (see its docstring). The cheap part is no longer "nobody reads
+      // it", it is "nothing changes".
       window.setInterval(() => {
         this.nowTick = Date.now();
       }, 1000);
@@ -2032,6 +2050,103 @@ function app() {
         return t("web.header.time_ago_minutes", { minutes });
       }
       return t("web.header.time_ago_hours", { hours: Math.round(minutes / 60) });
+    },
+
+    /**
+     * Like `sinceText`, but never in seconds: "just now", "3m ago",
+     * "2h ago".
+     *
+     * The difference is not cosmetic. `sinceText` feeds a `title`, where a
+     * label that changes width every second costs nothing. This one sits
+     * in the tile's text flow, and the tile has been here before: a
+     * per-signal age used to stand next to the value and was moved into
+     * the tooltip precisely because counting up from "7s ago" changes the
+     * label's width and shoves the row back and forth, drawing the eye to
+     * the motion instead of to the change that matters (see
+     * `signalSeenText`).
+     *
+     * Under a minute this is therefore a fixed string; from there it
+     * changes at most once a minute. Reads `nowTick`, so Alpine redraws
+     * it on its own.
+     *
+     * Unlike `sinceText` it has a day branch (final review, A7). The
+     * ceiling on both is the bridge's uptime - `last_heard` does not
+     * survive a restart - but this label is the one place in the
+     * interface built to show a LONG silence, and the incident that
+     * prompted it is itself a five-day story: a button whose
+     * subscription had been dead since 3 September. "120h ago" is a
+     * number to convert before it is an answer.
+     */
+    sinceTextCoarse(timestamp) {
+      if (!timestamp) {
+        return null;
+      }
+      const seconds = Math.max(0, Math.round((this.nowTick - timestamp) / 1000));
+      if (seconds < 60) {
+        return t("web.header.time_ago_just_now");
+      }
+      const minutes = Math.round(seconds / 60);
+      if (minutes < 60) {
+        return t("web.header.time_ago_minutes", { minutes });
+      }
+      const hours = Math.round(minutes / 60);
+      // Two full days, not one: "36h ago" still reads as a span someone
+      // can place in their own day, "1d ago" throws that away.
+      if (hours < 48) {
+        return t("web.header.time_ago_hours", { hours });
+      }
+      return t("web.header.time_ago_days", { days: Math.round(hours / 24) });
+    },
+
+    /**
+     * When this device was last heard from, in milliseconds - the LATER
+     * of two sources, or `null` when neither has anything.
+     *
+     * `device.last_heard` comes from the server, once, with
+     * `GET /api/devices`. On its own it would go stale in the tile while
+     * values stream into that very tile: confidently wrong, which is
+     * worse than saying nothing. `deviceHeardAt` carries the live side.
+     *
+     * The served value is therefore only the starting point, for the
+     * window between page load and the first live message from this
+     * device - which is precisely the gap it exists to fill, because the
+     * live bookkeeping starts empty on every page load and the server's
+     * does not.
+     */
+    lastHeardAt(device) {
+      const live = this.deviceHeardAt[device.id];
+      const served = device.last_heard ? Date.parse(device.last_heard) : NaN;
+      const candidates = [];
+      if (live !== undefined) {
+        candidates.push(live);
+      }
+      if (!Number.isNaN(served)) {
+        candidates.push(served);
+      }
+      return candidates.length ? Math.max(...candidates) : null;
+    },
+
+    /**
+     * The tile's line. A fact, not a judgement.
+     *
+     * No threshold and no colour anywhere near this: a silent window
+     * contact is normal, and so is a silent button or leak detector. Any
+     * staleness rule would fire first and most often on exactly the
+     * devices that prompted this line, and a warning that cries wolf on
+     * healthy hardware gets the next real one ignored too.
+     *
+     * The `null` branch is the valuable one. "Nothing since the bridge
+     * started" is unambiguous - not "offline", not "no data" - and it is
+     * the sentence that would have shortened 8 September, when a window
+     * contact that only reports on change looked exactly like a button
+     * whose subscription had been dead for five days.
+     */
+    lastHeardText(device) {
+      const at = this.lastHeardAt(device);
+      if (at === null) {
+        return t("web.devices.never_heard");
+      }
+      return t("web.devices.last_heard", { text: this.sinceTextCoarse(at) });
     },
 
     /** When ANYTHING last came in over the line - the heartbeat
@@ -3946,6 +4061,27 @@ function app() {
 
       socket.addEventListener("open", () => {
         this.socketConnected = true;
+        // On a RE-connection, fetch the server's `last_heard` again
+        // (final review, A2). Everything sent while the socket was down
+        // never reached this tab, and `deviceHeardAt` is the tab's own
+        // bookkeeping: it cannot know what it missed, and nothing else
+        // backfills it - `loadDevices()` otherwise runs only from
+        // `startApp()` and after commissioning or removal. A window
+        // contact that reports once during a two-hour outage would
+        // otherwise leave its tile reading "Last heard 3h ago"
+        // indefinitely, with the staleness banner already cleared: the
+        // same wasted investigation this line was built to prevent,
+        // pointing the other way. The server's `Runtime._last_heard`
+        // does know, and `lastHeardAt` takes the LATER of the two
+        // sources, so the refresh can only ever move a label forward.
+        //
+        // Read BEFORE `socketEverConnected` is set below, so this is the
+        // previous connection state, not this one: on the very first
+        // connection `startApp()` has just loaded the list and a second
+        // identical request per page load would buy nothing.
+        if (this.socketEverConnected) {
+          this.loadDevices();
+        }
         this.socketEverConnected = true;
         this.reconnectDelayMs = RECONNECT_DELAY_INITIAL_MS;
       });
@@ -3955,6 +4091,31 @@ function app() {
         this.liveValues[message.key] = message.value;
         const now = Date.now();
         this.liveSeenAt[message.key] = now;
+        // Which device a message belongs to is in its key: signal keys
+        // start with `d<device id>_`. The heartbeat (`bridge_alive`)
+        // matches no device on purpose - see the comment below for why it
+        // is the honest sign of life, and exactly for that reason it must
+        // not count here: it arrives every 30 seconds regardless, and
+        // crediting it would make every tile claim it had just been heard
+        // from.
+        //
+        // `d<id>_online` is the second key that must not count, and the
+        // key pattern does NOT exclude it on its own (final review, A1;
+        // the design reasoned only about the heartbeat and assumed it
+        // did). Reachability is matter-server's bookkeeping ABOUT a node,
+        // not the node saying anything - which is why `Runtime` calls
+        // `_mark_heard` from `on_attribute`, `on_node_snapshot` and
+        // `on_event`, but deliberately not from `set_online`
+        // (loxone/runtime.py). `set_online` still notifies its observers,
+        // so `d<id>_online` reaches this handler verbatim; without the
+        // exclusion below the tile would render the Offline pill and
+        // "Last heard just now" on the same card, at the exact moment
+        // this line exists to serve. The client's definition of "heard"
+        // is hereby the same as `Runtime._mark_heard`'s.
+        const owner = /^d(\d+)_/.exec(message.key);
+        if (owner && message.key !== `d${owner[1]}_online`) {
+          this.deviceHeardAt[Number(owner[1])] = now;
+        }
         // The heartbeat does not belong to any device (Spec 6.5) and is
         // exactly for that reason the honest sign of life: it arrives
         // even when nothing changes on any device.

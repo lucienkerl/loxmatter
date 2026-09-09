@@ -41,6 +41,12 @@ from conftest import load_snapshot
 
 from loxmatter.api.diagnostics import FABRIC_BACKUP_NAME
 from loxmatter.api.export import ARCHIVE_NAME
+
+# The private helper on purpose, not a second dict comprehension over the
+# same keys: the tests at the end of this file run the shipped `app.js`
+# with the table the browser really gets from `GET /api/i18n`, and a local
+# copy would keep agreeing with itself if that endpoint ever changed.
+from loxmatter.api.language import _web_strings
 from loxmatter.export.commands import extract_commands
 from loxmatter.loxone.server import build_app
 from loxmatter.model.store import Store
@@ -1121,21 +1127,39 @@ async def test_the_highlight_cannot_change_the_width_of_a_cell(api):
 # spot check for `if (!signal)` would stay green even if the condition
 # does the wrong thing. Alpine still does not run along with it; the unit
 # under test is the state object delivered by `app()`.
+#
+# Correction (final review of "last heard on the device card", 9
+# September 2026): no longer the only place. The last-heard section at
+# the end of this file runs `app.js` too, through the same `_app_state`
+# below - see the section comment there for why that one had to run
+# rather than read. The sentence above stands as the record of when this
+# harness was the exception rather than a tool.
 # ---------------------------------------------------------------------------
 
 NODE = shutil.which("node")
 
 
-def _app_state(setup: str = "") -> dict:
+def _app_state(setup: str = "", translations: dict[str, str] | None = None) -> dict:
     """Loads `app.js` in node, calls `app()`, and runs `setup` on it.
 
     `app.js` is a simple script with no module system (deliberately, see
     the header of the file) - hence `new Function` instead of an import.
+
+    `translations` fills the module-global `translationStrings` the same
+    way `loadI18n()` does at runtime, with a single assignment. It has to
+    happen INSIDE the function body: `translationStrings` is a `let` in
+    `app.js`'s own scope, so `setup` - which runs outside that body -
+    cannot reach it. Without a table, `t()` falls back to returning the
+    key, which is fine for a helper whose result is a boolean or a number
+    and useless for one whose result is a sentence: two different
+    timestamps would both render as "web.devices.last_heard".
     """
+    fill_strings = f"translationStrings = {json.dumps(translations)};\n" if translations else ""
+    tail = json.dumps("\n" + fill_strings + "return app();")
     script = f"""
       const fs = require("node:fs");
       const src = fs.readFileSync({str(WEB_DIR / "app.js")!r}, "utf8");
-      const state = new Function(src + "\\nreturn app();")();
+      const state = new Function(src + {tail})();
       {setup}
     """
     # `check=False`, because the line below reports the same failure with
@@ -6525,3 +6549,339 @@ async def test_the_checkbox_hit_targets_reach_24px(api):
     assert "min-height: 24px" in col_center_rule
     assert "align-items: center" in col_center_rule
     assert "min-width" not in col_center_rule
+
+
+async def test_the_coarse_age_helper_never_speaks_in_seconds(api):
+    """`sinceTextCoarse` is the label that sits IN the tile's text flow.
+
+    `sinceText` next to it stays as it is: it feeds a tooltip, where a
+    width that changes every second costs nothing. In the flow it does -
+    the tile carried such a label once and moved it into the tooltip on
+    purpose, because a value counting up from "7s ago" shoves the row
+    sideways and draws the eye to the motion instead of the change (see
+    `signalSeenText` in app.js).
+
+    So this helper must NOT reach for `web.header.time_ago_seconds`.
+
+    It DOES reach for `web.header.time_ago_days`, which `sinceText` does
+    not (final review, A7): this is the one label in the interface built
+    to show a long silence, and "120h ago" is a number to convert before
+    it is an answer.
+    """
+    client, _, _ = api
+    script = (await client.get("/static/app.js")).text
+    start = script.index("sinceTextCoarse(timestamp) {")
+    end = script.index("\n    },", start)
+    body = script[start:end]
+
+    assert 'return t("web.header.time_ago_just_now");' in body
+    assert 'return t("web.header.time_ago_minutes", { minutes });' in body
+    assert 'return t("web.header.time_ago_hours", { hours });' in body
+    assert 'return t("web.header.time_ago_days", { days: Math.round(hours / 24) });' in body
+    # The whole point of the helper: no per-second branch.
+    assert "time_ago_seconds" not in body
+    # And no hardcoded translation, in either language.
+    assert "just now" not in body
+    assert "gerade eben" not in body
+
+
+async def test_the_live_handler_credits_the_right_device(api):
+    """A live message names its device in its key: `d<id>_<rest>`.
+
+    The heartbeat (`bridge_alive`) belongs to no device (Spec 6.5) and
+    must not count. It arrives every 30 seconds no matter what, so
+    crediting it to anyone would make EVERY tile claim it had just been
+    heard from - and the one statement this feature exists to make would
+    become a lie on every card at once.
+
+    `d<id>_online` is the second key that must not count, and unlike the
+    heartbeat the key pattern does NOT exclude it (final review, A1). The
+    server draws that line deliberately: `Runtime._mark_heard` is called
+    from `on_attribute`, `on_node_snapshot` and `on_event`, and NOT from
+    `set_online`, because reachability is matter-server's bookkeeping
+    about a node, not the node saying anything. `set_online` nonetheless
+    ends in `_notify_observers("d<id>_online", ...)`, so the key reaches
+    this handler verbatim - and the tile would render the Offline pill
+    and "Last heard just now" on the same card, at the precise moment
+    this feature exists to serve.
+    """
+    client, _, _ = api
+    script = (await client.get("/static/app.js")).text
+    # `app.js` has two `socket.addEventListener("message", ...)` blocks -
+    # this one, and `connectDiagnosticsLive`'s, which comes first in the
+    # file. Anchor on `connectLive()` itself so `.index` cannot land on
+    # the wrong one.
+    connect_live = script.index("connectLive() {")
+    start = script.index('socket.addEventListener("message"', connect_live)
+    end = script.index("\n      });", start)
+    body = script[start:end]
+
+    assert "const owner = /^d(\\d+)_/.exec(message.key);" in body
+    assert "this.deviceHeardAt[Number(owner[1])] = now;" in body
+    # The exclusion itself, pinned character for character: a matching
+    # `owner` alone must NOT be enough to credit the device.
+    assert "if (owner && message.key !== `d${owner[1]}_online`) {" in body
+
+
+async def test_a_reconnection_refetches_the_served_last_heard(api):
+    """`deviceHeardAt` is the tab's own bookkeeping and cannot know what
+    it missed.
+
+    Nothing backfills it: `loadDevices()` runs from `startApp()` and
+    after commissioning or removal, never on reconnect. A window contact
+    that reports once during a two-hour socket outage would therefore
+    leave its tile reading "Last heard 3h ago" indefinitely, with the
+    staleness banner already cleared - the same wasted investigation this
+    feature was built to prevent, pointing the other way (final review,
+    A2).
+
+    The guard reads `socketEverConnected` BEFORE the assignment below it,
+    so it is the state of the PREVIOUS connection: on the first one
+    `startApp()` has just loaded the list.
+    """
+    client, _, _ = api
+    script = (await client.get("/static/app.js")).text
+    # Anchor on `connectLive()` - `connectDiagnosticsLive` has an `open`
+    # listener of its own, and it comes first in the file.
+    connect_live = script.index("connectLive() {")
+    start = script.index('socket.addEventListener("open"', connect_live)
+    end = script.index("\n      });", start)
+    body = script[start:end]
+
+    assert "if (this.socketEverConnected) {" in body
+    assert "this.loadDevices();" in body
+    # Order matters: read as the previous state, set afterwards.
+    assert body.index("if (this.socketEverConnected) {") < body.index(
+        "this.socketEverConnected = true;"
+    )
+
+
+async def test_the_tile_takes_the_later_of_the_served_and_the_live_timestamp(api):
+    """`device.last_heard` arrives once, with GET /api/devices.
+
+    Shown on its own it would say "12m ago" while values stream into the
+    very same tile - confidently wrong, which is worse than silent. The
+    served value is only the starting point for the window between page
+    load and the first live message from that device.
+    """
+    client, _, _ = api
+    script = (await client.get("/static/app.js")).text
+    start = script.index("lastHeardAt(device) {")
+    end = script.index("\n    },", start)
+    body = script[start:end]
+
+    assert "const live = this.deviceHeardAt[device.id];" in body
+    assert "Date.parse(device.last_heard)" in body
+    assert "Math.max(...candidates)" in body
+
+
+async def test_the_last_heard_line_is_translated_and_states_the_never_case(api):
+    """Both branches carry i18n keys, and the `null` case has its own
+    sentence rather than an empty line: "nothing since the bridge
+    started" is the statement that would have shortened 8 September, and
+    it must not be silently indistinguishable from a device heard from a
+    second ago."""
+    client, _, _ = api
+    script = (await client.get("/static/app.js")).text
+    start = script.index("lastHeardText(device) {")
+    end = script.index("\n    },", start)
+    body = script[start:end]
+
+    assert 'return t("web.devices.never_heard");' in body
+    assert 'return t("web.devices.last_heard", { text: this.sinceTextCoarse(at) });' in body
+    assert "Last heard" not in body
+    # The German that actually SHIPS (strings.yaml, `web.devices.last_heard`).
+    # Until the final review this line read "Zuletzt gehoert" - the
+    # transliteration that commit 8870425 had already replaced in the
+    # shipped string, so the assertion could no longer fail and someone
+    # hardcoding the real German would have sailed straight past it. The
+    # old spelling stays below as a second guard: nobody should reach for
+    # it here either.
+    assert "Zuletzt gehört" not in body
+    assert "Zuletzt gehoert" not in body
+
+
+async def test_the_tile_shows_the_last_heard_line_between_head_and_values(api):
+    """Device state belongs in the header half of the tile, export state
+    in the foot - the tile's own comment already draws that line ("The
+    header stays reserved for the device's state, not the export
+    state"). Two timestamps about different subjects on adjacent lines
+    read as one muddled sentence, so this must not land in
+    `.device-foot` next to `exportHintFor`.
+    """
+    client, _, _ = api
+    page = (await client.get("/")).text
+
+    assert 'class="hint device-heard" x-text="lastHeardText(device)"' in page
+
+    # There is exactly one tile template in the page, so plain positions
+    # are enough to pin the order.
+    head = page.index('<div class="device-head">')
+    line = page.index('x-text="lastHeardText(device)"')
+    values = page.index('<div class="value-rows"')
+    foot = page.index('<div class="device-foot">')
+
+    assert head < line < values < foot
+
+
+# ---------------------------------------------------------------------------
+# "Last heard ..." - the shipped file, executed (final review, A3).
+#
+# Every other check on this line in this file reads DELIVERED TEXT: that
+# `lastHeardText` names its i18n keys, that the tile carries the binding,
+# that the live handler excludes `d<id>_online`. Those prove the right
+# characters left the server. They cannot prove the code does the right
+# thing - an assertion on a condition's source text stays green however
+# the condition behaves, and the two tests below are about behaviour that
+# a copy of the source could not have shown: which of two timestamps
+# wins, and which keys count as the device speaking.
+#
+# The design (§8.2) asked for the expressions to be evaluated against a
+# real DOM; the plan settled for a throwaway harness over three copied
+# function bodies, which proved something about the copy. These tests run
+# the real, shipped `src/loxmatter/web/app.js` instead, through the same
+# `_app_state` as the tile-header section further up. Still no Alpine and
+# still no DOM - the unit under test is the object `app()` returns, and
+# the bindings in `index.html` stay pinned by the delivery tests above.
+# The one thing this buys over the surrounding convention is the one
+# thing that mattered here: a wrong condition FAILS instead of reading
+# correctly.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_the_shipped_last_heard_line_takes_the_newer_of_the_two_sources():
+    """Runs `lastHeardText` on the object `app()` actually returns.
+
+    Three cases, and the label is a different sentence in each - which is
+    why this test feeds the real translation table (`_web_strings`, what
+    `GET /api/i18n` sends the browser). Without it `t()` falls back to
+    returning the key and both timestamp cases would render as
+    "web.devices.last_heard", i.e. the test would pass no matter which
+    source won.
+
+    The `null` case is the one this feature exists for: a device from
+    which nothing has been heard must say so, not fall back to an empty
+    line that looks like a device heard from a second ago.
+    """
+    values = _app_state(
+        setup="""
+        // A fixed instant instead of the clock: the label must not depend
+        // on how long node took to start.
+        const now = 1757400000000;
+        state.nowTick = now;
+        const iso = (ms) => new Date(ms).toISOString();
+        const out = {};
+
+        // Neither source has anything.
+        out.never = state.lastHeardText({ id: 1 });
+
+        // The SERVED value is the newer one - the live bookkeeping of
+        // this tab is three hours behind it.
+        state.deviceHeardAt[2] = now - 3 * 3600 * 1000;
+        out.served_newer = state.lastHeardText({ id: 2, last_heard: iso(now - 120000) });
+
+        // And the other way round: the page was loaded three hours ago
+        // and this device has just reported.
+        state.deviceHeardAt[3] = now;
+        out.live_newer = state.lastHeardText({ id: 3, last_heard: iso(now - 3 * 3600 * 1000) });
+
+        // The five-day silence this whole line was built for. Before the
+        // day branch (A7) this read "Last heard 120h ago".
+        state.deviceHeardAt[4] = now - 5 * 24 * 3600 * 1000;
+        out.five_days = state.lastHeardText({ id: 4 });
+
+        console.log(JSON.stringify(out));
+        """,
+        translations=_web_strings(),
+    )
+
+    assert values["never"] == "Not heard since the bridge started"
+    assert values["served_newer"] == "Last heard 2m ago"
+    assert values["live_newer"] == "Last heard just now"
+    assert values["five_days"] == "Last heard 5d ago"
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_the_shipped_live_handler_does_not_credit_the_online_key():
+    """The scenario of 8 September, played through the shipped handler.
+
+    matter-server marks the dead button's node unavailable, `set_online`
+    puts `d5_online=false` on the socket, and before the exclusion the
+    tile answered that with "Last heard just now" - next to the Offline
+    pill, on the same card. `Runtime._mark_heard` never ran for that
+    message; only the browser counted it.
+
+    This is the assertion the source-text check cannot make: it runs the
+    handler, hands it the three kinds of message that reach it, and asks
+    the tile's own sentence afterwards.
+    """
+    values = _app_state(
+        setup="""
+        // `connectLive()` is browser code: it reads `window.location` to
+        // build the URL and calls `new WebSocket(...)`. node ships a REAL
+        // global WebSocket that would try to open a real connection, so
+        // both are stubbed - the stub only records its listeners, and
+        // `state.socketEverConnected` stays false, so the `open` handler
+        // does not reach for `fetch` either.
+        const sockets = [];
+        globalThis.window = {
+          location: { protocol: "http:", host: "example.invalid" },
+          setTimeout: () => 0,
+          clearTimeout: () => {},
+        };
+        globalThis.WebSocket = class {
+          constructor() {
+            this.listeners = {};
+            sockets.push(this);
+          }
+          addEventListener(type, handler) {
+            (this.listeners[type] = this.listeners[type] || []).push(handler);
+          }
+          close() {}
+        };
+
+        state.connectLive();
+        const socket = sockets[0];
+        const deliver = (key, value) => {
+          for (const handler of socket.listeners.message || []) {
+            handler({ data: JSON.stringify({ key, value }) });
+          }
+        };
+        const out = {};
+
+        // Reachability: matter-server's bookkeeping ABOUT the node, not
+        // the node saying anything.
+        deliver("d5_online", false);
+        out.after_online = state.deviceHeardAt[5] ?? null;
+        state.nowTick = Date.now();
+        out.text_after_online = state.lastHeardText({ id: 5 });
+
+        // The heartbeat belongs to no device at all (Spec 6.5).
+        deliver("bridge_alive", true);
+        out.after_heartbeat = state.deviceHeardAt[5] ?? null;
+        out.heartbeat_seen = state.lastHeartbeatAt !== null;
+
+        // An actual attribute report from that same device - this one
+        // counts, and it is the only one that does.
+        deliver("d5_state", true);
+        out.after_state = typeof state.deviceHeardAt[5];
+        state.nowTick = Date.now();
+        out.text_after_state = state.lastHeardText({ id: 5 });
+
+        console.log(JSON.stringify(out));
+        """,
+        translations=_web_strings(),
+    )
+
+    assert values["after_online"] is None
+    assert values["after_heartbeat"] is None
+    # The sentence the card shows in exactly the state that cost hours on
+    # 8 September: the device is offline AND nothing has been heard from
+    # it. Before the exclusion this read "Last heard just now".
+    assert values["text_after_online"] == "Not heard since the bridge started"
+    # The heartbeat still arrives and is still recorded - just not against
+    # any device.
+    assert values["heartbeat_seen"] is True
+    assert values["after_state"] == "number"
+    assert values["text_after_state"] == "Last heard just now"
