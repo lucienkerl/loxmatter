@@ -43,6 +43,7 @@ from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from typing import Any, Self
 
+import aiohttp
 import httpx2 as httpx
 import pytest
 from conftest import authenticate
@@ -251,13 +252,17 @@ async def test_a_broken_connection_to_github_becomes_a_calm_error_not_a_crash(ap
 
 
 class FakeResponse:
-    """Stands in for `aiohttp.ClientResponse` - only `status` and `text()`,
-    the two members `_fetch` actually reads (same pattern as
-    `tests/matter/test_otbr.py`'s `FakeResponse`)."""
+    """Stands in for `aiohttp.ClientResponse` - `status` and `text()`, the
+    two members `_fetch` actually reads (same pattern as
+    `tests/matter/test_otbr.py`'s `FakeResponse`). `text_exc`, if set, is
+    raised from `text()` instead of returning `_body` - it stands in for a
+    connection that answers with a status line and then dies before the
+    body finishes arriving (`aiohttp.ClientPayloadError`, say)."""
 
-    def __init__(self, status: int, body: str) -> None:
+    def __init__(self, status: int, body: str, text_exc: Exception | None = None) -> None:
         self.status = status
         self._body = body
+        self._text_exc = text_exc
 
     async def __aenter__(self) -> Self:
         return self
@@ -266,6 +271,8 @@ class FakeResponse:
         return None
 
     async def text(self) -> str:
+        if self._text_exc is not None:
+            raise self._text_exc
         return self._body
 
 
@@ -273,9 +280,12 @@ class FakeSession:
     """Stands in for `aiohttp.ClientSession` - only `get()` and `close()`,
     like `tests/matter/test_otbr.py`'s `FakeSession`."""
 
-    def __init__(self, status: int = 200, body: str = "{}") -> None:
+    def __init__(
+        self, status: int = 200, body: str = "{}", text_exc: Exception | None = None
+    ) -> None:
         self.status = status
         self.body = body
+        self.text_exc = text_exc
         self.requests: list[tuple[str, dict[str, str]]] = []
         self.closed = False
         self.raise_on_get: Exception | None = None
@@ -284,7 +294,7 @@ class FakeSession:
         self.requests.append((url, headers or {}))
         if self.raise_on_get is not None:
             raise self.raise_on_get
-        return FakeResponse(self.status, self.body)
+        return FakeResponse(self.status, self.body, self.text_exc)
 
     async def close(self) -> None:
         self.closed = True
@@ -343,6 +353,40 @@ async def test_fetch_closes_the_session_even_when_the_request_fails():
     assert session.closed
 
 
+async def test_fetch_translates_a_dropped_connection_into_a_value_error():
+    """Reproduces Important 1's first shape: `aiohttp.ServerDisconnectedError`
+    (the connection drops after the request was sent, before a response
+    ever comes back) is `ClientError` -> `ServerConnectionError` ->
+    `ClientConnectionError` -> `ClientError` -> `Exception` - checked
+    against the pinned aiohttp 3.14.3, NO `OSError` anywhere in that chain.
+    Before the fix this sailed straight past `check()`'s
+    `except (OSError, KeyError, ValueError, TypeError)`, unlike the plain
+    `OSError` the sibling test above raises."""
+    session = FakeSession()
+    session.raise_on_get = aiohttp.ServerDisconnectedError("Server disconnected")
+
+    with pytest.raises(ValueError, match="did not complete"):
+        await _fetch("https://api.github.com/x", session_factory=lambda: session)
+
+    assert session.closed
+
+
+async def test_fetch_translates_a_truncated_body_into_a_value_error():
+    """Reproduces Important 1's second shape: `aiohttp.ClientPayloadError`
+    (the response starts - status and headers arrive fine - and then dies
+    while the body is still being read, e.g. a truncated chunked
+    transfer). Same `ClientError` -> `Exception` chain, same absence of
+    `OSError`, but raised from `response.text()` instead of `session.get()`
+    - proving the translation covers both places a mid-transfer death can
+    surface, not just the one the sibling test above exercises."""
+    session = FakeSession(status=200, body="", text_exc=aiohttp.ClientPayloadError("boom"))
+
+    with pytest.raises(ValueError, match="did not complete"):
+        await _fetch("https://api.github.com/x", session_factory=lambda: session)
+
+    assert session.closed
+
+
 async def test_the_default_session_factory_sets_a_short_timeout():
     """The web UI's own request to `/api/update/check` waits synchronously
     on this call - an unbounded timeout would let a hanging GitHub stall
@@ -377,3 +421,46 @@ async def test_a_rate_limited_github_response_becomes_a_calm_error_not_a_crash()
 
     assert result.target is None
     assert result.error
+
+
+async def test_a_mid_transfer_failure_becomes_a_calm_error_not_a_crash():
+    """The same end-to-end wiring as the rate-limit test above (real
+    `_fetch`, real `update_check.check()`, only the HTTP transport faked),
+    but for the failure Important 1 actually reports: a response that dies
+    DURING the body read rather than arriving with a bad status. Before
+    the fix, `_fetch` let `aiohttp.ClientPayloadError` propagate unchanged
+    (see the module docstring's now-corrected claim that aiohttp's
+    exceptions "already inherit from OSError") straight past `check()`'s
+    catch tuple."""
+    session = FakeSession(status=200, body="", text_exc=aiohttp.ClientPayloadError("boom"))
+    fetch = functools.partial(_fetch, session_factory=lambda: session)
+
+    result = await update_check.check(
+        "stable", current_version="0.2.0", current_commit=None, fetch=fetch
+    )
+
+    assert result.target is None
+    assert result.error
+
+
+async def test_a_mid_transfer_failure_reaches_the_route_as_a_calm_error(api, monkeypatch):
+    """Same scenario as `test_a_mid_transfer_failure_becomes_a_calm_error_not_a_crash`,
+    but through the real `/api/update/check` route over HTTP - `_fetch` is
+    monkeypatched only to inject the `FakeSession` in place of a real
+    `aiohttp.ClientSession`, everything else (the route, `update_check.check()`,
+    `_fetch`'s own translation logic) runs unmodified. Before the fix this
+    is the exact request that returned a bare 500."""
+    import loxmatter.api.update as update_api
+
+    session = FakeSession(status=200, body="", text_exc=aiohttp.ClientPayloadError("boom"))
+    monkeypatch.setattr(
+        update_api, "_fetch", functools.partial(_fetch, session_factory=lambda: session)
+    )
+    client, _ = api
+
+    response = await client.get("/api/update/check")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["target"] is None
+    assert body["error"]

@@ -128,21 +128,47 @@ async def _fetch(
 
     A connection that never gets a response at all (DNS failure, refused,
     the fixed timeout above expiring) is a different matter: aiohttp's own
-    exceptions for that (`ClientConnectorError`, and - since Python
-    3.11 - the timeout itself, because `asyncio.TimeoutError` is now the
-    builtin `TimeoutError`) already inherit from `OSError`, so they need
-    no translation here and are left to propagate as-is.
+    `ClientConnectorError`, and - since Python 3.11 - the timeout itself
+    (`asyncio.TimeoutError` is now the builtin `TimeoutError`), both
+    happen to inherit from `OSError` and so already fit `check()`'s catch
+    tuple without any help from here.
+
+    A THIRD category is neither "bad status/body" nor "never got a
+    response": a response that STARTS and then dies mid-transfer, before
+    `status`/`text()` above ever return - `ServerDisconnectedError` (the
+    connection drops) or `ClientPayloadError` (a truncated chunked body).
+    An earlier version of this docstring claimed aiohttp's exceptions
+    "already inherit from OSError" and left every one of them to
+    propagate as-is on that basis; checked against the pinned aiohttp
+    3.14.3, that is true of `ClientConnectorError`/`TimeoutError` above
+    but FALSE for these two - their MRO runs `ClientError` -> `Exception`,
+    with no `OSError` anywhere in it - so before the `except` clause below
+    existed, they sailed straight past `check()`'s tuple and reached the
+    web UI as an unhandled 500, exactly like the rate-limit/bad-body cases
+    this function already guards against. Caught as the whole `ClientError`
+    family below, not enumerated by name: naming individual subtypes is
+    what missed this category the first time, and aiohttp is free to add
+    another one in a future release.
 
     `session_factory` mirrors `matter/otbr.fetch_active_dataset`'s own
     parameter of the same name and for the same reason: a seam for tests
     to hand in a `FakeSession` that never opens a socket, not
     speculative flexibility - see `tests/api/test_update_api.py`.
     """
+    import aiohttp
+
     session = (session_factory or _default_session_factory)()
     try:
         async with session.get(url, headers={"Accept": "application/vnd.github+json"}) as response:
             status = response.status
             body = await response.text()
+    except aiohttp.ClientError as exc:
+        # See the docstring paragraph above: a response that started and
+        # then died mid-transfer does not inherit `OSError`, so it must be
+        # translated into a type `check()` already expects, the same way
+        # the non-2xx/non-JSON cases below are - otherwise it would be an
+        # unhandled 500 on a route the web UI polls every two seconds.
+        raise ValueError(f"GitHub's response to {url} did not complete: {exc}") from exc
     finally:
         await session.close()
     if status != 200:
