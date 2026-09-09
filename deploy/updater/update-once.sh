@@ -43,7 +43,7 @@ LOG="$UPDATE_DIR/log.txt"
 FAILURE="$UPDATE_DIR/LETZTER-FEHLSCHLAG.txt"
 ENV_FILE="$STACK/.env"
 
-mkdir -p "$UPDATE_DIR" "$BACKUP_DIR"
+mkdir -p "$UPDATE_DIR" "$BACKUP_DIR" "$UPDATE_DIR/handled"
 
 # A literal newline, for `case ... in *"$NEWLINE"*)` further down - the
 # only reliable way in POSIX sh to test whether a value contains one. A
@@ -165,6 +165,72 @@ set_state() {
   fi
 }
 
+# entrypoint.sh forwards SIGTERM to exactly this process - both on
+# `docker stop` and when its own 600s parent `timeout` fires - and until
+# now nothing here ever trapped it. Proven end to end: sending SIGTERM
+# while curl still answered unhealthy during the ROLLBACK's own health
+# wait left state.json exactly as the last `set_state rollback ""` had
+# written it - phase "rollback", "healthy": true (set_state's own
+# DEFAULT, never a measurement - see the comment above the rollback
+# section further down), and no LETZTER-FEHLSCHLAG.txt at all. A web UI
+# reading that state would render a *completed, healthy* rollback that
+# never actually finished, and the one artefact meant for "the web UI is
+# unreachable" would not exist. This composes with the request-marker
+# guard below, too: a "rollback" phase that never resolves is exactly
+# what an operator facing it would try to fix by deleting or repairing
+# state.json - which self-heals to a fresh idle id (see the heartbeat
+# block above) and would otherwise let the very same failed job replay.
+#
+# Reads id/from/to back OUT of $STATE itself rather than off this
+# script's own JOB_ID/FROM/TO variables: those are unset for a signal
+# arriving before a request has even been read (nothing to report beyond
+# "idle" then, which the trap does not bother improving on), and the
+# values $STATE already holds from the last real `set_state` call are the
+# most honest account of what this pass was doing at the moment it was
+# cut off - not a reconstruction from variables that may lag behind it.
+#
+# Every step from here on is best-effort (the trap disables itself
+# first): a handler that could itself be killed by `set -eu` would leave
+# the process to whatever default disposition remains - silence again,
+# exactly what this exists to prevent.
+on_signal() {
+  # A second SIGTERM (an impatient `docker stop`, or the runtime
+  # escalating while this handler is still mid-write) must not re-enter
+  # this function while state.json or the failure file are half-written.
+  trap '' TERM INT HUP
+
+  sig_phase="$(jq -r '.phase // "unknown"' "$STATE" 2>/dev/null || echo unknown)"
+  JOB_ID="$(jq -r '.id // empty' "$STATE" 2>/dev/null || true)"
+  FROM="$(jq -r '.from // empty' "$STATE" 2>/dev/null || true)"
+  TO="$(jq -r '.to // empty' "$STATE" 2>/dev/null || true)"
+  ROLLED="${ROLLED:-false}"
+  # Never true here: whatever the health endpoint's real state is right
+  # now was, by definition, never measured after this signal arrived.
+  HEALTHY=false
+
+  set_state failed "interrupted by a signal while in phase '$sig_phase' - entrypoint.sh forwards SIGTERM here from \`docker stop\` and from its own 600s worker timeout; the fields above are the last ones this pass actually wrote, not a measurement of what is running now" \
+    || true
+
+  {
+    printf 'loxmatter - last failed update attempt\n\n'
+    printf 'Time:            %s\n' "$(now)"
+    printf 'Attempted:       %s -> %s\n' "$FROM" "$TO"
+    printf 'Interrupted in:  phase "%s" (a signal arrived before this pass could finish)\n' "$sig_phase"
+    printf 'Healthy again:   UNKNOWN - interrupted before this could be measured\n\n'
+    printf 'This run was killed by a signal - SIGTERM forwarded by entrypoint.sh, from\n'
+    printf 'either "docker stop" or its own 600-second worker timeout - before it reached\n'
+    printf 'a definite outcome. If phase above was "rollback", the service may currently\n'
+    printf 'be on neither the old nor the new version. Check by hand:\n'
+    printf '  cd %s && docker compose logs --tail 100 %s\n' "$STACK" "$SERVICE"
+    printf '  cd %s && ./scripts/update.sh --no-pull\n\n' "$REPO"
+    printf 'Last lines of the log:\n'
+    tail -n 40 "$LOG" 2>/dev/null || true
+  } > "$FAILURE" 2>/dev/null || true
+
+  exit 143
+}
+trap on_signal TERM INT HUP
+
 # Defined here, ahead of the heartbeat and request-reading sections below,
 # so it is available to the "request is not readable at all" branch there
 # too - rejecting is needed the moment a request is found to be bad, not
@@ -270,8 +336,48 @@ TARGET="$(jq -r '.target // empty' "$REQUEST" 2>/dev/null || true)"
 # Exactly once. Without this the sidecar would work through the same
 # request again every two seconds - and an update that restarts itself
 # never comes to rest.
+#
+# $LAST alone used to be the WHOLE guard, and that rests entirely on
+# state.json's own integrity - the heartbeat block above self-heals a
+# corrupt or `null` state.json back to a fresh idle state with id null
+# (by design: an unreadable state must not wedge the heartbeat forever).
+# Proven end to end against the unpatched guard: complete a rollback (two
+# recreates), truncate state.json to "garbage{", run one more pass - the
+# WHOLE failed update replayed, another backup, another pull, two MORE
+# recreates, four for one request. This is worse than a mere duplicate
+# log line: it composes with a stuck "rollback" phase (see the SIGTERM
+# trap above) exactly the way an operator would trigger it - by deleting
+# or repairing a state.json that looks broken.
+#
+# $HANDLED_MARKER is the independent half: a plain, empty file created
+# the moment a request is ACCEPTED (see `set_state queued ""` below), not
+# once it finishes - so even a request whose processing is later
+# interrupted (the SIGTERM trap above) or whose state.json is later reset
+# stays marked done. Deliberately a file per job id, not a rewrite of
+# state.json's own id field: state.json is the ONE thing this file's own
+# self-healing doctrine says must recover from corruption; a guard that
+# depends on the very field that doctrine resets could not be
+# "independent of the state file's integrity" at all.
+#
+# Guarded by the same character-class $JOB_ID must already pass to be
+# ACCEPTED (see Rule 0 below) before it is ever used as a filename here -
+# at this point in the script JOB_ID has NOT been validated yet (an
+# unreadable or malformed id reaches this line too), and building a path
+# from an unvalidated value would reopen a path-traversal question this
+# file has spent the sections below closing for every other purpose.
+# Skipping the marker check for anything that fails the class simply
+# falls through to $LAST - correct, since a request that was never
+# actually accepted (Rule 0/1/2 reject it further down) can never have
+# earned a marker in the first place.
+HANDLED_MARKER=""
+case "$JOB_ID" in
+  *[!A-Za-z0-9._-]*) ;;
+  *) HANDLED_MARKER="$UPDATE_DIR/handled/$JOB_ID" ;;
+esac
 LAST="$(jq -r '.id // empty' "$STATE" 2>/dev/null || true)"
-[ "$JOB_ID" != "$LAST" ] || exit 0
+if [ "$JOB_ID" = "$LAST" ] || { [ -n "$HANDLED_MARKER" ] && [ -e "$HANDLED_MARKER" ]; }; then
+  exit 0
+fi
 
 if [ "$UNREADABLE" = 1 ]; then
   FROM="" TO="" reject "request is not readable (invalid JSON, a top-level array, or a missing/empty id)"
@@ -467,6 +573,27 @@ fi
 set_state queued ""
 log "Request $JOB_ID accepted: $FROM -> $TO ($CHANNEL)"
 
+# Written the moment acceptance is final, before any risky work starts -
+# see the guard above for why this has to happen at acceptance and not at
+# completion. $HANDLED_MARKER is guaranteed non-empty here: JOB_ID has
+# just passed Rule 0's identical character-class check above (further
+# down in the script text, but already executed by the time control
+# reaches this line), so it always matched the "safe filename" case above.
+: > "$HANDLED_MARKER"
+
+# A stale LETZTER-FEHLSCHLAG.txt from an EARLIER, unrelated failed
+# request must not go on describing itself as "the" last failed attempt
+# once a new one has been accepted - proven end to end: complete a
+# rollback, then let a different request fail at `git fetch` (a stage
+# that never touches this file at all) and the OLD rollback's versions
+# and timestamp are still what an operator reads. The success path
+# further down already removes this file on a clean finish; clearing it
+# here as well means a request that fails BEFORE ever reaching the
+# rollback section leaves no failure file at all, which is the honest
+# answer - the plain-text file exists to narrate a rollback, not every
+# possible failure (those are already in state.json's own "error" field).
+rm -f "$FAILURE"
+
 # ------------------------------------------------------------------- flow --
 # Runs the accepted request through to completion in this same pass - there
 # is no separate hand-off. entrypoint.sh's 600s worker timeout already
@@ -634,6 +761,102 @@ wait_healthy() {
     sleep 1
   done
   return 1
+}
+
+# Resolves a path INSIDE this container back to where it lives on the
+# DOCKER HOST - the machine an operator's shell actually runs on, not this
+# sidecar's own filesystem. Proven end to end why guessing "same path"
+# does not work: $STACK/$REPO default to /repo/deploy/testhost and /repo,
+# bind-mounted from the host's checkout into this container - /repo does
+# not exist on the host at all, so every "cd /repo && ..." line in
+# LETZTER-FEHLSCHLAG.txt below used to fail at the `cd`, and the `&&`
+# silently swallowed everything after it.
+#
+# Asks the docker daemon itself, over the socket this sidecar already
+# holds, rather than assume any particular layout - it is the one party
+# that actually knows what is mounted where. `--format` prints one
+# "destination source" line per mount; `awk` picks the line whose
+# destination matches $1 verbatim. Piped through `awk` rather than left
+# bare: a `docker inspect` that fails (daemon unreachable, no container by
+# this name yet - the self-replacement service is a later task) must not
+# make the ASSIGNMENT this runs inside fail under `set -eu`, the same
+# reasoning current_tag()/running_version() already document above for
+# ending a substitution on a command that itself always exits 0 - `awk`
+# does, even reading nothing at all.
+#
+# Falls back to $2 when nothing matches - a container path backed by a
+# named volume ($BACKUP_DIR, in the caller below) has no host directory
+# to report at all, and the caller is expected to reach for `docker exec`
+# instead (see the restore command below, which already does exactly
+# that, for exactly that reason).
+host_path_for() {
+  host_path_for_raw="$(docker inspect loxmatter-updater \
+      --format '{{range .Mounts}}{{.Destination}} {{.Source}}
+{{end}}' 2>/dev/null \
+    | awk -v dest="$1" '$1 == dest { $1 = ""; sub(/^ /, ""); print; exit }')"
+  printf '%s' "${host_path_for_raw:-$2}"
+}
+
+# If even the rollback did not become healthy, the web UI is probably not
+# reachable at all - then this file is the only answer someone finds who
+# checks in over SSH after all. It is written on a successful rollback
+# too: anyone who wants to know why their version is the old one again
+# should be able to read up on it without needing the web UI at all.
+#
+# Called from BOTH rollback outcomes below, and deliberately BEFORE the
+# `set_state failed` call at each of them, not after: `{ ... } >
+# "$FAILURE"` used to sit downstream of an unguarded `set_state failed`
+# call, so a failing `set_state` (jq's own execve failing under `set -eu`,
+# say) killed the whole script right there - the one artefact meant for
+# exactly the "state.json is unwritable" world was the one thing that
+# then never got written. Calling this first means even a hard stop
+# immediately afterward still leaves a readable account behind.
+#
+# The restore command below reaches into $BACKUP_DIR through
+# loxmatter-updater specifically, not loxmatter: by the time an operator
+# runs it, loxmatter has just been asked to `stop`, and a stopped
+# container cannot be `exec`ed into. loxmatter-updater keeps running
+# throughout and shares the same volume at /data (see docker-compose.yml).
+# $BACKUP_DIR itself is a NAMED docker volume, not a host bind mount (see
+# docker-compose.yml's loxmatter-store) - there is no host path to print
+# for it at all, which is why it is named only in the `docker exec`
+# command below, never in a bare `cd`.
+write_failure_file() {
+  # $1: the message this attempt ends on (already what is about to be
+  # passed to `set_state failed` right after this call returns).
+  host_stack="$(host_path_for "$STACK" \
+    "$STACK (host path unknown - run: docker inspect loxmatter-updater --format '{{json .Mounts}}')")"
+  host_repo="$(host_path_for "$REPO" \
+    "$REPO (host path unknown - run: docker inspect loxmatter-updater --format '{{json .Mounts}}')")"
+  {
+    printf 'loxmatter - last failed update attempt\n\n'
+    printf 'Time:           %s\n' "$(now)"
+    printf 'Attempted:      %s -> %s (channel %s)\n' "$FROM" "$TO" "$CHANNEL"
+    if [ "$ROLLED" = true ]; then
+      printf 'Rolled back to: %s\n' "$BACK"
+    else
+      printf 'NOT ROLLED BACK - %s\n' "$1"
+    fi
+    printf 'Healthy again:  %s\n\n' "$([ "$HEALTHY" = true ] && echo yes || echo NO)"
+    printf 'Signal database: NOT restored automatically (see model/store.py -\n'
+    printf 'an older version starts up fine on a newer schema). A backup taken\n'
+    printf 'just before this attempt is available if you need to go further\n'
+    printf 'back than the image rollback above went. It lives INSIDE the\n'
+    printf 'loxmatter-updater container, in a named Docker volume - not on the\n'
+    printf 'host filesystem, so it cannot be "cd"ed to; reach it with "docker\n'
+    printf 'exec", exactly as the restore command below already does:\n'
+    printf '  %s/store-%s.tgz\n\n' "$BACKUP_DIR" "$STAMP"
+    printf 'Manual next steps, run from the HOST (not inside any container):\n'
+    printf '  cd %s && docker compose logs --tail 100 %s\n' "$host_stack" "$SERVICE"
+    printf '  cd %s && ./scripts/update.sh --no-pull\n\n' "$host_repo"
+    printf 'To restore that backup instead (discards every signal learned\n'
+    printf 'since it was taken - only if you are sure):\n'
+    printf '  cd %s && docker compose stop %s\n' "$host_stack" "$SERVICE"
+    printf "  docker exec loxmatter-updater sh -c 'tar xzf %s/store-%s.tgz -C /data'\n" "$BACKUP_DIR" "$STAMP"
+    printf '  cd %s && docker compose start %s\n\n' "$host_stack" "$SERVICE"
+    printf 'Last lines of the log:\n'
+    tail -n 40 "$LOG" 2>/dev/null || true
+  } > "$FAILURE"
 }
 
 # 0. Fetch the target and, for the dev channel, validate ancestry - BEFORE
@@ -845,19 +1068,44 @@ if [ "$RECREATE_OK" = true ]; then
     set_state "done" ""
     log "Update to $TO complete"
 
-    # Last, and only after a successful update: the sidecar checks
-    # whether its own pinned image is out of date and triggers its own
-    # replacement, detached. AFTER writing `done`, never before - doing
-    # this earlier would terminate the sidecar in the middle of writing
-    # the state the web UI is currently reading, and a successful update
-    # would look like a stuck one instead of a finished one.
+    # Last, and only after a successful update: the sidecar pulls its own
+    # pinned image and, only if that pull actually changed something,
+    # lets `compose up -d` recreate itself, detached. AFTER writing
+    # `done`, never before - doing this earlier would terminate the
+    # sidecar in the middle of writing the state the web UI is currently
+    # reading, and a successful update would look like a stuck one
+    # instead of a finished one.
+    #
+    # `compose up -d` ALONE - what this used to be - does not do what the
+    # paragraph above claims. Compose's default pull policy is `missing`:
+    # `up` only pulls an image it does not already have locally. This
+    # sidecar is pinned to a moving tag (":stable", typically) that IS
+    # already present locally the moment it is running at all, so `up -d`
+    # on its own never even asks the registry whether ":stable" has moved
+    # - it is a silent no-op every single time, self-replacement in name
+    # only. `compose pull` first is what actually asks the registry and
+    # updates the local image if it has moved; `up -d` afterward compares
+    # the (possibly now-updated) image against the running container and
+    # recreates it ONLY when that comparison actually differs - so an
+    # already-current image still costs one network round trip but never
+    # an unnecessary recreate.
+    #
+    # A failed pull (no network, registry unreachable) is intentionally
+    # NOT `set_state failed` - the update this pass exists to report on
+    # already succeeded and is already `done`; a sidecar that cannot
+    # currently reach the registry for its OWN image should keep running
+    # on its current one, not report the bridge's update as broken.
     #
     # Detached via `-d`: the call that replaces this very container must
     # not wait inside it for its own end. `--no-deps`, the same as every
     # other compose call in this file: the bridge and its neighbours are
     # not this call's business.
     if [ "${LOXMATTER_UPDATER_SELF_REPLACE:-1}" = "1" ]; then
-      compose up -d --no-deps loxmatter-updater || true
+      if compose pull loxmatter-updater; then
+        compose up -d --no-deps loxmatter-updater || true
+      else
+        log "self-replacement: compose pull loxmatter-updater failed - staying on the currently running image"
+      fi
     fi
 
     exit 0
@@ -875,7 +1123,6 @@ if [ "$RECREATE_OK" = true ]; then
 else
   ROLLBACK_REASON="docker compose up failed for $TO"
 fi
-set_state rollback ""
 
 # --------------------------------------------------------------- rollback --
 # Reached from two places above: `compose up` failing outright, or the
@@ -912,12 +1159,32 @@ set_state rollback ""
 # before `--force-recreate` ever ran). Only when that could not be
 # determined does the old, possibly-aliased .env entry ($FROM) remain the
 # only information left to fall back on.
-case "$RUNNING" in
+#
+# Normalised through the SAME "${RUNNING#v}" the acceptance check above
+# uses for $CUR, not tested raw - the two used to disagree: this case
+# used to test bare $RUNNING against the enum, while the acceptance check
+# tests it "v"-stripped. A build stamped "vdev" (a dev-channel build
+# whose own version string carries the leading "v" the stable channel
+# normally strips) matched neither literal branch here before - it fell
+# through to the "found a real version" arm and produced BACK="dev",
+# silently accepted as a rollback target, instead of correctly falling
+# back to $FROM as an unidentified "dev" running-version already does
+# everywhere else in this file.
+RUNNING_NORMALIZED="${RUNNING#v}"
+case "$RUNNING_NORMALIZED" in
   ''|unbekannt|dev) BACK="$FROM" ;;
-  *)                BACK="${RUNNING#v}" ;;
+  *)                BACK="$RUNNING_NORMALIZED" ;;
 esac
 log "$ROLLBACK_REASON - rolling back to $BACK"
-ROLLED=true
+
+# One write here, not two: an earlier revision of this section wrote
+# `set_state rollback ""` a second time immediately above this point,
+# before $BACK was even known - a phase update no consumer distinguished
+# from the one below, since ROLLED and BACK are still whatever they were
+# a moment before either write. This single call already lands well
+# before the health wait further down (state.json reads "phase":
+# "rollback" for that entire wait), which is what the SIGTERM trap at the
+# top of this file, and the test that exercises it, both rely on.
 set_state rollback ""
 
 if ! set_tag "$BACK"; then
@@ -928,9 +1195,22 @@ if ! set_tag "$BACK"; then
   # rollback at all, just the exact failure repeated once more, still
   # inside this one pass (see "exactly once" below). Nothing past this
   # point can still help, so nothing past this point is attempted.
+  #
+  # ROLLED stays false here - it used to be set true unconditionally
+  # BEFORE this call was ever attempted, so a failing `set_tag` (proven
+  # with $STACK made read-only: this exact call failed, "Permission
+  # denied") still left state.json and LETZTER-FEHLSCHLAG.txt both
+  # claiming "Rolled back to: $BACK" while .env kept reading $TO - an
+  # operator reading either would believe the house was back on the old
+  # version when it plainly was not. ROLLED now only ever becomes true
+  # once the write it claims has actually happened.
   HEALTHY=false
-  set_state failed "version $TO did not become healthy, and the rollback tag could not be written into $ENV_FILE either - it may still read $TO"
+  ROLLBACK_MSG="version $TO did not become healthy, and the rollback tag could not be written into $ENV_FILE either - it may still read $TO"
+  write_failure_file "$ROLLBACK_MSG"
+  set_state failed "$ROLLBACK_MSG"
 else
+  ROLLED=true
+
   # Best-effort: the Compose file at $GIT_BEFORE is what actually matched
   # $BACK, but even a checkout that fails here (a dirty working tree, a
   # ref this shallow clone never fetched) should not stop the one thing
@@ -949,39 +1229,7 @@ else
     HEALTHY=false
   fi
 
-  set_state failed "version $TO did not become healthy after ${HEALTH_TIMEOUT}s"
+  ROLLBACK_MSG="version $TO did not become healthy after ${HEALTH_TIMEOUT}s"
+  write_failure_file "$ROLLBACK_MSG"
+  set_state failed "$ROLLBACK_MSG"
 fi
-
-# If even the rollback did not become healthy, the web UI is probably not
-# reachable at all - then this file is the only answer someone finds who
-# checks in over SSH after all. It is written on a successful rollback
-# too: anyone who wants to know why their version is the old one again
-# should be able to read up on it without needing the web UI at all.
-#
-# The restore commands below reach into $BACKUP_DIR through
-# loxmatter-updater specifically, not loxmatter: by the time an operator
-# runs them, loxmatter has just been asked to `stop`, and a stopped
-# container cannot be `exec`ed into. loxmatter-updater keeps running
-# throughout and shares the same volume at /data (see docker-compose.yml).
-{
-  printf 'loxmatter - last failed update attempt\n\n'
-  printf 'Time:           %s\n' "$(now)"
-  printf 'Attempted:      %s -> %s (channel %s)\n' "$FROM" "$TO" "$CHANNEL"
-  printf 'Rolled back to: %s\n' "$BACK"
-  printf 'Healthy again:  %s\n\n' "$([ "$HEALTHY" = true ] && echo yes || echo NO)"
-  printf 'Signal database: NOT restored automatically (see model/store.py -\n'
-  printf 'an older version starts up fine on a newer schema). A backup taken\n'
-  printf 'just before this attempt is available if you need to go further\n'
-  printf 'back than the image rollback above went:\n'
-  printf '  %s/store-%s.tgz\n\n' "$BACKUP_DIR" "$STAMP"
-  printf 'Manual next steps:\n'
-  printf '  cd %s && docker compose logs --tail 100 %s\n' "$STACK" "$SERVICE"
-  printf '  cd %s && ./scripts/update.sh --no-pull\n\n' "$REPO"
-  printf 'To restore that backup instead (discards every signal learned\n'
-  printf 'since it was taken - only if you are sure):\n'
-  printf '  cd %s && docker compose stop %s\n' "$STACK" "$SERVICE"
-  printf "  docker exec loxmatter-updater sh -c 'tar xzf %s/store-%s.tgz -C /data'\n" "$BACKUP_DIR" "$STAMP"
-  printf '  cd %s && docker compose start %s\n\n' "$STACK" "$SERVICE"
-  printf 'Last lines of the log:\n'
-  tail -n 40 "$LOG" 2>/dev/null || true
-} > "$FAILURE"

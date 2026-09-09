@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import json
 import os
+import signal
 import subprocess
 import time
 from pathlib import Path
@@ -153,8 +154,8 @@ def updater(tmp_path):
         if real:
             (sysdir / tool).symlink_to(real)
 
-    def run(_timeout=None, **extra_env):
-        env = {
+    def build_env(**extra_env):
+        return {
             "PATH": f"{bindir}:{sysdir}",
             "STUB_LOG": str(log),
             "LOXMATTER_UPDATE_DIR": str(update_dir),
@@ -172,6 +173,9 @@ def updater(tmp_path):
             "LOXMATTER_UPDATER_SELF_REPLACE": "0",
             **extra_env,
         }
+
+    def run(_timeout=None, **extra_env):
+        env = build_env(**extra_env)
         result = subprocess.run(
             [str(SCRIPT)], capture_output=True, text=True, env=env, check=False, timeout=_timeout
         )
@@ -184,7 +188,16 @@ def updater(tmp_path):
         state = json.loads(state_file.read_text(encoding="utf-8")) if state_file.is_file() else None
         return result, calls, state
 
+    def popen(**extra_env):
+        # For tests that need to send the process a real signal (the
+        # SIGTERM trap) while it is still mid-run - `run()` above only
+        # ever returns after the process has already exited, which is
+        # exactly the state a signal test needs to interrupt.
+        return subprocess.Popen([str(SCRIPT)], env=build_env(**extra_env))
+
     run.update_dir = update_dir
+    run.log_path = log
+    run.popen = popen
     run.stack = stack
     run.bindir = bindir
     run.backup_dir = tmp_path / "data" / "backups"
@@ -1228,9 +1241,23 @@ def test_the_sidecar_replaces_itself_only_after_success(updater):
 
 
 def test_after_a_failure_it_does_not_replace_itself(kranker_dienst):
+    # "loxmatter-updater" alone is no longer a safe substring to forbid
+    # outright: the Stufe-2 fix for the plain-text file's unusable
+    # commands (host_path_for(), in update-once.sh) makes a READ-ONLY
+    # `docker inspect loxmatter-updater --format ...` call on every
+    # failure, rollback included, to resolve $STACK/$REPO back to a host
+    # path - that call is expected here, and is not a self-replacement.
+    # What this test actually claims is narrower and still holds: no
+    # MUTATING `docker compose ... loxmatter-updater` call (a pull or an
+    # up) ever runs on a failed pass.
     _auftrag(kranker_dienst, target="0.3.0")
     _, calls, _ = kranker_dienst(LOXMATTER_UPDATER_SELF_REPLACE="1")
-    assert "loxmatter-updater" not in calls
+    self_replace_calls = [
+        line
+        for line in calls.splitlines()
+        if line.startswith("docker compose") and "loxmatter-updater" in line
+    ]
+    assert self_replace_calls == []
 
 
 def test_self_replacement_is_off_by_default_in_this_fixture(updater):
@@ -1244,3 +1271,359 @@ def test_self_replacement_is_off_by_default_in_this_fixture(updater):
     _, calls, state = updater()
     assert state["phase"] == "done"
     assert "loxmatter-updater" not in calls
+
+
+# ------------------------------------------------------ Task 4 Stufe 2 --
+# The second review pass on the rollback, the plain-text file, and the
+# self-replacement (see .superpowers/sdd/task-4-stufe2-report.md for the
+# earlier round's own write-up). Seven Importants plus minors; each test
+# below names which one it closes.
+
+
+def test_the_rollback_does_not_claim_success_when_the_tag_write_fails(updater):
+    # Important 1. Proven against the unpatched script: `ROLLED=true` was
+    # set BEFORE `set_tag "$BACK"` was even attempted, so a failing tag
+    # write left state.json reporting "rolled_back": true and
+    # LETZTER-FEHLSCHLAG.txt printing "Rolled back to: 0.2.0" while .env
+    # kept reading 0.3.0 and exactly one `docker compose up` had ever run
+    # - an operator reading either would believe the house was back on
+    # the old version when it plainly was not.
+    #
+    # The curl stub below chmods $STACK read-only the moment it is first
+    # called - i.e. during the FIRST health wait, well after the update's
+    # own earlier `set_tag` call (writing the NEW tag, before the pull)
+    # has already succeeded normally. That isolates the failure to
+    # exactly the ROLLBACK's own `set_tag "$BACK"` call, the same
+    # technique `test_a_pull_failure_that_cannot_restore_the_tag_is_
+    # recorded_as_a_failure` already uses for an earlier call site.
+    curl_path = updater.bindir / "curl"
+    curl_path.write_text(
+        "#!/bin/sh\n"
+        'printf "curl %s\\n" "$*" >> "$STUB_LOG"\n'
+        'chmod 0555 "$LOXMATTER_STACK" 2>/dev/null || true\n'
+        "exit 7\n",
+        encoding="utf-8",
+    )
+    curl_path.chmod(0o755)
+    try:
+        _auftrag(updater, target="0.3.0")
+        _, calls, state = updater(_timeout=30)
+    finally:
+        updater.stack.chmod(0o755)
+    assert state["phase"] == "failed"
+    assert state["rolled_back"] is False
+    assert "may still read" in state["error"]
+    assert (updater.stack / ".env").read_text(encoding="utf-8") == "LOXMATTER_IMAGE_TAG=0.3.0\n"
+    assert len([line for line in calls.splitlines() if line.startswith("docker compose up")]) == 1
+    text = (updater.update_dir / "LETZTER-FEHLSCHLAG.txt").read_text(encoding="utf-8")
+    assert "NOT ROLLED BACK" in text
+    assert "Rolled back to:" not in text
+
+
+def test_the_failure_file_uses_a_real_host_path_when_docker_can_resolve_it(kranker_dienst):
+    # Important 2. Proven against the unpatched script: four of the five
+    # printed commands began `cd $STACK`/`cd $REPO` - CONTAINER paths
+    # (/repo/deploy/testhost, /repo), bind-mounted from the host's
+    # checkout - and on the host neither exists at all, so each failed at
+    # the `cd` and the `&&` silently swallowed everything after it.
+    #
+    # host_path_for() in update-once.sh asks the docker daemon itself
+    # (`docker inspect loxmatter-updater --format ...`) what is actually
+    # mounted where. This stub answers that question the way a real
+    # daemon would once the self-replacement service (a later task)
+    # exists: one "container-path host-path" line per bind mount.
+    host_checkout = "/home/pi/loxmatter-checkout"
+    docker_path = kranker_dienst.bindir / "docker"
+    docker_path.write_text(
+        "#!/bin/sh\n"
+        'printf "%s %s\\n" "docker" "$*" >> "$STUB_LOG"\n'
+        'case "$1" in\n'
+        "  inspect)\n"
+        '    if [ "$2" = "loxmatter-updater" ]; then\n'
+        f'      printf "%s %s\\n" "$LOXMATTER_REPO" "{host_checkout}"\n'
+        f'      printf "%s %s\\n" "$LOXMATTER_STACK" "{host_checkout}/deploy/testhost"\n'
+        "    else\n"
+        '      printf "LOXMATTER_VERSION=0.2.0\\n"\n'
+        "    fi\n"
+        "    ;;\n"
+        "esac\n",
+        encoding="utf-8",
+    )
+    docker_path.chmod(0o755)
+    _auftrag(kranker_dienst, target="0.3.0")
+    kranker_dienst()
+    text = (kranker_dienst.update_dir / "LETZTER-FEHLSCHLAG.txt").read_text(encoding="utf-8")
+    assert f"cd {host_checkout}/deploy/testhost && docker compose logs" in text
+    assert f"cd {host_checkout} && ./scripts/update.sh --no-pull" in text
+    # Bounded to the RUNNABLE command lines specifically, not the log
+    # excerpt at the end of the file (which legitimately still shows the
+    # container-side `cd` from this pass's own compose calls - that is a
+    # log of what THIS container did, not a command for the operator to
+    # run themselves).
+    manual_section = text.split("Manual next steps")[1].split("Last lines of the log")[0]
+    assert str(kranker_dienst.stack) not in manual_section
+    assert str(kranker_dienst.stack.parent.parent) not in manual_section
+
+
+def test_the_failure_file_says_so_plainly_when_the_host_path_cannot_be_resolved(kranker_dienst):
+    # Important 2, the other half: this file's default docker stub cannot
+    # answer the Mounts question at all (no `--format` handling) - the
+    # ordinary case until the self-replacement service actually exists,
+    # or on a daemon this sidecar cannot currently reach. The commands
+    # must not silently print the unusable container path as if it were
+    # fine; they must say plainly that the host path is unknown.
+    _auftrag(kranker_dienst, target="0.3.0")
+    kranker_dienst()
+    text = (kranker_dienst.update_dir / "LETZTER-FEHLSCHLAG.txt").read_text(encoding="utf-8")
+    assert "host path unknown" in text
+
+
+def test_the_self_replacement_pulls_before_recreating(updater):
+    # Important 3. Proven against the unpatched script: `compose up -d`
+    # ALONE never asks the registry anything - Compose's default pull
+    # policy is `missing`, and the sidecar's own pinned image is already
+    # present locally the instant it is running at all, so the whole
+    # block was a silent no-op on every run, self-replacement in name
+    # only. `compose pull` first is what actually contacts the registry;
+    # `up -d` afterward only recreates when that pull actually changed
+    # the local image.
+    _auftrag(updater, target="0.3.0")
+    _, calls, _ = updater(LOXMATTER_UPDATER_SELF_REPLACE="1")
+    lines = calls.splitlines()
+    pull_idx = next(
+        i for i, line in enumerate(lines) if line == "docker compose pull loxmatter-updater"
+    )
+    up_idx = next(
+        i
+        for i, line in enumerate(lines)
+        if line.startswith("docker compose up") and "loxmatter-updater" in line
+    )
+    assert pull_idx < up_idx
+
+
+def test_the_rollback_uses_running_not_the_env_alias_when_they_disagree(kranker_dienst):
+    # Important 4. Replacing the whole `case "$RUNNING" in ...` block that
+    # computes $BACK with a bare `BACK="$FROM"` - the exact regression the
+    # design's longest comment in update-once.sh exists to prevent - left
+    # ALL other tests in this file passing, because every other fixture
+    # seeds .env and the `docker inspect` stub with the SAME version
+    # (0.2.0): the two can never disagree in any of them. Seeded to
+    # genuinely differ here: .env holds the alias "stable" (the normal
+    # case on every fresh installation since 0.2.0 - see current_tag()'s
+    # own comment), while the container's baked-in LOXMATTER_VERSION -
+    # the only reliable answer to "what is actually running" - says
+    # 0.2.0. A correct rollback restores 0.2.0; a `BACK="$FROM"` mutant
+    # would instead write back the literal string "stable", pointing the
+    # next pull at whatever "stable" now resolves to in the registry -
+    # possibly the very release that just failed.
+    (kranker_dienst.stack / ".env").write_text("LOXMATTER_IMAGE_TAG=stable\n", encoding="utf-8")
+    _auftrag(kranker_dienst, target="0.3.0")
+    kranker_dienst()
+    assert (kranker_dienst.stack / ".env").read_text(encoding="utf-8") == (
+        "LOXMATTER_IMAGE_TAG=0.2.0\n"
+    )
+
+
+def test_the_self_replacement_runs_strictly_after_done_is_recorded(updater):
+    # Important 5. Moving the self-replacement block to BEFORE
+    # `set_state "done" ""` - exactly the ordering the code comment above
+    # it says must never happen (it would terminate the sidecar mid-write
+    # of the very state the web UI is currently reading) - left every
+    # other test in this file passing: the only existing coverage
+    # compares `compose up` INDICES within the call log, which that move
+    # does not change at all (the self-replacement's own `compose up`
+    # line still sorts after the update's `compose up` line regardless of
+    # which `set_state` calls happened around either of them).
+    #
+    # The docker stub below, on the specific call this file makes to
+    # replace ITSELF (a `compose` call whose arguments mention
+    # "loxmatter-updater"), snapshots state.json to a SIDE file at the
+    # moment that call actually runs - a direct, timestamped witness of
+    # what the state machine had recorded AT THAT INSTANT, not just what
+    # it is once the whole pass has finished.
+    snapshot = updater.update_dir / "state-at-self-replace.json"
+    docker_path = updater.bindir / "docker"
+    docker_path.write_text(
+        "#!/bin/sh\n"
+        'printf "%s %s\\n" "docker" "$*" >> "$STUB_LOG"\n'
+        'case "$1" in\n'
+        '  inspect) printf "LOXMATTER_VERSION=0.2.0\\n" ;;\n'
+        "  compose)\n"
+        '    case "$*" in\n'
+        f'      *loxmatter-updater*) cp "$LOXMATTER_UPDATE_DIR/state.json" "{snapshot}" 2>/dev/null ;;\n'
+        "    esac\n"
+        "    ;;\n"
+        "esac\n",
+        encoding="utf-8",
+    )
+    docker_path.chmod(0o755)
+    _auftrag(updater, target="0.3.0")
+    _, _calls, state = updater(LOXMATTER_UPDATER_SELF_REPLACE="1")
+    assert state["phase"] == "done"
+    assert snapshot.is_file(), "self-replacement never ran"
+    snap_state = json.loads(snapshot.read_text(encoding="utf-8"))
+    assert snap_state["phase"] == "done"
+
+
+def test_a_corrupted_state_file_does_not_replay_a_completed_rollback(kranker_dienst):
+    # Important 6. Exactly-once used to rest SOLELY on state.json's own
+    # "id" field, and request.json is never consumed or removed. Proven
+    # against the unpatched script: complete a rollback (two recreates),
+    # truncate state.json to unparseable garbage (this file's own
+    # documented self-healing then resets the id to null - see the
+    # heartbeat block's comment), run one more pass - the WHOLE failed
+    # update replayed: another backup, another pull, two MORE recreates,
+    # four for one request. An operator facing a stuck "rollback" phase
+    # (see the SIGTERM trap and Important 7) would plausibly do exactly
+    # this by hand, trying to fix what looks like a broken state file.
+    #
+    # The fix's guard (the "handled/<job-id>" marker, written the moment
+    # a request is ACCEPTED) is independent of state.json entirely, so
+    # this corruption must no longer be able to trigger a replay.
+    _auftrag(kranker_dienst, target="0.3.0")
+    _, first_calls, state = kranker_dienst()
+    assert state["phase"] == "failed"
+    assert state["rolled_back"] is True
+
+    (kranker_dienst.update_dir / "state.json").write_text("garbage{", encoding="utf-8")
+    _, second_calls, second_state = kranker_dienst()
+    assert second_state["phase"] == "idle"
+    assert second_calls == first_calls, "the corrupted-state pass must do nothing at all"
+
+
+def test_a_signal_during_the_rollback_health_wait_leaves_an_honest_failed_state(kranker_dienst):
+    # Important 7. There was no `trap` anywhere in this file. Proven
+    # against the unpatched script: sending SIGTERM - what entrypoint.sh
+    # forwards, from `docker stop` and from its own 600s parent `timeout`
+    # - while curl still answered unhealthy during the ROLLBACK's own
+    # health wait left state.json exactly as the last `set_state
+    # rollback ""` had written it: phase "rollback", "healthy": true
+    # (set_state's own DEFAULT, never a measurement), and no
+    # LETZTER-FEHLSCHLAG.txt at all - the one artefact meant for exactly
+    # "the web UI is unreachable" was missing, and a web UI that WAS
+    # reachable would have rendered a completed, healthy rollback that
+    # never actually finished.
+    #
+    # Sends a REAL signal to a REAL running process, mid-wait - polling
+    # state.json until it reports phase "rollback" (the second, long
+    # health wait happens entirely within that phase; kranker_dienst's
+    # curl always fails, so the window is the full HEALTH_TIMEOUT=3s),
+    # then delivering SIGTERM exactly then.
+    _auftrag(kranker_dienst, target="0.3.0")
+    proc = kranker_dienst.popen()
+    try:
+        deadline = time.monotonic() + 10
+        reached_rollback = False
+        state_file = kranker_dienst.update_dir / "state.json"
+        while time.monotonic() < deadline:
+            if state_file.is_file():
+                try:
+                    current = json.loads(state_file.read_text(encoding="utf-8"))
+                except json.JSONDecodeError:
+                    current = None
+                if current is not None and current.get("phase") == "rollback":
+                    reached_rollback = True
+                    break
+            time.sleep(0.05)
+        assert reached_rollback, "the run never reached the rollback phase in time"
+        os.kill(proc.pid, signal.SIGTERM)
+        proc.wait(timeout=10)
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait()
+
+    final_state = json.loads(state_file.read_text(encoding="utf-8"))
+    assert final_state["phase"] == "failed"
+    assert final_state["healthy"] is not True
+    assert "interrupt" in (final_state["error"] or "").lower()
+    assert (kranker_dienst.update_dir / "LETZTER-FEHLSCHLAG.txt").exists()
+
+
+def test_the_rollback_falls_back_to_from_for_an_unidentified_v_prefixed_running_version(updater):
+    # Minor. The acceptance check normalises $RUNNING through
+    # "${RUNNING#v}" before comparing it against the ''|unbekannt|dev
+    # sentinel enum (see $CUR above); the rollback's own `case` tested
+    # RAW $RUNNING instead. A build stamped "vdev" therefore matched
+    # neither literal branch there and fell through to the "found a real
+    # version" arm, producing BACK="dev" - silently accepted as a
+    # rollback target - instead of correctly falling back to $FROM, the
+    # way a bare "dev" already does everywhere else in this file.
+    docker_path = updater.bindir / "docker"
+    docker_path.write_text(
+        "#!/bin/sh\n"
+        'printf "%s %s\\n" "docker" "$*" >> "$STUB_LOG"\n'
+        'case "$1" in\n'
+        '  inspect) printf "LOXMATTER_VERSION=vdev\\n" ;;\n'
+        "esac\n",
+        encoding="utf-8",
+    )
+    docker_path.chmod(0o755)
+    curl_path = updater.bindir / "curl"
+    curl_path.write_text(
+        '#!/bin/sh\nprintf "curl %s\\n" "$*" >> "$STUB_LOG"\nexit 7\n', encoding="utf-8"
+    )
+    curl_path.chmod(0o755)
+    _auftrag(updater, channel="dev", target="abcdef1")
+    updater()
+    assert (updater.stack / ".env").read_text(encoding="utf-8") == "LOXMATTER_IMAGE_TAG=0.2.0\n"
+
+
+def test_a_dev_channel_update_is_rolled_back_when_unhealthy(kranker_dienst):
+    # Minor: no test drove a dev-channel update all the way into the
+    # rollback before. Exercises $RUNNING being computed unconditionally
+    # on channel (an earlier fix in this same section) together with the
+    # rollback actually running for a dev-channel request.
+    _auftrag(kranker_dienst, channel="dev", target="abcdef1")
+    _, _calls, state = kranker_dienst()
+    assert state["phase"] == "failed"
+    assert state["rolled_back"] is True
+
+
+def test_no_further_recreates_on_the_pass_after_a_rollback(kranker_dienst):
+    # Minor: no test asserted zero further recreates on the very next
+    # pass after a rollback (distinct from
+    # test_a_corrupted_state_file_does_not_replay_a_completed_rollback
+    # above, which covers the CORRUPTED-state case specifically) - this
+    # is the plain, uncorrupted redundant-safety case: request.json
+    # unchanged, state.json's id intact, dedup alone must already refuse
+    # to redo the mutating half of the flow.
+    _auftrag(kranker_dienst, target="0.3.0")
+    _, first_calls, state = kranker_dienst()
+    assert state["phase"] == "failed"
+    assert state["rolled_back"] is True
+    _, second_calls, second_state = kranker_dienst()
+    assert second_state["id"] == state["id"]
+    assert second_calls.count("docker compose up") == first_calls.count("docker compose up")
+    assert second_calls.count("docker compose pull") == first_calls.count("docker compose pull")
+
+
+def test_a_stale_failure_file_is_cleared_when_a_different_request_is_accepted(updater):
+    # Minor. Proven against the unpatched script: complete a rollback
+    # (writes LETZTER-FEHLSCHLAG.txt), then let a DIFFERENT, later
+    # request fail at a stage that never reaches the rollback section at
+    # all (`git fetch`) - the file titled "last failed update attempt"
+    # still carried the OLDER attempt's timestamp and versions, wrongly
+    # describing the CURRENT failure. The plain-text file exists to
+    # narrate a rollback specifically (state.json's own "error" field
+    # already covers every other failure mode), so a request that fails
+    # before ever reaching that section should leave no such file at all.
+    (updater.update_dir / "LETZTER-FEHLSCHLAG.txt").write_text(
+        "stale rollback story", encoding="utf-8"
+    )
+    git_path = updater.bindir / "git"
+    git_path.write_text(
+        "#!/bin/sh\n"
+        'printf "%s %s\\n" "git" "$*" >> "$STUB_LOG"\n'
+        'case "$*" in\n'
+        '  *"fetch --tags --force origin"*) exit 1 ;;\n'
+        "  *) exit 0 ;;\n"
+        "esac\n",
+        encoding="utf-8",
+    )
+    git_path.chmod(0o755)
+    _auftrag(updater, target="0.3.0")
+    _, _calls, state = updater()
+    assert state["phase"] == "failed"
+    assert state["error"] == "git fetch failed"
+    assert not (updater.update_dir / "LETZTER-FEHLSCHLAG.txt").exists()
