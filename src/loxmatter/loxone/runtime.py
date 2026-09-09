@@ -49,6 +49,7 @@ from typing import Protocol
 from loxmatter.loxone.values import to_loxone_value
 from loxmatter.matter.models import NodeSnapshot, SignalKind
 from loxmatter.model.store import Store, StoredSignal
+from loxmatter.timestamps import now_iso
 
 PULSE_MILLISECONDS = 200
 HEARTBEAT_KEY = "bridge_alive"
@@ -90,6 +91,20 @@ class Runtime:
         # annotation the heartbeat would silently hang on the state of the
         # moment of startup and would never fall silent.
         self._link_ok = link_ok
+        # When something last arrived from a device at all - one ISO
+        # timestamp per device id. IN MEMORY ONLY, not in the database:
+        # the same reasoning that the docstring of `StoredDevice` already
+        # gives for `online` - reachability is runtime state. A timestamp
+        # that survives a restart claims something after startup that
+        # nobody has checked; `None`, by contrast, honestly says "nothing
+        # heard since this bridge started".
+        #
+        # The occasion (8 September 2026): a window contact that only
+        # sends on change looked in the UI exactly like a button from
+        # which nothing had come for five days - both `online: true`.
+        # `online` stays what it is; this is the second number that makes
+        # the question answerable in the first place.
+        self._last_heard: dict[int, str] = {}
         self._last_values: dict[str, float | bool] = {}
         self._counters: dict[str, int] = {}
         self._heartbeat_on = False
@@ -231,6 +246,7 @@ class Runtime:
         return signal.key
 
     async def on_attribute(self, device_id: int, path: str, raw: object) -> None:
+        self._mark_heard(device_id)
         key = self._cache_attribute(device_id, path, raw)
         if key is None:
             return
@@ -328,6 +344,7 @@ class Runtime:
         not even have a virtual input in Loxone yet - that only comes into
         being once the template has been exported and imported.
         """
+        self._mark_heard(device_id)
         self._store.register_signals(device_id, snapshot)
         self.invalidate_index(device_id)
         self._cache_online(device_id, snapshot.available)
@@ -335,6 +352,7 @@ class Runtime:
             self._cache_attribute(device_id, path, raw)
 
     async def on_event(self, device_id: int, path: str) -> None:
+        self._mark_heard(device_id)
         signal = self._signal_for(device_id, path, SignalKind.EVENT)
         if signal is None:
             return
@@ -382,6 +400,24 @@ class Runtime:
         key = self._online_key(device_id)
         await self._sender.send(key, online)
         self._notify_observers(key, online)
+
+    def _mark_heard(self, device_id: int) -> None:
+        """Records that something has just arrived from this device.
+
+        Sits RIGHT AT THE TOP of `on_attribute`/`on_event`/
+        `on_node_snapshot`, before any early return: whether a path can be
+        mapped to an exported signal is a question of configuration - the
+        report arrived either way, and that is all this timestamp states.
+        """
+        self._last_heard[device_id] = now_iso()
+
+    def last_heard_for(self, device_id: int) -> str | None:
+        """When something last arrived from this device, or `None`.
+
+        `None` means "nothing heard since this bridge started" - see
+        `_last_heard` in the constructor for why this is not persisted.
+        """
+        return self._last_heard.get(device_id)
 
     def last_values_for(self, device_id: int) -> dict[str, float | bool]:
         """All most-recently-known values of a device, indexed by signal

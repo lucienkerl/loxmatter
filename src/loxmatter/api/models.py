@@ -89,6 +89,12 @@ class DeviceOut(BaseModel):
     node_id: int
     label: str
     online: bool
+    # When something last arrived from this device at all; `None` if
+    # nothing has come since the bridge started. `online` alone does not
+    # answer the question that stayed open on 8 September 2026: a device
+    # that only sends on change and is currently quiet looks exactly there
+    # like one from which nothing has come for days.
+    last_heard: str | None
     signal_count: int
     exportable_count: int
     next_export_count: int

@@ -759,3 +759,38 @@ async def test_the_heartbeat_falls_silent_when_the_link_drops(tmp_path):
     await runtime.stop()
 
     assert after == before
+
+
+async def test_last_heard_is_none_until_something_arrives(tmp_path):
+    store = Store(tmp_path / "s.sqlite")
+    runtime = Runtime(store, FakeSender())
+    assert runtime.last_heard_for(1) is None
+
+
+async def test_last_heard_is_set_even_for_an_unmapped_path(tmp_path):
+    """A path without a signal counts as "heard" too.
+
+    `on_attribute` returns early on an unknown path - but the report
+    ARRIVED all the same, and that is exactly what the timestamp is meant
+    to say. Were it set only after the mapping, a device whose signals
+    nobody has exported would report "never heard" forever.
+    """
+    store = Store(tmp_path / "s.sqlite")
+    runtime = Runtime(store, FakeSender())
+
+    await runtime.on_attribute(1, "1/6/0", True)
+
+    stamp = runtime.last_heard_for(1)
+    assert stamp is not None
+    assert stamp.startswith("20")
+
+
+async def test_last_heard_is_set_by_an_event(tmp_path):
+    store = Store(tmp_path / "s.sqlite")
+    runtime = Runtime(store, FakeSender())
+
+    await runtime.on_event(2, "1/59/1")
+
+    assert runtime.last_heard_for(2) is not None
+    # Another device stays untouched - the timestamp is per device.
+    assert runtime.last_heard_for(3) is None

@@ -842,6 +842,39 @@ async def test_a_failing_online_seed_still_reports_the_device_as_commissioned(
     store.close()
 
 
+async def test_the_device_list_carries_last_heard_from_the_runtime(
+    tmp_path, no_invoke, fake_runtime, fake_client, fake_otbr
+):
+    """Traces "last heard" from the runtime all the way into the JSON response.
+
+    A dedicated setup instead of the `api` fixture, for the same reason as
+    `test_a_failing_online_seed_still_reports_the_device_as_commissioned`
+    above: the timestamp has to be set on the `FakeRuntime`, and the fixture
+    doesn't hand that out.
+
+    The counter-check in the same test is the actual point: a second, unheard
+    device must report `None`. Without it the guarantee would also hold if the
+    route inserted some timestamp for every device instead of THIS device's."""
+    store = Store(tmp_path / "t.sqlite")
+    snapshot = load_snapshot("ikea_grillplats_plug.json")
+    heard_id = store.register_device(snapshot)
+    store.register_signals(heard_id, snapshot)
+    silent_id = store.register_device(load_snapshot("ikea_bilresa_button.json"))
+    fake_client.store = store
+    runtime = fake_runtime(store)
+    runtime.last_heard[heard_id] = "2026-09-08T21:13:00+00:00"
+    app = build_app(store, no_invoke, runtime, client=fake_client, thread_dataset_source=fake_otbr)
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
+        await authenticate(store, c)
+        devices = (await c.get("/api/devices")).json()
+
+    by_id = {d["id"]: d for d in devices}
+    assert by_id[heard_id]["last_heard"] == "2026-09-08T21:13:00+00:00"
+    assert by_id[silent_id]["last_heard"] is None
+    store.close()
+
+
 async def test_the_device_list_carries_room_and_category(api):
     client, _store, device_id, _fake = api
     devices = (await client.get("/api/devices")).json()

@@ -153,6 +153,10 @@ class FakeRuntime:
         # /api/diagnostics/resync`): `Runtime.resend_all` sends over the
         # same sender and fails at the same places.
         self.fail_resend_with: Exception | None = None
+        # "Last heard" per device id, as `Runtime._last_heard` keeps it.
+        # Empty means "nothing heard since startup" - a test that wants to
+        # trace the timestamp all the way into the JSON response sets it here.
+        self.last_heard: dict[int, str] = {}
         # What `resend_all` reports as its count, and how often it was
         # called - a test that traces the number all the way into the
         # response sets the first, a test of the wiring reads the second.
@@ -166,6 +170,19 @@ class FakeRuntime:
     def last_values_for(self, device_id: int) -> dict[str, float | bool]:
         prefix = f"d{device_id}_"
         return {k: v for k, v in self._values.items() if k.startswith(prefix)}
+
+    def last_heard_for(self, device_id: int) -> str | None:
+        """Like `Runtime.last_heard_for`: the timestamp of the last receipt,
+        or `None` for as long as nothing has come from this device.
+
+        The timestamps live in `last_heard` and are set by the test. Until
+        the final review this method returned a hard `None` - so not a single
+        test under `tests/api/` checked whether `api/devices.py` reads the
+        value at all and passes it on. Anyone who had replaced the call there
+        with a fixed `last_heard=None` would have got through; whether
+        `Runtime` keeps the value correctly (its own suite under
+        `tests/loxone/test_runtime.py`) does not answer that question."""
+        return self.last_heard.get(device_id)
 
     async def set_online(self, device_id: int, online: bool) -> None:
         """Like `Runtime.set_online`, without the UDP send: holds the value
