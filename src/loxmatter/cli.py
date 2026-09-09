@@ -57,6 +57,7 @@ from loxmatter.matter.discovery import (
     find_unreported_attributes,
 )
 from loxmatter.matter.models import NodeSnapshot, SignalKind
+from loxmatter.matter.supervisor import attach, supervise
 from loxmatter.model.locale_store import LocaleStore
 from loxmatter.model.store import Store
 from loxmatter.profiles.table import is_exportable
@@ -590,6 +591,7 @@ async def _run(
     async def invoke(call: MatterCall) -> None:
         await client.send_command(call)
 
+    supervisor_task: asyncio.Task[None] | None = None
     try:
         try:
             await client.connect()
@@ -597,32 +599,18 @@ async def _run(
             _fail(i18n.t("cli.common.fail_matter_unreachable", url=url))
         except MatterUnavailableError as exc:
             _fail(i18n.t("cli.common.fail_matter_not_ready", url=url, exc=exc))
-        await client.subscribe(store.device_id_for_node, runtime)
         await runtime.start()
-        # Load starting values from the current device state BEFORE the
-        # resend below sends them out (spec 6.4, live run of 2026-09-02):
-        # without this, `resend_all()` would find an empty cache, because
-        # a value only lands there via a changing subscription - see
-        # `Runtime.seed_from_snapshot`.
-        snapshots = await client.snapshots()
-        await runtime.seed_from_snapshot(snapshots)
-        # Backfill device types for existing devices (devices-tab design,
-        # 2026-09-05, section 3.4): the snapshots have just been fetched,
-        # a second fetch only for this purpose would be wasteful. Only
-        # fills in rows without types; a device that is currently offline
-        # and therefore missing here keeps its own and is reached on the
-        # next start.
-        store.backfill_device_types(snapshots)
-        # Refresh commands for existing devices, from the same snapshots
-        # (operational finding 2026-09-08): a device that was commissioned
-        # before a command existed in `clusters.yaml` never got it - an
-        # RGB light stayed without a color control even though the bridge
-        # had long known the command. See `Store.backfill_commands`.
-        gained = store.backfill_commands(snapshots)
+        # Since 8 September 2026 the startup sequence and the rebuild share
+        # one place (`matter.supervisor.attach`) - see there for why.
+        gained = await attach(client, store, runtime)
         if gained:
             typer.echo(i18n.t("cli.run.echo_commands_backfilled", count=gained))
-        # A bridge restart should behave like /resync (spec 6.4).
-        await runtime.resend_all()
+        # The supervisor runs for as long as the service runs: if the
+        # websocket to matter-server dies, it rebuilds the connection and
+        # lets `attach` run again. Without it the bridge stays mute after a
+        # restart of matter-server, without reporting it - exactly the
+        # outage of 8 September 2026.
+        supervisor_task = asyncio.ensure_future(supervise(client, store, runtime))
 
         # `log_handler` arrives already finished (see the docstring above,
         # "Log ring" section) - `install_log_buffer()` itself has, since
@@ -644,6 +632,28 @@ async def _run(
         )
         await uvicorn.Server(config).serve()
     finally:
+        if supervisor_task is not None:
+            supervisor_task.cancel()
+            try:
+                await supervisor_task
+            except asyncio.CancelledError:
+                # Two different cancellations arrive here as the same exception,
+                # and only one of them is the expected one.
+                # `supervisor_task.cancelled()` tells them apart: if the
+                # supervisor itself was cancelled, it was our `cancel()` one line
+                # above - exactly what we expected, nothing to report. If it was
+                # NOT, then the cancellation hit the surrounding `_run` task while
+                # we were waiting for it (a second Ctrl-C in the middle of the
+                # shutdown), and that one MUST keep travelling - the docstring
+                # above says the same for every other cleanup step.
+                if not supervisor_task.cancelled():
+                    raise
+            except Exception:
+                # Its own `try` like every neighbouring block: if the supervisor
+                # ended earlier on some other exception, `await` delivers it here -
+                # and without this `except` the whole rest of the cleanup would be
+                # skipped, `store.close()` included.
+                logger.exception("Supervisor of the matter-server connection ended with an error")
         try:
             await runtime.stop()
         except asyncio.CancelledError:
