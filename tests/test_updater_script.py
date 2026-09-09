@@ -85,6 +85,79 @@ def _mutating_docker_calls(calls: str) -> list[str]:
     return mutating
 
 
+def _is_compose_call(line: str, subcommand: str) -> bool:
+    """True if `line` (one entry from the stub call log) invokes `docker
+    compose <subcommand> ...` - tolerant of the `-f <container
+    path>/docker-compose.yml --project-directory <host path>` flags
+    compose() in update-once.sh now inserts between `compose` and the
+    subcommand it runs (see that function's own comment for why: `-f`
+    keeps the container path this sidecar can read, `--project-directory`
+    carries the host path Compose must resolve every relative volumes:
+    entry against - the fix for the "compose inside a container resolves
+    relative bind mounts to container paths" finding). A bare substring
+    check on e.g. "compose pull" does NOT survive that flag insertion -
+    it is exactly the mistake an earlier round on this branch made,
+    removing the flag again to keep such a check passing instead of
+    fixing the check. Matching on the SUBCOMMAND as a whole TOKEN,
+    wherever it falls among the flags, is what keeps assertions honest
+    about what actually ran without caring where Compose's own options
+    happen to sit."""
+    parts = line.split()
+    return (
+        len(parts) >= 3
+        and parts[0] == "docker"
+        and parts[1] == "compose"
+        and subcommand in parts[2:]
+    )
+
+
+def _compose_calls(calls: str, subcommand: str) -> list[str]:
+    """Lines from the stub call log invoking `docker compose <subcommand>
+    ...` - see _is_compose_call() above."""
+    return [line for line in calls.splitlines() if _is_compose_call(line, subcommand)]
+
+
+def _docker_stub_source(*, version: str = "0.2.0", compose_case: str = "exit 0 ;;") -> str:
+    """Full source for a fake `docker` binary that answers BOTH `docker
+    inspect` calls update-once.sh actually makes:
+
+      * `docker inspect $SERVICE --format ...` - running_version(),
+        answered with LOXMATTER_VERSION=<version>.
+      * `docker inspect loxmatter-updater --format ...` - host_path_for(),
+        hardcoded to that container name regardless of $SERVICE.
+        Answered with an IDENTITY mount mapping: $LOXMATTER_STACK and
+        $LOXMATTER_REPO each resolve to themselves. That is what lets
+        compose() in update-once.sh resolve --project-directory at all in
+        this fixture, where $LOXMATTER_STACK is already a real host
+        directory - there is no actual container/host boundary being
+        modelled here (the tests in the "host_path_for" section below
+        model a REAL split deliberately, with their own docker stubs, not
+        this one).
+
+    Distinguished by $2 (the container name), not by the `--format`
+    argument that follows it - both invocations pass `inspect` as $1.
+
+    `compose_case` is spliced into the `compose)` arm for callers that
+    need a specific `docker compose ...` call to fail; the default just
+    lets it succeed, since most callers only care THAT the right compose
+    call happened, not what it returns."""
+    return (
+        "#!/bin/sh\n"
+        'printf "%s %s\\n" "docker" "$*" >> "$STUB_LOG"\n'
+        'case "$1" in\n'
+        "  inspect)\n"
+        '    if [ "$2" = "loxmatter-updater" ]; then\n'
+        '      printf "%s %s\\n" "$LOXMATTER_STACK" "$LOXMATTER_STACK"\n'
+        '      printf "%s %s\\n" "$LOXMATTER_REPO" "$LOXMATTER_REPO"\n'
+        "    else\n"
+        f'      printf "LOXMATTER_VERSION={version}\\n"\n'
+        "    fi\n"
+        "    ;;\n"
+        f"  compose) {compose_case}\n"
+        "esac\n"
+    )
+
+
 SYSTEM_TOOLS = (
     "sh",
     "cat",
@@ -139,10 +212,15 @@ def updater(tmp_path):
     # same version: it plays the role of a freshly-installed 0.2.0
     # container that has not yet been updated - exactly the fixture the
     # forward-only tests below need to be able to tell "0.1.0" (older),
-    # "0.2.0" (same) and "0.3.0" (newer) apart. The stub answers every
-    # `docker inspect` call the same way regardless of arguments, which
-    # is enough here since the script only ever inspects one service.
-    stub("docker", 'case "$1" in\n  inspect) printf "LOXMATTER_VERSION=0.2.0\\n" ;;\nesac')
+    # "0.2.0" (same) and "0.3.0" (newer) apart. `_docker_stub_source()`
+    # (module level, above) also answers the OTHER `docker inspect` call
+    # this script makes - `inspect loxmatter-updater` for
+    # host_path_for() - with an identity mount mapping, which is what
+    # lets compose() resolve --project-directory at all by default; see
+    # that helper's own docstring.
+    docker_path = bindir / "docker"
+    docker_path.write_text(_docker_stub_source(), encoding="utf-8")
+    docker_path.chmod(0o755)
     stub("git")
     stub("curl", 'echo \'{"status":"ok"}\'')
     stub("tar")
@@ -317,13 +395,18 @@ def test_a_valid_dev_target_is_accepted(updater):
     # update fails later, dev channel included, and a dev-channel rollback
     # referencing an unset $RUNNING under `set -eu` would otherwise crash
     # instead of rolling back. So one `inspect` call is now expected here
-    # too; what this test still pins down is that it is the only kind of
-    # docker call a well-formed dev request causes before the recreate -
-    # never a mutating one, and never more than once.
+    # too - and a SECOND one besides: compose()'s own host_path_for() fix
+    # (the "compose inside a container resolves relative bind mounts to
+    # container paths" finding) makes exactly one more `docker inspect
+    # loxmatter-updater --format ...` call, cached for the rest of the
+    # pass, on compose()'s first invocation (the pull, here). What this
+    # test still pins down is that BOTH are read-only: never a mutating
+    # `docker inspect`, and never more of them than these two expected
+    # ones.
     _auftrag(updater, channel="dev", target="abcdef1")
     _, calls, state = updater()
     assert state["phase"] == "done"
-    assert calls.count("docker inspect") == 1
+    assert calls.count("docker inspect") == 2
 
 
 def test_a_malformed_dev_target_is_rejected(updater):
@@ -427,18 +510,21 @@ def test_the_same_job_is_not_run_twice(updater):
     # cumulative across both `updater()` calls in this fixture (same
     # stub.log for the whole test), so a guard that quietly stopped
     # working would show up as a second "compose pull" occurrence, not
-    # just a wrong `to`.
+    # just a wrong `to`. Matched via `_compose_calls()` (module level,
+    # above), not a bare substring - see its own docstring for why a
+    # literal "compose pull" no longer appears now that compose() carries
+    # `-f`/`--project-directory` between "compose" and the subcommand.
     _auftrag(updater, target="0.3.0")
     _, erste_calls, erste = updater()
     assert erste["phase"] == "done"
     assert erste["to"] == "0.3.0"
-    assert erste_calls.count("compose pull") == 1
+    assert len(_compose_calls(erste_calls, "pull")) == 1
 
     _auftrag(updater, target="0.4.0")  # same id "auftrag-1", new target
     _, zweite_calls, zweite = updater()
     assert zweite["id"] == "auftrag-1"
     assert zweite["to"] == "0.3.0"
-    assert zweite_calls.count("compose pull") == 1
+    assert len(_compose_calls(zweite_calls, "pull")) == 1
 
 
 # ---------------------------------------------------------- Stufe 2 round --
@@ -627,15 +713,19 @@ def test_a_leading_v_is_stripped_from_the_target(updater):
 def test_the_flow_keeps_its_order(updater):
     _auftrag(updater, target="0.3.0")
     _, calls, state = updater()
-    assert calls.index("tar") < calls.index("compose pull")
-    assert calls.index("compose pull") < calls.index("compose up")
+    lines = calls.splitlines()
+    tar_idx = next(i for i, line in enumerate(lines) if line.startswith("tar "))
+    pull_idx = next(i for i, line in enumerate(lines) if _is_compose_call(line, "pull"))
+    up_idx = next(i for i, line in enumerate(lines) if _is_compose_call(line, "up"))
+    assert tar_idx < pull_idx
+    assert pull_idx < up_idx
     assert state["phase"] == "done"
 
 
 def test_the_restart_leaves_the_neighboring_services_alone(updater):
     _auftrag(updater, target="0.3.0")
     _, calls, _ = updater()
-    up = next(line for line in calls.splitlines() if "compose up" in line)
+    up = _compose_calls(calls, "up")[0]
     assert "--no-deps" in up
     assert "loxmatter-updater" not in up
 
@@ -809,14 +899,15 @@ def test_a_failed_restart_hands_off_to_rollback_instead_of_stranding_the_tag(upd
     # not the un-recreated 0.3.0 target this update never reached, and
     # not restored on the assumption that the rollback might still be a
     # separate step.
+    # compose_case matches on " up " as a whole token within the FULL
+    # argument string, not on a positional "$2" - compose() in
+    # update-once.sh now runs `docker compose -f ... --project-directory
+    # ... <subcommand> ...`, so the subcommand is no longer the second
+    # argument to `docker` (see _compose_calls()'s own docstring for the
+    # same reasoning on the Python assertion side).
     docker_path = updater.bindir / "docker"
     docker_path.write_text(
-        "#!/bin/sh\n"
-        'printf "%s %s\\n" "docker" "$*" >> "$STUB_LOG"\n'
-        'case "$1" in\n'
-        '  inspect) printf "LOXMATTER_VERSION=0.2.0\\n" ;;\n'
-        '  compose) [ "$2" = "up" ] && exit 1; exit 0 ;;\n'
-        "esac\n",
+        _docker_stub_source(compose_case='case " $* " in *" up "*) exit 1 ;; esac; exit 0 ;;'),
         encoding="utf-8",
     )
     docker_path.chmod(0o755)
@@ -861,16 +952,13 @@ def test_a_pull_failure_that_cannot_restore_the_tag_is_recorded_as_a_failure(upd
     # unpatched script this way: rc=1, "Permission denied", and
     # state.json frozen at "pull" - further from the truth than even the
     # caught pull failure alone, since $FROM could not be restored either.
+    # See the previous test's comment: matches " pull " as a whole token
+    # in the FULL argument string, not a positional "$2".
     docker_path = updater.bindir / "docker"
     docker_path.write_text(
-        "#!/bin/sh\n"
-        'printf "%s %s\\n" "docker" "$*" >> "$STUB_LOG"\n'
-        'case "$1" in\n'
-        '  inspect) printf "LOXMATTER_VERSION=0.2.0\\n" ;;\n'
-        "  compose)\n"
-        '    if [ "$2" = "pull" ]; then chmod 0555 "$LOXMATTER_STACK"; exit 1; fi\n'
-        "    exit 0 ;;\n"
-        "esac\n",
+        _docker_stub_source(
+            compose_case='case " $* " in *" pull "*) chmod 0555 "$LOXMATTER_STACK"; exit 1 ;; esac; exit 0 ;;'
+        ),
         encoding="utf-8",
     )
     docker_path.chmod(0o755)
@@ -956,14 +1044,12 @@ def test_set_tag_escapes_sed_metacharacters_in_the_restored_tag(updater):
     # restricts. Seed .env with a tag containing `|` and fail the pull so
     # `set_tag "$FROM"` actually runs with that value.
     (updater.stack / ".env").write_text("LOXMATTER_IMAGE_TAG=a|b\n", encoding="utf-8")
+    # Matches " pull " as a whole token in the full argument string - see
+    # test_a_failed_restart_hands_off_to_rollback_instead_of_stranding_the_tag's
+    # comment above for why not a positional "$2".
     docker_path = updater.bindir / "docker"
     docker_path.write_text(
-        "#!/bin/sh\n"
-        'printf "%s %s\\n" "docker" "$*" >> "$STUB_LOG"\n'
-        'case "$1" in\n'
-        '  inspect) printf "LOXMATTER_VERSION=0.2.0\\n" ;;\n'
-        '  compose) [ "$2" = "pull" ] && exit 1; exit 0 ;;\n'
-        "esac\n",
+        _docker_stub_source(compose_case='case " $* " in *" pull "*) exit 1 ;; esac; exit 0 ;;'),
         encoding="utf-8",
     )
     docker_path.chmod(0o755)
@@ -1032,14 +1118,12 @@ def test_a_failed_update_does_not_prune_backups(updater):
     )
     tar_path.chmod(0o755)
 
+    # Matches " pull " as a whole token in the full argument string - see
+    # test_a_failed_restart_hands_off_to_rollback_instead_of_stranding_the_tag's
+    # comment above for why not a positional "$2".
     docker_path = updater.bindir / "docker"
     docker_path.write_text(
-        "#!/bin/sh\n"
-        'printf "%s %s\\n" "docker" "$*" >> "$STUB_LOG"\n'
-        'case "$1" in\n'
-        '  inspect) printf "LOXMATTER_VERSION=0.2.0\\n" ;;\n'
-        '  compose) [ "$2" = "pull" ] && exit 1; exit 0 ;;\n'
-        "esac\n",
+        _docker_stub_source(compose_case='case " $* " in *" pull "*) exit 1 ;; esac; exit 0 ;;'),
         encoding="utf-8",
     )
     docker_path.chmod(0o755)
@@ -1171,7 +1255,7 @@ def test_the_rollback_runs_exactly_once(kranker_dienst):
     # more downtime without changing the outcome.
     _auftrag(kranker_dienst, target="0.3.0")
     _, calls, _state = kranker_dienst()
-    assert len([line for line in calls.splitlines() if "compose up" in line]) == 2
+    assert len(_compose_calls(calls, "up")) == 2
 
 
 def test_the_rollback_does_not_touch_the_database(kranker_dienst):
@@ -1226,14 +1310,12 @@ def test_a_recreate_failure_also_rolls_back_without_a_pointless_wait(updater):
     # healthy) is left in place, so a successful ROLLBACK recreate would
     # otherwise look "healthy" regardless of what docker itself reported -
     # exactly why HEALTHY here reflects curl, not docker's exit code.
+    # Matches " up " as a whole token in the full argument string - see
+    # test_a_failed_restart_hands_off_to_rollback_instead_of_stranding_the_tag's
+    # comment above for why not a positional "$2".
     docker_path = updater.bindir / "docker"
     docker_path.write_text(
-        "#!/bin/sh\n"
-        'printf "%s %s\\n" "docker" "$*" >> "$STUB_LOG"\n'
-        'case "$1" in\n'
-        '  inspect) printf "LOXMATTER_VERSION=0.2.0\\n" ;;\n'
-        '  compose) [ "$2" = "up" ] && exit 1; exit 0 ;;\n'
-        "esac\n",
+        _docker_stub_source(compose_case='case " $* " in *" up "*) exit 1 ;; esac; exit 0 ;;'),
         encoding="utf-8",
     )
     docker_path.chmod(0o755)
@@ -1245,7 +1327,7 @@ def test_a_recreate_failure_also_rolls_back_without_a_pointless_wait(updater):
     assert state["rolled_back"] is True
     # No `set_state health ""` for the doomed initial attempt - a
     # skipped, pointless wait, not merely a short one.
-    assert len([line for line in calls.splitlines() if "compose up" in line]) == 2
+    assert len(_compose_calls(calls, "up")) == 2
     assert elapsed < 5, f"took {elapsed:.1f}s - the initial wait should have been skipped entirely"
 
 
@@ -1253,11 +1335,24 @@ def test_the_sidecar_replaces_itself_only_after_success(updater):
     _auftrag(updater, target="0.3.0")
     _, calls, _ = updater(LOXMATTER_UPDATER_SELF_REPLACE="1")
     zeilen = calls.splitlines()
-    eigen = next(i for i, line in enumerate(zeilen) if "loxmatter-updater" in line)
+    # Restricted to lines starting "docker compose" specifically, not any
+    # line merely MENTIONING "loxmatter-updater" - compose()'s own
+    # host_path_for() fix now makes a `docker inspect loxmatter-updater
+    # --format ...` call as the FIRST thing any compose() invocation does
+    # (cached for the rest of the pass, see that function's comment), and
+    # that line would otherwise be mistaken for "own" self-replacement
+    # activity even though it runs ahead of the ordinary update's own
+    # first `compose pull loxmatter`, not as part of replacing the
+    # sidecar itself.
+    eigen = next(
+        i
+        for i, line in enumerate(zeilen)
+        if line.startswith("docker compose") and "loxmatter-updater" in line
+    )
     fremd = next(
         i
         for i, line in enumerate(zeilen)
-        if "compose up" in line and "loxmatter-updater" not in line
+        if line.startswith("docker compose") and "loxmatter-updater" not in line
     )
     assert fremd < eigen
 
@@ -1289,10 +1384,25 @@ def test_self_replacement_is_off_by_default_in_this_fixture(updater):
     # file can assert on the ONE `compose up` line it actually cares
     # about without also accounting for a self-replacement it never asked
     # about.
+    #
+    # "loxmatter-updater" alone is no longer a safe substring to forbid
+    # outright - see test_after_a_failure_it_does_not_replace_itself's own
+    # comment just above: compose()'s host_path_for() fix makes a
+    # READ-ONLY `docker inspect loxmatter-updater --format ...` call on
+    # EVERY compose() invocation now, including the ordinary `loxmatter`
+    # pull/up this test's own successful update makes. What still holds,
+    # and is what this test actually claims, is narrower: no MUTATING
+    # `docker compose ... loxmatter-updater` call (a pull or an up) ever
+    # runs when self-replacement is off.
     _auftrag(updater, target="0.3.0")
     _, calls, state = updater()
     assert state["phase"] == "done"
-    assert "loxmatter-updater" not in calls
+    self_replace_calls = [
+        line
+        for line in calls.splitlines()
+        if line.startswith("docker compose") and "loxmatter-updater" in line
+    ]
+    assert self_replace_calls == []
 
 
 # ------------------------------------------------------ Task 4 Stufe 2 --
@@ -1336,7 +1446,7 @@ def test_the_rollback_does_not_claim_success_when_the_tag_write_fails(updater):
     assert state["rolled_back"] is False
     assert "may still read" in state["error"]
     assert (updater.stack / ".env").read_text(encoding="utf-8") == "LOXMATTER_IMAGE_TAG=0.3.0\n"
-    assert len([line for line in calls.splitlines() if line.startswith("docker compose up")]) == 1
+    assert len(_compose_calls(calls, "up")) == 1
     text = (updater.update_dir / "LETZTER-FEHLSCHLAG.txt").read_text(encoding="utf-8")
     assert "NOT ROLLED BACK" in text
     assert "Rolled back to:" not in text
@@ -1433,12 +1543,43 @@ def test_the_failure_file_resolves_a_host_path_for_a_path_under_a_mount(kranker_
 
 
 def test_the_failure_file_says_so_plainly_when_the_host_path_cannot_be_resolved(kranker_dienst):
-    # Important 2, the other half: this file's default docker stub cannot
-    # answer the Mounts question at all (no `--format` handling) - the
-    # ordinary case until the self-replacement service actually exists,
-    # or on a daemon this sidecar cannot currently reach. The commands
-    # must not silently print the unusable container path as if it were
-    # fine; they must say plainly that the host path is unknown.
+    # Important 2, the other half: the commands must not silently print
+    # the unusable container path as if it were fine; they must say
+    # plainly that the host path is unknown.
+    #
+    # This can no longer be reached with NO mount data at all, the way it
+    # used to be: compose() itself now also depends on host_path_for()
+    # resolving $STACK (the "compose inside a container resolves relative
+    # bind mounts to container paths" fix, see compose()'s own comment in
+    # update-once.sh), and refuses to run `docker compose` at all when it
+    # cannot - so a $STACK that cannot be resolved would fail the update
+    # at the very first `compose pull` and never even reach the rollback
+    # section this file's own write_failure_file() runs from. The docker
+    # stub below therefore resolves $STACK (compose() gets what it needs
+    # and the pass proceeds into the rollback) but deliberately answers
+    # NOTHING for $REPO - a real daemon that has that mount would answer
+    # for both, since deploy/testhost/docker-compose.yml bind-mounts only
+    # ONE thing (`../..:/repo`) and $STACK is a subdirectory of it (see
+    # the test above), but this fixture's stub is free to model a daemon
+    # that only PARTIALLY knows its own mounts, which is enough to prove
+    # host_path_for()'s per-path fallback still says so plainly for the
+    # one it cannot answer.
+    docker_path = kranker_dienst.bindir / "docker"
+    docker_path.write_text(
+        "#!/bin/sh\n"
+        'printf "%s %s\\n" "docker" "$*" >> "$STUB_LOG"\n'
+        'case "$1" in\n'
+        "  inspect)\n"
+        '    if [ "$2" = "loxmatter-updater" ]; then\n'
+        '      printf "%s %s\\n" "$LOXMATTER_STACK" "$LOXMATTER_STACK"\n'
+        "    else\n"
+        '      printf "LOXMATTER_VERSION=0.2.0\\n"\n'
+        "    fi\n"
+        "    ;;\n"
+        "esac\n",
+        encoding="utf-8",
+    )
+    docker_path.chmod(0o755)
     _auftrag(kranker_dienst, target="0.3.0")
     kranker_dienst()
     text = (kranker_dienst.update_dir / "LETZTER-FEHLSCHLAG.txt").read_text(encoding="utf-8")
@@ -1458,12 +1599,14 @@ def test_the_self_replacement_pulls_before_recreating(updater):
     _, calls, _ = updater(LOXMATTER_UPDATER_SELF_REPLACE="1")
     lines = calls.splitlines()
     pull_idx = next(
-        i for i, line in enumerate(lines) if line == "docker compose pull loxmatter-updater"
+        i
+        for i, line in enumerate(lines)
+        if _is_compose_call(line, "pull") and "loxmatter-updater" in line
     )
     up_idx = next(
         i
         for i, line in enumerate(lines)
-        if line.startswith("docker compose up") and "loxmatter-updater" in line
+        if _is_compose_call(line, "up") and "loxmatter-updater" in line
     )
     assert pull_idx < up_idx
 
@@ -1511,16 +1654,14 @@ def test_the_self_replacement_runs_strictly_after_done_is_recorded(updater):
     snapshot = updater.update_dir / "state-at-self-replace.json"
     docker_path = updater.bindir / "docker"
     docker_path.write_text(
-        "#!/bin/sh\n"
-        'printf "%s %s\\n" "docker" "$*" >> "$STUB_LOG"\n'
-        'case "$1" in\n'
-        '  inspect) printf "LOXMATTER_VERSION=0.2.0\\n" ;;\n'
-        "  compose)\n"
-        '    case "$*" in\n'
-        f'      *loxmatter-updater*) cp "$LOXMATTER_UPDATE_DIR/state.json" "{snapshot}" 2>/dev/null ;;\n'
-        "    esac\n"
-        "    ;;\n"
-        "esac\n",
+        _docker_stub_source(
+            compose_case=(
+                'case "$*" in\n'
+                f'      *loxmatter-updater*) cp "$LOXMATTER_UPDATE_DIR/state.json" "{snapshot}" 2>/dev/null ;;\n'
+                "    esac\n"
+                "    exit 0 ;;"
+            )
+        ),
         encoding="utf-8",
     )
     docker_path.chmod(0o755)
@@ -1617,14 +1758,7 @@ def test_the_rollback_falls_back_to_from_for_an_unidentified_v_prefixed_running_
     # rollback target - instead of correctly falling back to $FROM, the
     # way a bare "dev" already does everywhere else in this file.
     docker_path = updater.bindir / "docker"
-    docker_path.write_text(
-        "#!/bin/sh\n"
-        'printf "%s %s\\n" "docker" "$*" >> "$STUB_LOG"\n'
-        'case "$1" in\n'
-        '  inspect) printf "LOXMATTER_VERSION=vdev\\n" ;;\n'
-        "esac\n",
-        encoding="utf-8",
-    )
+    docker_path.write_text(_docker_stub_source(version="vdev"), encoding="utf-8")
     docker_path.chmod(0o755)
     curl_path = updater.bindir / "curl"
     curl_path.write_text(
@@ -1661,8 +1795,8 @@ def test_no_further_recreates_on_the_pass_after_a_rollback(kranker_dienst):
     assert state["rolled_back"] is True
     _, second_calls, second_state = kranker_dienst()
     assert second_state["id"] == state["id"]
-    assert second_calls.count("docker compose up") == first_calls.count("docker compose up")
-    assert second_calls.count("docker compose pull") == first_calls.count("docker compose pull")
+    assert len(_compose_calls(second_calls, "up")) == len(_compose_calls(first_calls, "up"))
+    assert len(_compose_calls(second_calls, "pull")) == len(_compose_calls(first_calls, "pull"))
 
 
 def test_a_stale_failure_file_is_cleared_when_a_different_request_is_accepted(updater):
@@ -1694,3 +1828,87 @@ def test_a_stale_failure_file_is_cleared_when_a_different_request_is_accepted(up
     assert state["phase"] == "failed"
     assert state["error"] == "git fetch failed"
     assert not (updater.update_dir / "LETZTER-FEHLSCHLAG.txt").exists()
+
+
+# ------------------------------------------------ Boundary-crossing fixes --
+# Three Criticals from a whole-branch review, all one root cause: this
+# feature had never crossed a container boundary. See
+# .superpowers/sdd/final-fix-boundary-report.md for the full write-up of
+# each; the tests below are what would have caught them.
+
+
+def test_compose_resolves_the_host_path_not_the_container_path(updater):
+    # Critical 1 - "compose inside a container resolves relative bind
+    # mounts to container paths". compose() used to `cd "$STACK"` (a
+    # CONTAINER path, e.g. /repo/deploy/testhost - bind-mounted from the
+    # host's checkout) and run `docker compose` with no
+    # --project-directory. Compose resolves every relative `volumes:`
+    # entry against ITS OWN project directory (the -f file's directory,
+    # absent an explicit override) and hands the DAEMON whatever that
+    # resolves to - a HOST path of the same spelling, which on the real
+    # host does not exist under that name at all.
+    #
+    # This fixture models a genuine container/host split: $LOXMATTER_STACK
+    # is a real directory (the `[ ! -d ]` guard in compose() passes) but
+    # the docker stub answers a DIFFERENT path as its actual host source -
+    # the way `docker inspect loxmatter-updater --format
+    # '{{range .Mounts}}...'` would against a real bind mount. What must
+    # show up in the ACTUAL `docker compose` invocation is that different
+    # host path, carried via --project-directory - never $LOXMATTER_STACK
+    # itself.
+    host_checkout = "/home/pi/loxmatter-checkout"
+    docker_path = updater.bindir / "docker"
+    docker_path.write_text(
+        "#!/bin/sh\n"
+        'printf "%s %s\\n" "docker" "$*" >> "$STUB_LOG"\n'
+        'case "$1" in\n'
+        "  inspect)\n"
+        '    if [ "$2" = "loxmatter-updater" ]; then\n'
+        f'      printf "%s %s\\n" "$LOXMATTER_REPO" "{host_checkout}"\n'
+        f'      printf "%s %s\\n" "$LOXMATTER_STACK" "{host_checkout}/deploy/testhost"\n'
+        "    else\n"
+        '      printf "LOXMATTER_VERSION=0.2.0\\n"\n'
+        "    fi\n"
+        "    ;;\n"
+        "esac\n",
+        encoding="utf-8",
+    )
+    docker_path.chmod(0o755)
+    _auftrag(updater, target="0.3.0")
+    _, calls, state = updater()
+    assert state["phase"] == "done"
+    pull_line = _compose_calls(calls, "pull")[0]
+    assert f"--project-directory {host_checkout}/deploy/testhost" in pull_line
+    # -f still names the CONTAINER path - this sidecar can only read its
+    # own filesystem, and it is the same file either way (bind-mounted).
+    assert f"-f {updater.stack}/docker-compose.yml" in pull_line
+    # The CONTAINER path must not appear as the resolved project
+    # directory - that would be the bug this test exists to catch,
+    # reached silently.
+    assert f"--project-directory {updater.stack}" not in pull_line
+
+
+def test_compose_refuses_when_the_host_path_cannot_be_resolved(updater):
+    # Critical 1, the other half: when host_path_for() cannot resolve
+    # $STACK to a host path at all (no mount whose Destination is a
+    # prefix of it - the daemon unreachable, or this sidecar's own mount
+    # table not shaped as expected), compose() must not silently fall
+    # back to the container path - that would reproduce the exact bug
+    # above by a different route. It must refuse to run `docker compose`
+    # at all: a call that never ran is retryable, one that mounted the
+    # wrong host directory is not.
+    docker_path = updater.bindir / "docker"
+    docker_path.write_text(
+        "#!/bin/sh\n"
+        'printf "%s %s\\n" "docker" "$*" >> "$STUB_LOG"\n'
+        'case "$1" in\n'
+        '  inspect) printf "LOXMATTER_VERSION=0.2.0\\n" ;;\n'
+        "esac\n",
+        encoding="utf-8",
+    )
+    docker_path.chmod(0o755)
+    _auftrag(updater, target="0.3.0")
+    _, calls, state = updater()
+    assert state["phase"] == "failed"
+    assert not _compose_calls(calls, "pull")
+    assert "docker compose" not in calls

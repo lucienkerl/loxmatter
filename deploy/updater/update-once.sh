@@ -632,30 +632,81 @@ run() {
   "$@" >> "$LOG" 2>&1
 }
 
-# Compose reads docker-compose.yml AND .env from the current directory (or
-# an explicit --project-directory) - both live in $STACK. `cd` there in a
-# subshell instead of passing --project-directory, the same way
-# scripts/update.sh already does: the logged command then reads exactly as
-# an operator typing it by hand from that directory would, which matters
-# when comparing this log against scripts/update.sh's own output during an
-# incident. The subshell keeps the `cd` from leaking into the rest of this
-# script.
+# Compose resolves every RELATIVE `volumes:` entry in docker-compose.yml
+# against its own project directory (the -f file's own directory, or an
+# explicit --project-directory) and hands the DAEMON whatever that
+# resolves to - the daemon then mounts that path from ITS OWN filesystem,
+# i.e. the HOST's, regardless of which filesystem the process invoking
+# `docker compose` happens to be running on. Two entries in
+# deploy/testhost/docker-compose.yml are relative: `./data:/matter-data:ro`
+# on `loxmatter`, and `../..:/repo` on `loxmatter-updater` itself.
 #
-# The `cd` is checked explicitly, ahead of the subshell, rather than left
-# to fail inside it: without this, a missing or unreadable $STACK makes
-# the whole subshell exit non-zero with nothing on record beyond that -
-# indistinguishable here from `docker compose` itself failing. Both call
-# sites below then report a plainly wrong diagnosis ("image could not be
-# pulled", "restart failed") for a problem that is neither a pull nor a
-# restart, but the stack directory itself. This one log line at least
-# tells the two apart for whoever reads log.txt afterward.
+# An earlier version of this function `cd`d into $STACK and ran `docker
+# compose` with no project-directory flag at all - which resolves those
+# two entries against $STACK, and $STACK ($LOXMATTER_STACK,
+# /repo/deploy/testhost by default) is a CONTAINER path: a directory that
+# exists inside THIS sidecar (bind-mounted from the host's checkout) but
+# not, under that exact name, on the host the daemon actually runs on.
+# On the first update this ever ran: the `loxmatter` recreate resolved
+# `./data` to a host path that does not exist, and the daemon silently
+# created it EMPTY rather than erroring - the fabric backup route (`GET
+# /api/diagnostics/fabric-backup`, which reads through that exact mount)
+# went dead from that point on, with nothing in this script or state.json
+# ever indicating it. The self-replacement further down resolved `../..`
+# the same way - an empty host `/repo` - so every update AFTER the first
+# one failed at `git fetch` ("$STACK is not a directory", from a checkout
+# that was never actually there). The self-replacement's own "only
+# recreate when the image changed" reasoning (see its comment further
+# down) was ALSO silently false the whole time: the WRONG mount source it
+# resolved differs from the correct one on every single run, so Compose's
+# own config-hash comparison never agreed with itself between runs and it
+# recreated unconditionally regardless of whether the image had actually
+# moved.
+#
+# `--project-directory` is the flag Compose actually resolves relative
+# paths against, independent of `-f` (which only says where to READ the
+# file). `-f "$STACK/docker-compose.yml"` keeps the CONTAINER path - this
+# process can only ever see its own filesystem, and that path correctly
+# reaches the (bind-mounted, so identical) file either way.
+# `--project-directory` gets the HOST path instead, resolved through
+# host_path_for() - the same function write_failure_file() below already
+# uses to turn a container path back into something an operator can `cd`
+# into, because the docker daemon behind this socket is the one party
+# that actually knows what is mounted where.
+#
+# Resolved (and refused, see below) only ONCE per pass, on this
+# function's first call - not once per invocation. There can be several
+# in one pass (pull, the initial recreate, a rollback's own recreate, the
+# self-replacement's pull/up), the mounts underneath this sidecar do not
+# change mid-pass, and re-querying the daemon for the identical answer
+# every time would be a socket round trip this sidecar does not need -
+# it would also turn a single unresolved-mount problem into a separate
+# log line, and a separate `docker inspect loxmatter-updater` call, for
+# every compose() call in the pass instead of exactly one.
+#
+# A $STACK that host_path_for() cannot resolve at ALL (no mount whose
+# Destination is a path-segment prefix of it - the daemon unreachable, or
+# this sidecar's own mount table not shaped the way it expects) must NOT
+# fall back to the container path - that is the exact bug this function
+# exists to fix, just reached by a different route, and this time
+# silently. Refuse instead: a compose call that never ran is retryable on
+# the very next request; one that silently recreated a service against
+# the wrong host directory is not.
 compose() {
   if [ ! -d "$STACK" ]; then
     log "compose: $STACK is not a directory - cannot run docker compose there"
     return 1
   fi
-  log "\$ (cd $STACK && docker compose $*)"
-  (cd "$STACK" && docker compose "$@") >> "$LOG" 2>&1
+  if [ -z "${COMPOSE_PROJECT_DIR_RESOLVED:-}" ]; then
+    COMPOSE_PROJECT_DIR="$(host_path_for "$STACK" "")"
+    COMPOSE_PROJECT_DIR_RESOLVED=1
+  fi
+  if [ -z "$COMPOSE_PROJECT_DIR" ]; then
+    log "compose: could not resolve $STACK to a host path (docker inspect loxmatter-updater found no mount whose Destination is a prefix of it) - refusing to run docker compose, since a relative volumes: entry would otherwise resolve against this container's own filesystem instead of the host's"
+    return 1
+  fi
+  log "\$ docker compose -f $STACK/docker-compose.yml --project-directory $COMPOSE_PROJECT_DIR $*"
+  docker compose -f "$STACK/docker-compose.yml" --project-directory "$COMPOSE_PROJECT_DIR" "$@" >> "$LOG" 2>&1
 }
 
 # Escapes sed's own replacement metacharacters - backslash, ampersand, and
