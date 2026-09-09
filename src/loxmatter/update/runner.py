@@ -62,6 +62,19 @@ class Commands(Protocol):
     def log(self, line: str) -> None: ...
 
 
+def _log(commands: Commands, line: str) -> None:
+    """`commands.log` appends to a file in the shared directory, and a
+    full SD card makes that an ordinary way for an update to fail. The
+    diagnostic line is a courtesy to whoever reads the log afterwards; it
+    must never be able to turn into the exception that breaks the one
+    invariant this module has - no exception leaves `run_update`. Best
+    effort: on failure, the line is simply not recorded."""
+    try:
+        commands.log(line)
+    except Exception:  # noqa: BLE001, S110 - see docstring; logging must never escape
+        pass
+
+
 def run_update(
     request: UpdateRequest,
     commands: Commands,
@@ -93,7 +106,17 @@ def run_update(
             healthy=healthy,
             updater_seen_at=now_iso(),
         )
-        write_state(base, state)
+        try:
+            write_state(base, state)
+        except Exception:  # noqa: BLE001, S110 - see finding (c): best effort, not an escape
+            # `write_state` can fail the same way `commands.log` can - a
+            # full disk mid-update is an ordinary failure, not an
+            # exceptional one. `run_update`'s contract with every caller
+            # is "return a correct state object", not "return one only if
+            # it could also be written to disk". The in-memory state is
+            # still accurate even when the file that should mirror it
+            # could not be updated.
+            pass
         return state
 
     try:
@@ -107,7 +130,7 @@ def run_update(
         # Before the first command, so a rejected request has taken no
         # backup and pulled no image - it left the installation exactly as
         # it found it.
-        commands.log(f"refused: {rejected.reason}")
+        _log(commands, f"refused: {rejected.reason}")
         return publish("failed", error=rejected.reason)
 
     # Both of these are read BEFORE anything is written, and they are two
@@ -137,23 +160,40 @@ def run_update(
         nothing. A rollback that does not complete has to publish that
         fact, not vanish.
         """
-        commands.log(f"rolling back to {previous_tag} ({previous_ref}): {reason}")
+        _log(commands, f"rolling back to {previous_tag} ({previous_ref}): {reason}")
         publish("rollback", error=reason)
+        restored_tag = False
+        restored_ref = False
         try:
             commands.write_image_tag(previous_tag)
+            restored_tag = True
             commands.checkout(previous_ref)
+            restored_ref = True
             commands.recreate()
         except Exception as rollback_failure:  # noqa: BLE001 - must publish, not propagate
-            # By the time `recreate` throws, `write_image_tag` and
-            # `checkout` have already run without raising: the files on
-            # disk (image tag, git ref) are back on the old version, but
-            # the running container is not - `rolled_back=True` would
-            # claim the installation is back on its previous version when
-            # it is not, and this field is what the interface renders.
-            commands.log(
-                "rollback did not complete: image tag and git ref were restored to "
-                f"{previous_tag} ({previous_ref}), but the container was not recreated - "
-                f"a person has to finish this by hand ({rollback_failure!r})"
+            # Name only what actually completed. `recreate` throwing is
+            # not the only way in here: `checkout` can throw too, and if
+            # it does the git ref was never restored - saying otherwise
+            # would tell whoever reads this log that only `up -d` is
+            # needed to finish by hand, which for someone who believes the
+            # ref is back deploys the checked-out (new) revision's
+            # docker-compose.yml instead of the old one.
+            if restored_ref:
+                what = (
+                    f"image tag and git ref were restored to {previous_tag} "
+                    f"({previous_ref}), but the container was not recreated"
+                )
+            elif restored_tag:
+                what = (
+                    f"the image tag was restored to {previous_tag}, but the git ref "
+                    "is still on the new revision and the container was not recreated"
+                )
+            else:
+                what = "nothing was restored - not even the image tag"
+            _log(
+                commands,
+                f"rollback did not complete: {what} - a person has to finish this by "
+                f"hand ({rollback_failure!r})",
             )
             return publish(
                 "failed",
@@ -165,7 +205,7 @@ def run_update(
         return publish("failed", error=reason, rolled_back=True, healthy=recovered)
 
     try:
-        commands.log(f"backing up before {request.target}")
+        _log(commands, f"backing up before {request.target}")
         commands.backup()
         done.append("backup")
         publish("backup")
@@ -176,7 +216,7 @@ def run_update(
         # a checkout rewrites docker-compose.yml on disk, and whoever
         # reads this log afterwards has to be able to see that the file
         # changed under them.
-        commands.log(f"checked out {request.target}; compose file on disk is now that revision")
+        _log(commands, f"checked out {request.target}; compose file on disk is now that revision")
         commands.pull(image_reference(request.target))
         done.append("pull")
         publish("pull")
@@ -190,14 +230,20 @@ def run_update(
         # at a version that never arrived, and that is exactly the state a
         # later `up -d` would deploy. The traceback goes to the log so the
         # cause survives.
-        commands.log(f"step failed: {failure!r}")
+        _log(commands, f"step failed: {failure!r}")
         return roll_back(str(failure))
 
     if not _wait_for_health(commands, sleep, deadline_seconds):
+        # `_wait_for_health` already treats a raising `healthy()` as "not
+        # healthy" (see its docstring) - that is what makes this branch
+        # the right response to the exact failure finding (a) describes:
+        # a real `healthy()` polling `/health` over HTTP raises rather
+        # than returning `False` while the bridge is down, which is
+        # precisely the condition this poll exists to detect.
         return roll_back(f"the bridge did not answer /health within {deadline_seconds:.0f}s")
 
     done.append("health")
-    commands.log(f"update to {request.target} complete")
+    _log(commands, f"update to {request.target} complete")
     return publish("done", healthy=True)
 
 
@@ -210,11 +256,25 @@ def _wait_for_health(
     clock, so a test can drive the whole wait with a `sleep` that returns
     immediately - otherwise the rollback test would take two real minutes
     and be skipped as slow within a month.
+
+    A raising `healthy()` is treated as a `False` for that one poll, not
+    as a reason to stop polling or to let the exception through. A real
+    `healthy()` calls `/health` over HTTP, and while the bridge is down -
+    the exact condition this whole function exists to detect - that call
+    raises `ConnectionError` instead of returning `False`. Both callers
+    (the main wait and `roll_back`'s own confirmation) rely on this: an
+    unreachable bridge must read as "not healthy", which for the main
+    caller means a rollback runs at all, and for `roll_back` means
+    `healthy=False` is published instead of the exception escaping
+    `run_update` and leaving `state.json` frozen (findings (a) and (b)).
     """
     waited = 0.0
-    while waited <= deadline_seconds:
-        if commands.healthy():
-            return True
+    while waited < deadline_seconds:
+        try:
+            if commands.healthy():
+                return True
+        except Exception:  # noqa: BLE001, S110 - a raising poll means "not healthy"
+            pass
         sleep(POLL_SECONDS)
         waited += POLL_SECONDS
     return False
