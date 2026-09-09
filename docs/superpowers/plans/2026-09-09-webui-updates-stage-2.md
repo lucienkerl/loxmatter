@@ -17,7 +17,15 @@
 - Line length 100 (`[tool.ruff] line-length = 100`).
 - The checks: `uv run ruff check .`, `uv run ruff format --check .`, `uv run mypy`, `uv run python scripts/check_language.py`, `uv run pytest`.
 - The full suite takes about **three minutes**. It looks like a hang; it is not. **Implementers must not run it** — the controller does. Run only the tests covering your change.
-- Baseline on this branch: **1475 passed, 2 skipped**. Each task says how far the number must rise.
+- Baseline on this branch: **1481 passed, 2 skipped**, measured after `main` was merged in.
+
+  > **Correction (9 September 2026).** This said 1475, and it was wrong twice over. The branch was
+  > cut from `origin/main` while `main` was already ten commits ahead - the last-heard work was
+  > merged locally and not pushed - so its real starting point was 1467, and the per-task totals
+  > below were all eight too high. Task 1 reported 1473 and was correct; the plan was not. `main`
+  > has since been merged into the branch, which is what this project's own notes say to do when
+  > main moves during a branch. Every per-task total below should be read as **six higher** than
+  > printed.
 - `mypy` runs with `strict = true` over `src` and `scripts` (`pyproject.toml`). Everything this plan adds under those paths is covered by it; that is deliberate and is half the reason the updater is Python.
 - Timestamps come only from `loxmatter.timestamps.now_iso()`.
 
