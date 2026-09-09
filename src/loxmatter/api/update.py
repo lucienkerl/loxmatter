@@ -249,12 +249,37 @@ def build_update_router(store: Store, update_dir: Path) -> APIRouter:
                 "error": i18n.t("api.update.check_disabled"),
             }
         info = build_info()
-        result = await update_check.check(
-            store.update_settings.get_channel(),
-            current_version=info.version,
-            current_commit=info.commit,
-            fetch=_fetch,
-        )
+        try:
+            result = await update_check.check(
+                store.update_settings.get_channel(),
+                current_version=info.version,
+                current_commit=info.commit,
+                fetch=_fetch,
+            )
+        except ValueError:
+            # `check()` deliberately raises `ValueError` for a channel
+            # outside `("stable", "dev")` (see its own docstring and
+            # `tests/test_update_check.py::test_an_unknown_channel_is_refused`)
+            # rather than folding it into its own catch tuple - that is
+            # right for callers passing a hardcoded/validated literal, a
+            # genuine programming error worth a loud failure. This route
+            # is not that caller: it hands `check()` whatever
+            # `store.update_settings.get_channel()` currently returns, and
+            # while `set_channel` is the only writer and already validates
+            # against the same two channels, two hardcoded lists can drift,
+            # and the `setting` row itself is one hand edit or migration
+            # bug away from holding something else. Same shape as the
+            # `check_disabled` branch above: a calm 200 with `error` set,
+            # not a 500 for a value this request never supplied itself.
+            return {
+                "channel": store.update_settings.get_channel(),
+                "target": None,
+                "title": None,
+                "notes": None,
+                "behind": None,
+                "checked_at": None,
+                "error": i18n.t("api.update.fail_unknown_channel"),
+            }
         return {
             "channel": result.channel,
             "target": result.target,

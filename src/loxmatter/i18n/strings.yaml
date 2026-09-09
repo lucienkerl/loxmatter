@@ -573,6 +573,9 @@ api.update.fail_busy:
 api.update.fail_unwritable:
   en: "The update request could not be written to disk ({exc}). This can happen after a read-only filesystem remount or when the disk is full — check the update volume and try again."
   de: "Die Aktualisierungsanfrage konnte nicht auf die Festplatte geschrieben werden ({exc}). Das kann nach einem Nur-Lese-Remount des Dateisystems oder bei vollem Speicher passieren — prüfen Sie das Update-Volume und versuchen Sie es erneut."
+api.update.fail_unknown_channel:
+  en: "The stored update channel is not recognized. Open Settings and choose the update channel again."
+  de: "Der gespeicherte Update-Kanal wird nicht erkannt. Öffnen Sie die Einstellungen und wählen Sie den Update-Kanal erneut aus."
 
 # --- web.nav — Reiterleiste ---
 web.nav.devices:

@@ -276,6 +276,43 @@ async def test_a_broken_connection_to_github_becomes_a_calm_error_not_a_crash(ap
     assert body["error"]
 
 
+async def test_a_tampered_channel_row_returns_a_calm_error_not_a_crash(
+    tmp_path, no_invoke, fake_runtime
+):
+    """Reproduces Minor 3: `update_check.check()` raises `ValueError(channel)`
+    BEFORE its own `try` block (deliberately - see
+    `tests/test_update_check.py::test_an_unknown_channel_is_refused`, which
+    pins that a genuinely invalid channel is a caller bug `check()` itself
+    should surface, not swallow), and `/check` calls it with nothing around
+    it. Unreachable through the API today, because
+    `UpdateSettingsStore.set_channel` is the only writer and already
+    validates against the same two channels `check()` checks - but two
+    hardcoded lists can drift, and the `setting` row itself is a plain
+    SQLite value nothing stops a hand edit (or a future migration bug) from
+    writing an unrecognized one into. This writes such a row directly,
+    bypassing `set_channel`'s validation entirely, to prove the ROUTE - not
+    `check()` - is what must not let that reach the web UI as a 500."""
+    update_dir = tmp_path / "update"
+    update_dir.mkdir()
+    store = Store(tmp_path / "t.sqlite")
+    store.update_settings._db.execute(
+        "INSERT INTO setting (key, value) VALUES ('update.channel', 'nightly') "
+        "ON CONFLICT(key) DO UPDATE SET value = excluded.value"
+    )
+    store.update_settings._db.commit()
+    app = build_app(store, no_invoke, fake_runtime(store), update_dir=update_dir)
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        await authenticate(store, client)
+        response = await client.get("/api/update/check")
+    store.close()
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["target"] is None
+    assert body["error"]
+
+
 class FakeResponse:
     """Stands in for `aiohttp.ClientResponse` - `status` and `text()`, the
     two members `_fetch` actually reads (same pattern as
