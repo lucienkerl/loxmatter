@@ -700,6 +700,95 @@ async def test_the_update_polling_only_runs_while_a_job_is_in_progress(api):
     assert "this.stopUpdateTimer()" in select_view_body
 
 
+async def test_a_stalled_sidecar_gets_its_own_message_in_the_running_state(api):
+    """Review fix, Important 2 (markup half): before this fix, the "no
+    updater" hint stayed suppressed for a dead-mid-job sidecar - it is
+    gated on `!updateRunning()`, and `updateRunning()` reads `true` for
+    as long as `phase` sits in a running value, which for a crashed
+    sidecar is forever. The running block (state 3) rendered exactly the
+    same regardless of whether anything was still alive back there. This
+    checks that `updateStalled()` (see the node-harness test above for
+    its own logic) is actually wired into that block, with its own
+    translated text, and that the existing "reconnects by itself" hint -
+    which promises exactly the recovery a stalled job will not get - is
+    suppressed at the same time so the two are never shown together."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+
+    running_start = page.index('x-if="updateRunning()"')
+    running_end = page.index("</template>", running_start)
+    running_block = page[running_start:running_end]
+
+    assert 'x-show="updateStalled()"' in running_block
+    assert "t('web.system.update_stalled')" in running_block
+    stalled_idx = running_block.index('x-show="updateStalled()"')
+    stalled_tag_start = running_block.rindex("<p", 0, stalled_idx)
+    stalled_tag_end = running_block.index(">", stalled_idx)
+    assert "banner danger" in running_block[stalled_tag_start:stalled_tag_end]
+
+    # The two must be mutually exclusive - a stalled job is never also
+    # told it is reconnecting on its own.
+    hint_idx = running_block.index("t('web.system.update_restarting_hint')")
+    hint_tag_start = running_block.rindex("<p", 0, hint_idx)
+    hint_tag_end = running_block.index(">", hint_idx)
+    assert "!updateStalled()" in running_block[hint_tag_start:hint_tag_end]
+
+
+async def test_the_update_card_css_classes_carry_the_rules_the_markup_relies_on(api):
+    """Minor 6: `.confirm`, `.steps` (`done`/`now`) and `.notes` style the
+    update card's confirmation box, its step list and its notes/log
+    boxes, but had no test of their own - a gap next to the precedent
+    this file already sets for CSS (`test_the_highlight_cannot_change_
+    the_width_of_a_cell`, `test_the_tab_styling_covers_links_and_
+    buttons`, `test_the_device_grid_is_multi_column`). Full visual
+    rendering stays genuinely untestable here - no engine applies CSS in
+    this suite, Playwright is deliberately not a dependency - so this
+    only proves the structural precondition: the exact selectors the
+    markup binds to (`index.html`'s `class="confirm"`,
+    `:class="{ done: ..., now: ... }"` on `.steps li`, `class="notes"`)
+    carry rules at all, and that the two visual states `done`/`now` are
+    told apart without colour alone (task requirement, also WCAG 1.4.1) -
+    a filled/checked marker for `done`, a spinning ring for `now`."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+    css = (await client.get("/static/style.css")).text
+
+    # The markup actually uses these class names - a CSS-only test could
+    # otherwise stay green after a rename left the rule below orphaned.
+    assert 'class="confirm"' in page
+    assert 'class="steps"' in page
+    assert "done: ['pull','recreate','health'].includes(updateStatus.state.phase)" in page
+    assert "now: updateStatus.state.phase === 'backup'" in page
+    assert 'class="notes"' in page
+
+    confirm_rule = css[css.index(".confirm {") : css.index("}", css.index(".confirm {"))]
+    assert "border" in confirm_rule
+    assert "border-radius" in confirm_rule
+
+    steps_rule = css[css.index(".steps {") : css.index("}", css.index(".steps {"))]
+    assert "list-style: none;" in steps_rule
+
+    done_rule = css[css.index(".steps li.done {") : css.index("}", css.index(".steps li.done {"))]
+    done_before_rule = css[
+        css.index(".steps li.done::before {") : css.index(
+            "}", css.index(".steps li.done::before {")
+        )
+    ]
+    assert "color: var(--text);" in done_rule
+    assert "background: var(--accent);" in done_before_rule
+
+    now_rule = css[css.index(".steps li.now {") : css.index("}", css.index(".steps li.now {"))]
+    now_before_rule = css[
+        css.index(".steps li.now::before {") : css.index("}", css.index(".steps li.now::before {"))
+    ]
+    assert "font-weight: 600;" in now_rule
+    assert "animation: update-step-spin" in now_before_rule
+
+    notes_rule = css[css.index(".notes {") : css.index("}", css.index(".notes {"))]
+    assert "white-space: pre-wrap;" in notes_rule
+    assert "overflow-y: auto;" in notes_rule
+
+
 async def test_the_device_tile_no_longer_promises_a_ranking_it_does_not_have(api):
     """Review-Fix Fix 9 (2026-09-03) hatte die Ueberschrift „Wichtigste
     Werte“ absichtlich in „Signale (Anfang der Liste)“ umbenannt, weil die
@@ -958,6 +1047,219 @@ def _app_state(setup: str = "") -> dict:
     )
     assert result.returncode == 0, result.stderr
     return json.loads(result.stdout)
+
+
+@pytest.mark.skipif(NODE is None, reason="node wird fuer diesen Test gebraucht")
+def test_a_cold_load_during_the_restart_window_still_starts_the_update_poll():
+    """Review fix, Important 1: `loadSystem()` used to await `GET
+    /api/version` first, inside the same `try` as `loadUpdateStatus()`
+    and `loadUpdateCheck()`. `/api/version` is exactly the call that
+    fails throughout the bridge's OWN restart window (`recreate`/`health`
+    in `update.py`'s `_RUNNING_PHASES`) - the one window this whole card
+    exists to report progress through. A failure there jumped straight
+    to the outer `catch`, past both update calls: `updateStatus` stayed
+    `null`, `updateRunning()` read `false`, and the poll timer - started
+    only inside `loadUpdateStatus()` - never got the chance to start.
+    Opening or reloading the System tab (or pressing "Refresh") during
+    exactly this window showed nothing but the generic load-error
+    banner: no restarting message, no steps, no polling.
+
+    Runs `app.js`'s own `loadSystem()` directly, the same way the other
+    node-harness tests in this file exercise the state object without an
+    Alpine runtime: `state.request` is stubbed to fail only for
+    `/api/version` and to answer a mid-job `/api/update/status` for
+    everything else. Before the fix this test failed with `updateStatus`
+    still `null` and no timer ever started - `/api/version` failing
+    aborted the whole function before `loadUpdateStatus()` ran."""
+    values = _app_state(
+        """
+        state.request = async (method, path) => {
+          if (path === "/api/version") {
+            throw new Error("bridge unreachable");
+          }
+          if (path === "/api/update/status") {
+            return {
+              state: { phase: "pull", id: "j1", from: "1.0.0", to: "1.1.0",
+                       error: null, rolled_back: false, healthy: true },
+              updater_present: true,
+              log: [],
+              channel: "stable",
+              check_enabled: true,
+            };
+          }
+          if (path === "/api/update/check") {
+            return {
+              channel: "stable", target: "1.1.0", title: null, notes: null,
+              behind: null, checked_at: null, error: null,
+            };
+          }
+          if (path === "/api/diagnostics/system") {
+            return [];
+          }
+          throw new Error("unexpected request " + method + " " + path);
+        };
+        (async () => {
+          await state.loadSystem();
+          // The interval keeps node's event loop alive - cleared before
+          // the process exits, or the 30s subprocess timeout would fire.
+          const timerWasSet = state.updateTimer !== null;
+          state.stopUpdateTimer();
+          console.log(JSON.stringify({
+            phase: state.updateStatus ? state.updateStatus.state.phase : null,
+            timerWasSet,
+            systemError: state.systemError,
+            versionInfo: state.versionInfo,
+          }));
+        })();
+        """
+    )
+
+    assert values["phase"] == "pull"
+    assert values["timerWasSet"] is True
+    assert values["systemError"] is None
+    # `/api/version` failed and must not have blanked anything it does
+    # not own: `versionInfo` stays at its initial `null` (see `app()`'s
+    # own state) rather than being forced to some other value by a
+    # failure in a completely different fetch.
+    assert values["versionInfo"] is None
+
+
+@pytest.mark.skipif(NODE is None, reason="node wird fuer diesen Test gebraucht")
+def test_updatestalled_is_true_only_while_running_with_no_recent_heartbeat():
+    """Review fix, Important 2: a crashed sidecar (OOM, a full disk) still
+    leaves `state.json`'s `phase` on whatever it was mid-job - nothing is
+    left to advance it. `updater_present` already carries "no heartbeat
+    in the last 30 seconds" on every `/api/update/status` response (see
+    `update.py`'s `updater_present()`, mirrored by `api/update.py`'s
+    `_status()`); `updateStalled()` combines it with `updateRunning()` so
+    the card can tell a genuinely stuck job apart from one still making
+    progress. Before this method existed, calling it threw `TypeError:
+    state.updateStalled is not a function` - this test would fail outright
+    rather than merely assert the wrong value."""
+    values = _app_state(
+        """
+        function stalledFor(status) {
+          state.updateStatus = status;
+          return state.updateStalled();
+        }
+        console.log(JSON.stringify([
+          stalledFor({ state: { phase: "pull" }, updater_present: false }),
+          stalledFor({ state: { phase: "pull" }, updater_present: true }),
+          stalledFor({ state: { phase: "done" }, updater_present: false }),
+          stalledFor(null),
+        ]));
+        """
+    )
+
+    assert values == [
+        True,  # running, no heartbeat - the stuck case this fix names
+        False,  # running, heartbeat present - a healthy job in progress
+        False,  # not running at all - an end state, not a stall
+        False,  # no state ever loaded
+    ]
+
+
+@pytest.mark.skipif(NODE is None, reason="node wird fuer diesen Test gebraucht")
+def test_a_failed_channel_switch_surfaces_an_error_instead_of_vanishing_silently():
+    """Review fix, Important 3: `setUpdateChannel` used to await its PATCH
+    with no `try` at all, unlike every sibling method in this card
+    (`applyUpdate`, `resyncAll`, `downloadFabricBackup`, ...). A rejected
+    request became an unhandled promise rejection straight out of the
+    `@click` handler: nothing shown, `updateStatus.channel` silently
+    left as it was, no way for whoever clicked to tell the click did
+    anything.
+
+    Before the fix, this test's own node process never printed its JSON:
+    the rejection propagated out of the async IIFE below uncaught, and
+    node exits non-zero for that - `_app_state`'s own
+    `assert result.returncode == 0, result.stderr` is what turns that
+    into a failing assertion here."""
+    values = _app_state(
+        """
+        state.updateStatus = { channel: "stable" };
+        state.updateError = null;
+        state.request = async (method, path) => {
+          if (method === "PATCH" && path === "/api/update/settings") {
+            throw new Error("boom");
+          }
+          throw new Error("unexpected request " + method + " " + path);
+        };
+        state.loadUpdateCheck = async () => {
+          throw new Error("loadUpdateCheck must not run after a failed PATCH");
+        };
+        (async () => {
+          await state.setUpdateChannel("dev");
+          console.log(JSON.stringify({
+            updateError: state.updateError,
+            channel: state.updateStatus.channel,
+          }));
+        })();
+        """
+    )
+
+    assert values["updateError"] == "boom"
+    # The failed PATCH must not have silently taken effect either.
+    assert values["channel"] == "stable"
+
+
+@pytest.mark.skipif(NODE is None, reason="node wird fuer diesen Test gebraucht")
+def test_an_expired_session_stops_the_update_poll_instead_of_retrying_forever():
+    """Review fix, Important 4: `loadUpdateStatus()` never checked
+    `this.authenticated`. A 401 mid-job was already caught, but since
+    `updateRunning()` still read `true` off the last good state fetched
+    before the session died, neither branch below the `catch` noticed
+    anything wrong: no error was set, and the timer - already
+    running - was left exactly as it was, firing this same request every
+    two seconds against a dead session until the page was reloaded by
+    hand. `handleDiagnosticsDisconnect` states the identical rule one
+    screen away for the diagnostics socket: an out-of-band 401 means
+    back to the login screen, not a retry loop against a session that
+    will never answer again.
+
+    `this.request()` itself already flips `this.authenticated` to
+    `false` synchronously before rethrowing (see `noteAuthError`) - the
+    stub below reproduces exactly that side effect rather than going
+    through the real fetch/`UnauthorizedError` stack, the same shortcut
+    `test_deselect_all_empties_the_selection_instead_of_inverting_it`
+    above takes for `toggleExported`. Before the fix, `timerStopped`
+    below read `False`: the interval created ahead of the call was still
+    running afterwards."""
+    values = _app_state(
+        """
+        state.authenticated = true;
+        state.updateStatus = {
+          state: { phase: "pull", id: "j1", from: "1.0.0", to: "1.1.0",
+                   error: null, rolled_back: false, healthy: true },
+          updater_present: true, log: [], channel: "stable", check_enabled: true,
+        };
+        // A real timer, not a placeholder value: `stopUpdateTimer()`
+        // calls `clearInterval` on it, and this proves that call is
+        // actually reached rather than merely that `updateTimer` gets
+        // reassigned to `null` by some other path.
+        state.updateTimer = setInterval(() => {}, 999999);
+        state.request = async () => {
+          state.authenticated = false;
+          state.authError = "session expired";
+          throw new Error("session expired");
+        };
+        (async () => {
+          await state.loadUpdateStatus();
+          console.log(JSON.stringify({
+            timerStopped: state.updateTimer === null,
+            updateError: state.updateError,
+            authenticated: state.authenticated,
+          }));
+        })();
+        """
+    )
+
+    assert values["timerStopped"] is True
+    assert values["authenticated"] is False
+    # No update-specific error either: the login screen (`authError`,
+    # already set above the way `noteAuthError` sets it for real) is the
+    # whole answer, not a second, contradictory message under a card the
+    # login screen has just covered.
+    assert values["updateError"] is None
 
 
 @pytest.mark.skipif(NODE is None, reason="node wird fuer diesen Test gebraucht")
