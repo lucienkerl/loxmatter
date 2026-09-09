@@ -434,7 +434,9 @@ def test_read_running_identity_reads_version_and_commit_from_the_container_env(t
     """The mandated source (design section 4): the running container's own
     `Config.Env`, not `pyproject.toml`/`git rev-parse HEAD` on the
     checkout - see `Dockerfile`'s `LOXMATTER_VERSION`/`LOXMATTER_COMMIT`
-    `ENV` and the method's own docstring for why."""
+    `ENV` and the method's own docstring for why. `LOXMATTER_SCHEMA_VERSION`
+    comes from the same `Config.Env`, the same reason (see the method's own
+    docstring on why this is not `PRAGMA user_version`)."""
 
     class FixedRunner:
         def __call__(self, argv: list[str], **_kwargs: object) -> str:
@@ -448,7 +450,12 @@ def test_read_running_identity_reads_version_and_commit_from_the_container_env(t
                 "abc123def456",
             ]
             return json.dumps(
-                ["PATH=/usr/bin", "LOXMATTER_VERSION=0.3.0", "LOXMATTER_COMMIT=abc1234"]
+                [
+                    "PATH=/usr/bin",
+                    "LOXMATTER_VERSION=0.3.0",
+                    "LOXMATTER_COMMIT=abc1234",
+                    "LOXMATTER_SCHEMA_VERSION=7",
+                ]
             )
 
     commands = DockerCommands(
@@ -459,7 +466,7 @@ def test_read_running_identity_reads_version_and_commit_from_the_container_env(t
         base=tmp_path / "update",
         run=FixedRunner(),
     )
-    assert commands.read_running_identity() == ("0.3.0", "abc1234")
+    assert commands.read_running_identity() == ("0.3.0", "abc1234", 7)
 
 
 def test_read_running_identity_raises_when_the_container_is_not_running(tmp_path):
@@ -488,14 +495,15 @@ def test_read_running_identity_raises_when_the_container_is_not_running(tmp_path
 
 def test_read_running_identity_falls_back_to_dev_when_the_env_keys_are_absent(tmp_path):
     """A foreign or very old image - one whose `Config.Env` never carried
-    `LOXMATTER_VERSION`/`LOXMATTER_COMMIT` at all - is the case the
-    method's own docstring names for this fallback, and the only one that
-    actually reaches it: `env.get("LOXMATTER_VERSION") or "dev"` only
-    falls back when the key is missing from the dict entirely. A
-    hand-built image using the current `Dockerfile` is not that case - its
-    `ARG LOXMATTER_VERSION=dev` default means the key IS present, already
-    holding the string `"dev"`, so supplying it explicitly (as this test
-    used to) exercises plain pass-through, not the fallback."""
+    `LOXMATTER_VERSION`/`LOXMATTER_COMMIT`/`LOXMATTER_SCHEMA_VERSION` at
+    all - is the case the method's own docstring names for this fallback,
+    and the only one that actually reaches it: `env.get("LOXMATTER_VERSION")
+    or "dev"` only falls back when the key is missing from the dict
+    entirely. A hand-built image using the current `Dockerfile` is not that
+    case - its `ARG LOXMATTER_VERSION=dev` default means the key IS
+    present, already holding the string `"dev"`, so supplying it explicitly
+    (as this test used to) exercises plain pass-through, not the
+    fallback."""
 
     class FixedRunner:
         def __call__(self, argv: list[str], **_kwargs: object) -> str:
@@ -511,7 +519,37 @@ def test_read_running_identity_falls_back_to_dev_when_the_env_keys_are_absent(tm
         base=tmp_path / "update",
         run=FixedRunner(),
     )
-    assert commands.read_running_identity() == ("dev", "")
+    assert commands.read_running_identity() == ("dev", "", 0)
+
+
+def test_read_running_identity_falls_back_to_zero_for_an_unparsable_schema_version(tmp_path):
+    """`LOXMATTER_SCHEMA_VERSION` is baked in as plain `ENV`, so nothing
+    stops a hand-edited or foreign image from setting it to something that
+    is not an integer at all - this must read as "unknown" (`0`), the same
+    fallback as the key being absent entirely, not raise and take down the
+    whole identity read over one cosmetic field."""
+
+    class FixedRunner:
+        def __call__(self, argv: list[str], **_kwargs: object) -> str:
+            if argv == ["docker", "compose", "ps", "-q", "loxmatter"]:
+                return "abc123\n"
+            return json.dumps(
+                [
+                    "LOXMATTER_VERSION=0.3.0",
+                    "LOXMATTER_COMMIT=abc1234",
+                    "LOXMATTER_SCHEMA_VERSION=not-a-number",
+                ]
+            )
+
+    commands = DockerCommands(
+        repo_dir=tmp_path,
+        stack_dir=tmp_path,
+        env_path=tmp_path / ".env",
+        health_url="http://x/health",
+        base=tmp_path / "update",
+        run=FixedRunner(),
+    )
+    assert commands.read_running_identity() == ("0.3.0", "abc1234", 0)
 
 
 def test_read_running_identity_propagates_a_failing_docker_inspect(tmp_path):

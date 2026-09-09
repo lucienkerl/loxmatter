@@ -358,11 +358,11 @@ class DockerCommands:
             timeout=_RECREATE_TIMEOUT_SECONDS,
         )
 
-    def read_running_identity(self) -> tuple[str, str]:
+    def read_running_identity(self) -> tuple[str, str, int]:
         """The build identity baked into the *running* `loxmatter`
-        container's environment - `LOXMATTER_VERSION`/`LOXMATTER_COMMIT`
-        from `Dockerfile`'s `ENV` - read live through the Docker socket
-        this sidecar holds.
+        container's environment - `LOXMATTER_VERSION`/`LOXMATTER_COMMIT`/
+        `LOXMATTER_SCHEMA_VERSION` from `Dockerfile`'s `ENV` - read live
+        through the Docker socket this sidecar holds.
 
         Design section 4: "It comes from the image, not from the checkout
         on the host - which may by now be elsewhere, moved or advanced,
@@ -374,6 +374,27 @@ class DockerCommands:
         nobody is running anymore, and `rules.check_request` would wave a
         downgrade through as "forward" because it never sees the real
         one.
+
+        The schema version is this same value, not the database's own
+        `PRAGMA user_version`: `Dockerfile`'s comment on
+        `LOXMATTER_SCHEMA_VERSION` says outright that this variable is
+        "read by... the updater", and CI (`.github/workflows/ci.yml`) sets
+        it from `model.store._SCHEMA_VERSION` at build time, the same
+        constant `_migrate` brings a database up to on every normal start.
+        Reading the live `PRAGMA user_version` directly would need this
+        image to import `loxmatter.model` - deliberately excluded from
+        `deploy/updater/Dockerfile` to keep the one container holding the
+        Docker socket importing as little as possible - or to open the
+        running bridge's sqlite file from a second process while the
+        bridge itself may be writing to it, neither of which is a channel
+        this design provides. They agree in the ordinary case (`_migrate`
+        already brought the database to this exact number before the
+        bridge finished starting); they can only disagree if a newer
+        binary previously wrote a higher `user_version` and an older one
+        is running now, which is exactly the "old binary on a newer
+        database" case `runner.roll_back`'s own docstring already treats
+        as safe, not one this method needs to distinguish for the record
+        it exists to keep.
 
         Raises if the container cannot be found or `docker inspect`
         fails - deliberately: the loop (`__main__.run_once`) already has
@@ -395,8 +416,8 @@ class DockerCommands:
         entries = json.loads(raw)
         env = dict(entry.split("=", 1) for entry in entries if "=" in entry)
         # A hand-built image (no build arguments passed) still carries
-        # these keys with their `Dockerfile` defaults ("dev", "") - that
-        # is the normal, honest case for a development build, not a
+        # these keys with their `Dockerfile` defaults ("dev", "", "") -
+        # that is the normal, honest case for a development build, not a
         # failure, and `rules.check_request` already treats an
         # unparsable running version/commit as "cannot prove forward" and
         # refuses safely. Falling back the same way for a foreign or very
@@ -404,7 +425,15 @@ class DockerCommands:
         # in one place instead of two.
         version = env.get("LOXMATTER_VERSION") or "dev"
         commit = env.get("LOXMATTER_COMMIT") or ""
-        return version, commit
+        try:
+            # `0` reads as "before this migration logic" the same way
+            # `model/store.py`'s own comment on `_SCHEMA_VERSION` uses that
+            # number - never a value a real release actually carries, so
+            # it cannot be mistaken for one.
+            schema_version = int(env.get("LOXMATTER_SCHEMA_VERSION") or "0")
+        except ValueError:
+            schema_version = 0
+        return version, commit, schema_version
 
     def healthy(self) -> bool:
         # A connection failure has to read as `False` here, not as an

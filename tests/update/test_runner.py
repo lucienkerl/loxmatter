@@ -27,7 +27,7 @@ import subprocess
 from pathlib import Path
 
 from loxmatter import i18n
-from loxmatter.update.protocol import UpdateRequest, read_state
+from loxmatter.update.protocol import UpdateRequest, failure_path, read_state
 from loxmatter.update.runner import HEALTH_REFRESH_POLLS, POLL_SECONDS, STEPS, run_update
 
 
@@ -152,6 +152,7 @@ def run(commands: FakeCommands, base: Path, **overrides: object):
         "base": base,
         "running_version": "0.2.0",
         "running_commit": "abc1234",
+        "running_schema_version": 7,
         "is_ancestor": lambda _a, _b: True,
         "sleep": lambda _seconds: None,
     }
@@ -260,6 +261,7 @@ def test_a_rejected_request_executes_nothing(tmp_path):
         base=tmp_path,
         running_version="0.2.0",
         running_commit="abc1234",
+        running_schema_version=7,
         is_ancestor=lambda _a, _b: True,
         sleep=lambda _seconds: None,
     )
@@ -307,6 +309,7 @@ def test_the_dev_ancestry_check_runs_after_the_fetch_not_before(tmp_path):
         base=tmp_path,
         running_version="0.2.0",
         running_commit="abc1234",
+        running_schema_version=7,
         is_ancestor=recording_is_ancestor,
         sleep=lambda _seconds: None,
     )
@@ -337,6 +340,7 @@ def test_a_rejected_request_publishes_a_translation_key_alongside_the_english_re
         base=tmp_path,
         running_version="0.2.0",
         running_commit="abc1234",
+        running_schema_version=7,
         is_ancestor=lambda _a, _b: False,
         sleep=lambda _seconds: None,
     )
@@ -490,6 +494,7 @@ def test_a_log_failure_on_a_rejected_request_does_not_escape(tmp_path):
         base=tmp_path,
         running_version="0.2.0",
         running_commit="abc1234",
+        running_schema_version=7,
         is_ancestor=lambda _a, _b: True,
         sleep=lambda _seconds: None,
     )
@@ -565,6 +570,7 @@ def test_a_dev_update_writes_a_sha_prefixed_docker_tag_not_the_bare_commit(tmp_p
         base=tmp_path,
         running_version="0.2.0",
         running_commit="abc1234",
+        running_schema_version=7,
         is_ancestor=lambda _a, _b: True,
         sleep=lambda _seconds: None,
     )
@@ -609,6 +615,7 @@ def test_a_raising_is_ancestor_check_does_not_escape_run_update(tmp_path):
         base=tmp_path,
         running_version="0.2.0",
         running_commit="abc1234",
+        running_schema_version=7,
         is_ancestor=raising_is_ancestor,
         sleep=lambda _seconds: None,
     )
@@ -840,3 +847,151 @@ def test_a_subprocess_timeout_reaches_the_rollback_path_like_any_other_failure(t
     assert commands.calls.count("recreate") == 1
     assert state.error is not None
     assert "timed out" in state.error.lower()
+
+
+# --- The four values design section 8 requires recorded, and the plain-
+# text file written when a run ends in a state a person has to act on. ---
+
+
+def test_a_healthy_run_records_the_four_values_design_section_8_wants(tmp_path):
+    """`backup_path` used to be discarded outright - `commands.backup()`
+    was called for its side effect alone, with the string it returned
+    thrown away. `previous_tag`/`previous_ref` were read but never carried
+    on `UpdateState`, and `running_schema_version` did not exist at all.
+    All four now ride along on every `publish()` from the point each
+    becomes known - see `run_update`'s own comment on the placeholders."""
+    commands = FakeCommands()
+    state = run(commands, tmp_path)
+    assert state.phase == "done"
+    assert state.previous_tag == "stable"
+    assert state.previous_ref == "v0.2.0"
+    assert state.backup_path == "/data/backups/store-x.tgz"
+    assert state.running_schema_version == 7
+
+
+def test_a_rejected_request_records_no_tag_ref_or_backup_path(tmp_path):
+    """A request refused by the cheap rules never reaches
+    `commands.read_image_tag()`/`read_git_ref()`, let alone `backup()` -
+    the three values stay `None`, honestly reporting that nothing was
+    read, rather than carrying over a stale value from an earlier run.
+    `running_schema_version` is the one exception: the caller already
+    knows it before `run_update` is even called, so it is present
+    regardless of what the request itself asked for."""
+    commands = FakeCommands()
+    state = run_update(
+        UpdateRequest(id="x", channel="stable", target="v0.1.0", requested_at="t"),
+        commands,
+        base=tmp_path,
+        running_version="0.2.0",
+        running_commit="abc1234",
+        running_schema_version=7,
+        is_ancestor=lambda _a, _b: True,
+        sleep=lambda _seconds: None,
+    )
+    assert state.phase == "failed"
+    assert state.previous_tag is None
+    assert state.previous_ref is None
+    assert state.backup_path is None
+    assert state.running_schema_version == 7
+
+
+def test_a_healthy_run_writes_no_failure_file(tmp_path):
+    commands = FakeCommands()
+    run(commands, tmp_path)
+    assert not failure_path(tmp_path).exists()
+
+
+def test_a_rejected_request_writes_no_failure_file(tmp_path):
+    """Nothing changed, so there is nothing for someone at a terminal to
+    finish by hand - the whole reason design section 8 restricts this file
+    to states a person has to act on."""
+    commands = FakeCommands()
+    run_update(
+        UpdateRequest(id="x", channel="stable", target="v0.1.0", requested_at="t"),
+        commands,
+        base=tmp_path,
+        running_version="0.2.0",
+        running_commit="abc1234",
+        running_schema_version=7,
+        is_ancestor=lambda _a, _b: True,
+        sleep=lambda _seconds: None,
+    )
+    assert not failure_path(tmp_path).exists()
+
+
+def test_a_clean_rollback_that_comes_back_healthy_writes_no_failure_file(tmp_path):
+    """`FakeCommands`' default `healthy_after=0` means the rollback's own
+    confirmation poll succeeds on its very first ask - a rollback that
+    completed AND was confirmed reachable again. The web interface's own
+    result screen already shows this; no SSH-only fallback is needed."""
+    commands = FakeCommands(fail_on="recreate", fail_times=1)
+    state = run(commands, tmp_path)
+    assert state.phase == "failed"
+    assert state.rolled_back is True
+    assert state.healthy is True
+    assert not failure_path(tmp_path).exists()
+
+
+def test_a_rollback_that_completes_but_stays_unhealthy_writes_a_failure_file(tmp_path):
+    """Design section 8, named explicitly: "if even the rollback does not
+    come back healthy... it also writes LAST-FAILURE.txt". Every restore
+    command below succeeds (`fail_on` is unset) - `rolled_back=True` is
+    correct - but `/health` never answers within the deadline, so the
+    bridge is not confirmed reachable, and this is precisely the case the
+    file exists for."""
+    commands = FakeCommands(healthy_after=10_000)
+    state = run(commands, tmp_path, deadline_seconds=3.0)
+    assert state.phase == "failed"
+    assert state.rolled_back is True
+    assert state.healthy is False
+
+    text = failure_path(tmp_path).read_text(encoding="utf-8")
+    assert "stable" in text  # previous_tag
+    assert "v0.2.0" in text  # previous_ref
+    assert "/data/backups/store-x.tgz" in text  # backup_path
+    assert "did not answer /health" in text
+
+
+def test_a_failed_rollback_writes_a_failure_file(tmp_path):
+    """The console case, named in the finding this fixes: `roll_back`'s
+    own restore sequence did not finish, so `rolled_back=False` - the
+    installation is not confirmed back on its previous version, and the
+    web interface may not even be reachable to say so."""
+    commands = FakeCommands(fail_on="recreate", fail_times=2)
+    state = run(commands, tmp_path)
+    assert state.phase == "failed"
+    assert state.rolled_back is False
+
+    text = failure_path(tmp_path).read_text(encoding="utf-8")
+    assert "did not complete" in text
+    assert "/data/backups/store-x.tgz" in text
+    # The three manual recovery commands, spelled out for someone with no
+    # web interface.
+    assert "LOXMATTER_IMAGE_TAG=stable" in text
+    assert "git checkout --detach v0.2.0" in text
+    assert "docker compose -f deploy/testhost/docker-compose.yml up -d --no-deps loxmatter" in text
+
+
+def test_the_failure_file_includes_the_tail_of_the_log(tmp_path):
+    """Design section 8: the file has to carry the last log lines, not
+    just a status sentence. `_write_failure_file` reads `log.txt` straight
+    off disk (there is no `Commands` method to read it back through), so
+    this needs a fake whose `log()` also writes the real file - unlike the
+    plain `FakeCommands.log()` above, which only appends in memory and
+    would leave the failure file's log section empty regardless of what
+    this test asserts."""
+    from loxmatter.update.protocol import log_path
+
+    class FileLoggingCommands(FakeCommands):
+        def log(self, line: str) -> None:
+            super().log(line)
+            path = log_path(tmp_path)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with path.open("a", encoding="utf-8") as handle:
+                handle.write(f"{line}\n")
+
+    commands = FileLoggingCommands(fail_on="recreate", fail_times=2)
+    run(commands, tmp_path)
+    text = failure_path(tmp_path).read_text(encoding="utf-8")
+    assert "step failed" in text
+    assert "rollback did not complete" in text

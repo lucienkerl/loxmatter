@@ -103,9 +103,9 @@ class FakeCommands:
     def is_ancestor(self, older: str, newer: str) -> bool:
         return True
 
-    def read_running_identity(self) -> tuple[str, str]:
+    def read_running_identity(self) -> tuple[str, str, int]:
         self.calls.append("read_running_identity")
-        return self.running_version, self.running_commit
+        return self.running_version, self.running_commit, 7
 
 
 def pass_once(base: Path, commands: FakeCommands, *, last_id: str | None = None) -> str | None:

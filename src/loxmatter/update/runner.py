@@ -31,7 +31,14 @@ from pathlib import Path
 from typing import Protocol
 
 from loxmatter.timestamps import now_iso
-from loxmatter.update.protocol import UpdatePhase, UpdateRequest, UpdateState, write_state
+from loxmatter.update.protocol import (
+    UpdatePhase,
+    UpdateRequest,
+    UpdateState,
+    failure_path,
+    log_path,
+    write_state,
+)
 from loxmatter.update.rules import (
     RequestRejected,
     check_ancestry,
@@ -104,6 +111,90 @@ def _log(commands: Commands, line: str) -> None:
         pass
 
 
+#: How many trailing lines of `log.txt` `_write_failure_file` copies into
+#: its own file - generous enough to show the whole of one update attempt
+#: (a healthy run logs on the order of half a dozen lines; a failed one
+#: with a rollback, a dozen) without risking the failure file itself
+#: growing unbounded the way `commands.py`'s `_cap_log` exists to stop
+#: `log.txt` doing.
+_FAILURE_LOG_TAIL_LINES = 60
+
+
+def _write_failure_file(
+    base: Path,
+    *,
+    status: str,
+    previous_tag: str | None,
+    previous_ref: str | None,
+    backup_path: str | None,
+) -> None:
+    """`/data/update/LAST-FAILURE.txt` (design section 8): plain text, for
+    someone who has reached the installation over SSH because the web
+    interface is not answering - the one case the rest of this file's
+    rollback machinery exists to survive but cannot always resolve on its
+    own. Called from exactly two places in `roll_back` below, never from
+    a healthy run or a request refused before anything changed: see that
+    function for which two outcomes warrant it and why the others do not.
+
+    The three recovery commands are `roll_back`'s own three steps
+    (`write_image_tag`, `checkout`, `recreate`), spelled out for a human
+    to run by hand. They are listed unconditionally, not trimmed to only
+    the steps `roll_back` did not reach - `status` above already says
+    precisely what completed and what did not (via the caller's own
+    message), and every one of these three commands is idempotent:
+    writing the same tag again, checking out the same ref again and
+    running `up -d` again are all safe to repeat even where the step in
+    question already succeeded. A conditional command list would need to
+    be exactly as precise as `status` to avoid being actively misleading
+    (see `roll_back`'s own comment on naming only what completed) for no
+    real benefit - safe repetition already covers the case precision
+    would otherwise be needed for.
+
+    Best-effort, like every other write in this module: a full disk that
+    stops this file being written must not raise out of `run_update` -
+    the state this function exists to explain is already lost enough
+    without also taking down the process trying to record it.
+    """
+    try:
+        log_text = log_path(base).read_text(encoding="utf-8")
+    except OSError:
+        log_text = ""
+    tail = log_text.splitlines()[-_FAILURE_LOG_TAIL_LINES:]
+    lines = [
+        "loxmatter update failure",
+        "",
+        (
+            "The web interface may not be reachable - this file is written for someone "
+            "reading it directly, e.g. via `docker exec loxmatter-updater cat "
+            "/data/update/LAST-FAILURE.txt`."
+        ),
+        "",
+        status,
+        "",
+        f"Backup taken before this update: {backup_path or '(none recorded)'}",
+        (
+            "The database itself was NOT restored automatically - restoring it is a "
+            "separate, explicit decision; see docs/OPERATIONS.md."
+        ),
+        "",
+        (
+            "To finish restoring the previous version by hand, run from the repository "
+            "root on the host (all three are safe to run again even if one already "
+            "happened):"
+        ),
+        f"  1. Set LOXMATTER_IMAGE_TAG={previous_tag or '<unknown>'} in deploy/testhost/.env",
+        f"  2. git checkout --detach {previous_ref or '<unknown>'}",
+        "  3. docker compose -f deploy/testhost/docker-compose.yml up -d --no-deps loxmatter",
+        "",
+        f"Last {len(tail)} line(s) of log.txt:",
+        *tail,
+    ]
+    try:
+        failure_path(base).write_text("\n".join(lines) + "\n", encoding="utf-8")
+    except Exception:  # noqa: BLE001, S110 - best effort, see docstring above
+        pass
+
+
 def run_update(
     request: UpdateRequest,
     commands: Commands,
@@ -111,11 +202,29 @@ def run_update(
     base: Path,
     running_version: str,
     running_commit: str,
+    running_schema_version: int,
     is_ancestor: Callable[[str, str], bool],
     sleep: Callable[[float], None],
     deadline_seconds: float = DEADLINE_SECONDS,
 ) -> UpdateState:
     done: list[str] = []
+
+    # The four values design section 8 requires recorded "before starting":
+    # `LOXMATTER_IMAGE_TAG`, the git ref, the fresh backup's path and the
+    # running schema version. The first three become known at different
+    # points below (`previous_tag`/`previous_ref` before the first command,
+    # `backup_path` only once `commands.backup()` returns), so they start
+    # as `None` here and are filled in as they become available; `publish`
+    # reads whatever the enclosing scope currently holds on every call, so
+    # once each is known it rides along on every publish from then on -
+    # including, critically, the terminal one, which is what makes them
+    # readable from `state.json` by the interface and by a person on the
+    # console after the fact. `running_schema_version` is known from the
+    # start - the caller resolves it exactly like `running_version`/
+    # `running_commit` - so it needs no such placeholder.
+    previous_tag: str | None = None
+    previous_ref: str | None = None
+    backup_path: str | None = None
 
     def publish(
         phase: UpdatePhase,
@@ -138,6 +247,10 @@ def run_update(
             updater_seen_at=now_iso(),
             error_i18n_key=error_i18n_key,
             error_i18n_values=error_i18n_values or {},
+            previous_tag=previous_tag,
+            previous_ref=previous_ref,
+            backup_path=backup_path,
+            running_schema_version=running_schema_version,
         )
         try:
             write_state(base, state)
@@ -260,6 +373,15 @@ def run_update(
         nothing. A rollback that does not complete has to publish that
         fact, not vanish.
         """
+        # `roll_back` is only ever reached after the initial prelude above
+        # has already read both - the two `except` branches before it
+        # return before this function is ever defined a caller could
+        # reach. The assertion exists for `mypy`'s benefit (both are typed
+        # `str | None` in the enclosing scope, since `publish` may be
+        # called before either is known - see the placeholders' own
+        # comment) and documents the same guarantee for a human reader.
+        assert previous_tag is not None
+        assert previous_ref is not None
         _log(commands, f"rolling back to {previous_tag} ({previous_ref}): {reason}")
         publish("rollback", error=reason)
         restored_tag = False
@@ -295,6 +417,23 @@ def run_update(
                 f"rollback did not complete: {what} - a person has to finish this by "
                 f"hand ({rollback_failure!r})",
             )
+            # The one case named explicitly in the design: the rollback
+            # itself did not finish. `rolled_back=False` alone already
+            # says the installation is not confirmed back on its previous
+            # version - this is the console case, so it also gets the
+            # plain-text file someone reaches for over SSH once the web
+            # interface may not be answering either.
+            _write_failure_file(
+                base,
+                status=(
+                    f"Update to {request.target} failed ({reason}), and the automatic "
+                    f"rollback did not complete either: {what} "
+                    f"({rollback_failure!r})."
+                ),
+                previous_tag=previous_tag,
+                previous_ref=previous_ref,
+                backup_path=backup_path,
+            )
             return publish(
                 "failed",
                 error=f"{reason}; rollback also failed: {rollback_failure}",
@@ -302,6 +441,31 @@ def run_update(
                 healthy=False,
             )
         recovered = wait_for_health(waiting_phase="rollback", error=reason)
+        if not recovered:
+            # Design section 8: "if even the rollback does not come back
+            # healthy, the updater stops... it also writes
+            # LAST-FAILURE.txt". Every restore command above succeeded -
+            # `rolled_back=True` is correct - but `/health` still never
+            # answered, so the bridge itself is not confirmed reachable
+            # either, and the reason is no longer anything this module can
+            # see: it is something about the bridge process, matter-server,
+            # or the host, not about the image tag or git ref roll_back
+            # already fixed.
+            _write_failure_file(
+                base,
+                status=(
+                    f"Update to {request.target} failed ({reason}). The previous "
+                    f"version {previous_tag} ({previous_ref}) was restored - image "
+                    "tag, git ref and container all recreated successfully - but the "
+                    f"bridge still did not answer /health within {deadline_seconds:.0f}s. "
+                    "The rollback itself is not the problem; something else is keeping "
+                    "the bridge from starting - check `docker logs loxmatter` on the "
+                    "host."
+                ),
+                previous_tag=previous_tag,
+                previous_ref=previous_ref,
+                backup_path=backup_path,
+            )
         return publish("failed", error=reason, rolled_back=True, healthy=recovered)
 
     try:
@@ -317,7 +481,12 @@ def run_update(
         # phase for the whole of it - see `api/update.py`'s
         # `_BUSY_BOUND_SECONDS["backup"]`, widened to match.
         publish("backup")
-        commands.backup()
+        # The path, not just the fact of it - see the placeholder comment
+        # near the top of this function. This used to be discarded outright
+        # (`commands.backup()` alone, no assignment), the only one of the
+        # four "before starting" values that was ever computed and then
+        # thrown away rather than never computed at all.
+        backup_path = commands.backup()
         done.append("backup")
 
         # Skipped on the `dev` channel when the prelude above already ran

@@ -74,6 +74,22 @@ def log_path(base: Path) -> Path:
     return base / "log.txt"
 
 
+def failure_path(base: Path) -> Path:
+    """Where `runner.run_update` writes a plain-text account of a run that
+    ended in a state a person has to act on - see the docstring at its
+    one call site for exactly which states those are.
+
+    `LAST-FAILURE.txt`: the plan that first named this file
+    (`docs/superpowers/plans/2026-09-08-webui-updates-stage-2.md`) called
+    it `LETZTER-FEHLSCHLAG.txt` - correct at the time, wrong now that the
+    whole repository is English-only (see CLAUDE.md; the translation
+    predates that rule by a day). Uppercase, unlike its two siblings
+    above: `request.json`/`state.json`/`log.txt` are machine-read, this
+    one is written for a person reading `ls /data/update/` over SSH with
+    the web interface unreachable, and the name should say so on sight."""
+    return base / "LAST-FAILURE.txt"
+
+
 @dataclass(frozen=True)
 class UpdateRequest:
     """What the operator asked for. Written by the bridge, read once by
@@ -116,7 +132,22 @@ class UpdateState:
     Defaulted, not required: every other constructor of this dataclass
     (`_repair_state`'s fresh `idle` state, every test written before this
     pair existed) has nothing translatable to report and should not have
-    to say so at every call site."""
+    to say so at every call site.
+
+    `previous_tag`/`previous_ref`/`backup_path`/`running_schema_version`
+    are the four values design section 8 requires recorded before the
+    first step runs: what `LOXMATTER_IMAGE_TAG` and the git ref were
+    before this run touched either, where the fresh backup landed, and
+    the schema version of the code that was running when the update
+    started. They exist for the case the rest of this file's rollback
+    machinery is built to survive - the bridge does not come back - where
+    they are what a person reads over SSH (in `runner.failure_path`'s
+    file) or a script reads from this one to finish the job by hand.
+    Defaulted to `None` for the same reason the two fields above are:
+    every state this dataclass ever described before they existed had no
+    such values to give, and every one of them (a fresh `idle` state, a
+    request rejected before `run_update`'s prelude even starts reading
+    `.env`) still does not."""
 
     id: str | None
     phase: UpdatePhase
@@ -129,6 +160,10 @@ class UpdateState:
     updater_seen_at: str
     error_i18n_key: str | None = None
     error_i18n_values: Mapping[str, str] = field(default_factory=dict)
+    previous_tag: str | None = None
+    previous_ref: str | None = None
+    backup_path: str | None = None
+    running_schema_version: int | None = None
 
 
 def write_json_atomically(path: Path, payload: Mapping[str, object]) -> None:
@@ -220,6 +255,25 @@ def read_state(base: Path) -> UpdateState | None:
         error_i18n_values = payload.get("error_i18n_values") or {}
         if not isinstance(error_i18n_values, dict):
             error_i18n_values = {}
+        # Same tolerance again, for the four fields design section 8 added:
+        # absent on any `state.json` a sidecar written before they existed
+        # left behind, and the wrong shape is exactly as uninformative as
+        # absent - neither is a reason to treat the whole file as
+        # unreadable.
+        previous_tag = payload.get("previous_tag")
+        if previous_tag is not None and not isinstance(previous_tag, str):
+            previous_tag = None
+        previous_ref = payload.get("previous_ref")
+        if previous_ref is not None and not isinstance(previous_ref, str):
+            previous_ref = None
+        backup_path = payload.get("backup_path")
+        if backup_path is not None and not isinstance(backup_path, str):
+            backup_path = None
+        running_schema_version = payload.get("running_schema_version")
+        # `bool` is an `int` subclass - excluded explicitly so a stray
+        # `true`/`false` in this field does not silently pass as 0/1.
+        if not isinstance(running_schema_version, int) or isinstance(running_schema_version, bool):
+            running_schema_version = None
         return UpdateState(
             id=payload.get("id"),
             phase=phase,
@@ -232,6 +286,10 @@ def read_state(base: Path) -> UpdateState | None:
             updater_seen_at=str(payload["updater_seen_at"]),
             error_i18n_key=error_i18n_key,
             error_i18n_values={str(k): str(v) for k, v in error_i18n_values.items()},
+            previous_tag=previous_tag,
+            previous_ref=previous_ref,
+            backup_path=backup_path,
+            running_schema_version=running_schema_version,
         )
     except KeyError:
         return None

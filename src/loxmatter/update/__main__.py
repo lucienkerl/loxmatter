@@ -150,7 +150,7 @@ class LoopCommands(Commands, Protocol):
     while it runs."""
 
     def is_ancestor(self, older: str, newer: str) -> bool: ...
-    def read_running_identity(self) -> tuple[str, str]: ...
+    def read_running_identity(self) -> tuple[str, str, int]: ...
 
 
 def run_once(
@@ -168,13 +168,14 @@ def run_once(
     (see the module docstring)."""
     request = read_request(base)
     if request is not None and request.id != last_id:
-        running_version, running_commit = commands.read_running_identity()
+        running_version, running_commit, running_schema_version = commands.read_running_identity()
         run_update(
             request,
             commands,
             base=base,
             running_version=running_version,
             running_commit=running_commit,
+            running_schema_version=running_schema_version,
             is_ancestor=is_ancestor,
             sleep=sleep,
         )

@@ -605,6 +605,7 @@ def test_run_update_actually_measured_stays_within_every_busy_bound(monkeypatch)
         base=Path("/unused"),
         running_version="0.2.0",
         running_commit="abc1234",
+        running_schema_version=7,
         is_ancestor=lambda _a, _b: True,
         sleep=fake_sleep,
     )
@@ -621,6 +622,7 @@ def test_run_update_actually_measured_stays_within_every_busy_bound(monkeypatch)
         base=Path("/unused"),
         running_version="0.2.0",
         running_commit="abc1234",
+        running_schema_version=7,
         is_ancestor=lambda _a, _b: True,
         sleep=fake_sleep,
         deadline_seconds=2 * HEALTH_REFRESH_POLLS * POLL_SECONDS,
