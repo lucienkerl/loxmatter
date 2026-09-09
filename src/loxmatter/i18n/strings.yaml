@@ -606,18 +606,39 @@ projectsync.missing_control_list_open:
 projectsync.missing_control_list_close:
   en: "Not a valid Loxone project file: </ControlList> is missing."
   de: "Keine gueltige Loxone-Projektdatei: </ControlList> fehlt."
+projectsync.not_utf8:
+  en: "The uploaded file is not a valid UTF-8 text file - a Loxone project file is saved as UTF-8."
+  de: "Die hochgeladene Datei ist keine gueltige UTF-8-Textdatei - eine Loxone-Projektdatei wird als UTF-8 gespeichert."
+
 api.settings.resend_interval_too_small:
   en: "resend interval must be at least {minimum}s, got: {value}"
   de: "Resend-Intervall muss mindestens {minimum}s betragen, angegeben: {value}"
 
-# api.update - WebUI updates design (2026-09-08), sections 7, 10 and 11.
+# api.update - WebUI updates design (2026-09-08), sections 7, 10, 11, 12 and 13.
 api.update.check_unavailable:
   en: "Could not check for updates ({reason}). If this bridge has no internet access, that is expected, not an error."
   de: "Konnte nicht auf Updates prüfen ({reason}). Falls diese Brücke keinen Internetzugang hat, ist das erwartet, kein Fehler."
-
-projectsync.not_utf8:
-  en: "The uploaded file is not a valid UTF-8 text file - a Loxone project file is saved as UTF-8."
-  de: "Die hochgeladene Datei ist keine gueltige UTF-8-Textdatei - eine Loxone-Projektdatei wird als UTF-8 gespeichert."
+api.update.already_running:
+  en: "An update is already running - wait for it to finish before starting another."
+  de: "Es läuft bereits ein Update - bitte abwarten, bis es beendet ist, bevor ein weiteres gestartet wird."
+api.update.rejected.unknown_channel:
+  en: "Unknown update channel: {channel}"
+  de: "Unbekannter Update-Kanal: {channel}"
+api.update.rejected.target_not_version_or_commit:
+  en: "Target {target} is neither a version nor a commit"
+  de: "Ziel {target} ist weder eine Version noch ein Commit"
+api.update.rejected.target_not_version_for_stable:
+  en: "Target {target} is not a version, but the channel is stable"
+  de: "Ziel {target} ist keine Version, aber der Kanal ist „stable“"
+api.update.rejected.target_not_newer:
+  en: "Target {target} is not newer than the running version {running_version} - this route never installs an older version"
+  de: "Ziel {target} ist nicht neuer als die laufende Version {running_version} - auf diesem Weg wird nie eine ältere Version installiert"
+api.update.rejected.target_is_version_for_dev:
+  en: "Target {target} is a version, but the channel is development"
+  de: "Ziel {target} ist eine Version, aber der Kanal ist „development“"
+api.update.rejected.target_not_descendant:
+  en: "Target {target} does not descend from the running commit {running_commit}"
+  de: "Ziel {target} stammt nicht von dem laufenden Commit {running_commit} ab"
 
 # --- web.nav — tab bar ---
 web.nav.devices:

@@ -15,7 +15,7 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 """The bridge's side of self-updating - WebUI updates design
-(2026-09-08), sections 7, 10 and 11.
+(2026-09-08), sections 7, 9, 10, 11, 12 and 13.
 
 `build_update_router` builds an `APIRouter` with prefix `/api`, wired into
 `loxone.server.build_app` behind the same `api_guard` as every other route
@@ -74,6 +74,17 @@ in a later task, is not broken - it just cannot say more than "last
 checked: could not reach GitHub". `_query_github` therefore turns every
 network failure into `_CheckUnavailable` on the way in, and the route
 turns that into a normal 200 response with `error` set, never a 500.
+
+**`GET /update/check` is cached, not re-run on every call.** Design
+section 9: queried "once daily and when opening the System tab, result
+cached". The interface calls this route far more often than once a day in
+practice - every channel toggle, every System-tab open - and GitHub's
+unauthenticated budget is 60 requests per hour per IP, shared with
+whatever else is on the same network. `build_update_router` holds the
+cache in a closure local to the router it builds, not at module scope: a
+module-level cache would leak between the app instances each test in
+`tests/api/test_update.py` builds, and there is exactly one router built
+in the real process anyway.
 
 **`_updater_present` reads `state.json`'s `phase`, not only its age.** A
 flat staleness threshold sized for the health-check wait (see
@@ -248,6 +259,22 @@ _GITHUB_API = f"https://api.github.com/repos/{_GITHUB_REPO}"
 #: call made from a request handler, not a background job.
 _GITHUB_TIMEOUT_SECONDS = 5.0
 
+#: How long `GET /update/check`'s result is served from cache before the
+#: route asks GitHub again - design section 9: "queried once daily and
+#: when opening the System tab, result cached". The interface calls this
+#: route far more often than once a day (every channel toggle, every
+#: System-tab open); GitHub's unauthenticated budget is 60 requests per
+#: hour per IP, shared with whatever else is on the same network, so a
+#: few dozen toggles in one sitting could exhaust it and leave the tile
+#: stuck showing "could not check" for the rest of the hour. Fifteen
+#: minutes keeps at most four real requests per hour even under
+#: continuous re-opening of the System tab - comfortable headroom under
+#: the budget - while "last checked" still reads as current to someone
+#: actually looking at the tile, unlike the literal "once daily" the
+#: design text names, which would feel stale for an operator watching
+#: for a just-published release.
+_CHECK_CACHE_SECONDS = 15 * 60.0
+
 _SEMVER = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)$")
 
 
@@ -268,10 +295,11 @@ def _no_git_access(_older: str, _newer: str) -> bool:
     rules (valid channel, valid target shape) and the `stable` channel's
     semantic forward-only check still get their fast, on-screen rejection
     from the very same `check_request` call below, unchanged. Design
-    section 10 is explicit that the ancestry rule is the sidecar's alone
-    to enforce - a `dev` request this route lets through still meets that
-    check, unchanged, a loop interval later; this function defers to it
-    rather than guessing at an answer it cannot compute."""
+    section 10 opens by saying plainly that all three rules - this
+    ancestry check on the `dev` channel included - are "enforced in the
+    sidecar", not here; a `dev` request this route lets through still
+    meets that check, unchanged, a loop interval later, and this function
+    defers to it rather than guessing at an answer it cannot compute."""
     return True
 
 
@@ -289,6 +317,15 @@ def _updater_present(state: UpdateState | None) -> bool:
     if seen_at.tzinfo is None:
         seen_at = seen_at.replace(tzinfo=UTC)
     age_seconds = (datetime.now(UTC) - seen_at).total_seconds()
+    if age_seconds < 0:
+        # A stamp from the future satisfies `<= _STALE_AFTER_SECONDS` for
+        # any threshold, however far ahead it is - a clock that jumped
+        # backwards (an unsynced RTC on first boot, an NTP correction)
+        # would otherwise keep a dead sidecar reading as present forever,
+        # with nothing that could ever age it past a threshold it is
+        # already "younger" than. Nothing legitimate ever writes a stamp
+        # ahead of now, so this is unconditionally untrusted.
+        return False
     if age_seconds <= _STALE_AFTER_SECONDS:
         return True
     # The fast path above missed - either genuinely stale, or a stamp
@@ -303,6 +340,32 @@ def _updater_present(state: UpdateState | None) -> bool:
     # full derivation.
     busy_bound = _BUSY_BOUND_SECONDS.get(state.phase)
     return busy_bound is not None and age_seconds <= busy_bound
+
+
+def _update_in_progress(state: UpdateState | None) -> bool:
+    """Whether `state.json` describes a run actively under way right now
+    - not merely "an updater exists" (`_updater_present` answers that).
+    `apply_update` uses this to refuse a second request while one is
+    already running (design section 13): the bug this closes let a
+    second `POST /apply` overwrite `request.json` mid-run, after which
+    `run_once` returns the OLD id once the first `run_update` finishes,
+    the next pass sees a DIFFERENT id in `request.json`, and the sidecar
+    runs a second full update immediately after the first - the bridge
+    recreated twice back to back from one accidental double-click.
+
+    Reuses `_updater_present`'s own phase-and-age reasoning rather than a
+    second, looser check: a phase that LOOKS busy but has aged past its
+    own derived bound is exactly as wedged here as it is for presence,
+    and must not lock the button shut against an updater that has
+    actually died.
+
+    `state is None` - a missing file OR a corrupt one, `read_state`
+    cannot tell the two apart (see its own docstring) - must read as
+    "nothing running", never as busy: a single bad byte in the shared
+    file must not be able to wedge the apply button forever."""
+    if state is None:
+        return False
+    return state.phase in _BUSY_BOUND_SECONDS and _updater_present(state)
 
 
 def _status_out(state: UpdateState | None, info: BuildInfo) -> UpdateStatusOut:
@@ -355,21 +418,29 @@ def _default_session_factory() -> Any:
 
 
 async def _fetch_github(url: str) -> dict[str, Any]:
-    session = _default_session_factory()
     try:
-        try:
-            async with session.get(
-                url, headers={"Accept": "application/vnd.github+json"}
-            ) as response:
-                status = response.status
-                payload = await response.json(content_type=None)
-        except Exception as exc:
-            # Deliberately `Exception`, not just `aiohttp.ClientError` -
-            # this module does not import aiohttp itself (see
-            # `_default_session_factory`), and an unreachable GitHub is,
-            # to this caller, the same case as one that answers with
-            # something unparsable: a reason, not a crash.
-            raise _CheckUnavailable(str(exc)) from exc
+        # Outside the `try`/`finally` that closes the session below on
+        # purpose: before this fix, `_default_session_factory()` sat
+        # outside every `try` in this function, so an `ImportError` from
+        # its own lazy `import aiohttp` (aiohttp missing or broken)
+        # propagated straight out as an unhandled exception - a 500 from
+        # `GET /update/check`, contradicting this module's own docstring
+        # ("never raises for network reasons"). There is no session yet
+        # for a `finally` to close if this line itself raises.
+        session = _default_session_factory()
+    except Exception as exc:
+        raise _CheckUnavailable(str(exc)) from exc
+    try:
+        async with session.get(url, headers={"Accept": "application/vnd.github+json"}) as response:
+            status = response.status
+            payload = await response.json(content_type=None)
+    except Exception as exc:
+        # Deliberately `Exception`, not just `aiohttp.ClientError` -
+        # this module does not import aiohttp itself (see
+        # `_default_session_factory`), and an unreachable GitHub is,
+        # to this caller, the same case as one that answers with
+        # something unparsable: a reason, not a crash.
+        raise _CheckUnavailable(str(exc)) from exc
     finally:
         await session.close()
     if status != 200:
@@ -410,6 +481,16 @@ async def _query_github(channel: UpdateChannel, info: BuildInfo) -> tuple[str | 
 def build_update_router(store: Store, *, base: Path) -> APIRouter:
     router = APIRouter(prefix="/api")
 
+    # `GET /update/check`'s cache (see `_CHECK_CACHE_SECONDS` and the
+    # module docstring). A closure local to the router this function
+    # builds, not a module-level dict: a module-level cache would leak
+    # between the separate `build_update_router` calls every test in
+    # `tests/api/test_update.py` makes (each with its own `Store` and
+    # `update_base`), and the real process only ever builds one router
+    # anyway - there is nothing a module-level dict would buy here that a
+    # closure does not.
+    check_cache: dict[UpdateChannel, tuple[datetime, UpdateCheckOut]] = {}
+
     @router.get("/update/status")
     async def get_update_status() -> UpdateStatusOut:
         return _status_out(read_state(base), build_info())
@@ -418,26 +499,52 @@ def build_update_router(store: Store, *, base: Path) -> APIRouter:
     async def check_for_update() -> UpdateCheckOut:
         info = build_info()
         channel = store.update_settings.get_channel()
+        now = datetime.now(UTC)
+        cached = check_cache.get(channel)
+        if cached is not None and (now - cached[0]).total_seconds() < _CHECK_CACHE_SECONDS:
+            return cached[1]
         try:
             latest, available = await _query_github(channel, info)
         except _CheckUnavailable as exc:
-            return UpdateCheckOut(
+            result = UpdateCheckOut(
                 channel=channel.value,
                 running_version=info.version,
                 available=False,
                 latest=None,
                 error=i18n.t("api.update.check_unavailable", reason=str(exc)),
             )
-        return UpdateCheckOut(
-            channel=channel.value,
-            running_version=info.version,
-            available=available,
-            latest=latest,
-            error=None,
-        )
+        else:
+            result = UpdateCheckOut(
+                channel=channel.value,
+                running_version=info.version,
+                available=available,
+                latest=latest,
+                error=None,
+            )
+        # A failed check is cached too, same lifetime as a successful one
+        # - without that, a firewalled installation would retry GitHub on
+        # every single call (the exact flood this cache exists to stop),
+        # never once benefiting from it.
+        check_cache[channel] = (now, result)
+        return result
 
     @router.post("/update/apply")
     async def apply_update(body: UpdateApplyIn) -> UpdateApplyOut:
+        if _update_in_progress(read_state(base)):
+            # Design section 13: "rejection of a second request while one
+            # is running." Checked before anything else, including
+            # `check_request` below - a request that would also have
+            # failed the rules is still, first and foremost, a second
+            # request arriving while the first has not finished. Without
+            # this, the reproduction is direct: `state.json` at
+            # `phase="pull"` with a fresh stamp, a second `POST` here
+            # still answered 200 and overwrote `request.json` - and
+            # because `run_once` (`update/__main__.py`) returns the OLD
+            # id once the in-flight `run_update` finishes, the very next
+            # pass then saw a DIFFERENT id sitting in `request.json` and
+            # ran a second full update immediately, back to back with the
+            # first, from one accidental double-click.
+            raise HTTPException(status_code=409, detail=i18n.t("api.update.already_running"))
         info = build_info()
         request = UpdateRequest(
             id=secrets.token_hex(16),
@@ -453,11 +560,18 @@ def build_update_router(store: Store, *, base: Path) -> APIRouter:
                 is_ancestor=_no_git_access,
             )
         except RequestRejected as exc:
-            # `exc.reason` is already written for a person, not a log grep
-            # (see `rules.RequestRejected`'s own docstring) - passed
-            # through unchanged, the same pattern `api/devices.py` uses
-            # for exceptions raised by a lower layer it does not own.
-            raise HTTPException(status_code=400, detail=exc.reason) from exc
+            # `exc.reason` (English, unabbreviated) is what `runner._log`
+            # writes into `log.txt` - never localised, see CLAUDE.md.
+            # `exc.i18n_key`/`exc.i18n_values` are the same rejection
+            # translated for the operator: design section 12 names this
+            # route's error messages among the ones needing en/de pairs,
+            # and `rules.py` authors this English prose itself (unlike
+            # `api/devices.py`'s `str(exc)` sites, which forward a
+            # third-party Matter layer's own message) - so, unlike those,
+            # it belongs behind `i18n.t()` here.
+            raise HTTPException(
+                status_code=400, detail=i18n.t(exc.i18n_key, **exc.i18n_values)
+            ) from exc
         write_request(base, request)
         return UpdateApplyOut(id=request.id)
 

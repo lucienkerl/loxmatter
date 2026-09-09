@@ -66,12 +66,26 @@ _SHA = re.compile(r"^[0-9a-f]{7,40}$")
 
 
 class RequestRejected(Exception):
-    """A request that will not be executed. The reason reaches the
-    interface, so it is written for a person, not for a log grep."""
+    """A request that will not be executed.
 
-    def __init__(self, reason: str) -> None:
+    Two representations of the one reason, not two reasons: `reason`
+    stays English and unabbreviated - `runner._log` writes it straight
+    into `log.txt`, which is never localised (see CLAUDE.md), and
+    `tests/update/test_rules.py` matches against it directly.
+    `i18n_key`/`i18n_values` are the same rejection for the operator:
+    `api.update.apply_update` resolves them through `i18n.t()` for the
+    `HTTPException` detail design section 12 requires an en/de pair for.
+    Keeping both on the same exception is what stops the sidecar's log
+    and the interface's dialog from drifting apart in wording while each
+    still being written for its own reader."""
+
+    def __init__(
+        self, reason: str, *, i18n_key: str, i18n_values: dict[str, str] | None = None
+    ) -> None:
         super().__init__(reason)
         self.reason = reason
+        self.i18n_key = i18n_key
+        self.i18n_values: dict[str, str] = i18n_values or {}
 
 
 def image_tag(target: str) -> str:
@@ -132,16 +146,28 @@ def check_request(
     the command layer's business (see `commands.py`).
     """
     if request.channel not in _CHANNELS:
-        raise RequestRejected(f"unknown channel {request.channel!r}")
+        raise RequestRejected(
+            f"unknown channel {request.channel!r}",
+            i18n_key="api.update.rejected.unknown_channel",
+            i18n_values={"channel": request.channel},
+        )
 
     target = request.target
     target_version = _version_tuple(target)
     if target_version is None and _SHA.match(target) is None:
-        raise RequestRejected(f"target {target!r} is neither a version nor a commit")
+        raise RequestRejected(
+            f"target {target!r} is neither a version nor a commit",
+            i18n_key="api.update.rejected.target_not_version_or_commit",
+            i18n_values={"target": target},
+        )
 
     if request.channel == "stable":
         if target_version is None:
-            raise RequestRejected(f"target {target!r} is not a version, but the channel is stable")
+            raise RequestRejected(
+                f"target {target!r} is not a version, but the channel is stable",
+                i18n_key="api.update.rejected.target_not_version_for_stable",
+                i18n_values={"target": target},
+            )
         current = _version_tuple(running_version, _RUNNING_VERSION)
         # An unparsable running version means we cannot prove the request
         # goes forward. Refusing is the only safe reading: the whole point
@@ -149,14 +175,22 @@ def check_request(
         if current is None or target_version <= current:
             raise RequestRejected(
                 f"target {target!r} is not newer than the running {running_version!r} - "
-                "this route never goes to an older version"
+                "this route never goes to an older version",
+                i18n_key="api.update.rejected.target_not_newer",
+                i18n_values={"target": target, "running_version": running_version},
             )
         return
 
     # dev: no ordering over SHAs, so "forward" means "descendant".
     if target_version is not None:
-        raise RequestRejected(f"target {target!r} is a version, but the channel is dev")
+        raise RequestRejected(
+            f"target {target!r} is a version, but the channel is dev",
+            i18n_key="api.update.rejected.target_is_version_for_dev",
+            i18n_values={"target": target},
+        )
     if not is_ancestor(running_commit, target):
         raise RequestRejected(
-            f"target {target!r} does not descend from the running commit {running_commit!r}"
+            f"target {target!r} does not descend from the running commit {running_commit!r}",
+            i18n_key="api.update.rejected.target_not_descendant",
+            i18n_values={"target": target, "running_commit": running_commit},
         )

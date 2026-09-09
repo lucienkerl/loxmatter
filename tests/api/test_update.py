@@ -16,7 +16,7 @@
 
 """Tests for GET /api/update/status, GET /api/update/check and
 POST /api/update/apply - WebUI updates design (2026-09-08), sections 7,
-10 and 11.
+9, 10, 11, 12 and 13.
 
 `api` builds the app with its own, throwaway `update` directory (via
 `build_app`'s `update_base`) instead of the real `/data/update` mount -
@@ -24,10 +24,11 @@ tests write `state.json` into it directly with `update.protocol.write_state`
 to control exactly what the route reads, the same way `test_settings_api.py`
 writes straight to the store instead of going through a second route.
 
-`GET /api/update/check` reaches GitHub and is deliberately not exercised
-here beyond the guard test: it has no dedicated test in this task's brief,
-and a test that actually hit the network would be flaky in CI for reasons
-that have nothing to do with this route's own logic."""
+`GET /api/update/check` reaching GitHub itself is still not exercised
+here - `_query_github` is monkeypatched wherever the cache or the route's
+shape needs proving, so nothing in this file makes a real network call,
+which would be flaky in CI for reasons that have nothing to do with this
+route's own logic."""
 
 from __future__ import annotations
 
@@ -39,6 +40,7 @@ import httpx2 as httpx
 import pytest
 from conftest import authenticate
 
+import loxmatter.api.update as update_module
 from loxmatter.api.update import _BUSY_BOUND_SECONDS, _STALE_AFTER_SECONDS
 from loxmatter.loxone.server import build_app
 from loxmatter.model.store import Store
@@ -175,6 +177,115 @@ async def test_apply_refuses_a_target_the_rules_reject(api, monkeypatch):
     assert read_request(update_dir) is None
 
 
+async def test_apply_refusal_detail_follows_the_selected_language(api, monkeypatch):
+    """Design section 12 names this route's error messages among the ones
+    needing en/de pairs, and CLAUDE.md says an `HTTPException` detail the
+    interface displays belongs in `strings.yaml` - `rules.py` authors this
+    English prose itself (unlike `api/devices.py`'s `str(exc)` sites, which
+    forward a third-party layer's own message), so it must not reach the
+    operator untranslated. Before the fix, `raise HTTPException(...,
+    detail=exc.reason)` passed the English reason straight through
+    regardless of the selected language."""
+    client, store, update_dir = api
+    monkeypatch.setenv("LOXMATTER_VERSION", "0.5.0")
+
+    async def apply() -> str:
+        response = await client.post(
+            "/api/update/apply", json={"channel": "stable", "target": "v0.1.0"}
+        )
+        assert response.status_code == 400
+        return str(response.json()["detail"])
+
+    english = await apply()
+    store.locale.set_language("de")
+    german = await apply()
+
+    assert english != german
+    assert "not newer than" in english
+    assert "nicht neuer als" in german
+    # Refused in both languages - the operator sees a translated reason,
+    # never an untranslated fallback.
+    assert read_request(update_dir) is None
+
+
+async def test_apply_refuses_a_second_request_while_one_is_running(api, monkeypatch):
+    """Design section 13: "rejection of a second request while one is
+    running." Reproduced by the finding this closes: `state.json` at
+    `phase="pull"` with a fresh stamp, a second `POST /apply` used to come
+    back 200 and overwrite `request.json` - and because `run_once`
+    (`update/__main__.py`) returns the OLD id once the in-flight
+    `run_update` finishes, the very next pass then saw a DIFFERENT id in
+    `request.json` and ran a second full update immediately, back to back
+    with the first."""
+    client, _, update_dir = api
+    monkeypatch.setenv("LOXMATTER_VERSION", "0.2.0")
+    fresh_stamp = datetime.now(UTC).isoformat(timespec="microseconds")
+    _write_state(update_dir, phase="pull", updater_seen_at=fresh_stamp)
+
+    response = await client.post(
+        "/api/update/apply", json={"channel": "stable", "target": "v0.3.0"}
+    )
+
+    assert response.status_code == 409
+    # `request.json` untouched - a rejected second request must not
+    # overwrite whatever the first one is still running against.
+    assert read_request(update_dir) is None
+
+
+async def test_apply_accepts_a_new_request_once_the_previous_one_finished(api, monkeypatch):
+    """A terminal phase (`"done"`/`"failed"`/`"idle"`) is not "an update is
+    running", however fresh its stamp - the operator must be able to start
+    the very next update the moment the last one finishes, not wait out
+    some cooldown."""
+    client, _, update_dir = api
+    monkeypatch.setenv("LOXMATTER_VERSION", "0.2.0")
+    fresh_stamp = datetime.now(UTC).isoformat(timespec="microseconds")
+    _write_state(update_dir, phase="done", updater_seen_at=fresh_stamp, healthy=True)
+
+    response = await client.post(
+        "/api/update/apply", json={"channel": "stable", "target": "v0.3.0"}
+    )
+
+    assert response.status_code == 200
+    assert read_request(update_dir) is not None
+
+
+async def test_apply_accepts_a_request_when_state_json_is_missing_or_corrupt(api, monkeypatch):
+    """ "No usable state" must not read as "an update is running" -
+    `read_state` returns `None` for a missing file and for a corrupt one
+    alike, and treating that as busy would wedge the apply button
+    permanently on one bad byte."""
+    client, _, update_dir = api
+    monkeypatch.setenv("LOXMATTER_VERSION", "0.2.0")
+
+    missing = await client.post("/api/update/apply", json={"channel": "stable", "target": "v0.3.0"})
+    assert missing.status_code == 200
+
+    update_dir.mkdir(parents=True, exist_ok=True)
+    (update_dir / "state.json").write_text("{not valid json", encoding="utf-8")
+    corrupt = await client.post("/api/update/apply", json={"channel": "stable", "target": "v0.4.0"})
+    assert corrupt.status_code == 200
+
+
+async def test_apply_accepts_a_request_once_a_busy_looking_phase_has_wedged(api, monkeypatch):
+    """A phase string alone must not be permanent evidence of a running
+    update - the same requirement `_updater_present` has to satisfy. A
+    `phase="pull"` stamp far older than `_BUSY_BOUND_SECONDS["pull"]` is a
+    dead sidecar, not a running one, and the operator must be able to
+    start over."""
+    client, _, update_dir = api
+    monkeypatch.setenv("LOXMATTER_VERSION", "0.2.0")
+    wedged_stamp = (
+        datetime.now(UTC) - timedelta(seconds=_BUSY_BOUND_SECONDS["pull"] + 3600)
+    ).isoformat(timespec="microseconds")
+    _write_state(update_dir, phase="pull", updater_seen_at=wedged_stamp)
+
+    response = await client.post(
+        "/api/update/apply", json={"channel": "stable", "target": "v0.3.0"}
+    )
+    assert response.status_code == 200
+
+
 def test_the_stale_after_threshold_leaves_headroom_over_the_health_wait_refresh_interval():
     """Renamed from "...worst_case_refresh_interval..." - that name
     claimed to check the general property (the worst case across an
@@ -294,6 +405,108 @@ async def test_status_says_no_updater_for_a_terminal_phase_past_the_fast_path_al
 
     response = await client.get("/api/update/status")
     assert response.json()["updater_present"] is False
+
+
+async def test_status_says_no_updater_for_a_future_dated_stamp(api):
+    """A negative age satisfies `<= threshold` for any threshold, however
+    far in the future the stamp is - a clock that jumped backwards (an
+    unsynced RTC on first boot, an NTP correction) must not keep a dead
+    sidecar reading as present forever just because nothing could ever
+    age the stamp past a bound it is already "younger" than."""
+    client, _, update_dir = api
+    future_stamp = (datetime.now(UTC) + timedelta(days=3650)).isoformat(timespec="microseconds")
+    _write_state(update_dir, phase="idle", updater_seen_at=future_stamp)
+
+    response = await client.get("/api/update/status")
+    assert response.json()["updater_present"] is False
+
+
+async def test_status_running_version_comes_from_build_info_not_state_to_version(api, monkeypatch):
+    """The module's own docstring: "The running version comes from
+    build_info(), not from state.json." `_status_out` reading
+    `state.to_version or info.version` instead - the updater's own
+    bookkeeping about what it last aimed for, not what is actually
+    running, and the exact security defect fixed earlier on this branch -
+    would leave every other test in this file green, because none of them
+    ever gives `to_version` and `LOXMATTER_VERSION` different values. This
+    one deliberately does."""
+    client, _, update_dir = api
+    monkeypatch.setenv("LOXMATTER_VERSION", "0.4.0")
+    fresh_stamp = datetime.now(UTC).isoformat(timespec="microseconds")
+    _write_state(update_dir, phase="done", updater_seen_at=fresh_stamp, to_version="0.9.9")
+
+    response = await client.get("/api/update/status")
+    assert response.json()["running_version"] == "0.4.0"
+
+
+async def test_check_is_served_from_cache_on_repeated_calls(api, monkeypatch):
+    """Design section 9: cached, not re-run on every call. GitHub allows
+    60 unauthenticated requests per hour per IP, and the interface calls
+    this route on every channel toggle and every System-tab open - without
+    a cache, a few dozen of those in one sitting exhaust the budget and
+    the tile is stuck showing "could not check" for the rest of the
+    hour."""
+    client, _, _update_dir = api
+    calls = 0
+
+    async def fake_query(_channel, _info):
+        nonlocal calls
+        calls += 1
+        return "v9.9.9", True
+
+    monkeypatch.setattr(update_module, "_query_github", fake_query)
+
+    first = await client.get("/api/update/check")
+    second = await client.get("/api/update/check")
+
+    assert first.status_code == 200
+    assert first.json() == second.json()
+    assert calls == 1
+
+
+async def test_check_queries_again_once_the_cache_expires(api, monkeypatch):
+    """Bite check for the test above: proves the cache actually consults
+    `_CHECK_CACHE_SECONDS` rather than caching forever regardless of it -
+    a cache that ignored the lifetime entirely would also pass the
+    "one call for two requests" test above."""
+    client, _, _update_dir = api
+    calls = 0
+
+    async def fake_query(_channel, _info):
+        nonlocal calls
+        calls += 1
+        return "v9.9.9", True
+
+    monkeypatch.setattr(update_module, "_query_github", fake_query)
+    monkeypatch.setattr(update_module, "_CHECK_CACHE_SECONDS", 0.0)
+
+    await client.get("/api/update/check")
+    await client.get("/api/update/check")
+
+    assert calls == 2
+
+
+async def test_check_caches_an_unavailable_result_too(api, monkeypatch):
+    """A firewalled installation must not retry GitHub on every single
+    call either - that is the exact flood this cache exists to stop, and
+    caching only successes would leave it wide open on every installation
+    that has no internet access at all."""
+    client, _, _update_dir = api
+    calls = 0
+
+    async def failing_query(_channel, _info):
+        nonlocal calls
+        calls += 1
+        raise update_module._CheckUnavailable("network unreachable")
+
+    monkeypatch.setattr(update_module, "_query_github", failing_query)
+
+    first = await client.get("/api/update/check")
+    second = await client.get("/api/update/check")
+
+    assert first.json()["error"] is not None
+    assert first.json() == second.json()
+    assert calls == 1
 
 
 async def test_every_update_route_is_behind_the_api_guard(api_without_session):
