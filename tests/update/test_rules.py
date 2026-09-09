@@ -190,7 +190,7 @@ def test_the_image_name_never_comes_from_the_request():
 
 
 def test_a_stable_target_becomes_the_tag_ci_publishes_for_a_release():
-    """Finding 1: `.github/workflows/ci.yml` computes
+    """`.github/workflows/ci.yml` computes
     `version="${GITHUB_REF#refs/tags/v}"` from the tag `v0.3.0` and pushes
     `ghcr.io/lucienkerl/loxmatter:0.3.0` - never `:v0.3.0`. The `v` that
     makes a target a valid git ref is exactly the character that must not
@@ -200,8 +200,8 @@ def test_a_stable_target_becomes_the_tag_ci_publishes_for_a_release():
 
 
 def test_a_dev_target_becomes_the_sha_prefixed_tag_ci_publishes():
-    """Finding 1: a dev build pushes `:dev` and `:sha-<commit>` - the
-    bare commit SHA that `checkout` uses as a git ref is never itself a
-    published tag."""
+    """A dev build pushes `:dev` and `:sha-<commit>` - the bare commit
+    SHA that `checkout` uses as a git ref is never itself a published
+    tag."""
     assert image_tag("deadbee") == "sha-deadbee"
     assert image_reference("deadbee") == f"{IMAGE_REPOSITORY}:sha-deadbee"

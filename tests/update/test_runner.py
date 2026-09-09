@@ -181,10 +181,10 @@ def test_the_state_file_is_written_during_pull_not_only_at_the_end(tmp_path):
     a state written only on the final `publish` call would also satisfy).
     `recreate` reads the file mid-flight to prove it.
 
-    Finding (p): this only pins the write at the `pull` phase - the one
-    `recreate`'s read observes. The `backup` and `rollback` publishes are
-    not separately checked here; the name says so rather than the
-    original "at every phase", which overclaimed."""
+    This only pins the write at the `pull` phase - the one `recreate`'s
+    read observes. The `backup` and `rollback` publishes are not
+    separately checked here; the name says so rather than "at every
+    phase", which would overclaim."""
     commands = FakeCommands(base=tmp_path)
     run(commands, tmp_path)
     assert commands.phase_at_recreate == "pull"
@@ -289,7 +289,7 @@ def test_a_failing_rollback_is_reported_not_raised(tmp_path):
     # The tag and ref were still restored on disk before recreate raised.
     assert commands.tag == "stable"
     assert commands.calls[-3:] == ["tag:stable", "checkout:v0.2.0", "recreate"]
-    # Finding (n): the `recreate` branch of the rollback-failure message
+    # The `recreate` branch of the rollback-failure message
     # (runner.py:181-185) was asserted by no test - only the error and
     # the call sequence were. `checkout` succeeded here before `recreate`
     # raised, so the log has to say the tag AND the ref came back, only
@@ -302,7 +302,7 @@ def test_a_failing_rollback_is_reported_not_raised(tmp_path):
 
 
 def test_a_raising_health_poll_triggers_a_rollback_instead_of_escaping(tmp_path):
-    """Finding (a): a real `healthy()` polls `/health` over HTTP, and when
+    """A real `healthy()` polls `/health` over HTTP, and when
     the bridge is down - the exact condition this poll exists to detect -
     that call raises `ConnectionError` instead of returning `False`.
     Before the fix, that exception left `run_update` from the unwrapped
@@ -324,7 +324,7 @@ def test_a_raising_health_poll_triggers_a_rollback_instead_of_escaping(tmp_path)
 
 
 def test_a_raising_rollback_confirmation_poll_yields_healthy_false(tmp_path):
-    """Finding (b): the rollback's own health poll - its confirmation that
+    """The rollback's own health poll - its confirmation that
     the restore worked - sat outside `roll_back`'s `try`, which closes
     before it runs. A raise there used to escape `roll_back` entirely,
     leaving the state frozen at `phase: "rollback"` forever - precisely
@@ -349,7 +349,7 @@ def test_a_raising_rollback_confirmation_poll_yields_healthy_false(tmp_path):
 
 
 def test_a_log_failure_on_a_rejected_request_does_not_escape(tmp_path):
-    """Finding (c): `commands.log` appends to a file in the same shared
+    """`commands.log` appends to a file in the same shared
     directory that a `docker pull` can fill up, and the reject path calls
     it before `publish`. A raise there - verified here for the log case,
     where the state file used to never get written at all - must not stop
@@ -372,7 +372,7 @@ def test_a_log_failure_on_a_rejected_request_does_not_escape(tmp_path):
 
 
 def test_a_write_state_failure_still_returns_a_correct_state(tmp_path, monkeypatch):
-    """Finding (c): `write_state` (called from `publish`) can fail on the
+    """`write_state` (called from `publish`) can fail on the
     same full disk that makes `commands.log` fail - `OSError(28)` is an
     ordinary update failure. `run_update` must still return the state
     object it built even when it could not be written to the file the
@@ -395,7 +395,7 @@ def test_a_write_state_failure_still_returns_a_correct_state(tmp_path, monkeypat
 
 
 def test_a_rollback_where_checkout_fails_does_not_claim_the_ref_was_restored(tmp_path):
-    """Finding (f): the log message used to unconditionally claim the
+    """The log message used to unconditionally claim the
     image tag AND git ref were restored, on the assumption that `recreate`
     is always the thrower. When `checkout` throws instead, the git ref
     was never restored - claiming otherwise would send whoever reads the
@@ -414,7 +414,7 @@ def test_a_rollback_where_checkout_fails_does_not_claim_the_ref_was_restored(tmp
 
 
 def test_a_dev_update_writes_a_sha_prefixed_docker_tag_not_the_bare_commit(tmp_path):
-    """Finding 1, exercised through the whole run rather than just
+    """The dev-tag rule (`rules.image_tag`), exercised through the whole run rather than just
     `rules.image_tag` in isolation: `checkout` gets the raw target (the
     git side is correct as it stands), but `pull` and the `.env` write
     must get the `sha-`-prefixed tag CI actually publishes for a dev
@@ -446,7 +446,7 @@ def test_a_dev_update_writes_a_sha_prefixed_docker_tag_not_the_bare_commit(tmp_p
 
 
 def test_a_raising_is_ancestor_check_does_not_escape_run_update(tmp_path):
-    """Finding 2, first escape: `is_ancestor` shells out to git (there is
+    """One of three escape hatches for a raising `Commands` method that had no test: `is_ancestor` shells out to git (there is
     no `commands.py` yet to catch its failures for us) and is called from
     inside `check_request` on the `dev` channel. Before the fix, the
     `try` around `check_request` caught only `RequestRejected`, so an
@@ -477,7 +477,7 @@ def test_a_raising_is_ancestor_check_does_not_escape_run_update(tmp_path):
 
 
 def test_a_raising_read_image_tag_does_not_escape_run_update(tmp_path):
-    """Finding 2, second escape: `commands.read_image_tag()` reads
+    """Second escape hatch: `commands.read_image_tag()` reads
     `.env`, which will not exist before the sidecar's first successful
     run. Before the fix, a `FileNotFoundError` there escaped `run_update`
     outright - it runs before `commands.backup()`, so nothing had been
@@ -496,7 +496,7 @@ def test_a_raising_read_image_tag_does_not_escape_run_update(tmp_path):
 
 
 def test_a_raising_read_git_ref_does_not_escape_run_update(tmp_path):
-    """Finding 2, third escape: `commands.read_git_ref()` reads
+    """Third escape hatch: `commands.read_git_ref()` reads
     `docker-compose.yml`'s checked-out revision, which can equally be
     missing or unreadable. Same shape as the two escapes above: it runs
     before the first command, so a raise here must become a published
@@ -514,7 +514,7 @@ def test_a_raising_read_git_ref_does_not_escape_run_update(tmp_path):
 
 
 def test_a_failing_rollback_tag_write_reports_nothing_restored(tmp_path):
-    """Finding (m): `FakeCommands.write_image_tag` used to append to
+    """`FakeCommands.write_image_tag` used to append to
     `calls` without going through `_record`, so `fail_on` could never
     target it - the "nothing was restored - not even the image tag"
     branch of `roll_back`'s failure message (runner.py:191-192) was
@@ -534,7 +534,7 @@ def test_a_failing_rollback_tag_write_reports_nothing_restored(tmp_path):
 
 
 def test_the_poll_stops_after_the_deadline_is_reached_not_before(tmp_path):
-    """Finding (o): `runner.py:272` uses `waited < deadline_seconds`, not
+    """`runner.py:272` uses `waited < deadline_seconds`, not
     `<=`. Every other test drives the wait with `deadline_seconds=3.0` or
     the default, and with `POLL_SECONDS = 2.0` both operators poll twice
     either way (`0.0 < 3.0` and `2.0 < 3.0` are both true regardless of
@@ -551,7 +551,7 @@ def test_the_poll_stops_after_the_deadline_is_reached_not_before(tmp_path):
 
 
 def test_a_log_failure_during_a_successful_run_does_not_escape(tmp_path):
-    """Finding (q): the existing bite check for `_log`
+    """The existing bite check for `_log`
     (`test_a_log_failure_on_a_rejected_request_does_not_escape`) only
     exercises the reject-path call before the first command. The six
     mid-function call sites (`runner.py:163, 193, 208, 219, 233, 246`)
@@ -568,7 +568,7 @@ def test_a_log_failure_during_a_successful_run_does_not_escape(tmp_path):
 
 
 def test_a_log_failure_during_a_failing_step_and_rollback_does_not_escape(tmp_path):
-    """Finding (q), continued: the rollback-only call sites (163, before
+    """Continued from the test above: the rollback-only call sites (163, before
     the restore commands run; 193, if the restore itself also fails) are
     reachable only when a step fails and the rollback then fails too -
     exercised here with the same `fail_on="recreate", fail_times=2`
