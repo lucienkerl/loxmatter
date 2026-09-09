@@ -1107,19 +1107,35 @@ compose() {
 # whole script (and with it, the backgrounded pull) regardless of what
 # the heartbeat says.
 #
-# Polls once a SECOND, the same granularity `wait_healthy` already uses
-# above, not once every several seconds - `sleep N` inside a `while kill
-# -0 ...; do sleep N; ...; done` loop always sleeps the FULL N before its
-# very first liveness check, even when the child is done before that
-# check ever runs. Measured with a 5-second poll during this fix's own
-# development: an already-instant pull (this file's own test fixtures,
-# where the pulled "image" is a fake binary that returns immediately)
-# still cost a flat 5 extra wall-clock seconds on every single run
-# through this function, real work or none - multiplied across a test
-# suite already documented (see `project_testsuite_dauer` in this
-# maintainer's own notes) as long enough to look like a hang. A
-# one-second poll bounds that same unavoidable "sleep before the first
-# check" tax to at most one second instead.
+# The poll interval and the refresh interval are two different numbers,
+# and conflating them is what made an earlier version of this function
+# expensive. `sleep N` inside a `while kill -0 ...; do sleep N; ...;
+# done` loop always sleeps the FULL N before its very first liveness
+# check, even when the child finished before that check ever ran - so
+# the poll interval, and only the poll interval, is a flat tax paid on
+# every call through here whether there was real work to wait for or
+# not. Measured during this fix's own development: at a 5-second poll an
+# already-instant command (this file's own test fixtures, where the
+# pulled "image" is a fake binary returning immediately) cost a flat 5
+# extra wall-clock seconds every single time; at one second, one second;
+# five call sites in a full pass, multiplied across a test suite this
+# maintainer's own notes already record as long enough to look like a
+# hang (`project_testsuite_dauer`).
+#
+# So poll often (_HEARTBEAT_POLL_SECONDS) and refresh rarely
+# (_HEARTBEAT_REFRESH_TICKS polls between writes). The tax drops to the
+# poll interval while the stamp still moves far more often than it needs
+# to, and the SD card underneath a Pi is written a fifth as often during
+# a long pull as a one-second refresh would have written it.
+#
+# Sub-second `sleep` is not POSIX - `sleep` there takes an integer - so
+# this rests on the implementations that actually run it: busybox in the
+# sidecar (verified: `docker run --rm alpine:3.20 sh -c 'sleep 0.2'`
+# exits 0 against the base image `deploy/updater/Dockerfile` pins) and
+# the host's own `sleep` under the test suite. If this script is ever
+# rebased onto an image whose `sleep` is stricter, the failure is loud
+# and immediate rather than silent: every call through here returns
+# non-zero at once.
 #
 # Generalised into `with_heartbeat()` below, not left as a pull-only
 # mechanism: `git fetch`, the `tar czf` backup and every
@@ -1131,12 +1147,33 @@ compose() {
 # a thin wrapper around `with_heartbeat` rather than inlining
 # `compose pull "$1"` at its one call site, so this function's own name
 # stays what every existing caller and test already expects.
+# How often `with_heartbeat` below looks to see whether the command it
+# wrapped has finished. This is the flat latency tax on every wrapped
+# call - see that function's own comment - so it is small.
+_HEARTBEAT_POLL_SECONDS=0.2
+
+# How many polls pass between two heartbeat writes: 25 x 0.2s = one
+# refresh every 5 seconds, against the 30-second staleness window the
+# bridge judges us by (`_MAX_SILENT_SECONDS`, src/loxmatter/update.py).
+# Six times the margin, deliberately - a Pi under load can stretch a
+# 0.2s sleep, and being early costs one file write while being late
+# costs the operator a red banner telling them to kill a healthy update.
+#
+# These two files must agree, and nothing at runtime makes them:
+# `test_the_heartbeat_refreshes_well_inside_the_bridges_staleness_window`
+# ties them by reading both, so moving either alone fails a test rather
+# than reaching a Pi.
+_HEARTBEAT_REFRESH_TICKS=25
+
 with_heartbeat() {
   "$@" &
   wh_pid=$!
+  wh_ticks=0
   while kill -0 "$wh_pid" 2>/dev/null; do
-    sleep 1
-    if kill -0 "$wh_pid" 2>/dev/null; then
+    sleep "$_HEARTBEAT_POLL_SECONDS"
+    wh_ticks=$((wh_ticks + 1))
+    if [ "$((wh_ticks % _HEARTBEAT_REFRESH_TICKS))" -eq 0 ] &&
+      kill -0 "$wh_pid" 2>/dev/null; then
       refresh_heartbeat || true
     fi
   done

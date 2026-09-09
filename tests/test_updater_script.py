@@ -1096,18 +1096,16 @@ def test_wait_healthy_is_bounded_by_wall_clock_not_curl_duration(updater):
     # own comment). The bound below still sits far under what the OLD,
     # iteration-counting bug this test exists to catch would produce.
     #
-    # Widened again for the same reason, multiplied: `with_heartbeat`
-    # (the fetch/backup/recreate windows this same fix now also covers -
-    # see its own comment) is the identical background-and-poll
-    # mechanism, so THIS one pass - which reaches the fetch, the backup,
-    # the pull, the initial recreate AND the rollback's own recreate, all
-    # five backed by `with_heartbeat` - can accumulate up to five of
-    # those same ~1s poll taxes on top of the two wall-clock-bounded
-    # waits above, not just the pull's one. Bounded generously rather
-    # than tightly for exactly that reason: this test's own claim is
-    # "bounded by the clock", not "fast", and a machine under load adds
-    # process-spawn overhead on top of the disclosed poll tax that has
-    # nothing to do with either fix.
+    # This one pass reaches five `with_heartbeat` call sites - the fetch,
+    # the backup, the pull, the initial recreate and the rollback's own
+    # recreate - and each pays that same tax once. Five of them is still
+    # about a second in total, because the poll interval is decoupled
+    # from the refresh interval (see `_HEARTBEAT_POLL_SECONDS`); this
+    # bound briefly stood at 20s when the two were one second apiece.
+    # Bounded generously rather than tightly regardless: this test's own
+    # claim is "bounded by the clock", not "fast", and a machine under
+    # load adds process-spawn overhead that has nothing to do with
+    # either fix.
     curl_path = updater.bindir / "curl"
     curl_path.write_text("#!/bin/sh\nsleep 2\nexit 1\n", encoding="utf-8")
     curl_path.chmod(0o755)
@@ -1117,10 +1115,10 @@ def test_wait_healthy_is_bounded_by_wall_clock_not_curl_duration(updater):
     elapsed = time.monotonic() - start
     assert state["phase"] == "failed"
     assert state["rolled_back"] is True
-    assert elapsed < 20, (
-        f"took {elapsed:.1f}s - two wall-clock-bounded 2s waits plus up to five "
-        "1s-granularity with_heartbeat polls (fetch, backup, pull, and two "
-        "recreates) should stay well under this"
+    assert elapsed < 12, (
+        f"took {elapsed:.1f}s - two wall-clock-bounded 2s waits plus five "
+        "with_heartbeat poll taxes (fetch, backup, pull, and two recreates) "
+        "should stay well under this"
     )
 
 
@@ -1700,13 +1698,14 @@ def test_a_recreate_failure_also_rolls_back_without_a_pointless_wait(updater):
     # test_a_failed_restart_hands_off_to_rollback_instead_of_stranding_the_tag's
     # comment above for why not a positional "$2".
     #
-    # The bound below accounts for `with_heartbeat` wrapping the fetch,
-    # the backup, the pull AND both `compose up` attempts (initial and
-    # rollback) - up to five ~1s poll taxes (see that function's own
-    # comment for why an already-instant command still costs one), none
-    # of them the "pointless wait" this test exists to prove was
-    # skipped: that wait is `wait_healthy`'s own HEALTH_TIMEOUT-bounded
-    # loop, never entered at all for the doomed initial attempt.
+    # `with_heartbeat` wraps the fetch, the backup, the pull AND both
+    # `compose up` attempts (initial and rollback), and an
+    # already-instant command still costs one poll interval each time -
+    # see that function's own comment for why. None of those is the
+    # "pointless wait" this test exists to prove was skipped: that wait
+    # is `wait_healthy`'s own HEALTH_TIMEOUT-bounded loop, never entered
+    # at all for the doomed initial attempt, and an order of magnitude
+    # longer than the whole poll tax put together.
     docker_path = updater.bindir / "docker"
     docker_path.write_text(
         _docker_stub_source(compose_case='case " $* " in *" up "*) exit 1 ;; esac; exit 0 ;;'),
@@ -1722,7 +1721,7 @@ def test_a_recreate_failure_also_rolls_back_without_a_pointless_wait(updater):
     # No `set_state health ""` for the doomed initial attempt - a
     # skipped, pointless wait, not merely a short one.
     assert len(_compose_calls(calls, "up")) == 2
-    assert elapsed < 10, f"took {elapsed:.1f}s - the initial wait should have been skipped entirely"
+    assert elapsed < 5, f"took {elapsed:.1f}s - the initial wait should have been skipped entirely"
 
 
 def test_the_sidecar_replaces_itself_only_after_success(updater):
@@ -2689,3 +2688,37 @@ def test_a_broken_git_surfaces_as_a_failure_instead_of_a_silent_head_fallback(up
     assert "could not determine the currently checked-out commit" in state["error"]
     assert "checkout --detach" not in calls
     assert "fetch --tags --force origin" not in calls
+
+
+def test_the_heartbeat_refreshes_well_inside_the_bridges_staleness_window():
+    """The updater's refresh rate and the bridge's patience live in two
+    files, in two languages, and nothing at runtime makes them agree.
+
+    If the refresh ever became slower than `_MAX_SILENT_SECONDS`, the
+    bridge would decide mid-update that no updater is installed and raise
+    the red "it may have crashed - restart the sidecar" banner, which is
+    the one instruction that destroys a healthy update. That failure
+    reaches a Raspberry Pi and nothing before it: the shell side has no
+    idea what the Python side considers stale, and the Python side never
+    reads the shell.
+
+    So the pairing is asserted here, by reading both. Six times the
+    margin is deliberate - a loaded Pi stretches a sub-second sleep, and
+    being early costs one file write while being late costs the operator
+    a banner telling them to kill their own update.
+    """
+    from loxmatter.update import _MAX_SILENT_SECONDS
+
+    script = SCRIPT.read_text(encoding="utf-8")
+    poll_match = re.search(r"^_HEARTBEAT_POLL_SECONDS=([0-9.]+)$", script, re.MULTILINE)
+    ticks_match = re.search(r"^_HEARTBEAT_REFRESH_TICKS=([0-9]+)$", script, re.MULTILINE)
+    assert poll_match and ticks_match, "the heartbeat constants moved or were renamed"
+    poll = float(poll_match.group(1))
+    ticks = int(ticks_match.group(1))
+    refresh_seconds = poll * ticks
+
+    assert refresh_seconds * 6 <= _MAX_SILENT_SECONDS, (
+        f"the heartbeat refreshes every {refresh_seconds:g}s but the bridge calls an "
+        f"updater gone after {_MAX_SILENT_SECONDS}s - less than six times the margin. "
+        "Whichever of the two moved, move the other or justify the new margin here."
+    )
