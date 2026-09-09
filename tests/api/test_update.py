@@ -32,6 +32,7 @@ route's own logic."""
 
 from __future__ import annotations
 
+import itertools
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -44,15 +45,18 @@ import loxmatter.api.update as update_module
 from loxmatter.api.update import _BUSY_BOUND_SECONDS, _STALE_AFTER_SECONDS
 from loxmatter.loxone.server import build_app
 from loxmatter.model.store import Store
+from loxmatter.model.update_settings_store import UpdateChannel
+from loxmatter.update import runner as runner_module
 from loxmatter.update.commands import (
+    _BACKUP_TIMEOUT_SECONDS,
     _GIT_FETCH_TIMEOUT_SECONDS,
     _HEALTH_TIMEOUT_SECONDS,
     _IMAGE_PULL_TIMEOUT_SECONDS,
     _LOCAL_TIMEOUT_SECONDS,
     _RECREATE_TIMEOUT_SECONDS,
 )
-from loxmatter.update.protocol import UpdateState, read_request, write_state
-from loxmatter.update.runner import HEALTH_REFRESH_POLLS, POLL_SECONDS
+from loxmatter.update.protocol import UpdateRequest, UpdateState, read_request, write_state
+from loxmatter.update.runner import HEALTH_REFRESH_POLLS, POLL_SECONDS, run_update
 
 
 @pytest.fixture
@@ -359,6 +363,161 @@ def test_every_busy_phase_has_a_bound_that_covers_its_own_actual_worst_case():
         assert _BUSY_BOUND_SECONDS[phase] >= worst_case, phase
 
 
+def test_run_update_actually_measured_stays_within_every_busy_bound(monkeypatch):
+    """The general property, executed rather than transcribed - the gap
+    `test_every_busy_phase_has_a_bound_that_covers_its_own_actual_worst_case`
+    above does not close, despite its own docstring calling it that:
+    that test bites against a change to `_BUSY_BOUND_SECONDS`'s formula,
+    computed independently from the same raw constants - but not against
+    a change to the STEP SEQUENCE those formulas assume. Inserting an
+    extra `commands.fetch()` call into `runner.run_update` between
+    `write_image_tag()` and `recreate()` left every test in this suite,
+    that one included, green: the true `pull` window becomes
+    `_RECREATE_TIMEOUT_SECONDS + _GIT_FETCH_TIMEOUT_SECONDS` (120s)
+    against a 75s bound, and nothing that only sums constants by hand
+    - "reproduced from a full read of `runner.run_update`", a human
+    read, not an executed one - can ever notice a step moving.
+
+    This drives `run_update` for real against a fake `Commands` whose
+    every method advances a monotonic fake clock by that method's actual
+    `commands.py` timeout before returning (the same worst case a real,
+    not-yet-timed-out subprocess call can legitimately cost), and a fake
+    `sleep` that does the same for `_wait_for_health`'s own
+    `sleep(POLL_SECONDS)`. `runner.write_state` is monkeypatched to
+    record `(phase, clock_reading)` at every `publish()` call - the
+    sequence `run_update` actually produces, not one restated here. The
+    gap between two consecutive records is exactly how long `state.json`
+    can legitimately sit at the earlier phase's stamp with nothing
+    refreshing it - the same question `_BUSY_BOUND_SECONDS` exists to
+    answer - so comparing it against that dict reads `runner.py` by
+    running it.
+
+    Two runs share one clock-driven `Commands`: a healthy one, whose
+    health wait is held false across two refresh cycles before
+    succeeding (covering `backup`, `pull`, `recreate` and `health` - the
+    last two exercised across an actual republish, not just a single
+    poll), and one that never turns healthy (covering `rollback`, whose
+    own confirmation wait is exercised the same way). Together every key
+    in `_BUSY_BOUND_SECONDS` is observed at least once."""
+    clock = {"now": 0.0}
+    records: list[tuple[str, float]] = []
+
+    def fake_write_state(_base: object, state: UpdateState) -> None:
+        records.append((state.phase, clock["now"]))
+
+    monkeypatch.setattr(runner_module, "write_state", fake_write_state)
+
+    class ClockCommands:
+        """Every method advances the shared `clock` by the real timeout
+        `commands.py` gives that operation, mirroring the worst case a
+        real subprocess call can legitimately cost without actually
+        timing out. `write_image_tag`/`read_image_tag` cost nothing, like
+        their real counterparts in `commands.DockerCommands` - plain file
+        I/O, no subprocess to bound."""
+
+        def __init__(self, *, healthy_after: int) -> None:
+            self._healthy_after = healthy_after
+            self._health_asked = 0
+
+        def backup(self) -> str:
+            clock["now"] += _BACKUP_TIMEOUT_SECONDS
+            return "/data/backups/store-x.tgz"
+
+        def fetch(self) -> None:
+            clock["now"] += _GIT_FETCH_TIMEOUT_SECONDS
+
+        def checkout(self, ref: str) -> None:
+            clock["now"] += _LOCAL_TIMEOUT_SECONDS
+
+        def pull(self, image: str) -> None:
+            clock["now"] += _IMAGE_PULL_TIMEOUT_SECONDS
+
+        def recreate(self) -> None:
+            clock["now"] += _RECREATE_TIMEOUT_SECONDS
+
+        def healthy(self) -> bool:
+            self._health_asked += 1
+            clock["now"] += _HEALTH_TIMEOUT_SECONDS
+            return self._health_asked > self._healthy_after
+
+        def write_image_tag(self, tag: str) -> None:
+            pass
+
+        def read_image_tag(self) -> str:
+            return "stable"
+
+        def read_git_ref(self) -> str:
+            clock["now"] += _LOCAL_TIMEOUT_SECONDS
+            return "v0.2.0"
+
+        def log(self, line: str) -> None:
+            pass
+
+    def fake_sleep(seconds: float) -> None:
+        clock["now"] += seconds
+
+    def request() -> UpdateRequest:
+        return UpdateRequest(
+            id="clock-1",
+            channel="stable",
+            target="v0.3.0",
+            requested_at="2026-09-09T10:00:00+00:00",
+        )
+
+    def deltas_by_phase(run_records: list[tuple[str, float]]) -> dict[str, float]:
+        """The max gap this one run observed between a publish of each
+        phase and whatever was published right after it - `max` because a
+        phase republished across several refreshes (`"health"`, twice
+        below) is measured once per gap, and only the largest of those
+        gaps is the one `_BUSY_BOUND_SECONDS` has to cover."""
+        out: dict[str, float] = {}
+        for (phase, start), (_next_phase, end) in itertools.pairwise(run_records):
+            out[phase] = max(out.get(phase, 0.0), end - start)
+        return out
+
+    # Run 1: healthy only after two full refresh cycles - exercises
+    # `backup`, `pull`, `recreate` and `health` (the latter two across a
+    # real republish, both at `HEALTH_REFRESH_POLLS` and again at
+    # `2 * HEALTH_REFRESH_POLLS`).
+    state = run_update(
+        request(),
+        ClockCommands(healthy_after=2 * HEALTH_REFRESH_POLLS),
+        base=Path("/unused"),
+        running_version="0.2.0",
+        running_commit="abc1234",
+        is_ancestor=lambda _a, _b: True,
+        sleep=fake_sleep,
+    )
+    assert state.phase == "done"
+    observed = deltas_by_phase(records)
+
+    # Run 2: never healthy, deadline reached quickly - exercises
+    # `rollback`, whose own confirmation wait republishes the same way.
+    clock["now"] = 0.0
+    records.clear()
+    state = run_update(
+        request(),
+        ClockCommands(healthy_after=10_000),
+        base=Path("/unused"),
+        running_version="0.2.0",
+        running_commit="abc1234",
+        is_ancestor=lambda _a, _b: True,
+        sleep=fake_sleep,
+        deadline_seconds=2 * HEALTH_REFRESH_POLLS * POLL_SECONDS,
+    )
+    assert state.phase == "failed"
+    assert state.rolled_back is True
+    for phase, delta in deltas_by_phase(records).items():
+        observed[phase] = max(observed.get(phase, 0.0), delta)
+
+    assert set(observed) <= set(_BUSY_BOUND_SECONDS)
+    for phase, worst_case in observed.items():
+        assert worst_case <= _BUSY_BOUND_SECONDS[phase], phase
+    # Every phase this dict makes a promise about was actually measured -
+    # a promise never checked is not a promise kept.
+    assert set(_BUSY_BOUND_SECONDS) <= set(observed)
+
+
 @pytest.mark.parametrize("phase", ["backup", "pull", "recreate", "health", "rollback"])
 async def test_status_says_updater_present_for_a_busy_phase_within_its_bound(api, phase):
     """The defect this fixes, reproduced directly: a stamp aged past
@@ -419,6 +578,81 @@ async def test_status_says_no_updater_for_a_future_dated_stamp(api):
 
     response = await client.get("/api/update/status")
     assert response.json()["updater_present"] is False
+
+
+async def test_status_localises_a_rejection_the_sidecar_recorded(api):
+    """The `dev` ancestry rule is enforced only by the sidecar - a request
+    this route's own pre-check let through still gets refused a loop
+    interval later, inside `run_update`, and `state.json` is the only
+    channel that refusal reaches the operator through (see `api.update`'s
+    module docstring and `runner.run_update`'s `except RequestRejected`
+    branch). Before this fix, `error` was a verbatim copy of `state.json`'s
+    English `error` regardless of the selected language - a German
+    operator reading an English sentence inside a German frame, exactly
+    what CLAUDE.md forbids."""
+    client, store, update_dir = api
+    fresh_stamp = datetime.now(UTC).isoformat(timespec="microseconds")
+    _write_state(
+        update_dir,
+        phase="failed",
+        updater_seen_at=fresh_stamp,
+        error="target 'deadbee' does not descend from the running commit 'abc1234'",
+        error_i18n_key="api.update.rejected.target_not_descendant",
+        error_i18n_values={"target": "deadbee", "running_commit": "abc1234"},
+    )
+
+    english = await client.get("/api/update/status")
+    store.locale.set_language("de")
+    german = await client.get("/api/update/status")
+
+    assert english.json()["error"] != german.json()["error"]
+    assert "does not descend" in english.json()["error"]
+    assert "stammt nicht" in german.json()["error"]
+
+
+async def test_status_falls_back_to_english_when_the_recorded_key_does_not_resolve(api):
+    """`i18n.t()` raises `KeyError` for a key it does not know - a
+    `state.json` written by a sidecar image whose `strings.yaml` has moved
+    ahead of (or behind) this bridge's own, say. That must not turn a
+    routine `GET /update/status` into a 500 over a rejection message that
+    would have displayed just fine in English; it must fall back to the
+    raw `error` instead, same as a failure with no key at all."""
+    client, _, update_dir = api
+    fresh_stamp = datetime.now(UTC).isoformat(timespec="microseconds")
+    _write_state(
+        update_dir,
+        phase="failed",
+        updater_seen_at=fresh_stamp,
+        error="target 'deadbee' does not descend from the running commit 'abc1234'",
+        error_i18n_key="api.update.rejected.this_key_does_not_exist",
+        error_i18n_values={"target": "deadbee", "running_commit": "abc1234"},
+    )
+
+    response = await client.get("/api/update/status")
+    assert response.status_code == 200
+    assert response.json()["error"] == (
+        "target 'deadbee' does not descend from the running commit 'abc1234'"
+    )
+
+
+async def test_status_leaves_a_keyless_error_in_english(api):
+    """Most failures `run_update` can report - a step that raised, a
+    health check that timed out, a rollback that itself failed - are
+    free-form exception text with nothing in `strings.yaml` to resolve
+    against, by design (see `UpdateState`'s own docstring). `error` must
+    reach the interface unchanged for those, in either language."""
+    client, store, update_dir = api
+    fresh_stamp = datetime.now(UTC).isoformat(timespec="microseconds")
+    _write_state(
+        update_dir,
+        phase="failed",
+        updater_seen_at=fresh_stamp,
+        error="recreate failed: RuntimeError('recreate failed')",
+    )
+
+    store.locale.set_language("de")
+    response = await client.get("/api/update/status")
+    assert response.json()["error"] == "recreate failed: RuntimeError('recreate failed')"
 
 
 async def test_status_running_version_comes_from_build_info_not_state_to_version(api, monkeypatch):
@@ -484,6 +718,44 @@ async def test_check_queries_again_once_the_cache_expires(api, monkeypatch):
     await client.get("/api/update/check")
 
     assert calls == 2
+
+
+async def test_check_cache_is_keyed_by_channel(api, monkeypatch):
+    """Every existing cache test above calls this route twice without ever
+    changing the selected channel, so a cache keyed by a single constant
+    instead of `channel` - `check_cache = {}` used as a one-slot cache
+    rather than `dict[UpdateChannel, ...]` - would leave every one of them
+    green too. The interface re-checks on every channel toggle (design
+    section 9); a cache that served `stable`'s cached answer to a `dev`
+    request would show the wrong `available`/`latest` for the full fifteen
+    minutes of `_CHECK_CACHE_SECONDS`, to an operator who just switched the
+    toggle specifically to see the `dev` answer."""
+    client, store, _update_dir = api
+    calls: list[UpdateChannel] = []
+
+    async def fake_query(channel, _info):
+        calls.append(channel)
+        if channel is UpdateChannel.DEV:
+            return "deadbee", True
+        return "v9.9.9", False
+
+    monkeypatch.setattr(update_module, "_query_github", fake_query)
+
+    store.update_settings.set_channel(UpdateChannel.STABLE)
+    stable = await client.get("/api/update/check")
+    store.update_settings.set_channel(UpdateChannel.DEV)
+    dev = await client.get("/api/update/check")
+
+    assert calls == [UpdateChannel.STABLE, UpdateChannel.DEV]
+    assert stable.json()["channel"] != dev.json()["channel"]
+    assert stable.json()["available"] != dev.json()["available"]
+    assert stable.json()["latest"] != dev.json()["latest"]
+
+    # Also proves the cache still WORKS per channel, not merely that it is
+    # not shared - a second call on `dev` must not ask GitHub again.
+    store.update_settings.set_channel(UpdateChannel.DEV)
+    await client.get("/api/update/check")
+    assert calls == [UpdateChannel.STABLE, UpdateChannel.DEV]
 
 
 async def test_check_caches_an_unavailable_result_too(api, monkeypatch):
