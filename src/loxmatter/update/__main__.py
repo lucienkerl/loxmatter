@@ -20,8 +20,16 @@ Small on purpose (design section 6: "Operation: loop with `sleep 2`"):
 read the request, skip it if its `id` matches the one already recorded in
 `state.json`, otherwise run it, and either way write `updater_seen_at` and
 sleep two seconds. `run_once` is that one pass, factored out so it can be
-driven directly - `main`'s own `while True` has no return value to assert
-on and nothing to unit-test that `run_once` does not already cover.
+driven directly - most of what a single pass does is covered there,
+without a daemon or a wall-clock sleep.
+
+That is not the whole of `main`, though: its pre-loop setup
+(`_repair_state`, `_seed_last_id`) and the in-memory carry across
+iterations are both things only `main` itself does, and both are still
+testable despite the `while True` having no return value of its own -
+inject a fake `DockerCommands` and a `time.sleep` that raises after a
+fixed number of calls to end the loop on command (see
+`tests/update/test_loop.py`).
 
 `run_once` resolves `running_version`/`running_commit` itself, and only in
 the branch that is about to check a request against them (`commands.
@@ -53,6 +61,7 @@ replaces the other.
 
 from __future__ import annotations
 
+import json
 import os
 import time
 from collections.abc import Callable
@@ -61,6 +70,7 @@ from pathlib import Path
 from typing import Protocol
 
 from loxmatter.timestamps import now_iso
+from loxmatter.update import protocol
 from loxmatter.update.commands import DockerCommands
 from loxmatter.update.protocol import (
     UpdateState,
@@ -80,9 +90,14 @@ LOOP_INTERVAL_SECONDS = 2.0
 
 #: Where the two sides meet inside this container. `main` uses this
 #: default; `run_once` itself takes `base` as a parameter, same as
-#: `run_update`. The only definition of this path - `protocol` used to
-#: carry a second, identical one (`UPDATE_DIR`) that no code ever read.
-DEFAULT_BASE = Path("/data/update")
+#: `run_update`. The plan's Task 2 interface list names this path as
+#: `protocol.UPDATE_DIR`
+#: (`docs/superpowers/plans/2026-09-09-webui-updates-stage-2.md:325`:
+#: "Tasks 3, 4 and 7 all use these") - it is defined once, there, and
+#: aliased here rather than duplicated, so the two modules cannot drift
+#: to two different paths for the one directory this whole file is
+#: about.
+DEFAULT_BASE = protocol.UPDATE_DIR
 
 #: The mounted checkout `fetch`/`checkout` run against.
 DEFAULT_COMPOSE_DIR = Path("/app")
@@ -156,58 +171,15 @@ def _touch_seen_at(base: Path, previous: UpdateState | None, commands: LoopComma
     both when `state.json` has never existed (the honest "idle, nothing
     has ever run here" case) and when it exists but could not be parsed -
     corrupt JSON, an unknown `phase`, a hand edit. Only the first case
-    should produce a fresh `idle` state outright; the second first has to
-    stop being an obstacle without its evidence being thrown away - see
-    below - after which it becomes the first case too.
-
-    Losing `id` here used to matter more than it does now: with `main`
-    seeding `last_id` from `state.json` at startup (see the module
-    docstring) as well as carrying it in memory, "already executed"
-    survives a corrupt file either way. What is left for this guard is
-    only to preserve the evidence rather than silently discard it, and -
-    the actual defect this replaces - to let `updater_seen_at` resume
-    being written at all. Design section 11 reads a stamp that stops
-    moving as "no sidecar installed" and hides the update button; a
-    single unparsable byte in `state.json` must not be able to disable
-    the whole feature forever while the sidecar keeps running fine.
+    should produce a fresh `idle` state outright; the second is
+    `_repair_state`'s job - once it has moved the unreadable file aside
+    and written a fresh one, the *next* pass finds a readable file again
+    and takes the first branch below like any other quiet pass.
     """
     if previous is None:
-        path = state_path(base)
-        if path.exists():
-            # Unreadable, not merely absent. Move it aside once rather
-            # than overwrite or delete it - a hand edit or SD-card
-            # corruption is exactly the kind of thing someone may want to
-            # look at later - and log that this happened, so the notice
-            # exists somewhere other than a file nobody is watching.
-            # Moving it succeeds or it does not; either way this branch
-            # runs at most once per corruption, because the next pass
-            # either finds a fresh, readable `state.json` here (moved out
-            # of the way, replaced below) or finds the same unmoved file
-            # and tries again - never a second log line for the same one
-            # that already got moved.
-            corrupt_path = path.with_name(f"{path.name}.corrupt")
-            try:
-                os.replace(path, corrupt_path)
-            except OSError:
-                return
-            _log_best_effort(
-                commands,
-                f"state.json could not be read; moved aside to {corrupt_path.name} "
-                "and resuming with a fresh state",
-            )
-        state = UpdateState(
-            id=None,
-            phase="idle",
-            steps=[],
-            from_version=None,
-            to_version=None,
-            error=None,
-            rolled_back=False,
-            healthy=False,
-            updater_seen_at=now_iso(),
-        )
-    else:
-        state = replace(previous, updater_seen_at=now_iso())
+        _repair_state(base, commands)
+        return
+    state = replace(previous, updater_seen_at=now_iso())
     try:
         write_state(base, state)
     except Exception:  # noqa: BLE001, S110 - best effort, matches
@@ -216,19 +188,144 @@ def _touch_seen_at(base: Path, previous: UpdateState | None, commands: LoopComma
         pass
 
 
+def _repair_state(base: Path, commands: LoopCommands) -> None:
+    """Make `state.json` readable again, called from two places: from
+    `_touch_seen_at` above on any quiet pass that finds it unreadable,
+    and once from `main`, before the loop even starts and before
+    `_seed_last_id` (see there) reads the file it repairs.
+
+    That second call site is the point of this function existing on its
+    own rather than staying inlined in `_touch_seen_at`: a *pending*
+    request never reaches `_touch_seen_at` at all in the process where
+    `state.json` is actually corrupt (`run_once` returns before it, once
+    `run_update` is called - see the module docstring), and
+    `run_update`'s own `publish` would then overwrite the corrupt bytes
+    outright, with no repair and no line in `log.txt` about it ever
+    having happened. Calling this once from `main`, unconditionally,
+    closes that gap regardless of what `request.json` says.
+
+    A missing file needs nothing done here - a plain `write_state` below
+    with `id=None` is the honest "nothing has ever run" state, same as
+    always. An unreadable-but-present file is moved aside under a
+    timestamped name (never overwriting an earlier `.corrupt` file - a
+    second corruption must not erase the first one's evidence) and its
+    `id` salvaged from the raw JSON before that move: `read_state`
+    returns `None` not only for binary garbage but for well-formed JSON
+    with an unknown `phase` or a non-list `steps` - the hand-edit case -
+    and in that case `id` is sitting in the file in plain text. Losing it
+    here would mean `_seed_last_id` genuinely cannot recover it, where
+    salvaging it here means it can.
+
+    Only the move is allowed to raise out of this function - a
+    persistent failure to move (a read-only mount, say) has to surface
+    somewhere, and letting it propagate means it reaches the exact
+    dedup `main` already has for exactly this purpose (`last_logged_failure`)
+    instead of this function reinventing one. `write_state` below stays
+    best-effort and silent on failure, matching `_touch_seen_at` and
+    `runner.run_update`'s own `publish`: a full disk must not stop the
+    loop, and was never logged for those two either.
+
+    Called from `_touch_seen_at`, `read_state(base) is None` already
+    holds by construction - `_touch_seen_at` only reaches this branch
+    when its own `previous` was `None`. Called from `main`, nothing
+    upstream has checked that yet, and a `state.json` that parses fine
+    must be left completely alone: re-reading it here first, rather than
+    trusting "the path exists" as a proxy for "the file is unreadable",
+    is what stops a perfectly healthy `done`/`failed` state from being
+    clobbered into a fresh `idle` one on every single process start.
+    """
+    if read_state(base) is not None:
+        return
+    path = state_path(base)
+    salvaged_id: str | None = None
+    if path.exists():
+        salvaged_id = _salvage_id(path)
+        corrupt_path = _unused_corrupt_name(path)
+        os.replace(path, corrupt_path)  # OSError propagates - see docstring
+        _log_best_effort(
+            commands,
+            f"state.json could not be read; moved aside to {corrupt_path.name} "
+            "and resuming with a fresh state"
+            + (f", salvaged id {salvaged_id!r}" if salvaged_id is not None else ""),
+        )
+    state = UpdateState(
+        id=salvaged_id,
+        phase="idle",
+        steps=[],
+        from_version=None,
+        to_version=None,
+        error=None,
+        rolled_back=False,
+        healthy=False,
+        updater_seen_at=now_iso(),
+    )
+    try:
+        write_state(base, state)
+    except Exception:  # noqa: BLE001, S110 - best effort, see docstring above
+        pass
+
+
+def _salvage_id(path: Path) -> str | None:
+    """Best-effort recovery of `id` from a `state.json` that `read_state`
+    could not turn into an `UpdateState`. `id` is a plain top-level JSON
+    field even when the rest of the document has the wrong shape - an
+    unknown `phase`, a `steps` that is not a list - so a raw `json.loads`
+    can still reach it even though `read_state` gave up. Binary garbage,
+    truncated JSON, a missing or non-string `id` all mean the same thing
+    here: nothing to salvage, not an error to raise."""
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    value = payload.get("id")
+    return value if isinstance(value, str) else None
+
+
+def _unused_corrupt_name(path: Path) -> Path:
+    """A `.corrupt` name that does not collide with one a previous
+    corruption already left behind - overwriting it would destroy that
+    evidence, exactly what moving the file aside (instead of the
+    original single fixed name `state.json.corrupt`) exists to avoid. A
+    failing SD card can corrupt the file more than once, and each time
+    deserves its own copy. `now_iso()` carries microseconds, so a
+    same-process collision is not a realistic concern; the loop below
+    exists only so this can never raise on one."""
+    stamp = now_iso().replace(":", "-")
+    candidate = path.with_name(f"{path.name}.corrupt.{stamp}")
+    suffix = 1
+    while candidate.exists():
+        candidate = path.with_name(f"{path.name}.corrupt.{stamp}.{suffix}")
+        suffix += 1
+    return candidate
+
+
 def _seed_last_id(base: Path) -> str | None:
     """The `id` `main` starts its in-memory carry from, read out of
     `state.json` once, before the loop begins - factored out for the same
     reason `run_once` was (see the module docstring): `main`'s own `while
     True` has no return value to assert on, and this is the one line of
-    it that matters. `None` covers both an installation that has never
-    run an update (`read_state` returns `None` because the file has
-    never existed) and one whose `state.json` cannot currently be parsed
-    - the safe reading in the second case is "unknown", not "definitely
-    nothing has run", but `_touch_seen_at` is what repairs that file, not
-    this function; until it does, treating the id as unknown here is no
-    worse than what a fresh process already does days on end while no
-    updater has ever written a byte."""
+    it that matters.
+
+    `None` covers both an installation that has never run an update
+    (`read_state` returns `None` because the file has never existed) and
+    - now that `main` calls `_repair_state` once, unconditionally, before
+    this function runs (see there) - the case where `state.json` was
+    unreadable and has just been replaced with a fresh `idle` state, `id`
+    salvaged where the raw JSON still named one and `None` where it truly
+    did not. Either way `read_state` here sees a normal, parseable file.
+
+    The two remaining cases are `None` for different reasons and must not
+    be read as interchangeable by whoever meets this function next: a
+    freshly installed sidecar with `id=None` has literally nothing to
+    re-run - there is no `request.json` yet either. A repaired one with
+    `id=None` means the id truly could not be salvaged, and the very next
+    request this process sees will be treated as new even if it is,
+    unknowably, one `state.json` already recorded `done` before the
+    corruption - a silent re-run of a request that already completed,
+    not merely "no worse than a fresh install."
+    """
     state = read_state(base)
     return state.id if state is not None else None
 
@@ -248,6 +345,24 @@ def main() -> None:
     commands = DockerCommands(
         compose_dir=compose_dir, env_path=env_path, health_url=health_url, base=base
     )
+
+    # Repair a corrupt or unreadable `state.json` before anything else
+    # touches it - in particular before `_seed_last_id` just below, which
+    # needs a readable file to recover `last_id` from, and before the
+    # loop's first pass, whose own `run_update` would otherwise overwrite
+    # the corrupt bytes outright the moment a request happens to be
+    # pending (see `_repair_state`'s docstring). Guarded the same way
+    # every other pre-loop and in-loop step in this function is: nothing
+    # before `while True` may be allowed to end the process either. A
+    # persistent failure here (a read-only mount, say) is not silently
+    # lost - the very next pass hits the identical unreadable file
+    # through `_touch_seen_at`, where it is logged with `main`'s own
+    # `last_logged_failure` dedup below, not reinvented here for a call
+    # that only ever happens once.
+    try:
+        _repair_state(base, commands)
+    except Exception:  # noqa: BLE001, S110 - see comment above
+        pass
 
     # Seeded from `state.json` once, here, and held in memory across
     # iterations after that - see the module docstring. The seed is what

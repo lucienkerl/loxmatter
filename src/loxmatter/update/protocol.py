@@ -40,6 +40,16 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Literal, get_args
 
+#: Where the bridge and the sidecar meet inside the container, named here
+#: because the plan's Task 2 interface list puts it here
+#: (`docs/superpowers/plans/2026-09-09-webui-updates-stage-2.md:325`:
+#: "Tasks 3, 4 and 7 all use these"). `__main__.DEFAULT_BASE` aliases
+#: this rather than redefining it - `base` is a plain parameter
+#: everywhere else in this package (`run_once`, `run_update`, every
+#: function below), so this is the one place the actual path is written
+#: down.
+UPDATE_DIR = Path("/data/update")
+
 #: The eight values the plan's interface list names. Defined once here and
 #: used both for `UpdateState.phase` and for `run_update`'s `publish`
 #: helper (`runner.py`), so a typo in either place is a `mypy` error

@@ -16,19 +16,37 @@
 
 """One pass of the sidecar's own loop - see `__main__.run_once`.
 
-`main()` itself is `while True: run_once(...); time.sleep(...)` and is
-deliberately not exercised here: an infinite loop has no return value to
-assert on, and the interesting behaviour - what one pass does - is all in
-`run_once`, which takes no daemon and no wall-clock sleep to test.
+`main()` itself is `while True: run_once(...); time.sleep(...)` and stays
+untested for what makes every iteration alike - that behaviour is all in
+`run_once`, which takes no daemon and no wall-clock sleep, and is covered
+above. What is NOT alike between iterations - `main`'s own pre-loop setup
+(`_repair_state`, `_seed_last_id`) and the in-memory carry across
+iterations that only `main` performs - has no return value of its own to
+assert on, but is testable anyway: inject a fake `DockerCommands` and a
+`time.sleep` that raises after a fixed number of calls to end the
+otherwise-infinite loop on command. See
+`test_main_seeds_and_carries_last_id_across_a_torn_read` below.
 """
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
+import pytest
+
 from loxmatter.timestamps import now_iso
+from loxmatter.update import __main__ as main_module
+from loxmatter.update import protocol
 from loxmatter.update.__main__ import _seed_last_id, run_once
-from loxmatter.update.protocol import UpdateRequest, read_state, state_path, write_request
+from loxmatter.update.protocol import (
+    UpdateRequest,
+    UpdateState,
+    read_state,
+    state_path,
+    write_request,
+    write_state,
+)
 
 
 class FakeCommands:
@@ -147,13 +165,14 @@ def test_a_restarted_process_seeds_last_id_from_state_json_and_executes_nothing(
     first pass regardless of what `state.json` already recorded as done.
 
     `main` closes that gap with `_seed_last_id`, called once before its
-    `while True` begins (see the module docstring). `main` itself has
-    nothing to unit-test - an infinite loop has no return value - so this
-    drives the same two steps `main` performs directly: seed, then call
-    `run_once` with the result. The first pass's own return value is
-    thrown away on purpose, standing in for the fact that a real restart
-    has genuinely lost it; `_seed_last_id` has to recover the id from
-    `state.json` on its own, not be handed it as a shortcut.
+    `while True` begins (see the module docstring). This test drives
+    `_seed_last_id` directly, in isolation from the rest of `main` - the
+    two together, wired exactly as `main` wires them, are what
+    `test_main_seeds_and_carries_last_id_across_a_torn_read` below
+    covers. The first pass's own return value is thrown away on purpose,
+    standing in for the fact that a real restart has genuinely lost it;
+    `_seed_last_id` has to recover the id from `state.json` on its own,
+    not be handed it as a shortcut.
     """
     base = tmp_path / "update"
     write_request(
@@ -210,9 +229,12 @@ def test_touch_seen_at_moves_a_corrupt_state_file_aside_and_resumes_stamping(tmp
     reads as "no sidecar installed" and hides the update button - over
     one unparsable byte, while the sidecar keeps polling perfectly.
 
-    The fix is to move the file out of the way once, under a `.corrupt`
-    name, and resume stamping from a fresh `idle` state - preserving the
-    evidence instead of discarding it, while letting the loop recover."""
+    The fix is to move the file out of the way once, under a timestamped
+    `.corrupt.<now_iso()>` name - not the single fixed name this used to
+    be, which a second corruption would silently overwrite, destroying
+    the first one's evidence - and resume stamping from a fresh `idle`
+    state - preserving the evidence instead of discarding it, while
+    letting the loop recover."""
     base = tmp_path / "update"
     path = state_path(base)
     path.parent.mkdir(parents=True)
@@ -222,9 +244,12 @@ def test_touch_seen_at_moves_a_corrupt_state_file_aside_and_resumes_stamping(tmp
 
     pass_once(base, commands)
 
-    # The corrupt bytes survive, moved aside rather than deleted.
-    corrupt_path = path.with_name("state.json.corrupt")
-    assert corrupt_path.read_bytes() == corrupt
+    # The corrupt bytes survive, moved aside rather than deleted, under a
+    # name that carries a timestamp rather than the fixed
+    # `state.json.corrupt` this used to be.
+    corrupt_candidates = list(path.parent.glob("state.json.corrupt.*"))
+    assert len(corrupt_candidates) == 1
+    assert corrupt_candidates[0].read_bytes() == corrupt
 
     # `state.json` itself is a fresh, readable, idle state - stamping has
     # resumed.
@@ -309,3 +334,259 @@ def test_a_downgrade_is_refused_against_the_running_container_not_the_checkout(t
         if call not in ("read_running_identity",) and not call.startswith("log:")
     ]
     assert executed == []
+
+
+class _StopLoop(Exception):
+    """Raised by a faked `time.sleep` to end `main`'s otherwise-infinite
+    `while True` on command, at a call count the test chooses - see the
+    tests below. Not an assertion failure in itself; a test that lets it
+    escape `pytest.raises` is one where `main` looped more or fewer times
+    than expected."""
+
+
+def _run_main_until_stopped(
+    base: Path, commands: FakeCommands, monkeypatch: pytest.MonkeyPatch, *, passes: int
+) -> None:
+    """Drive the real `main()` - not `run_once` - for exactly `passes`
+    iterations of its `while True`, then stop it with `_StopLoop` instead
+    of letting it run forever. `DockerCommands` is replaced so `main`'s
+    own construction of it (`compose_dir=/app` by default, no `tmp_path`
+    involved) never touches the filesystem; `time.sleep` is replaced so
+    the test does not wait 2 real seconds per pass and so it has a way to
+    end the loop at all.
+    """
+    monkeypatch.setattr(main_module, "DockerCommands", lambda **_kwargs: commands)
+    monkeypatch.setenv("LOXMATTER_UPDATE_BASE", str(base))
+    sleep_calls = 0
+
+    def fake_sleep(_seconds: float) -> None:
+        nonlocal sleep_calls
+        sleep_calls += 1
+        if sleep_calls >= passes:
+            raise _StopLoop
+
+    monkeypatch.setattr(main_module.time, "sleep", fake_sleep)
+    with pytest.raises(_StopLoop):
+        main_module.main()
+
+
+def test_default_base_is_the_shared_update_dir_protocol_names(monkeypatch: pytest.MonkeyPatch):
+    """The plan's Task 2 interface list gives `UPDATE_DIR` to `protocol`,
+    not to `__main__` (`docs/superpowers/plans/2026-09-09-webui-updates-
+    stage-2.md:325`: "Tasks 3, 4 and 7 all use these"). A previous round
+    kept `__main__.DEFAULT_BASE` as its own, separate `Path("/data/
+    update")` instead - the plan's resolution is the other way around:
+    `protocol` keeps the one definition, and `__main__` aliases it."""
+    assert main_module.DEFAULT_BASE is protocol.UPDATE_DIR
+
+
+def test_main_leaves_a_healthy_state_file_alone_at_startup(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+):
+    """`_repair_state` is now called unconditionally from `main`, before
+    the loop even starts (see the finding this is a companion to below).
+    A version of that call which decided "needs repair" from `path.
+    exists()` rather than from `read_state(base) is None` would move
+    ANY existing `state.json` aside on every single process start - even
+    one that parses perfectly - clobbering a `done`/`failed` result into
+    a fresh `idle` one before the interface ever gets to read it. The
+    id salvage that `_repair_state` performs happens to recover `id` from
+    valid JSON just as well as from a hand-edited one, which is exactly
+    what let this slip past every other test here: `_seed_last_id` still
+    saw the right id, so nothing *looked* wrong unless something checked
+    `phase` too. This test does."""
+    base = tmp_path / "update"
+    write_request(
+        base,
+        UpdateRequest(id="req-1", channel="stable", target="v0.3.0", requested_at=now_iso()),
+    )
+    write_state(
+        base,
+        UpdateState(
+            id="req-1",
+            phase="done",
+            steps=["backup", "fetch", "checkout", "pull", "recreate", "health"],
+            from_version="v0.2.0",
+            to_version="v0.3.0",
+            error=None,
+            rolled_back=False,
+            healthy=True,
+            updater_seen_at=now_iso(),
+        ),
+    )
+    commands = FakeCommands()
+
+    _run_main_until_stopped(base, commands, monkeypatch, passes=1)
+
+    assert list(state_path(base).parent.glob("state.json.corrupt.*")) == []
+    state = read_state(base)
+    assert state is not None
+    assert state.phase == "done"
+    assert state.steps == ["backup", "fetch", "checkout", "pull", "recreate", "health"]
+    non_log_calls = [call for call in commands.calls if not call.startswith("log:")]
+    assert non_log_calls == []
+
+
+def test_main_repairs_a_corrupt_state_file_even_with_a_request_already_pending(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+):
+    """`run_once` returns before `_touch_seen_at` is ever reached
+    whenever a request is pending and not yet recorded as this
+    process's `last_id` (see `run_once`'s own early return) - so in the
+    one process where `state.json` is actually corrupt AND a request is
+    waiting, the corrupt-file repair used to never run at all.
+    `run_update`'s own `publish` then overwrote the corrupt bytes
+    outright: no `state.json.corrupt*` file, and no line in `log.txt`
+    saying corruption ever happened.
+
+    The fix is `main` calling `_repair_state` once, unconditionally,
+    before the loop starts - before `run_once`'s first call can reach
+    `run_update` at all. This test reproduces the reviewer's probe:
+    corrupt `state.json`, a full request waiting, one pass of the real
+    `main()`. The corrupt evidence must survive and the notice must be
+    in the log - regardless of whether the request itself goes on to
+    execute (it does here, since the raw bytes are unreadable garbage
+    with no salvageable `id` - re-executing once the id is genuinely
+    gone is inherent, see `_seed_last_id`'s docstring; a *recoverable*
+    id is `test_main_salvages_the_id_of_a_hand_edited_state_before_
+    seeding` below, and does not re-execute)."""
+    base = tmp_path / "update"
+    path = state_path(base)
+    path.parent.mkdir(parents=True)
+    corrupt = b"\xff\xfe not valid JSON, and not valid UTF-8 either"
+    path.write_bytes(corrupt)
+    write_request(
+        base,
+        UpdateRequest(id="req-1", channel="stable", target="v0.3.0", requested_at=now_iso()),
+    )
+    commands = FakeCommands()
+
+    _run_main_until_stopped(base, commands, monkeypatch, passes=1)
+
+    corrupt_candidates = list(path.parent.glob("state.json.corrupt.*"))
+    assert len(corrupt_candidates) == 1
+    assert corrupt_candidates[0].read_bytes() == corrupt
+    corruption_logged = [
+        call for call in commands.calls if call.startswith("log:") and "could not be read" in call
+    ]
+    assert len(corruption_logged) == 1
+    # The repair ran before the re-run, as `_repair_state`'s docstring
+    # requires - not merely "eventually": the id truly could not be
+    # salvaged from binary garbage, so the update runs once more.
+    assert "recreate" in commands.calls
+
+
+def test_main_salvages_the_id_of_a_hand_edited_state_before_seeding(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+):
+    """The other half of the same finding: `read_state` returns `None`
+    not only for binary garbage but for well-formed JSON with an unknown
+    `phase` or a non-list `steps` - the hand-edit case the corrupt-file
+    comment itself names. `id` sits in that file in plain text; losing it
+    would mean a later `_seed_last_id` cannot recover it even though it
+    was recoverable. Here it names the same request already pending in
+    `request.json`, so the correctly-salvaged, correctly-seeded id must
+    make `main` skip it - no docker/git/curl call at all, just the
+    corruption notice."""
+    base = tmp_path / "update"
+    path = state_path(base)
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        json.dumps(
+            {
+                "id": "req-1",
+                "phase": "not-a-real-phase",
+                "steps": [],
+                "from_version": "v0.2.0",
+                "to_version": "v0.3.0",
+                "error": None,
+                "rolled_back": False,
+                "healthy": True,
+                "updater_seen_at": now_iso(),
+            }
+        ),
+        encoding="utf-8",
+    )
+    write_request(
+        base,
+        UpdateRequest(id="req-1", channel="stable", target="v0.3.0", requested_at=now_iso()),
+    )
+    commands = FakeCommands()
+
+    _run_main_until_stopped(base, commands, monkeypatch, passes=1)
+
+    state = read_state(base)
+    assert state is not None
+    assert state.id == "req-1"
+    non_log_calls = [call for call in commands.calls if not call.startswith("log:")]
+    assert non_log_calls == []
+
+
+def test_main_seeds_and_carries_last_id_across_a_torn_read(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+):
+    """The carrying decision of design section 7's file contract is that
+    `state.json` is the *only* memory across a process restart, but
+    `main` also holds `last_id` in memory across passes *within* one
+    process, precisely so a torn read or a failed write between two
+    passes cannot make an already-completed request look brand new
+    again (see the module docstring). Neither half is protected by
+    `run_once`'s own tests: replacing `main`'s `_seed_last_id(base)` with
+    a bare `None`, or rewriting `run_once` to re-derive `last_id` from
+    `read_state(base)` on every pass instead of trusting the value it was
+    handed, both leave every test above passing - none of them drives
+    `main` itself.
+
+    This one does, covering seed, carry, and "no exception escapes
+    `while True`" together: `state.json` already records `req-1` as
+    `done`, matching `request.json` - a correctly seeded first pass must
+    not re-run it. Between the first and second pass, `state.json` is
+    overwritten with binary garbage - standing in for the torn read/
+    failed write the module docstring warns about - so a `last_id` that
+    were re-derived from disk on the second pass would see `None` there
+    and re-run the request; a `last_id` correctly carried in memory does
+    not."""
+    base = tmp_path / "update"
+    write_request(
+        base,
+        UpdateRequest(id="req-1", channel="stable", target="v0.3.0", requested_at=now_iso()),
+    )
+    write_state(
+        base,
+        UpdateState(
+            id="req-1",
+            phase="done",
+            steps=["recreate"],
+            from_version="v0.2.0",
+            to_version="v0.3.0",
+            error=None,
+            rolled_back=False,
+            healthy=True,
+            updater_seen_at=now_iso(),
+        ),
+    )
+    commands = FakeCommands()
+    corrupted_mid_loop = False
+
+    def corrupt_state_after_first_pass(_seconds: float) -> None:
+        nonlocal corrupted_mid_loop
+        if not corrupted_mid_loop:
+            state_path(base).write_bytes(b"\xff\xfe not valid JSON, torn mid-write")
+            corrupted_mid_loop = True
+        else:
+            raise _StopLoop
+
+    monkeypatch.setattr(main_module, "DockerCommands", lambda **_kwargs: commands)
+    monkeypatch.setenv("LOXMATTER_UPDATE_BASE", str(base))
+    monkeypatch.setattr(main_module.time, "sleep", corrupt_state_after_first_pass)
+
+    with pytest.raises(_StopLoop):
+        main_module.main()
+
+    # Neither pass invoked a single docker/git/curl call: the first
+    # skipped because `_seed_last_id` correctly recovered "req-1" as
+    # already done, the second skipped despite the corrupted file only
+    # because `last_id` was carried in memory rather than re-read from a
+    # `state.json` that, at that moment, could not say anything at all.
+    non_log_calls = [call for call in commands.calls if not call.startswith("log:")]
+    assert non_log_calls == []
