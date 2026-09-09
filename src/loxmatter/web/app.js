@@ -96,6 +96,28 @@ const DIAGNOSTICS_LINE_LIMIT = 500;
 // silently swallow a line that might matter.
 const LOG_LEVEL_ORDER = ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"];
 
+// --- Self-update tile (Task 8, design 2026-09-08 section 9) -----------------
+//
+// The same five phase names `update/runner.py` writes to `state.json`
+// (`UpdatePhase`) - kept here as two small groups instead of one long
+// condition repeated at every call site. `rollback` counts as "active": the
+// container is being swapped again, exactly like `recreate`, just for the
+// old image instead of the new one.
+const UPDATE_ACTIVE_PHASES = ["backup", "pull", "recreate", "health", "rollback"];
+const UPDATE_TERMINAL_PHASES = ["done", "failed"];
+
+// The four steps `runner.STEPS` names, in the fixed order the tile shows
+// them - a progress bar that sticks at 60% tells nobody anything (design
+// section 9), four named steps at least say which one is running.
+const UPDATE_STEPS = ["backup", "pull", "recreate", "health"];
+
+// How often the tile re-reads `GET /api/update/status` while an update is
+// under way or the bridge cannot currently be reached - the same cadence
+// the sidecar itself polls at (`update/__main__.py`'s `LOOP_INTERVAL_SECONDS`),
+// so the tile is never more than one sidecar pass behind what actually
+// happened.
+const UPDATE_POLL_INTERVAL_MS = 2000;
+
 // Running number for toast messages. Module-wide instead of in the
 // state, because it only needs to tell the messages apart and no one
 // else cares about it.
@@ -678,6 +700,60 @@ function app() {
     // anything different.
     resyncBusy: false,
     resyncError: null,
+
+    // --- Self-update tile (Task 8) ---------------------------------------
+    // The channel setting from Task 1 (GET/PUT /api/settings/update-channel).
+    // `updateChannelDraft` is the `<select>`'s own bound value - the same
+    // draft-plus-@change-save shape as the Miniserver picker further down
+    // (`projectSync.selectedMiniserverIp`), so the field reacts the instant
+    // the operator picks an option instead of only after the save resolves.
+    updateChannel: null,
+    updateChannelDraft: "stable",
+    updateChannelBusy: false,
+    updateChannelError: null,
+    // The result of GET /api/update/check - `null` until the System tab has
+    // loaded once. `updateCheck.error` is already a translated sentence from
+    // the bridge (api/update.py never raises for network reasons), so it is
+    // shown as-is, the same way `systemError` is elsewhere on this tab.
+    updateCheck: null,
+    updateCheckBusy: false,
+    // The last `state.json` this tab managed to read, kept even after a
+    // failed poll (design section 9, state 3: "fed from the last state.json
+    // the interface managed to read") - cleared only by a NEW successful
+    // read, never by a failure.
+    updateStatus: null,
+    // Whether the LAST poll of /api/update/status actually reached the
+    // bridge. `false` while the bridge is mid-recreate and its own web
+    // server is down - this, not any field inside `updateStatus`, is what
+    // tells "running" and "bridge away" apart.
+    updateReachable: true,
+    updateApplyBusy: false,
+    updateApplyError: null,
+    // Set the instant `applyUpdate()` gets a 200 back, cleared once a real
+    // poll confirms the sidecar has picked the request up (its phase moves
+    // out of "idle"). Without this the tile would show the stale
+    // confirmation for up to one sidecar loop interval (`UPDATE_POLL_
+    // INTERVAL_MS`) after the operator already clicked the button.
+    updateApplyPending: false,
+    // Becomes true the first time THIS tab observes an active phase - the
+    // one flag `updateTileState()` needs to tell "a finished update this
+    // tab watched happen" (show the result) from "a finished update from
+    // who knows when, discovered on a fresh page load" (fall through to the
+    // ordinary up-to-date/available check instead of resurfacing it).
+    updateSawActive: false,
+    // Wall-clock timestamps this tab keeps for the two numbers the API
+    // itself cannot supply - `update.protocol.UpdateState` carries no
+    // started/finished timestamps at all, so "roughly how long did this
+    // take" and "how many seconds has the bridge been away" can only be the
+    // browser's own stopwatch, read against `nowTick`.
+    updateRunStartedAt: null,
+    updateResultDurationSeconds: null,
+    updateAwaySince: null,
+    updatePollTimer: null,
+    // Read by `x-for="step in updateSteps"` in index.html - Alpine
+    // expressions only see the component's own properties, not this
+    // script's top-level `const`s, hence the copy.
+    updateSteps: UPDATE_STEPS,
 
     // --- Project file sync (Task 12) ---------------------------------------
     // `plan` carries the complete response from `/api/export/project-sync`
@@ -2957,6 +3033,12 @@ function app() {
       } finally {
         this.diagnosticsBusy = false;
       }
+      // Outside the try/finally above on purpose: a broken system check
+      // must not stop the update tile from loading its own, independent
+      // data, and vice versa - the two cards fail separately.
+      await this.loadUpdateChannel();
+      await this.checkForUpdate();
+      this.pollUpdateStatus();
     },
 
     // Also no longer an `<a href>` (see `downloadExport`): an error
@@ -2998,6 +3080,292 @@ function app() {
       } finally {
         this.resyncBusy = false;
       }
+    },
+
+    // ---------------------------------------------------------------------
+    // Self-update tile (Task 8, design 2026-09-08 section 9)
+    // ---------------------------------------------------------------------
+
+    async loadUpdateChannel() {
+      this.updateChannelError = null;
+      try {
+        this.updateChannel = await this.request("GET", "/api/settings/update-channel");
+        this.updateChannelDraft = this.updateChannel.channel;
+      } catch (error) {
+        this.updateChannelError = t("web.system.update_channel_error", { message: error.message });
+      }
+    },
+
+    /**
+     * Saves the channel picked in the `<select>` and re-runs the check
+     * immediately (Task 8 brief, step 2: "the operator picked a channel to
+     * see what it offers, and a separate Save button would make them ask
+     * twice"). Reads `updateChannelDraft`, not a parameter - `x-model`
+     * has already written the new value there by the time `@change` fires,
+     * the same shape `confirmProjectSyncMiniserver` uses for its own
+     * `<select>`.
+     */
+    async saveUpdateChannel() {
+      this.updateChannelError = null;
+      this.updateChannelBusy = true;
+      try {
+        this.updateChannel = await this.request("PUT", "/api/settings/update-channel", {
+          channel: this.updateChannelDraft,
+        });
+        await this.checkForUpdate();
+      } catch (error) {
+        this.updateChannelError = t("web.system.update_channel_error", { message: error.message });
+        // Revert the `<select>` to the last value the bridge actually
+        // confirmed - otherwise a failed save leaves the dropdown showing
+        // a channel that was never saved.
+        this.updateChannelDraft = this.updateChannel ? this.updateChannel.channel : "stable";
+      } finally {
+        this.updateChannelBusy = false;
+      }
+    },
+
+    /**
+     * GET /api/update/check never raises for network reasons (see
+     * api/update.py's module docstring) - a firewall or an outbound check
+     * switched off comes back as a normal 200 with `error` set, which the
+     * markup shows as-is. A thrown error here is therefore always a
+     * failure of THIS bridge (e.g. an expired session), not of GitHub.
+     */
+    async checkForUpdate() {
+      this.updateCheckBusy = true;
+      try {
+        this.updateCheck = await this.request("GET", "/api/update/check");
+      } catch (error) {
+        this.updateCheck = {
+          channel: this.updateChannel ? this.updateChannel.channel : "stable",
+          running_version: this.versionInfo ? this.versionInfo.version : "",
+          available: false,
+          latest: null,
+          error: error.message,
+        };
+      } finally {
+        this.updateCheckBusy = false;
+      }
+    },
+
+    /**
+     * Reads GET /api/update/status once and, while an update is under way
+     * or the bridge could not be reached, schedules the next read itself -
+     * see UPDATE_POLL_INTERVAL_MS. Called from `loadSystem()` (System tab
+     * opened) and from `applyUpdate()` (right after a request is written);
+     * once started for an active update it keeps running regardless of
+     * which tab is on screen, because the connection banner (always
+     * rendered, not just on the System tab) depends on `updateStatus` too.
+     */
+    async pollUpdateStatus() {
+      let status;
+      try {
+        status = await this.request("GET", "/api/update/status");
+      } catch (error) {
+        if (error instanceof UnauthorizedError) {
+          // Already handled by `this.request` (login screen) - polling
+          // further would just repeat the same 401.
+          return;
+        }
+        // A network-level failure IS the "bridge away" state (design
+        // section 9, state 3): the process that would have answered this
+        // request is the one currently being replaced. Keep the last
+        // status this tab did manage to read - do not clear it - and only
+        // keep retrying if an update is actually why the bridge might be
+        // away; an unrelated blip on an otherwise idle tile should not
+        // spin a poll loop forever.
+        this.updateReachable = false;
+        if (this.updateAwaySince === null) {
+          this.updateAwaySince = Date.now();
+        }
+        if (this.updateSawActive || this.updateApplyPending) {
+          this.scheduleUpdatePoll();
+        }
+        return;
+      }
+      this.updateReachable = true;
+      this.updateAwaySince = null;
+      this.updateStatus = status;
+      if (UPDATE_ACTIVE_PHASES.includes(status.phase)) {
+        // The real phase has caught up with the request - the optimistic
+        // flag from `applyUpdate()` has done its job.
+        this.updateApplyPending = false;
+        if (!this.updateSawActive) {
+          this.updateRunStartedAt = Date.now();
+        }
+        this.updateSawActive = true;
+        this.updateResultDurationSeconds = null;
+        this.scheduleUpdatePoll();
+      } else if (
+        UPDATE_TERMINAL_PHASES.includes(status.phase) &&
+        this.updateSawActive &&
+        this.updateResultDurationSeconds === null
+      ) {
+        // Freeze the duration the first time a terminal phase is seen -
+        // recomputing it on every later poll would keep counting past the
+        // moment the update actually finished.
+        this.updateResultDurationSeconds = this.updateRunStartedAt
+          ? Math.max(0, Math.round((Date.now() - this.updateRunStartedAt) / 1000))
+          : null;
+      }
+    },
+
+    scheduleUpdatePoll() {
+      if (this.updatePollTimer !== null) {
+        return;
+      }
+      this.updatePollTimer = window.setTimeout(() => {
+        this.updatePollTimer = null;
+        this.pollUpdateStatus();
+      }, UPDATE_POLL_INTERVAL_MS);
+    },
+
+    /**
+     * Writes the update request (POST /api/update/apply) for whatever
+     * `checkForUpdate()` last reported. `updateCheck.latest` is already a
+     * valid `target` for the route as-is - the stable channel's `latest`
+     * is the release tag (`v0.3.0`, leading "v" included, see
+     * api/update.py's `_query_github`) and the dev channel's is a 7-char
+     * short SHA, exactly the two shapes `rules.check_request` accepts. No
+     * schema-jump warning here: `GET /update/check` carries no field for
+     * one (see this task's report) - the confirmation only shows what the
+     * bridge actually reported.
+     */
+    async applyUpdate() {
+      if (!this.updateCheck || !this.updateCheck.available || !this.updateCheck.latest) {
+        return;
+      }
+      this.updateApplyError = null;
+      this.updateApplyBusy = true;
+      try {
+        await this.request("POST", "/api/update/apply", {
+          channel: this.updateCheck.channel,
+          target: this.updateCheck.latest,
+        });
+        // Optimistic (see `updateApplyPending`'s own comment): the sidecar
+        // only notices the new request.json on its next poll, up to
+        // LOOP_INTERVAL_SECONDS away.
+        this.updateApplyPending = true;
+        this.updateSawActive = true;
+        this.updateRunStartedAt = Date.now();
+        this.updateResultDurationSeconds = null;
+        this.pollUpdateStatus();
+      } catch (error) {
+        this.updateApplyError = t("web.system.update_apply_error", { message: error.message });
+      } finally {
+        this.updateApplyBusy = false;
+      }
+    },
+
+    /**
+     * Which of the tile's blocks belongs on screen right now - the one
+     * place a wrong branch here would be invisible in the delivered
+     * markup (Task 8 brief, step 4), which is why this is a plain function
+     * over the component's own state instead of a chain of `x-show`
+     * conditions repeated in index.html.
+     *
+     * Order matters: an ACTIVE phase always wins (something really is
+     * happening right now, regardless of what a stale check said earlier);
+     * a TERMINAL phase only shows as "result" if this tab actually watched
+     * it happen (`updateSawActive`) - otherwise a page opened long after a
+     * past update falls through to the ordinary available/up-to-date
+     * check instead of resurfacing old news.
+     */
+    updateTileState() {
+      const status = this.updateStatus;
+      if (status && (UPDATE_ACTIVE_PHASES.includes(status.phase) || this.updateApplyPending)) {
+        return this.updateReachable ? "running" : "away";
+      }
+      if (status && UPDATE_TERMINAL_PHASES.includes(status.phase) && this.updateSawActive) {
+        return "result";
+      }
+      if (status && !status.updater_present) {
+        // Design section 11: a stale (or missing) `updater_seen_at` means
+        // no sidecar, not "nothing to update" - the tile names the console
+        // path instead of offering a button nothing would answer.
+        return "no_updater";
+      }
+      if (this.updateCheck && this.updateCheck.available) {
+        return "confirm";
+      }
+      return "none";
+    },
+
+    updateStepStatus(step) {
+      const status = this.updateStatus;
+      if (!status) {
+        return "pending";
+      }
+      if (status.steps.includes(step)) {
+        return "done";
+      }
+      if (status.phase === step) {
+        return "current";
+      }
+      return "pending";
+    },
+
+    updateStepLabel(step) {
+      return t(`web.system.update_step_${step}`);
+    },
+
+    updateAwaySeconds() {
+      if (this.updateAwaySince === null) {
+        return 0;
+      }
+      return Math.max(0, Math.round((this.nowTick - this.updateAwaySince) / 1000));
+    },
+
+    updateDurationText(seconds) {
+      if (seconds === null || seconds === undefined) {
+        return "";
+      }
+      if (seconds < 60) {
+        return t("web.system.update_duration_seconds", { seconds });
+      }
+      return t("web.system.update_duration_minutes", {
+        minutes: Math.floor(seconds / 60),
+        seconds: seconds % 60,
+      });
+    },
+
+    /**
+     * `running_version` comes from the running image, `to_version` from
+     * the updater's own bookkeeping about what it last aimed for (see
+     * api/models.py's `UpdateStatusOut` docstring) - they are expected to
+     * agree once an update finishes. This is deliberately not resolved
+     * behind the operator's back: a disagreement is real information about
+     * a desynchronised installation.
+     */
+    updateVersionMismatch() {
+      const status = this.updateStatus;
+      if (!status || !status.to_version || !status.running_version) {
+        return false;
+      }
+      return status.to_version !== status.running_version;
+    },
+
+    /**
+     * Text for the connection-lost banner while an update is why the
+     * bridge is briefly unreachable (design section 9, state 3) - the SAME
+     * banner slot as the ordinary connection loss, just with different
+     * words, driven by the last status this tab read before the socket
+     * dropped. An error-toned banner at exactly the moment the operator
+     * asked for a restart is the difference the brief calls out between a
+     * deliberate feature and a crash.
+     */
+    isUpdateInProgress() {
+      const status = this.updateStatus;
+      return Boolean(
+        status && (UPDATE_ACTIVE_PHASES.includes(status.phase) || this.updateApplyPending),
+      );
+    },
+
+    connectionBannerText() {
+      if (this.isUpdateInProgress()) {
+        return t("web.connection.update_banner");
+      }
+      return t("web.connection.lost_banner");
     },
 
     // ---------------------------------------------------------------------

@@ -1026,6 +1026,28 @@ footer.hint-block {
   border-bottom: none;
 }
 
+/* Self-update tile (Task 8): one of the four state blocks, spaced off from
+   the channel selector above it - `.card h3` already sets the heading
+   size, this only adds the gap `.card`'s own children do not carry. */
+.update-state {
+  margin-top: 0.75rem;
+}
+
+/* The four named steps' markers (design section 9: named steps instead of
+   a progress bar). Reuses `.dot`'s shape, not its online/offline colours -
+   a step is not a device. */
+.dot.update-step-done {
+  background: var(--ok);
+}
+
+.dot.update-step-current {
+  background: var(--accent);
+}
+
+.dot.update-step-pending {
+  background: var(--text-muted);
+}
+
 .log-list {
   max-height: 260px;
   overflow-y: auto;

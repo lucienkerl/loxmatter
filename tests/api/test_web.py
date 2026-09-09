@@ -501,6 +501,88 @@ async def test_the_system_view_shows_the_running_version(api):
     assert "t('web.system.version_built_at', { built_at: versionInfo.built_at })" in page
 
 
+# ---------------------------------------------------------------------------
+# Self-update tile (Task 8, design 2026-09-08 section 9). Delivery tests
+# below prove markup and script are shipped, the same limit every other
+# test in this file has - see the `_app_state` section further down for the
+# one thing a source-text check cannot show: which of the four blocks
+# `updateTileState()` actually picks for a given `state.json` shape.
+# ---------------------------------------------------------------------------
+
+
+async def test_the_update_tile_renames_the_version_card_heading(api):
+    """Design section 9 calls the tile "Version & updates" - it joins the
+    existing version card (Task 8 brief: "the version block already there
+    is where this joins") rather than adding a second one, so the old
+    `web.system.version_heading` binding ("Version") is gone, replaced by
+    `web.system.update_heading`."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+    assert "x-text=\"t('web.system.update_heading')\"" in page
+    assert "web.system.version_heading" not in page
+
+
+async def test_the_update_channel_selector_is_bound_to_task_1s_route(api):
+    """Task 8 brief, step 2: a `<select>` bound to the channel setting from
+    Task 1 (`GET`/`PUT /api/settings/update-channel`), saving on `@change`
+    and re-running the check immediately - "the operator picked a channel
+    to see what it offers, and a separate Save button would make them ask
+    twice"."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+    script = (await client.get("/static/app.js")).text
+    assert 'x-model="updateChannelDraft"' in page
+    assert '@change="saveUpdateChannel()"' in page
+    assert '<option value="stable"' in page
+    assert '<option value="dev"' in page
+    assert 'updateChannel = await this.request("GET", "/api/settings/update-channel")' in script
+    save_fn = script.split("async saveUpdateChannel()", 1)[1].split("\n    },", 1)[0]
+    assert '"PUT", "/api/settings/update-channel"' in save_fn
+    assert "await this.checkForUpdate()" in save_fn
+
+
+async def test_the_four_update_states_are_present_and_mutually_exclusive(api):
+    """Task 8 brief, step 3: one tile, four blocks - confirmation, running,
+    bridge-away, result. Each is gated on a DIFFERENT return value of the
+    SAME `updateTileState()` call, which is what makes them mutually
+    exclusive: only one of the four strings can compare equal at once."""
+    client, _, _ = api
+    page = _without_comments((await client.get("/")).text)
+    for expected in ("confirm", "running", "away", "result"):
+        assert f"x-show=\"updateTileState() === '{expected}'\"" in page
+
+
+async def test_the_confirmation_names_the_minute_of_silence(api):
+    """Task 8 brief, step 4: "the confirmation text names the minute of
+    silence - the design calls this the honest message, and an interface
+    that omits it is promising something it cannot keep." Checked in both
+    shipped languages, not just the one this test happens to run in."""
+    from loxmatter import i18n
+
+    silence = i18n._STRINGS["web.system.update_confirm_silence"]
+    assert "minute" in silence["en"].lower()
+    assert "minute" in silence["de"].lower()
+    client, _, _ = api
+    page = (await client.get("/")).text
+    assert "x-text=\"t('web.system.update_confirm_silence')\"" in page
+
+
+async def test_the_connection_banner_offers_the_update_text_as_an_alternative_not_a_second_banner(
+    api,
+):
+    """Task 8 brief, step 4: "The connection banner has the update text as
+    an alternative, not a second banner." Exactly one element carries the
+    `!socketConnected && socketEverConnected` condition; its text now comes
+    from `connectionBannerText()` (behaviour checked further down), not a
+    fixed `t(...)` call, and no second, update-specific banner sits next to
+    it."""
+    client, _, _ = api
+    markup = _without_comments((await client.get("/")).text)
+    condition = 'x-show="!socketConnected && socketEverConnected"'
+    assert markup.count(condition) == 1
+    assert 'x-text="connectionBannerText()"' in markup
+
+
 async def test_the_device_tile_no_longer_promises_a_ranking_it_does_not_have(api):
     """Review fix Fix 9 (2026-09-03) had deliberately renamed the heading
     "Most important values" to "Signals (start of the list)", because the
@@ -777,6 +859,281 @@ def _app_state(setup: str = "", translations: dict[str, str] | None = None) -> d
     )
     assert result.returncode == 0, result.stderr
     return json.loads(result.stdout)
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_the_shipped_update_tile_state_picks_the_right_block_for_each_state_json_shape():
+    """`updateTileState()` is the one place in the tile a wrong branch
+    would be invisible in the markup (Task 8 brief, step 4) - the four
+    `x-show` conditions in index.html all read the SAME function, so a
+    source-text check can only prove the four strings exist, never that
+    the right one comes back for a given `state.json` shape. Runs the
+    shipped function directly against seven such shapes, one per branch
+    plus the two cases outside the four (no updater, nothing pending)."""
+    values = _app_state(
+        setup="""
+        const base = {
+          updater_present: true, running_version: "0.3.0", running_commit: "abc1234",
+          id: null, phase: "idle", steps: [], from_version: null, to_version: null,
+          error: null, rolled_back: false, healthy: false, updater_seen_at: null,
+        };
+        const availableCheck = {
+          channel: "stable", running_version: "0.3.0", available: true,
+          latest: "v0.4.0", error: null,
+        };
+        const unavailableCheck = {
+          channel: "stable", running_version: "0.3.0", available: false,
+          latest: null, error: null,
+        };
+        const out = {};
+        state.updateCheck = availableCheck;
+
+        // An active phase wins outright, regardless of what a check said.
+        state.updateStatus = { ...base, phase: "recreate" };
+        state.updateReachable = true;
+        out.running = state.updateTileState();
+
+        // Same active phase, but the last poll could not reach the bridge.
+        state.updateReachable = false;
+        out.away = state.updateTileState();
+
+        // A terminal phase discovered on a fresh load - this tab never saw
+        // it go active, so it must NOT resurface as "result".
+        state.updateReachable = true;
+        state.updateStatus = { ...base, phase: "done", to_version: "0.4.0", running_version: "0.4.0" };
+        state.updateSawActive = false;
+        out.fresh_done_without_watching = state.updateTileState();
+
+        // The SAME terminal phase, but this tab watched it happen.
+        state.updateSawActive = true;
+        out.result = state.updateTileState();
+
+        // No sidecar: hides the button even though a check says something
+        // is available (design section 11).
+        state.updateStatus = { ...base, phase: "idle", updater_present: false };
+        state.updateSawActive = false;
+        out.no_updater = state.updateTileState();
+
+        // Updater present, nothing running, something available.
+        state.updateStatus = { ...base, phase: "idle", updater_present: true };
+        out.confirm = state.updateTileState();
+
+        // Updater present, nothing running, nothing available.
+        state.updateCheck = unavailableCheck;
+        out.none = state.updateTileState();
+
+        console.log(JSON.stringify(out));
+        """
+    )
+
+    assert values["running"] == "running"
+    assert values["away"] == "away"
+    assert values["fresh_done_without_watching"] == "confirm"
+    assert values["result"] == "result"
+    assert values["no_updater"] == "no_updater"
+    assert values["confirm"] == "confirm"
+    assert values["none"] == "none"
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_the_shipped_step_status_reflects_completed_and_current_steps():
+    """`updateStepStatus()` turns `state.steps` (completed) and
+    `state.phase` (current) into "done"/"current"/"pending" per named step
+    - the four-named-steps list design section 9 asks for instead of a
+    progress bar. Status mid-`pull`: `backup` is behind it, `pull` is
+    happening now, `recreate`/`health` have not started."""
+    values = _app_state(
+        setup="""
+        state.updateStatus = {
+          updater_present: true, running_version: "0.3.0", running_commit: "abc1234",
+          id: "x", phase: "pull", steps: ["backup"], from_version: "0.3.0",
+          to_version: "0.4.0", error: null, rolled_back: false, healthy: false,
+          updater_seen_at: "2026-09-09T10:00:00+00:00",
+        };
+        console.log(JSON.stringify(state.updateSteps.map((step) => state.updateStepStatus(step))));
+        """
+    )
+    assert values == ["done", "current", "pending", "pending"]
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_the_shipped_away_seconds_count_up_from_when_the_bridge_became_unreachable():
+    """`update.protocol.UpdateState` carries no started/finished timestamp
+    (see this task's report) - `updateAwaySeconds()` is the browser's own
+    stopwatch against `nowTick`, started the moment a status poll first
+    failed. Feeds `nowTick` directly instead of waiting on the real clock,
+    the same convention `test_the_shipped_last_heard_line...` above already
+    uses for the same reason."""
+    values = _app_state(
+        setup="""
+        const start = 1757400000000;
+        state.updateAwaySince = start;
+        state.nowTick = start + 47000;
+        const during = state.updateAwaySeconds();
+        state.updateAwaySince = null;
+        const idle = state.updateAwaySeconds();
+        console.log(JSON.stringify({ during, idle }));
+        """
+    )
+    assert values["during"] == 47
+    assert values["idle"] == 0
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_the_shipped_connection_banner_text_switches_during_an_update():
+    """The exact scenario the task singles out as most likely to be got
+    wrong: while the bridge is being recreated, `!socketConnected &&
+    socketEverConnected` is true for an entirely ordinary reason, and an
+    error-toned banner at that moment would be the "crash" reading the
+    brief warns against. `connectionBannerText()` must say something
+    different in that case, driven by the LAST status this tab read - not
+    by whether the socket happens to be connected right now (it never is,
+    while this condition holds at all)."""
+    values = _app_state(
+        setup="""
+        const out = {};
+        state.updateStatus = null;
+        out.ordinary = state.connectionBannerText();
+
+        state.updateStatus = { phase: "recreate", updater_present: true, steps: [] };
+        out.mid_update = state.connectionBannerText();
+
+        state.updateStatus = { phase: "done", updater_present: true, steps: [] };
+        out.after_update = state.connectionBannerText();
+
+        console.log(JSON.stringify(out));
+        """,
+        translations=_web_strings(),
+    )
+    assert "interrupted" in values["ordinary"]
+    assert "interrupted" in values["after_update"]
+    assert "restarting" in values["mid_update"]
+    assert values["mid_update"] != values["ordinary"]
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_the_shipped_result_state_reports_duration_without_a_server_field_and_shows_a_mismatch():
+    """Two of the "What the API gives you" points from this task's brief,
+    both exercised together: `UpdateStatusOut` carries no duration field at
+    all (`updateDurationText` is purely the browser's own stopwatch), and a
+    disagreement between `to_version` and `running_version` is surfaced by
+    `updateVersionMismatch()`, not silently resolved."""
+    values = _app_state(
+        setup="""
+        const out = {};
+        out.short = state.updateDurationText(47);
+        out.long = state.updateDurationText(125);
+        out.none = state.updateDurationText(null);
+
+        state.updateStatus = { to_version: "0.4.0", running_version: "0.4.0" };
+        out.matching = state.updateVersionMismatch();
+        state.updateStatus = { to_version: "0.4.0", running_version: "0.3.0" };
+        out.mismatched = state.updateVersionMismatch();
+
+        console.log(JSON.stringify(out));
+        """,
+        translations=_web_strings(),
+    )
+    assert values["short"] == "47s"
+    assert values["long"] == "2m 5s"
+    assert values["none"] == ""
+    assert values["matching"] is False
+    assert values["mismatched"] is True
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_the_shipped_apply_update_sends_the_checked_channel_and_target_unchanged():
+    """`applyUpdate()` must not re-derive channel/target itself:
+    `updateCheck.latest` is already a valid `target` for both channels (the
+    9 September correction to design section 10 - the stable channel's
+    `latest` is the release tag with its leading "v", the dev channel's is
+    a 7-char short SHA, exactly the two shapes `rules.check_request`
+    accepts), so the confirm button passes it through rather than
+    reconstructing it. Also checks the optimistic bookkeeping
+    (`updateApplyPending`/`updateSawActive`) `updateTileState()` depends on
+    for the gap before the sidecar's next poll."""
+    values = _app_state(
+        # `applyUpdate()` is async, and node refuses a top-level `await`
+        # alongside this harness's own `require()` (CommonJS/ESM
+        # ambiguity) - the IIFE keeps the `await` out of the top level
+        # without changing what runs.
+        setup="""
+        (async () => {
+        const calls = [];
+        globalThis.fetch = async (path, options) => {
+          calls.push({ path, body: options.body ? JSON.parse(options.body) : null });
+          return { ok: true, status: 200, json: async () => ({ id: "req-1" }) };
+        };
+        // Isolates this test from the follow-up poll it triggers - that
+        // behaviour belongs to the poll tests, not this one.
+        state.pollUpdateStatus = async () => {};
+        state.updateCheck = {
+          channel: "dev", running_version: "0.3.0-abc1234", available: true,
+          latest: "abc1234", error: null,
+        };
+        await state.applyUpdate();
+        console.log(JSON.stringify({
+          calls,
+          pending: state.updateApplyPending,
+          sawActive: state.updateSawActive,
+        }));
+        })();
+        """
+    )
+    apply_call = next(c for c in values["calls"] if c["path"] == "/api/update/apply")
+    assert apply_call["body"] == {"channel": "dev", "target": "abc1234"}
+    assert values["pending"] is True
+    assert values["sawActive"] is True
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_the_shipped_poll_marks_the_bridge_away_on_a_network_failure_and_keeps_the_last_status():
+    """`pollUpdateStatus()` is what actually drives the running/away split
+    in `updateTileState()`. `requestJson` turns any network-level fetch
+    failure into a plain `Error` (see app.js's own comment on `fetch()`
+    only ever throwing for that reason) - exactly the "the bridge's own web
+    server is down for a minute" case (design section 9, state 3). The
+    LAST status this tab did read must survive that failure unchanged:
+    "fed from the last state.json the interface managed to read"."""
+    values = _app_state(
+        # Same IIFE reason as the `applyUpdate()` test above:
+        # `pollUpdateStatus()` is async, and a top-level `await` alongside
+        # this harness's `require()` is ambiguous to node.
+        setup="""
+        (async () => {
+        let calls = 0;
+        const goodStatus = {
+          updater_present: true, running_version: "0.3.0", running_commit: "abc",
+          id: "x", phase: "recreate", steps: ["backup", "pull"], from_version: "0.3.0",
+          to_version: "0.4.0", error: null, rolled_back: false, healthy: false,
+          updater_seen_at: "2026-09-09T10:00:00+00:00",
+        };
+        globalThis.fetch = async () => {
+          calls += 1;
+          if (calls === 1) {
+            return { ok: true, status: 200, json: async () => goodStatus };
+          }
+          throw new Error("network down");
+        };
+        // Isolates this test from the retry timer - `scheduleUpdatePoll`
+        // itself is not under test here.
+        state.scheduleUpdatePoll = () => {};
+        await state.pollUpdateStatus();
+        const afterFirst = { reachable: state.updateReachable, phase: state.updateStatus.phase };
+        await state.pollUpdateStatus();
+        console.log(JSON.stringify({
+          afterFirst,
+          reachableAfterFailure: state.updateReachable,
+          statusSurvived: state.updateStatus.phase,
+          awaySinceSet: state.updateAwaySince !== null,
+        }));
+        })();
+        """
+    )
+    assert values["afterFirst"] == {"reachable": True, "phase": "recreate"}
+    assert values["reachableAfterFailure"] is False
+    assert values["statusSurvived"] == "recreate"
+    assert values["awaySinceSet"] is True
 
 
 @pytest.mark.skipif(NODE is None, reason="node is required for this test")
@@ -1329,7 +1686,10 @@ async def test_the_header_logout_and_connection_banner_are_translated(api):
     markup = _without_comments((await client.get("/")).text)
     assert "x-text=\"t('web.header.logout')\"" in markup
     assert ">Abmelden<" not in markup
-    assert "x-text=\"t('web.connection.lost_banner')\"" in markup
+    # Task 8: the banner's text is now computed (`connectionBannerText()`),
+    # not a fixed `t(...)` call directly on the element - see the dedicated
+    # tests for that function further down in this file.
+    assert 'x-text="connectionBannerText()"' in markup
     assert "Die Live-Verbindung wurde unterbrochen" not in markup
     assert ":title=\"t('web.header.toast_dismiss_tooltip')\"" in markup
     assert "Zum Ausblenden anklicken" not in markup

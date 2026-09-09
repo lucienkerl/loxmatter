@@ -643,6 +643,12 @@ web.header.heartbeat_prefix:
 web.connection.lost_banner:
   en: "The live connection was interrupted. Displayed values may be outdated until the connection is restored."
   de: "Die Live-Verbindung wurde unterbrochen. Angezeigte Werte können inzwischen veraltet sein, bis die Verbindung wiederhergestellt ist."
+# Task 8: the SAME banner as the line above, shown instead of it while the
+# reason the bridge is unreachable is a self-update it was just asked to
+# run - not a fault, see index.html and app.js's `isUpdateInProgress()`.
+web.connection.update_banner:
+  en: "The bridge is restarting for an update — this is expected, not a fault. It reconnects automatically once it is back."
+  de: "Die Brücke startet für ein Update neu — das ist erwartet, kein Fehler. Sie verbindet sich automatisch neu, sobald sie wieder da ist."
 web.header.toast_dismiss_tooltip:
   en: "Click to dismiss"
   de: "Zum Ausblenden anklicken"
@@ -1266,9 +1272,9 @@ web.export.download_failed:
   de: "Download fehlgeschlagen: {message}"
 
 # --- web.system — Resync, Systemcheck, Live-Diagnose, Sicherung ---
-web.system.version_heading:
-  en: "Version"
-  de: "Version"
+web.system.update_heading:
+  en: "Version & updates"
+  de: "Version & Updates"
 web.system.version_running:
   en: "Running: {version}"
   de: "Läuft: {version}"
@@ -1284,6 +1290,102 @@ web.system.version_dev_hint:
 web.system.version_dev_channel_hint:
   en: "dev is the rolling channel, built from the latest main after every merge — expect breakage. Switch to stable for a tested release."
   de: "dev ist der rollende Kanal, gebaut aus dem jeweils neuesten main nach jedem Merge — Aussetzer sind zu erwarten. Für eine getestete Version auf stable wechseln."
+
+# Task 8, design 2026-09-08 section 9: the update tile's channel selector
+# and its four mutually exclusive states.
+web.system.update_channel_label:
+  en: "Update channel"
+  de: "Update-Kanal"
+web.system.update_channel_stable_option:
+  en: "Stable"
+  de: "Stable"
+web.system.update_channel_dev_option:
+  en: "Development"
+  de: "Development"
+web.system.update_channel_stable_hint:
+  en: "Compares against the latest published release."
+  de: "Vergleicht gegen die jeweils neueste veröffentlichte Version."
+web.system.update_channel_dev_hint:
+  en: "Compares against the tip of main — untested intermediate versions can land here."
+  de: "Vergleicht gegen die Spitze von main — ungetestete Zwischenversionen können hier landen."
+web.system.update_channel_error:
+  en: "Could not save the update channel: {message}"
+  de: "Update-Kanal konnte nicht gespeichert werden: {message}"
+web.system.update_no_updater:
+  en: "No updater is installed on this bridge. Run git pull && ./scripts/update.sh on the console once to add it."
+  de: "Auf dieser Brücke ist kein Updater installiert. Einmal git pull && ./scripts/update.sh auf der Konsole ausführen, um ihn hinzuzufügen."
+web.system.update_up_to_date:
+  en: "Up to date."
+  de: "Aktuell."
+web.system.update_confirm_heading:
+  en: "Update available"
+  de: "Update verfügbar"
+web.system.update_confirm_stable_text:
+  en: "Version {version} is available."
+  de: "Version {version} ist verfügbar."
+web.system.update_confirm_dev_text:
+  en: "Commit {version} is available."
+  de: "Commit {version} ist verfügbar."
+web.system.update_confirm_untouched:
+  en: "matter-server and the Thread border router are not touched — only the bridge's own container is replaced."
+  de: "matter-server und der Thread-Grenzrouter bleiben unberührt — nur der Container der Brücke selbst wird ersetzt."
+web.system.update_confirm_silence:
+  en: "The bridge will be unreachable for roughly a minute while it restarts, and the Miniserver receives no values during that time. It sends everything again once it is back."
+  de: "Die Brücke ist während des Neustarts rund eine Minute lang nicht erreichbar, und der Miniserver bekommt in dieser Zeit keine Werte. Sobald sie wieder da ist, schickt sie alles erneut."
+web.system.update_confirm_button:
+  en: "Update now"
+  de: "Jetzt aktualisieren"
+web.system.update_apply_error:
+  en: "Could not start the update: {message}"
+  de: "Update konnte nicht gestartet werden: {message}"
+web.system.update_running_heading:
+  en: "Updating…"
+  de: "Aktualisiere…"
+web.system.update_step_backup:
+  en: "Back up"
+  de: "Sichern"
+web.system.update_step_pull:
+  en: "Load new version"
+  de: "Neue Version laden"
+web.system.update_step_recreate:
+  en: "Restart"
+  de: "Neu starten"
+web.system.update_step_health:
+  en: "Check health"
+  de: "Gesundheit prüfen"
+web.system.update_away_heading:
+  en: "The bridge is restarting"
+  de: "Die Brücke startet neu"
+web.system.update_away_text:
+  en: "This is expected — the update is recreating the bridge's container. The interface will reconnect on its own once it is back."
+  de: "Das ist erwartet — das Update erstellt den Container der Brücke neu. Die Oberfläche verbindet sich von selbst neu, sobald sie wieder da ist."
+web.system.update_away_seconds:
+  en: "{seconds}s of about 120s"
+  de: "{seconds} s von etwa 120 s"
+web.system.update_result_success_heading:
+  en: "Update complete"
+  de: "Update abgeschlossen"
+web.system.update_result_success_text:
+  en: "Now running {version}, after {duration}."
+  de: "Läuft jetzt auf {version}, nach {duration}."
+web.system.update_result_failure_heading:
+  en: "Update failed"
+  de: "Update fehlgeschlagen"
+web.system.update_result_failure_text:
+  en: "The update did not come back healthy and was rolled back. The bridge is running {version} again."
+  de: "Das Update kam nicht gesund zurück und wurde zurückgerollt. Die Brücke läuft wieder auf {version}."
+web.system.update_result_error_detail:
+  en: "Reported reason: {reason}"
+  de: "Gemeldeter Grund: {reason}"
+web.system.update_mismatch_warning:
+  en: "The updater aimed for {to_version}, but the bridge is running {running_version}. Worth investigating before trusting this installation."
+  de: "Der Updater hat auf {to_version} gezielt, aber die Brücke läuft auf {running_version}. Das lohnt eine Prüfung, bevor man dieser Installation vertraut."
+web.system.update_duration_seconds:
+  en: "{seconds}s"
+  de: "{seconds} s"
+web.system.update_duration_minutes:
+  en: "{minutes}m {seconds}s"
+  de: "{minutes} min {seconds} s"
 web.system.resync_heading:
   en: "Resend all values"
   de: "Alle Werte erneut senden"

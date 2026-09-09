@@ -267,8 +267,17 @@
 
     <p class="banner danger" x-show="authError" x-cloak x-text="authError"></p>
 
-    <div class="banner danger" x-show="!socketConnected && socketEverConnected" x-cloak
-         x-text="t('web.connection.lost_banner')">
+    <!--
+      Task 8: while the bridge is being recreated for a self-update, this
+      exact condition fires too - its own web server is down for roughly a
+      minute (design 2026-09-08, section 9). That is not a fault, so the
+      text (and tone) switch via `isUpdateInProgress()`/`connectionBannerText()`
+      instead of a second, update-specific banner appearing alongside this
+      one - see app.js for both.
+    -->
+    <div class="banner" :class="isUpdateInProgress() ? 'warn' : 'danger'"
+         x-show="!socketConnected && socketEverConnected" x-cloak
+         x-text="connectionBannerText()">
     </div>
 
     <!--
@@ -1534,8 +1543,17 @@
            View 3: System
            ================================================================ -->
       <section x-show="view === 'system'" x-cloak>
+        <!--
+          Task 8 (design 2026-09-08, section 9): "Version & updates", one
+          tile, always visible - the running build plus, below it, exactly
+          one of the four update blocks (or the two cases outside them: no
+          updater installed, nothing pending) picked by `updateTileState()`
+          in app.js. Nothing here is a modal: the brief is explicit that a
+          minute of paternalism would cost more than the rare confusion of
+          someone acting on a device mid-update.
+        -->
         <div class="card">
-          <h2 x-text="t('web.system.version_heading')"></h2>
+          <h2 x-text="t('web.system.update_heading')"></h2>
           <template x-if="versionInfo">
             <div>
               <p x-text="t('web.system.version_running', { version: versionInfo.version })"></p>
@@ -1551,6 +1569,108 @@
                  x-text="t('web.system.version_dev_channel_hint')"></p>
             </div>
           </template>
+
+          <!-- The channel selector (Task 8 brief, step 2): saves on
+               `@change`, then re-runs the check - see `saveUpdateChannel()`. -->
+          <div class="row" style="margin-top: 0.75rem">
+            <label
+              ><span x-text="t('web.system.update_channel_label')"></span>
+              <select
+                x-model="updateChannelDraft"
+                @change="saveUpdateChannel()"
+                :disabled="updateChannelBusy"
+              >
+                <option value="stable" x-text="t('web.system.update_channel_stable_option')"></option>
+                <option value="dev" x-text="t('web.system.update_channel_dev_option')"></option>
+              </select>
+            </label>
+          </div>
+          <p class="hint" x-show="updateChannelDraft === 'stable'" x-cloak
+             x-text="t('web.system.update_channel_stable_hint')"></p>
+          <p class="hint" x-show="updateChannelDraft === 'dev'" x-cloak
+             x-text="t('web.system.update_channel_dev_hint')"></p>
+          <p class="hint danger-text" x-show="updateChannelError" x-cloak x-text="updateChannelError"></p>
+          <p class="hint danger-text" x-show="updateCheck && updateCheck.error" x-cloak
+             x-text="updateCheck.error"></p>
+
+          <!-- Outside the four states: no updater at all (design section
+               11) - hides the button, names the console path, must not
+               read as a fault. -->
+          <p class="hint" x-show="updateTileState() === 'no_updater'" x-cloak
+             x-text="t('web.system.update_no_updater')"></p>
+
+          <!-- Outside the four states: checked, nothing to do. -->
+          <p class="hint" x-show="updateTileState() === 'none'" x-cloak
+             x-text="t('web.system.update_up_to_date')"></p>
+
+          <!-- State 1: Confirmation. Deliberately no schema-jump sentence
+               here - GET /api/update/check carries no field for one (design
+               section 8's pre-check runs in the updater, after the request
+               is already written, see this task's report). -->
+          <div class="update-state" x-show="updateTileState() === 'confirm'" x-cloak>
+            <h3 x-text="t('web.system.update_confirm_heading')"></h3>
+            <p x-show="updateCheck && updateCheck.channel === 'stable'" x-cloak
+               x-text="t('web.system.update_confirm_stable_text', { version: updateCheck ? updateCheck.latest : '' })"></p>
+            <p x-show="updateCheck && updateCheck.channel === 'dev'" x-cloak
+               x-text="t('web.system.update_confirm_dev_text', { version: updateCheck ? updateCheck.latest : '' })"></p>
+            <p class="hint" x-text="t('web.system.update_confirm_untouched')"></p>
+            <p class="hint" x-text="t('web.system.update_confirm_silence')"></p>
+            <p class="hint danger-text" x-show="updateApplyError" x-cloak x-text="updateApplyError"></p>
+            <button class="primary" :disabled="updateApplyBusy" @click="applyUpdate()"
+                    x-text="t('web.system.update_confirm_button')"></button>
+          </div>
+
+          <!-- State 2: Running - four named steps instead of a progress
+               bar (design section 9). -->
+          <div class="update-state" x-show="updateTileState() === 'running'" x-cloak>
+            <h3 x-text="t('web.system.update_running_heading')"></h3>
+            <ul class="system-check-list">
+              <template x-for="step in updateSteps" :key="step">
+                <li>
+                  <span class="dot" :class="'update-step-' + updateStepStatus(step)"></span>
+                  <span x-text="updateStepLabel(step)"></span>
+                </li>
+              </template>
+            </ul>
+          </div>
+
+          <!-- State 3: Bridge away - fed from the last state.json this tab
+               managed to read, seconds counting up against 120s. The
+               connection banner above (index.html header) carries the "no
+               error" message for this state, not this block. -->
+          <div class="update-state" x-show="updateTileState() === 'away'" x-cloak>
+            <h3 x-text="t('web.system.update_away_heading')"></h3>
+            <p x-text="t('web.system.update_away_text')"></p>
+            <p class="hint" x-text="t('web.system.update_away_seconds', { seconds: updateAwaySeconds() })"></p>
+          </div>
+
+          <!-- State 4: Result. No "full log"/"download backup" buttons -
+               see this task's report for why: neither a log tail nor a
+               backup download route exists behind /api/update/*. -->
+          <div class="update-state" x-show="updateTileState() === 'result'" x-cloak>
+            <template x-if="updateStatus && updateStatus.phase === 'done'">
+              <div>
+                <h3 x-text="t('web.system.update_result_success_heading')"></h3>
+                <p x-text="t('web.system.update_result_success_text', {
+                     version: updateStatus.running_version,
+                     duration: updateDurationText(updateResultDurationSeconds),
+                   })"></p>
+                <p class="hint danger-text" x-show="updateVersionMismatch()" x-cloak
+                   x-text="t('web.system.update_mismatch_warning', {
+                     to_version: updateStatus.to_version,
+                     running_version: updateStatus.running_version,
+                   })"></p>
+              </div>
+            </template>
+            <template x-if="updateStatus && updateStatus.phase === 'failed'">
+              <div>
+                <h3 x-text="t('web.system.update_result_failure_heading')"></h3>
+                <p x-text="t('web.system.update_result_failure_text', { version: updateStatus.running_version })"></p>
+                <p class="hint" x-show="updateStatus.error" x-cloak
+                   x-text="t('web.system.update_result_error_detail', { reason: updateStatus.error })"></p>
+              </div>
+            </template>
+          </div>
         </div>
 
         <!-- Action, not diagnosis - that's why before system checks and
