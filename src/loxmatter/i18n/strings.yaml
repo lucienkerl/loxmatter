@@ -1249,6 +1249,16 @@ web.system.update_confirm_title:
 web.system.update_confirm_downtime:
   en: "About a minute without the bridge. The Miniserver receives no values during that time; afterwards the bridge sends everything again. Signal keys, rooms and the Loxone wiring stay untouched, and the database is backed up first."
   de: "Rund eine Minute ohne Brücke. Der Miniserver erhält in dieser Zeit keine Werte; danach sendet die Brücke alles erneut. Signalschlüssel, Räume und die Loxone-Verdrahtung bleiben unverändert, und die Datenbank wird vorher gesichert."
+# Deliberately unwired: no API in this feature ever surfaces a target
+# schema version (see `api/update.py` and `update.py` - `UpdateState`
+# carries no such field, and `/api/update/check`'s response model has
+# nothing like it either). Raising the database schema is entirely the
+# sidecar's own internal precheck (update-once.sh), invisible to the web
+# UI's HTTP surface by design - the bridge finds out the schema changed
+# the same way it finds out anything else about a finished job, from
+# `state.json`. Kept here anyway, with this comment, so a future reader
+# does not delete it as dead weight or wire it to a value that does not
+# mean what this text claims - both worse than a currently-unused key.
 web.system.update_confirm_schema:
   en: "Raises the database schema from {from_version} to {to_version}. Going back to the previous version stays possible, but the new fields will not be maintained by it."
   de: "Hebt das Datenbankschema von {from_version} auf {to_version}. Ein Rückfall auf die vorherige Version bleibt möglich, die neuen Felder werden von ihr aber nicht gepflegt."
@@ -1297,9 +1307,6 @@ web.system.update_channel_dev:
 web.system.update_channel_dev_warning:
   en: "The development channel installs whatever is currently on main, including untested intermediate states."
   de: "Der Entwicklungskanal spielt ein, was gerade auf main liegt — auch ungetestete Zwischenstände."
-web.system.update_check_disabled:
-  en: "The search for updates is switched off."
-  de: "Die Suche nach Updates ist abgeschaltet."
 web.system.update_behind:
   en: "{behind} commits behind main"
   de: "{behind} Commits hinter main"

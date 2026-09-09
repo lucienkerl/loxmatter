@@ -536,7 +536,20 @@ def test_the_interface_knows_every_text_of_the_update_card():
     tests in `tests/api/test_web.py` (`test_the_update_card_offers_its_
     four_states_and_the_confirmation`,
     `test_the_disconnect_banner_gets_a_different_text_during_an_update`,
-    `test_the_update_polling_only_runs_while_a_job_is_in_progress`)."""
+    `test_the_update_polling_only_runs_while_a_job_is_in_progress`).
+
+    `web.system.update_check_disabled` used to be listed here too, but was
+    never referenced from anywhere in `app.js`/`index.html`: the disabled-
+    check case already reaches the card through `updateAvailable.error`,
+    itself carrying the backend's OWN `api.update.check_disabled` string
+    (a different key, in a different namespace - set by `/api/update/check`
+    in `api/update.py`). Listing the dead front-end key here would have
+    kept it looking load-bearing forever; it has been dropped from
+    `strings.yaml` along with this entry (Important/Minor review fix,
+    2026-09-09).
+
+    `web.system.update_confirm_schema` stays, unwired on purpose - see the
+    comment at its definition in `strings.yaml` for why."""
     from loxmatter import i18n
 
     for key in (
@@ -553,6 +566,7 @@ def test_the_interface_knows_every_text_of_the_update_card():
         "web.system.update_step_health",
         "web.system.update_restarting",
         "web.system.update_restarting_hint",
+        "web.system.update_stalled",
         "web.system.update_done",
         "web.system.update_failed",
         "web.system.update_rolled_back",
@@ -560,7 +574,6 @@ def test_the_interface_knows_every_text_of_the_update_card():
         "web.system.update_channel_stable",
         "web.system.update_channel_dev",
         "web.system.update_channel_dev_warning",
-        "web.system.update_check_disabled",
         "web.system.update_behind",
     ):
         assert i18n.raw_template(key), key
