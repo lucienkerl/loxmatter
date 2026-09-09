@@ -287,6 +287,28 @@ def build_update_router(store: Store, update_dir: Path) -> APIRouter:
             # one, and the client's own next poll of `/status` already
             # tells it what is actually running.
             raise HTTPException(status_code=409, detail=i18n.t("api.update.fail_busy")) from exc
+        except OSError as exc:
+            # `request_update` does `mkdir`/`write_text`/`os.replace` with
+            # no handling of its own - correctly so, see its own
+            # docstring: file handling is this feature's job, not the
+            # store module's. A read-only remount after an SD-card fault,
+            # or a full disk, are realistic failure modes on the
+            # Raspberry Pi this bridge targets, and either raises a plain
+            # `OSError` subclass (`PermissionError`, `OSError` for
+            # `ENOSPC`) straight out of that call.
+            #
+            # 503, not 500: this is not a bug in this router's own code to
+            # page over (a bare 500 would wrongly suggest one), and 500
+            # gives the operator nothing to act on - not the client's
+            # fault either (rules out 4xx), and it is not "an update is
+            # already running" (rules out the 409 above). It is the same
+            # "the update mechanism cannot currently do anything, go fix
+            # the environment and retry" shape as the no-updater 503
+            # above, just for a broken filesystem instead of a missing
+            # sidecar.
+            raise HTTPException(
+                status_code=503, detail=i18n.t("api.update.fail_unwritable", exc=str(exc))
+            ) from exc
         return ApplyOut(id=job_id)
 
     return router

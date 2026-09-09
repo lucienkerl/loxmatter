@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import functools
 import json
+import os
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from typing import Any, Self
@@ -188,6 +189,30 @@ async def test_a_request_not_yet_picked_up_by_the_sidecar_also_returns_409(api):
     assert json.loads((update_dir / "request.json").read_text(encoding="utf-8"))["id"] == (
         "already-written"
     )
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX permission bits do not apply on Windows")
+async def test_an_unwritable_update_directory_returns_a_mapped_status_not_a_bare_500(api):
+    """`update.request_update` does `mkdir`/`write_text`/`os.replace` with
+    no handling of its own (that is correct - see its own docstring: file
+    handling is Task 8's job, not this module's), and before this test the
+    router caught only `UpdateBusyError` around that call. A read-only
+    remount after an SD-card fault, or a full disk, are realistic failure
+    modes on the Raspberry Pi this bridge targets - and unlike a busy
+    sidecar or a missing one, this is neither the client's fault (409/503
+    for those two already exist) nor recoverable by simply retrying the
+    same request a moment later, so it must land on its own, distinct
+    mapped status with a body the operator can act on, not the bare 500
+    an unhandled `PermissionError` would otherwise produce."""
+    client, update_dir = api
+    _heartbeat(update_dir)
+    os.chmod(update_dir, 0o500)  # read + execute only - no write, no create
+    try:
+        response = await client.post("/api/update/apply", json={"target": "0.3.0"})
+    finally:
+        os.chmod(update_dir, 0o700)  # tmp_path cleanup needs this back
+    assert response.status_code == 503
+    assert response.json()["detail"]
 
 
 async def test_an_unknown_channel_is_refused(api):

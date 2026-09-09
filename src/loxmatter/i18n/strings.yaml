@@ -570,6 +570,9 @@ api.update.fail_no_updater:
 api.update.fail_busy:
   en: "An update is already running — please wait for it to finish before starting another one."
   de: "Es läuft bereits eine Aktualisierung — bitte warten Sie, bis sie abgeschlossen ist, bevor Sie eine weitere starten."
+api.update.fail_unwritable:
+  en: "The update request could not be written to disk ({exc}). This can happen after a read-only filesystem remount or when the disk is full — check the update volume and try again."
+  de: "Die Aktualisierungsanfrage konnte nicht auf die Festplatte geschrieben werden ({exc}). Das kann nach einem Nur-Lese-Remount des Dateisystems oder bei vollem Speicher passieren — prüfen Sie das Update-Volume und versuchen Sie es erneut."
 
 # --- web.nav — Reiterleiste ---
 web.nav.devices:
