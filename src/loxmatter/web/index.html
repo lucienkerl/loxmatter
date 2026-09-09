@@ -1666,7 +1666,19 @@
                 <li :class="{ now: updateStatus.state.phase === 'health' }"
                     x-text="t('web.system.update_step_health')"></li>
               </ul>
-              <p class="hint" x-show="updateStatus.state.phase === 'health'" x-cloak
+              <!-- A crashed sidecar (OOM, a full disk) leaves `phase`
+                   frozen mid-job forever - nothing is left to write
+                   `state.json` any further. `updater_present` (see
+                   `update.py`'s `updater_present()`) already tells the
+                   difference: no heartbeat in the last 30 seconds means
+                   nobody is going to advance this job, however long the
+                   same step stays highlighted above. Shown instead of the
+                   "reconnects by itself" hint below, not alongside it -
+                   that hint promises exactly the recovery this state says
+                   is not going to happen on its own. -->
+              <p class="banner danger" x-show="updateStalled()" x-cloak
+                 x-text="t('web.system.update_stalled')"></p>
+              <p class="hint" x-show="updateStatus.state.phase === 'health' && !updateStalled()" x-cloak
                  x-text="t('web.system.update_restarting_hint')"></p>
             </div>
           </template>

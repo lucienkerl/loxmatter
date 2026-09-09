@@ -1270,6 +1270,9 @@ web.system.update_restarting:
 web.system.update_restarting_hint:
   en: "This is part of the update. The page reconnects by itself as soon as the service answers. With many devices the first start takes longer: the bridge fetches every node before it goes on the network."
   de: "Das gehört dazu. Diese Seite verbindet sich von selbst wieder, sobald der Dienst antwortet. Bei vielen Geräten dauert der erste Start länger: die Brücke holt jeden Knoten ab, bevor sie ans Netz geht."
+web.system.update_stalled:
+  en: "The updater has not reported back in a while and may have crashed. The step above may never finish on its own; check the host or restart the updater sidecar."
+  de: "Der Updater hat sich länger nicht mehr gemeldet und ist möglicherweise abgestürzt. Der Schritt oben wird eventuell nicht von selbst fertig; Host prüfen oder den Updater-Sidecar neu starten."
 web.system.update_done:
   en: "Now running: {version}"
   de: "Läuft jetzt: {version}"

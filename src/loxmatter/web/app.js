@@ -2871,10 +2871,41 @@ function app() {
       this.systemError = null;
       this.diagnosticsBusy = true;
       try {
-        // Vor den Pruefungen, nicht danach: die Version steht als erste
-        // Karte im Tab, und sie soll nicht erst erscheinen, wenn die
-        // Pruefungen (die echte Netzarbeit machen) durch sind.
-        this.versionInfo = await this.request("GET", "/api/version");
+        // Before the checks, not after: the version is the first card in
+        // the tab and should not wait for the checks (the real network
+        // work) to finish.
+        //
+        // In its OWN try now, no longer sharing one with the two update
+        // calls below: `/api/version` is exactly the call in this
+        // function that fails throughout the bridge's OWN restart window
+        // (`recreate`/`health` in `update.py`'s `_RUNNING_PHASES`) -
+        // precisely the window the update card further down exists to
+        // report on. A shared `try` let this expected failure jump
+        // straight to the outer `catch`, past both
+        // `loadUpdateStatus()`/`loadUpdateCheck()`: on a cold load
+        // `updateStatus` stayed `null`, `updateRunning()` read `false`,
+        // and the poll timer - which only `loadUpdateStatus()` ever
+        // starts - never got the chance to. Opening the System tab (or
+        // reloading it, or pressing "Refresh") during exactly this
+        // window then showed nothing but the generic load-error banner -
+        // no restarting message, no steps, no polling - until a later,
+        // manual retry happened to land after the bridge answered again.
+        // Version and update state are two independent facts from two
+        // independent sources (the bridge's own endpoint vs. the
+        // sidecar's state file, read back through the bridge once it
+        // returns) - one being briefly unreadable says nothing about the
+        // other and must not blank it too.
+        try {
+          this.versionInfo = await this.request("GET", "/api/version");
+        } catch {
+          // Left as-is rather than set to `null`: the template's own
+          // `x-if="versionInfo"` already hides a missing value, a stale
+          // "last known" version is a truer answer than none during a
+          // restart, and both the restart banner (index.html, driven by
+          // `updateRunning()`) and the update card below already explain
+          // WHY the bridge is not answering right now - a second message
+          // for the same fact here would only be noise.
+        }
         await this.loadUpdateStatus();
         await this.loadUpdateCheck();
         this.systemChecks = await this.request("GET", "/api/diagnostics/system");
@@ -2894,6 +2925,21 @@ function app() {
       return ["queued", "backup", "pull", "recreate", "health", "rollback"].includes(phase);
     },
 
+    /** Whether `state.json` still claims a job is running while the
+     * sidecar itself has gone silent - `updater_present` (see
+     * `update.py`'s own docstring and `_MAX_SILENT_SECONDS`) already
+     * folds "no heartbeat in the last 30 seconds" into one boolean on
+     * every `/api/update/status` response, so this only has to combine
+     * it with `updateRunning()`. Without this check a crashed sidecar
+     * (OOM, a full disk) is indistinguishable from a healthy one still
+     * working through its steps: `phase` never advances once nothing is
+     * left to write it, so the card would otherwise keep highlighting
+     * the same step forever with no explanation for why it stopped
+     * moving. */
+    updateStalled() {
+      return this.updateRunning() && this.updateStatus != null && !this.updateStatus.updater_present;
+    },
+
     stopUpdateTimer() {
       if (this.updateTimer) {
         clearInterval(this.updateTimer);
@@ -2906,6 +2952,24 @@ function app() {
         this.updateStatus = await this.request("GET", "/api/update/status");
         this.updateError = null;
       } catch (error) {
+        // A 401 here means the session expired or was ended elsewhere -
+        // `this.request()` has already flipped `this.authenticated` to
+        // `false` and set `this.authError` by the time this `catch`
+        // runs (see `noteAuthError`). Same rule `handleDiagnosticsDisconnect`
+        // states for the diagnostics socket, one screen away: go back to
+        // the login screen instead of retrying against a session that
+        // will never answer again. Without this check, `updateRunning()`
+        // kept reading `true` off the last good state fetched before the
+        // session died - the branch below saw nothing wrong with that and
+        // left the timer running, firing this same request every two
+        // seconds against a dead session until the page was reloaded by
+        // hand. An explicit logout is unaffected: it reloads the page
+        // and clears all JS state, this timer included, before any of
+        // this can run again.
+        if (!this.authenticated) {
+          this.stopUpdateTimer();
+          return;
+        }
         // During the restart the bridge itself is gone - that is the
         // normal case for this flow, not an error (the connection banner
         // in index.html carries the message for it). The last known
@@ -2956,8 +3020,20 @@ function app() {
     },
 
     async setUpdateChannel(channel) {
-      this.updateStatus = await this.request("PATCH", "/api/update/settings", { channel });
-      await this.loadUpdateCheck();
+      this.updateError = null;
+      try {
+        this.updateStatus = await this.request("PATCH", "/api/update/settings", { channel });
+        await this.loadUpdateCheck();
+      } catch (error) {
+        // Every sibling method in this card (`applyUpdate`, `resyncAll`,
+        // `downloadFabricBackup`, ...) funnels a failure into a visible
+        // error - this one, alone, awaited the PATCH with no `try` at
+        // all. A rejected request became an unhandled rejection straight
+        // out of the `@click` handler in index.html: nothing shown, the
+        // channel silently left as it was, and no way for whoever
+        // clicked to tell the click did anything.
+        this.updateError = error.message;
+      }
     },
 
     // Ebenfalls kein `<a href>` mehr (siehe `downloadExport`): ein
