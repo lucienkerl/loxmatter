@@ -58,10 +58,12 @@ in the terminal would be unreasonable in the browser.
 - The `build:` block is retained, **alongside** `image:` on the same service.
   Building from source remains possible (`docker compose build`). A profile would not have been
   feasible here: profiles apply to services, not to individual keys of a service. That it
-  never accidentally builds is ensured by the caller, not the file — `update.sh` and the
-  updater explicitly call `compose pull` before `up -d`, and `up` only builds
-  if no image exists locally. On a host without GHCR access, that is exactly
-  the desired fallback.
+  never accidentally builds is ensured by the caller, not the file — `update.sh` calls
+  `compose pull` and the updater calls `docker pull <image>` directly (`.env`'s
+  `LOXMATTER_IMAGE_TAG` still holds the old value at this point in the updater's own
+  sequence, and `compose pull` would resolve through it and fetch the wrong image — see
+  section 8), both before `up -d`, and `up` only builds if no image exists locally. On a
+  host without GHCR access, that is exactly the desired fallback.
 
 ## 4. Version identity
 
@@ -173,8 +175,11 @@ git ref, the path of the fresh backup, the running `user_version`.
    we back up against is a failed migration, not volume loss. The UI offers
    the backup for download so it can leave the device.
 2. **`pull`** — `git fetch --tags`, check out the target (the
-   Compose file must match the version), then
-   `docker compose pull loxmatter`.
+   Compose file must match the version), then `docker pull <image>`
+   directly, not `docker compose pull loxmatter`: `.env`'s
+   `LOXMATTER_IMAGE_TAG` still holds the OLD value until the tag write in
+   step 3, and `compose pull` would resolve through it and fetch the
+   wrong image.
 3. **`recreate`** — `docker compose up -d --no-deps loxmatter`. `--no-deps`
    as today: matter-server and otbr remain untouched, and **the
    updater does not recreate itself**, which would end it in the middle of its own
@@ -384,8 +389,8 @@ sealed PATH of fake binaries and checks *which
 commands it chooses*, not what they do. Same setup, fake
 `docker`, `git`, `curl`:
 
-- The happy path calls `compose pull` **before** `up -d`, and `up -d`
-  always with `--no-deps`.
+- The happy path calls `docker pull <image>` directly (not `compose pull` — see
+  section 8, step 2, for why) **before** `up -d`, and `up -d` always with `--no-deps`.
 - If `/health` stays silent, the rollback sequence follows — exactly once.
 - `target: "v1.0.0; rm -rf /"` is rejected, **without a single
   docker call in the log.** This is the test that makes the claim
