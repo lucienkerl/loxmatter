@@ -268,9 +268,12 @@ set_state() {
   # writes the same value regardless of phase. Empty (never defaulted
   # here) means null, the same "empty means null" convention as
   # FROM/TO/ROLLED_BACK_TO - the honest answer for a sidecar built before
-  # this field existed. `refresh_heartbeat` below only ever rewrites
-  # `updater_seen_at` on an EXISTING state.json, so it preserves whatever
-  # this call already wrote here without needing to know about it.
+  # this field existed. Unlike FROM/TO/ROLLED_BACK_TO, `refresh_heartbeat`
+  # below does NOT merely preserve whatever this call already wrote here -
+  # it re-asserts $UPDATER_VERSION on every heartbeat too. See that
+  # function's own comment for why: this field describes the CONTAINER
+  # that is running right now, not the job, and a heartbeat always knows
+  # that for certain.
   if STATE_JSON="$(jq -n \
        --arg id "${JOB_ID:-}" --arg phase "$1" --arg error "${2:-}" \
        --arg from "${FROM:-}" --arg to "${TO:-}" --arg seen "$(now)" \
@@ -294,18 +297,46 @@ set_state() {
   fi
 }
 
-# Refreshes ONLY `updater_seen_at` in the existing $STATE, leaving every
-# other field - phase, id, error, ... - exactly as it already reads. This
-# is the fix for Important 1: the bridge treats the sidecar as absent
-# after 30 seconds of silence (`_MAX_SILENT_SECONDS` in update.py), but
-# `updater_seen_at` used to be written only by `write_state` - i.e. at
-# pass start and at each `set_state` call - and nothing refreshed it
-# WITHIN a phase. Proven against the unpatched script with a `docker
-# compose pull` stub that took 8 seconds: the timestamp froze for the
-# whole pull. On a Pi an arm64 image pull takes minutes and the health
-# wait can hold one phase for up to 120 seconds - most of a SUCCESSFUL
-# update used to spend most of its time looking, to the web UI, exactly
-# like a crashed sidecar.
+# Refreshes `updater_seen_at` - and, since this fix, `updater_version` -
+# in the existing $STATE, leaving every other field - phase, id, from,
+# to, error, rolled_back_to, ... - exactly as it already reads. The
+# `updater_seen_at` half is the fix for Important 1: the bridge treats the
+# sidecar as absent after 30 seconds of silence (`_MAX_SILENT_SECONDS` in
+# update.py), but `updater_seen_at` used to be written only by
+# `write_state` - i.e. at pass start and at each `set_state` call - and
+# nothing refreshed it WITHIN a phase. Proven against the unpatched script
+# with a `docker compose pull` stub that took 8 seconds: the timestamp
+# froze for the whole pull. On a Pi an arm64 image pull takes minutes and
+# the health wait can hold one phase for up to 120 seconds - most of a
+# SUCCESSFUL update used to spend most of its time looking, to the web UI,
+# exactly like a crashed sidecar.
+#
+# `updater_version` is asserted here - overwritten from $UPDATER_VERSION,
+# never merely left alone - for the opposite reason FROM/TO/ROLLED_BACK_TO
+# are left alone: those describe THE JOB, which a heartbeat must not
+# invent or lose, but $UPDATER_VERSION describes the CONTAINER that is
+# running THIS PASS, which every heartbeat knows for certain regardless of
+# whether a job is even in progress. Preserving it like the job fields
+# used to be exactly wrong, in both directions, both proven on the
+# maintainer's own Pi:
+#   * a state.json last written by a pre-0.3.3 sidecar (no such field at
+#     all) stayed without `updater_version` forever after a 0.3.3 sidecar
+#     replaced it and ran for minutes doing nothing but heartbeats - the
+#     System tab could not tell the updater had a version until some job
+#     happened to run and call `set_state`.
+#   * once a job HAS written a version, replacing the sidecar with a
+#     newer one leaves the OLD value in state.json until the next job -
+#     state.json would then assert a version that is not the one actually
+#     running, either hiding a real lag or reporting one that does not
+#     exist.
+# Every heartbeat is a container that has just, by definition, proven it
+# is alive and knows its own $UPDATER_VERSION - so every heartbeat is as
+# good an authority on that one field as `set_state` itself, and asserting
+# it here rather than trusting whatever an earlier (possibly different)
+# container once wrote is what keeps it honest between jobs, not just at
+# the moment one finishes. "Empty means null" applies here exactly as it
+# does in `set_state`, for the same reason: a sidecar built before this
+# field existed still has nothing truthful to assert.
 #
 # Deliberately NOT `set_state` itself: `set_state` rebuilds state.json
 # from this script's own JOB_ID/FROM/TO/etc. variables, which is exactly
@@ -316,7 +347,8 @@ set_state() {
 # already correctly on disk with whatever this call site happens to
 # think the phase is. The SIGTERM trap test relies on state.json reading
 # "rollback" for that entire second wait; a heartbeat helper that can
-# only ever touch the timestamp is what keeps that true.
+# only ever touch the timestamp (and, now, the running container's own
+# version) is what keeps that true.
 #
 # Best-effort, like `log()`: a momentary read/write hiccup here (the
 # volume briefly unwritable) must not abort a pass that is otherwise
@@ -324,9 +356,10 @@ set_state() {
 # below) already recovers a state.json that stays broken across passes.
 # Callers wrap this in `|| true` for exactly that reason.
 refresh_heartbeat() {
-  if REFRESHED="$(jq --arg seen "$(now)" \
+  if REFRESHED="$(jq --arg seen "$(now)" --arg updater_version "${UPDATER_VERSION:-}" \
        'if (type == "object" and has("phase"))
         then .updater_seen_at = $seen
+             | .updater_version = (if $updater_version == "" then null else $updater_version end)
         else empty end' \
        "$STATE" 2>/dev/null)" \
     && [ -n "$REFRESHED" ]; then

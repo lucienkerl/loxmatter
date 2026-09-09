@@ -333,6 +333,75 @@ def test_the_heartbeat_is_written_on_every_pass(updater):
     assert state["updater_seen_at"] > alt
 
 
+def test_a_heartbeat_only_pass_adds_a_missing_updater_version(updater):
+    # Observed on the maintainer's own Pi: a 0.3.2 sidecar (no
+    # `updater_version` field at all - the field did not exist yet) wrote
+    # state.json, then a 0.3.3 sidecar replaced it and ran for minutes
+    # doing nothing but refresh_heartbeat()'s own heartbeat-only passes,
+    # no job ever arriving. Because `refresh_heartbeat` used to touch
+    # `updater_seen_at` alone, that field stayed permanently absent - the
+    # System tab could not tell the updater had a version at all until
+    # some job happened to run. `refresh_heartbeat` must assert
+    # `updater_version` from the RUNNING container's own build-time value
+    # even when nothing else about the pass changes: this state.json has
+    # no such key at all (mirrors a pre-0.3.3 writer, not merely a null
+    # value), no request.json exists, and no docker call may happen - a
+    # pure heartbeat pass, exactly like the maintainer's Pi.
+    state_file = updater.update_dir / "state.json"
+    state_file.write_text(
+        json.dumps(
+            {
+                "id": None,
+                "phase": "idle",
+                "from": None,
+                "to": None,
+                "error": None,
+                "rolled_back": False,
+                "rolled_back_to": None,
+                "healthy": True,
+                "updater_seen_at": "2000-01-01T00:00:00Z",
+            }
+        ),
+        encoding="utf-8",
+    )
+    _, calls, state = updater(LOXMATTER_UPDATER_VERSION="0.3.3")
+    assert "docker" not in calls, "this must be a pure heartbeat pass, no job involved"
+    assert state["updater_version"] == "0.3.3"
+
+
+def test_a_heartbeat_only_pass_corrects_a_stale_updater_version(updater):
+    # The sharper case from the same defect: once a job HAS written
+    # `updater_version` into state.json, replacing the sidecar container
+    # with a newer (or older) one must not leave the OLD value sitting
+    # there until the next job runs - that would have the System tab
+    # assert a version that is not actually running, either hiding a real
+    # lag or reporting one that does not exist. A heartbeat-only pass (no
+    # request.json, no docker call) from a container whose OWN
+    # LOXMATTER_UPDATER_VERSION disagrees with what is already on disk
+    # must correct it.
+    state_file = updater.update_dir / "state.json"
+    state_file.write_text(
+        json.dumps(
+            {
+                "id": None,
+                "phase": "idle",
+                "from": None,
+                "to": None,
+                "error": None,
+                "rolled_back": False,
+                "rolled_back_to": None,
+                "healthy": True,
+                "updater_seen_at": "2000-01-01T00:00:00Z",
+                "updater_version": "0.3.2",
+            }
+        ),
+        encoding="utf-8",
+    )
+    _, calls, state = updater(LOXMATTER_UPDATER_VERSION="0.3.3")
+    assert "docker" not in calls, "this must be a pure heartbeat pass, no job involved"
+    assert state["updater_version"] == "0.3.3"
+
+
 def test_a_target_containing_a_semicolon_is_rejected(updater):
     _write_request(updater, target="0.3.0; rm -rf /")
     _, calls, state = updater()

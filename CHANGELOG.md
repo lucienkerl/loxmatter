@@ -8,6 +8,17 @@ people who don't know the code.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The updater's version could go missing, or go stale, on the System
+  tab.** The card that says when the updater has fallen behind the bridge
+  only updated when an update actually ran — so a freshly installed
+  updater could sit there for minutes with no version shown at all, and an
+  updater later replaced by a newer one could keep reporting the old
+  version long after it was gone. The updater now reports its own version
+  on every check-in, not only when it does work, so the card always
+  reflects what is actually running.
+
 ## [0.3.3] — 2026-09-09
 
 ### Changed
