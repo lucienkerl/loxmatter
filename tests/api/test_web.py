@@ -33,6 +33,7 @@ import re
 import shutil
 import subprocess
 from pathlib import Path
+from typing import get_args
 from xml.etree import ElementTree
 
 import httpx2 as httpx
@@ -47,9 +48,11 @@ from loxmatter.api.export import ARCHIVE_NAME
 # with the table the browser really gets from `GET /api/i18n`, and a local
 # copy would keep agreeing with itself if that endpoint ever changed.
 from loxmatter.api.language import _web_strings
+from loxmatter.api.update import _BUSY_BOUND_SECONDS
 from loxmatter.export.commands import extract_commands
 from loxmatter.loxone.server import build_app
 from loxmatter.model.store import Store
+from loxmatter.update.protocol import UpdatePhase
 
 WEB_DIR = Path(__file__).resolve().parents[2] / "src" / "loxmatter" / "web"
 
@@ -879,6 +882,38 @@ def _app_state(setup: str = "", translations: dict[str, str] | None = None) -> d
     )
     assert result.returncode == 0, result.stderr
     return json.loads(result.stdout)
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_the_shipped_active_phase_set_agrees_with_the_bridge_and_the_phase_literal():
+    """`UPDATE_ACTIVE_PHASES` (app.js) is a THIRD copy of the same set of
+    phases `_BUSY_BOUND_SECONDS` (`api/update.py`) and the non-terminal
+    members of `UpdatePhase` (`update/protocol.py`) both already name -
+    in a language no Python test reads, so nothing before this test tied
+    the three together. A phase added to one and not the others would
+    mean either a phase `_updater_present` treats as busy that the tile
+    never shows as active, or the reverse: a tile that looks like it is
+    still working on an update `state.json` itself calls terminal.
+
+    Read directly out of the shipped script rather than the `app()`
+    state `_app_state` above returns - `UPDATE_ACTIVE_PHASES` is a
+    top-level `const`, not part of the Alpine component."""
+    script = f"""
+      const fs = require("node:fs");
+      const src = fs.readFileSync({str(WEB_DIR / "app.js")!r}, "utf8");
+      const value = new Function(src + "\\nreturn UPDATE_ACTIVE_PHASES;")();
+      console.log(JSON.stringify(value));
+    """
+    result = subprocess.run(
+        [NODE, "-e", script], capture_output=True, text=True, timeout=30, check=False
+    )
+    assert result.returncode == 0, result.stderr
+    active_phases = set(json.loads(result.stdout))
+
+    terminal_phases = {"idle", "done", "failed"}
+    non_terminal_phases = set(get_args(UpdatePhase)) - terminal_phases
+    assert active_phases == set(_BUSY_BOUND_SECONDS)
+    assert active_phases == non_terminal_phases
 
 
 @pytest.mark.skipif(NODE is None, reason="node is required for this test")
