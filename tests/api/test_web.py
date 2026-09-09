@@ -555,67 +555,132 @@ async def test_the_update_card_offers_its_four_states_and_the_confirmation(api):
         "{ version: updateStatus.state.to, from_version: updateStatus.state.from })" in page
     )
 
+    # State 5 (rejected) - the "Also" fix: `phase: rejected` used to be
+    # rendered NOWHERE and `state.error` was never shown at all, so a
+    # rejected request (already running, no version stated, older than
+    # what is running) produced no feedback whatsoever. Bound to
+    # `state.error` verbatim, the same "show the backend's own wording"
+    # rule the generic `updateError` hint below already follows.
+    assert "updateStatus?.state?.phase === 'rejected'" in page
+    assert "t('web.system.update_rejected', { message: updateStatus.state.error })" in page
+
     # The one gap in the brief's own sample: a visible spot for `updateError`.
     assert 'x-show="updateError"' in page
     assert 'x-text="updateError"' in page
 
-    assert "async loadUpdateStatus()" in script
+    # `loadUpdateStatus` takes an `{ allowStop }` options object since
+    # Critical 3 (see its own comment in app.js) - the bare, no-parens
+    # form would never match again after that fix, silently stop proving
+    # this route is wired up at all.
+    assert "async loadUpdateStatus({ allowStop = true } = {})" in script
     assert "async loadUpdateCheck()" in script
     assert "async applyUpdate()" in script
     assert "async setUpdateChannel(channel)" in script
 
 
-async def test_the_update_card_offers_a_channel_switch_with_a_visible_dev_warning(api):
-    """Gap flagged by the update card's own implementer: the design's very
-    first decision for this feature (section 9) gives the operator a
-    choice of channel - Stable compares against the latest GitHub
-    release, Development compares the running commit against `main` - and
-    `PATCH /api/update/settings` plus `store.update_settings` plus
-    `app.js`'s own `setUpdateChannel()` all already existed to serve that
-    choice, but nothing in the markup ever called it: the setting was
-    unreachable from the interface.
+async def test_the_channel_switch_is_hidden_but_everything_behind_it_still_works(api):
+    """The channel switch cannot work end to end for 0.3.0: `update_check.
+    py` answers the dev channel with `target="main"`, `applyUpdate()`
+    posts that verbatim, and the sidecar's own pattern for the dev
+    channel (update-once.sh, Rule 1: `^[0-9a-f]{7,40}$`) rejects "main"
+    outright - and even a real commit SHA would not help, since `set_tag`
+    writes the bare SHA as the image tag while CI only ever publishes
+    `:dev`/`:sha-<short>`. The maintainer chose to hide the control for
+    this release rather than ship one that fails on every click.
 
-    Reuses the exact `nav.tabs`/`button.active` shape the language toggle
-    already established (`test_the_settings_tab_has_a_language_toggle`) -
-    the one existing precedent in this file for a small button-row toggle
-    with an active state - rather than inventing a second one.
+    What must hold, and what this test checks in that order:
 
-    The warning is the one thing this task's own brief calls out by name:
-    switching to Development means installing whatever currently sits on
-    main, untested intermediate states included, and it must be visible
-    the moment that channel is chosen, not only inside the confirmation
-    dialog three states further down, which someone choosing the channel
-    today may never even reach in this session."""
+      1. The control markup is NOT delivered to the browser inside a
+         live (uncommented) tag - a real HTML comment, not merely an
+         `x-show="false"` that would still ship the buttons and their
+         `@click` handlers to anyone reading the page source.
+      2. EVERYTHING it would have driven still exists and still works:
+         `app.js` still defines `setUpdateChannel()`, and the settings
+         route/store underneath it still accept and report a channel -
+         re-enabling this later must be a UI change (uncommenting the
+         markup, once the two points above are actually fixed) plus the
+         `set_tag`/CI-tag fix, not a rebuild of the feature.
+      3. The hidden block still carries a comment explaining WHY, naming
+         both concrete blockers, so nobody "fixes" this by silently
+         deleting the block or uncommenting a control that is still
+         broken."""
     client, _, _ = api
     page = (await client.get("/")).text
+    script = (await client.get("/static/app.js")).text
 
+    # The hidden block, isolated from the rest of the page: everything
+    # from the `<!--` that opens it (found by rewinding from the marker
+    # text this fix's own comment carries) to its closing `-->`.
+    hidden_idx = page.index("HIDDEN FOR 0.3.0")
+    comment_start = page.rindex("<!--", 0, hidden_idx)
+    # `rindex` finds the NEAREST preceding "<!--" - which is only the
+    # right one if it is genuinely adjacent to the marker text. Mutation-
+    # tested: a mutation that deletes just the "<!--"/"-->" pair around
+    # this block (re-enabling the control) without touching the marker
+    # text left `rindex`/`index` silently latching onto a DIFFERENT,
+    # unrelated comment nearby and reporting the control as still hidden
+    # - this proximity check is what catches that instead of a false
+    # green.
+    assert hidden_idx - comment_start < 80, (
+        "the nearest preceding '<!--' is too far from the 'HIDDEN FOR 0.3.0' "
+        "marker to be its own opening tag - the block may no longer be a "
+        "real HTML comment at all"
+    )
+    comment_end = page.index("-->", hidden_idx) + len("-->")
+    hidden_comment = page[comment_start:comment_end]
+    outside_hidden_comment = page[:comment_start] + page[comment_end:]
+
+    # 1. No live channel-switch control reaches the browser. A plain
+    # `needle not in page` is NOT the right check here (and is exactly
+    # what this test's own first version got wrong): the needles are
+    # LITERALLY present in `page` regardless of the fix, since HTML
+    # comments are still delivered as plain text - the browser only
+    # skips evaluating what is inside them, it does not strip it from
+    # the response. The real assurance is that every needle sits ONLY
+    # inside the hidden comment and nowhere else in the page.
+    for needle in (
+        ":class=\"{ active: updateStatus?.channel === 'stable' }\"",
+        "@click=\"setUpdateChannel('stable')\"",
+        ":class=\"{ active: updateStatus?.channel === 'dev' }\"",
+        "@click=\"setUpdateChannel('dev')\"",
+        "x-show=\"updateStatus?.channel === 'dev'\"",
+    ):
+        assert needle in hidden_comment, f"expected inside the hidden block: {needle!r}"
+        assert needle not in outside_hidden_comment, (
+            f"the hidden channel-switch control still reaches LIVE markup: {needle!r}"
+        )
+
+    # 2. Everything behind the control is still there. The strings
+    # themselves stay in the delivered page too (inside the HTML comment,
+    # not evaluated by Alpine, but still literally present) - per this
+    # fix's own instruction to leave the i18n strings in place.
     assert "t('web.system.update_channel_label')" in page
-
-    assert ":class=\"{ active: updateStatus?.channel === 'stable' }\"" in page
-    assert "@click=\"setUpdateChannel('stable')\"" in page
     assert "t('web.system.update_channel_stable')" in page
-
-    assert ":class=\"{ active: updateStatus?.channel === 'dev' }\"" in page
-    assert "@click=\"setUpdateChannel('dev')\"" in page
     assert "t('web.system.update_channel_dev')" in page
+    assert "t('web.system.update_channel_dev_warning')" in page
+    assert "async setUpdateChannel(channel)" in script
 
-    # Both buttons must actually sit inside a `nav.tabs`, not just carry
-    # the right attributes floating loose in the page somewhere else.
-    stable_idx = page.index("setUpdateChannel('stable')")
-    nav_start = page.rindex("<nav", 0, stable_idx)
-    nav_end = page.index("</nav>", stable_idx)
-    channel_nav = page[nav_start:nav_end]
-    assert 'class="tabs"' in channel_nav
-    assert "setUpdateChannel('dev')" in channel_nav
+    # 3. The reason is written down at the markup, and names BOTH
+    # concrete blockers - not a vague "TODO" a future reader could shrug
+    # off without understanding what would actually break.
+    assert 'target="main"' in hidden_comment
+    assert "set_tag" in hidden_comment
+    assert "loxmatter:&lt;sha&gt;" in hidden_comment or "loxmatter:<sha>" in hidden_comment
 
-    # The warning: bound to the channel actually being "dev", not shown
-    # unconditionally and not left as dead, untranslated text.
-    warning_idx = page.index("t('web.system.update_channel_dev_warning')")
-    warning_tag_start = page.rindex("<p", 0, warning_idx)
-    warning_tag_end = page.index(">", warning_idx)
-    warning_tag = page[warning_tag_start:warning_tag_end]
-    assert "x-show=\"updateStatus?.channel === 'dev'\"" in warning_tag
-    assert "banner warn" in warning_tag
+
+async def test_the_changelog_does_not_promise_the_hidden_channel_switch():
+    """CHANGELOG.md's `[Unreleased]` section used to advertise "An update
+    channel setting (Stable, the default, or Development)" as part of the
+    0.3.0 feature set - the web UI shows exactly this section as release
+    notes before anyone installs an update (see the changelog's own header
+    comment), so a promise here reaches people who cannot see that the
+    control is commented out of the page they are about to receive. With
+    the switch hidden (see the test above), the changelog must not claim
+    it either."""
+    changelog = (WEB_DIR.parents[2] / "CHANGELOG.md").read_text(encoding="utf-8")
+    unreleased = changelog.split("## [Unreleased]", 1)[1].split("\n## [", 1)[0]
+    assert "update channel" not in unreleased.lower()
+    assert "development" not in unreleased.lower()
 
 
 async def test_the_up_to_date_hint_is_suppressed_without_an_updater(api):

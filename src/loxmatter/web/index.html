@@ -1562,32 +1562,62 @@
             asked yet, and `setUpdateChannel` immediately re-runs the
             check against whatever channel was just chosen.
           -->
-          <div class="row">
-            <span x-text="t('web.system.update_channel_label')"></span>
-            <nav class="tabs">
-              <button
-                :class="{ active: updateStatus?.channel === 'stable' }"
-                @click="setUpdateChannel('stable')"
-                :disabled="updateRunning() || updateConfirming"
-                x-text="t('web.system.update_channel_stable')"
-              ></button>
-              <button
-                :class="{ active: updateStatus?.channel === 'dev' }"
-                @click="setUpdateChannel('dev')"
-                :disabled="updateRunning() || updateConfirming"
-                x-text="t('web.system.update_channel_dev')"
-              ></button>
-            </nav>
-          </div>
-          <!-- The one thing the maintainer's own brief insists must not
-               be buried: switching to Development installs whatever
-               currently sits on main, untested intermediate states
-               included. A `banner warn`, not a `hint`, and shown right
-               under the switch itself - not only inside the confirmation
-               dialog three states down, which someone choosing the
-               channel today may never even reach in this session. -->
-          <p class="banner warn" x-show="updateStatus?.channel === 'dev'" x-cloak
-             x-text="t('web.system.update_channel_dev_warning')"></p>
+          <!--
+            HIDDEN FOR 0.3.0 - the channel switch cannot work end to end
+            yet, and the maintainer chose to hide it rather than ship a
+            control that fails on every click:
+
+              * update_check.py answers the dev channel with
+                target="main"; applyUpdate() in app.js posts that
+                verbatim as `target`; the sidecar's own pattern for the
+                dev channel (update-once.sh, Rule 1) requires
+                ^[0-9a-f]{7,40}$ and rejects "main" outright.
+              * Even a real commit SHA would not help: set_tag
+                (update-once.sh) writes the bare SHA as the image tag,
+                but CI only ever publishes dev images as :dev and
+                :sha-<short> - loxmatter:<sha> is never a real tag.
+
+            Everything BEHIND this control is intentionally left wired up
+            and working: the `channel` setting, store.update_settings,
+            PATCH /api/update/settings, and update_check.py's own
+            dev-channel comparison logic all still work exactly as
+            designed and are still covered by their own tests - so
+            re-enabling this later is a UI change (uncommenting the block
+            below) plus the set_tag/CI-tag fix above, not a rebuild of
+            the feature. Do NOT delete this block as dead code, and do
+            NOT uncomment it without first fixing both points above -
+            re-enabling it as-is would reintroduce a channel switch that
+            fails on every attempt.
+
+            The commented-out markup, unchanged from before this fix:
+
+            <div class="row">
+              <span x-text="t('web.system.update_channel_label')"></span>
+              <nav class="tabs">
+                <button
+                  :class="{ active: updateStatus?.channel === 'stable' }"
+                  @click="setUpdateChannel('stable')"
+                  :disabled="updateRunning() || updateConfirming"
+                  x-text="t('web.system.update_channel_stable')"
+                ></button>
+                <button
+                  :class="{ active: updateStatus?.channel === 'dev' }"
+                  @click="setUpdateChannel('dev')"
+                  :disabled="updateRunning() || updateConfirming"
+                  x-text="t('web.system.update_channel_dev')"
+                ></button>
+              </nav>
+            </div>
+            The one thing the maintainer's own brief insists must not be
+            buried: switching to Development installs whatever currently
+            sits on main, untested intermediate states included. A
+            "banner warn", not a "hint", and shown right under the switch
+            itself - not only inside the confirmation dialog three states
+            down, which someone choosing the channel today may never even
+            reach in this session.
+            <p class="banner warn" x-show="updateStatus?.channel === 'dev'" x-cloak
+               x-text="t('web.system.update_channel_dev_warning')"></p>
+          -->
 
           <!--
             The update flow - design "Applying updates through the web UI"

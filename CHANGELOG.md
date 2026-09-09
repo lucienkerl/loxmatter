@@ -25,8 +25,6 @@ code, at the moment they decide whether to update. Write it for them.
   Afterwards, updates work from the browser like any newer installation.
   Without that service — or after removing it — the System tab still
   names the running version and points back to the console path.
-- An update channel setting (Stable, the default, or Development) next to
-  the button, for anyone who wants early access to unreleased changes.
 
 ## [0.2.0] — 2026-09-08
 
