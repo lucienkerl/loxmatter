@@ -36,12 +36,14 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import signal
 import subprocess
 import time
 from pathlib import Path
 
 import pytest
+import yaml
 
 from loxmatter.update import _TERMINAL_PHASES
 
@@ -2189,6 +2191,110 @@ def test_compose_resolves_the_host_path_not_the_container_path(updater):
     # directory - that would be the bug this test exists to catch,
     # reached silently.
     assert f"--project-directory {updater.stack}" not in pull_line
+
+
+@pytest.mark.skipif(
+    shutil.which("docker") is None,
+    reason="drives the real docker compose binary to resolve a real docker-compose.yml",
+)
+def test_the_env_file_survives_the_project_directory_moving_to_the_host(updater):
+    # The sibling of Critical 1 above, same root cause, found later: fixing
+    # --project-directory to point at the HOST (so relative `volumes:`
+    # entries resolve correctly) moves a SECOND lookup with it - Compose's
+    # own search for `.env` - onto that same host path, which this
+    # CONTAINER cannot read at all. Compose does not error on a missing
+    # `.env`; it warns per undefined variable and substitutes an empty
+    # string, so a recreate under that empty environment still reports
+    # success. That is exactly what reached production: `--miniserver ""`
+    # and an empty `LOXMATTER_API_TOKEN`, a bridge that came up and
+    # answered `/health` anyway, and a green "Now running: 0.3.2" tile.
+    #
+    # Every OTHER test in this file stubs `docker compose ...` as a bare
+    # `exit 0` (or a fixed failure), which proves nothing about `.env`:
+    # nothing ever asks Compose to actually READ one. This test instead
+    # translates each `docker compose ... pull|up ...` call update-once.sh
+    # makes into `docker compose <same -f/--project-directory/--env-file
+    # flags> config` against the REAL `docker` binary and the REAL
+    # deploy/testhost/docker-compose.yml - i.e. it asks Compose itself
+    # what it would resolve `--miniserver` to, under the exact flags
+    # compose() actually built. `--project-directory` below is a literal,
+    # never-created path (the same style the "host_checkout" tests above
+    # already use) - proven above to need no host directory to actually
+    # exist for `docker compose config` to run; what matters is only that
+    # NO `.env` sits there, which is the whole point: a fixed function
+    # finds `.env` via `--env-file` regardless, a broken one does not find
+    # it at all and falls back to Compose's own empty-string default.
+    real_docker = shutil.which("docker")
+    host_checkout = "/home/pi/loxmatter-checkout"
+    miniserver_ip = (
+        "203.0.113.42"  # TEST-NET-3 (RFC 5737) - reserved for documentation, never a real host.
+    )
+    config_out = updater.bindir.parent / "resolved-config.yml"
+
+    shutil.copy(
+        ROOT / "deploy" / "testhost" / "docker-compose.yml", updater.stack / "docker-compose.yml"
+    )
+    with (updater.stack / ".env").open("a", encoding="utf-8") as env_file:
+        env_file.write(f"MINISERVER_IP={miniserver_ip}\n")
+
+    docker_path = updater.bindir / "docker"
+    docker_path.write_text(
+        "#!/bin/sh\n"
+        'printf "%s %s\\n" "docker" "$*" >> "$STUB_LOG"\n'
+        'case "$1" in\n'
+        "  inspect)\n"
+        '    if [ "$2" = "loxmatter-updater" ]; then\n'
+        f'      printf "%s %s\\n" "$LOXMATTER_REPO" "{host_checkout}"\n'
+        f'      printf "%s %s\\n" "$LOXMATTER_STACK" "{host_checkout}/deploy/testhost"\n'
+        "    else\n"
+        '      printf "LOXMATTER_VERSION=0.2.0\\n"\n'
+        "    fi\n"
+        "    ;;\n"
+        "  compose)\n"
+        "    shift\n"
+        # compose() always emits some prefix of -f/--project-directory/
+        # --env-file flag+value pairs before the real subcommand
+        # (pull/up) - consumed generically here (rather than at fixed
+        # positions) so this stub keeps working when the fix under test
+        # is reverted for the bite-check below, where --env-file is
+        # simply absent from that prefix.
+        "    flags=\n"
+        '    while [ "$#" -gt 0 ]; do\n'
+        '      case "$1" in\n'
+        "        -f|--project-directory|--env-file)\n"
+        '          flags="$flags $1 $2"\n'
+        "          shift 2\n"
+        "          ;;\n"
+        "        *) break ;;\n"
+        "      esac\n"
+        "    done\n"
+        # The rest ($@: the real subcommand plus its own flags and the
+        # service name) is deliberately dropped - `config` takes none of
+        # that, and this call must never touch a real image or a real
+        # container regardless of what update-once.sh asked for.
+        f'    "{real_docker}" compose $flags config > "$CONFIG_OUT" 2>>"$STUB_LOG" || true\n'
+        "    exit 0\n"
+        "    ;;\n"
+        "esac\n",
+        encoding="utf-8",
+    )
+    docker_path.chmod(0o755)
+
+    _write_request(updater, target="0.3.0")
+    _, calls, state = updater(CONFIG_OUT=str(config_out))
+    assert state["phase"] == "done"
+    assert _compose_calls(calls, "pull"), (
+        "compose() was never called - nothing for this test to check"
+    )
+
+    assert config_out.exists(), "the docker stub's translated `config` call never ran"
+    resolved = yaml.safe_load(config_out.read_text(encoding="utf-8"))
+    command = resolved["services"]["loxmatter"]["command"]
+    assert "--miniserver" in command, command
+    assert command[command.index("--miniserver") + 1] == miniserver_ip, (
+        "MINISERVER_IP did not survive --project-directory moving to the host - "
+        f"resolved command was {command!r}"
+    )
 
 
 def test_compose_refuses_when_the_host_path_cannot_be_resolved(updater):

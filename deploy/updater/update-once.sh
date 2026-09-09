@@ -838,6 +838,37 @@ run() {
 # into, because the docker daemon behind this socket is the one party
 # that actually knows what is mounted where.
 #
+# `--project-directory` moves a SECOND thing besides relative `volumes:`
+# entries, and this comment did not say so for a long time: absent
+# `--env-file`, Compose also looks for `.env` inside the project
+# directory. Pointing that flag at the HOST path (as it must, for the
+# mounts above to resolve correctly) therefore also points the `.env`
+# lookup at a directory that exists on the HOST, not in this container -
+# and the host filesystem is not this process's filesystem at all, so
+# nothing under that path is readable here regardless of what actually
+# sits there. Compose's response to a missing `.env` is not an error: it
+# logs one warning line per undefined variable and substitutes an empty
+# string for each, then proceeds to `pull`/`up` normally. A recreate
+# under that empty environment SUCCEEDS - wrong, but successfully - which
+# is exactly what let this reach production: the health check three
+# lines below sees a container that came up and answers, `set_state done`
+# runs, and the bridge that just lost its `--miniserver` argument and its
+# `LOXMATTER_API_TOKEN` reports itself healthy throughout, because
+# `/health` (`src/loxmatter/loxone/server.py`) answers unconditionally.
+#
+# `--env-file "$ENV_FILE"` below is what keeps `.env` found. `$ENV_FILE`
+# (`"$STACK/.env"`, defined at the top of this file) is deliberately the
+# CONTAINER path, same footing as `-f` above and for the identical
+# reason - this process reads it from ITS OWN filesystem, the same
+# bind-mounted file `set_tag()` already writes through, elsewhere in this
+# script. Do not "fix" a future confusion here by making `$ENV_FILE` a
+# host path to match `$COMPOSE_PROJECT_DIR`: the two flags answer two
+# different questions - `--project-directory`, what the DAEMON should
+# resolve relative mounts against; `--env-file`, what THIS PROCESS should
+# read variables from - and each must stay on the side of the container
+# boundary that actually answers its own question. Swapping either one
+# reproduces a version of this same bug, just moved to the other flag.
+#
 # Resolved (and refused, see below) only ONCE per pass, on this
 # function's first call - not once per invocation. There can be several
 # in one pass (pull, the initial recreate, a rollback's own recreate, the
@@ -892,8 +923,8 @@ compose() {
     log "compose: could not resolve $STACK to a host path (docker inspect loxmatter-updater found no mount whose Destination is a prefix of it) - refusing to run docker compose, since a relative volumes: entry would otherwise resolve against this container's own filesystem instead of the host's"
     return 1
   fi
-  log "\$ docker compose -f $STACK/docker-compose.yml --project-directory $COMPOSE_PROJECT_DIR $*"
-  docker compose -f "$STACK/docker-compose.yml" --project-directory "$COMPOSE_PROJECT_DIR" "$@" >> "$LOG" 2>&1
+  log "\$ docker compose -f $STACK/docker-compose.yml --project-directory $COMPOSE_PROJECT_DIR --env-file $ENV_FILE $*"
+  docker compose -f "$STACK/docker-compose.yml" --project-directory "$COMPOSE_PROJECT_DIR" --env-file "$ENV_FILE" "$@" >> "$LOG" 2>&1
 }
 
 # Important 1's other half: `compose pull` (the actual image download,
