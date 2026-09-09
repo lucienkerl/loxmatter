@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import os
+from pathlib import Path
 
 import pytest
 
@@ -87,6 +88,39 @@ def test_a_corrupt_request_reads_as_none_rather_than_raising(tmp_path):
     """
     request_path(tmp_path).write_text("{not json", encoding="utf-8")
     assert read_request(tmp_path) is None
+
+
+def test_a_binary_or_torn_request_reads_as_none_rather_than_raising(tmp_path):
+    """`{not json` (the case above) still decodes as UTF-8 and only fails
+    at `json.loads`. Binary garbage - a write caught mid-flight despite
+    `write_json_atomically`, or a hand edit with a stray non-UTF-8 byte -
+    fails one step earlier, at `path.read_text` itself, with
+    `UnicodeDecodeError` instead of `JSONDecodeError`. Before this test
+    (and the fix it covers) that exception was never caught: it escaped
+    `_read_json`, then `read_request`, then `run_once`, and ended the
+    sidecar's `while True` loop."""
+    request_path(tmp_path).write_bytes(b"\xff\xfe not even close to UTF-8, let alone JSON")
+    assert read_request(tmp_path) is None
+
+
+def test_an_unreadable_state_file_reads_as_none_rather_than_raising(tmp_path, monkeypatch):
+    """Any other I/O failure on the read - a failing SD card returning
+    `OSError` mid-read, say - must read the same way as a missing or
+    corrupt file: as `None`, not as an exception past `_read_json`."""
+    state_path(tmp_path).write_text(
+        json.dumps({"phase": "idle", "steps": [], "updater_seen_at": "t"}),
+        encoding="utf-8",
+    )
+
+    real_read_text = Path.read_text
+
+    def raiser(self: Path, *args: object, **kwargs: object) -> str:
+        if self == state_path(tmp_path):
+            raise OSError(5, "Input/output error")
+        return real_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", raiser)
+    assert read_state(tmp_path) is None
 
 
 def test_a_wrong_shaped_steps_field_reads_as_none_rather_than_raising(tmp_path):

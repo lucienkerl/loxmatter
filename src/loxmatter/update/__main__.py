@@ -23,18 +23,27 @@ sleep two seconds. `run_once` is that one pass, factored out so it can be
 driven directly - `main`'s own `while True` has no return value to assert
 on and nothing to unit-test that `run_once` does not already cover.
 
-`run_once` takes `running_version`/`running_commit` as plain arguments,
-the same way `run_update` does, rather than deriving them itself - `main`
-resolves them once per iteration (see `_running_identity` below) and hands
-them over, so a test never needs a real checkout or a real git binary to
-drive a pass.
+`run_once` resolves `running_version`/`running_commit` itself, and only in
+the branch that is about to check a request against them (`commands.
+read_running_identity`, backed by `docker inspect` - see its docstring for
+why the checkout's own `pyproject.toml`/`git rev-parse HEAD` are the wrong
+source). `main` used to resolve both unconditionally on every pass, which
+meant a `git` fork roughly every two seconds even on the passes - nearly
+all of them - that have nothing to do; moving the lookup here also means a
+test drives it with a plain fake, no real checkout or `git` binary needed.
+
+Both `run_once` and `main` hold the last executed request `id` in memory,
+not only in `state.json`: the file is the channel to the operator, but it
+is not the only memory the loop is allowed to have, and a torn read or a
+failed write must not be able to make an already-completed request run
+again from scratch (see `_touch_seen_at` below, and the design's own
+warning about exactly that failure mode).
 """
 
 from __future__ import annotations
 
 import os
 import time
-import tomllib
 from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
@@ -42,7 +51,13 @@ from typing import Protocol
 
 from loxmatter.timestamps import now_iso
 from loxmatter.update.commands import DockerCommands
-from loxmatter.update.protocol import UpdateState, read_request, read_state, write_state
+from loxmatter.update.protocol import (
+    UpdateState,
+    read_request,
+    read_state,
+    state_path,
+    write_state,
+)
 from loxmatter.update.runner import Commands, run_update
 
 #: How often the loop wakes up to look for a new `request.json`. This
@@ -57,44 +72,51 @@ LOOP_INTERVAL_SECONDS = 2.0
 #: takes `base` as a parameter, same as `run_update`.
 DEFAULT_BASE = Path("/data/update")
 
-#: The mounted checkout `fetch`/`checkout` run against, and - see
-#: `_running_version` below - where `pyproject.toml` is read from to learn
-#: what is currently deployed.
+#: The mounted checkout `fetch`/`checkout` run against.
 DEFAULT_COMPOSE_DIR = Path("/app")
 
+#: Reaches the bridge on the *host's* network: `loxmatter` in
+#: `deploy/testhost/docker-compose.yml` runs with `network_mode: host`,
+#: so it is not a resolvable Compose service name from this container,
+#: which sits on the ordinary Compose network (design section 6 - it must
+#: not have LAN access). `host.docker.internal` reaches the host from
+#: there, but on Linux - the Raspberry Pi this ships to, not the Docker
+#: Desktop this was last checked against - only once the container
+#: declares `extra_hosts: ["host.docker.internal:host-gateway"]`. Design
+#: section 6 already commits the `loxmatter-updater` Compose service (a
+#: later task - adding it is not part of this one) to exactly that entry.
+#: Until that entry exists, `healthy()` returns `False` for the whole
+#: `runner.DEADLINE_SECONDS` and every update rolls back.
 DEFAULT_HEALTH_URL = "http://host.docker.internal:8080/health"
 
 
 class LoopCommands(Commands, Protocol):
-    """`Commands`, plus `is_ancestor` - see `DockerCommands`'s docstring
-    for why that member sits outside the Protocol `run_update` itself
-    takes."""
+    """`Commands`, plus `is_ancestor` and `read_running_identity` - see
+    `DockerCommands`'s docstrings for why these sit outside the Protocol
+    `run_update` itself takes: both are things the loop resolves before
+    calling `run_update`, not things `run_update` asks of `Commands`
+    while it runs."""
 
     def is_ancestor(self, older: str, newer: str) -> bool: ...
-
-
-def _running_version(compose_dir: Path) -> str:
-    """`rules.check_request`'s own comment says where this number comes
-    from: "out of `pyproject.toml`'s bare `version = '0.2.0'`" - not from
-    `.env`'s `LOXMATTER_IMAGE_TAG`, which is often the literal string
-    `stable` and would not parse as a version at all."""
-    data = tomllib.loads((compose_dir / "pyproject.toml").read_text(encoding="utf-8"))
-    return str(data["project"]["version"])
+    def read_running_identity(self) -> tuple[str, str]: ...
 
 
 def run_once(
     base: Path,
     commands: LoopCommands,
     *,
-    running_version: str,
-    running_commit: str,
+    last_id: str | None,
     is_ancestor: Callable[[str, str], bool],
     sleep: Callable[[float], None],
-) -> None:
-    previous = read_state(base)
-    last_id = previous.id if previous is not None else None
+) -> str | None:
+    """One pass. Returns the request `id` that should be remembered as
+    "already executed" for the next pass - `last_id` unchanged on a quiet
+    pass, `request.id` once `run_update` has been handed the request.
+    `main` holds this return value in memory in addition to `state.json`
+    (see the module docstring)."""
     request = read_request(base)
     if request is not None and request.id != last_id:
+        running_version, running_commit = commands.read_running_identity()
         run_update(
             request,
             commands,
@@ -104,19 +126,32 @@ def run_once(
             is_ancestor=is_ancestor,
             sleep=sleep,
         )
-        return
+        return request.id
     # Nothing to do this pass - `run_update` already stamped
     # `updater_seen_at` on its way out above, so only the quiet path needs
     # to do it here.
-    _touch_seen_at(base, previous)
+    _touch_seen_at(base, read_state(base))
+    return last_id
 
 
 def _touch_seen_at(base: Path, previous: UpdateState | None) -> None:
     """Refresh the one field the bridge polls for aliveness, leaving
     everything else exactly as the last `run_update` (or lack of one) left
     it - a quiet pass must not overwrite a `done` or `failed` result with
-    something that looks like `idle`."""
+    something that looks like `idle`.
+
+    `previous is None` is ambiguous on its own: `read_state` returns it
+    both when `state.json` has never existed (the honest "idle, nothing
+    has ever run here" case) and when it exists but could not be parsed -
+    corrupt JSON, an unknown `phase`, a hand edit. Only the first case
+    should produce a fresh `idle` state; the second must be left alone,
+    because a fresh `id=None` state written over it would make the next
+    pass believe no request has ever been seen, and re-run whatever
+    `request.json` currently names from scratch.
+    """
     if previous is None:
+        if state_path(base).exists():
+            return
         state = UpdateState(
             id=None,
             phase="idle",
@@ -154,28 +189,45 @@ def main() -> None:
         compose_dir=compose_dir, env_path=env_path, health_url=health_url, base=base
     )
 
+    # Held in memory across iterations, in addition to `state.json` - see
+    # the module docstring. `state.json` alone once meant a corrupt read
+    # or a failed write could make an already-completed request look
+    # brand new again.
+    last_id: str | None = None
+    # Also held across iterations: a failure that persists pass after
+    # pass (the Docker socket staying unreachable, say) is logged once,
+    # not every two seconds forever. `log()`'s own cap means a line
+    # repeated that often does not even buy history - it becomes a
+    # sustained stream of SD-card writes as `_cap_log` re-caps the file
+    # on every single call, which is worse for the card the cap exists
+    # to protect than the very failure being logged.
+    last_logged_failure: str | None = None
+
     while True:
+        # The whole pass is guarded, not just the identity lookup that
+        # used to be the only thing that could raise here. `read_request`/
+        # `read_state` are more tolerant now (see `protocol._read_json`),
+        # but an exception escaping `while True` would still end the
+        # sidecar silently - on an unattended installation, with nobody
+        # watching to restart the container.
         try:
-            version = _running_version(compose_dir)
-            commit = commands.read_git_ref()
-        except Exception as failure:  # noqa: BLE001 - see docstring
-            # Nothing is executed against an installation whose current
-            # identity cannot even be established - the same reasoning
-            # `run_update` applies to a failure before its first command
-            # (see its docstring). The loop keeps running so the next
-            # pass, once whatever is wrong is fixed, can pick the request
-            # back up rather than needing the container restarted.
-            _log_best_effort(commands, f"cannot determine what is currently running: {failure!r}")
-            _touch_seen_at(base, read_state(base))
-        else:
-            run_once(
+            last_id = run_once(
                 base,
                 commands,
-                running_version=version,
-                running_commit=commit,
+                last_id=last_id,
                 is_ancestor=commands.is_ancestor,
                 sleep=time.sleep,
             )
+            last_logged_failure = None
+        except Exception as failure:  # noqa: BLE001 - see comment above
+            message = f"a pass failed: {failure!r}"
+            if message != last_logged_failure:
+                _log_best_effort(commands, message)
+                last_logged_failure = message
+            try:
+                _touch_seen_at(base, read_state(base))
+            except Exception:  # noqa: BLE001, S110 - best effort, matches every guard here
+                pass
         time.sleep(LOOP_INTERVAL_SECONDS)
 
 

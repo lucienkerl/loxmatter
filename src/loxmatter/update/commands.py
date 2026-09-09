@@ -39,6 +39,7 @@ path for that reason.
 
 from __future__ import annotations
 
+import json
 import subprocess
 from collections.abc import Callable
 from pathlib import Path
@@ -117,10 +118,12 @@ def _run_subprocess(argv: list[str], *, cwd: Path | None = None) -> str:
 
 
 class DockerCommands:
-    """`Commands`, plus `is_ancestor` - the one member `run_update` takes
-    as its own injected argument rather than through the Protocol (see
-    `runner.py`), because the sidecar's loop needs a real implementation
-    of it to hand over."""
+    """`Commands`, plus `is_ancestor` and `read_running_identity` - two
+    members the loop (`__main__.py`) needs a real implementation of but
+    `run_update` itself does not ask `Commands` for, because both are
+    resolved before `run_update` is even called rather than while it
+    runs (see `runner.py`'s `Commands` Protocol, and `LoopCommands` in
+    `__main__.py`)."""
 
     def __init__(
         self,
@@ -194,6 +197,49 @@ class DockerCommands:
             ["docker", "compose", "up", "-d", "--no-deps", "loxmatter"],
             cwd=self._compose_dir,
         )
+
+    def read_running_identity(self) -> tuple[str, str]:
+        """The build identity baked into the *running* `loxmatter`
+        container's environment - `LOXMATTER_VERSION`/`LOXMATTER_COMMIT`
+        from `Dockerfile`'s `ENV` - read live through the Docker socket
+        this sidecar holds.
+
+        Design section 4: "It comes from the image, not from the checkout
+        on the host - which may by now be elsewhere, moved or advanced,
+        without that ever being shipped." `LOXMATTER_IMAGE_TAG=stable` is
+        a moving alias: CI repoints it on every release, so the running
+        container can advance while a checkout on disk stays exactly
+        where it was. Reading `pyproject.toml`'s bare version or `git
+        rev-parse HEAD` from that checkout would then report a number
+        nobody is running anymore, and `rules.check_request` would wave a
+        downgrade through as "forward" because it never sees the real
+        one.
+
+        Raises if the container cannot be found or `docker inspect`
+        fails - deliberately: the loop (`__main__.run_once`) already has
+        a path for "cannot determine what is currently running", and a
+        version identity that cannot be established must land there,
+        never in a permissive guess.
+        """
+        container_id = self._run(
+            ["docker", "compose", "ps", "-q", "loxmatter"], cwd=self._compose_dir
+        ).strip()
+        if not container_id:
+            raise RuntimeError("the loxmatter container is not running")
+        raw = self._run(["docker", "inspect", "--format", "{{json .Config.Env}}", container_id])
+        entries = json.loads(raw)
+        env = dict(entry.split("=", 1) for entry in entries if "=" in entry)
+        # A hand-built image (no build arguments passed) still carries
+        # these keys with their `Dockerfile` defaults ("dev", "") - that
+        # is the normal, honest case for a development build, not a
+        # failure, and `rules.check_request` already treats an
+        # unparsable running version/commit as "cannot prove forward" and
+        # refuses safely. Falling back the same way for a foreign or very
+        # old image that lacks the keys entirely keeps that one behaviour
+        # in one place instead of two.
+        version = env.get("LOXMATTER_VERSION") or "dev"
+        commit = env.get("LOXMATTER_COMMIT") or ""
+        return version, commit
 
     def healthy(self) -> bool:
         # A connection failure has to read as `False` here, not as an

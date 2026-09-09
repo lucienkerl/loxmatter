@@ -126,15 +126,20 @@ def write_json_atomically(path: Path, payload: Mapping[str, object]) -> None:
 def _read_json(path: Path) -> dict[str, Any] | None:
     try:
         raw = path.read_text(encoding="utf-8")
-    except FileNotFoundError:
+    except (OSError, UnicodeDecodeError):
+        # Missing (`FileNotFoundError`, an `OSError` subclass) reads the
+        # same as torn or binary content (`UnicodeDecodeError` - a write
+        # caught mid-flight despite `write_json_atomically`, or a hand
+        # edit) and the same as any other I/O failure a failing SD card
+        # can produce here. "Nothing to do" is the right answer for all
+        # of them: raising would end the updater's loop and leave the
+        # installation without an updater until someone restarts the
+        # container.
         return None
     try:
         parsed = json.loads(raw)
     except json.JSONDecodeError:
-        # Truncated, or edited by hand on the Pi. "Nothing to do" is the
-        # right answer: raising would end the updater's loop and leave the
-        # installation without an updater until someone restarts the
-        # container.
+        # Truncated, or edited by hand on the Pi. Same reasoning as above.
         return None
     return parsed if isinstance(parsed, dict) else None
 

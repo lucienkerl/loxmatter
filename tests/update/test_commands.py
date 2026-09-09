@@ -18,8 +18,11 @@
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
+
+import pytest
 
 import loxmatter.update.commands as commands_module
 from loxmatter.update.commands import DockerCommands
@@ -325,6 +328,105 @@ def test_is_ancestor_true_on_success_false_on_failure(tmp_path):
         run=RaisingRunner(),
     )
     assert failing.is_ancestor("abc1234", "def5678") is False
+
+
+def test_read_running_identity_reads_version_and_commit_from_the_container_env(tmp_path):
+    """The mandated source (design section 4): the running container's own
+    `Config.Env`, not `pyproject.toml`/`git rev-parse HEAD` on the
+    checkout - see `Dockerfile`'s `LOXMATTER_VERSION`/`LOXMATTER_COMMIT`
+    `ENV` and the method's own docstring for why."""
+
+    class FixedRunner:
+        def __call__(self, argv: list[str], **_kwargs: object) -> str:
+            if argv == ["docker", "compose", "ps", "-q", "loxmatter"]:
+                return "abc123def456\n"
+            assert argv == [
+                "docker",
+                "inspect",
+                "--format",
+                "{{json .Config.Env}}",
+                "abc123def456",
+            ]
+            return json.dumps(
+                ["PATH=/usr/bin", "LOXMATTER_VERSION=0.3.0", "LOXMATTER_COMMIT=abc1234"]
+            )
+
+    commands = DockerCommands(
+        compose_dir=tmp_path,
+        env_path=tmp_path / ".env",
+        health_url="http://x/health",
+        base=tmp_path / "update",
+        run=FixedRunner(),
+    )
+    assert commands.read_running_identity() == ("0.3.0", "abc1234")
+
+
+def test_read_running_identity_raises_when_the_container_is_not_running(tmp_path):
+    """`docker compose ps -q loxmatter` prints nothing (exit 0) when the
+    service is not up - that must not be read as an empty-but-valid
+    container id. The loop's own guard (`__main__.run_once`) treats this
+    raise as "cannot determine what is currently running", never as a
+    permissive default."""
+
+    class EmptyRunner:
+        def __call__(self, argv: list[str], **_kwargs: object) -> str:
+            assert argv == ["docker", "compose", "ps", "-q", "loxmatter"]
+            return ""
+
+    commands = DockerCommands(
+        compose_dir=tmp_path,
+        env_path=tmp_path / ".env",
+        health_url="http://x/health",
+        base=tmp_path / "update",
+        run=EmptyRunner(),
+    )
+    with pytest.raises(RuntimeError, match="not running"):
+        commands.read_running_identity()
+
+
+def test_read_running_identity_falls_back_to_dev_for_a_hand_built_image(tmp_path):
+    """`Dockerfile`'s `ARG LOXMATTER_VERSION=dev` means a hand-built image
+    (no build arguments passed) reports `LOXMATTER_VERSION=dev` and
+    `LOXMATTER_COMMIT=` (empty) - the honest, non-error case for a
+    development build, not something to raise on."""
+
+    class FixedRunner:
+        def __call__(self, argv: list[str], **_kwargs: object) -> str:
+            if argv == ["docker", "compose", "ps", "-q", "loxmatter"]:
+                return "abc123\n"
+            return json.dumps(["LOXMATTER_VERSION=dev", "LOXMATTER_COMMIT="])
+
+    commands = DockerCommands(
+        compose_dir=tmp_path,
+        env_path=tmp_path / ".env",
+        health_url="http://x/health",
+        base=tmp_path / "update",
+        run=FixedRunner(),
+    )
+    assert commands.read_running_identity() == ("dev", "")
+
+
+def test_read_running_identity_propagates_a_failing_docker_inspect(tmp_path):
+    """A stale container id (removed between the two calls) or a broken
+    Docker socket must reach the caller as an exception, not as a
+    fabricated identity - the loop's guard is what turns this into
+    "cannot determine what is currently running"."""
+
+    class FailingInspect:
+        def __call__(self, argv: list[str], **_kwargs: object) -> str:
+            if argv == ["docker", "compose", "ps", "-q", "loxmatter"]:
+                return "abc123\n"
+            raise RuntimeError("docker inspect: no such object")
+
+    commands = DockerCommands(
+        compose_dir=tmp_path,
+        env_path=tmp_path / ".env",
+        health_url="http://x/health",
+        base=tmp_path / "update",
+        run=FailingInspect(),
+    )
+    with pytest.raises(RuntimeError, match="no such object"):
+        commands.read_running_identity()
 
 
 def test_backup_writes_a_timestamped_archive_and_prunes_old_ones(tmp_path, monkeypatch):
