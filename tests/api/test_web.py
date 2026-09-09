@@ -5411,6 +5411,11 @@ async def test_the_coarse_age_helper_never_speaks_in_seconds(api):
     `signalSeenText` in app.js).
 
     So this helper must NOT reach for `web.header.time_ago_seconds`.
+
+    It DOES reach for `web.header.time_ago_days`, which `sinceText` does
+    not (final review, A7): this is the one label in the interface built
+    to show a long silence, and "120h ago" is a number to convert before
+    it is an answer.
     """
     client, _, _ = api
     script = (await client.get("/static/app.js")).text
@@ -5420,7 +5425,8 @@ async def test_the_coarse_age_helper_never_speaks_in_seconds(api):
 
     assert 'return t("web.header.time_ago_just_now");' in body
     assert 'return t("web.header.time_ago_minutes", { minutes });' in body
-    assert 'return t("web.header.time_ago_hours", { hours: Math.round(minutes / 60) });' in body
+    assert 'return t("web.header.time_ago_hours", { hours });' in body
+    assert 'return t("web.header.time_ago_days", { days: Math.round(hours / 24) });' in body
     # The whole point of the helper: no per-second branch.
     assert "time_ago_seconds" not in body
     # And no hardcoded translation, in either language.
@@ -5629,6 +5635,11 @@ def test_the_shipped_last_heard_line_takes_the_newer_of_the_two_sources():
         state.deviceHeardAt[3] = now;
         out.live_newer = state.lastHeardText({ id: 3, last_heard: iso(now - 3 * 3600 * 1000) });
 
+        // The five-day silence this whole line was built for. Before the
+        // day branch (A7) this read "Last heard 120h ago".
+        state.deviceHeardAt[4] = now - 5 * 24 * 3600 * 1000;
+        out.five_days = state.lastHeardText({ id: 4 });
+
         console.log(JSON.stringify(out));
         """,
         translations=_web_strings(),
@@ -5637,6 +5648,7 @@ def test_the_shipped_last_heard_line_takes_the_newer_of_the_two_sources():
     assert values["never"] == "Not heard since the bridge started"
     assert values["served_newer"] == "Last heard 2m ago"
     assert values["live_newer"] == "Last heard just now"
+    assert values["five_days"] == "Last heard 5d ago"
 
 
 @pytest.mark.skipif(NODE is None, reason="node is required for this test")

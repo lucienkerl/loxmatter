@@ -119,6 +119,23 @@ it arrives every 30 seconds regardless and would make every tile claim it had
 just been heard from. The key pattern excludes it on its own, and a test pins
 that.
 
+> **Correction (final review, 9 September 2026).** This paragraph names the
+> only key it thought had to be excluded, and there are two. `d<id>_online`
+> matches `d<device id>_` and so is *not* excluded by the key pattern —
+> "excludes it on its own" is true of the heartbeat and false of the online
+> key, which this design never considered. The distinction is one the
+> server already draws: `Runtime._mark_heard` is called from
+> `on_attribute`, `on_node_snapshot` and `on_event`, and deliberately not
+> from `set_online`, because reachability is matter-server's bookkeeping
+> *about* a node rather than the node saying anything. `set_online` still
+> ends in `_notify_observers("d<id>_online", …)`, so the key reached the
+> browser and was credited there — the tile rendered the Offline pill and
+> "Last heard just now" on the same card, on every re-subscription, which
+> is the feature asserting the opposite of the truth at the one moment it
+> exists for. `connectLive`'s handler now excludes the online key
+> explicitly (finding A1), and two tests pin it: one on the delivered
+> source, one that runs the handler.
+
 The server value is thus only the starting point, for the window between page
 load and the first live message from that device. Which is exactly the gap it
 exists to fill.
@@ -152,6 +169,23 @@ stay German — see `CLAUDE.md`):
 
 `web.header.time_ago_just_now` sits with the other `time_ago_*` keys because
 that is where the coarse helper's other branches already live.
+
+> **Correction (final review, 9 September 2026).** The two German values in
+> the table above are not what ships, and the second one was never even the
+> same sentence as the plan's. `strings.yaml` carries
+> `Zuletzt gehört {text}` and `Seit dem Start der Brücke nichts gehört`
+> (commit `8870425` for the umlauts; the wording is the plan's, not this
+> table's `Seit dem Bruecken-Start nichts gehoert`). `web.*` values are the
+> text a person reads in the browser and are written **with** umlauts —
+> see the correction under Global Constraints in the plan for the rule this
+> design and that plan both got wrong.
+>
+> There is also a **fourth** key now, which this section could not have
+> foreseen: `web.header.time_ago_days` (`{days}d ago` / `vor {days} Tagen`),
+> added by finding A7. `sinceTextCoarse` rendered a five-day silence as
+> "120h ago" — a number to convert before it is an answer, in the one label
+> in this interface built to show a long silence, for an incident that is
+> itself a five-day story.
 
 ## 8. Testing
 

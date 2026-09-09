@@ -15,6 +15,17 @@
 - All commands run from the worktree root, never `cd` into the main checkout. Never `git stash` — the stash stack is shared with other sessions.
 - **English everywhere** — code, comments, docstrings, test names, commit messages. The one exception this plan touches: the `de:` values in `src/loxmatter/i18n/strings.yaml` are shipped product and stay German. See `CLAUDE.md`.
 - German `de:` values in this repository are written **without umlauts** (`gehoert`, `Bruecke`), matching every neighbouring entry.
+
+  > **Correction (9 September 2026).** This constraint is wrong and was
+  > acted on: the three strings this plan added shipped transliterated and
+  > commit `8870425` had to put the umlauts back. `web.*` values are the
+  > text a person reads in the browser, and there they are written **with**
+  > umlauts — `Brücke`, `Gerät`, `Zuletzt gehört`. The "matching every
+  > neighbouring entry" was read off the wrong neighbours: transliteration
+  > is the convention for German that appears in *identifiers and code*,
+  > not for shipped `web.*` product text. The claim stays here because it
+  > is what the plan was executed under, and the transliterated values in
+  > Task 2 step 1 below are its consequence, not a second mistake.
 - Line length 100 (`[tool.ruff] line-length = 100`).
 - The checks: `uv run ruff check .`, `uv run ruff format --check .`, `uv run mypy`, `uv run python scripts/check_language.py`, `uv run pytest`.
 - The full suite takes about **three minutes** — it looks like a hang, it is not. Wait for it; do not return early.
@@ -230,6 +241,19 @@ web.devices.never_heard:
   en: "Not heard since the bridge started"
   de: "Seit dem Start der Bruecke nichts gehoert"
 ```
+
+> **Correction (9 September 2026).** What ships carries the umlauts —
+> `Zuletzt gehört {text}` and `Seit dem Start der Brücke nichts gehört`,
+> since commit `8870425`; see the correction under Global Constraints for
+> why. The block above is left as written: it is what was executed, and
+> the German in it is what the first version of `strings.yaml` actually
+> contained.
+>
+> The mistake did not stop at the strings. Step 2's
+> `assert "Zuletzt gehoert" not in body` guarded the transliteration that
+> had already been replaced, so it could no longer fail — a guard that
+> reads like one and is not. It asserts against `Zuletzt gehört` since the
+> final review (finding A4), with the old spelling kept beside it.
 
 - [ ] **Step 2: Write the failing tests**
 

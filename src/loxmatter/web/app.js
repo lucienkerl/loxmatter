@@ -771,6 +771,16 @@ function app() {
       // call Alpine exactly once. The tick costs nothing as long as no
       // one is logged in: it writes to a field that only the app's header
       // reads.
+      //
+      // Correction (final review, 2026-09-09): the last sentence is no
+      // longer true. Since the "Last heard ..." line, `nowTick` is read
+      // by every device tile as well, once a second (`lastHeardText` ->
+      // `sinceTextCoarse`). The conclusion holds anyway, for a different
+      // reason than the one given: `sinceTextCoarse` returns the SAME
+      // string for a whole minute, so Alpine re-evaluates the expression
+      // but rewrites no text - which is precisely why that helper exists
+      // (see its docstring). The cheap part is no longer "nobody reads
+      // it", it is "nothing changes".
       window.setInterval(() => {
         this.nowTick = Date.now();
       }, 1000);
@@ -1994,6 +2004,14 @@ function app() {
      * Under a minute this is therefore a fixed string; from there it
      * changes at most once a minute. Reads `nowTick`, so Alpine redraws
      * it on its own.
+     *
+     * Unlike `sinceText` it has a day branch (final review, A7). The
+     * ceiling on both is the bridge's uptime - `last_heard` does not
+     * survive a restart - but this label is the one place in the
+     * interface built to show a LONG silence, and the incident that
+     * prompted it is itself a five-day story: a button whose
+     * subscription had been dead since 3 September. "120h ago" is a
+     * number to convert before it is an answer.
      */
     sinceTextCoarse(timestamp) {
       if (!timestamp) {
@@ -2007,7 +2025,13 @@ function app() {
       if (minutes < 60) {
         return t("web.header.time_ago_minutes", { minutes });
       }
-      return t("web.header.time_ago_hours", { hours: Math.round(minutes / 60) });
+      const hours = Math.round(minutes / 60);
+      // Two full days, not one: "36h ago" still reads as a span someone
+      // can place in their own day, "1d ago" throws that away.
+      if (hours < 48) {
+        return t("web.header.time_ago_hours", { hours });
+      }
+      return t("web.header.time_ago_days", { days: Math.round(hours / 24) });
     },
 
     /**

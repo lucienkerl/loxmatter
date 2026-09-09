@@ -662,6 +662,9 @@ web.header.time_ago_minutes:
 web.header.time_ago_hours:
   en: "{hours}h ago"
   de: "vor {hours} h"
+web.header.time_ago_days:
+  en: "{days}d ago"
+  de: "vor {days} Tagen"
 web.header.time_ago_just_now:
   en: "just now"
   de: "gerade eben"
