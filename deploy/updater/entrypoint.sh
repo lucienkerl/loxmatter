@@ -72,6 +72,41 @@ WORKER="${WORKER:-/opt/loxmatter/update-once.sh}"
 # being there, and still reporting, when the bridge is not.
 WORKER_TIMEOUT_SECONDS="${WORKER_TIMEOUT_SECONDS:-600}"
 
+# This container's own image, by digest - resolved exactly ONCE, here,
+# before the poll loop below ever starts $WORKER for the first time, and
+# exported so every pass reads it as a plain environment variable
+# (update-once.sh's own $UPDATER_DIGEST - see its comment there for why
+# that script never resolves this itself: doing so on every pass would
+# touch `docker` unconditionally even on a pass that only rejects a
+# malformed request, and `tests/test_updater_script.py` pins down that
+# such a pass makes no docker call at all). Describes THIS CONTAINER's
+# own identity, not any one job - the same reasoning `Dockerfile`'s
+# LOXMATTER_UPDATER_VERSION ARG/ENV pair already follows for the sibling
+# field baked in at build time; a digest cannot be baked in the same way
+# (the registry only assigns one after a push), so it is resolved here,
+# at container start, instead.
+#
+# `docker inspect <container>` never carries `.RepoDigests` itself - only
+# `docker inspect <image>` does, and only once that image was actually
+# PULLED from a registry rather than built locally (`docker build`, a
+# maintainer's own checkout), which answers `[]`, not an error. Two
+# calls, the same shape update-once.sh's own `running_version()`/
+# `host_path_for()` already make: the first names the (opaque, local)
+# image id this container was created from, the second reads THAT
+# image's own `RepoDigests`. Either step failing (daemon unreachable,
+# no such container yet) leaves `UPDATER_DIGEST` empty - "unknown", not a
+# fabricated value - which `set -u` alone cannot turn fatal here since
+# every step below is already guarded by `|| true`/a redirected stderr.
+UPDATER_DIGEST=""
+updater_image_id="$(docker inspect loxmatter-updater --format '{{.Image}}' 2>/dev/null || true)"
+if [ -n "$updater_image_id" ]; then
+  UPDATER_DIGEST="$(docker inspect "$updater_image_id" \
+      --format '{{range .RepoDigests}}{{println .}}{{end}}' 2>/dev/null \
+    | sed -n -E 's/^.*@(sha256:[0-9a-f]+)$/\1/p' | head -1)"
+fi
+export LOXMATTER_UPDATER_DIGEST="$UPDATER_DIGEST"
+
+
 while [ "$terminated" -eq 0 ]; do
   timeout "$WORKER_TIMEOUT_SECONDS" "$WORKER" &
   child_pid=$!

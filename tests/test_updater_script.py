@@ -402,6 +402,59 @@ def test_a_heartbeat_only_pass_corrects_a_stale_updater_version(updater):
     assert state["updater_version"] == "0.3.3"
 
 
+def test_a_heartbeat_asserts_the_reported_digest(updater):
+    # `$UPDATER_DIGEST` is read from $LOXMATTER_UPDATER_DIGEST - resolved
+    # ONCE by entrypoint.sh, never by this script itself (see the
+    # top-of-file comment: resolving it here, on every pass, would touch
+    # `docker` unconditionally even on a pass that only rejects a
+    # malformed request - see the "docker not in calls" tests throughout
+    # this file). A pure heartbeat pass must still assert it into
+    # state.json, the same way it already asserts `updater_version`.
+    _, calls, state = updater(LOXMATTER_UPDATER_DIGEST="sha256:" + "a" * 64)
+    assert "docker" not in calls, "this must be a pure heartbeat pass, no job involved"
+    assert state["updater_digest"] == "sha256:" + "a" * 64
+
+
+def test_a_heartbeat_only_pass_corrects_a_stale_digest(updater):
+    # The sharper case, mirroring
+    # test_a_heartbeat_only_pass_corrects_a_stale_updater_version above: a
+    # value already on disk from a PREVIOUS container must not survive
+    # into a pass run by a DIFFERENT one - refresh_heartbeat re-asserts
+    # the field every pass rather than merely preserving whatever is
+    # already there.
+    state_file = updater.update_dir / "state.json"
+    state_file.write_text(
+        json.dumps(
+            {
+                "id": None,
+                "phase": "idle",
+                "from": None,
+                "to": None,
+                "error": None,
+                "rolled_back": False,
+                "rolled_back_to": None,
+                "healthy": True,
+                "updater_seen_at": "2000-01-01T00:00:00Z",
+                "updater_digest": "sha256:" + "b" * 64,
+            }
+        ),
+        encoding="utf-8",
+    )
+    _, calls, state = updater(LOXMATTER_UPDATER_DIGEST="sha256:" + "c" * 64)
+    assert "docker" not in calls, "this must be a pure heartbeat pass, no job involved"
+    assert state["updater_digest"] == "sha256:" + "c" * 64
+
+
+def test_an_unresolved_digest_reports_as_null(updater):
+    # $LOXMATTER_UPDATER_DIGEST not set at all (entrypoint.sh could not
+    # resolve it - no `RepoDigests` entry) - "empty means null", the same
+    # convention `updater_version` already follows, not an omitted key and
+    # not a fabricated value.
+    _, calls, state = updater()
+    assert "docker" not in calls
+    assert state["updater_digest"] is None
+
+
 def test_a_target_containing_a_semicolon_is_rejected(updater):
     _write_request(updater, target="0.3.0; rm -rf /")
     _, calls, state = updater()

@@ -107,11 +107,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - id: meta
-        # The version baked into THIS image (LOXMATTER_UPDATER_VERSION,
-        # compared by the web UI against the bridge's own LOXMATTER_VERSION
-        # - see deploy/updater/Dockerfile and update-once.sh) must read the
-        # same way the bridge's own does, or every comparison would first
-        # have to normalise one side. The `image` job above strips the
+        # The version baked into THIS image (LOXMATTER_UPDATER_VERSION -
+        # see deploy/updater/Dockerfile and update-once.sh). Review fix
+        # ("the comparison and the path"): the web UI no longer DECIDES
+        # whether to warn about a stale updater from this value - that
+        # decision moved to an image-DIGEST comparison (see
+        # update_check.resolve_updater_digest and update-once.sh's own
+        # updater_digest()), because every release stamps a version number
+        # here whether or not deploy/updater/ actually changed, which made
+        # the old version-based comparison warn on every single release.
+        # The stamp itself stays, deliberately: `updater_version` is still
+        # what the warning's own TEXT says ("the updater is still on X,
+        # this bridge on Y") once the digest comparison decides to show it
+        # at all - dropping this step would leave that sentence with
+        # nothing to say. It must still read the same way the bridge's own
+        # does, or every comparison would first have to normalise one
+        # side. The `image` job above strips the
         # leading "v" off the tag for exactly this value (its own `version`
         # output, `steps.meta.outputs.version` there); this job's `if:`
         # above already guarantees `github.ref` is `refs/tags/v...` (never

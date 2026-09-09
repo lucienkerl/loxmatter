@@ -8,6 +8,16 @@ people who don't know the code.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The "updater is out of date" warning could fire on a release that
+  never touched the updater at all.** It compared version numbers, and
+  every release stamps a version number into the updater image whether
+  or not that image actually changed — so the warning could tell you to
+  refresh something that was already current. It now compares the actual
+  image running against what is currently published, and only speaks up
+  when they genuinely differ.
+
 ## [0.3.4] — 2026-09-09
 
 ### Fixed

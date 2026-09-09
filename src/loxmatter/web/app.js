@@ -3066,29 +3066,42 @@ function app() {
     },
 
     /** Whether the UPDATER SIDECAR ITSELF (not the bridge, and nothing to
-     * do with `updateRunning()`) is reporting an older version than the
-     * bridge it serves. The sidecar no longer replaces its own container
-     * after a successful update (removed - see the incident recorded in
+     * do with `updateRunning()`) is running an image GHCR no longer
+     * serves under `:stable` - i.e. whether refreshing it (the command
+     * index.html prints beside this warning) would actually change
+     * anything. The sidecar no longer replaces its own container after a
+     * successful update (removed - see the incident recorded in
      * update-once.sh, near the end of the success branch: measured to
      * corrupt its own container instead of updating it), so nothing keeps
-     * these two in step on its own any more - this is the replacement
-     * signal, and the card (index.html) shows the one command that fixes
-     * it when this reads `true`.
+     * the two in step on its own any more - this is the replacement
+     * signal, and the card (index.html) shows the refresh command when
+     * this reads `true`.
      *
-     * `false`, not "unknown", whenever either version is missing: a
-     * sidecar built before `updater_version` existed reports `null` (see
-     * `update.py`'s own docstring on that field) and must not be nagged
-     * about a problem it cannot report on, and `versionInfo` itself is
-     * `null` until `GET /api/version` has answered at least once. A plain
-     * string comparison is enough for the case where both ARE present -
-     * both sides derive their version the same way (CI strips the leading
-     * "v" from the release tag for both the bridge and the sidecar image,
-     * see .github/workflows/ci.yml), so no further normalising is needed
-     * here. */
+     * A DIGEST comparison, deliberately not the version-STRING comparison
+     * this used to be: `.github/workflows/ci.yml`'s `updater-image` job
+     * bakes the release version into every tagged image unconditionally,
+     * so a version-string comparison flags "newer" on every single
+     * release - including one that never touched deploy/updater/ at all,
+     * where the image is behaviourally identical and there is nothing to
+     * refresh. The digest is the manifest GHCR would actually serve right
+     * now for `:stable` (`published_updater_digest`, resolved on the
+     * bridge - see `update_check.resolve_updater_digest`) against the one
+     * the running sidecar container actually has
+     * (`updater_digest`, `update-once.sh`'s own `updater_digest()`) -
+     * either matches or it does not, with nothing left to guess.
+     *
+     * `false`, not "unknown", whenever either digest is missing: a
+     * sidecar built before this field existed, one built locally rather
+     * than pulled (no `RepoDigests` entry at all), checking switched off,
+     * or GHCR unreachable right now, must not be nagged about a problem
+     * that cannot be measured - an unknown is not a mismatch. `updater_version`/
+     * `versionInfo.version` stay exactly what they were: not part of this
+     * decision any more, only of the message text index.html still builds
+     * from them directly. */
     updaterVersionBehind() {
-      const updaterVersion = this.updateStatus?.state?.updater_version;
-      const bridgeVersion = this.versionInfo?.version;
-      return Boolean(updaterVersion) && Boolean(bridgeVersion) && updaterVersion !== bridgeVersion;
+      const updaterDigest = this.updateStatus?.state?.updater_digest;
+      const publishedDigest = this.updateStatus?.published_updater_digest;
+      return Boolean(updaterDigest) && Boolean(publishedDigest) && updaterDigest !== publishedDigest;
     },
 
     /** Whether `state.json` still claims a job is running while the

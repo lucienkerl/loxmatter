@@ -139,6 +139,27 @@ def test_the_state_is_read_in_full(tmp_path):
     assert state.updater_version == "0.3.2"
 
 
+def test_the_updater_digest_is_read(tmp_path):
+    # Task "replace the version comparison with a digest comparison":
+    # `updater_digest` is a new field update-once.sh now writes alongside
+    # `updater_version` - read the same way, straight through
+    # `_as_optional_str`.
+    _state(tmp_path, phase="idle", updater_digest="sha256:abc123")
+    state = read_state(tmp_path)
+    assert state.updater_digest == "sha256:abc123"
+
+
+def test_an_absent_updater_digest_reads_as_none(tmp_path):
+    # The field is new - a state.json from before this change (or one
+    # where update-once.sh could not resolve it, see its own
+    # `updater_digest()`) simply has no such key, or an explicit `null`.
+    # Either way this must read as "unknown", not raise and not silently
+    # invent a value.
+    _state(tmp_path, phase="idle")
+    state = read_state(tmp_path)
+    assert state.updater_digest is None
+
+
 def test_an_absent_updater_version_reads_as_none_not_a_claim_of_currentness(tmp_path):
     # The bootstrapping case: every sidecar in the field predates
     # `updater_version` and will never write it at all - state.json simply

@@ -53,6 +53,27 @@ HEALTH_TIMEOUT="${LOXMATTER_HEALTH_TIMEOUT:-120}"
 # built with the ARG at all, so no default there can reach it.
 UPDATER_VERSION="${LOXMATTER_UPDATER_VERSION:-}"
 
+# This container's own image, by digest - resolved exactly ONCE, by
+# entrypoint.sh, before it ever starts this script's poll loop (see
+# entrypoint.sh's own comment). NOT resolved here, on every pass, even
+# though a `docker inspect` against the local socket would be cheap
+# enough on its own: `tests/test_updater_script.py`'s very first tests
+# pin down that a pure heartbeat pass - and, more importantly, a
+# REJECTED, malformed request - makes NO docker call whatsoever (spec
+# section 10's own claim: "even someone who fully takes over the bridge
+# can at most install a published, newer version" is proven exactly by
+# that absence). Resolving it from inside this script would touch docker
+# unconditionally on every single pass, malformed requests included, and
+# quietly weaken that proof. Describes THIS CONTAINER, never the job,
+# exactly like $UPDATER_VERSION above - so entrypoint.sh resolving it
+# once, the same way the Dockerfile bakes in $UPDATER_VERSION, is the
+# right layer for a fact that never changes for this container's whole
+# life. Empty (never defaulted) means null in state.json, the same
+# convention $UPDATER_VERSION already uses - an entrypoint.sh that could
+# not resolve it (no `RepoDigests` entry) reports nothing, honestly,
+# rather than a value nothing backs.
+UPDATER_DIGEST="${LOXMATTER_UPDATER_DIGEST:-}"
+
 REQUEST="$UPDATE_DIR/request.json"
 STATE="$UPDATE_DIR/state.json"
 LOG="$UPDATE_DIR/log.txt"
@@ -274,10 +295,21 @@ set_state() {
   # function's own comment for why: this field describes the CONTAINER
   # that is running right now, not the job, and a heartbeat always knows
   # that for certain.
+  #
+  # $UPDATER_DIGEST (top of file, read from entrypoint.sh's own one-time
+  # resolution - see the comment there for why this script never resolves
+  # it itself) is asserted the same way, for the same reason: it
+  # describes THIS container, not the job, and `refresh_heartbeat`
+  # re-asserts it on every heartbeat too. It is what the web UI now
+  # compares against GHCR's own ":stable" manifest digest to decide
+  # whether to show the "refresh the updater" warning at all - a
+  # version-string comparison alone used to trigger that warning on every
+  # release, whether or not deploy/updater/ had actually changed.
   if STATE_JSON="$(jq -n \
        --arg id "${JOB_ID:-}" --arg phase "$1" --arg error "${2:-}" \
        --arg from "${FROM:-}" --arg to "${TO:-}" --arg seen "$(now)" \
        --arg back "${ROLLED_BACK_TO:-}" --arg updater_version "${UPDATER_VERSION:-}" \
+       --arg updater_digest "${UPDATER_DIGEST:-}" \
        --argjson rolled "${ROLLED:-false}" --argjson healthy "${HEALTHY:-true}" \
        '{id: (if $id == "" then null else $id end),
          phase: $phase,
@@ -288,7 +320,8 @@ set_state() {
          rolled_back_to: (if $back == "" then null else $back end),
          healthy: $healthy,
          updater_seen_at: $seen,
-         updater_version: (if $updater_version == "" then null else $updater_version end)}')" \
+         updater_version: (if $updater_version == "" then null else $updater_version end),
+         updater_digest: (if $updater_digest == "" then null else $updater_digest end)}')" \
     && [ -n "$STATE_JSON" ]; then
     write_state "$STATE_JSON"
   else
@@ -357,9 +390,11 @@ set_state() {
 # Callers wrap this in `|| true` for exactly that reason.
 refresh_heartbeat() {
   if REFRESHED="$(jq --arg seen "$(now)" --arg updater_version "${UPDATER_VERSION:-}" \
+       --arg updater_digest "${UPDATER_DIGEST:-}" \
        'if (type == "object" and has("phase"))
         then .updater_seen_at = $seen
              | .updater_version = (if $updater_version == "" then null else $updater_version end)
+             | .updater_digest = (if $updater_digest == "" then null else $updater_digest end)
         else empty end' \
        "$STATE" 2>/dev/null)" \
     && [ -n "$REFRESHED" ]; then

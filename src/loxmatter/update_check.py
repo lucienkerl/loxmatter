@@ -42,7 +42,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 # The Fetch signature says "already-parsed JSON", not "raw response": the
@@ -54,8 +54,126 @@ from typing import Any
 # risking an `AttributeError` on `.get()`.
 Fetch = Callable[[str], Awaitable["dict[str, Any] | list[Any]"]]
 
+# A second, distinct callable for `resolve_updater_digest()` below: what
+# that answer needs is a RESPONSE HEADER (GHCR's `Docker-Content-Digest`),
+# not the parsed body `Fetch` promises - a container registry's manifest
+# response is never read here as JSON to interpret, only as headers a
+# caller supplies alongside the request headers this function needs to
+# send (the bearer token, the manifest-list `Accept` negotiation). Takes
+# the target URL and the request headers to send, returns the response
+# headers (case-insensitive lookup is the implementation's job, the same
+# way `aiohttp`'s own header mapping already behaves) - the body is
+# discarded by whatever implements this, deliberately: a manifest can be
+# sizable and nothing here reads it.
+FetchHeaders = Callable[[str, "dict[str, str]"], Awaitable["dict[str, str]"]]
+
 _RELEASE_URL = "https://api.github.com/repos/lucienkerl/loxmatter/releases/latest"
 _COMPARE_URL = "https://api.github.com/repos/lucienkerl/loxmatter/compare/{base}...main"
+
+# The updater sidecar's own image - a DIFFERENT GHCR repository from the
+# bridge's own (see `_RELEASE_URL`/`_COMPARE_URL` above, which name
+# `lucienkerl/loxmatter`, not `-updater`). `.github/workflows/ci.yml`'s
+# `updater-image` job is the one publisher of this repository's `:stable`
+# tag.
+_UPDATER_GHCR_REPO = "lucienkerl/loxmatter-updater"
+_GHCR_TOKEN_URL = "https://ghcr.io/token?scope=repository:{repo}:pull&service=ghcr.io"
+_GHCR_MANIFEST_URL = "https://ghcr.io/v2/{repo}/manifests/{tag}"
+# Both media types a multi-platform manifest list can come back as - GHCR
+# has been observed to answer with either depending on how the image was
+# pushed, and asking for both up front is what the verified-working
+# invocation in this feature's own design brief specifies; a server that
+# only recognises one of the two simply ignores the other.
+_GHCR_MANIFEST_ACCEPT = (
+    "application/vnd.oci.image.index.v1+json,"
+    "application/vnd.docker.distribution.manifest.list.v2+json"
+)
+
+
+async def resolve_updater_digest(*, fetch: Fetch, fetch_headers: FetchHeaders) -> str | None:
+    """What GHCR currently serves the updater sidecar's own image under
+    the `:stable` tag, as a `repo@sha256:...`-shaped digest's bare
+    `sha256:...` half - the same kind of value `update-once.sh`'s own
+    `updater_digest()` reports for the sidecar CONTAINER actually
+    running. The two are meant to be compared directly (see
+    `api/update.py`'s `_status()`), never parsed further here.
+
+    A two-step, unauthenticated flow - GHCR requires an anonymous pull
+    token even for a public image before it will answer a manifest
+    request at all:
+
+      1. `GET https://ghcr.io/token?scope=repository:<repo>:pull&service=ghcr.io`
+         -> `{"token": "..."}`
+      2. `GET https://ghcr.io/v2/<repo>/manifests/stable`, bearing that
+         token, asking for a manifest-list `Accept` - the
+         `Docker-Content-Digest` response HEADER (not the body) is the
+         answer.
+
+    `None` for every failure shape alike - a network error, an
+    unrecognised token response, a missing digest header - the same
+    "unknown, not a claim either way" doctrine `check()` above follows
+    for its own `error` field, except this function has no `error` field
+    to carry one: the caller (`api/update.py`) shows nothing at all when
+    this reads `None`, and a nagging false positive from a registry
+    hiccup would be worse than a warning that occasionally stays silent
+    one cycle longer than it strictly had to."""
+    try:
+        token_body = await fetch(_GHCR_TOKEN_URL.format(repo=_UPDATER_GHCR_REPO))
+        if not isinstance(token_body, dict):
+            return None
+        token = token_body.get("token")
+        if not isinstance(token, str) or not token:
+            return None
+        headers = await fetch_headers(
+            _GHCR_MANIFEST_URL.format(repo=_UPDATER_GHCR_REPO, tag="stable"),
+            {"Authorization": f"Bearer {token}", "Accept": _GHCR_MANIFEST_ACCEPT},
+        )
+    except (OSError, KeyError, ValueError, TypeError):
+        return None
+    # GHCR's own header casing is "Docker-Content-Digest", but HTTP header
+    # names are case-insensitive by spec and nothing here should trust a
+    # particular fetcher's mapping to preserve that casing - checked
+    # lower-cased against a lower-cased lookup instead of relying on the
+    # caller to hand back a case-insensitive mapping type.
+    lowered = {key.lower(): value for key, value in headers.items()}
+    digest = lowered.get("docker-content-digest")
+    return digest if digest else None
+
+
+class UpdaterDigestCache:
+    """Caches `resolve_updater_digest()`'s answer for a few minutes -
+    `/api/update/status` is polled every two seconds for the entire span
+    of a running update (see `app.js`'s `startUpdateTimer`), and without
+    this, every one of those polls would repeat the same GHCR round trip
+    for a value that only ever changes when a new updater image is
+    published, at most a few times a month. One instance is meant to live
+    for the process's whole lifetime (`api/update.py` constructs exactly
+    one, alongside the router), the same way `Store` is constructed once
+    and threaded through rather than reopened per request.
+
+    Deliberately NOT gated on `check_enabled` itself - that setting lives
+    in `store.update_settings`, which this module has no access to (see
+    `check()`'s own module docstring: update_check.py knows no HTTP or
+    settings concepts). The caller is expected to skip calling `get()`
+    entirely while checking is disabled, the same way `/api/update/check`
+    already skips calling `check()` - see `_status()` in `api/update.py`."""
+
+    # `:stable` moves only on a release; five minutes is generous headroom
+    # against that cadence while still being short enough that a
+    # maintainer who has just refreshed the sidecar by hand sees the
+    # warning clear within a handful of System-tab polls, not an hour of
+    # a stale "behind" reading.
+    _TTL = timedelta(minutes=5)
+
+    def __init__(self) -> None:
+        self._digest: str | None = None
+        self._checked_at: datetime | None = None
+
+    async def get(self, *, fetch: Fetch, fetch_headers: FetchHeaders, now: datetime) -> str | None:
+        if self._checked_at is not None and (now - self._checked_at) < self._TTL:
+            return self._digest
+        self._digest = await resolve_updater_digest(fetch=fetch, fetch_headers=fetch_headers)
+        self._checked_at = now
+        return self._digest
 
 
 @dataclass(frozen=True)

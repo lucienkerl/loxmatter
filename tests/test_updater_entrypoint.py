@@ -329,3 +329,122 @@ def test_late_forward_line_signals_an_already_known_pid(tmp_path: Path) -> None:
         "late-forward line did not deliver TERM to a PID already known "
         "when terminated was already set"
     )
+
+
+# ---------------------------------------------------------------------------
+# The one-time digest resolution (review fix, "the comparison"):
+# entrypoint.sh now resolves its own container's image digest exactly
+# ONCE, before the poll loop ever starts $WORKER, and exports it so
+# update-once.sh reads it as a plain environment variable - see that
+# script's own comment for why it never resolves this itself (a docker
+# call on every pass, including one that only rejects a malformed
+# request, would weaken tests/test_updater_script.py's own "no docker
+# call at all" proof).
+# ---------------------------------------------------------------------------
+
+
+def _fake_docker(
+    tmp_path: Path,
+    *,
+    image_id: str = "sha256:fakeimage0000",
+    repo_digest_line: str | None = "ghcr.io/lucienkerl/loxmatter-updater@sha256:" + "a" * 64,
+    mount_destination: str | None = "/repo",
+    mount_source: str | None = "/home/pi/matter-loxone",
+) -> None:
+    """A fake `docker` answering the two `docker inspect loxmatter-updater`
+    shapes entrypoint.sh makes (distinguished, like update-once.sh's own
+    stub, by whether the `--format` argument mentions "Mounts") plus the
+    THIRD one against the resolved image id - mirroring
+    `tests/test_updater_script.py::_docker_stub_source`'s own approach for
+    the sidecar's per-pass calls, just for entrypoint.sh's one-time ones.
+
+    `repo_digest_line`/`mount_destination` as `None` model "nothing to
+    report" - an image with no `RepoDigests` entry (built locally), or a
+    mount table that does not cover $LOXMATTER_STACK at all."""
+    digest_case = f'printf "%s\\n" "{repo_digest_line}"' if repo_digest_line else ":"
+    mount_case = (
+        f'printf "%s %s\\n" "{mount_destination}" "{mount_source}"' if mount_destination else ":"
+    )
+    _script(
+        tmp_path,
+        "docker",
+        f"""
+case "$1" in
+  inspect)
+    case "$2" in
+      loxmatter-updater)
+        case "$*" in
+          *Mounts*) {mount_case} ;;
+          *) printf "%s\\n" "{image_id}" ;;
+        esac
+        ;;
+      {image_id})
+        {digest_case}
+        ;;
+    esac
+    ;;
+esac
+""",
+    )
+
+
+def _dump_worker(tmp_path: Path, log: Path) -> Path:
+    """A worker that writes out the env var(s) entrypoint.sh is supposed
+    to have resolved and exported, so a test can read what $WORKER
+    actually saw - the one thing that matters here, since update-once.sh
+    itself just reads these as plain environment variables (see its own
+    comment)."""
+    return _script(
+        tmp_path,
+        "worker.sh",
+        f'printf "DIGEST=%s\\n" "$LOXMATTER_UPDATER_DIGEST" > "{log}"\n'
+        f'printf "STACK_HOST_PATH=%s\\n" "$LOXMATTER_STACK_HOST_PATH" >> "{log}"\n'
+        "exit 0\n",
+    )
+
+
+def test_the_digest_is_resolved_once_and_exported(tmp_path: Path) -> None:
+    """The normal case: an image that was actually pulled (a `RepoDigests`
+    entry exists) - the digest reaches the worker as a plain environment
+    variable."""
+    _fake_docker(tmp_path)
+    log = tmp_path / "worker-env.log"
+    worker = _dump_worker(tmp_path, log)
+
+    result = _run(tmp_path, worker, path_prefix=tmp_path)
+
+    assert result.returncode == 0, result.stderr
+    seen = log.read_text(encoding="utf-8")
+    assert f"DIGEST=sha256:{'a' * 64}" in seen
+
+
+def test_the_digest_is_unknown_for_a_locally_built_image(tmp_path: Path) -> None:
+    """`docker inspect <image>` answering an empty `RepoDigests` (a
+    `docker build`, not a pull) must leave `LOXMATTER_UPDATER_DIGEST`
+    empty - "unknown", never a fabricated value."""
+    _fake_docker(tmp_path, repo_digest_line=None)
+    log = tmp_path / "worker-env.log"
+    worker = _dump_worker(tmp_path, log)
+
+    result = _run(tmp_path, worker, path_prefix=tmp_path)
+
+    assert result.returncode == 0, result.stderr
+    seen = log.read_text(encoding="utf-8")
+    assert "DIGEST=\n" in seen
+
+
+def test_the_digest_resolution_makes_no_call_when_docker_is_unreachable(tmp_path: Path) -> None:
+    """`docker` itself failing outright (daemon down, no such container
+    yet - a fresh install.sh run this early in its own bootstrap) must not
+    take entrypoint.sh down with it under its own `set -u`: the digest
+    simply stays empty and the worker still starts."""
+    _script(tmp_path, "docker", "exit 1\n")
+    log = tmp_path / "worker-env.log"
+    worker = _dump_worker(tmp_path, log)
+
+    result = _run(tmp_path, worker, path_prefix=tmp_path)
+
+    assert result.returncode == 0, result.stderr
+    seen = log.read_text(encoding="utf-8")
+    assert "DIGEST=\n" in seen
+    assert "STACK_HOST_PATH=\n" in seen

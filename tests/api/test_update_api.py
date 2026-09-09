@@ -50,7 +50,7 @@ import pytest
 from conftest import authenticate
 
 from loxmatter import update_check
-from loxmatter.api.update import _default_session_factory, _fetch
+from loxmatter.api.update import _default_session_factory, _fetch, _fetch_headers
 from loxmatter.loxone.server import build_app
 from loxmatter.model.store import Store
 
@@ -112,6 +112,127 @@ async def test_the_status_route_reports_the_sidecars_own_version(api):
     _heartbeat(update_dir, updater_version="0.3.2")
     body = (await client.get("/api/update/status")).json()
     assert body["state"]["updater_version"] == "0.3.2"
+
+
+async def test_the_status_route_reports_the_sidecars_own_digest(api):
+    # `_status()` must forward `updater_digest` from `update.read_state`
+    # verbatim, the same as it already does for `updater_version` - the
+    # web UI's revised `updaterVersionBehind()` (app.js) reads it to
+    # decide whether to warn at all.
+    client, update_dir = api
+    _heartbeat(update_dir, updater_digest="sha256:" + "a" * 64)
+    body = (await client.get("/api/update/status")).json()
+    assert body["state"]["updater_digest"] == "sha256:" + "a" * 64
+
+
+async def test_an_absent_sidecar_digest_reads_as_none(api):
+    # A sidecar built before this change (or one that could not resolve
+    # its own digest - see update-once.sh's/entrypoint.sh's own comments)
+    # writes no such key at all. The route must pass that through as
+    # `null`, not omit the key.
+    client, update_dir = api
+    _heartbeat(update_dir)
+    body = (await client.get("/api/update/status")).json()
+    assert body["state"]["updater_digest"] is None
+
+
+async def test_the_status_route_reports_the_published_updater_digest(api, monkeypatch):
+    """The bridge's own half of the digest comparison: `_status()` must
+    resolve what GHCR currently serves the updater image under `:stable`
+    and hand it back as `published_updater_digest` - wired through the
+    real `update_check.resolve_updater_digest` (only the transport,
+    `_fetch`/`_fetch_headers`, is faked), the same "wire the real pieces
+    together, fake only the network" shape as
+    `test_a_rate_limited_github_response_becomes_a_calm_error_not_a_crash`
+    below."""
+    import loxmatter.api.update as update_api
+
+    async def fake_fetch(url: str) -> dict[str, Any]:
+        assert "token?scope=repository:lucienkerl/loxmatter-updater:pull" in url
+        return {"token": "t"}
+
+    async def fake_fetch_headers(url: str, headers: dict[str, str]) -> dict[str, str]:
+        assert "manifests/stable" in url
+        assert headers["Authorization"] == "Bearer t"
+        return {"Docker-Content-Digest": "sha256:" + "b" * 64}
+
+    monkeypatch.setattr(update_api, "_fetch", fake_fetch)
+    monkeypatch.setattr(update_api, "_fetch_headers", fake_fetch_headers)
+    client, update_dir = api
+    _heartbeat(update_dir)
+
+    body = (await client.get("/api/update/status")).json()
+
+    assert body["published_updater_digest"] == "sha256:" + "b" * 64
+
+
+async def test_the_published_digest_check_can_be_switched_off(api, monkeypatch):
+    """Same "an outbound call must be refusable" doctrine `/check` already
+    follows for its own GitHub call (see `test_the_check_can_be_switched_off`
+    below) - while checking is disabled, `/status` must not query GHCR at
+    all, not merely discard the answer."""
+    import loxmatter.api.update as update_api
+
+    async def must_not_be_called(*args: object, **kwargs: object) -> None:
+        raise AssertionError("must not query GHCR while checking is disabled")
+
+    monkeypatch.setattr(update_api, "_fetch", must_not_be_called)
+    monkeypatch.setattr(update_api, "_fetch_headers", must_not_be_called)
+    client, update_dir = api
+    _heartbeat(update_dir)
+    await client.patch("/api/update/settings", json={"check_enabled": False})
+
+    body = (await client.get("/api/update/status")).json()
+
+    assert body["published_updater_digest"] is None
+
+
+async def test_a_broken_connection_to_ghcr_leaves_the_published_digest_unknown(api, monkeypatch):
+    """GHCR being unreachable must not turn `/status` - polled every two
+    seconds during a running update - into an error response, and must
+    not be read as a mismatch either: `published_updater_digest` simply
+    stays unknown, the same "no internet is not an error state" doctrine
+    `update_check.check()` already follows."""
+    import loxmatter.api.update as update_api
+
+    async def broken_fetch(url: str) -> dict[str, Any]:
+        raise OSError("Name or service not known")
+
+    monkeypatch.setattr(update_api, "_fetch", broken_fetch)
+    client, update_dir = api
+    _heartbeat(update_dir)
+
+    response = await client.get("/api/update/status")
+
+    assert response.status_code == 200
+    assert response.json()["published_updater_digest"] is None
+
+
+async def test_the_published_digest_is_cached_across_polls(api, monkeypatch):
+    """The whole point of `UpdaterDigestCache`: `/status` is polled every
+    two seconds for the entire span of a running update - a second poll
+    landing well inside the cache's TTL must not repeat the GHCR round
+    trip."""
+    import loxmatter.api.update as update_api
+
+    calls: list[str] = []
+
+    async def counting_fetch(url: str) -> dict[str, Any]:
+        calls.append(url)
+        return {"token": "t"}
+
+    async def fake_fetch_headers(url: str, headers: dict[str, str]) -> dict[str, str]:
+        return {"Docker-Content-Digest": "sha256:" + "c" * 64}
+
+    monkeypatch.setattr(update_api, "_fetch", counting_fetch)
+    monkeypatch.setattr(update_api, "_fetch_headers", fake_fetch_headers)
+    client, update_dir = api
+    _heartbeat(update_dir)
+
+    await client.get("/api/update/status")
+    await client.get("/api/update/status")
+
+    assert len(calls) == 1, "the second poll within the cache TTL must not repeat the GHCR call"
 
 
 async def test_a_corrupted_state_file_is_read_as_absent_not_as_a_crash(api):
@@ -464,6 +585,98 @@ async def test_fetch_translates_a_truncated_body_into_a_value_error():
 
     with pytest.raises(ValueError, match="did not complete"):
         await _fetch("https://api.github.com/x", session_factory=lambda: session)
+
+    assert session.closed
+
+
+class FakeHeaderResponse:
+    """Stands in for `aiohttp.ClientResponse` for `_fetch_headers` tests -
+    unlike `FakeResponse` above (which serves `_fetch`'s body-reading
+    tests), what matters here is `.headers`, never a method call the way
+    `.text()` is."""
+
+    def __init__(self, status: int, headers: dict[str, str] | None = None) -> None:
+        self.status = status
+        self.headers = headers or {}
+
+    async def __aenter__(self) -> Self:
+        return self
+
+    async def __aexit__(self, *exc: object) -> None:
+        return None
+
+
+class FakeHeaderSession:
+    """Stands in for `aiohttp.ClientSession` for `_fetch_headers` tests -
+    same shape as `FakeSession` above, minus the body machinery
+    `_fetch_headers` never touches."""
+
+    def __init__(self, status: int = 200, headers: dict[str, str] | None = None) -> None:
+        self.status = status
+        self.headers = headers or {}
+        self.requests: list[tuple[str, dict[str, str]]] = []
+        self.closed = False
+        self.raise_on_get: Exception | None = None
+
+    def get(self, url: str, headers: dict[str, str] | None = None) -> Any:
+        self.requests.append((url, headers or {}))
+        if self.raise_on_get is not None:
+            raise self.raise_on_get
+        return FakeHeaderResponse(self.status, self.headers)
+
+    async def close(self) -> None:
+        self.closed = True
+
+
+async def test_fetch_headers_returns_the_response_headers():
+    session = FakeHeaderSession(status=200, headers={"Docker-Content-Digest": "sha256:abc"})
+
+    result = await _fetch_headers(
+        "https://ghcr.io/v2/x/manifests/stable",
+        {"Authorization": "Bearer t"},
+        session_factory=lambda: session,
+    )
+
+    assert result["Docker-Content-Digest"] == "sha256:abc"
+    url, headers = session.requests[0]
+    assert url == "https://ghcr.io/v2/x/manifests/stable"
+    assert headers["Authorization"] == "Bearer t"
+
+
+async def test_fetch_headers_rejects_a_non_200_status():
+    """A 401 (a bad/expired token) or 404 (no such tag) must not be read
+    as "here are the headers of a manifest that answers for :stable"."""
+    session = FakeHeaderSession(status=401)
+
+    with pytest.raises(ValueError, match="401"):
+        await _fetch_headers(
+            "https://ghcr.io/v2/x/manifests/stable", {}, session_factory=lambda: session
+        )
+
+
+async def test_fetch_headers_closes_the_session_even_when_the_request_fails():
+    session = FakeHeaderSession()
+    session.raise_on_get = OSError("Netz weg")
+
+    with pytest.raises(OSError):
+        await _fetch_headers(
+            "https://ghcr.io/v2/x/manifests/stable", {}, session_factory=lambda: session
+        )
+
+    assert session.closed
+
+
+async def test_fetch_headers_translates_a_dropped_connection_into_a_value_error():
+    """Same gap `_fetch`'s own sibling test closes - `ServerDisconnectedError`
+    does not inherit from `OSError`, and `resolve_updater_digest()`'s catch
+    tuple is written against the same shape `update_check.check()` uses."""
+    session = FakeHeaderSession()
+    session.raise_on_get = aiohttp.ServerDisconnectedError("Server disconnected")
+
+    with pytest.raises(ValueError, match="did not complete"):
+        await _fetch_headers(
+            "https://ghcr.io/v2/x/manifests/stable", {}, session_factory=lambda: session
+        )
 
     assert session.closed
 

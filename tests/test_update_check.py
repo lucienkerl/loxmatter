@@ -24,9 +24,11 @@ NOT an error here - the last test pins that down."""
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
+
 import pytest
 
-from loxmatter.update_check import check
+from loxmatter.update_check import UpdaterDigestCache, check, resolve_updater_digest
 
 
 async def test_the_stable_channel_reports_a_newer_release():
@@ -171,6 +173,125 @@ async def test_dev_channel_up_to_date_there_is_no_target():
     result = await check("dev", current_version="dev", current_commit="a3f91c2", fetch=fetch)
     assert result.target is None
     assert result.error is None
+
+
+async def test_resolve_updater_digest_reads_the_docker_content_digest_header():
+    # The exact, verified-working flow from this feature's own design
+    # brief: an anonymous token exchange first, then the manifest request
+    # bearing it - the answer is the RESPONSE HEADER, not anything in the
+    # body.
+    async def fetch(url):
+        assert url == (
+            "https://ghcr.io/token?scope=repository:lucienkerl/loxmatter-updater:pull"
+            "&service=ghcr.io"
+        )
+        return {"token": "the-token"}
+
+    async def fetch_headers(url, headers):
+        assert url == "https://ghcr.io/v2/lucienkerl/loxmatter-updater/manifests/stable"
+        assert headers["Authorization"] == "Bearer the-token"
+        assert "oci.image.index" in headers["Accept"]
+        return {"Docker-Content-Digest": "sha256:" + "a" * 64}
+
+    digest = await resolve_updater_digest(fetch=fetch, fetch_headers=fetch_headers)
+    assert digest == "sha256:" + "a" * 64
+
+
+async def test_resolve_updater_digest_is_none_without_a_usable_token():
+    # A token response missing its own "token" field (or answering
+    # something other than a JSON object entirely) leaves nothing to bear
+    # to the manifest request - that second call must never be attempted
+    # on an empty/forged Authorization header.
+    async def fetch(url):
+        return {"message": "denied"}
+
+    async def fetch_headers(url, headers):
+        raise AssertionError("must not be queried without a real token")
+
+    assert await resolve_updater_digest(fetch=fetch, fetch_headers=fetch_headers) is None
+
+
+async def test_resolve_updater_digest_is_none_when_the_header_is_missing():
+    # A 200 with no Docker-Content-Digest header at all (an unexpected
+    # registry response shape) is exactly as unknown as a failed request -
+    # never treated as "digest is the empty string" or similar.
+    async def fetch(url):
+        return {"token": "t"}
+
+    async def fetch_headers(url, headers):
+        return {}
+
+    assert await resolve_updater_digest(fetch=fetch, fetch_headers=fetch_headers) is None
+
+
+async def test_resolve_updater_digest_is_none_on_a_network_error():
+    # No internet is not an error state here either - same doctrine as
+    # `check()` above, just with `None` standing in for `Available.error`
+    # since this function has no error field of its own to carry one (see
+    # its own docstring: the caller shows nothing at all).
+    async def fetch(url):
+        raise OSError("Name or service not known")
+
+    async def fetch_headers(url, headers):
+        raise AssertionError("must not be reached without a token")
+
+    assert await resolve_updater_digest(fetch=fetch, fetch_headers=fetch_headers) is None
+
+
+async def test_resolve_updater_digest_is_none_when_the_manifest_call_fails():
+    # The token call can succeed while the manifest call itself fails (a
+    # rate limit, a transient GHCR error) - that failure must not
+    # propagate either.
+    async def fetch(url):
+        return {"token": "t"}
+
+    async def fetch_headers(url, headers):
+        raise ValueError("GHCR answered https://ghcr.io/... with HTTP 401.")
+
+    assert await resolve_updater_digest(fetch=fetch, fetch_headers=fetch_headers) is None
+
+
+async def test_the_digest_cache_reuses_a_recent_answer():
+    # `/api/update/status` is polled every two seconds for the entire span
+    # of a running update - without this cache, every single poll would
+    # repeat the GHCR round trip. Two calls within the TTL must reach the
+    # network exactly once.
+    calls = []
+
+    async def fetch(url):
+        calls.append(url)
+        return {"token": "t"}
+
+    async def fetch_headers(url, headers):
+        return {"Docker-Content-Digest": "sha256:" + "b" * 64}
+
+    cache = UpdaterDigestCache()
+    now = datetime(2026, 9, 9, 12, 0, 0, tzinfo=UTC)
+    first = await cache.get(fetch=fetch, fetch_headers=fetch_headers, now=now)
+    second = await cache.get(
+        fetch=fetch, fetch_headers=fetch_headers, now=now + timedelta(seconds=2)
+    )
+
+    assert first == second == "sha256:" + "b" * 64
+    assert len(calls) == 1, "a poll inside the TTL must not repeat the GHCR call"
+
+
+async def test_the_digest_cache_refreshes_after_the_ttl():
+    calls = []
+
+    async def fetch(url):
+        calls.append(url)
+        return {"token": "t"}
+
+    async def fetch_headers(url, headers):
+        return {"Docker-Content-Digest": "sha256:" + "c" * 64}
+
+    cache = UpdaterDigestCache()
+    now = datetime(2026, 9, 9, 12, 0, 0, tzinfo=UTC)
+    await cache.get(fetch=fetch, fetch_headers=fetch_headers, now=now)
+    await cache.get(fetch=fetch, fetch_headers=fetch_headers, now=now + timedelta(minutes=10))
+
+    assert len(calls) == 2, "a poll past the TTL must refresh, not keep serving a stale answer"
 
 
 async def test_equal_versions_under_different_component_counts():

@@ -189,10 +189,75 @@ async def _fetch(
     return parsed
 
 
+async def _fetch_headers(
+    url: str,
+    headers: dict[str, str],
+    *,
+    session_factory: Callable[[], Any] | None = None,
+) -> dict[str, str]:
+    """The `update_check.FetchHeaders` half of the two-step GHCR flow
+    `update_check.resolve_updater_digest()` needs - see that function's
+    own docstring. Unlike `_fetch` above, the answer this function's
+    caller wants is a response HEADER (`Docker-Content-Digest`), not the
+    parsed body - the manifest body itself is never read here, only
+    discarded once its headers have been captured, since nothing in this
+    feature needs the manifest's actual content.
+
+    Same translation duty as `_fetch`, for the same reason: aiohttp's own
+    exception hierarchy does not uniformly inherit from `OSError` (see
+    `_fetch`'s own docstring for the specific gap -
+    `ServerDisconnectedError`/`ClientPayloadError`), and
+    `resolve_updater_digest()`'s catch tuple is written against the same
+    `(OSError, KeyError, ValueError, TypeError)` shape `update_check.check()`
+    uses. Unguarded, one of those would surface as an unhandled exception
+    on `/api/update/status` - a route the web UI polls every two seconds
+    for the entire span of a running update.
+    """
+    import aiohttp
+
+    session = (session_factory or _default_session_factory)()
+    try:
+        async with session.get(url, headers=headers) as response:
+            status = response.status
+            response_headers = dict(response.headers)
+    except aiohttp.ClientError as exc:
+        raise ValueError(f"GHCR's response to {url} did not complete: {exc}") from exc
+    finally:
+        await session.close()
+    if status != 200:
+        raise ValueError(f"GHCR answered {url} with HTTP {status}.")
+    return response_headers
+
+
 def build_update_router(store: Store, update_dir: Path) -> APIRouter:
     router = APIRouter(prefix="/api/update")
 
-    def _status() -> dict[str, Any]:
+    # One cache for the whole life of this router - like `store` itself,
+    # constructed once and threaded through every closure below rather
+    # than reopened per request. See `UpdaterDigestCache`'s own docstring
+    # for why: `/status` is polled every two seconds for the entire span
+    # of a running update, and without this, every one of those polls
+    # would repeat the same GHCR round trip.
+    digest_cache = update_check.UpdaterDigestCache()
+
+    async def _published_updater_digest() -> str | None:
+        """What GHCR currently serves the updater sidecar's own image
+        under `:stable`, or `None` - gated on the same `check_enabled`
+        setting `/check` already gates its own GitHub call on (see that
+        route below): an outbound call must be refusable, and this is
+        the second one this feature makes. Any failure - disabled,
+        unreachable, an unrecognised answer - reads as `None`, and the
+        web UI shows nothing at all when either side of the comparison
+        it feeds is unknown (see `update_check.resolve_updater_digest`'s
+        own docstring for why: an unknown digest must never be read as a
+        mismatch)."""
+        if not store.update_settings.get_check_enabled():
+            return None
+        return await digest_cache.get(
+            fetch=_fetch, fetch_headers=_fetch_headers, now=datetime.now(UTC)
+        )
+
+    async def _status() -> dict[str, Any]:
         state = update_files.read_state(update_dir)
         return {
             "state": None
@@ -208,14 +273,28 @@ def build_update_router(store: Store, update_dir: Path) -> APIRouter:
                 "healthy": state.healthy,
                 # The sidecar's own baked-in version, `None` on one built
                 # before this field existed - see `UpdateState.updater_version`
-                # and the module docstring in `loxmatter/update.py`. The web
-                # UI compares this against `versionInfo.version` (the
-                # running bridge's own, from `GET /api/version`) and says
-                # nothing at all when this is `None`: an unknown version is
-                # not a stale one.
+                # and the module docstring in `loxmatter/update.py`. Kept
+                # verbatim even though the DECISION to warn no longer reads
+                # this field (see `updater_digest`/`published_updater_digest`
+                # below) - it is still what the warning's own text says
+                # ("the updater is still on X, this bridge on Y").
                 "updater_version": state.updater_version,
+                # The sidecar's own image, by digest - `None` when it was
+                # built locally rather than pulled (see
+                # `UpdateState.updater_digest`). Compared against
+                # `published_updater_digest` below to decide whether to
+                # warn at all; a version-string comparison alone used to
+                # trigger that warning on every release, whether or not
+                # deploy/updater/ had actually changed.
+                "updater_digest": state.updater_digest,
             },
             "updater_present": update_files.updater_present(state, now=datetime.now(UTC)),
+            # What GHCR currently serves for the updater image's `:stable`
+            # tag - see `_published_updater_digest()` above. Top-level, not
+            # nested under `state`: unlike every other field in `state`,
+            # this one does not come from the sidecar's own state.json at
+            # all, and nesting it there would misleadingly suggest it did.
+            "published_updater_digest": await _published_updater_digest(),
             "log": update_files.read_log(update_dir),
             "channel": store.update_settings.get_channel(),
             "check_enabled": store.update_settings.get_check_enabled(),
@@ -223,7 +302,7 @@ def build_update_router(store: Store, update_dir: Path) -> APIRouter:
 
     @router.get("/status")
     async def status() -> dict[str, Any]:
-        return _status()
+        return await _status()
 
     @router.patch("/settings")
     async def save_settings(patch: UpdateSettingsIn) -> dict[str, Any]:
@@ -238,7 +317,7 @@ def build_update_router(store: Store, update_dir: Path) -> APIRouter:
                 raise HTTPException(status_code=422, detail=str(exc)) from exc
         if patch.check_enabled is not None:
             store.update_settings.set_check_enabled(patch.check_enabled)
-        return _status()
+        return await _status()
 
     @router.get("/check")
     async def check() -> dict[str, Any]:
