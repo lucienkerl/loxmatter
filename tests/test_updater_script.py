@@ -43,6 +43,7 @@ import time
 from pathlib import Path
 
 import pytest
+import yaml
 
 from loxmatter.update import _TERMINAL_PHASES
 
@@ -950,6 +951,120 @@ def test_the_heartbeat_keeps_advancing_through_a_long_image_pull(updater):
     )
 
 
+def test_the_heartbeat_keeps_advancing_through_a_long_git_fetch(updater):
+    # Important 1 was never actually complete: `compose_pull_with_
+    # heartbeat` fixed the image pull, but `git fetch --tags --force
+    # origin` (the very first network call this pass makes, further up in
+    # update-once.sh, under phase "queued") is exactly the same shape - a
+    # single blocking call with no loop of its own - and nothing refreshed
+    # the heartbeat for its entire duration either. A slow uplink is the
+    # realistic trigger here (the fetch reaches the real, possibly
+    # distant `origin`, unlike most other operations in this file), and
+    # crossing the 30-second staleness window mid-fetch made the bridge
+    # show `updateStalled()`'s red banner - telling an operator to
+    # "restart the updater sidecar" while a healthy update was still
+    # under way.
+    #
+    # Same technique as the image-pull test above: the fake `git` binary
+    # snapshots state.json immediately before and after sleeping through
+    # the one call whose arguments contain "fetch", long enough (7s) to
+    # span several of `with_heartbeat`'s own 1s refresh polls.
+    before = updater.update_dir / "state-before-fetch.json"
+    after = updater.update_dir / "state-after-fetch.json"
+    git_path = updater.bindir / "git"
+    git_path.write_text(
+        "#!/bin/sh\n"
+        'printf "%s %s\\n" "git" "$*" >> "$STUB_LOG"\n'
+        'case " $* " in\n'
+        f'  *" fetch "*) cp "$LOXMATTER_UPDATE_DIR/state.json" "{before}" 2>/dev/null\n'
+        "    sleep 7\n"
+        f'    cp "$LOXMATTER_UPDATE_DIR/state.json" "{after}" 2>/dev/null ;;\n'
+        "esac\n"
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    git_path.chmod(0o755)
+    _write_request(updater, target="0.3.0")
+    _, _calls, state = updater(_timeout=30)
+    assert state["phase"] == "done"
+    assert before.is_file() and after.is_file(), "the git fetch never ran"
+    before_state = json.loads(before.read_text(encoding="utf-8"))
+    after_state = json.loads(after.read_text(encoding="utf-8"))
+    assert after_state["updater_seen_at"] > before_state["updater_seen_at"], (
+        "the heartbeat must advance WHILE the fetch is still running, not only once it has returned"
+    )
+
+
+def test_the_heartbeat_keeps_advancing_through_a_long_backup(updater):
+    # The same gap, on the `tar czf` backup: run before the pull, under
+    # phase "backup", and just as capable of outlasting 30 seconds - a
+    # database that has grown large, or `gzip` sharing an ARM core's
+    # attention with everything else this pass is doing, are the ordinary
+    # triggers on a Pi, not an edge case.
+    before = updater.update_dir / "state-before-backup.json"
+    after = updater.update_dir / "state-after-backup.json"
+    tar_path = updater.bindir / "tar"
+    tar_path.write_text(
+        "#!/bin/sh\n"
+        'printf "%s %s\\n" "tar" "$*" >> "$STUB_LOG"\n'
+        'case " $* " in\n'
+        f'  *" czf "*) cp "$LOXMATTER_UPDATE_DIR/state.json" "{before}" 2>/dev/null\n'
+        "    sleep 7\n"
+        f'    cp "$LOXMATTER_UPDATE_DIR/state.json" "{after}" 2>/dev/null ;;\n'
+        "esac\n"
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    tar_path.chmod(0o755)
+    _write_request(updater, target="0.3.0")
+    _, _calls, state = updater(_timeout=30)
+    assert state["phase"] == "done"
+    assert before.is_file() and after.is_file(), "the backup never ran"
+    before_state = json.loads(before.read_text(encoding="utf-8"))
+    after_state = json.loads(after.read_text(encoding="utf-8"))
+    assert after_state["updater_seen_at"] > before_state["updater_seen_at"], (
+        "the heartbeat must advance WHILE the backup is still running, not only once it has returned"
+    )
+
+
+def test_the_heartbeat_keeps_advancing_through_a_long_recreate(updater):
+    # The same gap again, on `compose up -d --no-deps --force-recreate` -
+    # the most misleading of the three to leave frozen: `--force-recreate`
+    # stops the OLD container (SIGTERM, then a grace period - 10s by
+    # default) before the new one is even created, let alone answering,
+    # so this call alone can already outlast the 30-second staleness
+    # window before `wait_healthy` gets a chance to start refreshing on
+    # its own. `updateStalled()` firing here (app.js) told an operator to
+    # "check the host or restart the updater sidecar" - i.e. to send
+    # SIGTERM into the very recreate this banner was describing.
+    before = updater.update_dir / "state-before-recreate.json"
+    after = updater.update_dir / "state-after-recreate.json"
+    docker_path = updater.bindir / "docker"
+    docker_path.write_text(
+        _docker_stub_source(
+            compose_case=(
+                'case " $* " in\n'
+                f'      *" up "*) cp "$LOXMATTER_UPDATE_DIR/state.json" "{before}" 2>/dev/null\n'
+                "        sleep 7\n"
+                f'        cp "$LOXMATTER_UPDATE_DIR/state.json" "{after}" 2>/dev/null ;;\n'
+                "    esac\n"
+                "    exit 0 ;;"
+            )
+        ),
+        encoding="utf-8",
+    )
+    docker_path.chmod(0o755)
+    _write_request(updater, target="0.3.0")
+    _, _calls, state = updater(_timeout=30)
+    assert state["phase"] == "done"
+    assert before.is_file() and after.is_file(), "the recreate never ran"
+    before_state = json.loads(before.read_text(encoding="utf-8"))
+    after_state = json.loads(after.read_text(encoding="utf-8"))
+    assert after_state["updater_seen_at"] > before_state["updater_seen_at"], (
+        "the heartbeat must advance WHILE the recreate is still running, not only once it has returned"
+    )
+
+
 def test_the_restart_leaves_the_neighboring_services_alone(updater):
     _write_request(updater, target="0.3.0")
     _, calls, _ = updater()
@@ -1105,6 +1220,17 @@ def test_wait_healthy_is_bounded_by_wall_clock_not_curl_duration(updater):
     # call this file has no other way to interrupt (see that function's
     # own comment). The bound below still sits far under what the OLD,
     # iteration-counting bug this test exists to catch would produce.
+    #
+    # This one pass reaches five `with_heartbeat` call sites - the fetch,
+    # the backup, the pull, the initial recreate and the rollback's own
+    # recreate - and each pays that same tax once. Five of them is still
+    # about a second in total, because the poll interval is decoupled
+    # from the refresh interval (see `_HEARTBEAT_POLL_SECONDS`); this
+    # bound briefly stood at 20s when the two were one second apiece.
+    # Bounded generously rather than tightly regardless: this test's own
+    # claim is "bounded by the clock", not "fast", and a machine under
+    # load adds process-spawn overhead that has nothing to do with
+    # either fix.
     curl_path = updater.bindir / "curl"
     curl_path.write_text("#!/bin/sh\nsleep 2\nexit 1\n", encoding="utf-8")
     curl_path.chmod(0o755)
@@ -1115,8 +1241,9 @@ def test_wait_healthy_is_bounded_by_wall_clock_not_curl_duration(updater):
     assert state["phase"] == "failed"
     assert state["rolled_back"] is True
     assert elapsed < 12, (
-        f"took {elapsed:.1f}s - two wall-clock-bounded 2s waits plus one "
-        "1s-granularity pull poll should stay well under this"
+        f"took {elapsed:.1f}s - two wall-clock-bounded 2s waits plus five "
+        "with_heartbeat poll taxes (fetch, backup, pull, and two recreates) "
+        "should stay well under this"
     )
 
 
@@ -1363,6 +1490,74 @@ def test_set_tag_escapes_sed_metacharacters_in_the_restored_tag(updater):
     assert state["phase"] == "failed"
     assert (updater.stack / ".env").read_text(encoding="utf-8") == "LOXMATTER_IMAGE_TAG=a|b\n"
     assert not (updater.stack / ".env.tmp").exists()
+
+
+def test_a_failed_sed_does_not_corrupt_the_env_file(updater):
+    # Item 4. `set_tag()` never checked `sed`'s own exit status before
+    # `mv`-ing its output over $ENV_FILE - and `set -eu` does not save it:
+    # every call site is `if ! set_tag ...` (the three further down in
+    # update-once.sh), and POSIX/bash both exempt the WHOLE body of a
+    # function called as an `if`'s own condition from `errexit`. A `sed`
+    # that fails partway through - the maintainer's own reproduction,
+    # reused here almost verbatim:
+    #
+    #   $ sh settag.sh env2 0.3.2
+    #   sed: couldn't flush stdout: No space left on device
+    #   rc=0
+    #   $ cat env2
+    #   MINISERVER_IP=192.168.1.77
+    #
+    # ...used to still let `set_tag` return 0 (the function's own exit
+    # status is its LAST command's - `mv`, moving whatever truncated
+    # garbage `sed` managed to write, which itself succeeds on its own
+    # terms), and the update proceeded to recreate the bridge against a
+    # `.env` that had just lost its API token, Thread dataset, radio
+    # device and image tag - while state.json went on to report success.
+    # A full SD card is the ordinary trigger on a Pi, and a full disk is
+    # exactly when someone reaches for an update.
+    #
+    # The `sed` stub below fails ONLY the one substitution call `set_tag`
+    # itself makes (matched on "LOXMATTER_IMAGE_TAG=" appearing in the
+    # substitution expression, `$1`) - every OTHER `sed` call this pass
+    # makes (`current_tag()`'s own read of the pre-existing tag,
+    # `sed_escape_replacement()`) falls through to the real binary
+    # unmodified, so this test still exercises a genuine pass rather than
+    # a script that cannot run past its very first `sed` invocation.
+    real_sed = shutil.which("sed")
+    assert real_sed, "this test needs a real sed on PATH to fall through to"
+    env_file = updater.stack / ".env"
+    env_file.write_text(
+        "MINISERVER_IP=192.168.1.77\n"
+        "LOXMATTER_API_TOKEN=deadbeefcafe\n"
+        "RADIO_DEVICE=/dev/ttyACM0\n"
+        "LOXMATTER_IMAGE_TAG=0.2.0\n",
+        encoding="utf-8",
+    )
+    original = env_file.read_text(encoding="utf-8")
+    sed_path = updater.bindir / "sed"
+    sed_path.write_text(
+        "#!/bin/sh\n"
+        'printf "%s %s\\n" "sed" "$*" >> "$STUB_LOG"\n'
+        'case "$1" in\n'
+        "  *LOXMATTER_IMAGE_TAG=*)\n"
+        '    printf "%s\\n" "MINISERVER_IP=192.168.1.77"\n'
+        "    exit 4 ;;\n"
+        "esac\n"
+        f'exec "{real_sed}" "$@"\n',
+        encoding="utf-8",
+    )
+    sed_path.chmod(0o755)
+    _write_request(updater, target="0.3.0")
+    _, _calls, state = updater()
+    assert state["phase"] == "failed"
+    assert "could not write the new image tag" in (state["error"] or "")
+    assert env_file.read_text(encoding="utf-8") == original, (
+        "a failed sed must leave the ORIGINAL .env completely untouched - "
+        "not the truncated output sed managed to emit before failing"
+    )
+    assert not (updater.stack / ".env.tmp").exists(), (
+        "the doomed temp file must be cleaned up, not left behind for a later pass to mv by accident"
+    )
 
 
 def test_set_tag_preserves_the_env_files_mode(updater):
@@ -1627,6 +1822,15 @@ def test_a_recreate_failure_also_rolls_back_without_a_pointless_wait(updater):
     # Matches " up " as a whole token in the full argument string - see
     # test_a_failed_restart_hands_off_to_rollback_instead_of_stranding_the_tag's
     # comment above for why not a positional "$2".
+    #
+    # `with_heartbeat` wraps the fetch, the backup, the pull AND both
+    # `compose up` attempts (initial and rollback), and an
+    # already-instant command still costs one poll interval each time -
+    # see that function's own comment for why. None of those is the
+    # "pointless wait" this test exists to prove was skipped: that wait
+    # is `wait_healthy`'s own HEALTH_TIMEOUT-bounded loop, never entered
+    # at all for the doomed initial attempt, and an order of magnitude
+    # longer than the whole poll tax put together.
     docker_path = updater.bindir / "docker"
     docker_path.write_text(
         _docker_stub_source(compose_case='case " $* " in *" up "*) exit 1 ;; esac; exit 0 ;;'),
@@ -2118,6 +2322,88 @@ def test_a_signal_during_the_rollback_health_wait_leaves_an_honest_failed_state(
     assert (unhealthy_service.update_dir / "LETZTER-FEHLSCHLAG.txt").exists()
 
 
+def test_a_signals_failure_file_uses_real_host_paths_too(unhealthy_service):
+    # Important 5, the sibling of Important 2 (`write_failure_file()`'s
+    # own host-path fix, `test_the_failure_file_uses_a_real_host_path_
+    # when_docker_can_resolve_it` above) on the SIGTERM path instead:
+    # `on_signal()` wrote its OWN copy of the same "cd $STACK && docker
+    # compose logs .../cd $REPO && ./scripts/update.sh ..." lines,
+    # straight from $STACK/$REPO - the CONTAINER paths - rather than
+    # through `host_path_for()` like every other failure path in this
+    # file. Those commands fail at the very first `cd` on the host,
+    # silently, exactly the bug `host_path_for()` exists to fix
+    # elsewhere - and this is the ONE failure file written for someone
+    # who by definition has no web interface left (a signal killed the
+    # process that would otherwise be answering it), so a command that
+    # cannot actually be pasted is worse here than almost anywhere else.
+    #
+    # Every OTHER docker stub in this file (including `unhealthy_service`'s
+    # own default, inherited from `updater`) answers `docker inspect
+    # loxmatter-updater` with an IDENTITY mount mapping - container and
+    # host paths coincide, so this exact bug is invisible to any test that
+    # does not deliberately model a real split. Reuses the non-identity
+    # docker stub shape `test_the_failure_file_uses_a_real_host_path_when_
+    # docker_can_resolve_it` above already introduced for exactly that
+    # reason, here answering BOTH `docker inspect` calls this pass makes
+    # (`running_version()` for $SERVICE, `host_path_for()` for
+    # loxmatter-updater) rather than just the second.
+    host_checkout = "/home/pi/loxmatter-checkout"
+    docker_path = unhealthy_service.bindir / "docker"
+    docker_path.write_text(
+        "#!/bin/sh\n"
+        'printf "%s %s\\n" "docker" "$*" >> "$STUB_LOG"\n'
+        'case "$1" in\n'
+        "  inspect)\n"
+        '    if [ "$2" = "loxmatter-updater" ]; then\n'
+        f'      printf "%s %s\\n" "$LOXMATTER_REPO" "{host_checkout}"\n'
+        f'      printf "%s %s\\n" "$LOXMATTER_STACK" "{host_checkout}/deploy/testhost"\n'
+        "    else\n"
+        '      printf "LOXMATTER_VERSION=0.2.0\\n"\n'
+        "    fi\n"
+        "    ;;\n"
+        "esac\n",
+        encoding="utf-8",
+    )
+    docker_path.chmod(0o755)
+    _write_request(unhealthy_service, target="0.3.0")
+    proc = unhealthy_service.popen()
+    try:
+        deadline = time.monotonic() + 10
+        reached_rollback = False
+        state_file = unhealthy_service.update_dir / "state.json"
+        while time.monotonic() < deadline:
+            if state_file.is_file():
+                try:
+                    current = json.loads(state_file.read_text(encoding="utf-8"))
+                except json.JSONDecodeError:
+                    current = None
+                if current is not None and current.get("phase") == "rollback":
+                    reached_rollback = True
+                    break
+            time.sleep(0.05)
+        assert reached_rollback, "the run never reached the rollback phase in time"
+        os.kill(proc.pid, signal.SIGTERM)
+        proc.wait(timeout=10)
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait()
+
+    text = (unhealthy_service.update_dir / "LETZTER-FEHLSCHLAG.txt").read_text(encoding="utf-8")
+    assert f"cd {host_checkout}/deploy/testhost && docker compose logs" in text
+    assert f"cd {host_checkout} && ./scripts/update.sh --no-pull" in text
+    # Scoped to the two RUNNABLE command lines specifically, not the log
+    # excerpt at the end of the file - that tail legitimately still shows
+    # the container-side `-f $STACK/docker-compose.yml` compose() always
+    # logs by design (see its own comment: `-f` deliberately stays a
+    # container path, only `--project-directory` moves to the host), a
+    # record of what THIS container did, not a command for a person to
+    # run themselves.
+    manual_section = text.split("Check by hand:")[1].split("Last lines of the log")[0]
+    assert str(unhealthy_service.stack) not in manual_section
+    assert str(unhealthy_service.stack.parent.parent) not in manual_section
+
+
 def test_the_rollback_falls_back_to_from_for_an_unidentified_v_prefixed_running_version(updater):
     # Minor. The acceptance check normalises $RUNNING through
     # "${RUNNING#v}" before comparing it against the ''|unbekannt|dev
@@ -2258,6 +2544,110 @@ def test_compose_resolves_the_host_path_not_the_container_path(updater):
     assert f"--project-directory {updater.stack}" not in pull_line
 
 
+@pytest.mark.skipif(
+    shutil.which("docker") is None,
+    reason="drives the real docker compose binary to resolve a real docker-compose.yml",
+)
+def test_the_env_file_survives_the_project_directory_moving_to_the_host(updater):
+    # The sibling of Critical 1 above, same root cause, found later: fixing
+    # --project-directory to point at the HOST (so relative `volumes:`
+    # entries resolve correctly) moves a SECOND lookup with it - Compose's
+    # own search for `.env` - onto that same host path, which this
+    # CONTAINER cannot read at all. Compose does not error on a missing
+    # `.env`; it warns per undefined variable and substitutes an empty
+    # string, so a recreate under that empty environment still reports
+    # success. That is exactly what reached production: `--miniserver ""`
+    # and an empty `LOXMATTER_API_TOKEN`, a bridge that came up and
+    # answered `/health` anyway, and a green "Now running: 0.3.2" tile.
+    #
+    # Every OTHER test in this file stubs `docker compose ...` as a bare
+    # `exit 0` (or a fixed failure), which proves nothing about `.env`:
+    # nothing ever asks Compose to actually READ one. This test instead
+    # translates each `docker compose ... pull|up ...` call update-once.sh
+    # makes into `docker compose <same -f/--project-directory/--env-file
+    # flags> config` against the REAL `docker` binary and the REAL
+    # deploy/testhost/docker-compose.yml - i.e. it asks Compose itself
+    # what it would resolve `--miniserver` to, under the exact flags
+    # compose() actually built. `--project-directory` below is a literal,
+    # never-created path (the same style the "host_checkout" tests above
+    # already use) - proven above to need no host directory to actually
+    # exist for `docker compose config` to run; what matters is only that
+    # NO `.env` sits there, which is the whole point: a fixed function
+    # finds `.env` via `--env-file` regardless, a broken one does not find
+    # it at all and falls back to Compose's own empty-string default.
+    real_docker = shutil.which("docker")
+    host_checkout = "/home/pi/loxmatter-checkout"
+    miniserver_ip = (
+        "203.0.113.42"  # TEST-NET-3 (RFC 5737) - reserved for documentation, never a real host.
+    )
+    config_out = updater.bindir.parent / "resolved-config.yml"
+
+    shutil.copy(
+        ROOT / "deploy" / "testhost" / "docker-compose.yml", updater.stack / "docker-compose.yml"
+    )
+    with (updater.stack / ".env").open("a", encoding="utf-8") as env_file:
+        env_file.write(f"MINISERVER_IP={miniserver_ip}\n")
+
+    docker_path = updater.bindir / "docker"
+    docker_path.write_text(
+        "#!/bin/sh\n"
+        'printf "%s %s\\n" "docker" "$*" >> "$STUB_LOG"\n'
+        'case "$1" in\n'
+        "  inspect)\n"
+        '    if [ "$2" = "loxmatter-updater" ]; then\n'
+        f'      printf "%s %s\\n" "$LOXMATTER_REPO" "{host_checkout}"\n'
+        f'      printf "%s %s\\n" "$LOXMATTER_STACK" "{host_checkout}/deploy/testhost"\n'
+        "    else\n"
+        '      printf "LOXMATTER_VERSION=0.2.0\\n"\n'
+        "    fi\n"
+        "    ;;\n"
+        "  compose)\n"
+        "    shift\n"
+        # compose() always emits some prefix of -f/--project-directory/
+        # --env-file flag+value pairs before the real subcommand
+        # (pull/up) - consumed generically here (rather than at fixed
+        # positions) so this stub keeps working when the fix under test
+        # is reverted for the bite-check below, where --env-file is
+        # simply absent from that prefix.
+        "    flags=\n"
+        '    while [ "$#" -gt 0 ]; do\n'
+        '      case "$1" in\n'
+        "        -f|--project-directory|--env-file)\n"
+        '          flags="$flags $1 $2"\n'
+        "          shift 2\n"
+        "          ;;\n"
+        "        *) break ;;\n"
+        "      esac\n"
+        "    done\n"
+        # The rest ($@: the real subcommand plus its own flags and the
+        # service name) is deliberately dropped - `config` takes none of
+        # that, and this call must never touch a real image or a real
+        # container regardless of what update-once.sh asked for.
+        f'    "{real_docker}" compose $flags config > "$CONFIG_OUT" 2>>"$STUB_LOG" || true\n'
+        "    exit 0\n"
+        "    ;;\n"
+        "esac\n",
+        encoding="utf-8",
+    )
+    docker_path.chmod(0o755)
+
+    _write_request(updater, target="0.3.0")
+    _, calls, state = updater(CONFIG_OUT=str(config_out))
+    assert state["phase"] == "done"
+    assert _compose_calls(calls, "pull"), (
+        "compose() was never called - nothing for this test to check"
+    )
+
+    assert config_out.exists(), "the docker stub's translated `config` call never ran"
+    resolved = yaml.safe_load(config_out.read_text(encoding="utf-8"))
+    command = resolved["services"]["loxmatter"]["command"]
+    assert "--miniserver" in command, command
+    assert command[command.index("--miniserver") + 1] == miniserver_ip, (
+        "MINISERVER_IP did not survive --project-directory moving to the host - "
+        f"resolved command was {command!r}"
+    )
+
+
 def test_compose_refuses_when_the_host_path_cannot_be_resolved(updater):
     # Critical 1, the other half: when host_path_for() cannot resolve
     # $STACK to a host path at all (no mount whose Destination is a
@@ -2364,3 +2754,37 @@ def test_a_broken_git_surfaces_as_a_failure_instead_of_a_silent_head_fallback(up
     assert "could not determine the currently checked-out commit" in state["error"]
     assert "checkout --detach" not in calls
     assert "fetch --tags --force origin" not in calls
+
+
+def test_the_heartbeat_refreshes_well_inside_the_bridges_staleness_window():
+    """The updater's refresh rate and the bridge's patience live in two
+    files, in two languages, and nothing at runtime makes them agree.
+
+    If the refresh ever became slower than `_MAX_SILENT_SECONDS`, the
+    bridge would decide mid-update that no updater is installed and raise
+    the red "it may have crashed - restart the sidecar" banner, which is
+    the one instruction that destroys a healthy update. That failure
+    reaches a Raspberry Pi and nothing before it: the shell side has no
+    idea what the Python side considers stale, and the Python side never
+    reads the shell.
+
+    So the pairing is asserted here, by reading both. Six times the
+    margin is deliberate - a loaded Pi stretches a sub-second sleep, and
+    being early costs one file write while being late costs the operator
+    a banner telling them to kill their own update.
+    """
+    from loxmatter.update import _MAX_SILENT_SECONDS
+
+    script = SCRIPT.read_text(encoding="utf-8")
+    poll_match = re.search(r"^_HEARTBEAT_POLL_SECONDS=([0-9.]+)$", script, re.MULTILINE)
+    ticks_match = re.search(r"^_HEARTBEAT_REFRESH_TICKS=([0-9]+)$", script, re.MULTILINE)
+    assert poll_match and ticks_match, "the heartbeat constants moved or were renamed"
+    poll = float(poll_match.group(1))
+    ticks = int(ticks_match.group(1))
+    refresh_seconds = poll * ticks
+
+    assert refresh_seconds * 6 <= _MAX_SILENT_SECONDS, (
+        f"the heartbeat refreshes every {refresh_seconds:g}s but the bridge calls an "
+        f"updater gone after {_MAX_SILENT_SECONDS}s - less than six times the margin. "
+        "Whichever of the two moved, move the other or justify the new margin here."
+    )

@@ -1397,6 +1397,9 @@ web.system.update_failed:
 web.system.update_rolled_back:
   en: "Version {version} did not report healthy. It was rolled back on its own; {from_version} is running again. The database was not touched."
   de: "Version {version} meldete sich nicht gesund. Es wurde selbsttätig zurückgesetzt, {from_version} läuft wieder. Die Datenbank wurde nicht angefasst."
+web.system.update_rollback_unhealthy:
+  en: "Version {version} did not report healthy, and the rollback to {from_version} did not report healthy either - this needs a look. Check LETZTER-FEHLSCHLAG.txt on the host, inside the shared volume at /data/update/LETZTER-FEHLSCHLAG.txt."
+  de: "Version {version} meldete sich nicht gesund, und auch das selbsttätige Zurücksetzen auf {from_version} meldete sich nicht gesund - das braucht einen Blick von Hand. LETZTER-FEHLSCHLAG.txt auf dem Host prüfen, im gemeinsamen Volume unter /data/update/LETZTER-FEHLSCHLAG.txt."
 web.system.update_rejected:
   en: "The update was refused: {message}"
   de: "Das Update wurde abgelehnt: {message}"

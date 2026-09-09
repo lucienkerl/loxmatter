@@ -1792,8 +1792,24 @@
                    installation), matching what update-once.sh itself
                    falls back to when it cannot name a concrete running
                    version either. -->
-              <p x-show="updateStatus.state.rolled_back" x-cloak
+              <!-- `healthy` (update.py's own `UpdateState.healthy`, sourced
+                   from update-once.sh's own $HEALTHY) reaches this route's
+                   response but, until now, was never read anywhere in this
+                   file - `grep healthy src/loxmatter/web/index.html` found
+                   nothing. update-once.sh's rollback branch sets `HEALTHY`
+                   to what the ROLLBACK's own health wait actually measured,
+                   not to `ROLLED`: a rollback can restore the old image
+                   (`ROLLED=true`, `set_tag "$BACK"` succeeded) and that old
+                   version can STILL fail to answer /health within
+                   HEALTH_TIMEOUT - the one case where a person, not the
+                   sidecar, has to intervene next. The unconditional
+                   sentence below used to claim "{from_version} is running
+                   again" regardless, which is exactly backwards for this
+                   case: told everything is fine, right when it is not. -->
+              <p x-show="updateStatus.state.rolled_back && updateStatus.state.healthy" x-cloak
                  x-text="t('web.system.update_rolled_back', { version: updateStatus.state.to, from_version: updateStatus.state.rolled_back_to || updateStatus.state.from })"></p>
+              <p class="banner danger" x-show="updateStatus.state.rolled_back && !updateStatus.state.healthy" x-cloak
+                 x-text="t('web.system.update_rollback_unhealthy', { version: updateStatus.state.to, from_version: updateStatus.state.rolled_back_to || updateStatus.state.from })"></p>
               <pre class="notes" x-text="updateStatus.log.slice(-8).join('\n')"></pre>
               <button @click="downloadFabricBackup()" x-text="t('web.system.backup_download')"></button>
             </div>

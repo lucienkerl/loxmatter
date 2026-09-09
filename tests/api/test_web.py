@@ -586,6 +586,20 @@ async def test_the_update_card_offers_its_four_states_and_the_confirmation(api):
         "{ version: updateStatus.state.to, "
         "from_version: updateStatus.state.rolled_back_to || updateStatus.state.from })" in page
     )
+    # `healthy` (update.py's `UpdateState.healthy`, update-once.sh's own
+    # $HEALTHY) reaches this route's response but used to be read nowhere
+    # in this file at all - a rollback that itself never became healthy
+    # (the case update-once.sh's own rollback health wait can produce)
+    # rendered the identical "is running again" sentence above, the one
+    # case where that claim is false. See the dedicated behavioral test
+    # below (`test_a_rollback_that_did_not_come_back_healthy_...`) for
+    # proof that the two lines are mutually exclusive on `healthy`, not
+    # just that this string was delivered somewhere on the page.
+    assert (
+        "t('web.system.update_rollback_unhealthy', "
+        "{ version: updateStatus.state.to, "
+        "from_version: updateStatus.state.rolled_back_to || updateStatus.state.from })" in page
+    )
 
     # State 5 (rejected) - the "Also" fix: `phase: rejected` used to be
     # rendered NOWHERE and `state.error` was never shown at all, so a
@@ -1200,6 +1214,94 @@ def _app_state(setup: str = "", translations: dict[str, str] | None = None) -> d
     )
     assert result.returncode == 0, result.stderr
     return json.loads(result.stdout)
+
+
+def _x_show_expr(markup: str, t_key: str) -> str:
+    """The literal `x-show="..."` expression on the `<p>` whose own
+    `x-text` calls `t(t_key, ...)` - pulled straight out of the SERVED
+    markup, not retyped by hand, so a future edit to index.html that
+    changes the condition (or drops it) breaks this extraction rather
+    than silently testing a stale copy. `re.DOTALL`: the two attributes
+    sit on separate lines in index.html (`x-show="..." x-cloak` then
+    `x-text="..."` on the next), same as every other multi-attribute tag
+    in that file."""
+    match = re.search(
+        r'x-show="([^"]*)"[^>]*x-text="t\(\'' + re.escape(t_key) + r"'",
+        markup,
+        flags=re.DOTALL,
+    )
+    assert match, f"no x-show immediately precedes t('{t_key}', ...) in the markup"
+    return match.group(1)
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+async def test_a_rollback_that_did_not_come_back_healthy_gets_its_own_message(api):
+    """Found comparing against an independent implementation of the same
+    design: `update-once.sh` sets `ROLLED=true` (the image write-back to
+    the old tag succeeded) and THEN, separately, `HEALTHY=false` when the
+    RESTORED version itself never answers `/health` within
+    `HEALTH_TIMEOUT` - the one case where a human, not the sidecar, has
+    to intervene next. `healthy` reaches `GET /api/update/status`
+    (`api/update.py`'s `_status()`) but was never read anywhere in
+    index.html at all (`grep healthy src/loxmatter/web/index.html`
+    returned nothing) - so the tile rendered the same "{from_version} is
+    running again" sentence regardless, in the one case where that
+    claim is false.
+
+    `test_the_update_card_offers_its_four_states_and_the_confirmation`
+    above only proves the new string was DELIVERED somewhere on the page
+    - true even if both lines' `x-show` conditions were identical, or
+    both hardcoded `true`, which would reproduce the exact bug this test
+    exists to catch while that assertion still passed. This test instead
+    pulls the REAL `x-show` expression text for both lines out of the
+    served page and evaluates it in node against a constructed
+    `updateStatus.state`, for every combination of `rolled_back`/
+    `healthy` - proving the two lines are actually mutually exclusive at
+    runtime, not merely both present in the HTML somewhere.
+
+    No Alpine runtime involved (consistent with every other node-harness
+    test in this file: `updateStalled()` and friends are plain JS
+    predicates run directly) - `x-show`'s value is itself a plain JS
+    boolean expression Alpine evaluates against the component's data, so
+    running it directly against a hand-built `updateStatus` is a faithful
+    stand-in, not a simulation of Alpine's own machinery."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+    rolled_back_expr = _x_show_expr(page, "web.system.update_rolled_back")
+    unhealthy_expr = _x_show_expr(page, "web.system.update_rollback_unhealthy")
+
+    def shown(expr: str, *, rolled_back: bool, healthy: bool) -> bool:
+        script = (
+            "const updateStatus = { state: { rolled_back: "
+            + ("true" if rolled_back else "false")
+            + ", healthy: "
+            + ("true" if healthy else "false")
+            + " } };\n"
+            f"console.log(!!({expr}));\n"
+        )
+        result = subprocess.run(
+            [NODE, "-e", script], capture_output=True, text=True, timeout=10, check=False
+        )
+        assert result.returncode == 0, result.stderr
+        return result.stdout.strip() == "true"
+
+    # Rolled back AND healthy again - the plain, reassuring sentence, and
+    # only that one.
+    assert shown(rolled_back_expr, rolled_back=True, healthy=True) is True
+    assert shown(unhealthy_expr, rolled_back=True, healthy=True) is False
+
+    # Rolled back but STILL not healthy - the case this fix adds. The
+    # reassuring sentence must no longer show (it would claim the old
+    # version "is running again", which here is not true); the new one
+    # must.
+    assert shown(rolled_back_expr, rolled_back=True, healthy=False) is False
+    assert shown(unhealthy_expr, rolled_back=True, healthy=False) is True
+
+    # No rollback at all - neither line, regardless of `healthy`.
+    assert shown(rolled_back_expr, rolled_back=False, healthy=True) is False
+    assert shown(unhealthy_expr, rolled_back=False, healthy=True) is False
+    assert shown(rolled_back_expr, rolled_back=False, healthy=False) is False
+    assert shown(unhealthy_expr, rolled_back=False, healthy=False) is False
 
 
 @pytest.mark.skipif(NODE is None, reason="node is required for this test")

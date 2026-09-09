@@ -419,6 +419,135 @@ refresh_heartbeat() {
   return 1
 }
 
+# Moved up here, ahead of `on_signal()` just below (Important 5) - it used
+# to sit much further down, next to its other caller `write_failure_file()`
+# in the rollback section, which is fine for THAT caller (only ever reached
+# late in a pass, long after this whole file has been read top to bottom)
+# but not for `on_signal()`: `trap on_signal TERM INT HUP` arms a few lines
+# down, and a POSIX shell only knows a function once the interpreter has
+# actually reached its `name() { ... }` definition - a signal arriving
+# EARLY in a pass (during the heartbeat block, say, well before the OLD
+# position of this function was ever read) would have hit `on_signal`
+# calling a `host_path_for` that, at that exact moment, simply did not
+# exist yet as a shell function. Defined here instead, before the trap is
+# even installed, `host_path_for` is available for the entire rest of the
+# script regardless of where a signal cuts it off - `write_failure_file`'s
+# own, much later use of it is unaffected either way.
+#
+# Resolves a path INSIDE this container back to where it lives on the
+# DOCKER HOST - the machine an operator's shell actually runs on, not this
+# sidecar's own filesystem. Proven end to end why guessing "same path"
+# does not work: $STACK/$REPO default to /repo/deploy/testhost and /repo,
+# bind-mounted from the host's checkout into this container - /repo does
+# not exist on the host at all, so every "cd /repo && ..." line in
+# LETZTER-FEHLSCHLAG.txt below used to fail at the `cd`, and the `&&`
+# silently swallowed everything after it.
+#
+# Asks the docker daemon itself, over the socket this sidecar already
+# holds, rather than assume any particular layout - it is the one party
+# that actually knows what is mounted where. `--format` prints one
+# "destination source" line per mount.
+#
+# The lookup below matches by LONGEST-PREFIX, not by an exact match on
+# $1 - a previous version of this function used
+# `awk -v dest="$1" '$1 == dest {...}'`, which only ever resolves a path
+# that is ITSELF a mount destination. $LOXMATTER_STACK
+# (/repo/deploy/testhost by default) is not one - only /repo is actually
+# mounted (see docker-compose.yml's `../..:/repo`), and /repo/deploy/testhost
+# is a subdirectory of it. Proven end to end against the exact-match
+# version: four of the five commands LETZTER-FEHLSCHLAG.txt prints start
+# `cd $STACK`, and every one of them fell back to "host path unknown"
+# even though the real host path was perfectly knowable - the /repo
+# mount's Source plus "/deploy/testhost". Only the fifth command (`cd
+# $REPO`, which resolves exactly since /repo IS a mount destination) came
+# out runnable. Restoring one out of five is not restoring the artefact
+# this file exists to be: something pasteable over SSH when the web UI
+# itself is unreachable.
+#
+# The fix: for each mount, ask whether its Destination is a PATH-SEGMENT
+# prefix of $1 (either an exact match, or $1 continues past it with a
+# "/"), keep the longest such Destination across all mounts, and append
+# whatever of $1 remains after stripping that prefix onto the matching
+# mount's Source. Three edge cases this has to get right:
+#
+#   * "/repo" must not be treated as a prefix of "/repository" - a plain
+#     `index($1, dest) == 1` substring test would accept that, silently
+#     resolving one mount's path as if it were inside a different one
+#     that merely happens to share a longer common spelling. The
+#     boundary check requires the character right after the shared
+#     prefix to be "/" (or nothing, for an exact match).
+#   * When mounts nest (a mount at /repo AND a more specific one at
+#     /repo/deploy, say), the LONGEST matching Destination has to win -
+#     otherwise a subdirectory that has its own, more specific mount
+#     would incorrectly resolve through the outer one instead.
+#   * A Destination of "/" (a mount of the whole container root - not
+#     something this project's own compose files do, but a general
+#     function should not assume its caller's layout) needs no special
+#     case at all if the prefix logic above is right: normalising it to
+#     the empty string before the "/"-boundary check makes it a prefix of
+#     every absolute path, at length 0 - the lowest possible priority, so
+#     any more specific mount still wins the longest-match comparison.
+#
+# Written for POSIX/busybox awk, not GNU awk specifically (the sidecar's
+# Alpine base has busybox awk, not gawk) - no gawk-only extensions
+# (`gensub`, `length()` on an array, gawk's own multi-char `RS`). Just
+# `index`, `substr`, `length`, `sub` and plain scalar bookkeeping, all
+# POSIX awk.
+#
+# Piped through `awk` rather than left bare: a `docker inspect` that
+# fails (daemon unreachable, no container named `loxmatter-updater` yet -
+# a fresh install.sh run this early in its own bootstrap) must not make
+# the ASSIGNMENT this runs inside fail under `set -eu`, the same reasoning
+# current_tag()/running_version() already document above for ending a
+# substitution on a command that itself always exits 0 - `awk` does, even
+# reading nothing at all.
+#
+# Falls back to $2 when nothing matches - a container path backed by a
+# named volume ($BACKUP_DIR, in the caller below) has no host directory
+# to report at all, and the caller is expected to reach for `docker exec`
+# instead (see the restore command below, which already does exactly
+# that, for exactly that reason).
+host_path_for() {
+  host_path_for_raw="$(docker inspect loxmatter-updater \
+      --format '{{range .Mounts}}{{.Destination}} {{.Source}}
+{{end}}' 2>/dev/null \
+    | awk -v dest="$1" '
+        {
+          d = $1
+          src = $0
+          sub(/^[^ ]*/, "", src)
+          sub(/^ /, "", src)
+
+          # Normalise a Destination of "/" to the empty string - see the
+          # block comment above for why that gives it the lowest possible
+          # priority (length 0) instead of a special case.
+          dn = d
+          if (dn == "/") { dn = "" } else { sub(/\/$/, "", dn) }
+
+          matched = 0
+          if (dest == dn) {
+            matched = 1
+            rest = ""
+          } else if (index(dest, dn "/") == 1) {
+            matched = 1
+            rest = substr(dest, length(dn) + 1)
+          }
+
+          if (matched) {
+            dlen = length(dn)
+            if (!found || dlen > best_len) {
+              found = 1
+              best_len = dlen
+              best_source = src
+              best_rest = rest
+            }
+          }
+        }
+        END { if (found) print best_source best_rest }
+      ')"
+  printf '%s' "${host_path_for_raw:-$2}"
+}
+
 # entrypoint.sh forwards SIGTERM to exactly this process - both on
 # `docker stop` and when its own 600s parent `timeout` fires - and until
 # now nothing here ever trapped it. Proven end to end: sending SIGTERM
@@ -516,6 +645,28 @@ on_signal() {
   set_state failed "interrupted by a signal while in phase '$sig_phase' - entrypoint.sh forwards SIGTERM here from \`docker stop\` and from its own 600s worker timeout; the fields above are the last ones this pass actually wrote, not a measurement of what is running now" \
     || true
 
+  # `write_failure_file()` resolves $STACK/$REPO through `host_path_for()`
+  # for every OTHER failure path in this file - this SIGTERM path used to
+  # print the raw CONTAINER paths instead, its own copy of the same
+  # commands rather than a call to that function. Same root cause
+  # `host_path_for()`'s own doc comment already tells in full: $STACK/
+  # $REPO are bind-mounted from the host's checkout into THIS container,
+  # under paths (/repo/deploy/testhost, /repo) that do not exist under
+  # those names on the host at all - so "cd $STACK && ..."/"cd $REPO &&
+  # ..." failed at the `cd`, silently swallowing everything after it via
+  # `&&`, exactly the bug that function was written to fix elsewhere.
+  # This is the ONE failure file written for someone who by definition has
+  # no web interface to fall back on (a signal killed the process that
+  # would otherwise be answering it) - the sibling of the fix the previous
+  # commit made on `write_failure_file()`'s own path, on THIS path
+  # instead, hidden until now by the same identity-mount docker stub every
+  # other test in this file still uses (see the non-identity fixture
+  # `test_the_env_file_survives_the_project_directory_moving_to_the_host`
+  # added for that fix, reused below).
+  host_stack="$(host_path_for "$STACK" \
+    "$STACK (host path unknown - run: docker inspect loxmatter-updater --format '{{json .Mounts}}')")"
+  host_repo="$(host_path_for "$REPO" \
+    "$REPO (host path unknown - run: docker inspect loxmatter-updater --format '{{json .Mounts}}')")"
   {
     printf 'loxmatter - last failed update attempt\n\n'
     printf 'Time:            %s\n' "$(now)"
@@ -526,8 +677,8 @@ on_signal() {
     printf 'either "docker stop" or its own 600-second worker timeout - before it reached\n'
     printf 'a definite outcome. If phase above was "rollback", the service may currently\n'
     printf 'be on neither the old nor the new version. Check by hand:\n'
-    printf '  cd %s && docker compose logs --tail 100 %s\n' "$STACK" "$SERVICE"
-    printf '  cd %s && ./scripts/update.sh --no-pull\n\n' "$REPO"
+    printf '  cd %s && docker compose logs --tail 100 %s\n' "$host_stack" "$SERVICE"
+    printf '  cd %s && ./scripts/update.sh --no-pull\n\n' "$host_repo"
     printf 'Last lines of the log:\n'
     tail -n 40 "$LOG" 2>/dev/null || true
   } > "$FAILURE" 2>/dev/null || true
@@ -954,6 +1105,37 @@ run() {
 # into, because the docker daemon behind this socket is the one party
 # that actually knows what is mounted where.
 #
+# `--project-directory` moves a SECOND thing besides relative `volumes:`
+# entries, and this comment did not say so for a long time: absent
+# `--env-file`, Compose also looks for `.env` inside the project
+# directory. Pointing that flag at the HOST path (as it must, for the
+# mounts above to resolve correctly) therefore also points the `.env`
+# lookup at a directory that exists on the HOST, not in this container -
+# and the host filesystem is not this process's filesystem at all, so
+# nothing under that path is readable here regardless of what actually
+# sits there. Compose's response to a missing `.env` is not an error: it
+# logs one warning line per undefined variable and substitutes an empty
+# string for each, then proceeds to `pull`/`up` normally. A recreate
+# under that empty environment SUCCEEDS - wrong, but successfully - which
+# is exactly what let this reach production: the health check three
+# lines below sees a container that came up and answers, `set_state done`
+# runs, and the bridge that just lost its `--miniserver` argument and its
+# `LOXMATTER_API_TOKEN` reports itself healthy throughout, because
+# `/health` (`src/loxmatter/loxone/server.py`) answers unconditionally.
+#
+# `--env-file "$ENV_FILE"` below is what keeps `.env` found. `$ENV_FILE`
+# (`"$STACK/.env"`, defined at the top of this file) is deliberately the
+# CONTAINER path, same footing as `-f` above and for the identical
+# reason - this process reads it from ITS OWN filesystem, the same
+# bind-mounted file `set_tag()` already writes through, elsewhere in this
+# script. Do not "fix" a future confusion here by making `$ENV_FILE` a
+# host path to match `$COMPOSE_PROJECT_DIR`: the two flags answer two
+# different questions - `--project-directory`, what the DAEMON should
+# resolve relative mounts against; `--env-file`, what THIS PROCESS should
+# read variables from - and each must stay on the side of the container
+# boundary that actually answers its own question. Swapping either one
+# reproduces a version of this same bug, just moved to the other flag.
+#
 # Resolved (and refused, see below) only ONCE per pass, on this
 # function's first call - not once per invocation. There can be several
 # in one pass (pull, the initial recreate, a rollback's own recreate),
@@ -1009,8 +1191,8 @@ compose() {
     log "compose: could not resolve $STACK to a host path (docker inspect loxmatter-updater found no mount whose Destination is a prefix of it) - refusing to run docker compose, since a relative volumes: entry would otherwise resolve against this container's own filesystem instead of the host's"
     return 1
   fi
-  log "\$ docker compose -f $STACK/docker-compose.yml --project-directory $COMPOSE_PROJECT_DIR $*"
-  docker compose -f "$STACK/docker-compose.yml" --project-directory "$COMPOSE_PROJECT_DIR" "$@" >> "$LOG" 2>&1
+  log "\$ docker compose -f $STACK/docker-compose.yml --project-directory $COMPOSE_PROJECT_DIR --env-file $ENV_FILE $*"
+  docker compose -f "$STACK/docker-compose.yml" --project-directory "$COMPOSE_PROJECT_DIR" --env-file "$ENV_FILE" "$@" >> "$LOG" 2>&1
 }
 
 # Important 1's other half: `compose pull` (the actual image download,
@@ -1042,32 +1224,84 @@ compose() {
 # whole script (and with it, the backgrounded pull) regardless of what
 # the heartbeat says.
 #
-# Polls once a SECOND, the same granularity `wait_healthy` already uses
-# above, not once every several seconds - `sleep N` inside a `while kill
-# -0 ...; do sleep N; ...; done` loop always sleeps the FULL N before its
-# very first liveness check, even when the child is done before that
-# check ever runs. Measured with a 5-second poll during this fix's own
-# development: an already-instant pull (this file's own test fixtures,
-# where the pulled "image" is a fake binary that returns immediately)
-# still cost a flat 5 extra wall-clock seconds on every single run
-# through this function, real work or none - multiplied across a test
-# suite already documented (see `project_testsuite_dauer` in this
-# maintainer's own notes) as long enough to look like a hang. A
-# one-second poll bounds that same unavoidable "sleep before the first
-# check" tax to at most one second instead.
-compose_pull_with_heartbeat() {
-  resolve_compose_project_dir
-  compose pull "$1" &
-  pull_pid=$!
-  while kill -0 "$pull_pid" 2>/dev/null; do
-    sleep 1
-    if kill -0 "$pull_pid" 2>/dev/null; then
+# The poll interval and the refresh interval are two different numbers,
+# and conflating them is what made an earlier version of this function
+# expensive. `sleep N` inside a `while kill -0 ...; do sleep N; ...;
+# done` loop always sleeps the FULL N before its very first liveness
+# check, even when the child finished before that check ever ran - so
+# the poll interval, and only the poll interval, is a flat tax paid on
+# every call through here whether there was real work to wait for or
+# not. Measured during this fix's own development: at a 5-second poll an
+# already-instant command (this file's own test fixtures, where the
+# pulled "image" is a fake binary returning immediately) cost a flat 5
+# extra wall-clock seconds every single time; at one second, one second;
+# five call sites in a full pass, multiplied across a test suite this
+# maintainer's own notes already record as long enough to look like a
+# hang (`project_testsuite_dauer`).
+#
+# So poll often (_HEARTBEAT_POLL_SECONDS) and refresh rarely
+# (_HEARTBEAT_REFRESH_TICKS polls between writes). The tax drops to the
+# poll interval while the stamp still moves far more often than it needs
+# to, and the SD card underneath a Pi is written a fifth as often during
+# a long pull as a one-second refresh would have written it.
+#
+# Sub-second `sleep` is not POSIX - `sleep` there takes an integer - so
+# this rests on the implementations that actually run it: busybox in the
+# sidecar (verified: `docker run --rm alpine:3.20 sh -c 'sleep 0.2'`
+# exits 0 against the base image `deploy/updater/Dockerfile` pins) and
+# the host's own `sleep` under the test suite. If this script is ever
+# rebased onto an image whose `sleep` is stricter, the failure is loud
+# and immediate rather than silent: every call through here returns
+# non-zero at once.
+#
+# Generalised into `with_heartbeat()` below, not left as a pull-only
+# mechanism: `git fetch`, the `tar czf` backup and every
+# `compose ... --force-recreate` have the identical shape - a single
+# blocking call, run from this same pass, whose own wall-clock time can
+# plausibly exceed the 30-second staleness window (`_MAX_SILENT_SECONDS`,
+# update.py) on a loaded Pi - and each left the heartbeat frozen for its
+# entire duration until this fix, exactly as the pull once did. Kept as
+# a thin wrapper around `with_heartbeat` rather than inlining
+# `compose pull "$1"` at its one call site, so this function's own name
+# stays what every existing caller and test already expects.
+# How often `with_heartbeat` below looks to see whether the command it
+# wrapped has finished. This is the flat latency tax on every wrapped
+# call - see that function's own comment - so it is small.
+_HEARTBEAT_POLL_SECONDS=0.2
+
+# How many polls pass between two heartbeat writes: 25 x 0.2s = one
+# refresh every 5 seconds, against the 30-second staleness window the
+# bridge judges us by (`_MAX_SILENT_SECONDS`, src/loxmatter/update.py).
+# Six times the margin, deliberately - a Pi under load can stretch a
+# 0.2s sleep, and being early costs one file write while being late
+# costs the operator a red banner telling them to kill a healthy update.
+#
+# These two files must agree, and nothing at runtime makes them:
+# `test_the_heartbeat_refreshes_well_inside_the_bridges_staleness_window`
+# ties them by reading both, so moving either alone fails a test rather
+# than reaching a Pi.
+_HEARTBEAT_REFRESH_TICKS=25
+
+with_heartbeat() {
+  "$@" &
+  wh_pid=$!
+  wh_ticks=0
+  while kill -0 "$wh_pid" 2>/dev/null; do
+    sleep "$_HEARTBEAT_POLL_SECONDS"
+    wh_ticks=$((wh_ticks + 1))
+    if [ "$((wh_ticks % _HEARTBEAT_REFRESH_TICKS))" -eq 0 ] &&
+      kill -0 "$wh_pid" 2>/dev/null; then
       refresh_heartbeat || true
     fi
   done
-  pull_rc=0
-  wait "$pull_pid" || pull_rc=$?
-  return "$pull_rc"
+  wh_rc=0
+  wait "$wh_pid" || wh_rc=$?
+  return "$wh_rc"
+}
+
+compose_pull_with_heartbeat() {
+  resolve_compose_project_dir
+  with_heartbeat compose pull "$1"
 }
 
 # Escapes sed's own replacement metacharacters - backslash, ampersand, and
@@ -1132,12 +1366,55 @@ set_tag() {
   # it; the redirection below then only overwrites that same temp file's
   # CONTENT, and the closing `mv` (a rename, same filesystem) keeps the
   # mode it already has.
-  cp -p "$set_tag_target" "$set_tag_target.tmp"
+  #
+  # Its own exit status is checked here too - see the paragraph below the
+  # `if`/`else` for why that matters for every write in this function,
+  # not only the two named there. A `cp -p` that fails partway (the same
+  # full-disk trigger as the rest of this function) can leave
+  # $set_tag_target.tmp missing or truncated; the `sed` branch overwrites
+  # it wholesale regardless (its `>` redirection does not care what was
+  # there before), but the append branch below only ever APPENDS onto
+  # whatever `cp -p` left - a failed copy there would seed it from an
+  # empty or partial base, and the small appends that follow (a newline,
+  # one short line) can succeed even when the disk had no room left for
+  # the original's full content moments earlier.
+  if ! cp -p "$set_tag_target" "$set_tag_target.tmp"; then
+    rm -f "$set_tag_target.tmp"
+    return 1
+  fi
 
+  # Every write below is checked against its OWN exit status before the
+  # closing `mv` is ever reached - not assumed to have succeeded because
+  # `set -eu` is in effect. It is not, here: every call site is
+  # `if ! set_tag ...` (see the three further down), and POSIX/bash both
+  # exempt the ENTIRE body of a function called as an `if`'s own
+  # condition from `errexit` - a failing `sed` or `printf` inside this
+  # function does not stop the script, it just leaves its own exit status
+  # sitting there, unchecked, for whoever wrote the NEXT line to have
+  # remembered to look at.
+  #
+  # Reproduced end to end with `sed` stubbed to emit exactly one line and
+  # exit 4 ("No space left on device", a full SD card being the ordinary
+  # trigger on a Pi - and a full disk is exactly when someone reaches for
+  # an update): before this check, `set_tag` still returned 0 (the
+  # function's own exit status is the LAST command's, and `mv` - moving
+  # whatever truncated garbage `sed` managed to write - succeeded on its
+  # own terms), $ENV_FILE lost everything after that one line (the API
+  # token, the Thread dataset, the radio device, the image tag itself),
+  # and the update proceeded to recreate the bridge against it while
+  # state.json went on to report "done".
   if grep -q '^LOXMATTER_IMAGE_TAG=' "$set_tag_target" 2>/dev/null; then
     set_tag_replacement="$(sed_escape_replacement "$1")"
-    sed "s|^LOXMATTER_IMAGE_TAG=.*|LOXMATTER_IMAGE_TAG=$set_tag_replacement|" "$set_tag_target" \
-      > "$set_tag_target.tmp"
+    if ! sed "s|^LOXMATTER_IMAGE_TAG=.*|LOXMATTER_IMAGE_TAG=$set_tag_replacement|" "$set_tag_target" \
+        > "$set_tag_target.tmp"; then
+      # Refusing HERE, before the `mv` two paragraphs down, is what
+      # actually fixes this: $set_tag_target itself is never touched by
+      # anything above this line, so the ORIGINAL file - API token,
+      # Thread dataset, radio device and all - is exactly as it was
+      # before this call. Only the doomed `.tmp` copy is discarded.
+      rm -f "$set_tag_target.tmp"
+      return 1
+    fi
   else
     # A hand-edited or hand-migrated .env commonly has no trailing
     # newline - a plain `printf` without one, or `$(...)` command
@@ -1157,10 +1434,21 @@ set_tag() {
     # rather than re-derived. `cp -p` above already copied
     # $set_tag_target's existing content onto $set_tag_target.tmp, so
     # only the missing newline and the new line need appending here.
+    #
+    # Both appends below are checked the same way `sed` above now is -
+    # the identical full-disk trigger can fail either one, and an
+    # unchecked failure here would report success over a `.env` missing
+    # its closing line just as silently.
     if [ -s "$set_tag_target" ] && [ "$(tail -c 1 "$set_tag_target")" != "" ]; then
-      printf '\n' >> "$set_tag_target.tmp"
+      if ! printf '\n' >> "$set_tag_target.tmp"; then
+        rm -f "$set_tag_target.tmp"
+        return 1
+      fi
     fi
-    printf 'LOXMATTER_IMAGE_TAG=%s\n' "$1" >> "$set_tag_target.tmp"
+    if ! printf 'LOXMATTER_IMAGE_TAG=%s\n' "$1" >> "$set_tag_target.tmp"; then
+      rm -f "$set_tag_target.tmp"
+      return 1
+    fi
   fi
 
   mv "$set_tag_target.tmp" "$set_tag_target"
@@ -1212,119 +1500,6 @@ wait_healthy() {
   return 1
 }
 
-# Resolves a path INSIDE this container back to where it lives on the
-# DOCKER HOST - the machine an operator's shell actually runs on, not this
-# sidecar's own filesystem. Proven end to end why guessing "same path"
-# does not work: $STACK/$REPO default to /repo/deploy/testhost and /repo,
-# bind-mounted from the host's checkout into this container - /repo does
-# not exist on the host at all, so every "cd /repo && ..." line in
-# LETZTER-FEHLSCHLAG.txt below used to fail at the `cd`, and the `&&`
-# silently swallowed everything after it.
-#
-# Asks the docker daemon itself, over the socket this sidecar already
-# holds, rather than assume any particular layout - it is the one party
-# that actually knows what is mounted where. `--format` prints one
-# "destination source" line per mount.
-#
-# The lookup below matches by LONGEST-PREFIX, not by an exact match on
-# $1 - a previous version of this function used
-# `awk -v dest="$1" '$1 == dest {...}'`, which only ever resolves a path
-# that is ITSELF a mount destination. $LOXMATTER_STACK
-# (/repo/deploy/testhost by default) is not one - only /repo is actually
-# mounted (see docker-compose.yml's `../..:/repo`), and /repo/deploy/testhost
-# is a subdirectory of it. Proven end to end against the exact-match
-# version: four of the five commands LETZTER-FEHLSCHLAG.txt prints start
-# `cd $STACK`, and every one of them fell back to "host path unknown"
-# even though the real host path was perfectly knowable - the /repo
-# mount's Source plus "/deploy/testhost". Only the fifth command (`cd
-# $REPO`, which resolves exactly since /repo IS a mount destination) came
-# out runnable. Restoring one out of five is not restoring the artefact
-# this file exists to be: something pasteable over SSH when the web UI
-# itself is unreachable.
-#
-# The fix: for each mount, ask whether its Destination is a PATH-SEGMENT
-# prefix of $1 (either an exact match, or $1 continues past it with a
-# "/"), keep the longest such Destination across all mounts, and append
-# whatever of $1 remains after stripping that prefix onto the matching
-# mount's Source. Three edge cases this has to get right:
-#
-#   * "/repo" must not be treated as a prefix of "/repository" - a plain
-#     `index($1, dest) == 1` substring test would accept that, silently
-#     resolving one mount's path as if it were inside a different one
-#     that merely happens to share a longer common spelling. The
-#     boundary check requires the character right after the shared
-#     prefix to be "/" (or nothing, for an exact match).
-#   * When mounts nest (a mount at /repo AND a more specific one at
-#     /repo/deploy, say), the LONGEST matching Destination has to win -
-#     otherwise a subdirectory that has its own, more specific mount
-#     would incorrectly resolve through the outer one instead.
-#   * A Destination of "/" (a mount of the whole container root - not
-#     something this project's own compose files do, but a general
-#     function should not assume its caller's layout) needs no special
-#     case at all if the prefix logic above is right: normalising it to
-#     the empty string before the "/"-boundary check makes it a prefix of
-#     every absolute path, at length 0 - the lowest possible priority, so
-#     any more specific mount still wins the longest-match comparison.
-#
-# Written for POSIX/busybox awk, not GNU awk specifically (the sidecar's
-# Alpine base has busybox awk, not gawk) - no gawk-only extensions
-# (`gensub`, `length()` on an array, gawk's own multi-char `RS`). Just
-# `index`, `substr`, `length`, `sub` and plain scalar bookkeeping, all
-# POSIX awk.
-#
-# Piped through `awk` rather than left bare: a `docker inspect` that
-# fails (daemon unreachable, no container named `loxmatter-updater` yet -
-# a fresh install.sh run this early in its own bootstrap) must not make
-# the ASSIGNMENT this runs inside fail under `set -eu`, the same reasoning
-# current_tag()/running_version() already document above for ending a
-# substitution on a command that itself always exits 0 - `awk` does, even
-# reading nothing at all.
-#
-# Falls back to $2 when nothing matches - a container path backed by a
-# named volume ($BACKUP_DIR, in the caller below) has no host directory
-# to report at all, and the caller is expected to reach for `docker exec`
-# instead (see the restore command below, which already does exactly
-# that, for exactly that reason).
-host_path_for() {
-  host_path_for_raw="$(docker inspect loxmatter-updater \
-      --format '{{range .Mounts}}{{.Destination}} {{.Source}}
-{{end}}' 2>/dev/null \
-    | awk -v dest="$1" '
-        {
-          d = $1
-          src = $0
-          sub(/^[^ ]*/, "", src)
-          sub(/^ /, "", src)
-
-          # Normalise a Destination of "/" to the empty string - see the
-          # block comment above for why that gives it the lowest possible
-          # priority (length 0) instead of a special case.
-          dn = d
-          if (dn == "/") { dn = "" } else { sub(/\/$/, "", dn) }
-
-          matched = 0
-          if (dest == dn) {
-            matched = 1
-            rest = ""
-          } else if (index(dest, dn "/") == 1) {
-            matched = 1
-            rest = substr(dest, length(dn) + 1)
-          }
-
-          if (matched) {
-            dlen = length(dn)
-            if (!found || dlen > best_len) {
-              found = 1
-              best_len = dlen
-              best_source = src
-              best_rest = rest
-            }
-          }
-        }
-        END { if (found) print best_source best_rest }
-      ')"
-  printf '%s' "${host_path_for_raw:-$2}"
-}
 
 # If even the rollback did not become healthy, the web UI is probably not
 # reachable at all - then this file is the only answer someone finds who
@@ -1481,7 +1656,15 @@ fi
 # fast is exactly that, not a step the web UI's four-item list claims a
 # name for). `set_state pull ""` now sits where the pull actually is,
 # right before `compose_pull_with_heartbeat` further down.
-if ! run_git fetch --tags --force origin; then
+#
+# `with_heartbeat`, not a bare `run_git`: "typically sub-second against a
+# local remote", two paragraphs up, is the ordinary case, not a
+# guarantee - a slow uplink (this pass's own fetch reaches the real,
+# possibly distant `origin`, unlike the mostly-local operations
+# elsewhere in this file) can still cost more than the 30-second
+# staleness window, and until this fix nothing refreshed the heartbeat
+# for its entire duration.
+if ! with_heartbeat run_git fetch --tags --force origin; then
   set_state failed "git fetch failed"
   exit 0
 fi
@@ -1522,7 +1705,13 @@ fi
 # list already claims to mean "downloading the image".
 set_state backup ""
 STAMP="$(date -u +%Y-%m-%d-%H%M%S)"
-if ! run tar czf "$BACKUP_DIR/store-$STAMP.tgz" -C /data loxmatter.sqlite; then
+# `with_heartbeat`, not a bare `run`: "seconds at most", in the comment
+# above, is the ordinary case on the maintainer's own test Pi - a
+# database that has grown large, or a `gzip` pass competing with
+# everything else for one of an ARM board's few cores, both push a plain
+# `tar czf` past the 30-second staleness window on its own, with no loop
+# of its own (unlike `wait_healthy`) to hang a heartbeat refresh off.
+if ! with_heartbeat run tar czf "$BACKUP_DIR/store-$STAMP.tgz" -C /data loxmatter.sqlite; then
   set_state failed "backup failed - nothing was changed"
   exit 0
 fi
@@ -1608,9 +1797,26 @@ fi
 # this call never touches the `loxmatter-updater` service itself - see
 # the comment near the end of the success branch below for why the
 # sidecar no longer replaces itself at all, ever.
+#
+# `with_heartbeat`, not a bare `compose`: `--force-recreate` stops the
+# old container (SIGTERM, then a grace period - 10s by default in
+# docker-compose.yml, before the daemon escalates to SIGKILL) and only
+# THEN starts the new one - the new container is not even created yet
+# when this call is 10 seconds in, let alone answering. Without a
+# refresh spanning this whole call, that ordinary grace period alone can
+# already outlast the 30-second staleness window before `wait_healthy`
+# below ever gets a chance to start refreshing on its own.
+# `resolve_compose_project_dir` first, same reasoning as
+# `compose_pull_with_heartbeat` above (its own comment covers why: a
+# background subshell that resolved it for the first time would only
+# memoize it for ITSELF) - a no-op here in practice, since the pull just
+# above already resolved and memoized it in this same process, but
+# spelled out at each backgrounding call site rather than relied on as
+# an accident of call order.
 set_state recreate ""
 RECREATE_OK=true
-if ! compose up -d --no-deps --force-recreate "$SERVICE"; then
+resolve_compose_project_dir
+if ! with_heartbeat compose up -d --no-deps --force-recreate "$SERVICE"; then
   # Proven with a `compose up` stub that exits 1: unlike the pull failure
   # above, "the running service is unchanged" is not true here -
   # `--force-recreate` removes the old container before creating its
@@ -1859,7 +2065,14 @@ else
   # tag. Whatever mismatch that leaves in docker-compose.yml is a smaller
   # problem than not attempting the recreate at all.
   run_git checkout --detach "$GIT_BEFORE" || true
-  compose up -d --no-deps --force-recreate "$SERVICE" || true
+  # The same `--force-recreate` gap as the forward path's own recreate
+  # above (see that call's comment for the SIGTERM-grace-period
+  # mechanics) - a rollback is no faster to stop and start a container
+  # than the update that led to it, and this call runs entirely under
+  # phase "rollback", not "recreate", so nothing else here refreshes the
+  # heartbeat until `wait_healthy` below starts its own loop.
+  resolve_compose_project_dir
+  with_heartbeat compose up -d --no-deps --force-recreate "$SERVICE" || true
 
   # Exactly once. No second attempt, no flapping: if the cause were not
   # the image itself (a dead matter-server, say), every further attempt
