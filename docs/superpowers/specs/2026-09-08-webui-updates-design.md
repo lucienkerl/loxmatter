@@ -466,6 +466,19 @@ so nobody has to derive it by reading both. Each was left out deliberately.
   `running_commit()`'s answer instead of `HEAD`. The switch is live in
   the interface again.
 
+  One thing about that channel is worth stating rather than leaving to be
+  rediscovered: **the sidecar does not follow it.** `.github/workflows/ci.yml`
+  builds `loxmatter-updater` only on a `v*` tag, never on a push to `main`,
+  and `deploy/testhost/docker-compose.yml` pins the service to `:stable`
+  regardless of the channel setting. So an installation on the development
+  channel runs release sidecars driving development bridge images. That is
+  deliberate — the sidecar is the machinery, not the product, and a
+  half-finished updater is a worse thing to ship to someone than a
+  half-finished bridge — but it has a consequence worth knowing when a fix
+  lands in the sidecar itself: it reaches no installation until the next
+  release, on either channel, and the update button cannot deliver it if
+  the thing being fixed is the update button.
+
 There is also a class of coupling this feature carries without a check: a
 constant, path or name that appears in two places and must agree. The
 sidecar's health-check port against the bridge's `--listen`; the `loxmatter`
