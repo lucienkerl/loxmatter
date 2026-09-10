@@ -496,3 +496,106 @@ recreated the bridge without a Miniserver address while the tile reported
 success. Where such a pair can be tied by a test, tie it:
 `test_the_heartbeat_refreshes_well_inside_the_bridges_staleness_window`
 reads the shell constant and the Python one and fails if the margin closes.
+
+## 17. The development channel builds on the machine (10 September 2026)
+
+The development channel waits for CI to publish an image before it can
+install anything. That wait is the whole cost of the channel: the code is
+already on the device — `git checkout` put it there — and the machine
+then sits idle until a multi-architecture build under QEMU finishes
+somewhere else.
+
+So on the development channel the updater builds the image itself, and
+stops using GHCR. The stable channel is unchanged and keeps pulling
+published images.
+
+### Why this is affordable, measured rather than assumed
+
+On the Raspberry Pi 4 this ships to, against the repository's own
+`Dockerfile`:
+
+| | |
+|---|---|
+| warm — only source changed, the usual case | **21 s** |
+| cold — `--no-cache`, dependencies changed too | **33 s** |
+
+Both are far below `entrypoint.sh`'s 600-second worker timeout, which was
+the number that could have killed this idea. They are also faster than
+pulling a published image, and very much faster than waiting for CI.
+
+The measurement is the argument. Without it the reasonable-sounding fear
+— "building on a Pi is slow, and it competes with the running bridge" —
+would have settled the question the wrong way.
+
+### What it does to section 10's second rule
+
+Rule 2 says the image name is not taken from the request but hard-coded,
+so a request can never name a foreign image. Building locally does not
+weaken that: nothing is named at all any more on this channel, and the
+image is produced from the checkout the first rule already constrained.
+
+It does introduce something rule 2 did not have to consider: the
+`Dockerfile` of the target commit is **executed** at build time, on the
+host's daemon. That is worth stating plainly rather than filing under
+"same as before". The mitigation is not a new check but an existing one:
+the target must be a descendant of the running commit on the project's
+own `origin` (rule 3), and the application code from that same commit is
+about to run as the bridge regardless. A commit whose `Dockerfile` cannot
+be trusted is a commit whose `src/` cannot be trusted either, and this
+feature has never claimed to defend against the project's own repository
+being compromised — section 10 says as much about the session that can
+already download the Fabric backup.
+
+What this does foreclose: an installation on the development channel can
+no longer be updated by a host with no build capability. That is
+acceptable — a machine following every commit is a machine someone is
+working on.
+
+### The rollback rebuilds
+
+Today a rollback re-pulls a published image by tag, which is guaranteed
+to exist. A locally built predecessor is not: Docker prunes, and nothing
+promises the old image is still in the store.
+
+The rollback therefore rebuilds the previous ref. That ref is already
+recorded before step 1 — section 8's first line — for exactly the reason
+that made it necessary there, and this is the second use for it. At 33
+seconds against a rollback that already waits up to 120 for health, the
+cost does not register.
+
+If the *build* is what failed, the rollback's build fails too and the run
+ends in "rollback did not complete", which writes `LAST-FAILURE.txt` and
+names the console. That is the correct outcome and needs no special case:
+a commit that cannot be built cannot be rolled back to by building.
+
+### Three things that have to be got right
+
+**The build arguments.** CI sets `LOXMATTER_VERSION` and
+`LOXMATTER_COMMIT`; a local build that omits them produces an image whose
+commit is empty. The forward-only rule then refuses every later update —
+"the running image does not state a commit" — and the installation is
+stuck on a button that always says no. The build must pass them, and a
+test must fail if it stops.
+
+**The image's name.** A locally built image must not be tagged as though
+it came from the registry: a later `compose pull` would replace it, or a
+`up` would fetch the published one instead. It gets a name no published
+image can ever have, so the two can never be confused in `docker images`
+either.
+
+**Pruning.** Every development update leaves an image behind, and nothing
+removes it. The backups already keep the last ten and delete the rest
+(`scripts/update.sh`'s own rule, mirrored in the sidecar); locally built
+images need the same treatment, or an SD card fills up one update at a
+time. This is a new failure mode the feature is introducing, not one it
+inherits, and it belongs in the same commit as the build.
+
+### What does not change
+
+The stable channel. It pulls published images, from the fixed repository,
+by a tag derived from the target — and it is the channel every
+installation that is not being worked on will be following.
+
+`install.sh`'s existing build fallback is a different mechanism for a
+different case (a first installation on a host without GHCR access) and
+is untouched.
