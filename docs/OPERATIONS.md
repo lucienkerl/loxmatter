@@ -181,6 +181,36 @@ since Compose's default pull policy never asks the registry for an image
 it already has locally. The two-command block above is the only thing
 that actually refreshes an already-present sidecar's image.
 
+## The two channels install differently
+
+**Stable** downloads a published image, the way this bridge has always
+updated. **Development** does not: it builds the image on the device from
+the commit it just checked out.
+
+That is worth knowing before you watch one happen, because two things
+look wrong otherwise and are not:
+
+- **Nothing is downloaded.** The card says "Building the image" and the
+  network stays quiet. On a Raspberry Pi 4 the build takes about twenty
+  seconds when only the source changed and about thirty when the
+  dependencies did — faster than the download it replaces, and without
+  the wait for the release pipeline to produce an image at all. That
+  wait was the whole cost of following this channel.
+- **The image has a name no registry serves.** A locally built image is
+  tagged `local-<commit>`, and `LOXMATTER_IMAGE_TAG` in `.env` names it.
+  Nothing on GHCR is called that, on purpose: a later `docker compose
+  pull` cannot silently replace a local build, and `docker images` is
+  never ambiguous about where a layer came from.
+
+The last ten locally built images are kept and older ones removed, the
+same rule the backups follow. Without it an SD card would fill one
+update at a time.
+
+Going back to **Stable** downloads a published version again and is a
+normal update — the release you land on may be *older* than the
+development build you were running, and the card says so before you
+press anything.
+
 ## Access control
 
 The service binds to `0.0.0.0` by default (`--host`) so that the Miniserver
