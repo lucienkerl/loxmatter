@@ -267,6 +267,9 @@ api.errors.group_needs_a_member:
 api.errors.group_category_mismatch:
   en: "device {device_id} is a {actual}, the group takes {expected}"
   de: "Gerät {device_id} ist ein {actual}, die Gruppe nimmt {expected}"
+api.errors.group_duplicate_member:
+  en: "a group's member list cannot contain the same device twice"
+  de: "die Mitgliederliste einer Gruppe darf ein Gerät nicht doppelt enthalten"
 api.errors.unknown_command:
   # The placeholder is deliberately not called "key" - i18n.t()'s own
   # first parameter is named that, and "key=..." as a keyword argument

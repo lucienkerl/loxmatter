@@ -1141,9 +1141,15 @@ class Store:
     def _check_members(self, category: str, member_ids: Sequence[int]) -> None:
         """Every member must exist, be active and match `category`.
 
-        Checked BEFORE anything is written, so a rejected member never
-        leaves a half-applied membership behind - the same all-or-nothing
-        stance as `register_commands`.
+        Checked BEFORE anything is written, so a category mismatch never
+        leaves a half-applied membership behind. This alone is not the
+        whole all-or-nothing story, though: it only catches a category
+        mismatch, not a duplicate id (checked separately by the caller) or
+        a write-time SQLite error. `create_group` and `set_group_members`
+        cover those by running their write loop inside the same
+        `try`/`except (ValueError, sqlite3.Error): self._db.rollback();
+        raise` guard as `register_commands` - together, the two give both
+        methods the same all-or-nothing stance.
         """
         for device_id in member_ids:
             actual = self._category_of(device_id)
@@ -1160,22 +1166,40 @@ class Store:
     def create_group(
         self, label: str, member_ids: Sequence[int], room: str | None = None
     ) -> StoredGroup:
-        """The first member fixes the category, so there must be one."""
+        """The first member fixes the category, so there must be one.
+
+        Duplicate ids in `member_ids` are rejected here, before anything is
+        written: `device_group_member` has `UNIQUE (group_id, device_id)`,
+        so an unchecked duplicate would only surface as a raw
+        `sqlite3.IntegrityError` partway through the insert loop below -
+        and runs as one transaction, exactly like `register_commands`: if a
+        write still fails there - that dedup check missing a case, or any
+        other SQLite error - the whole group is rolled back instead of
+        leaving `device_group` and a partial `device_group_member` row set
+        sitting in the connection's open transaction, to be committed by
+        surprise the next time some unrelated write calls `commit()`.
+        """
         if not member_ids:
             raise ValueError(i18n.t("api.errors.group_needs_a_member"))
+        if len(set(member_ids)) != len(member_ids):
+            raise ValueError(i18n.t("api.errors.group_duplicate_member"))
         category = self._category_of(member_ids[0])
         self._check_members(category, member_ids)
-        cur = self._db.execute(
-            "INSERT INTO device_group (label, room, category, updated_at) VALUES (?, ?, ?, ?)",
-            (label, _normalized_room(room), category, self._now()),
-        )
-        group_id = cur.lastrowid
-        assert group_id is not None
-        for device_id in member_ids:
-            self._db.execute(
-                "INSERT INTO device_group_member (group_id, device_id) VALUES (?, ?)",
-                (int(group_id), device_id),
+        try:
+            cur = self._db.execute(
+                "INSERT INTO device_group (label, room, category, updated_at) VALUES (?, ?, ?, ?)",
+                (label, _normalized_room(room), category, self._now()),
             )
+            group_id = cur.lastrowid
+            assert group_id is not None
+            for device_id in member_ids:
+                self._db.execute(
+                    "INSERT INTO device_group_member (group_id, device_id) VALUES (?, ?)",
+                    (int(group_id), device_id),
+                )
+        except (ValueError, sqlite3.Error):
+            self._db.rollback()
+            raise
         self._db.commit()
         return self.group(int(group_id))
 
@@ -1238,18 +1262,35 @@ class Store:
         single removals would recompute it twice and pass through an
         intermediate state nobody asked for - including keys that
         briefly vanish and come back (design 5).
+
+        Duplicate ids in `member_ids` are rejected up front, for the same
+        reason as in `create_group`: `device_group_member`'s
+        `UNIQUE (group_id, device_id)` would otherwise turn an unchecked
+        duplicate into an `sqlite3.IntegrityError` partway through the
+        insert loop below. The DELETE and the inserts that follow run
+        inside the same `try`/`except (ValueError, sqlite3.Error)` guard as
+        `register_commands`, so a write-time failure there rolls back to
+        the previous membership instead of leaving it half replaced -
+        deleted, but not yet fully reinserted - for a later unrelated
+        commit to persist.
         """
         group = self.group(group_id)
         self._check_members(group.category, member_ids)
-        self._db.execute("DELETE FROM device_group_member WHERE group_id = ?", (group_id,))
-        for device_id in member_ids:
+        if len(set(member_ids)) != len(member_ids):
+            raise ValueError(i18n.t("api.errors.group_duplicate_member"))
+        try:
+            self._db.execute("DELETE FROM device_group_member WHERE group_id = ?", (group_id,))
+            for device_id in member_ids:
+                self._db.execute(
+                    "INSERT INTO device_group_member (group_id, device_id) VALUES (?, ?)",
+                    (group_id, device_id),
+                )
             self._db.execute(
-                "INSERT INTO device_group_member (group_id, device_id) VALUES (?, ?)",
-                (group_id, device_id),
+                "UPDATE device_group SET updated_at = ? WHERE id = ?", (self._now(), group_id)
             )
-        self._db.execute(
-            "UPDATE device_group SET updated_at = ? WHERE id = ?", (self._now(), group_id)
-        )
+        except (ValueError, sqlite3.Error):
+            self._db.rollback()
+            raise
         self._db.commit()
 
     def rename_device(self, device_id: int, label: str) -> None:

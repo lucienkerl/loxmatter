@@ -132,3 +132,39 @@ def test_membership_of_a_forgotten_device_is_dropped(store, lamps):
     group = store.create_group("Living room", lamps)
     store.forget_device(lamps[1])
     assert [d.id for d in store.group_members(group.id)] == [lamps[0]]
+
+
+def test_create_group_rejects_a_duplicated_member_and_leaves_no_ghost_row(store, lamps, tmp_path):
+    """Regression for the missing rollback guard: a duplicate id used to
+    raise `sqlite3.IntegrityError` from mid-loop, after `device_group` and
+    some `device_group_member` rows had already been executed but not
+    committed - and since nothing rolled the transaction back, those rows
+    sat in the connection's open implicit transaction until any later,
+    completely unrelated write committed them.
+
+    Asserted against a REOPENED `Store` on the same file: that is exactly
+    the bug's signature - `store.groups()` looking empty on the live
+    connection proves nothing once an uncommitted row can still be
+    flushed to disk by someone else's `commit()`.
+    """
+    with pytest.raises(ValueError):
+        store.create_group("Dup", [lamps[0], lamps[0]])
+    assert store.groups() == []
+
+    # An unrelated write that commits - if the group row survived
+    # uncommitted, this is what would resurrect it on disk.
+    store.rename_device(lamps[0], "Renamed")
+    store.close()
+
+    reopened = Store(tmp_path / "test.sqlite")
+    try:
+        assert reopened.groups() == []
+    finally:
+        reopened.close()
+
+
+def test_set_group_members_rejects_a_duplicated_member_and_keeps_the_old_membership(store, lamps):
+    group = store.create_group("Living room", lamps)
+    with pytest.raises(ValueError):
+        store.set_group_members(group.id, [lamps[0], lamps[0]])
+    assert [d.id for d in store.group_members(group.id)] == lamps
