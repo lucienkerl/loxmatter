@@ -303,15 +303,20 @@ async def check(
         #
         # The FULL 40-character SHA, not this project's usual seven-
         # character short form: `git checkout --detach` in the sidecar's
-        # checkout accepts either, but the image tag does not - dev
-        # images are published as `:sha-<short>`, never `:<sha>` (see
-        # `set_tag`'s caller in update-once.sh), so something there has to
-        # derive the short form from the long one. Handing over an
-        # already-truncated target would leave nothing to derive it
-        # from, and would silently assume this response's SHA is the same
-        # length CI's `git rev-parse --short` happened to produce -
-        # exactly the coupling this feature's design doc (section 16)
-        # already flags as unchecked.
+        # checkout accepts either, but two things downstream want the
+        # full form specifically. `git merge-base --is-ancestor
+        # $RUNNING_COMMIT $TARGET` (update-once.sh, Rule 3) is
+        # unambiguous either way, but `image_tag_for()`'s dev-channel case
+        # (design addendum "The development channel builds on the
+        # machine", 2026-09-10) appends $TARGET verbatim onto a "local-"
+        # prefix to name the image the sidecar builds locally - the full
+        # SHA is what keeps two different commits whose short forms would
+        # collide (rare, but not impossible as a repository grows) from
+        # ever building over each other's tag. Before that addendum this
+        # channel instead pulled a `:sha-<short>` image CI published,
+        # which needed the SHORT form derived from this one - that
+        # derivation, and the CI-tag it matched, are both gone now that
+        # the dev channel builds instead of pulling.
         target_commit = str(commits[-1]["sha"])
         return Available(channel, target_commit, None, "\n".join(subjects), ahead, _now(), None)
     except (OSError, KeyError, ValueError, TypeError, IndexError) as exc:

@@ -123,7 +123,12 @@ def _compose_calls(calls: str, subcommand: str) -> list[str]:
 
 
 def _docker_stub_source(
-    *, version: str = "0.2.0", commit: str = "abc1234", compose_case: str = "exit 0 ;;"
+    *,
+    version: str = "0.2.0",
+    commit: str = "abc1234",
+    compose_case: str = "exit 0 ;;",
+    build_case: str = "exit 0 ;;",
+    images_case: str = "exit 0 ;;",
 ) -> str:
     """Full source for a fake `docker` binary that answers BOTH `docker
     inspect` calls update-once.sh actually makes:
@@ -150,7 +155,15 @@ def _docker_stub_source(
     `compose_case` is spliced into the `compose)` arm for callers that
     need a specific `docker compose ...` call to fail; the default just
     lets it succeed, since most callers only care THAT the right compose
-    call happened, not what it returns."""
+    call happened, not what it returns. `build_case` is the identical
+    mechanism for `docker build ...` (build_target_image() in
+    update-once.sh) - a bare, unmatched `build)` would already exit 0 via
+    the trailing `esac`'s implicit success, so this default only exists to
+    give callers the same explicit override point compose_case already
+    has. `images_case` is the same again for `docker images ...`
+    (the dev-channel image prune) - its default leaves the prune's own
+    pipeline fed nothing, so a caller not testing pruning sees zero
+    `docker rmi` calls regardless of what tags it built."""
     return (
         "#!/bin/sh\n"
         'printf "%s %s\\n" "docker" "$*" >> "$STUB_LOG"\n'
@@ -165,6 +178,8 @@ def _docker_stub_source(
         "    fi\n"
         "    ;;\n"
         f"  compose) {compose_case}\n"
+        f"  build) {build_case}\n"
+        f"  images) {images_case}\n"
         "esac\n"
     )
 
@@ -1224,21 +1239,188 @@ def test_a_dev_update_with_no_running_commit_fails_closed(updater):
     assert "merge-base" not in calls, "must reject before ever asking git about an empty ref"
 
 
-def test_the_dev_channel_tag_is_derived_not_the_bare_target(updater):
-    """Blocker 2: CI never publishes a `loxmatter:<sha>` tag for the dev
-    channel, only `:dev` and `:sha-<short>` - writing $TARGET verbatim
-    into LOXMATTER_IMAGE_TAG would name an image that was never pushed,
-    and the pull below would 404. `image_tag_for()` must derive
-    `sha-<first seven characters>` instead. Bite-checked by reverting to
-    `set_tag "${TARGET#v}"`: the .env then reads
-    "LOXMATTER_IMAGE_TAG=abcdef1234567890" (the bare, full-length target
-    used by this test), and this assertion fails."""
+def test_the_dev_channel_tag_is_local_not_a_registry_tag(updater):
+    """Design addendum "The development channel builds on the machine"
+    (2026-09-10): a locally built image must carry a name no image CI
+    ever publishes can have, so a later `compose pull` can never silently
+    replace it and `docker images` is never ambiguous about where a layer
+    came from. CI's own dev-channel tags are `dev` and `sha-<short>`
+    (`.github/workflows/ci.yml`) - none of them, at any length, start
+    with "local-", so `image_tag_for()` prefixes the full target with
+    exactly that. Bite-checked by reverting to the pre-addendum
+    `sha-<first seven characters>` derivation: the .env then reads
+    "LOXMATTER_IMAGE_TAG=sha-abcdef1", a string CI's own `image` job could
+    itself have published for this same commit, and the assertion below
+    fails."""
     _write_request(updater, channel="dev", target="abcdef1234567890")
     _, _calls, state = updater()
     assert state["phase"] == "done"
     env_text = (updater.stack / ".env").read_text(encoding="utf-8")
-    assert "LOXMATTER_IMAGE_TAG=sha-abcdef1" in env_text
+    assert "LOXMATTER_IMAGE_TAG=local-abcdef1234567890" in env_text
     assert "LOXMATTER_IMAGE_TAG=abcdef1234567890" not in env_text
+    assert "LOXMATTER_IMAGE_TAG=sha-abcdef1" not in env_text
+
+
+def test_the_dev_channel_builds_instead_of_pulling(updater):
+    """Design addendum, "The development channel builds on the machine":
+    CI has published nothing for a commit that only just landed on
+    `main`, and the code is already on disk from the checkout - so the
+    dev channel builds it itself and never calls `compose pull` at all.
+    Bite-checked by reverting the channel branch in update-once.sh back
+    to an unconditional `compose_pull_with_heartbeat "$SERVICE"`: this
+    test then fails on the "docker build" assertion (no such call is ever
+    made), and `test_the_stable_channel_still_pulls_and_never_builds`
+    below would also start failing for the opposite reason once a dev
+    build tries to run against a docker stub with no matching commit."""
+    _write_request(updater, channel="dev", target="abcdef1234567890")
+    _, calls, state = updater()
+    assert state["phase"] == "done"
+    assert any(line.startswith("docker build ") for line in calls.splitlines()), calls
+    assert _compose_calls(calls, "pull") == []
+
+
+def test_the_stable_channel_still_pulls_and_never_builds(updater):
+    """The other half of the same addendum: "What does not change" - the
+    stable channel keeps pulling published images, unconditionally. This
+    is the one test in this file that would catch a channel branch
+    accidentally inverted or dropped (the two tests above cover the dev
+    side; this covers the ASSUMPTION they both rely on, that a plain
+    `_write_request` with no `channel` override - the default here is
+    "stable" - never reaches build_target_image() at all). Bite-checked
+    by reverting the channel branch to `docker build` unconditionally:
+    this test then fails on the "docker build" assertion, since the
+    stable-channel default request would build instead of pulling."""
+    _write_request(updater, target="0.3.0")
+    _, calls, state = updater()
+    assert state["phase"] == "done"
+    assert _compose_calls(calls, "pull") != []
+    assert not any(line.startswith("docker build ") for line in calls.splitlines()), calls
+
+
+def test_the_dev_build_carries_version_and_commit_build_args(updater):
+    """The addendum's own named failure mode: "a local build that omits
+    [LOXMATTER_VERSION and LOXMATTER_COMMIT] produces an image whose
+    commit is empty. The forward-only rule then refuses every later
+    update ... and the installation is stuck on a button that always says
+    no." This asserts the two build arguments `ci.yml`'s `image` job
+    always supplies are present on the local build too - LOXMATTER_VERSION
+    the literal "dev" (CI's own fallback for every push to `main`), and
+    LOXMATTER_COMMIT the exact validated target this request named,
+    which build_target_image() takes directly from its caller rather than
+    re-deriving through a second `git` call (see that function's own
+    comment for why). Bite-checked by dropping the two --build-arg flags
+    from the `docker build` invocation: this test then fails, since
+    neither substring is present in the logged call at all."""
+    target = "abcdef1234567890abcdef1234567890abcdef12"
+    _write_request(updater, channel="dev", target=target)
+    _, calls, state = updater()
+    assert state["phase"] == "done"
+    build_line = next(line for line in calls.splitlines() if line.startswith("docker build "))
+    assert "--build-arg LOXMATTER_VERSION=dev" in build_line
+    assert f"--build-arg LOXMATTER_COMMIT={target}" in build_line
+
+
+def test_old_locally_built_images_are_pruned(updater):
+    """Design addendum, "Pruning": every dev update leaves an image
+    behind, and nothing removed it before this fix - `scripts/update.sh`'s
+    own "keep the last ten, delete the rest" rule (already mirrored here
+    for backups, just above) needed the identical treatment for locally
+    built images, or an SD card fills up one update at a time.
+
+    The docker stub below answers `docker images --filter
+    reference=<image>:local-* --format {{.Tag}}` with eleven canned tags,
+    newest first (`local-t01` .. `local-t11`) - modelling eleven images
+    already on disk from earlier dev updates, exactly the way a real
+    `docker images` (which itself lists newest first with no extra sort
+    needed) would answer. `tail -n +11` must keep the ten newest and
+    remove only the eleventh, oldest one.
+
+    Bite-checked by removing the whole prune block: this test then fails
+    on the "docker rmi ... local-t11" assertion, since nothing ever calls
+    `docker rmi` at all."""
+    tags = [f"local-t{i:02d}" for i in range(1, 12)]
+    images_case = 'printf "%s\\n" ' + " ".join(f'"{tag}"' for tag in tags) + " ;; "
+    docker_path = updater.bindir / "docker"
+    docker_path.write_text(_docker_stub_source(images_case=images_case), encoding="utf-8")
+    docker_path.chmod(0o755)
+    _write_request(updater, target="0.3.0")
+    _, calls, state = updater()
+    assert state["phase"] == "done"
+    assert (
+        "docker images --filter reference=ghcr.io/lucienkerl/loxmatter:local-* --format {{.Tag}}"
+        in calls
+    )
+    for tag in tags[:10]:
+        assert f"docker rmi ghcr.io/lucienkerl/loxmatter:{tag}" not in calls
+    assert "docker rmi ghcr.io/lucienkerl/loxmatter:local-t11" in calls
+
+
+def test_a_dev_channel_rollback_rebuilds_the_previous_commit(unhealthy_service):
+    """ "The rollback rebuilds" (design addendum, 2026-09-10): a locally
+    built predecessor is not guaranteed to still be in the image store
+    the way a published tag is (Docker prunes, and this same feature now
+    prunes it deliberately - see the pruning test above), so the rollback
+    must rebuild $GIT_BEFORE under the exact tag $BACK names, rather than
+    trust `compose up` to find it - or worse, silently fall through to
+    docker-compose.yml's own build fallback with none of the required
+    build arguments (see build_target_image()'s own comment).
+
+    The docker stub reports the RUNNING image as version "dev" (a prior
+    successful dev-channel update, exactly the state this rollback path
+    exists for) with .env seeded to the tag that update itself would have
+    written - `$FROM`/`$BACK` in update-once.sh then agree on
+    "local-cafefeed", and the rollback must rebuild exactly that tag.
+    `unhealthy_service`'s curl stub never answers healthy, so this proves
+    only that the REBUILD is attempted, not that it succeeds.
+
+    Bite-checked by reverting the rollback's rebuild gate to skip
+    rebuilding entirely: this test then fails, since only the forward
+    attempt's `docker build` call exists and `build_lines` has length 1,
+    not 2."""
+    docker_path = unhealthy_service.bindir / "docker"
+    docker_path.write_text(_docker_stub_source(version="dev", commit="cafefeed"), encoding="utf-8")
+    docker_path.chmod(0o755)
+    (unhealthy_service.stack / ".env").write_text(
+        "LOXMATTER_IMAGE_TAG=local-cafefeed\n", encoding="utf-8"
+    )
+    _write_request(unhealthy_service, channel="dev", target="abcdef1234567890")
+    _, calls, state = unhealthy_service()
+    assert state["phase"] == "failed"
+    assert state["rolled_back"] is True
+    build_lines = [line for line in calls.splitlines() if line.startswith("docker build ")]
+    assert len(build_lines) == 2, build_lines
+    assert "-t ghcr.io/lucienkerl/loxmatter:local-abcdef1234567890" in build_lines[0]
+    assert "-t ghcr.io/lucienkerl/loxmatter:local-cafefeed" in build_lines[1]
+
+
+def test_a_dev_channel_rollback_to_a_stable_predecessor_does_not_rebuild(unhealthy_service):
+    """The distinction "the rollback rebuilds" glosses over: switching
+    FROM a dev-track build back TO a stable release is accepted (spec
+    section 10 - "a development build states its provenance perfectly
+    well"), so a request can legitimately be on the dev channel while
+    what it would roll back TO, if it failed, is a concrete published
+    version - not something this feature ever built locally. Rebuilding
+    THAT would tag a fresh local image with a name CI itself publishes,
+    permanently shadowing it on this host.
+
+    The docker stub here reports the running image's own version as the
+    concrete "0.2.0" (never "dev"), so $BACK resolves to that concrete
+    version, not to $FROM - exactly the case the rollback's rebuild gate
+    must leave alone.
+
+    Bite-checked by gating the rollback's rebuild on $CHANNEL instead of
+    $RUNNING_NORMALIZED (the bug this test was written to catch during
+    development of this feature): this test then fails, since a second
+    `docker build` call for tag "0.2.0" would appear."""
+    _write_request(unhealthy_service, channel="dev", target="abcdef1234567890")
+    _, calls, state = unhealthy_service()
+    assert state["phase"] == "failed"
+    assert state["rolled_back"] is True
+    build_lines = [line for line in calls.splitlines() if line.startswith("docker build ")]
+    assert len(build_lines) == 1, build_lines
+    assert "LOXMATTER_IMAGE_TAG=0.2.0" in (unhealthy_service.stack / ".env").read_text(
+        encoding="utf-8"
+    )
 
 
 # ------------------------------------------------------- Stufe 2, round 2 --
