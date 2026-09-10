@@ -146,6 +146,7 @@ from loxmatter.api.settings import build_settings_router
 from loxmatter.api.update import build_update_router
 from loxmatter.api.version import build_version_router
 from loxmatter.auth.sessions import SESSION_COOKIE, session_is_valid
+from loxmatter.commands.fanout import dispatch_group, plan_group_calls
 from loxmatter.commands.translate import MatterCall, UnsupportedValueError, to_matter_calls
 from loxmatter.diagnostics.logbuffer import LogBufferHandler
 from loxmatter.loxone.sender import UdpSender
@@ -580,8 +581,12 @@ def build_app(
     async def command(key: str, value: str) -> dict[str, str]:
         try:
             stored = store.resolve_command(key)
-        except KeyError as exc:
-            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except KeyError:
+            # A group key, or nothing at all. The device table is asked
+            # first so that a device key costs exactly what it always did;
+            # the two can never collide (`d` vs `g` prefix, asserted in
+            # test_group_keys_can_never_collide_with_device_keys).
+            return await _group_command(key, value)
 
         try:
             calls = to_matter_calls(stored, value)
@@ -610,6 +615,45 @@ def build_app(
                 status_code=502, detail=i18n.t("api.errors.device_unreachable", exc=exc)
             ) from exc
 
+        return {"status": "ok", "key": key}
+
+    async def _group_command(key: str, value: str) -> dict[str, str]:
+        """The group half of `/cmd/{key}/{value}` (design 2026-09-10, 3).
+
+        The status codes are the device path's, unchanged: 404 unknown
+        key, 400 unsuitable value, 502 at least one member did not
+        answer. The Miniserver evaluates none of them - they are for the
+        human reading the log, which is also why the 502 detail names the
+        members instead of just counting them.
+        """
+        try:
+            group_command = store.resolve_group_command(key)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+        targets = store.group_targets(group_command)
+        try:
+            plans = plan_group_calls(targets, value)
+        except UnsupportedValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        failed = await dispatch_group(plans, invoke)
+        if failed:
+            logger.warning(
+                "group command %r reached %d of %d members",
+                key,
+                len(plans) - len(failed),
+                len(plans),
+            )
+            raise HTTPException(
+                status_code=502,
+                detail=i18n.t(
+                    "api.errors.group_partially_unreachable",
+                    reached=len(plans) - len(failed),
+                    total=len(plans),
+                    devices=", ".join(failed),
+                ),
+            )
         return {"status": "ok", "key": key}
 
     return app

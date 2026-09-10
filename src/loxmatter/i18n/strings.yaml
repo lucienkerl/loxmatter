@@ -338,6 +338,9 @@ api.errors.commissioning_failed:
 api.errors.device_unreachable:
   en: "device unreachable: {exc}"
   de: "Geraet nicht erreichbar: {exc}"
+api.errors.group_partially_unreachable:
+  en: "reached {reached} of {total} members; no answer from: {devices}"
+  de: "{reached} von {total} Mitgliedern erreicht, keine Antwort von: {devices}"
 api.errors.command_belongs_to_removed_device:
   en: "command {command_key!r} belongs to device {device_id}, which was removed"
   de: "Kommando {command_key!r} gehoert zu Geraet {device_id}, das entfernt wurde"
