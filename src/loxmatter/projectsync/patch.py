@@ -185,16 +185,26 @@ def _new_device_edit(
     port: int,
     listen: int,
 ) -> tuple[_Edit, int]:
-    """ONE new device container for ALL `NEW_DEVICE` entries of a device of
-    the same kind (`entries` is the group for one `(kind, device_id)`).
-    Returns the edit AND the number of newly created `<C>` objects (for
-    the `NextObj` counter in `apply_plan`).
+    """ONE new container for ALL `NEW_DEVICE` entries that share one
+    `(kind, owner_kind, device_id)` - the same grouping key
+    `apply_plan` uses when it builds `entries` (`device_id` is a device id
+    when `owner_kind == "device"`, a GROUP id when `owner_kind ==
+    "group"`; the two counters both start at 1, so the id alone would not
+    distinguish them). Note "group" is overloaded in this module: here in
+    the prose it means "the set of `PlanEntry` objects sharing that key",
+    not a device group - `entries[0].owner_kind` is what tells this
+    function whether it is building a device's container or a device
+    GROUP's. Returns the edit AND the number of newly created `<C>`
+    objects (for the `NextObj` counter in `apply_plan`).
 
-    Deliberately a group rather than a single entry: `export.signals.
-    to_inputs` always additionally produces an online signal per device,
-    so a genuinely new device practically never has just one entry. A
-    container per entry would produce several same-named `VirtualUdpIn`
-    devices with identical address and port, each with exactly one
+    Deliberately entries sharing a key rather than a single entry each:
+    for a device, `export.signals.to_inputs` always additionally produces
+    an online signal per device, so a genuinely new device practically
+    never has just one entry; for a device group (which has no inputs and
+    no online signal, design 2), the same batching still applies because
+    a group can offer several commands at once. A container per entry
+    would produce several same-named `VirtualUdpIn`/`VirtualOut`
+    containers with identical address and port, each with exactly one
     command in it - structurally wrong, not just unattractive.
 
     If the matching `VirtualInCaption`/`VirtualOutCaption` section is

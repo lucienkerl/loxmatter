@@ -148,6 +148,126 @@ def test_a_group_id_does_not_collide_with_a_device_id(sample_project, group_stor
     assert device_container is not group_container
 
 
+def test_a_command_entering_the_intersection_is_a_new_signal_in_the_group_container(
+    sample_project, group_store
+):
+    """Task 9 review: `_new_signal_edit`'s container prefix now comes from
+    `entry.owner_kind` (`g{id}_` for a group, `d{id}_` for a device)
+    instead of a hardcoded `d{id}_` - a group output's `device_id` holds
+    the GROUP's id, so the old prefix looked for a `d{id}_` container
+    that was never created and tripped `assert matching_container is not
+    None`, surfacing as a 500. No existing test drove a group through
+    `NEW_SIGNAL` at all, so nothing caught it.
+
+    `register_group_commands` intersects over the members, so *adding* a
+    member only narrows the command set further - the only way to make a
+    command *enter* the intersection is to *remove* a member (or use one
+    whose clusters differ from the start). The two checked-in lamps
+    differ in exactly this way: `ikea_kajplats_cws_lamp.json` (colour)
+    supports `color`, `ikea_kajplats_ws_lamp.json` (white spectrum) does
+    not, so the group over both never offers `color` (see
+    `tests/model/test_store_groups.py`,
+    `test_the_group_offers_only_what_every_member_accepts`). Removing the
+    white-spectrum member is therefore the widening step this test needs.
+    """
+    from loxmatter.projectsync.patch import apply_plan
+
+    store, group = group_store
+    colour_lamp, white_spectrum_lamp = store.devices()
+
+    # Step 1: patch once so the group's own container exists at all -
+    # otherwise every group command would be NEW_DEVICE, not NEW_SIGNAL,
+    # and this test would never reach `_new_signal_edit`.
+    index = build_index(sample_project)
+    first_plan = build_plan(
+        index,
+        [],
+        {},
+        {},
+        groups=store.groups(),
+        commands_by_group={group.id: store.group_commands(group.id)},
+    )
+    assert not any(
+        e.owner_kind == "group" and e.key == f"g{group.id}_color" for e in first_plan.entries
+    ), "the two-member group must not already offer color"
+    first_patched = apply_plan(
+        index,
+        first_plan,
+        [],
+        {},
+        {},
+        groups=store.groups(),
+        commands_by_group={group.id: store.group_commands(group.id)},
+        include_new_devices=True,
+        bridge_ip="192.168.1.2",
+        port=7000,
+        listen=8080,
+    )
+    first_index = build_index(first_patched.decode("utf-8"))
+    group_container_before = next(
+        element
+        for key, element in first_index.output_containers.items()
+        if key.startswith(f"g{group.id}_")
+    )
+    container_u_before = group_container_before.attrs["U"]
+
+    # Step 2: narrow the membership to just the colour lamp - `color`
+    # enters the intersection.
+    store.set_group_members(group.id, [colour_lamp.id])
+    assert "color" in {c.slug for c in store.group_commands(group.id)}
+
+    # Step 3: re-plan against the patched text. The container from step 1
+    # already exists, so the new command must be NEW_SIGNAL, not
+    # NEW_DEVICE.
+    second_plan = build_plan(
+        first_index,
+        [],
+        {},
+        {},
+        groups=store.groups(),
+        commands_by_group={group.id: store.group_commands(group.id)},
+    )
+    color_key = f"g{group.id}_color"
+    color_entries = [e for e in second_plan.entries if e.key == color_key]
+    assert len(color_entries) == 1
+    assert color_entries[0].status is PlanStatus.NEW_SIGNAL
+    assert color_entries[0].owner_kind == "group"
+
+    # Step 4: apply, and check the new <C> landed INSIDE the group's own
+    # `g{id}_` container - same U as before, not a freshly minted
+    # container and not a device's. This is the exact assertion the old
+    # hardcoded `d{id}_` prefix could never have satisfied: it would have
+    # raised before producing any bytes to check here at all.
+    second_patched = apply_plan(
+        first_index,
+        second_plan,
+        [],
+        {},
+        {},
+        groups=store.groups(),
+        commands_by_group={group.id: store.group_commands(group.id)},
+        include_new_devices=True,
+        bridge_ip="192.168.1.2",
+        port=7000,
+        listen=8080,
+    )
+    second_index = build_index(second_patched.decode("utf-8"))
+    color_container = second_index.output_containers[color_key]
+    assert color_container.attrs["U"] == container_u_before
+    group_container_us = {
+        element.attrs["U"]
+        for key, element in second_index.output_containers.items()
+        if key.startswith(f"g{group.id}_")
+    }
+    assert group_container_us == {container_u_before}, "no second group container was created"
+    device_container_us = {
+        element.attrs["U"]
+        for key, element in second_index.output_containers.items()
+        if key.startswith((f"d{white_spectrum_lamp.id}_", f"d{colour_lamp.id}_"))
+    }
+    assert container_u_before not in device_container_us
+
+
 def test_a_patched_project_keeps_matching_after_a_rename(sample_project, group_store):
     """Containers are matched by key, and keys come from the ID - so a
     rename leaves a stale title, not a broken sync (design 7)."""
@@ -186,4 +306,50 @@ def test_a_patched_project_keeps_matching_after_a_rename(sample_project, group_s
         groups=store.groups(),
         commands_by_group={group.id: store.group_commands(group.id)},
     )
+    assert second.entries
     assert not any(e.status is PlanStatus.NEW_DEVICE for e in second.entries)
+
+
+def test_a_deleted_groups_leftover_output_is_orphaned(sample_project, group_store):
+    """`diff._is_managed_owner_key` review: the orphan guard used to
+    accept only keys whose owner segment starts with `d`, so a `g{id}_*`
+    command left behind by a deleted group was silently ignored - unlike
+    the device equivalent (`d9_9_verwaist` in `sample_project`, covered by
+    `test_diff.test_orphaned_signal_is_reported`), which was already
+    reported. Patch a group's container into the file, delete the group,
+    and confirm its leftover output keys now come back ORPHANED."""
+    from loxmatter.projectsync.patch import apply_plan
+
+    store, group = group_store
+    index = build_index(sample_project)
+    plan = build_plan(
+        index,
+        [],
+        {},
+        {},
+        groups=store.groups(),
+        commands_by_group={group.id: store.group_commands(group.id)},
+    )
+    patched = apply_plan(
+        index,
+        plan,
+        [],
+        {},
+        {},
+        groups=store.groups(),
+        commands_by_group={group.id: store.group_commands(group.id)},
+        include_new_devices=True,
+        bridge_ip="192.168.1.2",
+        port=7000,
+        listen=8080,
+    )
+    patched_index = build_index(patched.decode("utf-8"))
+    leftover_keys = {key for key in patched_index.output_cmds if key.startswith(f"g{group.id}_")}
+    assert leftover_keys, "the group must actually have written commands to leave behind"
+
+    # The group is gone - re-plan the way `sync.run_sync` would after
+    # `delete_group`: no group in `groups`, nothing in `commands_by_group`.
+    store.delete_group(group.id)
+    second_plan = build_plan(patched_index, [], {}, {})
+    orphaned_keys = {e.key for e in second_plan.entries if e.status is PlanStatus.ORPHANED}
+    assert leftover_keys <= orphaned_keys

@@ -232,19 +232,32 @@ def _plan_outputs(
     return plan_entries
 
 
+def _is_managed_owner_key(key: str) -> bool:
+    """Whether `key`'s owner segment (everything before the first `_`)
+    looks like something THIS module could have created: `d{id}` for a
+    device, or `g{id}` for a group (design 2026-09-10, section 8) - both
+    counters exist and both produce output containers of this shape, so
+    an orphan check that only recognised `d` would silently swallow a
+    deleted group's leftover `g{id}_*` commands while still reporting the
+    device equivalent. Anything that starts with neither is not a key
+    this module ever mints and is therefore not ours to call orphaned."""
+    owner = key.split("_", 1)[0]
+    return owner.startswith(("d", "g"))
+
+
 def _orphaned_entries(
     index: ProjectIndex, known_input_keys: set[str], known_output_keys: set[str]
 ) -> list[PlanEntry]:
     orphaned: list[PlanEntry] = []
     for key, element in index.input_cmds.items():
-        if key not in known_input_keys and key.split("_", 1)[0].startswith("d"):
+        if key not in known_input_keys and _is_managed_owner_key(key):
             orphaned.append(
                 PlanEntry(
                     "input", -1, "", key, element.attrs.get("Title", key), PlanStatus.ORPHANED
                 )
             )
     for key, element in index.output_cmds.items():
-        if key not in known_output_keys and key.split("_", 1)[0].startswith("d"):
+        if key not in known_output_keys and _is_managed_owner_key(key):
             orphaned.append(
                 PlanEntry(
                     "output", -1, "", key, element.attrs.get("Title", key), PlanStatus.ORPHANED
