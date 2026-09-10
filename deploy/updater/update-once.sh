@@ -2322,32 +2322,96 @@ if ! set_tag "$BACK"; then
 else
   ROLLED=true
 
-  # Best-effort: the Compose file at $GIT_BEFORE is what actually matched
-  # $BACK, but even a checkout that fails here (a dirty working tree, a
-  # ref this shallow clone never fetched) should not stop the one thing
-  # that matters most - recreating the container against the now-restored
-  # tag. Whatever mismatch that leaves in docker-compose.yml is a smaller
-  # problem than not attempting the recreate at all.
-  run_git checkout --detach "$GIT_BEFORE" || true
-  # The same `--force-recreate` gap as the forward path's own recreate
-  # above (see that call's comment for the SIGTERM-grace-period
-  # mechanics) - a rollback is no faster to stop and start a container
-  # than the update that led to it, and this call runs entirely under
-  # phase "rollback", not "recreate", so nothing else here refreshes the
-  # heartbeat until `wait_healthy` below starts its own loop.
-  resolve_compose_project_dir
-  with_heartbeat compose up -d --no-deps --force-recreate "$SERVICE" || true
+  # Best-effort for the CHECKOUT itself, same as before this feature: the
+  # Compose file at $GIT_BEFORE is what actually matched $BACK, but even a
+  # checkout that fails here (a dirty working tree, a ref this shallow
+  # clone never fetched) should not by itself stop the one thing that
+  # matters most - recreating the container against the now-restored tag.
+  # $ROLLBACK_CHECKOUT_OK is captured (not `|| true`d away) purely for the
+  # dev-channel branch just below, which - unlike the stable channel - has
+  # a second use for it.
+  if run_git checkout --detach "$GIT_BEFORE"; then
+    ROLLBACK_CHECKOUT_OK=true
+  else
+    ROLLBACK_CHECKOUT_OK=false
+  fi
+
+  # "The rollback rebuilds" (design addendum "The development channel
+  # builds on the machine", 2026-09-10): today's rollback re-recreates
+  # against an image `compose up` finds already sitting in the local
+  # store from when it was first deployed - true for a published
+  # stable-channel tag, NOT true for a locally built one, which
+  # build_target_image()'s own pruning (above, on a confirmed "done") or a
+  # plain `docker system prune` can have removed by now. Rebuilding here,
+  # explicitly, is also what keeps `compose up` just below from ever
+  # reaching ITS OWN build fallback (docker-compose.yml's `build:` block,
+  # kept for section 3's console path) on a missing tag - that fallback
+  # carries no --build-arg, so an implicit build there would produce
+  # exactly the empty-LOXMATTER_COMMIT image the addendum warns about,
+  # this time on the recovery path meant to fix a broken update.
+  #
+  # Gated on $RUNNING_NORMALIZED = "dev", deliberately NOT on $CHANNEL -
+  # $CHANNEL is the channel of the INCOMING request, and the two can
+  # disagree: switching FROM a dev-track build BACK to a stable release is
+  # accepted (spec section 10, "a development build states its
+  # provenance perfectly well"), so a stable-channel request can still
+  # fail and roll back onto a dev-track predecessor. $RUNNING_NORMALIZED
+  # answers the question that actually matters here - was what was
+  # RUNNING before this pass a dev-track build - the same signal the
+  # $BACK computation just above already keys its own "trust $FROM, not
+  # the concrete $RUNNING" choice on. Rebuilding a $BACK that is instead a
+  # concrete stable version (RUNNING_NORMALIZED "0.2.0", say) would be
+  # actively wrong: it would locally build an image and tag it with a
+  # name CI itself publishes, permanently shadowing that published tag on
+  # this host until the next real pull overwrites it again.
+  #
+  # Gated on $ROLLBACK_CHECKOUT_OK too: building from a working tree that
+  # did NOT actually land on $GIT_BEFORE (the checkout above failed, so
+  # $REPO can still be sitting at the just-failed $REF from step 2) would
+  # tag the WRONG commit's image as $BACK - a silent mismatch, worse than
+  # the loud failure this guard produces instead.
+  #
+  # A failure either way - the checkout, or the build - is handled
+  # identically: $ROLLBACK_RECREATE_OK stays false, and the block below
+  # skips both the recreate AND the pointless HEALTH_TIMEOUT wait for a
+  # container that was never going to be there (the same RECREATE_OK
+  # reasoning the forward path already applies to its own failed
+  # recreate, above). The addendum names the resulting outcome directly:
+  # "a commit that cannot be built cannot be rolled back to by building" -
+  # this is that case, and it needs no further special-casing here.
+  ROLLBACK_RECREATE_OK=true
+  if [ "$RUNNING_NORMALIZED" = "dev" ]; then
+    if [ "$ROLLBACK_CHECKOUT_OK" != true ] || ! build_target_image "$GIT_BEFORE" "$BACK"; then
+      log "rollback: could not rebuild $GIT_BEFORE as $IMAGE:$BACK - the service was not recreated"
+      ROLLBACK_RECREATE_OK=false
+    fi
+  fi
+
+  if [ "$ROLLBACK_RECREATE_OK" = true ]; then
+    # The same `--force-recreate` gap as the forward path's own recreate
+    # above (see that call's comment for the SIGTERM-grace-period
+    # mechanics) - a rollback is no faster to stop and start a container
+    # than the update that led to it, and this call runs entirely under
+    # phase "rollback", not "recreate", so nothing else here refreshes the
+    # heartbeat until `wait_healthy` below starts its own loop.
+    resolve_compose_project_dir
+    with_heartbeat compose up -d --no-deps --force-recreate "$SERVICE" || true
+  fi
 
   # Exactly once. No second attempt, no flapping: if the cause were not
   # the image itself (a dead matter-server, say), every further attempt
   # here would only add more downtime without changing the outcome.
-  if wait_healthy; then
+  if [ "$ROLLBACK_RECREATE_OK" = true ] && wait_healthy; then
     HEALTHY=true
   else
     HEALTHY=false
   fi
 
-  ROLLBACK_MSG="version $TO did not become healthy after ${HEALTH_TIMEOUT}s"
+  if [ "$ROLLBACK_RECREATE_OK" = true ]; then
+    ROLLBACK_MSG="version $TO did not become healthy after ${HEALTH_TIMEOUT}s"
+  else
+    ROLLBACK_MSG="version $TO did not become healthy, and the rollback to $BACK could not be rebuilt - rollback did not complete"
+  fi
   write_failure_file "$ROLLBACK_MSG"
   set_state failed "$ROLLBACK_MSG"
 fi
