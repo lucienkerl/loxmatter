@@ -89,9 +89,19 @@ def test_a_bad_value_is_reported_before_anything_is_sent():
 
 
 async def test_the_calls_of_one_member_keep_their_order():
-    """The colour path sends colour and then brightness to ONE device, and
-    that order is deliberate (`_EXECUTE_IF_OFF` in translate.py). A flat
-    gather over all calls of all members would destroy it."""
+    """Pins the order `invoke` is *entered* for one member's calls, end to
+    end through `plan_group_calls` and `dispatch_group`: colour before
+    brightness, per member, matching the plan.
+
+    This does not by itself catch a flat gather over every member's calls:
+    `seen.append` runs before this coroutine's only `await`, and
+    `asyncio.gather` starts every coroutine's synchronous prefix in
+    creation order, so entry order comes out right even under a flat
+    gather. The guarantee that actually rules a flat gather out - a
+    member's second call not starting until its first has returned - is
+    `test_a_member_s_second_call_waits_for_the_first_to_return`'s job; do
+    not delete this test as redundant with that one, each pins a
+    different half of the ordering contract."""
     plans = plan_group_calls([colour_target(1, 11, "A"), colour_target(2, 22, "B")], "60100060")
     seen: list[tuple[int, int]] = []
 
@@ -136,14 +146,20 @@ async def test_a_member_s_second_call_waits_for_the_first_to_return():
         else:  # LevelControl - must not run before colour is released
             level_invoked = True
 
-    task = asyncio.ensure_future(dispatch_group([plan], invoke))
+    task = asyncio.create_task(dispatch_group([plan], invoke))
     # `dispatch_group` needs a tick to spawn its member task(s), and that
     # task needs a further tick to actually reach and block on the colour
     # call - a real (if tiny) sleep, rather than a single `sleep(0)`,
     # covers that without hard-coding how many bare hops apart it is.
     await asyncio.sleep(0.01)
-    assert level_invoked is False, "level was invoked before colour returned"
-    colour_released.set()
+    try:
+        assert level_invoked is False, "level was invoked before colour returned"
+    finally:
+        # Always release the member task, even if the assertion above
+        # fires - otherwise a failure here leaves it parked on its 2s
+        # `wait_for` and the real assertion error is buried under a
+        # timeout from the still-running task.
+        colour_released.set()
     assert await task == []
     assert level_invoked is True
 
@@ -183,12 +199,19 @@ async def test_a_failing_member_does_not_stop_the_others():
 
 
 async def test_every_failing_member_is_named_not_just_the_first():
+    """Failures must come back in *plan* order, not completion order, so a
+    caller's message is reproducible. A is planned before C but made to
+    fail later in wall-clock time (the `sleep` below); a dispatcher that
+    collected labels as members completed would return ["C", "A"] here."""
     plans = plan_group_calls(
         [on_target(1, 11, "A"), on_target(2, 22, "B"), on_target(3, 33, "C")], "1"
     )
 
     async def invoke(call: MatterCall) -> None:
-        if call.node_id in (11, 33):
+        if call.node_id == 11:
+            await asyncio.sleep(0.01)
+            raise RuntimeError("no route to host")
+        if call.node_id == 33:
             raise RuntimeError("no route to host")
 
     assert await dispatch_group(plans, invoke) == ["A", "C"]

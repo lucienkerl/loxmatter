@@ -110,6 +110,13 @@ async def dispatch_group(
     results = await asyncio.gather(
         *(_run_member(plan, invoke) for plan in plans), return_exceptions=True
     )
+    # BaseException, not Exception: cancelling the task that awaits this
+    # function still propagates CancelledError out, because CPython's
+    # _GatheringFuture re-raises it regardless of return_exceptions - so
+    # nothing is silently swallowed at shutdown. What this widening buys
+    # is a member whose own `invoke` raises CancelledError being reported
+    # as a failed label instead of propagating - `Exception` alone would
+    # silently count a cancelled member as a successful switch.
     return [
         plan.device_label
         for plan, result in zip(plans, results, strict=True)
