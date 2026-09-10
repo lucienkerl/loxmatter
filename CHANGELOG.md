@@ -8,6 +8,18 @@ people who don't know the code.
 
 ## [Unreleased]
 
+## [0.3.8] — 2026-09-10
+
+### Fixed
+
+- Switching to the **Development** channel is no longer a one-way trip.
+  Going back to **Stable** was refused every time, with a message about
+  the running version not stating a version, and the only way back was
+  the console. It works from the interface now, and the card says
+  beforehand what the move means: the release you land on is the newest
+  published one, it may be older than the development build you are
+  running, and the newer changes reach a release only later.
+
 ## [0.3.7] — 2026-09-10
 
 ### Added
