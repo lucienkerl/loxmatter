@@ -2110,6 +2110,34 @@ if [ "$RECREATE_OK" = true ]; then
     # already has to mind.
     ls -1t "$BACKUP_DIR"/store-*.tgz 2>/dev/null | tail -n +11 | while read -r old; do rm -f "$old"; done
 
+    # The same rule, mirrored for locally built dev-channel images (design
+    # addendum "The development channel builds on the machine",
+    # 2026-09-10, "Pruning"): every dev update leaves one behind
+    # (build_target_image() above never removes the tag it replaces), and
+    # nothing else in this file ever did either - an SD card that fills up
+    # one update at a time is a new failure mode this feature would
+    # otherwise introduce, not one it inherits.
+    #
+    # `docker images` lists newest first by default (verified: no `--filter
+    # before=`/`--format {{.CreatedAt}}` sort needed), the same "self-
+    # generated name, not attacker- or user-supplied" reasoning as the
+    # backup prune above - only build_target_image() ever produces a
+    # "local-*" tag, always from a validated, fetched commit (Rule 1) -
+    # so `tail -n +11` keeps the same ten-most-recent budget the backups
+    # get. Unconditional on channel, same as the backup prune just above:
+    # a stable-channel success finds nothing matching "local-*" and this
+    # is a no-op, cheaper than branching on $CHANNEL to skip it.
+    #
+    # Runs only once this update has actually reached "done", for the
+    # identical reason the backup prune waits for it too: the image this
+    # very pass just built is always the newest of the lot and therefore
+    # always kept, but a streak of failed dev-channel attempts (schema
+    # jump and all) must not be the thing that decides which of the last
+    # ten SUCCESSFUL builds survives.
+    docker images --filter "reference=$IMAGE:local-*" --format '{{.Tag}}' 2>/dev/null \
+      | tail -n +11 \
+      | while read -r old_tag; do docker rmi "$IMAGE:$old_tag" >/dev/null 2>&1 || true; done
+
     # A previous pass may have left this behind; a clean success means
     # the story it told is over. Written even though nothing here reads
     # it back - the file exists for a human on the other end of an SSH
