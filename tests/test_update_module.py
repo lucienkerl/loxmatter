@@ -292,6 +292,22 @@ def test_while_an_update_is_running_a_second_one_is_not_accepted(tmp_path):
         request_update(tmp_path, channel="stable", target="0.3.0")
 
 
+def test_while_a_dev_channel_build_is_running_a_second_one_is_not_accepted(tmp_path):
+    # `build` is the dev channel's own counterpart to `pull` above (design
+    # addendum "The development channel builds on the machine",
+    # 2026-09-10) - a local `docker build` that, measured on the real Pi,
+    # runs for the better part of a minute. Missing `build` from
+    # `_RUNNING_PHASES` would read this exact window as idle and let a
+    # second request overwrite request.json out from under the build
+    # already in progress - the same job-loss failure mode
+    # `_pending_job_id`'s own docstring names for the narrower window
+    # between "accepted" and "state.json caught up", reopened here for
+    # the whole build.
+    _state(tmp_path, id="laeuft", phase="build")
+    with pytest.raises(UpdateBusyError):
+        request_update(tmp_path, channel="dev", target="abcdef1234567890")
+
+
 def test_after_a_finished_update_a_new_one_goes_through(tmp_path):
     _state(tmp_path, id="alt", phase="done")
     assert request_update(tmp_path, channel="stable", target="0.4.0")

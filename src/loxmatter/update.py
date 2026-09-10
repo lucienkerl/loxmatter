@@ -36,9 +36,14 @@ exactly `id`, `phase`, `from`, `to`, `error`, `rolled_back`,
 `rolled_back_to`, `healthy`, `updater_seen_at`, `updater_version`,
 `updater_digest` and `updater_stack_host_path` (see `set_state()` there),
 and the phases that count as
-"still running" are exactly `queued`, `backup`, `pull`, `recreate`,
-`health` and `rollback` - every other phase (`idle`, `rejected`, `done`,
-`failed`) is an end state that allows a new request.
+"still running" are exactly `queued`, `backup`, `pull`, `build`,
+`recreate`, `health` and `rollback` - every other phase (`idle`,
+`rejected`, `done`, `failed`) is an end state that allows a new request.
+`pull` and `build` are alternatives, never both in the same pass - the
+stable channel downloads a published image (`pull`), the dev channel
+builds the checked-out commit itself (`build`, design addendum "The
+development channel builds on the machine", 2026-09-10) - so a single
+pass writes exactly one of the two, never a sequence through both.
 
 `updater_version` is the one field above that never changes within a
 sidecar's own lifetime - it is the version baked into the sidecar's own
@@ -90,13 +95,30 @@ from pathlib import Path
 # Phases in which a request is still running. Everything else is an end
 # state (or `idle`) and allows a new request. Copied from update-once.sh's
 # own phase names - `queued` (accepted, not yet started), `backup`,
-# `pull`, `recreate`, `health` (the normal forward path) and `rollback`
-# (the recovery path after a failed health check). `rejected` is
-# deliberately NOT in this set: a rejection is a completed judgment about
-# a bad request, not work in progress, and the point of surfacing it
-# instead of silently discarding it is exactly so a corrected resubmission
-# is not needlessly blocked.
-_RUNNING_PHASES = frozenset({"queued", "backup", "pull", "recreate", "health", "rollback"})
+# `pull` (stable channel: downloading the published image), `build` (dev
+# channel: building the checked-out commit locally instead - the two
+# never both occur in one pass, see the module docstring), `recreate`,
+# `health` (the normal forward path) and `rollback` (the recovery path
+# after a failed health check). `rejected` is deliberately NOT in this
+# set: a rejection is a completed judgment about a bad request, not work
+# in progress, and the point of surfacing it instead of silently
+# discarding it is exactly so a corrected resubmission is not needlessly
+# blocked.
+#
+# Missing `build` here specifically (as opposed to any other phase) is a
+# real bug, not a hypothetical one: `request_update()` below treats
+# anything NOT in this set as free to accept a new request over. A
+# `state.json` sitting at `phase: "build"` for the better part of a
+# minute (see `deploy/updater/update-once.sh`'s own measurement) would
+# read as idle here, and a second `POST /api/update/apply` landing in
+# that window would overwrite `request.json` out from under the build
+# already running - the exact job-loss failure mode this module's own
+# docstring already describes for the window between "accepted" and
+# "state.json caught up", just reopened for the whole build instead of a
+# few seconds of it. `app.js`'s OWN copy of this set has the identical
+# failure mode client-side, on `updateRunning()` instead of
+# `request_update()` - see that array's own comment.
+_RUNNING_PHASES = frozenset({"queued", "backup", "pull", "build", "recreate", "health", "rollback"})
 
 # The three phases in which a pass has reached a definite, unchangeable
 # outcome. This is the authoritative list update-once.sh's SIGTERM trap

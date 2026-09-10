@@ -677,8 +677,9 @@ on_signal() {
   # a finished pass, so a signal arriving while idle is still recorded
   # exactly as it always was - there is nothing finished there to
   # protect. A signal in any RUNNING phase (`queued`, `backup`, `pull`,
-  # `recreate`, `health`, `rollback`) also falls through unchanged below -
-  # that is what this trap exists for, and a rollback interrupted midway
+  # `build`, `recreate`, `health`, `rollback`) also falls through
+  # unchanged below - that is what this trap exists for, and a rollback
+  # interrupted midway
   # is precisely the case it must keep reporting (see the block comment
   # above this function for that exact scenario, proven end to end).
   case "$sig_phase" in
@@ -1972,29 +1973,44 @@ if ! set_tag "$IMAGE_TAG"; then
   exit 0
 fi
 
-# 2.5 Obtain the image - a registry download on the stable channel, the
-# ONLY step this phase name covers, matching what the web UI's own step
-# list already claims it means (Important 2). `compose_pull_with_heartbeat`,
-# not a bare `compose pull` (Important 1): a single blocking call this
-# long needs its heartbeat kept moving from inside itself - see that
-# function's own comment for the mechanism and its accepted trade-off.
+# 2.5 Obtain the image - a registry download on the stable channel, a
+# local build on the dev channel (design addendum "The development
+# channel builds on the machine", 2026-09-10). The two are alternatives,
+# never both in the same pass, and each now writes its OWN phase name -
+# `pull` for the download, `build` for the local build - instead of
+# sharing one.
 #
-# The dev channel does not reach `compose_pull_with_heartbeat` at all
-# (design addendum "The development channel builds on the machine",
-# 2026-09-10): it builds $REF, already checked out above, with
-# build_target_image() instead - same phase name, same heartbeat
-# wrapping, same failure handling below, just a different call. $OBTAIN_OK
-# and $OBTAIN_VERB exist only to let the two branches share that handling
-# rather than duplicate it once per channel.
-set_state pull ""
+# They used to share `pull` unconditionally, which is exactly what this
+# comment once justified ("same phase name ... just a different call").
+# Measured on the real Pi: the card showed "Loading the image" for a full
+# minute while `docker build` actually ran, because state.json never said
+# which of the two the sidecar was doing - someone watching waits for a
+# download that is not happening. `build` is mirrored in
+# `src/loxmatter/update.py`'s `_RUNNING_PHASES`, `app.js`'s
+# `updateRunning()`, index.html's step list and `strings.yaml`'s
+# `update_step_build` key - `tests/api/test_web.py` runs the real
+# `app.js`/index.html bindings against a `phase: "build"` state to keep
+# those four (five, counting this file) from drifting apart again the
+# way `pull` once silently did.
+#
+# `compose_pull_with_heartbeat`, not a bare `compose pull` (Important 1):
+# a single blocking call this long needs its heartbeat kept moving from
+# inside itself - see that function's own comment for the mechanism and
+# its accepted trade-off. `build_target_image()` carries the identical
+# `with_heartbeat` wrapping for the identical reason (see its own
+# comment, above). $OBTAIN_OK and $OBTAIN_VERB exist only to let the two
+# branches share the failure handling below rather than duplicate it once
+# per channel.
 OBTAIN_OK=false
 OBTAIN_VERB="pulled"
 if [ "$CHANNEL" = "dev" ]; then
   OBTAIN_VERB="built"
+  set_state build ""
   if build_target_image "$REF" "$IMAGE_TAG"; then
     OBTAIN_OK=true
   fi
 else
+  set_state pull ""
   if compose_pull_with_heartbeat "$SERVICE"; then
     OBTAIN_OK=true
   fi

@@ -1373,6 +1373,14 @@ web.system.update_step_backup:
 web.system.update_step_pull:
   en: "Loading the image"
   de: "Image wird geladen"
+# The dev channel's own second step (design addendum "The development
+# channel builds on the machine", 2026-09-10): `pull` and `build` are
+# alternatives within one run, never both, so exactly one of these two
+# keys is ever shown for the second step - see index.html's own comment
+# on that step for which.
+web.system.update_step_build:
+  en: "Building the image"
+  de: "Image wird gebaut"
 web.system.update_step_recreate:
   en: "Restarting the service"
   de: "Dienst wird neu gestartet"

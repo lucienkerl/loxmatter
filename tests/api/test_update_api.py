@@ -801,6 +801,7 @@ def test_the_interface_knows_every_text_of_the_update_card():
         "web.system.update_confirm_schema",
         "web.system.update_step_backup",
         "web.system.update_step_pull",
+        "web.system.update_step_build",
         "web.system.update_step_recreate",
         "web.system.update_step_health",
         "web.system.update_restarting",

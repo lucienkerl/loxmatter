@@ -3082,10 +3082,23 @@ function app() {
     /** The phases in which the sidecar is still doing something - copied
      * one-to-one from `update.py`'s own `_RUNNING_PHASES` (that module's
      * docstring is explicit that `rejected`/`idle`/`done`/`failed` are
-     * end states, `rollback` is not). Outside of these, the timer rests. */
+     * end states, `rollback` is not). Outside of these, the timer rests.
+     *
+     * `build` (the dev channel's own local build, alongside `pull` for
+     * the stable channel's download - the two never both occur in one
+     * pass) has to be in this list for the identical reason `pull` and
+     * `recreate` already are: leaving it out does not just mislabel a
+     * step, it makes THIS function read `false` for the better part of a
+     * minute while a real build runs - stopping the poll timer
+     * (`loadUpdateStatus`, below) and un-suppressing the "no updater
+     * installed" hint (index.html, gated on `!updateRunning()`) for a
+     * sidecar that is, at that exact moment, working as hard as it ever
+     * does. */
     updateRunning() {
       const phase = this.updateStatus?.state?.phase;
-      return ["queued", "backup", "pull", "recreate", "health", "rollback"].includes(phase);
+      return ["queued", "backup", "pull", "build", "recreate", "health", "rollback"].includes(
+        phase,
+      );
     },
 
     /** Whether the UPDATER SIDECAR ITSELF (not the bridge, and nothing to
