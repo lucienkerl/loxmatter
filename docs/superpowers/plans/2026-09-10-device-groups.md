@@ -10,6 +10,13 @@
 
 **Design document:** `docs/superpowers/specs/2026-09-10-device-groups-design.md`. Read it before Task 1; the section numbers referenced below are its.
 
+**Correction, made during execution:** the tests below originally used the
+slug `hue_saturation` for ColorControl command 6. The real slug in
+`profiles/clusters.yaml` is **`color`** (its control type is `hue_sat`);
+command 10 is `colortemp` (control `kelvin`), and LevelControl carries both
+`level` (8/0) and `level_onoff` (8/4). Confirmed by calling
+`profiles.table.command_slug` directly rather than reading the YAML.
+
 ## Global Constraints
 
 - **English everywhere** — code, comments, docstrings, test names, commit messages. The only German that may be written is a `de:` value in `src/loxmatter/i18n/strings.yaml`.
@@ -598,8 +605,8 @@ def lamps_with_commands(store, lamps):
 def test_the_group_offers_only_what_every_member_accepts(store, lamps_with_commands):
     colour_only = store.create_group("Colour", [lamps_with_commands[0]])
     both = store.create_group("Both", lamps_with_commands)
-    assert "hue_saturation" in _slugs(store, colour_only.id)
-    assert "hue_saturation" not in _slugs(store, both.id)
+    assert "color" in _slugs(store, colour_only.id)
+    assert "color" not in _slugs(store, both.id)
     assert {"on", "off", "toggle"} <= set(_slugs(store, both.id))
 
 
@@ -613,7 +620,7 @@ def test_a_surviving_command_keeps_its_key(store, lamps_with_commands):
 
 def test_a_command_that_leaves_the_intersection_stops_resolving(store, lamps_with_commands):
     group = store.create_group("Colour", [lamps_with_commands[0]])
-    key = next(c.key for c in store.group_commands(group.id) if c.slug == "hue_saturation")
+    key = next(c.key for c in store.group_commands(group.id) if c.slug == "color")
     store.set_group_members(group.id, lamps_with_commands)
     with pytest.raises(UnknownCommandError):
         store.resolve_group_command(key)
@@ -628,9 +635,9 @@ def test_the_group_survives_losing_every_member(store, lamps_with_commands):
 
 def test_forgetting_a_member_recomputes_the_intersection(store, lamps_with_commands):
     group = store.create_group("Both", lamps_with_commands)
-    assert "hue_saturation" not in _slugs(store, group.id)
+    assert "color" not in _slugs(store, group.id)
     store.forget_device(lamps_with_commands[1])
-    assert "hue_saturation" in _slugs(store, group.id)
+    assert "color" in _slugs(store, group.id)
 
 
 def test_group_keys_can_never_collide_with_device_keys(store, lamps_with_commands):
@@ -1009,7 +1016,7 @@ def colour_target(device_id: int, node_id: int, label: str) -> GroupTarget:
     return GroupTarget(
         device_id=device_id,
         device_label=label,
-        commands=(command(device_id, node_id, 1, 768, 6, "hue_saturation", True),),
+        commands=(command(device_id, node_id, 1, 768, 6, "color", True),),
     )
 
 
@@ -1730,8 +1737,8 @@ async def test_replacing_the_members_recomputes_the_commands(api):
     after = (await client.get(f"/api/groups/{group_id}/controls")).json()
     slugs_before = {c["slug"] for c in before["commands"]}
     slugs_after = {c["slug"] for c in after["commands"]}
-    assert "hue_saturation" in slugs_before
-    assert "hue_saturation" not in slugs_after
+    assert "color" in slugs_before
+    assert "color" not in slugs_after
 
 
 async def test_a_group_can_be_deleted(api):
