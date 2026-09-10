@@ -923,6 +923,47 @@ def test_the_image_pull_reports_phase_pull_not_backup(updater):
     )
 
 
+def test_the_image_build_reports_phase_build_not_pull(updater):
+    # The `build` counterpart of the test just above, added together with
+    # the `build` phase itself: before this feature the dev channel's own
+    # image build ran under `set_state pull ""`, shared unconditionally
+    # with the stable channel - a literal lie about what state.json told
+    # the web UI a minute-long `docker build` actually was. Measured on
+    # the real Pi: the card highlighted "Loading the image"
+    # (`web.system.update_step_pull`) for the whole build, because `phase`
+    # never said "build" at all.
+    #
+    # Same snapshot technique as `test_the_image_pull_reports_phase_pull_
+    # not_backup` above, and for the identical reason: a direct,
+    # timestamped witness of what state.json actually held at the exact
+    # moment `docker build` runs, not just what the finished pass ends on.
+    #
+    # Bite-checked by reverting the dev branch of the "obtain the image"
+    # block back to the single, unconditional `set_state pull ""` it used
+    # to share with the stable channel: this test then fails,
+    # `snap_state["phase"] == "pull"` instead of `"build"`.
+    snapshot = updater.update_dir / "state-at-build.json"
+    docker_path = updater.bindir / "docker"
+    docker_path.write_text(
+        _docker_stub_source(
+            build_case=(
+                f'cp "$LOXMATTER_UPDATE_DIR/state.json" "{snapshot}" 2>/dev/null\n    exit 0 ;;'
+            )
+        ),
+        encoding="utf-8",
+    )
+    docker_path.chmod(0o755)
+    _write_request(updater, channel="dev", target="abcdef1234567890")
+    _, _calls, state = updater()
+    assert state["phase"] == "done"
+    assert snapshot.is_file(), "the image build never ran"
+    snap_state = json.loads(snapshot.read_text(encoding="utf-8"))
+    assert snap_state["phase"] == "build", (
+        "the phase at the moment of the actual image build should read "
+        f"'build', not {snap_state['phase']!r}"
+    )
+
+
 def test_the_heartbeat_keeps_advancing_through_a_long_image_pull(updater):
     # Important 1. `updater_seen_at` used to be written only by
     # `write_state` - at pass start, and at each `set_state` call - and

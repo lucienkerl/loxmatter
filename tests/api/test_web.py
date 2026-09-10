@@ -852,7 +852,7 @@ async def test_the_update_card_css_classes_carry_the_rules_the_markup_relies_on(
     # otherwise stay green after a rename left the rule below orphaned.
     assert 'class="confirm"' in page
     assert 'class="steps"' in page
-    assert "done: ['pull','recreate','health'].includes(updateStatus.state.phase)" in page
+    assert "done: ['pull','build','recreate','health'].includes(updateStatus.state.phase)" in page
     assert "now: updateStatus.state.phase === 'backup'" in page
     assert 'class="notes"' in page
 
@@ -1178,6 +1178,131 @@ def _x_show_expr(markup: str, t_key: str) -> str:
     )
     assert match, f"no x-show immediately precedes t('{t_key}', ...) in the markup"
     return match.group(1)
+
+
+def _running_step_lis(markup: str) -> list[tuple[str, str]]:
+    """The `(:class expression, x-text expression)` pair for each of the
+    four step `<li>` elements inside the `x-if="updateRunning()"` block,
+    pulled straight out of the SERVED markup - the same "extract the real
+    expression, don't retype it" technique `_x_show_expr` above already
+    uses, for the same reason: a retyped copy would only ever prove it
+    agrees with itself."""
+    running_start = markup.index('x-if="updateRunning()"')
+    running_end = markup.index("</template>", running_start)
+    block = markup[running_start:running_end]
+    lis = re.findall(r'<li\s+:class="(\{[^}]*\})"\s*\n\s*x-text="([^"]*)"', block)
+    assert len(lis) == 4, f"expected exactly four step <li> elements, found {len(lis)}: {lis}"
+    return lis
+
+
+def _eval_js(expr: str, *, phase: str, channel: str) -> object:
+    """Evaluates one of the expressions `_running_step_lis` extracted,
+    against a real `updateStatus` shaped the way `/api/update/status`
+    actually returns one, in node - not a Python re-implementation of
+    Alpine's expression evaluation, which would only prove that
+    re-implementation self-consistent. `t` is stubbed to return its own
+    key (rather than a real translation) so this stays a check of WHICH
+    key each phase/channel combination selects, not of strings.yaml's
+    wording."""
+    script_src = (
+        "const t = (key) => key;\n"
+        f"const updateStatus = {{ state: {{ phase: {json.dumps(phase)} }}, "
+        f"channel: {json.dumps(channel)} }};\n"
+        f"console.log(JSON.stringify({expr}));\n"
+    )
+    result = subprocess.run(
+        [NODE, "-e", script_src], capture_output=True, text=True, timeout=10, check=False
+    )
+    assert result.returncode == 0, result.stderr
+    return json.loads(result.stdout)
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+async def test_the_build_phase_is_tied_across_every_place_it_lives(api):
+    """The phase set (`idle`/`queued`/`backup`/`pull`/`build`/`recreate`/
+    `health`/`rollback`/`done`/`failed`/`rejected`) lives in five places
+    with nothing tying them together: `update-once.sh`'s own `set_state`
+    calls, `update.py`'s `_RUNNING_PHASES`, `app.js`'s `updateRunning()`,
+    index.html's four step `<li>`s, and `strings.yaml`'s `update_step_*`
+    keys. Before this test, nothing would have noticed `build` (design
+    addendum "The development channel builds on the machine" plus this
+    feature's own follow-up) landing in some of those five and not
+    others - a card silently stuck on a step that never highlights,
+    the kind of drift this feature has produced six times, always found
+    by a person comparing two files by hand.
+
+    Every check below runs the REAL code - the real `_RUNNING_PHASES`
+    import, the real `app.js` executed in node, the real `:class`/
+    `x-text` expressions pulled out of the served index.html, the real
+    `strings.yaml` table - rather than a second, hand-typed phase list
+    that could only ever prove agreement with itself.
+
+    What this test does NOT cover: `update-once.sh` cannot be executed
+    here (node runs no POSIX sh), so this test does not touch place one
+    of the five. That place is bite-checked separately and more strongly
+    - behaviourally, not just textually - by
+    `tests/test_updater_script.py::test_the_image_build_reports_phase_
+    build_not_pull`, which snapshots state.json at the instant `docker
+    build` actually runs."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+    script = (await client.get("/static/app.js")).text
+
+    from loxmatter import i18n
+    from loxmatter.update import _RUNNING_PHASES
+
+    # Place 2: update.py's own list - the value every other place below
+    # is measured against.
+    assert "build" in _RUNNING_PHASES, "update.py's _RUNNING_PHASES must include 'build'"
+
+    # Place 3: app.js's updateRunning(), executed for real.
+    values = _app_state(
+        """
+        state.updateStatus = { state: { phase: "build" }, channel: "dev" };
+        console.log(JSON.stringify({ running: state.updateRunning() }));
+        """
+    )
+    assert values["running"] is True, "app.js's updateRunning() must treat 'build' as running"
+
+    # Place 4: index.html's step list, both halves - the highlight (keyed
+    # on phase: 'build' and 'pull' both have to light up the second step,
+    # and both have to mark the first step 'done' once reached) and the
+    # label (keyed on channel - see index.html's own comment for why).
+    step_lis = _running_step_lis(page)
+    backup_class_expr, _ = step_lis[0]
+    step2_class_expr, step2_text_expr = step_lis[1]
+
+    assert _eval_js(step2_class_expr, phase="build", channel="dev")["now"] is True
+    assert _eval_js(step2_class_expr, phase="pull", channel="stable")["now"] is True
+    assert _eval_js(backup_class_expr, phase="build", channel="dev")["done"] is True
+    assert _eval_js(backup_class_expr, phase="pull", channel="stable")["done"] is True
+
+    # The label must follow the CHANNEL for the whole run, including
+    # `backup` - before `phase` has ever read 'build' or 'pull' - not
+    # just at the instant the step is actually highlighted.
+    assert (
+        _eval_js(step2_text_expr, phase="backup", channel="dev") == "web.system.update_step_build"
+    )
+    assert _eval_js(step2_text_expr, phase="build", channel="dev") == "web.system.update_step_build"
+    assert (
+        _eval_js(step2_text_expr, phase="backup", channel="stable") == "web.system.update_step_pull"
+    )
+    assert (
+        _eval_js(step2_text_expr, phase="pull", channel="stable") == "web.system.update_step_pull"
+    )
+
+    # Place 5: strings.yaml must actually carry the key the channel-keyed
+    # label above names, in both languages - a label pointing at a key
+    # nobody translated would be its own kind of drift.
+    assert "web.system.update_step_build" in i18n._STRINGS
+    assert set(i18n._STRINGS["web.system.update_step_build"]) >= {"en", "de"}
+
+    # `script` is fetched only so a future edit cannot silently swap
+    # `_app_state`'s own file read for the SERVED script without this
+    # test noticing the delivered file differs - `_app_state` reads
+    # `app.js` straight off disk, `script` is what `/static/app.js`
+    # actually serves.
+    assert (WEB_DIR / "app.js").read_text(encoding="utf-8") == script
 
 
 @pytest.mark.skipif(NODE is None, reason="node is required for this test")
