@@ -7328,3 +7328,43 @@ def test_the_page_adopts_an_update_somebody_else_started():
     )
 
     assert values["adopted"] == "j-live"
+
+
+async def test_leaving_the_development_channel_is_explained_before_the_button(api):
+    """A delivery test: it proves the sentence and its two conditions were
+    served, not that Alpine evaluated them. That is the weaker of the two
+    kinds of test in this file, and it is the right one here - the
+    condition reads `versionInfo`, which the node harness does not build.
+
+    What it guards is a pairing that would otherwise drift silently. The
+    updater now lets a development build move back to a published release
+    (`tests/test_updater_script.py::test_a_development_build_may_return_to_a_published_release`),
+    on the understanding that the interface says which way the move goes
+    first - the release may be OLDER than the build running. Delete the
+    sentence and the updater still accepts the switch, in silence. That
+    is the failure this catches.
+    """
+    client, _, _ = api
+    page = (await client.get("/")).text
+
+    assert "web.system.update_leaving_dev" in page
+    # Both halves of the gate: only on the stable channel, and only while
+    # a development build is what is actually running.
+    assert "updateStatus.channel === 'stable'" in page
+    assert "versionInfo?.version === 'dev'" in page
+
+
+def test_the_leaving_development_sentence_exists_in_both_languages():
+    """`check_language.py` cannot catch a missing `de` - it looks for
+    German where English belongs, not for absence. A `web.*` key with no
+    German value falls back to English inside a German page, which is the
+    thing CLAUDE.md's i18n rule exists to prevent.
+    """
+    from loxmatter import i18n
+
+    for language in ("en", "de"):
+        i18n.set_language(language)
+        rendered = i18n.t("web.system.update_leaving_dev", version="0.3.7")
+        assert "0.3.7" in rendered
+        assert rendered != "web.system.update_leaving_dev"
+    i18n.set_language("en")

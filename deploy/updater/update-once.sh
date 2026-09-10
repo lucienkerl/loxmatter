@@ -1063,14 +1063,36 @@ if [ "$CHANNEL" = "stable" ]; then
   # Reject instead of guessing: the user then sees that they are running
   # an image that does not state its provenance - a usable piece of
   # information.
+  # "dev" is NOT one of these, and used to be: a development build states
+  # its provenance perfectly well - it says it is off the release track -
+  # which is a different thing from an image that cannot say what it is.
+  # Lumping the two together made the interface a one-way door: anyone who
+  # switched to the development channel could never get back to a release
+  # through the button, only through the console, and nothing warned them
+  # of that before they switched. Measured on real hardware, this is
+  # exactly what happened.
   case "$CUR" in
-    ''|unbekannt|dev) reject "the running version does not state a version - update only via the console" ;;
+    ''|unbekannt) reject "the running version does not state a version - update only via the console" ;;
   esac
-  if [ "$CUR" = "$NEW" ]; then
-    reject "this version is already running"
-  fi
-  if [ "$(printf '%s\n%s\n' "$CUR" "$NEW" | sort -V | head -1)" != "$CUR" ]; then
-    reject "older version - only the rollback goes backward"
+  # Both comparisons below need two version NUMBERS, and "dev" is not
+  # one. Skipping them for a development build is not a hole in rule 3:
+  # that rule exists to stop an installation sliding backwards along the
+  # release track by accident, and this is not that - it is someone who
+  # deliberately moved the channel setting back to stable, which is a
+  # decision the interface asked them to make and they made. The
+  # published release they land on may genuinely be older than the
+  # development build they were running; `sort -V` even ranks any release
+  # below the literal "dev", so leaving these checks in place would
+  # refuse every such switch as "older version". Design section 10 wants
+  # that stated rather than blocked - the interface says which way this
+  # goes before the button is pressed.
+  if [ "$CUR" != "dev" ]; then
+    if [ "$CUR" = "$NEW" ]; then
+      reject "this version is already running"
+    fi
+    if [ "$(printf '%s\n%s\n' "$CUR" "$NEW" | sort -V | head -1)" != "$CUR" ]; then
+      reject "older version - only the rollback goes backward"
+    fi
   fi
 fi
 

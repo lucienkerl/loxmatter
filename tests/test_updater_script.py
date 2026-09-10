@@ -2880,3 +2880,53 @@ def test_the_heartbeat_refreshes_well_inside_the_bridges_staleness_window():
         f"updater gone after {_MAX_SILENT_SECONDS}s - less than six times the margin. "
         "Whichever of the two moved, move the other or justify the new margin here."
     )
+
+
+def test_a_development_build_may_return_to_a_published_release(updater):
+    """The one-way door this fix closes, measured on real hardware before
+    it was closed: an installation that switched to the development
+    channel could never get back to a release through the interface.
+
+    `LOXMATTER_VERSION=dev` used to be rejected in the same breath as an
+    empty one - "the running version does not state a version". But a
+    development build states its provenance perfectly well; it says it is
+    off the release track. Rule 3 exists to stop an installation sliding
+    backwards along that track by accident, and a channel switch someone
+    deliberately made is not that.
+
+    The published release may genuinely be older than the development
+    build, which is why the two version comparisons are skipped rather
+    than satisfied - `sort -V` ranks every release below the literal
+    "dev", so leaving them in place refused every such switch as "older
+    version". The interface says which way it goes before the button;
+    see `web.system.update_leaving_dev`.
+    """
+    docker_path = updater.bindir / "docker"
+    docker_path.write_text(_docker_stub_source(version="dev"), encoding="utf-8")
+    docker_path.chmod(0o755)
+    _write_request(updater, target="0.3.7")
+    _, _, state = updater()
+
+    assert state["phase"] != "rejected", state.get("error")
+    assert state["to"] == "0.3.7"
+
+
+def test_an_image_that_cannot_say_what_it_is_still_cannot_update(updater):
+    """The other half, and the reason the two cases were ever together:
+    an image whose `LOXMATTER_VERSION` is empty - built by hand, or from
+    a tree that never went through CI - is not "off the release track",
+    it is unidentifiable. Nothing can be said about whether a target
+    moves it forward, so the rule still refuses and names the console.
+
+    If this ever passes, the fix above has been widened into the hole it
+    was carefully cut around.
+    """
+    docker_path = updater.bindir / "docker"
+    docker_path.write_text(_docker_stub_source(version=""), encoding="utf-8")
+    docker_path.chmod(0o755)
+    _write_request(updater, target="0.3.7")
+    _, calls, state = updater()
+
+    assert state["phase"] == "rejected"
+    assert "does not state a version" in state["error"]
+    assert _mutating_docker_calls(calls) == []
