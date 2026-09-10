@@ -39,6 +39,7 @@ import re
 
 from loxmatter.export.documents import (
     LoxoneCommand,
+    group_output_title,
     output_title,
     virtual_in_udp_cmd_attributes,
     virtual_out_cmd_attributes,
@@ -157,14 +158,21 @@ def new_input_container_open_tag(
     return f"<C {render_attrs(attrs)}>"
 
 
-def new_output_container_open_tag(device_label: str, base_url: str, iname: str, u: str) -> str:
-    """Like `new_input_container_open_tag`, for `VirtualOut`."""
+def new_output_container_open_tag(
+    device_label: str, base_url: str, iname: str, u: str, *, is_group: bool = False
+) -> str:
+    """Like `new_input_container_open_tag`, for `VirtualOut`.
+
+    `is_group` picks the title only (`group_output_title` vs.
+    `output_title`, design 2026-09-10 section 7) - a group container is
+    otherwise identical to a device one: outputs only, same attributes.
+    """
     attrs = [
         ("Type", "VirtualOut"),
         ("IName", iname),
         ("V", "178"),
         ("U", u),
-        ("Title", output_title(device_label)),
+        ("Title", group_output_title(device_label) if is_group else output_title(device_label)),
         ("WF", "16384"),
         ("Address", base_url),
         ("CloseAfterSend", "true"),
