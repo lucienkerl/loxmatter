@@ -28,6 +28,7 @@ from loxmatter.matter.models import NodeSnapshot
 from loxmatter.model.store import (
     CategoryMismatchError,
     Store,
+    UnknownCommandError,
     UnknownGroupError,
 )
 
@@ -263,5 +264,148 @@ def test_set_group_members_rolls_back_a_write_time_failure_and_keeps_the_old_mem
     reopened = Store(tmp_path / "test.sqlite")
     try:
         assert [d.id for d in reopened.group_members(group.id)] == [lamps[1]]
+    finally:
+        reopened.close()
+
+
+def _slugs(store, group_id):
+    return sorted(c.slug for c in store.group_commands(group_id))
+
+
+@pytest.fixture
+def lamps_with_commands(store, lamps):
+    """Registers the command rows the intersection is computed from."""
+    from loxmatter.export.commands import extract_commands
+
+    for device_id, name in zip(
+        lamps, ("ikea_kajplats_cws_lamp.json", "ikea_kajplats_ws_lamp.json"), strict=True
+    ):
+        snapshot = load(name)
+        store.register_commands(device_id, extract_commands(snapshot), snapshot.node_id)
+    return lamps
+
+
+def test_the_group_offers_only_what_every_member_accepts(store, lamps_with_commands):
+    colour_only = store.create_group("Colour", [lamps_with_commands[0]])
+    both = store.create_group("Both", lamps_with_commands)
+    assert "color" in _slugs(store, colour_only.id)
+    assert "color" not in _slugs(store, both.id)
+    assert {"on", "off", "toggle"} <= set(_slugs(store, both.id))
+
+
+def test_a_surviving_command_keeps_its_key(store, lamps_with_commands):
+    group = store.create_group("Colour", [lamps_with_commands[0]])
+    before = {c.slug: c.key for c in store.group_commands(group.id)}
+    store.set_group_members(group.id, lamps_with_commands)
+    after = {c.slug: c.key for c in store.group_commands(group.id)}
+    assert after["on"] == before["on"]
+
+
+def test_a_command_that_leaves_the_intersection_stops_resolving(store, lamps_with_commands):
+    group = store.create_group("Colour", [lamps_with_commands[0]])
+    key = next(c.key for c in store.group_commands(group.id) if c.slug == "color")
+    store.set_group_members(group.id, lamps_with_commands)
+    with pytest.raises(UnknownCommandError):
+        store.resolve_group_command(key)
+
+
+def test_the_group_survives_losing_every_member(store, lamps_with_commands):
+    group = store.create_group("Colour", lamps_with_commands)
+    store.set_group_members(group.id, [])
+    assert store.group(group.id).label == "Colour"
+    assert store.group_commands(group.id) == []
+
+
+def test_forgetting_a_member_recomputes_the_intersection(store, lamps_with_commands):
+    group = store.create_group("Both", lamps_with_commands)
+    assert "color" not in _slugs(store, group.id)
+    store.forget_device(lamps_with_commands[1])
+    assert "color" in _slugs(store, group.id)
+
+
+def test_group_keys_can_never_collide_with_device_keys(store, lamps_with_commands):
+    """The `d`/`g` prefixes are a convention, not an SQL guarantee - this
+    is the assertion `resolve_command`'s two-step lookup rests on."""
+    group = store.create_group("Both", lamps_with_commands)
+    device_keys = {c.key for d in lamps_with_commands for c in store.commands(d)}
+    group_keys = {c.key for c in store.group_commands(group.id)}
+    assert device_keys and group_keys
+    assert device_keys.isdisjoint(group_keys)
+
+
+class _FailSecondGroupCommandWrite:
+    """Proxies a real `sqlite3.Connection`, forcing the SECOND write against
+    `group_command` (DELETE, UPDATE or INSERT, whichever the scenario
+    produces) to fail as `sqlite3.IntegrityError` - standing in for any
+    write-time SQLite error reaching `register_group_commands`'s own
+    DELETE/INSERT/UPDATE loops, the same construction as
+    `_FailSecondMemberInsert` above but aimed at `register_group_commands`
+    instead of the membership writers it is called from.
+    """
+
+    _WRITE_PREFIXES = (
+        "DELETE FROM group_command",
+        "UPDATE group_command",
+        "INSERT INTO group_command",
+    )
+
+    def __init__(self, real: sqlite3.Connection) -> None:
+        self._real = real
+        self._write_count = 0
+
+    def execute(self, sql, parameters=()):
+        if sql.startswith(self._WRITE_PREFIXES):
+            self._write_count += 1
+            if self._write_count == 2:
+                raise sqlite3.IntegrityError("simulated failure past the first write")
+        return self._real.execute(sql, parameters)
+
+    def __getattr__(self, name):
+        return getattr(self._real, name)
+
+
+def test_register_group_commands_rolls_back_a_write_time_failure_and_leaves_the_old_rows_intact(
+    store, lamps_with_commands, tmp_path, monkeypatch
+):
+    """Regression for the rollback guard this task adds to
+    `register_group_commands` itself - the defect Task 1 left behind in
+    `create_group`/`set_group_members`, reproduced here in the sibling
+    method the brief warns carries the identical shape.
+
+    Setup: a group of the single colour-capable member already has several
+    committed `group_command` rows (including `color`). Widening
+    membership to both lamps would shrink the intersection - some rows
+    DELETEd, the survivors UPDATEd - but the second write into
+    `group_command` is forced to fail. Without `self._db.rollback()` in the
+    `except` clause, the first (successful) write would sit in the
+    connection's open implicit transaction rather than being undone,
+    waiting for a later unrelated `commit()` to flush a half-recomputed,
+    inconsistent command list to disk - proven here the same way as the
+    membership tests above: an unrelated committing write, then a REOPENED
+    `Store` on the same file.
+    """
+    group = store.create_group("Colour", [lamps_with_commands[0]])
+    before = {(c.slug, c.key) for c in store.group_commands(group.id)}
+    assert before  # the colour-only member has commands to lose
+
+    monkeypatch.setattr(store, "_db", _FailSecondGroupCommandWrite(store._db))
+
+    with pytest.raises(sqlite3.IntegrityError):
+        store.set_group_members(group.id, lamps_with_commands)
+
+    # Read through the still-proxied connection first - a plain SELECT
+    # never matches `_WRITE_PREFIXES`, so this is unaffected by the forced
+    # failure and confirms the rollback took effect immediately.
+    assert {(c.slug, c.key) for c in store.group_commands(group.id)} == before
+
+    # An unrelated write that commits - if the first write of the failed
+    # recompute survived uncommitted, this is what would flush the
+    # half-recomputed, inconsistent row set to disk.
+    store.rename_device(lamps_with_commands[0], "Renamed")
+    store.close()
+
+    reopened = Store(tmp_path / "test.sqlite")
+    try:
+        assert {(c.slug, c.key) for c in reopened.group_commands(group.id)} == before
     finally:
         reopened.close()

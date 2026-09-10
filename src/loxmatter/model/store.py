@@ -783,6 +783,24 @@ class StoredCommand:
     device_id: int
 
 
+@dataclass(frozen=True)
+class StoredGroupCommand:
+    """A row from `group_command` (design 2026-09-10, section 4.1).
+
+    Carries NO endpoint, unlike `StoredCommand`. Each member has its own,
+    and two lamps of different make can hold the same cluster on
+    different endpoints - the endpoint therefore belongs to the member and
+    is looked up per member at dispatch time (`Store.group_targets`).
+    """
+
+    key: str
+    slug: str
+    group_id: int
+    cluster_id: int
+    command_id: int
+    takes_value: bool
+
+
 def _encode_device_types(types: Mapping[int, frozenset[int]]) -> str:
     """The output of `relevance.device_types_by_endpoint` as JSON for the
     `device.device_types` column.
@@ -1082,10 +1100,26 @@ class Store:
         device produces a NEW row with a new id - the old membership
         could therefore never come back to life, and would only sit
         around pointing at a device nobody can reach.
+
+        Removing a device is a membership change like any other group
+        member removal (design 4.3): every group the device belonged to
+        recomputes its command intersection. The affected group ids are
+        captured BEFORE the `DELETE FROM device_group_member` below - once
+        that row is gone, there is no way left to ask which groups this
+        device used to belong to. This does not delete a thereby-emptied
+        group; a group survives losing every member (design 2.1, 4.3).
         """
+        affected = [
+            int(row["group_id"])
+            for row in self._db.execute(
+                "SELECT group_id FROM device_group_member WHERE device_id = ?", (device_id,)
+            ).fetchall()
+        ]
         self._db.execute("DELETE FROM device_group_member WHERE device_id = ?", (device_id,))
         self._db.execute("UPDATE device SET active = 0 WHERE id = ?", (device_id,))
         self._db.commit()
+        for group_id in affected:
+            self.register_group_commands(group_id)
 
     def udp_port(self, device_id: int) -> int:
         row = self._db.execute("SELECT udp_port FROM device WHERE id = ?", (device_id,)).fetchone()
@@ -1201,6 +1235,9 @@ class Store:
             self._db.rollback()
             raise
         self._db.commit()
+        # A brand-new group needs its command list computed too - it does
+        # not fall out of the INSERTs above for free (design 4.3).
+        self.register_group_commands(int(group_id))
         return self.group(int(group_id))
 
     def groups(self) -> list[StoredGroup]:
@@ -1295,6 +1332,115 @@ class Store:
             self._db.rollback()
             raise
         self._db.commit()
+        # The intersection depends on WHO the members are, so a membership
+        # change must recompute it (design 4.3) - same call as at the end
+        # of `create_group`.
+        self.register_group_commands(group_id)
+
+    @staticmethod
+    def _as_group_command(row: sqlite3.Row) -> StoredGroupCommand:
+        return StoredGroupCommand(
+            key=str(row["key"]),
+            slug=str(row["slug"]),
+            group_id=int(row["group_id"]),
+            cluster_id=int(row["cluster_id"]),
+            command_id=int(row["command_id"]),
+            takes_value=bool(row["takes_value"]),
+        )
+
+    def group_commands(self, group_id: int) -> list[StoredGroupCommand]:
+        rows = self._db.execute(
+            "SELECT * FROM group_command WHERE group_id = ? ORDER BY cluster_id, command_id",
+            (group_id,),
+        ).fetchall()
+        return [self._as_group_command(r) for r in rows]
+
+    def resolve_group_command(self, key: str) -> StoredGroupCommand:
+        row = self._db.execute("SELECT * FROM group_command WHERE key = ?", (key,)).fetchone()
+        if row is None:
+            raise UnknownCommandError(i18n.t("api.errors.unknown_command", command_key=key))
+        return self._as_group_command(row)
+
+    def register_group_commands(self, group_id: int) -> list[StoredGroupCommand]:
+        """Recomputes the group's command list from its current members.
+
+        Called after every membership change. Mirrors `register_commands`,
+        which likewise re-adopts `slug` and `takes_value` on every call so
+        that a correction in `clusters.yaml` reaches an already stored
+        command - a frozen list would be the opposite of that and would
+        let a group claim a capability no member has left (design 4.3).
+
+        A command that survives keeps its key. One that drops out of the
+        intersection loses its row and its key answers 404 from then on -
+        deliberately, because that 404 stands in the log and points at the
+        one line in the Loxone project that needs attention, whereas a
+        silently vanished key leaves an output nobody can trace.
+
+        The intersection runs over `(cluster_id, command_id)` pairs, NOT
+        over endpoints: a member that carries the pair on several
+        endpoints still counts as one member that accepts it (see
+        `group_targets`, which then sends to all of them).
+
+        **Rollback guard (Task 1 review finding, reapplied here).** The
+        DELETE and INSERT/UPDATE loops below run inside the same
+        `try`/`except (ValueError, sqlite3.Error): self._db.rollback();
+        raise` guard as `register_commands`, `create_group` and
+        `set_group_members`. Task 1's plan had this method's shape without
+        it: a write-time failure partway through the loops would leave the
+        earlier writes sitting in the connection's open implicit
+        transaction - not committed, but not rolled back either - for the
+        next unrelated `commit()` anywhere else in `Store` to flush to disk
+        by surprise. Every other multi-row writer in this file already
+        carries this guard; this one is no exception.
+        """
+        members = self.group_members(group_id)
+        by_member = [
+            {(c.cluster_id, c.command_id): c for c in self.commands(device.id)}
+            for device in members
+        ]
+        shared: dict[tuple[int, int], StoredCommand] = {}
+        if by_member:
+            common = set(by_member[0])
+            for other in by_member[1:]:
+                common &= set(other)
+            shared = {pair: by_member[0][pair] for pair in common}
+
+        keep = set(shared)
+        try:
+            for existing in self.group_commands(group_id):
+                if (existing.cluster_id, existing.command_id) not in keep:
+                    self._db.execute("DELETE FROM group_command WHERE key = ?", (existing.key,))
+
+            for (cluster_id, command_id), sample in sorted(shared.items()):
+                row = self._db.execute(
+                    "SELECT key FROM group_command"
+                    " WHERE group_id = ? AND cluster_id = ? AND command_id = ?",
+                    (group_id, cluster_id, command_id),
+                ).fetchone()
+                if row is not None:
+                    self._db.execute(
+                        "UPDATE group_command SET slug = ?, takes_value = ? WHERE key = ?",
+                        (sample.slug, int(sample.takes_value), row["key"]),
+                    )
+                    continue
+                self._db.execute(
+                    "INSERT INTO group_command"
+                    " (group_id, cluster_id, command_id, key, slug, takes_value)"
+                    " VALUES (?, ?, ?, ?, ?, ?)",
+                    (
+                        group_id,
+                        cluster_id,
+                        command_id,
+                        f"g{group_id}_{sample.slug}",
+                        sample.slug,
+                        int(sample.takes_value),
+                    ),
+                )
+        except (ValueError, sqlite3.Error):
+            self._db.rollback()
+            raise
+        self._db.commit()
+        return self.group_commands(group_id)
 
     def rename_device(self, device_id: int, label: str) -> None:
         """Sets a device's label (`PATCH /api/devices/{device_id}`).
