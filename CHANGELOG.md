@@ -8,6 +8,32 @@ people who don't know the code.
 
 ## [Unreleased]
 
+## [0.3.7] — 2026-09-10
+
+### Added
+
+- The **update channel** can be chosen again in the interface, under
+  Version & updates. *Stable* follows published releases, the way this
+  bridge has always updated. *Development* follows every change as it
+  lands — new things arrive sooner, and so do their rough edges. The
+  control has existed since 0.3.0 and was hidden because choosing
+  *Development* could not actually install anything; it can now.
+
+### Fixed
+
+- Choosing the development channel and pressing update no longer fails
+  every time. Three separate reasons it could not work are gone: the
+  update it offered did not name a version the bridge could install, the
+  image it would have downloaded was never published under that name,
+  and the check for "is this actually newer" compared against the wrong
+  thing — the copy of the source on the device rather than the version
+  running. That last one also stopped the check being fooled after an
+  update from the console.
+- The green **"Now running: …"** notice no longer stays on the System
+  tab forever. It reports the update you just watched and is gone after
+  a page reload. A *failed* update still says so after a reload — that is
+  something still waiting to be dealt with, not news.
+
 ## [0.3.6] — 2026-09-10
 
 ### Fixed
