@@ -288,27 +288,28 @@ current_tag() {
 # them as one was runtime blocker 2 (see this function's caller further
 # down): CI publishes the stable channel's tags exactly as its releases
 # are named (`v0.3.0` -> `0.3.0`, the "v" stripped elsewhere in this
-# file), but it never publishes a dev image under its bare commit SHA -
-# only `:dev` and `:sha-<short>` (`.github/workflows/ci.yml`). A dev
-# target that passed Rule 1 (a real, fetchable commit) would still 404 at
-# `compose pull` without this.
+# file), so for "stable" $2 already IS the tag CI publishes and passes
+# through unchanged, the same way current_tag()/set_tag() have always
+# treated a stable target.
 #
-# $2 arrives already normalised (the stable channel's leading "v"
-# stripped by the caller): for "stable" it IS the tag CI publishes, so it
-# passes through unchanged, the same way current_tag()/set_tag() have
-# always treated a stable target. For "dev" it is the FULL commit SHA
-# (see the comment at update_check.py's `target_commit`, which chose that
-# length for exactly this derivation) - CI's own tag is built from a
-# SHORT `git rev-parse --short HEAD` at build time, seven characters in
-# this repository today, so the first seven characters of the full SHA
-# are taken here to match it. Nothing pins the two lengths together -
-# git's abbreviation length is not a constant - so this is a match against
-# CI's CURRENT behavior, not a guarantee of it; see this feature's design
-# doc, section 16, for that coupling recorded as unchecked.
+# The dev channel no longer pulls at all (design addendum "The
+# development channel builds on the machine", 2026-09-10) - it builds the
+# checked-out target itself (see build_target_image() above) - so this
+# case no longer has to match a tag CI publishes; CI publishes nothing
+# this channel now reads. What it must do instead is exactly what the
+# addendum calls out by name: produce a tag "no published image can ever
+# have", so a later `compose pull` can never silently replace a locally
+# built image, and `docker images` is never ambiguous about where a layer
+# came from. CI's own tags are `dev`, `sha-<short>` (pushes to `main`),
+# `<version>` and `stable` (release tags) - none of them, at any length,
+# can start with "local-", so that prefix alone is the whole guarantee;
+# the full, validated commit ($2, 7-40 lowercase hex characters - Rule 1
+# above already bounds it) appended after it is what keeps two different
+# dev-channel builds on this same host from colliding with each other.
 image_tag_for() {
   # $1 channel, $2 normalised target
   case "$1" in
-    dev) printf 'sha-%s' "$(printf '%s' "$2" | cut -c1-7)" ;;
+    dev) printf 'local-%s' "$2" ;;
     *) printf '%s' "$2" ;;
   esac
 }
@@ -1385,6 +1386,106 @@ compose_pull_with_heartbeat() {
   with_heartbeat compose pull "$1"
 }
 
+# The dev channel's counterpart to compose_pull_with_heartbeat() above -
+# design addendum "The development channel builds on the machine"
+# (2026-09-10). CI has published nothing for a commit that only just
+# landed on `main`; the code is already on disk, courtesy of the checkout
+# a few lines above this function's one caller, so the sidecar builds it
+# itself instead of waiting.
+#
+# `docker build`, deliberately, never `docker compose build`: the
+# `build:` block docker-compose.yml keeps (section 3, for the console
+# fallback on a host without GHCR access) carries no --build-arg of its
+# own, and Compose's OWN fallback - "`up` builds only if no local image
+# exists" - would build under the Dockerfile's bare ARG defaults,
+# LOXMATTER_COMMIT="" among them. That is exactly the empty-commit image
+# the addendum's own "build arguments" section warns makes the
+# forward-only rule refuse every later update. A `docker build` this
+# script issues itself is the only way both arguments are ever certainly
+# supplied - it is invoked before `compose up` ever runs (see this
+# function's callers), so Compose always finds the tag already built and
+# never reaches its own build fallback at all.
+#
+# The context is $REPO's OWN path, not a host path resolved through
+# host_path_for(): unlike compose() above, which hands a path to the
+# DAEMON to interpret against the HOST's filesystem, `docker build <path>`
+# reads the context from the CALLER's OWN filesystem (this sidecar) and
+# uploads it to the daemon as a tar stream. $REPO is bind-mounted from the
+# host's checkout (see docker-compose.yml), so what this process reads
+# under that path already IS the host's content - no translation needed,
+# unlike every `compose ...` call in this file.
+#
+# The four build arguments mirror `.github/workflows/ci.yml`'s `image`
+# job exactly - that job is this repository's own reference for what a
+# correctly built image carries (design section 4), and matching it is
+# what keeps a locally built dev image indistinguishable, in its own
+# `ENV`, from one CI would have published for the same commit:
+#   * LOXMATTER_VERSION - the literal string "dev", CI's own fallback for
+#     every push to `main` that is not a `v*` tag (`ci.yml`'s `meta` step).
+#     The dev channel never builds anything else.
+#   * LOXMATTER_COMMIT - $1, the commit the caller just checked out (the
+#     forward path's own $REF, already the validated, fetched commit Rule
+#     1 checked before ever reaching here; the rollback's own $GIT_BEFORE,
+#     captured before step 1 - see that variable's own comment for why it
+#     is already exactly this). Taken from the caller rather than asked
+#     of `git` again here: this IS the value `git checkout --detach`
+#     already used moments earlier, in the same process, so re-deriving
+#     it through a fresh `git rev-parse` would only add a second call that
+#     could disagree with the first if the working tree changed between
+#     them, for no benefit CI's own single `git rev-parse --short HEAD`
+#     (run once, right after ITS OWN checkout) does not already cover by
+#     construction. This is the one argument the addendum names by name:
+#     an image built without it states no commit, and running_commit()
+#     then reads empty forever, which the dev-channel ancestry check above
+#     treats exactly like a hand-built image with no provenance at all -
+#     rejecting every later request, including the very next one meant to
+#     fix this. An empty $1 is treated as a build failure (below), not as
+#     an empty argument silently passed through.
+#   * LOXMATTER_BUILT_AT - `now()`, the same UTC-stamp helper this file
+#     already uses everywhere else, mirroring `ci.yml`'s own
+#     `date -u +%Y-%m-%dT%H:%M:%SZ`.
+#   * LOXMATTER_SCHEMA_VERSION - the same `sed` against
+#     `src/loxmatter/model/store.py`'s `_SCHEMA_VERSION` that `ci.yml`
+#     greps before every published build. CI aborts the whole job when
+#     this comes back empty; this function only logs and proceeds with an
+#     empty value - the schema pre-check this field exists for (design
+#     section 8) is itself unimplemented in this codebase (section 16 of
+#     the design doc), so nothing yet reads it back, and refusing an
+#     otherwise-buildable commit over a value nothing consumes would be a
+#     worse failure than the one it prevents.
+#
+# No dedicated timeout wraps this call. Every other single blocking call
+# in this file - fetch, backup, the pull this function stands beside,
+# both forward and rollback recreates - relies solely on entrypoint.sh's
+# 600s worker ceiling rather than a bespoke per-call limit (see
+# with_heartbeat's own comment: "a pull wedged with no timeout at all is
+# ... bounded by entrypoint.sh's own 600-second worker timeout"). A build
+# stuck mid-download (PyPI, say) is the identical shape of failure, so it
+# gets the identical treatment rather than a new mechanism for one call
+# site. The measured 21s/33s warm/cold build times (design addendum)
+# leave wide headroom under that ceiling even with a rollback's own
+# rebuild added on top of a forward attempt in the same pass.
+build_target_image() {
+  # $1 the commit just checked out (also the value baked in as
+  # LOXMATTER_COMMIT - see the block comment above), $2 the tag to build
+  if [ -z "$1" ]; then
+    log "build: refusing to build with an empty commit - LOXMATTER_COMMIT would be empty too"
+    return 1
+  fi
+  build_schema="$(sed -n -E 's/^_SCHEMA_VERSION = ([0-9]+)$/\1/p' \
+    "$REPO/src/loxmatter/model/store.py" 2>/dev/null)"
+  if [ -z "$build_schema" ]; then
+    log "build $1: no _SCHEMA_VERSION found in $REPO/src/loxmatter/model/store.py - building with LOXMATTER_SCHEMA_VERSION empty"
+  fi
+  with_heartbeat run docker build \
+    -t "$IMAGE:$2" \
+    --build-arg "LOXMATTER_VERSION=dev" \
+    --build-arg "LOXMATTER_COMMIT=$1" \
+    --build-arg "LOXMATTER_BUILT_AT=$(now)" \
+    --build-arg "LOXMATTER_SCHEMA_VERSION=$build_schema" \
+    "$REPO"
+}
+
 # Escapes sed's own replacement metacharacters - backslash, ampersand, and
 # the `|` this substitution uses as its delimiter - out of a value before
 # it reaches sed. Verified end to end: `set_tag 'a|b'` unescaped makes sed
@@ -1871,40 +1972,60 @@ if ! set_tag "$IMAGE_TAG"; then
   exit 0
 fi
 
-# 2.5 Pull the image - the actual, potentially multi-minute download an
-# arm64 Pi does over a home connection, and (Important 2) now the ONLY
-# step this phase name covers, matching what the web UI's own step list
-# already claims it means. `compose_pull_with_heartbeat`, not a bare
-# `compose pull` (Important 1): a single blocking call this long needs
-# its heartbeat kept moving from inside itself - see that function's own
-# comment for the mechanism and its accepted trade-off.
+# 2.5 Obtain the image - a registry download on the stable channel, the
+# ONLY step this phase name covers, matching what the web UI's own step
+# list already claims it means (Important 2). `compose_pull_with_heartbeat`,
+# not a bare `compose pull` (Important 1): a single blocking call this
+# long needs its heartbeat kept moving from inside itself - see that
+# function's own comment for the mechanism and its accepted trade-off.
+#
+# The dev channel does not reach `compose_pull_with_heartbeat` at all
+# (design addendum "The development channel builds on the machine",
+# 2026-09-10): it builds $REF, already checked out above, with
+# build_target_image() instead - same phase name, same heartbeat
+# wrapping, same failure handling below, just a different call. $OBTAIN_OK
+# and $OBTAIN_VERB exist only to let the two branches share that handling
+# rather than duplicate it once per channel.
 set_state pull ""
-if ! compose_pull_with_heartbeat "$SERVICE"; then
+OBTAIN_OK=false
+OBTAIN_VERB="pulled"
+if [ "$CHANNEL" = "dev" ]; then
+  OBTAIN_VERB="built"
+  if build_target_image "$REF" "$IMAGE_TAG"; then
+    OBTAIN_OK=true
+  fi
+else
+  if compose_pull_with_heartbeat "$SERVICE"; then
+    OBTAIN_OK=true
+  fi
+fi
+if [ "$OBTAIN_OK" != true ]; then
   # $FROM is what .env held before this run touched it - the ALIAS a
   # fresh installation ships with ("stable"), not necessarily a version
   # (see current_tag()'s own comment above). Restoring it is correct
-  # HERE specifically: the pull failed, nothing was recreated, and the
-  # only right thing is to put .env back exactly as it was. Do NOT copy
-  # this call for Task 4's rollback, though - by the time that runs,
-  # `--force-recreate` has already happened, and the concrete version
-  # that was actually RUNNING may no longer be what "stable" resolves to
-  # in the registry (it can already point AT the release that just
-  # failed to become healthy). Task 4's rollback restores the concrete
-  # running version instead, precisely for that reason - see the plan's
-  # own rollback step, which computes what it writes back from
+  # HERE specifically: obtaining the image failed, nothing was recreated,
+  # and the only right thing is to put .env back exactly as it was. Do
+  # NOT copy this call for the rollback below, though - by the time that
+  # runs, `--force-recreate` has already happened, and the concrete
+  # version that was actually RUNNING may no longer be what "stable"
+  # resolves to in the registry (it can already point AT the release that
+  # just failed to become healthy). The rollback restores the concrete
+  # running version instead, precisely for that reason - see its own
+  # comment further down, which computes what it writes back from
   # `$RUNNING`, never from `$FROM`.
   if ! set_tag "$FROM"; then
     # Same class of failure as the guard above, at the one point where it
-    # is worse: the pull already failed, and now .env cannot even be put
-    # back either. Say so explicitly - the plain "unchanged" message just
-    # below would be a lie here: .env may still read the new, un-pulled
-    # target. $IMAGE_TAG, not $TARGET - what the earlier set_tag call
-    # actually wrote into .env is the derived tag (see image_tag_for()),
-    # which for the dev channel is not the same string as $TARGET at all.
-    set_state failed "image could not be pulled, and the tag could not be restored in $ENV_FILE - it may still read $IMAGE_TAG"
+    # is worse: the image could not be obtained, and now .env cannot even
+    # be put back either. Say so explicitly - the plain "unchanged"
+    # message just below would be a lie here: .env may still read the
+    # new, unobtained target. $IMAGE_TAG, not $TARGET - what the earlier
+    # set_tag call actually wrote into .env is the derived tag (see
+    # image_tag_for()), which for the dev channel is not the same string
+    # as $TARGET at all.
+    set_state failed "image could not be $OBTAIN_VERB, and the tag could not be restored in $ENV_FILE - it may still read $IMAGE_TAG"
     exit 0
   fi
-  set_state failed "image could not be pulled - the running service is unchanged"
+  set_state failed "image could not be $OBTAIN_VERB - the running service is unchanged"
   exit 0
 fi
 
@@ -1988,6 +2109,34 @@ if [ "$RECREATE_OK" = true ]; then
     # across the GNU/BSD/busybox sort/find/stat variance this project
     # already has to mind.
     ls -1t "$BACKUP_DIR"/store-*.tgz 2>/dev/null | tail -n +11 | while read -r old; do rm -f "$old"; done
+
+    # The same rule, mirrored for locally built dev-channel images (design
+    # addendum "The development channel builds on the machine",
+    # 2026-09-10, "Pruning"): every dev update leaves one behind
+    # (build_target_image() above never removes the tag it replaces), and
+    # nothing else in this file ever did either - an SD card that fills up
+    # one update at a time is a new failure mode this feature would
+    # otherwise introduce, not one it inherits.
+    #
+    # `docker images` lists newest first by default (verified: no `--filter
+    # before=`/`--format {{.CreatedAt}}` sort needed), the same "self-
+    # generated name, not attacker- or user-supplied" reasoning as the
+    # backup prune above - only build_target_image() ever produces a
+    # "local-*" tag, always from a validated, fetched commit (Rule 1) -
+    # so `tail -n +11` keeps the same ten-most-recent budget the backups
+    # get. Unconditional on channel, same as the backup prune just above:
+    # a stable-channel success finds nothing matching "local-*" and this
+    # is a no-op, cheaper than branching on $CHANNEL to skip it.
+    #
+    # Runs only once this update has actually reached "done", for the
+    # identical reason the backup prune waits for it too: the image this
+    # very pass just built is always the newest of the lot and therefore
+    # always kept, but a streak of failed dev-channel attempts (schema
+    # jump and all) must not be the thing that decides which of the last
+    # ten SUCCESSFUL builds survives.
+    docker images --filter "reference=$IMAGE:local-*" --format '{{.Tag}}' 2>/dev/null \
+      | tail -n +11 \
+      | while read -r old_tag; do docker rmi "$IMAGE:$old_tag" >/dev/null 2>&1 || true; done
 
     # A previous pass may have left this behind; a clean success means
     # the story it told is over. Written even though nothing here reads
@@ -2173,32 +2322,96 @@ if ! set_tag "$BACK"; then
 else
   ROLLED=true
 
-  # Best-effort: the Compose file at $GIT_BEFORE is what actually matched
-  # $BACK, but even a checkout that fails here (a dirty working tree, a
-  # ref this shallow clone never fetched) should not stop the one thing
-  # that matters most - recreating the container against the now-restored
-  # tag. Whatever mismatch that leaves in docker-compose.yml is a smaller
-  # problem than not attempting the recreate at all.
-  run_git checkout --detach "$GIT_BEFORE" || true
-  # The same `--force-recreate` gap as the forward path's own recreate
-  # above (see that call's comment for the SIGTERM-grace-period
-  # mechanics) - a rollback is no faster to stop and start a container
-  # than the update that led to it, and this call runs entirely under
-  # phase "rollback", not "recreate", so nothing else here refreshes the
-  # heartbeat until `wait_healthy` below starts its own loop.
-  resolve_compose_project_dir
-  with_heartbeat compose up -d --no-deps --force-recreate "$SERVICE" || true
+  # Best-effort for the CHECKOUT itself, same as before this feature: the
+  # Compose file at $GIT_BEFORE is what actually matched $BACK, but even a
+  # checkout that fails here (a dirty working tree, a ref this shallow
+  # clone never fetched) should not by itself stop the one thing that
+  # matters most - recreating the container against the now-restored tag.
+  # $ROLLBACK_CHECKOUT_OK is captured (not `|| true`d away) purely for the
+  # dev-channel branch just below, which - unlike the stable channel - has
+  # a second use for it.
+  if run_git checkout --detach "$GIT_BEFORE"; then
+    ROLLBACK_CHECKOUT_OK=true
+  else
+    ROLLBACK_CHECKOUT_OK=false
+  fi
+
+  # "The rollback rebuilds" (design addendum "The development channel
+  # builds on the machine", 2026-09-10): today's rollback re-recreates
+  # against an image `compose up` finds already sitting in the local
+  # store from when it was first deployed - true for a published
+  # stable-channel tag, NOT true for a locally built one, which
+  # build_target_image()'s own pruning (above, on a confirmed "done") or a
+  # plain `docker system prune` can have removed by now. Rebuilding here,
+  # explicitly, is also what keeps `compose up` just below from ever
+  # reaching ITS OWN build fallback (docker-compose.yml's `build:` block,
+  # kept for section 3's console path) on a missing tag - that fallback
+  # carries no --build-arg, so an implicit build there would produce
+  # exactly the empty-LOXMATTER_COMMIT image the addendum warns about,
+  # this time on the recovery path meant to fix a broken update.
+  #
+  # Gated on $RUNNING_NORMALIZED = "dev", deliberately NOT on $CHANNEL -
+  # $CHANNEL is the channel of the INCOMING request, and the two can
+  # disagree: switching FROM a dev-track build BACK to a stable release is
+  # accepted (spec section 10, "a development build states its
+  # provenance perfectly well"), so a stable-channel request can still
+  # fail and roll back onto a dev-track predecessor. $RUNNING_NORMALIZED
+  # answers the question that actually matters here - was what was
+  # RUNNING before this pass a dev-track build - the same signal the
+  # $BACK computation just above already keys its own "trust $FROM, not
+  # the concrete $RUNNING" choice on. Rebuilding a $BACK that is instead a
+  # concrete stable version (RUNNING_NORMALIZED "0.2.0", say) would be
+  # actively wrong: it would locally build an image and tag it with a
+  # name CI itself publishes, permanently shadowing that published tag on
+  # this host until the next real pull overwrites it again.
+  #
+  # Gated on $ROLLBACK_CHECKOUT_OK too: building from a working tree that
+  # did NOT actually land on $GIT_BEFORE (the checkout above failed, so
+  # $REPO can still be sitting at the just-failed $REF from step 2) would
+  # tag the WRONG commit's image as $BACK - a silent mismatch, worse than
+  # the loud failure this guard produces instead.
+  #
+  # A failure either way - the checkout, or the build - is handled
+  # identically: $ROLLBACK_RECREATE_OK stays false, and the block below
+  # skips both the recreate AND the pointless HEALTH_TIMEOUT wait for a
+  # container that was never going to be there (the same RECREATE_OK
+  # reasoning the forward path already applies to its own failed
+  # recreate, above). The addendum names the resulting outcome directly:
+  # "a commit that cannot be built cannot be rolled back to by building" -
+  # this is that case, and it needs no further special-casing here.
+  ROLLBACK_RECREATE_OK=true
+  if [ "$RUNNING_NORMALIZED" = "dev" ]; then
+    if [ "$ROLLBACK_CHECKOUT_OK" != true ] || ! build_target_image "$GIT_BEFORE" "$BACK"; then
+      log "rollback: could not rebuild $GIT_BEFORE as $IMAGE:$BACK - the service was not recreated"
+      ROLLBACK_RECREATE_OK=false
+    fi
+  fi
+
+  if [ "$ROLLBACK_RECREATE_OK" = true ]; then
+    # The same `--force-recreate` gap as the forward path's own recreate
+    # above (see that call's comment for the SIGTERM-grace-period
+    # mechanics) - a rollback is no faster to stop and start a container
+    # than the update that led to it, and this call runs entirely under
+    # phase "rollback", not "recreate", so nothing else here refreshes the
+    # heartbeat until `wait_healthy` below starts its own loop.
+    resolve_compose_project_dir
+    with_heartbeat compose up -d --no-deps --force-recreate "$SERVICE" || true
+  fi
 
   # Exactly once. No second attempt, no flapping: if the cause were not
   # the image itself (a dead matter-server, say), every further attempt
   # here would only add more downtime without changing the outcome.
-  if wait_healthy; then
+  if [ "$ROLLBACK_RECREATE_OK" = true ] && wait_healthy; then
     HEALTHY=true
   else
     HEALTHY=false
   fi
 
-  ROLLBACK_MSG="version $TO did not become healthy after ${HEALTH_TIMEOUT}s"
+  if [ "$ROLLBACK_RECREATE_OK" = true ]; then
+    ROLLBACK_MSG="version $TO did not become healthy after ${HEALTH_TIMEOUT}s"
+  else
+    ROLLBACK_MSG="version $TO did not become healthy, and the rollback to $BACK could not be rebuilt - rollback did not complete"
+  fi
   write_failure_file "$ROLLBACK_MSG"
   set_state failed "$ROLLBACK_MSG"
 fi
