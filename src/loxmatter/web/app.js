@@ -525,7 +525,16 @@ function app() {
     // --- Devices -------------------------------------------------------------
     devices: [],
     devicesError: null,
-    controlsByDevice: {},
+    // Controls by SUBJECT, not only by device: a device's subject is its
+    // numeric id, a group's is the string "g3" (see `groupSubject`). One
+    // map rather than two, because the two kinds of key cannot collide (a
+    // number against a "g..." string) and because every reader below - the
+    // tile's command bar, the control modal - asks both the same question.
+    // That mirrors the server, where a group's command key (`g3_on`) lives
+    // in the same namespace as a device's (`d12_1_on`) and is sent through
+    // the very same `POST /api/commands/{key}` (design 2026-09-10,
+    // section 5).
+    controlsBySubject: {},
     commandValueDrafts: {},
     commandBusyKey: null,
     // Draft storage for the sliders in the control modal (task 7): filled
@@ -558,6 +567,36 @@ function app() {
     nowTick: Date.now(),
     labelDrafts: {},
     deviceActionError: null,
+
+    // --- Groups (design 2026-09-10, section 6) -----------------------------
+    //
+    // A separate list, deliberately NOT mixed into `devices`: a group is a
+    // named sender without a node, so every field the device tile reads
+    // from a node (online, last heard, signals) is absent on it, and one
+    // merged list would need a guard at each of them. The tile markup in
+    // index.html is copied for the same reason - it shows the few things a
+    // group has and none of the things only a node has.
+    //
+    // BEWARE of a name collision in this file: `deviceGroups()` further
+    // down has nothing to do with these groups - it is the older helper
+    // that buckets the device TILES by room. `groups`/`visibleGroups()` is
+    // always a device group, `deviceGroups()` is always a room section.
+    groups: [],
+    groupsError: null,
+    groupLabelDrafts: {},
+    groupActionError: null,
+    // The create/edit dialog. `id` is null while a group is being created
+    // and the group's id while its member list is being edited - one
+    // dialog for both, because the member list is the bulk of it either
+    // way. `roomTouched` keeps the room prefill from overwriting a name
+    // the user typed (design 6: prefilled when the members agree, the
+    // user's decision from then on).
+    groupDraft: { id: null, label: "", room: "", memberIds: [], roomTouched: false },
+    groupDialogError: null,
+    groupDialogBusy: false,
+    // Like `signalsModalBackdropMousedown`, only for the group dialog - see
+    // the comment on the `<dialog>` in index.html.
+    groupDialogBackdropMousedown: false,
 
     // --- Rooms, filter, search (device tab design, 2026-09-05) -------------
     //
@@ -657,6 +696,12 @@ function app() {
     // comment there and `controlModalDeviceObject()`. This field is
     // reset by the same rule at EXACTLY ONE place, the `@close`
     // of the control modal in index.html.
+    //
+    // Since groups it holds a SUBJECT (see `controlsBySubject`): a number
+    // for a device, "g3" for a group. One modal for both, because a group's
+    // controls answer in the device shape and are sent with the same call
+    // (design 5) - a second dialog would have been the same 140 lines of
+    // markup with its own slow drift.
     controlModalDevice: null,
     // Like `signalsModalBackdropMousedown`, only for the control modal.
     controlModalBackdropMousedown: false,
@@ -1026,9 +1071,15 @@ function app() {
       this.deviceActionError = null;
       this.signalsError = null;
       this.settingsError = null;
-      this.controlsByDevice = {};
+      this.controlsBySubject = {};
       this.signalsByDevice = {};
+      this.groupsError = null;
+      this.groupActionError = null;
+      // Groups before the fan-out below, because the group controls are
+      // loaded per group and that list has to exist first. Sequential with
+      // the device list for no deeper reason than that both are cheap.
       await this.loadDevices();
+      await this.loadGroups();
       // Every card shows values and controls immediately, with no click
       // needed (device dashboard design, section 3) - that is why
       // startApp() loads both for EVERY device, not just for one after an
@@ -1036,6 +1087,9 @@ function app() {
       await Promise.all([
         ...this.devices.map((device) => this.loadControls(device.id)),
         ...this.devices.map((device) => this.loadSignals(device.id)),
+        // A group has no signals to load - it has no node to get them
+        // from (design 2). Only its commands.
+        ...this.groups.map((group) => this.loadGroupControls(group)),
         this.loadExportStatus(),
         this.loadSettings(),
         this.loadResendInterval(),
@@ -1211,7 +1265,7 @@ function app() {
 
     async loadControls(deviceId) {
       try {
-        this.controlsByDevice[deviceId] = await this.request(
+        this.controlsBySubject[deviceId] = await this.request(
           "GET",
           `/api/devices/${deviceId}/controls`,
         );
@@ -1220,12 +1274,63 @@ function app() {
       }
     },
 
-    controlsFor(deviceId) {
-      return this.controlsByDevice[deviceId] || null;
+    // --- Groups: loading ----------------------------------------------------
+
+    /** A group's key into `controlsBySubject`. Deliberately the very
+     * prefix the server builds its group command keys from (`g3_on`,
+     * design 4.1), so the two never need translating into each other -
+     * and so it can never be mistaken for a device id, which is a
+     * number. */
+    groupSubject(group) {
+      return `g${group.id}`;
+    },
+
+    async loadGroups() {
+      this.groupsError = null;
+      try {
+        this.groups = await this.request("GET", "/api/groups");
+      } catch (error) {
+        this.groupsError = t("web.groups.list_load_error", { message: error.message });
+      }
+    },
+
+    /** Reloaded after every membership change, not only on startup: the
+     * command list of a group is the INTERSECTION of its members'
+     * commands and is recomputed server-side on every change (design
+     * 4.3), so a tile that kept the old list would offer a command the
+     * group no longer has - and that key now answers 404. */
+    async loadGroupControls(group) {
+      try {
+        this.controlsBySubject[this.groupSubject(group)] = await this.request(
+          "GET",
+          `/api/groups/${group.id}/controls`,
+        );
+      } catch (error) {
+        this.groupActionError = t("web.devices.controls_load_error", { message: error.message });
+      }
+    },
+
+    async loadAllGroupControls() {
+      await Promise.all(this.groups.map((group) => this.loadGroupControls(group)));
+    },
+
+    // --- Reading controls, for a device and for a group alike ---------------
+    //
+    // Every helper from here down to `hasColourTabs` takes a SUBJECT, not
+    // a device: a numeric device id, or a group's `"g3"` (see
+    // `groupSubject`). None of them had to change for groups - they only
+    // ever read `commands`, `hidden_raw_commands` and `control`, and
+    // `GET /api/groups/{id}/controls` answers with exactly the shape
+    // `GET /api/devices/{id}/controls` does (design 5). A second set of
+    // group-only copies would have been two lists of command kinds to keep
+    // in step.
+
+    controlsFor(subject) {
+      return this.controlsBySubject[subject] || null;
     },
 
     /**
-     * Whether this device's controls could be loaded at all. Without this
+     * Whether this subject's controls could be loaded at all. Without this
      * distinction the UI renders a failed (or still running) fetch as
      * "no known commands" - a statement about the device, when what is
      * really due is one about the connection (Spec 8.1: a failure must
@@ -1236,9 +1341,9 @@ function app() {
      * runs via `deviceActionError` (see `loadControls`); this is only
      * about avoiding the wrong tile display.
      */
-    controlsLoaded(deviceId) {
+    controlsLoaded(subject) {
       // Direct access, no `hasOwnProperty` - see `isOnline`.
-      return this.controlsByDevice[deviceId] !== undefined;
+      return this.controlsBySubject[subject] !== undefined;
     },
 
     // The following three helpers exist solely so `index.html` does not
@@ -1246,23 +1351,23 @@ function app() {
     // handle an entry that has not been loaded yet - an ordinary function
     // is more readable here than an expression with a built-in existence
     // check in the middle of the markup.
-    commandsFor(deviceId) {
-      const controls = this.controlsByDevice[deviceId];
+    commandsFor(subject) {
+      const controls = this.controlsBySubject[subject];
       return controls ? controls.commands : [];
     },
 
-    hiddenRawCommandsFor(deviceId) {
-      const controls = this.controlsByDevice[deviceId];
+    hiddenRawCommandsFor(subject) {
+      const controls = this.controlsBySubject[subject];
       return controls ? controls.hidden_raw_commands : 0;
     },
 
-    /** All commands of a device with exactly this control kind
+    /** All commands of a device or group with exactly this control kind
      * (`CommandOut.control`: "none", "percent", "kelvin", "hue_sat",
      * "unknown"). Decides WHICH control gets built - see the design
      * rule for that in the control modal in index.html: `command.slug`
      * only serves as a label there, never as a case distinction. */
-    controlsByKind(deviceId, kind) {
-      return this.commandsFor(deviceId).filter((command) => command.control === kind);
+    controlsByKind(subject, kind) {
+      return this.commandsFor(subject).filter((command) => command.control === kind);
     },
 
     /** Commands for which the shipped UI knows NO control of its
@@ -1274,25 +1379,26 @@ function app() {
      * and without this catch-all the command in the modal would simply
      * not be drawn at all - no slider, no number field, no
      * hint. */
-    unhandledControls(deviceId) {
-      return this.commandsFor(deviceId).filter(
+    unhandledControls(subject) {
+      return this.commandsFor(subject).filter(
         (command) => !KNOWN_CONTROL_KINDS.includes(command.control),
       );
     },
 
-    /** Whether this device can do anything value-carrying at all - only
-     * then does the tile get the "Control" button to the control modal. */
-    hasAdjustableControls(deviceId) {
-      return this.commandsFor(deviceId).some((command) => command.control !== "none");
+    /** Whether this device or group can do anything value-carrying at all
+     * - only then does the tile get the "Control" button to the control
+     * modal. */
+    hasAdjustableControls(subject) {
+      return this.commandsFor(subject).some((command) => command.control !== "none");
     },
 
-    /** Tabs only if the device can do BOTH paths. A CCT light thereby
+    /** Tabs only if the subject can do BOTH paths. A CCT light thereby
      * gets no tab bar - without a single check on device type or
      * model (design 2026-09-07, section 6.3). */
-    hasColourTabs(deviceId) {
+    hasColourTabs(subject) {
       return (
-        this.controlsByKind(deviceId, "kelvin").length > 0 &&
-        this.controlsByKind(deviceId, "hue_sat").length > 0
+        this.controlsByKind(subject, "kelvin").length > 0 &&
+        this.controlsByKind(subject, "hue_sat").length > 0
       );
     },
 
@@ -1436,6 +1542,10 @@ function app() {
     // identifier ("socket"), so the search below can compare against the
     // text the operator actually sees - in German "Steckdose", in English
     // "socket".
+    //
+    // Serves a GROUP unchanged: a group carries `category` under the same
+    // name and with the same vocabulary (`profiles.categories`), because
+    // its category is the one its first member fixed (design 2).
     categoryLabel(device) {
       return t("web.devices.category." + (device.category || "other"));
     },
@@ -1444,17 +1554,28 @@ function app() {
     // null/undefined. One place, so the conversion does not live
     // separately in four helpers, one of which might eventually do it
     // differently.
+    //
+    // Serves a GROUP unchanged too, and that is not a coincidence worth
+    // papering over with a second helper: a group's room is its OWN
+    // column, free text with NULL for "no room", exactly like a device's
+    // (design 4.1). It is deliberately NOT derived from the members - a
+    // derived room would move a group on its own the moment one lamp is
+    // re-roomed, and nobody would learn why (design 6).
     roomKeyOf(device) {
       return device.room || "";
     },
 
-    // All rooms with their device count, "No room" right at the end.
-    // `key` is the value `roomFilter` takes on ("" for no room), `label`
-    // the displayed text.
+    // All rooms with their count, "No room" right at the end. `key` is the
+    // value `roomFilter` takes on ("" for no room), `label` the displayed
+    // text.
+    //
+    // Groups count towards a chip just as devices do: the grid below shows
+    // both, and a chip whose number disagreed with what appears under it
+    // would be worse than no number at all.
     roomChips() {
       const counts = new Map();
-      for (const device of this.devices) {
-        const key = this.roomKeyOf(device);
+      for (const subject of [...this.devices, ...this.groups]) {
+        const key = this.roomKeyOf(subject);
         counts.set(key, (counts.get(key) || 0) + 1);
       }
       const chips = [...counts.keys()]
@@ -1467,15 +1588,18 @@ function app() {
       return chips;
     },
 
-    // The bar does not show at all as long as not a single device carries
-    // a room: with three devices and no room it would be a line of noise
-    // above a list that fits in one glance anyway.
+    // The bar does not show at all as long as not a single device or group
+    // carries a room: with three devices and no room it would be a line of
+    // noise above a list that fits in one glance anyway.
     hasAnyRoom() {
-      return this.devices.some((device) => Boolean(device.room));
+      return [...this.devices, ...this.groups].some((subject) => Boolean(subject.room));
     },
 
     // Does the search term match this device? Compared against name,
-    // translated category name, and room name.
+    // translated category name, and room name. A GROUP goes through here
+    // unchanged - it carries all three fields under the same names, which
+    // is exactly why `visibleGroups()` below does not reimplement the
+    // predicate (design 6: same search as the device tile).
     matchesSearch(device) {
       const needle = this.deviceSearch.trim().toLocaleLowerCase();
       if (!needle) {
@@ -1499,15 +1623,30 @@ function app() {
       );
     },
 
-    // How many devices the search term matches OUTSIDE the selected
-    // room. Only relevant when nothing is left within the room itself -
-    // otherwise the note would be a distraction.
+    // The visible groups: the SAME predicate as `visibleDevices()`, on the
+    // other list. Deliberately not a second implementation of it - the two
+    // halves of one grid must not start filtering differently, and
+    // `roomKeyOf`/`matchesSearch` already serve a group unchanged (see
+    // their comments).
+    visibleGroups() {
+      return this.groups.filter(
+        (group) =>
+          (this.roomFilter === null || this.roomKeyOf(group) === this.roomFilter) &&
+          this.matchesSearch(group),
+      );
+    },
+
+    // How many devices AND groups the search term matches OUTSIDE the
+    // selected room. Only relevant when nothing is left within the room
+    // itself - otherwise the note would be a distraction. Groups belong in
+    // this count for the same reason they belong in the chip count: the
+    // "show all rooms" link it offers reveals both.
     hitsOutsideRoom() {
       if (this.roomFilter === null || !this.deviceSearch.trim()) {
         return 0;
       }
-      return this.devices.filter(
-        (device) => this.roomKeyOf(device) !== this.roomFilter && this.matchesSearch(device),
+      return [...this.devices, ...this.groups].filter(
+        (subject) => this.roomKeyOf(subject) !== this.roomFilter && this.matchesSearch(subject),
       ).length;
     },
 
@@ -1556,6 +1695,13 @@ function app() {
     // The devices, grouped by room and sorted within a room: first by
     // category rank (all plug sockets together, then all pushbuttons),
     // then alphabetically by name within that.
+    //
+    // NOT related to the device GROUPS of the 2026-09-10 design, despite
+    // the name: a "group" here is a room section of the device grid, and
+    // the `group` in the `x-for` over this function in index.html is one
+    // of those. The device groups live in `groups`/`visibleGroups()` and
+    // render as tiles of their own. The two names met by accident; this
+    // one is the older, and renaming it would touch every room test.
     //
     // `localeCompare` instead of `<`: otherwise "Émile" would land
     // behind "Zurich", because the code point of "É" comes after that of
@@ -1749,6 +1895,250 @@ function app() {
       }
     },
 
+    // ---------------------------------------------------------------------
+    // Groups: renaming, room, deleting, and the create/edit dialog
+    // (design 2026-09-10, section 6)
+    // ---------------------------------------------------------------------
+
+    /** Renamed INLINE through the tile's name field, exactly like a
+     * device's (`saveLabel`) - no kebab entry and no dialog for it. The
+     * group tile is the device tile, and an edit that works one way on one
+     * tile and another way on its neighbour would be the gratuitous
+     * difference the design warns against. */
+    async saveGroupLabel(group) {
+      const label = (this.groupLabelDrafts[group.id] ?? group.label).trim();
+      if (!label || label === group.label) {
+        return;
+      }
+      this.groupActionError = null;
+      try {
+        const updated = await this.request("PATCH", `/api/groups/${group.id}`, { label });
+        Object.assign(group, updated);
+      } catch (error) {
+        this.groupActionError = t("web.devices.label_save_error", { message: error.message });
+      }
+    },
+
+    /** The group's own room, same encoding as a device's: "" is the value
+     * the API takes for "remove the room" (design 4.1). */
+    async saveGroupRoom(group, value) {
+      this.groupActionError = null;
+      try {
+        const updated = await this.request("PATCH", `/api/groups/${group.id}`, { room: value });
+        Object.assign(group, updated);
+      } catch (error) {
+        this.groupActionError = t("web.devices.room_save_error", { message: error.message });
+      } finally {
+        // Same reason as in `saveRoom`: a write that empties the filtered
+        // room must not leave the filter pointing at a chip that is gone.
+        // Since `roomChips()` counts groups, moving the last GROUP out of a
+        // room can do that too.
+        this.reconcileRoomFilter();
+      }
+    },
+
+    /** `newRoomFor` holds a device id for a device tile and a group's
+     * SUBJECT string ("g3") for a group tile - never a bare group id. Both
+     * kinds of tile share the one field (only one new-room text box may be
+     * open at a time, see index.html), and a group id and a device id are
+     * both small integers: with bare ids, opening the box on group 4 would
+     * open it on device 4 as well. The subject string cannot collide,
+     * because every comparison in the markup uses `===`. */
+    beginNewGroupRoom(group) {
+      this.newRoomFor = this.groupSubject(group);
+      this.newRoomDraft = "";
+    },
+
+    async commitNewGroupRoom(group) {
+      const name = this.newRoomDraft.trim();
+      this.newRoomFor = null;
+      this.newRoomDraft = "";
+      if (name) {
+        await this.saveGroupRoom(group, name);
+      }
+    },
+
+    /** The confirmation names what stops resolving afterwards: the group's
+     * keys go with it, so a virtual output in an already patched Loxone
+     * project points at a key that answers 404 from then on (design 4.3).
+     * Same stance as `removeDevice` - the text names the key prefix and the
+     * template file up to the id, not the full file name, whose second
+     * half comes from a normalisation rule that lives in Python
+     * (`export.documents.filename_for`) and must not be reimplemented
+     * here. */
+    async removeGroup(group) {
+      const confirmed = window.confirm(
+        t("web.groups.delete_confirm", { label: group.label, id: group.id }),
+      );
+      if (!confirmed) {
+        return;
+      }
+      this.groupActionError = null;
+      try {
+        await this.request("DELETE", `/api/groups/${group.id}`);
+        this.groups = this.groups.filter((entry) => entry.id !== group.id);
+        delete this.controlsBySubject[this.groupSubject(group)];
+        // A control modal standing open over the group that just went away
+        // would become an empty box behind the `x-if` guard - the same
+        // reasoning as in `removeDevice`, and checked against this group so
+        // a modal over a DIFFERENT subject does not close with it.
+        if (this.controlModalDevice === this.groupSubject(group)) {
+          this.closeControlModal();
+        }
+        this.reconcileRoomFilter();
+      } catch (error) {
+        this.groupActionError = t("web.devices.remove_error", { message: error.message });
+      }
+    },
+
+    // --- The create/edit dialog ---------------------------------------------
+
+    openGroupCreate() {
+      this.groupDraft = { id: null, label: "", room: "", memberIds: [], roomTouched: false };
+      this.groupDialogError = null;
+      // `$nextTick` for the same reason as in `openSignalsModal`:
+      // `showModal()` puts the initial focus on the first focusable
+      // element IN the dialog, and with `x-if` content that element does
+      // not exist until Alpine has built it.
+      this.$nextTick(() => this.$refs.groupDialog.showModal());
+    },
+
+    /** Editing touches the MEMBERS only. Name and room are edited on the
+     * tile itself (the name field, the kebab's room list), so the dialog
+     * does not offer a second way to do the same thing. */
+    openGroupMembers(group) {
+      this.groupDraft = {
+        id: group.id,
+        label: group.label,
+        room: group.room || "",
+        memberIds: [...group.member_ids],
+        roomTouched: true,
+      };
+      this.groupDialogError = null;
+      this.$nextTick(() => this.$refs.groupDialog.showModal());
+    },
+
+    /** Closes via `close()`, so the `@close` handler in index.html stays
+     * the one place that resets the draft - the same rule the two modals
+     * above follow. */
+    closeGroupDialog() {
+      this.$refs.groupDialog.close();
+    },
+
+    /** Every device, by name, regardless of the room filter and the search
+     * term: a group may well span two rooms, and a candidate list that
+     * silently obeyed the filter behind the dialog would hide exactly the
+     * lamp someone opened the dialog to add. */
+    groupCandidates() {
+      return [...this.devices].sort((a, b) => a.label.localeCompare(b.label));
+    },
+
+    /**
+     * The category the draft is locked to, or null while it is still open.
+     *
+     * When EDITING, that is the group's own stored category, not the first
+     * member's: the category is stored precisely so that an empty group
+     * still knows what it accepts (design 2), and the server refuses a
+     * foreign member for an emptied group just as it does for a full one.
+     * Reading the first draft member instead would unlock every category
+     * the moment someone unticks all of them, and the refusal would then
+     * arrive as a 400 from the server instead of as a greyed-out entry.
+     */
+    groupDraftCategory() {
+      if (this.groupDraft.id !== null) {
+        const group = this.groups.find((entry) => entry.id === this.groupDraft.id);
+        if (group) {
+          return group.category;
+        }
+      }
+      const first = this.devices.find((device) => device.id === this.groupDraft.memberIds[0]);
+      return first ? first.category : null;
+    },
+
+    /** Whether this device can be ticked, and if not, why. The first pick
+     * fixes the category; everything of another kind is then disabled WITH
+     * the reason on the entry, never silently (design 6) - a tick that does
+     * nothing and says nothing is the failure Spec 8.1 is about. */
+    groupCandidateState(device) {
+      const category = this.groupDraftCategory();
+      if (category === null || category === device.category) {
+        return { disabled: false, reason: "" };
+      }
+      return {
+        disabled: true,
+        reason: t("web.groups.other_category", { category: this.categoryLabel(device) }),
+      };
+    },
+
+    toggleGroupMember(device) {
+      if (this.groupCandidateState(device).disabled) {
+        return;
+      }
+      const ids = this.groupDraft.memberIds;
+      this.groupDraft.memberIds = ids.includes(device.id)
+        ? ids.filter((id) => id !== device.id)
+        : [...ids, device.id];
+      // Prefilled from the members while they agree on a room, and the
+      // user's from the first keystroke in the field on (design 6).
+      if (!this.groupDraft.roomTouched) {
+        this.groupDraft.room = this.groupRoomSuggestion();
+      }
+    },
+
+    /** The members' room, if they all carry the same one - otherwise
+     * nothing. Guessing a majority room would put the group somewhere none
+     * of its members is, and the field is right there to be filled in. */
+    groupRoomSuggestion() {
+      const rooms = new Set(
+        this.groupDraft.memberIds
+          .map((id) => this.devices.find((device) => device.id === id))
+          .filter(Boolean)
+          .map((device) => this.roomKeyOf(device)),
+      );
+      return rooms.size === 1 ? [...rooms][0] : "";
+    },
+
+    /** Create, or replace the member list of an existing group.
+     *
+     * The member list goes out as a WHOLE (`PUT`), not as add/remove per
+     * device: the command intersection is recomputed after every change
+     * anyway, and two single removals would pass through an intermediate
+     * state nobody asked for, including keys that briefly vanish and come
+     * back (design 5).
+     */
+    async saveGroupDialog() {
+      this.groupDialogError = null;
+      this.groupDialogBusy = true;
+      try {
+        if (this.groupDraft.id === null) {
+          await this.request("POST", "/api/groups", {
+            label: this.groupDraft.label.trim(),
+            room: this.groupDraft.room.trim(),
+            member_ids: this.groupDraft.memberIds,
+          });
+        } else {
+          await this.request("PUT", `/api/groups/${this.groupDraft.id}/members`, {
+            member_ids: this.groupDraft.memberIds,
+          });
+        }
+        await this.loadGroups();
+        // The intersection has changed - see `loadGroupControls`. Reloaded
+        // for ALL groups, not only this one: a device that just joined here
+        // may have been removed from another group's list in the same
+        // breath, and on creation there is no new id at hand anyway.
+        await this.loadAllGroupControls();
+        this.closeGroupDialog();
+      } catch (error) {
+        // The server's `detail` verbatim: it already names the offending
+        // device and both categories ("device 4 is a socket, the group
+        // takes light"). A generic sentence in its place would throw away
+        // the only part that says what to do next (Spec 8.1).
+        this.groupDialogError = error.message;
+      } finally {
+        this.groupDialogBusy = false;
+      }
+    },
+
     // Signal modal: "Functional" shows immediately what `is_functional`
     // classifies as intentional; "Expert" stays collapsed until the user
     // expands the `<details>` in the modal (until 2026-09-05 a global
@@ -1866,7 +2256,7 @@ function app() {
       try {
         await this.request("DELETE", `/api/devices/${device.id}`);
         this.devices = this.devices.filter((d) => d.id !== device.id);
-        delete this.controlsByDevice[device.id];
+        delete this.controlsBySubject[device.id];
         delete this.signalsByDevice[device.id];
         // Without this, a dialog would stay open over a device that no
         // longer exists - and the `x-if` guard in the modal would turn it
@@ -1889,11 +2279,26 @@ function app() {
         // `commitRenameRoom`: any write site that can make the filtered
         // room disappear calls it afterward.
         this.reconcileRoomFilter();
+        // Removing a device is a membership change like any other (design
+        // 4.3): the server drops its rows from every group it belonged to
+        // and recomputes those groups' command intersections. Without this
+        // reload, such a group's tile would keep showing the old member
+        // count and offer commands whose keys now answer 404.
+        await this.loadGroups();
+        await this.loadAllGroupControls();
       } catch (error) {
         this.deviceActionError = t("web.devices.remove_error", { message: error.message });
       }
     },
 
+    /**
+     * Sends one command. Unchanged for groups, and that is the whole point
+     * of the shared key namespace: a group tile makes exactly the same
+     * `POST /api/commands/{key}` call a device tile makes, with the same
+     * 404/400/502 semantics, and there is deliberately no group control
+     * route (design 5). `device` is only read for its `label` in the toast,
+     * which a group carries too.
+     */
     async executeCommand(device, command) {
       this.commandBusyKey = command.key;
       const value = command.takes_value ? this.commandValueDrafts[command.key] ?? "" : "1";
@@ -2719,8 +3124,47 @@ function app() {
     // for the rationale.
     // ---------------------------------------------------------------------
 
+    /** The modal's subject, resolved against the CURRENT lists - the field
+     * holds an id, not an object, for the reason given there. A string
+     * subject is a group ("g3"), a number is a device id; the two cannot be
+     * confused. */
     controlModalDeviceObject() {
+      if (typeof this.controlModalDevice === "string") {
+        return (
+          this.groups.find((group) => this.groupSubject(group) === this.controlModalDevice) || null
+        );
+      }
       return this.devices.find((device) => device.id === this.controlModalDevice) || null;
+    },
+
+    /**
+     * Whether this subject's controls must be blocked because it cannot be
+     * reached. An OFFLINE DEVICE blocks: a command to it would be the
+     * silent nothing Spec 8.1 exists to prevent.
+     *
+     * A GROUP never blocks. It has no online state of its own, and an
+     * aggregate over six lamps would be exactly the invention design
+     * section 2 rules out - "some of them are offline" is not a reason to
+     * refuse the ones that are not. A fan-out with an unreachable member
+     * answers 502 and names it (design 3.2), which is the honest place for
+     * that information; the reachable lamps still switch.
+     */
+    subjectOffline(subject) {
+      if (typeof subject === "string") {
+        return false;
+      }
+      const device = this.devices.find((entry) => entry.id === subject);
+      return device ? !this.isOnline(device) : false;
+    },
+
+    /** The member a group's slider positions were read from, or "" for a
+     * device (whose controls carry no such field). The modal shows it under
+     * every slider: a group has no state of its own, and naming the device
+     * the number came from is the honest alternative both to hiding it and
+     * to presenting it as the group's (design 5). */
+    controlSeedLabel(subject) {
+      const controls = this.controlsBySubject[subject];
+      return controls && controls.seed_device_label ? controls.seed_device_label : "";
     },
 
     /**
@@ -2733,6 +3177,32 @@ function app() {
       this.deviceActionError = null;
       this.controlModalDevice = device.id;
       this.controlDrafts = this.readStartValues(device.id);
+      this.controlTab = this.controlDrafts.colormode === 0 ? "colour" : "white";
+      this.$nextTick(() => this.$refs.controlModal.showModal());
+    },
+
+    /**
+     * The same modal for a group. The start values come from the SEED
+     * member that `GET /api/groups/{id}/controls` names, not from the group
+     * - a group has no state to read (design 2), and the lamp-controls
+     * design ruled out a slider with no start value at all, because the
+     * first nudge then yanks the light somewhere and proves nothing about
+     * what it changed. `readStartValues` therefore runs against the seed
+     * device's signals, which are already loaded like every other device's.
+     *
+     * An empty group has no seed: the drafts stay empty and every slider
+     * falls back to the "start value unknown" note the device path already
+     * shows, rather than to a made-up position.
+     */
+    openGroupControlModal(group) {
+      this.groupActionError = null;
+      const subject = this.groupSubject(group);
+      const controls = this.controlsBySubject[subject];
+      this.controlModalDevice = subject;
+      this.controlDrafts =
+        controls && controls.seed_device_id !== null && controls.seed_device_id !== undefined
+          ? this.readStartValues(controls.seed_device_id)
+          : {};
       this.controlTab = this.controlDrafts.colormode === 0 ? "colour" : "white";
       this.$nextTick(() => this.$refs.controlModal.showModal());
     },

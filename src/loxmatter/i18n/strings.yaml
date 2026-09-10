@@ -1128,6 +1128,80 @@ web.devices.control_colour_hint:
   en: "Horizontal: hue. Vertical: saturation. Release to send."
   de: "Waagerecht: Farbton. Senkrecht: Sättigung. Beim Loslassen wird gesendet."
 
+# --- device groups (design 2026-09-10, section 6): several devices of one
+# category behind ONE Loxone virtual output. The group tile reuses the
+# device tile's strings wherever the sentence is the same
+# (`web.devices.control_button`, `controls_loading`, `no_known_commands`,
+# `menu_room_heading`, `room_none`, `room_new`, the three save errors) -
+# only the sentences that are genuinely about a group live here.
+#
+# `web.groups.member_count` deliberately does NOT read "{count} devices":
+# t() interpolates and does not choose a plural form (i18n/__init__.py),
+# and a group of one would then be told it has "1 devices". The label
+# form says the same thing for every count.
+web.groups.badge:
+  en: "Group"
+  de: "Gruppe"
+web.groups.new:
+  en: "New group"
+  de: "Neue Gruppe"
+web.groups.member_count:
+  en: "Members: {count}"
+  de: "Mitglieder: {count}"
+web.groups.edit_members:
+  en: "Edit members…"
+  de: "Mitglieder bearbeiten…"
+web.groups.delete:
+  en: "Delete group"
+  de: "Gruppe löschen"
+web.groups.delete_confirm:
+  en: |
+    Really delete group "{label}"? This cannot be undone.
+
+    Its command keys go with it, so afterwards in Loxone:
+    • every virtual output with the key prefix "g{id}_" answers 404
+    • the imported template "VO_g{id}_….xml" points at nothing
+
+    The devices themselves stay untouched.
+  de: |
+    Gruppe "{label}" wirklich löschen? Das kann nicht rückgängig gemacht werden.
+
+    Ihre Kommandoschlüssel gehen mit, danach gilt in Loxone:
+    • jeder virtuelle Ausgang mit dem Schlüssel-Präfix "g{id}_" antwortet 404
+    • die importierte Vorlage "VO_g{id}_….xml" zeigt ins Leere
+
+    Die Geräte selbst bleiben unberührt.
+web.groups.label_field:
+  en: "Name"
+  de: "Name"
+web.groups.label_placeholder:
+  en: "Group name"
+  de: "Gruppenname"
+web.groups.members_heading:
+  en: "Members"
+  de: "Mitglieder"
+web.groups.members_title:
+  en: "Members of {label}"
+  de: "Mitglieder von {label}"
+web.groups.needs_member:
+  en: "Pick at least one device — the first one fixes the group's category."
+  de: "Mindestens ein Gerät wählen — das erste legt die Kategorie der Gruppe fest."
+web.groups.other_category:
+  en: "is a {category} — a group takes one kind only"
+  de: "ist ein {category} — eine Gruppe nimmt nur eine Sorte"
+web.groups.create:
+  en: "Create group"
+  de: "Gruppe erstellen"
+web.groups.members_save:
+  en: "Save members"
+  de: "Mitglieder speichern"
+web.groups.seed_from:
+  en: "Initial value from {device}"
+  de: "Ausgangswert von {device}"
+web.groups.list_load_error:
+  en: "Could not load groups: {message}"
+  de: "Gruppen konnten nicht geladen werden: {message}"
+
 # --- web.signals — Signalansicht ---
 web.signals.key_hint:
   en: "The key (in the \"Loxone input\" column, greyed out) is the wiring in Loxone and cannot be changed here — doing so would silently disable a block there."

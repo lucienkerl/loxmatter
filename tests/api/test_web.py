@@ -4872,7 +4872,12 @@ async def test_the_command_bar_distinguishes_loading_from_genuinely_empty(api):
         in device_commands
     )
 
-    controls_loaded_start = script.index("controlsLoaded(deviceId) {")
+    # `controlsLoaded(subject)`, not `(deviceId)`, since the group tiles
+    # (design 2026-09-10): the parameter is a control SUBJECT - a device id
+    # or a group's "g3" - and the function body is unchanged. Only the
+    # anchor moved; what this line proves is still that the method exists
+    # with a body, nothing about the parameter's name.
+    controls_loaded_start = script.index("controlsLoaded(subject) {")
     controls_loaded_end = script.index("\n    },", controls_loaded_start)
     assert controls_loaded_start < controls_loaded_end
 
@@ -5208,19 +5213,23 @@ async def test_exactly_one_dialog_of_each_kind_is_delivered(api):
     devices there would be thirty complete signal tables in the
     document, and every `id` in it thirtyfold (the same pitfall that
     `aria-labelledby` in the tile menu already had to dodge once). The
-    count of 2 (one signal modal, one control modal from task 7) is
-    the only assertion that would even notice this regression: a
-    `<dialog>` inside the tile would otherwise look exactly the same in
-    the shipped text as one at the end of the page.
+    count (one signal modal, one control modal from task 7, one group
+    dialog since the device groups of 2026-09-10) is the only assertion
+    that would even notice this regression: a `<dialog>` inside the tile
+    would otherwise look exactly the same in the shipped text as one at
+    the end of the page. The group dialog is the case in point - it holds
+    a checkbox per device, so inside the group `x-for` it would be
+    shipped once per group.
 
-    The location check (after `</main>`) additionally proves that both
-    sit outside the view sections and thus outside any
+    The location check (after `</main>`) additionally proves that all
+    three sit outside the view sections and thus outside any
     device loop."""
     client, _, _ = api
     markup = _without_comments((await client.get("/")).text)
-    assert markup.count("<dialog") == 2
+    assert markup.count("<dialog") == 3
     assert 'x-ref="signalsModal"' in markup
     assert 'x-ref="controlModal"' in markup
+    assert 'x-ref="groupDialog"' in markup
     assert markup.index("<dialog") > markup.index("</main>")
 
 
@@ -7493,3 +7502,583 @@ def test_the_leaving_development_sentence_exists_in_both_languages():
         assert "0.3.7" in rendered
         assert rendered != "web.system.update_leaving_dev"
     i18n.set_language("en")
+
+
+# ---------------------------------------------------------------------------
+# Device groups (design 2026-09-10, section 6)
+#
+# Two kinds of test, and the difference matters. The first one below is a
+# DELIVERY test: it proves the markup and the script reached the browser,
+# never that Alpine evaluated them - the known limit of string searches in
+# this file. Everything after it runs the shipped `app.js` in node through
+# `_app_state`, with a stubbed `request`, and therefore checks behaviour:
+# each one fails if the rule it is named for is taken out.
+# ---------------------------------------------------------------------------
+
+
+async def test_the_group_tile_is_delivered_and_shows_nothing_a_group_has_not(api):
+    """Delivery only. The negative half is the point: a group has no node,
+    so the tile must carry none of `isOnline`, `lastHeardText` or the
+    signal preview - showing one would mean inventing an aggregate over
+    six lamps with six brightnesses (design 2). The block is cut on
+    `group-card`, the tile's own second class, so this cannot accidentally
+    end up reading the device tile and passing for the wrong reason."""
+    client, _, _ = api
+    page = _without_comments((await client.get("/")).text)
+    script = (await client.get("/static/app.js")).text
+
+    assert "/api/groups" in script
+    assert "visibleGroups()" in script
+
+    # Cut from the group tile's own opening class to the ROOM-SECTION loop
+    # that follows the group grid in the document. Not to the first
+    # `</template>`: the tile contains several `x-for` blocks of its own
+    # (the command bar, the room entries), and the cut would end inside the
+    # first of them - the negative assertions below would then pass for the
+    # wrong reason, having simply been handed a fragment too short to hold
+    # anything. `deviceGroups()` is the older helper that buckets DEVICE
+    # tiles by room and has nothing to do with device groups; it is used
+    # here only as a stable marker for where the group grid ends.
+    start = page.index('class="card device-card group-card"')
+    tile = page[start : page.index('x-for="group in deviceGroups()"', start)]
+
+    assert "t('web.groups.badge')" in tile
+    assert "t('web.groups.member_count', { count: deviceGroup.member_ids.length })" in tile
+    assert "t('web.groups.edit_members')" in tile
+    assert "t('web.groups.delete')" in tile
+    # The room comes from the group's own field, never from its members
+    # (design 6): a derived room would move the group the moment one lamp
+    # is re-roomed, and nobody would learn why.
+    assert "saveGroupRoom(deviceGroup, '')" in tile
+    assert "member_labels" in tile  # only as the `title` naming the members
+
+    assert "isOnline" not in tile
+    assert "lastHeardText" not in tile
+    assert "firstSignalsFor" not in tile
+    assert "signalsByDevice" not in tile
+    assert "batterySignalFor" not in tile
+    assert "exportHintFor" not in tile
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_a_group_tile_and_a_device_tile_are_filtered_by_the_same_rule():
+    """Room chip and search field act TOGETHER (AND) on both halves of the
+    grid. `visibleGroups()` must not be a second implementation of that
+    rule - if it were, the two halves would eventually disagree, which is
+    exactly what this checks by running the real predicate over a group
+    whose room, label and category each have to answer on their own.
+
+    `web.devices.category.light` is filled in, because the search compares
+    against the TRANSLATED category name (see `matchesSearch`): without a
+    table, `t()` returns the key and searching for "light" would pass for
+    the wrong reason."""
+    values = _app_state(
+        """
+        state.devices = [
+          { id: 1, label: "Lamp Kitchen", room: "Kitchen", category: "light", online: true },
+          { id: 2, label: "Plug Hall", room: "Hall", category: "socket", online: true },
+        ];
+        state.groups = [
+          { id: 1, label: "Ceiling", room: "Kitchen", category: "light",
+            member_ids: [1], member_labels: ["Lamp Kitchen"], command_count: 2 },
+          { id: 2, label: "Outside", room: null, category: "light",
+            member_ids: [], member_labels: [], command_count: 0 },
+        ];
+        const labels = () => state.visibleGroups().map((group) => group.label);
+        const out = { all: labels() };
+        state.roomFilter = "Kitchen";
+        out.inKitchen = labels();
+        state.roomFilter = "";
+        out.inNoRoom = labels();
+        state.roomFilter = null;
+        state.deviceSearch = "ceil";
+        out.byLabel = labels();
+        state.deviceSearch = "outsid";
+        out.byOtherLabel = labels();
+        state.deviceSearch = "light";
+        out.byCategory = labels();
+        state.deviceSearch = "kitchen";
+        out.byRoom = labels();
+        state.roomFilter = "Hall";
+        out.searchAndFilterTogether = labels();
+        state.deviceSearch = "";
+        out.hallHasNoGroup = labels();
+        console.log(JSON.stringify(out));
+        """,
+        translations={
+            "web.devices.category.light": "Light",
+            "web.devices.category.socket": "Socket",
+        },
+    )
+
+    assert values["all"] == ["Ceiling", "Outside"]
+    assert values["inKitchen"] == ["Ceiling"]
+    # "No room" is a real selection, not "All" - the group with room null
+    # belongs to it and the one in the kitchen does not.
+    assert values["inNoRoom"] == ["Outside"]
+    assert values["byLabel"] == ["Ceiling"]
+    assert values["byOtherLabel"] == ["Outside"]
+    assert values["byCategory"] == ["Ceiling", "Outside"]
+    assert values["byRoom"] == ["Ceiling"]
+    # AND, not OR: "kitchen" matches the Ceiling group, but the Hall chip
+    # is selected, so nothing is left.
+    assert values["searchAndFilterTogether"] == []
+    assert values["hallHasNoGroup"] == []
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_a_room_chip_counts_the_groups_that_sit_under_it():
+    """A chip's number must match what the grid below it shows, and the
+    grid shows device tiles and group tiles. Counting devices only was the
+    state before this feature: the Kitchen chip would have said 1 with two
+    tiles under it.
+
+    `hasAnyRoom()` is checked in the same run, for the case a chip bar has
+    to exist for: a room carried by a GROUP and by no device at all.
+    Without groups in that check, the whole bar (and with it the only way
+    back to "All") would stay hidden."""
+    values = _app_state(
+        """
+        state.devices = [
+          { id: 1, label: "Lamp", room: "Kitchen", category: "light", online: true },
+        ];
+        state.groups = [
+          { id: 1, label: "Ceiling", room: "Kitchen", category: "light",
+            member_ids: [1], member_labels: ["Lamp"], command_count: 2 },
+          { id: 2, label: "Garden", room: "Garden", category: "light",
+            member_ids: [], member_labels: [], command_count: 0 },
+          { id: 3, label: "Spare", room: null, category: "light",
+            member_ids: [], member_labels: [], command_count: 0 },
+        ];
+        const chips = state.roomChips().map((chip) => [chip.key, chip.count]);
+        const groupsOnly = { devices: [], groups: state.groups };
+        console.log(JSON.stringify({
+          chips,
+          hasAnyRoom: state.hasAnyRoom(),
+          hasAnyRoomWithoutDevices: (() => {
+            const kept = state.devices;
+            state.devices = [];
+            const answer = state.hasAnyRoom();
+            state.devices = kept;
+            return answer;
+          })(),
+        }));
+        """,
+        translations={"web.devices.room_none": "No room"},
+    )
+
+    # Kitchen holds one device AND one group; Garden only a group; the
+    # group with no room lands on the "No room" chip at the end.
+    assert values["chips"] == [["Garden", 1], ["Kitchen", 2], ["", 1]]
+    assert values["hasAnyRoom"] is True
+    assert values["hasAnyRoomWithoutDevices"] is True
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_the_dialog_disables_another_category_with_the_reason_on_the_entry():
+    """The first pick fixes the category, and everything of another kind is
+    then disabled WITH its reason (design 6) - a tick that does nothing and
+    says nothing is the silent failure Spec 8.1 exists to surface. The
+    reason has to name the category the entry actually is, which is why
+    the translated text is asserted and not just `disabled`.
+
+    Second half: while EDITING, the lock comes from the group's stored
+    category, not from the first draft member. Unticking every member must
+    not unlock the other categories - the server refuses a foreign member
+    for an emptied group too (design 2), and the refusal belongs on the
+    entry, not in a 400 afterwards."""
+    values = _app_state(
+        """
+        state.devices = [
+          { id: 1, label: "Lamp", room: null, category: "light", online: true },
+          { id: 2, label: "Plug", room: null, category: "socket", online: true },
+        ];
+        state.groups = [
+          { id: 7, label: "Lights", room: null, category: "light",
+            member_ids: [1], member_labels: ["Lamp"], command_count: 2 },
+        ];
+        const lamp = state.devices[0];
+        const plug = state.devices[1];
+        const both = () => ({
+          lamp: state.groupCandidateState(lamp),
+          plug: state.groupCandidateState(plug),
+        });
+        const out = { empty: both() };
+        state.toggleGroupMember(lamp);
+        out.afterLamp = both();
+        out.pickedAfterLamp = [...state.groupDraft.memberIds];
+        // A disabled entry must not be tickable through the handler either -
+        // the `:disabled` attribute is the display, not the guard.
+        state.toggleGroupMember(plug);
+        out.pickedAfterPlugAttempt = [...state.groupDraft.memberIds];
+        // Editing group 7, draft emptied: still locked to "light".
+        state.groupDraft = { id: 7, label: "Lights", room: "", memberIds: [],
+                             roomTouched: true };
+        out.editingEmptied = both();
+        console.log(JSON.stringify(out));
+        """,
+        translations={
+            "web.devices.category.light": "Light",
+            "web.devices.category.socket": "Socket",
+            "web.groups.other_category": "is a {category} - a group takes one kind only",
+        },
+    )
+
+    assert values["empty"]["lamp"]["disabled"] is False
+    assert values["empty"]["plug"]["disabled"] is False
+    assert values["afterLamp"]["lamp"]["disabled"] is False
+    assert values["afterLamp"]["plug"]["disabled"] is True
+    assert values["afterLamp"]["plug"]["reason"] == "is a Socket - a group takes one kind only"
+    assert values["pickedAfterLamp"] == [1]
+    assert values["pickedAfterPlugAttempt"] == [1]
+    assert values["editingEmptied"]["plug"]["disabled"] is True
+    assert values["editingEmptied"]["lamp"]["disabled"] is False
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_the_room_prefill_stops_at_the_first_keystroke():
+    """Prefilled while the members agree on a room, the user's from then on
+    (design 6). Both halves fail loudly if `roomTouched` is dropped:
+    without it, ticking one more lamp silently overwrites a room just
+    typed; without the prefill, a group of five kitchen lamps starts with
+    no room at all."""
+    values = _app_state(
+        """
+        state.devices = [
+          { id: 1, label: "A", room: "Kitchen", category: "light", online: true },
+          { id: 2, label: "B", room: "Kitchen", category: "light", online: true },
+          { id: 3, label: "C", room: "Hall", category: "light", online: true },
+        ];
+        const out = {};
+        // `openGroupCreate` focuses the dialog after Alpine's next tick -
+        // neither exists in node.
+        state.$nextTick = () => {};
+        state.$refs = { groupDialog: { showModal: () => {} } };
+        state.openGroupCreate();
+        state.toggleGroupMember(state.devices[0]);
+        out.afterFirst = state.groupDraft.room;
+        state.toggleGroupMember(state.devices[1]);
+        out.afterSecondSameRoom = state.groupDraft.room;
+        state.toggleGroupMember(state.devices[2]);
+        out.afterThirdOtherRoom = state.groupDraft.room;
+        // The user types a room, then picks one more member.
+        state.groupDraft.room = "Ground floor";
+        state.groupDraft.roomTouched = true;
+        state.toggleGroupMember(state.devices[2]);
+        out.afterTypingThenPicking = state.groupDraft.room;
+        console.log(JSON.stringify(out));
+        """
+    )
+
+    assert values["afterFirst"] == "Kitchen"
+    assert values["afterSecondSameRoom"] == "Kitchen"
+    # Two rooms among the members: no guess at a majority - the group would
+    # land somewhere none of them is.
+    assert values["afterThirdOtherRoom"] == ""
+    assert values["afterTypingThenPicking"] == "Ground floor"
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_a_group_button_sends_one_post_to_the_shared_command_route():
+    """The whole point of the shared key namespace: a group tile makes
+    exactly the same `POST /api/commands/{key}` call a device tile makes,
+    and there is deliberately no group control route (design 5). The
+    recorded calls would show it immediately if `executeCommand` ever grew
+    a group-specific path - and the count of one shows the tile does not
+    fan out in the browser; the bridge does that.
+
+    `loadGroupControls` is exercised in the same run, because the key the
+    button sends comes from `GET /api/groups/{id}/controls` and from
+    nowhere else."""
+    values = _app_state(
+        """
+        const calls = [];
+        state.request = async (method, path, body) => {
+          calls.push([method, path, body]);
+          if (path === "/api/groups/1/controls") {
+            return { commands: [
+                       { key: "g1_on", slug: "on", takes_value: false,
+                         control: "none", range: null },
+                       { key: "g1_level", slug: "level", takes_value: true,
+                         control: "percent", range: null },
+                     ],
+                     hidden_raw_commands: 0, seed_device_id: 4,
+                     seed_device_label: "Lamp Kitchen" };
+          }
+          return null;
+        };
+        // `showToast` schedules its own dismissal - node has no `window`.
+        global.window = { setTimeout: () => 0 };
+        const group = { id: 1, label: "Ceiling", room: "Kitchen", category: "light",
+                        member_ids: [4, 5], member_labels: ["Lamp Kitchen", "Lamp Table"],
+                        command_count: 2 };
+        state.groups = [group];
+        (async () => {
+          await state.loadGroupControls(group);
+          const bar = state.controlsByKind(state.groupSubject(group), "none");
+          await state.executeCommand(group, bar[0]);
+          console.log(JSON.stringify({
+            subject: state.groupSubject(group),
+            barKeys: bar.map((command) => command.key),
+            adjustable: state.hasAdjustableControls(state.groupSubject(group)),
+            calls,
+          }));
+        })();
+        """
+    )
+
+    assert values["subject"] == "g1"
+    assert values["barKeys"] == ["g1_on"]
+    assert values["adjustable"] is True
+    assert values["calls"] == [
+        ["GET", "/api/groups/1/controls", None],
+        ["POST", "/api/commands/g1_on", {"value": "1"}],
+    ]
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_a_group_is_never_blocked_for_being_offline_and_names_its_seed_device():
+    """Two rules of the control modal once a group can open it.
+
+    `subjectOffline` must answer false for a group: a group has no online
+    state, and an aggregate over its members would be the invention design
+    section 2 rules out. If it answered from the members, a group with one
+    dead lamp would refuse to switch the five live ones - while the
+    fan-out itself reports 502 WITH the names (design 3.2).
+
+    `controlSeedLabel` must name the member the slider position came from,
+    and must stay empty for a device - a device's own value needs no
+    attribution, and the same binding serves both in the markup."""
+    values = _app_state(
+        """
+        state.devices = [
+          { id: 4, label: "Lamp Kitchen", room: "Kitchen", category: "light", online: false },
+          { id: 5, label: "Lamp Table", room: "Kitchen", category: "light", online: true },
+        ];
+        state.groups = [
+          { id: 1, label: "Ceiling", room: "Kitchen", category: "light",
+            member_ids: [4, 5], member_labels: ["Lamp Kitchen", "Lamp Table"],
+            command_count: 2 },
+        ];
+        state.controlsBySubject = {
+          4: { commands: [], hidden_raw_commands: 0 },
+          g1: { commands: [], hidden_raw_commands: 0,
+                seed_device_id: 4, seed_device_label: "Lamp Kitchen" },
+        };
+        console.log(JSON.stringify({
+          offlineDevice: state.subjectOffline(4),
+          onlineDevice: state.subjectOffline(5),
+          group: state.subjectOffline("g1"),
+          groupSeed: state.controlSeedLabel("g1"),
+          deviceSeed: state.controlSeedLabel(4),
+          unloadedSeed: state.controlSeedLabel("g9"),
+        }));
+        """
+    )
+
+    assert values["offlineDevice"] is True
+    assert values["onlineDevice"] is False
+    assert values["group"] is False
+    assert values["groupSeed"] == "Lamp Kitchen"
+    assert values["deviceSeed"] == ""
+    assert values["unloadedSeed"] == ""
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_a_refused_member_list_shows_the_servers_own_sentence():
+    """The store's 400 detail already names the offending device and both
+    categories. The dialog shows it verbatim: a generic "could not save"
+    in its place would throw away the only part that says what to do next
+    (Spec 8.1). The dialog also has to STAY open - the draft is still the
+    user's to fix.
+
+    The membership write goes out as the whole list (`PUT`), not add/remove
+    per device: the intersection is recomputed after every change anyway,
+    and two single removals would pass through an intermediate state
+    nobody asked for, keys included (design 5)."""
+    values = _app_state(
+        """
+        const calls = [];
+        state.request = async (method, path, body) => {
+          calls.push([method, path, body]);
+          if (method === "PUT") {
+            const error = new Error("device 2 is a socket, the group takes light");
+            error.status = 400;
+            throw error;
+          }
+          throw new Error("unexpected " + method + " " + path);
+        };
+        state.groups = [
+          { id: 7, label: "Lights", room: null, category: "light",
+            member_ids: [1], member_labels: ["Lamp"], command_count: 2 },
+        ];
+        state.groupDraft = { id: 7, label: "Lights", room: "", memberIds: [1, 2],
+                             roomTouched: true };
+        (async () => {
+          await state.saveGroupDialog();
+          console.log(JSON.stringify({
+            error: state.groupDialogError,
+            busy: state.groupDialogBusy,
+            draftKept: state.groupDraft.memberIds,
+            calls,
+          }));
+        })();
+        """
+    )
+
+    assert values["error"] == "device 2 is a socket, the group takes light"
+    # Released in `finally`, so a second attempt is possible at all.
+    assert values["busy"] is False
+    assert values["draftKept"] == [1, 2]
+    assert values["calls"] == [["PUT", "/api/groups/7/members", {"member_ids": [1, 2]}]]
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_creating_a_group_reloads_the_list_and_every_groups_commands():
+    """A membership change recomputes the command intersection server-side
+    (design 4.3), so the tile has to re-read it - a tile keeping the old
+    list would offer a command whose key now answers 404. Reloaded for
+    every group, not only the one just touched: a device that joined here
+    may have left another group's list in the same breath.
+
+    The room travels as the empty string for "no room" - the same encoding
+    the device path uses and the value the API expects (design 4.1)."""
+    values = _app_state(
+        """
+        const calls = [];
+        state.request = async (method, path, body) => {
+          calls.push([method, path]);
+          if (method === "GET" && path === "/api/groups") {
+            return [
+              { id: 1, label: "Ceiling", room: null, category: "light",
+                member_ids: [1], member_labels: ["Lamp"], command_count: 2 },
+              { id: 2, label: "Outside", room: null, category: "light",
+                member_ids: [2], member_labels: ["Lamp B"], command_count: 2 },
+            ];
+          }
+          if (method === "GET" && path.endsWith("/controls")) {
+            return { commands: [], hidden_raw_commands: 0,
+                     seed_device_id: 1, seed_device_label: "Lamp" };
+          }
+          return { id: 1 };
+        };
+        state.$nextTick = () => {};
+        state.$refs = { groupDialog: { close: () => {}, showModal: () => {} } };
+        state.groupDraft = { id: null, label: "Ceiling", room: "", memberIds: [1],
+                             roomTouched: false };
+        (async () => {
+          await state.saveGroupDialog();
+          console.log(JSON.stringify({
+            calls,
+            error: state.groupDialogError,
+            labels: state.groups.map((group) => group.label),
+            loadedSubjects: Object.keys(state.controlsBySubject).sort(),
+          }));
+        })();
+        """
+    )
+
+    assert values["error"] is None
+    assert values["calls"][0] == ["POST", "/api/groups"]
+    assert values["calls"][1] == ["GET", "/api/groups"]
+    assert sorted(values["calls"][2:]) == [
+        ["GET", "/api/groups/1/controls"],
+        ["GET", "/api/groups/2/controls"],
+    ]
+    assert values["labels"] == ["Ceiling", "Outside"]
+    assert values["loadedSubjects"] == ["g1", "g2"]
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_deleting_a_group_drops_its_controls_and_closes_a_modal_over_it():
+    """A group that is gone must not leave its commands behind in
+    `controlsBySubject` - a stale entry there is what `controlsLoaded`
+    reads, and the next group to be given the same id would inherit it.
+    A control modal standing open over it would become an empty box behind
+    its own `x-if` guard, which is the reason `removeDevice` does the same
+    two things."""
+    values = _app_state(
+        """
+        let closed = false;
+        state.request = async () => null;
+        state.groups = [
+          { id: 1, label: "Ceiling", room: null, category: "light",
+            member_ids: [], member_labels: [], command_count: 0 },
+          { id: 2, label: "Outside", room: null, category: "light",
+            member_ids: [], member_labels: [], command_count: 0 },
+        ];
+        state.controlsBySubject = { g1: { commands: [], hidden_raw_commands: 0 },
+                                    g2: { commands: [], hidden_raw_commands: 0 } };
+        state.controlModalDevice = "g1";
+        state.$refs = { controlModal: { close: () => { closed = true; } } };
+        global.window = { confirm: () => true };
+        (async () => {
+          await state.removeGroup(state.groups[0]);
+          console.log(JSON.stringify({
+            left: state.groups.map((group) => group.id),
+            subjects: Object.keys(state.controlsBySubject),
+            closed,
+            error: state.groupActionError,
+          }));
+        })();
+        """,
+        translations={"web.groups.delete_confirm": "delete {label} ({id})?"},
+    )
+
+    assert values["left"] == [2]
+    assert values["subjects"] == ["g2"]
+    assert values["closed"] is True
+    assert values["error"] is None
+
+
+async def test_the_group_dialog_waits_for_the_translation_table(api):
+    """MEASURED in a browser harness, not reasoned about, and the reason
+    this delivery test exists at all.
+
+    The two modals above build their content inside an `x-for`/`x-if` that
+    is false at startup, so every `t(...)` in them runs after
+    `GET /api/i18n` has answered. The group dialog's body has no such
+    condition of its own: without `x-if="stringsReady"` Alpine builds it on
+    its FIRST pass, while `translationStrings` is still empty, and `t()`
+    returns the bare key then (by design - see its comment in app.js).
+    Nothing in that markup carries a reactive dependency that would ever
+    re-evaluate it, so "web.groups.label_field" and
+    "web.groups.members_heading" stood in the open dialog for the rest of
+    the page's life. Both were visible in the harness before this guard.
+
+    The `<dialog>` element itself must stay outside the guard, or
+    `$refs.groupDialog` would not exist when `showModal()` is called."""
+    client, _, _ = api
+    markup = _without_comments((await client.get("/")).text)
+
+    start = markup.index('x-ref="groupDialog"')
+    dialog = markup[start : markup.index("</dialog>", start)]
+    body = dialog.index('class="signals-modal-body"')
+    guard = dialog.index('x-if="stringsReady"')
+    assert guard < body, "the dialog body must sit INSIDE the stringsReady guard"
+
+
+async def test_the_seed_attribution_only_appears_where_there_is_a_value(api):
+    """Also measured in the harness: a group's Kelvin row showed "Start
+    value unknown" and "Initial value from Lamp Kitchen" one under the
+    other, because the intersected range gave the slider a position while
+    the seed device had never reported a colour temperature. With no start
+    value there is nothing to attribute, and the sentence above it is the
+    whole truth.
+
+    Every one of the three sliders carries the same pair of conditions -
+    the seed label AND its own draft value. The device path is unaffected:
+    `controlSeedLabel` answers "" for a device, so the line never shows
+    there at all."""
+    client, _, _ = api
+    markup = _without_comments((await client.get("/")).text)
+
+    shows = re.findall(
+        r'x-show="([^"]*)"[^>]*x-text="t\(\'web\.groups\.seed_from\'',
+        markup,
+        flags=re.DOTALL,
+    )
+    assert len(shows) == 3, f"expected one attribution per slider kind, found {shows}"
+    for condition, draft in zip(shows, ("percent", "kelvin", "hue")):
+        assert "controlSeedLabel(controlModalDevice)" in condition
+        assert f"controlDrafts.{draft} !== undefined" in condition
