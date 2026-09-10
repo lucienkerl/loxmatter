@@ -19,6 +19,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -168,3 +169,99 @@ def test_set_group_members_rejects_a_duplicated_member_and_keeps_the_old_members
     with pytest.raises(ValueError):
         store.set_group_members(group.id, [lamps[0], lamps[0]])
     assert [d.id for d in store.group_members(group.id)] == lamps
+
+
+class _FailSecondMemberInsert:
+    """Proxies a real `sqlite3.Connection`, forcing the SECOND `INSERT INTO
+    device_group_member` to fail as `sqlite3.IntegrityError` - standing in
+    for any write-time SQLite error that reaches the write loop after the
+    duplicate-id and category checks have already passed, not only a
+    duplicate id. `sqlite3.Connection.execute` cannot be monkeypatched
+    directly (it is a read-only attribute of an immutable C type), so this
+    wraps the connection instead and is installed in place of `store._db`.
+    """
+
+    def __init__(self, real: sqlite3.Connection) -> None:
+        self._real = real
+        self._insert_count = 0
+
+    def execute(self, sql, parameters=()):
+        if sql.startswith("INSERT INTO device_group_member"):
+            self._insert_count += 1
+            if self._insert_count == 2:
+                raise sqlite3.IntegrityError("simulated failure past the duplicate check")
+        return self._real.execute(sql, parameters)
+
+    def __getattr__(self, name):
+        return getattr(self._real, name)
+
+
+def test_create_group_rolls_back_a_write_time_failure_and_leaves_no_ghost_row(
+    store, lamps, tmp_path, monkeypatch
+):
+    """Regression for the `except (ValueError, sqlite3.Error):
+    self._db.rollback(); raise` guard itself, as distinct from the
+    duplicate-id test above: here both members are distinct and valid, so
+    the upfront duplicate check passes and the write loop actually starts.
+    The second `INSERT INTO device_group_member` then fails the way a real
+    SQLite error would - a full disk, a corrupted index, anything past
+    dedup - and without `self._db.rollback()` in the `except` clause,
+    `device_group` and the first `device_group_member` row would stay in
+    the connection's open transaction, waiting for some later, unrelated
+    commit to flush them to disk - exactly the mechanism the duplicate-id
+    test's docstring above describes, reached from the other branch.
+    """
+    monkeypatch.setattr(store, "_db", _FailSecondMemberInsert(store._db))
+
+    with pytest.raises(sqlite3.IntegrityError):
+        store.create_group("Flaky", lamps)
+    assert store.groups() == []
+
+    # An unrelated write that commits - if the group row survived
+    # uncommitted, this is what would resurrect it on disk.
+    store.rename_device(lamps[0], "Renamed")
+    store.close()
+
+    reopened = Store(tmp_path / "test.sqlite")
+    try:
+        assert reopened.groups() == []
+    finally:
+        reopened.close()
+
+
+def test_set_group_members_rolls_back_a_write_time_failure_and_keeps_the_old_membership(
+    store, lamps, tmp_path, monkeypatch
+):
+    """Same construction as the `create_group` test above, applied to
+    `set_group_members`: the DELETE and the first re-INSERT succeed, the
+    second re-INSERT fails, and without the rollback guard the DELETE and
+    that first re-INSERT would survive uncommitted, to be flushed to disk
+    by a later unrelated commit - as a membership of `[lamps[0]]`, not the
+    `[lamps[1]]` that was actually there before this call.
+
+    The old membership is deliberately `[lamps[1]]`, not `[lamps[0]]`: the
+    attempted new list is `[lamps[0], lamps[1]]`, so the first (successful)
+    re-INSERT writes `lamps[0]` - the same id an unguarded rollback would
+    leave behind. Starting from `[lamps[0]]` would make that wrong interim
+    state look identical to the correct restored one and the assertion
+    below would pass whether or not the guard exists.
+    """
+    group = store.create_group("Living room", [lamps[1]])
+
+    monkeypatch.setattr(store, "_db", _FailSecondMemberInsert(store._db))
+
+    with pytest.raises(sqlite3.IntegrityError):
+        store.set_group_members(group.id, [lamps[0], lamps[1]])
+    assert [d.id for d in store.group_members(group.id)] == [lamps[1]]
+
+    # An unrelated write that commits - if the DELETE and the first
+    # re-INSERT survived uncommitted, this is what would flush the wrong
+    # membership (`[lamps[0]]`) to disk.
+    store.rename_device(lamps[0], "Renamed")
+    store.close()
+
+    reopened = Store(tmp_path / "test.sqlite")
+    try:
+        assert [d.id for d in reopened.group_members(group.id)] == [lamps[1]]
+    finally:
+        reopened.close()

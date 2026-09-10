@@ -1275,9 +1275,12 @@ class Store:
         commit to persist.
         """
         group = self.group(group_id)
-        self._check_members(group.category, member_ids)
+        # Same order as `create_group`: duplicates first, category second -
+        # so input that is both duplicated and wrong-category raises the
+        # same error, from the same check, in both methods.
         if len(set(member_ids)) != len(member_ids):
             raise ValueError(i18n.t("api.errors.group_duplicate_member"))
+        self._check_members(group.category, member_ids)
         try:
             self._db.execute("DELETE FROM device_group_member WHERE group_id = ?", (group_id,))
             for device_id in member_ids:
