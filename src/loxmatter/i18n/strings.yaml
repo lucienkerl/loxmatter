@@ -1333,6 +1333,9 @@ web.system.updater_behind:
 web.system.updater_behind_unknown_path:
   en: "The updater sidecar is still on {updater_version}, this bridge on {version}. Refresh it: from your loxmatter checkout's deploy/testhost directory (the host path could not be determined automatically), run: docker compose pull loxmatter-updater && docker compose up -d --no-deps loxmatter-updater"
   de: "Der Updater-Sidecar läuft noch auf {updater_version}, diese Brücke auf {version}. Ihn aktualisieren: im deploy/testhost-Verzeichnis Ihres loxmatter-Checkouts (der Host-Pfad konnte nicht automatisch ermittelt werden) ausführen: docker compose pull loxmatter-updater && docker compose up -d --no-deps loxmatter-updater"
+web.system.update_leaving_dev:
+  en: "You are running a development build. Version {version} is the newest published release - it may be older than what is running now, and the development channel's newer changes will not be in it until the next release."
+  de: "Sie fahren einen Entwicklungsstand. Version {version} ist die neueste veröffentlichte Fassung — sie kann älter sein als das, was gerade läuft, und die neueren Änderungen des Entwicklungskanals sind erst in der übernächsten Veröffentlichung enthalten."
 web.system.update_available:
   en: "Version {version} available"
   de: "Version {version} verfügbar"

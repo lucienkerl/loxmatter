@@ -1662,6 +1662,18 @@
                    ? t('web.system.update_behind', { behind: updateAvailable.behind })
                    : t('web.system.update_available', { version: updateAvailable.target })"></p>
               <pre class="notes" x-show="updateAvailable.notes" x-cloak x-text="updateAvailable.notes"></pre>
+              <!-- Leaving the development channel is the one offer here
+                   whose direction cannot be shown as a version step: the
+                   running build calls itself "dev" and may be newer than
+                   the release being offered. Design section 10 asks for
+                   that to be said rather than blocked - the updater lets
+                   the switch through precisely because the person made
+                   it deliberately, so the sentence has to be here,
+                   before the button, not in a rejection afterwards. -->
+              <p class="hint" x-cloak
+                 x-show="updateStatus.channel === 'stable'
+                         && versionInfo?.version === 'dev'"
+                 x-text="t('web.system.update_leaving_dev', { version: updateAvailable.target })"></p>
               <button @click="updateConfirming = true" x-text="t('web.system.update_apply')"></button>
             </div>
           </template>
