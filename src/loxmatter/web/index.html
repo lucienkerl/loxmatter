@@ -1755,8 +1755,20 @@
              x-text="t('web.system.update_not_collected')"></p>
 
           <!-- 4: Result. -->
-          <p class="banner ok" x-show="updateStatus?.state?.phase === 'done'" x-cloak
+          <!-- Gated on `updateWatchedJobId` (see app.js), not on the phase
+               alone: nothing ever returns `phase` to `idle` after `done`,
+               so a banner keyed on the phase stands here forever. This
+               announces a result to the page that watched it happen, and
+               a reload retires it. The failure banner below is
+               deliberately NOT gated the same way - see there. -->
+          <p class="banner ok" x-cloak
+             x-show="updateStatus?.state?.phase === 'done'
+                     && updateStatus?.state?.id === updateWatchedJobId"
              x-text="t('web.system.update_done', { version: updateStatus.state.to })"></p>
+          <!-- Not gated on `updateWatchedJobId`, unlike the success banner
+               above: a failure is a standing condition somebody still has
+               to deal with, and must survive the reload they will very
+               likely do while dealing with it. A success is news. -->
           <template x-if="updateStatus?.state?.phase === 'failed'">
             <div>
               <p class="banner danger" x-text="t('web.system.update_failed')"></p>

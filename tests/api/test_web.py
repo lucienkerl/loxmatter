@@ -7240,3 +7240,91 @@ def test_the_update_check_is_refreshed_once_the_update_reaches_a_terminal_state(
     assert values["callsWhileRunning"] == 0
     assert values["callsAfterDone"] == 1
     assert values["updateAvailableAfterDone"] == {"target": None, "error": None}
+
+
+def test_a_finished_update_is_announced_only_to_the_page_that_watched_it():
+    """`phase` never returns to `idle` after `done` - the sidecar has no
+    reason to rewrite its own record of what last happened - so a banner
+    keyed on the phase alone stands on the System tab forever, across
+    reloads and reboots, until the next update runs. Someone who never
+    pressed anything reads "Now running: 0.3.6" weeks later.
+
+    The banner is therefore keyed on `updateWatchedJobId`, which this
+    page sets when it starts an update or first catches one already
+    running, and which no reload survives. A socket reconnect is not a
+    reload - the bridge restarting mid-update is precisely when the
+    banner has to live through the gap - and the state is untouched
+    there because the page itself never went away.
+
+    A failure is deliberately not gated this way; see the markup.
+    """
+    values = _app_state(
+        """
+        state.request = async (method, path) => {
+          if (path === "/api/update/status") {
+            return {
+              state: { phase: "done", id: "j-old", from: "0.3.5", to: "0.3.6",
+                       error: null, rolled_back: false, healthy: true },
+              updater_present: true, log: [], channel: "stable",
+              check_enabled: true,
+            };
+          }
+          throw new Error("unexpected request " + method + " " + path);
+        };
+        (async () => {
+          // A freshly loaded page meeting a `done` left over from an
+          // update somebody else ran, or the same person ran yesterday.
+          await state.loadUpdateStatus();
+          const afterReload = state.updateWatchedJobId;
+          // The same page, having watched that very job.
+          state.updateWatchedJobId = "j-old";
+          const afterWatching = state.updateWatchedJobId;
+          state.stopUpdateTimer();
+          console.log(JSON.stringify({
+            phase: state.updateStatus.state.phase,
+            jobId: state.updateStatus.state.id,
+            afterReload,
+            afterWatching,
+          }));
+        })();
+        """
+    )
+
+    # The status itself is unchanged - the banner's condition is what moved.
+    assert values["phase"] == "done"
+    assert values["jobId"] == "j-old"
+    # Nothing on a fresh page claims the result, so the banner stays down.
+    assert values["afterReload"] is None
+    assert values["afterWatching"] == "j-old"
+
+
+def test_the_page_adopts_an_update_somebody_else_started():
+    """A second tab, or a phone, should still announce the result of an
+    update it did not itself start - otherwise the person watching from
+    the sofa never learns it finished. Catching it while a running phase
+    is on the wire is what makes that work, and it is the same field the
+    reload clears.
+    """
+    values = _app_state(
+        """
+        state.request = async (method, path) => {
+          if (path === "/api/update/status") {
+            return {
+              state: { phase: "pull", id: "j-live", from: "0.3.5", to: "0.3.6",
+                       error: null, rolled_back: false, healthy: true },
+              updater_present: true, log: [], channel: "stable",
+              check_enabled: true,
+            };
+          }
+          throw new Error("unexpected request " + method + " " + path);
+        };
+        (async () => {
+          await state.loadUpdateStatus();
+          const adopted = state.updateWatchedJobId;
+          state.stopUpdateTimer();
+          console.log(JSON.stringify({ adopted }));
+        })();
+        """
+    )
+
+    assert values["adopted"] == "j-live"

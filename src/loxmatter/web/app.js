@@ -716,6 +716,29 @@ function app() {
     // either none was ever made, or the last one was already resolved one
     // way or the other.
     updateApplyJobId: null,
+
+    // The job whose RESULT this page is entitled to announce. Set when
+    // this page starts an update, and when a poll first catches one
+    // already in flight; compared against `state.json`'s own id before
+    // the green "now running" banner renders.
+    //
+    // Deliberately page-local and deliberately NOT persisted. Nothing
+    // ever returns `phase` to `idle` after `done` - the sidecar has no
+    // reason to, the file is its record of what last happened - so a
+    // banner keyed on the phase alone stands on the System tab forever,
+    // across reloads and reboots, until the next update. That is a
+    // notice about something that just happened, still being shown
+    // weeks later to someone who did not do it.
+    //
+    // A reload clears this and the banner goes with it, which is the
+    // whole point. A socket reconnect does NOT (the bridge restarting
+    // mid-update is exactly when the banner must survive), because the
+    // page itself never went away.
+    //
+    // Only the success banner is gated this way. A FAILURE is a standing
+    // condition someone still has to deal with, and should still be
+    // there after a reload; a success is transient news.
+    updateWatchedJobId: null,
     updateApplyDeadline: null,
     // The reactive half of `updateNeverCollected()` (see that method's own
     // comment for why a plain `Date.now()` comparison cannot drive an
@@ -3240,6 +3263,12 @@ function app() {
       try {
         this.updateStatus = await this.request("GET", "/api/update/status");
         this.updateError = null;
+        // Catches an update this page did not start - another tab, or a
+        // phone - so its result still gets announced here. See
+        // `updateWatchedJobId`.
+        if (this.updateRunning() && this.updateStatus?.state?.id) {
+          this.updateWatchedJobId = this.updateStatus.state.id;
+        }
         // The moment `state.json`'s own `id` matches the job this
         // pending apply is waiting on, the race `updateAwaitingPickup()`
         // exists for is over - the sidecar has genuinely read
@@ -3392,6 +3421,7 @@ function app() {
         // the one signal that survives every possible phase the sidecar
         // could write next, rejection included.
         this.updateApplyJobId = accepted.id;
+        this.updateWatchedJobId = accepted.id;
         this.updateApplyDeadline = Date.now() + UPDATE_APPLY_GRACE_MS;
         // Critical 3: arm the timer HERE, unconditionally, the moment the
         // POST itself succeeds - not by relying on the `loadUpdateStatus`
