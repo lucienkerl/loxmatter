@@ -68,8 +68,14 @@ async def test_the_development_channel_counts_the_commits():
         return {
             "ahead_by": 14,
             "commits": [
-                {"commit": {"message": "fix: one\n\nmore"}},
-                {"commit": {"message": "feat: two"}},
+                {
+                    "commit": {"message": "fix: one\n\nmore"},
+                    "sha": "1111111111111111111111111111111111111111",
+                },
+                {
+                    "commit": {"message": "feat: two"},
+                    "sha": "2222222222222222222222222222222222222222",
+                },
             ],
         }
 
@@ -77,6 +83,41 @@ async def test_the_development_channel_counts_the_commits():
     assert result.behind == 14
     assert "fix: one" in result.notes
     assert "more" not in result.notes, "only the subject line, not the full body"
+
+
+async def test_the_development_channel_targets_the_tip_commit_not_the_branch_name():
+    # `target="main"` is what update-once.sh's Rule 1 (`^[0-9a-f]{7,40}$`)
+    # rejects on every single click - this is the fix for that. GitHub's
+    # `compare` endpoint lists commits oldest-first, so the actual tip of
+    # `main` is the LAST element, not the first - and the target must be
+    # the full 40-character SHA, not a truncated one (see the comment at
+    # this fix in update_check.py for why the length matters).
+    async def fetch(url):
+        return {
+            "ahead_by": 2,
+            "commits": [
+                {"commit": {"message": "older, not the target"}, "sha": "a" * 40},
+                {"commit": {"message": "main's actual tip"}, "sha": "b" * 40},
+            ],
+        }
+
+    result = await check("dev", current_version="dev", current_commit="a3f91c2", fetch=fetch)
+    assert result.target == "b" * 40
+    assert result.target != "main"
+
+
+async def test_the_development_channel_reports_an_error_if_commits_is_empty_but_ahead_by_is_not():
+    # A defensive case, not one GitHub is known to actually produce: if
+    # `ahead_by` and `commits` ever disagreed, `commits[-1]` must not
+    # raise past `check()` and reach the web UI as an unhandled exception -
+    # it must come back as the same kind of honest `error` every other
+    # malformed GitHub response gets.
+    async def fetch(url):
+        return {"ahead_by": 1, "commits": []}
+
+    result = await check("dev", current_version="dev", current_commit="a3f91c2", fetch=fetch)
+    assert result.target is None
+    assert result.error
 
 
 async def test_the_development_channel_without_a_known_commit_reports_nothing():
