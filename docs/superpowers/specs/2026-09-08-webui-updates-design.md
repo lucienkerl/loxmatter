@@ -557,7 +557,30 @@ Today a rollback re-pulls a published image by tag, which is guaranteed
 to exist. A locally built predecessor is not: Docker prunes, and nothing
 promises the old image is still in the store.
 
-The rollback therefore rebuilds the previous ref. That ref is already
+The rollback therefore rebuilds the previous ref.
+
+> **Correction (10 September 2026, from the implementation).** "The
+> rollback rebuilds" is underspecified above, and read literally it
+> produces a real bug. The question is not which channel the *request*
+> used — it is what was **running** before this pass. The two disagree:
+> section 10 accepts a switch from a development build back to a stable
+> release, so a stable-channel request can fail and roll back onto a
+> dev-track predecessor, and a dev-channel request can roll back onto a
+> concrete published version.
+>
+> Gating the rebuild on the request's channel would, in that second
+> case, build an image locally and tag it with a name CI itself
+> publishes — permanently shadowing that published tag on the host until
+> the next real pull overwrote it. The gate is the running version
+> being a development build, the same signal the `BACK` computation
+> beside it already keys on.
+>
+> The implementation adds a second condition the paragraph above did not
+> foresee either: the rebuild is skipped unless the checkout actually
+> landed on the previous ref. Building from a tree still sitting at the
+> just-failed target would tag the wrong commit's image under the
+> predecessor's name — a silent mismatch, and worse than the loud
+> failure that guard produces instead. That ref is already
 recorded before step 1 — section 8's first line — for exactly the reason
 that made it necessary there, and this is the second use for it. At 33
 seconds against a rollback that already waits up to 120 for health, the
@@ -570,8 +593,11 @@ a commit that cannot be built cannot be rolled back to by building.
 
 ### Three things that have to be got right
 
-**The build arguments.** CI sets `LOXMATTER_VERSION` and
-`LOXMATTER_COMMIT`; a local build that omits them produces an image whose
+**The build arguments.** This paragraph named two; CI's `image` job
+passes four, and the implementation follows the job rather than this
+list — `LOXMATTER_SCHEMA_VERSION` in particular, without which the
+updater could no longer read a target image's schema version at all. CI
+sets `LOXMATTER_VERSION` and `LOXMATTER_COMMIT`; a local build that omits them produces an image whose
 commit is empty. The forward-only rule then refuses every later update —
 "the running image does not state a commit" — and the installation is
 stuck on a button that always says no. The build must pass them, and a
