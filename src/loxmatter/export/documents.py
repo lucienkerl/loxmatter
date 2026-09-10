@@ -190,10 +190,27 @@ def virtual_out_cmd_attributes(command: LoxoneCommand) -> list[tuple[str, str]]:
     return attributes
 
 
+def output_title(label: str) -> str:
+    """The `Title` of a virtual output, for the template AND for the
+    container the project sync creates.
+
+    One helper for both: the string used to exist as two separate format
+    literals, here and in `projectsync.schema.new_output_container_open_tag`,
+    which agreed only by hand. Groups would have made that four.
+    """
+    return f"Matter — {label}"
+
+
+def group_output_title(label: str) -> str:
+    return i18n.t("export.group_title", label=label)
+
+
 def render_virtual_out(
     device_label: str,
     base_url: str,
     commands: Sequence[LoxoneCommand],
+    *,
+    is_group: bool = False,
 ) -> bytes:
     info = ("Info", [("templateType", "3"), ("minVersion", _MIN_VERSION)])
     children = [("VirtualOutCmd", virtual_out_cmd_attributes(command)) for command in commands]
@@ -204,7 +221,7 @@ def render_virtual_out(
             # (tests/fixtures/loxone/VO_working.xml):
             # `HintText` sits at the front there, not after `CmdInit`.
             ("HintText", ""),
-            ("Title", f"Matter — {device_label}"),
+            ("Title", group_output_title(device_label) if is_group else output_title(device_label)),
             ("Comment", i18n.t("export.comment_generated")),
             ("Address", base_url),
             ("CmdInit", ""),
@@ -269,29 +286,35 @@ def render_system_templates(bridge_ip: str, port: int, listen_port: int) -> tupl
     return viu, vo
 
 
-def filename_for(prefix: str, device_id: int, device_label: str) -> str:
+def filename_for(prefix: str, owner_id: int, owner_label: str, *, kind: str = "d") -> str:
     """Filename per spec 6.1, normalised to ASCII.
 
-    `device_id` is not decoration — it is the only part of the name that
+    `kind` distinguishes a device (`d`, the default and the shape every
+    existing export already has) from a group (`g`, design 2026-09-10,
+    section 7). It is a parameter rather than a second function because
+    everything below it - the lossy normalisation, and the reason the ID
+    must stay in the name - applies identically to both.
+
+    `owner_id` is not decoration — it is the only part of the name that
     guarantees uniqueness. `Store` assigns it immutably and never reuses
     it (see `export.signals`); the normalisation below, by contrast, is
     lossy and deliberately maps many different labels ("Lamp 1", "Lamp_1",
     "Lamp-1", "厨房", "") onto the same or an empty string. Without the
-    device ID, two devices with a colliding label would overwrite each
-    other's export — the user would then import one template believing
-    there were two. So: do NOT remove the ID here, even though it looks
-    redundant with the label in the name.
+    owner ID, two devices (or two groups) with a colliding label would
+    overwrite each other's export — the user would then import one
+    template believing there were two. So: do NOT remove the ID here,
+    even though it looks redundant with the label in the name.
 
     The label stays in the name nonetheless — it makes the file
     recognisable to a human, while the ID makes it unique.
     """
-    text = "".join(_UMLAUTS.get(char, char) for char in device_label)
+    text = "".join(_UMLAUTS.get(char, char) for char in owner_label)
     text = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode("ascii")
     safe = "".join(char if char.isalnum() else "_" for char in text)
     while "__" in safe:
         safe = safe.replace("__", "_")
     safe = safe.strip("_")
-    stem = f"{prefix}_d{device_id}"
+    stem = f"{prefix}_{kind}{owner_id}"
     if safe:
         stem = f"{stem}_{safe}"
     return f"{stem}.xml"

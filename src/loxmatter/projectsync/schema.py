@@ -39,6 +39,7 @@ import re
 
 from loxmatter.export.documents import (
     LoxoneCommand,
+    output_title,
     virtual_in_udp_cmd_attributes,
     virtual_out_cmd_attributes,
 )
@@ -163,7 +164,7 @@ def new_output_container_open_tag(device_label: str, base_url: str, iname: str, 
         ("IName", iname),
         ("V", "178"),
         ("U", u),
-        ("Title", f"Matter — {device_label}"),
+        ("Title", output_title(device_label)),
         ("WF", "16384"),
         ("Address", base_url),
         ("CloseAfterSend", "true"),

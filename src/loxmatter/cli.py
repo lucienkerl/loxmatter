@@ -44,7 +44,7 @@ from loxmatter.export.documents import (
     render_virtual_in_udp,
     render_virtual_out,
 )
-from loxmatter.export.outputs import to_outputs
+from loxmatter.export.outputs import to_group_outputs, to_outputs
 from loxmatter.export.signals import to_inputs
 from loxmatter.loxone.runtime import Runtime
 from loxmatter.loxone.sender import UdpSender
@@ -427,6 +427,23 @@ def export(
     # must not wrongly mark the device as exported.
     store = Store(resolved_store_path)
     try:
+        # Unlike the device above, `export` never registers a group from
+        # a snapshot - groups only ever come from the WebUI. So this is
+        # not "the group of the device just exported", it is every group
+        # the store currently knows, written alongside it every time the
+        # command runs, the same way the API's `download` route does.
+        for group in store.groups():
+            group_commands = to_group_outputs(store.group_commands(group.id))
+            if not group_commands:
+                # An emptied group has no outputs to offer. It keeps
+                # existing (design 4.3); it just has nothing to export.
+                continue
+            group_vo = out / filename_for("VO", group.id, group.label, kind="g")
+            group_vo.write_bytes(
+                render_virtual_out(
+                    group.label, f"http://{bridge_ip}:{listen}", group_commands, is_group=True
+                )
+            )
         store.mark_exported(device_id)
     finally:
         store.close()

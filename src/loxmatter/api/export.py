@@ -100,7 +100,7 @@ from loxmatter.export.documents import (
     render_virtual_in_udp,
     render_virtual_out,
 )
-from loxmatter.export.outputs import to_outputs
+from loxmatter.export.outputs import to_group_outputs, to_outputs
 from loxmatter.export.signals import to_inputs
 from loxmatter.model.store import (
     DEFAULT_LISTEN_PORT,
@@ -338,6 +338,22 @@ def build_export_router(store: Store) -> APIRouter:
                         render_virtual_out(device.label, f"http://{bridge_ip}:{listen}", commands),
                     )
                 exported_device_ids.append(device.id)
+
+            for group in store.groups():
+                group_commands = to_group_outputs(store.group_commands(group.id))
+                if not group_commands:
+                    # An emptied group has no outputs to offer. It keeps
+                    # existing (design 4.3); it just has nothing to export.
+                    continue
+                archive.writestr(
+                    filename_for("VO", group.id, group.label, kind="g"),
+                    render_virtual_out(
+                        group.label,
+                        f"http://{bridge_ip}:{listen}",
+                        group_commands,
+                        is_group=True,
+                    ),
+                )
 
             archive.writestr(_README_NAME, _readme_text())
 
