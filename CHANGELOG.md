@@ -8,6 +8,17 @@ people who don't know the code.
 
 ## [Unreleased]
 
+## [0.3.10] — 2026-09-10
+
+### Fixed
+
+- While an update on the **Development** channel is building, the card
+  now says so. It used to show the step for downloading, because the
+  build had no state of its own — so anyone watching waited for a
+  download that was not happening and wondered why their connection was
+  so slow. The step reads "Building the image" on that channel and
+  "Loading the image" on **Stable**, which is what each one does.
+
 ## [0.3.9] — 2026-09-10
 
 ### Changed
