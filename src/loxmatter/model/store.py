@@ -1395,13 +1395,14 @@ class Store:
 
         **`updated_at`, but only when something moved (design 4.3, review
         gap).** This method runs on every membership change, including
-        ones that leave the intersection exactly as it was - `set_room` on
-        a device with two other group-mates, say, recomputes nothing. If
-        this stamped `device_group.updated_at` unconditionally, every
-        group would read "changed since the last export" permanently,
-        which tells the export tab nothing, same as never stamping at
-        all. So a `changed` flag tracks whether the loops below actually
-        inserted a row, deleted a row, or altered an existing row's `slug`
+        ones that leave the intersection exactly as it was -
+        `set_group_members` re-submitting the member list it already has,
+        say, recomputes nothing. If this stamped `device_group.updated_at`
+        unconditionally, every group would read "changed since the last
+        export" permanently, which tells the export tab nothing, same as
+        never stamping at all. So a `changed` flag tracks whether the
+        loops below actually inserted a row, deleted a row, or altered an
+        existing row's `slug`
         or `takes_value` - a surviving row's refresh UPDATE still runs
         unconditionally, exactly as before (see the comment at that write),
         but only counts toward `changed` when the values it writes differ

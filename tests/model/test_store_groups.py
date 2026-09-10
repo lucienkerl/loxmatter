@@ -293,12 +293,33 @@ def test_the_group_offers_only_what_every_member_accepts(store, lamps_with_comma
     assert {"on", "off", "toggle"} <= set(_slugs(store, both.id))
 
 
+def _rowid_for(store, key):
+    return store._db.execute("SELECT rowid FROM group_command WHERE key = ?", (key,)).fetchone()[0]
+
+
 def test_a_surviving_command_keeps_its_key(store, lamps_with_commands):
+    """A row that survives a membership change must be the SAME row, not
+    a fresh one that merely landed on an identical key. `key` is
+    `f"g{group_id}_{sample.slug}"` (`register_group_commands`) - fully
+    deterministic from `group_id` and `slug`, with no randomness and no
+    counter. That means a naive implementation that deletes every row for
+    the group and reinserts them all on each call would still produce
+    `after["on"] == before["on"]` - same group, same slug, same string.
+    Comparing the key alone cannot tell "preserved through an UPDATE"
+    apart from "destroyed and reborn identical". SQLite's `rowid` can:
+    `group_command.id` is `INTEGER PRIMARY KEY AUTOINCREMENT`, so a
+    DELETE-then-INSERT gets a strictly new, never-reused rowid even
+    though the key string comes out the same, while an UPDATE of the
+    existing row keeps it. Asserting the rowid is unchanged is therefore
+    the assertion that actually distinguishes the two implementations.
+    """
     group = store.create_group("Colour", [lamps_with_commands[0]])
     before = {c.slug: c.key for c in store.group_commands(group.id)}
+    before_rowid = _rowid_for(store, before["on"])
     store.set_group_members(group.id, lamps_with_commands)
     after = {c.slug: c.key for c in store.group_commands(group.id)}
     assert after["on"] == before["on"]
+    assert _rowid_for(store, after["on"]) == before_rowid
 
 
 def test_a_command_that_leaves_the_intersection_stops_resolving(store, lamps_with_commands):
@@ -321,6 +342,43 @@ def test_forgetting_a_member_recomputes_the_intersection(store, lamps_with_comma
     assert "color" not in _slugs(store, group.id)
     store.forget_device(lamps_with_commands[1])
     assert "color" in _slugs(store, group.id)
+
+
+def test_an_offline_member_changes_nothing(store, lamps_with_commands):
+    """Design 2026-09-10, section 10: "An offline member changes
+    nothing." There is no way to stage that scenario at this layer, and
+    staging a fake one would misrepresent what the store can even
+    express: `StoredDevice`'s docstring is explicit that reachability is
+    `Runtime` state fed from Matter subscriptions, never a stored column
+    - a `Store` opened directly, as every fixture in this module does,
+    has no slot to hold "offline" in the first place, and this test file
+    never touches `Runtime` at all.
+
+    So the requirement holds structurally, not by any check this test
+    could add: `register_group_commands` reads each member's accepted
+    commands through `self.commands(device.id)` (the `command` table,
+    populated once per interview by `register_commands`), and
+    `group_members` filters candidates on `device.active` - "not
+    forgotten", not "currently reachable". Neither reads `Runtime` or
+    anything that could vary with a real device going on- or offline.
+    There is simply no code path between a device's live reachability
+    and this computation.
+
+    What this test CAN demonstrate is the closest honest approximation:
+    recomputing the intersection for a group of still-registered
+    (`active`) members, with no device or runtime state touched anywhere
+    in between, changes nothing - which is what "an offline member
+    changes nothing" reduces to for a component that has no notion of
+    "online" to begin with.
+    """
+    group = store.create_group("Both", lamps_with_commands)
+    before = _slugs(store, group.id)
+
+    store.register_group_commands(group.id)
+
+    after = _slugs(store, group.id)
+    assert after == before
+    assert before  # not a vacuous comparison of two empty sets
 
 
 # A fixed sentinel far in the past. `_now()` always produces a real
