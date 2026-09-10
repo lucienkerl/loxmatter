@@ -8,6 +8,57 @@ people who don't know the code.
 
 ## [Unreleased]
 
+## [0.3.6] — 2026-09-10
+
+### Fixed
+
+- **An update through the web interface could leave the bridge unable to
+  reach your Miniserver — and report success.** The bridge was restarted
+  without the settings file that holds the Miniserver's address and the
+  API token, so it came back configured with neither. Its health check
+  answers regardless of whether it can reach anything, so the update
+  reported itself finished and the tile turned green while the house
+  went quiet. Nothing on disk was lost: only the running container was
+  rebuilt without those values. If this has happened to you,
+  `docker inspect loxmatter --format '{{json .Config.Cmd}}'` shows an
+  empty entry after `--miniserver`, and recreating the container from
+  the console restores it.
+
+  Two things follow from the same cause, and are fixed with it: the
+  version an update wrote down was never actually deployed — the
+  `stable` image was reinstalled every time, whichever version you
+  chose — and a rollback brought the same failed image back while
+  reporting that the previous version was running again.
+
+- **Updating from the console failed after any update run from the web
+  interface**, with a message about local changes when there were none.
+  The web updater leaves the checkout pinned to an exact version, and
+  the console script had no way back from that. It now recovers on its
+  own, whatever left it that way.
+
+- **The interface could claim the updater had crashed while it was
+  working normally**, and advise restarting it — which, during the step
+  it usually appeared in, would have interrupted a healthy update. The
+  updater now keeps reporting for duty during its longer steps.
+
+- **A failed update whose rollback also failed was reported as if the
+  rollback had worked.** That is the one outcome that needs a person, and
+  it now says so plainly and names the file that explains what to do.
+
+- **An update begun on a full disk could empty the settings file and
+  report success.** The write is now checked before the old file is
+  replaced.
+
+- **The file written when an update is interrupted printed paths that do
+  not exist on your machine**, so the commands in it failed when pasted.
+  It now prints the paths as you see them.
+
+### Changed
+
+- The updater writes its "still working" signal five times less often
+  during long steps, which matters on an SD card, and reacts faster when
+  a step finishes.
+
 ## [0.3.5] — 2026-09-10
 
 ### Fixed
