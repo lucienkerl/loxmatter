@@ -451,23 +451,30 @@ so nobody has to derive it by reading both. Each was left out deliberately.
 - **`GET /api/version` naming matter-server's and otbr's running images**
   (section 4). It returns the bridge's own build identity only. There is no
   channel through which the bridge could ask the sidecar for them.
-- **The development channel.** The switch is hidden in the interface on
-  purpose: `update-once.sh` writes a bare commit SHA as the image tag, and
-  CI publishes dev builds as `:sha-<short>`, so the tag it writes names an
-  image that was never pushed. The comment at the hidden control lists what
-  must be fixed before it comes back; a third item belongs on that list, the
-  `merge-base --is-ancestor` that runs against `HEAD` rather than against
-  the running image's own commit, which is the one place this feature still
-  takes the checkout's word for what is running (section 4 forbids that by
-  name). Reachable today only through `PATCH /api/update/settings`.
+- **The development channel** was left out of this ledger's original
+  0.3.5 count above with its switch commented out of the interface: `
+  update_check.py` answered with the literal string `"main"`, which the
+  sidecar's own dev-channel pattern rejects outright; `update-once.sh`
+  wrote a bare commit SHA as the image tag while CI only ever publishes
+  dev builds as `:sha-<short>`; and its `merge-base --is-ancestor` ran
+  against `HEAD` rather than against the running image's own commit,
+  the one place this feature took the checkout's word for what is
+  running (section 4 forbids that by name). All three are fixed:
+  `update_check.py` returns the actual tip commit of `main`,
+  `update-once.sh`'s `image_tag_for()` derives the `sha-<short>` tag CI
+  publishes from it, and the ancestry check compares against
+  `running_commit()`'s answer instead of `HEAD`. The switch is live in
+  the interface again.
 
 There is also a class of coupling this feature carries without a check: a
 constant, path or name that appears in two places and must agree. The
 sidecar's health-check port against the bridge's `--listen`; the `loxmatter`
 service name, which `scripts/update.sh` guards with a `grep` and the sidecar
 does not; `.env`'s default tag against Compose's own `${LOXMATTER_IMAGE_TAG:-stable}`;
-the seven characters of `sha[:7]` against whatever length `git rev-parse
---short` actually returns.
+the seven characters `image_tag_for()` (update-once.sh) takes off the dev
+channel's target to build `sha-<short>`, against whatever length CI's own
+`git rev-parse --short` actually returns for a given commit — nothing pins
+the two together, and git's abbreviation length is not a constant.
 
 That class is worth naming because it is where this feature's real defects
 have come from. Every one found so far was found by a person putting two
