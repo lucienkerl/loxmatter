@@ -1392,6 +1392,24 @@ class Store:
         next unrelated `commit()` anywhere else in `Store` to flush to disk
         by surprise. Every other multi-row writer in this file already
         carries this guard; this one is no exception.
+
+        **`updated_at`, but only when something moved (design 4.3, review
+        gap).** This method runs on every membership change, including
+        ones that leave the intersection exactly as it was - `set_room` on
+        a device with two other group-mates, say, recomputes nothing. If
+        this stamped `device_group.updated_at` unconditionally, every
+        group would read "changed since the last export" permanently,
+        which tells the export tab nothing, same as never stamping at
+        all. So a `changed` flag tracks whether the loops below actually
+        inserted a row, deleted a row, or altered an existing row's `slug`
+        or `takes_value` - a surviving row's refresh UPDATE still runs
+        unconditionally, exactly as before (see the comment at that write),
+        but only counts toward `changed` when the values it writes differ
+        from what was already there. The stamp only fires when the flag is
+        set - in particular, when `forget_device` shrinks a group's
+        intersection by dropping a member, so the group correctly stops
+        looking unchanged even though nothing about the group's own row
+        (label, room, membership list) was touched here.
         """
         members = self.group_members(group_id)
         by_member = [
@@ -1406,23 +1424,38 @@ class Store:
             shared = {pair: by_member[0][pair] for pair in common}
 
         keep = set(shared)
+        changed = False
         try:
             for existing in self.group_commands(group_id):
                 if (existing.cluster_id, existing.command_id) not in keep:
                     self._db.execute("DELETE FROM group_command WHERE key = ?", (existing.key,))
+                    changed = True
 
             for (cluster_id, command_id), sample in sorted(shared.items()):
                 row = self._db.execute(
-                    "SELECT key FROM group_command"
+                    "SELECT key, slug, takes_value FROM group_command"
                     " WHERE group_id = ? AND cluster_id = ? AND command_id = ?",
                     (group_id, cluster_id, command_id),
                 ).fetchone()
                 if row is not None:
+                    # The refresh write itself stays unconditional - same
+                    # reasoning as `register_commands` (re-adopt on every
+                    # call so a `clusters.yaml` correction reaches an
+                    # already-stored row). Only the `changed` bookkeeping
+                    # is conditional: comparing the fetched values against
+                    # `sample` BEFORE writing tells us whether this
+                    # refresh actually altered anything, without skipping
+                    # the write that `register_group_commands`'s docstring
+                    # and the rollback-guard test both depend on always
+                    # happening for a surviving row.
+                    if row["slug"] != sample.slug or bool(row["takes_value"]) != sample.takes_value:
+                        changed = True
                     self._db.execute(
                         "UPDATE group_command SET slug = ?, takes_value = ? WHERE key = ?",
                         (sample.slug, int(sample.takes_value), row["key"]),
                     )
                     continue
+                changed = True
                 self._db.execute(
                     "INSERT INTO group_command"
                     " (group_id, cluster_id, command_id, key, slug, takes_value)"
@@ -1435,6 +1468,11 @@ class Store:
                         sample.slug,
                         int(sample.takes_value),
                     ),
+                )
+            if changed:
+                self._db.execute(
+                    "UPDATE device_group SET updated_at = ? WHERE id = ?",
+                    (self._now(), group_id),
                 )
         except (ValueError, sqlite3.Error):
             self._db.rollback()

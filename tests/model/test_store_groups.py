@@ -323,6 +323,66 @@ def test_forgetting_a_member_recomputes_the_intersection(store, lamps_with_comma
     assert "color" in _slugs(store, group.id)
 
 
+# A fixed sentinel far in the past. `_now()` always produces a real
+# UTC timestamp (2026 or later, given `now_iso`'s implementation), so no
+# genuine call can ever coincidentally reproduce this exact string - unlike
+# comparing two `_now()` calls against each other, which could in principle
+# land on the same microsecond and make an "it advanced" assertion flaky.
+_LONG_AGO = "2000-01-01T00:00:00.000000+00:00"
+
+
+def test_forgetting_a_member_that_shrinks_the_intersection_advances_updated_at(
+    store, lamps_with_commands
+):
+    """Regression for the design 4.3 gap: `forget_device` recomputes the
+    intersection via `register_group_commands`, and a command that drops
+    out of it (here: `color`, once the colour-only lamp is removed) makes
+    the group's exported command set stale - the export tab must be able
+    to see that, exactly as for a device (section 4.3). Before this fix,
+    `register_group_commands` never touched `device_group.updated_at` at
+    all, so the group would still read "unchanged" here even though a key
+    it used to export just stopped resolving.
+
+    `updated_at` is pinned to `_LONG_AGO` directly (bypassing `_now()`)
+    rather than compared against a timestamp read a moment earlier in the
+    test: two real `_now()` calls in the same test carry a - remote but
+    real - chance of landing on the same microsecond, which would make
+    an inequality assertion pass or fail by luck. A fixed sentinel from
+    the year 2000 cannot equal anything `_now()` produces today, so the
+    assertion below can only pass because the stamp genuinely moved.
+    """
+    group = store.create_group("Both", lamps_with_commands)
+    store._db.execute("UPDATE device_group SET updated_at = ? WHERE id = ?", (_LONG_AGO, group.id))
+    store._db.commit()
+
+    store.forget_device(lamps_with_commands[1])
+
+    assert store.group(group.id).updated_at != _LONG_AGO
+
+
+def test_a_recompute_that_changes_nothing_leaves_updated_at_alone(store, lamps_with_commands):
+    """The flip side of the gap above: `register_group_commands` runs on
+    every membership change, including ones where the intersection ends up
+    identical to what it already was. Stamping `updated_at` unconditionally
+    on every call - rather than only when a row was actually inserted,
+    deleted, or altered - would make every group permanently read "changed
+    since the last export", which tells the export tab nothing, the same
+    uselessness as never stamping at all.
+
+    This compares the stored value to itself rather than to a freshly
+    taken timestamp, so it cannot pass by accident: if the recompute below
+    touches the row, the stored string changes to whatever `_now()`
+    produced at that moment, and the equality fails regardless of how
+    close together the two calls landed.
+    """
+    group = store.create_group("Both", lamps_with_commands)
+    before = store.group(group.id).updated_at
+
+    store.register_group_commands(group.id)
+
+    assert store.group(group.id).updated_at == before
+
+
 def test_group_keys_can_never_collide_with_device_keys(store, lamps_with_commands):
     """The `d`/`g` prefixes are a convention, not an SQL guarantee - this
     is the assertion `resolve_command`'s two-step lookup rests on."""
