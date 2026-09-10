@@ -54,6 +54,7 @@ from loxmatter.model.locale_store import LocaleStore
 from loxmatter.model.resend_settings_store import ResendSettingsStore
 from loxmatter.model.settings_store import BridgeSettingsStore
 from loxmatter.model.update_settings_store import UpdateSettingsStore
+from loxmatter.profiles.categories import category_for
 from loxmatter.profiles.relevance import (
     ROOT_NODE_DEVICE_TYPE,
     UTILITY_ENDPOINT_KEEP_CLUSTERS,
@@ -111,7 +112,11 @@ DEFAULT_LISTEN_PORT = 8080
 # `_migrate`, and the service would start without the tables it needs to
 # sign in. The number depends on the order in which the changes were
 # merged, not on when they were written.
-_SCHEMA_VERSION = 7
+# Version 8 (device groups, design 2026-09-10) adds the three tables
+# `device_group`, `device_group_member` and `group_command`, see
+# `_migrate_to_v8` - all three are already present in a fresh database via
+# `_SCHEMA`, so the migration is only needed for existing databases.
+_SCHEMA_VERSION = 8
 
 
 def schema_version() -> int:
@@ -175,6 +180,29 @@ CREATE TABLE IF NOT EXISTS session (
     id         TEXT PRIMARY KEY,
     created_at INTEGER NOT NULL,
     expires_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS device_group (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    label       TEXT NOT NULL,
+    room        TEXT,
+    category    TEXT NOT NULL,
+    exported_at TEXT,
+    updated_at  TEXT
+);
+CREATE TABLE IF NOT EXISTS device_group_member (
+    group_id  INTEGER NOT NULL REFERENCES device_group(id),
+    device_id INTEGER NOT NULL REFERENCES device(id),
+    UNIQUE (group_id, device_id)
+);
+CREATE TABLE IF NOT EXISTS group_command (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    group_id    INTEGER NOT NULL REFERENCES device_group(id),
+    cluster_id  INTEGER NOT NULL,
+    command_id  INTEGER NOT NULL,
+    key         TEXT NOT NULL UNIQUE,
+    slug        TEXT NOT NULL,
+    takes_value INTEGER NOT NULL,
+    UNIQUE (group_id, cluster_id, command_id)
 );
 """
 
@@ -609,6 +637,44 @@ def _migrate_to_v7(db: sqlite3.Connection) -> None:
     _add_column_if_missing(db, "device", "device_types", "TEXT")
 
 
+def _migrate_to_v8(db: sqlite3.Connection) -> None:
+    """Adds the three group tables (design 2026-09-10, section 4.2).
+
+    `CREATE TABLE IF NOT EXISTS` and not `CREATE TABLE`, for the same
+    reason as in `_migrate_to_v5`: a freshly created database already has
+    all three via `_SCHEMA` and is nevertheless at `PRAGMA user_version =
+    0`, so it runs through this migration too. No backfill - no existing
+    database has groups.
+    """
+    db.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS device_group (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            label       TEXT NOT NULL,
+            room        TEXT,
+            category    TEXT NOT NULL,
+            exported_at TEXT,
+            updated_at  TEXT
+        );
+        CREATE TABLE IF NOT EXISTS device_group_member (
+            group_id  INTEGER NOT NULL REFERENCES device_group(id),
+            device_id INTEGER NOT NULL REFERENCES device(id),
+            UNIQUE (group_id, device_id)
+        );
+        CREATE TABLE IF NOT EXISTS group_command (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            group_id    INTEGER NOT NULL REFERENCES device_group(id),
+            cluster_id  INTEGER NOT NULL,
+            command_id  INTEGER NOT NULL,
+            key         TEXT NOT NULL UNIQUE,
+            slug        TEXT NOT NULL,
+            takes_value INTEGER NOT NULL,
+            UNIQUE (group_id, cluster_id, command_id)
+        );
+        """
+    )
+
+
 # Migrations in order, applied from whichever version is stored - to extend
 # for a later schema change: simply append, with the next version number as
 # the key.
@@ -620,6 +686,7 @@ _MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     5: _migrate_to_v5,
     6: _migrate_to_v6,
     7: _migrate_to_v7,
+    8: _migrate_to_v8,
 }
 
 
@@ -837,6 +904,25 @@ class StoredDevice:
     device_types: dict[int, frozenset[int]] | None
 
 
+@dataclass(frozen=True)
+class StoredGroup:
+    """A row from `device_group` (design 2026-09-10, section 2).
+
+    Carries no member list and no command list: both are separate tables
+    with their own lifetime, and a copy frozen in here would be stale the
+    moment a member changes. `category` is the `value` of a
+    `profiles.categories.Category`, stored rather than derived - an
+    emptied group must still know what it accepts (design 2.1).
+    """
+
+    id: int
+    label: str
+    room: str | None
+    category: str
+    exported_at: str | None
+    updated_at: str | None
+
+
 class UnknownCommandError(KeyError):
     """`KeyError.__str__` wraps the message in `repr()`, which makes
     `str(exc)` put extra quote marks around the entire text - Task 6 turns
@@ -856,6 +942,18 @@ class UnknownDeviceError(KeyError):
 
     def __str__(self) -> str:
         return str(self.args[0])
+
+
+class UnknownGroupError(KeyError):
+    """Like `UnknownCommandError`: `KeyError.__str__` would wrap the
+    message in `repr()`, and this text becomes an HTTP 404 body."""
+
+    def __str__(self) -> str:
+        return str(self.args[0])
+
+
+class CategoryMismatchError(ValueError):
+    """A member whose category differs from the group's (design 2.1)."""
 
 
 class Store:
@@ -977,7 +1075,15 @@ class Store:
         return int(device_id)
 
     def forget_device(self, device_id: int) -> None:
-        """Marks a device as removed. The id stays assigned (Spec 6.2)."""
+        """Marks a device as removed. The id stays assigned (Spec 6.2).
+
+        Its group memberships do NOT stay: `register_device` matches on
+        `unique_id AND active = 1`, so recommissioning the same physical
+        device produces a NEW row with a new id - the old membership
+        could therefore never come back to life, and would only sit
+        around pointing at a device nobody can reach.
+        """
+        self._db.execute("DELETE FROM device_group_member WHERE device_id = ?", (device_id,))
         self._db.execute("UPDATE device SET active = 0 WHERE id = ?", (device_id,))
         self._db.commit()
 
@@ -1017,6 +1123,134 @@ class Store:
         if row is None:
             raise UnknownDeviceError(i18n.t("api.errors.unknown_device", device_id=device_id))
         return self._as_device(row)
+
+    @staticmethod
+    def _as_group(row: sqlite3.Row) -> StoredGroup:
+        return StoredGroup(
+            id=int(row["id"]),
+            label=str(row["label"]),
+            room=row["room"],
+            category=str(row["category"]),
+            exported_at=row["exported_at"],
+            updated_at=row["updated_at"],
+        )
+
+    def _category_of(self, device_id: int) -> str:
+        return category_for(self.device(device_id).device_types).value
+
+    def _check_members(self, category: str, member_ids: Sequence[int]) -> None:
+        """Every member must exist, be active and match `category`.
+
+        Checked BEFORE anything is written, so a rejected member never
+        leaves a half-applied membership behind - the same all-or-nothing
+        stance as `register_commands`.
+        """
+        for device_id in member_ids:
+            actual = self._category_of(device_id)
+            if actual != category:
+                raise CategoryMismatchError(
+                    i18n.t(
+                        "api.errors.group_category_mismatch",
+                        device_id=device_id,
+                        actual=actual,
+                        expected=category,
+                    )
+                )
+
+    def create_group(
+        self, label: str, member_ids: Sequence[int], room: str | None = None
+    ) -> StoredGroup:
+        """The first member fixes the category, so there must be one."""
+        if not member_ids:
+            raise ValueError(i18n.t("api.errors.group_needs_a_member"))
+        category = self._category_of(member_ids[0])
+        self._check_members(category, member_ids)
+        cur = self._db.execute(
+            "INSERT INTO device_group (label, room, category, updated_at) VALUES (?, ?, ?, ?)",
+            (label, _normalized_room(room), category, self._now()),
+        )
+        group_id = cur.lastrowid
+        assert group_id is not None
+        for device_id in member_ids:
+            self._db.execute(
+                "INSERT INTO device_group_member (group_id, device_id) VALUES (?, ?)",
+                (int(group_id), device_id),
+            )
+        self._db.commit()
+        return self.group(int(group_id))
+
+    def groups(self) -> list[StoredGroup]:
+        rows = self._db.execute("SELECT * FROM device_group ORDER BY id").fetchall()
+        return [self._as_group(r) for r in rows]
+
+    def group(self, group_id: int) -> StoredGroup:
+        row = self._db.execute("SELECT * FROM device_group WHERE id = ?", (group_id,)).fetchone()
+        if row is None:
+            raise UnknownGroupError(i18n.t("api.errors.unknown_group", group_id=group_id))
+        return self._as_group(row)
+
+    def rename_group(self, group_id: int, label: str) -> None:
+        self.group(group_id)
+        self._db.execute(
+            "UPDATE device_group SET label = ?, updated_at = ? WHERE id = ?",
+            (label, self._now(), group_id),
+        )
+        self._db.commit()
+
+    def set_group_room(self, group_id: int, room: str | None) -> None:
+        self.group(group_id)
+        self._db.execute(
+            "UPDATE device_group SET room = ?, updated_at = ? WHERE id = ?",
+            (_normalized_room(room), self._now(), group_id),
+        )
+        self._db.commit()
+
+    def delete_group(self, group_id: int) -> None:
+        self.group(group_id)
+        self._db.execute("DELETE FROM group_command WHERE group_id = ?", (group_id,))
+        self._db.execute("DELETE FROM device_group_member WHERE group_id = ?", (group_id,))
+        self._db.execute("DELETE FROM device_group WHERE id = ?", (group_id,))
+        self._db.commit()
+
+    def group_members(self, group_id: int) -> list[StoredDevice]:
+        """Active members only.
+
+        `forget_device` already deletes the membership rows (see there),
+        so this filter should never have anything to do. It is here
+        anyway: a read that cannot return a removed device makes the
+        correctness of that write not load-bearing.
+        """
+        self.group(group_id)
+        rows = self._db.execute(
+            "SELECT d.* FROM device_group_member m"
+            " JOIN device d ON d.id = m.device_id"
+            " WHERE m.group_id = ? AND d.active = 1"
+            " ORDER BY d.id",
+            (group_id,),
+        ).fetchall()
+        return [self._as_device(r) for r in rows]
+
+    def set_group_members(self, group_id: int, member_ids: Sequence[int]) -> None:
+        """Replaces the whole membership in one transaction.
+
+        The complete list rather than add/remove: the command
+        intersection is recomputed after every change anyway, and two
+        single removals would recompute it twice and pass through an
+        intermediate state nobody asked for - including keys that
+        briefly vanish and come back (design 5).
+        """
+        group = self.group(group_id)
+        self._check_members(group.category, member_ids)
+        self._db.execute("DELETE FROM device_group_member WHERE group_id = ?", (group_id,))
+        for device_id in member_ids:
+            self._db.execute(
+                "INSERT INTO device_group_member (group_id, device_id) VALUES (?, ?)",
+                (group_id, device_id),
+            )
+        self._db.execute(
+            "UPDATE device_group SET updated_at = ? WHERE id = ?", (self._now(), group_id)
+        )
+        self._db.commit()
 
     def rename_device(self, device_id: int, label: str) -> None:
         """Sets a device's label (`PATCH /api/devices/{device_id}`).

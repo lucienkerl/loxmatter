@@ -258,6 +258,15 @@ api.language.fail_unsupported:
 api.errors.unknown_device:
   en: "unknown device {device_id}"
   de: "unbekanntes Geraet {device_id}"
+api.errors.unknown_group:
+  en: "unknown group {group_id}"
+  de: "unbekannte Gruppe {group_id}"
+api.errors.group_needs_a_member:
+  en: "a new group needs at least one member; it determines the category"
+  de: "eine neue Gruppe braucht mindestens ein Mitglied, es bestimmt die Kategorie"
+api.errors.group_category_mismatch:
+  en: "device {device_id} is a {actual}, the group takes {expected}"
+  de: "Gerät {device_id} ist ein {actual}, die Gruppe nimmt {expected}"
 api.errors.unknown_command:
   # The placeholder is deliberately not called "key" - i18n.t()'s own
   # first parameter is named that, and "key=..." as a keyword argument
