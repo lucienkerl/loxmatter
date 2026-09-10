@@ -254,6 +254,35 @@ current_tag() {
   printf '%s' "${current_tag_raw:-stable}"
 }
 
+# The TARGET and the image TAG are two different strings, and treating
+# them as one was runtime blocker 2 (see this function's caller further
+# down): CI publishes the stable channel's tags exactly as its releases
+# are named (`v0.3.0` -> `0.3.0`, the "v" stripped elsewhere in this
+# file), but it never publishes a dev image under its bare commit SHA -
+# only `:dev` and `:sha-<short>` (`.github/workflows/ci.yml`). A dev
+# target that passed Rule 1 (a real, fetchable commit) would still 404 at
+# `compose pull` without this.
+#
+# $2 arrives already normalised (the stable channel's leading "v"
+# stripped by the caller): for "stable" it IS the tag CI publishes, so it
+# passes through unchanged, the same way current_tag()/set_tag() have
+# always treated a stable target. For "dev" it is the FULL commit SHA
+# (see the comment at update_check.py's `target_commit`, which chose that
+# length for exactly this derivation) - CI's own tag is built from a
+# SHORT `git rev-parse --short HEAD` at build time, seven characters in
+# this repository today, so the first seven characters of the full SHA
+# are taken here to match it. Nothing pins the two lengths together -
+# git's abbreviation length is not a constant - so this is a match against
+# CI's CURRENT behavior, not a guarantee of it; see this feature's design
+# doc, section 16, for that coupling recorded as unchecked.
+image_tag_for() {
+  # $1 channel, $2 normalised target
+  case "$1" in
+    dev) printf 'sha-%s' "$(printf '%s' "$2" | cut -c1-7)" ;;
+    *) printf '%s' "$2" ;;
+  esac
+}
+
 set_state() {
   # $1 phase, $2 error message (may be empty)
   #
@@ -1741,8 +1770,15 @@ fi
 # is also why $IMAGE below appears only in the log, not as an argument to
 # any command: Compose forms the name from the .env line that set_tag
 # writes next.
-log "target image: $IMAGE:${TARGET#v}"
-if ! set_tag "${TARGET#v}"; then
+#
+# NOT `${TARGET#v}` written straight through: see image_tag_for()'s own
+# comment above for why the target and the tag CI actually publishes are
+# two different strings on the dev channel, and always have been on this
+# one - the "v" strip here is only ever relevant to the stable channel,
+# image_tag_for() leaves it alone for dev.
+IMAGE_TAG="$(image_tag_for "$CHANNEL" "${TARGET#v}")"
+log "target image: $IMAGE:$IMAGE_TAG"
+if ! set_tag "$IMAGE_TAG"; then
   # Proven with $STACK made unwritable: set_tag exited non-zero
   # ("Permission denied" creating its own temp file), and this call used
   # to be unguarded under `set -eu` - the shell simply stopped right
@@ -1785,8 +1821,10 @@ if ! compose_pull_with_heartbeat "$SERVICE"; then
     # is worse: the pull already failed, and now .env cannot even be put
     # back either. Say so explicitly - the plain "unchanged" message just
     # below would be a lie here: .env may still read the new, un-pulled
-    # target.
-    set_state failed "image could not be pulled, and the tag could not be restored in $ENV_FILE - it may still read $TARGET"
+    # target. $IMAGE_TAG, not $TARGET - what the earlier set_tag call
+    # actually wrote into .env is the derived tag (see image_tag_for()),
+    # which for the dev channel is not the same string as $TARGET at all.
+    set_state failed "image could not be pulled, and the tag could not be restored in $ENV_FILE - it may still read $IMAGE_TAG"
     exit 0
   fi
   set_state failed "image could not be pulled - the running service is unchanged"

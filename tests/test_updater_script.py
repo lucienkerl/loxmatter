@@ -1149,6 +1149,23 @@ def test_a_dev_target_that_is_not_a_descendant_is_rejected(updater):
     assert "docker compose" not in calls
 
 
+def test_the_dev_channel_tag_is_derived_not_the_bare_target(updater):
+    """Blocker 2: CI never publishes a `loxmatter:<sha>` tag for the dev
+    channel, only `:dev` and `:sha-<short>` - writing $TARGET verbatim
+    into LOXMATTER_IMAGE_TAG would name an image that was never pushed,
+    and the pull below would 404. `image_tag_for()` must derive
+    `sha-<first seven characters>` instead. Bite-checked by reverting to
+    `set_tag "${TARGET#v}"`: the .env then reads
+    "LOXMATTER_IMAGE_TAG=abcdef1234567890" (the bare, full-length target
+    used by this test), and this assertion fails."""
+    _write_request(updater, channel="dev", target="abcdef1234567890")
+    _, _calls, state = updater()
+    assert state["phase"] == "done"
+    env_text = (updater.stack / ".env").read_text(encoding="utf-8")
+    assert "LOXMATTER_IMAGE_TAG=sha-abcdef1" in env_text
+    assert "LOXMATTER_IMAGE_TAG=abcdef1234567890" not in env_text
+
+
 # ------------------------------------------------------- Stufe 2, round 2 --
 # The tests below close the second review pass on Task 3's flow (see
 # .superpowers/sdd/task-3-stufe2-report.md for the flow itself). One
