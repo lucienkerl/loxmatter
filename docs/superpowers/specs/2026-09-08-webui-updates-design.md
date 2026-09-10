@@ -484,10 +484,17 @@ constant, path or name that appears in two places and must agree. The
 sidecar's health-check port against the bridge's `--listen`; the `loxmatter`
 service name, which `scripts/update.sh` guards with a `grep` and the sidecar
 does not; `.env`'s default tag against Compose's own `${LOXMATTER_IMAGE_TAG:-stable}`;
-the seven characters `image_tag_for()` (update-once.sh) takes off the dev
-channel's target to build `sha-<short>`, against whatever length CI's own
-`git rev-parse --short` actually returns for a given commit — nothing pins
-the two together, and git's abbreviation length is not a constant.
+and, until section 17 landed, the seven characters `image_tag_for()`
+(update-once.sh) took off the dev channel's target to build `sha-<short>`,
+against whatever length CI's own abbreviation actually returned.
+
+That last one is **gone**, and how it went is worth a sentence. It was not
+fixed; it was removed by a change made for an entirely different reason.
+The dev channel builds on the machine now (section 17), so it names no
+published image at all, and the abbreviation length CI happens to use
+stopped being something this feature has to agree with. Deciding to stop
+waiting for a build turned out to also delete a coupling — the kind of
+result that only shows up when both questions are held at once.
 
 That class is worth naming because it is where this feature's real defects
 have come from. Every one found so far was found by a person putting two
