@@ -8,6 +8,20 @@ people who don't know the code.
 
 ## [Unreleased]
 
+## [0.3.9] — 2026-09-10
+
+### Changed
+
+- On the **Development** channel the bridge is now built on the device
+  instead of being downloaded. The code is already there — a development
+  update is a checkout away — so waiting for a build to finish elsewhere
+  was the whole cost of following that channel. Measured on a Raspberry
+  Pi 4: about twenty seconds when only the source changed, about thirty
+  when the dependencies did. Faster than the download it replaces.
+- The **Stable** channel is unchanged. It downloads published versions,
+  as it always has, and that is what an installation nobody is working
+  on should be following.
+
 ## [0.3.8] — 2026-09-10
 
 ### Fixed
