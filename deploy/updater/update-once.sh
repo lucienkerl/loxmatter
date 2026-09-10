@@ -242,8 +242,18 @@ running_version() {
   running_version_raw="$(docker inspect "$SERVICE" \
     --format '{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null \
     | sed -n -E 's/^LOXMATTER_VERSION=(.+)$/\1/p' | head -1)"
-  printf '%s' "${running_version_raw:-unbekannt}"
+  printf '%s' "${running_version_raw:-unknown}"
 }
+
+# `unbekannt` is the German this placeholder used to be, and both `case`
+# statements that test for it still list it alongside `unknown`. Not
+# nostalgia: `$FROM` is read back out of an EXISTING state.json when a
+# pass resumes bookkeeping a previous one wrote, and a state.json written
+# by a sidecar older than this change carries the German word. Dropping
+# the arm would make that value fall through to the "found a real
+# version" branch - the exact silent mis-read the comment above the
+# rollback's own `case` records. The arms can go once no installation can
+# still be carrying such a file; nothing here needs them to go sooner.
 
 # The dev channel's own equivalent of running_version() above: the SAME
 # read-only `docker inspect`, a DIFFERENT sibling ENV var
@@ -255,7 +265,7 @@ running_version() {
 # ancestry can be checked against.
 #
 # Empty - never defaulted to a placeholder the way running_version()
-# defaults to "unbekannt" - on purpose: an empty result must read as
+# defaults to "unknown" - on purpose: an empty result must read as
 # "unknown" to its one caller, which rejects rather than ever passing an
 # empty ref to `git merge-base`.
 running_commit() {
@@ -1072,7 +1082,7 @@ if [ "$CHANNEL" = "stable" ]; then
   # of that before they switched. Measured on real hardware, this is
   # exactly what happened.
   case "$CUR" in
-    ''|unbekannt) reject "the running version does not state a version - update only via the console" ;;
+    ''|unknown|unbekannt) reject "the running version does not state a version - update only via the console" ;;
   esac
   # Both comparisons below need two version NUMBERS, and "dev" is not
   # one. Skipping them for a development build is not a hole in rule 3:
@@ -2109,7 +2119,7 @@ fi
 # everywhere else in this file.
 RUNNING_NORMALIZED="${RUNNING#v}"
 case "$RUNNING_NORMALIZED" in
-  ''|unbekannt|dev) BACK="$FROM" ;;
+  ''|unknown|unbekannt|dev) BACK="$FROM" ;;
   *)                BACK="$RUNNING_NORMALIZED" ;;
 esac
 log "$ROLLBACK_REASON - rolling back to $BACK"
