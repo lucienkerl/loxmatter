@@ -116,9 +116,33 @@ async def test_a_group_can_be_deleted(api):
 
 
 async def test_an_unknown_group_is_a_404(api):
-    client, _store, _lamps, _plug = api
+    """Every route behind `_require` shares its guard - `GET .../controls`,
+    `PATCH`, `PUT .../members` and `DELETE` all need to answer 404 for a
+    group id that does not exist, not just the plain `GET`."""
+    client, _store, lamps, _plug = api
     assert (await client.get("/api/groups/999")).status_code == 404
     assert (await client.get("/api/groups/999/controls")).status_code == 404
+    assert (await client.patch("/api/groups/999", json={"label": "X"})).status_code == 404
+    assert (
+        await client.put("/api/groups/999/members", json={"member_ids": lamps})
+    ).status_code == 404
+    assert (await client.delete("/api/groups/999")).status_code == 404
+
+
+async def test_a_duplicate_member_id_is_a_400(api):
+    """`Store.set_group_members` raises a bare `ValueError` for a
+    duplicate member id (see the `except (CategoryMismatchError,
+    ValueError)` in `replace_members`) - without that case in the except
+    tuple, this would surface as a 500 instead of a 400."""
+    client, store, lamps, _plug = api
+    group_id = (await client.post("/api/groups", json={"label": "A", "member_ids": lamps})).json()[
+        "id"
+    ]
+    response = await client.put(
+        f"/api/groups/{group_id}/members", json={"member_ids": [lamps[0], lamps[0]]}
+    )
+    assert response.status_code == 400
+    assert [device.id for device in store.group_members(group_id)] == lamps
 
 
 async def test_the_controls_name_the_device_the_initial_value_came_from(api):

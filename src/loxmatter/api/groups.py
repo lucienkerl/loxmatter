@@ -105,10 +105,14 @@ def build_groups_router(store: Store, values: ValueReader) -> APIRouter:
         carries it (see `Store.group_targets`). So this function looks at
         every ColorControl signal of the member, on any endpoint. For a
         member that happens to carry ColorControl on more than one
-        endpoint, this means every endpoint's limits feed into the same
-        min/max computation for that member - there is no way from a bare
-        group command to prefer one endpoint over another, and the design
-        does not ask for one.
+        endpoint, `keys` below is keyed by `element_id`, so the second
+        endpoint's signal for the same attribute overwrites the first
+        outright - endpoints are never combined. `_signal_order` sorts
+        signals by `(rank, endpoint, cluster_id, ...)`, so the
+        highest-numbered endpoint's complete min+max pair is the one that
+        wins, and every earlier endpoint's values are simply dropped.
+        There is no way from a bare group command to prefer one endpoint
+        over another, and the design does not ask for one.
         """
         wanted = (_ATTR_CT_PHYS_MIN_MIREDS, _ATTR_CT_PHYS_MAX_MIREDS)
         lows: list[int] = []
