@@ -108,3 +108,43 @@ async def test_a_device_key_still_works_unchanged(api, invocations):
     key = next(c.key for c in store.commands(device.id) if c.slug == "on")
     assert (await client.get(f"/cmd/{key}/1")).status_code == 200
     assert [call.node_id for call in invocations] == [device.node_id]
+
+
+async def test_the_webui_route_drives_a_group_too(api, invocations):
+    """No second control endpoint - the shared key namespace means a group
+    tile makes the same call a device tile makes (design 5)."""
+    client, store, group_id = api
+    key = next(c.key for c in store.group_commands(group_id) if c.slug == "on")
+    response = await client.post(f"/api/commands/{key}", json={"value": "1"})
+    assert response.status_code == 200
+    node_ids = {device.node_id for device in store.group_members(group_id)}
+    assert {call.node_id for call in invocations} == node_ids
+
+
+async def test_the_webui_route_and_the_loxone_route_translate_identically(api, invocations):
+    """Spec 4.2: one translation, two callers, or they drift."""
+    client, store, group_id = api
+    key = next(c.key for c in store.group_commands(group_id) if c.slug == "level")
+    await client.get(f"/cmd/{key}/50")
+    from_loxone = list(invocations)
+    invocations.clear()
+    await client.post(f"/api/commands/{key}", json={"value": "50"})
+    assert sorted(from_loxone, key=lambda c: c.node_id) == sorted(
+        invocations, key=lambda c: c.node_id
+    )
+
+
+async def test_an_unknown_key_is_a_404_on_the_webui_route(api):
+    client, _store, _group_id = api
+    response = await client.post("/api/commands/g99_on", json={"value": "1"})
+    assert response.status_code == 404
+
+
+async def test_a_failing_member_is_a_502_on_the_webui_route(api, failing_nodes):
+    client, store, group_id = api
+    members = store.group_members(group_id)
+    failing_nodes.add(members[0].node_id)
+    key = next(c.key for c in store.group_commands(group_id) if c.slug == "on")
+    response = await client.post(f"/api/commands/{key}", json={"value": "1"})
+    assert response.status_code == 502
+    assert members[0].label in response.json()["detail"]

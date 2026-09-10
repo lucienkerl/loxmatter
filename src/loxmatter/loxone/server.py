@@ -639,11 +639,16 @@ def build_app(
 
         failed = await dispatch_group(plans, invoke)
         if failed:
+            # The failed labels are logged, not just counted (review fix
+            # from Task 5): the status code exists for the human reading
+            # the log, and "reached 2 of 4" alone still leaves them
+            # grepping the HTTP response for which two.
             logger.warning(
-                "group command %r reached %d of %d members",
+                "group command %r reached %d of %d members; no answer from: %s",
                 key,
                 len(plans) - len(failed),
                 len(plans),
+                ", ".join(failed),
             )
             raise HTTPException(
                 status_code=502,

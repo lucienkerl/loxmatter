@@ -149,6 +149,7 @@ from fastapi import APIRouter, HTTPException
 
 from loxmatter import i18n
 from loxmatter.api.models import CommandOut, ControlRange, ControlsOut, ValueIn
+from loxmatter.commands.fanout import dispatch_group, plan_group_calls
 from loxmatter.commands.translate import MatterCall, UnsupportedValueError, to_matter_calls
 from loxmatter.model.store import Store, UnknownCommandError, UnknownDeviceError
 from loxmatter.profiles.table import command_control, command_slug
@@ -291,8 +292,12 @@ def build_control_router(store: Store, invoke: Invoker, values: ValueReader) -> 
     async def execute_command(key: str, body: ValueIn) -> dict[str, str]:
         try:
             stored = store.resolve_command(key)
-        except UnknownCommandError as exc:
-            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except UnknownCommandError:
+            # A group key, or nothing at all - the same two-step lookup as
+            # the Loxone endpoint, and deliberately no second control
+            # route for groups: the key namespace is shared, so a group
+            # tile makes the same call a device tile makes (Spec 4.2).
+            return await _execute_group_command(key, body)
 
         try:
             # The same check, for the same reason, as in `write_signal`
@@ -338,6 +343,52 @@ def build_control_router(store: Store, invoke: Invoker, values: ValueReader) -> 
                 status_code=502, detail=i18n.t("api.errors.device_unreachable", exc=exc)
             ) from exc
 
+        return {"status": "ok", "key": key}
+
+    async def _execute_group_command(key: str, body: ValueIn) -> dict[str, str]:
+        """The group half of `POST /api/commands/{key}`.
+
+        Deliberately no `store.device(...)` check as in the device half
+        above: a group has no device of its own, and its members are
+        filtered by `group_members`, which returns active devices only. A
+        member removed with `forget_device` therefore cannot be reached
+        through a group either - the same gap that review fix Important #1
+        closed for device commands, closed here by construction rather
+        than by a second check.
+        """
+        try:
+            group_command = store.resolve_group_command(key)
+        except UnknownCommandError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+        targets = store.group_targets(group_command)
+        try:
+            plans = plan_group_calls(targets, body.value)
+        except UnsupportedValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        failed = await dispatch_group(plans, invoke)
+        if failed:
+            # The failed labels are logged, not just counted (review fix
+            # from Task 5): the status code exists for the human reading
+            # the log, and "reached 2 of 4" alone still leaves them
+            # grepping the HTTP response for which two.
+            logger.warning(
+                "group command %r reached %d of %d members; no answer from: %s",
+                key,
+                len(plans) - len(failed),
+                len(plans),
+                ", ".join(failed),
+            )
+            raise HTTPException(
+                status_code=502,
+                detail=i18n.t(
+                    "api.errors.group_partially_unreachable",
+                    reached=len(plans) - len(failed),
+                    total=len(plans),
+                    devices=", ".join(failed),
+                ),
+            )
         return {"status": "ok", "key": key}
 
     @router.post("/signals/{key}/write")
