@@ -339,6 +339,15 @@ def build_export_router(store: Store) -> APIRouter:
                     )
                 exported_device_ids.append(device.id)
 
+            # Unlike the device loop above, this one is not narrowed by
+            # `device_id` (or `only_pending`): the data model has no
+            # device-owns-group relationship, so there is nothing to
+            # filter a group by when only one device is requested -
+            # inventing such a link here would be a new rule, not a
+            # missing filter. A single-device download therefore always
+            # bundles every group's template alongside it, deliberately -
+            # the same way `cli.py`'s `export` command always writes every
+            # group's template alongside the one device it exports.
             for group in store.groups():
                 group_commands = to_group_outputs(store.group_commands(group.id))
                 if not group_commands:

@@ -157,6 +157,15 @@ cli.export.fail_write_first_file:
 cli.export.fail_write_second_file:
   en: "{path} could not be written: {exc}. {written} has already been written, {missing} is missing."
   de: "{path} konnte nicht geschrieben werden: {exc}. Geschrieben wurde bereits {written}, es fehlt {missing}."
+cli.export.echo_group_summary:
+  en: "{filename}: {count} output commands"
+  de: "{filename}: {count} Ausgangsbefehle"
+cli.export.echo_group_skipped:
+  en: "{filename}: skipped (no output commands, empty template)"
+  de: "{filename}: übersprungen (keine Ausgangsbefehle, leere Vorlage)"
+cli.export.fail_write_group_file:
+  en: "{path} could not be written: {exc}. The other templates from this export have already been written."
+  de: "{path} konnte nicht geschrieben werden: {exc}. Die übrigen Vorlagen dieses Exports wurden bereits geschrieben."
 
 cli.run.help:
   en: "Connects Matter and Loxone permanently: values out, commands in."

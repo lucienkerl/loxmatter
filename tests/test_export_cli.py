@@ -494,6 +494,90 @@ def test_export_reports_malformed_fixture_missing_node_id(tmp_path):
     assert "node_id" in result.stderr
 
 
+def test_export_announces_a_written_group_template(tmp_path):
+    """Fix pass, item 1 (Task 8 review): `export` writes a VO_g*.xml
+    template per group but used to say nothing about it at all - a user
+    exporting one device got an extra file in the output directory with
+    no way to learn from the command's output that it was written. The
+    announcement must name the exact file the loop wrote, not merely
+    contain a generic word that could come from somewhere else in the
+    output (the device's own VO summary already says "output
+    commands")."""
+    db_path = tmp_path / "store.sqlite"
+    out = tmp_path / "out"
+    export_args = [
+        "export",
+        "--fixture",
+        str(FIXTURES / "ikea_grillplats_plug.json"),
+        "--bridge-ip",
+        "192.168.1.50",
+        "--out",
+        str(out),
+        "--store-path",
+        str(db_path),
+    ]
+
+    first = CliRunner().invoke(app, export_args)
+    assert first.exit_code == 0, first.output
+
+    store = Store(db_path)
+    try:
+        (device,) = store.devices()
+        store.create_group("Kitchen plugs", [device.id])
+    finally:
+        store.close()
+
+    # Second run: `export` never registers a group from a snapshot
+    # (groups only ever come from the WebUI/store) - it writes every
+    # group the store currently knows every time it runs, the same
+    # device fixture as before is enough to trigger that loop.
+    result = CliRunner().invoke(app, export_args)
+    assert result.exit_code == 0, result.output
+
+    group_files = sorted(p.name for p in out.glob("VO_g*.xml"))
+    assert len(group_files) == 1
+    # The exact filename the loop wrote must appear in the announcement -
+    # not just the word "output commands", which the device's own VO
+    # summary line already contains regardless of the group loop.
+    assert group_files[0] in result.stdout  # cli.export.echo_group_summary
+
+
+def test_export_announces_an_emptied_group_as_skipped(tmp_path):
+    """The other half of the same loop: a group that keeps existing
+    (design 4.3) after its last capable member leaves has no output
+    commands to offer any more. It must say so - neither silence nor a
+    silently-written empty file."""
+    db_path = tmp_path / "store.sqlite"
+    out = tmp_path / "out"
+    export_args = [
+        "export",
+        "--fixture",
+        str(FIXTURES / "ikea_grillplats_plug.json"),
+        "--bridge-ip",
+        "192.168.1.50",
+        "--out",
+        str(out),
+        "--store-path",
+        str(db_path),
+    ]
+
+    CliRunner().invoke(app, export_args)
+
+    store = Store(db_path)
+    try:
+        (device,) = store.devices()
+        group = store.create_group("Kitchen plugs", [device.id])
+        store.set_group_members(group.id, [])
+    finally:
+        store.close()
+
+    result = CliRunner().invoke(app, export_args)
+    assert result.exit_code == 0, result.output
+    assert not list(out.glob("VO_g*.xml"))
+    assert "VO_g" in result.stdout
+    assert "skipped" in result.stdout  # cli.export.echo_group_skipped
+
+
 def test_export_marks_the_device_as_exported(tmp_path):
     """Task 5, Phase 5: the WebUI's `GET /api/export/status` must answer
     "when last exported" independent of whether the last export ran

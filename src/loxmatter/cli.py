@@ -434,14 +434,32 @@ def export(
         # command runs, the same way the API's `download` route does.
         for group in store.groups():
             group_commands = to_group_outputs(store.group_commands(group.id))
+            group_vo = out / filename_for("VO", group.id, group.label, kind="g")
             if not group_commands:
                 # An emptied group has no outputs to offer. It keeps
                 # existing (design 4.3); it just has nothing to export.
+                typer.echo(i18n.t("cli.export.echo_group_skipped", filename=group_vo.name))
                 continue
-            group_vo = out / filename_for("VO", group.id, group.label, kind="g")
-            group_vo.write_bytes(
-                render_virtual_out(
-                    group.label, f"http://{bridge_ip}:{listen}", group_commands, is_group=True
+            try:
+                group_vo.write_bytes(
+                    render_virtual_out(
+                        group.label, f"http://{bridge_ip}:{listen}", group_commands, is_group=True
+                    )
+                )
+            except OSError as exc:
+                # Its own `_fail`, distinct from the two above: by this
+                # point the device's own VIU/VO have already been written
+                # successfully (a failure there would have ended the
+                # command before this loop began), so neither
+                # `fail_write_first_file` ("no file has been created yet")
+                # nor `fail_write_second_file` (a specific written/missing
+                # pair) describes this situation honestly.
+                _fail(i18n.t("cli.export.fail_write_group_file", path=group_vo, exc=exc))
+            typer.echo(
+                i18n.t(
+                    "cli.export.echo_group_summary",
+                    filename=group_vo.name,
+                    count=len(group_commands),
                 )
             )
         store.mark_exported(device_id)
