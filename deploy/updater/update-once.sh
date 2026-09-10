@@ -245,6 +245,26 @@ running_version() {
   printf '%s' "${running_version_raw:-unbekannt}"
 }
 
+# The dev channel's own equivalent of running_version() above: the SAME
+# read-only `docker inspect`, a DIFFERENT sibling ENV var
+# (`LOXMATTER_COMMIT`, design section 4) - the commit the running image
+# was built from, not its human-facing version string. The dev channel's
+# forward-only check (further down, where `git merge-base --is-ancestor`
+# runs) has no use for `running_version()`'s answer: "dev" (what
+# `LOXMATTER_VERSION` reads for every dev-channel build) is not something
+# ancestry can be checked against.
+#
+# Empty - never defaulted to a placeholder the way running_version()
+# defaults to "unbekannt" - on purpose: an empty result must read as
+# "unknown" to its one caller, which rejects rather than ever passing an
+# empty ref to `git merge-base`.
+running_commit() {
+  running_commit_raw="$(docker inspect "$SERVICE" \
+    --format '{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null \
+    | sed -n -E 's/^LOXMATTER_COMMIT=(.+)$/\1/p' | head -1)"
+  printf '%s' "${running_commit_raw:-}"
+}
+
 # The tag from the .env - needed only for the rollback now, i.e. to know
 # what to write back if the update fails.
 current_tag() {
@@ -1700,13 +1720,38 @@ fi
 
 if [ "$CHANNEL" = "dev" ]; then
   # The dev channel's equivalent of "forward only" (spec section 10,
-  # rule 3): there is no ordering over SHAs, but there is ancestry. A
-  # `git` that cannot answer at all - the binary missing, or the ref not
-  # actually fetched - exits non-zero here exactly like a genuine "not an
-  # ancestor" does. This fails CLOSED, the same direction every other
-  # check in this file takes: an inconclusive answer is a "no", never
-  # waved through as a "sure, why not".
-  if ! git_repo merge-base --is-ancestor HEAD "$TARGET" 2>/dev/null; then
+  # rule 3): there is no ordering over SHAs, but there is ancestry.
+  #
+  # Against the RUNNING commit, not HEAD. HEAD is this checkout's own
+  # position, and design section 4 forbids taking the checkout's word for
+  # what is running - it "may by now be elsewhere, moved or advanced,
+  # without that ever being shipped". `scripts/update.sh` makes this a
+  # real, not theoretical, gap: it detaches this same checkout back onto
+  # `main` after every console update, so HEAD can sit at `main`'s own
+  # tip while the image actually running is far behind it - at which
+  # point `merge-base --is-ancestor HEAD "$TARGET"` would always answer
+  # "yes, main is an ancestor of main's own tip" and wave every dev-
+  # channel request through regardless of what is really installed.
+  # `running_commit()` reads the answer out of the running container
+  # itself instead, the same way `running_version()` already does for
+  # Rule 3's stable-channel comparison above.
+  #
+  # A `git` that cannot answer at all - the binary missing, or the ref
+  # not actually fetched - exits non-zero here exactly like a genuine
+  # "not an ancestor" does. This fails CLOSED, the same direction every
+  # other check in this file takes: an inconclusive answer is a "no",
+  # never waved through as a "sure, why not". The empty-commit case gets
+  # its own guard, explicitly, rather than relying on `git merge-base`
+  # rejecting an empty ref by accident: a hand-built image (or one from
+  # before LOXMATTER_COMMIT existed) states no commit at all, and that is
+  # exactly as inconclusive as a `git` that cannot answer - the same "no"
+  # the stable channel already gives one paragraph above for a running
+  # version that does not identify itself.
+  RUNNING_COMMIT="$(running_commit)"
+  if [ -z "$RUNNING_COMMIT" ]; then
+    reject "the running image does not state a commit - update only via the console"
+  fi
+  if ! git_repo merge-base --is-ancestor "$RUNNING_COMMIT" "$TARGET" 2>/dev/null; then
     reject "not a descendant of the running state"
   fi
   REF="$TARGET"
