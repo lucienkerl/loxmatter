@@ -331,14 +331,12 @@ never turns anything off.
 Title and caption container read `Matter — Group: <name>` (`de`: `Matter
 — Gruppe: <name>`), with an `en`/`de` pair in `strings.yaml`.
 
-**Renaming a group renames its caption**, and an already patched project
-file then no longer matches. That is not new behaviour introduced here: a
-device rename has exactly the same consequence today, because
-`render_virtual_out` builds its title from the device label. Groups
-inherit the existing behaviour rather than a special case, and the
-remedy is the existing one — re-import the template, or rename the
-container in Loxone Config to match. The group's *keys* are unaffected;
-they are built from the ID.
+**Renaming a group leaves an already patched project file working.**
+The container in the project keeps its old title, and the project sync
+keeps finding it, because containers are matched by key and the keys are
+built from the ID (Section 8). The stale title is cosmetic — the same
+thing a device rename does today, and for the same reason. Re-importing
+the template refreshes it.
 
 ## 8. Project Sync
 
@@ -352,10 +350,27 @@ namespace: had groups received their own route, the index would have
 needed a second URL pattern, and the Loxone project would carry two kinds
 of virtual output that do the same thing.
 
-**The template title and the caption name must be the same string.**
-`patch.apply_plan` looks the container up by its caption and raises
-`MissingCaptionError` when it does not find it. Both therefore come from
-one function, not from two format strings that happen to match today.
+**Containers are matched by key, not by title.** `index.build_index`
+indexes `output_containers` by the loxmatter key it reads back out of
+each `<VirtualOutCmd>` URL (`key_from_output_cmd`), and `_plan_outputs`
+asks whether any indexed key starts with `d{device.id}_`. The group
+variant asks the same question with `g{group.id}_`. Nothing here reads a
+title, so nothing here breaks when one changes.
+
+The two titles should nevertheless agree, and today they do so by hand:
+`documents.render_virtual_out` writes `Matter — {label}` and
+`schema.new_output_container_open_tag` writes the same string from a
+second format literal. The group path adds a third and a fourth
+occurrence of that pattern, which is where it stops being maintainable —
+so both group titles come from one shared helper. This is a
+readability requirement, not a correctness one; getting it wrong costs a
+confusing name in Loxone Config, not a failed sync.
+
+`MissingCaptionError` plays no part in any of this. Its own docstring
+records it as historical: `_new_device_edit` creates a missing
+`VirtualOutCaption` section itself, and the error is no longer raised.
+It is named here only because it would otherwise look like the obvious
+thing to guard against.
 
 `exported_at`/`updated_at` on the group behave as on a device.
 
