@@ -624,66 +624,26 @@ async def test_the_update_card_offers_its_four_states_and_the_confirmation(api):
     assert "async setUpdateChannel(channel)" in script
 
 
-async def test_the_channel_switch_is_hidden_but_everything_behind_it_still_works(api):
-    """The channel switch cannot work end to end for 0.3.0: `update_check.
-    py` answers the dev channel with `target="main"`, `applyUpdate()`
-    posts that verbatim, and the sidecar's own pattern for the dev
-    channel (update-once.sh, Rule 1: `^[0-9a-f]{7,40}$`) rejects "main"
-    outright - and even a real commit SHA would not help, since `set_tag`
-    writes the bare SHA as the image tag while CI only ever publishes
-    `:dev`/`:sha-<short>`. The maintainer chose to hide the control for
-    this release rather than ship one that fails on every click.
-
-    What must hold, and what this test checks in that order:
-
-      1. The control markup is NOT delivered to the browser inside a
-         live (uncommented) tag - a real HTML comment, not merely an
-         `x-show="false"` that would still ship the buttons and their
-         `@click` handlers to anyone reading the page source.
-      2. EVERYTHING it would have driven still exists and still works:
-         `app.js` still defines `setUpdateChannel()`, and the settings
-         route/store underneath it still accept and report a channel -
-         re-enabling this later must be a UI change (uncommenting the
-         markup, once the two points above are actually fixed) plus the
-         `set_tag`/CI-tag fix, not a rebuild of the feature.
-      3. The hidden block still carries a comment explaining WHY, naming
-         both concrete blockers, so nobody "fixes" this by silently
-         deleting the block or uncommenting a control that is still
-         broken."""
+async def test_the_channel_switch_is_live_now_that_its_blockers_are_fixed(api):
+    """The channel switch used to be commented out of the page: the dev
+    channel could not work end to end, since `update_check.py` answered
+    with `target="main"` (rejected outright by the sidecar's own
+    dev-channel pattern, update-once.sh Rule 1: `^[0-9a-f]{7,40}$`), and
+    even a real commit SHA would have failed at `pull` next, since no
+    `loxmatter:<sha>` tag was ever published (CI only publishes
+    `:dev`/`:sha-<short>`). All three blockers named at the control's own
+    comment are fixed now: `update_check.py` returns the actual tip
+    commit of `main`, update-once.sh derives the `sha-<short>` tag CI
+    actually publishes from it, and its ancestry check compares against
+    the running image's own commit rather than this checkout's HEAD - so
+    the control now ships as live markup, not inside an HTML comment, and
+    the stale "HIDDEN FOR 0.3.0" marker is gone."""
     client, _, _ = api
     page = (await client.get("/")).text
     script = (await client.get("/static/app.js")).text
 
-    # The hidden block, isolated from the rest of the page: everything
-    # from the `<!--` that opens it (found by rewinding from the marker
-    # text this fix's own comment carries) to its closing `-->`.
-    hidden_idx = page.index("HIDDEN FOR 0.3.0")
-    comment_start = page.rindex("<!--", 0, hidden_idx)
-    # `rindex` finds the NEAREST preceding "<!--" - which is only the
-    # right one if it is genuinely adjacent to the marker text. Mutation-
-    # tested: a mutation that deletes just the "<!--"/"-->" pair around
-    # this block (re-enabling the control) without touching the marker
-    # text left `rindex`/`index` silently latching onto a DIFFERENT,
-    # unrelated comment nearby and reporting the control as still hidden
-    # - this proximity check is what catches that instead of a false
-    # green.
-    assert hidden_idx - comment_start < 80, (
-        "the nearest preceding '<!--' is too far from the 'HIDDEN FOR 0.3.0' "
-        "marker to be its own opening tag - the block may no longer be a "
-        "real HTML comment at all"
-    )
-    comment_end = page.index("-->", hidden_idx) + len("-->")
-    hidden_comment = page[comment_start:comment_end]
-    outside_hidden_comment = page[:comment_start] + page[comment_end:]
+    assert "HIDDEN FOR 0.3.0" not in page, "the stale hidden-control marker must not linger"
 
-    # 1. No live channel-switch control reaches the browser. A plain
-    # `needle not in page` is NOT the right check here (and is exactly
-    # what this test's own first version got wrong): the needles are
-    # LITERALLY present in `page` regardless of the fix, since HTML
-    # comments are still delivered as plain text - the browser only
-    # skips evaluating what is inside them, it does not strip it from
-    # the response. The real assurance is that every needle sits ONLY
-    # inside the hidden comment and nowhere else in the page.
     for needle in (
         ":class=\"{ active: updateStatus?.channel === 'stable' }\"",
         "@click=\"setUpdateChannel('stable')\"",
@@ -691,27 +651,13 @@ async def test_the_channel_switch_is_hidden_but_everything_behind_it_still_works
         "@click=\"setUpdateChannel('dev')\"",
         "x-show=\"updateStatus?.channel === 'dev'\"",
     ):
-        assert needle in hidden_comment, f"expected inside the hidden block: {needle!r}"
-        assert needle not in outside_hidden_comment, (
-            f"the hidden channel-switch control still reaches LIVE markup: {needle!r}"
-        )
+        assert needle in page, f"expected live in the delivered page: {needle!r}"
 
-    # 2. Everything behind the control is still there. The strings
-    # themselves stay in the delivered page too (inside the HTML comment,
-    # not evaluated by Alpine, but still literally present) - per this
-    # fix's own instruction to leave the i18n strings in place.
     assert "t('web.system.update_channel_label')" in page
     assert "t('web.system.update_channel_stable')" in page
     assert "t('web.system.update_channel_dev')" in page
     assert "t('web.system.update_channel_dev_warning')" in page
     assert "async setUpdateChannel(channel)" in script
-
-    # 3. The reason is written down at the markup, and names BOTH
-    # concrete blockers - not a vague "TODO" a future reader could shrug
-    # off without understanding what would actually break.
-    assert 'target="main"' in hidden_comment
-    assert "set_tag" in hidden_comment
-    assert "loxmatter:&lt;sha&gt;" in hidden_comment or "loxmatter:<sha>" in hidden_comment
 
 
 async def test_the_changelog_does_not_promise_the_hidden_channel_switch():
@@ -7294,3 +7240,91 @@ def test_the_update_check_is_refreshed_once_the_update_reaches_a_terminal_state(
     assert values["callsWhileRunning"] == 0
     assert values["callsAfterDone"] == 1
     assert values["updateAvailableAfterDone"] == {"target": None, "error": None}
+
+
+def test_a_finished_update_is_announced_only_to_the_page_that_watched_it():
+    """`phase` never returns to `idle` after `done` - the sidecar has no
+    reason to rewrite its own record of what last happened - so a banner
+    keyed on the phase alone stands on the System tab forever, across
+    reloads and reboots, until the next update runs. Someone who never
+    pressed anything reads "Now running: 0.3.6" weeks later.
+
+    The banner is therefore keyed on `updateWatchedJobId`, which this
+    page sets when it starts an update or first catches one already
+    running, and which no reload survives. A socket reconnect is not a
+    reload - the bridge restarting mid-update is precisely when the
+    banner has to live through the gap - and the state is untouched
+    there because the page itself never went away.
+
+    A failure is deliberately not gated this way; see the markup.
+    """
+    values = _app_state(
+        """
+        state.request = async (method, path) => {
+          if (path === "/api/update/status") {
+            return {
+              state: { phase: "done", id: "j-old", from: "0.3.5", to: "0.3.6",
+                       error: null, rolled_back: false, healthy: true },
+              updater_present: true, log: [], channel: "stable",
+              check_enabled: true,
+            };
+          }
+          throw new Error("unexpected request " + method + " " + path);
+        };
+        (async () => {
+          // A freshly loaded page meeting a `done` left over from an
+          // update somebody else ran, or the same person ran yesterday.
+          await state.loadUpdateStatus();
+          const afterReload = state.updateWatchedJobId;
+          // The same page, having watched that very job.
+          state.updateWatchedJobId = "j-old";
+          const afterWatching = state.updateWatchedJobId;
+          state.stopUpdateTimer();
+          console.log(JSON.stringify({
+            phase: state.updateStatus.state.phase,
+            jobId: state.updateStatus.state.id,
+            afterReload,
+            afterWatching,
+          }));
+        })();
+        """
+    )
+
+    # The status itself is unchanged - the banner's condition is what moved.
+    assert values["phase"] == "done"
+    assert values["jobId"] == "j-old"
+    # Nothing on a fresh page claims the result, so the banner stays down.
+    assert values["afterReload"] is None
+    assert values["afterWatching"] == "j-old"
+
+
+def test_the_page_adopts_an_update_somebody_else_started():
+    """A second tab, or a phone, should still announce the result of an
+    update it did not itself start - otherwise the person watching from
+    the sofa never learns it finished. Catching it while a running phase
+    is on the wire is what makes that work, and it is the same field the
+    reload clears.
+    """
+    values = _app_state(
+        """
+        state.request = async (method, path) => {
+          if (path === "/api/update/status") {
+            return {
+              state: { phase: "pull", id: "j-live", from: "0.3.5", to: "0.3.6",
+                       error: null, rolled_back: false, healthy: true },
+              updater_present: true, log: [], channel: "stable",
+              check_enabled: true,
+            };
+          }
+          throw new Error("unexpected request " + method + " " + path);
+        };
+        (async () => {
+          await state.loadUpdateStatus();
+          const adopted = state.updateWatchedJobId;
+          state.stopUpdateTimer();
+          console.log(JSON.stringify({ adopted }));
+        })();
+        """
+    )
+
+    assert values["adopted"] == "j-live"

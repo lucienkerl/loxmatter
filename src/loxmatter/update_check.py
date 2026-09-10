@@ -291,7 +291,34 @@ async def check(
         # overview, not a read. `split("\n", 1)` also copes with a
         # (theoretical) empty message, where `splitlines()[0]` would
         # raise `IndexError`.
-        subjects = [str(c["commit"]["message"]).split("\n", 1)[0] for c in body.get("commits", [])]
-        return Available(channel, "main", None, "\n".join(subjects), ahead, _now(), None)
-    except (OSError, KeyError, ValueError, TypeError) as exc:
+        commits = body.get("commits", [])
+        subjects = [str(c["commit"]["message"]).split("\n", 1)[0] for c in commits]
+        # `target` must be an actual commit, not the branch name "main" -
+        # the sidecar's own dev-channel pattern (update-once.sh, Rule 1)
+        # is `^[0-9a-f]{7,40}$` and rejects "main" outright, which used to
+        # fail every dev-channel click. `_COMPARE_URL` lists commits
+        # oldest-first (GitHub's own documented order for `compare`), so
+        # the LAST entry is `main`'s own tip - the one commit this
+        # channel is offering.
+        #
+        # The FULL 40-character SHA, not this project's usual seven-
+        # character short form: `git checkout --detach` in the sidecar's
+        # checkout accepts either, but the image tag does not - dev
+        # images are published as `:sha-<short>`, never `:<sha>` (see
+        # `set_tag`'s caller in update-once.sh), so something there has to
+        # derive the short form from the long one. Handing over an
+        # already-truncated target would leave nothing to derive it
+        # from, and would silently assume this response's SHA is the same
+        # length CI's `git rev-parse --short` happened to produce -
+        # exactly the coupling this feature's design doc (section 16)
+        # already flags as unchecked.
+        target_commit = str(commits[-1]["sha"])
+        return Available(channel, target_commit, None, "\n".join(subjects), ahead, _now(), None)
+    except (OSError, KeyError, ValueError, TypeError, IndexError) as exc:
+        # IndexError joins the tuple here for the same reason the module
+        # docstring gives for keeping this catch wide: `commits[-1]`
+        # above is a new way for an unexpected GitHub response shape (an
+        # `ahead_by > 0` with an empty `commits` list) to raise, and it
+        # deserves the same honest `error` field every other malformed
+        # response gets, not an exception reaching the web UI.
         return unavailable(str(exc))

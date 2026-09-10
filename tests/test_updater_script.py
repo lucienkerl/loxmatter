@@ -122,12 +122,17 @@ def _compose_calls(calls: str, subcommand: str) -> list[str]:
     return [line for line in calls.splitlines() if _is_compose_call(line, subcommand)]
 
 
-def _docker_stub_source(*, version: str = "0.2.0", compose_case: str = "exit 0 ;;") -> str:
+def _docker_stub_source(
+    *, version: str = "0.2.0", commit: str = "abc1234", compose_case: str = "exit 0 ;;"
+) -> str:
     """Full source for a fake `docker` binary that answers BOTH `docker
     inspect` calls update-once.sh actually makes:
 
-      * `docker inspect $SERVICE --format ...` - running_version(),
-        answered with LOXMATTER_VERSION=<version>.
+      * `docker inspect $SERVICE --format ...` - running_version() AND
+        running_commit() share this one call's output, the same
+        container, answered with both LOXMATTER_VERSION=<version> and
+        LOXMATTER_COMMIT=<commit> - the same pair of sibling ENV vars
+        design section 4 says the built image actually carries.
       * `docker inspect loxmatter-updater --format ...` - host_path_for(),
         hardcoded to that container name regardless of $SERVICE.
         Answered with an IDENTITY mount mapping: $LOXMATTER_STACK and
@@ -156,6 +161,7 @@ def _docker_stub_source(*, version: str = "0.2.0", compose_case: str = "exit 0 ;
         '      printf "%s %s\\n" "$LOXMATTER_REPO" "$LOXMATTER_REPO"\n'
         "    else\n"
         f'      printf "LOXMATTER_VERSION={version}\\n"\n'
+        f'      printf "LOXMATTER_COMMIT={commit}\\n"\n'
         "    fi\n"
         "    ;;\n"
         f"  compose) {compose_case}\n"
@@ -522,29 +528,27 @@ def test_a_dev_target_with_an_embedded_newline_is_rejected(updater):
 # dev-channel request meets in this half of the script - nothing else
 # would notice if it were wrong, or missing, without these three.
 def test_a_valid_dev_target_is_accepted(updater):
-    # The dev channel's own forward-only equivalent (Task 3's ancestry
-    # check) reads via `git`, not `docker inspect` - Rule 3's semver
-    # comparison, the only thing that ever needed that read, applies to
-    # the stable channel alone. Task 4 changed what this test may claim,
-    # though: `docker inspect` is no longer stable-channel-exclusive.
-    # $RUNNING is now computed for every request whose shape has already
+    # Rule 3's semver comparison applies to the stable channel alone, but
+    # the dev channel's own ancestry check now reads `docker inspect` too
+    # (running_commit(), for the running image's own commit - see that
+    # check's comment in update-once.sh for why HEAD alone is not enough).
+    # $RUNNING is also computed for every request whose shape has already
     # passed validation (see the comment above `RUNNING="$(running_version)"`
     # in update-once.sh) - it is the honest rollback target if THIS
     # update fails later, dev channel included, and a dev-channel rollback
     # referencing an unset $RUNNING under `set -eu` would otherwise crash
-    # instead of rolling back. So one `inspect` call is now expected here
-    # too - and a SECOND one besides: compose()'s own host_path_for() fix
-    # (the "compose inside a container resolves relative bind mounts to
-    # container paths" finding) makes exactly one more `docker inspect
-    # loxmatter-updater --format ...` call, cached for the rest of the
-    # pass, on compose()'s first invocation (the pull, here). What this
-    # test still pins down is that BOTH are read-only: never a mutating
-    # `docker inspect`, and never more of them than these two expected
-    # ones.
+    # instead of rolling back. So THREE `inspect` calls are expected on a
+    # dev-channel pass: running_version(), running_commit(), and
+    # compose()'s own host_path_for() fix (the "compose inside a
+    # container resolves relative bind mounts to container paths"
+    # finding), cached for the rest of the pass, on compose()'s first
+    # invocation (the pull, here). What this test still pins down is that
+    # all three are read-only: never a mutating `docker inspect`, and
+    # never more of them than these three expected ones.
     _write_request(updater, channel="dev", target="abcdef1")
     _, calls, state = updater()
     assert state["phase"] == "done"
-    assert calls.count("docker inspect") == 2
+    assert calls.count("docker inspect") == 3
 
 
 def test_a_malformed_dev_target_is_rejected(updater):
@@ -1125,10 +1129,11 @@ def test_a_dev_target_that_is_not_a_descendant_is_rejected(updater):
     # `updater` fixture) - which is exactly why every dev-channel test
     # above never needed to distinguish "is an ancestor" from "is not".
     # Override it here so `merge-base --is-ancestor` specifically fails,
-    # the same way it does both for a real commit unreachable from HEAD
-    # and for a `git` that cannot answer the question at all - the check
-    # has to fail CLOSED in both cases, not only the first, and nothing
-    # short of actually failing this call exercises that.
+    # the same way it does both for a real target unreachable from the
+    # running commit and for a `git` that cannot answer the question at
+    # all - the check has to fail CLOSED in both cases, not only the
+    # first, and nothing short of actually failing this call exercises
+    # that.
     # Every call is `git -C "$REPO" <subcommand> ...` - the subcommand is
     # $3, not $1 - so matching on "$*" rather than a positional parameter
     # is what actually distinguishes merge-base from fetch/checkout here.
@@ -1147,6 +1152,93 @@ def test_a_dev_target_that_is_not_a_descendant_is_rejected(updater):
     assert state["phase"] == "rejected"
     assert state["error"] == "not a descendant of the running state"
     assert "docker compose" not in calls
+
+
+def test_the_ancestry_check_compares_against_the_running_commit_not_head(updater):
+    """Blocker 3: `merge-base --is-ancestor HEAD "$TARGET"` took the
+    checkout's own position as "what is running" - a claim design section
+    4 forbids by name ("It comes from the image, not from the checkout on
+    the host"). `scripts/update.sh` makes the gap concrete, not
+    theoretical: it detaches this same checkout back onto `main` after
+    every console update, so HEAD can sit at `main`'s own tip while the
+    image actually running stays far behind it - at which point
+    `merge-base --is-ancestor HEAD "$TARGET"` always answers "yes" for
+    any target at or behind `main`, waving through a request the real
+    running commit could not have supported.
+
+    The `git` stub below only lets `merge-base --is-ancestor` succeed
+    when its FIRST argument is the running commit reported over `docker
+    inspect` (the docker stub's own LOXMATTER_COMMIT, set to "cafe123"
+    below) - never the literal string "HEAD". Bite-checked by reverting
+    the fix (restoring `merge-base --is-ancestor HEAD "$TARGET"`): the
+    stub's `case` then falls through to its `exit 1` default because the
+    call never names "cafe123" at all, and this test fails with
+    `state["phase"] == "rejected"` instead of "done" - restoring the fix
+    made it pass again."""
+    docker_path = updater.bindir / "docker"
+    docker_path.write_text(_docker_stub_source(commit="cafe123"), encoding="utf-8")
+    docker_path.chmod(0o755)
+    git_path = updater.bindir / "git"
+    git_path.write_text(
+        "#!/bin/sh\n"
+        'printf "%s %s\\n" "git" "$*" >> "$STUB_LOG"\n'
+        'case "$*" in\n'
+        '  *"merge-base --is-ancestor cafe123 abcdef1"*) exit 0 ;;\n'
+        "  *merge-base*) exit 1 ;;\n"
+        "esac\n",
+        encoding="utf-8",
+    )
+    git_path.chmod(0o755)
+    _write_request(updater, channel="dev", target="abcdef1")
+    _, calls, state = updater()
+    assert state["phase"] == "done"
+    assert "merge-base --is-ancestor cafe123 abcdef1" in calls
+
+
+def test_a_dev_update_with_no_running_commit_fails_closed(updater):
+    """Blocker 3's other half: an inconclusive answer must be a "no", not
+    a "sure, why not" - the same doctrine every other check in this file
+    follows. A hand-built image, or one from before LOXMATTER_COMMIT
+    existed, reports no commit at all over `docker inspect`; this must
+    reject before ever calling `git merge-base` with an empty ref, not
+    rely on `git` happening to reject an empty argument on its own."""
+    docker_path = updater.bindir / "docker"
+    docker_path.write_text(_docker_stub_source(commit=""), encoding="utf-8")
+    docker_path.chmod(0o755)
+    git_path = updater.bindir / "git"
+    git_path.write_text(
+        "#!/bin/sh\n"
+        'printf "%s %s\\n" "git" "$*" >> "$STUB_LOG"\n'
+        'case "$*" in\n'
+        "  *merge-base*) echo BUG-should-never-run; exit 0 ;;\n"
+        "esac\n",
+        encoding="utf-8",
+    )
+    git_path.chmod(0o755)
+    _write_request(updater, channel="dev", target="abcdef1")
+    _, calls, state = updater()
+    assert state["phase"] == "rejected"
+    assert (
+        state["error"] == "the running image does not state a commit - update only via the console"
+    )
+    assert "merge-base" not in calls, "must reject before ever asking git about an empty ref"
+
+
+def test_the_dev_channel_tag_is_derived_not_the_bare_target(updater):
+    """Blocker 2: CI never publishes a `loxmatter:<sha>` tag for the dev
+    channel, only `:dev` and `:sha-<short>` - writing $TARGET verbatim
+    into LOXMATTER_IMAGE_TAG would name an image that was never pushed,
+    and the pull below would 404. `image_tag_for()` must derive
+    `sha-<first seven characters>` instead. Bite-checked by reverting to
+    `set_tag "${TARGET#v}"`: the .env then reads
+    "LOXMATTER_IMAGE_TAG=abcdef1234567890" (the bare, full-length target
+    used by this test), and this assertion fails."""
+    _write_request(updater, channel="dev", target="abcdef1234567890")
+    _, _calls, state = updater()
+    assert state["phase"] == "done"
+    env_text = (updater.stack / ".env").read_text(encoding="utf-8")
+    assert "LOXMATTER_IMAGE_TAG=sha-abcdef1" in env_text
+    assert "LOXMATTER_IMAGE_TAG=abcdef1234567890" not in env_text
 
 
 # ------------------------------------------------------- Stufe 2, round 2 --

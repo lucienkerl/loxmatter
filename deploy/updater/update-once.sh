@@ -245,6 +245,26 @@ running_version() {
   printf '%s' "${running_version_raw:-unbekannt}"
 }
 
+# The dev channel's own equivalent of running_version() above: the SAME
+# read-only `docker inspect`, a DIFFERENT sibling ENV var
+# (`LOXMATTER_COMMIT`, design section 4) - the commit the running image
+# was built from, not its human-facing version string. The dev channel's
+# forward-only check (further down, where `git merge-base --is-ancestor`
+# runs) has no use for `running_version()`'s answer: "dev" (what
+# `LOXMATTER_VERSION` reads for every dev-channel build) is not something
+# ancestry can be checked against.
+#
+# Empty - never defaulted to a placeholder the way running_version()
+# defaults to "unbekannt" - on purpose: an empty result must read as
+# "unknown" to its one caller, which rejects rather than ever passing an
+# empty ref to `git merge-base`.
+running_commit() {
+  running_commit_raw="$(docker inspect "$SERVICE" \
+    --format '{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null \
+    | sed -n -E 's/^LOXMATTER_COMMIT=(.+)$/\1/p' | head -1)"
+  printf '%s' "${running_commit_raw:-}"
+}
+
 # The tag from the .env - needed only for the rollback now, i.e. to know
 # what to write back if the update fails.
 current_tag() {
@@ -252,6 +272,35 @@ current_tag() {
   # named after its function rather than "tag".
   current_tag_raw="$(sed -n -E 's/^LOXMATTER_IMAGE_TAG=(.*)$/\1/p' "$ENV_FILE" 2>/dev/null | tail -1)"
   printf '%s' "${current_tag_raw:-stable}"
+}
+
+# The TARGET and the image TAG are two different strings, and treating
+# them as one was runtime blocker 2 (see this function's caller further
+# down): CI publishes the stable channel's tags exactly as its releases
+# are named (`v0.3.0` -> `0.3.0`, the "v" stripped elsewhere in this
+# file), but it never publishes a dev image under its bare commit SHA -
+# only `:dev` and `:sha-<short>` (`.github/workflows/ci.yml`). A dev
+# target that passed Rule 1 (a real, fetchable commit) would still 404 at
+# `compose pull` without this.
+#
+# $2 arrives already normalised (the stable channel's leading "v"
+# stripped by the caller): for "stable" it IS the tag CI publishes, so it
+# passes through unchanged, the same way current_tag()/set_tag() have
+# always treated a stable target. For "dev" it is the FULL commit SHA
+# (see the comment at update_check.py's `target_commit`, which chose that
+# length for exactly this derivation) - CI's own tag is built from a
+# SHORT `git rev-parse --short HEAD` at build time, seven characters in
+# this repository today, so the first seven characters of the full SHA
+# are taken here to match it. Nothing pins the two lengths together -
+# git's abbreviation length is not a constant - so this is a match against
+# CI's CURRENT behavior, not a guarantee of it; see this feature's design
+# doc, section 16, for that coupling recorded as unchecked.
+image_tag_for() {
+  # $1 channel, $2 normalised target
+  case "$1" in
+    dev) printf 'sha-%s' "$(printf '%s' "$2" | cut -c1-7)" ;;
+    *) printf '%s' "$2" ;;
+  esac
 }
 
 set_state() {
@@ -1671,13 +1720,38 @@ fi
 
 if [ "$CHANNEL" = "dev" ]; then
   # The dev channel's equivalent of "forward only" (spec section 10,
-  # rule 3): there is no ordering over SHAs, but there is ancestry. A
-  # `git` that cannot answer at all - the binary missing, or the ref not
-  # actually fetched - exits non-zero here exactly like a genuine "not an
-  # ancestor" does. This fails CLOSED, the same direction every other
-  # check in this file takes: an inconclusive answer is a "no", never
-  # waved through as a "sure, why not".
-  if ! git_repo merge-base --is-ancestor HEAD "$TARGET" 2>/dev/null; then
+  # rule 3): there is no ordering over SHAs, but there is ancestry.
+  #
+  # Against the RUNNING commit, not HEAD. HEAD is this checkout's own
+  # position, and design section 4 forbids taking the checkout's word for
+  # what is running - it "may by now be elsewhere, moved or advanced,
+  # without that ever being shipped". `scripts/update.sh` makes this a
+  # real, not theoretical, gap: it detaches this same checkout back onto
+  # `main` after every console update, so HEAD can sit at `main`'s own
+  # tip while the image actually running is far behind it - at which
+  # point `merge-base --is-ancestor HEAD "$TARGET"` would always answer
+  # "yes, main is an ancestor of main's own tip" and wave every dev-
+  # channel request through regardless of what is really installed.
+  # `running_commit()` reads the answer out of the running container
+  # itself instead, the same way `running_version()` already does for
+  # Rule 3's stable-channel comparison above.
+  #
+  # A `git` that cannot answer at all - the binary missing, or the ref
+  # not actually fetched - exits non-zero here exactly like a genuine
+  # "not an ancestor" does. This fails CLOSED, the same direction every
+  # other check in this file takes: an inconclusive answer is a "no",
+  # never waved through as a "sure, why not". The empty-commit case gets
+  # its own guard, explicitly, rather than relying on `git merge-base`
+  # rejecting an empty ref by accident: a hand-built image (or one from
+  # before LOXMATTER_COMMIT existed) states no commit at all, and that is
+  # exactly as inconclusive as a `git` that cannot answer - the same "no"
+  # the stable channel already gives one paragraph above for a running
+  # version that does not identify itself.
+  RUNNING_COMMIT="$(running_commit)"
+  if [ -z "$RUNNING_COMMIT" ]; then
+    reject "the running image does not state a commit - update only via the console"
+  fi
+  if ! git_repo merge-base --is-ancestor "$RUNNING_COMMIT" "$TARGET" 2>/dev/null; then
     reject "not a descendant of the running state"
   fi
   REF="$TARGET"
@@ -1741,8 +1815,15 @@ fi
 # is also why $IMAGE below appears only in the log, not as an argument to
 # any command: Compose forms the name from the .env line that set_tag
 # writes next.
-log "target image: $IMAGE:${TARGET#v}"
-if ! set_tag "${TARGET#v}"; then
+#
+# NOT `${TARGET#v}` written straight through: see image_tag_for()'s own
+# comment above for why the target and the tag CI actually publishes are
+# two different strings on the dev channel, and always have been on this
+# one - the "v" strip here is only ever relevant to the stable channel,
+# image_tag_for() leaves it alone for dev.
+IMAGE_TAG="$(image_tag_for "$CHANNEL" "${TARGET#v}")"
+log "target image: $IMAGE:$IMAGE_TAG"
+if ! set_tag "$IMAGE_TAG"; then
   # Proven with $STACK made unwritable: set_tag exited non-zero
   # ("Permission denied" creating its own temp file), and this call used
   # to be unguarded under `set -eu` - the shell simply stopped right
@@ -1785,8 +1866,10 @@ if ! compose_pull_with_heartbeat "$SERVICE"; then
     # is worse: the pull already failed, and now .env cannot even be put
     # back either. Say so explicitly - the plain "unchanged" message just
     # below would be a lie here: .env may still read the new, un-pulled
-    # target.
-    set_state failed "image could not be pulled, and the tag could not be restored in $ENV_FILE - it may still read $TARGET"
+    # target. $IMAGE_TAG, not $TARGET - what the earlier set_tag call
+    # actually wrote into .env is the derived tag (see image_tag_for()),
+    # which for the dev channel is not the same string as $TARGET at all.
+    set_state failed "image could not be pulled, and the tag could not be restored in $ENV_FILE - it may still read $IMAGE_TAG"
     exit 0
   fi
   set_state failed "image could not be pulled - the running service is unchanged"
