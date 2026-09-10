@@ -1719,11 +1719,34 @@
                   x-text="t('web.system.update_available', { version: updateStatus.state.to })"></h3>
               <h3 x-show="updateStatus.state.phase === 'health'" x-cloak
                   x-text="t('web.system.update_restarting')"></h3>
+              <!--
+                Still four steps, not five (design section 9 chose named
+                steps over a progress bar deliberately, and a step that is
+                empty on every stable update would be worse than a wrong
+                label). `pull` and `build` are alternatives, never both in
+                one run (the dev channel builds the image itself instead
+                of downloading it - design addendum "The development
+                channel builds on the machine", 2026-09-10) - so the
+                second slot's HIGHLIGHT keys off whichever of the two the
+                sidecar actually wrote to `phase` (both count as "done"
+                once `recreate`/`health` is reached, so that class needs
+                no change), but its LABEL keys off `updateStatus.channel`
+                instead: the channel is fixed for the whole run (the
+                toggle buttons above are disabled while `updateRunning()`
+                is true), while `phase` has not yet reached this step
+                during `backup` and has already passed it during
+                `recreate`/`health` - neither moment tells this label
+                which word to use, only the channel does, for the entire
+                run. Measured on the real Pi before this fix: the card
+                showed "Loading the image" for a full minute while
+                `docker build` ran, because `phase` read `pull` even on
+                the dev channel.
+              -->
               <ul class="steps">
-                <li :class="{ done: ['pull','recreate','health'].includes(updateStatus.state.phase), now: updateStatus.state.phase === 'backup' }"
+                <li :class="{ done: ['pull','build','recreate','health'].includes(updateStatus.state.phase), now: updateStatus.state.phase === 'backup' }"
                     x-text="t('web.system.update_step_backup')"></li>
-                <li :class="{ done: ['recreate','health'].includes(updateStatus.state.phase), now: updateStatus.state.phase === 'pull' }"
-                    x-text="t('web.system.update_step_pull')"></li>
+                <li :class="{ done: ['recreate','health'].includes(updateStatus.state.phase), now: updateStatus.state.phase === 'pull' || updateStatus.state.phase === 'build' }"
+                    x-text="updateStatus.channel === 'dev' ? t('web.system.update_step_build') : t('web.system.update_step_pull')"></li>
                 <li :class="{ done: updateStatus.state.phase === 'health', now: updateStatus.state.phase === 'recreate' }"
                     x-text="t('web.system.update_step_recreate')"></li>
                 <li :class="{ now: updateStatus.state.phase === 'health' }"
