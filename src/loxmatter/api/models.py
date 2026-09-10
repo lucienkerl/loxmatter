@@ -225,6 +225,76 @@ class ControlsOut(BaseModel):
     hidden_raw_commands: int
 
 
+class GroupIn(BaseModel):
+    """Body of `POST /api/groups`.
+
+    `member_ids` is required and must not be empty: the first member fixes
+    the group's category (design 2026-09-10, section 2).
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    label: str
+    member_ids: list[int]
+    room: str | None = None
+
+
+class GroupPatch(BaseModel):
+    """Body of `PATCH /api/groups/{id}` - label and room, both optional."""
+
+    model_config = ConfigDict(frozen=True)
+
+    label: str | None = None
+    room: str | None = None
+
+
+class GroupMembersIn(BaseModel):
+    """Body of `PUT /api/groups/{id}/members` - the COMPLETE list.
+
+    Not add/remove: the command intersection is recomputed after every
+    change anyway, and two single removals would pass through an
+    intermediate state nobody asked for (design 5).
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    member_ids: list[int]
+
+
+class GroupOut(BaseModel):
+    """A group for the WebUI. `member_labels` travels with `member_ids` so
+    a tile can name its members without one request per member."""
+
+    model_config = ConfigDict(frozen=True)
+
+    id: int
+    label: str
+    room: str | None
+    category: str
+    member_ids: list[int]
+    member_labels: list[str]
+    command_count: int
+
+
+class GroupControlsOut(BaseModel):
+    """Response of `GET /api/groups/{id}/controls`.
+
+    `seed_device_id`/`seed_device_label` name the member the sliders'
+    initial values were read from. A group has no state of its own, and
+    the lamp-controls design ruled out showing a slider with no initial
+    value at all - so the number is shown and attributed rather than
+    presented as the group's (design 5). Both are `None` for an empty
+    group.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    commands: list[CommandOut]
+    hidden_raw_commands: int
+    seed_device_id: int | None
+    seed_device_label: str | None
+
+
 class ValueIn(BaseModel):
     """Body of `POST /api/commands/{key}` and `POST /api/signals/{key}/write`
     (Task 4) - the same string value that `/cmd/{key}/{value}` (Phase 4)

@@ -139,6 +139,7 @@ from loxmatter.api.diagnostics import (
 )
 from loxmatter.api.diagnostics_live import build_diagnostics_live_router
 from loxmatter.api.export import build_export_router
+from loxmatter.api.groups import build_groups_router
 from loxmatter.api.language import build_i18n_router, build_language_router
 from loxmatter.api.live import BEARER_SUBPROTOCOL, ObservableRuntime, build_live_router
 from loxmatter.api.project_sync import build_project_sync_router
@@ -480,12 +481,13 @@ def build_app(
             i18n.set_language(store.locale.get_language())
         return await call_next(request)
 
-    # `dependencies=api_guard` on each of the ten `/api` routers (task 8,
+    # `dependencies=api_guard` on each of the eleven `/api` routers (task 8,
     # phase 5, see `build_api_guard` above; the eighth since `POST
     # /api/export/project-sync`, task 11, phase 6, the ninth since
     # `build_language_router`, the tenth since `build_update_router`, task
-    # 8 of this stage 2): this protects without exception every route of
-    # these ten routers, including the WebSocket routes `/api/live` and
+    # 8 of this stage 2, the eleventh since `build_groups_router`, device
+    # groups task 7): this protects without exception every route of
+    # these eleven routers, including the WebSocket routes `/api/live` and
     # `/api/diagnostics/live` - and explicitly NOT `/cmd`, `/resync`,
     # `/health`, `/` and `/static`, which are mounted further below
     # without `dependencies`.
@@ -507,6 +509,10 @@ def build_app(
     # api/control.py module docstring: one translation, two callers, or
     # they drift (spec 4.2, test_the_same_translation_as_the_loxone_endpoint).
     app.include_router(build_control_router(store, invoke, runtime), dependencies=api_guard)
+    # Same guard as every other `/api` router. `runtime` satisfies
+    # `ValueReader` here for the same reason it does in the control
+    # router - the group controls route reads last values, nothing more.
+    app.include_router(build_groups_router(store, runtime), dependencies=api_guard)
     app.include_router(
         build_diagnostics_router(
             store,
