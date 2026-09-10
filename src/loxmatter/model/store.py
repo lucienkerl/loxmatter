@@ -801,6 +801,21 @@ class StoredGroupCommand:
     takes_value: bool
 
 
+@dataclass(frozen=True)
+class GroupTarget:
+    """One member of a group, with the command rows that carry out one
+    group command on it (design 2026-09-10, section 3).
+
+    `device_label` travels along because the 502 detail names the members
+    that failed, and the dispatcher must not have to reach back into the
+    store to find out who it was talking to.
+    """
+
+    device_id: int
+    device_label: str
+    commands: tuple[StoredCommand, ...]
+
+
 def _encode_device_types(types: Mapping[int, frozenset[int]]) -> str:
     """The output of `relevance.device_types_by_endpoint` as JSON for the
     `device.device_types` column.
@@ -1480,6 +1495,31 @@ class Store:
             raise
         self._db.commit()
         return self.group_commands(group_id)
+
+    def group_targets(self, command: StoredGroupCommand) -> list[GroupTarget]:
+        """The per-member command rows for one group command.
+
+        A member may carry the pair on several endpoints; all of them are
+        returned, ordered by endpoint, and all of them get the command
+        (design 4.3). Members without a matching row are skipped rather
+        than returned empty - by construction of the intersection there
+        should be none, and an empty target would only make the
+        dispatcher guard against a case the store already rules out.
+        """
+        targets: list[GroupTarget] = []
+        for device in self.group_members(command.group_id):
+            rows = tuple(
+                stored
+                for stored in self.commands(device.id)
+                if stored.cluster_id == command.cluster_id
+                and stored.command_id == command.command_id
+            )
+            if not rows:
+                continue
+            targets.append(
+                GroupTarget(device_id=device.id, device_label=device.label, commands=rows)
+            )
+        return targets
 
     def rename_device(self, device_id: int, label: str) -> None:
         """Sets a device's label (`PATCH /api/devices/{device_id}`).

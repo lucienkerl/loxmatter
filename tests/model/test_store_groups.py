@@ -527,3 +527,54 @@ def test_register_group_commands_rolls_back_a_write_time_failure_and_leaves_the_
         assert {(c.slug, c.key) for c in reopened.group_commands(group.id)} == before
     finally:
         reopened.close()
+
+
+def test_targets_carry_one_entry_per_member_with_that_member_s_own_rows(store, lamps_with_commands):
+    group = store.create_group("Both", lamps_with_commands)
+    on = next(c for c in store.group_commands(group.id) if c.slug == "on")
+    targets = store.group_targets(on)
+    assert [t.device_id for t in targets] == lamps_with_commands
+    assert all(t.device_label for t in targets)
+    for target in targets:
+        assert target.commands
+        for command in target.commands:
+            assert (command.cluster_id, command.command_id) == (on.cluster_id, on.command_id)
+
+
+def test_a_member_carrying_the_pair_on_two_endpoints_gets_both(store, lamps_with_commands):
+    """A two-channel device has one command row per endpoint; the group
+    has one command. The only reading that does not surprise is "the
+    whole member" (design 4.3)."""
+    group = store.create_group("Both", lamps_with_commands)
+    on = next(c for c in store.group_commands(group.id) if c.slug == "on")
+    store._db.execute(
+        "INSERT INTO command"
+        " (device_id, node_id, endpoint, cluster_id, command_id, key, slug, takes_value)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            lamps_with_commands[0],
+            store.device(lamps_with_commands[0]).node_id,
+            99,
+            on.cluster_id,
+            on.command_id,
+            f"d{lamps_with_commands[0]}_99_on",
+            "on",
+            0,
+        ),
+    )
+    store._db.commit()
+    targets = store.group_targets(on)
+    first = next(t for t in targets if t.device_id == lamps_with_commands[0])
+    second = next(t for t in targets if t.device_id == lamps_with_commands[1])
+
+    # The exact, ordered pair of endpoints for the two-endpoint member -
+    # not just "the endpoints seen are unique", which would still pass if
+    # one of the two rows were silently dropped or duplicated. `commands()`
+    # already orders by (endpoint, cluster_id, command_id), so the
+    # original row at endpoint 1 comes before the inserted one at 99.
+    assert tuple(c.endpoint for c in first.commands) == (1, 99)
+    assert len(first.commands) == 2
+
+    # The other member has exactly its own single row and must not pick
+    # up the first member's extra endpoint as a side effect.
+    assert tuple(c.endpoint for c in second.commands) == (1,)
