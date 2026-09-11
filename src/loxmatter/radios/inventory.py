@@ -92,8 +92,12 @@ def scan_serial(host_dev: Path, sys_root: Path) -> list[SerialRadio]:
     by_id = host_dev / "serial" / "by-id"
     if not by_id.is_dir():
         return []
+    try:
+        entries = sorted(by_id.iterdir())
+    except OSError:
+        return []
     radios: list[SerialRadio] = []
-    for entry in sorted(by_id.iterdir()):
+    for entry in entries:
         if not entry.is_symlink():
             continue
         tty = Path(os.readlink(entry)).name
@@ -118,8 +122,12 @@ def scan_bluetooth(sys_root: Path) -> list[BluetoothAdapter]:
     base = sys_root / "class" / "bluetooth"
     if not base.is_dir():
         return []
+    try:
+        entries = list(base.iterdir())
+    except OSError:
+        return []
     adapters: list[BluetoothAdapter] = []
-    for entry in base.iterdir():
+    for entry in entries:
         match = _HCI_NAME.fullmatch(entry.name)
         if match is None:
             continue

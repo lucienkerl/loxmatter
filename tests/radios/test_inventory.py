@@ -19,7 +19,10 @@ tmp_path the way the test Pi showed them on 11 September 2026."""
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
+
+import pytest
 
 from loxmatter.radios.inventory import (
     BluetoothAdapter,
@@ -55,6 +58,7 @@ def _usb_serial(root: Path, tty: str, by_id: str, attrs: dict[str, str], interfa
 
 
 def test_a_usb_serial_stick_is_found_with_its_details(tmp_path):
+    """Fault to prove it: only look one level above the resolved device."""
     host_dev, sys_root = _usb_serial(
         tmp_path,
         "ttyUSB0",
@@ -81,7 +85,8 @@ def test_a_usb_serial_stick_is_found_with_its_details(tmp_path):
 
 
 def test_an_acm_stick_whose_device_is_the_interface_itself_is_found(tmp_path):
-    """Fault to prove it: only look one level above the resolved device."""
+    """Fault to prove it: check only the resolved device itself, without
+    walking up."""
     host_dev, sys_root = _usb_serial(
         tmp_path,
         "ttyACM0",
@@ -105,6 +110,28 @@ def test_a_by_id_entry_that_is_not_a_usb_or_acm_tty_is_ignored(tmp_path):
     (host_dev / "sda").write_text("", encoding="utf-8")
     (host_dev / "serial" / "by-id" / "usb-Disk").symlink_to(Path("../..") / "sda")
     assert scan_serial(host_dev, tmp_path / "sys") == []
+
+
+def test_an_unreadable_by_id_directory_means_no_sticks(tmp_path):
+    """Fault to prove it: remove the `try`/`except OSError` guard around
+    `by_id.iterdir()` in `scan_serial` - this test then fails with
+    `PermissionError`.
+
+    Skipped when running as root: root ignores file permission bits, so
+    the directory would still be listable and the test could not prove
+    anything."""
+    if os.geteuid() == 0:
+        pytest.skip(
+            "running as root ignores file permissions - cannot test an unreadable directory"
+        )
+    host_dev = tmp_path / "dev"
+    by_id = host_dev / "serial" / "by-id"
+    by_id.mkdir(parents=True)
+    os.chmod(by_id, 0)
+    try:
+        assert scan_serial(host_dev, tmp_path / "sys") == []
+    finally:
+        os.chmod(by_id, 0o755)
 
 
 def _bluetooth(root: Path, name: str, device_target: str, rfkill_soft: str | None = None):
@@ -146,6 +173,28 @@ def test_adapters_are_sorted_by_number_not_by_name(tmp_path):
         _bluetooth(tmp_path, f"hci{n}", f"devices/other/{n}")
     assert [a.index for a in scan_bluetooth(tmp_path / "sys")] == [2, 10]
     assert {a.bus for a in scan_bluetooth(tmp_path / "sys")} == {"other"}
+
+
+def test_an_unreadable_bluetooth_class_directory_means_no_adapters(tmp_path):
+    """Fault to prove it: remove the `try`/`except OSError` guard around
+    `base.iterdir()` in `scan_bluetooth` - this test then fails with
+    `PermissionError`.
+
+    Skipped when running as root: root ignores file permission bits, so
+    the directory would still be listable and the test could not prove
+    anything."""
+    if os.geteuid() == 0:
+        pytest.skip(
+            "running as root ignores file permissions - cannot test an unreadable directory"
+        )
+    sys_root = tmp_path / "sys"
+    base = sys_root / "class" / "bluetooth"
+    base.mkdir(parents=True)
+    os.chmod(base, 0)
+    try:
+        assert scan_bluetooth(sys_root) == []
+    finally:
+        os.chmod(base, 0o755)
 
 
 def _radio(path: str, tty: str) -> SerialRadio:
