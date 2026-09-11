@@ -198,6 +198,40 @@ async def test_a_failing_member_does_not_stop_the_others():
     assert sorted(reached) == [11, 33]
 
 
+async def test_duplicate_labels_among_the_failed_members_are_disambiguated_by_id():
+    """Regression for the unread `MemberPlan.device_id` (final review,
+    Item 3): two members named "Lamp" that both fail must not both come
+    back as the bare string "Lamp" - `api/control.py` and
+    `loxone/server.py` build "no answer from: {devices}" straight from
+    this list, and "no answer from: Lamp, Lamp" does not tell a reader
+    which of the two is actually unreachable."""
+    plans = plan_group_calls([on_target(1, 11, "Lamp"), on_target(2, 22, "Lamp")], "1")
+
+    async def invoke(call: MatterCall) -> None:
+        raise RuntimeError("no route to host")
+
+    assert await dispatch_group(plans, invoke) == ["Lamp (1)", "Lamp (2)"]
+
+
+async def test_a_unique_label_among_the_failed_members_stays_bare():
+    """The common case - every failed member has a distinct label - must
+    read exactly as before: only a label actually shared by more than one
+    FAILED member gains its id, not every member of a group that happens
+    to contain a duplicate label somewhere among its *reachable*
+    members."""
+    plans = plan_group_calls(
+        [on_target(1, 11, "Lamp"), on_target(2, 22, "Lamp"), on_target(3, 33, "Kitchen Lamp")],
+        "1",
+    )
+
+    async def invoke(call: MatterCall) -> None:
+        if call.node_id == 33:
+            return
+        raise RuntimeError("no route to host")
+
+    assert await dispatch_group(plans, invoke) == ["Lamp (1)", "Lamp (2)"]
+
+
 async def test_every_failing_member_is_named_not_just_the_first():
     """Failures must come back in *plan* order, not completion order, so a
     caller's message is reproducible. A is planned before C but made to

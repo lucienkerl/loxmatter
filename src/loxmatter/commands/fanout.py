@@ -37,6 +37,7 @@ a second implementation, and nothing else in the feature would move.
 from __future__ import annotations
 
 import asyncio
+from collections import Counter
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 
@@ -48,7 +49,13 @@ __all__ = ["MemberPlan", "dispatch_group", "plan_group_calls"]
 
 @dataclass(frozen=True)
 class MemberPlan:
-    """Everything one member is to receive, in the order it is to receive it."""
+    """Everything one member is to receive, in the order it is to receive it.
+
+    `device_id` disambiguates `device_label` in the failure report
+    `dispatch_group` builds: device labels are not unique (nothing in this
+    codebase requires it), so two failed members named the same would
+    otherwise both read as plain "Lamp" in a 502 detail - see
+    `dispatch_group`'s docstring."""
 
     device_id: int
     device_label: str
@@ -106,6 +113,20 @@ async def dispatch_group(
 
     The returned list is in plan order, so the message a caller builds
     from it is reproducible.
+
+    **Disambiguation (final review, Item 3).** Device labels are not
+    unique - two lamps can both be named "Lamp" - so a failed member is
+    reported as its bare label only while that label is unique among the
+    OTHER failed members of this call; a label shared by more than one
+    failed member gets its `device_id` appended (`"Lamp (12)"`), read
+    from `MemberPlan.device_id`. Uniqueness is checked against the failed
+    set, not the whole group, so the common case - distinct labels -
+    reads exactly as before; only the ambiguous case gains anything,
+    which is deliberately not a bare id list (`api/control.py` and
+    `loxone/server.py` both build their 502 detail and log line from this
+    return value, so fixing the ambiguity once here keeps the two in
+    sync automatically - the same reason this module exists as one
+    implementation for both routes, see the module docstring).
     """
     results = await asyncio.gather(
         *(_run_member(plan, invoke) for plan in plans), return_exceptions=True
@@ -117,8 +138,15 @@ async def dispatch_group(
     # is a member whose own `invoke` raises CancelledError being reported
     # as a failed label instead of propagating - `Exception` alone would
     # silently count a cancelled member as a successful switch.
-    return [
-        plan.device_label
+    failed = [
+        plan
         for plan, result in zip(plans, results, strict=True)
         if isinstance(result, BaseException)
+    ]
+    label_counts = Counter(plan.device_label for plan in failed)
+    return [
+        plan.device_label
+        if label_counts[plan.device_label] == 1
+        else f"{plan.device_label} ({plan.device_id})"
+        for plan in failed
     ]
