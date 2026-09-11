@@ -1123,6 +1123,18 @@ class Store:
         that row is gone, there is no way left to ask which groups this
         device used to belong to. This does not delete a thereby-emptied
         group; a group survives losing every member (design 2.1, 4.3).
+
+        **Rollback guard.** This method was a single UPDATE before device
+        groups; this branch made it a two-write method (the
+        `device_group_member` DELETE, then the `device` UPDATE) and needs
+        the same `try`/`except (ValueError, sqlite3.Error):
+        self._db.rollback(); raise` guard as `create_group`,
+        `set_group_members` and `register_group_commands`. Without it, a
+        write-time failure on the UPDATE would leave the DELETE sitting in
+        the connection's open implicit transaction - the membership rows
+        gone from this connection's view while `device.active` still
+        reads 1 - for a later, unrelated `commit()` anywhere else in
+        `Store` to flush that half-removed state to disk by surprise.
         """
         affected = [
             int(row["group_id"])
@@ -1130,8 +1142,12 @@ class Store:
                 "SELECT group_id FROM device_group_member WHERE device_id = ?", (device_id,)
             ).fetchall()
         ]
-        self._db.execute("DELETE FROM device_group_member WHERE device_id = ?", (device_id,))
-        self._db.execute("UPDATE device SET active = 0 WHERE id = ?", (device_id,))
+        try:
+            self._db.execute("DELETE FROM device_group_member WHERE device_id = ?", (device_id,))
+            self._db.execute("UPDATE device SET active = 0 WHERE id = ?", (device_id,))
+        except (ValueError, sqlite3.Error):
+            self._db.rollback()
+            raise
         self._db.commit()
         for group_id in affected:
             self.register_group_commands(group_id)
@@ -1220,13 +1236,14 @@ class Store:
         Duplicate ids in `member_ids` are rejected here, before anything is
         written: `device_group_member` has `UNIQUE (group_id, device_id)`,
         so an unchecked duplicate would only surface as a raw
-        `sqlite3.IntegrityError` partway through the insert loop below -
-        and runs as one transaction, exactly like `register_commands`: if a
-        write still fails there - that dedup check missing a case, or any
-        other SQLite error - the whole group is rolled back instead of
-        leaving `device_group` and a partial `device_group_member` row set
-        sitting in the connection's open transaction, to be committed by
-        surprise the next time some unrelated write calls `commit()`.
+        `sqlite3.IntegrityError` partway through the insert loop below.
+        That loop runs as one transaction, exactly like
+        `register_commands`: if a write still fails there - that dedup
+        check missing a case, or any other SQLite error - the whole group
+        is rolled back instead of leaving `device_group` and a partial
+        `device_group_member` row set sitting in the connection's open
+        transaction, to be committed by surprise the next time some
+        unrelated write calls `commit()`.
         """
         if not member_ids:
             raise ValueError(i18n.t("api.errors.group_needs_a_member"))
@@ -1282,10 +1299,27 @@ class Store:
         self._db.commit()
 
     def delete_group(self, group_id: int) -> None:
+        """Removes a group and everything that references it.
+
+        Three DELETEs, one commit: the same shape as `create_group` and
+        `set_group_members`, and the same guard. Without
+        `self._db.rollback()` in the `except` clause, a write-time failure
+        on the second or third DELETE (a full disk, a corrupted index -
+        anything past the first) would leave the earlier DELETE(s) sitting
+        in the connection's open implicit transaction - the group's
+        commands or memberships gone from this connection's view, the
+        group row itself still there - for a later, unrelated `commit()`
+        anywhere else in `Store` to flush that half-deleted state to disk
+        by surprise.
+        """
         self.group(group_id)
-        self._db.execute("DELETE FROM group_command WHERE group_id = ?", (group_id,))
-        self._db.execute("DELETE FROM device_group_member WHERE group_id = ?", (group_id,))
-        self._db.execute("DELETE FROM device_group WHERE id = ?", (group_id,))
+        try:
+            self._db.execute("DELETE FROM group_command WHERE group_id = ?", (group_id,))
+            self._db.execute("DELETE FROM device_group_member WHERE group_id = ?", (group_id,))
+            self._db.execute("DELETE FROM device_group WHERE id = ?", (group_id,))
+        except (ValueError, sqlite3.Error):
+            self._db.rollback()
+            raise
         self._db.commit()
 
     def group_members(self, group_id: int) -> list[StoredDevice]:

@@ -268,6 +268,71 @@ def test_set_group_members_rolls_back_a_write_time_failure_and_keeps_the_old_mem
         reopened.close()
 
 
+class _FailForgetDeviceUpdate:
+    """Proxies a real `sqlite3.Connection`, forcing `forget_device`'s
+    `UPDATE device SET active = 0` to fail as `sqlite3.IntegrityError` -
+    standing in for any write-time SQLite error that reaches the second of
+    its two writes, the same construction as `_FailSecondMemberInsert`
+    above but aimed at `forget_device`.
+    """
+
+    def __init__(self, real: sqlite3.Connection) -> None:
+        self._real = real
+
+    def execute(self, sql, parameters=()):
+        if sql.startswith("UPDATE device SET active = 0"):
+            raise sqlite3.IntegrityError("simulated failure on the active-flag update")
+        return self._real.execute(sql, parameters)
+
+    def __getattr__(self, name):
+        return getattr(self._real, name)
+
+
+def test_forget_device_rolls_back_a_write_time_failure_and_keeps_the_old_membership(
+    store, lamps, tmp_path, monkeypatch
+):
+    """Regression for the missing rollback guard on `forget_device` (final
+    review, Item 2): this method was a single UPDATE before device
+    groups; this branch made it a two-write method (the
+    `device_group_member` DELETE, then the `device` UPDATE) without
+    adding the `try`/`except (ValueError, sqlite3.Error):
+    self._db.rollback(); raise` guard its three siblings
+    (`create_group`, `set_group_members`, `register_group_commands`)
+    already carry.
+
+    The DELETE succeeds, the UPDATE is forced to fail. Without
+    `self._db.rollback()` in the `except` clause, the DELETE would stay
+    visible on this very connection (SQLite reads a connection's own
+    uncommitted writes back immediately) - so the assertion right after
+    `pytest.raises` below, that the membership is back to what it was
+    before this call, is itself proof the guard ran: it can only pass if
+    `rollback()` actually undid the DELETE. The reopened-store assertion
+    that follows additionally proves no half-removed state - the
+    membership gone, `device.active` still 1 - was left for a later
+    unrelated commit to flush to disk, the same construction as the
+    `create_group`/`set_group_members` regressions above.
+    """
+    group = store.create_group("Living room", lamps)
+
+    monkeypatch.setattr(store, "_db", _FailForgetDeviceUpdate(store._db))
+
+    with pytest.raises(sqlite3.IntegrityError):
+        store.forget_device(lamps[1])
+    assert [d.id for d in store.group_members(group.id)] == lamps
+
+    # An unrelated write that commits - if the DELETE survived
+    # uncommitted, this is what would flush the dropped membership to
+    # disk while `device.active` stayed (wrongly) 1 for lamps[1].
+    store.rename_device(lamps[0], "Renamed")
+    store.close()
+
+    reopened = Store(tmp_path / "test.sqlite")
+    try:
+        assert [d.id for d in reopened.group_members(group.id)] == lamps
+    finally:
+        reopened.close()
+
+
 def _slugs(store, group_id):
     return sorted(c.slug for c in store.group_commands(group_id))
 
@@ -525,6 +590,78 @@ def test_register_group_commands_rolls_back_a_write_time_failure_and_leaves_the_
     reopened = Store(tmp_path / "test.sqlite")
     try:
         assert {(c.slug, c.key) for c in reopened.group_commands(group.id)} == before
+    finally:
+        reopened.close()
+
+
+class _FailSecondGroupDelete:
+    """Proxies a real `sqlite3.Connection`, forcing the SECOND of
+    `delete_group`'s three DELETEs to fail as `sqlite3.IntegrityError` -
+    standing in for any write-time SQLite error reaching partway through
+    the sequence, the same construction as `_FailSecondMemberInsert`
+    above but aimed at `delete_group`.
+    """
+
+    _DELETE_PREFIXES = (
+        "DELETE FROM group_command",
+        "DELETE FROM device_group_member",
+        "DELETE FROM device_group ",
+    )
+
+    def __init__(self, real: sqlite3.Connection) -> None:
+        self._real = real
+        self._delete_count = 0
+
+    def execute(self, sql, parameters=()):
+        if sql.startswith(self._DELETE_PREFIXES):
+            self._delete_count += 1
+            if self._delete_count == 2:
+                raise sqlite3.IntegrityError("simulated failure past the first DELETE")
+        return self._real.execute(sql, parameters)
+
+    def __getattr__(self, name):
+        return getattr(self._real, name)
+
+
+def test_delete_group_rolls_back_a_write_time_failure_and_leaves_the_group_intact(
+    store, lamps_with_commands, tmp_path, monkeypatch
+):
+    """Regression for the missing rollback guard on `delete_group` (final
+    review, Item 2): three DELETEs and one commit, unguarded before this
+    fix - the same shape `create_group` and `set_group_members` were
+    fixed for, missed on this sibling.
+
+    Setup: a group with committed `group_command` rows. The first DELETE
+    (`group_command`) succeeds, the second (`device_group_member`) is
+    forced to fail. Without `self._db.rollback()` in the `except` clause,
+    that first DELETE would stay visible on this connection (SQLite reads
+    a connection's own uncommitted writes back immediately) - so the
+    immediate assertion below, that the group's commands are still there,
+    is itself proof the guard ran.
+    """
+    group = store.create_group("Colour", [lamps_with_commands[0]])
+    before_commands = {(c.slug, c.key) for c in store.group_commands(group.id)}
+    assert before_commands  # something to lose if the first DELETE survives
+
+    monkeypatch.setattr(store, "_db", _FailSecondGroupDelete(store._db))
+
+    with pytest.raises(sqlite3.IntegrityError):
+        store.delete_group(group.id)
+
+    # Read through the still-proxied connection first - proves the
+    # rollback took effect immediately, before any reopen.
+    assert store.group(group.id).label == "Colour"
+    assert {(c.slug, c.key) for c in store.group_commands(group.id)} == before_commands
+
+    # An unrelated write that commits - if the first DELETE survived
+    # uncommitted, this is what would flush the half-deleted group to disk.
+    store.rename_device(lamps_with_commands[0], "Renamed")
+    store.close()
+
+    reopened = Store(tmp_path / "test.sqlite")
+    try:
+        assert reopened.group(group.id).label == "Colour"
+        assert {(c.slug, c.key) for c in reopened.group_commands(group.id)} == before_commands
     finally:
         reopened.close()
 
