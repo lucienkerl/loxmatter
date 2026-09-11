@@ -65,8 +65,8 @@ pair per device, instead of being typed into Loxone Config by hand.
 ### 🔁 Patch your existing project file
 Upload the Loxone project you already have, see exactly what would change per device
 and per signal, download the patched copy. Nothing is downloaded before you have seen
-the plan. Updating existing inputs/outputs is the default path; adding completely new
-device containers is experimental and unverified, see
+the plan. Existing inputs/outputs are updated, and devices the project does not know
+yet get containers of their own, see
 [docs/OPERATIONS.md#project-file-sync](docs/OPERATIONS.md#project-file-sync).
 
 </td>

@@ -27,7 +27,7 @@ from loxmatter import i18n
 from loxmatter.model.store import Store, StoredCommand, StoredGroupCommand, StoredSignal
 from loxmatter.projectsync.diff import SyncPlan, build_plan
 from loxmatter.projectsync.index import ProjectFormatError, build_index
-from loxmatter.projectsync.patch import MissingCaptionError, apply_plan
+from loxmatter.projectsync.patch import apply_plan
 
 __all__ = ["ProjectFormatError", "ProjectSyncResult", "run_sync"]
 
@@ -35,12 +35,7 @@ __all__ = ["ProjectFormatError", "ProjectSyncResult", "run_sync"]
 @dataclass(frozen=True)
 class ProjectSyncResult:
     plan: SyncPlan
-    patched_conservative: bytes
-    # `None` if the experimental variant could not be built for this file
-    # - then `new_devices_unavailable_reason` carries the reason (and
-    # conversely: if the variant is present, the reason is `None`).
-    patched_with_new_devices: bytes | None
-    new_devices_unavailable_reason: str | None
+    patched: bytes
 
 
 def run_sync(
@@ -72,10 +67,7 @@ def run_sync(
     # `needs_miniserver_selection=True` for the selection field in the
     # WebUI (user request after the review) - only the "none configured at
     # all" case (empty `candidates`) remains a genuine 400. Without an
-    # unambiguous Miniserver, there is, for NEITHER of the two variants
-    # (conservative or experimental), any place to compare against at all
-    # - unlike a missing caption (see below), that is not a limitation of
-    # the experimental path alone.
+    # unambiguous Miniserver, there is no place to compare against at all.
     index = build_index(text, miniserver_ip)
     devices = store.devices()
     signals_by_device: dict[int, Sequence[StoredSignal]] = {
@@ -96,26 +88,14 @@ def run_sync(
         groups=groups,
         commands_by_group=commands_by_group,
     )
-    # Without `try`: only `NEW_DEVICE` entries reach, with
-    # `include_new_devices=True`, the code that needs a caption - so the
-    # conservative variant cannot throw a `MissingCaptionError` at all.
-    #
     # A `ProjectFormatError` from `_installation_suffix` (finding N1 from
     # the re-review: via `apply_plan` -> `_new_signal_edit`/
-    # `_new_device_edit` -> `new_unique_id`, as soon as a `NEW_SIGNAL`
-    # entry needs a new ID), by contrast, VERY MUCH CAN be thrown by this
-    # conservative variant - `NEW_SIGNAL` is independent of
-    # `include_new_devices`. Deliberately left unhandled: unlike a missing
-    # caption (only a limitation of the experimental path), a
-    # `ProjectFormatError` here means "this file's ID format cannot be
-    # recognised at all" (design section 10) - a more fundamental problem
-    # than a missing optional section, one that should rightly fail the
-    # whole upload (`api.project_sync` already catches `ProjectFormatError`
-    # into a comprehensible 400). For consistency, the same decision holds
-    # further below for the experimental variant: the `except` block there
-    # deliberately catches only `MissingCaptionError`, not
-    # `ProjectFormatError`.
-    conservative = apply_plan(
+    # `_new_device_edit` -> `new_unique_id`, as soon as an entry needs a
+    # new ID) is deliberately left unhandled: it means "this file's ID
+    # format cannot be recognised at all" (design section 10), which should
+    # rightly fail the whole upload (`api.project_sync` already catches
+    # `ProjectFormatError` into a comprehensible 400).
+    patched = apply_plan(
         index,
         plan,
         devices,
@@ -123,43 +103,8 @@ def run_sync(
         commands_by_device,
         groups=groups,
         commands_by_group=commands_by_group,
-        include_new_devices=False,
         bridge_ip=bridge_ip,
         port=port,
         listen=listen,
     )
-    with_new_devices: bytes | None
-    reason: str | None
-    try:
-        with_new_devices = apply_plan(
-            index,
-            plan,
-            devices,
-            signals_by_device,
-            commands_by_device,
-            groups=groups,
-            commands_by_group=commands_by_group,
-            include_new_devices=True,
-            bridge_ip=bridge_ip,
-            port=port,
-            listen=listen,
-        )
-        reason = None
-    except MissingCaptionError as exc:
-        # A missing caption is, per design section 8, a limitation of the
-        # EXPERIMENTAL path, not a reason to fail the whole upload: the
-        # plan and the conservative variant remain usable, only this one
-        # variant is dropped - with a reason given, not silently.
-        #
-        # Deliberately ONLY `MissingCaptionError`, not `ProjectFormatError`:
-        # a `ProjectFormatError` from `_installation_suffix` (see the
-        # comment at the conservative-variant call above) is meant to
-        # propagate up to `api.project_sync`'s `except ProjectFormatError`
-        # -> HTTP 400, rather than merely disabling the experimental
-        # variant here - the same file could already have triggered the
-        # same error in the conservative variant, which also leaves it
-        # unhandled there. Degraded behaviour only for this call would be
-        # inconsistent with the one above.
-        with_new_devices = None
-        reason = str(exc)
-    return ProjectSyncResult(plan, conservative, with_new_devices, reason)
+    return ProjectSyncResult(plan, patched)

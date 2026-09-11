@@ -129,6 +129,16 @@ This is not a global switch and not a config file — once the user has
 successfully imported a file with a freshly created container, the
 checkbox is simply routine for them from then on.
 
+**Update 2026-09-11: new device containers are the default, the checkbox
+is gone.** Files with freshly created containers have been imported into
+Loxone Config in real use and worked (after the corrections recorded in
+sections 3.5 and 6), so the checkbox had become exactly the routine
+predicted above — a click everyone makes, guarding nothing. The WebUI no
+longer offers it; `/api/export/project-sync` returns one patched file
+(`patched_base64`) instead of the two variants, and `apply_plan` lost its
+`include_new_devices` flag. The paragraphs above stay as the record of why
+the option existed.
+
 ### 3.5 File structure & Miniserver assignment (corrected after a real-world test)
 
 **The original assumption in this section (and in 3.3) was wrong.** In

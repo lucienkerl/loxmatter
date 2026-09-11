@@ -824,18 +824,12 @@ function app() {
 
     // --- Project file sync (Task 12) ---------------------------------------
     // `plan` carries the complete response from `/api/export/project-sync`
-    // unchanged (entries AND the two fully patched files as base64) -
+    // unchanged (entries AND the patched file as base64) -
     // `downloadPatchedProject` reads from it instead of making a second
-    // call to the bridge for the "Also create new device containers"
-    // checkbox. As long as `plan` is `null`, there was no response to see
-    // yet - and exactly that is what the download button in `index.html`
-    // (`x-show="projectSync.plan"`) hangs on: nothing to download before
-    // the plan has been seen.
-    // `plan.patched_with_new_devices_base64` is `null` if the uploaded
-    // file has no `VirtualInCaption`/`VirtualOutCaption` section
-    // (Review-Fix Important #4) - `plan.new_devices_unavailable_reason`
-    // then carries the reason. Both stay, like the rest of `plan`,
-    // unchanged from the API response, with no dedicated camelCase copy.
+    // call to the bridge. As long as `plan` is `null`, there was no
+    // response to see yet - and exactly that is what the download button
+    // in `index.html` (`x-show="projectSync.plan"`) hangs on: nothing to
+    // download before the plan has been seen.
     projectSync: {
       // The actual `File` object, not just its name (user request after
       // the review: a selection field instead of typing an IP by hand) -
@@ -844,7 +838,6 @@ function app() {
       // repeated file dialog.
       file: null,
       plan: null,
-      includeNewDevices: false,
       busy: false,
       error: "",
       // If the file carries more than one Miniserver, `/api/export/
@@ -4556,35 +4549,17 @@ function app() {
 
     /**
      * Builds the blob from the base64-encoded file that was already part
-     * of the plan response (no second call to the bridge needed) - the
-     * "Also create new device containers" checkbox only selects WHICH of
-     * the two supplied versions gets downloaded.
-     *
-     * `patched_with_new_devices_base64` can be `null` if the uploaded file
-     * has no `VirtualInCaption`/`VirtualOutCaption` section for a new
-     * device container (`new_devices_unavailable_reason` then carries the
-     * reason, displayed in `index.html`). The checkbox is already
-     * disabled in that case - this check here is only the second line of
-     * defense in case it is checked anyway, and quietly falls back to the
-     * conservative version instead of triggering `atob(null)`.
+     * of the plan response (no second call to the bridge needed).
      */
     downloadPatchedProject() {
       if (!this.projectSync.plan) {
         return;
       }
-      const wantsNewDevices = this.projectSync.includeNewDevices;
-      const base64 =
-        wantsNewDevices && this.projectSync.plan.patched_with_new_devices_base64
-          ? this.projectSync.plan.patched_with_new_devices_base64
-          : this.projectSync.plan.patched_conservative_base64;
-      const isNewDevicesVariant = wantsNewDevices && Boolean(this.projectSync.plan.patched_with_new_devices_base64);
-      const blob = blobFromBase64(base64, "application/xml");
+      const blob = blobFromBase64(this.projectSync.plan.patched_base64, "application/xml");
       const objectUrl = URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = objectUrl;
-      link.download = isNewDevicesVariant
-        ? "loxmatter-project-patched-with-new-devices.Loxone"
-        : "loxmatter-project-patched.Loxone";
+      link.download = "loxmatter-project-patched.Loxone";
       link.click();
       // Delayed release like in `requestDownload` above - some browsers
       // (Firefox) only start the download of an object URL after the

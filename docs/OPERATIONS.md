@@ -48,18 +48,18 @@ This runs via `POST /api/export/project-sync`, in the WebUI at the top under
 it that have to be imported one by one. Instead of importing templates one
 at a time, an existing Loxone project file can be uploaded — the tool
 reconciles it against the stored devices and returns a patched version for
-download. Updates to virtual inputs/outputs that already exist, and new
-signals within devices that already exist, are the default. **Completely new
-device containers are experimental** and are only included via an explicit
-checkbox in the WebUI: the ID scheme needed for new objects is derived from a
-single real project file, is not officially documented and is **not
-verified**. If the project has never had a virtual input or output of this
-kind (no `VirtualInCaption`/`VirtualOutCaption` section), that same
-experimental path now creates this section automatically along with it,
-instead of locking the checkbox — no more manual preparation in Loxone
-Config, but one more unverified object in the chain. Before trusting this
-path for the first time: open a file patched this way in Loxone Config once
-and check it for errors. Details:
+download. It updates virtual inputs/outputs that already exist, adds new
+signals within devices that already exist, and creates completely new device
+containers for devices the project does not have yet. If the project has
+never had a virtual input or output of this kind (no
+`VirtualInCaption`/`VirtualOutCaption` section), the sync creates that
+section along with it — no manual preparation in Loxone Config.
+
+New containers used to be experimental and behind a checkbox in the WebUI.
+Since 2026-09-11 they are part of every patched file: the ID scheme for new
+objects is still derived from real project files rather than an official
+Loxone document, but files patched this way have opened and worked in Loxone
+Config in real use. Details:
 [project file sync design](superpowers/specs/2026-09-03-project-file-sync-design.md).
 
 ## Updating when devices are already commissioned

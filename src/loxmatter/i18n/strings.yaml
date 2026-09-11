@@ -1816,9 +1816,9 @@ web.export.projectsync_heading:
   de: "Projektdatei-Sync"
 web.export.projectsync_intro:
   en: |
-    Upload an existing Loxone project file – existing virtual inputs/outputs are updated, new signals are added. Nothing is downloaded before you have seen the plan.
+    Upload an existing Loxone project file – existing virtual inputs/outputs are updated, new signals are added, and new devices get inputs/outputs of their own. Nothing is downloaded before you have seen the plan.
   de: |
-    Bestehende Loxone-Projektdatei hochladen – vorhandene virtuelle Ein-/Ausgänge werden aktualisiert, neue Signale ergänzt. Nichts wird heruntergeladen, bevor du den Plan gesehen hast.
+    Bestehende Loxone-Projektdatei hochladen – vorhandene virtuelle Ein-/Ausgänge werden aktualisiert, neue Signale ergänzt, und neue Geräte bekommen eigene Ein-/Ausgänge. Nichts wird heruntergeladen, bevor du den Plan gesehen hast.
 web.export.projectsync_bridge_ip_hint_prefix:
   en: "Please set the bridge IP in "
   de: "Bitte zuerst in "
@@ -1938,9 +1938,6 @@ web.export.projectsync_attr_cmd_on:
 web.export.projectsync_attr_cmd_off:
   en: "Command off"
   de: "Befehl Aus"
-web.export.projectsync_new_devices_checkbox:
-  en: "Also create new device containers (experimental, not yet validated against Loxone Config)"
-  de: "Neue Geräte-Container ebenfalls anlegen (experimentell, noch nicht gegen Loxone Config validiert)"
 web.export.projectsync_download_button:
   en: "Download patched file"
   de: "Gepatchte Datei herunterladen"
