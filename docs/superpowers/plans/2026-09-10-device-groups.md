@@ -1045,9 +1045,15 @@ def test_a_bad_value_is_reported_before_anything_is_sent():
 
 
 async def test_the_calls_of_one_member_keep_their_order():
-    """The colour path sends colour and then brightness to ONE device, and
-    that order is deliberate (`_EXECUTE_IF_OFF` in translate.py). A flat
-    gather over all calls of all members would destroy it."""
+    """The order in which `invoke` is ENTERED for one member.
+
+    **Correction made during execution:** this test does NOT discriminate a
+    flat gather — `asyncio.gather` runs every coroutine's synchronous prefix
+    in creation order, so recording before the only `await` cannot detect
+    one. The in-flight guarantee needs a second test that asserts a member's
+    second call has not been entered while its first is still running; the
+    implementation added `test_a_member_s_second_call_waits_for_the_first_to_return`
+    for exactly that. Keep both."""
     plans = plan_group_calls([colour_target(1, 11, "A"), colour_target(2, 22, "B")], "60100060")
     seen: list[tuple[int, int]] = []
 
@@ -2165,7 +2171,10 @@ def test_on_and_off_are_paired_without_an_endpoint(group):
     endpoint, so the group variant pairs over the cluster alone."""
     store, created = group
     outputs = to_group_outputs(store.group_commands(created.id))
-    combined = [o for o in outputs if o.off_path is not None]
+    # `off_path` defaults to "" and is never None, so `is not None` here
+    # would match every output and the test would pass without pairing
+    # working at all. Correction made during execution.
+    combined = [o for o in outputs if o.off_path]
     assert len(combined) == 1
     assert "/cmd/g" in combined[0].path
     assert "/cmd/g" in combined[0].off_path
