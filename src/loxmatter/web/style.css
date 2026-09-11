@@ -1244,6 +1244,7 @@ footer.hint-block {
 }
 
 .type-badge {
+  position: relative;
   width: 2.1rem;
   height: 2.1rem;
   border-radius: 7px;
@@ -1253,6 +1254,31 @@ footer.hint-block {
   background: var(--type-bg);
   color: var(--type-fg);
   flex: none;
+}
+
+/* The transport badge sits on the category icon's lower right corner
+   (design 2026-09-11, section 5.3). `.device-card` already has
+   `overflow: visible`, so the overhang is not clipped, and the head's
+   0.4rem gap is wider than the 0.35rem overhang, so it never touches
+   the name field. */
+.transport-badge {
+  position: absolute;
+  right: -0.35rem;
+  bottom: -0.35rem;
+  width: 1.05rem;
+  height: 1.05rem;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--surface);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+}
+.transport-badge .icon {
+  width: 0.72rem;
+  height: 0.72rem;
+  stroke-width: 2.2;
 }
 
 .status-pill {

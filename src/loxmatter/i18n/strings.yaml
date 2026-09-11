@@ -942,6 +942,15 @@ web.devices.changed_since_export:
 web.devices.offline:
   en: "Offline"
   de: "Offline"
+web.devices.transport_thread:
+  # Tooltip and accessible name of the small badge on a tile's category
+  # icon (design 2026-09-11, section 5.3). No official logo is used:
+  # "Matter" is a trademark of the Connectivity Standards Alliance.
+  en: "Matter over Thread"
+  de: "Matter über Thread"
+web.devices.transport_ip:
+  en: "Matter over IP"
+  de: "Matter über IP"
 web.devices.last_heard:
   en: "Last heard {text}"
   de: "Zuletzt gehört {text}"

@@ -103,6 +103,7 @@ from loxmatter.model.store import Store, StoredDevice, StoredSignal, UnknownDevi
 from loxmatter.profiles.categories import CATEGORY_RANK, category_for
 from loxmatter.profiles.endpoints import endpoint_labels
 from loxmatter.profiles.table import Exportability, is_exportable
+from loxmatter.profiles.transport import transport_for
 from loxmatter.sources import SourceNotConfiguredError, Sources
 
 logger = logging.getLogger(__name__)
@@ -240,6 +241,7 @@ def _device_out(device: StoredDevice, store: Store, runtime: RuntimeValues) -> D
         id=device.id,
         technology=device.technology,
         address=device.address,
+        transport=transport_for(device.technology, device.network_features),
         label=device.label,
         online=online,
         last_heard=last_heard,

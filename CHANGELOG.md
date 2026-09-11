@@ -26,6 +26,10 @@ people who don't know the code.
 - These are the bridge's own groups, not Matter's. No Matter server this bridge
   can use offers group messaging, so nothing is created on the devices
   themselves.
+- **Thread or IP at a glance.** Every device tile now carries a small badge on
+  its icon showing whether the device talks to the bridge over Thread or over
+  your IP network (Wi-Fi or Ethernet). Hover it for the name. A device that
+  does not say how it is connected gets no badge rather than a guess.
 
 ## [0.3.10] — 2026-09-10
 

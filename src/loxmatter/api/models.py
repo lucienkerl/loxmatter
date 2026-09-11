@@ -90,6 +90,9 @@ class DeviceOut(BaseModel):
     # 2026-09-11, section 5.3). Not used by the web UI today.
     technology: str
     address: str
+    # "thread", "ip", "zigbee" or None - see `profiles/transport.py`. The
+    # tile shows a badge only when this is not None.
+    transport: str | None
     label: str
     online: bool
     # When something last arrived from this device at all; `None` if

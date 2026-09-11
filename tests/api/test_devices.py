@@ -1014,3 +1014,13 @@ async def test_recommissioning_a_known_device_uses_set_room_not_rename_device(ap
 
     assert response.status_code == 201
     assert store.device(device_id).room == "Küche"
+
+
+async def test_the_device_list_says_how_a_device_is_connected(api):
+    """The GRILLPLATS fixture reports NetworkCommissioning FeatureMap 2.
+    Fault to prove it: return `None` from `transport_for` for Thread."""
+    client, _, _, _ = api
+    devices = (await client.get("/api/devices")).json()
+    assert devices[0]["transport"] == "thread"
+    assert devices[0]["technology"] == "matter"
+    assert "node_id" not in devices[0]
