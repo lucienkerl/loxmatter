@@ -96,7 +96,10 @@ def test_command_keys_match_the_exported_scheme(store):
     ]
 
 
-def test_node_id_is_stored_so_the_runtime_can_address_the_device(store):
+def test_a_command_carries_its_owning_devices_address(store):
+    """A command's `(technology, address)` come from the owning device via
+    the join in `Store._COMMAND_SELECT`, not a value passed in at
+    registration time - see `register_commands`."""
     _, snap, commands = registered(store, "ikea_grillplats_plug.json")
     assert {c.address for c in commands} == {str(snap.node_id)}
 

@@ -119,10 +119,25 @@ def _build_v8_database(path: Path) -> None:
     db.close()
 
 
-def test_a_v8_database_moves_node_ids_into_addresses(tmp_path):
-    """Protects: the `address` backfill, the two dropped columns, and that
-    no Loxone key changes. Fault to prove it: comment out the `UPDATE
-    device SET address = ...` line in `_migrate_to_v9`."""
+def test_a_v8_database_gains_addresses_and_keeps_node_ids(tmp_path, monkeypatch):
+    """Protects: the `address` backfill and that no Loxone key changes.
+    `node_id` stays on both tables (fix round 1, rollback compatibility -
+    see `_migrate_to_v9`), so this no longer checks that it is gone; that
+    guarantee moved to `test_version_8_code_still_works_on_a_version_9_database`.
+
+    `_repair_rows_written_by_older_versions` runs right after `_migrate` on
+    every `Store.__init__` (fix round 1) and happens to perform the exact
+    same backfill this test wants to pin on `_migrate_to_v9` alone
+    (`address = CAST(node_id AS TEXT) WHERE address = ''`) - left wired up,
+    it would silently paper over a broken migration and this test would
+    stay green regardless. It is monkeypatched to a no-op here so that only
+    `_migrate_to_v9`'s own line is exercised; its own behaviour has its own
+    test, `test_a_device_added_by_version_8_code_is_addressable_after_rolling_forward`.
+    Fault to prove it: comment out the `UPDATE device SET address = ...`
+    line in `_migrate_to_v9`."""
+    from loxmatter.model import store as store_module
+
+    monkeypatch.setattr(store_module, "_repair_rows_written_by_older_versions", lambda db: None)
     path = tmp_path / "v8.sqlite"
     _build_v8_database(path)
 
@@ -137,8 +152,8 @@ def test_a_v8_database_moves_node_ids_into_addresses(tmp_path):
         assert (command.technology, command.address) == ("matter", "23")
     finally:
         store.close()
-    assert "node_id" not in _columns(path, "device")
-    assert "node_id" not in _columns(path, "command")
+    assert "node_id" in _columns(path, "device")
+    assert "node_id" in _columns(path, "command")
 
 
 def test_a_fresh_database_runs_migration_9_without_duplicate_column(tmp_path):
@@ -185,6 +200,103 @@ def test_a_failing_migration_9_leaves_version_8_intact(tmp_path, monkeypatch):
     assert _user_version(path) == 8
     assert "node_id" in _columns(path, "device")
     assert "technology" not in _columns(path, "device")
+
+
+def test_version_8_code_still_works_on_a_version_9_database(tmp_path):
+    """Protects the rollback promise `deploy/updater/update-once.sh` relies
+    on (fix round 1): `update-once.sh` rolls a failed update back to the
+    OLD image WITHOUT restoring the database, on the invariant that every
+    migration only ADDS columns - so version-8 code, unmodified, must still
+    read and write a version-9 database exactly the way it always has.
+
+    Runs the LITERAL version-8 SQL statements (not `Store` methods) against
+    a database this version's `Store` created and populated - the only way
+    to actually prove old code still works, rather than merely that new
+    code still emits the old column.
+
+    Fault to prove it: make `Store._legacy_node_id_for` return `0` for
+    Matter too, instead of `int(address)` - the node-14 lookup below then
+    finds nothing (it looks for `node_id = 14`, but every row would carry
+    `node_id = 0`)."""
+    path = tmp_path / "s.sqlite"
+    store = Store(path)
+    snapshot = _fixture("ikea_kajplats_ws_lamp.json")
+    device_id = store.register_device(snapshot)
+    store.register_commands(device_id, extract_commands(snapshot))
+    store.close()
+
+    db = sqlite3.connect(path)
+    try:
+        row = db.execute("SELECT id FROM device WHERE node_id = ? AND active = 1", (14,)).fetchone()
+        assert row is not None
+        assert row[0] == device_id
+
+        node_ids = {
+            r[0]
+            for r in db.execute("SELECT node_id FROM command WHERE device_id = ?", (device_id,))
+        }
+        assert node_ids == {14}
+
+        db.execute(
+            "INSERT INTO device (unique_id, node_id, label, udp_port, updated_at, room,"
+            " device_types) VALUES ('old', 99, 'Old', 7000, NULL, NULL, NULL)"
+        )
+        # command_id 99: the lamp's own commands already occupy 0/1/2 on
+        # cluster 6 (off/on/toggle, see `extract_commands`) - an unused id
+        # keeps this a genuinely new row rather than colliding with the
+        # UNIQUE (device_id, endpoint, cluster_id, command_id) constraint.
+        db.execute(
+            "INSERT INTO command (device_id, node_id, endpoint, cluster_id, command_id, key,"
+            " slug, takes_value) VALUES (?, 14, 1, 6, 99, ?, 'legacy', 0)",
+            (device_id, f"d{device_id}_1_legacy"),
+        )
+        db.commit()
+    finally:
+        db.close()
+
+
+def test_a_device_added_by_version_8_code_is_addressable_after_rolling_forward(tmp_path):
+    """The other half of the rollback story (fix round 1): a device
+    commissioned by version-8 code WHILE rolled back (no `technology`/
+    `address` in its INSERT, so both sit at their column defaults - `matter`
+    and `''`) must become addressable again as soon as the bridge is rolled
+    FORWARD to this version - `_repair_rows_written_by_older_versions` runs
+    on every `Store.__init__` for exactly this. Fault to prove it: remove
+    the `_repair_rows_written_by_older_versions(self._db)` call from
+    `Store.__init__`."""
+    path = tmp_path / "s.sqlite"
+    Store(path).close()
+
+    db = sqlite3.connect(path)
+    try:
+        db.execute(
+            "INSERT INTO device (unique_id, node_id, label, udp_port, updated_at, room,"
+            " device_types) VALUES ('legacy-device', 99, 'Legacy', 7000, NULL, NULL, NULL)"
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    store = Store(path)
+    try:
+        device_id = store.device_id_for("matter", "99")
+        assert device_id is not None
+        assert store.device(device_id).address == "99"
+    finally:
+        store.close()
+
+
+def test_a_device_without_a_unique_id_falls_back_to_its_address(tmp_path):
+    """Pins `_device_identity`'s fallback for a device that reports no
+    UniqueID at all (Spec 7.2) - `ikea_bilresa_button.json` is exactly such
+    a fixture. Fault to prove it: change the `f"node:{...}"` fallback
+    string in `_device_identity`, e.g. to drop the `node:` prefix."""
+    store = Store(tmp_path / "s.sqlite")
+    try:
+        device_id = store.register_device(_fixture("ikea_bilresa_button.json"))
+        assert store.device(device_id).unique_id == "node:4"
+    finally:
+        store.close()
 
 
 def test_device_id_for_tells_technologies_apart(tmp_path):

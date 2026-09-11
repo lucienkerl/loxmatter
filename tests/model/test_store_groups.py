@@ -765,10 +765,11 @@ def test_a_member_carrying_the_pair_on_two_endpoints_gets_both(store, lamps_with
     on = next(c for c in store.group_commands(group.id) if c.slug == "on")
     store._db.execute(
         "INSERT INTO command"
-        " (device_id, endpoint, cluster_id, command_id, key, slug, takes_value)"
-        " VALUES (?, ?, ?, ?, ?, ?, ?)",
+        " (device_id, node_id, endpoint, cluster_id, command_id, key, slug, takes_value)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         (
             lamps_with_commands[0],
+            int(store.device(lamps_with_commands[0]).address),
             99,
             on.cluster_id,
             on.command_id,

@@ -123,10 +123,13 @@ DEFAULT_LISTEN_PORT = 8080
 # `device_group`, `device_group_member` and `group_command`, see
 # `_migrate_to_v8` - all three are already present in a fresh database via
 # `_SCHEMA`, so the migration is only needed for existing databases.
-# Version 9 (device source boundary, design 2026-09-11) replaces the Matter
-# node ID as device identity with `device.technology` + `device.address`,
-# adds `device.network_features`, and drops `node_id` from `device` and from
-# `command` (where it was a redundant copy), see `_migrate_to_v9`.
+# Version 9 (device source boundary, design 2026-09-11) adds
+# `device.technology` + `device.address` as the identity the rest of the
+# code reads from now on, and `device.network_features`, see
+# `_migrate_to_v9`. `device.node_id` and `command.node_id` are NOT dropped,
+# even though nothing in this codebase reads them past this migration - see
+# `_migrate_to_v9`'s docstring for why (rollback compatibility with
+# `deploy/updater/update-once.sh`).
 _SCHEMA_VERSION = 9
 
 
@@ -146,6 +149,7 @@ _SCHEMA = """
 CREATE TABLE IF NOT EXISTS device (
     id               INTEGER PRIMARY KEY AUTOINCREMENT,
     unique_id        TEXT NOT NULL,
+    node_id          INTEGER NOT NULL,
     technology       TEXT NOT NULL DEFAULT 'matter',
     address          TEXT NOT NULL DEFAULT '',
     label            TEXT NOT NULL,
@@ -176,6 +180,7 @@ CREATE TABLE IF NOT EXISTS signal (
 CREATE TABLE IF NOT EXISTS command (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     device_id   INTEGER NOT NULL REFERENCES device(id),
+    node_id     INTEGER NOT NULL,
     endpoint    INTEGER NOT NULL,
     cluster_id  INTEGER NOT NULL,
     command_id  INTEGER NOT NULL,
@@ -239,14 +244,6 @@ def _add_column_if_missing(db: sqlite3.Connection, table: str, column: str, ddl:
         return False
     db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
     return True
-
-
-def _drop_column_if_present(db: sqlite3.Connection, table: str, column: str) -> None:
-    """The mirror image of `_add_column_if_missing`, for the same pitfall:
-    a fresh database never had `column`, and still runs every migration."""
-    columns = {str(row["name"]) for row in db.execute(f"PRAGMA table_info({table})")}
-    if column in columns:
-        db.execute(f"ALTER TABLE {table} DROP COLUMN {column}")
 
 
 def _migrate_to_v1(db: sqlite3.Connection) -> None:
@@ -696,13 +693,31 @@ def _migrate_to_v8(db: sqlite3.Connection) -> None:
 
 
 def _migrate_to_v9(db: sqlite3.Connection) -> None:
-    """Technology plus address instead of the Matter node ID (design
-    2026-09-11, section 4.1).
+    """Technology plus address alongside the Matter node ID (design
+    2026-09-11, section 4.1; kept additive after human review, fix round 1).
 
-    `node_id` is dropped rather than left as a dead column: it is `NOT
-    NULL`, and a Zigbee row would have to invent a node ID to satisfy it.
-    `DROP COLUMN` needs SQLite 3.35; the image ships 3.46.1 (measured 11
-    September 2026).
+    **`node_id` is intentionally NOT dropped**, even though nothing in this
+    codebase reads `device.node_id`/`command.node_id` past this migration -
+    the first version of this migration dropped both columns, and that was
+    wrong. `deploy/updater/update-once.sh` rolls a failed update back to the
+    OLD image WITHOUT restoring the database (its own failure report says so
+    verbatim: "Signal database: NOT restored automatically ... an older
+    version starts up fine on a newer schema") - that promise rests on every
+    migration only ever ADDING columns, never removing one a previous
+    version still reads or writes. Version 8 code reads `device.node_id`
+    (`device_id_for_node`, `_as_device`) and writes `command.node_id`
+    (`register_commands`); dropping either column would leave a rolled-back
+    bridge broken while `/health` still answers "healthy". The updater
+    sidecar does not update itself (see the README), so a fix to the
+    updater's own rollback logic would never reach an installation that is
+    already running it. Hence: migration 9 only adds columns.
+
+    `Store.register_device`/`Store.register_commands` (this task, fix round
+    1) keep writing `node_id` for exactly this reason - see
+    `_legacy_node_id_for` - so a schema-9 database stays fully usable by
+    schema-8 code after a rollback. `_repair_rows_written_by_older_versions`
+    is the other half: it repairs a device row that version-8 code inserted
+    (no `technology`/`address`) if the bridge is later rolled FORWARD again.
 
     `address` is `NOT NULL DEFAULT ''` in both this migration and `_SCHEMA`,
     so a migrated and a fresh database end up with the same column
@@ -719,8 +734,6 @@ def _migrate_to_v9(db: sqlite3.Connection) -> None:
     device_columns = {str(row["name"]) for row in db.execute("PRAGMA table_info(device)")}
     if "node_id" in device_columns:
         db.execute("UPDATE device SET address = CAST(node_id AS TEXT) WHERE address = ''")
-    _drop_column_if_present(db, "device", "node_id")
-    _drop_column_if_present(db, "command", "node_id")
 
 
 # Migrations in order, applied from whichever version is stored - to extend
@@ -767,6 +780,35 @@ def _migrate(db: sqlite3.Connection) -> None:
         raise
     else:
         db.commit()
+
+
+def _repair_rows_written_by_older_versions(db: sqlite3.Connection) -> None:
+    """Heals a device row that version-8 code inserted into a version-9
+    database (fix round 1, rollback compatibility - see `_migrate_to_v9`).
+
+    The scenario: an update fails, `update-once.sh` rolls back to the OLD
+    (schema-8-only) image WITHOUT restoring the database, and that old code
+    commissions a new device while running against this newer schema. Its
+    `INSERT INTO device (unique_id, node_id, label, udp_port, ...)` never
+    mentions `technology`/`address` at all, so the row lands with the
+    column defaults - `technology = 'matter'`, `address = ''`. That is a
+    real, unaddressable device from the moment the bridge is rolled FORWARD
+    again: `address = ''` matches no snapshot's `_identity_of`, so
+    `backfill_commands`/`backfill_device_types`/`backfill_network_features`
+    and every `device_id_for("matter", ...)` lookup silently skip it.
+
+    Called on every start, right after `_migrate` - not folded into
+    `_migrate_to_v9` itself, because this fixes damage a LATER (schema-8)
+    write can do to an ALREADY-migrated database; a migration only ever
+    runs once, going forward, and would never see this again. `technology =
+    'matter'` in the WHERE clause: a hypothetical non-Matter row with a
+    genuinely empty address (never produced by this codebase today) must
+    not be reinterpreted as node 0."""
+    db.execute(
+        "UPDATE device SET address = CAST(node_id AS TEXT)"
+        " WHERE address = '' AND technology = 'matter'"
+    )
+    db.commit()
 
 
 @dataclass(frozen=True)
@@ -1071,6 +1113,7 @@ class Store:
         self._db.executescript(_SCHEMA)
         self._db.commit()
         _migrate(self._db)
+        _repair_rows_written_by_older_versions(self._db)
         # A view onto the same connection, not a second connection - see
         # the module docstring of `auth_store.py`.
         self.auth = AuthStore(self._db)
@@ -1147,6 +1190,26 @@ class Store:
         derives it, so the snapshot's own fields replace it in one edit."""
         return ("matter", str(snapshot.node_id))  # TRANSITIONAL (Task 3)
 
+    @staticmethod
+    def _legacy_node_id_for(technology: str, address: str) -> int:
+        """The value written into the `device.node_id`/`command.node_id`
+        columns that schema 9 keeps only for rollback compatibility (fix
+        round 1, see `_migrate_to_v9`).
+
+        MUST NEVER BE READ by any code in this version - `StoredDevice` and
+        `StoredCommand` deliberately have no `node_id` field, and every
+        reader in this class goes through `technology`/`address` instead.
+        This exists purely so that version-8 code (`device_id_for_node`,
+        `_as_device`, `register_commands`'s old INSERT) still finds a
+        usable `node_id` in every row if the bridge is rolled back to that
+        version without its database being restored. For a Matter device,
+        `address` IS `str(node_id)` (see `_identity_of`), so this recovers
+        the original integer; a non-Matter (future Zigbee) row has no
+        Matter node ID to recover, so it gets `0` - a value no real Matter
+        node ever has, and one schema-8 code never has to resolve anyway,
+        since schema 8 predates any non-Matter source."""
+        return int(address) if technology == "matter" else 0
+
     def register_device(self, snapshot: NodeSnapshot, room: str | None = None) -> int:
         """Creates a device, or returns the id of an already known active
         device without changing it.
@@ -1172,11 +1235,12 @@ class Store:
         technology, address = self._identity_of(snapshot)
         cur = self._db.execute(
             "INSERT INTO device"
-            " (unique_id, technology, address, label, udp_port, updated_at, room,"
+            " (unique_id, node_id, technology, address, label, udp_port, updated_at, room,"
             " device_types, network_features)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 identity,
+                self._legacy_node_id_for(technology, address),
                 technology,
                 address,
                 label,
@@ -2241,11 +2305,17 @@ class Store:
                         f"key {key!r}"
                     )
                 taken.add(key)
+                # `node_id` is a copy of the owning device's, read back via
+                # the subquery rather than passed in by the caller: kept
+                # only for schema-8 rollback compatibility (see
+                # `_migrate_to_v9`), never read by this version's own code.
                 self._db.execute(
                     "INSERT INTO command "
-                    "(device_id, endpoint, cluster_id, command_id, key, slug, takes_value)"
-                    " VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    "(device_id, node_id, endpoint, cluster_id, command_id, key, slug,"
+                    " takes_value)"
+                    " VALUES (?, (SELECT node_id FROM device WHERE id = ?), ?, ?, ?, ?, ?, ?)",
                     (
+                        device_id,
                         device_id,
                         command.endpoint,
                         command.cluster_id,
