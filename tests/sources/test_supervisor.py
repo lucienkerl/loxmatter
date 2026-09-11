@@ -22,14 +22,15 @@ import asyncio
 
 import pytest
 
-from loxmatter.matter.supervisor import attach, supervise
+from loxmatter.sources.supervisor import attach, supervise
 
 
 class FakeClient:
     """Stands in for `BridgeMatterClient`, as far as the supervisor uses it."""
 
-    def __init__(self, connect_failures: int = 0) -> None:
+    def __init__(self, connect_failures: int = 0, technology: str = "matter") -> None:
         self._connect_failures = connect_failures
+        self.technology = technology
         self.connect_calls = 0
         self.subscribe_calls = 0
         self._link_lost = asyncio.Event()
@@ -48,6 +49,7 @@ class FakeClient:
 
     async def subscribe(self, resolve_device_id, handler) -> None:
         self.subscribe_calls += 1
+        self.resolver = resolve_device_id
 
     async def snapshots(self) -> list[object]:
         return []
@@ -57,12 +59,19 @@ class FakeStore:
     def __init__(self) -> None:
         self.backfill_types_calls = 0
         self.backfill_commands_calls = 0
+        self.backfill_features_calls = 0
+        self.lookups: list[tuple[str, str]] = []
 
     def device_id_for(self, technology: str, address: str) -> int | None:
+        self.lookups.append((technology, address))
         return None
 
     def backfill_device_types(self, snapshots) -> int:
         self.backfill_types_calls += 1
+        return 0
+
+    def backfill_network_features(self, snapshots) -> int:
+        self.backfill_features_calls += 1
         return 0
 
     def backfill_commands(self, snapshots) -> int:
@@ -105,6 +114,27 @@ async def test_attach_runs_the_whole_startup_sequence():
     # the link dropped.
     assert runtime.resend_calls == 1
     assert gained == 3
+
+
+async def test_attach_resolves_addresses_in_the_sources_own_technology():
+    """A non-Matter source, so a resolver bound to "matter" cannot pass.
+    Fault to prove it: bind `partial(store.device_id_for, "matter")` in
+    `attach` instead of `source.technology`."""
+    source = FakeClient(technology="zigbee")
+    store = FakeStore()
+
+    await attach(source, store, FakeRuntime())
+    source.resolver("00:12:4b:00:1c:a1:b2:c3")
+
+    assert store.lookups == [("zigbee", "00:12:4b:00:1c:a1:b2:c3")]
+
+
+async def test_attach_backfills_network_features():
+    """Fault to prove it: remove the `store.backfill_network_features(...)`
+    line from `attach`."""
+    store = FakeStore()
+    await attach(FakeClient(), store, FakeRuntime())
+    assert store.backfill_features_calls == 1
 
 
 async def test_supervise_rebuilds_after_a_link_loss():

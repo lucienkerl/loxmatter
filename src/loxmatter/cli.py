@@ -56,11 +56,11 @@ from loxmatter.matter.discovery import (
     find_unreported_attributes,
 )
 from loxmatter.matter.models import NodeSnapshot, SignalKind
-from loxmatter.matter.supervisor import attach, supervise
 from loxmatter.model.locale_store import LocaleStore
 from loxmatter.model.store import Store
 from loxmatter.profiles.table import is_exportable
 from loxmatter.sources import Sources
+from loxmatter.sources.supervisor import attach, supervise
 
 logger = logging.getLogger(__name__)
 
@@ -663,7 +663,7 @@ async def _run(
     runtime = Runtime(store, sender, link_ok=sources.all_connected)
     invoke = sources.send
 
-    supervisor_task: asyncio.Task[None] | None = None
+    supervisor_tasks: list[asyncio.Task[None]] = []
     try:
         try:
             await client.connect()
@@ -672,17 +672,19 @@ async def _run(
         except MatterUnavailableError as exc:
             _fail(i18n.t("cli.common.fail_matter_not_ready", url=url, exc=exc))
         await runtime.start()
-        # Since 8 September 2026 the startup sequence and the rebuild share
-        # one place (`matter.supervisor.attach`) - see there for why.
-        gained = await attach(client, store, runtime)
+        gained = 0
+        for source in sources.all():
+            gained += await attach(source, store, runtime)
         if gained:
             typer.echo(i18n.t("cli.run.echo_commands_backfilled", count=gained))
-        # The supervisor runs for as long as the service runs: if the
-        # websocket to matter-server dies, it rebuilds the connection and
-        # lets `attach` run again. Without it the bridge stays mute after a
-        # restart of matter-server, without reporting it - exactly the
-        # outage of 8 September 2026.
-        supervisor_task = asyncio.ensure_future(supervise(client, store, runtime))
+        # A supervisor per source runs for as long as the service runs: if
+        # the connection to a source dies, it rebuilds it and lets `attach`
+        # run again. Without it the bridge stays mute after a restart of a
+        # source, without reporting it - exactly the outage of
+        # 8 September 2026.
+        supervisor_tasks = [
+            asyncio.ensure_future(supervise(source, store, runtime)) for source in sources.all()
+        ]
 
         # `log_handler` arrives already finished (see the docstring above,
         # "Log ring" section) - `install_log_buffer()` itself has, since
@@ -705,7 +707,7 @@ async def _run(
         )
         await uvicorn.Server(config).serve()
     finally:
-        if supervisor_task is not None:
+        for supervisor_task in supervisor_tasks:
             supervisor_task.cancel()
             try:
                 await supervisor_task
@@ -726,7 +728,7 @@ async def _run(
                 # ended earlier on some other exception, `await` delivers it here -
                 # and without this `except` the whole rest of the cleanup would be
                 # skipped, `store.close()` included.
-                logger.exception("Supervisor of the matter-server connection ended with an error")
+                logger.exception("Supervisor of a device source ended with an error")
         try:
             await runtime.stop()
         except asyncio.CancelledError:
@@ -739,14 +741,15 @@ async def _run(
             raise
         except Exception:
             logger.exception("UDP sender could not be closed cleanly on shutdown")
-        try:
-            await client.disconnect()
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            logger.exception(
-                "Connection to matter-server could not be disconnected cleanly on shutdown"
-            )
+        for source in sources.all():
+            try:
+                await source.disconnect()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception(
+                    "Source %s could not be disconnected cleanly on shutdown", source.technology
+                )
         store.close()
 
 

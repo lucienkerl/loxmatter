@@ -407,7 +407,7 @@ class BridgeMatterClient:
 
         `asyncio.wait` instead of `await task`: an `await` on a task
         PROPAGATES the waiter's cancellation to the task. If the supervisor
-        (see `matter/supervisor.py`) is cancelled during shutdown, it would
+        (see `sources/supervisor.py`) is cancelled during shutdown, it would
         tear the listener down with it - and `disconnect()` would find it
         already cancelled. `asyncio.wait` does not touch the tasks handed
         to it.
@@ -663,7 +663,7 @@ class BridgeMatterClient:
         its node ID, see the module docstring) to the store's stable
         `device_id`. It is `Store.device_id_for` bound to this source's
         technology - e.g. `functools.partial(store.device_id_for,
-        "matter")`, see `matter.supervisor.attach` - exactly this
+        "matter")`, see `sources.supervisor.attach` - exactly this
         mapping happens here, BEFORE `handler` sees anything, because the
         keys in Loxone hang off the `device_id`, not the node ID (see the
         module docstring, `Store` and the task 8 report). If

@@ -14,7 +14,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Keeps the connection to matter-server alive.
+"""Keeps the connection to a device source alive.
 
 On 8 September 2026 the websocket to matter-server died, and loxmatter did
 not reconnect - it did not even notice. From the outside everything looked
@@ -28,6 +28,10 @@ connection needs `Store` and `Runtime`, and a client that knows half the
 application would be the worse boundary. The client only reports that the
 connection is gone (`wait_for_link_loss`); what has to happen afterwards is
 this layer's knowledge.
+
+Moved from `matter/supervisor.py` on 11 September 2026 (design device source
+boundary, section 3.3): nothing in it was Matter-specific except the type of
+its argument, and a second source needs the same guarantees.
 """
 
 from __future__ import annotations
@@ -38,8 +42,8 @@ from collections.abc import Awaitable, Callable
 from functools import partial
 
 from loxmatter.loxone.runtime import Runtime
-from loxmatter.matter.client import BridgeMatterClient
 from loxmatter.model.store import Store
+from loxmatter.sources import DeviceSource
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +51,7 @@ BACKOFF_START_SECONDS = 1.0
 BACKOFF_MAX_SECONDS = 60.0
 
 
-async def attach(client: BridgeMatterClient, store: Store, runtime: Runtime) -> int:
+async def attach(source: DeviceSource, store: Store, runtime: Runtime) -> int:
     """Binds an existing connection to the store and the runtime.
 
     Exactly the sequence that, until 8 September 2026, lived only in
@@ -71,20 +75,18 @@ async def attach(client: BridgeMatterClient, store: Store, runtime: Runtime) -> 
     heartbeat and resend loops, and those are meant to outlast an outage,
     not to begin anew with it.
     """
-    await client.subscribe(
-        partial(store.device_id_for, "matter"),  # TRANSITIONAL (Task 6)
-        runtime,
-    )
-    snapshots = await client.snapshots()
+    await source.subscribe(partial(store.device_id_for, source.technology), runtime)
+    snapshots = await source.snapshots()
     await runtime.seed_from_snapshot(snapshots)
     store.backfill_device_types(snapshots)
+    store.backfill_network_features(snapshots)
     gained: int = store.backfill_commands(snapshots)
     await runtime.resend_all()
     return gained
 
 
 async def supervise(
-    client: BridgeMatterClient,
+    source: DeviceSource,
     store: Store,
     runtime: Runtime,
     *,
@@ -106,8 +108,8 @@ async def supervise(
     """
     while True:
         try:
-            await client.wait_for_link_loss()
-            logger.warning("connection to matter-server lost - rebuilding it")
+            await source.wait_for_link_loss()
+            logger.warning("connection of source %s lost - rebuilding it", source.technology)
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -128,8 +130,8 @@ async def supervise(
         delay = backoff_start
         while True:
             try:
-                await client.connect()
-                gained = await attach(client, store, runtime)
+                await source.connect()
+                gained = await attach(source, store, runtime)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
@@ -145,7 +147,8 @@ async def supervise(
                 # cause - and on 8 September 2026 that was exactly the reason why
                 # nobody found the actual cause of the outage.
                 logger.warning(
-                    "rebuild failed (%s) - next attempt in %.0f s",
+                    "rebuild of source %s failed (%s) - next attempt in %.0f s",
+                    source.technology,
                     exc,
                     delay,
                     exc_info=exc,
@@ -154,7 +157,8 @@ async def supervise(
                 delay = min(delay * 2, backoff_max)
             else:
                 logger.info(
-                    "connection to matter-server restored (%d commands backfilled)",
+                    "connection of source %s restored (%d commands backfilled)",
+                    source.technology,
                     gained,
                 )
                 break

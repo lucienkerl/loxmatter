@@ -420,7 +420,7 @@ class _YieldingUvicornServer:
 
 
 class _SpySupervisor:
-    """Stands in for `matter.supervisor.supervise` - records WITH WHAT the
+    """Stands in for `sources.supervisor.supervise` - records WITH WHAT the
     supervisor was started, and then blocks like the original.
 
     The blocking is not incidental: the real `supervise()` never returns on
