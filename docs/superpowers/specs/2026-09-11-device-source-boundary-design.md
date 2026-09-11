@@ -225,17 +225,37 @@ the new columns from `_SCHEMA` and still runs the chain from
 | Table | Change |
 |---|---|
 | `device` | **add** `technology TEXT NOT NULL DEFAULT 'matter'` |
-| `device` | **add** `address TEXT`, filled from `CAST(node_id AS TEXT)` |
+| `device` | **add** `address TEXT NOT NULL DEFAULT ''`, filled from `CAST(node_id AS TEXT)` |
 | `device` | **add** `network_features INTEGER`, the raw FeatureMap of NetworkCommissioning (`0/49/65532`), `NULL` at first |
-| `device` | **drop** `node_id` |
-| `command` | **drop** `node_id`, a redundant copy of the device's; `StoredCommand` gets `technology` and `address` through a join |
+| `device` | **keep** `node_id`, still written: `int(address)` for Matter, `0` for any other technology; never read by version-9 code |
+| `command` | **keep** `node_id`, still written as a copy of the owning device's; `StoredCommand` gets `technology` and `address` through a join and has no `node_id` field |
 
-**Why `node_id` is actually dropped** instead of left as a dead column: it
-is `NOT NULL`, and every Zigbee row would have to invent a node ID to
-satisfy it. `ALTER TABLE … DROP COLUMN` needs SQLite 3.35. The SQLite
-version inside `python:3.12-slim` is the implementation plan's first
-check, not an assumption; if it is older, the migration rebuilds the two
-tables instead.
+**Why `node_id` stays.** This section first said to drop it. The task
+review of the implementation (11 September 2026) found what that would
+break: the web UI updater (`deploy/updater/update-once.sh`, rollback
+section) rolls a failed update back to the previous image **without**
+restoring the database, on the stated invariant that every migration only
+adds columns, so the older version keeps running on the newer schema.
+Version 8 reads `device.node_id` and writes `command.node_id`. Dropping the
+columns would leave a rolled-back bridge unable to subscribe or list its
+devices, while `/health` — which does not touch Matter — still answered.
+Fixing the updater instead would not help existing installations: the
+updater sidecar does not update itself. So migration 9 is additive, and
+the price named above moves into Spec 2: a Zigbee row writes `0` into
+`node_id`, which version-8 code would treat as an unreachable Matter node
+— degraded, not dead.
+
+**Rows written by version 8 after a rollback.** A device commissioned
+while the older version runs against a version-9 database gets
+`technology = 'matter'` by default but `address = ''`, and migration 9
+never runs again when rolling forward. Every start of the store therefore
+repairs such rows (`address = CAST(node_id AS TEXT) WHERE address = ''
+AND technology = 'matter'`). Commands written by version 8 carry a
+`node_id` the new code ignores; they reach their device through the join.
+
+SQLite in `python:3.12-slim` and in the running Pi container is 3.46.1
+(measured 11 September 2026); the migration needs nothing newer than
+`ADD COLUMN`.
 
 ### 4.2 Store API
 
@@ -398,7 +418,9 @@ introduced, the test is seen failing, the fault is reverted.
 
 | Test | Protects | Fault introduced to prove it |
 |---|---|---|
-| Migration 8→9 on a version-8 database built in the test | `address` equals the old `node_id`; `node_id` gone from `device` **and** `command`; signal keys and command keys still resolve | Comment out the `address` backfill |
+| Migration 8→9 on a version-8 database built in the test | `address` equals the old `node_id`; `node_id` still present in `device` **and** `command`; signal keys and command keys still resolve | Comment out the `address` backfill |
+| Version-8 SQL on a version-9 database | The literal statements version 8 runs (lookup by `node_id`, inserts with `node_id`) still work | Write `0` into `node_id` for Matter too |
+| A device inserted by version-8 code | Addressable by `(technology, address)` after reopening the store | Remove the startup repair |
 | Migration on a fresh database | Idempotent: no "duplicate column", no "no such column" | Replace `_add_column_if_missing` with a bare `ALTER` |
 | Migration rollback | A failure inside migration 9 leaves version 8 intact | Fail **after** the first write, not before — otherwise the test only exercises a precheck |
 | `transport_for` | 2→thread, 4→ip, 5→ip, 1→ip, 3→thread, 0→`None`, `None`→`None`, zigbee→zigbee | Swap the Thread bit and the IP bits |

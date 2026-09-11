@@ -2210,7 +2210,7 @@ grep -rn "TRANSITIONAL" src tests scripts
 grep -rn "device_id_for_node\|MatterCall\|to_matter_calls\|send_command\|remove_node(\|follow_node(" src tests scripts | grep -v "_follow_node\|upstream.remove_node\|\.remove_node(int("
 grep -rn "node_id" src --include='*.py' | grep -v "src/loxmatter/matter/client.py\|src/loxmatter/cli.py\|src/loxmatter/matter/otbr.py\|src/loxmatter/matter/models.py"
 ```
-Expected: the first two print nothing. The third prints only (a) `_migrate_to_v9` and the version comment block in `model/store.py`, which must name the old column, and (b) docstring mentions in `api/devices.py`/`api/control.py` of matter-server's own API (`MatterClient.remove_node(node_id)`, `write_attribute(node_id, …)`). Read each hit and confirm it is one of those.
+Expected: the first two print nothing. The third prints only (a) `model/store.py`'s schema, migration 9, its version comment, the rollback-compatibility writer and the startup repair — `node_id` is kept and still written on purpose (spec section 4.1, "Why `node_id` stays"), but no store method may READ it into a row type — and (b) docstring mentions in `api/devices.py`/`api/control.py` of matter-server's own API (`MatterClient.remove_node(node_id)`, `write_attribute(node_id, …)`). Read each hit and confirm it is one of those.
 
 - [ ] **Step 2: Full checks**
 
