@@ -543,8 +543,14 @@
         <p x-show="devicesError" x-cloak class="banner danger" x-text="devicesError"></p>
         <p x-show="deviceActionError" x-cloak class="banner danger" x-text="deviceActionError"></p>
 
+        <!-- Group-aware (fix 2026-09-11): a group survives to zero
+             members, so removing the last device used to leave group
+             tiles in the grid under a hint claiming there are none - every
+             neighbouring condition in this change (the room bar above,
+             `visibleGroups()`) already counts groups, this one had been
+             missed. -->
         <p
-          x-show="devices.length === 0 && !devicesError"
+          x-show="devices.length === 0 && groups.length === 0 && !devicesError"
           class="hint"
           x-text="t('web.devices.empty')"
         ></p>
@@ -555,14 +561,18 @@
              one glance anyway. The search field stays reachable in that case
              regardless, because it also searches by name and category
              without any rooms. -->
-        <div class="room-bar" x-show="devices.length > 0" x-cloak>
+        <div class="room-bar" x-show="devices.length > 0 || groups.length > 0" x-cloak>
           <template x-if="hasAnyRoom()">
             <span class="room-chips">
+              <!-- Groups count towards "All" just as they do towards every
+                   other chip (`roomChips()`): both kinds of tile sit in the
+                   grid below, and a number that disagreed with what appears
+                   under it would be worse than no number. -->
               <button
                 class="room-chip"
                 :class="{ active: roomFilter === null }"
                 @click="roomFilter = null"
-                x-text="t('web.devices.room_all') + ' ' + devices.length"
+                x-text="t('web.devices.room_all') + ' ' + (devices.length + groups.length)"
               ></button>
               <template x-for="chip in roomChips()" :key="chip.key">
                 <button
@@ -638,7 +648,7 @@
               aria-live="polite"
               x-show="deviceSearch.trim()"
               x-cloak
-              x-text="t('web.devices.search_count', { count: visibleDevices().length })"
+              x-text="t('web.devices.search_count', { count: visibleDevices().length + visibleGroups().length })"
             ></span>
             <button
               class="search-clear"
@@ -649,9 +659,34 @@
               :aria-label="t('web.devices.search_clear')"
             ><svg class="icon" aria-hidden="true"><use href="#i-close"></use></svg></button>
           </div>
+          <!-- "New group" joins the search field (design 6). It sits
+               OUTSIDE `.search-field`, after it, so the test that cuts that
+               field out of the served markup keeps cutting the field and
+               nothing else - and so a click on it cannot be swallowed by
+               the field's `:focus-within` box.
+
+               Disabled without a single device: the first member is what
+               fixes a group's category, so a group cannot be created before
+               there is something to put in it (design 2). -->
+          <button
+            @click="openGroupCreate()"
+            :disabled="devices.length === 0"
+            x-text="t('web.groups.new')"
+          ></button>
         </div>
 
-        <p x-show="devices.length > 0 && visibleDevices().length === 0" x-cloak class="hint">
+        <p x-show="groupsError" x-cloak class="banner danger" x-text="groupsError"></p>
+        <p x-show="groupActionError" x-cloak class="banner danger" x-text="groupActionError"></p>
+
+        <!-- The "nothing matches" note asks about BOTH halves of the grid:
+             with only `visibleDevices()` in the condition it would claim
+             nothing was found while a matching group tile stood right
+             underneath it. -->
+        <p
+          x-show="devices.length > 0 && visibleDevices().length === 0 && visibleGroups().length === 0"
+          x-cloak
+          class="hint"
+        >
           <span x-text="t('web.devices.search_empty')"></span>
           <template x-if="hitsOutsideRoom() > 0">
             <span>
@@ -661,6 +696,209 @@
             </span>
           </template>
         </p>
+
+        <!-- ============================================================
+             Group tiles (design 2026-09-10, section 6)
+
+             The group tile IS the device tile - same grid, same command
+             bar, same room chips, same search. Copied rather than merged
+             into the device `x-for` below, because a group has no node: it
+             shows none of `isOnline`, `lastHeardText`, the signal preview,
+             the battery row or the export footer, and one shared template
+             would need a guard at every one of them.
+
+             What it deliberately does NOT show, and this is not
+             sparseness: no online dot, no "last heard", no signal list.
+             Those are properties of a node, and a group is not one
+             (design 2) - showing them would mean inventing an aggregate,
+             and six lamps have six brightnesses.
+
+             Its own grid ABOVE the room sections, not inside them: a room
+             section's heading is built by `deviceGroups()` from the device
+             list (the `group` in that `x-for` is a ROOM, not a device
+             group - see the note on `deviceGroups()` in app.js). The room
+             FILTER and the search still apply, through exactly the same
+             predicate (`visibleGroups()`).
+
+             Every block below that the device tile also has carries a
+             second class (`group-head`, `group-commands`, `group-foot`,
+             `group-tile-menu`): the first class keeps the shared styling,
+             the second makes a `querySelector` - or a test cutting a block
+             out of the served markup - unambiguous about which of the two
+             tiles it has got hold of. Exactly the reason the control modal
+             further down carries two classes as well.
+             ============================================================ -->
+        <!-- `x-if`, not `x-show`: with no group (or none matching the
+             filter) the grid must not exist at all, rather than sit there
+             as an empty, hidden `.device-grid`. `scripts/capture_screenshots.py`
+             addresses the device grid positionally ("the second
+             `.device-grid`"), and a hidden node still counts there. -->
+        <template x-if="visibleGroups().length > 0">
+        <div class="device-grid group-grid">
+          <template x-for="deviceGroup in visibleGroups()" :key="deviceGroup.id">
+            <div class="card device-card group-card">
+              <div class="device-head group-head">
+                <span class="type-badge">
+                  <svg class="icon"><use :href="'#i-cat-' + deviceGroup.category"></use></svg>
+                </span>
+                <span class="device-ident">
+                  <!-- Renamed inline, exactly like a device's name
+                       (`saveLabel`): the group tile is the device tile, and
+                       an edit that worked one way here and another way on
+                       the neighbouring tile would be a difference with no
+                       reason behind it. That is also why the kebab below
+                       has no "Rename" entry. -->
+                  <input
+                    type="text"
+                    class="device-name"
+                    :value="deviceGroup.label"
+                    @input="groupLabelDrafts[deviceGroup.id] = $event.target.value"
+                    @change="saveGroupLabel(deviceGroup)"
+                  />
+                </span>
+                <!-- In the place where the device tile carries its offline
+                     pill - the only pill a group has, and it says what the
+                     tile is, not how it is doing. `.off` for its neutral
+                     grey: a group is not a state worth colouring. -->
+                <span class="status-pill off" x-text="t('web.groups.badge')"></span>
+              </div>
+
+              <!-- Where the device tile has its "last heard" line. The
+                   member names ride along in a `title`: `member_labels`
+                   comes with the list response precisely so a tile can name
+                   its members without a request per member, and "6 devices"
+                   alone leaves the obvious question open. -->
+              <p
+                class="hint group-members"
+                :title="deviceGroup.member_labels.join(', ')"
+                x-text="t('web.groups.member_count', { count: deviceGroup.member_ids.length })"
+              ></p>
+
+              <div class="device-commands group-commands">
+                <!-- The same `controlsByKind` the device tile uses, on the
+                     group's subject, and the same `executeCommand`: one
+                     `POST /api/commands/{key}` for both, because group and
+                     device command keys share one namespace (design 5).
+                     NO `isOnline` in `:disabled` - a group has none. -->
+                <template x-for="command in controlsByKind(groupSubject(deviceGroup), 'none')" :key="command.key">
+                  <button
+                    @click="executeCommand(deviceGroup, command)"
+                    :disabled="commandBusyKey === command.key"
+                    x-text="command.slug"
+                  ></button>
+                </template>
+                <button
+                  x-show="hasAdjustableControls(groupSubject(deviceGroup))"
+                  @click="openGroupControlModal(deviceGroup)"
+                  x-text="t('web.devices.control_button')"
+                ></button>
+                <span
+                  class="hint"
+                  x-show="hiddenRawCommandsFor(groupSubject(deviceGroup)) > 0"
+                  x-text="'+' + hiddenRawCommandsFor(groupSubject(deviceGroup)) + ' ' + t('web.devices.more_commands_short')"
+                ></span>
+                <!-- The same two hints as on the device tile, for the same
+                     reason (Spec 8.1): "not loaded yet or the fetch failed"
+                     must not look like "loaded, and genuinely empty". An
+                     emptied group really does have no commands left - its
+                     intersection over no members is empty (design 4.3) -
+                     and then the second hint is the true statement. -->
+                <span
+                  class="hint"
+                  x-show="!controlsLoaded(groupSubject(deviceGroup))"
+                  x-text="t('web.devices.controls_loading')"
+                ></span>
+                <span
+                  class="hint"
+                  x-show="controlsLoaded(groupSubject(deviceGroup)) && commandsFor(groupSubject(deviceGroup)).length === 0 && hiddenRawCommandsFor(groupSubject(deviceGroup)) === 0"
+                  x-text="t('web.devices.no_known_commands')"
+                ></span>
+              </div>
+
+              <div class="device-foot group-foot">
+                <span style="flex: 1 1 auto"></span>
+                <!-- The kebab follows the device tile's `<details>` down to
+                     the four ways of closing it - see the long comment on
+                     that one for why each of them is needed. `newRoomFor`
+                     holds this group's SUBJECT string here, never a bare
+                     group id: the device tiles share the field, and a group
+                     id and a device id are both small integers (see
+                     `beginNewGroupRoom`). -->
+                <details
+                  class="tile-menu group-tile-menu"
+                  @toggle="if (newRoomFor === groupSubject(deviceGroup)) { newRoomFor = null; newRoomDraft = '' }"
+                  @click.outside="if ($el.open) closeTileMenu($el)"
+                  @keydown.escape.window="if ($el.open) closeTileMenu($el)"
+                >
+                  <summary :title="t('web.devices.menu')" :aria-label="t('web.devices.menu')">
+                    <svg class="icon" aria-hidden="true"><use href="#i-kebab"></use></svg>
+                  </summary>
+                  <div class="tile-menu-items group-tile-menu-items">
+                    <!-- The room list, same as the device tile's - but
+                         writing the GROUP's own room (design 6), never one
+                         derived from its members. The heading id is derived
+                         per group and carries a prefix of its own, so it
+                         cannot collide with the device tiles' ids in the
+                         one document (the whole page shares a single
+                         `x-data`; see the device menu's comment). -->
+                    <div class="tile-menu-rooms" role="group" :aria-labelledby="'group-menu-room-heading-' + deviceGroup.id">
+                      <p
+                        class="tile-menu-heading"
+                        :id="'group-menu-room-heading-' + deviceGroup.id"
+                        x-text="t('web.devices.menu_room_heading')"
+                      ></p>
+                      <button
+                        class="tile-menu-item"
+                        :class="{ 'is-current': roomKeyOf(deviceGroup) === '' }"
+                        :aria-current="roomKeyOf(deviceGroup) === '' ? 'true' : null"
+                        @click="closeTileMenu($el); saveGroupRoom(deviceGroup, '')"
+                        x-text="t('web.devices.room_none')"
+                      ></button>
+                      <template x-for="chip in roomChips().filter((c) => c.key !== '')" :key="chip.key">
+                        <button
+                          class="tile-menu-item"
+                          :class="{ 'is-current': roomKeyOf(deviceGroup) === chip.key }"
+                          :aria-current="roomKeyOf(deviceGroup) === chip.key ? 'true' : null"
+                          :title="chip.key"
+                          @click="closeTileMenu($el); saveGroupRoom(deviceGroup, chip.key)"
+                          x-text="chip.key"
+                        ></button>
+                      </template>
+                      <button
+                        class="tile-menu-item tile-menu-new"
+                        x-show="newRoomFor !== groupSubject(deviceGroup)"
+                        @click="beginNewGroupRoom(deviceGroup); $nextTick(() => $el.parentElement.querySelector('.tile-menu-input')?.focus())"
+                        x-text="t('web.devices.room_new')"
+                      ></button>
+                      <input
+                        x-show="newRoomFor === groupSubject(deviceGroup)"
+                        x-cloak
+                        type="text"
+                        class="tile-menu-input"
+                        x-model="newRoomDraft"
+                        :placeholder="t('web.devices.room_new_placeholder')"
+                        @keydown.enter="closeTileMenu($el); commitNewGroupRoom(deviceGroup)"
+                        @keydown.escape.stop="newRoomFor = null; newRoomDraft = ''; $nextTick(() => $el.parentElement.querySelector('.tile-menu-new')?.focus())"
+                      />
+                    </div>
+                    <hr class="tile-menu-sep" />
+                    <button
+                      class="tile-menu-item"
+                      @click="closeTileMenu($el); openGroupMembers(deviceGroup)"
+                      x-text="t('web.groups.edit_members')"
+                    ></button>
+                    <button
+                      class="tile-menu-item is-danger"
+                      @click="closeTileMenu($el); removeGroup(deviceGroup)"
+                      x-text="t('web.groups.delete')"
+                    ></button>
+                  </div>
+                </details>
+              </div>
+            </div>
+          </template>
+        </div>
+        </template>
 
         <template x-for="group in deviceGroups()" :key="group.key">
           <div>
@@ -1291,9 +1529,10 @@
                 with dozens of signals.
 
                 `projectSyncGroupedEntries` (app.js) groups the flat plan
-                delivered by the backend purely client-side by
-                device and, within that, by inputs/outputs, no
-                backend contract changed.
+                delivered by the backend client-side by owner (device or
+                group, keyed on `owner_kind` together with the id - see
+                that function's docstring for why the id alone is not
+                enough) and, within that, by inputs/outputs.
               -->
               <div
                 class="projectsync-plan"
@@ -1324,7 +1563,7 @@
 
                 <template
                   x-for="group in projectSyncGroupedEntries(projectSync.plan.entries)"
-                  :key="group.deviceId"
+                  :key="group.key"
                 >
                   <details class="projectsync-device" :open="group.needsAttention">
                     <summary>
@@ -1535,6 +1774,58 @@
             </table>
           </div>
           <p class="hint" x-text="t('web.export.expert_withheld_explanation')"></p>
+
+          <!-- The group counterpart of the device table above (final fix
+               pass, review finding Important #1). A separate table, not
+               rows folded into the one above: a group has no
+               `viu_filename`/`inputs`/`skipped`/`hidden_count` at all
+               (`ExportGroupOut`'s docstring - a group has no signals of
+               its own), so a shared table would need a column that is
+               blank for every group row. `x-show`, not `x-if`: unlike the
+               device grid's group tiles (see `index.html`'s long comment
+               there), an empty group table sitting hidden costs nothing
+               here - there is no positional-selector script depending on
+               this card's exact child count. -->
+          <div style="overflow-x: auto" x-show="previewGroups().length > 0" x-cloak>
+            <h3 x-text="t('web.export.groups_heading')"></h3>
+            <table>
+              <thead>
+                <tr>
+                  <th x-text="t('web.export.col_group')"></th>
+                  <th x-text="t('web.export.col_vo')"></th>
+                  <th x-text="t('web.export.col_commands')"></th>
+                  <th x-text="t('web.export.col_last_exported')"></th>
+                </tr>
+              </thead>
+              <tbody>
+                <template x-for="group in previewGroups()" :key="group.group_id">
+                  <tr>
+                    <td x-text="group.label"></td>
+                    <td class="key" x-text="group.vo_filename"></td>
+                    <td x-text="group.commands"></td>
+                    <!-- The group tile in the devices grid deliberately
+                         carries no export footer of its own (see the
+                         group-tile markup comment further up), so this
+                         cell is a group's ONLY home for "changed since
+                         export" - unlike a device, whose pill also lives
+                         on its tile (`.device-foot`, further up). Same
+                         order, same wording, same pill classes as there:
+                         timestamp first, pill right after, reusing
+                         `web.devices.changed_since_export` rather than a
+                         second string for the same fact. -->
+                    <td>
+                      <span x-text="formatTimestamp(groupExportedAtFor(group.group_id))"></span>
+                      <span class="status-pill warn" x-show="groupChangedSinceExport(group.group_id)">
+                        <svg class="icon"><use href="#i-warn"></use></svg>
+                        <span x-text="t('web.devices.changed_since_export')"></span>
+                      </span>
+                    </td>
+                  </tr>
+                </template>
+              </tbody>
+            </table>
+          </div>
+
           <p class="hint" x-show="exportPreview && exportPreview.system_files.length > 0">
             <span x-text="t('web.export.system_files_prefix')"></span><span x-text="exportPreview ? exportPreview.system_files.join(', ') : ''"></span>
           </p>
@@ -2518,7 +2809,7 @@
           <template x-for="command in controlsByKind(controlModalDevice, 'none')" :key="command.key">
             <button
               @click="executeCommand(controlModalDeviceObject(), command)"
-              :disabled="commandBusyKey === command.key || !isOnline(controlModalDeviceObject())"
+              :disabled="commandBusyKey === command.key || subjectOffline(controlModalDevice)"
               x-text="command.slug"
             ></button>
           </template>
@@ -2532,13 +2823,32 @@
               <input
                 type="range" min="0" max="100" step="1"
                 :value="controlDrafts.percent ?? 50"
-                :disabled="commandBusyKey === command.key || !isOnline(controlModalDeviceObject())"
+                :disabled="commandBusyKey === command.key || subjectOffline(controlModalDevice)"
                 @change="recordControlDraft(command, Number($event.target.value)); sendControl(controlModalDeviceObject(), command, $event.target.value)"
               />
               <p
                 class="hint"
                 x-show="controlDrafts.percent === undefined"
                 x-text="t('web.devices.control_start_value_unknown')"
+              ></p>
+              <!-- For a GROUP only: names the member the slider's position
+                   was read from. A group has no state of its own - six
+                   lamps have six brightnesses - and the lamp-controls design
+                   ruled out a slider with no start value at all, because the
+                   first nudge then proves nothing about what it changed.
+                   Attributing the number is the honest third option
+                   (design 5). `controlSeedLabel` answers "" for a device, so
+                   this one binding serves both and needs no case
+                   distinction. The value guard next to it is not
+                   belt-and-braces: with no start value there is nothing to
+                   attribute, and the modal already says "start value
+                   unknown" right above - measured in a browser harness,
+                   where a group's Kelvin row showed both sentences at
+                   once. -->
+              <p
+                class="hint"
+                x-show="controlSeedLabel(controlModalDevice) && controlDrafts.percent !== undefined"
+                x-text="t('web.groups.seed_from', { device: controlSeedLabel(controlModalDevice) })"
               ></p>
             </div>
           </template>
@@ -2563,7 +2873,7 @@
                   x-show="command.range"
                   type="range" :min="command.range?.min" :max="command.range?.max" step="10"
                   :value="controlDrafts.kelvin ?? command.range?.min"
-                  :disabled="commandBusyKey === command.key || !isOnline(controlModalDeviceObject())"
+                  :disabled="commandBusyKey === command.key || subjectOffline(controlModalDevice)"
                   @change="recordControlDraft(command, Number($event.target.value)); sendControl(controlModalDeviceObject(), command, $event.target.value)"
                 />
                 <!-- Note for a missing start value, when the slider is visible -->
@@ -2571,6 +2881,12 @@
                   class="hint"
                   x-show="command.range && controlDrafts.kelvin === undefined"
                   x-text="t('web.devices.control_start_value_unknown')"
+                ></p>
+                <!-- Group attribution, see the percent slider above. -->
+                <p
+                  class="hint"
+                  x-show="command.range && controlSeedLabel(controlModalDevice) && controlDrafts.kelvin !== undefined"
+                  x-text="t('web.groups.seed_from', { device: controlSeedLabel(controlModalDevice) })"
                 ></p>
                 <p class="hint" x-show="!command.range" x-text="t('web.devices.control_no_range')"></p>
                 <span x-show="!command.range" class="row">
@@ -2581,7 +2897,7 @@
                   />
                   <button
                     @click="executeCommand(controlModalDeviceObject(), command)"
-                    :disabled="commandBusyKey === command.key || !isOnline(controlModalDeviceObject())"
+                    :disabled="commandBusyKey === command.key || subjectOffline(controlModalDevice)"
                     x-text="t('web.devices.send')"
                   ></button>
                 </span>
@@ -2601,7 +2917,7 @@
                      there is no dot, and the note below says why. -->
                 <div
                   class="colour-field"
-                  :class="{ 'is-busy': commandBusyKey === command.key || !isOnline(controlModalDeviceObject()) }"
+                  :class="{ 'is-busy': commandBusyKey === command.key || subjectOffline(controlModalDevice) }"
                   @pointerup="pickColour($event, controlModalDeviceObject(), command)"
                 >
                   <span
@@ -2613,6 +2929,9 @@
                 <p class="hint" x-text="t('web.devices.control_colour_hint')"></p>
                 <p class="hint" x-show="controlDrafts.hue === undefined"
                    x-text="t('web.devices.control_start_value_unknown')"></p>
+                <!-- Group attribution, see the percent slider above. -->
+                <p class="hint" x-show="controlSeedLabel(controlModalDevice) && controlDrafts.hue !== undefined"
+                   x-text="t('web.groups.seed_from', { device: controlSeedLabel(controlModalDevice) })"></p>
               </div>
             </template>
           </div>
@@ -2633,12 +2952,152 @@
               />
               <button
                 @click="executeCommand(controlModalDeviceObject(), command)"
-                :disabled="commandBusyKey === command.key || !isOnline(controlModalDeviceObject())"
+                :disabled="commandBusyKey === command.key || subjectOffline(controlModalDevice)"
                 x-text="t('web.devices.send')"
               ></button>
             </span>
           </template>
         </div>
+      </template>
+    </dialog>
+
+    <!--
+      Group dialog (design 2026-09-10, section 6): creates a group, and
+      edits the member list of an existing one. ONE dialog for both,
+      because the member list is the bulk of it either way - the only
+      difference is the name and room block, which a new group needs and
+      an existing one already has on its tile (its name field, its kebab's
+      room list). A second dialog for editing would have been the same
+      member list with a different heading.
+
+      Structure, closing and backdrop click follow the two modals above -
+      see the signal modal's comments for the full reasoning. Two classes
+      for the same reason the control modal carries two: `signals-modal`
+      alone is the shared framing, and without the second class
+      `document.querySelector('dialog.signals-modal')` would match
+      whichever of the three comes first in the document.
+
+      `x-if` on the body, not on the `<dialog>`: `$refs.groupDialog` has to
+      exist before `openGroupCreate()` can call `showModal()` on it.
+    -->
+    <dialog
+      x-ref="groupDialog"
+      class="signals-modal group-dialog"
+      aria-labelledby="group-dialog-heading"
+      @close="groupDraft = { id: null, label: '', room: '', memberIds: [], roomTouched: false }; groupDialogError = null"
+      @mousedown="groupDialogBackdropMousedown = isBackdropEvent($event, $el)"
+      @click.self="if (groupDialogBackdropMousedown && isBackdropEvent($event, $el)) $el.close(); groupDialogBackdropMousedown = false"
+    >
+      <!-- `x-if="stringsReady"`, and it is load-bearing - MEASURED in a
+           browser harness, not reasoned about: the two modals above build
+           their content inside an `x-for`/`x-if` that is false at startup,
+           so every `t(...)` in them runs after `GET /api/i18n` has
+           answered. This dialog's body would otherwise be built during
+           Alpine's FIRST pass, while `translationStrings` is still empty -
+           and `t()` returns the bare key then (by design, see its comment).
+           The headings and placeholders in here have no reactive dependency
+           that would ever re-evaluate them, so "web.groups.label_field"
+           stood in the dialog for the rest of the page's life. The same
+           condition the three app sections use, for the same reason.
+
+           The `<dialog>` element itself stays outside the guard:
+           `$refs.groupDialog` has to exist before `showModal()`. -->
+      <template x-if="stringsReady">
+      <div class="signals-modal-body">
+        <div class="signals-modal-head">
+          <h2
+            id="group-dialog-heading"
+            x-text="groupDraft.id === null ? t('web.groups.new') : t('web.groups.members_title', { label: groupDraft.label })"
+          ></h2>
+          <span style="flex: 1 1 auto"></span>
+          <button
+            class="signals-modal-close"
+            :title="t('web.signals.modal_close')"
+            :aria-label="t('web.signals.modal_close')"
+            @click="closeGroupDialog()"
+          ><svg class="icon" aria-hidden="true"><use href="#i-close"></use></svg></button>
+        </div>
+
+        <!-- Name and room only while creating: an existing group is renamed
+             and re-roomed on its tile, and a second path to the same write
+             is a second place for it to go wrong. -->
+        <template x-if="groupDraft.id === null">
+          <div>
+            <div class="row">
+              <label
+                ><span x-text="t('web.groups.label_field')"></span>
+                <input
+                  type="text"
+                  x-model="groupDraft.label"
+                  :placeholder="t('web.groups.label_placeholder')"
+              /></label>
+            </div>
+            <!-- Prefilled while the picked members agree on a room, and the
+                 user's from the first keystroke on (design 6) -
+                 `roomTouched` is what draws that line; without it, ticking
+                 one more lamp would silently overwrite a room just typed. -->
+            <div class="row">
+              <label
+                ><span x-text="t('web.devices.menu_room_heading')"></span>
+                <input
+                  type="text"
+                  x-model="groupDraft.room"
+                  @input="groupDraft.roomTouched = true"
+                  :placeholder="t('web.devices.room_new_placeholder')"
+              /></label>
+            </div>
+          </div>
+        </template>
+
+        <p class="tile-menu-heading" x-text="t('web.groups.members_heading')"></p>
+        <!-- Only while creating: there the first pick is what fixes the
+             category, so an empty list has nothing to go on. An EXISTING
+             group may be emptied - it survives down to zero members, and
+             its category is stored rather than derived (design 4.3). -->
+        <p class="hint" x-show="groupDraft.id === null" x-text="t('web.groups.needs_member')"></p>
+
+        <!-- One `<label>` per candidate, each its own flex row: the
+             checkbox, the device's name, and then EITHER its category or
+             the reason it cannot be picked. The reason sits on the entry
+             itself and not in a banner somewhere else, because that is the
+             one place the question arises (design 6: disabled with the
+             reason, not silently). -->
+        <template x-for="device in groupCandidates()" :key="device.id">
+          <label class="row group-candidate">
+            <input
+              type="checkbox"
+              :checked="groupDraft.memberIds.includes(device.id)"
+              :disabled="groupCandidateState(device).disabled"
+              @change="toggleGroupMember(device)"
+            />
+            <span x-text="device.label"></span>
+            <span
+              class="hint"
+              x-show="!groupCandidateState(device).disabled"
+              x-text="categoryLabel(device)"
+            ></span>
+            <span
+              class="hint"
+              x-show="groupCandidateState(device).disabled"
+              x-text="groupCandidateState(device).reason"
+            ></span>
+          </label>
+        </template>
+
+        <!-- The server's own `detail`, verbatim: it already names the
+             offending device and both categories. A generic sentence in its
+             place would throw away the only part that says what to do
+             next (Spec 8.1). -->
+        <p x-show="groupDialogError" x-cloak class="banner danger" x-text="groupDialogError"></p>
+
+        <div class="row">
+          <button
+            @click="saveGroupDialog()"
+            :disabled="groupDialogBusy || (groupDraft.id === null && (groupDraft.memberIds.length === 0 || !groupDraft.label.trim()))"
+            x-text="groupDraft.id === null ? t('web.groups.create') : t('web.groups.members_save')"
+          ></button>
+        </div>
+      </div>
       </template>
     </dialog>
 

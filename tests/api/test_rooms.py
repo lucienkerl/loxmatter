@@ -83,6 +83,27 @@ async def test_renaming_to_an_empty_name_is_a_422(api):
     assert store.device(device_id).room == "Küche"
 
 
+async def test_renaming_a_room_carried_only_by_a_group_is_no_longer_a_404(api):
+    """Final fix pass, item 1: a group carries its own room, independent of
+    its members (design 2026-09-10, section 6) - the rename pencil on the
+    devices tab appears for such a room exactly as it does for any other
+    (`roomChips()` in `app.js` counts groups). Before `Store.rename_room`
+    also wrote to `device_group`, this request matched zero DEVICE rows and
+    the route (`api/devices.py`) turned that into a 404 "unknown room" -
+    for a room that was visibly still on screen, populated by the group
+    below."""
+    client, store, device_id, _fake = api
+    # The device itself carries no room at all - only the group does.
+    group = store.create_group("Steckdosen", [device_id], room="Küche")
+    assert store.device(device_id).room is None
+
+    response = await client.post("/api/rooms/rename", json={"from": "Küche", "to": "Essbereich"})
+
+    assert response.status_code == 200
+    assert response.json() == {"renamed": 1}
+    assert store.group(group.id).room == "Essbereich"
+
+
 async def test_renaming_a_room_with_surrounding_whitespace_in_the_source_still_matches(api):
     """Regression test for the `_normalized_room` fix in `Store.rename_room`
     (Review-Found Task 2): `from` comes here as free text from the JSON body,

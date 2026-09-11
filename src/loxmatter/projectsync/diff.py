@@ -26,9 +26,15 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 
 from loxmatter.export.documents import LoxoneCommand
-from loxmatter.export.outputs import to_outputs
+from loxmatter.export.outputs import to_group_outputs, to_outputs
 from loxmatter.export.signals import LoxoneInput, to_inputs
-from loxmatter.model.store import StoredCommand, StoredDevice, StoredSignal
+from loxmatter.model.store import (
+    StoredCommand,
+    StoredDevice,
+    StoredGroup,
+    StoredGroupCommand,
+    StoredSignal,
+)
 from loxmatter.projectsync.index import ProjectIndex
 from loxmatter.projectsync.scan import Element
 from loxmatter.projectsync.schema import (
@@ -72,6 +78,11 @@ class PlanEntry:
     status: PlanStatus
     # attrname -> (old value, new value) - non-empty only for UPDATED.
     changes: dict[str, tuple[str, str]] = field(default_factory=dict)
+    # "device" or "group" (design 2026-09-10, section 8). A group and a
+    # device can carry the SAME numeric id - both counters start at 1 -
+    # so anything that groups entries by owner must key on this as well,
+    # or a group's outputs land in a device's container.
+    owner_kind: str = "device"
 
 
 @dataclass(frozen=True)
@@ -160,9 +171,13 @@ def _plan_inputs(
 
 
 def _plan_outputs(
-    index: ProjectIndex, device: StoredDevice, commands: Sequence[LoxoneCommand]
+    index: ProjectIndex,
+    owner_kind: str,
+    owner_id: int,
+    owner_label: str,
+    commands: Sequence[LoxoneCommand],
 ) -> list[PlanEntry]:
-    prefix = f"d{device.id}_"
+    prefix = f"{'g' if owner_kind == 'group' else 'd'}{owner_id}_"
     has_existing_container = any(key.startswith(prefix) for key in index.output_containers)
     plan_entries: list[PlanEntry] = []
     for command in commands:
@@ -175,18 +190,27 @@ def _plan_outputs(
             else:
                 status = PlanStatus.NEW_SIGNAL if has_existing_container else PlanStatus.NEW_DEVICE
             plan_entries.append(
-                PlanEntry("output", device.id, device.label, command.key, command.title, status)
+                PlanEntry(
+                    "output",
+                    owner_id,
+                    owner_label,
+                    command.key,
+                    command.title,
+                    status,
+                    owner_kind=owner_kind,
+                )
             )
             continue
         if not _has_required_attrs(existing.attrs, _REQUIRED_OUTPUT_ATTRS):
             plan_entries.append(
                 PlanEntry(
                     "output",
-                    device.id,
-                    device.label,
+                    owner_id,
+                    owner_label,
                     command.key,
                     command.title,
                     PlanStatus.CONFLICT,
+                    owner_kind=owner_kind,
                 )
             )
             continue
@@ -195,10 +219,30 @@ def _plan_outputs(
         status = PlanStatus.UPDATED if changes else PlanStatus.UNCHANGED
         plan_entries.append(
             PlanEntry(
-                "output", device.id, device.label, command.key, command.title, status, changes
+                "output",
+                owner_id,
+                owner_label,
+                command.key,
+                command.title,
+                status,
+                changes,
+                owner_kind=owner_kind,
             )
         )
     return plan_entries
+
+
+def _is_managed_owner_key(key: str) -> bool:
+    """Whether `key`'s owner segment (everything before the first `_`)
+    looks like something THIS module could have created: `d{id}` for a
+    device, or `g{id}` for a group (design 2026-09-10, section 8) - both
+    counters exist and both produce output containers of this shape, so
+    an orphan check that only recognised `d` would silently swallow a
+    deleted group's leftover `g{id}_*` commands while still reporting the
+    device equivalent. Anything that starts with neither is not a key
+    this module ever mints and is therefore not ours to call orphaned."""
+    owner = key.split("_", 1)[0]
+    return owner.startswith(("d", "g"))
 
 
 def _orphaned_entries(
@@ -206,14 +250,14 @@ def _orphaned_entries(
 ) -> list[PlanEntry]:
     orphaned: list[PlanEntry] = []
     for key, element in index.input_cmds.items():
-        if key not in known_input_keys and key.split("_", 1)[0].startswith("d"):
+        if key not in known_input_keys and _is_managed_owner_key(key):
             orphaned.append(
                 PlanEntry(
                     "input", -1, "", key, element.attrs.get("Title", key), PlanStatus.ORPHANED
                 )
             )
     for key, element in index.output_cmds.items():
-        if key not in known_output_keys and key.split("_", 1)[0].startswith("d"):
+        if key not in known_output_keys and _is_managed_owner_key(key):
             orphaned.append(
                 PlanEntry(
                     "output", -1, "", key, element.attrs.get("Title", key), PlanStatus.ORPHANED
@@ -227,6 +271,8 @@ def build_plan(
     devices: Sequence[StoredDevice],
     signals_by_device: dict[int, Sequence[StoredSignal]],
     commands_by_device: dict[int, Sequence[StoredCommand]],
+    groups: Sequence[StoredGroup] = (),
+    commands_by_group: dict[int, Sequence[StoredGroupCommand]] | None = None,
 ) -> SyncPlan:
     entries: list[PlanEntry] = []
     known_input_keys: set[str] = set()
@@ -238,7 +284,13 @@ def build_plan(
         known_input_keys.update(entry.key for entry in inputs)
         known_output_keys.update(command.key for command in outputs)
         entries += _plan_inputs(index, device, inputs)
-        entries += _plan_outputs(index, device, outputs)
+        entries += _plan_outputs(index, "device", device.id, device.label, outputs)
+
+    # Groups have outputs only - no signals, no inputs (design 2).
+    for group in groups:
+        outputs = to_group_outputs((commands_by_group or {}).get(group.id, []))
+        known_output_keys.update(command.key for command in outputs)
+        entries += _plan_outputs(index, "group", group.id, group.label, outputs)
 
     entries += _orphaned_entries(index, known_input_keys, known_output_keys)
     return SyncPlan(entries)

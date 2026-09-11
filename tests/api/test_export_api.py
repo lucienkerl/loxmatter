@@ -219,6 +219,58 @@ async def test_status_marks_a_device_as_never_exported(api):
     assert entry["changed_since_export"] is True
 
 
+async def test_preview_lists_a_groups_file_and_command_count(api):
+    """Item 1 of the final fix pass: a download has always bundled every
+    group's `VO_g*.xml` alongside whatever devices it writes
+    (`api.export.download`), but the preview never mentioned groups at
+    all - it promised a smaller file list than the download it is
+    supposed to describe. A one-member group's intersection is simply
+    that member's full command list (design 4.3), so the plug's 3
+    commands (`test_preview_reports_what_would_be_written`) become the
+    group's `commands` count too."""
+    client, store, device_id = api
+    group = store.create_group("Solo", [device_id])
+
+    preview = (await client.get("/api/export/preview?bridge_ip=192.168.1.50")).json()
+
+    entry = next(g for g in preview["groups"] if g["group_id"] == group.id)
+    assert entry["label"] == "Solo"
+    assert entry["commands"] == 3
+    assert entry["vo_filename"] == f"VO_g{group.id}_Solo.xml"
+
+
+async def test_preview_and_status_skip_a_group_with_no_commands(api):
+    """A group with no commands is skipped by `download` too (design 4.3:
+    an emptied group has nothing to export) - listing it in the preview
+    or the status would promise a file that is never written, and a
+    "never exported" pill for a group that never CAN be exported is not
+    useful information."""
+    client, store, device_id = api
+    group = store.create_group("Solo", [device_id])
+    store.set_group_members(group.id, [])
+    assert store.group_commands(group.id) == []
+
+    preview = (await client.get("/api/export/preview?bridge_ip=192.168.1.50")).json()
+    assert preview["groups"] == []
+
+    status = (await client.get("/api/export/status")).json()
+    assert not any(e.get("group_id") == group.id for e in status)
+
+
+async def test_status_marks_a_group_as_never_exported(api):
+    """The group counterpart of `test_status_marks_a_device_as_never_exported`
+    (item 1 of the final fix pass) - must not crash on a group that has
+    commands but has never been exported (`exported_at is None`)."""
+    client, store, device_id = api
+    group = store.create_group("Solo", [device_id])
+
+    status = (await client.get("/api/export/status")).json()
+
+    entry = next(e for e in status if e.get("group_id") == group.id)
+    assert entry["exported_at"] is None
+    assert entry["changed_since_export"] is True
+
+
 async def test_missing_bridge_ip_yields_422(api):
     client, _, _ = api
     assert (await client.get("/api/export/preview")).status_code == 422
@@ -236,6 +288,25 @@ async def test_download_marks_a_device_as_exported(api):
     assert store.device(device_id).exported_at is not None
     status = (await client.get("/api/export/status")).json()
     entry = next(s for s in status if s["device_id"] == device_id)
+    assert entry["exported_at"] is not None
+    assert entry["changed_since_export"] is False
+
+
+async def test_download_marks_a_group_as_exported(api):
+    """The group counterpart of `test_download_marks_a_device_as_exported`
+    (item 1 of the final fix pass): `download` has always written a
+    group's `VO_g*.xml`, but nothing ever called
+    `Store.mark_group_exported` for it - `GET /api/export/status` could
+    then never answer "when last exported" for a group at all, no matter
+    how many times it was downloaded."""
+    client, store, device_id = api
+    group = store.create_group("Solo", [device_id])
+
+    await client.get("/api/export/download?bridge_ip=192.168.1.50")
+
+    assert store.group(group.id).exported_at is not None
+    status = (await client.get("/api/export/status")).json()
+    entry = next(e for e in status if e.get("group_id") == group.id)
     assert entry["exported_at"] is not None
     assert entry["changed_since_export"] is False
 

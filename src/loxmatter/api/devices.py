@@ -330,16 +330,19 @@ def build_device_router(
 
     @router.post("/rooms/rename")
     async def rename_room(patch: RoomRename) -> dict[str, int]:
-        """Renames a room across all active devices.
+        """Renames a room across all active devices and all groups.
 
         The only route that exists for rooms at all - there are no room
         objects (design 3.2), so no `GET /api/rooms` either: the room list
         already lives inside `GET /api/devices`, and a second endpoint for
         the same information could only drift out of sync.
 
-        404 instead of "0 renamed" if no active device carries the source
-        name: a typo in the source name would otherwise look like a
-        successful operation."""
+        404 instead of "0 renamed" if no active device AND no group
+        carries the source name: a typo in the source name would
+        otherwise look like a successful operation. A room that only a
+        group occupies - no device left in it - is exactly the case
+        `Store.rename_room` learned to cover, so it must not 404 here
+        either; see that method's docstring."""
         if not patch.to_room.strip():
             raise HTTPException(status_code=422, detail=i18n.t("api.devices.room_name_required"))
         renamed = store.rename_room(patch.from_room, patch.to_room)

@@ -24,7 +24,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 from loxmatter import i18n
-from loxmatter.model.store import Store, StoredCommand, StoredSignal
+from loxmatter.model.store import Store, StoredCommand, StoredGroupCommand, StoredSignal
 from loxmatter.projectsync.diff import SyncPlan, build_plan
 from loxmatter.projectsync.index import ProjectFormatError, build_index
 from loxmatter.projectsync.patch import MissingCaptionError, apply_plan
@@ -84,7 +84,18 @@ def run_sync(
     commands_by_device: dict[int, Sequence[StoredCommand]] = {
         device.id: store.commands(device.id) for device in devices
     }
-    plan = build_plan(index, devices, signals_by_device, commands_by_device)
+    groups = store.groups()
+    commands_by_group: dict[int, Sequence[StoredGroupCommand]] = {
+        group.id: store.group_commands(group.id) for group in groups
+    }
+    plan = build_plan(
+        index,
+        devices,
+        signals_by_device,
+        commands_by_device,
+        groups=groups,
+        commands_by_group=commands_by_group,
+    )
     # Without `try`: only `NEW_DEVICE` entries reach, with
     # `include_new_devices=True`, the code that needs a caption - so the
     # conservative variant cannot throw a `MissingCaptionError` at all.
@@ -110,6 +121,8 @@ def run_sync(
         devices,
         signals_by_device,
         commands_by_device,
+        groups=groups,
+        commands_by_group=commands_by_group,
         include_new_devices=False,
         bridge_ip=bridge_ip,
         port=port,
@@ -124,6 +137,8 @@ def run_sync(
             devices,
             signals_by_device,
             commands_by_device,
+            groups=groups,
+            commands_by_group=commands_by_group,
             include_new_devices=True,
             bridge_ip=bridge_ip,
             port=port,

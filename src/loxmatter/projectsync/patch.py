@@ -42,10 +42,16 @@ from dataclasses import dataclass
 from typing import cast
 
 from loxmatter.export.documents import LoxoneCommand
-from loxmatter.export.outputs import to_outputs
+from loxmatter.export.outputs import to_group_outputs, to_outputs
 from loxmatter.export.signals import LoxoneInput, to_inputs
 from loxmatter.export.xml import BOM, escape_attr_value
-from loxmatter.model.store import StoredCommand, StoredDevice, StoredSignal
+from loxmatter.model.store import (
+    StoredCommand,
+    StoredDevice,
+    StoredGroup,
+    StoredGroupCommand,
+    StoredSignal,
+)
 from loxmatter.projectsync.diff import PlanEntry, PlanStatus, SyncPlan
 from loxmatter.projectsync.ids import new_iname, new_unique_id
 from loxmatter.projectsync.index import ProjectIndex
@@ -136,7 +142,12 @@ def _new_signal_edit(
 ) -> _Edit:
     is_input = entry.kind == "input"
     container = index.input_containers if is_input else index.output_containers
-    prefix = f"d{entry.device_id}_"
+    # A group has outputs only, so `is_input` and `entry.owner_kind ==
+    # "group"` never combine - but an output entry needs the same
+    # "g"-vs-"d" distinction `diff._plan_outputs` uses, or a NEW_SIGNAL
+    # for an already-synced group (id N) would look for a "dN_" container
+    # that does not exist, while the real one sits under "gN_".
+    prefix = f"{'g' if entry.owner_kind == 'group' else 'd'}{entry.device_id}_"
     matching_container = next(
         (element for key, element in container.items() if key.startswith(prefix)), None
     )
@@ -174,16 +185,26 @@ def _new_device_edit(
     port: int,
     listen: int,
 ) -> tuple[_Edit, int]:
-    """ONE new device container for ALL `NEW_DEVICE` entries of a device of
-    the same kind (`entries` is the group for one `(kind, device_id)`).
-    Returns the edit AND the number of newly created `<C>` objects (for
-    the `NextObj` counter in `apply_plan`).
+    """ONE new container for ALL `NEW_DEVICE` entries that share one
+    `(kind, owner_kind, device_id)` - the same grouping key
+    `apply_plan` uses when it builds `entries` (`device_id` is a device id
+    when `owner_kind == "device"`, a GROUP id when `owner_kind ==
+    "group"`; the two counters both start at 1, so the id alone would not
+    distinguish them). Note "group" is overloaded in this module: here in
+    the prose it means "the set of `PlanEntry` objects sharing that key",
+    not a device group - `entries[0].owner_kind` is what tells this
+    function whether it is building a device's container or a device
+    GROUP's. Returns the edit AND the number of newly created `<C>`
+    objects (for the `NextObj` counter in `apply_plan`).
 
-    Deliberately a group rather than a single entry: `export.signals.
-    to_inputs` always additionally produces an online signal per device,
-    so a genuinely new device practically never has just one entry. A
-    container per entry would produce several same-named `VirtualUdpIn`
-    devices with identical address and port, each with exactly one
+    Deliberately entries sharing a key rather than a single entry each:
+    for a device, `export.signals.to_inputs` always additionally produces
+    an online signal per device, so a genuinely new device practically
+    never has just one entry; for a device group (which has no inputs and
+    no online signal, design 2), the same batching still applies because
+    a group can offer several commands at once. A container per entry
+    would produce several same-named `VirtualUdpIn`/`VirtualOut`
+    containers with identical address and port, each with exactly one
     command in it - structurally wrong, not just unattractive.
 
     If the matching `VirtualInCaption`/`VirtualOutCaption` section is
@@ -217,7 +238,11 @@ def _new_device_edit(
         )
     else:
         container_open = new_output_container_open_tag(
-            first.device_label, f"http://{bridge_ip}:{listen}", container_iname, container_u
+            first.device_label,
+            f"http://{bridge_ip}:{listen}",
+            container_iname,
+            container_u,
+            is_group=first.owner_kind == "group",
         )
 
     cmd_iname_prefix = "VCI" if is_input else "VQC"
@@ -294,6 +319,8 @@ def apply_plan(
     devices: Sequence[StoredDevice],
     signals_by_device: dict[int, Sequence[StoredSignal]],
     commands_by_device: dict[int, Sequence[StoredCommand]],
+    groups: Sequence[StoredGroup] = (),
+    commands_by_group: dict[int, Sequence[StoredGroupCommand]] | None = None,
     *,
     include_new_devices: bool,
     bridge_ip: str,
@@ -312,13 +339,16 @@ def apply_plan(
         for output_item in to_outputs(commands_by_device.get(device.id, [])):
             desired_outputs[output_item.key] = output_item
 
+    for group in groups:
+        for output_item in to_group_outputs((commands_by_group or {}).get(group.id, [])):
+            desired_outputs[output_item.key] = output_item
+
     edits: list[_Edit] = []
     created_count = 0
-    # (kind, device_id) -> all NEW_DEVICE entries of this device, so a
-    # device gets exactly ONE new container instead of one per signal (see
-    # `_new_device_edit`). `dict` preserves the plan's order, so the
-    # generated file is reproducible.
-    new_device_groups: dict[tuple[str, int], list[PlanEntry]] = {}
+    # (kind, owner_kind, id) - NOT (kind, id): both counters start at 1,
+    # so group 1 and device 1 would otherwise share one container. `dict`
+    # preserves the plan's order, so the generated file is reproducible.
+    new_device_groups: dict[tuple[str, str, int], list[PlanEntry]] = {}
     for entry in plan.entries:
         if entry.status is PlanStatus.UPDATED:
             edits += _update_edits(index, entry)
@@ -327,14 +357,18 @@ def apply_plan(
             edits.append(_new_signal_edit(index, entry, source))
             created_count += 1
         elif entry.status is PlanStatus.NEW_DEVICE and include_new_devices:
-            new_device_groups.setdefault((entry.kind, entry.device_id), []).append(entry)
+            new_device_groups.setdefault(
+                (entry.kind, entry.owner_kind, entry.device_id), []
+            ).append(entry)
 
-    for (kind, _device_id), group in new_device_groups.items():
+    for (kind, _owner_kind, _owner_id), group_entries in new_device_groups.items():
         source = desired_inputs if kind == "input" else desired_outputs
         # The number of new <C> objects comes back from `_new_device_edit`
         # itself: container + one cmd per entry, plus the newly created
         # caption if any.
-        edit, group_created_count = _new_device_edit(index, group, source, bridge_ip, port, listen)
+        edit, group_created_count = _new_device_edit(
+            index, group_entries, source, bridge_ip, port, listen
+        )
         edits.append(edit)
         created_count += group_created_count
 

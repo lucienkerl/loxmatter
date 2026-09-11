@@ -1,0 +1,796 @@
+# loxmatter - connects Matter devices to a Loxone Miniserver.
+# Copyright (C) 2026 Lucien Kerl
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+"""Groups in the store - see design 2026-09-10, sections 2 and 4."""
+
+from __future__ import annotations
+
+import json
+import sqlite3
+from pathlib import Path
+
+import pytest
+
+from loxmatter.matter.models import NodeSnapshot
+from loxmatter.model.store import (
+    CategoryMismatchError,
+    Store,
+    UnknownCommandError,
+    UnknownGroupError,
+)
+
+FIXTURES = Path(__file__).parents[1] / "fixtures" / "nodes"
+
+
+def load(name: str) -> NodeSnapshot:
+    raw = json.loads((FIXTURES / name).read_text(encoding="utf-8"))
+    return NodeSnapshot.from_raw(raw["node_id"], raw)
+
+
+@pytest.fixture
+def store(tmp_path):
+    s = Store(tmp_path / "test.sqlite")
+    yield s
+    s.close()
+
+
+@pytest.fixture
+def lamps(store):
+    """Two LIGHT devices of differing capability - the intersection case."""
+    ids = []
+    for name in ("ikea_kajplats_cws_lamp.json", "ikea_kajplats_ws_lamp.json"):
+        snapshot = load(name)
+        device_id = store.register_device(snapshot)
+        store.register_signals(device_id, snapshot)
+        ids.append(device_id)
+    return ids
+
+
+@pytest.fixture
+def plug(store):
+    snapshot = load("ikea_grillplats_plug.json")
+    device_id = store.register_device(snapshot)
+    store.register_signals(device_id, snapshot)
+    return device_id
+
+
+def test_a_new_group_takes_its_category_from_its_first_member(store, lamps):
+    group = store.create_group("Living room", lamps)
+    assert group.category == "light"
+    assert group.label == "Living room"
+    assert group.room is None
+
+
+def test_a_member_of_another_category_is_refused(store, lamps, plug):
+    with pytest.raises(CategoryMismatchError):
+        store.create_group("Mixed", [lamps[0], plug])
+
+
+def test_the_category_is_still_enforced_after_the_group_ran_empty(store, lamps, plug):
+    """The category is stored, not derived - an emptied group must keep
+    refusing, which a derivation from the members could not do."""
+    group = store.create_group("Living room", lamps)
+    store.set_group_members(group.id, [])
+    with pytest.raises(CategoryMismatchError):
+        store.set_group_members(group.id, [plug])
+
+
+def test_a_device_may_belong_to_several_groups(store, lamps):
+    first = store.create_group("Living room", lamps)
+    second = store.create_group("Ground floor", [lamps[0]])
+    assert [d.id for d in store.group_members(first.id)] == lamps
+    assert [d.id for d in store.group_members(second.id)] == [lamps[0]]
+
+
+def test_room_and_label_survive_a_round_trip(store, lamps):
+    group = store.create_group("Living room", lamps, room="Living room")
+    store.rename_group(group.id, "Ceiling")
+    store.set_group_room(group.id, "Hallway")
+    reread = store.group(group.id)
+    assert (reread.label, reread.room) == ("Ceiling", "Hallway")
+
+
+def test_set_group_room_does_not_touch_updated_at(store, lamps):
+    """The group counterpart of `test_set_room_does_not_touch_updated_at`
+    (`tests/model/test_store.py`) - final fix pass, review finding Minor
+    #3(a). `Store.set_room`'s own docstring gives the reason a room
+    assignment must not stamp `updated_at`: a room ends up in NO export
+    template, so touching it would make the export tab report "changed
+    since the last export" for a change that produces byte-for-byte the
+    same files as the last one. `set_group_room` used to stamp it anyway -
+    the one place the group side of a device/group method pair disagreed
+    with its device counterpart for no stated reason. That only becomes
+    visible once something reads `device_group.updated_at` for display
+    (item 1 of this same fix pass makes `GET /api/export/status` do
+    exactly that for groups), which is why this gap could ship unnoticed
+    until now."""
+    group = store.create_group("Living room", lamps)
+    before = store.group(group.id).updated_at
+
+    store.set_group_room(group.id, "Hallway")
+
+    assert store.group(group.id).room == "Hallway"
+    assert store.group(group.id).updated_at == before
+
+
+def test_rename_room_does_not_touch_a_groups_updated_at(store, lamps):
+    """The group side of `test_rename_room_does_not_touch_updated_at`
+    (`tests/model/test_store.py`) - same rationale, same fix pass, review
+    finding Minor #3(a). `rename_room` writes both `device.room` and
+    `device_group.room` in one bulk update (see its docstring); the group
+    half used to stamp `updated_at` even though the device half never
+    did, which would make a room rename alone light up a group's "changed
+    since export" pill for a change that touches no template."""
+    group = store.create_group("Living room", lamps, room="Küche")
+    before = store.group(group.id).updated_at
+
+    assert store.rename_room("Küche", "Essbereich") == 1
+
+    # Not passing vacuously: the rename must actually have taken place.
+    assert store.group(group.id).room == "Essbereich"
+    assert store.group(group.id).updated_at == before
+
+
+def test_an_empty_room_name_becomes_no_room(store, lamps):
+    """The same encoding as `device.room` - `_normalized_room` turns a
+    blank name into NULL, so "" can never be a real room."""
+    group = store.create_group("Living room", lamps, room="  ")
+    assert store.group(group.id).room is None
+
+
+def test_an_unknown_group_raises_without_repr_quotes(store):
+    with pytest.raises(UnknownGroupError) as excinfo:
+        store.group(999)
+    assert not str(excinfo.value).startswith("'")
+
+
+def test_a_deleted_group_is_gone(store, lamps):
+    group = store.create_group("Living room", lamps)
+    store.delete_group(group.id)
+    with pytest.raises(UnknownGroupError):
+        store.group(group.id)
+    assert store.groups() == []
+
+
+def test_a_group_needs_at_least_one_member_at_creation(store):
+    """The first member is what fixes the category (design 2.1)."""
+    with pytest.raises(ValueError):
+        store.create_group("Empty", [])
+
+
+def test_membership_of_a_forgotten_device_is_dropped(store, lamps):
+    group = store.create_group("Living room", lamps)
+    store.forget_device(lamps[1])
+    assert [d.id for d in store.group_members(group.id)] == [lamps[0]]
+
+
+def test_create_group_rejects_a_duplicated_member_and_leaves_no_ghost_row(store, lamps, tmp_path):
+    """Regression for the missing rollback guard: a duplicate id used to
+    raise `sqlite3.IntegrityError` from mid-loop, after `device_group` and
+    some `device_group_member` rows had already been executed but not
+    committed - and since nothing rolled the transaction back, those rows
+    sat in the connection's open implicit transaction until any later,
+    completely unrelated write committed them.
+
+    Asserted against a REOPENED `Store` on the same file: that is exactly
+    the bug's signature - `store.groups()` looking empty on the live
+    connection proves nothing once an uncommitted row can still be
+    flushed to disk by someone else's `commit()`.
+    """
+    with pytest.raises(ValueError):
+        store.create_group("Dup", [lamps[0], lamps[0]])
+    assert store.groups() == []
+
+    # An unrelated write that commits - if the group row survived
+    # uncommitted, this is what would resurrect it on disk.
+    store.rename_device(lamps[0], "Renamed")
+    store.close()
+
+    reopened = Store(tmp_path / "test.sqlite")
+    try:
+        assert reopened.groups() == []
+    finally:
+        reopened.close()
+
+
+def test_set_group_members_rejects_a_duplicated_member_and_keeps_the_old_membership(store, lamps):
+    group = store.create_group("Living room", lamps)
+    with pytest.raises(ValueError):
+        store.set_group_members(group.id, [lamps[0], lamps[0]])
+    assert [d.id for d in store.group_members(group.id)] == lamps
+
+
+class _FailSecondMemberInsert:
+    """Proxies a real `sqlite3.Connection`, forcing the SECOND `INSERT INTO
+    device_group_member` to fail as `sqlite3.IntegrityError` - standing in
+    for any write-time SQLite error that reaches the write loop after the
+    duplicate-id and category checks have already passed, not only a
+    duplicate id. `sqlite3.Connection.execute` cannot be monkeypatched
+    directly (it is a read-only attribute of an immutable C type), so this
+    wraps the connection instead and is installed in place of `store._db`.
+    """
+
+    def __init__(self, real: sqlite3.Connection) -> None:
+        self._real = real
+        self._insert_count = 0
+
+    def execute(self, sql, parameters=()):
+        if sql.startswith("INSERT INTO device_group_member"):
+            self._insert_count += 1
+            if self._insert_count == 2:
+                raise sqlite3.IntegrityError("simulated failure past the duplicate check")
+        return self._real.execute(sql, parameters)
+
+    def __getattr__(self, name):
+        return getattr(self._real, name)
+
+
+def test_create_group_rolls_back_a_write_time_failure_and_leaves_no_ghost_row(
+    store, lamps, tmp_path, monkeypatch
+):
+    """Regression for the `except (ValueError, sqlite3.Error):
+    self._db.rollback(); raise` guard itself, as distinct from the
+    duplicate-id test above: here both members are distinct and valid, so
+    the upfront duplicate check passes and the write loop actually starts.
+    The second `INSERT INTO device_group_member` then fails the way a real
+    SQLite error would - a full disk, a corrupted index, anything past
+    dedup - and without `self._db.rollback()` in the `except` clause,
+    `device_group` and the first `device_group_member` row would stay in
+    the connection's open transaction, waiting for some later, unrelated
+    commit to flush them to disk - exactly the mechanism the duplicate-id
+    test's docstring above describes, reached from the other branch.
+    """
+    monkeypatch.setattr(store, "_db", _FailSecondMemberInsert(store._db))
+
+    with pytest.raises(sqlite3.IntegrityError):
+        store.create_group("Flaky", lamps)
+    assert store.groups() == []
+
+    # An unrelated write that commits - if the group row survived
+    # uncommitted, this is what would resurrect it on disk.
+    store.rename_device(lamps[0], "Renamed")
+    store.close()
+
+    reopened = Store(tmp_path / "test.sqlite")
+    try:
+        assert reopened.groups() == []
+    finally:
+        reopened.close()
+
+
+def test_set_group_members_rolls_back_a_write_time_failure_and_keeps_the_old_membership(
+    store, lamps, tmp_path, monkeypatch
+):
+    """Same construction as the `create_group` test above, applied to
+    `set_group_members`: the DELETE and the first re-INSERT succeed, the
+    second re-INSERT fails, and without the rollback guard the DELETE and
+    that first re-INSERT would survive uncommitted, to be flushed to disk
+    by a later unrelated commit - as a membership of `[lamps[0]]`, not the
+    `[lamps[1]]` that was actually there before this call.
+
+    The old membership is deliberately `[lamps[1]]`, not `[lamps[0]]`: the
+    attempted new list is `[lamps[0], lamps[1]]`, so the first (successful)
+    re-INSERT writes `lamps[0]` - the same id an unguarded rollback would
+    leave behind. Starting from `[lamps[0]]` would make that wrong interim
+    state look identical to the correct restored one and the assertion
+    below would pass whether or not the guard exists.
+    """
+    group = store.create_group("Living room", [lamps[1]])
+
+    monkeypatch.setattr(store, "_db", _FailSecondMemberInsert(store._db))
+
+    with pytest.raises(sqlite3.IntegrityError):
+        store.set_group_members(group.id, [lamps[0], lamps[1]])
+    assert [d.id for d in store.group_members(group.id)] == [lamps[1]]
+
+    # An unrelated write that commits - if the DELETE and the first
+    # re-INSERT survived uncommitted, this is what would flush the wrong
+    # membership (`[lamps[0]]`) to disk.
+    store.rename_device(lamps[0], "Renamed")
+    store.close()
+
+    reopened = Store(tmp_path / "test.sqlite")
+    try:
+        assert [d.id for d in reopened.group_members(group.id)] == [lamps[1]]
+    finally:
+        reopened.close()
+
+
+class _FailForgetDeviceUpdate:
+    """Proxies a real `sqlite3.Connection`, forcing `forget_device`'s
+    `UPDATE device SET active = 0` to fail as `sqlite3.IntegrityError` -
+    standing in for any write-time SQLite error that reaches the second of
+    its two writes, the same construction as `_FailSecondMemberInsert`
+    above but aimed at `forget_device`.
+    """
+
+    def __init__(self, real: sqlite3.Connection) -> None:
+        self._real = real
+
+    def execute(self, sql, parameters=()):
+        if sql.startswith("UPDATE device SET active = 0"):
+            raise sqlite3.IntegrityError("simulated failure on the active-flag update")
+        return self._real.execute(sql, parameters)
+
+    def __getattr__(self, name):
+        return getattr(self._real, name)
+
+
+def test_forget_device_rolls_back_a_write_time_failure_and_keeps_the_old_membership(
+    store, lamps, tmp_path, monkeypatch
+):
+    """Regression for the missing rollback guard on `forget_device` (final
+    review, Item 2): this method was a single UPDATE before device
+    groups; this branch made it a two-write method (the
+    `device_group_member` DELETE, then the `device` UPDATE) without
+    adding the `try`/`except (ValueError, sqlite3.Error):
+    self._db.rollback(); raise` guard its three siblings
+    (`create_group`, `set_group_members`, `register_group_commands`)
+    already carry.
+
+    The DELETE succeeds, the UPDATE is forced to fail. Without
+    `self._db.rollback()` in the `except` clause, the DELETE would stay
+    visible on this very connection (SQLite reads a connection's own
+    uncommitted writes back immediately) - so the assertion right after
+    `pytest.raises` below, that the membership is back to what it was
+    before this call, is itself proof the guard ran: it can only pass if
+    `rollback()` actually undid the DELETE. The reopened-store assertion
+    that follows additionally proves no half-removed state - the
+    membership gone, `device.active` still 1 - was left for a later
+    unrelated commit to flush to disk, the same construction as the
+    `create_group`/`set_group_members` regressions above.
+    """
+    group = store.create_group("Living room", lamps)
+
+    monkeypatch.setattr(store, "_db", _FailForgetDeviceUpdate(store._db))
+
+    with pytest.raises(sqlite3.IntegrityError):
+        store.forget_device(lamps[1])
+    assert [d.id for d in store.group_members(group.id)] == lamps
+
+    # An unrelated write that commits - if the DELETE survived
+    # uncommitted, this is what would flush the dropped membership to
+    # disk while `device.active` stayed (wrongly) 1 for lamps[1].
+    store.rename_device(lamps[0], "Renamed")
+    store.close()
+
+    reopened = Store(tmp_path / "test.sqlite")
+    try:
+        assert [d.id for d in reopened.group_members(group.id)] == lamps
+    finally:
+        reopened.close()
+
+
+def _slugs(store, group_id):
+    return sorted(c.slug for c in store.group_commands(group_id))
+
+
+@pytest.fixture
+def lamps_with_commands(store, lamps):
+    """Registers the command rows the intersection is computed from."""
+    from loxmatter.export.commands import extract_commands
+
+    for device_id, name in zip(
+        lamps, ("ikea_kajplats_cws_lamp.json", "ikea_kajplats_ws_lamp.json"), strict=True
+    ):
+        snapshot = load(name)
+        store.register_commands(device_id, extract_commands(snapshot), snapshot.node_id)
+    return lamps
+
+
+def test_the_group_offers_only_what_every_member_accepts(store, lamps_with_commands):
+    colour_only = store.create_group("Colour", [lamps_with_commands[0]])
+    both = store.create_group("Both", lamps_with_commands)
+    assert "color" in _slugs(store, colour_only.id)
+    assert "color" not in _slugs(store, both.id)
+    assert {"on", "off", "toggle"} <= set(_slugs(store, both.id))
+
+
+def _rowid_for(store, key):
+    return store._db.execute("SELECT rowid FROM group_command WHERE key = ?", (key,)).fetchone()[0]
+
+
+def test_a_surviving_command_keeps_its_key(store, lamps_with_commands):
+    """A row that survives a membership change must be the SAME row, not
+    a fresh one that merely landed on an identical key. `key` is
+    `f"g{group_id}_{sample.slug}"` (`register_group_commands`) - fully
+    deterministic from `group_id` and `slug`, with no randomness and no
+    counter. That means a naive implementation that deletes every row for
+    the group and reinserts them all on each call would still produce
+    `after["on"] == before["on"]` - same group, same slug, same string.
+    Comparing the key alone cannot tell "preserved through an UPDATE"
+    apart from "destroyed and reborn identical". SQLite's `rowid` can:
+    `group_command.id` is `INTEGER PRIMARY KEY AUTOINCREMENT`, so a
+    DELETE-then-INSERT gets a strictly new, never-reused rowid even
+    though the key string comes out the same, while an UPDATE of the
+    existing row keeps it. Asserting the rowid is unchanged is therefore
+    the assertion that actually distinguishes the two implementations.
+    """
+    group = store.create_group("Colour", [lamps_with_commands[0]])
+    before = {c.slug: c.key for c in store.group_commands(group.id)}
+    before_rowid = _rowid_for(store, before["on"])
+    store.set_group_members(group.id, lamps_with_commands)
+    after = {c.slug: c.key for c in store.group_commands(group.id)}
+    assert after["on"] == before["on"]
+    assert _rowid_for(store, after["on"]) == before_rowid
+
+
+def test_a_command_that_leaves_the_intersection_stops_resolving(store, lamps_with_commands):
+    group = store.create_group("Colour", [lamps_with_commands[0]])
+    key = next(c.key for c in store.group_commands(group.id) if c.slug == "color")
+    store.set_group_members(group.id, lamps_with_commands)
+    with pytest.raises(UnknownCommandError):
+        store.resolve_group_command(key)
+
+
+def test_the_group_survives_losing_every_member(store, lamps_with_commands):
+    group = store.create_group("Colour", lamps_with_commands)
+    store.set_group_members(group.id, [])
+    assert store.group(group.id).label == "Colour"
+    assert store.group_commands(group.id) == []
+
+
+def test_forgetting_a_member_recomputes_the_intersection(store, lamps_with_commands):
+    group = store.create_group("Both", lamps_with_commands)
+    assert "color" not in _slugs(store, group.id)
+    store.forget_device(lamps_with_commands[1])
+    assert "color" in _slugs(store, group.id)
+
+
+def test_a_startup_backfill_that_reaches_every_member_extends_the_group(store, lamps):
+    """Item 2 of the final fix pass: `register_group_commands` used to run
+    only from `create_group`, `set_group_members` and `forget_device` -
+    every MEMBERSHIP change - but `Store.register_commands` also runs on
+    every startup via `backfill_commands` (and on re-commissioning),
+    without ever touching a group. So a `clusters.yaml` correction that
+    gives every member a command they did not previously share reached
+    each device's own tile the moment the bridge restarted, and left the
+    group's command list stale until someone happened to re-save its
+    member list - exactly the staleness section 4.3's re-adoption
+    rationale exists to prevent, just never wired to the one trigger that
+    actually fires it in production.
+
+    Both fixtures lamps share `colortemp` (`ColorControl`,
+    `MoveToColorTemperature`) in their real command lists; this test
+    registers each with `colortemp` held back, as if commissioning
+    predated the `clusters.yaml` entry for it, and then reruns
+    `backfill_commands` with the full snapshots - the same call
+    `cli.py`'s `run` command makes at every startup."""
+    from loxmatter.export.commands import extract_commands
+
+    device_a, device_b = lamps
+    snap_a = load("ikea_kajplats_cws_lamp.json")
+    snap_b = load("ikea_kajplats_ws_lamp.json")
+    reduced_a = [c for c in extract_commands(snap_a) if c.slug != "colortemp"]
+    reduced_b = [c for c in extract_commands(snap_b) if c.slug != "colortemp"]
+    store.register_commands(device_a, reduced_a, snap_a.node_id)
+    store.register_commands(device_b, reduced_b, snap_b.node_id)
+
+    group = store.create_group("Both", lamps)
+    assert "colortemp" not in _slugs(store, group.id)
+
+    gained = store.backfill_commands([snap_a, snap_b])
+
+    assert gained == 2  # both devices actually gained a command
+    assert "colortemp" in _slugs(store, group.id)
+
+
+def test_an_offline_member_changes_nothing(store, lamps_with_commands):
+    """Design 2026-09-10, section 10: "An offline member changes
+    nothing." There is no way to stage that scenario at this layer, and
+    staging a fake one would misrepresent what the store can even
+    express: `StoredDevice`'s docstring is explicit that reachability is
+    `Runtime` state fed from Matter subscriptions, never a stored column
+    - a `Store` opened directly, as every fixture in this module does,
+    has no slot to hold "offline" in the first place, and this test file
+    never touches `Runtime` at all.
+
+    So the requirement holds structurally, not by any check this test
+    could add: `register_group_commands` reads each member's accepted
+    commands through `self.commands(device.id)` (the `command` table,
+    populated once per interview by `register_commands`), and
+    `group_members` filters candidates on `device.active` - "not
+    forgotten", not "currently reachable". Neither reads `Runtime` or
+    anything that could vary with a real device going on- or offline.
+    There is simply no code path between a device's live reachability
+    and this computation.
+
+    What this test CAN demonstrate is the closest honest approximation:
+    recomputing the intersection for a group of still-registered
+    (`active`) members, with no device or runtime state touched anywhere
+    in between, changes nothing - which is what "an offline member
+    changes nothing" reduces to for a component that has no notion of
+    "online" to begin with.
+    """
+    group = store.create_group("Both", lamps_with_commands)
+    before = _slugs(store, group.id)
+
+    store.register_group_commands(group.id)
+
+    after = _slugs(store, group.id)
+    assert after == before
+    assert before  # not a vacuous comparison of two empty sets
+
+
+# A fixed sentinel far in the past. `_now()` always produces a real
+# UTC timestamp (2026 or later, given `now_iso`'s implementation), so no
+# genuine call can ever coincidentally reproduce this exact string - unlike
+# comparing two `_now()` calls against each other, which could in principle
+# land on the same microsecond and make an "it advanced" assertion flaky.
+_LONG_AGO = "2000-01-01T00:00:00.000000+00:00"
+
+
+def test_forgetting_a_member_that_shrinks_the_intersection_advances_updated_at(
+    store, lamps_with_commands
+):
+    """Regression for the design 4.3 gap: `forget_device` recomputes the
+    intersection via `register_group_commands`, and a command that drops
+    out of it (here: `color`, once the colour-only lamp is removed) makes
+    the group's exported command set stale - the export tab must be able
+    to see that, exactly as for a device (section 4.3). Before this fix,
+    `register_group_commands` never touched `device_group.updated_at` at
+    all, so the group would still read "unchanged" here even though a key
+    it used to export just stopped resolving.
+
+    `updated_at` is pinned to `_LONG_AGO` directly (bypassing `_now()`)
+    rather than compared against a timestamp read a moment earlier in the
+    test: two real `_now()` calls in the same test carry a - remote but
+    real - chance of landing on the same microsecond, which would make
+    an inequality assertion pass or fail by luck. A fixed sentinel from
+    the year 2000 cannot equal anything `_now()` produces today, so the
+    assertion below can only pass because the stamp genuinely moved.
+    """
+    group = store.create_group("Both", lamps_with_commands)
+    store._db.execute("UPDATE device_group SET updated_at = ? WHERE id = ?", (_LONG_AGO, group.id))
+    store._db.commit()
+
+    store.forget_device(lamps_with_commands[1])
+
+    assert store.group(group.id).updated_at != _LONG_AGO
+
+
+def test_a_recompute_that_changes_nothing_leaves_updated_at_alone(store, lamps_with_commands):
+    """The flip side of the gap above: `register_group_commands` runs on
+    every membership change, including ones where the intersection ends up
+    identical to what it already was. Stamping `updated_at` unconditionally
+    on every call - rather than only when a row was actually inserted,
+    deleted, or altered - would make every group permanently read "changed
+    since the last export", which tells the export tab nothing, the same
+    uselessness as never stamping at all.
+
+    This compares the stored value to itself rather than to a freshly
+    taken timestamp, so it cannot pass by accident: if the recompute below
+    touches the row, the stored string changes to whatever `_now()`
+    produced at that moment, and the equality fails regardless of how
+    close together the two calls landed.
+    """
+    group = store.create_group("Both", lamps_with_commands)
+    before = store.group(group.id).updated_at
+
+    store.register_group_commands(group.id)
+
+    assert store.group(group.id).updated_at == before
+
+
+def test_group_keys_can_never_collide_with_device_keys(store, lamps_with_commands):
+    """The `d`/`g` prefixes are a convention, not an SQL guarantee - this
+    is the assertion `resolve_command`'s two-step lookup rests on."""
+    group = store.create_group("Both", lamps_with_commands)
+    device_keys = {c.key for d in lamps_with_commands for c in store.commands(d)}
+    group_keys = {c.key for c in store.group_commands(group.id)}
+    assert device_keys and group_keys
+    assert device_keys.isdisjoint(group_keys)
+
+
+class _FailSecondGroupCommandWrite:
+    """Proxies a real `sqlite3.Connection`, forcing the SECOND write against
+    `group_command` (DELETE, UPDATE or INSERT, whichever the scenario
+    produces) to fail as `sqlite3.IntegrityError` - standing in for any
+    write-time SQLite error reaching `register_group_commands`'s own
+    DELETE/INSERT/UPDATE loops, the same construction as
+    `_FailSecondMemberInsert` above but aimed at `register_group_commands`
+    instead of the membership writers it is called from.
+    """
+
+    _WRITE_PREFIXES = (
+        "DELETE FROM group_command",
+        "UPDATE group_command",
+        "INSERT INTO group_command",
+    )
+
+    def __init__(self, real: sqlite3.Connection) -> None:
+        self._real = real
+        self._write_count = 0
+
+    def execute(self, sql, parameters=()):
+        if sql.startswith(self._WRITE_PREFIXES):
+            self._write_count += 1
+            if self._write_count == 2:
+                raise sqlite3.IntegrityError("simulated failure past the first write")
+        return self._real.execute(sql, parameters)
+
+    def __getattr__(self, name):
+        return getattr(self._real, name)
+
+
+def test_register_group_commands_rolls_back_a_write_time_failure_and_leaves_the_old_rows_intact(
+    store, lamps_with_commands, tmp_path, monkeypatch
+):
+    """Regression for the rollback guard this task adds to
+    `register_group_commands` itself - the defect Task 1 left behind in
+    `create_group`/`set_group_members`, reproduced here in the sibling
+    method the brief warns carries the identical shape.
+
+    Setup: a group of the single colour-capable member already has several
+    committed `group_command` rows (including `color`). Widening
+    membership to both lamps would shrink the intersection - some rows
+    DELETEd, the survivors UPDATEd - but the second write into
+    `group_command` is forced to fail. Without `self._db.rollback()` in the
+    `except` clause, the first (successful) write would sit in the
+    connection's open implicit transaction rather than being undone,
+    waiting for a later unrelated `commit()` to flush a half-recomputed,
+    inconsistent command list to disk - proven here the same way as the
+    membership tests above: an unrelated committing write, then a REOPENED
+    `Store` on the same file.
+    """
+    group = store.create_group("Colour", [lamps_with_commands[0]])
+    before = {(c.slug, c.key) for c in store.group_commands(group.id)}
+    assert before  # the colour-only member has commands to lose
+
+    monkeypatch.setattr(store, "_db", _FailSecondGroupCommandWrite(store._db))
+
+    with pytest.raises(sqlite3.IntegrityError):
+        store.set_group_members(group.id, lamps_with_commands)
+
+    # Read through the still-proxied connection first - a plain SELECT
+    # never matches `_WRITE_PREFIXES`, so this is unaffected by the forced
+    # failure and confirms the rollback took effect immediately.
+    assert {(c.slug, c.key) for c in store.group_commands(group.id)} == before
+
+    # An unrelated write that commits - if the first write of the failed
+    # recompute survived uncommitted, this is what would flush the
+    # half-recomputed, inconsistent row set to disk.
+    store.rename_device(lamps_with_commands[0], "Renamed")
+    store.close()
+
+    reopened = Store(tmp_path / "test.sqlite")
+    try:
+        assert {(c.slug, c.key) for c in reopened.group_commands(group.id)} == before
+    finally:
+        reopened.close()
+
+
+class _FailSecondGroupDelete:
+    """Proxies a real `sqlite3.Connection`, forcing the SECOND of
+    `delete_group`'s three DELETEs to fail as `sqlite3.IntegrityError` -
+    standing in for any write-time SQLite error reaching partway through
+    the sequence, the same construction as `_FailSecondMemberInsert`
+    above but aimed at `delete_group`.
+    """
+
+    _DELETE_PREFIXES = (
+        "DELETE FROM group_command",
+        "DELETE FROM device_group_member",
+        "DELETE FROM device_group ",
+    )
+
+    def __init__(self, real: sqlite3.Connection) -> None:
+        self._real = real
+        self._delete_count = 0
+
+    def execute(self, sql, parameters=()):
+        if sql.startswith(self._DELETE_PREFIXES):
+            self._delete_count += 1
+            if self._delete_count == 2:
+                raise sqlite3.IntegrityError("simulated failure past the first DELETE")
+        return self._real.execute(sql, parameters)
+
+    def __getattr__(self, name):
+        return getattr(self._real, name)
+
+
+def test_delete_group_rolls_back_a_write_time_failure_and_leaves_the_group_intact(
+    store, lamps_with_commands, tmp_path, monkeypatch
+):
+    """Regression for the missing rollback guard on `delete_group` (final
+    review, Item 2): three DELETEs and one commit, unguarded before this
+    fix - the same shape `create_group` and `set_group_members` were
+    fixed for, missed on this sibling.
+
+    Setup: a group with committed `group_command` rows. The first DELETE
+    (`group_command`) succeeds, the second (`device_group_member`) is
+    forced to fail. Without `self._db.rollback()` in the `except` clause,
+    that first DELETE would stay visible on this connection (SQLite reads
+    a connection's own uncommitted writes back immediately) - so the
+    immediate assertion below, that the group's commands are still there,
+    is itself proof the guard ran.
+    """
+    group = store.create_group("Colour", [lamps_with_commands[0]])
+    before_commands = {(c.slug, c.key) for c in store.group_commands(group.id)}
+    assert before_commands  # something to lose if the first DELETE survives
+
+    monkeypatch.setattr(store, "_db", _FailSecondGroupDelete(store._db))
+
+    with pytest.raises(sqlite3.IntegrityError):
+        store.delete_group(group.id)
+
+    # Read through the still-proxied connection first - proves the
+    # rollback took effect immediately, before any reopen.
+    assert store.group(group.id).label == "Colour"
+    assert {(c.slug, c.key) for c in store.group_commands(group.id)} == before_commands
+
+    # An unrelated write that commits - if the first DELETE survived
+    # uncommitted, this is what would flush the half-deleted group to disk.
+    store.rename_device(lamps_with_commands[0], "Renamed")
+    store.close()
+
+    reopened = Store(tmp_path / "test.sqlite")
+    try:
+        assert reopened.group(group.id).label == "Colour"
+        assert {(c.slug, c.key) for c in reopened.group_commands(group.id)} == before_commands
+    finally:
+        reopened.close()
+
+
+def test_targets_carry_one_entry_per_member_with_that_member_s_own_rows(store, lamps_with_commands):
+    group = store.create_group("Both", lamps_with_commands)
+    on = next(c for c in store.group_commands(group.id) if c.slug == "on")
+    targets = store.group_targets(on)
+    assert [t.device_id for t in targets] == lamps_with_commands
+    assert all(t.device_label for t in targets)
+    for target in targets:
+        assert target.commands
+        for command in target.commands:
+            assert (command.cluster_id, command.command_id) == (on.cluster_id, on.command_id)
+
+
+def test_a_member_carrying_the_pair_on_two_endpoints_gets_both(store, lamps_with_commands):
+    """A two-channel device has one command row per endpoint; the group
+    has one command. The only reading that does not surprise is "the
+    whole member" (design 4.3)."""
+    group = store.create_group("Both", lamps_with_commands)
+    on = next(c for c in store.group_commands(group.id) if c.slug == "on")
+    store._db.execute(
+        "INSERT INTO command"
+        " (device_id, node_id, endpoint, cluster_id, command_id, key, slug, takes_value)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            lamps_with_commands[0],
+            store.device(lamps_with_commands[0]).node_id,
+            99,
+            on.cluster_id,
+            on.command_id,
+            f"d{lamps_with_commands[0]}_99_on",
+            "on",
+            0,
+        ),
+    )
+    store._db.commit()
+    targets = store.group_targets(on)
+    first = next(t for t in targets if t.device_id == lamps_with_commands[0])
+    second = next(t for t in targets if t.device_id == lamps_with_commands[1])
+
+    # The exact, ordered pair of endpoints for the two-endpoint member -
+    # not just "the endpoints seen are unique", which would still pass if
+    # one of the two rows were silently dropped or duplicated. `commands()`
+    # already orders by (endpoint, cluster_id, command_id), so the
+    # original row at endpoint 1 comes before the inserted one at 99.
+    assert tuple(c.endpoint for c in first.commands) == (1, 99)
+    assert len(first.commands) == 2
+
+    # The other member has exactly its own single row and must not pick
+    # up the first member's extra endpoint as a side effect.
+    assert tuple(c.endpoint for c in second.commands) == (1,)

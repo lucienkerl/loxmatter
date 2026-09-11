@@ -225,6 +225,76 @@ class ControlsOut(BaseModel):
     hidden_raw_commands: int
 
 
+class GroupIn(BaseModel):
+    """Body of `POST /api/groups`.
+
+    `member_ids` is required and must not be empty: the first member fixes
+    the group's category (design 2026-09-10, section 2).
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    label: str
+    member_ids: list[int]
+    room: str | None = None
+
+
+class GroupPatch(BaseModel):
+    """Body of `PATCH /api/groups/{id}` - label and room, both optional."""
+
+    model_config = ConfigDict(frozen=True)
+
+    label: str | None = None
+    room: str | None = None
+
+
+class GroupMembersIn(BaseModel):
+    """Body of `PUT /api/groups/{id}/members` - the COMPLETE list.
+
+    Not add/remove: the command intersection is recomputed after every
+    change anyway, and two single removals would pass through an
+    intermediate state nobody asked for (design 5).
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    member_ids: list[int]
+
+
+class GroupOut(BaseModel):
+    """A group for the WebUI. `member_labels` travels with `member_ids` so
+    a tile can name its members without one request per member."""
+
+    model_config = ConfigDict(frozen=True)
+
+    id: int
+    label: str
+    room: str | None
+    category: str
+    member_ids: list[int]
+    member_labels: list[str]
+    command_count: int
+
+
+class GroupControlsOut(BaseModel):
+    """Response of `GET /api/groups/{id}/controls`.
+
+    `seed_device_id`/`seed_device_label` name the member the sliders'
+    initial values were read from. A group has no state of its own, and
+    the lamp-controls design ruled out showing a slider with no initial
+    value at all - so the number is shown and attributed rather than
+    presented as the group's (design 5). Both are `None` for an empty
+    group.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    commands: list[CommandOut]
+    hidden_raw_commands: int
+    seed_device_id: int | None
+    seed_device_label: str | None
+
+
 class ValueIn(BaseModel):
     """Body of `POST /api/commands/{key}` and `POST /api/signals/{key}/write`
     (Task 4) - the same string value that `/cmd/{key}/{value}` (Phase 4)
@@ -331,13 +401,46 @@ class ExportDeviceOut(BaseModel):
     hidden_count: int
 
 
+class ExportGroupOut(BaseModel):
+    """A group in the response of `GET /api/export/preview` (final fix
+    pass, review finding Important #1) - the group counterpart of
+    `ExportDeviceOut`, stripped to what actually applies to a group.
+
+    A group has no signals of its own (`api.groups`'s module docstring:
+    it is driven, never read), so it produces no VIU template and none of
+    `ExportDeviceOut`'s `inputs`/`skipped`/`hidden_count` describe
+    anything real for it - there is nothing to leave at zero, the
+    concepts themselves do not apply, so the fields are simply absent
+    rather than present-and-meaningless. Only `vo_filename`/`commands`
+    survive: the same two things `api.export.download` actually writes
+    for a group (`filename_for(..., kind="g")`, `to_group_outputs`).
+    Before this fix, the preview never mentioned groups at all even
+    though a download always bundles every group's template alongside
+    whatever devices it writes - the preview's file list therefore always
+    undercounted what the ZIP actually contained."""
+
+    model_config = ConfigDict(frozen=True)
+
+    group_id: int
+    label: str
+    vo_filename: str
+    commands: int
+
+
 class ExportPreviewOut(BaseModel):
     """Response of `GET /api/export/preview` (Task 5) - a pure preview, no
-    write access (see `api.export.preview`)."""
+    write access (see `api.export.preview`).
+
+    `groups` (final fix pass, review finding Important #1): every group
+    that has at least one command, i.e. every group `download` would
+    actually write a `VO_g*.xml` for. An emptied group (design 4.3) has
+    nothing to export and is left out here exactly as `download` skips
+    writing a file for it."""
 
     model_config = ConfigDict(frozen=True)
 
     devices: list[ExportDeviceOut]
+    groups: list[ExportGroupOut]
     system_files: list[str]
 
 
@@ -354,6 +457,31 @@ class ExportStatusOut(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     device_id: int
+    label: str
+    exported_at: str | None
+    changed_since_export: bool
+
+
+class GroupExportStatusOut(BaseModel):
+    """A group in the response of `GET /api/export/status` (final fix
+    pass, review finding Important #1) - the group counterpart of
+    `ExportStatusOut`, riding along in the SAME response list as a
+    differently-shaped entry rather than under a second top-level key:
+    `GET /api/export/status` is pinned to answer with a list, not an
+    object (`tests/api/test_devices.py`,
+    `test_patching_the_room_does_not_make_the_device_pending`).
+
+    `group_id`, never `device_id`: a device counter and a group counter
+    both start at 1 (`ProjectSyncEntryOut.owner_kind`'s docstring records
+    the same collision for the project-sync plan), so a group's id needs
+    its own field rather than borrowing the device one. `exported_at`/
+    `changed_since_export` mean exactly what they mean on
+    `ExportStatusOut` - see `model.store.Store.mark_group_exported` and
+    `model.store.changed_since_export`."""
+
+    model_config = ConfigDict(frozen=True)
+
+    group_id: int
     label: str
     exported_at: str | None
     changed_since_export: bool
@@ -390,13 +518,23 @@ class BridgeSettingsIn(BaseModel):
 class ProjectSyncEntryOut(BaseModel):
     """A row in the diff plan of `POST /api/export/project-sync` (design
     section 5/7). `changes` is always empty outside of
-    `status == "updated"`."""
+    `status == "updated"`.
+
+    `owner_kind` (design 2026-09-10, section 8) is `"device"` or
+    `"group"` - carried through unchanged from `PlanEntry.owner_kind`
+    because a group and a device can share the same `device_id` (both
+    counters start at 1). The WebUI groups entries into per-owner cards
+    (`projectSyncGroupedEntries` in `app.js`); without this field it keys
+    that grouping on `device_id` alone and a group's outputs land inside
+    the same-numbered device's card, mislabelled with the device's name
+    (devices are planned first, so the device's label wins the merge)."""
 
     model_config = ConfigDict(frozen=True)
 
     kind: str
     device_id: int
     device_label: str
+    owner_kind: str
     key: str
     title: str
     status: str

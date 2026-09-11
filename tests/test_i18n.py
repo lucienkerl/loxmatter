@@ -29,6 +29,7 @@ from __future__ import annotations
 import pytest
 
 from loxmatter import i18n
+from loxmatter.profiles.categories import Category
 
 
 def test_default_language_is_english():
@@ -160,3 +161,26 @@ def test_no_value_is_wrapped_in_typographic_quotes():
         "likely used as YAML delimiters instead of straight ASCII "
         "quotation marks: " + ", ".join(offenders)
     )
+
+
+# -----------------------------------------------------------------------------
+# api.categories.* - `Store._check_members` (model/store.py) builds this key
+# as `"api.categories." + actual`, straight from a `Category.value`, and
+# hands it to `t()`, which raises `KeyError` on a key missing from the table
+# entirely (see `t()`'s docstring above: only a missing PER-LANGUAGE entry
+# falls back to English, a missing key does not). All eight `Category`
+# values (`profiles/categories.py`) have one today - this guards against a
+# ninth value added later without a matching entry quietly turning a 400
+# category refusal into an unhandled 500 the moment someone hits it.
+# -----------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("category", list(Category))
+def test_every_category_has_an_api_categories_key_in_both_languages(category):
+    """Parametrized over the real enum, not a hand-typed list of its
+    members, so a new `Category` value is covered the moment it exists,
+    without anyone remembering to extend this test too."""
+    key = f"api.categories.{category.value}"
+    translations = i18n._STRINGS.get(key, {})
+    assert "en" in translations, f"{key} is missing an 'en' entry"
+    assert "de" in translations, f"{key} is missing a 'de' entry"

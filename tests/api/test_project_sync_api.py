@@ -220,3 +220,49 @@ async def test_project_sync_missing_caption_is_auto_created(api):
     assert b'Type="VirtualInCaption"' in with_new_devices
     conservative = base64.b64decode(body["patched_conservative_base64"])
     assert conservative.decode("utf-8-sig") == NO_VIRTUAL_IN_CAPTION_PROJECT
+
+
+async def test_project_sync_distinguishes_a_group_from_a_same_numbered_device(api):
+    """Regression for the missing `owner_kind` at the API boundary (final
+    review, Item 1): a group id and a device id can be the same number -
+    both counters start at 1 - so `PlanEntry.owner_kind` exists precisely
+    to let a consumer of the plan tell a group's entries from a
+    same-numbered device's. `_entries_out` used to drop it when building
+    `ProjectSyncEntryOut`, and the WebUI's `projectSyncGroupedEntries`
+    grouped by `device_id` alone - the normal case on a first
+    installation, not an edge case, since the first device and the first
+    group both get id 1.
+
+    The `api` fixture's plug is device 1 (the only device registered).
+    Grouping it into a one-member group makes that group id 1 too - the
+    exact collision the fix exists for (`_category_of` accepts a group
+    whose sole member fixes its own category, so this needs no second
+    device). Without `owner_kind` in the response, this test cannot even
+    ask the question it means to ask - there would be no field to prove
+    a group entry apart from a device entry with the same `device_id`.
+    """
+    client, store = api
+    (plug,) = store.devices()
+    group = store.create_group("Kitchen group", [plug.id])
+    assert group.id == plug.id == 1  # the collision this test exists to cover
+
+    response = await client.post(
+        "/api/export/project-sync",
+        params={"bridge_ip": "10.0.0.5"},
+        files={"file": ("projekt.Loxone", SAMPLE_PROJECT.encode("utf-8"), "application/xml")},
+    )
+    assert response.status_code == 200
+    entries = response.json()["entries"]
+    assert entries
+
+    same_numbered = [e for e in entries if e["device_id"] == 1]
+    assert same_numbered  # sanity: the collision actually produced entries
+    device_entries = [e for e in same_numbered if e["owner_kind"] == "device"]
+    group_entries = [e for e in same_numbered if e["owner_kind"] == "group"]
+    assert device_entries and group_entries
+
+    # The group's entries carry the group's own label - never the
+    # device's - which is exactly what a `device_id`-only grouping (the
+    # WebUI's old behaviour) could not preserve once merged into one card.
+    assert {e["device_label"] for e in group_entries} == {"Kitchen group"}
+    assert {e["device_label"] for e in device_entries} == {plug.label}

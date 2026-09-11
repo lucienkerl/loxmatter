@@ -8,6 +8,25 @@ people who don't know the code.
 
 ## [Unreleased]
 
+### Added
+
+- **Groups.** Several devices of the same kind — usually lamps — can now be
+  switched together from a single block in Loxone. The bridge takes the one
+  command and passes it on to each member itself, so the Miniserver no longer
+  needs a virtual output per lamp and no longer fires them one after another.
+- A group takes only one kind of device, and offers only what *all* its
+  members understand: put a colour lamp and a white-only lamp together and the
+  group can do brightness and on/off, but not colour. If one member does not
+  answer, the others are still switched and the log names the one that stayed
+  dark — "five of six" is the useful answer when something is wrong.
+- Groups sit as tiles beside the devices, carry their own room, and get their
+  own template in the export and their own container in the project sync, just
+  like a device. They only send: a group reports no state back, because six
+  lamps have six brightnesses and any single number for them would be invented.
+- These are the bridge's own groups, not Matter's. No Matter server this bridge
+  can use offers group messaging, so nothing is created on the devices
+  themselves.
+
 ## [0.3.10] — 2026-09-10
 
 ### Fixed

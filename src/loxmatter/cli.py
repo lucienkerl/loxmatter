@@ -44,7 +44,7 @@ from loxmatter.export.documents import (
     render_virtual_in_udp,
     render_virtual_out,
 )
-from loxmatter.export.outputs import to_outputs
+from loxmatter.export.outputs import to_group_outputs, to_outputs
 from loxmatter.export.signals import to_inputs
 from loxmatter.loxone.runtime import Runtime
 from loxmatter.loxone.sender import UdpSender
@@ -427,7 +427,58 @@ def export(
     # must not wrongly mark the device as exported.
     store = Store(resolved_store_path)
     try:
+        # Unlike the device above, `export` never registers a group from
+        # a snapshot - groups only ever come from the WebUI. So this is
+        # not "the group of the device just exported", it is every group
+        # the store currently knows, written alongside it every time the
+        # command runs, the same way the API's `download` route does.
+        #
+        # `exported_group_ids` (final fix pass, review finding Important
+        # #1): this loop has always written a group's `VO_g*.xml`, but
+        # nothing ever called `Store.mark_group_exported` for it -
+        # `GET /api/export/status` could then never answer "when last
+        # exported" for a group exported only via the CLI, exactly the
+        # gap `Store.mark_exported`'s own docstring already describes for
+        # a device (design 8: a group's `exported_at` "behaves as on a
+        # device"). Collected instead of marked inline, for the same
+        # reason as the device's own deferred `mark_exported` call
+        # (comment above): a write failure partway through this loop ends
+        # the command via `_fail` before any group is marked.
+        exported_group_ids: list[int] = []
+        for group in store.groups():
+            group_commands = to_group_outputs(store.group_commands(group.id))
+            group_vo = out / filename_for("VO", group.id, group.label, kind="g")
+            if not group_commands:
+                # An emptied group has no outputs to offer. It keeps
+                # existing (design 4.3); it just has nothing to export.
+                typer.echo(i18n.t("cli.export.echo_group_skipped", filename=group_vo.name))
+                continue
+            try:
+                group_vo.write_bytes(
+                    render_virtual_out(
+                        group.label, f"http://{bridge_ip}:{listen}", group_commands, is_group=True
+                    )
+                )
+            except OSError as exc:
+                # Its own `_fail`, distinct from the two above: by this
+                # point the device's own VIU/VO have already been written
+                # successfully (a failure there would have ended the
+                # command before this loop began), so neither
+                # `fail_write_first_file` ("no file has been created yet")
+                # nor `fail_write_second_file` (a specific written/missing
+                # pair) describes this situation honestly.
+                _fail(i18n.t("cli.export.fail_write_group_file", path=group_vo, exc=exc))
+            typer.echo(
+                i18n.t(
+                    "cli.export.echo_group_summary",
+                    filename=group_vo.name,
+                    count=len(group_commands),
+                )
+            )
+            exported_group_ids.append(group.id)
         store.mark_exported(device_id)
+        for group_id_written in exported_group_ids:
+            store.mark_group_exported(group_id_written)
     finally:
         store.close()
 

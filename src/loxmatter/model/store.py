@@ -54,6 +54,7 @@ from loxmatter.model.locale_store import LocaleStore
 from loxmatter.model.resend_settings_store import ResendSettingsStore
 from loxmatter.model.settings_store import BridgeSettingsStore
 from loxmatter.model.update_settings_store import UpdateSettingsStore
+from loxmatter.profiles.categories import category_for
 from loxmatter.profiles.relevance import (
     ROOT_NODE_DEVICE_TYPE,
     UTILITY_ENDPOINT_KEEP_CLUSTERS,
@@ -111,7 +112,11 @@ DEFAULT_LISTEN_PORT = 8080
 # `_migrate`, and the service would start without the tables it needs to
 # sign in. The number depends on the order in which the changes were
 # merged, not on when they were written.
-_SCHEMA_VERSION = 7
+# Version 8 (device groups, design 2026-09-10) adds the three tables
+# `device_group`, `device_group_member` and `group_command`, see
+# `_migrate_to_v8` - all three are already present in a fresh database via
+# `_SCHEMA`, so the migration is only needed for existing databases.
+_SCHEMA_VERSION = 8
 
 
 def schema_version() -> int:
@@ -175,6 +180,29 @@ CREATE TABLE IF NOT EXISTS session (
     id         TEXT PRIMARY KEY,
     created_at INTEGER NOT NULL,
     expires_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS device_group (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    label       TEXT NOT NULL,
+    room        TEXT,
+    category    TEXT NOT NULL,
+    exported_at TEXT,
+    updated_at  TEXT
+);
+CREATE TABLE IF NOT EXISTS device_group_member (
+    group_id  INTEGER NOT NULL REFERENCES device_group(id),
+    device_id INTEGER NOT NULL REFERENCES device(id),
+    UNIQUE (group_id, device_id)
+);
+CREATE TABLE IF NOT EXISTS group_command (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    group_id    INTEGER NOT NULL REFERENCES device_group(id),
+    cluster_id  INTEGER NOT NULL,
+    command_id  INTEGER NOT NULL,
+    key         TEXT NOT NULL UNIQUE,
+    slug        TEXT NOT NULL,
+    takes_value INTEGER NOT NULL,
+    UNIQUE (group_id, cluster_id, command_id)
 );
 """
 
@@ -609,6 +637,44 @@ def _migrate_to_v7(db: sqlite3.Connection) -> None:
     _add_column_if_missing(db, "device", "device_types", "TEXT")
 
 
+def _migrate_to_v8(db: sqlite3.Connection) -> None:
+    """Adds the three group tables (design 2026-09-10, section 4.2).
+
+    `CREATE TABLE IF NOT EXISTS` and not `CREATE TABLE`, for the same
+    reason as in `_migrate_to_v5`: a freshly created database already has
+    all three via `_SCHEMA` and is nevertheless at `PRAGMA user_version =
+    0`, so it runs through this migration too. No backfill - no existing
+    database has groups.
+    """
+    db.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS device_group (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            label       TEXT NOT NULL,
+            room        TEXT,
+            category    TEXT NOT NULL,
+            exported_at TEXT,
+            updated_at  TEXT
+        );
+        CREATE TABLE IF NOT EXISTS device_group_member (
+            group_id  INTEGER NOT NULL REFERENCES device_group(id),
+            device_id INTEGER NOT NULL REFERENCES device(id),
+            UNIQUE (group_id, device_id)
+        );
+        CREATE TABLE IF NOT EXISTS group_command (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            group_id    INTEGER NOT NULL REFERENCES device_group(id),
+            cluster_id  INTEGER NOT NULL,
+            command_id  INTEGER NOT NULL,
+            key         TEXT NOT NULL UNIQUE,
+            slug        TEXT NOT NULL,
+            takes_value INTEGER NOT NULL,
+            UNIQUE (group_id, cluster_id, command_id)
+        );
+        """
+    )
+
+
 # Migrations in order, applied from whichever version is stored - to extend
 # for a later schema change: simply append, with the next version number as
 # the key.
@@ -620,6 +686,7 @@ _MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     5: _migrate_to_v5,
     6: _migrate_to_v6,
     7: _migrate_to_v7,
+    8: _migrate_to_v8,
 }
 
 
@@ -714,6 +781,39 @@ class StoredCommand:
     # /api/commands/{key}`), and the calling route still needs the
     # device_id to check whether the associated device is still active.
     device_id: int
+
+
+@dataclass(frozen=True)
+class StoredGroupCommand:
+    """A row from `group_command` (design 2026-09-10, section 4.1).
+
+    Carries NO endpoint, unlike `StoredCommand`. Each member has its own,
+    and two lamps of different make can hold the same cluster on
+    different endpoints - the endpoint therefore belongs to the member and
+    is looked up per member at dispatch time (`Store.group_targets`).
+    """
+
+    key: str
+    slug: str
+    group_id: int
+    cluster_id: int
+    command_id: int
+    takes_value: bool
+
+
+@dataclass(frozen=True)
+class GroupTarget:
+    """One member of a group, with the command rows that carry out one
+    group command on it (design 2026-09-10, section 3).
+
+    `device_label` travels along because the 502 detail names the members
+    that failed, and the dispatcher must not have to reach back into the
+    store to find out who it was talking to.
+    """
+
+    device_id: int
+    device_label: str
+    commands: tuple[StoredCommand, ...]
 
 
 def _encode_device_types(types: Mapping[int, frozenset[int]]) -> str:
@@ -837,6 +937,45 @@ class StoredDevice:
     device_types: dict[int, frozenset[int]] | None
 
 
+@dataclass(frozen=True)
+class StoredGroup:
+    """A row from `device_group` (design 2026-09-10, section 2).
+
+    Carries no member list and no command list: both are separate tables
+    with their own lifetime, and a copy frozen in here would be stale the
+    moment a member changes. `category` is the `value` of a
+    `profiles.categories.Category`, stored rather than derived - an
+    emptied group must still know what it accepts (design 2.1).
+    """
+
+    id: int
+    label: str
+    room: str | None
+    category: str
+    exported_at: str | None
+    updated_at: str | None
+
+
+def changed_since_export(exported_at: str | None, updated_at: str | None) -> bool:
+    """Whether an exportable object - a device or a group - has changed
+    since it was last exported.
+
+    Takes the two raw timestamps rather than a `StoredDevice` or
+    `StoredGroup` instance so that `api.export`'s device-side check
+    (`_changed_since_export`) and its group-side check
+    (`_group_changed_since_export`) (final fix pass, review finding
+    Important #1 - design 8 says a group's `exported_at`/`updated_at`
+    "behave as on a device", and this is the comparison that makes that
+    claim mean something) run the exact same comparison instead of two
+    independently written copies that could silently drift apart - the
+    same rationale as `_loxone_commands` assembling a key in exactly one
+    place instead of two.
+
+    An unknown `updated_at` counts as "changed" - the more cautious of the
+    two possible assumptions, see `StoredDevice.updated_at`."""
+    return exported_at is None or updated_at is None or updated_at > exported_at
+
+
 class UnknownCommandError(KeyError):
     """`KeyError.__str__` wraps the message in `repr()`, which makes
     `str(exc)` put extra quote marks around the entire text - Task 6 turns
@@ -856,6 +995,18 @@ class UnknownDeviceError(KeyError):
 
     def __str__(self) -> str:
         return str(self.args[0])
+
+
+class UnknownGroupError(KeyError):
+    """Like `UnknownCommandError`: `KeyError.__str__` would wrap the
+    message in `repr()`, and this text becomes an HTTP 404 body."""
+
+    def __str__(self) -> str:
+        return str(self.args[0])
+
+
+class CategoryMismatchError(ValueError):
+    """A member whose category differs from the group's (design 2.1)."""
 
 
 class Store:
@@ -977,9 +1128,49 @@ class Store:
         return int(device_id)
 
     def forget_device(self, device_id: int) -> None:
-        """Marks a device as removed. The id stays assigned (Spec 6.2)."""
-        self._db.execute("UPDATE device SET active = 0 WHERE id = ?", (device_id,))
+        """Marks a device as removed. The id stays assigned (Spec 6.2).
+
+        Its group memberships do NOT stay: `register_device` matches on
+        `unique_id AND active = 1`, so recommissioning the same physical
+        device produces a NEW row with a new id - the old membership
+        could therefore never come back to life, and would only sit
+        around pointing at a device nobody can reach.
+
+        Removing a device is a membership change like any other group
+        member removal (design 4.3): every group the device belonged to
+        recomputes its command intersection. The affected group ids are
+        captured BEFORE the `DELETE FROM device_group_member` below - once
+        that row is gone, there is no way left to ask which groups this
+        device used to belong to. This does not delete a thereby-emptied
+        group; a group survives losing every member (design 2.1, 4.3).
+
+        **Rollback guard.** This method was a single UPDATE before device
+        groups; this branch made it a two-write method (the
+        `device_group_member` DELETE, then the `device` UPDATE) and needs
+        the same `try`/`except (ValueError, sqlite3.Error):
+        self._db.rollback(); raise` guard as `create_group`,
+        `set_group_members` and `register_group_commands`. Without it, a
+        write-time failure on the UPDATE would leave the DELETE sitting in
+        the connection's open implicit transaction - the membership rows
+        gone from this connection's view while `device.active` still
+        reads 1 - for a later, unrelated `commit()` anywhere else in
+        `Store` to flush that half-removed state to disk by surprise.
+        """
+        affected = [
+            int(row["group_id"])
+            for row in self._db.execute(
+                "SELECT group_id FROM device_group_member WHERE device_id = ?", (device_id,)
+            ).fetchall()
+        ]
+        try:
+            self._db.execute("DELETE FROM device_group_member WHERE device_id = ?", (device_id,))
+            self._db.execute("UPDATE device SET active = 0 WHERE id = ?", (device_id,))
+        except (ValueError, sqlite3.Error):
+            self._db.rollback()
+            raise
         self._db.commit()
+        for group_id in affected:
+            self.register_group_commands(group_id)
 
     def udp_port(self, device_id: int) -> int:
         row = self._db.execute("SELECT udp_port FROM device WHERE id = ?", (device_id,)).fetchone()
@@ -1017,6 +1208,396 @@ class Store:
         if row is None:
             raise UnknownDeviceError(i18n.t("api.errors.unknown_device", device_id=device_id))
         return self._as_device(row)
+
+    @staticmethod
+    def _as_group(row: sqlite3.Row) -> StoredGroup:
+        return StoredGroup(
+            id=int(row["id"]),
+            label=str(row["label"]),
+            room=row["room"],
+            category=str(row["category"]),
+            exported_at=row["exported_at"],
+            updated_at=row["updated_at"],
+        )
+
+    def _category_of(self, device_id: int) -> str:
+        return category_for(self.device(device_id).device_types).value
+
+    def _check_members(self, category: str, member_ids: Sequence[int]) -> None:
+        """Every member must exist, be active and match `category`.
+
+        Checked BEFORE anything is written, so a category mismatch never
+        leaves a half-applied membership behind. This alone is not the
+        whole all-or-nothing story, though: it only catches a category
+        mismatch, not a duplicate id (checked separately by the caller) or
+        a write-time SQLite error. `create_group` and `set_group_members`
+        cover those by running their write loop inside the same
+        `try`/`except (ValueError, sqlite3.Error): self._db.rollback();
+        raise` guard as `register_commands` - together, the two give both
+        methods the same all-or-nothing stance.
+        """
+        for device_id in member_ids:
+            actual = self._category_of(device_id)
+            if actual != category:
+                # `actual`/`expected` go through `api.categories.*` before
+                # they reach the sentence below - `category` and `actual`
+                # are `Category.value` identifiers ("light", "socket", ...),
+                # language-independent by design (they are also stored
+                # data, `device_group.category`), and interpolating them
+                # unchanged left the untranslated identifier standing as
+                # the one English island in an otherwise translated
+                # sentence, out of step with the WebUI's own pre-check for
+                # the same refusal (`web.groups.other_category`,
+                # `categoryLabel()` in app.js), which already names the
+                # category in the reader's language (review finding, final
+                # fix pass).
+                raise CategoryMismatchError(
+                    i18n.t(
+                        "api.errors.group_category_mismatch",
+                        device_id=device_id,
+                        actual=i18n.t("api.categories." + actual),
+                        expected=i18n.t("api.categories." + category),
+                    )
+                )
+
+    def create_group(
+        self, label: str, member_ids: Sequence[int], room: str | None = None
+    ) -> StoredGroup:
+        """The first member fixes the category, so there must be one.
+
+        Duplicate ids in `member_ids` are rejected here, before anything is
+        written: `device_group_member` has `UNIQUE (group_id, device_id)`,
+        so an unchecked duplicate would only surface as a raw
+        `sqlite3.IntegrityError` partway through the insert loop below.
+        That loop runs as one transaction, exactly like
+        `register_commands`: if a write still fails there - that dedup
+        check missing a case, or any other SQLite error - the whole group
+        is rolled back instead of leaving `device_group` and a partial
+        `device_group_member` row set sitting in the connection's open
+        transaction, to be committed by surprise the next time some
+        unrelated write calls `commit()`.
+        """
+        if not member_ids:
+            raise ValueError(i18n.t("api.errors.group_needs_a_member"))
+        if len(set(member_ids)) != len(member_ids):
+            raise ValueError(i18n.t("api.errors.group_duplicate_member"))
+        category = self._category_of(member_ids[0])
+        self._check_members(category, member_ids)
+        try:
+            cur = self._db.execute(
+                "INSERT INTO device_group (label, room, category, updated_at) VALUES (?, ?, ?, ?)",
+                (label, _normalized_room(room), category, self._now()),
+            )
+            group_id = cur.lastrowid
+            assert group_id is not None
+            for device_id in member_ids:
+                self._db.execute(
+                    "INSERT INTO device_group_member (group_id, device_id) VALUES (?, ?)",
+                    (int(group_id), device_id),
+                )
+        except (ValueError, sqlite3.Error):
+            self._db.rollback()
+            raise
+        self._db.commit()
+        # A brand-new group needs its command list computed too - it does
+        # not fall out of the INSERTs above for free (design 4.3).
+        self.register_group_commands(int(group_id))
+        return self.group(int(group_id))
+
+    def groups(self) -> list[StoredGroup]:
+        rows = self._db.execute("SELECT * FROM device_group ORDER BY id").fetchall()
+        return [self._as_group(r) for r in rows]
+
+    def group(self, group_id: int) -> StoredGroup:
+        row = self._db.execute("SELECT * FROM device_group WHERE id = ?", (group_id,)).fetchone()
+        if row is None:
+            raise UnknownGroupError(i18n.t("api.errors.unknown_group", group_id=group_id))
+        return self._as_group(row)
+
+    def rename_group(self, group_id: int, label: str) -> None:
+        self.group(group_id)
+        self._db.execute(
+            "UPDATE device_group SET label = ?, updated_at = ? WHERE id = ?",
+            (label, self._now(), group_id),
+        )
+        self._db.commit()
+
+    def set_group_room(self, group_id: int, room: str | None) -> None:
+        """Sets a group's room (`PATCH /api/groups/{group_id}`).
+
+        **Deliberately does NOT touch `updated_at`** - the group
+        counterpart of `set_room`'s own deviation from `rename_device`,
+        for the identical reason: the room ends up in no export template
+        (design 6, "a group's room, like a device's, is never derived
+        from what it exports"), so a room assignment must not make the
+        export tab report the group as "changed since the last export"
+        when the next export would produce byte-identical files (final
+        fix pass, review finding Minor #3(a) - this used to stamp
+        `updated_at` unconditionally, the one place where the group side
+        of a device/group pair of methods disagreed with its device
+        counterpart for no stated reason)."""
+        self.group(group_id)
+        self._db.execute(
+            "UPDATE device_group SET room = ? WHERE id = ?", (_normalized_room(room), group_id)
+        )
+        self._db.commit()
+
+    def delete_group(self, group_id: int) -> None:
+        """Removes a group and everything that references it.
+
+        Three DELETEs, one commit: the same shape as `create_group` and
+        `set_group_members`, and the same guard. Without
+        `self._db.rollback()` in the `except` clause, a write-time failure
+        on the second or third DELETE (a full disk, a corrupted index -
+        anything past the first) would leave the earlier DELETE(s) sitting
+        in the connection's open implicit transaction - the group's
+        commands or memberships gone from this connection's view, the
+        group row itself still there - for a later, unrelated `commit()`
+        anywhere else in `Store` to flush that half-deleted state to disk
+        by surprise.
+        """
+        self.group(group_id)
+        try:
+            self._db.execute("DELETE FROM group_command WHERE group_id = ?", (group_id,))
+            self._db.execute("DELETE FROM device_group_member WHERE group_id = ?", (group_id,))
+            self._db.execute("DELETE FROM device_group WHERE id = ?", (group_id,))
+        except (ValueError, sqlite3.Error):
+            self._db.rollback()
+            raise
+        self._db.commit()
+
+    def group_members(self, group_id: int) -> list[StoredDevice]:
+        """Active members only.
+
+        `forget_device` already deletes the membership rows (see there),
+        so this filter should never have anything to do. It is here
+        anyway: a read that cannot return a removed device makes the
+        correctness of that write not load-bearing.
+        """
+        self.group(group_id)
+        rows = self._db.execute(
+            "SELECT d.* FROM device_group_member m"
+            " JOIN device d ON d.id = m.device_id"
+            " WHERE m.group_id = ? AND d.active = 1"
+            " ORDER BY d.id",
+            (group_id,),
+        ).fetchall()
+        return [self._as_device(r) for r in rows]
+
+    def set_group_members(self, group_id: int, member_ids: Sequence[int]) -> None:
+        """Replaces the whole membership in one transaction.
+
+        The complete list rather than add/remove: the command
+        intersection is recomputed after every change anyway, and two
+        single removals would recompute it twice and pass through an
+        intermediate state nobody asked for - including keys that
+        briefly vanish and come back (design 5).
+
+        Duplicate ids in `member_ids` are rejected up front, for the same
+        reason as in `create_group`: `device_group_member`'s
+        `UNIQUE (group_id, device_id)` would otherwise turn an unchecked
+        duplicate into an `sqlite3.IntegrityError` partway through the
+        insert loop below. The DELETE and the inserts that follow run
+        inside the same `try`/`except (ValueError, sqlite3.Error)` guard as
+        `register_commands`, so a write-time failure there rolls back to
+        the previous membership instead of leaving it half replaced -
+        deleted, but not yet fully reinserted - for a later unrelated
+        commit to persist.
+        """
+        group = self.group(group_id)
+        # Same order as `create_group`: duplicates first, category second -
+        # so input that is both duplicated and wrong-category raises the
+        # same error, from the same check, in both methods.
+        if len(set(member_ids)) != len(member_ids):
+            raise ValueError(i18n.t("api.errors.group_duplicate_member"))
+        self._check_members(group.category, member_ids)
+        try:
+            self._db.execute("DELETE FROM device_group_member WHERE group_id = ?", (group_id,))
+            for device_id in member_ids:
+                self._db.execute(
+                    "INSERT INTO device_group_member (group_id, device_id) VALUES (?, ?)",
+                    (group_id, device_id),
+                )
+            self._db.execute(
+                "UPDATE device_group SET updated_at = ? WHERE id = ?", (self._now(), group_id)
+            )
+        except (ValueError, sqlite3.Error):
+            self._db.rollback()
+            raise
+        self._db.commit()
+        # The intersection depends on WHO the members are, so a membership
+        # change must recompute it (design 4.3) - same call as at the end
+        # of `create_group`.
+        self.register_group_commands(group_id)
+
+    @staticmethod
+    def _as_group_command(row: sqlite3.Row) -> StoredGroupCommand:
+        return StoredGroupCommand(
+            key=str(row["key"]),
+            slug=str(row["slug"]),
+            group_id=int(row["group_id"]),
+            cluster_id=int(row["cluster_id"]),
+            command_id=int(row["command_id"]),
+            takes_value=bool(row["takes_value"]),
+        )
+
+    def group_commands(self, group_id: int) -> list[StoredGroupCommand]:
+        rows = self._db.execute(
+            "SELECT * FROM group_command WHERE group_id = ? ORDER BY cluster_id, command_id",
+            (group_id,),
+        ).fetchall()
+        return [self._as_group_command(r) for r in rows]
+
+    def resolve_group_command(self, key: str) -> StoredGroupCommand:
+        row = self._db.execute("SELECT * FROM group_command WHERE key = ?", (key,)).fetchone()
+        if row is None:
+            raise UnknownCommandError(i18n.t("api.errors.unknown_command", command_key=key))
+        return self._as_group_command(row)
+
+    def register_group_commands(self, group_id: int) -> list[StoredGroupCommand]:
+        """Recomputes the group's command list from its current members.
+
+        Called after every membership change. Mirrors `register_commands`,
+        which likewise re-adopts `slug` and `takes_value` on every call so
+        that a correction in `clusters.yaml` reaches an already stored
+        command - a frozen list would be the opposite of that and would
+        let a group claim a capability no member has left (design 4.3).
+
+        A command that survives keeps its key. One that drops out of the
+        intersection loses its row and its key answers 404 from then on -
+        deliberately, because that 404 stands in the log and points at the
+        one line in the Loxone project that needs attention, whereas a
+        silently vanished key leaves an output nobody can trace.
+
+        The intersection runs over `(cluster_id, command_id)` pairs, NOT
+        over endpoints: a member that carries the pair on several
+        endpoints still counts as one member that accepts it (see
+        `group_targets`, which then sends to all of them).
+
+        **Rollback guard (Task 1 review finding, reapplied here).** The
+        DELETE and INSERT/UPDATE loops below run inside the same
+        `try`/`except (ValueError, sqlite3.Error): self._db.rollback();
+        raise` guard as `register_commands`, `create_group` and
+        `set_group_members`. Task 1's plan had this method's shape without
+        it: a write-time failure partway through the loops would leave the
+        earlier writes sitting in the connection's open implicit
+        transaction - not committed, but not rolled back either - for the
+        next unrelated `commit()` anywhere else in `Store` to flush to disk
+        by surprise. Every other multi-row writer in this file already
+        carries this guard; this one is no exception.
+
+        **`updated_at`, but only when something moved (design 4.3, review
+        gap).** This method runs on every membership change, including
+        ones that leave the intersection exactly as it was -
+        `set_group_members` re-submitting the member list it already has,
+        say, recomputes nothing. If this stamped `device_group.updated_at`
+        unconditionally, every group would read "changed since the last
+        export" permanently, which tells the export tab nothing, same as
+        never stamping at all. So a `changed` flag tracks whether the
+        loops below actually inserted a row, deleted a row, or altered an
+        existing row's `slug`
+        or `takes_value` - a surviving row's refresh UPDATE still runs
+        unconditionally, exactly as before (see the comment at that write),
+        but only counts toward `changed` when the values it writes differ
+        from what was already there. The stamp only fires when the flag is
+        set - in particular, when `forget_device` shrinks a group's
+        intersection by dropping a member, so the group correctly stops
+        looking unchanged even though nothing about the group's own row
+        (label, room, membership list) was touched here.
+        """
+        members = self.group_members(group_id)
+        by_member = [
+            {(c.cluster_id, c.command_id): c for c in self.commands(device.id)}
+            for device in members
+        ]
+        shared: dict[tuple[int, int], StoredCommand] = {}
+        if by_member:
+            common = set(by_member[0])
+            for other in by_member[1:]:
+                common &= set(other)
+            shared = {pair: by_member[0][pair] for pair in common}
+
+        keep = set(shared)
+        changed = False
+        try:
+            for existing in self.group_commands(group_id):
+                if (existing.cluster_id, existing.command_id) not in keep:
+                    self._db.execute("DELETE FROM group_command WHERE key = ?", (existing.key,))
+                    changed = True
+
+            for (cluster_id, command_id), sample in sorted(shared.items()):
+                row = self._db.execute(
+                    "SELECT key, slug, takes_value FROM group_command"
+                    " WHERE group_id = ? AND cluster_id = ? AND command_id = ?",
+                    (group_id, cluster_id, command_id),
+                ).fetchone()
+                if row is not None:
+                    # The refresh write itself stays unconditional - same
+                    # reasoning as `register_commands` (re-adopt on every
+                    # call so a `clusters.yaml` correction reaches an
+                    # already-stored row). Only the `changed` bookkeeping
+                    # is conditional: comparing the fetched values against
+                    # `sample` BEFORE writing tells us whether this
+                    # refresh actually altered anything, without skipping
+                    # the write that `register_group_commands`'s docstring
+                    # and the rollback-guard test both depend on always
+                    # happening for a surviving row.
+                    if row["slug"] != sample.slug or bool(row["takes_value"]) != sample.takes_value:
+                        changed = True
+                    self._db.execute(
+                        "UPDATE group_command SET slug = ?, takes_value = ? WHERE key = ?",
+                        (sample.slug, int(sample.takes_value), row["key"]),
+                    )
+                    continue
+                changed = True
+                self._db.execute(
+                    "INSERT INTO group_command"
+                    " (group_id, cluster_id, command_id, key, slug, takes_value)"
+                    " VALUES (?, ?, ?, ?, ?, ?)",
+                    (
+                        group_id,
+                        cluster_id,
+                        command_id,
+                        f"g{group_id}_{sample.slug}",
+                        sample.slug,
+                        int(sample.takes_value),
+                    ),
+                )
+            if changed:
+                self._db.execute(
+                    "UPDATE device_group SET updated_at = ? WHERE id = ?",
+                    (self._now(), group_id),
+                )
+        except (ValueError, sqlite3.Error):
+            self._db.rollback()
+            raise
+        self._db.commit()
+        return self.group_commands(group_id)
+
+    def group_targets(self, command: StoredGroupCommand) -> list[GroupTarget]:
+        """The per-member command rows for one group command.
+
+        A member may carry the pair on several endpoints; all of them are
+        returned, ordered by endpoint, and all of them get the command
+        (design 4.3). Members without a matching row are skipped rather
+        than returned empty - by construction of the intersection there
+        should be none, and an empty target would only make the
+        dispatcher guard against a case the store already rules out.
+        """
+        targets: list[GroupTarget] = []
+        for device in self.group_members(command.group_id):
+            rows = tuple(
+                stored
+                for stored in self.commands(device.id)
+                if stored.cluster_id == command.cluster_id
+                and stored.command_id == command.command_id
+            )
+            if not rows:
+                continue
+            targets.append(
+                GroupTarget(device_id=device.id, device_label=device.label, commands=rows)
+            )
+        return targets
 
     def rename_device(self, device_id: int, label: str) -> None:
         """Sets a device's label (`PATCH /api/devices/{device_id}`).
@@ -1148,23 +1729,34 @@ class Store:
         return filled
 
     def rename_room(self, old: str, new: str) -> int:
-        """Renames a room across all active devices and returns how many
-        that was (`POST /api/rooms/rename`).
+        """Renames a room across all active devices AND all groups, and
+        returns how many rows that was combined (`POST /api/rooms/rename`).
 
         There is no room table (design 3.2), so "rename room" is not a
-        write to one object but this one bulk write. The alternative would
-        be typing a new room name into each device individually - with five
-        devices, five opportunities for a typo that creates a sixth room.
+        write to one object but this bulk write - now two bulk writes,
+        one per table that can carry a room name. A group is as much a
+        room carrier as a device (design 6): it has its own `room`
+        column, never derived from its members, so that re-rooming one
+        lamp cannot silently drag the group along. Renaming only the
+        `device` table would leave exactly that column stale - the old
+        room name would keep existing in `roomChips()` (`app.js`),
+        populated by nothing but a group nobody touched, right next to
+        the new name the devices moved to. Both writes share one
+        `source`/`target` pair and one count, so "0 renamed" means "no
+        device AND no group carried that name" - not "no device did,
+        never mind what a group might say".
 
-        `active = 1` for the same reason `devices()` filters on it
-        afterward: a removed device is no longer there from the UI's point
-        of view.
+        `active = 1` on `device`, for the same reason `devices()` filters
+        on it afterward: a removed device is no longer there from the
+        UI's point of view. `device_group` has no such column - a group
+        is deleted outright (`delete_group`), never soft-removed, so
+        every row here is live by construction.
 
         An already occupied target name merges both rooms; the confirmation
         prompt for that is the UI's responsibility, not this method's. An
         empty target name, by contrast, is rejected here: "rename" is not
-        the way to dissolve a room - `set_room` with `None` on each
-        individual device exists for that."""
+        the way to dissolve a room - `set_room`/`set_group_room` with
+        `None` exist for that."""
         # `old` through the same normalization as `new`: since this method
         # became reachable via `POST /api/rooms/rename` (Task 5), the
         # source name arrives as free text from the JSON body, no longer
@@ -1175,11 +1767,22 @@ class Store:
         target = _normalized_room(new)
         if target is None:
             raise ValueError(i18n.t("api.devices.room_name_required"))
-        cur = self._db.execute(
+        device_cur = self._db.execute(
             "UPDATE device SET room = ? WHERE room = ? AND active = 1", (target, source)
         )
+        # No `updated_at` here either, for the same reason `set_group_room`
+        # does not touch it (see there): a room, renamed or not, never
+        # lands in an export template, so this bulk write must not make
+        # the export tab report every group in the renamed room as
+        # "changed since the last export" (final fix pass, review finding
+        # Minor #3(a) - this used to stamp `updated_at` unconditionally,
+        # disagreeing with `set_group_room`'s own docstring for no stated
+        # reason).
+        group_cur = self._db.execute(
+            "UPDATE device_group SET room = ? WHERE room = ?", (target, source)
+        )
         self._db.commit()
-        return int(cur.rowcount)
+        return int(device_cur.rowcount) + int(group_cur.rowcount)
 
     def mark_exported(self, device_id: int) -> None:
         """Sets `exported_at` to now (Task 5, Phase 5).
@@ -1192,6 +1795,25 @@ class Store:
         through. Without this call in the CLI command, the WebUI would
         keep showing "never exported" after a `loxmatter export`."""
         self._db.execute("UPDATE device SET exported_at = ? WHERE id = ?", (self._now(), device_id))
+        self._db.commit()
+
+    def mark_group_exported(self, group_id: int) -> None:
+        """Sets a group's `exported_at` to now - the group counterpart of
+        `mark_exported` (final fix pass, review finding Important #1).
+
+        Design 8 says `exported_at`/`updated_at` on the group "behave as
+        on a device", but until this fix nothing in `src/` ever wrote
+        `device_group.exported_at` at all: `api.export.download` and
+        `cli.py`'s `export` command both already build and write a
+        group's `VO_g{id}_*.xml` (design 7), and both stopped one call
+        short of the parity the design claims. Called the same way as
+        `mark_exported` - only for a group whose template was actually
+        written, never for one skipped because it has no commands (design
+        4.3: an emptied group has nothing to export, and marking it
+        exported would claim a template exists that does not)."""
+        self._db.execute(
+            "UPDATE device_group SET exported_at = ? WHERE id = ?", (self._now(), group_id)
+        )
         self._db.commit()
 
     def device_id_for_node(self, node_id: int) -> int | None:
@@ -1468,6 +2090,24 @@ class Store:
         strategy here via an extra ID: two commands of different clusters
         on the same endpoint with the same slug are a bug in
         `clusters.yaml`, not a legitimate ambiguity.
+
+        **Recomputes this device's groups too (final fix pass, review
+        finding Important #2).** `register_group_commands` used to run
+        only from `create_group`, `set_group_members` and `forget_device`
+        - every membership change, but not this method, even though this
+        is the method a `clusters.yaml` correction or a re-interview
+        actually reaches: `backfill_commands` calls it for every device on
+        every startup, and `api.devices`'s recommissioning path calls it
+        too. Neither ever touched a group, so a command that a
+        `clusters.yaml` fix newly gave to every member of an existing
+        group reached each member's own tile immediately and the group's
+        intersection not at all - until someone happened to re-save its
+        member list. That is exactly the staleness the re-adoption above
+        exists to prevent, just never wired to the trigger that fires in
+        production. The query is the same shape as `forget_device`'s
+        (device to group ids), run AFTER the commit above so the
+        recompute sees this device's just-written commands rather than an
+        uncommitted transaction.
         """
         taken = self._existing_command_keys(device_id)
         try:
@@ -1525,6 +2165,14 @@ class Store:
             self._db.rollback()
             raise
         self._db.commit()
+        affected = [
+            int(row["group_id"])
+            for row in self._db.execute(
+                "SELECT group_id FROM device_group_member WHERE device_id = ?", (device_id,)
+            ).fetchall()
+        ]
+        for group_id in affected:
+            self.register_group_commands(group_id)
         return self.commands(device_id)
 
     def commands(self, device_id: int) -> list[StoredCommand]:

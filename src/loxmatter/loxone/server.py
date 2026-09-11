@@ -139,6 +139,7 @@ from loxmatter.api.diagnostics import (
 )
 from loxmatter.api.diagnostics_live import build_diagnostics_live_router
 from loxmatter.api.export import build_export_router
+from loxmatter.api.groups import build_groups_router
 from loxmatter.api.language import build_i18n_router, build_language_router
 from loxmatter.api.live import BEARER_SUBPROTOCOL, ObservableRuntime, build_live_router
 from loxmatter.api.project_sync import build_project_sync_router
@@ -146,6 +147,7 @@ from loxmatter.api.settings import build_settings_router
 from loxmatter.api.update import build_update_router
 from loxmatter.api.version import build_version_router
 from loxmatter.auth.sessions import SESSION_COOKIE, session_is_valid
+from loxmatter.commands.fanout import dispatch_group, plan_group_calls
 from loxmatter.commands.translate import MatterCall, UnsupportedValueError, to_matter_calls
 from loxmatter.diagnostics.logbuffer import LogBufferHandler
 from loxmatter.loxone.sender import UdpSender
@@ -479,12 +481,13 @@ def build_app(
             i18n.set_language(store.locale.get_language())
         return await call_next(request)
 
-    # `dependencies=api_guard` on each of the ten `/api` routers (task 8,
+    # `dependencies=api_guard` on each of the eleven `/api` routers (task 8,
     # phase 5, see `build_api_guard` above; the eighth since `POST
     # /api/export/project-sync`, task 11, phase 6, the ninth since
     # `build_language_router`, the tenth since `build_update_router`, task
-    # 8 of this stage 2): this protects without exception every route of
-    # these ten routers, including the WebSocket routes `/api/live` and
+    # 8 of this stage 2, the eleventh since `build_groups_router`, device
+    # groups task 7): this protects without exception every route of
+    # these eleven routers, including the WebSocket routes `/api/live` and
     # `/api/diagnostics/live` - and explicitly NOT `/cmd`, `/resync`,
     # `/health`, `/` and `/static`, which are mounted further below
     # without `dependencies`.
@@ -506,6 +509,10 @@ def build_app(
     # api/control.py module docstring: one translation, two callers, or
     # they drift (spec 4.2, test_the_same_translation_as_the_loxone_endpoint).
     app.include_router(build_control_router(store, invoke, runtime), dependencies=api_guard)
+    # Same guard as every other `/api` router. `runtime` satisfies
+    # `ValueReader` here for the same reason it does in the control
+    # router - the group controls route reads last values, nothing more.
+    app.include_router(build_groups_router(store, runtime), dependencies=api_guard)
     app.include_router(
         build_diagnostics_router(
             store,
@@ -580,8 +587,12 @@ def build_app(
     async def command(key: str, value: str) -> dict[str, str]:
         try:
             stored = store.resolve_command(key)
-        except KeyError as exc:
-            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except KeyError:
+            # A group key, or nothing at all. The device table is asked
+            # first so that a device key costs exactly what it always did;
+            # the two can never collide (`d` vs `g` prefix, asserted in
+            # test_group_keys_can_never_collide_with_device_keys).
+            return await _group_command(key, value)
 
         try:
             calls = to_matter_calls(stored, value)
@@ -610,6 +621,50 @@ def build_app(
                 status_code=502, detail=i18n.t("api.errors.device_unreachable", exc=exc)
             ) from exc
 
+        return {"status": "ok", "key": key}
+
+    async def _group_command(key: str, value: str) -> dict[str, str]:
+        """The group half of `/cmd/{key}/{value}` (design 2026-09-10, 3).
+
+        The status codes are the device path's, unchanged: 404 unknown
+        key, 400 unsuitable value, 502 at least one member did not
+        answer. The Miniserver evaluates none of them - they are for the
+        human reading the log, which is also why the 502 detail names the
+        members instead of just counting them.
+        """
+        try:
+            group_command = store.resolve_group_command(key)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+        targets = store.group_targets(group_command)
+        try:
+            plans = plan_group_calls(targets, value)
+        except UnsupportedValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        failed = await dispatch_group(plans, invoke)
+        if failed:
+            # The failed labels are logged, not just counted (review fix
+            # from Task 5): the status code exists for the human reading
+            # the log, and "reached 2 of 4" alone still leaves them
+            # grepping the HTTP response for which two.
+            logger.warning(
+                "group command %r reached %d of %d members; no answer from: %s",
+                key,
+                len(plans) - len(failed),
+                len(plans),
+                ", ".join(failed),
+            )
+            raise HTTPException(
+                status_code=502,
+                detail=i18n.t(
+                    "api.errors.group_partially_unreachable",
+                    reached=len(plans) - len(failed),
+                    total=len(plans),
+                    devices=", ".join(failed),
+                ),
+            )
         return {"status": "ok", "key": key}
 
     return app

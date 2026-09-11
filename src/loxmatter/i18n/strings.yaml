@@ -157,6 +157,15 @@ cli.export.fail_write_first_file:
 cli.export.fail_write_second_file:
   en: "{path} could not be written: {exc}. {written} has already been written, {missing} is missing."
   de: "{path} konnte nicht geschrieben werden: {exc}. Geschrieben wurde bereits {written}, es fehlt {missing}."
+cli.export.echo_group_summary:
+  en: "{filename}: {count} output commands"
+  de: "{filename}: {count} Ausgangsbefehle"
+cli.export.echo_group_skipped:
+  en: "{filename}: skipped (no output commands, empty template)"
+  de: "{filename}: übersprungen (keine Ausgangsbefehle, leere Vorlage)"
+cli.export.fail_write_group_file:
+  en: "{path} could not be written: {exc}. The other templates from this export have already been written."
+  de: "{path} konnte nicht geschrieben werden: {exc}. Die übrigen Vorlagen dieses Exports wurden bereits geschrieben."
 
 cli.run.help:
   en: "Connects Matter and Loxone permanently: values out, commands in."
@@ -258,6 +267,72 @@ api.language.fail_unsupported:
 api.errors.unknown_device:
   en: "unknown device {device_id}"
   de: "unbekanntes Geraet {device_id}"
+api.errors.unknown_group:
+  en: "unknown group {group_id}"
+  de: "unbekannte Gruppe {group_id}"
+api.errors.group_needs_a_member:
+  en: "a new group needs at least one member; it determines the category"
+  de: "eine neue Gruppe braucht mindestens ein Mitglied, es bestimmt die Kategorie"
+# The category names for `api.errors.group_category_mismatch` below.
+# Deliberately a SEPARATE table from `web.devices.category.*`
+# (strings.yaml, rooms/search section) rather than the store reaching for
+# that one: `Store` sits a layer below `api/` (module docstring, Store),
+# which sits below the WebUI - a lookup that crossed back up to a
+# WebUI-owned key would tie the store's wording to a namespace it has no
+# business knowing exists. Today's words happen to match
+# `web.devices.category.*` because both name the same eight `Category`
+# values (`profiles/categories.py`) - that is convenience, not a
+# guarantee this table leans on.
+api.categories.light:
+  en: "light"
+  de: "Licht"
+api.categories.socket:
+  en: "socket"
+  de: "Steckdose"
+api.categories.switch:
+  en: "switch"
+  de: "Taster"
+api.categories.covering:
+  en: "covering"
+  de: "Beschattung"
+api.categories.climate:
+  en: "climate"
+  de: "Klima"
+api.categories.sensor:
+  en: "sensor"
+  de: "Sensor"
+api.categories.lock:
+  en: "lock"
+  de: "Schloss"
+api.categories.other:
+  en: "other"
+  de: "Sonstige"
+api.errors.group_category_mismatch:
+  # `{actual}`/`{expected}` arrive PRE-TRANSLATED (`_check_members` in
+  # store.py looks them up via `api.categories.*` above before calling
+  # `i18n.t` here) - not as the raw `Category.value` identifiers (Review
+  # finding, final fix pass): the untranslated identifiers used to stand
+  # as the one English island in an otherwise fully translated sentence,
+  # and disagreed with the WebUI's own pre-check
+  # (`web.groups.other_category`), which already went through
+  # `categoryLabel()` for the same refusal.
+  #
+  # The German sentence used to place `{actual}` right after a single
+  # hard-coded indefinite article (final fix pass, review finding Minor
+  # #3(b)). `api.categories.*` names all three grammatical genders -
+  # neuter, masculine and feminine nouns are mixed across the eight
+  # category values - and a placeholder that can be filled with any of
+  # them can never agree with one fixed article chosen up front: whichever
+  # article was hard-coded, half the categories would read wrong.
+  # Restructured to name the category as an appositive instead ("device N
+  # HAS THE CATEGORY {actual}"), which reads correctly for every value
+  # regardless of its gender, rather than special-casing eight nouns
+  # against two articles.
+  en: "device {device_id} is a {actual}, the group takes {expected}"
+  de: "Gerät {device_id} hat die Kategorie {actual}, die Gruppe nimmt {expected}"
+api.errors.group_duplicate_member:
+  en: "a group's member list cannot contain the same device twice"
+  de: "die Mitgliederliste einer Gruppe darf ein Gerät nicht doppelt enthalten"
 api.errors.unknown_command:
   # The placeholder is deliberately not called "key" - i18n.t()'s own
   # first parameter is named that, and "key=..." as a keyword argument
@@ -326,6 +401,9 @@ api.errors.commissioning_failed:
 api.errors.device_unreachable:
   en: "device unreachable: {exc}"
   de: "Geraet nicht erreichbar: {exc}"
+api.errors.group_partially_unreachable:
+  en: "reached {reached} of {total} members; no answer from: {devices}"
+  de: "{reached} von {total} Mitgliedern erreicht, keine Antwort von: {devices}"
 api.errors.command_belongs_to_removed_device:
   en: "command {command_key!r} belongs to device {device_id}, which was removed"
   de: "Kommando {command_key!r} gehoert zu Geraet {device_id}, das entfernt wurde"
@@ -494,6 +572,9 @@ api.diagnostics.fabric_backup_dir_missing:
 export.comment_generated:
   en: "generated by loxmatter"
   de: "erzeugt von loxmatter"
+export.group_title:
+  en: "Matter — Group: {label}"
+  de: "Matter — Gruppe: {label}"
 export.system.bridge_alive_title:
   en: "Bridge reachable"
   de: "Bridge erreichbar"
@@ -952,6 +1033,19 @@ web.devices.remove_confirm:
     • die importierten Vorlagen "VIU_d{id}_….xml" und "VO_d{id}_….xml"
 
     Diese in Loxone Config von Hand löschen.
+# Appended to `web.devices.remove_confirm` above (see `removeDevice` in
+# app.js), never shown on its own - only when the device is a member of
+# at least one group. `{groups}` is the comma-joined list of that
+# device's group labels, computed client-side from `member_ids` before
+# the dialog opens. Names the SAME failure `web.groups.delete_confirm`
+# already names for a deleted group's own "g{id}_" keys - here the group
+# survives, but can lose one command out of its intersection (design
+# 4.3, `register_group_commands`) without a word about it otherwise.
+web.devices.remove_confirm_groups_note:
+  en: |
+    It also belongs to: {groups}. If it was the only member carrying a command, that command drops out of the group's intersection, and the group's virtual output for it answers 404 in Loxone from then on.
+  de: |
+    Es gehört außerdem zu: {groups}. War es das einzige Mitglied mit einem bestimmten Kommando, fällt dieses aus der Schnittmenge der Gruppe, und der für dieses Kommando zuständige virtuelle Ausgang der Gruppe antwortet in Loxone von da an mit 404.
 web.devices.commission_code_required:
   en: "Please enter a pairing code first."
   de: "Bitte zuerst einen Pairing-Code eingeben."
@@ -1100,6 +1194,90 @@ web.devices.control_tab_colour:
 web.devices.control_colour_hint:
   en: "Horizontal: hue. Vertical: saturation. Release to send."
   de: "Waagerecht: Farbton. Senkrecht: Sättigung. Beim Loslassen wird gesendet."
+
+# --- device groups (design 2026-09-10, section 6): several devices of one
+# category behind ONE Loxone virtual output. The group tile reuses the
+# device tile's strings wherever the sentence is the same
+# (`web.devices.control_button`, `controls_loading`, `no_known_commands`,
+# `menu_room_heading`, `room_none`, `room_new`, the three save errors) -
+# only the sentences that are genuinely about a group live here.
+#
+# `web.groups.member_count` deliberately does NOT read "{count} devices":
+# t() interpolates and does not choose a plural form (i18n/__init__.py),
+# and a group of one would then be told it has "1 devices". The label
+# form says the same thing for every count.
+web.groups.badge:
+  en: "Group"
+  de: "Gruppe"
+web.groups.new:
+  en: "New group"
+  de: "Neue Gruppe"
+web.groups.member_count:
+  en: "Members: {count}"
+  de: "Mitglieder: {count}"
+web.groups.edit_members:
+  en: "Edit members…"
+  de: "Mitglieder bearbeiten…"
+web.groups.delete:
+  en: "Delete group"
+  de: "Gruppe löschen"
+web.groups.delete_confirm:
+  en: |
+    Really delete group "{label}"? This cannot be undone.
+
+    Its command keys go with it, so afterwards in Loxone:
+    • every virtual output with the key prefix "g{id}_" answers 404
+    • the imported template "VO_g{id}_….xml" points at nothing
+
+    The devices themselves stay untouched.
+  de: |
+    Gruppe "{label}" wirklich löschen? Das kann nicht rückgängig gemacht werden.
+
+    Ihre Kommandoschlüssel gehen mit, danach gilt in Loxone:
+    • jeder virtuelle Ausgang mit dem Schlüssel-Präfix "g{id}_" antwortet 404
+    • die importierte Vorlage "VO_g{id}_….xml" zeigt ins Leere
+
+    Die Geräte selbst bleiben unberührt.
+web.groups.label_field:
+  en: "Name"
+  de: "Name"
+web.groups.label_placeholder:
+  en: "Group name"
+  de: "Gruppenname"
+web.groups.members_heading:
+  en: "Members"
+  de: "Mitglieder"
+web.groups.members_title:
+  en: "Members of {label}"
+  de: "Mitglieder von {label}"
+web.groups.needs_member:
+  en: "Pick at least one device — the first one fixes the group's category."
+  de: "Mindestens ein Gerät wählen — das erste legt die Kategorie der Gruppe fest."
+web.groups.other_category:
+  # The German mirrors `api.errors.group_category_mismatch`'s fix (final
+  # fix pass, review finding Minor #3(b)) for the identical reason: the
+  # eight category values `categoryLabel()` (`app.js`) can produce span
+  # all three grammatical genders, so a single hard-coded indefinite
+  # article can never agree with the one it happens to fill in here.
+  # Restructured to name the category as an appositive instead of behind
+  # an article, exactly like the API-side message.
+  en: "is a {category} — a group takes one kind only"
+  de: "hat die Kategorie {category} — eine Gruppe nimmt nur eine Sorte"
+web.groups.create:
+  en: "Create group"
+  de: "Gruppe erstellen"
+web.groups.members_save:
+  en: "Save members"
+  de: "Mitglieder speichern"
+web.groups.seed_from:
+  en: "Initial value from {device}"
+  de: "Ausgangswert von {device}"
+web.groups.list_load_error:
+  en: "Could not load groups: {message}"
+  de: "Gruppen konnten nicht geladen werden: {message}"
+web.groups.delete_error:
+  en: "Could not delete group: {message}"
+  de: "Gruppe konnte nicht gelöscht werden: {message}"
 
 # --- web.signals — Signalansicht ---
 web.signals.key_hint:
@@ -1265,6 +1443,15 @@ web.export.col_expert_withheld:
 web.export.col_last_exported:
   en: "Last exported"
   de: "Zuletzt exportiert"
+# Group export table (final fix pass, review finding Important #1) - the
+# preview's file list used to undercount every download by exactly the
+# groups this heading and column now make visible.
+web.export.groups_heading:
+  en: "Groups"
+  de: "Gruppen"
+web.export.col_group:
+  en: "Group"
+  de: "Gruppe"
 web.export.expert_withheld_explanation:
   en: "\"Held back as expert\" signals would be technically exportable but don't belong to the device type by default (tile menu → \"Edit signals…\" → \"Expert\" section) – each one can be enabled individually there."
   de: "„Als Experte zurückgehalten“ sind Signale, die technisch exportierbar wären, aber standardmäßig nicht zum Gerätetyp gehören (Kachelmenü → „Signale bearbeiten…“ → Block „Experte“) – dort lässt sich jedes einzeln freischalten."
@@ -1686,6 +1873,14 @@ web.export.projectsync_group_all_current:
 web.export.projectsync_unassigned_device_label:
   en: "No longer assigned"
   de: "Nicht mehr zugeordnet"
+# `projectSyncGroupedEntries` (web/app.js) prefixes a group's card with
+# this instead of the bare label: a group and a device can carry the
+# same numeric id (design 2026-09-10, section 8), and the label alone
+# would not tell a reviewer that this particular card is the group's,
+# not the same-numbered device's.
+web.export.projectsync_group_label:
+  en: "Group: {label}"
+  de: "Gruppe: {label}"
 web.export.projectsync_section_inputs:
   en: "Inputs"
   de: "Eingänge"

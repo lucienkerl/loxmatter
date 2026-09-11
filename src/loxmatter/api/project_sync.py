@@ -66,6 +66,12 @@ def _entries_out(plan: SyncPlan) -> list[ProjectSyncEntryOut]:
             kind=entry.kind,
             device_id=entry.device_id,
             device_label=entry.device_label,
+            # A group and a device can share the same numeric id (design
+            # 2026-09-10, section 8) - dropping this would let the WebUI's
+            # per-owner grouping (keyed on device_id alone) merge a
+            # group's entries into the same-numbered device's card. See
+            # `ProjectSyncEntryOut.owner_kind`.
+            owner_kind=entry.owner_kind,
             key=entry.key,
             title=entry.title,
             status=entry.status.value,

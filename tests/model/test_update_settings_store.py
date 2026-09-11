@@ -107,7 +107,19 @@ def test_settings_survive_reopening_the_same_database(tmp_path):
 # purpose is to catch a table appearing in the schema that this list does
 # not already name, so it must not source that list from the same place
 # a regression would extend.
-_KNOWN_TABLES = frozenset({"command", "device", "session", "setting", "signal", "sqlite_sequence"})
+_KNOWN_TABLES = frozenset(
+    {
+        "command",
+        "device",
+        "device_group",
+        "device_group_member",
+        "group_command",
+        "session",
+        "setting",
+        "signal",
+        "sqlite_sequence",
+    }
+)
 
 
 def test_settings_live_in_the_existing_setting_table_not_a_new_one(tmp_path):
