@@ -34,7 +34,6 @@ from matter_server.client.exceptions import CannotConnect
 
 from loxmatter import i18n
 from loxmatter.auth.passwords import MIN_PASSWORD_LENGTH, hash_password
-from loxmatter.commands.translate import MatterCall
 from loxmatter.devtools.fake_miniserver import FakeMiniserver
 from loxmatter.diagnostics.logbuffer import LogBufferHandler, install_log_buffer
 from loxmatter.export.commands import extract_commands
@@ -61,6 +60,7 @@ from loxmatter.matter.supervisor import attach, supervise
 from loxmatter.model.locale_store import LocaleStore
 from loxmatter.model.store import Store
 from loxmatter.profiles.table import is_exportable
+from loxmatter.sources import DeviceCall
 
 logger = logging.getLogger(__name__)
 
@@ -665,8 +665,8 @@ async def _run(
     # rejects it.
     runtime = Runtime(store, sender, link_ok=lambda: client.connected)
 
-    async def invoke(call: MatterCall) -> None:
-        await client.send_command(call)
+    async def invoke(call: DeviceCall) -> None:
+        await client.send(call)
 
     supervisor_task: asyncio.Task[None] | None = None
     try:

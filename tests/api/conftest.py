@@ -83,7 +83,6 @@ import httpx2 as httpx
 import pytest
 
 from loxmatter.auth.passwords import hash_password
-from loxmatter.commands.translate import MatterCall
 from loxmatter.diagnostics.logbuffer import install_log_buffer
 from loxmatter.export.commands import extract_commands
 from loxmatter.loxone.runtime import Runtime
@@ -91,6 +90,7 @@ from loxmatter.loxone.sender import UdpSender
 from loxmatter.loxone.server import build_app
 from loxmatter.matter.models import NodeSnapshot
 from loxmatter.model.store import Store
+from loxmatter.sources import DeviceCall
 
 FIXTURES = Path(__file__).parents[1] / "fixtures" / "nodes"
 
@@ -125,7 +125,7 @@ def no_invoke():
     the device API doesn't trigger any `/cmd` calls. If a test does call it
     anyway, it does nothing instead of sending to a real device."""
 
-    async def _invoke(call: MatterCall) -> None:
+    async def _invoke(call: DeviceCall) -> None:
         return None
 
     return _invoke

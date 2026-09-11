@@ -61,12 +61,12 @@ from pathlib import Path
 import uvicorn
 
 from loxmatter.auth.passwords import hash_password
-from loxmatter.commands.translate import MatterCall
 from loxmatter.export.commands import extract_commands
 from loxmatter.loxone.server import build_app
 from loxmatter.matter.models import NodeSnapshot
 from loxmatter.model.store import Store, StoredSignal
 from loxmatter.profiles.table import Exportability
+from loxmatter.sources import DeviceCall
 
 FIXTURES = Path(__file__).parent.parent / "tests" / "fixtures" / "nodes"
 
@@ -184,7 +184,7 @@ class _SeededRuntime:
         return 0
 
 
-async def _invoke(call: MatterCall) -> None:
+async def _invoke(call: DeviceCall) -> None:
     return None
 
 

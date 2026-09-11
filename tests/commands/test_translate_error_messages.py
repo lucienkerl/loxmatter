@@ -22,7 +22,7 @@ from __future__ import annotations
 import pytest
 
 from loxmatter import i18n
-from loxmatter.commands.translate import UnsupportedValueError, _as_number, to_matter_calls
+from loxmatter.commands.translate import UnsupportedValueError, _as_number, to_device_calls
 from loxmatter.model.store import StoredCommand
 
 
@@ -50,4 +50,4 @@ def test_unsupported_command_error_is_english_by_default():
         device_id=1,
     )
     with pytest.raises(UnsupportedValueError, match="Cluster 99 command 0 is not supported"):
-        to_matter_calls(command, "")
+        to_device_calls(command, "")

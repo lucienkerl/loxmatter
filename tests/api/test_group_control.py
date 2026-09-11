@@ -24,20 +24,20 @@ import httpx2 as httpx
 import pytest
 from conftest import authenticate, load_snapshot
 
-from loxmatter.commands.translate import MatterCall
 from loxmatter.export.commands import extract_commands
 from loxmatter.loxone.server import build_app
 from loxmatter.model.store import Store
+from loxmatter.sources import DeviceCall
 
 
 @pytest.fixture
-def invocations() -> list[MatterCall]:
+def invocations() -> list[DeviceCall]:
     return []
 
 
 @pytest.fixture
-def failing_nodes() -> set[int]:
-    """Node IDs whose invocation raises - the 502 path."""
+def failing_nodes() -> set[str]:
+    """Addresses whose invocation raises - the 502 path."""
     return set()
 
 
@@ -55,8 +55,8 @@ async def api(
         member_ids.append(device_id)
     group = store.create_group("Living room", member_ids)
 
-    async def invoke(call: MatterCall) -> None:
-        if call.node_id in failing_nodes:
+    async def invoke(call: DeviceCall) -> None:
+        if call.address in failing_nodes:
             raise RuntimeError("no route to host")
         invocations.append(call)
 
@@ -73,8 +73,8 @@ async def test_one_loxone_call_reaches_every_member(api, invocations):
     key = next(c.key for c in store.group_commands(group_id) if c.slug == "on")
     response = await client.get(f"/cmd/{key}/1")
     assert response.status_code == 200
-    node_ids = {int(device.address) for device in store.group_members(group_id)}
-    assert {call.node_id for call in invocations} == node_ids
+    addresses = {device.address for device in store.group_members(group_id)}
+    assert {call.address for call in invocations} == addresses
 
 
 async def test_an_unknown_group_key_is_a_404(api):
@@ -92,13 +92,13 @@ async def test_a_bad_value_is_a_400_and_sends_nothing(api, invocations):
 async def test_a_failing_member_yields_502_and_names_it(api, invocations, failing_nodes):
     client, store, group_id = api
     members = store.group_members(group_id)
-    failing_nodes.add(int(members[0].address))
+    failing_nodes.add(members[0].address)
     key = next(c.key for c in store.group_commands(group_id) if c.slug == "on")
     response = await client.get(f"/cmd/{key}/1")
     assert response.status_code == 502
     assert members[0].label in response.json()["detail"]
     # the reachable member was still switched
-    assert {call.node_id for call in invocations} == {int(members[1].address)}
+    assert {call.address for call in invocations} == {members[1].address}
 
 
 async def test_a_device_key_still_works_unchanged(api, invocations):
@@ -107,7 +107,7 @@ async def test_a_device_key_still_works_unchanged(api, invocations):
     device = store.group_members(group_id)[0]
     key = next(c.key for c in store.commands(device.id) if c.slug == "on")
     assert (await client.get(f"/cmd/{key}/1")).status_code == 200
-    assert [call.node_id for call in invocations] == [int(device.address)]
+    assert [call.address for call in invocations] == [device.address]
 
 
 async def test_the_webui_route_drives_a_group_too(api, invocations):
@@ -117,8 +117,8 @@ async def test_the_webui_route_drives_a_group_too(api, invocations):
     key = next(c.key for c in store.group_commands(group_id) if c.slug == "on")
     response = await client.post(f"/api/commands/{key}", json={"value": "1"})
     assert response.status_code == 200
-    node_ids = {int(device.address) for device in store.group_members(group_id)}
-    assert {call.node_id for call in invocations} == node_ids
+    addresses = {device.address for device in store.group_members(group_id)}
+    assert {call.address for call in invocations} == addresses
 
 
 async def test_the_webui_route_and_the_loxone_route_translate_identically(api, invocations):
@@ -129,8 +129,8 @@ async def test_the_webui_route_and_the_loxone_route_translate_identically(api, i
     from_loxone = list(invocations)
     invocations.clear()
     await client.post(f"/api/commands/{key}", json={"value": "50"})
-    assert sorted(from_loxone, key=lambda c: c.node_id) == sorted(
-        invocations, key=lambda c: c.node_id
+    assert sorted(from_loxone, key=lambda c: c.address) == sorted(
+        invocations, key=lambda c: c.address
     )
 
 
@@ -143,7 +143,7 @@ async def test_an_unknown_key_is_a_404_on_the_webui_route(api):
 async def test_a_failing_member_is_a_502_on_the_webui_route(api, failing_nodes):
     client, store, group_id = api
     members = store.group_members(group_id)
-    failing_nodes.add(int(members[0].address))
+    failing_nodes.add(members[0].address)
     key = next(c.key for c in store.group_commands(group_id) if c.slug == "on")
     response = await client.post(f"/api/commands/{key}", json={"value": "1"})
     assert response.status_code == 502

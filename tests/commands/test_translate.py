@@ -20,12 +20,12 @@ from loxmatter import i18n
 from loxmatter.commands.color import kelvin_to_mireds
 from loxmatter.commands.translate import (
     _PAYLOAD_BUILDERS,
-    MatterCall,
     UnsupportedValueError,
-    to_matter_calls,
+    to_device_calls,
 )
 from loxmatter.model.store import StoredCommand
 from loxmatter.profiles.table import known_command_pairs
+from loxmatter.sources import DeviceCall
 
 
 def cmd(cluster: int, command: int, takes_value: bool = False) -> StoredCommand:
@@ -43,28 +43,30 @@ def cmd(cluster: int, command: int, takes_value: bool = False) -> StoredCommand:
 
 
 def test_onoff_needs_no_payload():
-    call = to_matter_calls(cmd(6, 1), "1")[0]
-    assert call == MatterCall(node_id=3, endpoint=1, cluster_id=6, command_id=1, payload={})
+    call = to_device_calls(cmd(6, 1), "1")[0]
+    assert call == DeviceCall(
+        technology="matter", address="3", endpoint=1, cluster_id=6, command_id=1, payload={}
+    )
 
 
 def test_level_is_scaled_from_percent_to_254():
-    call = to_matter_calls(cmd(8, 4, takes_value=True), "50")[0]
+    call = to_device_calls(cmd(8, 4, takes_value=True), "50")[0]
     assert call.payload["level"] == 127
 
 
 def test_level_hundred_percent_is_full():
-    assert to_matter_calls(cmd(8, 4, takes_value=True), "100")[0].payload["level"] == 254
+    assert to_device_calls(cmd(8, 4, takes_value=True), "100")[0].payload["level"] == 254
 
 
 def test_level_is_clamped_not_wrapped():
     """Loxone can send 100.4 due to rounding - that must not become 255."""
-    assert to_matter_calls(cmd(8, 4, takes_value=True), "100.4")[0].payload["level"] == 254
-    assert to_matter_calls(cmd(8, 4, takes_value=True), "-3")[0].payload["level"] == 0
+    assert to_device_calls(cmd(8, 4, takes_value=True), "100.4")[0].payload["level"] == 254
+    assert to_device_calls(cmd(8, 4, takes_value=True), "-3")[0].payload["level"] == 0
 
 
 def test_non_numeric_value_raises_a_clear_error():
     with pytest.raises(UnsupportedValueError, match="is not a number"):
-        to_matter_calls(cmd(8, 4, takes_value=True), "hell")
+        to_device_calls(cmd(8, 4, takes_value=True), "hell")
 
 
 def test_non_numeric_value_raises_in_german():
@@ -72,7 +74,7 @@ def test_non_numeric_value_raises_in_german():
     above."""
     i18n.set_language("de")
     with pytest.raises(UnsupportedValueError, match="keine Zahl"):
-        to_matter_calls(cmd(8, 4, takes_value=True), "hell")
+        to_device_calls(cmd(8, 4, takes_value=True), "hell")
 
 
 @pytest.mark.parametrize("value", ["nan", "inf", "-inf", "Infinity"])
@@ -81,7 +83,7 @@ def test_non_finite_value_raises_a_clear_error(value: str):
     through to `round()`, where it explodes as an English `ValueError`
     instead of as an `UnsupportedValueError` with a clear message."""
     with pytest.raises(UnsupportedValueError, match="is not a number"):
-        to_matter_calls(cmd(8, 4, takes_value=True), value)
+        to_device_calls(cmd(8, 4, takes_value=True), value)
 
 
 @pytest.mark.parametrize("value", ["nan", "inf", "-inf", "Infinity"])
@@ -90,18 +92,18 @@ def test_non_finite_value_raises_in_german(value: str):
     above."""
     i18n.set_language("de")
     with pytest.raises(UnsupportedValueError, match="keine Zahl"):
-        to_matter_calls(cmd(8, 4, takes_value=True), value)
+        to_device_calls(cmd(8, 4, takes_value=True), value)
 
 
 def test_color_temperature_converts_kelvin_to_mireds():
-    call = to_matter_calls(cmd(768, 10, takes_value=True), "2700")[0]
+    call = to_device_calls(cmd(768, 10, takes_value=True), "2700")[0]
     assert call.payload["colorTemperatureMireds"] == 370
 
 
 def test_unknown_cluster_command_raises_rather_than_guessing():
     """A clear error is better than a command with a made-up payload."""
     with pytest.raises(UnsupportedValueError, match="is not supported"):
-        to_matter_calls(cmd(64999, 3, takes_value=True), "1")
+        to_device_calls(cmd(64999, 3, takes_value=True), "1")
 
 
 def test_unknown_cluster_command_raises_rather_than_guessing_in_german():
@@ -109,7 +111,7 @@ def test_unknown_cluster_command_raises_rather_than_guessing_in_german():
     `test_unknown_cluster_command_raises_rather_than_guessing` above."""
     i18n.set_language("de")
     with pytest.raises(UnsupportedValueError, match="nicht unterstuetzt"):
-        to_matter_calls(cmd(64999, 3, takes_value=True), "1")
+        to_device_calls(cmd(64999, 3, takes_value=True), "1")
 
 
 def test_known_cluster_with_unknown_command_raises():
@@ -120,7 +122,7 @@ def test_known_cluster_with_unknown_command_raises():
     completely unknown cluster, but also to a known cluster with an
     unknown command."""
     with pytest.raises(UnsupportedValueError, match="is not supported"):
-        to_matter_calls(cmd(768, 7, takes_value=True), "255,0,0")
+        to_device_calls(cmd(768, 7, takes_value=True), "255,0,0")
 
 
 def test_known_cluster_with_unknown_command_raises_in_german():
@@ -128,7 +130,7 @@ def test_known_cluster_with_unknown_command_raises_in_german():
     above."""
     i18n.set_language("de")
     with pytest.raises(UnsupportedValueError, match="nicht unterstuetzt"):
-        to_matter_calls(cmd(768, 7, takes_value=True), "255,0,0")
+        to_device_calls(cmd(768, 7, takes_value=True), "255,0,0")
 
 
 def test_onoff_cluster_with_unknown_command_raises():
@@ -137,7 +139,7 @@ def test_onoff_cluster_with_unknown_command_raises():
     OnOff command would get a made-up empty payload instead of an
     error."""
     with pytest.raises(UnsupportedValueError, match="is not supported"):
-        to_matter_calls(cmd(6, 99, takes_value=True), "1")
+        to_device_calls(cmd(6, 99, takes_value=True), "1")
 
 
 def test_onoff_cluster_with_unknown_command_raises_in_german():
@@ -145,7 +147,7 @@ def test_onoff_cluster_with_unknown_command_raises_in_german():
     above."""
     i18n.set_language("de")
     with pytest.raises(UnsupportedValueError, match="nicht unterstuetzt"):
-        to_matter_calls(cmd(6, 99, takes_value=True), "1")
+        to_device_calls(cmd(6, 99, takes_value=True), "1")
 
 
 def test_payload_builders_match_clusters_yaml_commands():
@@ -168,7 +170,7 @@ def test_level_cluster_with_unknown_command_raises():
     them a MoveToLevelWithOnOff payload (level/transitionTime) would be
     exactly the error this module is meant to prevent."""
     with pytest.raises(UnsupportedValueError, match="is not supported"):
-        to_matter_calls(cmd(8, 1, takes_value=True), "50")
+        to_device_calls(cmd(8, 1, takes_value=True), "50")
 
 
 def test_level_cluster_with_unknown_command_raises_in_german():
@@ -176,7 +178,7 @@ def test_level_cluster_with_unknown_command_raises_in_german():
     above."""
     i18n.set_language("de")
     with pytest.raises(UnsupportedValueError, match="nicht unterstuetzt"):
-        to_matter_calls(cmd(8, 1, takes_value=True), "50")
+        to_device_calls(cmd(8, 1, takes_value=True), "50")
 
 
 def test_a_packed_loxone_colour_becomes_hue_and_saturation():
@@ -184,7 +186,7 @@ def test_a_packed_loxone_colour_becomes_hue_and_saturation():
     Loxone number -> RGB -> hue/sat, so that WebUI and Loxone use the same
     translator (design 2026-09-07, section 6.5)."""
     command = cmd(768, 6, takes_value=True)
-    call = to_matter_calls(command, "100")[0]
+    call = to_device_calls(command, "100")[0]
     assert call.cluster_id == 768
     assert call.command_id == 6
     assert call.payload["hue"] == 0
@@ -194,7 +196,7 @@ def test_a_packed_loxone_colour_becomes_hue_and_saturation():
 
 def test_white_has_no_saturation():
     command = cmd(768, 6, takes_value=True)
-    call = to_matter_calls(command, "100100100")[0]
+    call = to_device_calls(command, "100100100")[0]
     assert call.payload["saturation"] == 0
 
 
@@ -203,13 +205,13 @@ def test_an_impossible_colour_number_is_rejected():
     color on the device."""
     command = cmd(768, 6, takes_value=True)
     with pytest.raises(UnsupportedValueError):
-        to_matter_calls(command, "999999999")
+        to_device_calls(command, "999999999")
 
 
 def test_colour_rejects_text():
     command = cmd(768, 6, takes_value=True)
     with pytest.raises(UnsupportedValueError):
-        to_matter_calls(command, "rot")
+        to_device_calls(command, "rot")
 
 
 def test_channel_over_100_percent_names_channel_and_value():
@@ -220,7 +222,7 @@ def test_channel_over_100_percent_names_channel_and_value():
     - see `commands/color.py::loxone_rgb_to_rgb`."""
     command = cmd(768, 6, takes_value=True)
     with pytest.raises(UnsupportedValueError, match="green") as excinfo:
-        to_matter_calls(command, "100101100")
+        to_device_calls(command, "100101100")
     assert "101" in str(excinfo.value)
 
 
@@ -233,14 +235,14 @@ def test_channel_over_100_percent_names_channel_and_value_in_german():
     i18n.set_language("de")
     command = cmd(768, 6, takes_value=True)
     with pytest.raises(UnsupportedValueError, match="gruen") as excinfo:
-        to_matter_calls(command, "100101100")
+        to_device_calls(command, "100101100")
     assert "101" in str(excinfo.value)
 
 
 def test_negative_colour_number_raises_a_clear_error():
     command = cmd(768, 6, takes_value=True)
     with pytest.raises(UnsupportedValueError, match="not be negative"):
-        to_matter_calls(command, "-1")
+        to_device_calls(command, "-1")
 
 
 def test_negative_colour_number_raises_in_german():
@@ -249,13 +251,13 @@ def test_negative_colour_number_raises_in_german():
     i18n.set_language("de")
     command = cmd(768, 6, takes_value=True)
     with pytest.raises(UnsupportedValueError, match="nicht negativ"):
-        to_matter_calls(command, "-1")
+        to_device_calls(command, "-1")
 
 
 def test_fractional_colour_number_raises_a_clear_error():
     command = cmd(768, 6, takes_value=True)
     with pytest.raises(UnsupportedValueError, match="must be an integer"):
-        to_matter_calls(command, "20040060.5")
+        to_device_calls(command, "20040060.5")
 
 
 def test_fractional_colour_number_raises_in_german():
@@ -264,7 +266,7 @@ def test_fractional_colour_number_raises_in_german():
     i18n.set_language("de")
     command = cmd(768, 6, takes_value=True)
     with pytest.raises(UnsupportedValueError, match="ganzzahlig"):
-        to_matter_calls(command, "20040060.5")
+        to_device_calls(command, "20040060.5")
 
 
 def test_a_lumitech_value_becomes_a_colour_temperature_command():
@@ -276,7 +278,7 @@ def test_a_lumitech_value_becomes_a_colour_temperature_command():
 
     201002700 = identifier 20 | brightness 100% | 2700 K. Measured value from
     a real installation."""
-    call = to_matter_calls(cmd(768, 6, takes_value=True), "201002700")[0]
+    call = to_device_calls(cmd(768, 6, takes_value=True), "201002700")[0]
     assert call.cluster_id == 768
     assert call.command_id == 10
     assert call.payload["colorTemperatureMireds"] == kelvin_to_mireds(2700)
@@ -286,7 +288,7 @@ def test_an_rgb_value_still_becomes_a_hue_saturation_command():
     """The counterproof: the same key, an RGB number, unchanged
     behavior. Without this test, the switch could hijack the color path without
     it being noticed."""
-    call = to_matter_calls(cmd(768, 6, takes_value=True), "100")[0]
+    call = to_device_calls(cmd(768, 6, takes_value=True), "100")[0]
     assert call.command_id == 6
     assert call.payload["hue"] == 0
     assert call.payload["saturation"] == 254
@@ -297,7 +299,7 @@ def test_an_rgb_value_still_becomes_a_hue_saturation_command():
     [("200283057", 3057), ("201004324", 4324), ("201006500", 6500)],
 )
 def test_measured_lumitech_values_reach_their_kelvin(packed, kelvin):
-    call = to_matter_calls(cmd(768, 6, takes_value=True), packed)[0]
+    call = to_device_calls(cmd(768, 6, takes_value=True), packed)[0]
     assert call.command_id == 10
     assert call.payload["colorTemperatureMireds"] == kelvin_to_mireds(kelvin)
 
@@ -306,7 +308,7 @@ def test_a_malformed_lumitech_value_is_rejected_not_guessed():
     """20|101|2700 - a brightness over 100%. The format is violated,
     and computing a color temperature from it would be guessing."""
     with pytest.raises(UnsupportedValueError):
-        to_matter_calls(cmd(768, 6, takes_value=True), "201012700")
+        to_device_calls(cmd(768, 6, takes_value=True), "201012700")
 
 
 def test_a_colour_value_also_carries_its_brightness():
@@ -316,7 +318,7 @@ def test_a_colour_value_also_carries_its_brightness():
 
     85019094 = (94,19,85) - hue 307 degrees at 94% brightness. TWO
     commands are expected: the color and the level."""
-    calls = to_matter_calls(cmd(768, 6, takes_value=True), "85019094")
+    calls = to_device_calls(cmd(768, 6, takes_value=True), "85019094")
     assert [c.command_id for c in calls] == [6, 4]
     assert calls[0].cluster_id == 768
     assert calls[1].cluster_id == 8
@@ -327,15 +329,15 @@ def test_the_same_colour_dimmed_differs_only_in_the_level_command():
     """The two measured values of the same color: the color payload must
     stay the same, only the level differs. If this test fails,
     brightness bleeds onto the color."""
-    dark = to_matter_calls(cmd(768, 6, takes_value=True), "18004020")
-    bright = to_matter_calls(cmd(768, 6, takes_value=True), "85019094")
+    dark = to_device_calls(cmd(768, 6, takes_value=True), "18004020")
+    bright = to_device_calls(cmd(768, 6, takes_value=True), "85019094")
     assert dark[0].payload["hue"] == pytest.approx(bright[0].payload["hue"], abs=2)
     assert dark[1].payload["level"] < bright[1].payload["level"]
 
 
 def test_a_lumitech_value_also_carries_its_brightness():
     """200283057 = identifier 20 | 28 % | 3057 K - two commands, not one."""
-    calls = to_matter_calls(cmd(768, 6, takes_value=True), "200283057")
+    calls = to_device_calls(cmd(768, 6, takes_value=True), "200283057")
     assert [c.command_id for c in calls] == [10, 4]
     assert calls[0].payload["colorTemperatureMireds"] == kelvin_to_mireds(3057)
     assert calls[1].payload["level"] == pytest.approx(round(28 * 254 / 100), abs=2)
@@ -347,7 +349,7 @@ def test_the_colour_command_comes_before_the_level_command():
     the old color and visibly change after - color first, then
     turn on."""
     for value in ("85019094", "200283057"):
-        calls = to_matter_calls(cmd(768, 6, takes_value=True), value)
+        calls = to_device_calls(cmd(768, 6, takes_value=True), value)
         assert calls[0].cluster_id == 768
         assert calls[1].cluster_id == 8
 
@@ -356,7 +358,7 @@ def test_brightness_zero_switches_the_lamp_off():
     """Loxone value 0 means off. Previously this resulted in saturation 0, so
     WHITE instead of off - the error that spec section 10 point 5
     described. `MoveToLevelWithOnOff` with level 0 really turns off."""
-    calls = to_matter_calls(cmd(768, 6, takes_value=True), "0")
+    calls = to_device_calls(cmd(768, 6, takes_value=True), "0")
     assert calls[-1].cluster_id == 8
     assert calls[-1].command_id == 4
     assert calls[-1].payload["level"] == 0
@@ -366,7 +368,7 @@ def test_commands_without_a_brightness_still_yield_exactly_one_call():
     """Only the color output carries two meanings. Everything else remains
     one command - a second would be invented here."""
     for cluster, command, value in [(6, 1, "1"), (8, 4, "50"), (768, 10, "2700")]:
-        assert len(to_matter_calls(cmd(cluster, command, takes_value=True), value)) == 1
+        assert len(to_device_calls(cmd(cluster, command, takes_value=True), value)) == 1
 
 
 def test_colour_commands_apply_even_while_the_lamp_is_off():
@@ -381,7 +383,7 @@ def test_colour_commands_apply_even_while_the_lamp_is_off():
     the OLD color and change after. With the bit, the
     color-then-level order stays correct and the change is invisible."""
     for value, expected in [("85019094", 6), ("200283057", 10)]:
-        color_cmd = to_matter_calls(cmd(768, 6, takes_value=True), value)[0]
+        color_cmd = to_device_calls(cmd(768, 6, takes_value=True), value)[0]
         assert color_cmd.command_id == expected
         assert color_cmd.payload["optionsMask"] == 1
         assert color_cmd.payload["optionsOverride"] == 1
@@ -391,7 +393,7 @@ def test_the_plain_colour_temperature_output_also_applies_while_off():
     """Same reason for the separate `colortemp` output: it also
     sets a color, and it too should not fizzle just because the
     lamp is currently off."""
-    call = to_matter_calls(cmd(768, 10, takes_value=True), "2700")[0]
+    call = to_device_calls(cmd(768, 10, takes_value=True), "2700")[0]
     assert call.payload["optionsMask"] == 1
     assert call.payload["optionsOverride"] == 1
 
@@ -408,7 +410,7 @@ def test_switching_off_sends_no_colour_command():
     even brighter than the image before.
 
     At brightness 0, there is no color to set. Only one command remains: turn off."""
-    calls = to_matter_calls(cmd(768, 6, takes_value=True), "0")
+    calls = to_device_calls(cmd(768, 6, takes_value=True), "0")
     assert len(calls) == 1
     assert calls[0].cluster_id == 8
     assert calls[0].command_id == 4
@@ -418,7 +420,7 @@ def test_switching_off_sends_no_colour_command():
 def test_lumitech_at_zero_brightness_also_sends_no_colour_command():
     """Same case on the white path: 200003691 = identifier 20 | 0% |
     3691 K. Here too, brightness 0 appears in the installation's log."""
-    calls = to_matter_calls(cmd(768, 6, takes_value=True), "200003691")
+    calls = to_device_calls(cmd(768, 6, takes_value=True), "200003691")
     assert len(calls) == 1
     assert calls[0].cluster_id == 8
     assert calls[0].payload["level"] == 0
@@ -427,7 +429,26 @@ def test_lumitech_at_zero_brightness_also_sends_no_colour_command():
 def test_a_barely_dimmed_value_still_carries_its_colour():
     """The counterproof: 1 is (1,0,0) - dark red at 1%, NOT off. If
     the condition is weakened to 'almost zero', the color is lost here."""
-    calls = to_matter_calls(cmd(768, 6, takes_value=True), "1")
+    calls = to_device_calls(cmd(768, 6, takes_value=True), "1")
     assert len(calls) == 2
     assert calls[0].cluster_id == 768
     assert calls[1].payload["level"] > 0
+
+
+def test_a_call_carries_the_commands_technology_and_address():
+    """Protects that the call is addressed through the stored identity, not
+    a constant. Fault to prove it: hardcode `technology="matter"` in
+    `to_device_calls`."""
+    command = StoredCommand(
+        key="d1_1_on",
+        slug="on",
+        technology="zigbee",
+        address="00:12:4b:00:1c:a1:b2:c3",
+        endpoint=1,
+        cluster_id=6,
+        command_id=1,
+        takes_value=False,
+        device_id=1,
+    )
+    (call,) = to_device_calls(command, "1")
+    assert (call.technology, call.address) == ("zigbee", "00:12:4b:00:1c:a1:b2:c3")

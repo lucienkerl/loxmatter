@@ -130,7 +130,7 @@ stand today - `BridgeMatterClient` (matter/client.py) has no
 `write_attribute`, and this module's interface
 (`build_control_router(store, invoke, values)`) does not accept a writing
 caller for it either; `invoke` is typed exclusively for commands
-(`Callable[[MatterCall], Awaitable[None]]`), `values` only reads
+(`Callable[[DeviceCall], Awaitable[None]]`), `values` only reads
 (see `ValueReader`), and an attribute write is neither of those.
 `POST /api/signals/{key}/write` therefore honestly answers with 501 for
 an allowed attribute instead of a success that does nothing - the same
@@ -150,11 +150,12 @@ from fastapi import APIRouter, HTTPException
 from loxmatter import i18n
 from loxmatter.api.models import CommandOut, ControlRange, ControlsOut, ValueIn
 from loxmatter.commands.fanout import dispatch_group, plan_group_calls
-from loxmatter.commands.translate import MatterCall, UnsupportedValueError, to_matter_calls
+from loxmatter.commands.translate import UnsupportedValueError, to_device_calls
 from loxmatter.model.store import Store, UnknownCommandError, UnknownDeviceError
 from loxmatter.profiles.table import command_control, command_slug
+from loxmatter.sources import DeviceCall
 
-Invoker = Callable[[MatterCall], Awaitable[None]]
+Invoker = Callable[[DeviceCall], Awaitable[None]]
 
 logger = logging.getLogger(__name__)
 
@@ -251,7 +252,7 @@ def build_control_router(store: Store, invoke: Invoker, values: ValueReader) -> 
         knows what `c4_cmd0` does without reading the template - and a
         click on a button with no visible meaning is the opposite
         of Spec 8.1's "one click separates the two possible causes".
-        `command_slug` is the same source that `to_matter_calls`
+        `command_slug` is the same source that `to_device_calls`
         ultimately serves (via `commands.translate._PAYLOAD_BUILDERS`,
         kept in sync with `clusters.yaml` by
         `profiles.table.known_command_pairs` - see there) - a
@@ -322,14 +323,14 @@ def build_control_router(store: Store, invoke: Invoker, values: ValueReader) -> 
             ) from exc
 
         try:
-            calls = to_matter_calls(stored, body.value)
+            calls = to_device_calls(stored, body.value)
         except UnsupportedValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
         try:
             # Multiple calls because a Loxone value can mean more than one thing
             # - the color output carries color AND brightness
-            # (see `to_matter_calls`). The first failure stops and is
+            # (see `to_device_calls`). The first failure stops and is
             # reported; a partial state is possible
             # and justified there.
             for call in calls:
@@ -338,7 +339,7 @@ def build_control_router(store: Store, invoke: Invoker, values: ValueReader) -> 
             # logger.exception writes the full traceback to the server log,
             # NOT to the HTTP response - the same justification as for the
             # Loxone endpoint in loxone/server.py.
-            logger.exception("Matter call for key %r failed", key)
+            logger.exception("device call for key %r failed", key)
             raise HTTPException(
                 status_code=502, detail=i18n.t("api.errors.device_unreachable", exc=exc)
             ) from exc

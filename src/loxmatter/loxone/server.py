@@ -148,14 +148,15 @@ from loxmatter.api.update import build_update_router
 from loxmatter.api.version import build_version_router
 from loxmatter.auth.sessions import SESSION_COOKIE, session_is_valid
 from loxmatter.commands.fanout import dispatch_group, plan_group_calls
-from loxmatter.commands.translate import MatterCall, UnsupportedValueError, to_matter_calls
+from loxmatter.commands.translate import UnsupportedValueError, to_device_calls
 from loxmatter.diagnostics.logbuffer import LogBufferHandler
 from loxmatter.loxone.sender import UdpSender
 from loxmatter.matter.client import BridgeMatterClient
 from loxmatter.model.store import Store
+from loxmatter.sources import DeviceCall
 from loxmatter.timestamps import now_iso
 
-Invoker = Callable[[MatterCall], Awaitable[None]]
+Invoker = Callable[[DeviceCall], Awaitable[None]]
 
 logger = logging.getLogger(__name__)
 
@@ -595,14 +596,14 @@ def build_app(
             return await _group_command(key, value)
 
         try:
-            calls = to_matter_calls(stored, value)
+            calls = to_device_calls(stored, value)
         except UnsupportedValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
         try:
             # Multiple calls because a Loxone value can mean more than one thing
             # - the color output carries color AND brightness
-            # (see `to_matter_calls`). The first failure stops and is
+            # (see `to_device_calls`). The first failure stops and is
             # reported; a partial state is possible
             # and justified there.
             for call in calls:
@@ -616,7 +617,7 @@ def build_app(
             # just "Device unreachable: <message>" without a traceback,
             # and the difference between "Zigbee mesh gone" and "typo
             # in invoker" would be lost.
-            logger.exception("Matter call for key %r failed", key)
+            logger.exception("device call for key %r failed", key)
             raise HTTPException(
                 status_code=502, detail=i18n.t("api.errors.device_unreachable", exc=exc)
             ) from exc

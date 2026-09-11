@@ -124,8 +124,8 @@ from dataclasses import dataclass
 from typing import Any, Final, Protocol
 
 from loxmatter import i18n
-from loxmatter.commands.translate import MatterCall
 from loxmatter.matter.models import NodeSnapshot
+from loxmatter.sources import DeviceCall
 
 logger = logging.getLogger(__name__)
 
@@ -576,8 +576,8 @@ class BridgeMatterClient:
         await self._require_upstream().set_thread_operational_dataset(dataset)
         self._thread_dataset_set = True
 
-    async def send_command(self, call: MatterCall) -> None:
-        """Executes a translated `MatterCall` over the upstream.
+    async def send(self, call: DeviceCall) -> None:
+        """Executes a translated `DeviceCall` over the upstream.
 
         `MatterClient.send_device_command()` does not expect a triple of
         cluster ID, command ID and a raw payload dict, but a command
@@ -595,7 +595,7 @@ class BridgeMatterClient:
         The field names from `commands/translate.py` (e.g. `level`,
         `transitionTime`, `colorTemperatureMireds`) are deliberately named
         identically to the dataclass fields of the respective command
-        class - see `test_send_command_passes_the_payload_as_command_fields`.
+        class - see `test_send_passes_the_payload_as_command_fields`.
         """
         upstream = self._require_upstream()
 
@@ -615,7 +615,7 @@ class BridgeMatterClient:
                 )
             )
         command = command_cls(**call.payload)
-        await upstream.send_device_command(call.node_id, call.endpoint, command)
+        await upstream.send_device_command(int(call.address), call.endpoint, command)
 
     def _subscribe_attribute_paths(
         self,

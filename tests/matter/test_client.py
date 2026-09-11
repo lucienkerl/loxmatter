@@ -22,10 +22,10 @@ import pytest
 from matter_server.common.models import EventType, MatterNodeEvent
 
 from loxmatter import i18n
-from loxmatter.commands.translate import MatterCall
 from loxmatter.matter import client as client_module
 from loxmatter.matter.client import BridgeMatterClient, MatterUnavailableError
 from loxmatter.matter.models import NodeSnapshot
+from loxmatter.sources import DeviceCall
 
 
 class FakeNode:
@@ -600,7 +600,7 @@ def make_connected_pair(
     nodes: list[FakeNode] | None = None,
 ) -> tuple[BridgeMatterClient, FakeUpstream]:
     """Like make_client(), but additionally returns the upstream stand-in —
-    send_command()/subscribe() evaluate its sent_commands/subscribe_events(),
+    send()/subscribe() evaluate its sent_commands/subscribe_events(),
     which is not reachable through make_client()'s return value."""
     upstream = FakeUpstream(nodes or [])
     bridge = BridgeMatterClient(
@@ -639,31 +639,37 @@ def _attribute_subscriptions(upstream: FakeUpstream) -> list[str]:
     )
 
 
-# --- send_command() ---------------------------------------------------
+# --- send() -------------------------------------------------------------
 
 
-async def test_send_command_requires_a_connection():
+async def test_send_requires_a_connection():
     bridge, _upstream = make_connected_pair()
-    call = MatterCall(node_id=12, endpoint=1, cluster_id=6, command_id=1, payload={})
+    call = DeviceCall(
+        technology="matter", address="12", endpoint=1, cluster_id=6, command_id=1, payload={}
+    )
     with pytest.raises(MatterUnavailableError, match="not connected"):
-        await bridge.send_command(call)
+        await bridge.send(call)
 
 
-async def test_send_command_requires_a_connection_in_german():
-    """German counterpart to `test_send_command_requires_a_connection` above."""
+async def test_send_requires_a_connection_in_german():
+    """German counterpart to `test_send_requires_a_connection` above."""
     i18n.set_language("de")
     bridge, _upstream = make_connected_pair()
-    call = MatterCall(node_id=12, endpoint=1, cluster_id=6, command_id=1, payload={})
+    call = DeviceCall(
+        technology="matter", address="12", endpoint=1, cluster_id=6, command_id=1, payload={}
+    )
     with pytest.raises(MatterUnavailableError, match="nicht verbunden"):
-        await bridge.send_command(call)
+        await bridge.send(call)
 
 
-async def test_send_command_builds_the_real_cluster_command_from_cluster_and_command_id():
+async def test_send_builds_the_real_cluster_command_from_cluster_and_command_id():
     bridge, upstream = make_connected_pair([FakeNode(12, {})])
     await bridge.connect()
 
-    call = MatterCall(node_id=12, endpoint=1, cluster_id=6, command_id=1, payload={})
-    await bridge.send_command(call)
+    call = DeviceCall(
+        technology="matter", address="12", endpoint=1, cluster_id=6, command_id=1, payload={}
+    )
+    await bridge.send(call)
 
     assert len(upstream.sent_commands) == 1
     node_id, endpoint_id, command = upstream.sent_commands[0]
@@ -673,20 +679,21 @@ async def test_send_command_builds_the_real_cluster_command_from_cluster_and_com
     assert command.cluster_id == 6
 
 
-async def test_send_command_passes_the_payload_as_command_fields():
+async def test_send_passes_the_payload_as_command_fields():
     bridge, upstream = make_connected_pair([FakeNode(12, {})])
     await bridge.connect()
 
     # LevelControl (8) MoveToLevelWithOnOff (4) — the same field names that
     # commands/translate.py._payload_level builds.
-    call = MatterCall(
-        node_id=12,
+    call = DeviceCall(
+        technology="matter",
+        address="12",
         endpoint=1,
         cluster_id=8,
         command_id=4,
         payload={"level": 128, "transitionTime": 0},
     )
-    await bridge.send_command(call)
+    await bridge.send(call)
 
     _node_id, _endpoint_id, command = upstream.sent_commands[0]
     assert command.__class__.__name__ == "MoveToLevelWithOnOff"
@@ -694,7 +701,7 @@ async def test_send_command_passes_the_payload_as_command_fields():
     assert command.transitionTime == 0
 
 
-async def test_send_command_builds_the_colour_temperature_command_from_the_sdk():
+async def test_send_builds_the_colour_temperature_command_from_the_sdk():
     """ColorControl (768) MoveToColorTemperature (10) through `chip`.
 
     `tests/commands/test_translate.py` only checks the payload dict that
@@ -706,8 +713,9 @@ async def test_send_command_builds_the_colour_temperature_command_from_the_sdk()
     bridge, upstream = make_connected_pair([FakeNode(12, {})])
     await bridge.connect()
 
-    call = MatterCall(
-        node_id=12,
+    call = DeviceCall(
+        technology="matter",
+        address="12",
         endpoint=1,
         cluster_id=768,
         command_id=10,
@@ -717,7 +725,7 @@ async def test_send_command_builds_the_colour_temperature_command_from_the_sdk()
             "optionsOverride": 1,
         },
     )
-    await bridge.send_command(call)
+    await bridge.send(call)
 
     _node_id, _endpoint_id, command = upstream.sent_commands[0]
     assert command.__class__.__name__ == "MoveToColorTemperature"
@@ -728,13 +736,14 @@ async def test_send_command_builds_the_colour_temperature_command_from_the_sdk()
     assert command.optionsOverride == 1
 
 
-async def test_send_command_builds_the_hue_saturation_command_from_the_sdk():
+async def test_send_builds_the_hue_saturation_command_from_the_sdk():
     """ColorControl (768) MoveToHueAndSaturation (6), same reason."""
     bridge, upstream = make_connected_pair([FakeNode(12, {})])
     await bridge.connect()
 
-    call = MatterCall(
-        node_id=12,
+    call = DeviceCall(
+        technology="matter",
+        address="12",
         endpoint=1,
         cluster_id=768,
         command_id=6,
@@ -746,7 +755,7 @@ async def test_send_command_builds_the_hue_saturation_command_from_the_sdk():
             "optionsOverride": 1,
         },
     )
-    await bridge.send_command(call)
+    await bridge.send(call)
 
     _node_id, _endpoint_id, command = upstream.sent_commands[0]
     assert command.__class__.__name__ == "MoveToHueAndSaturation"
@@ -754,13 +763,15 @@ async def test_send_command_builds_the_hue_saturation_command_from_the_sdk():
     assert command.saturation == 254
 
 
-async def test_send_command_raises_for_a_cluster_command_the_sdk_does_not_know():
+async def test_send_raises_for_a_cluster_command_the_sdk_does_not_know():
     bridge, _upstream = make_connected_pair([FakeNode(12, {})])
     await bridge.connect()
 
-    call = MatterCall(node_id=12, endpoint=1, cluster_id=9999, command_id=1, payload={})
+    call = DeviceCall(
+        technology="matter", address="12", endpoint=1, cluster_id=9999, command_id=1, payload={}
+    )
     with pytest.raises(MatterUnavailableError, match="9999"):
-        await bridge.send_command(call)
+        await bridge.send(call)
 
 
 # --- subscribe() --------------------------------------------------------

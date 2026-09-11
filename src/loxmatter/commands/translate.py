@@ -52,7 +52,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from loxmatter import i18n
 from loxmatter.commands.color import (
@@ -66,6 +66,7 @@ from loxmatter.commands.color import (
     rgb_to_hue_saturation,
 )
 from loxmatter.model.store import StoredCommand
+from loxmatter.sources import DeviceCall
 
 LEVEL_MAX = 254
 
@@ -102,15 +103,6 @@ _COMMAND_HUE_SATURATION = 6
 
 class UnsupportedValueError(ValueError):
     """The value does not fit this command."""
-
-
-@dataclass(frozen=True)
-class MatterCall:
-    node_id: int
-    endpoint: int
-    cluster_id: int
-    command_id: int
-    payload: dict[str, object] = field(default_factory=dict)
 
 
 def _as_number(value: str) -> float:
@@ -291,7 +283,7 @@ def _payload_hue_saturation(value: str) -> _Built:
 
 
 # The only place that defines which (cluster ID, command ID) pairs
-# are served. The dispatch in `to_matter_calls` only
+# are served. The dispatch in `to_device_calls` only
 # reads this mapping - supporting another command is a data change
 # here, not a new branch there, and the set of served pairs is
 # complete at a glance.
@@ -306,8 +298,8 @@ _PAYLOAD_BUILDERS: dict[tuple[int, int], Callable[[str], _Built]] = {
 }
 
 
-def to_matter_calls(command: StoredCommand, value: str) -> list[MatterCall]:
-    """The Matter calls for an exported command key.
+def to_device_calls(command: StoredCommand, value: str) -> list[DeviceCall]:
+    """The device calls for an exported command key.
 
     **A list, not a single call**, because a Loxone value can mean more than
     one thing: the color output of the light control carries
@@ -368,8 +360,9 @@ def to_matter_calls(command: StoredCommand, value: str) -> list[MatterCall]:
     level = _level(str(built.brightness_percent)) if built.brightness_percent is not None else None
     if level == 0:
         return [
-            MatterCall(
-                node_id=int(command.address),  # TRANSITIONAL (Task 4)
+            DeviceCall(
+                technology=command.technology,
+                address=command.address,
                 endpoint=command.endpoint,
                 cluster_id=_CLUSTER_LEVEL,
                 command_id=_COMMAND_MOVE_TO_LEVEL_WITH_ON_OFF,
@@ -378,8 +371,9 @@ def to_matter_calls(command: StoredCommand, value: str) -> list[MatterCall]:
         ]
 
     calls = [
-        MatterCall(
-            node_id=int(command.address),  # TRANSITIONAL (Task 4)
+        DeviceCall(
+            technology=command.technology,
+            address=command.address,
             endpoint=command.endpoint,
             cluster_id=command.cluster_id,
             # The value can determine the command - see `_Built`.
@@ -389,8 +383,9 @@ def to_matter_calls(command: StoredCommand, value: str) -> list[MatterCall]:
     ]
     if built.brightness_percent is not None:
         calls.append(
-            MatterCall(
-                node_id=int(command.address),  # TRANSITIONAL (Task 4)
+            DeviceCall(
+                technology=command.technology,
+                address=command.address,
                 endpoint=command.endpoint,
                 cluster_id=_CLUSTER_LEVEL,
                 command_id=_COMMAND_MOVE_TO_LEVEL_WITH_ON_OFF,

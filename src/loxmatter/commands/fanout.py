@@ -41,8 +41,9 @@ from collections import Counter
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 
-from loxmatter.commands.translate import MatterCall, to_matter_calls
+from loxmatter.commands.translate import to_device_calls
 from loxmatter.model.store import GroupTarget
+from loxmatter.sources import DeviceCall
 
 __all__ = ["MemberPlan", "dispatch_group", "plan_group_calls"]
 
@@ -59,7 +60,7 @@ class MemberPlan:
 
     device_id: int
     device_label: str
-    calls: tuple[MatterCall, ...]
+    calls: tuple[DeviceCall, ...]
 
 
 def plan_group_calls(targets: Sequence[GroupTarget], value: str) -> list[MemberPlan]:
@@ -72,9 +73,9 @@ def plan_group_calls(targets: Sequence[GroupTarget], value: str) -> list[MemberP
     """
     plans: list[MemberPlan] = []
     for target in targets:
-        calls: list[MatterCall] = []
+        calls: list[DeviceCall] = []
         for stored in target.commands:
-            calls.extend(to_matter_calls(stored, value))
+            calls.extend(to_device_calls(stored, value))
         plans.append(
             MemberPlan(
                 device_id=target.device_id,
@@ -85,7 +86,7 @@ def plan_group_calls(targets: Sequence[GroupTarget], value: str) -> list[MemberP
     return plans
 
 
-async def _run_member(plan: MemberPlan, invoke: Callable[[MatterCall], Awaitable[None]]) -> None:
+async def _run_member(plan: MemberPlan, invoke: Callable[[DeviceCall], Awaitable[None]]) -> None:
     """One member's calls, strictly in order.
 
     Sequential within the member and NOT gathered: the colour path sends
@@ -101,7 +102,7 @@ async def _run_member(plan: MemberPlan, invoke: Callable[[MatterCall], Awaitable
 
 
 async def dispatch_group(
-    plans: Sequence[MemberPlan], invoke: Callable[[MatterCall], Awaitable[None]]
+    plans: Sequence[MemberPlan], invoke: Callable[[DeviceCall], Awaitable[None]]
 ) -> list[str]:
     """Runs every member concurrently and returns the labels that failed.
 
