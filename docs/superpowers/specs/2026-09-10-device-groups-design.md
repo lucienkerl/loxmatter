@@ -212,8 +212,31 @@ current members and writes it, on every membership change:
 - A command that survives **keeps its key.** A command that drops out of
   the intersection loses its row, and its key answers 404 from then on.
 - The group itself survives, down to one member and down to zero.
-- `updated_at` is touched, so the export tab can answer "changed since the
-  last export" for a group exactly as it does for a device.
+- `updated_at` is touched **when the recompute actually changed
+  something**, so the export tab can answer "changed since the last
+  export" for a group exactly as it does for a device. Stamping
+  unconditionally would be the same uselessness in the other direction:
+  the recompute runs on every membership change, so every group would
+  read "changed" forever.
+- **A group's room does not stamp it.** `Store.set_room` deliberately does
+  not stamp a device's either, and for the same reason: the room appears
+  in no template, so a rename cannot make an export stale. The group side
+  of `rename_room` follows the same rule.
+
+**`register_commands` is a fourth trigger, not only membership changes.**
+It runs on every startup through `backfill_commands` and again on
+re-commissioning, and it fills in without clearing. Without recomputing
+the groups a device belongs to at that point, a `clusters.yaml`
+correction or a re-interview that gives every member a command they did
+not previously share would reach every *device* tile at startup and no
+*group* — until somebody happened to re-save the member list. That is
+precisely the staleness the re-adoption rule above exists to prevent, and
+re-adoption alone cannot reach it: it only ever refreshes rows that
+already exist, never a newly shared pair.
+
+The staleness this closes is one-directional, which is why it went
+unnoticed: because `register_commands` never deletes, a group can never
+*retain* a key whose members have stopped accepting the command.
 
 Removing a device (`DELETE /api/devices/{id}`, `forget_device`) is a
 membership change like any other: its rows in `device_group_member` go
@@ -245,12 +268,18 @@ All routes sit under the existing `api_guard`.
 
 | Route | Purpose |
 | --- | --- |
-| `GET /api/groups` | list with members, commands, room, category |
+| `GET /api/groups` | list: room, category, `member_ids`, `member_labels`, `command_count` |
+| `GET /api/groups/{id}` | one group, same shape |
 | `POST /api/groups` | `{label, room?, member_ids[]}`; at least one member, which fixes the category |
 | `PATCH /api/groups/{id}` | label and room |
 | `PUT /api/groups/{id}/members` | the complete member list |
 | `DELETE /api/groups/{id}` | group and its keys |
-| `GET /api/groups/{id}/controls` | as `GET /api/devices/{id}/controls` |
+| `GET /api/groups/{id}/controls` | as `GET /api/devices/{id}/controls`, plus the seed attribution |
+
+The list carries a `command_count`, not the commands themselves; the
+commands are what `/controls` answers with. `member_labels` rides along
+beside `member_ids` so a tile can name its members without one request
+per member.
 
 **No new control endpoint.** `POST /api/commands/{key}` drives groups
 too — this is where the shared key namespace pays off. A group tile in
@@ -277,6 +306,13 @@ command without a usable range, rather than shown with a degenerate span
 that no value satisfies. The command itself stays in the group and stays
 exported — it is the *slider* that has nothing to offer, and `/cmd` with
 an explicit value still reaches every member that accepts it.
+
+The same answer covers a **single-member** group whose own limits collapse
+to one value: the group offers no slider, while that device's own
+`/devices/{id}/controls` still returns the degenerate range. The two
+differ on purpose. For a device the range is what the hardware reports;
+for a group it is a statement about what the members have in common, and
+"they agree on exactly one Kelvin value" is not a range anybody can drag.
 
 **The sliders' initial value** is the one place where a group tile states
 something it cannot know: six lamps have six brightnesses. The
@@ -327,6 +363,13 @@ parameter. Two copies would drift, and they would drift **silently**: an
 unpaired `on` does not raise, it simply passes through as its own output,
 and the missing off-path would only show up as a switch in Loxone that
 never turns anything off.
+
+**A group's title is locale-dependent; a device's is not.** `output_title`
+is a plain f-string, `group_output_title` goes through `i18n.t`. Exporting
+in English and later syncing in German therefore writes two different
+titles for the same group. This is cosmetic and not a correctness
+problem, for the reason Section 8 gives: containers are matched by key,
+never by title.
 
 Title and caption container read `Matter — Group: <name>` (`de`: `Matter
 — Gruppe: <name>`), with an `en`/`de` pair in `strings.yaml`.
@@ -409,10 +452,13 @@ Beyond the obvious per-unit coverage:
   rows; a fresh database ends at version 8 with the same schema. Both
   directions matter — the `_migrate_to_v5` pitfall is that a fresh
   database also runs the whole chain.
-- **Export and sync round trip.** A group template imports into a project
-  file, and a subsequent sync recognises its keys instead of reporting
-  them as new — the check that Section 8's shared string requirement
-  actually holds.
+- **Sync round trip.** A group is patched into a project file, and a
+  subsequent plan against the patched text recognises its keys instead of
+  reporting them as new — including after the group is renamed, which is
+  the check that Section 8's key-not-title claim actually holds. This is
+  a patch-and-re-plan round trip, not an import of an exported template:
+  since both titles now come from one helper, there is no second string
+  left that could drift apart.
 
 Fixtures: the two checked-in IKEA lamps
 (`tests/fixtures/nodes/`) already provide a mixed-capability pair, which
