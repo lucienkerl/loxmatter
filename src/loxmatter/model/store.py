@@ -961,8 +961,9 @@ def changed_since_export(exported_at: str | None, updated_at: str | None) -> boo
     since it was last exported.
 
     Takes the two raw timestamps rather than a `StoredDevice` or
-    `StoredGroup` instance so that `api.export`'s device-side check and
-    `api.groups`'s group-side check (final fix pass, review finding
+    `StoredGroup` instance so that `api.export`'s device-side check
+    (`_changed_since_export`) and its group-side check
+    (`_group_changed_since_export`) (final fix pass, review finding
     Important #1 - design 8 says a group's `exported_at`/`updated_at`
     "behave as on a device", and this is the comparison that makes that
     claim mean something) run the exact same comparison instead of two
