@@ -214,22 +214,23 @@ async def test_duplicate_labels_among_the_failed_members_are_disambiguated_by_id
 
 
 async def test_a_unique_label_among_the_failed_members_stays_bare():
-    """The common case - every failed member has a distinct label - must
-    read exactly as before: only a label actually shared by more than one
-    FAILED member gains its id, not every member of a group that happens
-    to contain a duplicate label somewhere among its *reachable*
-    members."""
+    """Uniqueness is checked against the FAILED set, not the whole group:
+    two members share the label "Lamp", but only one of them fails, so
+    that failure is not ambiguous among failures and must stay bare - the
+    disambiguating id is for when two *failed* members would otherwise
+    read the same, not for every label the group happens to repeat
+    somewhere among its reachable members."""
     plans = plan_group_calls(
         [on_target(1, 11, "Lamp"), on_target(2, 22, "Lamp"), on_target(3, 33, "Kitchen Lamp")],
         "1",
     )
 
     async def invoke(call: MatterCall) -> None:
-        if call.node_id == 33:
+        if call.node_id == 11:
             return
         raise RuntimeError("no route to host")
 
-    assert await dispatch_group(plans, invoke) == ["Lamp (1)", "Lamp (2)"]
+    assert await dispatch_group(plans, invoke) == ["Lamp", "Kitchen Lamp"]
 
 
 async def test_every_failing_member_is_named_not_just_the_first():
