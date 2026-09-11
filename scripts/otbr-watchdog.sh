@@ -41,6 +41,11 @@
 set -euo pipefail
 
 SERVICE="otbr"
+# Overridable for the same reason `install.sh` makes RFKILL_DIR
+# overridable: otherwise the check can only be exercised on a host that
+# happens to have - or happens to lack - a Thread interface, and the
+# tests for it would assert nothing on the very Pi this runs on.
+IF_INET6="${IF_INET6:-/proc/net/if_inet6}"
 STACK="$(cd "$(dirname "${BASH_SOURCE[0]}")/../deploy/testhost" && pwd)"
 STAMP="$(date '+%Y-%m-%d %H:%M:%S')"
 
@@ -72,7 +77,7 @@ fi
 thread_is_up() {
   # Scope 00 means routed (ULA included); wpan* is OTBR's Thread
   # interface.
-  awk '$4 == "00" && $6 ~ /^wpan/ { found = 1 } END { exit !found }' /proc/net/if_inet6
+  awk '$4 == "00" && $6 ~ /^wpan/ { found = 1 } END { exit !found }' "$IF_INET6"
 }
 
 if thread_is_up; then
@@ -80,6 +85,34 @@ if thread_is_up; then
 fi
 
 printf '%s  No Thread interface - restarting %s\n' "$STAMP" "$SERVICE"
+
+# The agent's pid file lives in the container's WRITABLE LAYER and so
+# survives a restart, while the container's PID namespace starts over at
+# 1. The file then names a pid the new container has already handed to
+# some other process, and `/etc/init.d/otbr-agent`'s start guard - which
+# asks whether that pid is alive, not whether it is the agent - answers
+# "thread border agent already started; not starting". The container
+# comes up with no Thread daemon at all, `docker ps` still reports "Up",
+# and the next run of this watchdog five minutes later is the first
+# chance to recover.
+#
+# Measured on the Pi on 11 September 2026: /run/otbr-agent.pid still held
+# 97 from a start three days earlier, and 97 is also the pid the agent
+# gets on a fresh start of this image - so the collision is systematic,
+# not bad luck. That incident cost five minutes of Thread outage on top
+# of the one the radio module had already caused.
+#
+# Before the restart and not after: afterwards would delete the pid file
+# of the agent that has just started. `/var/run` is a symlink to `/run`
+# in this image, so one path covers both.
+#
+# A failure here is deliberately not fatal. The container may be stopped
+# outright - exactly a case this watchdog exists to recover from - and
+# the restart below is what recovers it.
+if ! docker exec "$SERVICE" rm -f /run/otbr-agent.pid >/dev/null 2>&1; then
+  printf '%s  Could not clear the stale pid file - restarting anyway\n' "$STAMP"
+fi
+
 if ! (cd "$STACK" && docker compose restart "$SERVICE" >/dev/null 2>&1); then
   printf '%s  Restarting %s failed\n' "$STAMP" "$SERVICE"
   exit 1
