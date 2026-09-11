@@ -64,7 +64,7 @@ fail silently.
 | What the running containers see | Both `loxmatter` and `loxmatter-updater` see `/sys/class/bluetooth/hci0` and `/sys/class/tty/ttyUSB0`. Neither sees `/dev/serial/by-id` or `/dev/ttyUSB*`. |
 | Stick details from sysfs, inside `loxmatter` | `manufacturer=SONOFF`, `product=SONOFF Dongle Plus MG24`, `serial=e26a7d9118f9ef118f7767135c2a50c9`, `idVendor=10c4`, `idProduct=ea60`, read from the USB interface's grandparent of `/sys/class/tty/ttyUSB0/device`. |
 | Bluetooth details from sysfs | `uevent` has `DEVTYPE=host`; `device` links to `…/serial0/serial0-0` (UART); an `rfkill0` entry exists. No address is exposed in sysfs. |
-| Current `.env` | `RADIO_DEVICE=/dev/ttyUSB0` (the unstable name the installer detected), `RADIO_BAUDRATE=460800`, `BACKBONE_IF=wlan0`, `BLUETOOTH_ADAPTER=0`, **no `COMPOSE_PROFILES` line** although `otbr` runs. The file lives at `/home/pi/loxmatter-testhost/.env`, not in the installer's layout. |
+| Current `.env` | The stack runs from `/home/pi/matter-loxone/deploy/testhost` (Compose labels of all four containers; `/home/pi/loxmatter-testhost` is a leftover from 3 September). Its `.env`: `RADIO_DEVICE=/dev/ttyUSB0` (the unstable name the installer detected), `RADIO_BAUDRATE=460800`, `BACKBONE_IF=wlan0`, `BLUETOOTH_ADAPTER=0`, **no `COMPOSE_PROFILES` line** although the Compose file puts `otbr` behind `profiles: ["thread"]` and `otbr` runs — it was once started with the profile given on the command line. |
 | Docker with a by-id path | `docker run --device <by-id path>:<by-id path>` works: the container gets a character device `188,0` at that path. |
 
 The last two rows matter beyond this Pi: every installer-made `.env` holds
@@ -217,8 +217,9 @@ On every loop iteration, with or without a job, `radios-once.sh` writes
 }
 ```
 
-`thread_enabled` means `COMPOSE_PROFILES` contains `thread`;
-`otbr_running` is what Docker reports, so the card can show when the two
+`thread_enabled` means `COMPOSE_PROFILES` contains `thread` or an `otbr`
+container exists (section 12, point 1); `otbr_running` is what Docker
+reports, so the card can show when the two
 disagree instead of hiding it. `capable` is `false`, with a reason key,
 when `/host/dev` is not mounted in the sidecar (a sidecar container
 created before section 5's change).
@@ -327,8 +328,7 @@ introduced, the test fails, the fault is reverted.
 The updater's lesson was that the defects that mattered sat at boundaries
 no test saw. These steps extend `2026-09-09-first-run-checklist.md`:
 
-0. Resolve the layout deviation (section 3: no `COMPOSE_PROFILES` line, a
-   non-installer path) before the sidecar writes anything there.
+0. Back up the Pi's `.env` by hand before the first radio job.
 1. Install the build, refresh the sidecar from the console once; the card
    shows the read-only state before the refresh and the normal state after.
 2. The card lists the SONOFF stick and `hci0`, both "in use".
@@ -362,13 +362,13 @@ failure is covered only by the automatic tests.
 
 ## 12. Open Points
 
-1. **The test Pi's layout.** Its stack lives in `/home/pi/loxmatter-testhost`
-   and its `.env` has no `COMPOSE_PROFILES` line while `otbr` runs, which
-   the current Compose file (with `profiles: ["thread"]` on `otbr`) would
-   not produce. The implementation plan starts by finding out which Compose
-   file and which env file the Pi's sidecar actually uses, and whether
-   `thread_enabled` must fall back to "the `otbr` service has no profile"
-   for such stacks.
+1. **Resolved while planning: a running `otbr` without a profile line.**
+   The Pi's real stack is the repository layout; its `.env` simply lacks
+   `COMPOSE_PROFILES` while `otbr` exists. So `thread_enabled` in the
+   sidecar's report means "`COMPOSE_PROFILES` contains `thread`, **or** an
+   `otbr` container exists", and the first applied change writes the
+   profile explicitly. Naming `otbr` on the Compose command line activates
+   its profile, so recreating it works either way.
 2. **Baud rate per stick.** 460800 fits the SONOFF MG24 and the installer's
    default; an RCP that needs another rate fails verification and is rolled
    back, with no way to fix it from the UI. Revisit if it happens.
