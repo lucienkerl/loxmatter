@@ -344,6 +344,17 @@ If it's missing, it restarts the `otbr` service and waits up to 60
 seconds for the network. As long as everything is running it writes nothing; the log file
 therefore contains exactly the incidents.
 
+**Before the restart it clears `/run/otbr-agent.pid` inside the
+container.** That file sits in the writable layer and survives a
+restart, while the container's PID namespace starts over at 1 — so it
+names a pid the new container has already handed to another process, and
+`/etc/init.d/otbr-agent`'s start guard refuses with *"thread border agent
+already started; not starting"*. The container then comes up with no
+Thread daemon, `docker ps` still reports `Up`, and only the next run of
+the watchdog five minutes later gets another chance. Measured on
+11 September 2026, where it cost five minutes of outage on top of the one
+the radio module had already caused.
+
 **It deliberately does not restart in a loop.** If the radio module itself is stuck,
 restarting every minute wouldn't help and would just flood the log. At that point
 someone has to look — and finds what happened in the log, including the last lines from the
