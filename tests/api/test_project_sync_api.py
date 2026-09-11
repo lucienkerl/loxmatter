@@ -51,10 +51,9 @@ SAMPLE_PROJECT = (
 # above. A real project in which no virtual input has ever been created
 # looks like this (see `tests/projectsync/test_patch.py`,
 # NO_VIRTUAL_IN_CAPTION_PROJECT, for the same pattern at the level of
-# `patch.apply_plan`). `apply_plan` creates this section itself on the
-# experimental path (design section 8: the special case of first-time
-# creation, also behind the experimental toggle) - no manual prep in Loxone
-# Config needed any more.
+# `patch.apply_plan`). `apply_plan` creates this section itself (design
+# section 8: the special case of first-time creation) - no manual prep in
+# Loxone Config needed any more.
 NO_VIRTUAL_IN_CAPTION_PROJECT = (
     '<?xml version="1.0" encoding="utf-8"?>\r\n'
     '<ControlList Version="275" NextObj="100">\r\n'
@@ -107,7 +106,7 @@ async def api(tmp_path, no_invoke, fake_runtime) -> AsyncIterator[tuple[httpx.As
     store.close()
 
 
-async def test_project_sync_returns_plan_and_both_variants(api):
+async def test_project_sync_returns_plan_and_the_patched_file(api):
     client, _store = api
     response = await client.post(
         "/api/export/project-sync",
@@ -118,11 +117,11 @@ async def test_project_sync_returns_plan_and_both_variants(api):
     body = response.json()
     assert body["entries"]
     assert body["has_changes"] is True
-    assert body["new_devices_unavailable_reason"] is None
-    conservative = base64.b64decode(body["patched_conservative_base64"])
-    with_new_devices = base64.b64decode(body["patched_with_new_devices_base64"])
-    assert b"VirtualUdpIn" not in conservative  # new creation only with the toggle
-    assert b"VirtualUdpIn" in with_new_devices
+    patched = base64.b64decode(body["patched_base64"])
+    # A new device container, without any option to ask for one - the
+    # upload's only file has it (design section 3.4, since 2026-09-11).
+    assert b"VirtualUdpIn" not in SAMPLE_PROJECT.encode("utf-8")
+    assert b"VirtualUdpIn" in patched
 
 
 async def test_project_sync_rejects_invalid_file(api):
@@ -157,7 +156,7 @@ async def test_project_sync_offers_a_selection_for_multiple_miniservers(api):
     ]
     # All plan-specific fields stay empty - there is no plan (yet).
     assert body["entries"] == []
-    assert body["patched_conservative_base64"] is None
+    assert body["patched_base64"] is None
 
 
 async def test_project_sync_with_selected_miniserver_returns_the_plan(api):
@@ -175,7 +174,7 @@ async def test_project_sync_with_selected_miniserver_returns_the_plan(api):
     body = response.json()
     assert body["needs_miniserver_selection"] is False
     assert body["available_miniservers"] == []
-    assert body["patched_conservative_base64"] is not None
+    assert body["patched_base64"] is not None
 
 
 async def test_project_sync_requires_authentication(tmp_path, no_invoke, fake_runtime):
@@ -196,10 +195,8 @@ async def test_project_sync_missing_caption_is_auto_created(api):
     """A well-formed project with no `VirtualInCaption` section, uploaded
     for a device that is completely new (the plug from the `api` fixture
     has no matching container in `NO_VIRTUAL_IN_CAPTION_PROJECT`): the
-    variant with new device containers now creates the missing section
-    itself, following the user request from the review, instead of just
-    locking the experimental path with a justification. The conservative
-    file stays unaffected by this."""
+    patched file creates the missing section itself, following the user
+    request from the review."""
     client, _store = api
     response = await client.post(
         "/api/export/project-sync",
@@ -215,11 +212,8 @@ async def test_project_sync_missing_caption_is_auto_created(api):
     assert response.status_code == 200
     body = response.json()
     assert body["entries"]
-    assert body["new_devices_unavailable_reason"] is None
-    with_new_devices = base64.b64decode(body["patched_with_new_devices_base64"])
-    assert b'Type="VirtualInCaption"' in with_new_devices
-    conservative = base64.b64decode(body["patched_conservative_base64"])
-    assert conservative.decode("utf-8-sig") == NO_VIRTUAL_IN_CAPTION_PROJECT
+    patched = base64.b64decode(body["patched_base64"])
+    assert b'Type="VirtualInCaption"' in patched
 
 
 async def test_project_sync_distinguishes_a_group_from_a_same_numbered_device(api):

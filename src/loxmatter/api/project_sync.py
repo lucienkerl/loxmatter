@@ -17,8 +17,8 @@
 """`POST /api/export/project-sync` (design `docs/superpowers/specs/
 2026-09-03-project-file-sync-design.md`, section 7).
 
-Accepts an uploaded Loxone project file and returns a diff plan plus both
-patched file variants in a single response - the same `Store` that
+Accepts an uploaded Loxone project file and returns a diff plan plus the
+patched file in a single response - the same `Store` that
 `api.export` and `api.devices` also receive (see their module docstrings
 for the rationale: a second, independently opened store would assign a
 second set of signal keys for the same device).
@@ -37,15 +37,7 @@ second set of signal keys for the same device).
   WebUI then shows a selection field instead of an error (user request
   after the review: select instead of typing the IP by hand). Only the
   "none configured at all" case (empty `candidates`, nothing to select)
-  remains a genuine 400.
-
-`patch.MissingCaptionError` belongs to neither of the two: an otherwise
-well-formed project that is merely missing the `VirtualInCaption` or
-`VirtualOutCaption` section is, per design section 8, a limit of the
-experimental path, not a reason to discard the whole response. `run_sync`
-therefore catches it itself and returns `patched_with_new_devices=None`
-plus `new_devices_unavailable_reason`; the plan and the conservative file
-reach the user normally."""
+  remains a genuine 400."""
 
 from __future__ import annotations
 
@@ -103,7 +95,7 @@ def build_project_sync_router(store: Store) -> APIRouter:
             " `needs_miniserver_selection=True` with the found Miniservers to choose from.",
         ),
     ) -> ProjectSyncPlanOut:
-        """Builds the diff plan and both patched file variants in memory -
+        """Builds the diff plan and the patched file in memory -
         writes nothing to disk and marks no device as exported (unlike
         `/api/export/download`: an uploaded project file is not a
         downloaded template, see design section 4)."""
@@ -130,19 +122,10 @@ def build_project_sync_router(store: Store) -> APIRouter:
         except ProjectFormatError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-        with_new_devices = result.patched_with_new_devices
         return ProjectSyncPlanOut(
             entries=_entries_out(result.plan),
             has_changes=result.plan.has_changes,
-            patched_conservative_base64=base64.b64encode(result.patched_conservative).decode(
-                "ascii"
-            ),
-            patched_with_new_devices_base64=(
-                None
-                if with_new_devices is None
-                else base64.b64encode(with_new_devices).decode("ascii")
-            ),
-            new_devices_unavailable_reason=result.new_devices_unavailable_reason,
+            patched_base64=base64.b64encode(result.patched).decode("ascii"),
         )
 
     return router

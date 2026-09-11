@@ -4201,9 +4201,6 @@ async def test_the_projectsync_card_static_text_is_translated(api):
     )
     assert "unveränderte Signale anzeigen" not in markup
 
-    assert "x-text=\"t('web.export.projectsync_new_devices_checkbox')\"" in markup
-    assert "Neue Geräte-Container ebenfalls anlegen" not in markup
-
     assert "x-text=\"t('web.export.projectsync_download_button')\"" in markup
     assert "Gepatchte Datei herunterladen<" not in markup
 
@@ -7071,7 +7068,8 @@ async def test_the_checkbox_hit_targets_reach_24px(api):
     measured, not the `<input>`'s). Result before/after (desktop
     px, identical under 640px for the four text-label rows, since they
     are not tied to any media query):
-      - projectSync.includeNewDevices: 204x21.5 -> 200x24
+      - projectSync.includeNewDevices: 204x21.5 -> 200x24 (the checkbox
+        itself was removed on 2026-09-11)
       - exportIncludeSystem:           208x21.5 -> 204x24
       - exportOnlyPending:             131x21.5 -> 128x24
       - hideNoise:                     166x21.5 -> 162x24
@@ -7101,13 +7099,12 @@ async def test_the_checkbox_hit_targets_reach_24px(api):
     page = _without_comments((await client.get("/")).text)
     css = (await client.get("/static/style.css")).text
 
-    # The four text-label checkboxes now carry `checkbox-label` - not
+    # The text-label checkboxes now carry `checkbox-label` - not
     # `.row label` in general, because the same row class elsewhere also
     # carries text-field, file, and select labels (e.g. the bridge IP),
     # whose layout is not meant to be dragged along here. `:has()`
     # deliberately avoided (project guideline).
     for model in (
-        'x-model="projectSync.includeNewDevices"',
         'x-model="exportIncludeSystem"',
         'x-model="exportOnlyPending"',
         'x-model="hideNoise"',

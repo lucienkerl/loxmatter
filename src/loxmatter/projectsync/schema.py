@@ -141,10 +141,9 @@ def new_output_cmd_open_tag(command: LoxoneCommand, iname: str, u: str) -> str:
 def new_input_container_open_tag(
     device_label: str, bridge_ip: str, port: int, iname: str, u: str
 ) -> str:
-    """Start tag of a freshly created `VirtualUdpIn` device container - only
-    for the experimental path (design section 3.4). Since the correction
-    above, this too carries `V="178"`, like every other `<C>` node in the
-    real reference file."""
+    """Start tag of a freshly created `VirtualUdpIn` device container (design
+    section 3.4). Since the correction above, this too carries `V="178"`,
+    like every other `<C>` node in the real reference file."""
     attrs = [
         ("Type", "VirtualUdpIn"),
         ("IName", iname),
@@ -185,7 +184,7 @@ def new_caption_open_tag(kind: str, u: str) -> str:
     """Start tag of a freshly created `VirtualInCaption`/`VirtualOutCaption`
     - only when the project file has never had a virtual input or output
     of this kind before (design section 8: the special case of creating
-    one, also behind the experimental flag).
+    one).
 
     **Correction after a real-world test (2026-09-05):** all four
     `VirtualInCaption`/`VirtualOutCaption` objects in the real reference

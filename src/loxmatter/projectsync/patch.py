@@ -66,20 +66,7 @@ from loxmatter.projectsync.schema import (
     sibling_iodata_attrs,
 )
 
-__all__ = ["MissingCaptionError", "apply_plan"]
-
-
-class MissingCaptionError(ValueError):
-    """Historical: used to be thrown when the project file did not (yet)
-    have a `VirtualInCaption`/`VirtualOutCaption` section into which a
-    completely new device could be inserted. `_new_device_edit` now
-    creates this section itself (design section 8: the special case of
-    creating one, also behind the experimental flag) - this error is
-    therefore no longer triggered in the current codebase. The class
-    remains exported and `sync.run_sync` still catches it: as a line of
-    defence in case a later caller ever calls `_new_device_edit` under
-    conditions where the automatic creation, for whatever reason, does not
-    kick in."""
+__all__ = ["apply_plan"]
 
 
 @dataclass(frozen=True)
@@ -212,8 +199,7 @@ def _new_device_edit(
     output of this kind before), this function creates it itself - as an
     additional child object directly before the closing tag of the
     selected `LoxLIVE` block (`index.target_loxlive`, design section 8:
-    the special case of creating one, also behind the experimental flag
-    that `apply_plan` already guards via `include_new_devices`).
+    the special case of creating one).
     Deliberately NOT at the level of the `<ControlList>` root element (an
     earlier bug, found against a real reference file: `VirtualInCaption`/
     `VirtualOutCaption` never hang there directly, but always under
@@ -322,15 +308,13 @@ def apply_plan(
     groups: Sequence[StoredGroup] = (),
     commands_by_group: dict[int, Sequence[StoredGroupCommand]] | None = None,
     *,
-    include_new_devices: bool,
     bridge_ip: str,
     port: int,
     listen: int,
 ) -> bytes:
-    """Builds the patched file for one of the two download variants (design
-    section 3.4/7): `include_new_devices=False` produces only updates and
-    new signals in already-existing device containers, `True` also
-    produces completely new device containers."""
+    """Builds the patched file (design section 3.4/7): updates, new signals
+    in already-existing device containers, and completely new device
+    containers."""
     desired_inputs: dict[str, LoxoneInput] = {}
     desired_outputs: dict[str, LoxoneCommand] = {}
     for device in devices:
@@ -356,7 +340,7 @@ def apply_plan(
             source = desired_inputs if entry.kind == "input" else desired_outputs
             edits.append(_new_signal_edit(index, entry, source))
             created_count += 1
-        elif entry.status is PlanStatus.NEW_DEVICE and include_new_devices:
+        elif entry.status is PlanStatus.NEW_DEVICE:
             new_device_groups.setdefault(
                 (entry.kind, entry.owner_kind, entry.device_id), []
             ).append(entry)
