@@ -1529,9 +1529,10 @@
                 with dozens of signals.
 
                 `projectSyncGroupedEntries` (app.js) groups the flat plan
-                delivered by the backend purely client-side by
-                device and, within that, by inputs/outputs, no
-                backend contract changed.
+                delivered by the backend client-side by owner (device or
+                group, keyed on `owner_kind` together with the id - see
+                that function's docstring for why the id alone is not
+                enough) and, within that, by inputs/outputs.
               -->
               <div
                 class="projectsync-plan"
@@ -1562,7 +1563,7 @@
 
                 <template
                   x-for="group in projectSyncGroupedEntries(projectSync.plan.entries)"
-                  :key="group.deviceId"
+                  :key="group.key"
                 >
                   <details class="projectsync-device" :open="group.needsAttention">
                     <summary>

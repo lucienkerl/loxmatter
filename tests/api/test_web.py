@@ -4185,10 +4185,8 @@ async def test_the_projectsync_card_dynamic_strings_are_translated(api):
     grouped_start = script.index("projectSyncGroupedEntries(entries) {")
     grouped_end = script.index("\n    },", grouped_start)
     grouped_body = script[grouped_start:grouped_end]
-    assert (
-        't("web.export.projectsync_unassigned_device_label")\n                : entry.device_label'
-        in grouped_body
-    )
+    assert 't("web.export.projectsync_unassigned_device_label")' in grouped_body
+    assert 't("web.export.projectsync_group_label", { label: rawLabel })' in grouped_body
     assert "Nicht mehr zugeordnet" not in grouped_body
     assert 'label: t("web.export.projectsync_section_inputs"),' in grouped_body
     assert 'label: t("web.export.projectsync_section_outputs"),' in grouped_body

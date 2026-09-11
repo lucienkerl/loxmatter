@@ -1790,6 +1790,14 @@ web.export.projectsync_group_all_current:
 web.export.projectsync_unassigned_device_label:
   en: "No longer assigned"
   de: "Nicht mehr zugeordnet"
+# `projectSyncGroupedEntries` (web/app.js) prefixes a group's card with
+# this instead of the bare label: a group and a device can carry the
+# same numeric id (design 2026-09-10, section 8), and the label alone
+# would not tell a reviewer that this particular card is the group's,
+# not the same-numbered device's.
+web.export.projectsync_group_label:
+  en: "Group: {label}"
+  de: "Gruppe: {label}"
 web.export.projectsync_section_inputs:
   en: "Inputs"
   de: "Eingänge"

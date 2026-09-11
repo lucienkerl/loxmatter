@@ -4195,16 +4195,32 @@ function app() {
     },
 
     /**
-     * Groups the flat plan by device and, within that, again by input/
+     * Groups the flat plan by owner and, within that, again by input/
      * output - exactly the nesting in which the signals later end up as
-     * virtual inputs/outputs in Loxone Config (one container per device,
-     * `Inputs` and `Outputs` as separate groups underneath it), instead of
-     * one single long, unsorted list.
+     * virtual inputs/outputs in Loxone Config (one container per device
+     * or group, `Inputs` and `Outputs` as separate groups underneath it),
+     * instead of one single long, unsorted list.
+     *
+     * Keyed on `owner_kind` + `device_id` TOGETHER, not `device_id` alone:
+     * a group and a device can carry the same numeric id (both counters
+     * start at 1, design 2026-09-10, section 8), and on a first
+     * installation - the normal case, not an edge one - the first device
+     * and the first group both get id 1. Keying on the id alone would
+     * merge a group's outputs into the same-numbered device's card, under
+     * the device's label (devices are planned first, so the device's
+     * label would win the merge). A group's card is labelled via
+     * `web.export.projectsync_group_label` so it reads as a group even
+     * when its id collides with a device's.
      *
      * Orphaned entries (`device_id === -1`, see `PlanEntry` in `diff.py` -
-     * no longer belong to any currently known device) get their own group
-     * with no real device name and are deliberately placed at the end,
-     * regardless of their position in the flat plan.
+     * no longer belong to any currently known device or group) get their
+     * own group with no real owner name and are deliberately placed at
+     * the end, regardless of their position in the flat plan. Orphaned
+     * entries always carry `owner_kind === "device"` (the default in
+     * `PlanEntry`, `diff.py`) regardless of whether they used to belong to
+     * a device or a group - the object no longer maps to anything in the
+     * current index, so there is nothing left to attribute it to, and
+     * both cases share this one "no longer assigned" bucket by design.
      *
      * Each group additionally carries `counts` (per status bucket, for the
      * count chips in the collapsible card header) and `needsAttention`
@@ -4216,21 +4232,28 @@ function app() {
      */
     projectSyncGroupedEntries(entries) {
       const groups = [];
-      const byDeviceId = new Map();
+      const byOwnerKey = new Map();
       for (const entry of entries || []) {
-        let group = byDeviceId.get(entry.device_id);
+        const ownerKind = entry.owner_kind || "device";
+        const ownerKey = `${ownerKind}:${entry.device_id}`;
+        let group = byOwnerKey.get(ownerKey);
         if (!group) {
+          const rawLabel = entry.device_label || "—";
           group = {
+            key: ownerKey,
             deviceId: entry.device_id,
+            ownerKind,
             deviceLabel:
               entry.device_id === -1
                 ? t("web.export.projectsync_unassigned_device_label")
-                : entry.device_label || "—",
+                : ownerKind === "group"
+                  ? t("web.export.projectsync_group_label", { label: rawLabel })
+                  : rawLabel,
             inputs: [],
             outputs: [],
             counts: { new: 0, updated: 0, unchanged: 0, orphaned: 0, conflict: 0 },
           };
-          byDeviceId.set(entry.device_id, group);
+          byOwnerKey.set(ownerKey, group);
           groups.push(group);
         }
         (entry.kind === "input" ? group.inputs : group.outputs).push(entry);

@@ -460,13 +460,23 @@ class BridgeSettingsIn(BaseModel):
 class ProjectSyncEntryOut(BaseModel):
     """A row in the diff plan of `POST /api/export/project-sync` (design
     section 5/7). `changes` is always empty outside of
-    `status == "updated"`."""
+    `status == "updated"`.
+
+    `owner_kind` (design 2026-09-10, section 8) is `"device"` or
+    `"group"` - carried through unchanged from `PlanEntry.owner_kind`
+    because a group and a device can share the same `device_id` (both
+    counters start at 1). The WebUI groups entries into per-owner cards
+    (`projectSyncGroupedEntries` in `app.js`); without this field it keys
+    that grouping on `device_id` alone and a group's outputs land inside
+    the same-numbered device's card, mislabelled with the device's name
+    (devices are planned first, so the device's label wins the merge)."""
 
     model_config = ConfigDict(frozen=True)
 
     kind: str
     device_id: int
     device_label: str
+    owner_kind: str
     key: str
     title: str
     status: str
