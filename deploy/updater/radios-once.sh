@@ -68,6 +68,46 @@ env_value() {
   printf '%s' "$raw"
 }
 
+env_target() {
+  target="$ENV_FILE"
+  if [ -L "$target" ]; then
+    resolved="$(readlink -f "$target" 2>/dev/null || true)"
+    if [ -n "$resolved" ]; then target="$resolved"; fi
+  fi
+  printf '%s' "$target"
+}
+
+# Rewrites through `cat >`, not `mv`, so a symlinked .env and the file's
+# inode stay what the operator set up - the same care as set_tag() in
+# update-once.sh. Values reaching here passed validation: a by-id path
+# ([A-Za-z0-9._:+-]), a number, or a profile list built below.
+env_set() {
+  target="$(env_target)"
+  if grep -q "^$1=" "$target" 2>/dev/null; then
+    escaped="$(printf '%s' "$2" | sed 's/[\\&|]/\\&/g')"
+    sed "s|^$1=.*|$1=$escaped|" "$target" > "$target.radios-tmp"
+    cat "$target.radios-tmp" > "$target"
+    rm -f "$target.radios-tmp"
+  else
+    printf '%s=%s\n' "$1" "$2" >> "$target"
+  fi
+}
+
+profiles_with_thread() {
+  others="$(env_value COMPOSE_PROFILES | tr ',' '\n' | awk 'NF && $0 != "thread" { printf "%s%s", sep, $0; sep = "," }')"
+  if [ "$1" = on ]; then
+    if [ -n "$others" ]; then printf '%s,thread' "$others"; else printf 'thread'; fi
+  else
+    printf '%s' "$others"
+  fi
+}
+
+compose() {
+  log "\$ docker compose -f $STACK/docker-compose.yml --project-directory $STACK_HOST_PATH --env-file $ENV_FILE $*"
+  docker compose -f "$STACK/docker-compose.yml" --project-directory "$STACK_HOST_PATH" \
+    --env-file "$ENV_FILE" "$@" >> "$LOG" 2>&1
+}
+
 # ----------------------------------------------------------------- report --
 
 # thread_enabled is "the profile says so, or an otbr container exists" -
@@ -176,7 +216,18 @@ write_state "$JOB_PHASE" "$JOB_ERROR"
 # schema check and the value reads see different bytes (design 6.6), and a
 # request that becomes unreadable fails once, here, instead of crashing an
 # unguarded read under `set -eu` with the phase stuck at "validate" forever.
-REQUEST_BODY="$(cat "$REQUEST" 2>/dev/null || true)"
+#
+# Bounded with `timeout`: the `[ -f "$REQUEST" ]` check above only proves
+# $REQUEST was a regular file at that instant. A FIFO swapped in at the
+# same path strictly between that check and this read still opens as a
+# blocking read with no writer on the other end, and update-once.sh runs
+# in this same entrypoint loop - an unbounded `cat` here would stall
+# updates too, exactly like the no-writer FIFO case the `-f` check already
+# stops on its own. `timeout` turns that hang into an empty $REQUEST_BODY
+# after 5 seconds instead, which the emptiness check below rejects the
+# same as any other unreadable request - a terminal, retryable-next-time
+# state rather than a wedged pass.
+REQUEST_BODY="$(timeout 5 cat "$REQUEST" 2>/dev/null || true)"
 [ -n "$REQUEST_BODY" ] || reject request_malformed
 
 REQUEST_ID="$(printf '%s' "$REQUEST_BODY" | jq -r 'if type == "object" and (.id | type) == "string" then .id else empty end' 2>/dev/null || true)"
@@ -258,7 +309,7 @@ fi
 # ---------------------------------------------------------------- changes --
 
 read_current
-ORIG_ENABLED="$CUR_ENABLED" # TRANSITIONAL (Task 4)
+ORIG_ENABLED="$CUR_ENABLED"
 BLUETOOTH_CHANGE=false
 if [ "$WANT_BLUETOOTH" != "$CUR_BLUETOOTH" ]; then BLUETOOTH_CHANGE=true; fi
 THREAD_ACTION=none
@@ -276,5 +327,125 @@ fi
 
 [ -f "$ENV_FILE" ] || reject env_file_missing
 
-write_state failed apply_not_implemented # TRANSITIONAL (Task 4)
-log "radios request $JOB_ID: applying is not implemented yet" # TRANSITIONAL (Task 4)
+# ------------------------------------------------------------- apply --
+
+JOB_STEPS='["validate","backup","write"]'
+if [ "$BLUETOOTH_CHANGE" = true ]; then
+  JOB_STEPS="$(printf '%s' "$JOB_STEPS" | jq -c '. + ["apply_bluetooth","verify_bluetooth"]')"
+fi
+if [ "$THREAD_ACTION" != none ]; then
+  JOB_STEPS="$(printf '%s' "$JOB_STEPS" | jq -c '. + ["apply_thread","verify_thread"]')"
+fi
+
+if [ "$THREAD_ACTION" = up ] && [ "$ORIG_ENABLED" = true ]; then
+  ROLLBACK_THREAD=up
+elif [ "$THREAD_ACTION" = up ]; then
+  ROLLBACK_THREAD=down
+elif [ "$THREAD_ACTION" = down ]; then
+  ROLLBACK_THREAD=up
+else
+  ROLLBACK_THREAD=none
+fi
+
+BACKUP="$(env_target).radios-$(date -u +%Y%m%d%H%M%S)"
+write_state backup ""
+if ! cp "$(env_target)" "$BACKUP"; then
+  write_state failed env_backup_failed
+  log "radios request $JOB_ID: could not back up .env"
+  exit 0
+fi
+
+write_state write ""
+if [ "$THREAD_ACTION" = up ]; then
+  env_set RADIO_DEVICE "$WANT_DEVICE"
+  env_set COMPOSE_PROFILES "$(profiles_with_thread on)"
+  if [ -z "$(env_value RADIO_BAUDRATE)" ]; then env_set RADIO_BAUDRATE 460800; fi
+elif [ "$THREAD_ACTION" = down ]; then
+  env_set COMPOSE_PROFILES "$(profiles_with_thread off)"
+fi
+if [ "$BLUETOOTH_CHANGE" = true ]; then env_set BLUETOOTH_ADAPTER "$WANT_BLUETOOTH"; fi
+
+verify_bluetooth() {
+  waited=0
+  while [ "$waited" -lt "$BLUETOOTH_TIMEOUT" ]; do
+    if curl -s -o /dev/null --max-time 3 "$MATTER_SERVER_URL"; then return 0; fi
+    sleep "$POLL_SECONDS"
+    waited=$((waited + POLL_SECONDS))
+  done
+  return 1
+}
+
+apply_thread() {
+  if [ "$1" = up ]; then
+    compose up -d --no-deps --force-recreate otbr
+  else
+    compose rm -s -f otbr
+  fi
+}
+
+# The watchdog's known fix (scripts/otbr-watchdog.sh): on the Pi kernel
+# start-stop-daemon can leave a stale pid file and otbr-agent never runs.
+# Applied at most once per verification.
+verify_thread() {
+  if [ "$1" = down ]; then
+    [ -z "$(docker ps -a --filter 'name=^otbr$' --format '{{.Names}}' 2>/dev/null)" ]
+    return
+  fi
+  waited=0
+  fixed=0
+  while [ "$waited" -lt "$THREAD_TIMEOUT" ]; do
+    case "$(docker exec otbr ot-ctl state 2>/dev/null | tr -d '\r' | head -n 1)" in
+      leader|router|child) return 0 ;;
+    esac
+    if [ "$fixed" -eq 0 ] && [ "$waited" -ge "$THREAD_FIX_AFTER" ]; then
+      fixed=1
+      log "no Thread state after ${waited}s - clearing the stale pid file and restarting otbr"
+      docker exec otbr rm -f /run/otbr-agent.pid >/dev/null 2>&1 || true
+      compose restart otbr || true
+    fi
+    sleep "$POLL_SECONDS"
+    waited=$((waited + POLL_SECONDS))
+  done
+  return 1
+}
+
+ROLLING=false
+FAILED_STEP=""
+
+step() {
+  if [ "$ROLLING" = false ]; then write_state "$1" ""; fi
+}
+
+apply_and_verify() {
+  if [ "$BLUETOOTH_CHANGE" = true ]; then
+    step apply_bluetooth
+    compose up -d --no-deps --force-recreate matter-server || { FAILED_STEP=apply_bluetooth; return 1; }
+    step verify_bluetooth
+    verify_bluetooth || { FAILED_STEP=verify_bluetooth; return 1; }
+  fi
+  if [ "$THREAD_ACTION" != none ]; then
+    step apply_thread
+    apply_thread "$THREAD_ACTION" || { FAILED_STEP=apply_thread; return 1; }
+    step verify_thread
+    verify_thread "$THREAD_ACTION" || { FAILED_STEP=verify_thread; return 1; }
+  fi
+  return 0
+}
+
+if apply_and_verify; then
+  HEALTHY=true
+  write_state done ""
+  log "radios request $JOB_ID applied"
+  exit 0
+fi
+
+ERROR_KEY="${FAILED_STEP}_failed"
+log "radios request $JOB_ID: $FAILED_STEP failed - restoring $BACKUP"
+write_state rollback "$ERROR_KEY"
+cat "$BACKUP" > "$(env_target)"
+ROLLED=true
+ROLLING=true
+THREAD_ACTION="$ROLLBACK_THREAD"
+if apply_and_verify; then HEALTHY=true; else HEALTHY=false; fi
+write_state failed "$ERROR_KEY"
+log "radios request $JOB_ID rolled back, healthy after rollback: $HEALTHY"

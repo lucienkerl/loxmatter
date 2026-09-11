@@ -51,11 +51,11 @@ SYSTEM_TOOLS = (
     "date",
     "head",
     "tail",
-    "jq",
     "cut",
     "wc",
     "readlink",
     "cksum",
+    "timeout",
 )
 
 DOCKER_STUB = r"""#!/bin/sh
@@ -107,6 +107,19 @@ printf 'cat %s\\n' "$*" >> "$STUB_LOG"
 exec {real_cat} "$@"
 """
 
+# Same idea as the `cat` stub above, for `jq`: the script calls `jq` many
+# times a pass (state bookkeeping, the schema check, the value reads), and
+# logging every one of them - then delegating to the real binary - is what
+# lets a test assert that $REQUEST's own path never reaches `jq` directly
+# (only `cat`, exactly once, feeding the in-memory $REQUEST_BODY every other
+# read is drawn from). A regression that fed some `jq ... "$REQUEST"` call
+# straight from the file again would otherwise still pass a `cat`-only
+# count, since it would not add a `cat` invocation at all.
+JQ_STUB_TEMPLATE = """#!/bin/sh
+printf 'jq %s\\n' "$*" >> "$STUB_LOG"
+exec {real_jq} "$@"
+"""
+
 
 @pytest.fixture
 def radios(tmp_path):
@@ -147,6 +160,11 @@ def radios(tmp_path):
     ).stdout.strip()
     (bindir / "cat").write_text(CAT_STUB_TEMPLATE.format(real_cat=real_cat), encoding="utf-8")
     (bindir / "cat").chmod(0o755)
+    real_jq = subprocess.run(
+        ["which", "jq"], capture_output=True, text=True, check=False
+    ).stdout.strip()
+    (bindir / "jq").write_text(JQ_STUB_TEMPLATE.format(real_jq=real_jq), encoding="utf-8")
+    (bindir / "jq").chmod(0o755)
     for tool in SYSTEM_TOOLS:
         real = subprocess.run(
             ["which", tool], capture_output=True, text=True, check=False
@@ -180,6 +198,7 @@ def radios(tmp_path):
 
     run.env_file, run.update_dir, run.fake = env_file, update_dir, fake
     run.host_dev, run.sys_bluetooth, run.log = host_dev, sys_bluetooth, log
+    run.bindir, run.real_cat = bindir, real_cat
     return run
 
 
@@ -406,7 +425,15 @@ def test_the_request_file_is_read_from_disk_exactly_once(radios):
     This test cannot by itself tell the fixed script apart from round 1's
     file-snapshot shape, which also called `cat` on $REQUEST exactly once
     (to make the snapshot) - see
-    test_no_writable_path_is_used_to_stage_the_request below for that."""
+    test_no_writable_path_is_used_to_stage_the_request below for that.
+
+    Extended blind spot: counting only the stubbed `cat` would still pass a
+    regression that kept that one `cat` snapshot AND additionally fed some
+    `jq` call directly from `"$REQUEST"` (instead of from `$REQUEST_BODY` via
+    a pipe) - that would add no `cat` invocation at all. `jq` is stubbed the
+    same logging way as `cat` (see JQ_STUB_TEMPLATE) precisely so this can
+    also assert that $REQUEST's own path never reaches any stub - `jq`
+    included - except that single `cat` call."""
     radios.env_file.write_text(
         radios.env_file.read_text().replace("/dev/ttyUSB0", f"/dev/serial/by-id/{SONOFF}")
     )
@@ -414,10 +441,10 @@ def test_the_request_file_is_read_from_disk_exactly_once(radios):
     _, calls, state = radios()
     assert state["phase"] == "unchanged"
     request_path = str(radios.update_dir / "radios-request.json")
-    request_reads = [
-        line for line in calls.splitlines() if line.startswith("cat ") and request_path in line
-    ]
+    lines_with_request_path = [line for line in calls.splitlines() if request_path in line]
+    request_reads = [line for line in lines_with_request_path if line.startswith("cat ")]
     assert len(request_reads) == 1
+    assert lines_with_request_path == request_reads
 
 
 def test_no_writable_path_is_used_to_stage_the_request(radios):
@@ -476,6 +503,53 @@ def test_a_fifo_request_with_no_writer_does_not_hang(radios):
     assert _mutating_docker_calls(calls) == []
 
 
+def test_a_hanging_request_read_is_bounded_and_ends_rejected(radios):
+    """The `[ -f "$REQUEST" ]` guard above only proves $REQUEST was a
+    regular file at that instant - a FIFO swapped in at the same path
+    strictly between that check and the read still opens as a blocking
+    read with no writer, and update-once.sh runs in this same entrypoint
+    loop, so an unbounded read here would stall updates too. That exact
+    swap is a genuine race, not reproducible deterministically from outside
+    a sub-second subprocess (like the similar race in
+    test_no_writable_path_is_used_to_stage_the_request above), so this
+    proves the bound itself instead: make `cat` redirect its read to a
+    FIFO that genuinely has no writer - the same blocking open() a swapped-
+    in FIFO would cause - rather than the race that can trigger it. A
+    `sleep`-based stub would not prove anything here: the fixture's own
+    `sleep` stub (used everywhere else to keep the timed polling loops fast)
+    always returns immediately, so a stub that just slept would return
+    before either a fault or a fix had a chance to matter.
+
+    Fault to prove it: read the request with a bare `cat "$REQUEST"` and no
+    `timeout` around it.
+
+    The redirect below only fires for $REQUEST's own path - the docker
+    stub's `ps` branch also shells out to `cat` (reading back the fake
+    otbr state), with no `timeout` of its own, and pointing every `cat`
+    call at the no-writer FIFO regardless of argument hangs that unrelated
+    read too."""
+    request_path = str(radios.update_dir / "radios-request.json")
+    no_writer_fifo = radios.fake / "no-writer.fifo"
+    os.mkfifo(no_writer_fifo)
+    (radios.bindir / "cat").write_text(
+        "#!/bin/sh\n"
+        'printf \'cat %s\\n\' "$*" >> "$STUB_LOG"\n'
+        'case "$*" in\n'
+        f'  *"{request_path}"*) exec {radios.real_cat} "{no_writer_fifo}" ;;\n'
+        "esac\n"
+        f'exec {radios.real_cat} "$@"\n',
+        encoding="utf-8",
+    )
+    (radios.bindir / "cat").chmod(0o755)
+    before = radios.env_file.read_bytes()
+    _request(radios)
+    result, calls, state = radios(timeout=10)
+    assert result.returncode == 0, result.stderr
+    assert (state["phase"], state["error"]) == ("rejected", "request_malformed")
+    assert radios.env_file.read_bytes() == before
+    assert _mutating_docker_calls(calls) == []
+
+
 def test_enabling_thread_requires_a_backbone_interface(radios):
     radios.env_file.write_text("RADIO_DEVICE=/dev/ttyUSB0\nBLUETOOTH_ADAPTER=0\n")
     before = radios.env_file.read_bytes()
@@ -520,9 +594,134 @@ def test_a_request_that_changes_nothing_ends_unchanged(radios):
     assert _mutating_docker_calls(calls) == []
 
 
-def test_a_changing_request_is_not_applied_yet(radios):
-    """TRANSITIONAL (Task 4): replaced by the flow tests of Task 4."""
-    _request(radios, bluetooth={"adapter": 0})
+def _compose(calls: str, *words: str) -> list[str]:
+    return [
+        line
+        for line in calls.splitlines()
+        if line.startswith("docker compose") and all(word in line.split() for word in words)
+    ]
+
+
+def test_switching_the_bluetooth_adapter_recreates_only_matter_server(radios):
+    (radios.sys_bluetooth / "hci1").mkdir()
+    radios.env_file.write_text(
+        radios.env_file.read_text().replace("/dev/ttyUSB0", f"/dev/serial/by-id/{SONOFF}")
+    )
+    _request(radios, bluetooth={"adapter": 1})
     _, calls, state = radios()
-    assert (state["phase"], state["error"]) == ("failed", "apply_not_implemented")
-    assert _mutating_docker_calls(calls) == []
+    assert (state["phase"], state["healthy"], state["rolled_back"]) == ("done", True, False)
+    assert state["steps"] == ["validate", "backup", "write", "apply_bluetooth", "verify_bluetooth"]
+    assert "BLUETOOTH_ADAPTER=1\n" in radios.env_file.read_text()
+    assert len(_compose(calls, "up", "--force-recreate", "matter-server")) == 1
+    assert _compose(calls, "otbr") == []
+    assert "curl " in calls
+    assert list(radios.env_file.parent.glob(".env.radios-*"))
+
+
+def test_switching_the_thread_stick_writes_the_by_id_path_and_recreates_otbr(radios):
+    radios.env_file.write_text(radios.env_file.read_text() + "COMPOSE_PROFILES=foo\n")
+    _request(radios)
+    _, calls, state = radios()
+    text = radios.env_file.read_text()
+    assert state["phase"] == "done"
+    assert f"RADIO_DEVICE=/dev/serial/by-id/{SONOFF}\n" in text
+    assert "COMPOSE_PROFILES=foo,thread\n" in text
+    assert len(_compose(calls, "up", "--force-recreate", "otbr")) == 1
+    assert _compose(calls, "matter-server") == []
+    assert "ot-ctl state" in calls
+
+
+def test_enabling_thread_adds_a_missing_baud_rate_and_keeps_an_existing_one(radios):
+    (radios.fake / "otbr_state").unlink()
+    radios.env_file.write_text("RADIO_DEVICE=\nBACKBONE_IF=wlan0\nBLUETOOTH_ADAPTER=0\n")
+    _request(radios)
+    _, _, state = radios()
+    assert state["phase"] == "done"
+    assert "RADIO_BAUDRATE=460800\n" in radios.env_file.read_text()
+    assert "COMPOSE_PROFILES=thread\n" in radios.env_file.read_text()
+
+
+def test_disabling_thread_removes_otbr_and_only_the_thread_profile(radios):
+    radios.env_file.write_text(radios.env_file.read_text() + "COMPOSE_PROFILES=foo,thread\n")
+    _request(radios, thread={"enabled": False, "device": None})
+    _, calls, state = radios()
+    assert state["phase"] == "done"
+    assert "COMPOSE_PROFILES=foo\n" in radios.env_file.read_text()
+    assert len(_compose(calls, "rm", "otbr")) == 1
+    assert state["current"]["otbr_running"] is False
+
+
+def test_a_hanging_agent_gets_the_watchdog_fix_and_recovers(radios):
+    (radios.fake / "thread_mode").write_text("needs_fix")
+    _request(radios)
+    _, calls, state = radios()
+    assert state["phase"] == "done"
+    assert calls.count("rm -f /run/otbr-agent.pid") == 1
+    assert len(_compose(calls, "restart", "otbr")) == 1
+
+
+def test_a_thread_stick_that_never_forms_the_network_is_rolled_back(radios):
+    """Two faults to prove it, one at a time: comment out the line that
+    copies the backup back over .env (the byte comparison fails); remove
+    the `fixed=1` guard (the pid fix then repeats within one verification,
+    and the count of two - one per verification, apply and rollback -
+    fails)."""
+    before = radios.env_file.read_bytes()
+    (radios.fake / "thread_mode").write_text("never")
+    _request(radios)
+    _, calls, state = radios()
+    assert (state["phase"], state["error"]) == ("failed", "verify_thread_failed")
+    assert (state["rolled_back"], state["healthy"]) == (True, False)
+    assert radios.env_file.read_bytes() == before
+    assert len(_compose(calls, "up", "otbr")) == 2
+    assert calls.count("rm -f /run/otbr-agent.pid") == 2
+
+
+def test_a_rollback_that_brings_thread_back_reports_healthy(radios):
+    (radios.fake / "thread_mode").write_text("second_up")
+    _request(radios)
+    _, _, state = radios()
+    assert (state["phase"], state["error"]) == ("failed", "verify_thread_failed")
+    assert (state["rolled_back"], state["healthy"]) == (True, True)
+
+
+def test_enabling_thread_that_fails_rolls_back_to_disabled(radios):
+    (radios.fake / "otbr_state").unlink()
+    (radios.fake / "thread_mode").write_text("never")
+    _request(radios)
+    _, calls, state = radios()
+    assert state["phase"] == "failed"
+    assert len(_compose(calls, "rm", "otbr")) == 1
+    assert state["current"]["otbr_running"] is False
+
+
+def test_a_matter_server_that_does_not_come_back_is_rolled_back(radios):
+    (radios.sys_bluetooth / "hci1").mkdir()
+    radios.env_file.write_text(
+        radios.env_file.read_text().replace("/dev/ttyUSB0", f"/dev/serial/by-id/{SONOFF}")
+    )
+    before = radios.env_file.read_bytes()
+    (radios.fake / "matter_up").write_text("no")
+    _request(radios, bluetooth={"adapter": 1})
+    _, calls, state = radios()
+    assert (state["phase"], state["error"], state["rolled_back"]) == (
+        "failed",
+        "verify_bluetooth_failed",
+        True,
+    )
+    assert state["healthy"] is False
+    assert radios.env_file.read_bytes() == before
+    assert len(_compose(calls, "up", "matter-server")) == 2
+
+
+def test_a_failing_compose_call_is_rolled_back_too(radios):
+    (radios.fake / "compose_fail").write_text("--force-recreate otbr")
+    before = radios.env_file.read_bytes()
+    _request(radios)
+    _, _, state = radios()
+    assert (state["phase"], state["error"], state["rolled_back"]) == (
+        "failed",
+        "apply_thread_failed",
+        True,
+    )
+    assert radios.env_file.read_bytes() == before
