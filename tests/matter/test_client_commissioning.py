@@ -100,7 +100,7 @@ async def test_commissioning_returns_a_snapshot(client):
     bridge, _ = client
     await bridge.connect()
     snapshot = await bridge.commission_with_code("MT:ABC123")
-    assert snapshot.node_id == 7
+    assert snapshot.address == "7"
     assert snapshot.vendor_name == "IKEA of Sweden"
     await bridge.disconnect()
 
@@ -189,10 +189,10 @@ async def test_cancellation_during_commissioning_propagates_unwrapped(client):
     await bridge.disconnect()
 
 
-async def test_remove_node_reaches_upstream(client):
+async def test_remove_reaches_upstream(client):
     bridge, upstream = client
     await bridge.connect()
-    await bridge.remove_node(7)
+    await bridge.remove("7")
     assert upstream.removed == [7]
     await bridge.disconnect()
 

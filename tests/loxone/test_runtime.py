@@ -106,7 +106,7 @@ def environment(tmp_path):
     plug_snap = NodeSnapshot.from_raw(plug_raw["node_id"], plug_raw)
     device_id = store.register_device(plug_snap)
     store.register_signals(device_id, plug_snap)
-    store.register_commands(device_id, extract_commands(plug_snap), plug_snap.node_id)
+    store.register_commands(device_id, extract_commands(plug_snap))
 
     button_raw = json.loads((FIXTURES / "ikea_bilresa_button.json").read_text(encoding="utf-8"))
     button_snap = NodeSnapshot.from_raw(button_raw["node_id"], button_raw)
@@ -558,7 +558,8 @@ async def test_seed_from_snapshot_skips_an_unknown_node_without_aborting(environ
     only this node is skipped, all others are still seeded."""
     runtime, sender, _, _, _ = environment
     unknown = NodeSnapshot(
-        node_id=999_999,
+        technology="matter",
+        address="999999",
         vendor_name="",
         product_name="",
         unique_id="",

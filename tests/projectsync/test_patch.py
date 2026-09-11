@@ -24,13 +24,15 @@ def _signal(key: str, device_id: int, title: str = "Ein/Aus", unit: str = "") ->
 def _device(device_id: int, label: str) -> StoredDevice:
     return StoredDevice(
         id=device_id,
-        node_id=device_id,
+        technology="matter",
+        address=str(device_id),
         unique_id=f"u{device_id}",
         label=label,
         exported_at=None,
         updated_at=None,
         room=None,
         device_types=None,
+        network_features=None,
     )
 
 
@@ -38,7 +40,8 @@ def _command(key: str, slug: str, device_id: int, command_id: int) -> StoredComm
     return StoredCommand(
         key=key,
         slug=slug,
-        node_id=device_id,
+        technology="matter",
+        address=str(device_id),
         endpoint=1,
         cluster_id=6,
         command_id=command_id,

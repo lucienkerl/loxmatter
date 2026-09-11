@@ -46,7 +46,7 @@ async def api(
     snapshot = load_snapshot("ikea_grillplats_plug.json")
     device_id = store.register_device(snapshot)
     store.register_signals(device_id, snapshot)
-    store.register_commands(device_id, extract_commands(snapshot), snapshot.node_id)
+    store.register_commands(device_id, extract_commands(snapshot))
 
     app = build_app(store, no_invoke, fake_runtime(store))
     transport = httpx.ASGITransport(app=app)
@@ -119,7 +119,7 @@ async def test_download_skips_the_vo_file_for_a_device_without_commands(
     snapshot = load_snapshot("ikea_bilresa_button.json")
     device_id = store.register_device(snapshot)
     store.register_signals(device_id, snapshot)
-    store.register_commands(device_id, extract_commands(snapshot), snapshot.node_id)
+    store.register_commands(device_id, extract_commands(snapshot))
 
     app = build_app(store, no_invoke, fake_runtime(store))
     transport = httpx.ASGITransport(app=app)
@@ -324,9 +324,7 @@ async def test_a_failure_partway_through_the_archive_marks_no_device(api, monkey
     second_snapshot = load_snapshot("example_light.json")
     second_device_id = store.register_device(second_snapshot)
     store.register_signals(second_device_id, second_snapshot)
-    store.register_commands(
-        second_device_id, extract_commands(second_snapshot), second_snapshot.node_id
-    )
+    store.register_commands(second_device_id, extract_commands(second_snapshot))
     assert store.devices()[0].id == first_device_id  # first device is processed first
 
     import loxmatter.api.export as export_module
@@ -470,7 +468,7 @@ def _second_device(store: Store) -> int:
     snapshot = load_snapshot("example_light.json")
     device_id = store.register_device(snapshot)
     store.register_signals(device_id, snapshot)
-    store.register_commands(device_id, extract_commands(snapshot), snapshot.node_id)
+    store.register_commands(device_id, extract_commands(snapshot))
     return device_id
 
 

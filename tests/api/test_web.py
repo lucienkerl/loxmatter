@@ -79,7 +79,7 @@ async def api(tmp_path, no_invoke, fake_runtime, fake_client):
     snapshot = load_snapshot("ikea_grillplats_plug.json")
     device_id = store.register_device(snapshot)
     store.register_signals(device_id, snapshot)
-    store.register_commands(device_id, extract_commands(snapshot), snapshot.node_id)
+    store.register_commands(device_id, extract_commands(snapshot))
 
     app = build_app(store, no_invoke, fake_runtime(store), client=fake_client)
     transport = httpx.ASGITransport(app=app)
@@ -8621,3 +8621,74 @@ async def test_the_group_picker_markup_is_delivered_and_stacks_on_a_phone(api):
     rule = phone[0][phone[0].index(".group-dialog-fields") :]
     rule = rule[: rule.index("}")]
     assert "grid-template-columns: minmax(0, 1fr)" in rule
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_the_transport_badge_helper_maps_transports_to_symbols_and_labels():
+    """Runs the real `transportBadge` in node. Fault to prove it: swap the
+    two symbol names in its map."""
+    values = _app_state(
+        """
+        console.log(JSON.stringify({
+          thread: state.transportBadge({ transport: "thread" }),
+          ip: state.transportBadge({ transport: "ip" }),
+          none: state.transportBadge({ transport: null }),
+          zigbee: state.transportBadge({ transport: "zigbee" }),
+        }));
+        """,
+        translations={
+            "web.devices.transport_thread": "Matter over Thread",
+            "web.devices.transport_ip": "Matter over IP",
+        },
+    )
+    assert values["thread"] == {"symbol": "i-transport-thread", "label": "Matter over Thread"}
+    assert values["ip"] == {"symbol": "i-transport-ip", "label": "Matter over IP"}
+    assert values["none"] is None
+    # No Zigbee glyph before the Zigbee spec; no badge beats a wrong one.
+    assert values["zigbee"] is None
+
+
+async def test_every_transport_badge_symbol_exists(api):
+    """A `<use>` pointing at a missing symbol silently draws nothing - the
+    same reason `test_every_category_has_an_icon_symbol` exists."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+    for symbol in ("i-transport-thread", "i-transport-ip"):
+        assert f'<symbol id="{symbol}"' in page, symbol
+
+
+def _element_at(markup: str, open_index: int, tag: str) -> str:
+    """The complete element whose opening tag starts at `open_index`,
+    found by counting nested opening and closing tags of the same name -
+    so "inside" means inside, not merely "somewhere after"."""
+    depth = 0
+    for match in re.finditer(rf"<{tag}\b|</{tag}>", markup[open_index:]):
+        depth += -1 if match.group().startswith("</") else 1
+        if depth == 0:
+            return markup[open_index : open_index + match.end()]
+    raise AssertionError(f"unbalanced <{tag}> starting at {open_index}")
+
+
+async def test_the_badge_sits_inside_the_device_tiles_category_icon(api):
+    """Only the device tile - a group has no single transport. Checks the
+    badge is nested in the `.type-badge` that shows `device.category`, not
+    merely present somewhere after it."""
+    client, _, _ = api
+    page = _without_comments((await client.get("/")).text)
+    icon = page.index("'#i-cat-' + device.category")
+    type_badge = _element_at(page, page.rindex('<span class="type-badge">', 0, icon), "span")
+    assert "transportBadge(device)" in type_badge
+    assert "transportBadge(deviceGroup)" not in page
+
+
+def test_the_transport_labels_exist_in_both_languages():
+    from loxmatter import i18n
+
+    for key in ("web.devices.transport_thread", "web.devices.transport_ip"):
+        english = i18n.t(key)
+        i18n.set_language("de")
+        try:
+            german = i18n.t(key)
+        finally:
+            i18n.set_language("en")
+        assert english and german and english != key

@@ -26,9 +26,16 @@ people who don't know the code.
 - These are the bridge's own groups, not Matter's. No Matter server this bridge
   can use offers group messaging, so nothing is created on the devices
   themselves.
+- **Thread or IP at a glance.** Every device tile now carries a small badge on
+  its icon showing whether the device talks to the bridge over Thread or over
+  your IP network (Wi-Fi or Ethernet). Hover it for the name. A device that
+  does not say how it is connected gets no badge rather than a guess.
 
 ### Changed
 
+- If you script against the API with a token: `GET /api/devices` no longer
+  returns `node_id`. Each device now reports `technology`, `address` and
+  `transport` instead, to make room for device types beyond Matter.
 - **Project file sync creates new devices without asking.** A device the
   uploaded project does not know yet now always gets its own virtual input
   and output in the patched file. This used to be an experimental checkbox;

@@ -1463,6 +1463,18 @@ function app() {
       };
     },
 
+    // The badge on a tile's category icon (design 2026-09-11, section 5.3).
+    // `null` hides it: a device whose transport is unknown gets no badge
+    // rather than a guessed one, and Zigbee has no glyph before the Zigbee
+    // spec adds one. The map is the only place a transport meets its
+    // symbol - index.html just renders what this returns.
+    transportBadge(device) {
+      const symbols = { thread: "i-transport-thread", ip: "i-transport-ip" };
+      const symbol = symbols[device.transport];
+      if (!symbol) return null;
+      return { symbol, label: t("web.devices.transport_" + device.transport) };
+    },
+
     // Short list for the device view: only the functional signals
     // (`signal.functional`, from `profiles.relevance.is_functional` -
     // Task 8), and only the first few of those - the full tree (including
@@ -2982,7 +2994,7 @@ function app() {
         this.commissionStep = 2;
         // The earlier sentence "live values only after a bridge restart"
         // has been dropped because the limitation itself is gone: the
-        // commissioning route now calls `follow_node`, which sets up this
+        // commissioning route now calls `follow`, which sets up this
         // device's attribute subscriptions and seeds its values (design
         // from 2026-09-04). A note is still needed here, just a different
         // one: that the values only arrive in the Miniserver after export

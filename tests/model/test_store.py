@@ -252,24 +252,24 @@ def test_all_devices_share_the_default_udp_port(store):
     assert store.udp_port(plug) == store.udp_port(button) == 7000
 
 
-def test_device_id_for_node_resolves_a_registered_device(store):
+def test_device_id_for_resolves_a_registered_device(store):
     snap = load("ikea_grillplats_plug.json")
     device_id = store.register_device(snap)
-    assert store.device_id_for_node(snap.node_id) == device_id
+    assert store.device_id_for("matter", snap.address) == device_id
 
 
-def test_device_id_for_node_is_none_for_an_unknown_node(store):
-    assert store.device_id_for_node(999) is None
+def test_device_id_for_is_none_for_an_unknown_node(store):
+    assert store.device_id_for("matter", "999") is None
 
 
-def test_device_id_for_node_ignores_a_forgotten_device(store):
+def test_device_id_for_ignores_a_forgotten_device(store):
     """A removed device must no longer be findable via its old node id -
     otherwise a runtime subscription would assign values to an inactive
     device."""
     snap = load("ikea_grillplats_plug.json")
     device_id = store.register_device(snap)
     store.forget_device(device_id)
-    assert store.device_id_for_node(snap.node_id) is None
+    assert store.device_id_for("matter", snap.address) is None
 
 
 def test_devices_lists_only_active_devices(store):
@@ -284,7 +284,7 @@ def test_device_returns_the_stored_row(store):
     device_id = store.register_device(snap)
     device = store.device(device_id)
     assert device.id == device_id
-    assert device.node_id == snap.node_id
+    assert device.address == snap.address
     assert "GRILLPLATS" in device.label
 
 

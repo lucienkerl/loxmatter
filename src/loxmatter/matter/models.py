@@ -21,12 +21,30 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any
+from typing import Any, Final, Literal, cast, get_args
 
 # BasicInformation cluster on endpoint 0.
 _VENDOR_NAME_PATH = "0/40/1"
 _PRODUCT_NAME_PATH = "0/40/3"
 _UNIQUE_ID_PATH = "0/40/18"
+
+# Which kind of source a device comes from (design 2026-09-11, section
+# 3.1). Lives here, next to `NodeSnapshot`, and not in `loxmatter.sources`:
+# `sources` imports this module, so the reverse import would be a cycle.
+Technology = Literal["matter", "zigbee"]
+
+_TECHNOLOGIES: Final = frozenset(get_args(Technology))
+
+
+def parse_technology(value: str) -> Technology:
+    """Narrows a stored string to `Technology`, loudly.
+
+    A value the code does not know means the database was written by a
+    newer loxmatter than the one reading it; reading on as if it were
+    Matter would send Matter commands to a device that is not one."""
+    if value not in _TECHNOLOGIES:
+        raise ValueError(f"unknown device technology {value!r}")
+    return cast(Technology, value)
 
 
 class SignalKind(str, Enum):
@@ -54,7 +72,12 @@ class SignalRef:
 
 @dataclass(frozen=True)
 class NodeSnapshot:
-    node_id: int
+    # Which source produced the snapshot and the device's address there
+    # (design 2026-09-11, section 3.3). For Matter the address is the node
+    # ID as text; `BridgeMatterClient` converts back where matter-server
+    # needs an integer.
+    technology: Technology
+    address: str
     vendor_name: str
     product_name: str
     unique_id: str
@@ -75,7 +98,8 @@ class NodeSnapshot:
             return value if isinstance(value, str) else ""
 
         return cls(
-            node_id=node_id,
+            technology="matter",
+            address=str(node_id),
             vendor_name=text(_VENDOR_NAME_PATH),
             product_name=text(_PRODUCT_NAME_PATH),
             unique_id=text(_UNIQUE_ID_PATH),

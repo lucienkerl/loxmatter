@@ -119,7 +119,7 @@ async def _build_client(
     snapshot = load_snapshot("ikea_grillplats_plug.json")
     device_id = store.register_device(snapshot)
     store.register_signals(device_id, snapshot)
-    store.register_commands(device_id, extract_commands(snapshot), snapshot.node_id)
+    store.register_commands(device_id, extract_commands(snapshot))
     runtime = Runtime(store, FakeSender())
 
     app = build_app(

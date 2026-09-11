@@ -23,8 +23,9 @@ import asyncio
 import pytest
 
 from loxmatter.commands.fanout import dispatch_group, plan_group_calls
-from loxmatter.commands.translate import MatterCall, UnsupportedValueError
+from loxmatter.commands.translate import UnsupportedValueError
 from loxmatter.model.store import GroupTarget, StoredCommand
+from loxmatter.sources import DeviceCall
 
 
 def command(
@@ -39,7 +40,8 @@ def command(
     return StoredCommand(
         key=f"d{device_id}_{endpoint}_{slug}",
         slug=slug,
-        node_id=node_id,
+        technology="matter",
+        address=str(node_id),
         endpoint=endpoint,
         cluster_id=cluster_id,
         command_id=command_id,
@@ -64,10 +66,10 @@ def colour_target(device_id: int, node_id: int, label: str) -> GroupTarget:
     )
 
 
-def test_one_plan_per_member_carrying_that_member_s_node_id():
+def test_one_plan_per_member_carrying_that_member_s_address():
     plans = plan_group_calls([on_target(1, 11, "A"), on_target(2, 22, "B")], "1")
     assert [p.device_label for p in plans] == ["A", "B"]
-    assert [call.node_id for p in plans for call in p.calls] == [11, 22]
+    assert [call.address for p in plans for call in p.calls] == ["11", "22"]
 
 
 def test_a_member_with_two_endpoints_gets_two_calls():
@@ -103,19 +105,19 @@ async def test_the_calls_of_one_member_keep_their_order():
     not delete this test as redundant with that one, each pins a
     different half of the ordering contract."""
     plans = plan_group_calls([colour_target(1, 11, "A"), colour_target(2, 22, "B")], "60100060")
-    seen: list[tuple[int, int]] = []
+    seen: list[tuple[str, int]] = []
 
-    async def invoke(call: MatterCall) -> None:
-        seen.append((call.node_id, call.command_id))
+    async def invoke(call: DeviceCall) -> None:
+        seen.append((call.address, call.command_id))
         await asyncio.sleep(0)
 
     assert await dispatch_group(plans, invoke) == []
-    for node_id in (11, 22):
-        own = [command_id for node, command_id in seen if node == node_id]
+    for address in ("11", "22"):
+        own = [command_id for node, command_id in seen if node == address]
         expected = [
             call.command_id
             for plan in plans
-            if plan.calls[0].node_id == node_id
+            if plan.calls[0].address == address
             for call in plan.calls
         ]
         assert own == expected
@@ -139,7 +141,7 @@ async def test_a_member_s_second_call_waits_for_the_first_to_return():
     colour_released = asyncio.Event()
     level_invoked = False
 
-    async def invoke(call: MatterCall) -> None:
+    async def invoke(call: DeviceCall) -> None:
         nonlocal level_invoked
         if call.cluster_id == 768:  # ColorControl - the first call
             await asyncio.wait_for(colour_released.wait(), timeout=2)
@@ -172,8 +174,8 @@ async def test_members_are_dispatched_concurrently():
     second = asyncio.Event()
     plans = plan_group_calls([on_target(1, 11, "A"), on_target(2, 22, "B")], "1")
 
-    async def invoke(call: MatterCall) -> None:
-        if call.node_id == 11:
+    async def invoke(call: DeviceCall) -> None:
+        if call.address == "11":
             started.set()
             await asyncio.wait_for(second.wait(), timeout=2)
         else:
@@ -187,15 +189,15 @@ async def test_a_failing_member_does_not_stop_the_others():
     plans = plan_group_calls(
         [on_target(1, 11, "A"), on_target(2, 22, "B"), on_target(3, 33, "C")], "1"
     )
-    reached: list[int] = []
+    reached: list[str] = []
 
-    async def invoke(call: MatterCall) -> None:
-        if call.node_id == 22:
+    async def invoke(call: DeviceCall) -> None:
+        if call.address == "22":
             raise RuntimeError("no route to host")
-        reached.append(call.node_id)
+        reached.append(call.address)
 
     assert await dispatch_group(plans, invoke) == ["B"]
-    assert sorted(reached) == [11, 33]
+    assert sorted(reached) == ["11", "33"]
 
 
 async def test_duplicate_labels_among_the_failed_members_are_disambiguated_by_id():
@@ -207,7 +209,7 @@ async def test_duplicate_labels_among_the_failed_members_are_disambiguated_by_id
     which of the two is actually unreachable."""
     plans = plan_group_calls([on_target(1, 11, "Lamp"), on_target(2, 22, "Lamp")], "1")
 
-    async def invoke(call: MatterCall) -> None:
+    async def invoke(call: DeviceCall) -> None:
         raise RuntimeError("no route to host")
 
     assert await dispatch_group(plans, invoke) == ["Lamp (1)", "Lamp (2)"]
@@ -225,8 +227,8 @@ async def test_a_unique_label_among_the_failed_members_stays_bare():
         "1",
     )
 
-    async def invoke(call: MatterCall) -> None:
-        if call.node_id == 11:
+    async def invoke(call: DeviceCall) -> None:
+        if call.address == "11":
             return
         raise RuntimeError("no route to host")
 
@@ -242,11 +244,11 @@ async def test_every_failing_member_is_named_not_just_the_first():
         [on_target(1, 11, "A"), on_target(2, 22, "B"), on_target(3, 33, "C")], "1"
     )
 
-    async def invoke(call: MatterCall) -> None:
-        if call.node_id == 11:
+    async def invoke(call: DeviceCall) -> None:
+        if call.address == "11":
             await asyncio.sleep(0.01)
             raise RuntimeError("no route to host")
-        if call.node_id == 33:
+        if call.address == "33":
             raise RuntimeError("no route to host")
 
     assert await dispatch_group(plans, invoke) == ["A", "C"]

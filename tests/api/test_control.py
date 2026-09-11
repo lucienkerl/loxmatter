@@ -24,16 +24,16 @@ import httpx2 as httpx
 import pytest
 from conftest import authenticate, load_snapshot
 
-from loxmatter.commands.translate import MatterCall
 from loxmatter.export.commands import extract_commands
 from loxmatter.loxone.server import build_app
 from loxmatter.model.store import Store
 from loxmatter.profiles.table import command_slug
+from loxmatter.sources import DeviceCall
 
 
 @pytest.fixture
-def invocations() -> list[MatterCall]:
-    """Collects every `MatterCall` accepted by the ONE invoker that `api`
+def invocations() -> list[DeviceCall]:
+    """Collects every `DeviceCall` accepted by the ONE invoker that `api`
     passes through to both the Loxone endpoint (`/cmd`) and the WebUI route
     (`/api/commands`) - the basis for
     `test_the_same_translation_as_the_loxone_endpoint` (Spec 4.2)."""
@@ -46,15 +46,15 @@ async def api(
 ) -> AsyncIterator[tuple[httpx.AsyncClient, Store, int]]:
     """Like the `api` fixture in `test_devices.py`, but with a RECORDING
     invoker instead of `no_invoke`: `test_the_same_translation_as_the_loxone_
-    endpoint` below needs the actually translated `MatterCall`s, not just
+    endpoint` below needs the actually translated `DeviceCall`s, not just
     that some invoker exists."""
     store = Store(tmp_path / "t.sqlite")
     snapshot = load_snapshot("ikea_grillplats_plug.json")
     device_id = store.register_device(snapshot)
     store.register_signals(device_id, snapshot)
-    store.register_commands(device_id, extract_commands(snapshot), snapshot.node_id)
+    store.register_commands(device_id, extract_commands(snapshot))
 
-    async def invoke(call: MatterCall) -> None:
+    async def invoke(call: DeviceCall) -> None:
         invocations.append(call)
 
     app = build_app(store, invoke, fake_runtime(store), client=fake_client)
@@ -74,7 +74,7 @@ async def api_button(
     snapshot = load_snapshot("ikea_bilresa_button.json")
     device_id = store.register_device(snapshot)
     store.register_signals(device_id, snapshot)
-    store.register_commands(device_id, extract_commands(snapshot), snapshot.node_id)
+    store.register_commands(device_id, extract_commands(snapshot))
 
     app = build_app(store, no_invoke, fake_runtime(store), client=fake_client)
     transport = httpx.ASGITransport(app=app)
@@ -94,9 +94,9 @@ async def api_failing_invoke(
     snapshot = load_snapshot("ikea_grillplats_plug.json")
     device_id = store.register_device(snapshot)
     store.register_signals(device_id, snapshot)
-    store.register_commands(device_id, extract_commands(snapshot), snapshot.node_id)
+    store.register_commands(device_id, extract_commands(snapshot))
 
-    async def invoke(call: MatterCall) -> None:
+    async def invoke(call: DeviceCall) -> None:
         raise RuntimeError("device does not respond")
 
     app = build_app(store, invoke, fake_runtime(store), client=fake_client)
@@ -122,7 +122,7 @@ async def api_raw_commands(
     snapshot = load_snapshot("ikea_grillplats_plug.json")
     device_id = store.register_device(snapshot)
     store.register_signals(device_id, snapshot)
-    store.register_commands(device_id, extract_commands(snapshot, raw=True), snapshot.node_id)
+    store.register_commands(device_id, extract_commands(snapshot, raw=True))
 
     app = build_app(store, no_invoke, fake_runtime(store), client=fake_client)
     transport = httpx.ASGITransport(app=app)
@@ -339,7 +339,7 @@ async def api_lamp(
     snapshot = load_snapshot("ikea_kajplats_cws_lamp.json")
     device_id = store.register_device(snapshot)
     store.register_signals(device_id, snapshot)
-    store.register_commands(device_id, extract_commands(snapshot), snapshot.node_id)
+    store.register_commands(device_id, extract_commands(snapshot))
     runtime = fake_runtime(store)
 
     app = build_app(store, no_invoke, runtime, client=fake_client)

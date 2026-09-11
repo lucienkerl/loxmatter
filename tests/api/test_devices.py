@@ -31,7 +31,7 @@ async def api(tmp_path, no_invoke, fake_runtime, fake_client, fake_otbr):
     snapshot = load_snapshot("ikea_grillplats_plug.json")
     device_id = store.register_device(snapshot)
     store.register_signals(device_id, snapshot)
-    store.register_commands(device_id, extract_commands(snapshot), snapshot.node_id)
+    store.register_commands(device_id, extract_commands(snapshot))
     fake_client.store = store
 
     app = build_app(
@@ -58,7 +58,7 @@ async def button_api(tmp_path, no_invoke, fake_runtime, fake_client, fake_otbr):
     snapshot = load_snapshot("ikea_bilresa_button.json")
     device_id = store.register_device(snapshot)
     store.register_signals(device_id, snapshot)
-    store.register_commands(device_id, extract_commands(snapshot), snapshot.node_id)
+    store.register_commands(device_id, extract_commands(snapshot))
     fake_client.store = store
 
     app = build_app(
@@ -426,10 +426,10 @@ async def test_matter_server_unreachable_during_commissioning_yields_502(api):
 
 async def test_removing_a_device_forgets_it_and_frees_the_fabric(api):
     client, store, device_id, fake_client = api
-    node_id = store.device(device_id).node_id
+    address = store.device(device_id).address
     response = await client.delete(f"/api/devices/{device_id}")
     assert response.status_code == 204
-    assert fake_client.removed == [node_id]
+    assert fake_client.removed == [address]
     assert store.devices() == []
 
 
@@ -439,7 +439,7 @@ async def test_removing_an_unknown_device_yields_404(api):
 
 
 async def test_a_failed_fabric_removal_leaves_the_device_listed(api):
-    """Proves the order justified in `api/devices.py`: if `remove_node`
+    """Proves the order justified in `api/devices.py`: if `remove`
     fails, the device stays visible and removable in `Store` instead of
     silently disappearing while it still hangs around in the fabric."""
     client, store, device_id, fake_client = api
@@ -746,7 +746,7 @@ async def test_commissioning_follows_the_new_node(api):
 
     new_device = (await client.post("/api/devices/commission", json={"code": "MT:X"})).json()
 
-    assert fake_client.followed == [store.device(new_device["id"]).node_id]
+    assert fake_client.followed == [store.device(new_device["id"]).address]
 
 
 async def test_the_new_node_is_followed_only_after_it_is_registered(api):
@@ -755,7 +755,7 @@ async def test_the_new_node_is_followed_only_after_it_is_registered(api):
     the race that `NODE_ADDED` already lost. The mere ordering "commission
     before follow" doesn't prove that - only the assurance that the store
     could already resolve the node ID to the new `device_id` at the time
-    of the `follow_node` call shows that the route actually catches up
+    of the `follow` call shows that the route actually catches up
     only AFTER registration."""
     client, _, _, fake_client = api
     # The Thread dataset isn't the subject of this test (see
@@ -779,7 +779,7 @@ async def test_the_route_forces_the_seeding_of_the_new_node(api):
     catch-up therefore finds an empty diff - without
     `seed_even_without_new_paths` it ends before the handler, and the
     device's starting values would never be seeded (see
-    `BridgeMatterClient.follow_node` and
+    `BridgeMatterClient.follow` and
     `test_the_commissioning_route_still_seeds_after_the_dispatch_loop_was_first`
     in tests/matter/test_client.py)."""
     client, _, _, fake_client = api
@@ -792,13 +792,13 @@ async def test_the_route_forces_the_seeding_of_the_new_node(api):
 # ---------------------------------------------------------------------------
 # The follow-up of commissioning must not retroactively cancel the process
 #
-# `set_online` and `follow_node` run AFTER `register_device` - so from the
+# `set_online` and `follow` run AFTER `register_device` - so from the
 # point at which the device is in the fabric AND in the store. A failure
 # there is not a failed commissioning, but an incomplete follow-up on a
 # completed process.
 #
 # The scenario is exactly what this branch is built around: matter-server
-# restarts right after commissioning, `follow_node` fails with
+# restarts right after commissioning, `follow` fails with
 # `MatterUnavailableError`, and the route answered with 500. The UI showed
 # "Commissioning failed", the device tile didn't appear - but the device
 # WAS commissioned. Anyone who then presses "commission" again fails on a
@@ -816,7 +816,7 @@ async def test_a_failing_follow_up_still_reports_the_device_as_commissioned(api)
     response = await client.post("/api/devices/commission", json={"code": "MT:X"})
 
     assert response.status_code == 201
-    assert store.device(response.json()["id"]).node_id == 100
+    assert store.device(response.json()["id"]).address == "100"
 
 
 async def test_a_failing_online_seed_still_reports_the_device_as_commissioned(
@@ -835,10 +835,10 @@ async def test_a_failing_online_seed_still_reports_the_device_as_commissioned(
         response = await c.post("/api/devices/commission", json={"code": "MT:X"})
 
     assert response.status_code == 201
-    assert store.device(response.json()["id"]).node_id == 100
+    assert store.device(response.json()["id"]).address == "100"
     # And the follow-up keeps going despite the failure: catching up on
     # subscriptions doesn't depend on the reachability seed succeeding.
-    assert fake_client.followed == [100]
+    assert fake_client.followed == ["100"]
     store.close()
 
 
@@ -1014,3 +1014,13 @@ async def test_recommissioning_a_known_device_uses_set_room_not_rename_device(ap
 
     assert response.status_code == 201
     assert store.device(device_id).room == "Küche"
+
+
+async def test_the_device_list_says_how_a_device_is_connected(api):
+    """The GRILLPLATS fixture reports NetworkCommissioning FeatureMap 2.
+    Fault to prove it: return `None` from `transport_for` for Thread."""
+    client, _, _, _ = api
+    devices = (await client.get("/api/devices")).json()
+    assert devices[0]["transport"] == "thread"
+    assert devices[0]["technology"] == "matter"
+    assert "node_id" not in devices[0]

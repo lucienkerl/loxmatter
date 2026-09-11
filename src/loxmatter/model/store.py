@@ -48,7 +48,13 @@ from pathlib import Path
 from loxmatter import i18n
 from loxmatter.export.commands import DeviceCommand, extract_commands
 from loxmatter.matter.discovery import extract_signals
-from loxmatter.matter.models import NodeSnapshot, SignalKind, SignalRef
+from loxmatter.matter.models import (
+    NodeSnapshot,
+    SignalKind,
+    SignalRef,
+    Technology,
+    parse_technology,
+)
 from loxmatter.model.auth_store import AuthStore
 from loxmatter.model.locale_store import LocaleStore
 from loxmatter.model.resend_settings_store import ResendSettingsStore
@@ -69,6 +75,7 @@ from loxmatter.profiles.table import (
     rank_for,
     struct_field,
 )
+from loxmatter.profiles.transport import network_features_of
 from loxmatter.timestamps import now_iso
 
 DEFAULT_UDP_PORT = 7000
@@ -116,7 +123,14 @@ DEFAULT_LISTEN_PORT = 8080
 # `device_group`, `device_group_member` and `group_command`, see
 # `_migrate_to_v8` - all three are already present in a fresh database via
 # `_SCHEMA`, so the migration is only needed for existing databases.
-_SCHEMA_VERSION = 8
+# Version 9 (device source boundary, design 2026-09-11) adds
+# `device.technology` + `device.address` as the identity the rest of the
+# code reads from now on, and `device.network_features`, see
+# `_migrate_to_v9`. `device.node_id` and `command.node_id` are NOT dropped,
+# even though nothing in this codebase reads them past this migration - see
+# `_migrate_to_v9`'s docstring for why (rollback compatibility with
+# `deploy/updater/update-once.sh`).
+_SCHEMA_VERSION = 9
 
 
 def schema_version() -> int:
@@ -133,16 +147,19 @@ def schema_version() -> int:
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS device (
-    id           INTEGER PRIMARY KEY AUTOINCREMENT,
-    unique_id    TEXT NOT NULL,
-    node_id      INTEGER NOT NULL,
-    label        TEXT NOT NULL,
-    udp_port     INTEGER NOT NULL,
-    active       INTEGER NOT NULL DEFAULT 1,
-    exported_at  TEXT,
-    updated_at   TEXT,
-    room         TEXT,
-    device_types TEXT
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    unique_id        TEXT NOT NULL,
+    node_id          INTEGER NOT NULL,
+    technology       TEXT NOT NULL DEFAULT 'matter',
+    address          TEXT NOT NULL DEFAULT '',
+    label            TEXT NOT NULL,
+    udp_port         INTEGER NOT NULL,
+    active           INTEGER NOT NULL DEFAULT 1,
+    exported_at      TEXT,
+    updated_at       TEXT,
+    room             TEXT,
+    device_types     TEXT,
+    network_features INTEGER
 );
 CREATE TABLE IF NOT EXISTS signal (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -675,6 +692,51 @@ def _migrate_to_v8(db: sqlite3.Connection) -> None:
     )
 
 
+def _migrate_to_v9(db: sqlite3.Connection) -> None:
+    """Technology plus address alongside the Matter node ID (design
+    2026-09-11, section 4.1; kept additive after human review, see that
+    section for why the first draft's column drop was reverted).
+
+    **`node_id` is intentionally NOT dropped**, even though nothing in this
+    codebase reads `device.node_id`/`command.node_id` past this migration -
+    the first version of this migration dropped both columns, and that was
+    wrong. `deploy/updater/update-once.sh` rolls a failed update back to the
+    OLD image WITHOUT restoring the database (its own failure report says so
+    verbatim: "Signal database: NOT restored automatically ... an older
+    version starts up fine on a newer schema") - that promise rests on every
+    migration only ever ADDING columns, never removing one a previous
+    version still reads or writes. Version 8 code reads `device.node_id`
+    (`device_id_for_node`, `_as_device`) and writes `command.node_id`
+    (`register_commands`); dropping either column would leave a rolled-back
+    bridge broken while `/health` still answers "healthy". The updater
+    sidecar does not update itself (see the README), so a fix to the
+    updater's own rollback logic would never reach an installation that is
+    already running it. Hence: migration 9 only adds columns.
+
+    `Store.register_device`/`Store.register_commands` (design 2026-09-11,
+    section 4.1) keep writing `node_id` for exactly this reason - see
+    `_legacy_node_id_for` - so a schema-9 database stays fully usable by
+    schema-8 code after a rollback. `_repair_rows_written_by_older_versions`
+    is the other half: it repairs a device row that version-8 code inserted
+    (no `technology`/`address`) if the bridge is later rolled FORWARD again.
+
+    `address` is `NOT NULL DEFAULT ''` in both this migration and `_SCHEMA`,
+    so a migrated and a fresh database end up with the same column
+    definition. The empty default never survives: this backfill fills every
+    existing row, and `register_device` always writes a real address.
+
+    No backfill for `network_features`: the value lives in the snapshot,
+    which a migration never sees - `Store.backfill_network_features` fills
+    it at startup, the same split `_migrate_to_v7` documents for
+    `device_types`."""
+    _add_column_if_missing(db, "device", "technology", "TEXT NOT NULL DEFAULT 'matter'")
+    _add_column_if_missing(db, "device", "address", "TEXT NOT NULL DEFAULT ''")
+    _add_column_if_missing(db, "device", "network_features", "INTEGER")
+    device_columns = {str(row["name"]) for row in db.execute("PRAGMA table_info(device)")}
+    if "node_id" in device_columns:
+        db.execute("UPDATE device SET address = CAST(node_id AS TEXT) WHERE address = ''")
+
+
 # Migrations in order, applied from whichever version is stored - to extend
 # for a later schema change: simply append, with the next version number as
 # the key.
@@ -687,6 +749,7 @@ _MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     6: _migrate_to_v6,
     7: _migrate_to_v7,
     8: _migrate_to_v8,
+    9: _migrate_to_v9,
 }
 
 
@@ -718,6 +781,53 @@ def _migrate(db: sqlite3.Connection) -> None:
         raise
     else:
         db.commit()
+
+
+def _repair_rows_written_by_older_versions(db: sqlite3.Connection) -> None:
+    """Heals a device row that version-8 code inserted into a version-9
+    database (design 2026-09-11, section 4.1, rollback compatibility - see
+    `_migrate_to_v9`).
+
+    The scenario: an update fails, `update-once.sh` rolls back to the OLD
+    (schema-8-only) image WITHOUT restoring the database, and that old code
+    commissions a new device while running against this newer schema. Its
+    `INSERT INTO device (unique_id, node_id, label, udp_port, ...)` never
+    mentions `technology`/`address` at all, so the row lands with the
+    column defaults - `technology = 'matter'`, `address = ''`. That is a
+    real, unaddressable device from the moment the bridge is rolled FORWARD
+    again: `address = ''` matches no snapshot's `_identity_of`, so
+    `backfill_commands`/`backfill_device_types`/`backfill_network_features`
+    and every `device_id_for("matter", ...)` lookup silently skip it.
+
+    Called on every start, right after `_migrate` - not folded into
+    `_migrate_to_v9` itself, because this fixes damage a LATER (schema-8)
+    write can do to an ALREADY-migrated database; a migration only ever
+    runs once, going forward, and would never see this again. `technology =
+    'matter'` in the WHERE clause: a hypothetical non-Matter row with a
+    genuinely empty address (never produced by this codebase today) must
+    not be reinterpreted as node 0.
+
+    **Probes before writing (final fix pass).** The overwhelming majority
+    of starts - every one where no schema-8 code has run against this
+    database since the last repair - find nothing to fix here. Running the
+    `UPDATE`/`commit()` unconditionally on every `Store.__init__` broke the
+    write-free-normal-start promise `_migrate`'s own docstring makes: a
+    fully migrated version-9 database opened from a read-only file failed
+    with "attempt to write a readonly database" even though there was
+    nothing to repair, and every CLI invocation took a write lock for a
+    no-op. The `SELECT 1 ... LIMIT 1` probe costs one read against an
+    already-indexed-by-nothing but small table and only reaches the
+    `UPDATE`/`commit()` when a row actually needs healing."""
+    needs_repair = db.execute(
+        "SELECT 1 FROM device WHERE address = '' AND technology = 'matter' LIMIT 1"
+    ).fetchone()
+    if needs_repair is None:
+        return
+    db.execute(
+        "UPDATE device SET address = CAST(node_id AS TEXT)"
+        " WHERE address = '' AND technology = 'matter'"
+    )
+    db.commit()
 
 
 @dataclass(frozen=True)
@@ -770,7 +880,8 @@ class StoredSignal:
 class StoredCommand:
     key: str
     slug: str
-    node_id: int
+    technology: Technology
+    address: str
     endpoint: int
     cluster_id: int
     command_id: int
@@ -907,7 +1018,8 @@ class StoredDevice:
     """
 
     id: int
-    node_id: int
+    technology: Technology
+    address: str
     unique_id: str
     label: str
     # exported_at/updated_at (Task 5, Phase 5) - the basis for `GET
@@ -935,6 +1047,10 @@ class StoredDevice:
     # stored, that is a code change without a migration.
     room: str | None
     device_types: dict[int, frozenset[int]] | None
+    # The raw FeatureMap of NetworkCommissioning (`0/49/65532`), `None` for
+    # a device that reports none or has not been backfilled yet. Stored raw
+    # for the reason `device_types` is - see `profiles/transport.py`.
+    network_features: int | None
 
 
 @dataclass(frozen=True)
@@ -1016,6 +1132,7 @@ class Store:
         self._db.executescript(_SCHEMA)
         self._db.commit()
         _migrate(self._db)
+        _repair_rows_written_by_older_versions(self._db)
         # A view onto the same connection, not a second connection - see
         # the module docstring of `auth_store.py`.
         self.auth = AuthStore(self._db)
@@ -1084,7 +1201,33 @@ class Store:
 
     def _device_identity(self, snapshot: NodeSnapshot) -> str:
         """Falls back to the node ID: some devices do not report a unique ID (Spec 7.2)."""
-        return snapshot.unique_id or f"node:{snapshot.node_id}"
+        return snapshot.unique_id or f"node:{self._identity_of(snapshot)[1]}"
+
+    @staticmethod
+    def _identity_of(snapshot: NodeSnapshot) -> tuple[str, str]:
+        """`(technology, address)` of a snapshot - the one place the store
+        derives it, so the snapshot's own fields replace it in one edit."""
+        return (snapshot.technology, snapshot.address)
+
+    @staticmethod
+    def _legacy_node_id_for(technology: str, address: str) -> int:
+        """The value written into the `device.node_id`/`command.node_id`
+        columns that schema 9 keeps only for rollback compatibility (fix
+        round 1, see `_migrate_to_v9`).
+
+        MUST NEVER BE READ by any code in this version - `StoredDevice` and
+        `StoredCommand` deliberately have no `node_id` field, and every
+        reader in this class goes through `technology`/`address` instead.
+        This exists purely so that version-8 code (`device_id_for_node`,
+        `_as_device`, `register_commands`'s old INSERT) still finds a
+        usable `node_id` in every row if the bridge is rolled back to that
+        version without its database being restored. For a Matter device,
+        `address` IS `str(node_id)` (see `_identity_of`), so this recovers
+        the original integer; a non-Matter (future Zigbee) row has no
+        Matter node ID to recover, so it gets `0` - a value no real Matter
+        node ever has, and one schema-8 code never has to resolve anyway,
+        since schema 8 predates any non-Matter source."""
+        return int(address) if technology == "matter" else 0
 
     def register_device(self, snapshot: NodeSnapshot, room: str | None = None) -> int:
         """Creates a device, or returns the id of an already known active
@@ -1108,18 +1251,23 @@ class Store:
             return int(row["id"])
 
         label = f"{snapshot.vendor_name} {snapshot.product_name}".strip() or identity
+        technology, address = self._identity_of(snapshot)
         cur = self._db.execute(
             "INSERT INTO device"
-            " (unique_id, node_id, label, udp_port, updated_at, room, device_types)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?)",
+            " (unique_id, node_id, technology, address, label, udp_port, updated_at, room,"
+            " device_types, network_features)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 identity,
-                snapshot.node_id,
+                self._legacy_node_id_for(technology, address),
+                technology,
+                address,
                 label,
                 DEFAULT_UDP_PORT,
                 self._now(),
                 _normalized_room(room),
                 _encode_device_types(device_types_by_endpoint(snapshot)),
+                network_features_of(snapshot),
             ),
         )
         self._db.commit()
@@ -1182,20 +1330,24 @@ class Store:
     def _as_device(row: sqlite3.Row) -> StoredDevice:
         return StoredDevice(
             id=int(row["id"]),
-            node_id=int(row["node_id"]),
+            technology=parse_technology(str(row["technology"])),
+            address=str(row["address"]),
             unique_id=str(row["unique_id"]),
             label=str(row["label"]),
             exported_at=row["exported_at"],
             updated_at=row["updated_at"],
             room=row["room"],
             device_types=_decode_device_types(row["device_types"]),
+            network_features=(
+                None if row["network_features"] is None else int(row["network_features"])
+            ),
         )
 
     def devices(self) -> list[StoredDevice]:
         """All active devices (Task 2, Phase 5) - for `GET /api/devices`.
 
         A removed device (`forget_device`) no longer shows up here, exactly
-        as with `device_id_for_node`."""
+        as with `device_id_for`."""
         rows = self._db.execute("SELECT * FROM device WHERE active = 1 ORDER BY id").fetchall()
         return [self._as_device(r) for r in rows]
 
@@ -1678,14 +1830,14 @@ class Store:
         `snapshots()` is skipped - the same rule as for
         `backfill_device_types`: this fills in, never clears.
         """
-        by_node = {snapshot.node_id: snapshot for snapshot in snapshots}
+        by_identity = {self._identity_of(snapshot): snapshot for snapshot in snapshots}
         gained = 0
         for device in self.devices():
-            snapshot = by_node.get(device.node_id)
+            snapshot = by_identity.get((device.technology, device.address))
             if snapshot is None:
                 continue
             before = len(self.commands(device.id))
-            self.register_commands(device.id, extract_commands(snapshot), device.node_id)
+            self.register_commands(device.id, extract_commands(snapshot))
             if len(self.commands(device.id)) > before:
                 gained += 1
         return gained
@@ -1711,18 +1863,49 @@ class Store:
 
         Does not touch `updated_at` - the same rationale as for `set_room`:
         the device types end up in no export template."""
-        by_node = {snapshot.node_id: snapshot for snapshot in snapshots}
+        by_identity = {self._identity_of(snapshot): snapshot for snapshot in snapshots}
         rows = self._db.execute(
-            "SELECT id, node_id FROM device WHERE device_types IS NULL AND active = 1"
+            "SELECT id, technology, address FROM device WHERE device_types IS NULL AND active = 1"
         ).fetchall()
         filled = 0
         for row in rows:
-            snapshot = by_node.get(int(row["node_id"]))
+            snapshot = by_identity.get((str(row["technology"]), str(row["address"])))
             if snapshot is None:
                 continue
             self._db.execute(
                 "UPDATE device SET device_types = ? WHERE id = ?",
                 (_encode_device_types(device_types_by_endpoint(snapshot)), int(row["id"])),
+            )
+            filled += 1
+        self._db.commit()
+        return filled
+
+    def backfill_network_features(self, snapshots: Sequence[NodeSnapshot]) -> int:
+        """Backfills `device.network_features` for devices that do not yet
+        have it, and returns how many that was.
+
+        The same rules as `backfill_device_types`, for the same reasons:
+        only `NULL` is filled, a set value is never overwritten, a device
+        missing from `snapshots` (offline) is left alone, and `updated_at`
+        is not touched - the value ends up in no export template. A
+        snapshot that reports no FeatureMap leaves the row at `NULL`, so
+        the next start asks again."""
+        by_identity = {self._identity_of(snapshot): snapshot for snapshot in snapshots}
+        rows = self._db.execute(
+            "SELECT id, technology, address FROM device"
+            " WHERE network_features IS NULL AND active = 1"
+        ).fetchall()
+        filled = 0
+        for row in rows:
+            snapshot = by_identity.get((str(row["technology"]), str(row["address"])))
+            if snapshot is None:
+                continue
+            features = network_features_of(snapshot)
+            if features is None:
+                continue
+            self._db.execute(
+                "UPDATE device SET network_features = ? WHERE id = ?",
+                (features, int(row["id"])),
             )
             filled += 1
         self._db.commit()
@@ -1816,19 +1999,21 @@ class Store:
         )
         self._db.commit()
 
-    def device_id_for_node(self, node_id: int) -> int | None:
-        """Maps a Matter node ID to the associated, stable `device_id`.
+    def device_id_for(self, technology: str, address: str) -> int | None:
+        """Maps a source's address to the associated, stable `device_id`.
 
-        For the runtime (Task 8): an incoming subscription from
-        matter-server carries only the node ID, but the signal keys hang
-        off the `device_id` (see module docstring - a node ID can change,
-        the `device_id` never does). `None` if no active device with this
-        node ID is known, e.g. because it was never exported or has since
-        been removed (`forget_device`) - a removed device's node ID must
-        not point to its old, inactive `device_id`.
+        For the runtime: an incoming update carries only the address its
+        source uses, but the signal keys hang off the `device_id` (see
+        module docstring - an address can change, the `device_id` never
+        does). The technology is part of the lookup because two sources
+        can use the same address text. `None` if no active device matches,
+        e.g. because it was never exported or has since been removed
+        (`forget_device`) - a removed device's address must not point to
+        its old, inactive `device_id`.
         """
         row = self._db.execute(
-            "SELECT id FROM device WHERE node_id = ? AND active = 1", (node_id,)
+            "SELECT id FROM device WHERE technology = ? AND address = ? AND active = 1",
+            (technology, address),
         ).fetchone()
         return int(row["id"]) if row is not None else None
 
@@ -2037,7 +2222,7 @@ class Store:
         """A single signal by its key - for `PATCH /api/signals/{key}`
         (Task 2), which has no device path parameter and therefore cannot
         go via `signals(device_id)`. `None` instead of an exception,
-        analogous to `device_id_for_node` - the caller decides whether that
+        analogous to `device_id_for` - the caller decides whether that
         is a 404."""
         row = self._db.execute("SELECT * FROM signal WHERE key = ?", (key,)).fetchone()
         return self._as_signal(row) if row is not None else None
@@ -2061,7 +2246,7 @@ class Store:
         return {str(r["key"]) for r in rows}
 
     def register_commands(
-        self, device_id: int, commands: Sequence[DeviceCommand], node_id: int
+        self, device_id: int, commands: Sequence[DeviceCommand]
     ) -> list[StoredCommand]:
         """Makes the exported command keys resolvable at runtime.
 
@@ -2139,13 +2324,18 @@ class Store:
                         f"key {key!r}"
                     )
                 taken.add(key)
+                # `node_id` is a copy of the owning device's, read back via
+                # the subquery rather than passed in by the caller: kept
+                # only for schema-8 rollback compatibility (see
+                # `_migrate_to_v9`), never read by this version's own code.
                 self._db.execute(
                     "INSERT INTO command "
                     "(device_id, node_id, endpoint, cluster_id, command_id, key, slug,"
-                    " takes_value) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    " takes_value)"
+                    " VALUES (?, (SELECT node_id FROM device WHERE id = ?), ?, ?, ?, ?, ?, ?)",
                     (
                         device_id,
-                        node_id,
+                        device_id,
                         command.endpoint,
                         command.cluster_id,
                         command.command_id,
@@ -2175,15 +2365,25 @@ class Store:
             self.register_group_commands(group_id)
         return self.commands(device_id)
 
+    # The owning device's identity travels with every command row through
+    # this join instead of a stored copy (design 2026-09-11, section 4.1):
+    # `command.node_id` used to duplicate `device.node_id`, and a copy is a
+    # second place that can disagree.
+    _COMMAND_SELECT = (
+        "SELECT command.*, device.technology AS technology, device.address AS address"
+        " FROM command JOIN device ON device.id = command.device_id"
+    )
+
     def commands(self, device_id: int) -> list[StoredCommand]:
         rows = self._db.execute(
-            "SELECT * FROM command WHERE device_id = ? ORDER BY endpoint, cluster_id, command_id",
+            f"{self._COMMAND_SELECT} WHERE command.device_id = ?"
+            " ORDER BY command.endpoint, command.cluster_id, command.command_id",
             (device_id,),
         ).fetchall()
         return [self._as_command(r) for r in rows]
 
     def resolve_command(self, key: str) -> StoredCommand:
-        row = self._db.execute("SELECT * FROM command WHERE key = ?", (key,)).fetchone()
+        row = self._db.execute(f"{self._COMMAND_SELECT} WHERE command.key = ?", (key,)).fetchone()
         if row is None:
             raise UnknownCommandError(i18n.t("api.errors.unknown_command", command_key=key))
         return self._as_command(row)
@@ -2193,7 +2393,8 @@ class Store:
         return StoredCommand(
             key=row["key"],
             slug=row["slug"],
-            node_id=int(row["node_id"]),
+            technology=parse_technology(str(row["technology"])),
+            address=str(row["address"]),
             endpoint=int(row["endpoint"]),
             cluster_id=int(row["cluster_id"]),
             command_id=int(row["command_id"]),

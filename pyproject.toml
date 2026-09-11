@@ -95,7 +95,7 @@ files = ["src", "scripts"]
 
 [[tool.mypy.overrides]]
 # chip provides no py.typed marking/stubs - see
-# BridgeMatterClient.send_command in matter/client.py. As of 8 September
+# BridgeMatterClient.send in matter/client.py. As of 8 September
 # 2026 the package comes from the same distribution as `matter_server`
 # (matter-python-client) and is generated from matter.js models, not
 # from the CHIP SDK anymore; the missing type marking doesn't change.

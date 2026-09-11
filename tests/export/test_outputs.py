@@ -29,7 +29,8 @@ def command(
     return StoredCommand(
         key=key,
         slug=slug,
-        node_id=3,
+        technology="matter",
+        address="3",
         endpoint=endpoint,
         cluster_id=cluster_id,
         command_id=0,

@@ -44,7 +44,7 @@ def registered(store: Store, name: str):
     snap = load(name)
     device_id = store.register_device(snap)
     store.register_signals(device_id, snap)
-    commands = store.register_commands(device_id, extract_commands(snap), snap.node_id)
+    commands = store.register_commands(device_id, extract_commands(snap))
     return device_id, snap, commands
 
 
@@ -54,7 +54,7 @@ def test_plug_commands_are_resolvable_by_their_exported_key(store):
     assert resolved.cluster_id == 6
     assert resolved.command_id == 1
     assert resolved.endpoint == 1
-    assert resolved.node_id == snap.node_id
+    assert resolved.address == snap.address
 
 
 def test_unknown_key_raises_with_a_clear_message(store):
@@ -83,7 +83,7 @@ def test_button_registers_no_commands(store):
 
 def test_reregistering_is_idempotent(store):
     device_id, snap, first = registered(store, "ikea_grillplats_plug.json")
-    again = store.register_commands(device_id, extract_commands(snap), snap.node_id)
+    again = store.register_commands(device_id, extract_commands(snap))
     assert [c.key for c in again] == [c.key for c in first]
 
 
@@ -96,9 +96,12 @@ def test_command_keys_match_the_exported_scheme(store):
     ]
 
 
-def test_node_id_is_stored_so_the_runtime_can_address_the_device(store):
+def test_a_command_carries_its_owning_devices_address(store):
+    """A command's `(technology, address)` come from the owning device via
+    the join in `Store._COMMAND_SELECT`, not a value passed in at
+    registration time - see `register_commands`."""
     _, snap, commands = registered(store, "ikea_grillplats_plug.json")
-    assert {c.node_id for c in commands} == {snap.node_id}
+    assert {c.address for c in commands} == {snap.address}
 
 
 def test_command_key_collision_raises_instead_of_dropping_silently(store, monkeypatch):
@@ -130,7 +133,7 @@ def test_command_key_collision_raises_instead_of_dropping_silently(store, monkey
     }
 
     with pytest.raises(ValueError, match="key collision"):
-        store.register_commands(device_id, commands, snap.node_id)
+        store.register_commands(device_id, commands)
 
     assert store.commands(device_id) == []
 
@@ -141,7 +144,7 @@ def test_takes_value_change_is_picked_up_on_reregistration(store):
     `clusters.yaml` — a command later recognized as taking a value — never
     reached a command that was already stored. The key must stay unchanged
     in the process (spec 6.2)."""
-    device_id, snap, first = registered(store, "ikea_grillplats_plug.json")
+    device_id, _snap, first = registered(store, "ikea_grillplats_plug.json")
     on_before = next(c for c in first if c.slug == "on")
     assert on_before.takes_value is False
 
@@ -154,7 +157,7 @@ def test_takes_value_change_is_picked_up_on_reregistration(store):
             takes_value=True,
         )
     ]
-    again = store.register_commands(device_id, updated, snap.node_id)
+    again = store.register_commands(device_id, updated)
 
     on_after = next(c for c in again if c.key == on_before.key)
     assert on_after.takes_value is True
@@ -178,7 +181,7 @@ def test_backfill_adds_a_command_that_was_locked_when_the_device_was_learned(tmp
         store.register_signals(device_id, snapshot)
         # The old state: the same extraction without the pair that was locked back then.
         alt = [c for c in extract_commands(snapshot) if (c.cluster_id, c.command_id) != (768, 6)]
-        store.register_commands(device_id, alt, snapshot.node_id)
+        store.register_commands(device_id, alt)
         assert not any(c.cluster_id == 768 and c.command_id == 6 for c in store.commands(device_id))
 
         assert store.backfill_commands([snapshot]) == 1
@@ -202,7 +205,7 @@ def test_backfill_keeps_the_keys_of_commands_that_already_exist(tmp_path):
         device_id = store.register_device(snapshot)
         store.register_signals(device_id, snapshot)
         alt = [c for c in extract_commands(snapshot) if (c.cluster_id, c.command_id) != (768, 6)]
-        store.register_commands(device_id, alt, snapshot.node_id)
+        store.register_commands(device_id, alt)
         vorher = {(c.cluster_id, c.command_id): c.key for c in store.commands(device_id)}
 
         store.backfill_commands([snapshot])
@@ -228,7 +231,7 @@ def test_backfill_reports_nothing_to_do_when_every_command_is_present(tmp_path):
         snapshot = load("ikea_kajplats_cws_lamp.json")
         device_id = store.register_device(snapshot)
         store.register_signals(device_id, snapshot)
-        store.register_commands(device_id, extract_commands(snapshot), snapshot.node_id)
+        store.register_commands(device_id, extract_commands(snapshot))
 
         assert store.backfill_commands([snapshot]) == 0
     finally:
@@ -246,10 +249,10 @@ def test_backfill_leaves_a_device_missing_from_the_snapshots_untouched(tmp_path)
         lampen_id = store.register_device(lampe)
         store.register_signals(lampen_id, lampe)
         alt = [c for c in extract_commands(lampe) if (c.cluster_id, c.command_id) != (768, 6)]
-        store.register_commands(lampen_id, alt, lampe.node_id)
+        store.register_commands(lampen_id, alt)
         stecker_id = store.register_device(stecker)
         store.register_signals(stecker_id, stecker)
-        store.register_commands(stecker_id, extract_commands(stecker), stecker.node_id)
+        store.register_commands(stecker_id, extract_commands(stecker))
         stecker_vorher = len(store.commands(stecker_id))
 
         # Only the lamp's snapshot is present - the plug is currently offline.

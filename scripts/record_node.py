@@ -56,7 +56,7 @@ async def main() -> None:
 
     args.target.write_text(
         json.dumps(
-            {"node_id": snapshot.node_id, "attributes": dict(snapshot.attributes)},
+            {"node_id": int(snapshot.address), "attributes": dict(snapshot.attributes)},
             indent=2,
             ensure_ascii=False,
             sort_keys=True,

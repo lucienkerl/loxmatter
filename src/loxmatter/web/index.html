@@ -179,6 +179,21 @@
         <path d="M21 11v3" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/>
         <path d="M5 12.5h4" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/>
       </symbol>
+      <!-- Transport badges on a device tile's category icon (design
+           2026-09-11, section 5.3). Neutral pictograms, not the Matter or
+           Thread logos: those are trademarks. Thread is a small mesh of
+           three nodes, IP a globe. -->
+      <symbol id="i-transport-thread" viewBox="0 0 24 24">
+        <circle cx="12" cy="5" r="2.4" />
+        <circle cx="5" cy="18" r="2.4" />
+        <circle cx="19" cy="18" r="2.4" />
+        <path d="M10.8 7.1 6.2 15.9M13.2 7.1l4.6 8.8M7.4 18h9.2" />
+      </symbol>
+      <symbol id="i-transport-ip" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="9" />
+        <path d="M3 12h18" />
+        <path d="M12 3a14 14 0 0 1 0 18a14 14 0 0 1 0-18z" />
+      </symbol>
     </svg>
     <!-- Until `/auth-info` has answered, the page deliberately shows nothing -
          otherwise the wrong screen would flash up depending on the response. -->
@@ -934,6 +949,21 @@
                   <div class="device-head">
                     <span class="type-badge">
                       <svg class="icon"><use :href="'#i-cat-' + device.category"></use></svg>
+                      <!-- How the device is connected, as a badge on WHAT it
+                           is (design 2026-09-11, section 5.3). Chosen over an
+                           icon beside the name, which competes with the
+                           offline pill, and over the footer, which carries
+                           export state. -->
+                      <template x-if="transportBadge(device)">
+                        <span
+                          class="transport-badge"
+                          role="img"
+                          :title="transportBadge(device).label"
+                          :aria-label="transportBadge(device).label"
+                        >
+                          <svg class="icon" aria-hidden="true"><use :href="'#' + transportBadge(device).symbol"></use></svg>
+                        </span>
+                      </template>
                     </span>
                     <span class="device-ident">
                       <input

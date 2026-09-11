@@ -401,6 +401,13 @@ api.errors.commissioning_failed:
 api.errors.device_unreachable:
   en: "device unreachable: {exc}"
   de: "Geraet nicht erreichbar: {exc}"
+api.errors.source_not_configured:
+  # A stored device belongs to a technology no running source serves -
+  # possible once a second source exists and its radio is removed from
+  # the configuration (design 2026-09-11, section 6.3). 503, not 502:
+  # nothing was asked of the device.
+  en: "{technology} is not set up in this installation"
+  de: "{technology} ist in dieser Installation nicht eingerichtet"
 api.errors.group_partially_unreachable:
   en: "reached {reached} of {total} members; no answer from: {devices}"
   de: "{reached} von {total} Mitgliedern erreicht, keine Antwort von: {devices}"
@@ -935,6 +942,15 @@ web.devices.changed_since_export:
 web.devices.offline:
   en: "Offline"
   de: "Offline"
+web.devices.transport_thread:
+  # Tooltip and accessible name of the small badge on a tile's category
+  # icon (design 2026-09-11, section 5.3). No official logo is used:
+  # "Matter" is a trademark of the Connectivity Standards Alliance.
+  en: "Matter over Thread"
+  de: "Matter über Thread"
+web.devices.transport_ip:
+  en: "Matter over IP"
+  de: "Matter über IP"
 web.devices.last_heard:
   en: "Last heard {text}"
   de: "Zuletzt gehört {text}"
@@ -1052,7 +1068,7 @@ web.devices.commission_code_required:
 web.devices.commission_success:
   # The limitation formerly named here ("only after a restart of the
   # bridge", spec 12.3) no longer exists: the commissioning route calls
-  # `follow_node` and seeds the new device's values immediately. What
+  # `follow` and seeds the new device's values immediately. What
   # remains is the other, still-correct note - the values only reach the
   # Miniserver after export and import, because until then there is no
   # virtual input for them there.

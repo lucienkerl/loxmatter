@@ -61,12 +61,12 @@ from pathlib import Path
 import uvicorn
 
 from loxmatter.auth.passwords import hash_password
-from loxmatter.commands.translate import MatterCall
 from loxmatter.export.commands import extract_commands
 from loxmatter.loxone.server import build_app
 from loxmatter.matter.models import NodeSnapshot
 from loxmatter.model.store import Store, StoredSignal
 from loxmatter.profiles.table import Exportability
+from loxmatter.sources import DeviceCall
 
 FIXTURES = Path(__file__).parent.parent / "tests" / "fixtures" / "nodes"
 
@@ -115,7 +115,7 @@ def _ensure_demo_devices(store: Store) -> list[int]:
         snapshot = _load_snapshot(filename)
         device_id = store.register_device(snapshot, room=room)
         store.register_signals(device_id, snapshot)
-        store.register_commands(device_id, extract_commands(snapshot), snapshot.node_id)
+        store.register_commands(device_id, extract_commands(snapshot))
         store.rename_device(device_id, label)
         device_ids.append(device_id)
 
@@ -184,7 +184,7 @@ class _SeededRuntime:
         return 0
 
 
-async def _invoke(call: MatterCall) -> None:
+async def _invoke(call: DeviceCall) -> None:
     return None
 
 
@@ -226,13 +226,13 @@ def _ensure_devices(store: Store) -> list[int]:
     plug = _load_snapshot("ikea_grillplats_plug.json")
     plug_id = store.register_device(plug)
     store.register_signals(plug_id, plug)
-    store.register_commands(plug_id, extract_commands(plug), plug.node_id)
+    store.register_commands(plug_id, extract_commands(plug))
     store.rename_device(plug_id, "Living room plug")
 
     button = _load_snapshot("ikea_bilresa_button.json")
     button_id = store.register_device(button)
     store.register_signals(button_id, button)
-    store.register_commands(button_id, extract_commands(button), button.node_id)
+    store.register_commands(button_id, extract_commands(button))
     store.rename_device(button_id, "Hallway button")
 
     return [plug_id, button_id]

@@ -332,7 +332,7 @@ class _SpyRuntime:
         self.sender = sender
         # Held on to like store/sender above, for the same reason: a test
         # might later want to prove WHAT cli.serve() passed as link_ok (see
-        # cli.py: `lambda: client.connected`), instead of just accepting the
+        # cli.py: `sources.all_connected`), instead of just accepting the
         # keyword and throwing it away.
         self.link_ok = link_ok
         self.started = False
@@ -420,7 +420,7 @@ class _YieldingUvicornServer:
 
 
 class _SpySupervisor:
-    """Stands in for `matter.supervisor.supervise` - records WITH WHAT the
+    """Stands in for `sources.supervisor.supervise` - records WITH WHAT the
     supervisor was started, and then blocks like the original.
 
     The blocking is not incidental: the real `supervise()` never returns on

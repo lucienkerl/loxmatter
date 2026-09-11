@@ -107,7 +107,8 @@ def test_gate_blocks_administrative_cluster_even_with_table_entry(monkeypatch):
 
     path = f"1/62/{ACCEPTED_COMMAND_LIST_ID}"
     snapshot = NodeSnapshot(
-        node_id=999,
+        technology="matter",
+        address="999",
         vendor_name="test",
         product_name="test",
         unique_id="test",

@@ -387,7 +387,7 @@ def lamps_with_commands(store, lamps):
         lamps, ("ikea_kajplats_cws_lamp.json", "ikea_kajplats_ws_lamp.json"), strict=True
     ):
         snapshot = load(name)
-        store.register_commands(device_id, extract_commands(snapshot), snapshot.node_id)
+        store.register_commands(device_id, extract_commands(snapshot))
     return lamps
 
 
@@ -476,8 +476,8 @@ def test_a_startup_backfill_that_reaches_every_member_extends_the_group(store, l
     snap_b = load("ikea_kajplats_ws_lamp.json")
     reduced_a = [c for c in extract_commands(snap_a) if c.slug != "colortemp"]
     reduced_b = [c for c in extract_commands(snap_b) if c.slug != "colortemp"]
-    store.register_commands(device_a, reduced_a, snap_a.node_id)
-    store.register_commands(device_b, reduced_b, snap_b.node_id)
+    store.register_commands(device_a, reduced_a)
+    store.register_commands(device_b, reduced_b)
 
     group = store.create_group("Both", lamps)
     assert "colortemp" not in _slugs(store, group.id)
@@ -769,7 +769,7 @@ def test_a_member_carrying_the_pair_on_two_endpoints_gets_both(store, lamps_with
         " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         (
             lamps_with_commands[0],
-            store.device(lamps_with_commands[0]).node_id,
+            int(store.device(lamps_with_commands[0]).address),
             99,
             on.cluster_id,
             on.command_id,

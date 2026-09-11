@@ -63,7 +63,7 @@ async def client(tmp_path):
     store = Store(tmp_path / "t.sqlite")
     device_id = store.register_device(snap)
     store.register_signals(device_id, snap)
-    store.register_commands(device_id, extract_commands(snap), snap.node_id)
+    store.register_commands(device_id, extract_commands(snap))
 
     calls = []
 
@@ -128,7 +128,7 @@ async def test_a_failing_matter_call_yields_502_not_a_traceback(tmp_path):
     store = Store(tmp_path / "t.sqlite")
     device_id = store.register_device(snap)
     store.register_signals(device_id, snap)
-    store.register_commands(device_id, extract_commands(snap), snap.node_id)
+    store.register_commands(device_id, extract_commands(snap))
 
     async def invoke(call):
         raise TimeoutError("device does not respond")
@@ -156,7 +156,7 @@ async def test_a_failing_matter_call_yields_502_with_the_german_detail_text(tmp_
     store = Store(tmp_path / "t.sqlite")
     device_id = store.register_device(snap)
     store.register_signals(device_id, snap)
-    store.register_commands(device_id, extract_commands(snap), snap.node_id)
+    store.register_commands(device_id, extract_commands(snap))
     store.locale.set_language("de")
 
     async def invoke(call):
@@ -180,7 +180,7 @@ async def test_a_failing_resend_yields_502_not_a_traceback(tmp_path):
     store = Store(tmp_path / "t.sqlite")
     device_id = store.register_device(snap)
     store.register_signals(device_id, snap)
-    store.register_commands(device_id, extract_commands(snap), snap.node_id)
+    store.register_commands(device_id, extract_commands(snap))
 
     runtime = Runtime(store, BrokenResendSender())
     # `on_attribute` enters the value into `_last_values` BEFORE it calls
@@ -211,7 +211,7 @@ async def test_a_failing_resend_yields_502_with_the_german_detail_text(tmp_path)
     store = Store(tmp_path / "t.sqlite")
     device_id = store.register_device(snap)
     store.register_signals(device_id, snap)
-    store.register_commands(device_id, extract_commands(snap), snap.node_id)
+    store.register_commands(device_id, extract_commands(snap))
     store.locale.set_language("de")
 
     runtime = Runtime(store, BrokenResendSender())
@@ -306,7 +306,7 @@ async def test_a_crashing_route_still_appears_in_the_command_log_and_still_raise
     store = Store(tmp_path / "t.sqlite")
     device_id = store.register_device(snap)
     store.register_signals(device_id, snap)
-    store.register_commands(device_id, extract_commands(snap), snap.node_id)
+    store.register_commands(device_id, extract_commands(snap))
 
     async def invoke(call):
         return None

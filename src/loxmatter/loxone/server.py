@@ -24,15 +24,20 @@ has no effect. Accordingly, they must be distinguishable: 404 for an
 unknown key, 400 for an unsuitable value, 502 for a device that does not
 respond.
 
-`client` is new compared to phase 4: the WebUI routes under `/api` need
-`BridgeMatterClient` for commissioning and removing devices (task 1), the
-Loxone routes here do not need it. The parameter is therefore optional and
+`client` is new compared to phase 4: the WebUI routes under `/api` need the
+Matter client for commissioning and removing devices (task 1), the Loxone
+routes here do not need it. The parameter is therefore optional and
 defaults to `None` - precisely so that the three existing phase-4 calls of
 `build_app(store, invoke, runtime)` keep running unchanged. `None` does not
 mean "WebUI missing"; it means "the bridge is running without a Matter
 connection" - `build_device_router` then answers the two routes that need
-`client` (commissioning, removal) with 503 instead of an `AttributeError`
-on `None` (see there).
+it (commissioning, removal) with 503 instead of an `AttributeError` on
+`None` (see there). Commissioning stays on the Matter client by name
+(design 2026-09-11, section 3.2). Removal itself goes through `Sources` (design
+2026-09-11, section 6.2), not `client` directly: when a caller does not
+pass `sources` explicitly, `build_app` derives one from `client` alone
+(see below), so an existing caller that only ever knew `BridgeMatterClient`
+keeps working unchanged.
 
 `sender` and `matter_data_dir` are new in task 6 (diagnostics, spec 10.5),
 optional with default `None` for the same reason: the diagnostics routes
@@ -148,14 +153,15 @@ from loxmatter.api.update import build_update_router
 from loxmatter.api.version import build_version_router
 from loxmatter.auth.sessions import SESSION_COOKIE, session_is_valid
 from loxmatter.commands.fanout import dispatch_group, plan_group_calls
-from loxmatter.commands.translate import MatterCall, UnsupportedValueError, to_matter_calls
+from loxmatter.commands.translate import UnsupportedValueError, to_device_calls
 from loxmatter.diagnostics.logbuffer import LogBufferHandler
 from loxmatter.loxone.sender import UdpSender
 from loxmatter.matter.client import BridgeMatterClient
 from loxmatter.model.store import Store
+from loxmatter.sources import DeviceCall, SourceNotConfiguredError, Sources
 from loxmatter.timestamps import now_iso
 
-Invoker = Callable[[MatterCall], Awaitable[None]]
+Invoker = Callable[[DeviceCall], Awaitable[None]]
 
 logger = logging.getLogger(__name__)
 
@@ -373,6 +379,7 @@ def build_app(
     invoke: Invoker,
     runtime: _RuntimeDependency,
     client: BridgeMatterClient | None = None,
+    sources: Sources | None = None,
     sender: UdpSender | None = None,
     matter_data_dir: Path | None = None,
     api_token: str | None = None,
@@ -386,6 +393,11 @@ def build_app(
     # side would step on each other's files.
     update_dir: Path = Path("/data/update"),
 ) -> FastAPI:
+    # Callers that predate the device source boundary pass only `client`;
+    # for them the registry is the Matter client alone, which is exactly
+    # what they had (design 2026-09-11, section 6.2).
+    if sources is None and client is not None:
+        sources = Sources([client])
     app = FastAPI(title="loxmatter", docs_url=None, redoc_url=None)
     command_log: RingBuffer[CommandLogEntry] = RingBuffer(maxlen=COMMAND_LOG_SIZE)
     api_guard = [Depends(build_api_guard(api_token, store))]
@@ -492,7 +504,7 @@ def build_app(
     # `/health`, `/` and `/static`, which are mounted further below
     # without `dependencies`.
     app.include_router(
-        build_device_router(store, client, runtime, thread_dataset_source),
+        build_device_router(store, client, runtime, thread_dataset_source, sources),
         dependencies=api_guard,
     )
     app.include_router(build_export_router(store), dependencies=api_guard)
@@ -595,18 +607,21 @@ def build_app(
             return await _group_command(key, value)
 
         try:
-            calls = to_matter_calls(stored, value)
+            calls = to_device_calls(stored, value)
         except UnsupportedValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
         try:
             # Multiple calls because a Loxone value can mean more than one thing
             # - the color output carries color AND brightness
-            # (see `to_matter_calls`). The first failure stops and is
+            # (see `to_device_calls`). The first failure stops and is
             # reported; a partial state is possible
             # and justified there.
             for call in calls:
                 await invoke(call)
+        except SourceNotConfiguredError as exc:
+            # Nothing was asked of the device, so this is not 502.
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
         except Exception as exc:  # every device problem becomes 502
             # logger.exception writes the full traceback to the server log,
             # NOT to the HTTP response (see
@@ -616,7 +631,7 @@ def build_app(
             # just "Device unreachable: <message>" without a traceback,
             # and the difference between "Zigbee mesh gone" and "typo
             # in invoker" would be lost.
-            logger.exception("Matter call for key %r failed", key)
+            logger.exception("device call for key %r failed", key)
             raise HTTPException(
                 status_code=502, detail=i18n.t("api.errors.device_unreachable", exc=exc)
             ) from exc

@@ -86,7 +86,13 @@ class DeviceOut(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     id: int
-    node_id: int
+    # Which source the device belongs to, and its address there (design
+    # 2026-09-11, section 5.3). Not used by the web UI today.
+    technology: str
+    address: str
+    # "thread", "ip", "zigbee" or None - see `profiles/transport.py`. The
+    # tile shows a badge only when this is not None.
+    transport: str | None
     label: str
     online: bool
     # When something last arrived from this device at all; `None` if
@@ -138,7 +144,8 @@ class DevicePatch(BaseModel):
 
     Was called `DeviceRename` up to the device-tab design and could only
     do the label; the name has moved along with the capability. Neither
-    `node_id` nor `id` belong here, for the same reason as with
+    `technology`/`address` (the device's identity, design 2026-09-11,
+    section 4.1) nor `id` belong here, for the same reason as with
     `SignalPatch`: a route cannot accidentally pick up what the model
     does not know about (Pydantic v2 discards unknown fields via
     `extra="ignore"`).

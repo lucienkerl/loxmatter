@@ -27,18 +27,18 @@ throwing an `AttributeError` on `None`; all other routes (reading,
 renaming, setting the export flag) work entirely without a Matter
 connection and remain usable.
 
-**Removal (Task 2): `remove_node` first, then `forget_device`.** Removing
+**Removal (Task 2): `remove` first, then `forget_device`.** Removing
 a device is two steps that cannot sit in one transaction (one is a
 network call to matter-server, the other a local SQLite write) - either
 one can succeed while the other fails. The two possible orders leave
 behind states of different severity on a partial failure:
 
-- **`forget_device` first, then `remove_node` fails:** `Store` considers
+- **`forget_device` first, then `remove` fails:** `Store` considers
   the device removed, it disappears from `GET /api/devices` - but it
   still hangs in the Matter fabric. From this moment on, the WebUI has no
   more `device_id` under which a renewed removal could be triggered. A
   silent leftover no longer reachable from the UI.
-- **`remove_node` first, then `forget_device` fails:** the device has
+- **`remove` first, then `forget_device` fails:** the device has
   actually been removed from the fabric, but `Store` still lists it as
   active. It stays visible in `GET /api/devices` - and, as soon as
   `BridgeMatterClient.subscribe` delivers the associated `NODE_REMOVED`
@@ -53,9 +53,9 @@ of a silent one on failure; `remove_device` below therefore implements
 it.
 
 **Unverified assumption (Minor #3, Review 2026-09-02):** "A second
-`DELETE` remains possible" above assumes that `remove_node` may be called again
+`DELETE` remains possible" above assumes that `remove` may be called again
 against a device that was already removed from the fabric on the first (partially
-failed) attempt - so it is retry-safe against `matter-server`. `tests/api/conftest.py::FakeMatterClient.remove_node`
+failed) attempt - so it is retry-safe against `matter-server`. `tests/api/conftest.py::FakeMatterClient.remove`
 merely appends each call to a list and cannot verify this assumption; whether the real
 `MatterClient.remove_node` acknowledges an already-removed device with an error or
 silently ignores it has not been verified against the installed `python-matter-server`
@@ -103,6 +103,8 @@ from loxmatter.model.store import Store, StoredDevice, StoredSignal, UnknownDevi
 from loxmatter.profiles.categories import CATEGORY_RANK, category_for
 from loxmatter.profiles.endpoints import endpoint_labels
 from loxmatter.profiles.table import Exportability, is_exportable
+from loxmatter.profiles.transport import transport_for
+from loxmatter.sources import SourceNotConfiguredError, Sources
 
 logger = logging.getLogger(__name__)
 
@@ -237,7 +239,9 @@ def _device_out(device: StoredDevice, store: Store, runtime: RuntimeValues) -> D
     category = category_for(device.device_types)
     return DeviceOut(
         id=device.id,
-        node_id=device.node_id,
+        technology=device.technology,
+        address=device.address,
+        transport=transport_for(device.technology, device.network_features),
         label=device.label,
         online=online,
         last_heard=last_heard,
@@ -276,6 +280,7 @@ def build_device_router(
     client: BridgeMatterClient | None,
     runtime: RuntimeValues,
     thread_dataset_source: ThreadDatasetSource | None = None,
+    sources: Sources | None = None,
 ) -> APIRouter:
     router = APIRouter(prefix="/api")
     fetch_dataset = thread_dataset_source or fetch_active_dataset
@@ -512,7 +517,7 @@ def build_device_router(
         if request.room is not None:
             store.set_room(device_id, request.room)
         store.register_signals(device_id, snapshot)
-        store.register_commands(device_id, extract_commands(snapshot), snapshot.node_id)
+        store.register_commands(device_id, extract_commands(snapshot))
 
         # The reachability of the new device MUST be seeded here, from
         # `snapshot.available` - exactly as `Runtime.seed_from_snapshot`
@@ -561,10 +566,10 @@ def build_device_router(
                 device_id,
             )
 
-        # Only now, after `register_device`: `follow_node` resolves the
+        # Only now, after `register_device`: `follow` resolves the
         # node ID via the store, and before that there would be nothing to
         # resolve there - the same race that `NODE_ADDED` already lost
-        # (see the comment above and the docstring of `follow_node`).
+        # (see the comment above and the docstring of `_follow_node`).
         # Creates the attribute subscriptions for this device and seeds
         # its values, so the signals show numbers immediately instead of
         # dashes - previously this required a restart of the bridge.
@@ -582,7 +587,7 @@ def build_device_router(
         #
         # Also follow-up work, also safeguarded (see above): the most
         # likely scenario is a matter-server that restarts immediately
-        # after commissioning - then `follow_node` runs into
+        # after commissioning - then `follow` runs into
         # `_require_upstream` and throws `MatterUnavailableError`, even
         # though the device is fully commissioned. Without values, but
         # commissioned: the signal rows exist (they are created by
@@ -595,13 +600,13 @@ def build_device_router(
         # `_seed_pending` in `BridgeMatterClient`: the bridge remembers
         # every node it still owes a snapshot - whether because the store
         # did not know it yet, or because the handler threw during
-        # seeding -, and the next `follow_node` from the dispatch loop
+        # seeding -, and the next `_follow_node` from the dispatch loop
         # catches up on it. That is why the assurance here holds for BOTH
         # cases: a failure before subscribing as well as one after (say, a
         # `sqlite3.OperationalError` under concurrent write load from the
         # resend loop).
         try:
-            await active_client.follow_node(snapshot.node_id, seed_even_without_new_paths=True)
+            await active_client.follow(snapshot.address, seed_even_without_new_paths=True)
         except Exception:
             logger.exception(
                 "Could not catch up on subscriptions of freshly commissioned device %s "
@@ -614,10 +619,21 @@ def build_device_router(
     @router.delete("/devices/{device_id}", status_code=204)
     async def remove_device(device_id: int) -> None:
         device = _require_device(device_id)
-        active_client = _require_client()
+        if sources is None:
+            # `build_app` derives `sources` from `client`, so this is the
+            # app started without any device connection - the same 503 the
+            # route answered before.
+            raise HTTPException(
+                status_code=503,
+                detail=i18n.t("api.devices.fail_no_matter_client"),
+            )
+        try:
+            source = sources.get(device.technology)
+        except SourceNotConfiguredError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
         try:
             # Order: see module docstring - the fabric first, then the store.
-            await active_client.remove_node(device.node_id)
+            await source.remove(device.address)
         except MatterUnavailableError as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
         store.forget_device(device.id)
