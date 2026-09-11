@@ -1045,7 +1045,7 @@ web.devices.remove_confirm_groups_note:
   en: |
     It also belongs to: {groups}. If it was the only member carrying a command, that command drops out of the group's intersection, and the group's virtual output for it answers 404 in Loxone from then on.
   de: |
-    Es gehört außerdem zu: {groups}. War es das einzige Mitglied mit einem bestimmten Kommando, fällt dieses aus der Schnittmenge der Gruppe, und der virtuelle Ausgang der Gruppe dafür antwortet in Loxone ab dann mit 404.
+    Es gehört außerdem zu: {groups}. War es das einzige Mitglied mit einem bestimmten Kommando, fällt dieses aus der Schnittmenge der Gruppe, und der für dieses Kommando zuständige virtuelle Ausgang der Gruppe antwortet in Loxone von da an mit 404.
 web.devices.commission_code_required:
   en: "Please enter a pairing code first."
   de: "Bitte zuerst einen Pairing-Code eingeben."
