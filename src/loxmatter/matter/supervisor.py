@@ -35,6 +35,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable
+from functools import partial
 
 from loxmatter.loxone.runtime import Runtime
 from loxmatter.matter.client import BridgeMatterClient
@@ -71,7 +72,7 @@ async def attach(client: BridgeMatterClient, store: Store, runtime: Runtime) -> 
     not to begin anew with it.
     """
     await client.subscribe(
-        lambda node_id: store.device_id_for("matter", str(node_id)),  # TRANSITIONAL (Task 5)
+        partial(store.device_id_for, "matter"),  # TRANSITIONAL (Task 6)
         runtime,
     )
     snapshots = await client.snapshots()

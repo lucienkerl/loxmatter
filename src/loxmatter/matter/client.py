@@ -74,19 +74,20 @@ callback itself closes over `node_id`/`path` as a closure. Node events and
 reachability, by contrast, each run through a single wildcard
 subscription, because their `data` already carries everything needed.
 
-Whatever is added after `subscribe()` is caught up by `follow_node()` - a
+Whatever is added after `subscribe()` is caught up by `_follow_node()` - a
 device that is only commissioned afterwards, as well as a known device
 that subsequently reports new attribute paths. It is triggered from the
-dispatch loop on `NODE_ADDED`/`NODE_UPDATED` and additionally from the
-commissioning route. This "additionally" is not belt-and-braces: the
-`NODE_ADDED` of a device just commissioned demonstrably arrives BEFORE
-`commission_with_code` returns and the store can give the node a
-device_id - the values of this notification therefore go nowhere, and no
-second one follows for a device that is quietly sitting on the network.
-At this point, however, the dispatch task has already subscribed to every
-path; the route's follow-up call therefore finds an empty diff and still
-seeds only because it requests it with `seed_even_without_new_paths=True`
-(the full rationale is at `follow_node`). See
+dispatch loop on `NODE_ADDED`/`NODE_UPDATED` and additionally, via the
+public `follow()`, from the commissioning route. This "additionally" is
+not belt-and-braces: the `NODE_ADDED` of a device just commissioned
+demonstrably arrives BEFORE `commission_with_code` returns and the store
+can give the node a device_id - the values of this notification therefore
+go nowhere, and no second one follows for a device that is quietly
+sitting on the network. At this point, however, the dispatch task has
+already subscribed to every path; the route's follow-up call therefore
+finds an empty diff and still seeds only because it requests it with
+`seed_even_without_new_paths=True` (the full rationale is at
+`_follow_node`). See
 docs/superpowers/specs/2026-09-04-live-values-for-new-devices-design.md.
 
 commission_with_code()/remove_node()/set_thread_dataset() - verified
@@ -121,11 +122,11 @@ import contextlib
 import logging
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
-from typing import Any, Final, Protocol
+from typing import Any, Final
 
 from loxmatter import i18n
-from loxmatter.matter.models import NodeSnapshot
-from loxmatter.sources import DeviceCall
+from loxmatter.matter.models import NodeSnapshot, Technology
+from loxmatter.sources import DeviceCall, RuntimeEventHandler
 
 logger = logging.getLogger(__name__)
 
@@ -155,23 +156,6 @@ class CommissioningError(RuntimeError):
     original exception is preserved via `__cause__`."""
 
 
-class RuntimeEventHandler(Protocol):
-    """What `subscribe()` needs from its caller - `Runtime`
-    (loxone/runtime.py) already satisfies this unchanged, so `_run()` can
-    pass it directly as `handler`, without writing an adapter.
-
-    `on_node_snapshot` was added with the follow-up of subscriptions
-    (`follow_node`): the client sees a device with paths for which there
-    is no signal row yet, and cannot do anything with that itself - it
-    does not know the `Store` and is not supposed to know it. The handler,
-    on the other hand, has it."""
-
-    async def on_attribute(self, device_id: int, path: str, raw: object) -> None: ...
-    async def on_event(self, device_id: int, path: str) -> None: ...
-    async def set_online(self, device_id: int, online: bool) -> None: ...
-    async def on_node_snapshot(self, device_id: int, snapshot: NodeSnapshot) -> None: ...
-
-
 @dataclass(frozen=True)
 class _AttributeUpdate:
     node_id: int
@@ -196,7 +180,7 @@ class _FollowNode:
     """Trigger to catch up a node's subscriptions.
 
     Runs over the same queue as the value updates, rather than directly
-    out of the synchronous event callback: `follow_node` is a coroutine,
+    out of the synchronous event callback: `_follow_node` is a coroutine,
     and the callback cannot await one (see
     `on_node_or_availability_event`).
     """
@@ -223,6 +207,8 @@ async def _cancel_and_await(task: asyncio.Task[Any]) -> None:
 
 
 class BridgeMatterClient:
+    technology: Technology = "matter"
+
     def __init__(
         self,
         url: str,
@@ -246,14 +232,14 @@ class BridgeMatterClient:
         # connection can hit a freshly restarted matter-server, and that
         # one has forgotten it.
         self._thread_dataset_set = False
-        # subscribe()/follow_node() state. The set of already-created
+        # subscribe()/_follow_node() state. The set of already-created
         # attribute subscriptions is the only source of what counts as
         # "new" - a second subscription for the same (node, path) would
         # deliver every value twice. Queue, handler and the device_id
         # resolution remain reachable after subscribe(), because
-        # follow_node needs them.
+        # _follow_node needs them.
         self._subscribed_paths: set[tuple[int, str]] = set()
-        # Nodes this bridge still owes a snapshot to - see `follow_node`,
+        # Nodes this bridge still owes a snapshot to - see `_follow_node`,
         # which also explains why that answers a DIFFERENT question than
         # the `seed_even_without_new_paths` flag.
         self._seed_pending: set[int] = set()
@@ -511,9 +497,9 @@ class BridgeMatterClient:
             node.node_id, {"attributes": node.attributes, "available": node.available}
         )
 
-    async def remove_node(self, node_id: int) -> None:
+    async def remove(self, address: str) -> None:
         """Removes a device from the fabric."""
-        await self._require_upstream().remove_node(node_id)
+        await self._require_upstream().remove_node(int(address))
 
     @property
     def thread_dataset_set(self) -> bool:
@@ -627,7 +613,7 @@ class BridgeMatterClient:
         """Creates one attribute subscription per not-yet-subscribed
         (node, path) pair and returns their count.
 
-        One spot for both callers (`subscribe` and `follow_node`): two
+        One spot for both callers (`subscribe` and `_follow_node`): two
         spots that rebuild the same registration scheme drift apart
         sooner or later - and that would not be noticed here, because a
         missing subscription is not an error, just silence.
@@ -668,13 +654,16 @@ class BridgeMatterClient:
 
     async def subscribe(
         self,
-        resolve_device_id: Callable[[int], int | None],
+        resolve_device_id: Callable[[str], int | None],
         handler: RuntimeEventHandler,
     ) -> None:
         """Reports attribute and event changes as well as reachability to `handler`.
 
-        `resolve_device_id` maps a node ID to the store's stable
-        `device_id` (e.g. `Store.device_id_for`) - exactly this
+        `resolve_device_id` maps a device's address (the string form of
+        its node ID, see the module docstring) to the store's stable
+        `device_id`. It is `Store.device_id_for` bound to this source's
+        technology - e.g. `functools.partial(store.device_id_for,
+        "matter")`, see `matter.supervisor.attach` - exactly this
         mapping happens here, BEFORE `handler` sees anything, because the
         keys in Loxone hang off the `device_id`, not the node ID (see the
         module docstring, `Store` and the task 8 report). If
@@ -694,6 +683,12 @@ class BridgeMatterClient:
         upstream = self._require_upstream()
         if self._dispatch_task is not None:
             raise MatterUnavailableError(i18n.t("api.errors.subscribe_already_called"))
+
+        # matter-server speaks integer node IDs; the store speaks addresses.
+        # The conversion happens once, here, and everything below this
+        # point keeps working with node IDs.
+        def resolve_node(node_id: int) -> int | None:
+            return resolve_device_id(str(node_id))
 
         # Lazily imported like _default_session_factory: tests with a
         # fake upstream should never need to load matter_server.
@@ -724,21 +719,28 @@ class BridgeMatterClient:
         self._subscribed_paths = set()
         self._queue = queue
         self._handler = handler
-        self._resolve_device_id = resolve_device_id
+        self._resolve_device_id = resolve_node
 
         # Attribute updates: see the module docstring for why this only
         # works per (node, path) pair known at this point. Whatever is
-        # added after this call is caught up by `follow_node`.
+        # added after this call is caught up by `_follow_node`.
         for node in upstream.get_nodes():
             self._subscribe_attribute_paths(
                 upstream, queue, node.node_id, node.node_data.attributes
             )
 
-        self._dispatch_task = asyncio.create_task(
-            self._dispatch_loop(queue, resolve_device_id, handler)
+        self._dispatch_task = asyncio.create_task(self._dispatch_loop(queue, resolve_node, handler))
+
+    async def follow(self, address: str, *, seed_even_without_new_paths: bool = False) -> None:
+        """Catches up a device's subscriptions - see `_follow_node`, which
+        does the work in matter-server's integer node IDs."""
+        await self._follow_node(
+            int(address), seed_even_without_new_paths=seed_even_without_new_paths
         )
 
-    async def follow_node(self, node_id: int, *, seed_even_without_new_paths: bool = False) -> None:
+    async def _follow_node(
+        self, node_id: int, *, seed_even_without_new_paths: bool = False
+    ) -> None:
         """Catches up a node's attribute subscriptions.
 
         Two callers, one operation: the commissioning route
@@ -875,11 +877,11 @@ class BridgeMatterClient:
             item = await queue.get()
             try:
                 if isinstance(item, _FollowNode):
-                    # BEFORE the device_id resolution: `follow_node` also
+                    # BEFORE the device_id resolution: `_follow_node` also
                     # creates subscriptions for a node the store does not
                     # (yet) know, and decides itself whether the handler
                     # gets to see anything.
-                    await self.follow_node(item.node_id)
+                    await self._follow_node(item.node_id)
                     continue
                 device_id = resolve_device_id(item.node_id)
                 if device_id is None:

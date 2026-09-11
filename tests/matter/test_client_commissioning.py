@@ -189,10 +189,10 @@ async def test_cancellation_during_commissioning_propagates_unwrapped(client):
     await bridge.disconnect()
 
 
-async def test_remove_node_reaches_upstream(client):
+async def test_remove_reaches_upstream(client):
     bridge, upstream = client
     await bridge.connect()
-    await bridge.remove_node(7)
+    await bridge.remove("7")
     assert upstream.removed == [7]
     await bridge.disconnect()
 

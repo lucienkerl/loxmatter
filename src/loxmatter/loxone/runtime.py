@@ -314,7 +314,7 @@ class Runtime:
 
     async def on_node_snapshot(self, device_id: int, snapshot: NodeSnapshot) -> None:
         """Catches up a device whose attribute paths have changed - called
-        from `BridgeMatterClient.follow_node`.
+        from `BridgeMatterClient.follow`.
 
         Three steps. Only one order is binding: `invalidate_index` MUST
         run before seeding (step 3). Whether `register_signals` comes

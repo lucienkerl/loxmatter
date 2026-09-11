@@ -2989,7 +2989,7 @@ function app() {
         this.commissionStep = 2;
         // The earlier sentence "live values only after a bridge restart"
         // has been dropped because the limitation itself is gone: the
-        // commissioning route now calls `follow_node`, which sets up this
+        // commissioning route now calls `follow`, which sets up this
         // device's attribute subscriptions and seeds its values (design
         // from 2026-09-04). A note is still needed here, just a different
         // one: that the values only arrive in the Miniserver after export

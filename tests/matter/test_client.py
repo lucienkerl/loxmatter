@@ -98,7 +98,7 @@ class FakeUpstream:
     def add_node(self, node: FakeNode) -> None:
         """A device that only joins after start_listening() - on the real
         MatterClient the NODE_ADDED event fills the node cache accordingly.
-        Exactly the case that `follow_node` covers."""
+        Exactly the case that `follow` covers."""
         self._nodes.append(node)
 
     # --- from here on: reproduction of MatterClient.subscribe_events()/
@@ -814,7 +814,7 @@ async def test_subscribe_maps_an_attribute_update_to_the_resolved_device_id():
     await bridge.connect()
     handler = FakeHandler()
 
-    await bridge.subscribe(lambda node_id: {12: 5}.get(node_id), handler)
+    await bridge.subscribe(lambda address: {"12": 5}.get(address), handler)
     upstream.emit(EventType.ATTRIBUTE_UPDATED, False, node_id=12, attribute_path="1/6/0")
     await _settle()
 
@@ -855,7 +855,7 @@ async def test_subscribe_maps_a_node_event_to_the_resolved_device_id():
     await bridge.connect()
     handler = FakeHandler()
 
-    await bridge.subscribe(lambda node_id: {12: 5}.get(node_id), handler)
+    await bridge.subscribe(lambda address: {"12": 5}.get(address), handler)
     node_event = MatterNodeEvent(
         node_id=12,
         endpoint_id=1,
@@ -878,7 +878,7 @@ async def test_subscribe_maps_node_updated_availability_to_the_resolved_device_i
     await bridge.connect()
     handler = FakeHandler()
 
-    await bridge.subscribe(lambda node_id: {12: 5}.get(node_id), handler)
+    await bridge.subscribe(lambda address: {"12": 5}.get(address), handler)
     upstream.emit(EventType.NODE_UPDATED, FakeNode(12, {}, available=False))
     await _settle()
 
@@ -890,7 +890,7 @@ async def test_subscribe_treats_node_removed_as_offline():
     await bridge.connect()
     handler = FakeHandler()
 
-    await bridge.subscribe(lambda node_id: {12: 5}.get(node_id), handler)
+    await bridge.subscribe(lambda address: {"12": 5}.get(address), handler)
     # MatterClient._handle_event_message delivers the bare node ID as data
     # on NODE_REMOVED, not a node object.
     upstream.emit(EventType.NODE_REMOVED, 12)
@@ -912,27 +912,27 @@ async def test_disconnect_stops_delivering_updates():
     assert handler.attribute_calls == []
 
 
-# --- follow_node() ----------------------------------------------------
+# --- follow() ----------------------------------------------------
 
 
-async def test_follow_node_subscribes_a_node_that_did_not_exist_at_subscribe_time():
+async def test_follow_subscribes_a_node_that_did_not_exist_at_subscribe_time():
     """The reported case: a device that was only commissioned after
     `subscribe()` had not a single attribute subscription - its signals
     stayed at "-" until the bridge's next restart."""
     bridge, upstream = make_connected_pair([FakeNode(12, {"1/6/0": True})])
     await bridge.connect()
     handler = FakeHandler()
-    await bridge.subscribe(lambda node_id: {12: 5, 8: 9}.get(node_id), handler)
+    await bridge.subscribe(lambda address: {"12": 5, "8": 9}.get(address), handler)
 
     upstream.add_node(FakeNode(8, {"1/6/0": True}))
-    await bridge.follow_node(8)
+    await bridge.follow("8")
     upstream.emit(EventType.ATTRIBUTE_UPDATED, False, node_id=8, attribute_path="1/6/0")
     await _settle()
 
     assert handler.attribute_calls == [(9, "1/6/0", False)]
 
 
-async def test_follow_node_does_not_subscribe_the_same_path_twice():
+async def test_follow_does_not_subscribe_the_same_path_twice():
     """A second subscription for the same path would deliver every value
     twice - `on_attribute` would run twice, and for an event signal the
     counter would count up twice as fast."""
@@ -941,21 +941,21 @@ async def test_follow_node_does_not_subscribe_the_same_path_twice():
     handler = FakeHandler()
     await bridge.subscribe(lambda _node_id: 5, handler)
 
-    await bridge.follow_node(12)
+    await bridge.follow("12")
     upstream.emit(EventType.ATTRIBUTE_UPDATED, False, node_id=12, attribute_path="1/6/0")
     await _settle()
 
     assert handler.attribute_calls == [(5, "1/6/0", False)]
 
 
-async def test_follow_node_only_subscribes_the_paths_that_are_new():
+async def test_follow_only_subscribes_the_paths_that_are_new():
     node = FakeNode(12, {"1/6/0": True})
     bridge, upstream = make_connected_pair([node])
     await bridge.connect()
     await bridge.subscribe(lambda _node_id: 5, FakeHandler())
 
     node.node_data.attributes["1/8/0"] = 254
-    await bridge.follow_node(12)
+    await bridge.follow("12")
 
     assert _attribute_subscriptions(upstream) == [
         "attribute_updated/12/1/6/0",
@@ -963,7 +963,7 @@ async def test_follow_node_only_subscribes_the_paths_that_are_new():
     ]
 
 
-async def test_follow_node_without_new_paths_leaves_the_handler_alone():
+async def test_follow_without_new_paths_leaves_the_handler_alone():
     """The normal case in operation: `NODE_UPDATED` also fires on a change
     of availability and after every re-subscription. For a device with no
     new paths, the diff is empty, and the process ends before reaching the
@@ -974,31 +974,31 @@ async def test_follow_node_without_new_paths_leaves_the_handler_alone():
     handler = FakeHandler()
     await bridge.subscribe(lambda _node_id: 5, handler)
 
-    await bridge.follow_node(12)
+    await bridge.follow("12")
 
     assert handler.snapshot_calls == []
 
 
-async def test_follow_node_hands_the_snapshot_to_the_handler():
+async def test_follow_hands_the_snapshot_to_the_handler():
     bridge, upstream = make_connected_pair([FakeNode(12, {})])
     await bridge.connect()
     handler = FakeHandler()
-    await bridge.subscribe(lambda node_id: {8: 42}.get(node_id), handler)
+    await bridge.subscribe(lambda address: {"8": 42}.get(address), handler)
 
     upstream.add_node(FakeNode(8, {"0/40/1": "IKEA of Sweden", "1/6/0": True}))
-    await bridge.follow_node(8)
+    await bridge.follow("8")
 
     assert [(device_id, snap.address) for device_id, snap in handler.snapshot_calls] == [(42, "8")]
     assert handler.snapshot_calls[0][1].vendor_name == "IKEA of Sweden"
 
 
-async def test_follow_node_subscribes_even_when_the_store_does_not_know_the_node():
+async def test_follow_subscribes_even_when_the_store_does_not_know_the_node():
     """The subscriptions still come into being - only the handler stays out
     of it, because there is no device that the values would belong to.
 
     That the seeding is caught up on afterward is NOT what this test
     proves, but `test_the_commissioning_route_still_seeds_after_the_dispatch_
-    loop_was_first` further below: a plain second `follow_node` would find
+    loop_was_first` further below: a plain second `follow` would find
     not a single new path anymore and would not even reach the handler -
     that is exactly why `seed_even_without_new_paths` exists."""
     bridge, upstream = make_connected_pair([FakeNode(12, {})])
@@ -1007,7 +1007,7 @@ async def test_follow_node_subscribes_even_when_the_store_does_not_know_the_node
     await bridge.subscribe(lambda _node_id: None, handler)
 
     upstream.add_node(FakeNode(8, {"1/6/0": True}))
-    await bridge.follow_node(8)
+    await bridge.follow("8")
 
     assert "attribute_updated/8/1/6/0" in _attribute_subscriptions(upstream)
     assert handler.snapshot_calls == []
@@ -1040,7 +1040,7 @@ async def test_the_commissioning_route_still_seeds_after_the_dispatch_loop_was_f
     handler = FakeHandler()
     # Stands in for `Store.device_id_for`: only knows the new node
     # after `register_device` has run - so only from step 4 onward.
-    known: dict[int, int] = {}
+    known: dict[str, int] = {}
     await bridge.subscribe(known.get, handler)
 
     new_node = FakeNode(8, {"0/40/1": "IKEA of Sweden", "1/6/0": False})
@@ -1051,8 +1051,8 @@ async def test_the_commissioning_route_still_seeds_after_the_dispatch_loop_was_f
     assert "attribute_updated/8/1/6/0" in _attribute_subscriptions(upstream)
     assert handler.snapshot_calls == []
 
-    known[8] = 42
-    await bridge.follow_node(8, seed_even_without_new_paths=True)
+    known["8"] = 42
+    await bridge.follow("8", seed_even_without_new_paths=True)
 
     assert [(device_id, snap.address) for device_id, snap in handler.snapshot_calls] == [(42, "8")]
     assert handler.snapshot_calls[0][1].attributes == {"0/40/1": "IKEA of Sweden", "1/6/0": False}
@@ -1069,7 +1069,7 @@ async def test_forced_seeding_still_invents_no_device_id():
     await bridge.subscribe(lambda _node_id: None, handler)
 
     upstream.add_node(FakeNode(8, {"1/6/0": True}))
-    await bridge.follow_node(8, seed_even_without_new_paths=True)
+    await bridge.follow("8", seed_even_without_new_paths=True)
 
     assert handler.snapshot_calls == []
 
@@ -1097,7 +1097,7 @@ class FailingOnceHandler(FakeHandler):
 async def test_a_snapshot_the_handler_refused_is_owed_and_caught_up_later():
     """The sequence the commissioning route had claimed for itself: if the
     seeding failed AFTER the subscribing, no later `NODE_UPDATED` helped
-    anymore - the diff was empty, `follow_node` returned before reaching the
+    anymore - the diff was empty, `follow` returned before reaching the
     handler, and the device stayed without initial values until the
     bridge's next restart.
 
@@ -1106,16 +1106,16 @@ async def test_a_snapshot_the_handler_refused_is_owed_and_caught_up_later():
     bridge, upstream = make_connected_pair([FakeNode(12, {})])
     await bridge.connect()
     handler = FailingOnceHandler()
-    await bridge.subscribe(lambda node_id: {8: 42}.get(node_id), handler)
+    await bridge.subscribe(lambda address: {"8": 42}.get(address), handler)
 
     upstream.add_node(FakeNode(8, {"0/40/1": "IKEA of Sweden", "1/6/0": True}))
     with pytest.raises(RuntimeError):
         # The exception propagates unchanged - the caller (the route)
         # decides what happens with it.
-        await bridge.follow_node(8, seed_even_without_new_paths=True)
+        await bridge.follow("8", seed_even_without_new_paths=True)
     assert handler.snapshot_calls == []
 
-    await bridge.follow_node(8)
+    await bridge.follow("8")
 
     assert [(device_id, snap.address) for device_id, snap in handler.snapshot_calls] == [(42, "8")]
 
@@ -1127,15 +1127,15 @@ async def test_a_node_the_store_did_not_know_yet_is_owed_its_snapshot():
     bridge, upstream = make_connected_pair([FakeNode(12, {})])
     await bridge.connect()
     handler = FakeHandler()
-    known: dict[int, int] = {}
+    known: dict[str, int] = {}
     await bridge.subscribe(known.get, handler)
 
     upstream.add_node(FakeNode(8, {"1/6/0": True}))
-    await bridge.follow_node(8)
+    await bridge.follow("8")
     assert handler.snapshot_calls == []
 
-    known[8] = 42
-    await bridge.follow_node(8)
+    known["8"] = 42
+    await bridge.follow("8")
 
     assert [(device_id, snap.address) for device_id, snap in handler.snapshot_calls] == [(42, "8")]
 
@@ -1149,36 +1149,36 @@ async def test_a_snapshot_that_arrived_is_not_owed_a_second_time():
     bridge, upstream = make_connected_pair([FakeNode(12, {})])
     await bridge.connect()
     handler = FakeHandler()
-    await bridge.subscribe(lambda node_id: {8: 42}.get(node_id), handler)
+    await bridge.subscribe(lambda address: {"8": 42}.get(address), handler)
 
     upstream.add_node(FakeNode(8, {"1/6/0": True}))
-    await bridge.follow_node(8)
+    await bridge.follow("8")
     assert len(handler.snapshot_calls) == 1
 
-    await bridge.follow_node(8)
+    await bridge.follow("8")
 
     assert len(handler.snapshot_calls) == 1
 
 
-async def test_follow_node_before_subscribe_does_nothing():
-    """No raising: the commissioning route calls `follow_node`
+async def test_follow_before_subscribe_does_nothing():
+    """No raising: the commissioning route calls `follow`
     unconditionally, and a startup without a subscription must not fail
     because of it."""
     bridge, upstream = make_connected_pair([FakeNode(12, {"1/6/0": True})])
     await bridge.connect()
 
-    await bridge.follow_node(12)
+    await bridge.follow("12")
 
     assert _attribute_subscriptions(upstream) == []
 
 
-async def test_follow_node_for_an_unknown_node_does_nothing():
+async def test_follow_for_an_unknown_node_does_nothing():
     bridge, _upstream = make_connected_pair([FakeNode(12, {})])
     await bridge.connect()
     handler = FakeHandler()
     await bridge.subscribe(lambda _node_id: 5, handler)
 
-    await bridge.follow_node(999)
+    await bridge.follow("999")
 
     assert handler.snapshot_calls == []
 

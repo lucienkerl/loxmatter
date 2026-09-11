@@ -221,14 +221,16 @@ class FakeMatterClient:
     API calls `BridgeMatterClient` directly, not its upstream.
     """
 
+    technology = "matter"
+
     def __init__(self) -> None:
         self.commissioned: list[str] = []
-        self.removed: list[int] = []
+        self.removed: list[str] = []
         self.datasets: list[str] = []
         self.fail_commission_with: Exception | None = None
         self.fail_remove_with: Exception | None = None
         # The case this branch is built around: matter-server restarts
-        # right after commissioning, and `follow_node` runs into
+        # right after commissioning, and `follow` runs into
         # `MatterUnavailableError` - after the device is already in the
         # fabric AND in the store.
         self.fail_follow_with: Exception | None = None
@@ -253,12 +255,12 @@ class FakeMatterClient:
         # The order of the calls: the dataset must be set BEFORE
         # commissioning, or it arrives too late for this device.
         self.order: list[str] = []
-        # The node IDs for which the route has triggered catching up on
-        # subscriptions (`BridgeMatterClient.follow_node`).
-        self.followed: list[int] = []
-        # The store `follow_node` checks against to see whether the device
+        # The addresses for which the route has triggered catching up on
+        # subscriptions (`BridgeMatterClient.follow`).
+        self.followed: list[str] = []
+        # The store `follow` checks against to see whether the device
         # was already registered at the time of the call. The `api` fixture
-        # sets it; without it, `follow_node` only records the call.
+        # sets it; without it, `follow` only records the call.
         self.store: Store | None = None
         self.followed_resolved: list[int | None] = []
         # Whether the given call forced the seeding
@@ -266,7 +268,7 @@ class FakeMatterClient:
         # incidental: by the time it catches up, the dispatch loop has long
         # since subscribed to the new node's paths - without the switch it
         # would find an empty diff and never seed (see
-        # `BridgeMatterClient.follow_node`).
+        # `BridgeMatterClient.follow`).
         self.followed_forced: list[bool] = []
         # The snapshot `commission_with_code` returns when set (category on
         # the freshly commissioned device, Task 5 device tab): the stub
@@ -296,31 +298,29 @@ class FakeMatterClient:
             available=self.available,
         )
 
-    async def remove_node(self, node_id: int) -> None:
+    async def remove(self, address: str) -> None:
         if self.fail_remove_with is not None:
             raise self.fail_remove_with
-        self.removed.append(node_id)
+        self.removed.append(address)
 
     async def set_thread_dataset(self, dataset: str) -> None:
         self.datasets.append(dataset)
         self.order.append("dataset")
         self.thread_dataset_set = True
 
-    async def follow_node(self, node_id: int, *, seed_even_without_new_paths: bool = False) -> None:
+    async def follow(self, address: str, *, seed_even_without_new_paths: bool = False) -> None:
         if self.fail_follow_with is not None:
             raise self.fail_follow_with
-        self.followed.append(node_id)
+        self.followed.append(address)
         self.followed_forced.append(seed_even_without_new_paths)
         self.order.append("follow")
-        # The actual point: the real `BridgeMatterClient.follow_node`
+        # The actual point: the real `BridgeMatterClient.follow`
         # resolves the node ID via the store and, without a match, does
         # nothing but subscribe. If it isn't resolved here, the route
         # catches up too early - the same race the NODE_ADDED event already
         # lost.
         self.followed_resolved.append(
-            None
-            if self.store is None
-            else self.store.device_id_for("matter", str(node_id))  # TRANSITIONAL (Task 5)
+            None if self.store is None else self.store.device_id_for("matter", address)
         )
 
 

@@ -60,7 +60,7 @@ from loxmatter.matter.supervisor import attach, supervise
 from loxmatter.model.locale_store import LocaleStore
 from loxmatter.model.store import Store
 from loxmatter.profiles.table import is_exportable
-from loxmatter.sources import DeviceCall
+from loxmatter.sources import Sources
 
 logger = logging.getLogger(__name__)
 
@@ -659,14 +659,9 @@ async def _run(
     passes none, e.g. a test)."""
     sender = UdpSender(miniserver, port)
     client = _build_client(url)
-    # `lambda: client.connected`, NOT `client.connected`: the second form
-    # would be a bool evaluated once, and the heartbeat would thereby hang
-    # forever on the state of the moment of startup. `mypy --strict`
-    # rejects it.
-    runtime = Runtime(store, sender, link_ok=lambda: client.connected)
-
-    async def invoke(call: DeviceCall) -> None:
-        await client.send(call)
+    sources = Sources([client])
+    runtime = Runtime(store, sender, link_ok=sources.all_connected)
+    invoke = sources.send
 
     supervisor_task: asyncio.Task[None] | None = None
     try:
