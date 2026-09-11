@@ -1428,7 +1428,9 @@ function app() {
     // Important #1) - used by the export tab's group table, never by the
     // group tile in the devices grid: that tile deliberately shows no
     // export footer at all (see the group-tile markup comment in
-    // `index.html`), a group has no export-changed pill to keep in sync.
+    // `index.html`), so the export tab's group table (`index.html`) is
+    // where a group's own "changed since export" pill lives instead -
+    // the tile has none to keep in sync with this.
     groupExportedAtFor(groupId) {
       const status = this.groupExportStatusFor(groupId);
       return status ? status.exported_at : null;

@@ -1803,7 +1803,23 @@
                     <td x-text="group.label"></td>
                     <td class="key" x-text="group.vo_filename"></td>
                     <td x-text="group.commands"></td>
-                    <td x-text="formatTimestamp(groupExportedAtFor(group.group_id))"></td>
+                    <!-- The group tile in the devices grid deliberately
+                         carries no export footer of its own (see the
+                         group-tile markup comment further up), so this
+                         cell is a group's ONLY home for "changed since
+                         export" - unlike a device, whose pill also lives
+                         on its tile (`.device-foot`, further up). Same
+                         order, same wording, same pill classes as there:
+                         timestamp first, pill right after, reusing
+                         `web.devices.changed_since_export` rather than a
+                         second string for the same fact. -->
+                    <td>
+                      <span x-text="formatTimestamp(groupExportedAtFor(group.group_id))"></span>
+                      <span class="status-pill warn" x-show="groupChangedSinceExport(group.group_id)">
+                        <svg class="icon"><use href="#i-warn"></use></svg>
+                        <span x-text="t('web.devices.changed_since_export')"></span>
+                      </span>
+                    </td>
                   </tr>
                 </template>
               </tbody>

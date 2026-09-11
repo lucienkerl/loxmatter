@@ -37,7 +37,7 @@ from xml.etree import ElementTree
 
 import httpx2 as httpx
 import pytest
-from conftest import load_snapshot
+from conftest import authenticate, load_snapshot
 
 from loxmatter.api.diagnostics import FABRIC_BACKUP_NAME
 from loxmatter.api.export import ARCHIVE_NAME
@@ -4826,6 +4826,78 @@ async def test_the_changed_pill_now_lives_in_the_tile_footer(api):
     pill_tag = markup[pill_open : markup.index(">", pill_open)]
     assert "changedSinceExport(device.id)" in pill_tag
     assert "isOnline" not in pill_tag
+
+
+async def test_the_group_changed_pill_is_wired_into_the_export_tabs_group_table(api):
+    """Item 3 of the final polish pass (2026-09-11): `groupChangedSinceExport`
+    used to be defined and called by nothing. The group tile in the
+    devices grid deliberately carries no export footer of its own (see
+    the group-tile markup comment further up in `index.html`), so the
+    export tab's group table is a group's only home for "changed since
+    export" at all - this proves the DELIVERED markup actually wires that
+    row to it, with the same pill classes (`status-pill warn`), the same
+    icon (`#i-warn`), and the same wording key
+    (`web.devices.changed_since_export`, reused rather than a second
+    string invented for groups) as the device tile's own pill - not a
+    copy-pasted `changedSinceExport(device.id)` left over from that
+    tile."""
+    client, _, _ = api
+    markup = _without_comments((await client.get("/")).text)
+    groups_heading_pos = markup.index("t('web.export.groups_heading')")
+    pill_pos = markup.index("x-text=\"t('web.devices.changed_since_export')\"", groups_heading_pos)
+    pill_open = markup.rindex('<span class="status-pill warn"', groups_heading_pos, pill_pos)
+    pill_tag = markup[pill_open : markup.index(">", pill_open)]
+    assert "groupChangedSinceExport(group.group_id)" in pill_tag
+
+    # Same subject-predicate order as the device tile's footer: the
+    # timestamp is named first, the pill immediately after.
+    timestamp_pos = markup.rindex(
+        "groupExportedAtFor(group.group_id)", groups_heading_pos, pill_open
+    )
+    assert timestamp_pos < pill_open
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+async def test_a_changed_group_shows_the_marker_a_re_exported_one_does_not(api):
+    """The behavioural counterpart of the markup-wiring test above: runs
+    the REAL `updated_at`/`exported_at` comparison end to end -
+    `Store.changed_since_export` (already exhaustively exercised in
+    `test_export_api.py`) through `GET /api/export/status`, shaped
+    exactly as `loadExportStatus()` shapes `exportStatusByGroup` in
+    `app.js` - into the real `groupChangedSinceExport` running in node.
+    Not a hand-typed status object, which could only ever prove agreement
+    with itself, and not a second implementation of the comparison either
+    - it is the same one `_group_changed_since_export` (api/export.py)
+    calls."""
+    client, store, device_id = api
+    await authenticate(store, client)
+    group = store.create_group("Solo", [device_id])
+
+    # Exported once, nothing has touched `updated_at` since: unchanged.
+    download = await client.get("/api/export/download?bridge_ip=192.168.1.50")
+    assert download.status_code == 200
+    status = (await client.get("/api/export/status")).json()
+    unchanged_entry = next(e for e in status if e.get("group_id") == group.id)
+    assert unchanged_entry["changed_since_export"] is False
+
+    # `set_group_members` stamps `updated_at` (design 4.3: the
+    # intersection depends on who the members are) - later than the
+    # `exported_at` set above, so the group now reads as changed.
+    store.set_group_members(group.id, [device_id])
+    status = (await client.get("/api/export/status")).json()
+    changed_entry = next(e for e in status if e.get("group_id") == group.id)
+    assert changed_entry["changed_since_export"] is True
+
+    values = _app_state(
+        f"""
+        state.exportStatusByGroup = {{ {unchanged_entry["group_id"]}: {json.dumps(unchanged_entry)} }};
+        const unchanged = state.groupChangedSinceExport({unchanged_entry["group_id"]});
+        state.exportStatusByGroup = {{ {changed_entry["group_id"]}: {json.dumps(changed_entry)} }};
+        const changed = state.groupChangedSinceExport({changed_entry["group_id"]});
+        console.log(JSON.stringify({{ unchanged, changed }}));
+        """
+    )
+    assert values == {"unchanged": False, "changed": True}
 
 
 async def test_command_row_wrappers_do_not_stack_their_sibling_margin(api):
