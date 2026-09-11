@@ -4853,23 +4853,32 @@ async def test_reconcile_room_filter_falls_back_to_all_when_the_filtered_room_va
     rename_body = script[rename_start:rename_end]
     assert "this.reconcileRoomFilter();" in rename_body
 
-    if NODE is not None:
-        values = _app_state(
-            """
-            const calls = [];
-            state.reconcileRoomFilter = () => calls.push("reconcile");
-            state.request = async () => ({ id: 1, room: "Kitchen" });
-            (async () => {
-              await state.saveRoom({ id: 1, label: "Lamp" }, "Kitchen");
-              await state.saveGroupRoom({ id: 1, label: "Ceiling" }, "Kitchen");
-              console.log(JSON.stringify({ calls }));
-            })();
-            """
-        )
-        assert values["calls"] == ["reconcile", "reconcile"], (
-            "saveRoom and saveGroupRoom must both call reconcileRoomFilter() "
-            "after their write, device and group alike"
-        )
+    # The room-save half of this guard runs the real code in node, and it
+    # must NOT become a silent no-op when node is missing. It replaced a
+    # source-text assertion that ran everywhere, so `if NODE is not None`
+    # would leave the 2026-09-05 finding's only remaining guard inert while
+    # the test still reported green - which is precisely how that finding
+    # would come back unnoticed. A skip says so out loud; the assertions
+    # above it have already run by this point.
+    if NODE is None:
+        pytest.skip("node is required for the saveRoom/saveGroupRoom half of this guard")
+
+    values = _app_state(
+        """
+        const calls = [];
+        state.reconcileRoomFilter = () => calls.push("reconcile");
+        state.request = async () => ({ id: 1, room: "Kitchen" });
+        (async () => {
+          await state.saveRoom({ id: 1, label: "Lamp" }, "Kitchen");
+          await state.saveGroupRoom({ id: 1, label: "Ceiling" }, "Kitchen");
+          console.log(JSON.stringify({ calls }));
+        })();
+        """
+    )
+    assert values["calls"] == ["reconcile", "reconcile"], (
+        "saveRoom and saveGroupRoom must both call reconcileRoomFilter() "
+        "after their write, device and group alike"
+    )
 
 
 async def test_the_command_bar_distinguishes_loading_from_genuinely_empty(api):
