@@ -2938,3 +2938,238 @@ footer.hint-block {
     padding-left: 0;
   }
 }
+
+/* The group dialog's member picker (design canvas, direction B, chosen on
+ * 2026-09-11). One section per room in the room chips' order; a device of
+ * another kind stays in its room once the kind is fixed, greyed out, with its
+ * kind where the check box would be - removing it would hide the one thing
+ * that just happened. Rows are 44px tap targets: this dialog gets used on a
+ * phone as often as at a desk. */
+.group-dialog-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+  margin-top: 0.9rem;
+}
+
+.group-dialog-fields label {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+/* `input[type="text"]` further up sizes itself to its content; inside a grid
+ * cell the field fills the cell instead. */
+.group-dialog-fields input {
+  width: 100%;
+}
+
+.group-members-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.5rem;
+  min-height: 1.9rem;
+  margin: 0.9rem 0 0.5rem;
+}
+
+.group-members-head .field-label {
+  margin-bottom: 0;
+}
+
+.group-members-status {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.5rem;
+  margin-left: auto;
+}
+
+/* `.status-pill`'s metrics in the type badge's colours: it names a kind, not
+ * a state. */
+.group-kind-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.28rem 0.65rem;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  background: var(--type-bg);
+  color: var(--type-fg);
+}
+
+.group-clear {
+  background: none;
+  border: 1px solid transparent;
+  color: var(--text-muted);
+  padding: 0.1rem 0.25rem;
+  font-size: 0.82rem;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.group-clear:hover {
+  color: var(--text);
+}
+
+.group-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 0.25rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.group-picker-room {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+/* `.tile-menu-heading`'s type, so a room reads the same here as in a tile's
+ * room menu. */
+.group-picker-room-head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  margin: 0;
+  padding: 0.5rem 0.5rem 0.2rem;
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+}
+
+.group-picker-room-count {
+  font-size: 0.72rem;
+  letter-spacing: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.group-candidate {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  min-height: 44px;
+  padding: 0.3rem 0.5rem;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+/* Hover only where there is a pointer: on a touch screen `:hover` sticks to
+ * the last tapped row and reads like a second selection. */
+@media (hover: hover) {
+  .group-candidate:not(.is-disabled):hover {
+    background: var(--bg);
+  }
+}
+
+.group-candidate-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.group-candidate.is-selected .group-candidate-name {
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.group-candidate.is-disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/* The real checkbox, visually hidden but still focusable and still the
+ * control a screen reader announces; the `<label>` around the row makes the
+ * whole row toggle it. */
+.group-candidate-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.group-check {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border: 1.5px solid var(--text-muted);
+  border-radius: 4px;
+  color: var(--accent-contrast);
+}
+
+.group-check .icon {
+  width: 14px;
+  height: 14px;
+  stroke-width: 2.6;
+  visibility: hidden;
+}
+
+.group-candidate-input:checked + .group-check {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.group-candidate-input:checked + .group-check .icon {
+  visibility: visible;
+}
+
+.group-candidate-input:focus-visible + .group-check {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* `.room-chip`'s shape: the kind of a device that cannot join, where its
+ * check box would be. */
+.group-kind-tag {
+  flex: none;
+  padding: 0.15rem 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text-muted);
+  font-size: 0.8rem;
+}
+
+/* Sticky at the bottom of the scrolling dialog (`.signals-modal` is the
+ * scroll container): with a long device list on a phone the button would
+ * otherwise sit below the fold. */
+.group-dialog-foot {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem 0.75rem;
+  margin-top: 1rem;
+  padding: 0.75rem 0;
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.group-dialog-foot .hint {
+  flex: 1 1 12rem;
+}
+
+/* The dialog breakpoint the signals grid already uses. Two ~150px columns on
+ * a 375px screen leave no room to type a room name, and the button gets the
+ * full width as a comfortable tap target. */
+@media (max-width: 640px) {
+  .group-dialog-fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .group-dialog-foot .primary {
+    flex: 1 1 100%;
+    min-height: 44px;
+  }
+}

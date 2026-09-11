@@ -8389,3 +8389,238 @@ async def test_the_seed_attribution_only_appears_where_there_is_a_value(api):
     for condition, draft in zip(shows, ("percent", "kelvin", "hue")):
         assert "controlSeedLabel(controlModalDevice)" in condition
         assert f"controlDrafts.{draft} !== undefined" in condition
+
+
+# --- Group dialog: the member picker grouped by room (design canvas, B) -----
+
+
+_PICKER_DEVICES = """
+  state.devices = [
+    { id: 1, label: "Pendant", room: "Dining", category: "light", online: true },
+    { id: 2, label: "Ceiling", room: "Kitchen", category: "light", online: true },
+    { id: 3, label: "Coffee plug", room: "Kitchen", category: "socket", online: true },
+    { id: 4, label: "Terrace", room: null, category: "light", online: true },
+    { id: 5, label: "Armchair", room: "Living", category: "light", online: true },
+  ];
+  state.groups = [
+    { id: 7, label: "Lights", room: null, category: "light",
+      member_ids: [2], member_labels: ["Ceiling"], command_count: 2 },
+  ];
+"""
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_the_picker_groups_candidates_by_room_with_no_room_last():
+    """The picker is sorted the way the room chips are: named rooms
+    alphabetically, "No room" at the very end - the same order a user
+    already reads above the tile grid, so a lamp is found where it hangs.
+    Every candidate appears in exactly one section, in label order."""
+    values = _app_state(
+        _PICKER_DEVICES
+        + """
+        console.log(JSON.stringify({ sections: state.groupCandidateSections().map((s) => ({
+          key: s.key, label: s.label, ids: s.devices.map((d) => d.id),
+        })) }));
+        """,
+        translations={"web.devices.room_none": "No room"},
+    )
+
+    assert values["sections"] == [
+        {"key": "Dining", "label": "Dining", "ids": [1]},
+        {"key": "Kitchen", "label": "Kitchen", "ids": [2, 3]},
+        {"key": "Living", "label": "Living", "ids": [5]},
+        {"key": "", "label": "No room", "ids": [4]},
+    ]
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_a_pick_greys_out_other_kinds_but_keeps_them_in_place():
+    """The user's explicit call on the design canvas: once the first
+    device is picked, devices of another kind must NOT disappear from the
+    list - they stay in their room, greyed out and unpickable, so it is
+    visible what just happened. A picker that filtered them out would
+    pass every "is it disabled" test and still break exactly that."""
+    values = _app_state(
+        _PICKER_DEVICES
+        + """
+        state.toggleGroupMember(state.devices[1]);
+        const sections = state.groupCandidateSections();
+        const kitchen = sections.find((s) => s.key === "Kitchen");
+        console.log(JSON.stringify({
+          everyId: sections.flatMap((s) => s.devices.map((d) => d.id)).sort(),
+          kitchenIds: kitchen.devices.map((d) => d.id),
+          plugDisabled: state.groupCandidateState(state.devices[2]).disabled,
+          lampDisabled: state.groupCandidateState(state.devices[0]).disabled,
+        }));
+        """,
+        translations={"web.devices.room_none": "No room"},
+    )
+
+    assert values["everyId"] == [1, 2, 3, 4, 5]
+    assert values["kitchenIds"] == [2, 3]
+    assert values["plugDisabled"] is True
+    assert values["lampDisabled"] is False
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_clearing_the_members_unlocks_a_new_group_but_not_an_existing_one():
+    """Clearing empties the selection. For a NEW group that also lifts the
+    kind lock, because the lock only ever came from the first pick. For an
+    EXISTING group it must not: its kind is stored (design 2), and the
+    server refuses a foreign member for an emptied group too - unlocking
+    here would turn a greyed-out entry into a 400 after saving.
+
+    The room follows the same rule as picking: an untouched, prefilled
+    room goes back to empty with the members; a typed room stays."""
+    values = _app_state(
+        _PICKER_DEVICES
+        + """
+        const out = {};
+        state.toggleGroupMember(state.devices[1]);
+        out.roomBefore = state.groupDraft.room;
+        state.clearGroupMembers();
+        out.createIds = [...state.groupDraft.memberIds];
+        out.createCategory = state.groupDraftCategory();
+        out.createRoom = state.groupDraft.room;
+
+        state.toggleGroupMember(state.devices[1]);
+        state.groupDraft.room = "Ground floor";
+        state.groupDraft.roomTouched = true;
+        state.clearGroupMembers();
+        out.typedRoom = state.groupDraft.room;
+
+        state.groupDraft = { id: 7, label: "Lights", room: "", memberIds: [2],
+                             roomTouched: true };
+        state.clearGroupMembers();
+        out.editIds = [...state.groupDraft.memberIds];
+        out.editCategory = state.groupDraftCategory();
+        console.log(JSON.stringify(out));
+        """
+    )
+
+    assert values["roomBefore"] == "Kitchen"
+    assert values["createIds"] == []
+    assert values["createCategory"] is None
+    assert values["createRoom"] == ""
+    assert values["typedRoom"] == "Ground floor"
+    assert values["editIds"] == []
+    assert values["editCategory"] == "light"
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_the_kind_summary_names_the_locked_kind_and_the_count():
+    """The pill above the list says which kind the group is locked to and
+    how many devices are picked. Nothing to say while a new group is still
+    open; an emptied EXISTING group still names its stored kind."""
+    values = _app_state(
+        _PICKER_DEVICES
+        + """
+        const out = { none: state.groupKindSummary() };
+        state.toggleGroupMember(state.devices[1]);
+        state.toggleGroupMember(state.devices[0]);
+        out.two = state.groupKindSummary();
+        state.groupDraft = { id: 7, label: "Lights", room: "", memberIds: [],
+                             roomTouched: true };
+        out.editEmptied = state.groupKindSummary();
+        console.log(JSON.stringify(out));
+        """,
+        translations={
+            "web.devices.category.light": "Light",
+            "web.groups.kind_selected": "{category} · {count} selected",
+        },
+    )
+
+    assert values["none"] == ""
+    assert values["two"] == "Light · 2 selected"
+    assert values["editEmptied"] == "Light · 0 selected"
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_the_create_button_says_why_it_is_disabled():
+    """A disabled button with no reason is a silent failure (Spec 8.1).
+    The reason covers all four states of a new group. Editing an existing
+    group may save any member list, including an empty one, so there is
+    never a reason there - and the button's `disabled` reads this same
+    helper, so the text and the state cannot disagree."""
+    values = _app_state(
+        _PICKER_DEVICES
+        + """
+        const out = {};
+        out.both = state.groupDialogBlockedReason();
+        state.groupDraft.label = "Kitchen";
+        out.member = state.groupDialogBlockedReason();
+        state.toggleGroupMember(state.devices[1]);
+        out.ready = state.groupDialogBlockedReason();
+        state.groupDraft.label = "   ";
+        out.name = state.groupDialogBlockedReason();
+        state.groupDraft = { id: 7, label: "", room: "", memberIds: [], roomTouched: true };
+        out.editing = state.groupDialogBlockedReason();
+        console.log(JSON.stringify(out));
+        """,
+        translations={
+            "web.groups.blocked_name_and_member": "Name and at least one device missing",
+            "web.groups.blocked_name": "Name missing",
+            "web.groups.blocked_member": "Pick at least one device",
+        },
+    )
+
+    assert values["both"] == "Name and at least one device missing"
+    assert values["member"] == "Pick at least one device"
+    assert values["ready"] == ""
+    assert values["name"] == "Name missing"
+    assert values["editing"] == ""
+
+
+def _css_media_blocks(css: str, query: str) -> list[str]:
+    """The bodies of every `@media <query> { ... }` block, brace-matched.
+    All of them, not the first: the stylesheet has several blocks with the
+    same query, and a lookup that stopped at the first would miss a rule
+    appended to a later one."""
+    blocks: list[str] = []
+    start = 0
+    head = f"@media {query}"
+    while (at := css.find(head, start)) != -1:
+        open_at = css.index("{", at)
+        depth, i = 0, open_at
+        while True:
+            if css[i] == "{":
+                depth += 1
+            elif css[i] == "}":
+                depth -= 1
+                if depth == 0:
+                    break
+            i += 1
+        blocks.append(css[open_at + 1 : i])
+        start = i
+    return blocks
+
+
+async def test_the_group_picker_markup_is_delivered_and_stacks_on_a_phone(api):
+    """Delivery only - the browser harness is what proves the bindings run.
+    The rows come from the room sections, carry the lock reason as their
+    tooltip (it moved out of the row text, it did not go away), use the
+    check mark from the sprite, and the button's `disabled` reads the same
+    helper as the sentence beside it.
+
+    The phone half: at the dialog breakpoint the name and room fields
+    stack into ONE column. Two columns of ~150px each on a 375px screen
+    leave no room to type a room name."""
+    client, _, _ = api
+    markup = _without_comments((await client.get("/")).text)
+    start = markup.index('x-ref="groupDialog"')
+    dialog = markup[start : markup.index("</dialog>", start)]
+
+    assert "groupCandidateSections()" in dialog
+    assert ':title="groupCandidateState(device).reason' in dialog
+    assert "#i-check" in dialog
+    assert '<symbol id="i-check"' in markup
+    assert 'class="group-dialog-fields"' in dialog
+    assert "groupDialogBlockedReason()" in dialog
+    assert ':disabled="groupDialogBusy || groupDialogBlockedReason()' in dialog
+
+    css = (await client.get("/static/style.css")).text
+    phone = [b for b in _css_media_blocks(css, "(max-width: 640px)") if ".group-dialog-fields" in b]
+    assert phone, "no 640px rule stacks the group dialog fields"
+    rule = phone[0][phone[0].index(".group-dialog-fields") :]
+    rule = rule[: rule.index("}")]
+    assert "grid-template-columns: minmax(0, 1fr)" in rule

@@ -265,6 +265,17 @@ function t(key, values = {}) {
 }
 
 /**
+ * Room keys in the order every room list in this UI uses: named rooms
+ * alphabetically, "" ("No room") last. One rule for the room chips and the
+ * group dialog's member picker - two lists a user sees on the same screen,
+ * which would otherwise be free to disagree about where a room sits.
+ */
+function sortRoomKeys(keys) {
+  const named = keys.filter((key) => key !== "").sort((a, b) => a.localeCompare(b));
+  return keys.includes("") ? [...named, ""] : named;
+}
+
+/**
  * Uploads a file via multipart/form-data and expects JSON back - a
  * dedicated function instead of `requestJson`, because a file upload is
  * not a `JSON.stringify` body and `Content-Type` must be left to the
@@ -1602,14 +1613,11 @@ function app() {
         const key = this.roomKeyOf(subject);
         counts.set(key, (counts.get(key) || 0) + 1);
       }
-      const chips = [...counts.keys()]
-        .filter((key) => key !== "")
-        .sort((a, b) => a.localeCompare(b))
-        .map((key) => ({ key, label: key, count: counts.get(key) }));
-      if (counts.has("")) {
-        chips.push({ key: "", label: t("web.devices.room_none"), count: counts.get("") });
-      }
-      return chips;
+      return sortRoomKeys([...counts.keys()]).map((key) => ({
+        key,
+        label: key === "" ? t("web.devices.room_none") : key,
+        count: counts.get(key),
+      }));
     },
 
     // The bar does not show at all as long as not a single device or group
@@ -2084,6 +2092,81 @@ function app() {
      * lamp someone opened the dialog to add. */
     groupCandidates() {
       return [...this.devices].sort((a, b) => a.label.localeCompare(b.label));
+    },
+
+    /** The candidates by room, in the room chips' order (`sortRoomKeys`), so
+     * a lamp is found where it hangs. Every candidate sits in exactly one
+     * section, in label order.
+     *
+     * Deliberately NOT filtered by the draft's kind. Once the first pick
+     * fixes it, devices of another kind stay in their room, greyed out and
+     * unpickable (`groupCandidateState`) - decided on the design canvas,
+     * because a list that removed them would hide the one thing that had
+     * just happened. */
+    groupCandidateSections() {
+      const byRoom = new Map();
+      for (const device of this.groupCandidates()) {
+        const key = this.roomKeyOf(device);
+        if (!byRoom.has(key)) {
+          byRoom.set(key, []);
+        }
+        byRoom.get(key).push(device);
+      }
+      return sortRoomKeys([...byRoom.keys()]).map((key) => ({
+        key,
+        label: key === "" ? t("web.devices.room_none") : key,
+        devices: byRoom.get(key),
+      }));
+    },
+
+    /** The pill above the list: the kind the draft is locked to and how many
+     * devices are picked. Empty while a NEW group has no kind yet; an emptied
+     * EXISTING group still names its stored kind (`groupDraftCategory`). */
+    groupKindSummary() {
+      const category = this.groupDraftCategory();
+      if (category === null) {
+        return "";
+      }
+      return t("web.groups.kind_selected", {
+        category: this.categoryLabel({ category }),
+        count: this.groupDraft.memberIds.length,
+      });
+    },
+
+    /** Empties the selection. For a new group that also lifts the kind lock,
+     * which only ever came from the first pick; an existing group keeps its
+     * stored kind, because the server refuses a foreign member for an
+     * emptied group too (design 2). The room follows the same rule as a
+     * pick: a prefilled room follows the members, a typed one stays. */
+    clearGroupMembers() {
+      this.groupDraft.memberIds = [];
+      if (!this.groupDraft.roomTouched) {
+        this.groupDraft.room = this.groupRoomSuggestion();
+      }
+    },
+
+    /** Why the save button is disabled, or "" when it is not. The button's
+     * `disabled` reads this same helper, so the sentence beside it and the
+     * state cannot disagree - a disabled button that says nothing is the
+     * silent failure Spec 8.1 is about. Editing an existing group may save
+     * any member list, including an empty one, so there is never a reason
+     * there. */
+    groupDialogBlockedReason() {
+      if (this.groupDraft.id !== null) {
+        return "";
+      }
+      const hasLabel = this.groupDraft.label.trim() !== "";
+      const hasMember = this.groupDraft.memberIds.length > 0;
+      if (!hasLabel && !hasMember) {
+        return t("web.groups.blocked_name_and_member");
+      }
+      if (!hasLabel) {
+        return t("web.groups.blocked_name");
+      }
+      if (!hasMember) {
+        return t("web.groups.blocked_member");
+      }
+      return "";
     },
 
     /**
