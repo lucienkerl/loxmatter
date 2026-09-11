@@ -543,8 +543,14 @@
         <p x-show="devicesError" x-cloak class="banner danger" x-text="devicesError"></p>
         <p x-show="deviceActionError" x-cloak class="banner danger" x-text="deviceActionError"></p>
 
+        <!-- Group-aware (fix 2026-09-11): a group survives to zero
+             members, so removing the last device used to leave group
+             tiles in the grid under a hint claiming there are none - every
+             neighbouring condition in this change (the room bar above,
+             `visibleGroups()`) already counts groups, this one had been
+             missed. -->
         <p
-          x-show="devices.length === 0 && !devicesError"
+          x-show="devices.length === 0 && groups.length === 0 && !devicesError"
           class="hint"
           x-text="t('web.devices.empty')"
         ></p>

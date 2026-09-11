@@ -1201,6 +1201,9 @@ web.groups.seed_from:
 web.groups.list_load_error:
   en: "Could not load groups: {message}"
   de: "Gruppen konnten nicht geladen werden: {message}"
+web.groups.delete_error:
+  en: "Could not delete group: {message}"
+  de: "Gruppe konnte nicht gelöscht werden: {message}"
 
 # --- web.signals — Signalansicht ---
 web.signals.key_hint:

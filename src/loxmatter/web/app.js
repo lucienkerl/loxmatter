@@ -1754,20 +1754,37 @@ function app() {
     // `value` is already in the same encoding as `roomFilter`: "" means
     // "no room", and that is exactly what the API also expects for
     // "remove room". No conversion at this point.
-    async saveRoom(device, value) {
-      this.deviceActionError = null;
+    //
+    // Shared with `saveGroupRoom` - the two used to be near-verbatim
+    // copies (collection segment, error field, that is genuinely all that
+    // differs), and the copy had already drifted once: `saveGroupRoom`
+    // re-added its OWN `finally { reconcileRoomFilter() }` instead of
+    // reusing this one (review finding, 2026-09-11). One implementation
+    // means the next fix to this write path only has to be made here.
+    // `collection` is the URL segment ("devices" or "groups"), `errorField`
+    // the state property a failure is shown through (`deviceActionError`
+    // or `groupActionError`) - both callers pass their own literal
+    // strings, not a value computed from `entity`, so this stays a
+    // two-line diff to read at each call site.
+    async saveEntityRoom(entity, collection, value, errorField) {
+      this[errorField] = null;
       try {
-        const updated = await this.request("PATCH", `/api/devices/${device.id}`, {
+        const updated = await this.request("PATCH", `/api/${collection}/${entity.id}`, {
           room: value,
         });
-        Object.assign(device, updated);
+        Object.assign(entity, updated);
       } catch (error) {
-        this.deviceActionError = t("web.devices.room_save_error", { message: error.message });
+        this[errorField] = t("web.devices.room_save_error", { message: error.message });
       } finally {
         // Even on failure: if a failed write leaves a room empty, the
         // filter must not stay stuck on a room that no longer exists.
+        // Applies to both kinds of tile - `roomChips()` counts groups too.
         this.reconcileRoomFilter();
       }
+    },
+
+    async saveRoom(device, value) {
+      await this.saveEntityRoom(device, "devices", value, "deviceActionError");
     },
 
     // Finding 3 (review from 2026-09-05): a native `<details>` does not
@@ -1820,18 +1837,36 @@ function app() {
       if (hadFocus) menu.querySelector("summary").focus({ preventScroll: true });
     },
 
-    beginNewRoom(device) {
-      this.newRoomFor = device.id;
+    // Shared with `beginNewGroupRoom`/`commitNewGroupRoom`: `key` is a
+    // device id for a device tile, a group's SUBJECT string ("g3") for a
+    // group tile (see `beginNewGroupRoom`'s own comment for why a bare
+    // group id would not do - `newRoomFor` is the one field both kinds of
+    // tile share).
+    beginNewRoomAt(key) {
+      this.newRoomFor = key;
       this.newRoomDraft = "";
     },
 
-    async commitNewRoom(device) {
+    beginNewRoom(device) {
+      this.beginNewRoomAt(device.id);
+    },
+
+    // Shared with `commitNewGroupRoom`: reads the typed name and closes
+    // the field immediately either way, then saves through whichever of
+    // `saveRoom`/`saveGroupRoom` the caller binds as `save` - so this
+    // function does not itself need to know which kind of tile it runs
+    // for.
+    async commitNewRoomWith(save) {
       const name = this.newRoomDraft.trim();
       this.newRoomFor = null;
       this.newRoomDraft = "";
       if (name) {
-        await this.saveRoom(device, name);
+        await save(name);
       }
+    },
+
+    async commitNewRoom(device) {
+      await this.commitNewRoomWith((name) => this.saveRoom(device, name));
     },
 
     // Renaming happens INLINE, like every other edit in this UI (device
@@ -1904,37 +1939,19 @@ function app() {
      * device's (`saveLabel`) - no kebab entry and no dialog for it. The
      * group tile is the device tile, and an edit that works one way on one
      * tile and another way on its neighbour would be the gratuitous
-     * difference the design warns against. */
+     * difference the design warns against. Thin wrapper around the shared
+     * `saveEntityLabel` (see there, next to `saveLabel`) - the group and
+     * device paths differ only in the draft map, the collection segment,
+     * and which field carries a failure. */
     async saveGroupLabel(group) {
-      const label = (this.groupLabelDrafts[group.id] ?? group.label).trim();
-      if (!label || label === group.label) {
-        return;
-      }
-      this.groupActionError = null;
-      try {
-        const updated = await this.request("PATCH", `/api/groups/${group.id}`, { label });
-        Object.assign(group, updated);
-      } catch (error) {
-        this.groupActionError = t("web.devices.label_save_error", { message: error.message });
-      }
+      await this.saveEntityLabel(group, this.groupLabelDrafts, "groups", "groupActionError");
     },
 
     /** The group's own room, same encoding as a device's: "" is the value
-     * the API takes for "remove the room" (design 4.1). */
+     * the API takes for "remove the room" (design 4.1). Thin wrapper around
+     * the shared `saveEntityRoom` (see there, next to `saveRoom`). */
     async saveGroupRoom(group, value) {
-      this.groupActionError = null;
-      try {
-        const updated = await this.request("PATCH", `/api/groups/${group.id}`, { room: value });
-        Object.assign(group, updated);
-      } catch (error) {
-        this.groupActionError = t("web.devices.room_save_error", { message: error.message });
-      } finally {
-        // Same reason as in `saveRoom`: a write that empties the filtered
-        // room must not leave the filter pointing at a chip that is gone.
-        // Since `roomChips()` counts groups, moving the last GROUP out of a
-        // room can do that too.
-        this.reconcileRoomFilter();
-      }
+      await this.saveEntityRoom(group, "groups", value, "groupActionError");
     },
 
     /** `newRoomFor` holds a device id for a device tile and a group's
@@ -1943,19 +1960,17 @@ function app() {
      * open at a time, see index.html), and a group id and a device id are
      * both small integers: with bare ids, opening the box on group 4 would
      * open it on device 4 as well. The subject string cannot collide,
-     * because every comparison in the markup uses `===`. */
+     * because every comparison in the markup uses `===`. Thin wrapper
+     * around the shared `beginNewRoomAt` (see there, next to
+     * `beginNewRoom`). */
     beginNewGroupRoom(group) {
-      this.newRoomFor = this.groupSubject(group);
-      this.newRoomDraft = "";
+      this.beginNewRoomAt(this.groupSubject(group));
     },
 
+    /** Thin wrapper around the shared `commitNewRoomWith` (see there, next
+     * to `commitNewRoom`), bound to `saveGroupRoom` instead of `saveRoom`. */
     async commitNewGroupRoom(group) {
-      const name = this.newRoomDraft.trim();
-      this.newRoomFor = null;
-      this.newRoomDraft = "";
-      if (name) {
-        await this.saveGroupRoom(group, name);
-      }
+      await this.commitNewRoomWith((name) => this.saveGroupRoom(group, name));
     },
 
     /** The confirmation names what stops resolving afterwards: the group's
@@ -1987,7 +2002,11 @@ function app() {
         }
         this.reconcileRoomFilter();
       } catch (error) {
-        this.groupActionError = t("web.devices.remove_error", { message: error.message });
+        // NOT `web.devices.remove_error` ("Could not remove device") - that
+        // text was a copy-paste leftover from `removeDevice` and told the
+        // user a DEVICE could not be removed on a failed GROUP delete, in
+        // both languages (review finding, 2026-09-11).
+        this.groupActionError = t("web.groups.delete_error", { message: error.message });
       }
     },
 
@@ -2222,18 +2241,34 @@ function app() {
       return live === undefined ? signal.value : live;
     },
 
-    async saveLabel(device) {
-      const label = (this.labelDrafts[device.id] ?? device.label).trim();
-      if (!label || label === device.label) {
+    // Shared with `saveGroupLabel` - the two used to be near-verbatim
+    // copies (collection segment, draft map, error field, that is all
+    // that differs). `collection` is the URL segment ("devices" or
+    // "groups"), `errorField` the state property a failure is shown
+    // through (`deviceActionError` or `groupActionError`); both callers
+    // pass their own literal strings, not a value computed from `entity`.
+    //
+    // `saveRoom`/`saveGroupRoom` hold a reference to exactly the entity
+    // object passed in and only write into it after the `await`
+    // (`Object.assign`, see the comment on `commissionDevice`'s
+    // `existingIndex` branch for why that matters) - this function keeps
+    // that guarantee.
+    async saveEntityLabel(entity, drafts, collection, errorField) {
+      const label = (drafts[entity.id] ?? entity.label).trim();
+      if (!label || label === entity.label) {
         return;
       }
-      this.deviceActionError = null;
+      this[errorField] = null;
       try {
-        const updated = await this.request("PATCH", `/api/devices/${device.id}`, { label });
-        Object.assign(device, updated);
+        const updated = await this.request("PATCH", `/api/${collection}/${entity.id}`, { label });
+        Object.assign(entity, updated);
       } catch (error) {
-        this.deviceActionError = t("web.devices.label_save_error", { message: error.message });
+        this[errorField] = t("web.devices.label_save_error", { message: error.message });
       }
+    },
+
+    async saveLabel(device) {
+      await this.saveEntityLabel(device, this.labelDrafts, "devices", "deviceActionError");
     },
 
     // The confirmation names the objects that get orphaned (Spec 9, line

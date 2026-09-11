@@ -3310,6 +3310,7 @@ async def test_the_bridge_ip_hint_splits_prefix_link_suffix_without_collapsing_t
     assert 'href="#/settings"' in devices_markup
 
 
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
 async def test_the_device_list_dynamic_errors_and_toasts_are_translated(api):
     """Task 11, step 4: the load/save/remove errors, the export hints
     (`exportHintFor`), and the two command toasts of the device list now
@@ -3334,10 +3335,27 @@ async def test_the_device_list_dynamic_errors_and_toasts_are_translated(api):
         in script
     )
     assert "Zuletzt exportiert am" not in script
-    assert (
-        'this.deviceActionError = t("web.devices.label_save_error", { message: error.message });'
-        in script
+
+    # `saveLabel` shares its write path with `saveGroupLabel` since the fix
+    # of 2026-09-11 (`saveEntityLabel`) - the error field it writes into is
+    # now a runtime parameter (`this[errorField] = ...`), so the OLD literal
+    # text `this.deviceActionError = t("web.devices.label_save_error", ...)`
+    # no longer appears anywhere in the script, on purpose. Running the real
+    # `saveLabel` proves the same thing a source-text search used to: a
+    # failed save shows the translated `label_save_error` text through
+    # `deviceActionError`, not the German original.
+    values = _app_state(
+        """
+        state.request = async () => { throw new Error("boom"); };
+        state.labelDrafts[1] = "New name";
+        (async () => {
+          await state.saveLabel({ id: 1, label: "Lamp" });
+          console.log(JSON.stringify({ error: state.deviceActionError }));
+        })();
+        """,
+        translations={"web.devices.label_save_error": "Could not save name: {message}"},
     )
+    assert values["error"] == "Could not save name: boom"
     assert "Name konnte nicht gespeichert werden" not in script
     assert (
         'this.deviceActionError = t("web.devices.remove_error", { message: error.message });'
@@ -4804,10 +4822,21 @@ async def test_reconcile_room_filter_falls_back_to_all_when_the_filtered_room_va
     for that one, `roomChips()` has no chip for it anyway.
 
     Proven is that the method exists, that its guard as described now
-    only excludes `null` (no longer `""`), and that both `saveRoom` and
-    `commitRenameRoom` call it after their respective write - not that
-    Alpine then actually switches to the "All" chip (that would need a
-    browser engine, see `test_the_page_does_not_call_init_a_second_time`)."""
+    only excludes `null` (no longer `""`), and that `saveRoom`,
+    `saveGroupRoom` and `commitRenameRoom` call it after their respective
+    write - not that Alpine then actually switches to the "All" chip (that
+    would need a browser engine, see
+    `test_the_page_does_not_call_init_a_second_time`).
+
+    `saveRoom` and `saveGroupRoom` share one write path since the fix of
+    2026-09-11 (`saveEntityRoom`, see the fix report): the `finally {
+    reconcileRoomFilter() }` that used to sit, duplicated, at the end of
+    each of them now sits once, in the shared function. A source-text
+    search anchored on `async saveRoom(device, value) {` would no longer
+    find that call inside the substring it cuts out (`saveRoom`'s own body
+    is now a one-line delegation) and would prove nothing either way -
+    running the real code instead proves the call still fires for both
+    kinds of tile, regardless of where in the file it is written."""
     client, _, _ = api
     script = (await client.get("/static/app.js")).text
 
@@ -4819,15 +4848,28 @@ async def test_reconcile_room_filter_falls_back_to_all_when_the_filtered_room_va
     assert 'typeof this.roomFilter !== "string"' not in reconcile_body
     assert "this.roomFilter = null;" in reconcile_body
 
-    save_room_start = script.index("async saveRoom(device, value) {")
-    save_room_end = script.index("\n    },", save_room_start)
-    save_room_body = script[save_room_start:save_room_end]
-    assert "this.reconcileRoomFilter();" in save_room_body
-
     rename_start = script.index("async commitRenameRoom() {")
     rename_end = script.index("\n    },", rename_start)
     rename_body = script[rename_start:rename_end]
     assert "this.reconcileRoomFilter();" in rename_body
+
+    if NODE is not None:
+        values = _app_state(
+            """
+            const calls = [];
+            state.reconcileRoomFilter = () => calls.push("reconcile");
+            state.request = async () => ({ id: 1, room: "Kitchen" });
+            (async () => {
+              await state.saveRoom({ id: 1, label: "Lamp" }, "Kitchen");
+              await state.saveGroupRoom({ id: 1, label: "Ceiling" }, "Kitchen");
+              console.log(JSON.stringify({ calls }));
+            })();
+            """
+        )
+        assert values["calls"] == ["reconcile", "reconcile"], (
+            "saveRoom and saveGroupRoom must both call reconcileRoomFilter() "
+            "after their write, device and group alike"
+        )
 
 
 async def test_the_command_bar_distinguishes_loading_from_genuinely_empty(api):
@@ -7552,6 +7594,23 @@ async def test_the_group_tile_is_delivered_and_shows_nothing_a_group_has_not(api
     assert "saveGroupRoom(deviceGroup, '')" in tile
     assert "member_labels" in tile  # only as the `title` naming the members
 
+    # `controlsBySubject` is keyed by a device id (a number) or a group
+    # SUBJECT string ("g3") - safe only while every group call site wraps
+    # its id in `groupSubject(...)`. A slip to, say,
+    # `controlsByKind(deviceGroup.id, 'none')` would silently read DEVICE
+    # 1's commands onto GROUP 1's tile, and nothing else here would notice:
+    # this suite has no browser engine to actually render the markup and
+    # see the wrong buttons appear, and the node tests
+    # (`test_a_group_button_sends_one_post_to_the_shared_command_route` and
+    # friends) call `groupSubject` themselves rather than exercise the
+    # markup's own expressions. Checked at minimum for the commands list,
+    # `controlsLoaded` and `commandsFor` - the three bindings the markup's
+    # own comment above the command bar names as reading the group's
+    # subject (finding, 2026-09-11).
+    assert "controlsByKind(groupSubject(deviceGroup), 'none')" in tile
+    assert "controlsLoaded(groupSubject(deviceGroup))" in tile
+    assert "commandsFor(groupSubject(deviceGroup))" in tile
+
     assert "isOnline" not in tile
     assert "lastHeardText" not in tile
     assert "firstSignalsFor" not in tile
@@ -7942,12 +8001,16 @@ def test_creating_a_group_reloads_the_list_and_every_groups_commands():
     may have left another group's list in the same breath.
 
     The room travels as the empty string for "no room" - the same encoding
-    the device path uses and the value the API expects (design 4.1)."""
+    the device path uses and the value the API expects (design 4.1). The
+    POST body is recorded and asserted for that reason, the same as the
+    sibling test `test_a_refused_member_list_shows_the_servers_own_sentence`
+    already does for its PUT - a claim about what goes out on the wire is
+    only proven by looking at the wire."""
     values = _app_state(
         """
         const calls = [];
         state.request = async (method, path, body) => {
-          calls.push([method, path]);
+          calls.push([method, path, body]);
           if (method === "GET" && path === "/api/groups") {
             return [
               { id: 1, label: "Ceiling", room: null, category: "light",
@@ -7979,11 +8042,15 @@ def test_creating_a_group_reloads_the_list_and_every_groups_commands():
     )
 
     assert values["error"] is None
-    assert values["calls"][0] == ["POST", "/api/groups"]
-    assert values["calls"][1] == ["GET", "/api/groups"]
+    assert values["calls"][0] == [
+        "POST",
+        "/api/groups",
+        {"label": "Ceiling", "room": "", "member_ids": [1]},
+    ]
+    assert values["calls"][1] == ["GET", "/api/groups", None]
     assert sorted(values["calls"][2:]) == [
-        ["GET", "/api/groups/1/controls"],
-        ["GET", "/api/groups/2/controls"],
+        ["GET", "/api/groups/1/controls", None],
+        ["GET", "/api/groups/2/controls", None],
     ]
     assert values["labels"] == ["Ceiling", "Outside"]
     assert values["loadedSubjects"] == ["g1", "g2"]
