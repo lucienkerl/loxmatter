@@ -29,7 +29,6 @@ from __future__ import annotations
 import json
 import os
 import subprocess
-import threading
 from pathlib import Path
 
 import pytest
@@ -98,6 +97,16 @@ printf 'curl %s\n' "$*" >> "$STUB_LOG"
 exit 7
 """
 
+# Logs every invocation (so a test can count how many times $REQUEST is
+# actually opened), then delegates to the real `cat` so nothing else in the
+# script - or in this stub itself, which still needs to read $FAKE files
+# above - notices the difference. {real_cat} is filled in with the real
+# binary's path at fixture setup, since this stub shadows it on PATH.
+CAT_STUB_TEMPLATE = """#!/bin/sh
+printf 'cat %s\\n' "$*" >> "$STUB_LOG"
+exec {real_cat} "$@"
+"""
+
 
 @pytest.fixture
 def radios(tmp_path):
@@ -133,6 +142,11 @@ def radios(tmp_path):
         (bindir / name).chmod(0o755)
     (bindir / "sleep").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
     (bindir / "sleep").chmod(0o755)
+    real_cat = subprocess.run(
+        ["which", "cat"], capture_output=True, text=True, check=False
+    ).stdout.strip()
+    (bindir / "cat").write_text(CAT_STUB_TEMPLATE.format(real_cat=real_cat), encoding="utf-8")
+    (bindir / "cat").chmod(0o755)
     for tool in SYSTEM_TOOLS:
         real = subprocess.run(
             ["which", tool], capture_output=True, text=True, check=False
@@ -140,7 +154,7 @@ def radios(tmp_path):
         if real:
             (sysdir / tool).symlink_to(real)
 
-    def run(**extra_env):
+    def run(timeout=30, **extra_env):
         env = {
             "PATH": f"{bindir}:{sysdir}",
             "STUB_LOG": str(log),
@@ -157,7 +171,7 @@ def radios(tmp_path):
             **extra_env,
         }
         result = subprocess.run(
-            [str(SCRIPT)], capture_output=True, text=True, env=env, check=False, timeout=30
+            [str(SCRIPT)], capture_output=True, text=True, env=env, check=False, timeout=timeout
         )
         calls = log.read_text(encoding="utf-8") if log.exists() else ""
         state_file = update_dir / "radios-state.json"
@@ -379,46 +393,85 @@ def test_a_request_path_that_cannot_be_read_ends_terminal_not_stuck(radios):
     assert _mutating_docker_calls(calls) == []
 
 
-def test_the_value_used_comes_from_a_single_read_of_the_request(radios):
-    """The request path is a FIFO, which can hand its bytes to only ONE
-    reader; a second attempt to open it for reading would hang (no writer
-    left) or see empty content. A script that re-reads $REQUEST for the
-    schema check and again for the three value reads cannot pass this test
-    reliably; a script that copies it once into a private snapshot and
-    reads only the snapshot afterwards always can.
+def test_the_request_file_is_read_from_disk_exactly_once(radios):
+    """Fault to prove it: feed the schema check and the three value reads
+    from `jq ... "$REQUEST"` again (the original, pre-round-1 shape)
+    instead of capturing $REQUEST's bytes into a shell variable up front and
+    feeding every later `jq` from that variable via a pipe. In the fixed
+    script, `cat` is the only command ever run against $REQUEST's own path
+    - the stub below records every invocation of `cat`, so re-reading
+    $REQUEST directly shows up as an extra (or, for a well-formed request
+    whose id needs no cksum fallback, a missing) logged line.
 
-    A genuine mid-run swap of the live file (the attack this closes) is not
-    reliably reproducible from outside the script in a fast, deterministic
-    test - the whole pass completes in well under a second - so this proves
-    the stronger property instead: every check and every value read that
-    matters for the outcome is satisfiable from data obtained through
-    exactly one read of $REQUEST."""
+    This test cannot by itself tell the fixed script apart from round 1's
+    file-snapshot shape, which also called `cat` on $REQUEST exactly once
+    (to make the snapshot) - see
+    test_no_writable_path_is_used_to_stage_the_request below for that."""
+    radios.env_file.write_text(
+        radios.env_file.read_text().replace("/dev/ttyUSB0", f"/dev/serial/by-id/{SONOFF}")
+    )
+    _request(radios)
+    _, calls, state = radios()
+    assert state["phase"] == "unchanged"
+    request_path = str(radios.update_dir / "radios-request.json")
+    request_reads = [
+        line for line in calls.splitlines() if line.startswith("cat ") and request_path in line
+    ]
+    assert len(request_reads) == 1
+
+
+def test_no_writable_path_is_used_to_stage_the_request(radios):
+    """IMPORTANT 1 (round 1's fix relocated the problem, did not close it):
+    round 1 copied the request into radios-request.handling.json, a
+    predictable path inside $UPDATE_DIR - but /data (the whole directory
+    tree $UPDATE_DIR lives under) is mounted read-write into both the
+    bridge and the updater (docker-compose.yml), so whoever can write
+    radios-request.json can also write at that same predictable path.
+    `cat "$REQUEST" > snapshot` follows a symlink there and truncates
+    through it, so a symlink re-planted between round 1's own `rm -f` of
+    that path and its `cat` redirects the write anywhere this process can
+    write - .env included, breaking ".env byte-identical on rejection".
+
+    Fault to prove it: stage the request through any file under
+    $UPDATE_DIR at all. This test statically pre-plants a symlink there
+    before the script even starts, which round 1's own `rm -f` of that
+    same path unlinks unconditionally on every single pass - before the
+    truncating write ever happens - so it does not reproduce the narrower,
+    precisely-timed race the finding names (a genuine mid-pass replant is,
+    like round 1's own live-file-swap race, not reliably reproducible from
+    outside a sub-second subprocess). What it does prove, deterministically:
+    round 1's script touches (removes, then recreates) a fixed, predictable,
+    bridge-writable path on every pass regardless of timing, and the fixed
+    script does not - it never creates, removes, or writes through any path
+    under $UPDATE_DIR while handling a request, so a symlink planted there
+    beforehand is left completely alone, race or no race."""
+    trap = radios.update_dir / "radios-request.handling.json"
+    trap.symlink_to(radios.env_file)
     radios.env_file.write_text(
         radios.env_file.read_text().replace("/dev/ttyUSB0", f"/dev/serial/by-id/{SONOFF}")
     )
     before = radios.env_file.read_bytes()
+    _request(radios)
+    _, calls, state = radios()
+    assert state["phase"] == "unchanged"
+    assert radios.env_file.read_bytes() == before
+    assert trap.is_symlink() and trap.resolve() == radios.env_file.resolve()
+    assert _mutating_docker_calls(calls) == []
+
+
+def test_a_fifo_request_with_no_writer_does_not_hang(radios):
+    """Fault to prove it: widen the presence check from `-f` to `-e` without
+    also requiring `-f` before any read, so a FIFO with no writer blocks
+    `cat` (and so the whole pass) forever - update-once.sh runs in the same
+    entrypoint loop, so this would stall updates too. Gives the subprocess
+    its own short timeout: a regression here must fail loudly and fast, not
+    hang this whole test file."""
     request_path = radios.update_dir / "radios-request.json"
     os.mkfifo(request_path)
-    body = json.dumps(
-        {
-            "id": "job-1",
-            "thread": {"enabled": True, "device": f"/dev/serial/by-id/{SONOFF}"},
-            "bluetooth": {"adapter": 0},
-            "requested_at": "2026-09-11T20:00:00Z",
-        }
-    ).encode("utf-8")
-
-    def feed() -> None:
-        with open(request_path, "wb") as pipe:
-            pipe.write(body)
-
-    writer = threading.Thread(target=feed)
-    writer.start()
-    try:
-        _, calls, state = radios()
-    finally:
-        writer.join(timeout=5)
-    assert state["phase"] == "unchanged"
+    before = radios.env_file.read_bytes()
+    result, calls, state = radios(timeout=5)
+    assert result.returncode == 0, result.stderr
+    assert (state["phase"], state["error"]) == ("rejected", "request_malformed")
     assert radios.env_file.read_bytes() == before
     assert _mutating_docker_calls(calls) == []
 

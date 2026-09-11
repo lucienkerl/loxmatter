@@ -156,32 +156,37 @@ write_state "$JOB_PHASE" "$JOB_ERROR"
 
 [ -e "$REQUEST" ] || exit 0
 
-# Read the request exactly once: copy it into a private snapshot right away
-# and run every check and every value read against the snapshot only.
-# Otherwise an attacker who controls the bridge could rewrite
-# radios-request.json between the schema check and the value reads below,
-# so WANT_DEVICE/WANT_BLUETOOTH would carry strings the schema never saw -
-# exactly the guarantee Task 4 relies on when it writes RADIO_DEVICE into
-# .env (a newline there would inject an .env line). It also means a request
-# that turns unreadable (deleted, replaced by a directory, ...) fails at
-# one guarded place instead of crashing an unguarded command substitution
-# under `set -eu` and leaving the phase stuck at "validate" forever.
-REQUEST_SNAPSHOT="$UPDATE_DIR/radios-request.handling.json"
-rm -f "$REQUEST_SNAPSHOT"
-trap 'rm -f "$REQUEST_SNAPSHOT"' EXIT
-if ! cat "$REQUEST" > "$REQUEST_SNAPSHOT" 2>/dev/null; then
-  log "radios request unreadable: could not snapshot $REQUEST"
-  reject request_malformed
-fi
+# A FIFO (or anything else non-regular) left at this path must never be
+# opened: with no writer, `cat` (or any reader) on a FIFO blocks forever,
+# and update-once.sh runs in this same entrypoint loop, so that would stall
+# updates too. Reject it - without ever attempting a read - before the
+# regular-file case gets anywhere near one.
+[ -f "$REQUEST" ] || reject request_malformed
 
-REQUEST_ID="$(jq -r 'if type == "object" and (.id | type) == "string" then .id else empty end' "$REQUEST_SNAPSHOT" 2>/dev/null || true)"
+# Read the request exactly once, into a shell variable - never through a
+# file. /data (this whole directory) is mounted read-write into both the
+# bridge and the updater, so any file this script created at a predictable
+# path there (a "snapshot") is just as writable by whoever writes
+# radios-request.json, and a symlink re-planted at that path between an
+# `rm -f` and the next write can redirect a truncating copy anywhere this
+# process can write, .env included. Process memory has no such shared path
+# to race. Every check and every value read below is fed from this one
+# in-memory copy via `printf '%s' "$REQUEST_BODY" | jq ...`, never from
+# $REQUEST again - so an attacker who controls the bridge cannot make the
+# schema check and the value reads see different bytes (design 6.6), and a
+# request that becomes unreadable fails once, here, instead of crashing an
+# unguarded read under `set -eu` with the phase stuck at "validate" forever.
+REQUEST_BODY="$(cat "$REQUEST" 2>/dev/null || true)"
+[ -n "$REQUEST_BODY" ] || reject request_malformed
+
+REQUEST_ID="$(printf '%s' "$REQUEST_BODY" | jq -r 'if type == "object" and (.id | type) == "string" then .id else empty end' 2>/dev/null || true)"
 MARKER="$REQUEST_ID"
 case "$REQUEST_ID" in
   ''|.|..|*"$NEWLINE"*|*[!A-Za-z0-9._-]*)
-    MARKER="invalid-$(cksum < "$REQUEST_SNAPSHOT" | cut -d ' ' -f 1)" ;;
+    MARKER="invalid-$(printf '%s' "$REQUEST_BODY" | cksum | cut -d ' ' -f 1)" ;;
 esac
 if [ "${#MARKER}" -gt 128 ]; then
-  MARKER="invalid-$(cksum < "$REQUEST_SNAPSHOT" | cut -d ' ' -f 1)"
+  MARKER="invalid-$(printf '%s' "$REQUEST_BODY" | cksum | cut -d ' ' -f 1)"
 fi
 if [ "$MARKER" = "$JOB_ID" ] || [ -e "$HANDLED_DIR/$MARKER" ]; then
   exit 0
@@ -204,7 +209,7 @@ write_state validate ""
 [ "$MARKER" = "$REQUEST_ID" ] || reject request_malformed
 [ "$CAPABLE" = true ] || reject "$CAPABLE_REASON"
 
-jq -e '
+printf '%s' "$REQUEST_BODY" | jq -e '
   type == "object"
   and (keys | sort) == ["bluetooth", "id", "requested_at", "thread"]
   and (.thread | type) == "object" and (.thread | keys | sort) == ["device", "enabled"]
@@ -217,17 +222,17 @@ jq -e '
   and .bluetooth.adapter == (.bluetooth.adapter | floor)
   and (.bluetooth.adapter | tostring | test("^[0-9]+$"))
   and .bluetooth.adapter >= 0 and .bluetooth.adapter <= 15
-' "$REQUEST_SNAPSHOT" >/dev/null 2>&1 || reject request_malformed
+' >/dev/null 2>&1 || reject request_malformed
 
 # Guarded (not a bare assignment): a read failing here must reject, not let
 # `set -eu` kill the pass with the marker already written (see above).
-if ! WANT_ENABLED="$(jq -r '.thread.enabled' "$REQUEST_SNAPSHOT" 2>/dev/null)"; then
+if ! WANT_ENABLED="$(printf '%s' "$REQUEST_BODY" | jq -r '.thread.enabled' 2>/dev/null)"; then
   reject request_malformed
 fi
-if ! WANT_DEVICE="$(jq -r '.thread.device // empty' "$REQUEST_SNAPSHOT" 2>/dev/null)"; then
+if ! WANT_DEVICE="$(printf '%s' "$REQUEST_BODY" | jq -r '.thread.device // empty' 2>/dev/null)"; then
   reject request_malformed
 fi
-if ! WANT_BLUETOOTH="$(jq -r '.bluetooth.adapter' "$REQUEST_SNAPSHOT" 2>/dev/null)"; then
+if ! WANT_BLUETOOTH="$(printf '%s' "$REQUEST_BODY" | jq -r '.bluetooth.adapter' 2>/dev/null)"; then
   reject request_malformed
 fi
 
