@@ -273,7 +273,49 @@ api.errors.unknown_group:
 api.errors.group_needs_a_member:
   en: "a new group needs at least one member; it determines the category"
   de: "eine neue Gruppe braucht mindestens ein Mitglied, es bestimmt die Kategorie"
+# The category names for `api.errors.group_category_mismatch` below.
+# Deliberately a SEPARATE table from `web.devices.category.*`
+# (strings.yaml, rooms/search section) rather than the store reaching for
+# that one: `Store` sits a layer below `api/` (module docstring, Store),
+# which sits below the WebUI - a lookup that crossed back up to a
+# WebUI-owned key would tie the store's wording to a namespace it has no
+# business knowing exists. Today's words happen to match
+# `web.devices.category.*` because both name the same eight `Category`
+# values (`profiles/categories.py`) - that is convenience, not a
+# guarantee this table leans on.
+api.categories.light:
+  en: "light"
+  de: "Licht"
+api.categories.socket:
+  en: "socket"
+  de: "Steckdose"
+api.categories.switch:
+  en: "switch"
+  de: "Taster"
+api.categories.covering:
+  en: "covering"
+  de: "Beschattung"
+api.categories.climate:
+  en: "climate"
+  de: "Klima"
+api.categories.sensor:
+  en: "sensor"
+  de: "Sensor"
+api.categories.lock:
+  en: "lock"
+  de: "Schloss"
+api.categories.other:
+  en: "other"
+  de: "Sonstige"
 api.errors.group_category_mismatch:
+  # `{actual}`/`{expected}` arrive PRE-TRANSLATED (`_check_members` in
+  # store.py looks them up via `api.categories.*` above before calling
+  # `i18n.t` here) - not as the raw `Category.value` identifiers (Review
+  # finding, final fix pass): the untranslated identifiers used to stand
+  # as the one English island in an otherwise fully translated sentence,
+  # and disagreed with the WebUI's own pre-check
+  # (`web.groups.other_category`), which already went through
+  # `categoryLabel()` for the same refusal.
   en: "device {device_id} is a {actual}, the group takes {expected}"
   de: "Gerät {device_id} ist ein {actual}, die Gruppe nimmt {expected}"
 api.errors.group_duplicate_member:
@@ -979,6 +1021,19 @@ web.devices.remove_confirm:
     • die importierten Vorlagen "VIU_d{id}_….xml" und "VO_d{id}_….xml"
 
     Diese in Loxone Config von Hand löschen.
+# Appended to `web.devices.remove_confirm` above (see `removeDevice` in
+# app.js), never shown on its own - only when the device is a member of
+# at least one group. `{groups}` is the comma-joined list of that
+# device's group labels, computed client-side from `member_ids` before
+# the dialog opens. Names the SAME failure `web.groups.delete_confirm`
+# already names for a deleted group's own "g{id}_" keys - here the group
+# survives, but can lose one command out of its intersection (design
+# 4.3, `register_group_commands`) without a word about it otherwise.
+web.devices.remove_confirm_groups_note:
+  en: |
+    It also belongs to: {groups}. If it was the only member carrying a command, that command drops out of the group's intersection, and the group's virtual output for it answers 404 in Loxone from then on.
+  de: |
+    Es gehört außerdem zu: {groups}. War es das einzige Mitglied mit einem bestimmten Kommando, fällt dieses aus der Schnittmenge der Gruppe, und der virtuelle Ausgang der Gruppe dafür antwortet in Loxone ab dann mit 404.
 web.devices.commission_code_required:
   en: "Please enter a pairing code first."
   de: "Bitte zuerst einen Pairing-Code eingeben."

@@ -673,6 +673,54 @@ def test_rename_room_normalizes_the_source_name_too(tmp_path):
         store.close()
 
 
+def test_rename_room_moves_a_group_carrying_the_room_too(tmp_path):
+    """A group is as much a room carrier as a device (design 6, section 2):
+    it has its OWN `room` column, deliberately never derived from its
+    members - a derived room would move the group on its own the moment
+    one lamp is re-roomed. `rename_room` only ever wrote to `device`
+    before this fix, so renaming "Kueche" moved the plug but left the
+    group's `room` column exactly as it was: the chip bar (`roomChips()`,
+    `app.js`) would then show BOTH "Essbereich (1)", populated by the
+    device that actually moved, AND "Kueche (1)", populated by nothing but
+    the group nobody touched - the old room still standing.
+
+    Two rows moved, one call: the return value is the combined count
+    (device rows AND group rows), matching what `POST /api/rooms/rename`
+    reports back to the WebUI as "renamed"."""
+    store = Store(tmp_path / "t.sqlite")
+    try:
+        plug = store.register_device(load("ikea_grillplats_plug.json"), room="Küche")
+        group = store.create_group("Lampengruppe", [plug], room="Küche")
+        assert store.rename_room("Küche", "Essbereich") == 2
+        assert store.device(plug).room == "Essbereich"
+        assert store.group(group.id).room == "Essbereich"
+    finally:
+        store.close()
+
+
+def test_rename_room_moves_a_room_carried_only_by_a_group(tmp_path):
+    """The case a user hits when every device that used to live in a room
+    has since been re-roomed away, leaving only a group behind (design 6:
+    a group's room is its own field, never derived from members - it does
+    not disappear just because the last device left).
+
+    Before this fix, `rename_room` matched zero rows for a room like this
+    (it only ever looked at `device`) and returned 0 - which `POST
+    /api/rooms/rename` (`api/devices.py`) turns into a 404 with "unknown
+    room", even though the room is visibly still on screen, populated by
+    the group below."""
+    store = Store(tmp_path / "t.sqlite")
+    try:
+        # No room at all for the device - only the group carries "Küche".
+        plug = store.register_device(load("ikea_grillplats_plug.json"))
+        group = store.create_group("Lampengruppe", [plug], room="Küche")
+        assert store.device(plug).room is None
+        assert store.rename_room("Küche", "Essbereich") == 1
+        assert store.group(group.id).room == "Essbereich"
+    finally:
+        store.close()
+
+
 def test_rename_room_does_not_touch_updated_at(tmp_path):
     """Same rationale as for `set_room` and `backfill_device_types`: the
     room ends up in NO export template, so cleaning up room names must not

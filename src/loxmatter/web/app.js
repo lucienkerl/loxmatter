@@ -1906,7 +1906,12 @@ function app() {
         this.cancelRenameRoom();
         return;
       }
-      const exists = this.devices.some((device) => device.room === name);
+      // A group is as much a room carrier as a device (design 6, `roomChips()`
+      // above) - checking `this.devices` alone missed a target name that
+      // exists only on a group and renamed INTO it without ever asking:
+      // exactly the merge the confirmation below exists to catch (review
+      // finding, final fix pass).
+      const exists = [...this.devices, ...this.groups].some((subject) => subject.room === name);
       if (exists && !window.confirm(t("web.devices.room_rename_merge_confirm"))) {
         // Field stays open: declining the confirmation means "not like
         // this", not "forget what I typed".
@@ -1920,6 +1925,11 @@ function app() {
           this.roomFilter = name;
         }
         await this.loadDevices();
+        // `Store.rename_room` now writes `device_group.room` too (final
+        // fix pass) - without this reload the chip bar and every group
+        // tile would keep showing the OLD room name until the next full
+        // refresh, out of step with what the server just committed.
+        await this.loadGroups();
         // Normally a no-op (thanks to the line above, the filter already
         // points at `name`) - but kicks in if a merge resulted in no
         // device carrying `name` at all in the end (see
@@ -2271,6 +2281,14 @@ function app() {
       await this.saveEntityLabel(device, this.labelDrafts, "devices", "deviceActionError");
     },
 
+    // The groups this device belongs to, computed BEFORE the confirmation
+    // dialog below asks anything: `this.groups` already carries
+    // `member_ids` (`GET /api/groups`, loaded at startup and refreshed
+    // after every membership change), so this needs no extra request.
+    memberOfGroups(device) {
+      return this.groups.filter((group) => group.member_ids.includes(device.id));
+    },
+
     // The confirmation names the objects that get orphaned (Spec 9, line
     // "device removed and re-commissioned"; Review-Fix Fix 10,
     // 2026-09-03). It names the key prefix and the two template files -
@@ -2283,7 +2301,27 @@ function app() {
     // unique (see `filename_for`) and is enough to find the file again in
     // Loxone Config.
     async removeDevice(device) {
-      const confirmed = window.confirm(t("web.devices.remove_confirm", { label: device.label, id: device.id }));
+      // Removing a device is a membership change in every group it
+      // belongs to (design 4.3, `register_group_commands`): if it was the
+      // only member carrying a command, that command drops out of the
+      // group's intersection and the matching "g{n}_…" key answers 404
+      // from then on - a second orphan the confirmation above did not use
+      // to mention at all, on top of the device's own "d{id}_" keys. Named
+      // here, not silently discovered later in Loxone Config. Appended
+      // rather than folded into `web.devices.remove_confirm` itself: a
+      // device in no group at all (the common case) must see exactly the
+      // careful wording that was already there, with no trailing "and
+      // belongs to: " clause naming nothing.
+      let confirmText = t("web.devices.remove_confirm", { label: device.label, id: device.id });
+      const affectedGroups = this.memberOfGroups(device);
+      if (affectedGroups.length > 0) {
+        confirmText +=
+          "\n\n" +
+          t("web.devices.remove_confirm_groups_note", {
+            groups: affectedGroups.map((group) => group.label).join(", "),
+          });
+      }
+      const confirmed = window.confirm(confirmText);
       if (!confirmed) {
         return;
       }

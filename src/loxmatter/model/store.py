@@ -1219,12 +1219,24 @@ class Store:
         for device_id in member_ids:
             actual = self._category_of(device_id)
             if actual != category:
+                # `actual`/`expected` go through `api.categories.*` before
+                # they reach the sentence below - `category` and `actual`
+                # are `Category.value` identifiers ("light", "socket", ...),
+                # language-independent by design (they are also stored
+                # data, `device_group.category`), and interpolating them
+                # unchanged left the untranslated identifier standing as
+                # the one English island in an otherwise translated
+                # sentence, out of step with the WebUI's own pre-check for
+                # the same refusal (`web.groups.other_category`,
+                # `categoryLabel()` in app.js), which already names the
+                # category in the reader's language (review finding, final
+                # fix pass).
                 raise CategoryMismatchError(
                     i18n.t(
                         "api.errors.group_category_mismatch",
                         device_id=device_id,
-                        actual=actual,
-                        expected=category,
+                        actual=i18n.t("api.categories." + actual),
+                        expected=i18n.t("api.categories." + category),
                     )
                 )
 
@@ -1685,23 +1697,34 @@ class Store:
         return filled
 
     def rename_room(self, old: str, new: str) -> int:
-        """Renames a room across all active devices and returns how many
-        that was (`POST /api/rooms/rename`).
+        """Renames a room across all active devices AND all groups, and
+        returns how many rows that was combined (`POST /api/rooms/rename`).
 
         There is no room table (design 3.2), so "rename room" is not a
-        write to one object but this one bulk write. The alternative would
-        be typing a new room name into each device individually - with five
-        devices, five opportunities for a typo that creates a sixth room.
+        write to one object but this bulk write - now two bulk writes,
+        one per table that can carry a room name. A group is as much a
+        room carrier as a device (design 6): it has its own `room`
+        column, never derived from its members, so that re-rooming one
+        lamp cannot silently drag the group along. Renaming only the
+        `device` table would leave exactly that column stale - the old
+        room name would keep existing in `roomChips()` (`app.js`),
+        populated by nothing but a group nobody touched, right next to
+        the new name the devices moved to. Both writes share one
+        `source`/`target` pair and one count, so "0 renamed" means "no
+        device AND no group carried that name" - not "no device did,
+        never mind what a group might say".
 
-        `active = 1` for the same reason `devices()` filters on it
-        afterward: a removed device is no longer there from the UI's point
-        of view.
+        `active = 1` on `device`, for the same reason `devices()` filters
+        on it afterward: a removed device is no longer there from the
+        UI's point of view. `device_group` has no such column - a group
+        is deleted outright (`delete_group`), never soft-removed, so
+        every row here is live by construction.
 
         An already occupied target name merges both rooms; the confirmation
         prompt for that is the UI's responsibility, not this method's. An
         empty target name, by contrast, is rejected here: "rename" is not
-        the way to dissolve a room - `set_room` with `None` on each
-        individual device exists for that."""
+        the way to dissolve a room - `set_room`/`set_group_room` with
+        `None` exist for that."""
         # `old` through the same normalization as `new`: since this method
         # became reachable via `POST /api/rooms/rename` (Task 5), the
         # source name arrives as free text from the JSON body, no longer
@@ -1712,11 +1735,15 @@ class Store:
         target = _normalized_room(new)
         if target is None:
             raise ValueError(i18n.t("api.devices.room_name_required"))
-        cur = self._db.execute(
+        device_cur = self._db.execute(
             "UPDATE device SET room = ? WHERE room = ? AND active = 1", (target, source)
         )
+        group_cur = self._db.execute(
+            "UPDATE device_group SET room = ?, updated_at = ? WHERE room = ?",
+            (target, self._now(), source),
+        )
         self._db.commit()
-        return int(cur.rowcount)
+        return int(device_cur.rowcount) + int(group_cur.rowcount)
 
     def mark_exported(self, device_id: int) -> None:
         """Sets `exported_at` to now (Task 5, Phase 5).

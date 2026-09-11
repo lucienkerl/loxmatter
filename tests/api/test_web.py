@@ -3466,18 +3466,96 @@ async def test_commission_device_avoids_duplicate_tiles(api):
 
 async def test_the_remove_confirm_dialog_text_comes_from_t(api):
     """Task 11, step 4: the native `window.confirm(...)` in `removeDevice`
-    now carries a single `t(...)` call with `label` and `id` instead of
-    the hand-built template string - the dialog itself cannot be checked
-    without a browser engine, but that its text now comes from the
-    translation table can be."""
+    carries a `t(...)` call with `label` and `id` instead of a hand-built
+    template string - the dialog itself cannot be checked without a
+    browser engine, but that its text now comes from the translation
+    table can be.
+
+    Final fix pass, item 2: the call used to be `window.confirm(t(...))`
+    inline; it now builds `confirmText` first so the groups note (see
+    `test_removing_a_device_names_its_groups_in_the_confirmation` below)
+    can be appended before the dialog opens. The base text must still
+    come from `t("web.devices.remove_confirm", ...)` with exactly `label`
+    and `id`, unconditionally - not only when `confirmText` happens to get
+    extended afterward."""
     client, _, _ = api
     script = (await client.get("/static/app.js")).text
     assert (
-        'window.confirm(t("web.devices.remove_confirm", { label: device.label, id: device.id }))'
+        'let confirmText = t("web.devices.remove_confirm", { label: device.label, id: device.id });'
         in script
     )
+    assert "window.confirm(confirmText)" in script
     assert "wirklich entfernen? Das kann nicht rückgängig gemacht werden" not in script
     assert "In Loxone bleiben danach verwaist" not in script
+    assert "Es gehört außerdem zu" not in script
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_removing_a_device_in_no_group_shows_the_confirmation_unextended():
+    """Final fix pass, item 2: a device in no group at all is the common
+    case, and it must see EXACTLY the careful wording
+    `web.devices.remove_confirm` already had - no trailing "it also
+    belongs to: " clause naming nothing. `state.groups` here holds a group
+    whose `member_ids` does NOT include this device, so the fix must
+    filter by membership, not merely by "are there any groups at all"."""
+    values = _app_state(
+        """
+        let confirmText = null;
+        global.window = { confirm: (message) => { confirmText = message; return false; } };
+        state.groups = [
+          { id: 1, label: "Ceiling", room: null, category: "light",
+            member_ids: [5], member_labels: ["Other lamp"], command_count: 1 },
+        ];
+        state.request = async () => { throw new Error("must not run: confirm was declined"); };
+        (async () => {
+          await state.removeDevice({ id: 9, label: "Lamp" });
+          console.log(JSON.stringify({ confirmText }));
+        })();
+        """,
+        translations={
+            "web.devices.remove_confirm": "remove {label} ({id})?",
+            "web.devices.remove_confirm_groups_note": "it also belongs to: {groups}",
+        },
+    )
+    assert values["confirmText"] == "remove Lamp (9)?"
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_removing_a_device_names_its_groups_in_the_confirmation():
+    """Final fix pass, item 2: removing a device is a membership change in
+    every group it belongs to (design 4.3, `register_group_commands`) - if
+    it was the only member carrying a command, that command drops out of
+    the group's intersection and the matching key answers 404 in Loxone
+    from then on, with nothing in the old confirmation ever saying so.
+    This device (id 9) is a member of both groups in `state.groups`
+    (`member_ids` includes 9 in each) - the note must name BOTH, and the
+    base wording from `web.devices.remove_confirm` must still be there,
+    unextended in itself, with the note appended after it rather than
+    mixed into it."""
+    values = _app_state(
+        """
+        let confirmText = null;
+        global.window = { confirm: (message) => { confirmText = message; return false; } };
+        state.groups = [
+          { id: 1, label: "Ceiling", room: null, category: "light",
+            member_ids: [9], member_labels: ["Lamp"], command_count: 1 },
+          { id: 2, label: "Reading corner", room: "Living room", category: "light",
+            member_ids: [3, 9], member_labels: ["Other", "Lamp"], command_count: 2 },
+        ];
+        state.request = async () => { throw new Error("must not run: confirm was declined"); };
+        (async () => {
+          await state.removeDevice({ id: 9, label: "Lamp" });
+          console.log(JSON.stringify({ confirmText }));
+        })();
+        """,
+        translations={
+            "web.devices.remove_confirm": "remove {label} ({id})?",
+            "web.devices.remove_confirm_groups_note": "it also belongs to: {groups}",
+        },
+    )
+    assert values["confirmText"] == (
+        "remove Lamp (9)?\n\nit also belongs to: Ceiling, Reading corner"
+    )
 
 
 async def test_remove_device_reconciles_the_room_filter(api):
@@ -4876,6 +4954,89 @@ async def test_reconcile_room_filter_falls_back_to_all_when_the_filtered_room_va
     assert values["calls"] == ["reconcile", "reconcile"], (
         "saveRoom and saveGroupRoom must both call reconcileRoomFilter() "
         "after their write, device and group alike"
+    )
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_commit_rename_room_offers_the_merge_confirmation_for_a_group_only_room():
+    """Final fix pass, item 1: `commitRenameRoom`'s merge check used to read
+    `this.devices.some((device) => device.room === name)` - a room carried
+    by nothing but a GROUP (design 6: a group's room is its own field, not
+    derived from members) was therefore invisible to it. Renaming into
+    such a name merged two rooms with no confirmation at all - the one
+    dialog this flow exists to show never appeared.
+
+    `state.devices` is deliberately empty here: the target name "Neu" is
+    carried only by the group in `state.groups`, so a fix that still only
+    checks `devices` would find no match, skip `window.confirm` entirely,
+    and let `state.request` (which throws) run straight through - the
+    thrown error would surface as `deviceActionError` and this assertion
+    would fail with a wrong message rather than a wrong flow. Declining
+    the confirmation (`confirm: () => false`) then proves the rest of the
+    guard still holds: an unwanted merge must not fire the rename at all,
+    so `state.request` must stay uncalled."""
+    values = _app_state(
+        """
+        state.devices = [];
+        state.groups = [
+          { id: 1, label: "Ceiling", room: "Neu", category: "light",
+            member_ids: [], member_labels: [], command_count: 0 },
+        ];
+        state.renamingRoom = "Kueche";
+        state.renameDraft = "Neu";
+        let confirmCalled = false;
+        global.window = { confirm: () => { confirmCalled = true; return false; } };
+        state.request = async () => { throw new Error("must not run: merge was declined"); };
+        (async () => {
+          await state.commitRenameRoom();
+          console.log(JSON.stringify({
+            confirmCalled,
+            renamingRoom: state.renamingRoom,
+            error: state.deviceActionError,
+          }));
+        })();
+        """,
+        translations={"web.devices.room_rename_merge_confirm": "merge?"},
+    )
+    assert values["confirmCalled"] is True
+    # The field stays open on decline (see the comment in `commitRenameRoom`
+    # right above the `window.confirm` call) - `renamingRoom` therefore
+    # keeps pointing at the room being renamed, not `null`.
+    assert values["renamingRoom"] == "Kueche"
+    assert values["error"] is None
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_commit_rename_room_reloads_groups_after_a_successful_rename():
+    """Final fix pass, item 1: `Store.rename_room` now writes
+    `device_group.room` alongside `device.room` (see the store-side tests
+    next to `Store.rename_room`), but the WebUI still needs telling - the
+    group list it already holds in `state.groups` was fetched before the
+    rename and does not update itself. Before this fix `commitRenameRoom`
+    called `loadDevices()` only, so a group's tile and the chip bar kept
+    showing the OLD room name for that group until some unrelated action
+    happened to trigger a full reload."""
+    values = _app_state(
+        """
+        const calls = [];
+        state.devices = [];
+        state.groups = [];
+        state.renamingRoom = "Kueche";
+        state.renameDraft = "Essbereich";
+        state.roomFilter = null;
+        state.request = async () => { calls.push("rename"); return { renamed: 1 }; };
+        state.loadDevices = async () => { calls.push("loadDevices"); };
+        state.loadGroups = async () => { calls.push("loadGroups"); };
+        state.reconcileRoomFilter = () => { calls.push("reconcile"); };
+        (async () => {
+          await state.commitRenameRoom();
+          console.log(JSON.stringify({ calls }));
+        })();
+        """
+    )
+    assert values["calls"] == ["rename", "loadDevices", "loadGroups", "reconcile"], (
+        "commitRenameRoom must reload groups (not just devices) after a "
+        "successful rename, so a group's room reflects the write it just made"
     )
 
 
