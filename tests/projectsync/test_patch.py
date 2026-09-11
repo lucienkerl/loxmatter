@@ -50,7 +50,7 @@ def _command(key: str, slug: str, device_id: int, command_id: int) -> StoredComm
     )
 
 
-def _patch_bytes(index, device, signals, *, include_new_devices, commands=()):
+def _patch_bytes(index, device, signals, *, commands=()):
     commands = list(commands)
     plan = build_plan(index, [device], {device.id: signals}, {device.id: commands})
     return apply_plan(
@@ -59,24 +59,21 @@ def _patch_bytes(index, device, signals, *, include_new_devices, commands=()):
         [device],
         {device.id: signals},
         {device.id: commands},
-        include_new_devices=include_new_devices,
         bridge_ip="10.0.0.5",
         port=7000,
         listen=8080,
     )
 
 
-def _patch(index, device, signals, *, include_new_devices, commands=()):
-    return _patch_bytes(
-        index, device, signals, include_new_devices=include_new_devices, commands=commands
-    ).decode("utf-8-sig")
+def _patch(index, device, signals, *, commands=()):
+    return _patch_bytes(index, device, signals, commands=commands).decode("utf-8-sig")
 
 
 def test_updated_attribute_is_replaced_in_place(sample_project):
     index = build_index(sample_project)
     device = _device(1, "Altes Geraet")
     signals = [_signal("d1_1_onoff", 1, title="Ein/Aus")]
-    patched = _patch(index, device, signals, include_new_devices=False)
+    patched = _patch(index, device, signals)
     assert 'Title="Ein/Aus"' in patched
     assert 'Title="Alter Titel"' not in patched
     # The u-id of the updated object stays exactly preserved - wiring
@@ -93,7 +90,7 @@ def test_orphaned_object_is_left_untouched(sample_project):
     index = build_index(sample_project)
     device = _device(1, "Altes Geraet")
     signals = [_signal("d1_1_onoff", 1, title="Ein/Aus")]
-    patched = _patch(index, device, signals, include_new_devices=False)
+    patched = _patch(index, device, signals)
     assert 'Title="Verwaist"' in patched
     assert 'Check="d9_9_verwaist:\\v"' in patched
 
@@ -140,7 +137,7 @@ def test_possible_duplicate_is_not_patched_in():
         _command("d1_1_on", "on", 1, 1),
         _command("d1_1_off", "off", 1, 0),
     ]
-    patched = _patch(index, device, [], include_new_devices=True, commands=commands)
+    patched = _patch(index, device, [], commands=commands)
     # The corrupted existing command stays exactly as it was ...
     assert 'CmdOn="/cmd/d1_1_o/1"' in patched
     # ... and NO second "onoff" gets added - only exactly ONE
@@ -171,7 +168,7 @@ def test_unchanged_plan_leaves_the_file_byte_identical(sample_project):
     plan = build_plan(index, [device], {1: _unchanged_signals()}, {1: []})
     assert plan.has_changes is False
 
-    patched = _patch_bytes(index, device, _unchanged_signals(), include_new_devices=True)
+    patched = _patch_bytes(index, device, _unchanged_signals())
     assert patched == ("﻿" + sample_project).encode("utf-8")
     assert patched.decode("utf-8").lstrip("﻿") == sample_project.lstrip("﻿")
 
@@ -184,7 +181,7 @@ def test_existing_bom_is_preserved_and_not_duplicated(sample_project):
     with_bom = BOM + sample_project
     index = build_index(with_bom)
     device = _device(1, "Altes Geraet")
-    patched = _patch_bytes(index, device, _unchanged_signals(), include_new_devices=True)
+    patched = _patch_bytes(index, device, _unchanged_signals())
 
     assert patched == with_bom.encode("utf-8")
     assert patched.decode("utf-8").count(BOM) == 1
@@ -216,7 +213,6 @@ def test_created_u_ids_are_unique_across_the_whole_file(sample_project):
         devices,
         signals,
         commands,
-        include_new_devices=True,
         bridge_ip="10.0.0.5",
         port=7000,
         listen=8080,
@@ -234,7 +230,7 @@ def test_new_signal_is_appended_inside_existing_container(sample_project):
         _signal("d1_1_onoff", 1, title="Alter Titel"),
         _signal("d1_1_temp", 1, title="Temperatur"),
     ]
-    patched = _patch(index, device, signals, include_new_devices=False)
+    patched = _patch(index, device, signals)
     assert 'Check="d1_1_temp:\\v"' in patched
     # Inserted into the same container as the existing d1_1_onoff, not
     # somewhere in the document and not as a new device container. Checked
@@ -250,19 +246,11 @@ def test_new_signal_is_appended_inside_existing_container(sample_project):
     )
 
 
-def test_new_device_is_absent_without_the_flag(sample_project):
+def test_new_device_gets_its_own_container(sample_project):
     index = build_index(sample_project)
     device = _device(2, "Neues Geraet")
     signals = [_signal("d2_1_onoff", 2)]
-    patched = _patch(index, device, signals, include_new_devices=False)
-    assert "d2_1_onoff" not in patched
-
-
-def test_new_device_is_created_with_the_flag(sample_project):
-    index = build_index(sample_project)
-    device = _device(2, "Neues Geraet")
-    signals = [_signal("d2_1_onoff", 2)]
-    patched = _patch(index, device, signals, include_new_devices=True)
+    patched = _patch(index, device, signals)
     assert 'Check="d2_1_onoff:\\v"' in patched
     assert 'Title="Matter — Neues Geraet"' in patched
     assert 'Address="10.0.0.5"' in patched
@@ -283,7 +271,7 @@ def test_new_device_with_several_signals_gets_exactly_one_container(sample_proje
     device = _device(2, "Neues Geraet")
     signals = [_signal("d2_1_onoff", 2), _signal("d2_1_temp", 2, title="Temperatur", unit="°C")]
     commands = [_command("d2_1_on", "on", 2, 1), _command("d2_1_off", "off", 2, 0)]
-    patched = _patch(index, device, signals, include_new_devices=True, commands=commands)
+    patched = _patch(index, device, signals, commands=commands)
 
     # Exactly one new container each - in addition to the one each the
     # sample file already brings for device 1.
@@ -309,7 +297,7 @@ def test_next_obj_is_raised_when_new_objects_were_created(sample_project):
     index = build_index(sample_project)
     device = _device(2, "Neues Geraet")
     signals = [_signal("d2_1_onoff", 2)]
-    patched = _patch(index, device, signals, include_new_devices=True)
+    patched = _patch(index, device, signals)
     next_obj = int(patched.split('NextObj="', 1)[1].split('"', 1)[0])
     assert next_obj > 100  # starting value in the sample file
 
@@ -320,7 +308,7 @@ def test_output_is_valid_xml(sample_project):
     index = build_index(sample_project)
     device = _device(2, "Neues Geraet")
     signals = [_signal("d2_1_onoff", 2)]
-    patched = _patch(index, device, signals, include_new_devices=True)
+    patched = _patch(index, device, signals)
     ET.fromstring(patched)  # raises on invalid XML
 
 
@@ -343,7 +331,7 @@ def test_missing_attribute_is_inserted_into_existing_tag(sample_project):
 
     device = _device(1, "Altes Geraet")
     commands = [_command("d1_1_on", "on", 1, 1)]
-    patched = _patch(index, device, [], include_new_devices=False, commands=commands)
+    patched = _patch(index, device, [], commands=commands)
 
     # Newly inserted into exactly the tag it was previously missing from -
     # not somewhere else in the document.
@@ -413,7 +401,7 @@ def test_update_does_not_rewrite_an_attribute_that_only_ends_in_the_name():
     index = build_index(DECOY_ATTR_PROJECT)
     device = _device(1, "Altes Geraet")
     signals = [_signal("d1_1_onoff", 1, title="Neuer Titel")]
-    patched = _patch(index, device, signals, include_new_devices=False)
+    patched = _patch(index, device, signals)
 
     assert 'XTitle="Bitte nicht anfassen"' in patched
     patched_index = build_index(patched)
@@ -428,7 +416,7 @@ def test_update_does_not_rewrite_an_attribute_that_only_ends_in_the_name():
 # format). `d1_1_onoff` already exists (stays `unchanged`), `d1_1_temp` is
 # still missing - that forces a new id via `_new_signal_edit` ->
 # `new_unique_id` -> `_installation_suffix`, without needing a completely
-# new device (and thus `MissingCaptionError`).
+# new device.
 NO_U_ATTR_PROJECT = (
     '<?xml version="1.0" encoding="utf-8"?>\r\n'
     '<ControlList Version="275" NextObj="100">\r\n'
@@ -477,7 +465,6 @@ def test_new_signal_without_any_existing_u_id_raises_project_format_error():
             [device],
             {1: signals},
             {1: []},
-            include_new_devices=False,
             bridge_ip="10.0.0.5",
             port=7000,
             listen=8080,
@@ -496,7 +483,7 @@ def test_next_obj_edit_is_skipped_when_next_obj_is_not_numeric(sample_project):
     index = build_index(bad_project)
     device = _device(2, "Neues Geraet")
     signals = [_signal("d2_1_onoff", 2)]
-    patched = _patch(index, device, signals, include_new_devices=True)
+    patched = _patch(index, device, signals)
 
     # The broken attribute stays untouched ...
     assert 'NextObj="not-a-number"' in patched
@@ -507,13 +494,12 @@ def test_next_obj_edit_is_skipped_when_next_obj_is_not_numeric(sample_project):
 
 
 def test_new_device_without_virtual_in_caption_creates_the_caption_too():
-    """`include_new_devices=True` for a device that needs a completely new
-    input container, in a project without any existing `VirtualInCaption`
-    section: `_new_device_edit` now creates this section itself too (draft
-    section 8, user request after the review) - the user should not have
-    to manually create something in Loxone Config by hand just to be able
-    to test the experimental path at all. The device command then sits
-    INSIDE the newly created caption, not next to it."""
+    """A device that needs a completely new input container, in a project
+    without any existing `VirtualInCaption` section: `_new_device_edit`
+    creates this section itself too (draft section 8, user request after
+    the review) - the user should not have to create something in Loxone
+    Config by hand first. The device command then sits INSIDE the newly
+    created caption, not next to it."""
     import xml.etree.ElementTree as ET
 
     index = build_index(NO_VIRTUAL_IN_CAPTION_PROJECT)
@@ -529,7 +515,6 @@ def test_new_device_without_virtual_in_caption_creates_the_caption_too():
         [device],
         {device.id: signals},
         {device.id: []},
-        include_new_devices=True,
         bridge_ip="10.0.0.5",
         port=7000,
         listen=8080,
@@ -569,7 +554,7 @@ def test_new_analog_input_carries_its_unit_into_the_file(sample_project):
             resend=False,
         )
     ]
-    patched = _patch(index, device, signals, include_new_devices=True)
+    patched = _patch(index, device, signals)
 
     cmd_start = patched.index('Check="d2_2_voltage')
     cmd_end = patched.index("</C>", cmd_start)
@@ -606,9 +591,7 @@ def test_patched_file_is_stable_when_synced_again(sample_project):
     ]
     commands = [_command("d2_1_on", "on", 2, 1), _command("d2_1_off", "off", 2, 0)]
 
-    first = _patch(
-        build_index(sample_project), device, signals, include_new_devices=True, commands=commands
-    )
+    first = _patch(build_index(sample_project), device, signals, commands=commands)
     # The combined on/off output was created exactly once ...
     assert first.count('Title="onoff"') == 1
 

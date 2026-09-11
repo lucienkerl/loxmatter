@@ -1472,10 +1472,9 @@
           of the template ZIPs below): upload an existing
           Loxone project file, view the plan, download the patched file
           - only AFTER the plan has been seen (design: no download before
-          the plan). Both patched versions already arrive with the
-          upload response (see `downloadPatchedProject` in app.js), the
-          checkbox below only chooses between them, without a second call to
-          the bridge.
+          the plan). The patched file already arrives with the upload
+          response (see `downloadPatchedProject` in app.js), without a
+          second call to the bridge.
         -->
         <div class="card">
           <h2 x-text="t('web.export.projectsync_heading')"></h2>
@@ -1687,29 +1686,6 @@
                     </div>
                   </details>
                 </template>
-              </div>
-              <!--
-                Review-Fix Important #4: `patched_with_new_devices_base64`
-                is now `null` when the uploaded file has no
-                `VirtualInCaption`/`VirtualOutCaption` section for a
-                new device container - the checkbox is then disabled,
-                instead of allowing a silent/empty download.
-              -->
-              <p
-                x-show="projectSync.plan.new_devices_unavailable_reason"
-                x-cloak
-                class="banner warn"
-                x-text="projectSync.plan.new_devices_unavailable_reason"
-              ></p>
-              <div class="row">
-                <label class="checkbox-label">
-                  <input
-                    type="checkbox"
-                    x-model="projectSync.includeNewDevices"
-                    :disabled="!!projectSync.plan.new_devices_unavailable_reason"
-                  />
-                  <span x-text="t('web.export.projectsync_new_devices_checkbox')"></span>
-                </label>
               </div>
               <button
                 class="primary"

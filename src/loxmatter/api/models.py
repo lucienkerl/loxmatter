@@ -561,9 +561,9 @@ class ProjectSyncMiniserverOut(BaseModel):
 
 
 class ProjectSyncPlanOut(BaseModel):
-    """Response of `POST /api/export/project-sync` - plan and both patched
-    file variants in one response (design section 4/7): no second server
-    round trip, the "confirm" step is purely client-side.
+    """Response of `POST /api/export/project-sync` - plan and the patched
+    file in one response (design section 4/7): no second server round
+    trip, the "confirm" step is purely client-side.
 
     **Two response shapes** (user request after the review): if the file
     carries more than one Miniserver and none was selected, the endpoint
@@ -579,13 +579,7 @@ class ProjectSyncPlanOut(BaseModel):
     available_miniservers: list[ProjectSyncMiniserverOut] = Field(default_factory=list)
     entries: list[ProjectSyncEntryOut] = Field(default_factory=list)
     has_changes: bool = False
-    patched_conservative_base64: str | None = None
-    # `None` if the experimental variant could not be built for this file
-    # (e.g. missing `VirtualInCaption` section, design section 8). The
-    # plan and the conservative variant remain unaffected by that - the
-    # UI then shows only the reason instead of the download offer.
-    patched_with_new_devices_base64: str | None = None
-    new_devices_unavailable_reason: str | None = None
+    patched_base64: str | None = None
 
 
 class ResendIntervalOut(BaseModel):

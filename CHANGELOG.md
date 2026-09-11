@@ -37,6 +37,14 @@ people who don't know the code.
   returns `node_id`. Each device now reports `technology`, `address` and
   `transport` instead, to make room for device types beyond Matter.
 
+### Changed
+
+- **Project file sync creates new devices without asking.** A device the
+  uploaded project does not know yet now always gets its own virtual input
+  and output in the patched file. This used to be an experimental checkbox;
+  it has worked reliably in Loxone Config, so the checkbox is gone and there
+  is one file to download.
+
 ## [0.3.10] — 2026-09-10
 
 ### Fixed
