@@ -58,7 +58,14 @@ log() {
 
 env_value() {
   [ -f "$ENV_FILE" ] || return 0
-  sed -n "s/^$1=//p" "$ENV_FILE" | tail -n 1
+  raw="$(sed -n "s/^$1=//p" "$ENV_FILE" | tail -n 1)"
+  # A hand-edited .env may quote its value; strip one matching pair so
+  # RADIO_DEVICE="/dev/..." compares equal to an unquoted request value.
+  case "$raw" in
+    \"*\") raw="${raw#\"}"; raw="${raw%\"}" ;;
+    \'*\') raw="${raw#\'}"; raw="${raw%\'}" ;;
+  esac
+  printf '%s' "$raw"
 }
 
 # ----------------------------------------------------------------- report --
@@ -147,16 +154,34 @@ write_state "$JOB_PHASE" "$JOB_ERROR"
 
 # ---------------------------------------------------------------- request --
 
-[ -f "$REQUEST" ] || exit 0
+[ -e "$REQUEST" ] || exit 0
 
-REQUEST_ID="$(jq -r 'if type == "object" and (.id | type) == "string" then .id else empty end' "$REQUEST" 2>/dev/null || true)"
+# Read the request exactly once: copy it into a private snapshot right away
+# and run every check and every value read against the snapshot only.
+# Otherwise an attacker who controls the bridge could rewrite
+# radios-request.json between the schema check and the value reads below,
+# so WANT_DEVICE/WANT_BLUETOOTH would carry strings the schema never saw -
+# exactly the guarantee Task 4 relies on when it writes RADIO_DEVICE into
+# .env (a newline there would inject an .env line). It also means a request
+# that turns unreadable (deleted, replaced by a directory, ...) fails at
+# one guarded place instead of crashing an unguarded command substitution
+# under `set -eu` and leaving the phase stuck at "validate" forever.
+REQUEST_SNAPSHOT="$UPDATE_DIR/radios-request.handling.json"
+rm -f "$REQUEST_SNAPSHOT"
+trap 'rm -f "$REQUEST_SNAPSHOT"' EXIT
+if ! cat "$REQUEST" > "$REQUEST_SNAPSHOT" 2>/dev/null; then
+  log "radios request unreadable: could not snapshot $REQUEST"
+  reject request_malformed
+fi
+
+REQUEST_ID="$(jq -r 'if type == "object" and (.id | type) == "string" then .id else empty end' "$REQUEST_SNAPSHOT" 2>/dev/null || true)"
 MARKER="$REQUEST_ID"
 case "$REQUEST_ID" in
   ''|.|..|*"$NEWLINE"*|*[!A-Za-z0-9._-]*)
-    MARKER="invalid-$(cat "$REQUEST" | cksum | cut -d ' ' -f 1)" ;;
+    MARKER="invalid-$(cksum < "$REQUEST_SNAPSHOT" | cut -d ' ' -f 1)" ;;
 esac
 if [ "${#MARKER}" -gt 128 ]; then
-  MARKER="invalid-$(cat "$REQUEST" | cksum | cut -d ' ' -f 1)"
+  MARKER="invalid-$(cksum < "$REQUEST_SNAPSHOT" | cut -d ' ' -f 1)"
 fi
 if [ "$MARKER" = "$JOB_ID" ] || [ -e "$HANDLED_DIR/$MARKER" ]; then
   exit 0
@@ -190,12 +215,21 @@ jq -e '
            and (.thread.device | test("\\A/dev/serial/by-id/[A-Za-z0-9._:+-]+\\z"))))
   and (.bluetooth.adapter | type) == "number"
   and .bluetooth.adapter == (.bluetooth.adapter | floor)
+  and (.bluetooth.adapter | tostring | test("^[0-9]+$"))
   and .bluetooth.adapter >= 0 and .bluetooth.adapter <= 15
-' "$REQUEST" >/dev/null 2>&1 || reject request_malformed
+' "$REQUEST_SNAPSHOT" >/dev/null 2>&1 || reject request_malformed
 
-WANT_ENABLED="$(jq -r '.thread.enabled' "$REQUEST")"
-WANT_DEVICE="$(jq -r '.thread.device // empty' "$REQUEST")"
-WANT_BLUETOOTH="$(jq -r '.bluetooth.adapter' "$REQUEST")"
+# Guarded (not a bare assignment): a read failing here must reject, not let
+# `set -eu` kill the pass with the marker already written (see above).
+if ! WANT_ENABLED="$(jq -r '.thread.enabled' "$REQUEST_SNAPSHOT" 2>/dev/null)"; then
+  reject request_malformed
+fi
+if ! WANT_DEVICE="$(jq -r '.thread.device // empty' "$REQUEST_SNAPSHOT" 2>/dev/null)"; then
+  reject request_malformed
+fi
+if ! WANT_BLUETOOTH="$(jq -r '.bluetooth.adapter' "$REQUEST_SNAPSHOT" 2>/dev/null)"; then
+  reject request_malformed
+fi
 
 if [ "$WANT_ENABLED" = true ]; then
   [ -n "$WANT_DEVICE" ] || reject thread_device_required
@@ -219,7 +253,7 @@ fi
 # ---------------------------------------------------------------- changes --
 
 read_current
-ORIG_ENABLED="$CUR_ENABLED"
+ORIG_ENABLED="$CUR_ENABLED" # TRANSITIONAL (Task 4)
 BLUETOOTH_CHANGE=false
 if [ "$WANT_BLUETOOTH" != "$CUR_BLUETOOTH" ]; then BLUETOOTH_CHANGE=true; fi
 THREAD_ACTION=none

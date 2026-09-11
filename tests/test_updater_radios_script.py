@@ -27,7 +27,9 @@ per-pass report."""
 from __future__ import annotations
 
 import json
+import os
 import subprocess
+import threading
 from pathlib import Path
 
 import pytest
@@ -229,6 +231,17 @@ def test_a_missing_bluetooth_adapter_line_reads_as_zero(radios):
     assert state["current"]["bluetooth_adapter"] == 0
 
 
+def test_a_hand_quoted_env_value_reads_the_same_as_unquoted(radios):
+    """Fault to prove it: stop stripping surrounding quotes in env_value."""
+    radios.env_file.write_text(
+        radios.env_file.read_text().replace(
+            "RADIO_DEVICE=/dev/ttyUSB0", 'RADIO_DEVICE="/dev/ttyUSB0"'
+        )
+    )
+    _, _, state = radios()
+    assert state["current"]["thread_device"] == "/dev/ttyUSB0"
+
+
 def test_a_zero_padded_bluetooth_adapter_does_not_break_the_report(radios):
     """Fault to prove it: remove the leading-zero strip. The installed jq
     (1.7.1) turns out to coerce "01" to 1 on its own for --argjson, so a
@@ -265,6 +278,28 @@ def test_without_the_dev_mount_it_is_not_capable_and_rejects(radios, tmp_path):
     assert _mutating_docker_calls(calls) == []
 
 
+def test_without_a_known_stack_host_path_it_is_not_capable_and_rejects(radios):
+    before = radios.env_file.read_bytes()
+    _request(radios)
+    _, calls, state = radios(LOXMATTER_STACK_HOST_PATH="")
+    assert state["capable"] is False
+    assert state["capable_reason"] == "stack_host_path_unknown"
+    assert (state["phase"], state["error"]) == ("rejected", "stack_host_path_unknown")
+    assert radios.env_file.read_bytes() == before
+    assert _mutating_docker_calls(calls) == []
+
+
+def test_a_change_with_no_env_file_is_rejected(radios):
+    """Reach the changes section (thread disabled requested while otbr is
+    running counts as a change) without a .env file to write into."""
+    radios.env_file.unlink()
+    _request(radios, thread={"enabled": False, "device": None}, bluetooth={"adapter": 0})
+    _, calls, state = radios()
+    assert (state["phase"], state["error"]) == ("rejected", "env_file_missing")
+    assert not radios.env_file.exists()
+    assert _mutating_docker_calls(calls) == []
+
+
 @pytest.mark.parametrize(
     ("overrides", "error"),
     [
@@ -294,6 +329,11 @@ def test_without_the_dev_mount_it_is_not_capable_and_rejects(radios, tmp_path):
         ({"bluetooth": {"adapter": 16}}, "request_malformed"),
         ({"bluetooth": {"adapter": "0"}}, "request_malformed"),
         ({"bluetooth": {"adapter": 1.5}}, "request_malformed"),
+        # A whole-number float renders as "1.0" via `jq -r`, which would
+        # otherwise look for a nonexistent "hci1.0" instead of being caught
+        # as malformed - see test_a_bad_request_is_rejected_without_any_effect
+        # fault-proving notes.
+        ({"bluetooth": {"adapter": 1.0}}, "request_malformed"),
         ({"bluetooth": {"adapter": 1}}, "bluetooth_adapter_not_found"),
         ({"command": "rm -rf /"}, "request_malformed"),
     ],
@@ -318,6 +358,69 @@ def test_an_unreadable_request_is_rejected_once(radios):
     log_lines = (radios.update_dir / "radios-log.txt").read_text().count("rejected")
     radios()
     assert (radios.update_dir / "radios-log.txt").read_text().count("rejected") == log_lines
+
+
+def test_a_request_path_that_cannot_be_read_ends_terminal_not_stuck(radios):
+    """Fault to prove it: read $REQUEST directly at every step instead of
+    snapshotting it once. The old code's `[ -f "$REQUEST" ]` guard only
+    accepts regular files, so a request path that is anything else (here: a
+    directory left behind by something else, or the bridge itself losing a
+    race while writing the real file) was silently treated as "no request
+    yet" forever - phase stays whatever it last was, with no error, and no
+    one is ever told the request could not be used. The fix widens that
+    guard to "the path exists" and then fails the one guarded read with a
+    clear, terminal, retryable-next-time state."""
+    request_path = radios.update_dir / "radios-request.json"
+    request_path.mkdir()
+    before = radios.env_file.read_bytes()
+    _, calls, state = radios()
+    assert (state["phase"], state["error"]) == ("rejected", "request_malformed")
+    assert radios.env_file.read_bytes() == before
+    assert _mutating_docker_calls(calls) == []
+
+
+def test_the_value_used_comes_from_a_single_read_of_the_request(radios):
+    """The request path is a FIFO, which can hand its bytes to only ONE
+    reader; a second attempt to open it for reading would hang (no writer
+    left) or see empty content. A script that re-reads $REQUEST for the
+    schema check and again for the three value reads cannot pass this test
+    reliably; a script that copies it once into a private snapshot and
+    reads only the snapshot afterwards always can.
+
+    A genuine mid-run swap of the live file (the attack this closes) is not
+    reliably reproducible from outside the script in a fast, deterministic
+    test - the whole pass completes in well under a second - so this proves
+    the stronger property instead: every check and every value read that
+    matters for the outcome is satisfiable from data obtained through
+    exactly one read of $REQUEST."""
+    radios.env_file.write_text(
+        radios.env_file.read_text().replace("/dev/ttyUSB0", f"/dev/serial/by-id/{SONOFF}")
+    )
+    before = radios.env_file.read_bytes()
+    request_path = radios.update_dir / "radios-request.json"
+    os.mkfifo(request_path)
+    body = json.dumps(
+        {
+            "id": "job-1",
+            "thread": {"enabled": True, "device": f"/dev/serial/by-id/{SONOFF}"},
+            "bluetooth": {"adapter": 0},
+            "requested_at": "2026-09-11T20:00:00Z",
+        }
+    ).encode("utf-8")
+
+    def feed() -> None:
+        with open(request_path, "wb") as pipe:
+            pipe.write(body)
+
+    writer = threading.Thread(target=feed)
+    writer.start()
+    try:
+        _, calls, state = radios()
+    finally:
+        writer.join(timeout=5)
+    assert state["phase"] == "unchanged"
+    assert radios.env_file.read_bytes() == before
+    assert _mutating_docker_calls(calls) == []
 
 
 def test_enabling_thread_requires_a_backbone_interface(radios):
