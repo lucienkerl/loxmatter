@@ -103,7 +103,7 @@ async def api(tmp_path, no_invoke, fake_runtime, fake_client):
     snapshot = load_snapshot("ikea_grillplats_plug.json")
     device_id = store.register_device(snapshot)
     store.register_signals(device_id, snapshot)
-    store.register_commands(device_id, extract_commands(snapshot), snapshot.node_id)
+    store.register_commands(device_id, extract_commands(snapshot))
 
     app = build_app(
         store,
@@ -125,7 +125,7 @@ async def api_with_sender(tmp_path, no_invoke, fake_runtime, fake_client, receiv
     snapshot = load_snapshot("ikea_grillplats_plug.json")
     device_id = store.register_device(snapshot)
     store.register_signals(device_id, snapshot)
-    store.register_commands(device_id, extract_commands(snapshot), snapshot.node_id)
+    store.register_commands(device_id, extract_commands(snapshot))
 
     host, port = receiver.getsockname()
     sender = UdpSender(host, port)
@@ -152,7 +152,7 @@ async def api_with_token(tmp_path, no_invoke, fake_runtime, fake_client):
     snapshot = load_snapshot("ikea_grillplats_plug.json")
     device_id = store.register_device(snapshot)
     store.register_signals(device_id, snapshot)
-    store.register_commands(device_id, extract_commands(snapshot), snapshot.node_id)
+    store.register_commands(device_id, extract_commands(snapshot))
 
     app = build_app(
         store,
@@ -174,7 +174,7 @@ async def api_without_matter(tmp_path, no_invoke, fake_runtime):
     snapshot = load_snapshot("ikea_grillplats_plug.json")
     device_id = store.register_device(snapshot)
     store.register_signals(device_id, snapshot)
-    store.register_commands(device_id, extract_commands(snapshot), snapshot.node_id)
+    store.register_commands(device_id, extract_commands(snapshot))
 
     app = build_app(store, no_invoke, fake_runtime(store), client=None)
     transport = httpx.ASGITransport(app=app)
@@ -729,7 +729,7 @@ async def api_with_runtime(tmp_path, no_invoke, fake_runtime, fake_client):
     snapshot = load_snapshot("ikea_grillplats_plug.json")
     device_id = store.register_device(snapshot)
     store.register_signals(device_id, snapshot)
-    store.register_commands(device_id, extract_commands(snapshot), snapshot.node_id)
+    store.register_commands(device_id, extract_commands(snapshot))
 
     runtime = fake_runtime(store)
     app = build_app(store, no_invoke, runtime, client=fake_client)

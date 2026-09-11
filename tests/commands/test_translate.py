@@ -31,7 +31,8 @@ from loxmatter.profiles.table import known_command_pairs
 def cmd(cluster: int, command: int, takes_value: bool = False) -> StoredCommand:
     return StoredCommand(
         key="d1_1_test",
-        node_id=3,
+        technology="matter",
+        address="3",
         endpoint=1,
         cluster_id=cluster,
         command_id=command,

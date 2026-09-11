@@ -70,7 +70,10 @@ async def attach(client: BridgeMatterClient, store: Store, runtime: Runtime) -> 
     heartbeat and resend loops, and those are meant to outlast an outage,
     not to begin anew with it.
     """
-    await client.subscribe(store.device_id_for_node, runtime)
+    await client.subscribe(
+        lambda node_id: store.device_id_for("matter", str(node_id)),  # TRANSITIONAL (Task 5)
+        runtime,
+    )
     snapshots = await client.snapshots()
     await runtime.seed_from_snapshot(snapshots)
     store.backfill_device_types(snapshots)

@@ -48,7 +48,13 @@ from pathlib import Path
 from loxmatter import i18n
 from loxmatter.export.commands import DeviceCommand, extract_commands
 from loxmatter.matter.discovery import extract_signals
-from loxmatter.matter.models import NodeSnapshot, SignalKind, SignalRef
+from loxmatter.matter.models import (
+    NodeSnapshot,
+    SignalKind,
+    SignalRef,
+    Technology,
+    parse_technology,
+)
 from loxmatter.model.auth_store import AuthStore
 from loxmatter.model.locale_store import LocaleStore
 from loxmatter.model.resend_settings_store import ResendSettingsStore
@@ -69,6 +75,7 @@ from loxmatter.profiles.table import (
     rank_for,
     struct_field,
 )
+from loxmatter.profiles.transport import network_features_of
 from loxmatter.timestamps import now_iso
 
 DEFAULT_UDP_PORT = 7000
@@ -116,7 +123,11 @@ DEFAULT_LISTEN_PORT = 8080
 # `device_group`, `device_group_member` and `group_command`, see
 # `_migrate_to_v8` - all three are already present in a fresh database via
 # `_SCHEMA`, so the migration is only needed for existing databases.
-_SCHEMA_VERSION = 8
+# Version 9 (device source boundary, design 2026-09-11) replaces the Matter
+# node ID as device identity with `device.technology` + `device.address`,
+# adds `device.network_features`, and drops `node_id` from `device` and from
+# `command` (where it was a redundant copy), see `_migrate_to_v9`.
+_SCHEMA_VERSION = 9
 
 
 def schema_version() -> int:
@@ -133,16 +144,18 @@ def schema_version() -> int:
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS device (
-    id           INTEGER PRIMARY KEY AUTOINCREMENT,
-    unique_id    TEXT NOT NULL,
-    node_id      INTEGER NOT NULL,
-    label        TEXT NOT NULL,
-    udp_port     INTEGER NOT NULL,
-    active       INTEGER NOT NULL DEFAULT 1,
-    exported_at  TEXT,
-    updated_at   TEXT,
-    room         TEXT,
-    device_types TEXT
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    unique_id        TEXT NOT NULL,
+    technology       TEXT NOT NULL DEFAULT 'matter',
+    address          TEXT NOT NULL DEFAULT '',
+    label            TEXT NOT NULL,
+    udp_port         INTEGER NOT NULL,
+    active           INTEGER NOT NULL DEFAULT 1,
+    exported_at      TEXT,
+    updated_at       TEXT,
+    room             TEXT,
+    device_types     TEXT,
+    network_features INTEGER
 );
 CREATE TABLE IF NOT EXISTS signal (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -163,7 +176,6 @@ CREATE TABLE IF NOT EXISTS signal (
 CREATE TABLE IF NOT EXISTS command (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     device_id   INTEGER NOT NULL REFERENCES device(id),
-    node_id     INTEGER NOT NULL,
     endpoint    INTEGER NOT NULL,
     cluster_id  INTEGER NOT NULL,
     command_id  INTEGER NOT NULL,
@@ -227,6 +239,14 @@ def _add_column_if_missing(db: sqlite3.Connection, table: str, column: str, ddl:
         return False
     db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
     return True
+
+
+def _drop_column_if_present(db: sqlite3.Connection, table: str, column: str) -> None:
+    """The mirror image of `_add_column_if_missing`, for the same pitfall:
+    a fresh database never had `column`, and still runs every migration."""
+    columns = {str(row["name"]) for row in db.execute(f"PRAGMA table_info({table})")}
+    if column in columns:
+        db.execute(f"ALTER TABLE {table} DROP COLUMN {column}")
 
 
 def _migrate_to_v1(db: sqlite3.Connection) -> None:
@@ -675,6 +695,34 @@ def _migrate_to_v8(db: sqlite3.Connection) -> None:
     )
 
 
+def _migrate_to_v9(db: sqlite3.Connection) -> None:
+    """Technology plus address instead of the Matter node ID (design
+    2026-09-11, section 4.1).
+
+    `node_id` is dropped rather than left as a dead column: it is `NOT
+    NULL`, and a Zigbee row would have to invent a node ID to satisfy it.
+    `DROP COLUMN` needs SQLite 3.35; the image ships 3.46.1 (measured 11
+    September 2026).
+
+    `address` is `NOT NULL DEFAULT ''` in both this migration and `_SCHEMA`,
+    so a migrated and a fresh database end up with the same column
+    definition. The empty default never survives: this backfill fills every
+    existing row, and `register_device` always writes a real address.
+
+    No backfill for `network_features`: the value lives in the snapshot,
+    which a migration never sees - `Store.backfill_network_features` fills
+    it at startup, the same split `_migrate_to_v7` documents for
+    `device_types`."""
+    _add_column_if_missing(db, "device", "technology", "TEXT NOT NULL DEFAULT 'matter'")
+    _add_column_if_missing(db, "device", "address", "TEXT NOT NULL DEFAULT ''")
+    _add_column_if_missing(db, "device", "network_features", "INTEGER")
+    device_columns = {str(row["name"]) for row in db.execute("PRAGMA table_info(device)")}
+    if "node_id" in device_columns:
+        db.execute("UPDATE device SET address = CAST(node_id AS TEXT) WHERE address = ''")
+    _drop_column_if_present(db, "device", "node_id")
+    _drop_column_if_present(db, "command", "node_id")
+
+
 # Migrations in order, applied from whichever version is stored - to extend
 # for a later schema change: simply append, with the next version number as
 # the key.
@@ -687,6 +735,7 @@ _MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     6: _migrate_to_v6,
     7: _migrate_to_v7,
     8: _migrate_to_v8,
+    9: _migrate_to_v9,
 }
 
 
@@ -770,7 +819,8 @@ class StoredSignal:
 class StoredCommand:
     key: str
     slug: str
-    node_id: int
+    technology: Technology
+    address: str
     endpoint: int
     cluster_id: int
     command_id: int
@@ -907,7 +957,8 @@ class StoredDevice:
     """
 
     id: int
-    node_id: int
+    technology: Technology
+    address: str
     unique_id: str
     label: str
     # exported_at/updated_at (Task 5, Phase 5) - the basis for `GET
@@ -935,6 +986,10 @@ class StoredDevice:
     # stored, that is a code change without a migration.
     room: str | None
     device_types: dict[int, frozenset[int]] | None
+    # The raw FeatureMap of NetworkCommissioning (`0/49/65532`), `None` for
+    # a device that reports none or has not been backfilled yet. Stored raw
+    # for the reason `device_types` is - see `profiles/transport.py`.
+    network_features: int | None
 
 
 @dataclass(frozen=True)
@@ -1084,7 +1139,13 @@ class Store:
 
     def _device_identity(self, snapshot: NodeSnapshot) -> str:
         """Falls back to the node ID: some devices do not report a unique ID (Spec 7.2)."""
-        return snapshot.unique_id or f"node:{snapshot.node_id}"
+        return snapshot.unique_id or f"node:{self._identity_of(snapshot)[1]}"
+
+    @staticmethod
+    def _identity_of(snapshot: NodeSnapshot) -> tuple[str, str]:
+        """`(technology, address)` of a snapshot - the one place the store
+        derives it, so the snapshot's own fields replace it in one edit."""
+        return ("matter", str(snapshot.node_id))  # TRANSITIONAL (Task 3)
 
     def register_device(self, snapshot: NodeSnapshot, room: str | None = None) -> int:
         """Creates a device, or returns the id of an already known active
@@ -1108,18 +1169,22 @@ class Store:
             return int(row["id"])
 
         label = f"{snapshot.vendor_name} {snapshot.product_name}".strip() or identity
+        technology, address = self._identity_of(snapshot)
         cur = self._db.execute(
             "INSERT INTO device"
-            " (unique_id, node_id, label, udp_port, updated_at, room, device_types)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?)",
+            " (unique_id, technology, address, label, udp_port, updated_at, room,"
+            " device_types, network_features)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 identity,
-                snapshot.node_id,
+                technology,
+                address,
                 label,
                 DEFAULT_UDP_PORT,
                 self._now(),
                 _normalized_room(room),
                 _encode_device_types(device_types_by_endpoint(snapshot)),
+                network_features_of(snapshot),
             ),
         )
         self._db.commit()
@@ -1182,20 +1247,24 @@ class Store:
     def _as_device(row: sqlite3.Row) -> StoredDevice:
         return StoredDevice(
             id=int(row["id"]),
-            node_id=int(row["node_id"]),
+            technology=parse_technology(str(row["technology"])),
+            address=str(row["address"]),
             unique_id=str(row["unique_id"]),
             label=str(row["label"]),
             exported_at=row["exported_at"],
             updated_at=row["updated_at"],
             room=row["room"],
             device_types=_decode_device_types(row["device_types"]),
+            network_features=(
+                None if row["network_features"] is None else int(row["network_features"])
+            ),
         )
 
     def devices(self) -> list[StoredDevice]:
         """All active devices (Task 2, Phase 5) - for `GET /api/devices`.
 
         A removed device (`forget_device`) no longer shows up here, exactly
-        as with `device_id_for_node`."""
+        as with `device_id_for`."""
         rows = self._db.execute("SELECT * FROM device WHERE active = 1 ORDER BY id").fetchall()
         return [self._as_device(r) for r in rows]
 
@@ -1678,14 +1747,14 @@ class Store:
         `snapshots()` is skipped - the same rule as for
         `backfill_device_types`: this fills in, never clears.
         """
-        by_node = {snapshot.node_id: snapshot for snapshot in snapshots}
+        by_identity = {self._identity_of(snapshot): snapshot for snapshot in snapshots}
         gained = 0
         for device in self.devices():
-            snapshot = by_node.get(device.node_id)
+            snapshot = by_identity.get((device.technology, device.address))
             if snapshot is None:
                 continue
             before = len(self.commands(device.id))
-            self.register_commands(device.id, extract_commands(snapshot), device.node_id)
+            self.register_commands(device.id, extract_commands(snapshot))
             if len(self.commands(device.id)) > before:
                 gained += 1
         return gained
@@ -1711,18 +1780,49 @@ class Store:
 
         Does not touch `updated_at` - the same rationale as for `set_room`:
         the device types end up in no export template."""
-        by_node = {snapshot.node_id: snapshot for snapshot in snapshots}
+        by_identity = {self._identity_of(snapshot): snapshot for snapshot in snapshots}
         rows = self._db.execute(
-            "SELECT id, node_id FROM device WHERE device_types IS NULL AND active = 1"
+            "SELECT id, technology, address FROM device WHERE device_types IS NULL AND active = 1"
         ).fetchall()
         filled = 0
         for row in rows:
-            snapshot = by_node.get(int(row["node_id"]))
+            snapshot = by_identity.get((str(row["technology"]), str(row["address"])))
             if snapshot is None:
                 continue
             self._db.execute(
                 "UPDATE device SET device_types = ? WHERE id = ?",
                 (_encode_device_types(device_types_by_endpoint(snapshot)), int(row["id"])),
+            )
+            filled += 1
+        self._db.commit()
+        return filled
+
+    def backfill_network_features(self, snapshots: Sequence[NodeSnapshot]) -> int:
+        """Backfills `device.network_features` for devices that do not yet
+        have it, and returns how many that was.
+
+        The same rules as `backfill_device_types`, for the same reasons:
+        only `NULL` is filled, a set value is never overwritten, a device
+        missing from `snapshots` (offline) is left alone, and `updated_at`
+        is not touched - the value ends up in no export template. A
+        snapshot that reports no FeatureMap leaves the row at `NULL`, so
+        the next start asks again."""
+        by_identity = {self._identity_of(snapshot): snapshot for snapshot in snapshots}
+        rows = self._db.execute(
+            "SELECT id, technology, address FROM device"
+            " WHERE network_features IS NULL AND active = 1"
+        ).fetchall()
+        filled = 0
+        for row in rows:
+            snapshot = by_identity.get((str(row["technology"]), str(row["address"])))
+            if snapshot is None:
+                continue
+            features = network_features_of(snapshot)
+            if features is None:
+                continue
+            self._db.execute(
+                "UPDATE device SET network_features = ? WHERE id = ?",
+                (features, int(row["id"])),
             )
             filled += 1
         self._db.commit()
@@ -1816,19 +1916,21 @@ class Store:
         )
         self._db.commit()
 
-    def device_id_for_node(self, node_id: int) -> int | None:
-        """Maps a Matter node ID to the associated, stable `device_id`.
+    def device_id_for(self, technology: str, address: str) -> int | None:
+        """Maps a source's address to the associated, stable `device_id`.
 
-        For the runtime (Task 8): an incoming subscription from
-        matter-server carries only the node ID, but the signal keys hang
-        off the `device_id` (see module docstring - a node ID can change,
-        the `device_id` never does). `None` if no active device with this
-        node ID is known, e.g. because it was never exported or has since
-        been removed (`forget_device`) - a removed device's node ID must
-        not point to its old, inactive `device_id`.
+        For the runtime: an incoming update carries only the address its
+        source uses, but the signal keys hang off the `device_id` (see
+        module docstring - an address can change, the `device_id` never
+        does). The technology is part of the lookup because two sources
+        can use the same address text. `None` if no active device matches,
+        e.g. because it was never exported or has since been removed
+        (`forget_device`) - a removed device's address must not point to
+        its old, inactive `device_id`.
         """
         row = self._db.execute(
-            "SELECT id FROM device WHERE node_id = ? AND active = 1", (node_id,)
+            "SELECT id FROM device WHERE technology = ? AND address = ? AND active = 1",
+            (technology, address),
         ).fetchone()
         return int(row["id"]) if row is not None else None
 
@@ -2037,7 +2139,7 @@ class Store:
         """A single signal by its key - for `PATCH /api/signals/{key}`
         (Task 2), which has no device path parameter and therefore cannot
         go via `signals(device_id)`. `None` instead of an exception,
-        analogous to `device_id_for_node` - the caller decides whether that
+        analogous to `device_id_for` - the caller decides whether that
         is a 404."""
         row = self._db.execute("SELECT * FROM signal WHERE key = ?", (key,)).fetchone()
         return self._as_signal(row) if row is not None else None
@@ -2061,7 +2163,7 @@ class Store:
         return {str(r["key"]) for r in rows}
 
     def register_commands(
-        self, device_id: int, commands: Sequence[DeviceCommand], node_id: int
+        self, device_id: int, commands: Sequence[DeviceCommand]
     ) -> list[StoredCommand]:
         """Makes the exported command keys resolvable at runtime.
 
@@ -2141,11 +2243,10 @@ class Store:
                 taken.add(key)
                 self._db.execute(
                     "INSERT INTO command "
-                    "(device_id, node_id, endpoint, cluster_id, command_id, key, slug,"
-                    " takes_value) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    "(device_id, endpoint, cluster_id, command_id, key, slug, takes_value)"
+                    " VALUES (?, ?, ?, ?, ?, ?, ?)",
                     (
                         device_id,
-                        node_id,
                         command.endpoint,
                         command.cluster_id,
                         command.command_id,
@@ -2175,15 +2276,25 @@ class Store:
             self.register_group_commands(group_id)
         return self.commands(device_id)
 
+    # The owning device's identity travels with every command row through
+    # this join instead of a stored copy (design 2026-09-11, section 4.1):
+    # `command.node_id` used to duplicate `device.node_id`, and a copy is a
+    # second place that can disagree.
+    _COMMAND_SELECT = (
+        "SELECT command.*, device.technology AS technology, device.address AS address"
+        " FROM command JOIN device ON device.id = command.device_id"
+    )
+
     def commands(self, device_id: int) -> list[StoredCommand]:
         rows = self._db.execute(
-            "SELECT * FROM command WHERE device_id = ? ORDER BY endpoint, cluster_id, command_id",
+            f"{self._COMMAND_SELECT} WHERE command.device_id = ?"
+            " ORDER BY command.endpoint, command.cluster_id, command.command_id",
             (device_id,),
         ).fetchall()
         return [self._as_command(r) for r in rows]
 
     def resolve_command(self, key: str) -> StoredCommand:
-        row = self._db.execute("SELECT * FROM command WHERE key = ?", (key,)).fetchone()
+        row = self._db.execute(f"{self._COMMAND_SELECT} WHERE command.key = ?", (key,)).fetchone()
         if row is None:
             raise UnknownCommandError(i18n.t("api.errors.unknown_command", command_key=key))
         return self._as_command(row)
@@ -2193,7 +2304,8 @@ class Store:
         return StoredCommand(
             key=row["key"],
             slug=row["slug"],
-            node_id=int(row["node_id"]),
+            technology=parse_technology(str(row["technology"])),
+            address=str(row["address"]),
             endpoint=int(row["endpoint"]),
             cluster_id=int(row["cluster_id"]),
             command_id=int(row["command_id"]),

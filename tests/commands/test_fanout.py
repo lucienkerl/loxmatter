@@ -39,7 +39,8 @@ def command(
     return StoredCommand(
         key=f"d{device_id}_{endpoint}_{slug}",
         slug=slug,
-        node_id=node_id,
+        technology="matter",
+        address=str(node_id),
         endpoint=endpoint,
         cluster_id=cluster_id,
         command_id=command_id,

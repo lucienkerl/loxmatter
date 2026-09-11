@@ -1027,7 +1027,7 @@ async def test_the_commissioning_route_still_seeds_after_the_dispatch_loop_was_f
     bridge, upstream = make_connected_pair([FakeNode(12, {})])
     await bridge.connect()
     handler = FakeHandler()
-    # Stands in for `Store.device_id_for_node`: only knows the new node
+    # Stands in for `Store.device_id_for`: only knows the new node
     # after `register_device` has run - so only from step 4 onward.
     known: dict[int, int] = {}
     await bridge.subscribe(known.get, handler)

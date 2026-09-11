@@ -86,7 +86,10 @@ class DeviceOut(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     id: int
-    node_id: int
+    # Which source the device belongs to, and its address there (design
+    # 2026-09-11, section 5.3). Not used by the web UI today.
+    technology: str
+    address: str
     label: str
     online: bool
     # When something last arrived from this device at all; `None` if

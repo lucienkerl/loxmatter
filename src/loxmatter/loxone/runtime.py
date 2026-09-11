@@ -297,7 +297,10 @@ class Runtime:
         Returns the number of signals seeded (for the log in `_run`)."""
         count = 0
         for snapshot in snapshots:
-            device_id = self._store.device_id_for_node(snapshot.node_id)
+            device_id = self._store.device_id_for(
+                "matter",
+                str(snapshot.node_id),  # TRANSITIONAL (Task 3)
+            )
             if device_id is None:
                 logger.info(
                     "no known device for node %s - skipping snapshot during seeding",

@@ -58,7 +58,7 @@ class FakeStore:
         self.backfill_types_calls = 0
         self.backfill_commands_calls = 0
 
-    def device_id_for_node(self, node_id: int) -> int | None:
+    def device_id_for(self, technology: str, address: str) -> int | None:
         return None
 
     def backfill_device_types(self, snapshots) -> int:

@@ -41,7 +41,8 @@ def test_unsupported_command_error_is_english_by_default():
     command = StoredCommand(
         key="d1_c99_cmd0",
         slug="cmd0",
-        node_id=1,
+        technology="matter",
+        address="1",
         endpoint=1,
         cluster_id=99,
         command_id=0,

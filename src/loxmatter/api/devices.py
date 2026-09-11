@@ -237,7 +237,8 @@ def _device_out(device: StoredDevice, store: Store, runtime: RuntimeValues) -> D
     category = category_for(device.device_types)
     return DeviceOut(
         id=device.id,
-        node_id=device.node_id,
+        technology=device.technology,
+        address=device.address,
         label=device.label,
         online=online,
         last_heard=last_heard,
@@ -512,7 +513,7 @@ def build_device_router(
         if request.room is not None:
             store.set_room(device_id, request.room)
         store.register_signals(device_id, snapshot)
-        store.register_commands(device_id, extract_commands(snapshot), snapshot.node_id)
+        store.register_commands(device_id, extract_commands(snapshot))
 
         # The reachability of the new device MUST be seeded here, from
         # `snapshot.available` - exactly as `Runtime.seed_from_snapshot`
@@ -617,7 +618,7 @@ def build_device_router(
         active_client = _require_client()
         try:
             # Order: see module docstring - the fabric first, then the store.
-            await active_client.remove_node(device.node_id)
+            await active_client.remove_node(int(device.address))  # TRANSITIONAL (Task 5)
         except MatterUnavailableError as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
         store.forget_device(device.id)

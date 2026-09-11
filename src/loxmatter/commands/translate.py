@@ -369,7 +369,7 @@ def to_matter_calls(command: StoredCommand, value: str) -> list[MatterCall]:
     if level == 0:
         return [
             MatterCall(
-                node_id=command.node_id,
+                node_id=int(command.address),  # TRANSITIONAL (Task 4)
                 endpoint=command.endpoint,
                 cluster_id=_CLUSTER_LEVEL,
                 command_id=_COMMAND_MOVE_TO_LEVEL_WITH_ON_OFF,
@@ -379,7 +379,7 @@ def to_matter_calls(command: StoredCommand, value: str) -> list[MatterCall]:
 
     calls = [
         MatterCall(
-            node_id=command.node_id,
+            node_id=int(command.address),  # TRANSITIONAL (Task 4)
             endpoint=command.endpoint,
             cluster_id=command.cluster_id,
             # The value can determine the command - see `_Built`.
@@ -390,7 +390,7 @@ def to_matter_calls(command: StoredCommand, value: str) -> list[MatterCall]:
     if built.brightness_percent is not None:
         calls.append(
             MatterCall(
-                node_id=command.node_id,
+                node_id=int(command.address),  # TRANSITIONAL (Task 4)
                 endpoint=command.endpoint,
                 cluster_id=_CLUSTER_LEVEL,
                 command_id=_COMMAND_MOVE_TO_LEVEL_WITH_ON_OFF,

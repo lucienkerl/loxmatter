@@ -21,12 +21,30 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any
+from typing import Any, Final, Literal, cast, get_args
 
 # BasicInformation cluster on endpoint 0.
 _VENDOR_NAME_PATH = "0/40/1"
 _PRODUCT_NAME_PATH = "0/40/3"
 _UNIQUE_ID_PATH = "0/40/18"
+
+# Which kind of source a device comes from (design 2026-09-11, section
+# 3.1). Lives here, next to `NodeSnapshot`, and not in `loxmatter.sources`:
+# `sources` imports this module, so the reverse import would be a cycle.
+Technology = Literal["matter", "zigbee"]
+
+_TECHNOLOGIES: Final = frozenset(get_args(Technology))
+
+
+def parse_technology(value: str) -> Technology:
+    """Narrows a stored string to `Technology`, loudly.
+
+    A value the code does not know means the database was written by a
+    newer loxmatter than the one reading it; reading on as if it were
+    Matter would send Matter commands to a device that is not one."""
+    if value not in _TECHNOLOGIES:
+        raise ValueError(f"unknown device technology {value!r}")
+    return cast(Technology, value)
 
 
 class SignalKind(str, Enum):

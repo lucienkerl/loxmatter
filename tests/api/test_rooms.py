@@ -40,7 +40,7 @@ async def api(tmp_path, no_invoke, fake_runtime, fake_client, fake_otbr):
     snapshot = load_snapshot("ikea_grillplats_plug.json")
     device_id = store.register_device(snapshot)
     store.register_signals(device_id, snapshot)
-    store.register_commands(device_id, extract_commands(snapshot), snapshot.node_id)
+    store.register_commands(device_id, extract_commands(snapshot))
     fake_client.store = store
 
     app = build_app(

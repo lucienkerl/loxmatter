@@ -353,7 +353,7 @@ def export(
         # Output commands come from AcceptedCommandList, not from the
         # attributes: Matter attributes are almost all read-only (task 6).
         stored_commands = store.register_commands(
-            device_id, extract_commands(snapshot, raw=raw_commands), snapshot.node_id
+            device_id, extract_commands(snapshot, raw=raw_commands)
         )
     finally:
         store.close()

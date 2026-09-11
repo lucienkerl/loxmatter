@@ -674,7 +674,7 @@ class BridgeMatterClient:
         """Reports attribute and event changes as well as reachability to `handler`.
 
         `resolve_device_id` maps a node ID to the store's stable
-        `device_id` (e.g. `Store.device_id_for_node`) - exactly this
+        `device_id` (e.g. `Store.device_id_for`) - exactly this
         mapping happens here, BEFORE `handler` sees anything, because the
         keys in Loxone hang off the `device_id`, not the node ID (see the
         module docstring, `Store` and the task 8 report). If

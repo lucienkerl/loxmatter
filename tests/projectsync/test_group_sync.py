@@ -48,7 +48,7 @@ def group_store(tmp_path):
         snapshot = _load(name)
         device_id = store.register_device(snapshot)
         store.register_signals(device_id, snapshot)
-        store.register_commands(device_id, extract_commands(snapshot), snapshot.node_id)
+        store.register_commands(device_id, extract_commands(snapshot))
         lamp_ids.append(device_id)
     group = store.create_group("Living room", lamp_ids)
     yield store, group

@@ -51,7 +51,7 @@ async def api(
         snapshot = load_snapshot(name)
         device_id = store.register_device(snapshot)
         store.register_signals(device_id, snapshot)
-        store.register_commands(device_id, extract_commands(snapshot), snapshot.node_id)
+        store.register_commands(device_id, extract_commands(snapshot))
         member_ids.append(device_id)
     group = store.create_group("Living room", member_ids)
 
@@ -73,7 +73,7 @@ async def test_one_loxone_call_reaches_every_member(api, invocations):
     key = next(c.key for c in store.group_commands(group_id) if c.slug == "on")
     response = await client.get(f"/cmd/{key}/1")
     assert response.status_code == 200
-    node_ids = {device.node_id for device in store.group_members(group_id)}
+    node_ids = {int(device.address) for device in store.group_members(group_id)}
     assert {call.node_id for call in invocations} == node_ids
 
 
@@ -92,13 +92,13 @@ async def test_a_bad_value_is_a_400_and_sends_nothing(api, invocations):
 async def test_a_failing_member_yields_502_and_names_it(api, invocations, failing_nodes):
     client, store, group_id = api
     members = store.group_members(group_id)
-    failing_nodes.add(members[0].node_id)
+    failing_nodes.add(int(members[0].address))
     key = next(c.key for c in store.group_commands(group_id) if c.slug == "on")
     response = await client.get(f"/cmd/{key}/1")
     assert response.status_code == 502
     assert members[0].label in response.json()["detail"]
     # the reachable member was still switched
-    assert {call.node_id for call in invocations} == {members[1].node_id}
+    assert {call.node_id for call in invocations} == {int(members[1].address)}
 
 
 async def test_a_device_key_still_works_unchanged(api, invocations):
@@ -107,7 +107,7 @@ async def test_a_device_key_still_works_unchanged(api, invocations):
     device = store.group_members(group_id)[0]
     key = next(c.key for c in store.commands(device.id) if c.slug == "on")
     assert (await client.get(f"/cmd/{key}/1")).status_code == 200
-    assert [call.node_id for call in invocations] == [device.node_id]
+    assert [call.node_id for call in invocations] == [int(device.address)]
 
 
 async def test_the_webui_route_drives_a_group_too(api, invocations):
@@ -117,7 +117,7 @@ async def test_the_webui_route_drives_a_group_too(api, invocations):
     key = next(c.key for c in store.group_commands(group_id) if c.slug == "on")
     response = await client.post(f"/api/commands/{key}", json={"value": "1"})
     assert response.status_code == 200
-    node_ids = {device.node_id for device in store.group_members(group_id)}
+    node_ids = {int(device.address) for device in store.group_members(group_id)}
     assert {call.node_id for call in invocations} == node_ids
 
 
@@ -143,7 +143,7 @@ async def test_an_unknown_key_is_a_404_on_the_webui_route(api):
 async def test_a_failing_member_is_a_502_on_the_webui_route(api, failing_nodes):
     client, store, group_id = api
     members = store.group_members(group_id)
-    failing_nodes.add(members[0].node_id)
+    failing_nodes.add(int(members[0].address))
     key = next(c.key for c in store.group_commands(group_id) if c.slug == "on")
     response = await client.post(f"/api/commands/{key}", json={"value": "1"})
     assert response.status_code == 502

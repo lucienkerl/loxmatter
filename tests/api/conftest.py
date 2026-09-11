@@ -317,7 +317,9 @@ class FakeMatterClient:
         # catches up too early - the same race the NODE_ADDED event already
         # lost.
         self.followed_resolved.append(
-            None if self.store is None else self.store.device_id_for_node(node_id)
+            None
+            if self.store is None
+            else self.store.device_id_for("matter", str(node_id))  # TRANSITIONAL (Task 5)
         )
 
 
@@ -363,7 +365,7 @@ def plug_store(tmp_path):
     snapshot = load_snapshot("ikea_grillplats_plug.json")
     device_id = store.register_device(snapshot)
     store.register_signals(device_id, snapshot)
-    store.register_commands(device_id, extract_commands(snapshot), snapshot.node_id)
+    store.register_commands(device_id, extract_commands(snapshot))
     yield store, device_id
     store.close()
 
