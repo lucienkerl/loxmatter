@@ -153,7 +153,7 @@ from loxmatter.commands.fanout import dispatch_group, plan_group_calls
 from loxmatter.commands.translate import UnsupportedValueError, to_device_calls
 from loxmatter.model.store import Store, UnknownCommandError, UnknownDeviceError
 from loxmatter.profiles.table import command_control, command_slug
-from loxmatter.sources import DeviceCall
+from loxmatter.sources import DeviceCall, SourceNotConfiguredError
 
 Invoker = Callable[[DeviceCall], Awaitable[None]]
 
@@ -335,6 +335,9 @@ def build_control_router(store: Store, invoke: Invoker, values: ValueReader) -> 
             # and justified there.
             for call in calls:
                 await invoke(call)
+        except SourceNotConfiguredError as exc:
+            # Nothing was asked of the device, so this is not 502.
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
         except Exception as exc:  # every device problem becomes 502
             # logger.exception writes the full traceback to the server log,
             # NOT to the HTTP response - the same justification as for the

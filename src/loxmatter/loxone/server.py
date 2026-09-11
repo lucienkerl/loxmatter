@@ -153,7 +153,7 @@ from loxmatter.diagnostics.logbuffer import LogBufferHandler
 from loxmatter.loxone.sender import UdpSender
 from loxmatter.matter.client import BridgeMatterClient
 from loxmatter.model.store import Store
-from loxmatter.sources import DeviceCall
+from loxmatter.sources import DeviceCall, SourceNotConfiguredError, Sources
 from loxmatter.timestamps import now_iso
 
 Invoker = Callable[[DeviceCall], Awaitable[None]]
@@ -374,6 +374,7 @@ def build_app(
     invoke: Invoker,
     runtime: _RuntimeDependency,
     client: BridgeMatterClient | None = None,
+    sources: Sources | None = None,
     sender: UdpSender | None = None,
     matter_data_dir: Path | None = None,
     api_token: str | None = None,
@@ -387,6 +388,11 @@ def build_app(
     # side would step on each other's files.
     update_dir: Path = Path("/data/update"),
 ) -> FastAPI:
+    # Callers that predate the device source boundary pass only `client`;
+    # for them the registry is the Matter client alone, which is exactly
+    # what they had (design 2026-09-11, section 6.2).
+    if sources is None and client is not None:
+        sources = Sources([client])
     app = FastAPI(title="loxmatter", docs_url=None, redoc_url=None)
     command_log: RingBuffer[CommandLogEntry] = RingBuffer(maxlen=COMMAND_LOG_SIZE)
     api_guard = [Depends(build_api_guard(api_token, store))]
@@ -493,7 +499,7 @@ def build_app(
     # `/health`, `/` and `/static`, which are mounted further below
     # without `dependencies`.
     app.include_router(
-        build_device_router(store, client, runtime, thread_dataset_source),
+        build_device_router(store, client, runtime, thread_dataset_source, sources),
         dependencies=api_guard,
     )
     app.include_router(build_export_router(store), dependencies=api_guard)
@@ -608,6 +614,9 @@ def build_app(
             # and justified there.
             for call in calls:
                 await invoke(call)
+        except SourceNotConfiguredError as exc:
+            # Nothing was asked of the device, so this is not 502.
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
         except Exception as exc:  # every device problem becomes 502
             # logger.exception writes the full traceback to the server log,
             # NOT to the HTTP response (see

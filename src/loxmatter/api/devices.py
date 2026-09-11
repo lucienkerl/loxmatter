@@ -103,6 +103,7 @@ from loxmatter.model.store import Store, StoredDevice, StoredSignal, UnknownDevi
 from loxmatter.profiles.categories import CATEGORY_RANK, category_for
 from loxmatter.profiles.endpoints import endpoint_labels
 from loxmatter.profiles.table import Exportability, is_exportable
+from loxmatter.sources import SourceNotConfiguredError, Sources
 
 logger = logging.getLogger(__name__)
 
@@ -277,6 +278,7 @@ def build_device_router(
     client: BridgeMatterClient | None,
     runtime: RuntimeValues,
     thread_dataset_source: ThreadDatasetSource | None = None,
+    sources: Sources | None = None,
 ) -> APIRouter:
     router = APIRouter(prefix="/api")
     fetch_dataset = thread_dataset_source or fetch_active_dataset
@@ -615,10 +617,21 @@ def build_device_router(
     @router.delete("/devices/{device_id}", status_code=204)
     async def remove_device(device_id: int) -> None:
         device = _require_device(device_id)
-        active_client = _require_client()
+        if sources is None:
+            # `build_app` derives `sources` from `client`, so this is the
+            # app started without any device connection - the same 503 the
+            # route answered before.
+            raise HTTPException(
+                status_code=503,
+                detail=i18n.t("api.devices.fail_no_matter_client"),
+            )
+        try:
+            source = sources.get(device.technology)
+        except SourceNotConfiguredError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
         try:
             # Order: see module docstring - the fabric first, then the store.
-            await active_client.remove(device.address)
+            await source.remove(device.address)
         except MatterUnavailableError as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
         store.forget_device(device.id)

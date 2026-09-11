@@ -695,6 +695,7 @@ async def _run(
                 invoke,
                 runtime,
                 client=client,
+                sources=sources,
                 sender=sender,
                 matter_data_dir=matter_data_dir,
                 api_token=api_token,
