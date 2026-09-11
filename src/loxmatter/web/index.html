@@ -162,6 +162,9 @@
         <path d="M6 6l12 12" />
         <path d="M18 6L6 18" />
       </symbol>
+      <symbol id="i-check" viewBox="0 0 24 24">
+        <path d="M5 12.5l4.5 4.5L19 7.5" />
+      </symbol>
       <!-- Three filled dots instead of strokes: `.icon` sets
            `fill: none; stroke: currentColor`, which is correct for line icons,
            but would make a dot invisible. `#i-offline` already makes
@@ -3020,69 +3023,114 @@
 
         <!-- Name and room only while creating: an existing group is renamed
              and re-roomed on its tile, and a second path to the same write
-             is a second place for it to go wrong. -->
+             is a second place for it to go wrong. Two columns side by side,
+             one below the dialog breakpoint (style.css). -->
         <template x-if="groupDraft.id === null">
-          <div>
-            <div class="row">
-              <label
-                ><span x-text="t('web.groups.label_field')"></span>
-                <input
-                  type="text"
-                  x-model="groupDraft.label"
-                  :placeholder="t('web.groups.label_placeholder')"
-              /></label>
-            </div>
+          <div class="group-dialog-fields">
+            <label>
+              <span class="field-label" x-text="t('web.groups.label_field')"></span>
+              <input
+                type="text"
+                x-model="groupDraft.label"
+                :placeholder="t('web.groups.label_placeholder')"
+              />
+            </label>
             <!-- Prefilled while the picked members agree on a room, and the
                  user's from the first keystroke on (design 6) -
                  `roomTouched` is what draws that line; without it, ticking
                  one more lamp would silently overwrite a room just typed. -->
-            <div class="row">
-              <label
-                ><span x-text="t('web.devices.menu_room_heading')"></span>
-                <input
-                  type="text"
-                  x-model="groupDraft.room"
-                  @input="groupDraft.roomTouched = true"
-                  :placeholder="t('web.devices.room_new_placeholder')"
-              /></label>
-            </div>
+            <label>
+              <span class="field-label" x-text="t('web.devices.menu_room_heading')"></span>
+              <input
+                type="text"
+                x-model="groupDraft.room"
+                @input="groupDraft.roomTouched = true"
+                :placeholder="t('web.devices.room_new_placeholder')"
+              />
+            </label>
           </div>
         </template>
 
-        <p class="tile-menu-heading" x-text="t('web.groups.members_heading')"></p>
-        <!-- Only while creating: there the first pick is what fixes the
-             category, so an empty list has nothing to go on. An EXISTING
-             group may be emptied - it survives down to zero members, and
-             its category is stored rather than derived (design 4.3). -->
-        <p class="hint" x-show="groupDraft.id === null" x-text="t('web.groups.needs_member')"></p>
+        <!-- The head says what the list is locked to. While a NEW group has
+             no kind yet, the hint says what will fix it; once there is one,
+             the pill names it and "Clear" is the way back. -->
+        <div class="group-members-head">
+          <span class="field-label" x-text="t('web.groups.members_heading')"></span>
+          <span class="group-members-status">
+            <span
+              class="hint"
+              x-show="groupDraftCategory() === null"
+              x-text="t('web.groups.needs_member')"
+            ></span>
+            <template x-if="groupDraftCategory() !== null">
+              <span class="group-kind-pill">
+                <svg class="icon" aria-hidden="true"><use :href="'#i-cat-' + groupDraftCategory()"></use></svg>
+                <span x-text="groupKindSummary()"></span>
+              </span>
+            </template>
+            <button
+              type="button"
+              class="group-clear"
+              x-show="groupDraft.memberIds.length > 0"
+              @click="clearGroupMembers()"
+              x-text="t('web.groups.clear_members')"
+            ></button>
+          </span>
+        </div>
 
-        <!-- One `<label>` per candidate, each its own flex row: the
-             checkbox, the device's name, and then EITHER its category or
-             the reason it cannot be picked. The reason sits on the entry
-             itself and not in a banner somewhere else, because that is the
-             one place the question arises (design 6: disabled with the
-             reason, not silently). -->
-        <template x-for="device in groupCandidates()" :key="device.id">
-          <label class="row group-candidate">
-            <input
-              type="checkbox"
-              :checked="groupDraft.memberIds.includes(device.id)"
-              :disabled="groupCandidateState(device).disabled"
-              @change="toggleGroupMember(device)"
-            />
-            <span x-text="device.label"></span>
-            <span
-              class="hint"
-              x-show="!groupCandidateState(device).disabled"
-              x-text="categoryLabel(device)"
-            ></span>
-            <span
-              class="hint"
-              x-show="groupCandidateState(device).disabled"
-              x-text="groupCandidateState(device).reason"
-            ></span>
-          </label>
-        </template>
+        <!-- One section per room, in the room chips' order. A device of
+             another kind is NOT removed once the kind is fixed: it stays in
+             its room, greyed out and unpickable, with its kind where the
+             check box would be - so it is visible what just happened (decided
+             on the design canvas). The full reason is the row's tooltip.
+
+             The real checkbox stays in every row, visually hidden but
+             focusable: the `<label>` makes the whole row the tap target, and
+             keyboard and screen reader users keep a native control.
+             `.group-check` is drawn from its `:checked` state in CSS, so the
+             two can never show different things. -->
+        <div class="group-picker">
+          <template x-for="section in groupCandidateSections()" :key="section.key">
+            <div class="group-picker-room" role="group" :aria-label="section.label">
+              <p class="group-picker-room-head" aria-hidden="true">
+                <span x-text="section.label"></span>
+                <span class="group-picker-room-count" x-text="section.devices.length"></span>
+              </p>
+              <template x-for="device in section.devices" :key="device.id">
+                <label
+                  class="group-candidate"
+                  :class="{
+                    'is-selected': groupDraft.memberIds.includes(device.id),
+                    'is-disabled': groupCandidateState(device).disabled
+                  }"
+                  :title="groupCandidateState(device).reason || null"
+                >
+                  <span class="type-badge" aria-hidden="true">
+                    <svg class="icon"><use :href="'#i-cat-' + (device.category || 'other')"></use></svg>
+                  </span>
+                  <span class="group-candidate-name" x-text="device.label"></span>
+                  <span
+                    class="group-kind-tag"
+                    x-show="groupCandidateState(device).disabled"
+                    x-text="categoryLabel(device)"
+                  ></span>
+                  <input
+                    type="checkbox"
+                    class="group-candidate-input"
+                    :checked="groupDraft.memberIds.includes(device.id)"
+                    :disabled="groupCandidateState(device).disabled"
+                    @change="toggleGroupMember(device)"
+                  />
+                  <span
+                    class="group-check"
+                    x-show="!groupCandidateState(device).disabled"
+                    aria-hidden="true"
+                  ><svg class="icon"><use href="#i-check"></use></svg></span>
+                </label>
+              </template>
+            </div>
+          </template>
+        </div>
 
         <!-- The server's own `detail`, verbatim: it already names the
              offending device and both categories. A generic sentence in its
@@ -3090,10 +3138,15 @@
              next (Spec 8.1). -->
         <p x-show="groupDialogError" x-cloak class="banner danger" x-text="groupDialogError"></p>
 
-        <div class="row">
+        <!-- Sticky at the bottom of the scrolling dialog, so on a phone with a
+             long device list the button is not below the fold. Its `disabled`
+             and the sentence beside it read the same helper. -->
+        <div class="group-dialog-foot">
+          <span class="hint" x-text="groupDialogBlockedReason()"></span>
           <button
+            class="primary"
             @click="saveGroupDialog()"
-            :disabled="groupDialogBusy || (groupDraft.id === null && (groupDraft.memberIds.length === 0 || !groupDraft.label.trim()))"
+            :disabled="groupDialogBusy || groupDialogBlockedReason() !== ''"
             x-text="groupDraft.id === null ? t('web.groups.create') : t('web.groups.members_save')"
           ></button>
         </div>
