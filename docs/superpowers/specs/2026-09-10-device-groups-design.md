@@ -415,7 +415,36 @@ records it as historical: `_new_device_edit` creates a missing
 It is named here only because it would otherwise look like the obvious
 thing to guard against.
 
-`exported_at`/`updated_at` on the group behave as on a device.
+## 8.1 The Export Surface
+
+`exported_at`/`updated_at` on the group behave as on a device, and the
+export surface shows them. Three things about its shape are decisions, not
+accidents:
+
+- **`GET /api/export/status` answers with one mixed list**, a group row
+  beside a device row, rather than gaining a second top-level key. The
+  route is pinned to answer with a list rather than an object, and the two
+  shapes are disjoint by *required* field — a device row carries
+  `device_id`, a group row `group_id` — so a reader can always tell them
+  apart. The honest note against this choice: Section 8 added an explicit
+  `owner_kind` to the sync plan for exactly the ambiguity that
+  presence-based discrimination causes, and a later revision that adds an
+  explicit `kind` field here would be an improvement rather than a change
+  of mind.
+- **`GET /api/export/preview` counts groups**, because it promises the
+  file list a download produces and the download writes a group's
+  template. A group with no commands is skipped in both, by the same
+  predicate, so the two cannot disagree.
+- **`GroupOut` carries no export timestamps.** The devices grid shows a
+  group no export footer at all — that is Section 6's rule about what a
+  group tile does not claim — so the export tab reads them from the
+  status and preview routes instead.
+
+The group table in the export tab carries its own "changed since the last
+export" marker. A group needs one more than a device does: removing a
+member *widens* the intersection, so keys and a template can appear
+without anyone having touched the export, and the group tile has no
+footer to say so.
 
 ## 9. Internationalisation
 
