@@ -14,7 +14,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""The supervisor that rebuilds the connection to matter-server."""
+"""The supervisor that rebuilds the connection to a device source."""
 
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ from loxmatter.sources.supervisor import attach, supervise
 
 
 class FakeClient:
-    """Stands in for `BridgeMatterClient`, as far as the supervisor uses it."""
+    """Stands in for a `DeviceSource`, as far as the supervisor uses it."""
 
     def __init__(self, connect_failures: int = 0, technology: str = "matter") -> None:
         self._connect_failures = connect_failures
@@ -96,10 +96,10 @@ class FakeRuntime:
 async def test_attach_runs_the_whole_startup_sequence():
     """`attach` is the sequence that until then lived only in `cli.serve()`.
 
-    Bundling it here is the core of this task: startup and rebuild must do
-    the same thing, otherwise they drift apart - and that only shows up
-    once something is missing after a reconnect that was taken for granted
-    at startup.
+    Bundling it here is not tidying-up work (see `attach`'s own docstring):
+    startup and rebuild must do the same thing, otherwise they drift apart
+    - and that only shows up once something is missing after a reconnect
+    that was taken for granted at startup.
     """
     client, store, runtime = FakeClient(), FakeStore(), FakeRuntime()
 

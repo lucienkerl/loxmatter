@@ -144,7 +144,8 @@ class DevicePatch(BaseModel):
 
     Was called `DeviceRename` up to the device-tab design and could only
     do the label; the name has moved along with the capability. Neither
-    `node_id` nor `id` belong here, for the same reason as with
+    `technology`/`address` (the device's identity, design 2026-09-11,
+    section 4.1) nor `id` belong here, for the same reason as with
     `SignalPatch`: a route cannot accidentally pick up what the model
     does not know about (Pydantic v2 discards unknown fields via
     `extra="ignore"`).

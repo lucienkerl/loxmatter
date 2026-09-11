@@ -1262,7 +1262,7 @@ footer.hint-block {
    head's 0.4rem gap is wider than the 0.35rem overhang, so it never
    touches the name field. Vertically there is no overhang at all
    (`bottom: 0`, flush with the icon's own bottom edge): `.device-heard`
-   (fix round 1, 2026-09-11) sits directly below `.device-head` with
+   (design 2026-09-11, section 5.3) sits directly below `.device-head` with
    `margin: 0` by design, so any downward overhang would land on that
    "Last heard ..." line - the badge stays inside the icon's box instead. */
 .transport-badge {

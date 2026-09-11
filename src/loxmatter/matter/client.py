@@ -773,7 +773,7 @@ class BridgeMatterClient:
            puts the node, complete with full `attributes`, into its cache
            and only then calls the callbacks.
         3. The dispatch task runs while the route is still waiting: its
-           `follow_node` finds the node in the cache and subscribes to ALL
+           `_follow_node` finds the node in the cache and subscribes to ALL
            of its paths. `resolve_device_id` returns `None` (the store
            does not yet know the node), so the handler is left out.
         4. The route returns, registers the device, and catches up -
@@ -804,7 +804,7 @@ class BridgeMatterClient:
         outstanding.
 
         Without the set, the commissioning route's self-healing promise
-        would only hold halfway: it applies to a `follow_node` that fails
+        would only hold halfway: it applies to a `_follow_node` that fails
         BEFORE it has subscribed. If it fails AFTER that -
         `resolve_device_id` reads from SQLite, the handler writes there,
         both can be hit by the write load of the resend loop - every
@@ -827,7 +827,7 @@ class BridgeMatterClient:
         resolve_device_id = self._resolve_device_id
         if queue is None or handler is None or resolve_device_id is None:
             logger.debug(
-                "follow_node(%s) without a prior subscribe() - nothing to catch up", node_id
+                "_follow_node(%s) without a prior subscribe() - nothing to catch up", node_id
             )
             return
 
@@ -847,7 +847,7 @@ class BridgeMatterClient:
         device_id = resolve_device_id(node_id)
         if device_id is None:
             # The subscriptions remain in place, and the debt is noted:
-            # once the store knows the node, the next `follow_node` will
+            # once the store knows the node, the next `_follow_node` will
             # catch up the snapshot - even without a new path and without
             # the flag.
             self._seed_pending.add(node_id)
@@ -857,7 +857,7 @@ class BridgeMatterClient:
         # Register first, then seed, and only clear the entry after
         # success: if the handler throws - it writes into the store via
         # `Runtime.on_node_snapshot` - or the call is cancelled, the debt
-        # stays outstanding, and the next `follow_node` catches it up. The
+        # stays outstanding, and the next `_follow_node` catches it up. The
         # exception propagates unchanged; what happens to it is the
         # caller's decision.
         self._seed_pending.add(node_id)

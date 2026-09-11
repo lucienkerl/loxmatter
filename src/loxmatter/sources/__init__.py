@@ -65,7 +65,7 @@ class RuntimeEventHandler(Protocol):
     pass it directly as `handler`, without writing an adapter.
 
     `on_node_snapshot` was added with the follow-up of subscriptions
-    (`follow_node`): the client sees a device with paths for which there
+    (`follow`): the client sees a device with paths for which there
     is no signal row yet, and cannot do anything with that itself - it
     does not know the `Store` and is not supposed to know it. The handler,
     on the other hand, has it."""

@@ -31,6 +31,12 @@ people who don't know the code.
   your IP network (Wi-Fi or Ethernet). Hover it for the name. A device that
   does not say how it is connected gets no badge rather than a guess.
 
+### Changed
+
+- If you script against the API with a token: `GET /api/devices` no longer
+  returns `node_id`. Each device now reports `technology`, `address` and
+  `transport` instead, to make room for device types beyond Matter.
+
 ## [0.3.10] — 2026-09-10
 
 ### Fixed

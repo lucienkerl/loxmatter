@@ -497,3 +497,35 @@ Recorded here so they are not rediscovered:
    `/dev/serial/by-id/` so two sticks cannot be confused.
 8. **Coordinator backup** next to the Matter fabric backup in the System tab.
 9. **Dependency policy** for `zha`'s exact pins and release pace.
+10. **`parse_technology` fails the whole device list for one bad row.** An
+    unknown `technology` value makes `parse_technology` raise inside
+    `_as_device`, so `Store.devices()` fails for every device, not just the
+    one with the unrecognized value. A future third technology, combined
+    with an updater rollback to a version that predates it, would stop the
+    bridge from starting rather than just hiding the one device it cannot
+    place. Spec 2 should read an unknown `technology` leniently here (the
+    `Sources` registry already answers 503 for a *known* technology with no
+    running source - see item 12 below and section 6.2 - this is the
+    narrower case of a technology the reading code itself has never heard
+    of).
+11. **`DeviceSource` has no error contract.** `remove_device` only maps
+    `MatterUnavailableError` to 502 (section 6.1); a Zigbee source raising
+    its own exception type on the same failure would surface as an
+    unhandled 500 instead. Spec 2 should define which exceptions across
+    sources mean "device unreachable" so `DeviceSource` implementations and
+    their callers agree on one vocabulary instead of each source needing a
+    bespoke `except` clause in shared code.
+12. **Group fan-out misreports an unconfigured source as "no answer".** When
+    a group member's technology has no running source, the fan-out records
+    it the same way as a member that was actually asked and did not answer
+    - "no answer from X" (`api.errors.group_partially_unreachable`, 502).
+    Section 6.3 rules out exactly this conflation for the single-device
+    `/cmd` path (503, "not set up", vs. 502, "asked and got nothing back");
+    the group path should draw the same distinction.
+13. **`api.errors.source_not_configured` names the technology, not a
+    person.** The message interpolates the raw, lowercase `technology`
+    value ("zigbee is not set up in this installation") instead of a
+    translated display name - every other user-facing identifier in this
+    codebase goes through a lookup like `api.categories.*` first (see
+    `Store._check_members`). Spec 2 should give technologies the same
+    treatment.

@@ -20,6 +20,7 @@ section 4)."""
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 from pathlib import Path
 
@@ -121,13 +122,15 @@ def _build_v8_database(path: Path) -> None:
 
 def test_a_v8_database_gains_addresses_and_keeps_node_ids(tmp_path, monkeypatch):
     """Protects: the `address` backfill and that no Loxone key changes.
-    `node_id` stays on both tables (fix round 1, rollback compatibility -
-    see `_migrate_to_v9`), so this no longer checks that it is gone; that
-    guarantee moved to `test_version_8_code_still_works_on_a_version_9_database`.
+    `node_id` stays on both tables (design 2026-09-11, section 4.1,
+    rollback compatibility - see `_migrate_to_v9`), so this no longer
+    checks that it is gone; that guarantee moved to
+    `test_version_8_code_still_works_on_a_version_9_database`.
 
     `_repair_rows_written_by_older_versions` runs right after `_migrate` on
-    every `Store.__init__` (fix round 1) and happens to perform the exact
-    same backfill this test wants to pin on `_migrate_to_v9` alone
+    every `Store.__init__` (design 2026-09-11, section 4.1) and happens to
+    perform the exact same backfill this test wants to pin on
+    `_migrate_to_v9` alone
     (`address = CAST(node_id AS TEXT) WHERE address = ''`) - left wired up,
     it would silently paper over a broken migration and this test would
     stay green regardless. It is monkeypatched to a no-op here so that only
@@ -204,7 +207,7 @@ def test_a_failing_migration_9_leaves_version_8_intact(tmp_path, monkeypatch):
 
 def test_version_8_code_still_works_on_a_version_9_database(tmp_path):
     """Protects the rollback promise `deploy/updater/update-once.sh` relies
-    on (fix round 1): `update-once.sh` rolls a failed update back to the
+    on (design 2026-09-11, section 4.1): `update-once.sh` rolls a failed update back to the
     OLD image WITHOUT restoring the database, on the invariant that every
     migration only ADDS columns - so version-8 code, unmodified, must still
     read and write a version-9 database exactly the way it always has.
@@ -217,7 +220,23 @@ def test_version_8_code_still_works_on_a_version_9_database(tmp_path):
     Fault to prove it: make `Store._legacy_node_id_for` return `0` for
     Matter too, instead of `int(address)` - the node-14 lookup below then
     finds nothing (it looks for `node_id = 14`, but every row would carry
-    `node_id = 0`)."""
+    `node_id = 0`).
+
+    **The two assertions after the reopen below prove two different
+    things.** `resolve_command` reads a command's identity through the
+    `command JOIN device` in `_COMMAND_SELECT` (see `_as_command`), not
+    from the command row's own `node_id` - so the version-8-style command
+    row inserted above (`node_id = 14`, owned by `device_id`, the lamp
+    already registered by this version) must resolve to the OWNING
+    DEVICE's `(technology, address)`, `("matter", "14")`, regardless of
+    the raw `node_id` column. The separate `device_id_for("matter", "99")`
+    check proves the OTHER version-8 artefact above - the raw device row
+    inserted with no `technology`/`address` of its own, sitting at the
+    column defaults `technology = 'matter'`, `address = ''` - is healed by
+    `_repair_rows_written_by_older_versions` on THIS reopen, exactly the
+    fault `test_a_device_added_by_version_8_code_is_addressable_after_rolling_forward`
+    already proves by removing that call; no separate fault is needed
+    here for that half."""
     path = tmp_path / "s.sqlite"
     store = Store(path)
     snapshot = _fixture("ikea_kajplats_ws_lamp.json")
@@ -254,9 +273,20 @@ def test_version_8_code_still_works_on_a_version_9_database(tmp_path):
     finally:
         db.close()
 
+    reopened = Store(path)
+    try:
+        legacy_command = reopened.resolve_command(f"d{device_id}_1_legacy")
+        assert (legacy_command.technology, legacy_command.address) == ("matter", "14")
+
+        old_device_id = reopened.device_id_for("matter", "99")
+        assert old_device_id is not None
+        assert reopened.device(old_device_id).unique_id == "old"
+    finally:
+        reopened.close()
+
 
 def test_a_device_added_by_version_8_code_is_addressable_after_rolling_forward(tmp_path):
-    """The other half of the rollback story (fix round 1): a device
+    """The other half of the rollback story (design 2026-09-11, section 4.1): a device
     commissioned by version-8 code WHILE rolled back (no `technology`/
     `address` in its INSERT, so both sit at their column defaults - `matter`
     and `''`) must become addressable again as soon as the bridge is rolled
@@ -284,6 +314,45 @@ def test_a_device_added_by_version_8_code_is_addressable_after_rolling_forward(t
         assert store.device(device_id).address == "99"
     finally:
         store.close()
+
+
+def test_opening_a_read_only_up_to_date_database_does_not_write(tmp_path):
+    """Protects: `_repair_rows_written_by_older_versions` must not write on
+    every `Store.__init__` - only when a row actually needs healing (final
+    fix pass). Before the probe was added, this ran an unconditional
+    `UPDATE ...; commit()` on every open: a fully migrated version-9
+    database opened from a read-only file then failed with "attempt to
+    write a readonly database", even though there was nothing to repair,
+    and every CLI invocation took a write lock for a no-op.
+
+    Fault to prove it: replace the `SELECT 1 ... LIMIT 1` probe in
+    `_repair_rows_written_by_older_versions` with an unconditional
+    `UPDATE`/`commit()` (i.e. remove the `if needs_repair is None: return`
+    guard) - this test then fails with `sqlite3.OperationalError: attempt
+    to write a readonly database`.
+
+    Skipped when running as root: root ignores file permission bits, so
+    the read-only file would still be writable and the test could not
+    prove anything."""
+    if os.geteuid() == 0:
+        pytest.skip("running as root ignores file permissions - cannot test read-only opening")
+    path = tmp_path / "s.sqlite"
+    store = Store(path)
+    device_id = store.register_device(_fixture("ikea_kajplats_ws_lamp.json"))
+    store.close()
+
+    os.chmod(path, 0o444)
+    os.chmod(tmp_path, 0o555)
+    try:
+        store = Store(path)
+        try:
+            devices = store.devices()
+            assert [d.id for d in devices] == [device_id]
+        finally:
+            store.close()
+    finally:
+        os.chmod(tmp_path, 0o755)
+        os.chmod(path, 0o644)
 
 
 def test_a_device_without_a_unique_id_falls_back_to_its_address(tmp_path):

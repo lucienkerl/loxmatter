@@ -16,7 +16,7 @@
 - Everything is written in English: code, comments, docstrings, test names, commit messages. German appears only as `de:` values in `src/loxmatter/i18n/strings.yaml`.
 - Every string a user can see goes through `i18n.t(...)` with an `en` and a `de` value. `web.*` values must not contain `{placeholders}` (`GET /api/i18n` calls `t(key)` without values and would fail for all keys).
 - New source and test files start with the 15-line GPL header, copied verbatim from `src/loxmatter/profiles/categories.py` lines 1–15.
-- Schema version goes from **8 to 9**. SQLite in `python:3.12-slim` and in the running Pi container is **3.46.1** (measured 11 September 2026), so `ALTER TABLE … DROP COLUMN` is available; no table rebuild.
+- Schema version goes from **8 to 9**. Migration 9 only adds columns (`device.technology`, `device.address`, `device.network_features`) - `device.node_id`/`command.node_id` are kept, not dropped, so a bridge rolled back to schema-8 code still runs on a schema-9 database without its database being restored (see `_migrate_to_v9`'s docstring in `src/loxmatter/model/store.py` and design section 4.1). `ALTER TABLE … DROP COLUMN` was available (SQLite 3.46.1, measured 11 September 2026) but is not used by this migration.
 - A Matter device's `address` is `str(node_id)`. Integer node IDs stay inside `src/loxmatter/matter/client.py`; everything else uses `technology` + `address`.
 - `unique_id` stays as it is for Matter, including the fallback `node:<address>` (identical text to today's `node:<node_id>`).
 - No new dependency, no change to `deploy/` or `install.sh`, no Zigbee code.

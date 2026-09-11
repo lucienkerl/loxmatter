@@ -694,7 +694,8 @@ def _migrate_to_v8(db: sqlite3.Connection) -> None:
 
 def _migrate_to_v9(db: sqlite3.Connection) -> None:
     """Technology plus address alongside the Matter node ID (design
-    2026-09-11, section 4.1; kept additive after human review, fix round 1).
+    2026-09-11, section 4.1; kept additive after human review, see that
+    section for why the first draft's column drop was reverted).
 
     **`node_id` is intentionally NOT dropped**, even though nothing in this
     codebase reads `device.node_id`/`command.node_id` past this migration -
@@ -712,8 +713,8 @@ def _migrate_to_v9(db: sqlite3.Connection) -> None:
     updater's own rollback logic would never reach an installation that is
     already running it. Hence: migration 9 only adds columns.
 
-    `Store.register_device`/`Store.register_commands` (this task, fix round
-    1) keep writing `node_id` for exactly this reason - see
+    `Store.register_device`/`Store.register_commands` (design 2026-09-11,
+    section 4.1) keep writing `node_id` for exactly this reason - see
     `_legacy_node_id_for` - so a schema-9 database stays fully usable by
     schema-8 code after a rollback. `_repair_rows_written_by_older_versions`
     is the other half: it repairs a device row that version-8 code inserted
@@ -784,7 +785,8 @@ def _migrate(db: sqlite3.Connection) -> None:
 
 def _repair_rows_written_by_older_versions(db: sqlite3.Connection) -> None:
     """Heals a device row that version-8 code inserted into a version-9
-    database (fix round 1, rollback compatibility - see `_migrate_to_v9`).
+    database (design 2026-09-11, section 4.1, rollback compatibility - see
+    `_migrate_to_v9`).
 
     The scenario: an update fails, `update-once.sh` rolls back to the OLD
     (schema-8-only) image WITHOUT restoring the database, and that old code
@@ -803,7 +805,24 @@ def _repair_rows_written_by_older_versions(db: sqlite3.Connection) -> None:
     runs once, going forward, and would never see this again. `technology =
     'matter'` in the WHERE clause: a hypothetical non-Matter row with a
     genuinely empty address (never produced by this codebase today) must
-    not be reinterpreted as node 0."""
+    not be reinterpreted as node 0.
+
+    **Probes before writing (final fix pass).** The overwhelming majority
+    of starts - every one where no schema-8 code has run against this
+    database since the last repair - find nothing to fix here. Running the
+    `UPDATE`/`commit()` unconditionally on every `Store.__init__` broke the
+    write-free-normal-start promise `_migrate`'s own docstring makes: a
+    fully migrated version-9 database opened from a read-only file failed
+    with "attempt to write a readonly database" even though there was
+    nothing to repair, and every CLI invocation took a write lock for a
+    no-op. The `SELECT 1 ... LIMIT 1` probe costs one read against an
+    already-indexed-by-nothing but small table and only reaches the
+    `UPDATE`/`commit()` when a row actually needs healing."""
+    needs_repair = db.execute(
+        "SELECT 1 FROM device WHERE address = '' AND technology = 'matter' LIMIT 1"
+    ).fetchone()
+    if needs_repair is None:
+        return
     db.execute(
         "UPDATE device SET address = CAST(node_id AS TEXT)"
         " WHERE address = '' AND technology = 'matter'"
