@@ -24,15 +24,16 @@ has no effect. Accordingly, they must be distinguishable: 404 for an
 unknown key, 400 for an unsuitable value, 502 for a device that does not
 respond.
 
-`client` is new compared to phase 4: the WebUI routes under `/api` need a
-device source for commissioning and removing devices (task 1), the Loxone
+`client` is new compared to phase 4: the WebUI routes under `/api` need the
+Matter client for commissioning and removing devices (task 1), the Loxone
 routes here do not need it. The parameter is therefore optional and
 defaults to `None` - precisely so that the three existing phase-4 calls of
 `build_app(store, invoke, runtime)` keep running unchanged. `None` does not
 mean "WebUI missing"; it means "the bridge is running without a Matter
 connection" - `build_device_router` then answers the two routes that need
-a source (commissioning, removal) with 503 instead of an `AttributeError`
-on `None` (see there). Removal itself goes through `Sources` (design
+it (commissioning, removal) with 503 instead of an `AttributeError` on
+`None` (see there). Commissioning stays on the Matter client by name
+(design 2026-09-11, section 3.2). Removal itself goes through `Sources` (design
 2026-09-11, section 6.2), not `client` directly: when a caller does not
 pass `sources` explicitly, `build_app` derives one from `client` alone
 (see below), so an existing caller that only ever knew `BridgeMatterClient`

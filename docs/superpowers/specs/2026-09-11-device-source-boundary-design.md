@@ -505,11 +505,11 @@ Recorded here so they are not rediscovered:
     bridge from starting rather than just hiding the one device it cannot
     place. Spec 2 should read an unknown `technology` leniently here (the
     `Sources` registry already answers 503 for a *known* technology with no
-    running source - see item 12 below and section 6.2 - this is the
+    running source - see section 6.3 - this is the
     narrower case of a technology the reading code itself has never heard
     of).
 11. **`DeviceSource` has no error contract.** `remove_device` only maps
-    `MatterUnavailableError` to 502 (section 6.1); a Zigbee source raising
+    `MatterUnavailableError` to 502 (sections 6.2 and 6.3); a Zigbee source raising
     its own exception type on the same failure would surface as an
     unhandled 500 instead. Spec 2 should define which exceptions across
     sources mean "device unreachable" so `DeviceSource` implementations and
