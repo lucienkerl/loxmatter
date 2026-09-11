@@ -215,7 +215,7 @@ async def test_snapshots_requires_a_connection_in_german(client):
 async def test_snapshots_maps_every_node(client):
     await client.connect()
     snapshots = await client.snapshots()
-    assert [s.node_id for s in snapshots] == [12, 13]
+    assert [s.address for s in snapshots] == ["12", "13"]
     assert snapshots[0].vendor_name == "IKEA of Sweden"
     assert snapshots[1].attributes["1/1026/0"] == 2150
     assert snapshots[0].available is True
@@ -308,7 +308,7 @@ async def test_failed_connect_closes_session_and_allows_retry():
 
     await bridge.connect()
     snapshots = await bridge.snapshots()
-    assert [s.node_id for s in snapshots] == [1]
+    assert [s.address for s in snapshots] == ["1"]
     assert sessions[1].close_calls == 0
 
 
@@ -347,7 +347,7 @@ async def test_failed_connect_closes_session_and_allows_retry_in_german():
 
     await bridge.connect()
     snapshots = await bridge.snapshots()
-    assert [s.node_id for s in snapshots] == [1]
+    assert [s.address for s in snapshots] == ["1"]
     assert sessions[1].close_calls == 0
 
 
@@ -378,7 +378,7 @@ async def test_connect_twice_closes_previous_session_and_does_not_leak():
     assert sessions[0].close_calls == 1
     assert sessions[1].close_calls == 0
     snapshots = await bridge.snapshots()
-    assert [s.node_id for s in snapshots] == [1]
+    assert [s.address for s in snapshots] == ["1"]
 
 
 async def test_disconnect_closes_session_even_if_upstream_disconnect_raises():
@@ -493,7 +493,7 @@ async def test_connect_timeout_closes_session_and_allows_a_later_successful_conn
 
     await bridge.connect()
     snapshots = await bridge.snapshots()
-    assert [s.node_id for s in snapshots] == [1]
+    assert [s.address for s in snapshots] == ["1"]
     assert sessions[1].close_calls == 0
 
 
@@ -534,7 +534,7 @@ async def test_connect_timeout_closes_session_and_allows_a_later_successful_conn
 
     await bridge.connect()
     snapshots = await bridge.snapshots()
-    assert [s.node_id for s in snapshots] == [1]
+    assert [s.address for s in snapshots] == ["1"]
     assert sessions[1].close_calls == 0
 
 
@@ -569,7 +569,7 @@ async def test_snapshots_reflect_nodes_populated_by_the_listener():
     await bridge.connect()
     snapshots = await bridge.snapshots()
 
-    assert [s.node_id for s in snapshots] == [3]
+    assert [s.address for s in snapshots] == ["3"]
     assert snapshots[0].vendor_name == "Aqara"
 
 
@@ -977,7 +977,7 @@ async def test_follow_node_hands_the_snapshot_to_the_handler():
     upstream.add_node(FakeNode(8, {"0/40/1": "IKEA of Sweden", "1/6/0": True}))
     await bridge.follow_node(8)
 
-    assert [(device_id, snap.node_id) for device_id, snap in handler.snapshot_calls] == [(42, 8)]
+    assert [(device_id, snap.address) for device_id, snap in handler.snapshot_calls] == [(42, "8")]
     assert handler.snapshot_calls[0][1].vendor_name == "IKEA of Sweden"
 
 
@@ -1043,7 +1043,7 @@ async def test_the_commissioning_route_still_seeds_after_the_dispatch_loop_was_f
     known[8] = 42
     await bridge.follow_node(8, seed_even_without_new_paths=True)
 
-    assert [(device_id, snap.node_id) for device_id, snap in handler.snapshot_calls] == [(42, 8)]
+    assert [(device_id, snap.address) for device_id, snap in handler.snapshot_calls] == [(42, "8")]
     assert handler.snapshot_calls[0][1].attributes == {"0/40/1": "IKEA of Sweden", "1/6/0": False}
 
 
@@ -1106,7 +1106,7 @@ async def test_a_snapshot_the_handler_refused_is_owed_and_caught_up_later():
 
     await bridge.follow_node(8)
 
-    assert [(device_id, snap.node_id) for device_id, snap in handler.snapshot_calls] == [(42, 8)]
+    assert [(device_id, snap.address) for device_id, snap in handler.snapshot_calls] == [(42, "8")]
 
 
 async def test_a_node_the_store_did_not_know_yet_is_owed_its_snapshot():
@@ -1126,7 +1126,7 @@ async def test_a_node_the_store_did_not_know_yet_is_owed_its_snapshot():
     known[8] = 42
     await bridge.follow_node(8)
 
-    assert [(device_id, snap.node_id) for device_id, snap in handler.snapshot_calls] == [(42, 8)]
+    assert [(device_id, snap.address) for device_id, snap in handler.snapshot_calls] == [(42, "8")]
 
 
 async def test_a_snapshot_that_arrived_is_not_owed_a_second_time():

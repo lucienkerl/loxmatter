@@ -54,7 +54,7 @@ def test_plug_commands_are_resolvable_by_their_exported_key(store):
     assert resolved.cluster_id == 6
     assert resolved.command_id == 1
     assert resolved.endpoint == 1
-    assert resolved.address == str(snap.node_id)
+    assert resolved.address == snap.address
 
 
 def test_unknown_key_raises_with_a_clear_message(store):
@@ -101,7 +101,7 @@ def test_a_command_carries_its_owning_devices_address(store):
     the join in `Store._COMMAND_SELECT`, not a value passed in at
     registration time - see `register_commands`."""
     _, snap, commands = registered(store, "ikea_grillplats_plug.json")
-    assert {c.address for c in commands} == {str(snap.node_id)}
+    assert {c.address for c in commands} == {snap.address}
 
 
 def test_command_key_collision_raises_instead_of_dropping_silently(store, monkeypatch):

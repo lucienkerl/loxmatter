@@ -287,7 +287,8 @@ class FakeMatterClient:
         node_id = self._next_node_id
         self._next_node_id += 1
         return NodeSnapshot(
-            node_id=node_id,
+            technology="matter",
+            address=str(node_id),
             vendor_name="Fake",
             product_name="Device",
             unique_id=f"fake-{node_id}",

@@ -497,7 +497,7 @@ def _build_store_at_schema_v2(
             (
                 device_id,
                 f"dev-{device_id}",
-                snap.node_id,
+                int(snap.address),
                 f"{snap.vendor_name} {snap.product_name}".strip(),
                 DEFAULT_UDP_PORT,
             ),

@@ -100,7 +100,7 @@ async def test_commissioning_returns_a_snapshot(client):
     bridge, _ = client
     await bridge.connect()
     snapshot = await bridge.commission_with_code("MT:ABC123")
-    assert snapshot.node_id == 7
+    assert snapshot.address == "7"
     assert snapshot.vendor_name == "IKEA of Sweden"
     await bridge.disconnect()
 

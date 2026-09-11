@@ -72,7 +72,12 @@ class SignalRef:
 
 @dataclass(frozen=True)
 class NodeSnapshot:
-    node_id: int
+    # Which source produced the snapshot and the device's address there
+    # (design 2026-09-11, section 3.3). For Matter the address is the node
+    # ID as text; `BridgeMatterClient` converts back where matter-server
+    # needs an integer.
+    technology: Technology
+    address: str
     vendor_name: str
     product_name: str
     unique_id: str
@@ -93,7 +98,8 @@ class NodeSnapshot:
             return value if isinstance(value, str) else ""
 
         return cls(
-            node_id=node_id,
+            technology="matter",
+            address=str(node_id),
             vendor_name=text(_VENDOR_NAME_PATH),
             product_name=text(_PRODUCT_NAME_PATH),
             unique_id=text(_UNIQUE_ID_PATH),

@@ -558,7 +558,8 @@ async def test_seed_from_snapshot_skips_an_unknown_node_without_aborting(environ
     only this node is skipped, all others are still seeded."""
     runtime, sender, _, _, _ = environment
     unknown = NodeSnapshot(
-        node_id=999_999,
+        technology="matter",
+        address="999999",
         vendor_name="",
         product_name="",
         unique_id="",

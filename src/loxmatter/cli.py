@@ -162,7 +162,7 @@ def main() -> None:
 
 def render_report(snapshot: NodeSnapshot) -> str:
     lines = [
-        f"Node {snapshot.node_id}: {snapshot.vendor_name} {snapshot.product_name}".rstrip(),
+        f"Node {snapshot.address}: {snapshot.vendor_name} {snapshot.product_name}".rstrip(),
         f"Unique ID: {snapshot.unique_id or '—'}",
         "",
     ]
@@ -358,7 +358,7 @@ def export(
     finally:
         store.close()
 
-    label = f"{snapshot.vendor_name} {snapshot.product_name}".strip() or f"Node {snapshot.node_id}"
+    label = f"{snapshot.vendor_name} {snapshot.product_name}".strip() or f"Node {snapshot.address}"
     inputs = to_inputs(stored, device_id, label)
     # The key comes exclusively from the store (see register_commands): so
     # the key in the template and the one in the database come from one

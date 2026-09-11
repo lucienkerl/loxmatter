@@ -602,7 +602,9 @@ def build_device_router(
         # `sqlite3.OperationalError` under concurrent write load from the
         # resend loop).
         try:
-            await active_client.follow_node(snapshot.node_id, seed_even_without_new_paths=True)
+            await active_client.follow_node(  # TRANSITIONAL (Task 5)
+                int(snapshot.address), seed_even_without_new_paths=True
+            )
         except Exception:
             logger.exception(
                 "Could not catch up on subscriptions of freshly commissioned device %s "

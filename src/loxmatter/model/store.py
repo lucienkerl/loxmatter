@@ -1188,7 +1188,7 @@ class Store:
     def _identity_of(snapshot: NodeSnapshot) -> tuple[str, str]:
         """`(technology, address)` of a snapshot - the one place the store
         derives it, so the snapshot's own fields replace it in one edit."""
-        return ("matter", str(snapshot.node_id))  # TRANSITIONAL (Task 3)
+        return (snapshot.technology, snapshot.address)
 
     @staticmethod
     def _legacy_node_id_for(technology: str, address: str) -> int:

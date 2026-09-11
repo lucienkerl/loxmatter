@@ -54,7 +54,7 @@ def test_node_snapshot_reads_basic_information_cluster():
         }
     }
     snapshot = NodeSnapshot.from_raw(node_id=12, raw=raw)
-    assert snapshot.node_id == 12
+    assert snapshot.address == "12"
     assert snapshot.vendor_name == "IKEA of Sweden"
     assert snapshot.product_name == "TRADFRI bulb"
     assert snapshot.unique_id == "ABC123"
@@ -66,3 +66,12 @@ def test_node_snapshot_tolerates_missing_basic_information():
     assert snapshot.vendor_name == ""
     assert snapshot.product_name == ""
     assert snapshot.unique_id == ""
+
+
+def test_from_raw_is_the_matter_factory():
+    """Protects the identity every other module now reads. Fault to prove
+    it: set `address=""` in `from_raw`."""
+    snapshot = NodeSnapshot.from_raw(23, {"attributes": {}})
+    assert snapshot.technology == "matter"
+    assert snapshot.address == "23"
+    assert not hasattr(snapshot, "node_id")

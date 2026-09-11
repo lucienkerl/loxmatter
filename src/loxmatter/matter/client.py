@@ -470,7 +470,7 @@ class BridgeMatterClient:
 
     async def snapshot(self, node_id: int) -> NodeSnapshot:
         for candidate in await self.snapshots():
-            if candidate.node_id == node_id:
+            if candidate.address == str(node_id):
                 return candidate
         raise MatterUnavailableError(i18n.t("api.errors.unknown_node", node_id=node_id))
 

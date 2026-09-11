@@ -255,7 +255,7 @@ def test_all_devices_share_the_default_udp_port(store):
 def test_device_id_for_resolves_a_registered_device(store):
     snap = load("ikea_grillplats_plug.json")
     device_id = store.register_device(snap)
-    assert store.device_id_for("matter", str(snap.node_id)) == device_id
+    assert store.device_id_for("matter", snap.address) == device_id
 
 
 def test_device_id_for_is_none_for_an_unknown_node(store):
@@ -269,7 +269,7 @@ def test_device_id_for_ignores_a_forgotten_device(store):
     snap = load("ikea_grillplats_plug.json")
     device_id = store.register_device(snap)
     store.forget_device(device_id)
-    assert store.device_id_for("matter", str(snap.node_id)) is None
+    assert store.device_id_for("matter", snap.address) is None
 
 
 def test_devices_lists_only_active_devices(store):
@@ -284,7 +284,7 @@ def test_device_returns_the_stored_row(store):
     device_id = store.register_device(snap)
     device = store.device(device_id)
     assert device.id == device_id
-    assert device.address == str(snap.node_id)
+    assert device.address == snap.address
     assert "GRILLPLATS" in device.label
 
 
