@@ -92,7 +92,13 @@ from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import Response
 
 from loxmatter import i18n
-from loxmatter.api.models import ExportDeviceOut, ExportPreviewOut, ExportStatusOut
+from loxmatter.api.models import (
+    ExportDeviceOut,
+    ExportGroupOut,
+    ExportPreviewOut,
+    ExportStatusOut,
+    GroupExportStatusOut,
+)
 from loxmatter.export.documents import (
     LoxoneCommand,
     filename_for,
@@ -108,8 +114,11 @@ from loxmatter.model.store import (
     Store,
     StoredCommand,
     StoredDevice,
+    StoredGroup,
+    StoredGroupCommand,
     UnknownDeviceError,
 )
+from loxmatter.model.store import changed_since_export as _changed_since_export_at
 from loxmatter.profiles.table import is_exportable
 
 # Public, because the UI has to assign the same file name: ever since
@@ -174,20 +183,18 @@ def _device_preview(device: StoredDevice, store: Store) -> ExportDeviceOut:
 def _changed_since_export(device: StoredDevice) -> bool:
     """Whether the device has changed since its last export.
 
-    An unknown `updated_at` (legacy database predating `_migrate_to_v2`,
-    see there) counts as "changed" - the more cautious of the two possible
-    assumptions, see `StoredDevice.updated_at`.
-
     A dedicated function, ever since `download?only_pending=true` had to
     get the same question answered as `GET /api/export/status` (review fix
     Fix 4, 2026-09-03). Two versions of this condition would be exactly
     the fault the UI previously had: the table showed one selection, the
-    ZIP contained another."""
-    return (
-        device.exported_at is None
-        or device.updated_at is None
-        or device.updated_at > device.exported_at
-    )
+    ZIP contained another.
+
+    Delegates to `model.store.changed_since_export` (final fix pass,
+    review finding Important #1) rather than comparing the two timestamps
+    here itself - that comparison is now shared with `_group_changed_since_export`
+    below, so the device and group answers to "changed since when" cannot
+    quietly drift into two different definitions."""
+    return _changed_since_export_at(device.exported_at, device.updated_at)
 
 
 def _status_for(device: StoredDevice) -> ExportStatusOut:
@@ -197,6 +204,48 @@ def _status_for(device: StoredDevice) -> ExportStatusOut:
         label=device.label,
         exported_at=device.exported_at,
         changed_since_export=changed,
+    )
+
+
+def _group_changed_since_export(group: StoredGroup) -> bool:
+    """The group counterpart of `_changed_since_export` - see there and
+    `model.store.changed_since_export` for why both call the same shared
+    comparison instead of two copies of it."""
+    return _changed_since_export_at(group.exported_at, group.updated_at)
+
+
+def _group_status_for(group: StoredGroup) -> GroupExportStatusOut:
+    """The group counterpart of `_status_for` (final fix pass, review
+    finding Important #1). `group_id`, not `device_id` - a device and a
+    group counter both start at 1 (see `ProjectSyncEntryOut.owner_kind`'s
+    docstring for the same collision), so this rides along in `GET
+    /api/export/status`'s list as its own, distinguishable shape rather
+    than forcing a group id through a field named `device_id`."""
+    return GroupExportStatusOut(
+        group_id=group.id,
+        label=group.label,
+        exported_at=group.exported_at,
+        changed_since_export=_group_changed_since_export(group),
+    )
+
+
+def _group_preview(group: StoredGroup, commands: Sequence[StoredGroupCommand]) -> ExportGroupOut:
+    """The group counterpart of `_device_preview` (final fix pass, review
+    finding Important #1).
+
+    Only `vo_filename`/`commands` - a group has no signals of its own
+    (`api.groups`'s module docstring: it is driven, never read), so unlike
+    a device it produces no VIU template and none of `inputs`/`skipped`/
+    `hidden_count` describe anything real for it. The caller skips a group
+    with no commands entirely (see `preview` below) rather than calling
+    this for one - an emptied group has nothing to export (design 4.3),
+    and listing it here would promise a `VO_g*.xml` that `download` never
+    writes for it either."""
+    return ExportGroupOut(
+        group_id=group.id,
+        label=group.label,
+        vo_filename=filename_for("VO", group.id, group.label, kind="g"),
+        commands=len(commands),
     )
 
 
@@ -223,10 +272,24 @@ def build_export_router(store: Store) -> APIRouter:
         does later for `/download`, instead of only after clicking
         "Download". It therefore deliberately does not appear in any
         field of `ExportPreviewOut`, even though it is a required
-        parameter."""
+        parameter.
+
+        **Groups too, now (final fix pass, review finding Important #1).**
+        `download` below has always bundled every group's `VO_g*.xml`
+        alongside whatever devices it writes - this used to promise a
+        different, smaller file list than the download it describes. A
+        group with no commands is skipped here exactly as `download`
+        skips writing a file for it (design 4.3: an emptied group has
+        nothing to export)."""
         devices = [_device_preview(device, store) for device in store.devices()]
+        groups = []
+        for group in store.groups():
+            group_commands = store.group_commands(group.id)
+            if not group_commands:
+                continue
+            groups.append(_group_preview(group, group_commands))
         system_files = ["VIU_Matter_System.xml", "VO_Matter_System.xml"] if system else []
-        return ExportPreviewOut(devices=devices, system_files=system_files)
+        return ExportPreviewOut(devices=devices, groups=groups, system_files=system_files)
 
     @router.get("/download")
     async def download(
@@ -306,6 +369,14 @@ def build_export_router(store: Store) -> APIRouter:
         # Collected instead of recorded immediately (see above) - only
         # processed below after the archive has been fully built.
         exported_device_ids: list[int] = []
+        # The group counterpart (final fix pass, review finding Important
+        # #1): a group's `VO_g*.xml` has always been written here, but
+        # nothing ever marked the group exported for it - `GET
+        # /api/export/status` and `GroupOut` could then never answer
+        # "changed since" for a group at all. Same discipline as the
+        # device ids above: collected here, only acted on once the
+        # archive is known to be complete.
+        exported_group_ids: list[int] = []
         with zipfile.ZipFile(buffer, mode="w", compression=zipfile.ZIP_DEFLATED) as archive:
             if system:
                 viu_system, vo_system = render_system_templates(bridge_ip, port, listen)
@@ -363,6 +434,7 @@ def build_export_router(store: Store) -> APIRouter:
                         is_group=True,
                     ),
                 )
+                exported_group_ids.append(group.id)
 
             archive.writestr(_README_NAME, _readme_text())
 
@@ -372,6 +444,8 @@ def build_export_router(store: Store) -> APIRouter:
         # up to that point would be wrongly marked as exported.
         for device_id_written in exported_device_ids:
             store.mark_exported(device_id_written)
+        for group_id_written in exported_group_ids:
+            store.mark_group_exported(group_id_written)
 
         return Response(
             content=buffer.getvalue(),
@@ -380,11 +454,28 @@ def build_export_router(store: Store) -> APIRouter:
         )
 
     @router.get("/status")
-    async def status() -> list[ExportStatusOut]:
+    async def status() -> list[ExportStatusOut | GroupExportStatusOut]:
         """Per active device: when last exported, changed since (see
         `_status_for`). A removed device (`forget_device`) does not
         appear here - `store.devices()` already filters it out, the same
-        rule as for `GET /api/devices`."""
-        return [_status_for(device) for device in store.devices()]
+        rule as for `GET /api/devices`.
+
+        **Groups ride along in the same list (final fix pass, review
+        finding Important #1).** `tests/api/test_devices.py`'s
+        `test_patching_the_room_does_not_make_the_device_pending` pins
+        this endpoint's response as a LIST, not an object - so a group's
+        status is a further entry of a different shape
+        (`GroupExportStatusOut`, `group_id` instead of `device_id`)
+        rather than a second top-level key. A group with no commands is
+        left out, the same as in `preview` above and for the same reason:
+        it produces no file for `download` to mark exported."""
+        entries: list[ExportStatusOut | GroupExportStatusOut] = [
+            _status_for(device) for device in store.devices()
+        ]
+        for group in store.groups():
+            if not store.group_commands(group.id):
+                continue
+            entries.append(_group_status_for(group))
+        return entries
 
     return router

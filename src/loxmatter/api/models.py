@@ -401,13 +401,46 @@ class ExportDeviceOut(BaseModel):
     hidden_count: int
 
 
+class ExportGroupOut(BaseModel):
+    """A group in the response of `GET /api/export/preview` (final fix
+    pass, review finding Important #1) - the group counterpart of
+    `ExportDeviceOut`, stripped to what actually applies to a group.
+
+    A group has no signals of its own (`api.groups`'s module docstring:
+    it is driven, never read), so it produces no VIU template and none of
+    `ExportDeviceOut`'s `inputs`/`skipped`/`hidden_count` describe
+    anything real for it - there is nothing to leave at zero, the
+    concepts themselves do not apply, so the fields are simply absent
+    rather than present-and-meaningless. Only `vo_filename`/`commands`
+    survive: the same two things `api.export.download` actually writes
+    for a group (`filename_for(..., kind="g")`, `to_group_outputs`).
+    Before this fix, the preview never mentioned groups at all even
+    though a download always bundles every group's template alongside
+    whatever devices it writes - the preview's file list therefore always
+    undercounted what the ZIP actually contained."""
+
+    model_config = ConfigDict(frozen=True)
+
+    group_id: int
+    label: str
+    vo_filename: str
+    commands: int
+
+
 class ExportPreviewOut(BaseModel):
     """Response of `GET /api/export/preview` (Task 5) - a pure preview, no
-    write access (see `api.export.preview`)."""
+    write access (see `api.export.preview`).
+
+    `groups` (final fix pass, review finding Important #1): every group
+    that has at least one command, i.e. every group `download` would
+    actually write a `VO_g*.xml` for. An emptied group (design 4.3) has
+    nothing to export and is left out here exactly as `download` skips
+    writing a file for it."""
 
     model_config = ConfigDict(frozen=True)
 
     devices: list[ExportDeviceOut]
+    groups: list[ExportGroupOut]
     system_files: list[str]
 
 
@@ -424,6 +457,31 @@ class ExportStatusOut(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     device_id: int
+    label: str
+    exported_at: str | None
+    changed_since_export: bool
+
+
+class GroupExportStatusOut(BaseModel):
+    """A group in the response of `GET /api/export/status` (final fix
+    pass, review finding Important #1) - the group counterpart of
+    `ExportStatusOut`, riding along in the SAME response list as a
+    differently-shaped entry rather than under a second top-level key:
+    `GET /api/export/status` is pinned to answer with a list, not an
+    object (`tests/api/test_devices.py`,
+    `test_patching_the_room_does_not_make_the_device_pending`).
+
+    `group_id`, never `device_id`: a device counter and a group counter
+    both start at 1 (`ProjectSyncEntryOut.owner_kind`'s docstring records
+    the same collision for the project-sync plan), so a group's id needs
+    its own field rather than borrowing the device one. `exported_at`/
+    `changed_since_export` mean exactly what they mean on
+    `ExportStatusOut` - see `model.store.Store.mark_group_exported` and
+    `model.store.changed_since_export`."""
+
+    model_config = ConfigDict(frozen=True)
+
+    group_id: int
     label: str
     exported_at: str | None
     changed_since_export: bool

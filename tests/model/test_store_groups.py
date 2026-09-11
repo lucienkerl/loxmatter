@@ -103,6 +103,47 @@ def test_room_and_label_survive_a_round_trip(store, lamps):
     assert (reread.label, reread.room) == ("Ceiling", "Hallway")
 
 
+def test_set_group_room_does_not_touch_updated_at(store, lamps):
+    """The group counterpart of `test_set_room_does_not_touch_updated_at`
+    (`tests/model/test_store.py`) - final fix pass, review finding Minor
+    #3(a). `Store.set_room`'s own docstring gives the reason a room
+    assignment must not stamp `updated_at`: a room ends up in NO export
+    template, so touching it would make the export tab report "changed
+    since the last export" for a change that produces byte-for-byte the
+    same files as the last one. `set_group_room` used to stamp it anyway -
+    the one place the group side of a device/group method pair disagreed
+    with its device counterpart for no stated reason. That only becomes
+    visible once something reads `device_group.updated_at` for display
+    (item 1 of this same fix pass makes `GET /api/export/status` do
+    exactly that for groups), which is why this gap could ship unnoticed
+    until now."""
+    group = store.create_group("Living room", lamps)
+    before = store.group(group.id).updated_at
+
+    store.set_group_room(group.id, "Hallway")
+
+    assert store.group(group.id).room == "Hallway"
+    assert store.group(group.id).updated_at == before
+
+
+def test_rename_room_does_not_touch_a_groups_updated_at(store, lamps):
+    """The group side of `test_rename_room_does_not_touch_updated_at`
+    (`tests/model/test_store.py`) - same rationale, same fix pass, review
+    finding Minor #3(a). `rename_room` writes both `device.room` and
+    `device_group.room` in one bulk update (see its docstring); the group
+    half used to stamp `updated_at` even though the device half never
+    did, which would make a room rename alone light up a group's "changed
+    since export" pill for a change that touches no template."""
+    group = store.create_group("Living room", lamps, room="Küche")
+    before = store.group(group.id).updated_at
+
+    assert store.rename_room("Küche", "Essbereich") == 1
+
+    # Not passing vacuously: the rename must actually have taken place.
+    assert store.group(group.id).room == "Essbereich"
+    assert store.group(group.id).updated_at == before
+
+
 def test_an_empty_room_name_becomes_no_room(store, lamps):
     """The same encoding as `device.room` - `_normalized_room` turns a
     blank name into NULL, so "" can never be a real room."""
@@ -407,6 +448,44 @@ def test_forgetting_a_member_recomputes_the_intersection(store, lamps_with_comma
     assert "color" not in _slugs(store, group.id)
     store.forget_device(lamps_with_commands[1])
     assert "color" in _slugs(store, group.id)
+
+
+def test_a_startup_backfill_that_reaches_every_member_extends_the_group(store, lamps):
+    """Item 2 of the final fix pass: `register_group_commands` used to run
+    only from `create_group`, `set_group_members` and `forget_device` -
+    every MEMBERSHIP change - but `Store.register_commands` also runs on
+    every startup via `backfill_commands` (and on re-commissioning),
+    without ever touching a group. So a `clusters.yaml` correction that
+    gives every member a command they did not previously share reached
+    each device's own tile the moment the bridge restarted, and left the
+    group's command list stale until someone happened to re-save its
+    member list - exactly the staleness section 4.3's re-adoption
+    rationale exists to prevent, just never wired to the one trigger that
+    actually fires it in production.
+
+    Both fixtures lamps share `colortemp` (`ColorControl`,
+    `MoveToColorTemperature`) in their real command lists; this test
+    registers each with `colortemp` held back, as if commissioning
+    predated the `clusters.yaml` entry for it, and then reruns
+    `backfill_commands` with the full snapshots - the same call
+    `cli.py`'s `run` command makes at every startup."""
+    from loxmatter.export.commands import extract_commands
+
+    device_a, device_b = lamps
+    snap_a = load("ikea_kajplats_cws_lamp.json")
+    snap_b = load("ikea_kajplats_ws_lamp.json")
+    reduced_a = [c for c in extract_commands(snap_a) if c.slug != "colortemp"]
+    reduced_b = [c for c in extract_commands(snap_b) if c.slug != "colortemp"]
+    store.register_commands(device_a, reduced_a, snap_a.node_id)
+    store.register_commands(device_b, reduced_b, snap_b.node_id)
+
+    group = store.create_group("Both", lamps)
+    assert "colortemp" not in _slugs(store, group.id)
+
+    gained = store.backfill_commands([snap_a, snap_b])
+
+    assert gained == 2  # both devices actually gained a command
+    assert "colortemp" in _slugs(store, group.id)
 
 
 def test_an_offline_member_changes_nothing(store, lamps_with_commands):

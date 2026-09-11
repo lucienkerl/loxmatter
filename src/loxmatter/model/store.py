@@ -956,6 +956,25 @@ class StoredGroup:
     updated_at: str | None
 
 
+def changed_since_export(exported_at: str | None, updated_at: str | None) -> bool:
+    """Whether an exportable object - a device or a group - has changed
+    since it was last exported.
+
+    Takes the two raw timestamps rather than a `StoredDevice` or
+    `StoredGroup` instance so that `api.export`'s device-side check and
+    `api.groups`'s group-side check (final fix pass, review finding
+    Important #1 - design 8 says a group's `exported_at`/`updated_at`
+    "behave as on a device", and this is the comparison that makes that
+    claim mean something) run the exact same comparison instead of two
+    independently written copies that could silently drift apart - the
+    same rationale as `_loxone_commands` assembling a key in exactly one
+    place instead of two.
+
+    An unknown `updated_at` counts as "changed" - the more cautious of the
+    two possible assumptions, see `StoredDevice.updated_at`."""
+    return exported_at is None or updated_at is None or updated_at > exported_at
+
+
 class UnknownCommandError(KeyError):
     """`KeyError.__str__` wraps the message in `repr()`, which makes
     `str(exc)` put extra quote marks around the entire text - Task 6 turns
@@ -1303,10 +1322,22 @@ class Store:
         self._db.commit()
 
     def set_group_room(self, group_id: int, room: str | None) -> None:
+        """Sets a group's room (`PATCH /api/groups/{group_id}`).
+
+        **Deliberately does NOT touch `updated_at`** - the group
+        counterpart of `set_room`'s own deviation from `rename_device`,
+        for the identical reason: the room ends up in no export template
+        (design 6, "a group's room, like a device's, is never derived
+        from what it exports"), so a room assignment must not make the
+        export tab report the group as "changed since the last export"
+        when the next export would produce byte-identical files (final
+        fix pass, review finding Minor #3(a) - this used to stamp
+        `updated_at` unconditionally, the one place where the group side
+        of a device/group pair of methods disagreed with its device
+        counterpart for no stated reason)."""
         self.group(group_id)
         self._db.execute(
-            "UPDATE device_group SET room = ?, updated_at = ? WHERE id = ?",
-            (_normalized_room(room), self._now(), group_id),
+            "UPDATE device_group SET room = ? WHERE id = ?", (_normalized_room(room), group_id)
         )
         self._db.commit()
 
@@ -1738,9 +1769,16 @@ class Store:
         device_cur = self._db.execute(
             "UPDATE device SET room = ? WHERE room = ? AND active = 1", (target, source)
         )
+        # No `updated_at` here either, for the same reason `set_group_room`
+        # does not touch it (see there): a room, renamed or not, never
+        # lands in an export template, so this bulk write must not make
+        # the export tab report every group in the renamed room as
+        # "changed since the last export" (final fix pass, review finding
+        # Minor #3(a) - this used to stamp `updated_at` unconditionally,
+        # disagreeing with `set_group_room`'s own docstring for no stated
+        # reason).
         group_cur = self._db.execute(
-            "UPDATE device_group SET room = ?, updated_at = ? WHERE room = ?",
-            (target, self._now(), source),
+            "UPDATE device_group SET room = ? WHERE room = ?", (target, source)
         )
         self._db.commit()
         return int(device_cur.rowcount) + int(group_cur.rowcount)
@@ -1756,6 +1794,25 @@ class Store:
         through. Without this call in the CLI command, the WebUI would
         keep showing "never exported" after a `loxmatter export`."""
         self._db.execute("UPDATE device SET exported_at = ? WHERE id = ?", (self._now(), device_id))
+        self._db.commit()
+
+    def mark_group_exported(self, group_id: int) -> None:
+        """Sets a group's `exported_at` to now - the group counterpart of
+        `mark_exported` (final fix pass, review finding Important #1).
+
+        Design 8 says `exported_at`/`updated_at` on the group "behave as
+        on a device", but until this fix nothing in `src/` ever wrote
+        `device_group.exported_at` at all: `api.export.download` and
+        `cli.py`'s `export` command both already build and write a
+        group's `VO_g{id}_*.xml` (design 7), and both stopped one call
+        short of the parity the design claims. Called the same way as
+        `mark_exported` - only for a group whose template was actually
+        written, never for one skipped because it has no commands (design
+        4.3: an emptied group has nothing to export, and marking it
+        exported would claim a template exists that does not)."""
+        self._db.execute(
+            "UPDATE device_group SET exported_at = ? WHERE id = ?", (self._now(), group_id)
+        )
         self._db.commit()
 
     def device_id_for_node(self, node_id: int) -> int | None:
@@ -2032,6 +2089,24 @@ class Store:
         strategy here via an extra ID: two commands of different clusters
         on the same endpoint with the same slug are a bug in
         `clusters.yaml`, not a legitimate ambiguity.
+
+        **Recomputes this device's groups too (final fix pass, review
+        finding Important #2).** `register_group_commands` used to run
+        only from `create_group`, `set_group_members` and `forget_device`
+        - every membership change, but not this method, even though this
+        is the method a `clusters.yaml` correction or a re-interview
+        actually reaches: `backfill_commands` calls it for every device on
+        every startup, and `api.devices`'s recommissioning path calls it
+        too. Neither ever touched a group, so a command that a
+        `clusters.yaml` fix newly gave to every member of an existing
+        group reached each member's own tile immediately and the group's
+        intersection not at all - until someone happened to re-save its
+        member list. That is exactly the staleness the re-adoption above
+        exists to prevent, just never wired to the trigger that fires in
+        production. The query is the same shape as `forget_device`'s
+        (device to group ids), run AFTER the commit above so the
+        recompute sees this device's just-written commands rather than an
+        uncommitted transaction.
         """
         taken = self._existing_command_keys(device_id)
         try:
@@ -2089,6 +2164,14 @@ class Store:
             self._db.rollback()
             raise
         self._db.commit()
+        affected = [
+            int(row["group_id"])
+            for row in self._db.execute(
+                "SELECT group_id FROM device_group_member WHERE device_id = ?", (device_id,)
+            ).fetchall()
+        ]
+        for group_id in affected:
+            self.register_group_commands(group_id)
         return self.commands(device_id)
 
     def commands(self, device_id: int) -> list[StoredCommand]:

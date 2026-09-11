@@ -316,8 +316,20 @@ api.errors.group_category_mismatch:
   # and disagreed with the WebUI's own pre-check
   # (`web.groups.other_category`), which already went through
   # `categoryLabel()` for the same refusal.
+  #
+  # The German sentence used to place `{actual}` right after a single
+  # hard-coded indefinite article (final fix pass, review finding Minor
+  # #3(b)). `api.categories.*` names all three grammatical genders -
+  # neuter, masculine and feminine nouns are mixed across the eight
+  # category values - and a placeholder that can be filled with any of
+  # them can never agree with one fixed article chosen up front: whichever
+  # article was hard-coded, half the categories would read wrong.
+  # Restructured to name the category as an appositive instead ("device N
+  # HAS THE CATEGORY {actual}"), which reads correctly for every value
+  # regardless of its gender, rather than special-casing eight nouns
+  # against two articles.
   en: "device {device_id} is a {actual}, the group takes {expected}"
-  de: "Gerät {device_id} ist ein {actual}, die Gruppe nimmt {expected}"
+  de: "Gerät {device_id} hat die Kategorie {actual}, die Gruppe nimmt {expected}"
 api.errors.group_duplicate_member:
   en: "a group's member list cannot contain the same device twice"
   de: "die Mitgliederliste einer Gruppe darf ein Gerät nicht doppelt enthalten"
@@ -1242,8 +1254,15 @@ web.groups.needs_member:
   en: "Pick at least one device — the first one fixes the group's category."
   de: "Mindestens ein Gerät wählen — das erste legt die Kategorie der Gruppe fest."
 web.groups.other_category:
+  # The German mirrors `api.errors.group_category_mismatch`'s fix (final
+  # fix pass, review finding Minor #3(b)) for the identical reason: the
+  # eight category values `categoryLabel()` (`app.js`) can produce span
+  # all three grammatical genders, so a single hard-coded indefinite
+  # article can never agree with the one it happens to fill in here.
+  # Restructured to name the category as an appositive instead of behind
+  # an article, exactly like the API-side message.
   en: "is a {category} — a group takes one kind only"
-  de: "ist ein {category} — eine Gruppe nimmt nur eine Sorte"
+  de: "hat die Kategorie {category} — eine Gruppe nimmt nur eine Sorte"
 web.groups.create:
   en: "Create group"
   de: "Gruppe erstellen"
@@ -1424,6 +1443,15 @@ web.export.col_expert_withheld:
 web.export.col_last_exported:
   en: "Last exported"
   de: "Zuletzt exportiert"
+# Group export table (final fix pass, review finding Important #1) - the
+# preview's file list used to undercount every download by exactly the
+# groups this heading and column now make visible.
+web.export.groups_heading:
+  en: "Groups"
+  de: "Gruppen"
+web.export.col_group:
+  en: "Group"
+  de: "Gruppe"
 web.export.expert_withheld_explanation:
   en: "\"Held back as expert\" signals would be technically exportable but don't belong to the device type by default (tile menu → \"Edit signals…\" → \"Expert\" section) – each one can be enabled individually there."
   de: "„Als Experte zurückgehalten“ sind Signale, die technisch exportierbar wären, aber standardmäßig nicht zum Gerätetyp gehören (Kachelmenü → „Signale bearbeiten…“ → Block „Experte“) – dort lässt sich jedes einzeln freischalten."

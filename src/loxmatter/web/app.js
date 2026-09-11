@@ -724,6 +724,13 @@ function app() {
     exportOnlyPending: false,
     exportPreview: null,
     exportStatusByDevice: {},
+    // A group's counterpart (final fix pass, review finding Important
+    // #1): `GET /api/export/status` answers with one list carrying both
+    // shapes (`device_id` entries and `group_id` entries - see
+    // `api/export.py`, `status`), so `loadExportStatus` below splits it
+    // into two maps instead of one, the same way the two ids never
+    // collide server-side despite both counters starting at 1.
+    exportStatusByGroup: {},
     exportBusy: false,
     exportError: null,
 
@@ -1414,6 +1421,21 @@ function app() {
     // `_changed_since_export`).
     changedSinceExport(deviceId) {
       const status = this.exportStatusFor(deviceId);
+      return status ? status.changed_since_export : true;
+    },
+
+    // Group counterparts of the two above (final fix pass, review finding
+    // Important #1) - used by the export tab's group table, never by the
+    // group tile in the devices grid: that tile deliberately shows no
+    // export footer at all (see the group-tile markup comment in
+    // `index.html`), a group has no export-changed pill to keep in sync.
+    groupExportedAtFor(groupId) {
+      const status = this.groupExportStatusFor(groupId);
+      return status ? status.exported_at : null;
+    },
+
+    groupChangedSinceExport(groupId) {
+      const status = this.groupExportStatusFor(groupId);
       return status ? status.changed_since_export : true;
     },
 
@@ -3339,10 +3361,21 @@ function app() {
       try {
         const rows = await this.request("GET", "/api/export/status");
         const byDevice = {};
+        const byGroup = {};
+        // One list, two shapes (`api/export.py`, `status` - final fix
+        // pass, review finding Important #1): a device row carries
+        // `device_id`, a group row carries `group_id` instead, never
+        // both, so this is how the two are told apart rather than a
+        // second field naming which is which.
         for (const row of rows) {
-          byDevice[row.device_id] = row;
+          if (row.group_id !== undefined) {
+            byGroup[row.group_id] = row;
+          } else {
+            byDevice[row.device_id] = row;
+          }
         }
         this.exportStatusByDevice = byDevice;
+        this.exportStatusByGroup = byGroup;
       } catch (error) {
         this.exportError = t("web.export.status_load_error", { message: error.message });
       }
@@ -3350,6 +3383,14 @@ function app() {
 
     exportStatusFor(deviceId) {
       return this.exportStatusByDevice[deviceId] || null;
+    },
+
+    // The group counterparts of `exportedAtFor`/`changedSinceExport`
+    // below (final fix pass, review finding Important #1) - same
+    // fallbacks, same cautious default for a group not yet in the map
+    // (not loaded yet, or never exported: both must read as "changed").
+    groupExportStatusFor(groupId) {
+      return this.exportStatusByGroup[groupId] || null;
     },
 
     // ---------------------------------------------------------------------
@@ -3482,6 +3523,18 @@ function app() {
         const status = this.exportStatusFor(device.device_id);
         return !status || status.changed_since_export;
       });
+    },
+
+    // The group counterpart of `previewDevices` (final fix pass, review
+    // finding Important #1) - deliberately NOT filtered by
+    // `exportOnlyPending`: `only_pending` never narrows the group loop in
+    // `api.export.download` either (see the long comment there), a
+    // single-device or filtered download still bundles every group's
+    // template alongside it, so the preview table must keep showing all
+    // of them regardless of the checkbox, or it would promise a smaller
+    // download than the one `only_pending` actually produces.
+    previewGroups() {
+      return this.exportPreview ? this.exportPreview.groups : [];
     },
 
     // `only_pending` travels along with the request (Review-Fix Fix 4,

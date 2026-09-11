@@ -107,7 +107,15 @@ def test_group_category_mismatch_error_is_german_when_set(tmp_path):
     `categoryLabel()` in app.js), which already named the category
     properly. `_check_members` (store.py) now looks both `actual` and
     `expected` up through `api.categories.*` before building this message,
-    so a German reader sees German words for both."""
+    so a German reader sees German words for both.
+
+    The sentence itself changed again in the final fix pass's last item
+    (Minor #3(b)): "ist ein Steckdose" does not agree ("Steckdose" is
+    feminine, "ein" is not), and a fixed article cannot agree with every
+    one of the eight categories at once - `Licht`/`Klima`/`Schloss` are
+    neuter, `Taster`/`Sensor` masculine, `Steckdose`/`Beschattung`
+    feminine. "hat die Kategorie {actual}" sidesteps the whole question
+    instead of special-casing eight nouns against two articles."""
     i18n.set_language("de")
     store = Store(tmp_path / "t.sqlite")
     try:
@@ -116,7 +124,9 @@ def test_group_category_mismatch_error_is_german_when_set(tmp_path):
         try:
             store.create_group("Mixed", [lamp_id, plug_id])
         except CategoryMismatchError as exc:
-            assert str(exc) == f"Gerät {plug_id} ist ein Steckdose, die Gruppe nimmt Licht"
+            assert (
+                str(exc) == f"Gerät {plug_id} hat die Kategorie Steckdose, die Gruppe nimmt Licht"
+            )
         else:
             raise AssertionError("expected CategoryMismatchError")
     finally:

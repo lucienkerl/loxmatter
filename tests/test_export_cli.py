@@ -606,3 +606,50 @@ def test_export_marks_the_device_as_exported(tmp_path):
         assert device.exported_at is not None
     finally:
         store.close()
+
+
+def test_export_marks_a_group_as_exported(tmp_path):
+    """The group counterpart of `test_export_marks_the_device_as_exported`
+    (final fix pass, review finding Important #1): the CLI's `export`
+    command has always written a group's `VO_g*.xml` (see
+    `test_export_announces_a_written_group_template` above), but nothing
+    ever called `Store.mark_group_exported` for it - `GET
+    /api/export/status` could never answer "when last exported" for a
+    group exported only via the CLI, no matter how many times
+    `loxmatter export` ran."""
+    db_path = tmp_path / "store.sqlite"
+    out = tmp_path / "out"
+    export_args = [
+        "export",
+        "--fixture",
+        str(FIXTURES / "ikea_grillplats_plug.json"),
+        "--bridge-ip",
+        "192.168.1.50",
+        "--out",
+        str(out),
+        "--store-path",
+        str(db_path),
+    ]
+
+    first = CliRunner().invoke(app, export_args)
+    assert first.exit_code == 0, first.output
+
+    store = Store(db_path)
+    try:
+        (device,) = store.devices()
+        group = store.create_group("Kitchen plugs", [device.id])
+        assert group.exported_at is None
+    finally:
+        store.close()
+
+    # Second run: the same shape as `test_export_announces_a_written_group_
+    # template` above - `export` writes every group the store currently
+    # knows every time it runs.
+    result = CliRunner().invoke(app, export_args)
+    assert result.exit_code == 0, result.output
+
+    store = Store(db_path)
+    try:
+        assert store.group(group.id).exported_at is not None
+    finally:
+        store.close()

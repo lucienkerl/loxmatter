@@ -1774,6 +1774,42 @@
             </table>
           </div>
           <p class="hint" x-text="t('web.export.expert_withheld_explanation')"></p>
+
+          <!-- The group counterpart of the device table above (final fix
+               pass, review finding Important #1). A separate table, not
+               rows folded into the one above: a group has no
+               `viu_filename`/`inputs`/`skipped`/`hidden_count` at all
+               (`ExportGroupOut`'s docstring - a group has no signals of
+               its own), so a shared table would need a column that is
+               blank for every group row. `x-show`, not `x-if`: unlike the
+               device grid's group tiles (see `index.html`'s long comment
+               there), an empty group table sitting hidden costs nothing
+               here - there is no positional-selector script depending on
+               this card's exact child count. -->
+          <div style="overflow-x: auto" x-show="previewGroups().length > 0" x-cloak>
+            <h3 x-text="t('web.export.groups_heading')"></h3>
+            <table>
+              <thead>
+                <tr>
+                  <th x-text="t('web.export.col_group')"></th>
+                  <th x-text="t('web.export.col_vo')"></th>
+                  <th x-text="t('web.export.col_commands')"></th>
+                  <th x-text="t('web.export.col_last_exported')"></th>
+                </tr>
+              </thead>
+              <tbody>
+                <template x-for="group in previewGroups()" :key="group.group_id">
+                  <tr>
+                    <td x-text="group.label"></td>
+                    <td class="key" x-text="group.vo_filename"></td>
+                    <td x-text="group.commands"></td>
+                    <td x-text="formatTimestamp(groupExportedAtFor(group.group_id))"></td>
+                  </tr>
+                </template>
+              </tbody>
+            </table>
+          </div>
+
           <p class="hint" x-show="exportPreview && exportPreview.system_files.length > 0">
             <span x-text="t('web.export.system_files_prefix')"></span><span x-text="exportPreview ? exportPreview.system_files.join(', ') : ''"></span>
           </p>

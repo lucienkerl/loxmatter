@@ -432,6 +432,19 @@ def export(
         # not "the group of the device just exported", it is every group
         # the store currently knows, written alongside it every time the
         # command runs, the same way the API's `download` route does.
+        #
+        # `exported_group_ids` (final fix pass, review finding Important
+        # #1): this loop has always written a group's `VO_g*.xml`, but
+        # nothing ever called `Store.mark_group_exported` for it -
+        # `GET /api/export/status` could then never answer "when last
+        # exported" for a group exported only via the CLI, exactly the
+        # gap `Store.mark_exported`'s own docstring already describes for
+        # a device (design 8: a group's `exported_at` "behaves as on a
+        # device"). Collected instead of marked inline, for the same
+        # reason as the device's own deferred `mark_exported` call
+        # (comment above): a write failure partway through this loop ends
+        # the command via `_fail` before any group is marked.
+        exported_group_ids: list[int] = []
         for group in store.groups():
             group_commands = to_group_outputs(store.group_commands(group.id))
             group_vo = out / filename_for("VO", group.id, group.label, kind="g")
@@ -462,7 +475,10 @@ def export(
                     count=len(group_commands),
                 )
             )
+            exported_group_ids.append(group.id)
         store.mark_exported(device_id)
+        for group_id_written in exported_group_ids:
+            store.mark_group_exported(group_id_written)
     finally:
         store.close()
 
