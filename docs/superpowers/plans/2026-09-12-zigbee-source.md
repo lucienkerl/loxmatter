@@ -5365,7 +5365,12 @@ The commissioning card gains two tabs, **Matter** and **Zigbee**. The Matter tab
 - Test: `tests/api/test_web.py`, plus a throwaway Alpine harness
 
 **Interfaces:**
-- Consumes: the routes of Task 12, as they were actually committed (`b5876dc`), not as this plan predicted them. Four facts the tests below are built on, each verifiable in `src/loxmatter/api/zigbee.py`: every pairing route answers **503 `api.errors.zigbee_not_configured`** both when no source is configured **and** for the window of a radio swap (`_require_source`, which reads `ZigbeeRuntime.current()` per request); `permit_until` is **`null` whenever no window is open** — after a Stop, after the duration elapsed, and after the radio went away, because `connection_lost` and `disconnect()` both close the window while `GET /api/zigbee/pairing` goes on listing the rows (the devices did not go anywhere, the radio did); a `POST /zigbee/permit` after that is a **502**; and a `PATCH` on a row that is not `ready` is a **409 `api.zigbee.not_ready_yet`**.
+- Consumes: the routes of Task 12, as they were actually committed (`b5876dc`, with the follow-up that re-checks a row after the snapshot read), not as this plan predicted them. The facts the tests below are built on, each verifiable in `src/loxmatter/api/zigbee.py`:
+  - Every pairing route answers **503** when there is no source, with one of **two** details: **`api.zigbee.radio_changing`** while a radio change is in flight (`ZigbeeRuntime.progress().state == "applying"` — the old source released, the new one not built yet), and **`api.errors.zigbee_not_configured`** when nothing is set up. Show the detail inside the tab as it comes; do not substitute a sentence of the tab's own, because the tab is only visible when a stick is configured and "pick one under Settings first" is false there.
+  - `permit_until` is **`null` whenever no window is open** — after a Stop, after the duration elapsed, and after the radio went away, because `connection_lost` and `disconnect()` both close the window while `GET /api/zigbee/pairing` goes on listing the rows (the devices did not go anywhere, the radio did).
+  - After the radio went away, `POST /zigbee/permit` with a non-zero duration is a **502** (`api.zigbee.permit_failed`), but a **Stop (`duration: 0`) is a 200 with `permit_until: null`**: the window is already closed, and a Stop that finds nothing open is not an error. A Stop is a 502 only while a window is still recorded as open and the radio does not acknowledge it.
+  - **Trust `GET /api/zigbee/pairing`, not a `POST /permit` body, for the countdown.** Two overlapping `POST /permit` requests are serialised by the source, but each route reads `permit_until` back as soon as its own call finishes - so the LOSING request of a "Keep open longer" and a Stop pressed together can carry a 254 s end time in its own response body while the stored state, and the radio, are closed. After any `POST /permit`, set `zigbeePermitUntil` from the next `GET`, or at least let the next `GET` overwrite it.
+  - A `PATCH` is a **409 `api.zigbee.not_ready_yet`** unless the row's **STORED** state (`PairingRow.state`) is `ready` - not the `state` field the list displays. The displayed `state` overlays `configuring` and `waiting_wake` onto a stored `ready` row, and **a row displayed as `configuring` or `waiting_wake` can be named**: the 409 does not apply to it, and the tab must offer the name field on it. `waiting_wake` in particular can last days for a sleeping sensor, and reading "not `ready` is a 409" against the displayed field would block naming it for all of that time. The rows the server refuses are the ones displayed as `joined`, `interviewing`, `failed` or `stuck` (a stalled `joined`/`interviewing`); a 409 that does arrive (the row regressed while the name was being saved) is shown inline on the row, and the next `GET` shows why.
 - Produces, in `app.js`: `commissionTab`, `selectCommissionTab(tab)`, `zigbeeTabVisible()`, `loadZigbeePairing()`, `zigbeePairing`, `zigbeePairingError`, `zigbeePermitUntil`, `zigbeeCountdown()`, `zigbeeRowState(row)`, `startZigbeeSearch()`, `stopZigbeeSearch()`, `extendZigbeeSearch()`, `retryZigbeeDevice(ieee)`, `removeZigbeeDevice(ieee)`.
 
   The first five were missing from this list as originally written, and the tests below are what found them: there was no name for "is the tab offered at all", none for the tab switch that has to close the join window, and none for the load whose 503 must **not** take the tab away. A body-less test can be written against a Produces list with holes in it; a real one cannot.
@@ -5696,10 +5701,12 @@ async def test_leaving_the_tab_closes_the_join_window(api):
     after the radio went away, which closes the window on the source's side
     without being asked (`connection_lost` and `disconnect()` both do it,
     while the rows stay listed). A tab change that sent `permit(0)`
-    unconditionally would aim a request at a bridge with no source and
-    collect the 503 of `_require_source`, or a 502 for a radio that has
-    just gone: an error banner for doing nothing wrong, on the very click
-    that was supposed to be tidy.
+    unconditionally would aim a request at a bridge with no source - mid
+    swap, or with the setting just cleared - and collect the 503 of
+    `_require_source`: an error banner for doing nothing wrong, on the very
+    click that was supposed to be tidy. (A Stop after a lost link is a 200
+    with `permit_until: null` on the server's side; the 503 is what is
+    left.)
 
     Fault to prove it: leave the window open on tab change."""
     values = _app_state(
@@ -5756,7 +5763,7 @@ async def test_the_matter_tab_keeps_the_card_it_had(api):
 
   **Where the gate's data comes from, and what must not feed it.** `zigbeeTabVisible()` reads `configured_path` from `GET /api/zigbee/radio` — the stored setting, which Task 13 already loads into `state.zigbee` for the radios card. The Devices view therefore has to load it too (the radios card lives in Settings and its loader is armed only there), so call the same `GET /api/zigbee/radio` on entering Devices. Do **not** gate the tab on `GET /api/zigbee/pairing` having answered: that route returns 503 for the whole window of a radio swap as well as for an unconfigured source, and a tab that vanished under the user mid-swap would be a worse bug than a missing one. `loadZigbeePairing()` therefore keeps its 503 in `zigbeePairingError` and shows it inside the tab; it never takes the tab away.
 
-The ready row carries an inline name prefilled with `<Manufacturer> <Model>`, saved on blur, and a room `<select>` that **reuses the commissioning card's existing room control** — the same component and the same room-key encoding (`""` for no room), not a second one. The quirk hint sits on the ready row. The removal confirmation uses the honest copy of §3.1.
+The ready row - and a row displayed as `configuring` or `waiting_wake`, which is stored as `ready` and may be named (see Interfaces) - carries an inline name prefilled with `<Manufacturer> <Model>`, saved on blur, and a room `<select>` that **reuses the commissioning card's existing room control** — the same component and the same room-key encoding (`""` for no room), not a second one. The quirk hint sits on the ready row. The removal confirmation uses the honest copy of §3.1.
 
 - [ ] **Step 3: Add every i18n key** from spec §3.4's table, each with `en` **and** `de`.
 
