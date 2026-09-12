@@ -136,6 +136,13 @@ clusters:
       # Color mode (ColorMode, 8): an enumeration, not a physical
       # quantity - no unit.
       8: {slug: colormode, unit: ""}
+      # CurrentX (3) and CurrentY (4): the chromaticity as the ZCL and
+      # Matter both carry it, x = value / 65536. Left raw - a division by
+      # 65536 would be expressible as `scale`, but the pair only means
+      # anything together, and two independent 0-1 numbers in Loxone are
+      # less useful than the two integers the standard names.
+      3: {slug: color_x, unit: ""}
+      4: {slug: color_y, unit: ""}
       # ColorTempPhysicalMinMireds (16395) and ColorTempPhysicalMaxMireds
       # (16396): what color temperature the light can do at all. IDs
       # checked against the installed SDK (chip.clusters.Objects.
@@ -177,6 +184,12 @@ clusters:
       # RGBW light (tests/fixtures/nodes/ikea_kajplats_cws_lamp.json, 1/768/65529
       # contains 6).
       6: {slug: color, takes_value: true, control: hue_sat}
+      # MoveToColor (7, XY) - served since 2026-09-12, see
+      # commands/translate.py `_payload_color_xy`. Without this entry the
+      # command would appear as a generic, digital `c768_cmd7` in the raw
+      # export and a button press would send the literal "1" into the XY
+      # builder - the same trap that `10:` above documents.
+      7: {slug: color_xy, takes_value: true, control: hue_sat}
   1026:
     name: temperature
     rank: 10
@@ -238,3 +251,44 @@ clusters:
     # this cluster as not wanted (see its docstring,
     # layer 3). The rank alone only changes the order.
     rank: 95
+  1030:
+    name: occupancy
+    rank: 10
+    attributes:
+      # Matter OccupancySensing and Zigbee 0x0406 are the same cluster ID,
+      # the same attribute and the same bit 0 - nothing is converted. A
+      # bitmap, not a quantity: no unit.
+      0: {slug: occupancy, unit: ""}
+  69:
+    name: booleanstate
+    rank: 10
+    attributes:
+      # Matter BooleanState StateValue. Contact and water-leak sensors both
+      # land here; the POLARITY differs between them and is decided at the
+      # Zigbee edge from the IAS zone type (design 5.2), never in this table.
+      0: {slug: state, unit: ""}
+  1024:
+    name: illuminance
+    rank: 10
+    attributes:
+      # Deliberately left raw. Both Matter and the ZCL use
+      # 10000*log10(lux)+1, so the two agree exactly - and turning that back
+      # into lux is a power, not a factor, which `scale` cannot express (the
+      # same reason the colour temperature below stays in mired).
+      0: {slug: illuminance, unit: ""}
+  1280:
+    name: iaszone
+    rank: 40
+    attributes:
+      # The raw IAS zone-status bitmap, kept visible as an expert signal.
+      #
+      # `functional: false` ON PURPOSE: the Zigbee edge derives a
+      # BooleanState (69/0) or an occupancy (1030/0) from this same bitmap,
+      # and exporting both would put the same physical fact into Loxone
+      # twice under two names. Whoever wants the raw bits - tamper, battery,
+      # supervision - enables this one by hand in the expert block.
+      #
+      # NOTE the trap documented at cluster 40 above: an `attributes:`
+      # section makes `relevance.is_functional` filter EVERY attribute of
+      # this cluster through `names_element`. That is wanted here.
+      2: {slug: ias_zone_status, unit: "", functional: false}

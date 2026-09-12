@@ -115,14 +115,14 @@ def test_unknown_cluster_command_raises_rather_than_guessing_in_german():
 
 
 def test_known_cluster_with_unknown_command_raises():
-    """Cluster 768 (ColorControl) is known, but command 7 (MoveToColor, xy)
-    is not (yet) here - the UI sets hue and saturation via
-    command 6, anything more would be unclaimed territory (see the module
-    docstring of translate.py). The error must not only apply to a
-    completely unknown cluster, but also to a known cluster with an
-    unknown command."""
+    """Cluster 768 (ColorControl) is known, but command 0 (MoveToHue)
+    is not here - the UI sets hue and saturation via command 6, and
+    colour via command 7 (MoveToColor, xy), anything more would be
+    unclaimed territory (see the module docstring of translate.py). The
+    error must not only apply to a completely unknown cluster, but also to
+    a known cluster with an unknown command."""
     with pytest.raises(UnsupportedValueError, match="is not supported"):
-        to_device_calls(cmd(768, 7, takes_value=True), "255,0,0")
+        to_device_calls(cmd(768, 0, takes_value=True), "255,0,0")
 
 
 def test_known_cluster_with_unknown_command_raises_in_german():
@@ -130,7 +130,7 @@ def test_known_cluster_with_unknown_command_raises_in_german():
     above."""
     i18n.set_language("de")
     with pytest.raises(UnsupportedValueError, match="nicht unterstuetzt"):
-        to_device_calls(cmd(768, 7, takes_value=True), "255,0,0")
+        to_device_calls(cmd(768, 0, takes_value=True), "255,0,0")
 
 
 def test_onoff_cluster_with_unknown_command_raises():
@@ -192,6 +192,43 @@ def test_a_packed_loxone_colour_becomes_hue_and_saturation():
     assert call.payload["hue"] == 0
     assert call.payload["saturation"] == 254
     assert call.payload["transitionTime"] == 0
+
+
+def test_move_to_color_is_served_and_carries_execute_if_off():
+    """ZHA 2.2.2 sends colour ONLY as move_to_color (XY) and
+    move_to_color_temp, never hue/saturation, and Matter's own Extended
+    Color Light makes XY mandatory and hue/saturation optional (research
+    C.4). Without (768, 7), colour on a Zigbee bulb does nothing.
+
+    `ExecuteIfOff` for the reason `_OPTIONS_EXECUTE_IF_OFF` already gives:
+    without it a colour command has no effect on a switched-off lamp.
+
+    Fault to prove it: remove the (768, 7) entry from `_PAYLOAD_BUILDERS`.
+    The call then raises `UnsupportedValueError` and the colour output is
+    dead."""
+    command = cmd(768, 7, takes_value=True)
+    calls = to_device_calls(command, "100")  # packed Loxone full red
+
+    colour = calls[0]
+    assert (colour.cluster_id, colour.command_id) == (768, 7)
+    assert colour.payload["colorX"] == 41943
+    assert colour.payload["colorY"] == 21627
+    assert colour.payload["optionsMask"] == 1
+    assert colour.payload["optionsOverride"] == 1
+
+
+def test_move_to_color_still_sends_brightness_as_a_second_call():
+    """The same two-call rule `(768, 6)` already follows: a packed Loxone
+    number carries colour AND brightness, Matter carries them in different
+    clusters, and the colour call must come first so the lamp does not
+    visibly power on in the old colour.
+
+    Fault to prove it: return only the colour call."""
+    command = cmd(768, 7, takes_value=True)
+    calls = to_device_calls(command, "100")
+
+    assert len(calls) == 2
+    assert (calls[1].cluster_id, calls[1].command_id) == (8, 4)
 
 
 def test_white_has_no_saturation():

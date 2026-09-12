@@ -27,7 +27,7 @@ error. That holds not only for a completely unknown cluster, but
 also for a known cluster with an unknown command ID inside it: the
 dispatch keys on the pair (cluster ID, command ID), never on the
 cluster ID alone - see `test_known_cluster_with_unknown_command_raises`
-(cluster 768/ColorControl, command 7),
+(cluster 768/ColorControl, command 0/MoveToHue),
 `test_onoff_cluster_with_unknown_command_raises` (cluster 6) and
 `test_level_cluster_with_unknown_command_raises` (cluster 8) in
 `tests/commands/test_translate.py`. Cluster 768 command 6 (Hue/Saturation)
@@ -36,16 +36,20 @@ is backed by an official source in `color.py` (knowledge base, "RGB
 Lighting Controller"). Until then the reasoning here said it was
 unbacked - that confused RGB with **Lumitech**, the combined
 brightness-and-Kelvin output, which remains without a solid source
-(see `color.py` and design 2026-09-07, section 10.1). Not supported
-remain MoveToHue (0), MoveToSaturation (3), MoveToColor (7, xy) and
-Enhanced (67) - the control UI sets hue and saturation in one
-command, anything further would be unbacked territory. Clusters 6 and 8
-simply know no further commands here beyond Off/On/Toggle and
-MoveToLevel(WithOnOff) respectively - that matters especially for the raw
-export (`raw`), which also lets through commands with no entry in
-`clusters.yaml`, such as LevelControl Move/Step/Stop. Wrongly building a
-command just because the cluster is known would be exactly the error this
-function is meant to avoid.
+(see `color.py` and design 2026-09-07, section 10.1). Cluster 768 command 7
+(MoveToColor, xy) has been supported since September 12, 2026: Zigbee
+lamps (ZHA 2.2.2) accept colour only as XY and frequently not
+hue/saturation at all, and Matter's own Extended Color Light makes XY
+mandatory while hue/saturation stays optional - so the same builder now
+serves Matter lamps too (see `_payload_color_xy`). Not supported remain
+MoveToHue (0), MoveToSaturation (3) and Enhanced (67) - the control UI
+sets colour in one command (hue/saturation or XY), anything further would
+be unbacked territory. Clusters 6 and 8 simply know no further commands
+here beyond Off/On/Toggle and MoveToLevel(WithOnOff) respectively - that
+matters especially for the raw export (`raw`), which also lets through
+commands with no entry in `clusters.yaml`, such as LevelControl
+Move/Step/Stop. Wrongly building a command just because the cluster is
+known would be exactly the error this function is meant to avoid.
 """
 
 from __future__ import annotations
@@ -63,6 +67,7 @@ from loxmatter.commands.color import (
     lumitech_to_brightness,
     lumitech_to_kelvin,
     rgb_to_brightness,
+    rgb_to_cie_xy,
     rgb_to_hue_saturation,
 )
 from loxmatter.model.store import StoredCommand
@@ -99,6 +104,7 @@ _OPTIONS_EXECUTE_IF_OFF: dict[str, object] = {
     "optionsOverride": _EXECUTE_IF_OFF,
 }
 _COMMAND_HUE_SATURATION = 6
+_COMMAND_MOVE_TO_COLOR = 7
 
 
 class UnsupportedValueError(ValueError):
@@ -282,6 +288,51 @@ def _payload_hue_saturation(value: str) -> _Built:
     )
 
 
+def _payload_color_xy(value: str) -> _Built:
+    """Packed Loxone colour number -> ColorControl MoveToColor (XY).
+
+    Added for Zigbee (design 2026-09-12, section 5.6) and kept shared,
+    because it improves Matter lamps at the same time: ZHA 2.2.2 sends
+    colour only as XY, and Matter's Extended Color Light makes XY mandatory
+    while hue/saturation is optional. A lamp that ignores (768, 6) accepts
+    this one.
+
+    Same shape as `_payload_hue_saturation` in every other respect,
+    including the Lumitech branch: the SAME Loxone output carries colour,
+    white and brightness, so which of the three a value means is decided by
+    the value, not by the command it was exported as.
+    """
+    number = _as_number(value)
+
+    if number == int(number) and is_lumitech(int(number)):
+        try:
+            kelvin = lumitech_to_kelvin(int(number))
+        except ValueError as exc:
+            raise UnsupportedValueError(
+                i18n.t("api.errors.lumitech_malformed", value=value)
+            ) from exc
+        return _Built(
+            {"colorTemperatureMireds": kelvin_to_mireds(kelvin), **_OPTIONS_EXECUTE_IF_OFF},
+            command_id=_COMMAND_COLOR_TEMPERATURE,
+            brightness_percent=lumitech_to_brightness(int(number)),
+        )
+
+    try:
+        red, green, blue = loxone_rgb_to_rgb(number)
+    except LoxoneColourError as exc:
+        raise UnsupportedValueError(_translate_loxone_colour_error(exc)) from exc
+    colour_x, colour_y = rgb_to_cie_xy(red, green, blue)
+    return _Built(
+        {
+            "colorX": colour_x,
+            "colorY": colour_y,
+            "transitionTime": 0,
+            **_OPTIONS_EXECUTE_IF_OFF,
+        },
+        brightness_percent=rgb_to_brightness(red, green, blue),
+    )
+
+
 # The only place that defines which (cluster ID, command ID) pairs
 # are served. The dispatch in `to_device_calls` only
 # reads this mapping - supporting another command is a data change
@@ -295,6 +346,7 @@ _PAYLOAD_BUILDERS: dict[tuple[int, int], Callable[[str], _Built]] = {
     (_CLUSTER_LEVEL, _COMMAND_MOVE_TO_LEVEL_WITH_ON_OFF): _payload_level,
     (_CLUSTER_COLOR, _COMMAND_COLOR_TEMPERATURE): _payload_color_temperature,
     (_CLUSTER_COLOR, _COMMAND_HUE_SATURATION): _payload_hue_saturation,
+    (_CLUSTER_COLOR, _COMMAND_MOVE_TO_COLOR): _payload_color_xy,
 }
 
 
