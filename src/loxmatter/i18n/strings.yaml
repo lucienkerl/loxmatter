@@ -424,15 +424,24 @@ api.errors.group_partially_unreachable:
   en: "reached {reached} of {total} members; no answer from: {devices}"
   de: "{reached} von {total} Mitgliedern erreicht, keine Antwort von: {devices}"
 api.errors.device_timed_out:
-  # `Sources.send`'s bound (boundary design open point 11) - a source was
-  # asked and stayed silent past `SOURCE_CALL_TIMEOUT_SECONDS`.
-  en: "the device did not answer within {seconds} s"
-  de: "das Geraet hat innerhalb von {seconds} s nicht geantwortet"
-api.errors.group_source_not_configured:
-  # The all-unconfigured case of a group fan-out (boundary design open
-  # point 12): every failed member was never asked, because the
-  # technology's source is not running right now - 503, not 502, the same
-  # distinction `api.errors.source_not_configured` makes for one device.
+  # `bounded_source_call`'s bound (boundary design open point 11) - a
+  # source was asked and stayed silent past `SOURCE_CALL_TIMEOUT_SECONDS`.
+  # `:g` because that bound is a float: "within 10 s", not "within 10.0 s".
+  en: "the device did not answer within {seconds:g} s"
+  de: "das Geraet hat innerhalb von {seconds:g} s nicht geantwortet"
+# The all-unconfigured case of a group fan-out (boundary design open point
+# 12): EVERY member was never asked, because the technology's source is not
+# running right now - 503, not 502, the same distinction
+# `api.errors.source_not_configured` makes for one device. A group with even
+# one member switched is a partial success and uses
+# `api.errors.group_partially_unreachable` instead.
+# Two keys rather than one with a plural rule: i18n.t knows no plural forms,
+# and a group of one is the common case (same pattern as
+# `web.devices.code_detect_remaining_*`).
+api.errors.group_source_not_configured_one:
+  en: "{technology} is not set up in this installation, so 1 member was not reached"
+  de: "{technology} ist in dieser Installation nicht eingerichtet, daher wurde 1 Mitglied nicht erreicht"
+api.errors.group_source_not_configured_many:
   en: "{technology} is not set up in this installation, so {total} members were not reached"
   de: "{technology} ist in dieser Installation nicht eingerichtet, daher wurden {total} Mitglieder nicht erreicht"
 api.errors.command_belongs_to_removed_device:

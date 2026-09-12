@@ -134,6 +134,24 @@ def test_web_namespace_key_count_is_substantial():
     assert len(i18n.strings_with_prefix("web.")) > 100
 
 
+@pytest.mark.parametrize("language", ["en", "de"])
+def test_the_call_bound_reads_as_a_whole_number_of_seconds(language):
+    """`SOURCE_CALL_TIMEOUT_SECONDS` is a float, and this message is shown
+    to a person: interpolating it raw reads "the device did not answer
+    within 10.0 s", which is not how anybody writes ten seconds. The `:g`
+    in `api.errors.device_timed_out` is what keeps it "within 10 s", in
+    both languages.
+
+    Fault to prove it: drop `:g` from either value of that key. The
+    distinguishing input is a whole-number float - 0.05 renders the same
+    with and without `:g`, which is why the route-level timeout test cannot
+    measure this."""
+    i18n.set_language(language)
+    message = i18n.t("api.errors.device_timed_out", seconds=10.0)
+    assert "10 s" in message
+    assert "10.0" not in message
+
+
 def test_no_value_is_wrapped_in_typographic_quotes():
     """No entry in strings.yaml may be wrapped as a whole in typographic
     quotation marks - neither „...“ (German)

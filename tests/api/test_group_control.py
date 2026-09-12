@@ -24,6 +24,7 @@ import httpx2 as httpx
 import pytest
 from conftest import authenticate, load_snapshot
 
+from loxmatter import i18n
 from loxmatter.export.commands import extract_commands
 from loxmatter.loxone.server import build_app
 from loxmatter.model.store import Store
@@ -160,25 +161,118 @@ async def test_a_failing_member_is_a_502_on_the_webui_route(api, failing_nodes):
     assert members[0].label in response.json()["detail"]
 
 
-async def test_an_all_unconfigured_group_is_a_503_not_a_502(api, unconfigured_nodes):
+async def test_an_all_unconfigured_group_is_a_503_naming_the_technology_and_the_count(
+    api, unconfigured_nodes
+):
     """Boundary design open point 12: every member was never ASKED - its
     technology has no running source right now - so this must not read
-    like "did not answer" (502)."""
+    like "did not answer" (502).
+
+    The detail is asserted, not just the status: a 503 whose text is built
+    from an empty technology and a zero count is the same 503 to a status
+    assertion, and that is exactly what the review found (`technology=""`
+    and `total=0` both survived the whole suite).
+
+    Faults to prove it: pass `technology=""` to `i18n.t` in the 503 branch
+    of `loxone/server.py`, and separately pass `total=0`."""
     client, store, group_id = api
     members = store.group_members(group_id)
     unconfigured_nodes.update(m.address for m in members)
     key = next(c.key for c in store.group_commands(group_id) if c.slug == "on")
     response = await client.get(f"/cmd/{key}/1")
     assert response.status_code == 503
+    assert response.json()["detail"] == i18n.t(
+        "api.errors.group_source_not_configured_many",
+        technology="Matter",
+        total=len(members),
+    )
 
 
 async def test_an_all_unconfigured_group_is_a_503_on_the_webui_route(api, unconfigured_nodes):
+    """The same assertion on the other route - the two must not drift.
+
+    Faults to prove it: `technology=""` and `total=0` in the 503 branch of
+    `api/control.py`."""
     client, store, group_id = api
     members = store.group_members(group_id)
     unconfigured_nodes.update(m.address for m in members)
     key = next(c.key for c in store.group_commands(group_id) if c.slug == "on")
     response = await client.post(f"/api/commands/{key}", json={"value": "1"})
     assert response.status_code == 503
+    assert response.json()["detail"] == i18n.t(
+        "api.errors.group_source_not_configured_many",
+        technology="Matter",
+        total=len(members),
+    )
+
+
+async def test_a_single_member_group_reads_in_the_singular(api, unconfigured_nodes):
+    """A group of one used to report "1 members were not reached", and a
+    group of one is the common case. `i18n.t` has no plural rule, so the
+    branch picks between two keys.
+
+    Fault to prove it: always use `api.errors.group_source_not_configured_many`."""
+    client, store, _group_id = api
+    lonely = store.devices()[0]
+    group = store.create_group("Hallway", [lonely.id])
+    unconfigured_nodes.add(lonely.address)
+    key = next(c.key for c in store.group_commands(group.id) if c.slug == "on")
+    response = await client.get(f"/cmd/{key}/1")
+    assert response.status_code == 503
+    detail = response.json()["detail"]
+    assert detail == i18n.t("api.errors.group_source_not_configured_one", technology="Matter")
+    assert "1 member was not reached" in detail
+
+
+async def test_a_group_half_of_which_switched_is_not_a_flat_503(
+    api, invocations, unconfigured_nodes
+):
+    """One member switched, the other has no source. Answering 503 "Matter
+    is not set up, so 1 members were not reached" would name no member,
+    give no reached count, and tell the user nothing happened - while half
+    the group had just switched. Any partial success is a 502 with the
+    member names and the reached count.
+
+    Fault to prove it: gate the 503 on `outcome.unconfigured and not
+    outcome.unreachable` again instead of on every member being
+    unconfigured."""
+    client, store, group_id = api
+    members = store.group_members(group_id)
+    unconfigured_nodes.add(members[1].address)
+    key = next(c.key for c in store.group_commands(group_id) if c.slug == "on")
+
+    response = await client.get(f"/cmd/{key}/1")
+
+    assert response.status_code == 502
+    assert response.json()["detail"] == i18n.t(
+        "api.errors.group_partially_unreachable",
+        reached=1,
+        total=2,
+        devices=members[1].label,
+    )
+    # and the half that worked really did switch
+    assert [call.address for call in invocations] == [members[0].address]
+
+
+async def test_a_group_half_of_which_switched_is_not_a_flat_503_on_the_webui_route(
+    api, invocations, unconfigured_nodes
+):
+    """The same partial success on the other route - see above."""
+    client, store, group_id = api
+    members = store.group_members(group_id)
+    unconfigured_nodes.add(members[1].address)
+    key = next(c.key for c in store.group_commands(group_id) if c.slug == "on")
+
+    response = await client.post(f"/api/commands/{key}", json={"value": "1"})
+
+    assert response.status_code == 502
+    assert response.json()["detail"] == i18n.t(
+        "api.errors.group_partially_unreachable",
+        reached=1,
+        total=2,
+        devices=members[1].label,
+    )
+    assert [call.address for call in invocations] == [members[0].address]
 
 
 async def test_a_mix_of_unreachable_and_unconfigured_members_stays_a_502(

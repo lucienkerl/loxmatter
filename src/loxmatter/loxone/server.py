@@ -660,11 +660,15 @@ def build_app(
         """The group half of `/cmd/{key}/{value}` (design 2026-09-10, 3).
 
         The status codes are the device path's, unchanged: 404 unknown
-        key, 400 unsuitable value, 502 at least one member did not
-        answer, 503 no member was even asked (boundary design open point
-        12 - see `GroupOutcome`). The Miniserver evaluates none of them -
-        they are for the human reading the log, which is also why the
-        detail names the members instead of just counting them.
+        key, 400 unsuitable value, 502 at least one member failed while
+        the group was otherwise reachable, 503 NO member was even asked
+        (boundary design open point 12 - see `GroupOutcome`). The
+        Miniserver evaluates none of them - they are for the human reading
+        the log, and that is what decides what each detail says: the 502
+        names every failed member and counts how many were reached, since
+        the group did something and the human needs to know what; the 503
+        names the technology and the group size, since nothing was asked
+        and there is no per-member story to tell.
         """
         try:
             group_command = store.resolve_group_command(key)
@@ -677,31 +681,24 @@ def build_app(
         except UnsupportedValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-        # See `api/control.py::_execute_group_command` for why this thin
-        # wrapper exists: `dispatch_group` classifies a failure from the
-        # exception it caught itself, but never hands that exception back
-        # out - `GroupOutcome` carries labels, not exceptions. This
-        # observes the same exception on its way past, without invoking
-        # anything twice, so the 503 branch below can still name a
-        # technology.
-        unconfigured_technologies: list[str] = []
-
-        async def _invoke(call: DeviceCall) -> None:
-            try:
-                await invoke(call)
-            except SourceNotConfiguredError as exc:
-                unconfigured_technologies.append(exc.technology)
-                raise
-
-        outcome = await dispatch_group(plans, _invoke)
-        if outcome.unconfigured and not outcome.unreachable:
-            # Every failed member was never ASKED - see `GroupOutcome`'s
-            # docstring. 503, not 502: nothing to answer, nothing silent.
-            technology = unconfigured_technologies[0] if unconfigured_technologies else ""
+        outcome = await dispatch_group(plans, invoke)
+        if outcome.unconfigured and len(outcome.unconfigured) == len(plans):
+            # 503 only when the WHOLE group was never ASKED - the same
+            # branch, and the same reasoning, as in
+            # `api/control.py::_execute_group_command`: any member that DID
+            # switch makes this a partial success, which belongs in the 502
+            # below because that one names the members and counts what was
+            # reached.
+            technology = outcome.unconfigured_technologies[0]
+            key_for_total = (
+                "api.errors.group_source_not_configured_one"
+                if len(outcome.unconfigured) == 1
+                else "api.errors.group_source_not_configured_many"
+            )
             raise HTTPException(
                 status_code=503,
                 detail=i18n.t(
-                    "api.errors.group_source_not_configured",
+                    key_for_total,
                     technology=technology_display_name(technology),
                     total=len(outcome.unconfigured),
                 ),
@@ -712,7 +709,9 @@ def build_app(
             # the log, and "reached 2 of 4" alone still leaves them
             # grepping the HTTP response for which two. `outcome.failed`
             # names every failed member regardless of kind, so a mix of
-            # unreachable and unconfigured members is still named in full.
+            # unreachable and unconfigured members - and a group where some
+            # members switched and the rest have no source - is still named
+            # in full, with its reached count.
             logger.warning(
                 "group command %r reached %d of %d members; no answer from: %s",
                 key,

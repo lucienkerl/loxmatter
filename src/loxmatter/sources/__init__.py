@@ -26,9 +26,9 @@ a device came from.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Coroutine, Iterable
 from dataclasses import dataclass, field
-from typing import Protocol
+from typing import Any, Protocol
 
 from loxmatter import i18n
 from loxmatter.matter.models import NodeSnapshot, Technology
@@ -42,6 +42,7 @@ __all__ = [
     "SourceNotConfiguredError",
     "Sources",
     "Technology",
+    "bounded_source_call",
     "technology_display_name",
 ]
 
@@ -166,6 +167,38 @@ def technology_display_name(technology: str) -> str:
         return technology
 
 
+async def bounded_source_call(call: Coroutine[Any, Any, None]) -> None:
+    """Awaits one call into a source, and gives up on it after
+    `SOURCE_CALL_TIMEOUT_SECONDS`.
+
+    The one place the bound lives, because there is more than one way into
+    a source and a human or a Miniserver waits on all of them: `Sources.send`
+    (a command) and `api/devices.py`'s removal route (`source.remove`). The
+    removal route was unbounded until this function existed, which mattered
+    most exactly where the bound matters most - zigpy retries a request twice
+    and waits 5 s per attempt for a mains device and 28 s for an end device
+    or one without a node descriptor (research E.6), so removing a sleeping
+    button held the DELETE open for over a minute.
+
+    The bound is read from the module here, at call time, rather than bound
+    as a default argument, so a test can shorten it with
+    `monkeypatch.setattr("loxmatter.sources.SOURCE_CALL_TIMEOUT_SECONDS", ...)`
+    and reach every caller at once.
+
+    A timeout is reported as `DeviceUnreachableError`, not as the bare
+    `TimeoutError`: from the caller's point of view "asked, no answer" is
+    exactly what happened, it maps to the same 502 as every other way of not
+    answering, and `str(TimeoutError())` is the empty string - a 502 whose
+    detail is blank tells the person reading it nothing at all.
+    """
+    try:
+        await asyncio.wait_for(call, SOURCE_CALL_TIMEOUT_SECONDS)
+    except TimeoutError as exc:
+        raise DeviceUnreachableError(
+            i18n.t("api.errors.device_timed_out", seconds=SOURCE_CALL_TIMEOUT_SECONDS)
+        ) from exc
+
+
 class SourceNotConfiguredError(LookupError):
     """A stored device belongs to a technology no running source serves.
 
@@ -234,24 +267,10 @@ class Sources:
         self._by_technology[technology] = source
 
     async def send(self, call: DeviceCall) -> None:
-        """The invoker. Bounded, because this is the one place that knows a
-        human or a Miniserver is waiting.
-
-        zigpy retries a request twice and waits 5 s per attempt for a mains
-        device and 28 s for an end device or one without a node descriptor
-        (research E.6), so an unbounded call here holds a Loxone virtual
-        output open for over a minute. The bound is read from the module at
-        call time so tests can shorten it.
-
-        A timeout is reported as `DeviceUnreachableError`, not as
-        `TimeoutError`: from the caller's point of view "asked, no answer"
-        is exactly what happened, and it maps to the same 502 as every other
-        way of not answering.
+        """The invoker. Bounded through `bounded_source_call`, because this
+        is one of the two places that knows a human or a Miniserver is
+        waiting - see that function for the bound and why a timeout comes
+        back as `DeviceUnreachableError`.
         """
         source = self.get(call.technology)
-        try:
-            await asyncio.wait_for(source.send(call), SOURCE_CALL_TIMEOUT_SECONDS)
-        except TimeoutError as exc:
-            raise DeviceUnreachableError(
-                i18n.t("api.errors.device_timed_out", seconds=SOURCE_CALL_TIMEOUT_SECONDS)
-            ) from exc
+        await bounded_source_call(source.send(call))

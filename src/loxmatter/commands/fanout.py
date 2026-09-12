@@ -130,6 +130,19 @@ class GroupOutcome:
     # need to tell a 502 from a 503.
     unreachable: list[str]
     unconfigured: list[str]
+    # The technology of each unconfigured member, same index, same plan
+    # order as `unconfigured` - so a caller naming ONE technology in a 503
+    # detail names the FIRST member's, not whichever coroutine happened to
+    # raise first. Both routes used to observe this through a wrapper around
+    # `invoke`, which recorded completion order and only coincided with plan
+    # order because `Sources.send` raises before its first `await`; a single
+    # `await` ahead of that raise would have flipped it silently.
+    #
+    # A list rather than one value: two technologies can be unconfigured at
+    # once (a Zigbee stick removed while the Matter server is down), and a
+    # caller that must show one name should be able to see that it is
+    # choosing among several.
+    unconfigured_technologies: list[str]
 
 
 async def dispatch_group(
@@ -168,7 +181,9 @@ async def dispatch_group(
     member classified by `isinstance(result, SourceNotConfiguredError)`:
     that one was never asked (its technology has no running source right
     now), everything else in `failed` was asked and did not answer. Both
-    subsets preserve plan order, same as `failed` itself.
+    subsets preserve plan order, same as `failed` itself, and
+    `unconfigured_technologies` is read off the very exceptions that did the
+    classifying, so it lines up with `unconfigured` index for index.
     """
     results = await asyncio.gather(
         *(_run_member(plan, invoke) for plan in plans), return_exceptions=True
@@ -202,4 +217,17 @@ async def dispatch_group(
         for (_, result), label in zip(failed_pairs, labels, strict=True)
         if not isinstance(result, SourceNotConfiguredError)
     ]
-    return GroupOutcome(failed=labels, unreachable=unreachable, unconfigured=unconfigured)
+    # The exception objects are right here, so the technology is read off
+    # them in plan order - no caller has to watch exceptions fly past to
+    # learn it.
+    unconfigured_technologies = [
+        result.technology
+        for _, result in failed_pairs
+        if isinstance(result, SourceNotConfiguredError)
+    ]
+    return GroupOutcome(
+        failed=labels,
+        unreachable=unreachable,
+        unconfigured=unconfigured,
+        unconfigured_technologies=unconfigured_technologies,
+    )

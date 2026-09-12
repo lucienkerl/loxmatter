@@ -400,31 +400,29 @@ def build_control_router(store: Store, invoke: Invoker, values: ValueReader) -> 
         except UnsupportedValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-        # `dispatch_group` classifies a failure by `isinstance(result,
-        # SourceNotConfiguredError)` from the exception it caught itself -
-        # it never hands that exception back out (boundary design open
-        # point 12: `GroupOutcome` carries labels, not exceptions). This
-        # thin wrapper is how the 503 branch below still gets a technology
-        # name to show: it observes the very same exception on its way
-        # past, without invoking anything twice.
-        unconfigured_technologies: list[str] = []
-
-        async def _invoke(call: DeviceCall) -> None:
-            try:
-                await invoke(call)
-            except SourceNotConfiguredError as exc:
-                unconfigured_technologies.append(exc.technology)
-                raise
-
-        outcome = await dispatch_group(plans, _invoke)
-        if outcome.unconfigured and not outcome.unreachable:
-            # Every failed member was never ASKED - see `GroupOutcome`'s
-            # docstring. 503, not 502: nothing to answer, nothing silent.
-            technology = unconfigured_technologies[0] if unconfigured_technologies else ""
+        outcome = await dispatch_group(plans, invoke)
+        if outcome.unconfigured and len(outcome.unconfigured) == len(plans):
+            # 503 only when the WHOLE group was never ASKED - see
+            # `GroupOutcome`'s docstring. `unconfigured and not unreachable`
+            # was not enough: a group of two where one lamp switched and the
+            # other had no source answered 503 "so 1 members were not
+            # reached", which names no member, gives no reached count, and
+            # says "nothing happened" about a group that was half switched.
+            # Any partial success therefore falls through to the 502 below,
+            # which names every failed member.
+            technology = outcome.unconfigured_technologies[0]
+            # Singular and plural as separate keys - `i18n.t` knows no
+            # plural rule, and one unreached member is the common case
+            # (same pattern as `web.devices.code_detect_remaining_*`).
+            key_for_total = (
+                "api.errors.group_source_not_configured_one"
+                if len(outcome.unconfigured) == 1
+                else "api.errors.group_source_not_configured_many"
+            )
             raise HTTPException(
                 status_code=503,
                 detail=i18n.t(
-                    "api.errors.group_source_not_configured",
+                    key_for_total,
                     technology=technology_display_name(technology),
                     total=len(outcome.unconfigured),
                 ),
@@ -435,7 +433,9 @@ def build_control_router(store: Store, invoke: Invoker, values: ValueReader) -> 
             # the log, and "reached 2 of 4" alone still leaves them
             # grepping the HTTP response for which two. `outcome.failed`
             # names every failed member regardless of kind, so a mix of
-            # unreachable and unconfigured members is still named in full.
+            # unreachable and unconfigured members - and a group where some
+            # members switched and the rest have no source - is still named
+            # in full, with its reached count.
             logger.warning(
                 "group command %r reached %d of %d members; no answer from: %s",
                 key,

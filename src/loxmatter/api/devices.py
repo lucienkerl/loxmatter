@@ -104,7 +104,12 @@ from loxmatter.profiles.categories import CATEGORY_RANK, category_for
 from loxmatter.profiles.endpoints import endpoint_labels
 from loxmatter.profiles.table import Exportability, is_exportable
 from loxmatter.profiles.transport import transport_for
-from loxmatter.sources import DeviceUnreachableError, SourceNotConfiguredError, Sources
+from loxmatter.sources import (
+    DeviceUnreachableError,
+    SourceNotConfiguredError,
+    Sources,
+    bounded_source_call,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -633,12 +638,29 @@ def build_device_router(
             raise HTTPException(status_code=503, detail=str(exc)) from exc
         try:
             # Order: see module docstring - the fabric first, then the store.
-            await source.remove(device.address)
-        except (MatterUnavailableError, DeviceUnreachableError, TimeoutError) as exc:
+            #
+            # Bounded like every other call into a source (boundary design
+            # open point 11): a zigpy `remove()` on a sleeping end device
+            # waits per attempt and retries, so an unbounded await here held
+            # this DELETE open with no upper limit. `bounded_source_call`
+            # turns the bound's expiry into `DeviceUnreachableError`, which
+            # is caught right below - one bound, one vocabulary, both shared
+            # with `Sources.send`.
+            await bounded_source_call(source.remove(device.address))
+        except (MatterUnavailableError, DeviceUnreachableError) as exc:
             # One vocabulary across sources (boundary design open point 11).
             # `MatterUnavailableError` stays in the tuple rather than being
             # replaced: it is what the Matter client has always raised here
             # and every existing test asserts on it.
+            #
+            # A bare `TimeoutError` is deliberately NOT in this tuple. It was,
+            # and nothing could reach it: the only timeout this route can
+            # produce is the one above, and that arrives as
+            # `DeviceUnreachableError` - by design, since `str(TimeoutError())`
+            # is empty and would have made this a 502 with a blank detail. A
+            # source that lets a raw `TimeoutError` escape instead of raising
+            # `DeviceUnreachableError` at its own edge is a bug in that
+            # source, and should look like one.
             raise HTTPException(status_code=502, detail=str(exc)) from exc
         store.forget_device(device.id)
 

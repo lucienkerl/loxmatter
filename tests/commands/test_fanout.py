@@ -275,7 +275,12 @@ async def test_a_source_not_configured_failure_is_classified_as_unconfigured():
             raise RuntimeError("no route to host")
 
     outcome = await dispatch_group(plans, invoke)
-    assert outcome == GroupOutcome(failed=["A", "C"], unreachable=["C"], unconfigured=["A"])
+    assert outcome == GroupOutcome(
+        failed=["A", "C"],
+        unreachable=["C"],
+        unconfigured=["A"],
+        unconfigured_technologies=["zigbee"],
+    )
 
 
 async def test_an_all_unconfigured_group_reports_no_unreachable_members():
@@ -288,4 +293,36 @@ async def test_an_all_unconfigured_group_reports_no_unreachable_members():
         raise SourceNotConfiguredError("zigbee")
 
     outcome = await dispatch_group(plans, invoke)
-    assert outcome == GroupOutcome(failed=["A", "B"], unreachable=[], unconfigured=["A", "B"])
+    assert outcome == GroupOutcome(
+        failed=["A", "B"],
+        unreachable=[],
+        unconfigured=["A", "B"],
+        unconfigured_technologies=["zigbee", "zigbee"],
+    )
+
+
+async def test_the_unconfigured_technologies_are_in_plan_order():
+    """The 503 detail names ONE technology, so which one it names must be
+    the first member's, not the first coroutine's to finish. A is planned
+    before C but made to raise later in wall-clock time; a dispatcher that
+    collected technologies as members completed would answer
+    ["matter", "zigbee"] here and a caller would tell the user the wrong
+    radio is missing.
+
+    Fault to prove it: collect the technologies by observing
+    `SourceNotConfiguredError` as it flies past `invoke` (the wrapper both
+    routes used to carry) instead of reading them off `failed_pairs`."""
+    plans = plan_group_calls(
+        [on_target(1, 11, "A"), on_target(2, 22, "B"), on_target(3, 33, "C")], "1"
+    )
+
+    async def invoke(call: DeviceCall) -> None:
+        if call.address == "11":
+            await asyncio.sleep(0.01)
+            raise SourceNotConfiguredError("zigbee")
+        if call.address == "33":
+            raise SourceNotConfiguredError("matter")
+
+    outcome = await dispatch_group(plans, invoke)
+    assert outcome.unconfigured == ["A", "C"]
+    assert outcome.unconfigured_technologies == ["zigbee", "matter"]

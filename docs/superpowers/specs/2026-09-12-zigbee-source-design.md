@@ -930,6 +930,20 @@ the window closing when the tab is left.
   as read.
 - The real cost of `zhaquirks.setup()` on the Pi, against the 9–15 s
   extrapolation.
+- What a cancelled `BridgeMatterClient.send` leaves behind upstream. Every
+  call into a source now runs under `bounded_source_call`'s
+  `asyncio.wait_for` (`sources/__init__.py`), so a Matter command that
+  outlives `SOURCE_CALL_TIMEOUT_SECONDS` is **cancelled** while it awaits a
+  websocket RPC future inside `python-matter-server`. Whether that client
+  then drops its entry in its own result-future map, or keeps a pending
+  future for a reply that arrives later, is upstream behaviour nothing here
+  can exercise without a device that stalls for ten seconds. Check it on the
+  Pi: make one command time out (a device powered off mid-command), then
+  keep the instance running and watch whether later commands still get their
+  replies and whether the process's memory grows across repeats. A leak here
+  would be slow and would look like "the bridge gets worse the longer it
+  runs", which is exactly the kind of thing to find on purpose rather than
+  by surprise.
 - Matter's BooleanState polarity (5.2). This one is settleable **today with
   Matter devices that already exist**: MYGGBETT (contact) and KLIPPBOK
   (water leak) are commissioned, and reading their `x/69/0` in a known

@@ -81,6 +81,20 @@ async def test_an_unconfigured_technology_raises_with_its_name():
     )
 
 
+def test_a_technology_with_no_display_name_falls_back_to_itself():
+    """The `KeyError` branch of `technology_display_name`, which its
+    docstring spends a paragraph arguing for and nothing measured. It is
+    reachable in the field: `technology` is read from the `device` table, so
+    a row written by a NEWER loxmatter and left behind by an updater
+    rollback arrives here with a name that has no string - and this runs
+    inside an error path, where raising would be an error about an error.
+
+    Fault to prove it: drop the `try`/`except KeyError` and return
+    `i18n.t(...)` bare - this then raises `KeyError` instead of answering."""
+    assert technology_display_name("zwave") == "zwave"
+    assert technology_display_name("matter") == "Matter"
+
+
 def test_two_sources_of_one_technology_are_a_wiring_error():
     with pytest.raises(ValueError, match="matter"):
         Sources([_FakeSource("matter"), _FakeSource("matter")])

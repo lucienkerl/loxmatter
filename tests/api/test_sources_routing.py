@@ -20,10 +20,13 @@ sections 6.2 and 6.3)."""
 
 from __future__ import annotations
 
+import asyncio
+
 import httpx2 as httpx
 import pytest
 from conftest import authenticate, load_snapshot
 
+from loxmatter import i18n
 from loxmatter.export.commands import extract_commands
 from loxmatter.loxone.server import build_app
 from loxmatter.model.store import Store
@@ -43,8 +46,15 @@ class _FakeZigbeeSource:
         # type it has always caught here to still answer 502 rather than
         # an unhandled 500.
         self.fail_remove_with: BaseException | None = None
+        # A source that never answers removal at all - what a zigpy
+        # `remove()` on a sleeping end device looks like from here. Set,
+        # `remove` waits forever, and only the route's own bound can end
+        # the request.
+        self.remove_hangs = False
 
     async def remove(self, address: str) -> None:
+        if self.remove_hangs:
+            await asyncio.sleep(3600)
         if self.fail_remove_with is not None:
             raise self.fail_remove_with
         self.removed.append(address)
@@ -151,6 +161,30 @@ async def test_a_zigbee_removal_that_does_not_answer_is_a_502_not_a_500(zigbee_p
     response = await client.delete(f"/api/devices/{device_id}")
 
     assert response.status_code == 502
+
+
+async def test_a_removal_that_never_answers_is_cut_off(zigbee_plug, monkeypatch):
+    """The promise of a bound on every device call was true of `Sources.send`
+    only: this route awaited `source.remove(...)` with nothing above it, so a zigpy
+    `remove()` on a sleeping end device would have held the DELETE open
+    indefinitely. The removal now goes through `bounded_source_call` too.
+
+    The detail is asserted, not just the status: the bound's expiry becomes
+    `DeviceUnreachableError` carrying the i18n message precisely so the 502
+    is not blank (a bare `TimeoutError` stringifies to "").
+
+    Fault to prove it: await `source.remove(device.address)` directly again -
+    the request then never returns and the outer `wait_for` below fires
+    instead, failing the test with `TimeoutError`."""
+    monkeypatch.setattr("loxmatter.sources.SOURCE_CALL_TIMEOUT_SECONDS", 0.05)
+    client, device_id, _, zigbee = await zigbee_plug(with_zigbee=True)
+    zigbee.remove_hangs = True
+
+    response = await asyncio.wait_for(client.delete(f"/api/devices/{device_id}"), timeout=5)
+
+    assert response.status_code == 502
+    assert response.json()["detail"] == i18n.t("api.errors.device_timed_out", seconds=0.05)
+    assert "0.05 s" in response.json()["detail"]
 
 
 async def test_cmd_reaches_the_zigbee_source(zigbee_plug):
