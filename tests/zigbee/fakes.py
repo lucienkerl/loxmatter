@@ -48,6 +48,7 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+
 # `FakeDevice.__init__`'s default for `last_seen`: distinguishes "the
 # caller did not pass one - use a fresh timestamp, the way a device that
 # just finished its interview would" from an explicit `last_seen=None`,
@@ -56,7 +57,17 @@ logger = logging.getLogger(__name__)
 # `availability.is_available` treats the two very differently, so a fake
 # that could not tell them apart would hide exactly the branch that reads
 # `None` as "never seen".
-_LAST_SEEN_UNSET = object()
+#
+# A NAMED CLASS rather than a bare `object()`, so the parameter it defaults
+# can be annotated truthfully. `last_seen: float | None = object()` is a lie
+# no tool here catches - mypy is configured for `src/` only - and the next
+# reader would reasonably conclude that passing `None` and passing nothing
+# do the same thing.
+class _LastSeenUnset:
+    """The absence of an explicit `last_seen`, as a type."""
+
+
+_LAST_SEEN_UNSET = _LastSeenUnset()
 
 
 # ------------------------------------------------- zigpy's exception names --
@@ -403,7 +414,32 @@ class FakeEndpoint:
 
 @dataclass
 class FakeNodeDescriptor:
+    """The three `zigpy.zdo.types.NodeDescriptor` properties this bridge
+    reads.
+
+    All three are derived properties over the same two bytes in the real
+    descriptor - `is_mains_powered` and `is_receiver_on_when_idle` are two
+    separate bits of `mac_capability_flags`, `is_coordinator` reads
+    `logical_type`. Verified against zigpy 2.2.0:
+    `NodeDescriptor(logical_type=LogicalType.Coordinator,
+    mac_capability_flags=0x8E)` answers `True` to all three, one built with
+    `LogicalType.EndDevice` and `0x80` answers `False` to all three, and a
+    descriptor with no fields set at all - what an uninterviewed device
+    carries - answers `None`, never `False`.
+
+    `is_receiver_on_when_idle` defaults to MIRRORING `is_mains_powered`,
+    which is what the two bits do on every mains-powered router: a device
+    that is plugged in keeps its receiver on. The point of the separate
+    field is that a test can pull them apart, because nothing in the
+    protocol ties them together."""
+
     is_mains_powered: bool = True
+    is_coordinator: bool | None = False
+    is_receiver_on_when_idle: bool | None = None
+
+    def __post_init__(self) -> None:
+        if self.is_receiver_on_when_idle is None:
+            self.is_receiver_on_when_idle = self.is_mains_powered
 
 
 # --------------------------------------------------------------- the device --
@@ -419,14 +455,16 @@ class FakeDevice:
         endpoints: Iterable[FakeEndpoint] = (),
         node_desc: FakeNodeDescriptor | None = None,
         quirk_applied: bool = False,
-        last_seen: float | None = _LAST_SEEN_UNSET,
+        last_seen: float | None | _LastSeenUnset = _LAST_SEEN_UNSET,
     ) -> None:
         self.ieee = ieee
         self.nwk = 0x1234
         self.manufacturer = manufacturer
         self.model = model
         self.node_desc = node_desc if node_desc is not None else FakeNodeDescriptor()
-        self.last_seen = time.time() if last_seen is _LAST_SEEN_UNSET else last_seen
+        self.last_seen: float | None = (
+            time.time() if isinstance(last_seen, _LastSeenUnset) else last_seen
+        )
         self.is_initialized = True
         self._endpoints = list(endpoints)
         for endpoint in self._endpoints:

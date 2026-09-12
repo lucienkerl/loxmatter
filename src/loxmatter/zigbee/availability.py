@@ -40,18 +40,44 @@ and a mains device fail differently:
 
 - **The threshold is picked from `is_mains_powered`, never a single value
   for both.** One threshold would either declare a normal battery sensor
-  dead four times a day, or take six hours to notice a dead lamp.
-- **Only a mains-powered device is ever pinged**, and only after its
-  threshold has already passed. A sleepy end device cannot be woken by an
-  unsolicited read - there is nothing to gain by trying, and a real cost
-  (a wasted radio wake, spent battery) if the attempt is made anyway. A
-  mains device, by contrast, is expected to answer promptly; a read
+  dead four times a day, or take six hours to notice a dead lamp. This is
+  ZHA's own split (`zha/zigbee/device.py` picks `consider_unavailable_mains`
+  or `consider_unavailable_battery` from exactly that flag).
+- **Only a device whose receiver is on while it idles is ever pinged**, and
+  only after its threshold has already passed. A sleepy end device cannot be
+  woken by an unsolicited read - there is nothing to gain by trying, and a
+  real cost (a wasted radio wake, spent battery) if the attempt is made
+  anyway. The predicate for that is `node_desc.is_receiver_on_when_idle` and
+  NOT `is_mains_powered`: both are bits of the same MAC capability byte
+  (verified against the installed zigpy 2.2.0 - a `NodeDescriptor` built with
+  `mac_capability_flags=0x80` answers `is_mains_powered is False` and
+  `is_receiver_on_when_idle is False`, one with `0x8E` answers `True` to
+  both), and it is the second bit, not the first, that says whether anybody
+  is listening. A listening device is expected to answer promptly; a read
   (`Basic.manufacturer` with `allow_cache=False`, ZHA's own literal choice)
   gives a device that simply had nothing new to report two more chances
   before it is written off, and LUMI/Aqara devices are excluded from even
   that: they are known not to answer an unsolicited read at all, mains-
   powered or not, so pinging one only wastes a wake-up and delays the
   correct answer by a sweep or two for nothing.
+
+Two things the sweep will NOT do, both of them ZHA's own behaviour:
+
+- **A sweep with no link decides nothing on its own.** `is_available` reads
+  `last_seen`, and losing the coordinator does not touch `last_seen` - so a
+  sweep that consulted the device alone would answer "online" thirty seconds
+  after `mark_all_offline()` had just told the truth, and undo the one thing
+  this module exists for. The link state is therefore part of the sweep's
+  answer, exactly the way `ZigbeeSource._facts` already writes
+  `self._connected and is_available(device)`.
+- **The coordinator is exempt.** ZHA's `_check_available` opens with
+  `if self.is_active_coordinator: return`, and its `DeviceAvailabilityChecker`
+  filters `if not dev.is_coordinator`. zigpy keeps the coordinator in
+  `app.devices` like any other node, so without this it would be pinged over
+  the air - a read addressed to the radio itself - and written off for
+  silence. `node_desc.is_coordinator` is what says so (zigpy 2.2.0; a
+  descriptor that has not been read yet answers `None`, never `True`, so an
+  uninterviewed device is treated as an ordinary one).
 
 This module does not import zigpy: every zigpy object it reads
 (`Device.last_seen`, `Device.node_desc`, `Device.manufacturer`,
@@ -125,6 +151,30 @@ def _is_mains_powered(device: Any) -> bool:
     return bool(node_desc is not None and node_desc.is_mains_powered)
 
 
+def _answers_unsolicited_reads(device: Any) -> bool:
+    """Whether anything is listening between this device's own transmissions.
+
+    `node_desc.is_receiver_on_when_idle` and NOT `is_mains_powered` - see the
+    module docstring for why the two are different bits of the same byte and
+    why this is the one that decides whether a ping can be answered. An
+    uninterviewed device answers `None` here, and is treated the same as a
+    sleepy one: not pinged, which is the direction that costs nothing."""
+    node_desc = device.node_desc
+    return bool(node_desc is not None and node_desc.is_receiver_on_when_idle)
+
+
+def _is_coordinator(device: Any) -> bool:
+    """Whether this "device" is the radio this bridge is talking through.
+
+    zigpy keeps the coordinator in `app.devices` alongside every real node,
+    so nothing else filters it out. `NodeDescriptor.is_coordinator` answers
+    `None` for a descriptor that has not been read yet (verified against
+    zigpy 2.2.0), which `bool()` turns into "an ordinary device" - the safe
+    reading, since an ordinary device merely gets checked."""
+    node_desc = device.node_desc
+    return bool(node_desc is not None and node_desc.is_coordinator)
+
+
 def _basic_cluster(device: Any) -> Any | None:
     for endpoint in device.non_zdo_endpoints:
         cluster = endpoint.in_clusters.get(_BASIC_CLUSTER_ID)
@@ -190,6 +240,14 @@ class AvailabilityChecker:
         # heard from again - by a report, by a successful ping, or by the
         # whole link going down, at which point the count means nothing.
         self._missed_checkins: dict[str, int] = {}
+        # Per address, the last `available` this checker actually told the
+        # handler. ZHA signals only on `available ^ new` and this does the
+        # same: without it every device is re-announced every thirty
+        # seconds forever. `UdpSender.send` would de-duplicate by value
+        # before anything reached the wire, but `Runtime._notify_observers`
+        # fires per call regardless, and an address with no entry here has
+        # never been told anything - so its first decision always goes out.
+        self._reported: dict[str, bool] = {}
         self._task: asyncio.Task[None] | None = None
 
     # ------------------------------------------------------------ lifecycle --
@@ -224,13 +282,28 @@ class AvailabilityChecker:
 
         The ping grace counters are cleared as well: a count of missed
         check-ins means nothing once the reason nobody answered is the link
-        itself, not the device."""
+        itself, not the device.
+
+        **Every device is guarded on its own.** `_handle_connection_lost`
+        runs this through `_spawn`, so an exception escaping here reaches
+        nothing but asyncio's "never retrieved" logger, and the devices
+        after the one that raised would keep their last value forever -
+        which is precisely the outcome this method exists to prevent.
+        `RuntimeEventHandler.set_online` really does raise: `UdpSender.send`
+        raises `RuntimeError("the UDP sender is closed")` once its socket is
+        gone. `_dispatch_loop` already takes this stance per item for
+        ordinary updates; this path has more at stake, not less."""
         self._missed_checkins.clear()
-        for device in self._source._devices():
+        for device in self._devices_to_check():
             device_id = self._resolve_device_id(str(device.ieee))
             if device_id is None:
                 continue
-            await self._handler.set_online(device_id, False)
+            try:
+                await self._report(str(device.ieee), device_id, False)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("could not mark Zigbee device %s offline", device.ieee)
 
     # --------------------------------------------------------------- sweep --
 
@@ -239,6 +312,27 @@ class AvailabilityChecker:
             await self._sleep(CHECK_INTERVAL_SECONDS)
             await self._sweep()
 
+    def _devices_to_check(self) -> list[Any]:
+        """The catalogue minus the radio itself.
+
+        ZHA's `DeviceAvailabilityChecker` filters `if not dev.is_coordinator`
+        and `_check_available` opens with the same exemption; `_devices()`
+        hands over `list(app.devices.values())`, and zigpy keeps the
+        coordinator in there. Filtered in ONE place so the sweep and
+        `mark_all_offline` cannot drift apart: a coordinator the sweep
+        refuses to bring back online must not be one `mark_all_offline` is
+        willing to take down, or it would be stuck offline for good."""
+        return [device for device in self._source._devices() if not _is_coordinator(device)]
+
+    async def _report(self, address: str, device_id: int, online: bool) -> None:
+        """Tells the handler, but only when the answer has changed."""
+        if self._reported.get(address) == online:
+            return
+        await self._handler.set_online(device_id, online)
+        # Only after the handler returned: if it raised, the change is still
+        # outstanding and the next sweep says it again.
+        self._reported[address] = online
+
     async def _sweep(self) -> None:
         """One pass over the whole catalogue, all of it judged against the
         SAME moment - so a sweep that takes a while (pinging several quiet
@@ -246,7 +340,7 @@ class AvailabilityChecker:
         list enjoy a few extra seconds of grace the last one does not
         get."""
         moment = self._now()
-        for device in self._source._devices():
+        for device in self._devices_to_check():
             await self._check_one(device, moment)
 
     async def _check_one(self, device: Any, moment: float) -> None:
@@ -256,16 +350,28 @@ class AvailabilityChecker:
             # Not (yet) a device the store knows - nothing to report to,
             # and nothing worth pinging on its behalf either.
             return
+        if not self._source.connected:
+            # THE gate, and the reason it is written here rather than left
+            # to `mark_all_offline` alone: losing the coordinator does not
+            # touch `last_seen`, so a sweep that asked the device alone
+            # would answer "online" within thirty seconds of the link going
+            # down and put the motion sensor in this module's docstring
+            # straight back to "no motion". This is the same answer
+            # `ZigbeeSource._facts` already writes for a snapshot
+            # (`self._connected and is_available(device)`), and there is no
+            # point pinging over a radio that is gone either.
+            self._missed_checkins.pop(address, None)
+            await self._report(address, device_id, False)
+            return
         if is_available(device, now=moment):
             self._missed_checkins.pop(address, None)
-            await self._handler.set_online(device_id, True)
+            await self._report(address, device_id, True)
             return
-        if not _is_mains_powered(device):
-            # A sleepy or battery end device cannot be woken by an
-            # unsolicited read - there is nothing to ping, and nothing to
-            # wait for either. It is simply offline once its (longer)
-            # threshold has passed.
-            await self._handler.set_online(device_id, False)
+        if not _answers_unsolicited_reads(device):
+            # A sleepy end device cannot be woken by an unsolicited read -
+            # there is nothing to ping, and nothing to wait for either. It
+            # is simply offline once its (longer) threshold has passed.
+            await self._report(address, device_id, False)
             return
         if device.manufacturer == _LUMI_MANUFACTURER:
             # LUMI/Aqara devices never answer an unsolicited attribute
@@ -273,11 +379,11 @@ class AvailabilityChecker:
             # Pinging one anyway would not save it: it would only spend the
             # grace period below pointlessly before reaching the same
             # answer, and cost the device a wake-up for nothing.
-            await self._handler.set_online(device_id, False)
+            await self._report(address, device_id, False)
             return
         missed = self._missed_checkins.get(address, 0)
         if missed >= _CHECKIN_GRACE_PERIODS:
-            await self._handler.set_online(device_id, False)
+            await self._report(address, device_id, False)
             return
         # Not yet declared offline: a mains device that simply had nothing
         # new to report is not a dead one, and it gets

@@ -639,6 +639,12 @@ class ZigbeeSource:
                 await dispatch_task
             except asyncio.CancelledError:
                 pass
+        # The availability checker goes down with the rest of the wiring,
+        # for the same reason bellows' serial thread does: it is a task that
+        # outlives nothing here, and a `disconnect()` that left it running
+        # would leave a sweeper asking a source that has no application at
+        # all. The next `subscribe()` builds a fresh one.
+        await self._stop_availability_checker()
         try:
             if app is not None:
                 await app.shutdown(db=True)
@@ -887,8 +893,22 @@ class ZigbeeSource:
         self._register_cluster_listeners()
         # See the constructor: rebuilt fresh on every call, and not started
         # here - only `mark_all_offline()` is wired up yet.
+        #
+        # **The previous one is stopped first, and awaited.** Assigning over
+        # it would leave its `_run()` task pending on a checker nobody can
+        # reach any more, holding the device ids of a connection that is
+        # gone; `attach()` runs on every reconnect, so that is one leaked
+        # sweeper per outage rather than a one-off. Harmless only for as
+        # long as nothing calls `start()`, which is exactly what the task
+        # that wires this into the running bridge will do.
+        await self._stop_availability_checker()
         self._availability_checker = AvailabilityChecker(self, handler, resolve_device_id)
         await self._seed_baseline()
+
+    async def _stop_availability_checker(self) -> None:
+        checker, self._availability_checker = self._availability_checker, None
+        if checker is not None:
+            await checker.stop()
 
     async def _seed_baseline(self) -> None:
         """Remembers what each known device currently reads as, WITHOUT

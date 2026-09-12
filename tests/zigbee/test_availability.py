@@ -53,6 +53,7 @@ from loxmatter.radios.fingerprints import Fingerprint
 from loxmatter.zigbee import source as source_module
 from loxmatter.zigbee.availability import (
     BATTERY_THRESHOLD_SECONDS,
+    CHECK_INTERVAL_SECONDS,
     MAINS_THRESHOLD_SECONDS,
     AvailabilityChecker,
     is_available,
@@ -70,10 +71,17 @@ FINGERPRINT = Fingerprint(
 class RecordingHandler:
     """A `RuntimeEventHandler` that remembers only what `AvailabilityChecker`
     is allowed to call - the same shape `test_source.py`'s own
-    `RecordingHandler` has, trimmed to the one method this feature uses."""
+    `RecordingHandler` has, trimmed to the one method this feature uses.
 
-    def __init__(self) -> None:
+    `failing_device_ids` makes `set_online` raise for those devices and only
+    those. The exception is the one the real sender raises: `UdpSender.send`
+    answers `RuntimeError("the UDP sender is closed")` once its socket is
+    gone, which is exactly the shape a shutdown racing a lost link
+    produces."""
+
+    def __init__(self, *, failing_device_ids: frozenset[int] = frozenset()) -> None:
         self.online: list[tuple[int, bool]] = []
+        self._failing_device_ids = failing_device_ids
 
     async def on_attribute(self, device_id: int, path: str, raw: object) -> None:
         raise AssertionError("AvailabilityChecker must never call on_attribute")
@@ -82,10 +90,42 @@ class RecordingHandler:
         raise AssertionError("AvailabilityChecker must never call on_event")
 
     async def set_online(self, device_id: int, online: bool) -> None:
+        if device_id in self._failing_device_ids:
+            raise RuntimeError("the UDP sender is closed")
         self.online.append((device_id, online))
 
     async def on_node_snapshot(self, device_id: int, snapshot: NodeSnapshot) -> None:
         raise AssertionError("AvailabilityChecker must never call on_node_snapshot")
+
+
+class Metronome:
+    """An injected `sleep` that hands control back to the test.
+
+    `AvailabilityChecker` takes its own `sleep`, so the periodic loop can be
+    driven one interval at a time instead of waiting out thirty real
+    seconds - the reason this file's docstring gives for injecting a clock,
+    applied to the lifecycle as well. Each `tick()` releases exactly one
+    sleep and returns only once the task has reached the NEXT one, so a
+    sweep is complete by the time the assertions run."""
+
+    def __init__(self) -> None:
+        self.slept: list[float] = []
+        self._asleep = asyncio.Event()
+        self._resume = asyncio.Event()
+
+    async def sleep(self, seconds: float) -> None:
+        self.slept.append(seconds)
+        self._asleep.set()
+        await self._resume.wait()
+        self._resume.clear()
+
+    async def wait_until_asleep(self) -> None:
+        await asyncio.wait_for(self._asleep.wait(), timeout=1.0)
+        self._asleep.clear()
+
+    async def tick(self) -> None:
+        self._resume.set()
+        await self.wait_until_asleep()
 
 
 def _resolver(mapping: dict[str, int]) -> Any:
@@ -136,13 +176,25 @@ def build_source(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 
 
 def _mains_device(
-    ieee: str, *, manufacturer: str = "ORVIBO", last_seen: float = 0.0
+    ieee: str,
+    *,
+    manufacturer: str = "ORVIBO",
+    last_seen: float = 0.0,
+    answers: str | None = None,
 ) -> tuple[FakeDevice, FakeCluster]:
     """A mains-powered device with a Basic cluster that never answers - the
     fixture `test_a_mains_device_is_pinged_twice_before_it_is_declared_offline`
     and `test_lumi_devices_are_never_pinged` both need: something to try to
-    ping, whether or not the checker is supposed to actually try."""
-    basic = FakeCluster(0x0000, declared=[0x0004])
+    ping, whether or not the checker is supposed to actually try.
+
+    `answers` makes the ping succeed, by giving the cluster a readable
+    `Basic.manufacturer` - what a device that was alive all along but simply
+    had nothing new to report sends back."""
+    basic = FakeCluster(
+        0x0000,
+        declared=[0x0004],
+        readable=None if answers is None else {0x0004: answers},
+    )
     device = FakeDevice(
         ieee,
         manufacturer=manufacturer,
@@ -153,6 +205,17 @@ def _mains_device(
         ],
     )
     return device, basic
+
+
+class _MovingClock:
+    """A clock a test advances by hand, for the sweeps that have to happen
+    at more than one moment."""
+
+    def __init__(self, moment: float) -> None:
+        self.moment = moment
+
+    def __call__(self) -> float:
+        return self.moment
 
 
 # ------------------------------------------------------------- thresholds --
@@ -273,6 +336,405 @@ async def test_every_device_goes_offline_when_the_link_is_lost(build_source) -> 
 
     assert (1, False) in handler.online
     assert (2, False) in handler.online
+
+
+async def test_a_sweep_does_not_bring_a_device_back_while_the_link_is_down(build_source) -> None:
+    """THE defect `mark_all_offline` alone does not close, and the only one
+    of this module's promises that nothing else measures.
+
+    Losing the coordinator does not touch `last_seen`, and `is_available`
+    reads nothing but `last_seen` - so a sweep that consults the device
+    alone answers "online" for every device that was heard from in the last
+    two hours, thirty seconds after the link went down. The motion sensor
+    this module's docstring is about would be back to reading "no motion"
+    within half a minute of the radio dying, and `UdpSender.send`
+    de-duplicates by VALUE, so `False` -> `True` is a genuine change that
+    really goes out on the wire.
+
+    The sweep therefore consults the link state as well, the same way
+    `ZigbeeSource._facts` already writes `self._connected and
+    is_available(device)`.
+
+    Fault to prove it: drop the `if not self._source.connected` gate from
+    `_check_one`."""
+    lamp = colour_lamp()
+    sensor = contact_sensor()
+    source, app = build_source(lamp, sensor)
+    await source.connect()
+    handler = RecordingHandler()
+    await source.subscribe(_resolver({lamp.ieee: 1, sensor.ieee: 2}), handler)
+    checker = source._availability_checker
+    assert checker is not None
+
+    # Both devices were heard from moments ago, so `last_seen` alone says
+    # "online" for both - and goes on saying it for hours after the radio is
+    # gone, because nothing advances or retracts it.
+    assert is_available(lamp) is True
+    assert is_available(sensor) is True
+
+    app.fire_connection_lost()
+    await _settle()
+    assert sorted(handler.online) == [(1, False), (2, False)]
+
+    # Ten sweeps, five minutes of wall clock on the real interval. Not one
+    # of them may report either device as reachable again.
+    for _ in range(10):
+        await checker._sweep()
+
+    assert sorted(handler.online) == [(1, False), (2, False)], (
+        "a sweep with no link must not undo mark_all_offline - and must not "
+        "re-announce the same answer over and over either"
+    )
+    assert source.connected is False
+
+
+async def test_one_device_that_cannot_be_told_does_not_silence_the_rest(build_source) -> None:
+    """`mark_all_offline` runs under `_spawn`, so an exception escaping it
+    reaches nothing but asyncio's "never retrieved" logger - and every
+    device after the one that raised keeps its last value forever, which is
+    the precise outcome this method exists to prevent.
+
+    `set_online` really does raise: `UdpSender.send` answers
+    `RuntimeError("the UDP sender is closed")` once its socket is gone.
+
+    Fault to prove it: drop the per-device `try` from `mark_all_offline`.
+    Only device 1 is then marked offline and devices 3 and 4 keep reporting
+    yesterday's readings."""
+    first = colour_lamp(ieee="00:12:4b:00:00:00:00:01")
+    second = colour_lamp(ieee="00:12:4b:00:00:00:00:02")
+    third = colour_lamp(ieee="00:12:4b:00:00:00:00:03")
+    fourth = colour_lamp(ieee="00:12:4b:00:00:00:00:04")
+    source, app = build_source(first, second, third, fourth)
+    await source.connect()
+    handler = RecordingHandler(failing_device_ids=frozenset({2}))
+    await source.subscribe(
+        _resolver({first.ieee: 1, second.ieee: 2, third.ieee: 3, fourth.ieee: 4}), handler
+    )
+
+    app.fire_connection_lost()
+    await _settle()
+
+    assert sorted(handler.online) == [(1, False), (3, False), (4, False)], (
+        "a sender that is closed for one device must not strand every device behind it"
+    )
+
+
+# ------------------------------------------------------------ coordinator --
+
+
+async def test_the_coordinator_is_never_pinged_or_written_off(build_source) -> None:
+    """ZHA's `_check_available` opens with `if self.is_active_coordinator:
+    return`, and its `DeviceAvailabilityChecker` filters
+    `if not dev.is_coordinator`. This module claims to be a port of that
+    method, and `ZigbeeSource._devices()` hands over
+    `list(app.devices.values())` - which zigpy keeps the coordinator in.
+
+    Without the exemption the checker addresses an over-the-air read to the
+    radio it is talking THROUGH, and then declares the radio offline for not
+    answering it.
+
+    Fault to prove it: drop the filter from `_devices_to_check`."""
+    coordinator, coordinator_basic = _mains_device("00:12:4b:00:00:00:00:aa")
+    coordinator.node_desc = FakeNodeDescriptor(is_mains_powered=True, is_coordinator=True)
+    lamp, lamp_basic = _mains_device("00:12:4b:00:00:00:00:bb")
+    source, app = build_source(coordinator, lamp)
+    await source.connect()
+    handler = RecordingHandler()
+    checker = AvailabilityChecker(
+        source,
+        handler,
+        _resolver({coordinator.ieee: 1, lamp.ieee: 2}),
+        now=_fixed_clock(MAINS_THRESHOLD_SECONDS + 1),
+    )
+
+    for _ in range(4):
+        await checker._sweep()
+
+    assert coordinator_basic.reads == [], "the coordinator must never be asked over the air"
+    assert lamp_basic.reads != [], "an ordinary mains device still is"
+    assert handler.online == [(2, False)], (
+        "only the lamp is written off; the radio's own state is the link, not a device row"
+    )
+
+    # And the same exemption on the link-loss path, so a coordinator that
+    # DOES have a store row cannot be taken offline by a sweep that will
+    # never bring it back.
+    app.fire_connection_lost()
+    await _settle()
+    assert (1, False) not in handler.online
+
+
+# ---------------------------------------------------- the ping's predicate --
+
+
+async def test_a_device_that_sleeps_is_not_pinged_even_when_it_is_mains_powered(
+    build_source,
+) -> None:
+    """`is_mains_powered` is not the predicate that decides whether a device
+    can answer an unsolicited read - `is_receiver_on_when_idle` is. They are
+    two separate bits of the same MAC capability byte in zigpy 2.2.0, and
+    the second one is what says whether anybody is listening between the
+    device's own transmissions.
+
+    Fault to prove it: ping on `is_mains_powered` again. The sleepy device
+    below is then pinged three times and stays "online" for two extra
+    sweeps, on the strength of a read nothing could have answered."""
+    sleepy, basic = _mains_device("00:12:4b:00:00:00:00:cc")
+    sleepy.node_desc = FakeNodeDescriptor(is_mains_powered=True, is_receiver_on_when_idle=False)
+    source, _app = build_source(sleepy)
+    await source.connect()
+    handler = RecordingHandler()
+    checker = AvailabilityChecker(
+        source,
+        handler,
+        _resolver({sleepy.ieee: 1}),
+        now=_fixed_clock(MAINS_THRESHOLD_SECONDS + 1),
+    )
+
+    await checker._sweep()
+
+    assert basic.reads == [], "nothing is listening - there is nobody to ask"
+    assert handler.online == [(1, False)], "offline at once, with no grace period spent pinging"
+
+
+# -------------------------------------------------------------- lifecycle --
+
+
+async def test_start_sweeps_on_every_interval_and_stop_ends_it(build_source) -> None:
+    """Nothing anywhere called `start()` or `stop()`, so the whole periodic
+    half of this module was unmeasured - and it is exactly the half the task
+    that wires a source into the running bridge has to trust blind.
+
+    Faults to prove it, one at a time:
+      - make `start()` a no-op: the loop never reaches its first sleep;
+      - make `_run()` sleep without sweeping: the first tick reports nothing;
+      - make `stop()` drop the `cancel()`: the task is still pending after.
+    """
+    # LUMI, so the verdict lands on the FIRST sweep rather than after two
+    # grace pings - this test is about the loop's cadence, not about grace.
+    device, _basic = _mains_device("00:12:4b:00:00:00:02:00", manufacturer="LUMI")
+    source, _app = build_source(device)
+    await source.connect()
+    handler = RecordingHandler()
+    metronome = Metronome()
+    checker = AvailabilityChecker(
+        source,
+        handler,
+        _resolver({device.ieee: 1}),
+        sleep=metronome.sleep,
+        now=_fixed_clock(MAINS_THRESHOLD_SECONDS + 1),
+    )
+
+    checker.start()
+    task = checker._task
+    assert task is not None, "start() must actually create the sweeping task"
+    await metronome.wait_until_asleep()
+    assert metronome.slept == [CHECK_INTERVAL_SECONDS], (
+        "it waits one interval BEFORE the first sweep"
+    )
+    assert handler.online == [], "and has swept nothing yet"
+
+    await metronome.tick()
+    assert handler.online == [(1, False)], "one interval, one sweep"
+
+    # A second interval, to pin that this is a loop and not a single shot.
+    device.last_seen = MAINS_THRESHOLD_SECONDS  # heard from again
+    await metronome.tick()
+    assert handler.online == [(1, False), (1, True)]
+    assert metronome.slept == [CHECK_INTERVAL_SECONDS] * 3
+
+    await checker.stop()
+    assert task.done(), "stop() must cancel the task, not merely forget it"
+    assert checker._task is None
+
+
+async def test_a_ping_that_is_answered_resets_the_grace_counter(build_source) -> None:
+    """A device that answers is alive, whatever `last_seen` says: on the
+    real radio the response updates `last_seen` itself, but nothing here
+    depends on that timing lining up with the next sweep.
+
+    Fault to prove it: stop clearing the counter on a successful read. The
+    plug below is then declared offline on the third sweep despite having
+    answered every single ping."""
+    device, basic = _mains_device("00:12:4b:00:00:00:00:dd", answers="ORVIBO")
+    source, _app = build_source(device)
+    await source.connect()
+    handler = RecordingHandler()
+    checker = AvailabilityChecker(
+        source,
+        handler,
+        _resolver({device.ieee: 1}),
+        now=_fixed_clock(MAINS_THRESHOLD_SECONDS + 1),
+    )
+
+    for _ in range(5):
+        await checker._sweep()
+
+    assert len(basic.reads) == 5, "every sweep asks again, because every answer resets the count"
+    assert handler.online == [], "a device that answers is never written off"
+
+
+async def test_a_device_that_is_heard_from_again_gets_its_full_grace_back(build_source) -> None:
+    """The counter is per run of silence, not a lifetime total. A plug that
+    went quiet once, answered, and went quiet again months later must get
+    both of its pings again.
+
+    Fault to prove it: stop clearing the count when the device is available.
+    The plug is then written off after ONE ping the second time round."""
+    device, basic = _mains_device("00:12:4b:00:00:00:00:ee")
+    source, _app = build_source(device)
+    await source.connect()
+    handler = RecordingHandler()
+    clock = _MovingClock(MAINS_THRESHOLD_SECONDS + 1)
+    checker = AvailabilityChecker(source, handler, _resolver({device.ieee: 1}), now=clock)
+
+    await checker._sweep()  # quiet: first grace ping
+    assert len(basic.reads) == 1
+
+    # The device reports of its own accord, which is what advances `last_seen`.
+    device.last_seen = clock.moment
+    clock.moment += 1
+    await checker._sweep()
+    assert handler.online == [(1, True)]
+
+    # And months later it goes quiet again.
+    clock.moment = device.last_seen + MAINS_THRESHOLD_SECONDS + 1
+    await checker._sweep()
+    assert len(basic.reads) == 2
+    await checker._sweep()
+    assert len(basic.reads) == 3, "the second run of silence gets BOTH pings, not one"
+    assert handler.online == [(1, True)], "and it is not offline yet"
+
+    await checker._sweep()
+    assert handler.online == [(1, True), (1, False)]
+
+
+async def test_a_lost_link_clears_the_grace_counters(build_source) -> None:
+    """A count of missed check-ins means nothing once the reason nobody
+    answered is the link itself. Carrying it across an outage would spend a
+    reconnected device's grace on silence the device had no part in.
+
+    Fault to prove it: stop clearing `_missed_checkins` in
+    `mark_all_offline`. The plug below then gets one ping after the outage
+    instead of two."""
+    device, basic = _mains_device("00:12:4b:00:00:00:00:ff")
+    source, _app = build_source(device)
+    await source.connect()
+    handler = RecordingHandler()
+    checker = AvailabilityChecker(
+        source,
+        handler,
+        _resolver({device.ieee: 1}),
+        now=_fixed_clock(MAINS_THRESHOLD_SECONDS + 1),
+    )
+
+    await checker._sweep()  # one grace ping spent
+    assert len(basic.reads) == 1
+
+    await checker.mark_all_offline()
+    assert handler.online == [(1, False)]
+
+    # The link is back (`source.connected` was never cleared here - this
+    # isolates the counter from the link gate above), and the device is
+    # still quiet. It must get two fresh pings, not one.
+    await checker._sweep()
+    await checker._sweep()
+    assert len(basic.reads) == 3, "an outage returns the grace counter to zero"
+
+
+async def test_a_device_with_no_basic_cluster_still_gets_its_grace_periods(build_source) -> None:
+    """A ping that cannot even be attempted is a failed ping, not a verdict.
+    `_ping` returns quietly when there is no Basic cluster, and the device
+    runs out of grace on a later sweep the same way a silent one does -
+    deliberately gentler than ZHA, which writes such a device off at once.
+
+    Fault to prove it: have `_ping` set the missed count to the grace limit
+    when the cluster is missing. The device is then offline one sweep early,
+    on evidence about the bridge's own reading of it rather than about the
+    device."""
+    device = FakeDevice(
+        "00:12:4b:00:00:00:01:00",
+        manufacturer="ORVIBO",
+        node_desc=FakeNodeDescriptor(is_mains_powered=True),
+        last_seen=0.0,
+        # On/Off only: no Basic cluster anywhere on the device.
+        endpoints=[
+            FakeEndpoint(
+                1, profile_id=0x0104, device_type=0x0051, in_clusters=[FakeCluster(0x0006)]
+            )
+        ],
+    )
+    source, _app = build_source(device)
+    await source.connect()
+    handler = RecordingHandler()
+    checker = AvailabilityChecker(
+        source,
+        handler,
+        _resolver({device.ieee: 1}),
+        now=_fixed_clock(MAINS_THRESHOLD_SECONDS + 1),
+    )
+
+    await checker._sweep()
+    assert handler.online == [], "first grace period, spent on a ping that could not be sent"
+    await checker._sweep()
+    assert handler.online == [], "second"
+    await checker._sweep()
+    assert handler.online == [(1, False)], "and only now is it written off"
+
+
+# ------------------------------------------------------------- ownership --
+
+
+async def test_subscribing_again_stops_the_previous_checker(build_source) -> None:
+    """`attach()` runs on every reconnect, so `subscribe()` runs on every
+    reconnect. Assigning a new checker over the old one leaves the old
+    `_run()` task pending on an object nobody can reach, holding the device
+    ids of a connection that is gone - one leaked sweeper per outage.
+
+    Fault to prove it: assign without `await old.stop()`. The first task is
+    then still pending after the second `subscribe()`."""
+    lamp = colour_lamp()
+    source, _app = build_source(lamp)
+    await source.connect()
+    handler = RecordingHandler()
+    resolve = _resolver({lamp.ieee: 1})
+
+    await source.subscribe(resolve, handler)
+    first = source._availability_checker
+    assert first is not None
+    first.start()
+    first_task = first._task
+    assert first_task is not None
+
+    await source.subscribe(resolve, handler)
+    second = source._availability_checker
+
+    assert second is not first, "a fresh checker per subscribe, as the constructor says"
+    assert first_task.done(), "and the previous one is stopped, not orphaned"
+
+
+async def test_disconnecting_stops_the_checker(build_source) -> None:
+    """`disconnect()` tears down the dispatch task and the cluster listeners
+    and used to leave the checker sweeping a source with no application at
+    all.
+
+    Fault to prove it: leave `_stop_availability_checker()` out of
+    `disconnect()`."""
+    lamp = colour_lamp()
+    source, _app = build_source(lamp)
+    await source.connect()
+    handler = RecordingHandler()
+    await source.subscribe(_resolver({lamp.ieee: 1}), handler)
+    checker = source._availability_checker
+    assert checker is not None
+    checker.start()
+    task = checker._task
+    assert task is not None
+
+    await source.disconnect()
+
+    assert task.done(), "the sweeper goes down with the connection"
+    assert source._availability_checker is None
 
 
 # --------------------------------------------------------------- restarts --
