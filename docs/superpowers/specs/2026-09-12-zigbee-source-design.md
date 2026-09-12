@@ -229,11 +229,33 @@ sources = Sources([client, zigbee])
 
 `connect()` always builds a **fresh** `ControllerApplication`: `await
 old.shutdown(db=True)`, then the `zhaquirks` resolver, then
-`new(start_radio=False, device_resolver=DEVICE_REGISTRY.resolve,
+`new(start_radio=False, device_resolver=zhaquirks.ZHA_DEVICE_REGISTRY.resolve,
 uninitialized_packet_handler=...)`, then `startup(auto_form=True)` (R1 §1,
 §9). An object whose `startup()` failed is never reused — that is what Home
 Assistant does, and zigpy's own teardown cancels tasks and calls
 `device.on_remove()` on every device (research E.3).
+
+> **Three names in this document were wrong, and are corrected in place.
+> Do not "restore" them.** Each was checked against the packages that are
+> actually installed — zigpy 2.2.0, zha-quirks 2.2.2 — not against the
+> research notes, and `tests/zigbee/test_zigpy_names.py` now fails if any of
+> them changes back.
+>
+> 1. **`device_resolver`** is `zhaquirks.ZHA_DEVICE_REGISTRY.resolve`, not
+>    `DEVICE_REGISTRY.resolve`. In the installed zha-quirks,
+>    `zhaquirks.DEVICE_REGISTRY` is the *legacy v1* `LegacyDeviceRegistry`
+>    and has no `resolve` attribute at all. Following this document as first
+>    written would have loaded **every device without its quirk** and raised
+>    `AttributeError` on the first connect.
+> 2. **`ControllerError` does not exist** (§4.7's table). zigpy spells it
+>    `zigpy.exceptions.ControllerException`, a subclass of `ZigbeeException`.
+>    Caught by the wrong name, it would leave the boundary untranslated and
+>    reach `api/devices.py`'s removal route as an unhandled 500.
+> 3. **`NetworkSettingsInconsistent` takes three arguments**
+>    (§4.6, §4.8): `NetworkSettingsInconsistent(message, new_state,
+>    old_state)` — it carries both network backups. Harmless for the source,
+>    which only ever catches it, but a test or a fixture that constructs one
+>    with a message alone does not compile against the real class.
 
 `validate_network_settings = True`, as ZHA sets it. Its consequence is
 section 4.6.
@@ -246,7 +268,7 @@ section 4.6.
 | `connected` | An explicit `self._connected` flag, set in `connect()`, cleared by the `connection_lost` listener and by `disconnect()`. **Not** `bellows.is_controller_running`, which is never cleared on loss (R1 §2, research E.3) |
 | `connect()` | Section 4.1 |
 | `disconnect()` | `app.shutdown(db=True)`; must always run, or bellows' non-daemon serial thread leaks and the stick is left mid-frame (research E.1, G14) |
-| `wait_for_link_loss()` | `await self._link_lost.wait()` on an `asyncio.Event` set by the `connection_lost` listener; returns immediately when already disconnected — the same contract as `BridgeMatterClient.wait_for_link_loss` |
+| `wait_for_link_loss()` | `await self._link_lost.wait()` on an `asyncio.Event` set by the `connection_lost` listener **and by `disconnect()`** — a supervisor parked here holds nothing else, so a caller that takes the radio away must wake it; returns immediately when already disconnected — the same contract as `BridgeMatterClient.wait_for_link_loss` |
 | `snapshots()` | The devices zigpy loaded from its own database, `available` from section 4.5. Works **even when the stick is gone**: `new(start_radio=False)` loads the DB without touching the radio (research E.2) |
 | `subscribe()` | Registers per-cluster listeners after every (re)connect and starts one dispatch task (section 4.4) |
 | `follow()` | Re-reads a device and hands a fresh snapshot to `on_node_snapshot`; this is the path that creates signal rows for values that only arrived later (section 5.5) |
@@ -291,6 +313,19 @@ Subscribe to the four attribute events — `attribute_report`,
 of every device, both freshly initialized and database-loaded, and
 re-subscribe after every reconnect, reinterview and removal (R1 §6).
 
+The **reinterview** half of that sentence needs two library facts, or it
+cannot be implemented (both verified against zigpy 2.2.0):
+
+- The event is **`device_reinterviewed`**, not `device_initialized`.
+  `ControllerApplication._device_reinterviewed` emits it deliberately —
+  its own comment says callers "should listen for `device_reinterviewed`
+  instead" — and `raw_device_initialized`, the only other event that fires,
+  means "interviewing" and is too early to bind to.
+- It hands over a **new device object with new clusters** under the same
+  IEEE (`old_device.on_remove()`, then `_finalize_device(shadow)`). A
+  re-subscription guarded by address therefore returns early and binds
+  nothing; the guard has to compare the device object.
+
 ### 4.5 Availability
 
 zigpy has no availability concept; ZHA's is worth copying literally
@@ -324,7 +359,7 @@ gets its own message rather than one generic failure:
 | Container may not open USB serial devices | `PermissionError` | The container lacks device permission; refresh the Compose stack (section 8) |
 | Another process holds it | `OSError(EBUSY, "... already locked ...")` | Another program is using this stick — a second loxmatter instance is the common case (G13) |
 | Stick answers nothing | `TimeoutError` after 7.5 s | This stick does not answer as a Zigbee coordinator; it may be running Thread or bootloader firmware (research A.4 item 6) |
-| Stick carries a different network | `NetworkSettingsInconsistent` | Section 4.8 |
+| Stick carries a different network | `NetworkSettingsInconsistent(message, new_state, old_state)` | Section 4.8 |
 
 ### 4.7 Command Timeout and the Error Vocabulary
 
@@ -342,7 +377,7 @@ Exception` → 502 `api.errors.device_unreachable` at line 341):
 
 | Condition | Status |
 |---|---|
-| `TimeoutError`, `DeliveryError`, `ControllerError`, `ZigbeeException`, a non-SUCCESS ZCL status, our own "radio not connected" | **502**, `api.errors.device_unreachable` |
+| `TimeoutError`, `DeliveryError`, `ControllerException`, `ZigbeeException`, a non-SUCCESS ZCL status, our own "radio not connected" | **502**, `api.errors.device_unreachable` |
 | No Zigbee source configured (`SourceNotConfiguredError`) | **503**, unchanged |
 
 The 502 set matters beyond tidiness: `devices.py`'s removal route today

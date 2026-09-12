@@ -803,6 +803,207 @@ async def test_cluster_listeners_are_registered_again_after_a_reconnect(build) -
     assert (7, "1/8/0", 33) in harness.handler.attributes
 
 
+async def test_a_reinterviewed_device_is_listened_to_again(build) -> None:
+    """A reinterview replaces the device OBJECT under the same IEEE.
+
+    zigpy's `_device_reinterviewed` calls `old_device.on_remove()`, builds a
+    new device with new clusters through `_finalize_device`, and then emits
+    `device_reinterviewed` - deliberately not `device_initialized`. Both
+    halves of that are load-bearing here: without a method by that name
+    nothing re-binds, and with an address-keyed guard even a later
+    `device_initialized` would return early because the IEEE is already in
+    `_listening`. Either way the device reports nothing until the next
+    `connect()` while the bridge keeps saying the link is fine.
+
+    Two faults prove it, both observed. (a) Delete
+    `_ApplicationListener.device_reinterviewed`: the replacement's report
+    reaches nobody. (b) Keep `device_reinterviewed` but restore the
+    address-keyed early return (`if address in self._listening: return`):
+    the replacement's report reaches nobody either, for the second reason."""
+    original = colour_lamp()
+    harness = build(FakeApplication(devices=[original]))
+    await harness.source.connect()
+    await harness.source.subscribe(_lamp_resolver(), harness.handler)
+    await _settle(harness.source)
+
+    # The original really was being listened to - otherwise the assertion
+    # below could pass against a source that listens to nothing at all.
+    original.endpoints[1].in_clusters[0x0008].report(0x0000, 11)
+    await _settle(harness.source)
+    assert (7, "1/8/0", 11) in harness.handler.attributes
+
+    replacement = colour_lamp()
+    assert replacement is not original
+    harness.app.fire_device_reinterviewed(replacement)
+    await _settle(harness.source)
+    harness.handler.attributes.clear()
+
+    # The original's clusters are on an object zigpy has dropped; a report
+    # through them must reach nobody, and a report through the replacement's
+    # must arrive.
+    original.endpoints[1].in_clusters[0x0008].report(0x0000, 99)
+    await _settle(harness.source)
+    assert harness.handler.attributes == []
+
+    replacement.endpoints[1].in_clusters[0x0008].report(0x0000, 33)
+    await _settle(harness.source)
+    assert (7, "1/8/0", 33) in harness.handler.attributes
+
+
+async def test_a_device_whose_quirk_declares_a_duplicate_attribute_id_does_not_stop_the_bridge(
+    build,
+) -> None:
+    """The Ubisys shape: one cluster class, two definitions for one id.
+
+    `Cluster.get(int)` resolves the id OUTSIDE its own `try`, so an
+    ambiguous id raises `KeyError` rather than answering the default -
+    28 (cluster, attribute) pairs in the installed zha-quirks 2.2.2 are
+    like that, `UbisysLevelControl` 0x0000 among them. `_endpoint_facts`
+    feeds `_facts` feeds `_snapshot` feeds `snapshots()`, and `cli._run`
+    calls `attach()` unguarded, so one Ubisys dimmer in the network used to
+    mean the bridge did not start at all - before uvicorn, with no HTTP
+    surface to report it through.
+
+    Fault to prove it: pass the bare id to `cluster.get` in
+    `_endpoint_facts`, as the code did. `snapshots()` then raises
+    `KeyError`, and so does every delivery for that device.
+
+    What is asserted is BOTH halves: the call survives, and the endpoint's
+    other attributes still come out. A source that swallowed the whole
+    endpoint would also "not crash"."""
+    lamp = colour_lamp()
+    level = lamp.endpoints[1].in_clusters[0x0008]
+    # `UbisysLevelControl`: `current_level` (standard, cached as 254 by
+    # `colour_lamp`) and `minimum_on_level` (manufacturer-specific, code
+    # 0x1092) share id 0x0000, and the manufacturer-specific one is the
+    # definition `attributes` keeps.
+    level.shadowed[0x0000] = 25
+    harness = build(FakeApplication(devices=[lamp]))
+    await harness.source.connect()
+
+    snapshots = await harness.source.snapshots()
+
+    assert len(snapshots) == 1
+    # THE RESIDUAL, measured rather than assumed: the path is exported, and
+    # what it carries is the surviving definition's value - the dimmer's
+    # minimum-on level (25) where its current level (254) belongs. This is
+    # the cost the fix accepts, and it is written down so that nobody reads
+    # "does not crash" as "is correct".
+    assert snapshots[0].attributes["1/8/0"] == 25
+    # And nothing else on the device is disturbed.
+    assert snapshots[0].attributes["1/6/0"] is True
+    assert snapshots[0].attributes["1/768/7"] == 370
+    assert snapshots[0].attributes["1/768/16394"] == 0x1F
+
+    # The same crash reached `_deliver` through the dispatch loop, where it
+    # was swallowed - a permanently silent device plus a log line.
+    await harness.source.subscribe(_lamp_resolver(), harness.handler)
+    lamp.endpoints[1].in_clusters[0x0006].report(0x0000, False)
+    await _settle(harness.source)
+    assert (7, "1/6/0", False) in harness.handler.attributes
+
+
+async def test_removal_releases_the_removed_devices_listeners(build) -> None:
+    """The third of the brief's three re-subscription points - "after every
+    reconnect, reinterview and REMOVAL".
+
+    Two things are wrong without it. The removed device's clusters keep
+    callbacks that enqueue an address nothing will ever resolve again, on
+    objects zigpy has dropped; and a device that is removed and then rejoins
+    - a factory reset, the ordinary repair - comes back as a NEW object
+    whose listeners are never bound, because the source still believes it is
+    listening to that address.
+
+    Fault to prove it: drop the `_release_device_listeners(address)` line
+    from `_forget`. `listener_count` below stays at its bound value, and the
+    rejoined lamp's report reaches nobody.
+
+    `listener_count` is counted rather than inferred: four events on each of
+    three clusters is twelve, and "some listeners" would not distinguish a
+    release from a partial one."""
+    lamp = colour_lamp()
+    harness = build(FakeApplication(devices=[lamp]))
+    await harness.source.connect()
+    await harness.source.subscribe(_lamp_resolver(), harness.handler)
+    await _settle(harness.source)
+
+    bound = [cluster.listener_count for cluster in lamp.clusters()]
+    assert bound == [4, 4, 4], bound
+
+    await harness.source.remove(LAMP_IEEE)
+    await _settle(harness.source)
+
+    assert [cluster.listener_count for cluster in lamp.clusters()] == [0, 0, 0]
+    assert LAMP_IEEE not in harness.source._listening
+
+    # And the same lamp rejoining - a new object, the same IEEE - is bound
+    # again rather than skipped as "already listening".
+    rejoined = colour_lamp()
+    harness.app.fire_device_initialized(rejoined)
+    await _settle(harness.source)
+    harness.handler.attributes.clear()
+
+    rejoined.endpoints[1].in_clusters[0x0008].report(0x0000, 77)
+    await _settle(harness.source)
+    assert (7, "1/8/0", 77) in harness.handler.attributes
+
+
+async def test_a_colour_cluster_that_does_not_declare_the_capabilities_is_skipped(
+    build,
+) -> None:
+    """The second `Cluster.get` in this file, and the second way it raises.
+
+    `find_attribute` raises `KeyError` for an id the cluster class does not
+    declare AT ALL, not only for an ambiguous one - so the pre-read's
+    `cluster.get(0x400A)` had the same crash in it as `_endpoint_facts`, on
+    the path that runs before every snapshot. No quirk ships a `Color`
+    subclass without 0x400A today (all 13 were checked), which is why this
+    is a guard rather than a bug report; it must still not be the thing that
+    stops `snapshots()`.
+
+    Fault to prove it: look the attribute up with `cluster.get(0x400A)`
+    again instead of through `cluster.attributes.get(...)`."""
+    lamp = colour_lamp(colour_capabilities=None)
+    colour = lamp.endpoints[1].in_clusters[0x0300]
+    # A Color cluster whose class declares no ColorCapabilities at all.
+    del colour.attributes[0x400A]
+    harness = build(FakeApplication(devices=[lamp]))
+    await harness.source.connect()
+
+    snapshots = await harness.source.snapshots()
+
+    assert len(snapshots) == 1
+    # No read was attempted for an attribute the cluster does not have...
+    assert colour.reads == []
+    assert "1/768/16394" not in snapshots[0].attributes
+    # ...and the rest of the lamp still came through.
+    assert snapshots[0].attributes["1/768/7"] == 370
+
+
+async def test_disconnect_wakes_a_supervisor_waiting_on_the_link(build) -> None:
+    """`wait_for_link_loss()` must return when the caller itself takes the
+    radio away, not only when the radio dies.
+
+    Task 11 clears the radio setting by calling `disconnect()`; a supervisor
+    parked in `wait_for_link_loss()` holds nothing but that event, so a
+    `disconnect()` that cleared `_connected` without setting it would leave
+    the supervisor waiting for a link that is already gone and can never be
+    lost again.
+
+    Fault to prove it: remove `self._link_lost.set()` from `disconnect()`.
+    The `wait_for` below then times out."""
+    harness = build(FakeApplication(devices=[colour_lamp()]))
+    await harness.source.connect()
+
+    waiting = asyncio.ensure_future(harness.source.wait_for_link_loss())
+    await asyncio.sleep(0)
+    assert not waiting.done(), "the supervisor must still be waiting while the link holds"
+
+    await harness.source.disconnect()
+
+    await asyncio.wait_for(waiting, 1)
+
+
 # ------------------------------------------------------------------ commands --
 
 

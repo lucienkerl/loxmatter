@@ -43,6 +43,7 @@ radio - only that it is talking to the library that is actually installed.
 from __future__ import annotations
 
 import inspect
+import re
 
 import pytest
 
@@ -53,8 +54,11 @@ from loxmatter.zigbee.source import (
     _STARTUP_MESSAGES,
     _UNREACHABLE_EXCEPTION_NAMES,
     ATTRIBUTE_EVENTS,
+    PERMIT_MAX_SECONDS,
     ZigbeeSource,
+    _ApplicationListener,
 )
+from loxmatter.zigbee.translate import _SENTINELS
 
 
 def test_every_failure_name_the_source_catches_exists_in_zigpy() -> None:
@@ -240,6 +244,371 @@ def test_the_device_surface_the_source_reads_is_public_and_shaped_as_expected() 
     facts = inspect.getsource(source_module.ZigbeeSource._endpoint_facts)
     assert "_attr_cache" not in facts
     assert "cluster.get(" in facts
+
+
+def test_cluster_get_raises_on_a_duplicate_attribute_id_and_not_on_its_definition() -> None:
+    """The Critical this module exists to keep fixed.
+
+    `Cluster.get(key)` calls `self.find_attribute(key)` OUTSIDE its own
+    `try`, and `find_attribute` raises `KeyError("Multiple definitions exist
+    for attribute ID ...")` for any id a cluster class declares twice - once
+    as a standard attribute, once as a manufacturer-specific one.
+    `Cluster.attributes` is keyed by id, so it shows one of the two and the
+    duplicate is invisible there; `_attributes_by_id` keeps both, and that is
+    what the ambiguity check reads. A lookup by DEFINITION short-circuits:
+    `find_attribute` returns the first candidate at once for a non-integer
+    key.
+
+    Why it mattered: `_endpoint_facts` feeds `snapshots()` and `cli._run`
+    calls `attach()` unguarded, so one Ubisys dimmer in the network stopped
+    the bridge from starting - before uvicorn, with no HTTP surface left to
+    say why.
+
+    Fault to prove it: iterate `for attribute_id in cluster.attributes` and
+    call `cluster.get(attribute_id)` in `_endpoint_facts`, as the code did.
+
+    Real classes, not a constructed one: `UbisysLevelControl` is shipped by
+    the installed zha-quirks and is the case the bug report will name."""
+    from zhaquirks.ubisys.dimmer_d1 import UbisysLevelControl
+
+    with pytest.raises(KeyError, match="Multiple definitions exist"):
+        UbisysLevelControl.find_attribute(0x0000)
+
+    definition = UbisysLevelControl.attributes[0x0000]
+    assert UbisysLevelControl.find_attribute(definition) is definition
+    # And the survivor really is the manufacturer-specific one here, which
+    # is the residual `_endpoint_facts` documents: a Ubisys D1 exports its
+    # minimum-on level where `current_level` belongs.
+    assert definition.name == "minimum_on_level"
+    assert definition.is_manufacturer_specific is True
+
+    # `Cluster.get` itself, not only `find_attribute` - the call the source
+    # actually makes, on an instance. The endpoint is only ever stored by
+    # `Cluster.__init__`, so `None` is enough to build one here.
+    cluster = UbisysLevelControl(None)
+    with pytest.raises(KeyError, match="Multiple definitions exist"):
+        cluster.get(0x0000)
+    assert cluster.get(definition) is None  # nothing cached: a default, not a raise
+
+    # And the source stays on the definition.
+    facts = inspect.getsource(source_module.ZigbeeSource._endpoint_facts)
+    assert "cluster.attributes.items()" in facts
+    assert "cluster.get(definition)" in facts
+
+
+def test_how_many_shipped_quirks_carry_a_duplicate_attribute_id() -> None:
+    """The blast radius, counted rather than guessed - and a canary for the
+    day an upgrade makes it larger or the check unnecessary.
+
+    Walking the registry is the only honest way to answer "how common is
+    this": the 28 pairs below are spread over five quirk modules, not the
+    one the first report named. Asserting a floor rather than an exact
+    number, so a zha-quirks release that adds a Ubisys device does not turn
+    this into a failing test for no reason; a release that drops to zero
+    would be news and is asserted against as well.
+
+    `zhaquirks.setup()` IS called here - it is the only way the registry
+    holds every quirk module - which is what makes this the slowest test in
+    the file (2-3 s). It is the one place in the suite that pays it."""
+    import zhaquirks
+    from zigpy.zcl import Cluster
+
+    zhaquirks.setup()
+
+    duplicates: list[tuple[str, str, int]] = []
+    seen: set[type] = set()
+    pending = list(Cluster.__subclasses__())
+    while pending:
+        cluster_class = pending.pop()
+        if cluster_class in seen:
+            continue
+        seen.add(cluster_class)
+        pending.extend(cluster_class.__subclasses__())
+        for attribute_id in cluster_class.attributes:
+            try:
+                cluster_class.find_attribute(attribute_id)
+            except KeyError:
+                duplicates.append((cluster_class.__module__, cluster_class.__name__, attribute_id))
+
+    assert duplicates, (
+        "no shipped quirk declares a duplicate attribute id any more - if that is "
+        "real and not a broken walk, `_endpoint_facts` can be simplified"
+    )
+    assert len(duplicates) >= 28, len(duplicates)
+    assert ("zhaquirks.ubisys.dimmer_d1", "UbisysLevelControl", 0x0000) in duplicates
+    # Five modules, not one: the first report said "all under ubisys".
+    assert {"zhaquirks.philips", "zhaquirks.innr.innr_sp120_plug"} <= {
+        module for module, _, _ in duplicates
+    }
+
+
+def test_every_listener_method_is_an_event_zigpy_actually_emits() -> None:
+    """zigpy dispatches to a listener BY METHOD NAME through
+    `ListenableMixin.listener_event`, and that method swallows every
+    listener exception. So a renamed or misspelled event here is the most
+    silently dead name in the source: no error, no log at warning level,
+    just a bridge that stops noticing something.
+
+    `hasattr(ControllerApplication, "connection_lost")` - which is all the
+    module checked before - proves nothing about dispatch: it finds
+    `ControllerApplication`'s OWN method, not the listener event of the same
+    name, and there is no such method for `device_reinterviewed` at all.
+    This reads the names out of zigpy's source instead.
+
+    Two faults prove it, both observed: rename
+    `_ApplicationListener.device_removed` to `device_remove` (the listener
+    then goes dead and a removed device stays in the pairing tab forever),
+    and delete `device_reinterviewed` (the gap this test was written for -
+    it would have caught that one for free)."""
+    import zigpy.application
+
+    emitted = set(re.findall(r'listener_event\("(\w+)"', inspect.getsource(zigpy.application)))
+    assert emitted >= {
+        "connection_lost",
+        "device_initialized",
+        "device_joined",
+        "device_left",
+        "device_reinterviewed",
+        "device_removed",
+        "raw_device_initialized",
+    }, sorted(emitted)
+
+    listened = {
+        name
+        for name in vars(_ApplicationListener)
+        if not name.startswith("_") and callable(vars(_ApplicationListener)[name])
+    }
+    assert listened == {
+        "connection_lost",
+        "device_joined",
+        "raw_device_initialized",
+        "device_initialized",
+        "device_reinterviewed",
+        "device_removed",
+    }
+    # Every one of them is a name zigpy really emits. This is the assertion
+    # that catches a typo; the set above only catches a deletion.
+    assert listened <= emitted, sorted(listened - emitted)
+
+    # `device_left` is emitted and deliberately not listened to: zigpy
+    # announces a leave before it knows whether the device is gone for good,
+    # and `device_removed` is the one that follows `app.remove()`.
+    assert "device_left" in emitted - listened
+
+
+def test_the_join_window_bound_is_the_one_zigpy_asserts() -> None:
+    """`ControllerApplication.permit` opens with `assert 0 <= time_s <= 254`.
+    A source that allowed more would turn a user's request into an
+    `AssertionError` from inside the library - which, under `python -O`, is
+    no check at all and an out-of-range broadcast instead.
+
+    Fault to prove it: set `PERMIT_MAX_SECONDS` to 255."""
+    import zigpy.application
+
+    body = inspect.getsource(zigpy.application.ControllerApplication.permit)
+    assert f"<= time_s <= {PERMIT_MAX_SECONDS}" in body, body.splitlines()[:4]
+
+
+def _real_zigpy_device(ieee: str = "00:12:4b:00:1c:a1:b2:c3"):
+    """A genuine `zigpy.device.Device` with one endpoint and two real
+    clusters, built without a radio.
+
+    `Device.__init__` and `Endpoint.add_input_cluster` reach back into the
+    application for exactly two things - `register_callback_listener` and
+    `_dblistener` - so the stub below is the whole of what a device needs to
+    exist. Everything else on the object is the library's own."""
+    import zigpy.device
+    import zigpy.endpoint
+    import zigpy.types
+    import zigpy.zdo.types
+
+    class _MinimalApplication:
+        _dblistener = None
+
+        def register_callback_listener(self, *args: object, **kwargs: object) -> int:
+            return 0
+
+    device = zigpy.device.Device(_MinimalApplication(), zigpy.types.EUI64.convert(ieee), 0x1234)
+    endpoint = zigpy.endpoint.Endpoint(device, 1)
+    device.endpoints[1] = endpoint
+    endpoint.profile_id = 0x0104
+    endpoint.device_type = 0x0100
+    endpoint.add_input_cluster(0x0006)  # OnOff
+    endpoint.add_input_cluster(0x0402)  # TemperatureMeasurement
+    device.node_desc = zigpy.zdo.types.NodeDescriptor(
+        logical_type=zigpy.zdo.types.LogicalType.Router, mac_capability_flags=0x8E
+    )
+    return device
+
+
+def test_the_snapshot_is_built_from_a_real_zigpy_device_without_a_radio() -> None:
+    """`_facts` and `_endpoint_facts` read eight names off zigpy objects,
+    every one of them `Any` to mypy - the radio libraries ship no `py.typed` -
+    so nothing but this test stands between a renamed attribute and an
+    `AttributeError` that appears on hardware and nowhere else.
+
+    Asserted by RUNNING the real methods against a real `zigpy.device.Device`
+    rather than by checking that names exist: `hasattr` passes on a property
+    that raises, and a source-text search passes on a docstring. This fails
+    the way production would, with the same `AttributeError`.
+
+    Fault to prove it: rename any of `ieee`, `manufacturer`, `model`,
+    `node_desc.is_mains_powered`, `non_zdo_endpoints`, `endpoint_id`,
+    `profile_id`, `device_type` or `in_clusters` in the source. The
+    fake-driven suite stays green, because `fakes.py` gets renamed with it.
+
+    `is_mains_powered` is the one worth naming twice: `_facts` reads a
+    missing node descriptor as "battery powered", so a rename would quietly
+    give every mains device a sleeping device's six hours of patience before
+    Task 8 declares it dead."""
+    device = _real_zigpy_device()
+    source = ZigbeeSource(
+        path="/dev/ttyUSB0",
+        fingerprint=Fingerprint(
+            name="SONOFF ZBDongle-E V2",
+            radio_type="ezsp",
+            baudrate=115200,
+            flow_control="software",
+        ),
+        database="/data/zigbee.sqlite",
+    )
+
+    facts = source._facts(device)
+
+    assert facts.ieee == "00:12:4b:00:1c:a1:b2:c3"
+    assert facts.manufacturer == ""  # `device.manufacturer` is None before the interview
+    assert facts.model == ""
+    assert facts.is_mains_powered is True
+    assert facts.quirk_applied is False
+    # Endpoint 0 is the ZDO and carries no ZCL clusters; `non_zdo_endpoints`
+    # is what keeps it out.
+    assert sorted(device.endpoints) == [0, 1]
+    assert [endpoint.endpoint for endpoint in facts.endpoints] == [1]
+    only = facts.endpoints[0]
+    assert only.profile_id == 0x0104
+    assert only.device_type == 0x0100
+    assert only.in_cluster_ids == frozenset({0x0006, 0x0402})
+    # Nothing has reported yet, so every declared attribute reads as `None`
+    # and none of them becomes a path. The point is that getting there took
+    # no exception - `_endpoint_facts` walked two real clusters' real
+    # `attributes` dicts and called the real `Cluster.get` on each.
+    assert only.attributes == {}
+
+
+def test_the_application_devices_mapping_is_keyed_the_way_the_source_reads_it() -> None:
+    """`_devices()` iterates `app.devices.values()` and `_device_or_none`
+    compares `str(device.ieee)` against the store's text form, deliberately
+    rather than building an `EUI64` on the command path.
+
+    That only works if `EUI64.__str__` produces the colon-separated lower-case
+    form the store writes. It does - asserted here rather than assumed,
+    because a change would make every command say "unknown Zigbee device"
+    while the catalogue looked complete.
+
+    Fault to prove it: compare `device.ieee` to the address without `str()`."""
+    import zigpy.application
+    import zigpy.types
+
+    assert str(zigpy.types.EUI64.convert("00:12:4b:00:1c:a1:b2:c3")) == ("00:12:4b:00:1c:a1:b2:c3")
+    devices = inspect.signature(zigpy.application.ControllerApplication.get_device).parameters
+    assert "ieee" in devices
+    assert "devices" in inspect.getsource(zigpy.application.ControllerApplication.__init__)
+    assert "app.devices.values()" in inspect.getsource(source_module.ZigbeeSource._devices)
+
+
+@pytest.mark.parametrize(
+    ("cluster_id", "attribute_id", "type_name", "sentinel"),
+    [
+        (0x0402, 0x0000, "int16s", -0x8000),
+        (0x0201, 0x0000, "int16s", -0x8000),
+        (0x0201, 0x0001, "int16s", -0x8000),
+        (0x0403, 0x0000, "int16s", -0x8000),
+        (0x0404, 0x0000, "uint16_t", 0xFFFF),
+        (0x0408, 0x0000, "uint16_t", 0xFFFF),
+        (0x0405, 0x0000, "uint16_t", 0xFFFF),
+        (0x0400, 0x0000, "uint16_t", 0xFFFF),
+        (0x0001, 0x0021, "uint8_t", 0xFF),
+        (0x0001, 0x0020, "uint8_t", 0xFF),
+    ],
+)
+def test_every_sentinel_is_a_value_its_attributes_declared_type_can_hold(
+    cluster_id: int, attribute_id: int, type_name: str, sentinel: int
+) -> None:
+    """The trap that has now been walked into twice on this branch: a
+    sentinel written as the ZCL's BIT PATTERN for an attribute whose declared
+    type is signed. `int16s(0x8000)` raises, so such a row can never match
+    any value zigpy produces - the row is dead, the test is green, and a
+    sensor with no reading publishes -327.68 °C into the house.
+
+    Reading the type off the installed library, per row, is what turns "we
+    checked" into something that stays checked. `Thermostat.local_temperature`
+    is the row this test was written for: same type, same sentinel, same
+    cluster and attribute number in Matter - and a TRV is a device this
+    project targets.
+
+    Fault to prove it: write `0x8000` for any of the `int16s` rows."""
+    from zigpy.zcl import Cluster
+
+    cluster_class = Cluster._registry[cluster_id]
+    definition = cluster_class.attributes[attribute_id]
+    assert definition.type.__name__ == type_name, definition
+    # The sentinel must round-trip through the declared type unchanged. A
+    # bit pattern for a signed type does not: it raises here.
+    assert definition.type(sentinel) == sentinel
+    assert _SENTINELS[(cluster_id, attribute_id)] == sentinel
+
+
+async def test_the_radio_library_is_imported_off_the_event_loop() -> None:
+    """`import bellows.zigbee.application` costs 0.44 s on an M1 - measured,
+    on the machine this was written on - so roughly 2-3 s on a Pi 4, and it
+    sits on the reconnect path: the first time a radio is configured from the
+    web UI, the loop would stop answering `/health` for that long.
+
+    The same reason `quirks.py` gives for the registry warm-up, and the same
+    remedy: the default executor.
+
+    Asserted by watching WHICH THREAD the import runs on, not by searching
+    the source for `run_in_executor` - a docstring satisfies a text search,
+    and this file has already been bitten by exactly that (the F36 note in
+    the Task 7 report).
+
+    Fault to prove it: call `_radio_module(...)` directly again."""
+    import asyncio
+    import threading
+
+    loop_thread = threading.get_ident()
+    seen: list[int] = []
+
+    class _StubApplication:
+        @classmethod
+        async def new(cls, config, *, start_radio, device_resolver):
+            return ("built", config, start_radio, device_resolver)
+
+    class _StubModule:
+        ControllerApplication = _StubApplication
+
+    def fake_radio_module(radio_type: str) -> object:
+        seen.append(threading.get_ident())
+        return _StubModule
+
+    real = source_module._radio_module
+    source_module._radio_module = fake_radio_module  # type: ignore[assignment]
+    try:
+        built = await source_module._default_application(
+            {"_radio_type": "ezsp", "database_path": "/tmp/x"}
+        )
+    finally:
+        source_module._radio_module = real  # type: ignore[assignment]
+
+    assert seen, "the radio module was never imported"
+    assert seen[0] != loop_thread, "the radio library was imported ON the event loop"
+    # And it really did build the application from the config, minus this
+    # module's own private key.
+    assert built[0] == "built"
+    assert built[1] == {"database_path": "/tmp/x"}
+    assert built[2] is False
+    # The loop is still the loop afterwards.
+    assert asyncio.get_running_loop() is not None
 
 
 def test_the_command_schemas_carry_the_field_names_the_source_renames_to() -> None:

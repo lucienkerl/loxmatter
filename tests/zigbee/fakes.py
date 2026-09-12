@@ -88,6 +88,20 @@ class NetworkSettingsInconsistent(ZigbeeException):
 
 
 @dataclass(frozen=True)
+class FakeAttributeDef:
+    """What `Cluster.attributes[attribute_id]` answers.
+
+    zigpy's real `ZCLAttributeDef` carries far more, but the two fields
+    below are the two the source touches - and, crucially, the fact that it
+    is an OBJECT rather than an int is what makes `FakeCluster.get` able to
+    tell a definition lookup from an id lookup, the same way
+    `Cluster.find_attribute` does."""
+
+    id: int
+    name: str
+
+
+@dataclass(frozen=True)
 class FakeField:
     """One field of a ZCL command schema (`schema.fields[n].name`)."""
 
@@ -201,14 +215,29 @@ class FakeCluster:
         cached: Mapping[int, Any] | None = None,
         commands: Mapping[int, FakeCommandDef] | None = None,
         readable: Mapping[int, Any] | None = None,
+        shadowed: Mapping[int, Any] | None = None,
     ) -> None:
         self.cluster_id = cluster_id
-        # `Cluster.attributes` is a dict of attribute ID -> definition. The
-        # source only ever iterates its KEYS, so a name is enough here.
-        self.attributes: dict[int, str] = {
-            attribute_id: f"attribute_{attribute_id:#06x}"
+        # `Cluster.attributes` is a dict of attribute ID -> DEFINITION, and
+        # the definition is what `Cluster.get` must be handed - see `get`.
+        self.attributes: dict[int, FakeAttributeDef] = {
+            attribute_id: FakeAttributeDef(attribute_id, f"attribute_{attribute_id:#06x}")
             for attribute_id in {*declared, *(cached or {}), *(readable or {})}
         }
+        # Attribute ids for which this cluster class declares TWO
+        # definitions - one standard, one manufacturer-specific - the way
+        # every `zhaquirks/ubisys/` cluster does. `attributes` shows only
+        # the survivor; `Cluster._attributes_by_id` keeps both, which is
+        # what makes a lookup BY ID ambiguous.
+        #
+        # The value mapped here is the SURVIVOR's cached value, and it is
+        # deliberately not the same object as `cached[id]`: on a real
+        # `UbisysLevelControl` the survivor is `minimum_on_level`, so
+        # `_attr_cache.get_value(definition)` answers the minimum-on level
+        # while `cached[0x0000]` is what `current_level` would have said.
+        # Modelling the two separately is the only way a test can measure
+        # the residual the fix leaves behind rather than assume it.
+        self.shadowed: dict[int, Any] = dict(shadowed or {})
         self.server_commands: dict[int, FakeCommandDef] = dict(commands or {})
         self._cached: dict[int, Any] = dict(cached or {})
         # What a read over the air would answer. An attribute that is
@@ -251,9 +280,39 @@ class FakeCluster:
 
     # -- what the source reads ---------------------------------------------
 
-    def get(self, attribute_id: int, default: Any | None = None) -> Any:
-        """`Cluster.get` - the cache, never the air."""
-        return self._cached.get(attribute_id, default)
+    def get(self, key: int | FakeAttributeDef, default: Any | None = None) -> Any:
+        """`Cluster.get` - the cache, never the air, and it RAISES.
+
+        zigpy's `Cluster.get` calls `find_attribute(key)` outside its own
+        `try`, so two lookups by bare id raise `KeyError` rather than
+        answering the default:
+
+        - an id this cluster class does not declare at all, and
+        - an id with two definitions (`shadowed` above), where zigpy says
+          "Multiple definitions exist for attribute ID ..., please specify a
+          manufacturer code".
+
+        A lookup by DEFINITION raises neither: `find_attribute` returns the
+        first candidate at once for any non-integer key - and answers with
+        THAT definition's cached value, which for a shadowed id is the
+        survivor's and not the standard attribute's.
+
+        This fake used to answer `self._cached.get(attribute_id, default)`
+        for everything, and that forgiveness is exactly why a crash that
+        would have stopped the bridge from starting on any Ubisys device sat
+        in `_endpoint_facts` behind a green suite."""
+        if isinstance(key, FakeAttributeDef):
+            if key.id in self.shadowed:
+                return self.shadowed[key.id]
+            return self._cached.get(key.id, default)
+        if key in self.shadowed:
+            raise KeyError(
+                f"Multiple definitions exist for attribute ID {key:#06x}, "
+                f"please specify a manufacturer code"
+            )
+        if key not in self.attributes:
+            raise KeyError(key)
+        return self._cached.get(key, default)
 
     async def read_attributes(
         self, attributes: list[int], allow_cache: bool = False
@@ -289,7 +348,9 @@ class FakeCluster:
         `set_value` and only then `emit`), and the source depends on it -
         it reads the cache when the event wakes it."""
         self._cached[attribute_id] = value
-        self.attributes.setdefault(attribute_id, f"attribute_{attribute_id:#06x}")
+        self.attributes.setdefault(
+            attribute_id, FakeAttributeDef(attribute_id, f"attribute_{attribute_id:#06x}")
+        )
         endpoint = self.endpoint
         self.emit(
             event,
@@ -474,6 +535,19 @@ class FakeApplication:
 
     def fire_device_joined(self, device: FakeDevice) -> None:
         self.listener_event("device_joined", device)
+
+    def fire_device_reinterviewed(self, replacement: FakeDevice) -> None:
+        """zigpy's reinterview, in the order `ControllerApplication._device_reinterviewed`
+        performs it (verified against zigpy 2.2.0).
+
+        The old device is dropped and a BRAND-NEW object with brand-new
+        clusters takes its place under the same IEEE, and the event that
+        announces it is `device_reinterviewed` - deliberately NOT
+        `device_initialized`, as zigpy's own comment in that method says.
+        A bridge with no method by that name keeps its listeners on an
+        object nobody will ever report through again."""
+        self.devices[replacement.ieee] = replacement
+        self.listener_event("device_reinterviewed", replacement)
 
 
 @dataclass

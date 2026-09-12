@@ -56,7 +56,17 @@ Everything this module reads out of a zigpy device goes through the public
 surface - `Device.non_zdo_endpoints`, `Endpoint.in_clusters`,
 `Cluster.attributes`, `Cluster.get` - and never through `Cluster._attr_cache`,
 which is an `AttributeCache` object in zigpy 2.2.0 and offers no way to
-enumerate what it holds.
+enumerate what it holds. `Cluster.get` is always handed the attribute
+DEFINITION and never the bare id; `_endpoint_facts` says why, and the reason
+is a `KeyError` that would stop the bridge from starting.
+
+**`snapshots()` can be slow, once per connection.** `_snapshot` reads
+`ColorCapabilities` over the air for any colour endpoint that has none
+cached, and `snapshots()` walks the devices serially - so a reconnect with
+several unresponsive colour endpoints pays one zigpy timeout after another
+before `attach()` returns. It is bounded: `_capabilities_asked` makes it at
+most one read per endpoint per connection, and a lamp switched off at the
+wall costs that once rather than on every report.
 """
 
 from __future__ import annotations
@@ -217,7 +227,16 @@ def channels_excluding(thread_channel: int | None) -> list[int]:
 
     A missing border router leaves the list whole - it must never stop
     Zigbee from forming - and so does a Thread channel that is not one of
-    the four candidates anyway."""
+    the four candidates anyway.
+
+    **Outstanding debt for Tasks 10 and 11.** Nothing in the tree passes a
+    channel yet: `ZigbeeSource(thread_channel=...)` defaults to `None`, and
+    only the tests give it a value, so in production this exclusion is inert
+    and a network may still form on OTBR's channel. What is missing is not
+    this function but its input - `matter/otbr.py` fetches the active
+    dataset as a hex TLV blob and nothing parses the channel out of it. The
+    caller that already knows about OTBR is the one to close this; it must
+    not become an HTTP call inside `connect()`."""
     if thread_channel is None:
         return list(ZIGBEE_CHANNELS)
     return [channel for channel in ZIGBEE_CHANNELS if channel != thread_channel]
@@ -282,7 +301,14 @@ def _radio_module(radio_type: str) -> ModuleType:
     `importlib` rather than a plain import, and not only for laziness:
     `bellows` and `zha` ship no `py.typed`, so a direct import would need a
     mypy exception per module, while the application object is `Any` to this
-    file either way."""
+    file either way.
+
+    SYNCHRONOUS and blocking - measured at 0.44 s for `bellows` on an M1, so
+    roughly 2-3 s on a Pi 4. `_default_application` therefore calls it
+    through the default executor, for the reason `quirks.py` gives for the
+    registry warm-up: this lands on the reconnect path, and the first time a
+    radio is configured from the web UI the event loop would otherwise stop
+    answering `/health` for the duration."""
     import importlib
 
     try:
@@ -306,10 +332,17 @@ async def _default_application(config: dict[str, Any]) -> Any:
     `resolve` at all - the unified one that applies both quirk generations,
     and that marks what it transformed with `_quirk_registry_entry`, is
     `ZHA_DEVICE_REGISTRY`. Verified against the installed package, not read
-    off the document."""
+    off the document.
+
+    The radio library is imported OFF the loop (`run_in_executor`), the way
+    `quirks.py` warms the registry up: `import bellows.zigbee.application`
+    costs 0.44 s on an M1 and several times that on a Pi, and this runs on
+    every reconnect attempt."""
     import zhaquirks
 
-    application_class = _radio_module(config["_radio_type"]).ControllerApplication
+    application_class = (
+        await asyncio.get_running_loop().run_in_executor(None, _radio_module, config["_radio_type"])
+    ).ControllerApplication
     return await application_class.new(
         {key: value for key, value in config.items() if not key.startswith("_")},
         start_radio=False,
@@ -342,6 +375,23 @@ class _ApplicationListener:
         self._source._handle_device_event(device, "interviewing")
 
     def device_initialized(self, device: Any) -> None:
+        self._source._handle_device_event(device, "ready")
+
+    def device_reinterviewed(self, device: Any) -> None:
+        """A device that was interviewed AGAIN - a new object, same IEEE.
+
+        zigpy's `_device_reinterviewed` calls `old_device.on_remove()` and
+        then `_finalize_device(shadow)`, which builds a brand-new device with
+        brand-new cluster objects, and then emits THIS event deliberately
+        instead of `device_initialized` (its own comment says so). Without a
+        method by this name nothing re-binds the cluster listeners: the
+        replacement's clusters have none, the original's are on an object
+        zigpy has dropped, and the device reports nothing until the next
+        `connect()` while `connected` still says the link is fine.
+
+        Handled as "ready" - which it is - so the pairing row, the
+        re-listening and the fresh snapshot all go through the one path that
+        already does those three things."""
         self._source._handle_device_event(device, "ready")
 
     def device_removed(self, device: Any) -> None:
@@ -383,8 +433,13 @@ class ZigbeeSource:
         self._dispatch_task: asyncio.Task[None] | None = None
         self._handler: RuntimeEventHandler | None = None
         self._resolve_device_id: Callable[[str], int | None] | None = None
-        self._unsubscribers: list[Callable[[], None]] = []
-        self._listening: set[str] = set()
+        # Per device, so one device can be re-bound without disturbing the
+        # rest - a reinterview replaces exactly one device object.
+        self._unsubscribers: dict[str, list[Callable[[], None]]] = {}
+        # Address -> the device OBJECT the listeners sit on. Not a set of
+        # addresses: a reinterviewed device keeps its IEEE and gets new
+        # clusters, so the address alone cannot answer "already listening".
+        self._listening: dict[str, Any] = {}
         # The last set of paths and values each device was told to the
         # handler with. A path that is not in here has no signal row yet,
         # and a value that is has to go through `on_attribute` rather than
@@ -552,9 +607,17 @@ class ZigbeeSource:
         leaks, and the stick is left mid-frame for the next start to pay
         for (research E.1, G14). Idempotent, and it reports `False` to the
         connection hook either way, because the caller that clears the radio
-        setting entirely (Task 11) needs the badge to say so."""
+        setting entirely (Task 11) needs the badge to say so.
+
+        `_link_lost` is SET here, not merely left alone. A supervisor parked
+        in `wait_for_link_loss()` holds a reference to that event and nothing
+        else; clearing `_connected` without setting it would leave Task 11's
+        "the user removed the radio" path waiting for a link that is already
+        gone and will never be lost again. Setting it is idempotent, and
+        `connect()` clears it before anyone can wait on it afresh."""
         app, self._app = self._app, None
         self._connected = False
+        self._link_lost.set()
         self._release_cluster_listeners()
         self._delivered.clear()
         dispatch_task, self._dispatch_task = self._dispatch_task, None
@@ -650,7 +713,19 @@ class ZigbeeSource:
             cluster = endpoint.in_clusters.get(_COLOR_CONTROL_CLUSTER)
             if cluster is None:
                 continue
-            if cluster.get(_COLOR_CAPABILITIES_ATTRIBUTE) is not None:
+            # The definition, for the reason `_endpoint_facts` spells out;
+            # and `Cluster.get` raises `KeyError` for an id the cluster does
+            # not declare at all, which a quirk's own Color subclass could
+            # one day be. No installed quirk drops 0x400A today - checked -
+            # but neither case may reach `snapshots()` as an exception.
+            definition = cluster.attributes.get(_COLOR_CAPABILITIES_ATTRIBUTE)
+            if definition is None:
+                continue
+            try:
+                cached = cluster.get(definition)
+            except KeyError:
+                cached = None
+            if cached is not None:
                 continue
             key = (address, endpoint.endpoint_id)
             if key in self._capabilities_asked:
@@ -669,8 +744,45 @@ class ZigbeeSource:
     def _endpoint_facts(self, endpoint: Any) -> EndpointFacts:
         attributes: dict[tuple[int, int], object] = {}
         for cluster_id, cluster in endpoint.in_clusters.items():
-            for attribute_id in cluster.attributes:
-                value = cluster.get(attribute_id)
+            # The DEFINITION, never the bare id. `Cluster.get(int)` calls
+            # `find_attribute(key)` OUTSIDE its own `try`, and that raises
+            # `KeyError("Multiple definitions exist for attribute ID 0x...,
+            # please specify a manufacturer code")` for every cluster class
+            # that declares two attributes with the same id - one standard,
+            # one manufacturer-specific. `cluster.attributes` is keyed by id,
+            # so the duplicate is invisible there while `_attributes_by_id`
+            # keeps both. zha-quirks 2.2.2 has 28 such pairs (measured, not
+            # assumed: `zhaquirks/ubisys/{dimmer_d1,cover_j1,trv_h1}.py`,
+            # `zhaquirks/philips/__init__.py`, `zhaquirks/innr/innr_sp120_plug.py`),
+            # among them `UbisysLevelControl` 0x0000. `find_attribute` returns
+            # at once for a NON-integer lookup, so handing it the definition
+            # never reaches the ambiguity check.
+            #
+            # The residual, written down rather than left to be rediscovered:
+            # on a duplicate id `attributes` has kept exactly ONE of the two
+            # definitions, and that is the one whose cached value comes back.
+            # Which one survives is a matter of declaration order - for
+            # `UbisysLevelControl` 0x0000 it is the manufacturer-specific
+            # `minimum_on_level`, so a Ubisys D1 would export its minimum-on
+            # level where `current_level` belongs; for the Ubisys H1's
+            # `ThermostatCluster` it is the standard name instead. Losing one
+            # path on one device beats a bridge that does not start at all.
+            for attribute_id, definition in cluster.attributes.items():
+                try:
+                    value = cluster.get(definition)
+                except KeyError:
+                    # A future shape of the same problem must degrade to a
+                    # missing path, not take `snapshots()` down - and with it
+                    # `cli._run`, which calls `attach()` unguarded before
+                    # uvicorn ever starts.
+                    logger.debug(
+                        "skipping attribute %#06x of cluster %#06x on endpoint %s: "
+                        "zigpy cannot resolve it",
+                        attribute_id,
+                        cluster_id,
+                        endpoint.endpoint_id,
+                    )
+                    continue
                 if value is not None:
                     attributes[(cluster_id, attribute_id)] = value
         return EndpointFacts(
@@ -770,10 +882,15 @@ class ZigbeeSource:
             self._delivered[address] = dict(snapshot.attributes)
 
     def _release_cluster_listeners(self) -> None:
-        for unsubscribe in self._unsubscribers:
-            unsubscribe()
-        self._unsubscribers = []
+        for address in list(self._unsubscribers):
+            self._release_device_listeners(address)
+        self._unsubscribers = {}
         self._listening.clear()
+
+    def _release_device_listeners(self, address: str) -> None:
+        for unsubscribe in self._unsubscribers.pop(address, []):
+            unsubscribe()
+        self._listening.pop(address, None)
 
     def _register_cluster_listeners(self) -> None:
         self._release_cluster_listeners()
@@ -790,14 +907,25 @@ class ZigbeeSource:
         against SQLite, building a snapshot, the handler itself - has to
         happen on the dispatch task instead. A raising callback would
         otherwise escape into whatever zigpy was doing when the attribute
-        arrived, and event delivery would stop for every device."""
+        arrived, and event delivery would stop for every device.
+
+        **The guard compares the device OBJECT, not its address.** zigpy's
+        `_device_reinterviewed` builds a replacement device - new object, new
+        clusters - under the same IEEE, and an address-keyed guard would then
+        return early and leave the replacement with no listeners at all while
+        the bridge kept reporting a healthy link."""
         queue = self._queue
         if queue is None:
             return
         address = str(device.ieee)
-        if address in self._listening:
+        if self._listening.get(address) is device:
             return
-        self._listening.add(address)
+        # A different object under the same address: drop the old object's
+        # subscriptions before binding the new one, so a device that is
+        # reinterviewed repeatedly does not accumulate dead closures.
+        self._release_device_listeners(address)
+        self._listening[address] = device
+        unsubscribers = self._unsubscribers.setdefault(address, [])
         for endpoint in device.non_zdo_endpoints:
             for cluster in endpoint.in_clusters.values():
                 for event_name in ATTRIBUTE_EVENTS:
@@ -807,7 +935,7 @@ class ZigbeeSource:
                     def on_attribute_event(_event: Any, address: str = address) -> None:
                         queue.put_nowait(address)
 
-                    self._unsubscribers.append(cluster.on_event(event_name, on_attribute_event))
+                    unsubscribers.append(cluster.on_event(event_name, on_attribute_event))
 
     async def _dispatch_loop(self, queue: asyncio.Queue[str]) -> None:
         while True:
@@ -947,7 +1075,7 @@ class ZigbeeSource:
     def _forget(self, address: str) -> None:
         self._pairing.pop(address, None)
         self._delivered.pop(address, None)
-        self._listening.discard(address)
+        self._release_device_listeners(address)
 
     async def permit(self, seconds: int) -> datetime:
         """Opens the network for new devices, and answers when it closes.

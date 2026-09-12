@@ -189,6 +189,13 @@ BLOCKED_CLUSTER_IDS: frozenset[int] = frozenset({0x0000, 0x0003, 0x0019, 0x1000}
 # attribute's declared type, not the bit pattern the ZCL specification
 # prints - see the temperature row.
 #
+# WHICH rows belong here is decided by reach, not by which sensors came to
+# mind: `_apply_endpoint` passes through every attribute of every
+# non-blocked cluster, so a sentinel is needed wherever a nullable ZCL
+# measurement can become a Loxone signal. The four rows added after the
+# first audit were found that way, each type read off the installed zigpy
+# before it was written down.
+#
 # `_NO_SENTINEL` is a private marker object, not `None`: `dict.get()` on a
 # pair with no entry here already answers `None`, and a naive
 # `_SENTINELS.get(key) == value` would then coincidentally agree with the
@@ -213,6 +220,47 @@ _SENTINELS: dict[tuple[int, int], int] = {
     (0x0400, 0x0000): 0xFFFF,  # IlluminanceMeasurement.MeasuredValue, invalid (uint16_t)
     (0x0001, 0x0021): 0xFF,  # PowerConfiguration.BatteryPercentageRemaining, unknown (uint8_t)
     (0x0001, 0x0020): 0xFF,  # PowerConfiguration.BatteryVoltage, unknown (uint8_t)
+    # The SAME trap as the temperature row, one cluster over, and on the
+    # device class this project explicitly targets. `Thermostat.local_temperature`
+    # is `int16s` in the installed zigpy (verified, not assumed), and Matter's
+    # Thermostat is cluster 0x0201 attribute 0x0000 as well - `LocalTemperature`,
+    # nullable, verified against the installed `chip.clusters` - so the value
+    # passes straight through this module and out to Loxone. A TRV that has
+    # not measured yet reports -32768, which is -327.68 degrees in somebody's
+    # living room.
+    (0x0201, 0x0000): -0x8000,  # Thermostat.LocalTemperature, invalid (int16s)
+    # `Thermostat.outdoor_temperature`, same type, same sentinel, same Matter
+    # number (0x0201/0x0001, `OutdoorTemperature`, nullable). Included with
+    # the row above rather than after the next TRV arrives: the argument for
+    # one is the argument for the other, word for word.
+    (0x0201, 0x0001): -0x8000,  # Thermostat.OutdoorTemperature, invalid (int16s)
+    # `PressureMeasurement.measured_value` is `int16s` too - the third signed
+    # row, and the reason this table cannot be skimmed for `0xFFFF`.
+    (0x0403, 0x0000): -0x8000,  # PressureMeasurement.MeasuredValue, invalid (int16s)
+    # These two are `uint16_t` in the installed zigpy, so here the bit
+    # pattern and the value do coincide. Flow lines up with Matter exactly
+    # (0x0404/0x0000, `MeasuredValue`, nullable); soil moisture does NOT -
+    # Matter numbers it 0x0430, so 0x0408 reaches no Matter device type at
+    # all. It reaches a Loxone signal either way, because `_apply_endpoint`
+    # passes every non-blocked attribute through by number, and that is
+    # precisely why the row is needed: nothing downstream would recognise
+    # 65535 as "no reading".
+    (0x0404, 0x0000): 0xFFFF,  # FlowMeasurement.MeasuredValue, invalid (uint16_t)
+    (0x0408, 0x0000): 0xFFFF,  # SoilMoisture.MeasuredValue, invalid (uint16_t)
+    #
+    # Examined and deliberately NOT added, so the next audit does not spend
+    # the time again:
+    #
+    # - `Thermostat` setpoints (0x0011, 0x0012, 0x0013, 0x0014) and the
+    #   heat/cool limits. `int16s`, but NOT nullable in the ZCL: -32768 is a
+    #   legal, if absurd, configured value there and has no "invalid"
+    #   meaning. Suppressing it would hide a real misconfiguration.
+    # - `Thermostat.local_temperature_calibration` (0x0010) is `int8s`, whose
+    #   whole range is legal - there is no sentinel to write.
+    # - `PressureMeasurement.scaled_value` (0x0010) is nullable `int16s` as
+    #   well, but loxmatter never reads the companion `scale` (0x0014) that
+    #   makes it mean anything, so a row for it would suppress a value this
+    #   bridge does not publish in the first place.
 }
 
 # A table, not a camelCase -> snake_case helper (design 5.7): two of these
