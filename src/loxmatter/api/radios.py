@@ -35,7 +35,13 @@ from pydantic import BaseModel
 
 from loxmatter import i18n
 from loxmatter import update as update_files
-from loxmatter.radios.inventory import match_current_device, scan_bluetooth, scan_serial
+from loxmatter.model.store import Store
+from loxmatter.radios.inventory import (
+    is_same_device,
+    match_current_device,
+    scan_bluetooth,
+    scan_serial,
+)
 from loxmatter.radios.sidecar import (
     BluetoothRequest,
     RadiosBusyError,
@@ -76,9 +82,29 @@ def build_radios_router(
     *,
     host_dev: Path,
     sys_root: Path,
+    store: Store | None = None,
     clock: Callable[[], datetime] = _utc_now,
 ) -> APIRouter:
     router = APIRouter(prefix="/api")
+
+    def _zigbee_stick(path: str) -> bool:
+        """Whether `path` is the stick the bridge is set up to use for
+        Zigbee - the reverse of the lock `PUT /api/zigbee/radio` puts on the
+        Thread stick.
+
+        By resolved major:minor, the same `is_same_device` the Zigbee side
+        uses, and for the same measured reason: one stick is a by-id path on
+        this card, `/dev/ttyUSB0` in `.env` and a third name under
+        `/host/dev`. The STORED setting, not whether zigpy currently holds
+        the port: a configured stick that is failing to open is still the
+        one the supervisor keeps reopening, and handing it to the border
+        router would turn two working radios into two failing ones.
+
+        `store` is optional only because a `build_app` without one has no
+        Zigbee setting to protect; the production app always passes it."""
+        if store is None:
+            return False
+        return is_same_device(path, store.zigbee_settings.get().path, host_dev)
 
     @router.get("/radios")
     async def get_radios() -> dict[str, object]:
@@ -131,7 +157,13 @@ def build_radios_router(
             "updater_stack_host_path": (
                 update_state.updater_stack_host_path if update_state is not None else None
             ),
-            "serial": [asdict(radio) for radio in serial],
+            # `is_zigbee` marks the stick the Zigbee row is set up with, so
+            # the Thread row can show it as taken and not offer it - the
+            # same courtesy the Zigbee row extends to the Thread stick. The
+            # `POST` below is what actually refuses it.
+            "serial": [
+                {**asdict(radio), "is_zigbee": _zigbee_stick(radio.path)} for radio in serial
+            ],
             "bluetooth": [asdict(adapter) for adapter in bluetooth],
             "current": current,
             "job": job,
@@ -160,6 +192,14 @@ def build_radios_router(
                 raise HTTPException(
                     status_code=400, detail=i18n.t("api.radios.fail_unknown_device")
                 )
+            # The other half of the Thread/Zigbee exclusion. Without it the
+            # card refused to put Zigbee on the Thread stick but would
+            # happily put Thread on the Zigbee stick: the sidecar would
+            # recreate the border router on a port zigpy is holding, and
+            # both radios would fail. Checked here and not only in the page,
+            # for the reason `PUT /api/zigbee/radio` gives for its own check.
+            if _zigbee_stick(body.thread.device):
+                raise HTTPException(status_code=400, detail=i18n.t("api.radios.fail_zigbee_stick"))
         if body.bluetooth is not None and body.bluetooth.adapter not in {
             adapter.index for adapter in scan_bluetooth(sys_root)
         }:

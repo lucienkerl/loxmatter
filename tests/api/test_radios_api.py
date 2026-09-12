@@ -125,6 +125,7 @@ async def test_without_a_sidecar_the_card_is_read_only_with_detection(api):
             "product": "SONOFF Dongle Plus MG24",
             "serial": None,
             "vid_pid": "10c4:ea60",
+            "is_zigbee": False,
         }
     ]
     assert body["bluetooth"] == [

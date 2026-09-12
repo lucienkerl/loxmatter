@@ -537,7 +537,9 @@ def build_app(
     # version deliberately gets no SECOND password prompt on top of it.
     app.include_router(build_update_router(store, update_dir), dependencies=api_guard)
     app.include_router(
-        build_radios_router(update_dir, host_dev=radios_host_dev, sys_root=radios_sys_root),
+        build_radios_router(
+            update_dir, host_dev=radios_host_dev, sys_root=radios_sys_root, store=store
+        ),
         dependencies=api_guard,
     )
     # Only when a holder exists, and that is not defensiveness: the routes

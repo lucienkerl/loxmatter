@@ -824,6 +824,53 @@ async def test_the_stored_radio_parameters_are_reported_back(api):
     assert body["configured_baudrate"] == 38400
 
 
+async def test_thread_cannot_be_put_on_the_zigbee_stick(api):
+    """The reverse half of the exclusion. `PUT /api/zigbee/radio` refuses
+    the Thread stick; until this, `POST /api/radios` accepted the Zigbee
+    stick for Thread without a word, and the sidecar would have recreated
+    the border router on a port zigpy holds - two failing radios.
+
+    The stored setting spells the stick `/dev/ttyUSB1`, the way
+    `--zigbee-device` may have seeded it, while the card sends the by-id
+    path: two strings, one stick. A string compare would let it through.
+
+    And `GET /api/radios` says so up front (`is_zigbee`), so the Thread row
+    can show the stick as taken instead of letting the user find out after
+    the confirmation dialog.
+
+    Fault to prove it: drop the `_zigbee_stick` check from `post_radios`
+    (the POST is accepted), or compare the path strings (the by-id request
+    no longer matches the stored `/dev/ttyUSB1`)."""
+    client, update_dir, harness = api
+    (update_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "id": None,
+                "phase": "idle",
+                "updater_seen_at": _now(),
+                "updater_stack_host_path": "/home/pi/stack",
+            }
+        ),
+        encoding="utf-8",
+    )
+    harness.store.zigbee_settings.save(replace(settings_for_path(None, []), path="/dev/ttyUSB1"))
+
+    listed = (await client.get("/api/radios")).json()
+    flags = {radio["path"]: radio["is_zigbee"] for radio in listed["serial"]}
+    assert flags == {ITEAD_PATH: True, MG24_PATH: False}
+
+    body = {"thread": {"enabled": True, "device": ITEAD_PATH}, "bluetooth": None}
+    refused = await client.post("/api/radios", json=body)
+    assert refused.status_code == 400, refused.text
+    assert refused.json()["detail"] == i18n.t("api.radios.fail_zigbee_stick")
+    assert not (update_dir / "radios-request.json").exists()
+
+    allowed = await client.post(
+        "/api/radios", json={"thread": {"enabled": True, "device": MG24_PATH}, "bluetooth": None}
+    )
+    assert allowed.status_code == 202, allowed.text
+
+
 # --- Pairing ---------------------------------------------------------------
 #
 # These drive the REAL `ZigbeeSource` rather than a stand-in for it. The

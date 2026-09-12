@@ -832,6 +832,12 @@ api.radios.fail_unknown_adapter:
 api.radios.fail_busy:
   en: "An update or another radio change is still running"
   de: "Ein Update oder eine andere Funkgeräte-Änderung läuft noch"
+api.radios.fail_zigbee_stick:
+  # The reverse of `api.errors.zigbee_is_thread_stick`: the stick the bridge
+  # is set up to use for Zigbee, asked for as the Thread stick. Names both
+  # ways out, because either one is a legitimate thing to want.
+  en: "This stick is set up for Zigbee. Choose another stick for Thread, or first choose another Zigbee stick (or none) in the Zigbee row."
+  de: "Dieser Stick ist für Zigbee eingerichtet. Wählen Sie für Thread einen anderen Stick, oder wählen Sie zuerst in der Zigbee-Zeile einen anderen Zigbee-Stick (oder keinen)."
 api.radios.fail_unwritable:
   en: "The request could not be written: {exc}"
   de: "Der Auftrag konnte nicht geschrieben werden: {exc}"
