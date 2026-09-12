@@ -478,13 +478,36 @@ button:disabled {
 
 /* A select holding a long stick name ("SONOFF Zigbee Dongle Plus MG24 ·
  * in use for Thread") must shrink with a narrow card instead of pushing
- * the Apply button out of it. */
-.radios-zigbee .row > label {
+ * the Apply button out of it. Every select on the radios card, not only
+ * this row's: the Thread select carries the very same kind of label once a
+ * stick is in use for Zigbee (index.html), and a real product name plus
+ * that suffix - about 70 characters - overflowed a 375px card before this
+ * reached the Thread row too. */
+.radios-card .row > label {
   min-width: 0;
   max-width: 100%;
 }
-.radios-zigbee select {
+.radios-card select {
   max-width: 100%;
+}
+
+/* Below this width - the same threshold `.code-field` already uses further
+ * up - the label and its select stacked inconsistently across the three
+ * rows: Thread's whole label (span and select together) wrapped onto its
+ * own line because nothing constrained its width, Bluetooth's usually
+ * short label stayed on one line, and only Zigbee's (already narrowed by
+ * the rule above) happened to wrap its own select under its span. None of
+ * that depended on the row a maintainer cared about, only on how long that
+ * particular label's text was. Forcing every label into its own column
+ * makes Thread, Bluetooth and Zigbee stack the same way regardless of
+ * content length. */
+@media (max-width: 480px) {
+  .radios-card .row > label {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.25rem;
+  }
 }
 
 /* The progress line changes wording several times during one successful

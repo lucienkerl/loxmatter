@@ -2050,6 +2050,25 @@ web.radios.thread_option_zigbee:
   # the mirror of `web.radios.zigbee_is_thread_stick`.
   en: "in use for Zigbee"
   de: "für Zigbee in Verwendung"
+web.radios.thread_zigbee_took_over:
+  # The suffix for a stick that is IN USE FOR THREAD and set up for Zigbee -
+  # the mirror of `web.radios.zigbee_thread_took_over`. One suffix instead
+  # of "in use · in use for Zigbee", which read as two contradicting claims.
+  en: "taken over by Zigbee"
+  de: "von Zigbee belegt"
+web.radios.thread_zigbee_stick_hint:
+  # The line under the Thread select whenever the list holds the Zigbee
+  # stick - the mirror of `web.radios.zigbee_thread_stick_hint`. The
+  # option's own suffix is cut off by a narrow native select, so the reason
+  # and the way out live here, in full. {name} is the stick's name as the
+  # Thread row shows it.
+  en: "{name} is set up for Zigbee, so it cannot be chosen here for Thread. To use it for Thread, choose another stick for Zigbee, or turn Zigbee off (\"No Zigbee stick\"), in the Zigbee row below."
+  de: "{name} ist für Zigbee eingerichtet und kann hier für Thread nicht gewählt werden. Um ihn für Thread zu nutzen, wählen Sie in der Zigbee-Zeile unten einen anderen Stick oder schalten Sie Zigbee ab („Kein Zigbee-Stick“)."
+web.radios.thread_zigbee_took_over_hint:
+  # The same line when that stick is also the current Thread device - the
+  # mirror of `web.radios.zigbee_thread_took_over_hint`.
+  en: "{name} is in use for Thread, but it is set up for Zigbee. To free it for Zigbee, choose another stick for Zigbee, or turn Zigbee off (\"No Zigbee stick\"), in the Zigbee row below."
+  de: "{name} wird für Thread verwendet, ist aber für Zigbee eingerichtet. Um ihn für Zigbee freizugeben, wählen Sie in der Zigbee-Zeile unten einen anderen Stick oder schalten Sie Zigbee ab („Kein Zigbee-Stick“)."
 
 # --- The Zigbee coordinator row (Task 11-13) ---
 web.radios.zigbee_label:

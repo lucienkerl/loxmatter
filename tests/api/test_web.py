@@ -10803,29 +10803,72 @@ async def test_the_progress_line_binding_passes_the_presence_flag(api):
 @pytest.mark.skipif(NODE is None, reason="node is required for this test")
 async def test_the_zigbee_option_binding_disables_what_the_helper_disables(api):
     """`zigbeeRadioOptions()` computing `disabled` is worth nothing if the
-    `<option>` does not bind it. Extracted from the served markup and
-    evaluated for both of the maintainer's sticks.
+    `<option>` does not bind it - and worth just as little if this test only
+    ever evaluated the raw JS truthiness of `option.disabled`. "No Zigbee
+    stick" and the option for a configured stick the scan no longer finds
+    both spell `disabled: false` out in their object literal rather than
+    deriving it; deleting that key left `option.disabled` `undefined` for
+    exactly those two options and every assertion here still green, while
+    Alpine turns that `undefined` from a dotted `:disabled` expression into
+    `""`, which a boolean attribute treats as present - the user could no
+    longer remove a configured Zigbee stick that way. `boundTrue` (see
+    `_BINDINGS_JS`) models that coercion; extracted from the served markup
+    and evaluated for EVERY option `zigbeeRadioOptions()` returns, "No
+    Zigbee stick" and the missing-stick option included.
 
     Fault to prove it: remove `:disabled="option.disabled"` from the Zigbee
-    `<option>` (the extraction fails), or bind it to `option.unrecognised`
-    (the MG24 comes out enabled)."""
+    `<option>` (the extraction fails), bind it to `option.unrecognised` (the
+    MG24 comes out enabled), or delete `disabled: false` from the "No
+    Zigbee stick" or the missing-stick option in `zigbeeRadioOptions()`
+    (app.js) - this test starts failing where the old one did not."""
     client, _, _ = api
     row = _zigbee_row(_without_comments((await client.get("/")).text))
     options = row[row.index('x-for="option in zigbeeRadioOptions()"') :]
     match = re.search(r'<option[^>]*:disabled="([^"]*)"', options)
     assert match, "the Zigbee <option> binds no :disabled"
-    results = _app_state(
-        _zigbee_state(
-            f"const expr = {json.dumps(match.group(1))};"
-            "const evaluate = new Function('option', 'return (' + expr + ');');"
-            "console.log(JSON.stringify(state.zigbeeRadioOptions()"
-            "  .map((option) => [option.value, evaluate(option)])));"
-        )
+    values = _app_state(
+        _BINDINGS_JS
+        + _zigbee_state("state.zigbee.configured_path = '/dev/serial/by-id/gone';")
+        + "console.log(JSON.stringify(state.zigbeeRadioOptions().map((option) => ["
+        "  option.value,"
+        f"  boundTrue({json.dumps(match.group(1))}, {{ option }}),"
+        "])));"
     )
-    disabled = dict(results)
+    disabled = dict(values)
+    assert disabled[""] is False
     assert disabled[MG24] is True
     assert disabled[ITEAD] is False
     assert disabled[UNKNOWN_STICK] is False
+    assert disabled["/dev/serial/by-id/gone"] is False
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_the_configured_option_drops_in_use_while_it_is_the_open_draft():
+    """A native `<select>` shows its CLOSED value using that option's own
+    label - and the "in use" marker sits at the very end of it, exactly
+    where a narrow select cuts a label off. Measured in German at 375 px:
+    "SONOFF ZBDongle-E V2 · in Verwendung" came out clipped to "...in
+    Verwendun". The suffix costs nothing while the draft still points at
+    the configured stick (that is what "configured" already means), and it
+    is not lost - it comes back on that same option as soon as the draft
+    points elsewhere, which is what the open list then shows.
+
+    Fault to prove it: drop `&& this.zigbeeDraft.path !== configured` from
+    the `in_use` branch of `zigbeeRadioOptions()` (app.js) - `closed` below
+    starts carrying the suffix again."""
+    values = _app_state(
+        _zigbee_state(
+            f"state.zigbee.configured_path = {json.dumps(ITEAD)};"
+            "state.zigbee.configured_device_present = true;"
+            f"state.zigbeeDraft.path = {json.dumps(ITEAD)};"
+            f"const closed = state.zigbeeRadioOptions().find((o) => o.value === {json.dumps(ITEAD)});"
+            "state.zigbeeDraft.path = '';"
+            f"const open = state.zigbeeRadioOptions().find((o) => o.value === {json.dumps(ITEAD)});"
+            "console.log(JSON.stringify({ closed: closed.label, open: open.label }));"
+        )
+    )
+    assert "web.radios.in_use" not in values["closed"]
+    assert "web.radios.in_use" in values["open"]
 
 
 async def test_the_zigbee_row_says_it_restarts_nothing_and_has_its_own_apply(api):
@@ -11661,6 +11704,84 @@ async def test_the_thread_row_offers_the_zigbee_stick_disabled_with_its_reason(a
     assert rows["/dev/serial/by-id/usb-B"] == (True, "ttyACM0 · in use for Zigbee")
     assert rows["/dev/serial/by-id/usb-A"][0] is False
     assert rows[""][0] is False
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+async def test_the_radios_zigbee_hint_names_the_stick_and_the_way_out(api):
+    """The Zigbee stick is listed in the Thread row disabled with its
+    reason at the END of the option label - where a narrow native select
+    cuts it off first (`test_the_thread_row_offers_the_zigbee_stick_disabled_with_its_reason`
+    measured "ttyACM0 · in use for Zigbee"). And nothing on the card said
+    how to get it back. `radiosZigbeeHint()` (mirroring `zigbeeThreadHint()`)
+    is the line under the Thread select that says both, whenever the list
+    holds a Zigbee stick, and says nothing when it does not.
+
+    The SERVED `x-show`/`x-text` of that line.
+
+    Fault to prove it: remove the hint's `x-show` condition (it shows with
+    no Zigbee stick), or return `null` from `radiosZigbeeHint()`."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+    hint = next(
+        attributes
+        for tag, attributes, _ancestors in _served_elements(page)
+        if tag == "p" and attributes.get("x-text") == "radiosZigbeeHint()"
+    )
+    radios = json.loads(json.dumps(RADIOS_READY))
+    radios["serial"][1]["is_zigbee"] = True
+    values = _app_state(
+        _BINDINGS_JS + f"state.radios = {json.dumps(radios)};" + "const out = {};"
+        f"out.locked = [Boolean(run({json.dumps(hint['x-show'])})), run({json.dumps(hint['x-text'])})];"
+        "state.radios.serial[1].is_zigbee = false;"
+        f"out.free = Boolean(run({json.dumps(hint['x-show'])}));"
+        "console.log(JSON.stringify(out));",
+        translations=_web_strings(),
+    )
+    shown, text = values["locked"]
+    assert shown is True
+    assert text.startswith("ttyACM0 is set up for Zigbee, so it cannot be chosen here for Thread")
+    assert "choose another stick for Zigbee" in text
+    assert values["free"] is False
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+async def test_a_thread_stick_zigbee_took_over_reads_as_one_claim(api):
+    """The Thread-row mirror of `test_a_zigbee_stick_thread_took_over_reads_as_one_claim`:
+    a stick in use for Thread that Zigbee was later set up on read "... ·
+    in use · in use for Zigbee" - two claims that seem to contradict each
+    other. It gets one suffix, and the hint under the select names the
+    conflict and both ways out of it.
+
+    The SERVED `x-text` of the Thread `<option>`, evaluated the way Alpine
+    evaluates it, plus `radiosZigbeeHint()`.
+
+    Fault to prove it: push `web.radios.in_use` and
+    `web.radios.thread_option_zigbee` for the same option unconditionally
+    instead of the single `web.radios.thread_zigbee_took_over`."""
+    client, _, _ = api
+    page = _without_comments((await client.get("/")).text)
+    thread_option = next(
+        attributes
+        for tag, attributes, ancestors in _served_elements(page)
+        if tag == "option"
+        and any(
+            ancestor.get("x-for") == "option in radiosThreadOptions()" for _, ancestor in ancestors
+        )
+    )
+    values = _app_state(
+        _BINDINGS_JS
+        + f"state.radios = {json.dumps(RADIOS_READY)};"
+        + "state.radios.serial[0].is_zigbee = true;"
+        "const option = state.radiosThreadOptions().find((o) => o.value === '/dev/serial/by-id/usb-A');"
+        "console.log(JSON.stringify({"
+        f"  label: run({json.dumps(thread_option['x-text'])}, {{ option }}),"
+        "  hint: state.radiosZigbeeHint(),"
+        "}));",
+        translations=_web_strings(),
+    )
+    assert values["label"] == "SONOFF Dongle Plus MG24 · …50c9 · taken over by Zigbee"
+    assert values["hint"].startswith("SONOFF Dongle Plus MG24 · …50c9 is in use for Thread")
+    assert "choose another stick for Zigbee" in values["hint"]
 
 
 @pytest.mark.skipif(NODE is None, reason="node is required for this test")

@@ -2355,10 +2355,14 @@
           <p x-show="settingsError" x-cloak class="banner danger" x-text="settingsError"></p>
         </div>
 
-        <div class="card">
+        <div class="card radios-card">
           <!-- Radios (design "Radios in the Web UI", 2026-09-11, section
                8). Detection is always shown; changing needs a ready
-               sidecar, otherwise the message explains what to run. -->
+               sidecar, otherwise the message explains what to run.
+
+               `radios-card`: a hook for CSS that must reach every select on
+               this card, Thread and Bluetooth included, not only
+               `.radios-zigbee`'s own row - see style.css. -->
           <h2 x-text="t('web.radios.heading')"></h2>
           <p class="hint" x-text="t('web.radios.explanation')"></p>
           <p class="hint" x-show="radiosSidecarMessage()" x-cloak x-text="radiosSidecarMessage()"></p>
@@ -2376,14 +2380,21 @@
                          the Zigbee row below is set up with, which
                          `POST /api/radios` refuses for Thread. Listed and
                          disabled rather than dropped, the way the Zigbee
-                         row lists the Thread stick. -->
+                         row lists the Thread stick. One suffix for the
+                         stick's use, not two - the way `zigbeeRadioOptions()`
+                         (app.js) already reads for the Zigbee row's mirror
+                         case: a stick both in use for Thread AND set up for
+                         Zigbee used to read "... · in use · in use for
+                         Zigbee", two claims that seem to contradict each
+                         other. -->
                     <template x-for="option in radiosThreadOptions()" :key="option.value">
                       <option
                         :value="option.value"
                         :disabled="option.zigbee"
                         x-text="option.label
-                          + (option.inUse ? ' · ' + t('web.radios.in_use') : '')
-                          + (option.zigbee ? ' · ' + t('web.radios.thread_option_zigbee') : '')"
+                          + (option.inUse && option.zigbee ? ' · ' + t('web.radios.thread_zigbee_took_over')
+                              : option.inUse ? ' · ' + t('web.radios.in_use')
+                              : option.zigbee ? ' · ' + t('web.radios.thread_option_zigbee') : '')"
                       ></option>
                     </template>
                   </select>
@@ -2417,6 +2428,11 @@
                   </select>
                 </label>
               </div>
+              <!-- Which stick Zigbee holds and how to free it. Its own line,
+                   the way `zigbeeThreadHint()`'s line is for the Zigbee row:
+                   the option's own suffix is what a narrow native select
+                   cuts off first. -->
+              <p class="hint" x-show="radiosZigbeeHint()" x-cloak x-text="radiosZigbeeHint()"></p>
               <template x-for="option in radiosBluetoothOptions().filter((o) => o.blocked)" :key="'blocked-' + option.value">
                 <!-- Review-Fix Minor #5: `.hint.warn` does not exist in
                      style.css (only `.badge.warn`, `.banner.warn` and

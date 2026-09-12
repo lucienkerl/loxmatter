@@ -3873,6 +3873,24 @@ function app() {
       return options;
     },
 
+    /** The line under the Thread select that says which stick Zigbee holds
+     * and how to free it, or `null` when the list holds no Zigbee stick.
+     *
+     * Mirrors `zigbeeThreadHint()`: the option's own suffix is what a
+     * narrow native select cuts off first (same 375 px measurement), and a
+     * disabled option that gives no reason reads as detection being
+     * broken. `option.label` already carries the stick's name (plus the
+     * serial-id suffix `radiosThreadOptions()` bakes in), so it doubles as
+     * the `{name}` this hint names. */
+    radiosZigbeeHint() {
+      const option = this.radiosThreadOptions().find((candidate) => candidate.zigbee);
+      if (!option) return null;
+      const key = option.inUse
+        ? "web.radios.thread_zigbee_took_over_hint"
+        : "web.radios.thread_zigbee_stick_hint";
+      return t(key, { name: option.label });
+    },
+
     radiosBluetoothOptions() {
       // Same reasoning as `radiosThreadOptions()` above.
       if (this.radios && this.radios.current === null) {
@@ -4349,9 +4367,17 @@ function app() {
         // One suffix for the stick's use, not two: a stick set up for
         // Zigbee that Thread was moved onto afterwards read "in use · in
         // use for Thread", two claims that seem to contradict each other.
+        // Also skip the "in use" suffix while the draft still points at the
+        // configured stick: on a narrow native select the marker is what
+        // gets cut off the CLOSED select's text, and "in Verwendung" was
+        // clipped to "in Verwendun". Dropping it there costs nothing - the
+        // configured stick being selected already says it is in use - and
+        // it returns in the open list as soon as the draft points
+        // elsewhere.
         if (stick.is_thread && stick.path === configured) parts.push(t("web.radios.zigbee_thread_took_over"));
         else if (stick.is_thread) parts.push(t("web.radios.zigbee_is_thread_stick"));
-        else if (stick.path === configured) parts.push(t("web.radios.in_use"));
+        else if (stick.path === configured && this.zigbeeDraft.path !== configured)
+          parts.push(t("web.radios.in_use"));
         if (unrecognised) parts.push(t("web.radios.zigbee_option_unrecognised"));
         options.push({
           value: stick.path,
