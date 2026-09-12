@@ -524,10 +524,10 @@ api.errors.zigbee_unknown_device:
   # the bridge validates what it can see. Without it a typo becomes a zigpy
   # startup failure minutes later, with a message about a serial port.
   en: "This USB device is not among the sticks the bridge can see. Rescan, and pick one from the list."
-  de: "Dieses USB-Gerät ist keiner der Sticks, die die Brücke sehen kann. Lies neu ein und wähle einen aus der Liste."
+  de: "Dieses USB-Gerät ist keiner der Sticks, die die Brücke sehen kann. Lesen Sie neu ein und wählen Sie einen aus der Liste."
 api.errors.zigbee_not_configured:
   en: "No Zigbee stick is set up in this installation. Pick one under Settings first."
-  de: "In dieser Installation ist kein Zigbee-Stick eingerichtet. Wähle zuerst unter Einstellungen einen aus."
+  de: "In dieser Installation ist kein Zigbee-Stick eingerichtet. Wählen Sie zuerst unter Einstellungen einen aus."
 
 # The errors of the pairing routes (design 3.4). Each one says what the
 # user's next move is, because each sends them somewhere different: to the
@@ -547,19 +547,19 @@ api.zigbee.radio_changing:
   # up" sentence: the user has just picked a stick, and the pairing tab is
   # only on screen because one is set up.
   en: "The Zigbee radio is being changed. Wait a moment, then reload the page."
-  de: "Das Zigbee-Funkmodul wird gerade gewechselt. Warte einen Moment und lade die Seite dann neu."
+  de: "Das Zigbee-Funkmodul wird gerade gewechselt. Warten Sie einen Moment und laden Sie die Seite dann neu."
 api.zigbee.unknown_device:
   # A row that is no longer there: the device was removed from another tab,
   # or the radio was swapped and took every row with it. Reloading is the
   # whole fix, and saying so beats a bare "not found".
   en: "This device is no longer in the pairing list. Reload the page to see what the bridge currently knows."
-  de: "Dieses Gerät steht nicht mehr in der Kopplungsliste. Lade die Seite neu, um zu sehen, was die Brücke gerade kennt."
+  de: "Dieses Gerät steht nicht mehr in der Kopplungsliste. Laden Sie die Seite neu, um zu sehen, was die Brücke gerade kennt."
 api.zigbee.not_ready_yet:
   # A save arriving for a row that has since gone back to interviewing.
   # Registering it then would store whatever half an interview produced -
   # a device tile with no signals and no hint why.
   en: "This device is not ready yet — the bridge is still reading its details. Give it a moment, then set the name again."
-  de: "Dieses Gerät ist noch nicht bereit – die Brücke liest noch seine Angaben. Warte einen Moment und vergib den Namen dann erneut."
+  de: "Dieses Gerät ist noch nicht bereit – die Brücke liest noch seine Angaben. Warten Sie einen Moment und vergeben Sie den Namen dann erneut."
 
 # The five messages of `ThreadDatasetUnavailableError` (matter/otbr.py).
 # NONE of them may contain the dataset itself - it carries the network key
@@ -2263,7 +2263,7 @@ web.radios.sidecar_refresh:
   de: "Zum Ändern der Funkgeräte braucht es einen neueren Updater-Dienst. Einmal auf dem Host ausführen: cd {path} && docker compose pull loxmatter-updater && docker compose up -d --no-deps loxmatter-updater"
 web.radios.sidecar_refresh_unknown_path:
   en: "Changing radios needs a newer updater service. From your loxmatter checkout's deploy/testhost directory, run once: docker compose pull loxmatter-updater && docker compose up -d --no-deps loxmatter-updater"
-  de: "Zum Ändern der Funkgeräte braucht es einen neueren Updater-Dienst. Im Verzeichnis deploy/testhost deines loxmatter-Checkouts einmal ausführen: docker compose pull loxmatter-updater && docker compose up -d --no-deps loxmatter-updater"
+  de: "Zum Ändern der Funkgeräte braucht es einen neueren Updater-Dienst. Im Verzeichnis deploy/testhost Ihres loxmatter-Checkouts einmal ausführen: docker compose pull loxmatter-updater && docker compose up -d --no-deps loxmatter-updater"
 web.radios.reason.request_malformed:
   en: "the request was malformed"
   de: "der Auftrag war fehlerhaft"

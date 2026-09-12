@@ -26,6 +26,8 @@ to prove the fallback case.
 
 from __future__ import annotations
 
+import re
+
 import pytest
 
 from loxmatter import i18n
@@ -219,3 +221,31 @@ def test_a_message_is_translated_when_it_is_read():
     i18n.set_language("de")
     assert message.text() == "Hallo, Ada!"
 
+
+# The informal German address - "du" and its forms, and the imperatives the
+# Zigbee strings used before they were aligned with the rest of the radios
+# card. A word list, so it can only find what it names; it names every form
+# these strings have actually carried.
+_INFORMAL_GERMAN = re.compile(
+    r"\b(du|dich|dir|dein\w*|Lies|Wähle|Warte|Lade|Schalte|Vergib|Prüfe|Stecke)\b"
+)
+
+
+def test_the_zigbee_and_radios_sentences_say_sie_like_the_rest_of_the_card():
+    """The radios card addresses the user formally, with `Sie` (see
+    `web.radios.zigbee_device_missing` or `web.radios.job_abandoned`). The
+    Zigbee refusals it shows - and the pairing tab's, written in the same
+    pass - used the informal `du`, so one card spoke to the same person in
+    two registers.
+
+    Fault to prove it: put "Schalte Thread ab" back into
+    `api.errors.zigbee_is_thread_stick`."""
+    prefixes = ("web.radios.", "api.radios.", "api.errors.zigbee_", "api.zigbee.")
+    informal = {
+        key: i18n._STRINGS[key]["de"]
+        for key in i18n.strings_with_prefix("")
+        if key.startswith(prefixes)
+        and "de" in i18n._STRINGS[key]
+        and _INFORMAL_GERMAN.search(i18n._STRINGS[key]["de"])
+    }
+    assert informal == {}
