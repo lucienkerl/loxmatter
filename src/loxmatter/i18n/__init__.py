@@ -28,6 +28,7 @@ process sees the new language immediately."""
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -82,6 +83,40 @@ def t(key: str, **values: Any) -> str:
     entry = _STRINGS[key]
     template = entry.get(_current_language, entry["en"])
     return template.format(**values)
+
+
+@dataclass(frozen=True)
+class Message:
+    """A sentence that is translated when it is READ, not when it is made.
+
+    `t()` answers in the language that is current at the moment it is
+    called. That is right for a response built and sent in one go, and
+    wrong for a sentence that is STORED and shown later: the radios card
+    polls a Zigbee connection failure for as long as the supervisor keeps
+    retrying, and a failure resolved at failure time kept answering in the
+    language the user had just switched away from - next to a wrapper the
+    browser was already rendering in the new one, on the same line.
+
+    So whatever keeps a sentence around keeps this instead, and whatever
+    hands it to a person calls `text()` right then. `values` are the
+    placeholders, already strings: a stringified exception is not
+    translatable, and freezing it is exactly right.
+
+    `__str__` resolves too, so a log line (`"%s", message`) reads as a
+    sentence, in the language of the moment it was logged."""
+
+    key: str
+    values: tuple[tuple[str, str], ...] = ()
+
+    @classmethod
+    def of(cls, key: str, **values: object) -> Message:
+        return cls(key, tuple(sorted((name, str(value)) for name, value in values.items())))
+
+    def text(self) -> str:
+        return t(self.key, **dict(self.values))
+
+    def __str__(self) -> str:
+        return self.text()
 
 
 def raw_template(key: str) -> str:

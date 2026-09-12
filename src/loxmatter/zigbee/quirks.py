@@ -37,6 +37,7 @@ never pays any of this."""
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import time
 from collections.abc import Callable
@@ -88,7 +89,21 @@ async def ensure_quirks_loaded(*, setup: Callable[[], None] = _default_setup) ->
         if _duration_seconds is not None:
             return _duration_seconds
         started = time.monotonic()
-        await asyncio.get_running_loop().run_in_executor(None, setup)
+        running = asyncio.get_running_loop().run_in_executor(None, setup)
+        try:
+            # Shielded, and waited out when the caller is cancelled. A radio
+            # change cancels the supervisor wherever it is, this `await`
+            # included, and the executor thread cannot be cancelled with it:
+            # releasing the lock here while `setup` still ran would let the
+            # next attempt start a SECOND `zhaquirks.setup()` beside the
+            # first - both filling one process-wide registry at once.
+            await asyncio.shield(running)
+        except asyncio.CancelledError:
+            with contextlib.suppress(Exception):
+                await running
+            if running.done() and not running.cancelled() and running.exception() is None:
+                _duration_seconds = time.monotonic() - started
+            raise
         _duration_seconds = time.monotonic() - started
         logger.info("zigbee quirks registry loaded in %.1f s", _duration_seconds)
         return _duration_seconds

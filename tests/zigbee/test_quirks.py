@@ -105,3 +105,40 @@ async def test_the_warm_up_runs_off_the_event_loop_thread():
     await ensure_quirks_loaded(setup=lambda: seen.append(threading.get_ident()))
 
     assert seen and seen[0] != loop_thread
+
+
+async def test_a_cancelled_warm_up_is_waited_out_and_never_started_twice(monkeypatch):
+    """A radio change cancels the supervisor wherever it is, and on a first
+    configuration that can be inside this warm-up. The executor thread
+    cannot be cancelled with it: a caller that let go of the lock at once
+    let the next attempt start a second `zhaquirks.setup()` beside the
+    first, both filling one process-wide registry.
+
+    Fault to prove it: `await` the executor future directly instead of
+    through `asyncio.shield` plus the wait in the `except`. The second
+    caller then runs `setup` again while the first is still inside it."""
+    # The lock binds to the first loop that contends for it, and this test
+    # contends; a fresh one keeps an earlier test's loop out of it.
+    monkeypatch.setattr(quirks_module, "_lock", asyncio.Lock())
+    calls: list[int] = []
+    inside = threading.Event()
+    release = threading.Event()
+
+    def setup() -> None:
+        calls.append(1)
+        inside.set()
+        release.wait(5)
+
+    first = asyncio.ensure_future(ensure_quirks_loaded(setup=setup))
+    while not inside.is_set():
+        await asyncio.sleep(0.01)
+    first.cancel()
+    second = asyncio.ensure_future(ensure_quirks_loaded(setup=setup))
+    await asyncio.sleep(0.05)
+    release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await first
+    await second
+
+    assert calls == [1]
+    assert quirks_loaded() is True

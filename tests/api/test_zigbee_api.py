@@ -748,11 +748,13 @@ async def test_the_progress_of_a_running_attempt_is_readable(api):
 
     # And the failing case says how often, and why - the supervisor never
     # gives up, so the card must be able to say so.
-    harness.built[0].set_progress("failed", attempts=4, error="the stick is not there")
+    harness.built[0].set_progress(
+        "failed", attempts=4, error=i18n.Message.of("api.errors.zigbee_stick_missing")
+    )
     body = (await client.get("/api/zigbee/radio")).json()
     assert body["progress"]["state"] == "failed"
     assert body["progress"]["attempts"] == 4
-    assert body["progress"]["error"] == "the stick is not there"
+    assert body["progress"]["error"] == i18n.t("api.errors.zigbee_stick_missing")
 
 
 async def test_a_configured_stick_that_is_gone_is_reported_as_missing(api, tmp_path):
@@ -1919,6 +1921,38 @@ async def test_stop_after_the_link_was_lost_is_not_an_error(pairing):
 
     assert stopped.status_code == 200, stopped.text
     assert stopped.json() == {"permit_until": None}
+
+
+async def test_a_failure_message_follows_a_language_switch(pairing, monkeypatch):
+    """Fail in one language, switch, read in the other.
+
+    The card shows a failure for as long as the supervisor retries. Its
+    sentence used to be translated when the link was lost and stored as
+    text, so after a switch to English the line kept its German sentence -
+    inside the English "(attempt N - the bridge keeps trying)" wrapper the
+    browser renders. It is translated when this route answers now.
+
+    Fault to prove it: store `i18n.t("api.errors.zigbee_not_connected")` in
+    `_handle_connection_lost` instead of the message."""
+    monkeypatch.delenv("LOXMATTER_LANG", raising=False)
+    client, harness = pairing
+    harness.store.locale.set_language("de")
+    # A request in German first, so the process language really is German
+    # at the moment the link goes.
+    assert (await client.get("/api/zigbee/radio")).status_code == 200
+    harness.app.listener_event("connection_lost", OSError("link lost"))
+    await asyncio.sleep(0)
+    german = (await client.get("/api/zigbee/radio")).json()["progress"]
+
+    harness.store.locale.set_language("en")
+    english = (await client.get("/api/zigbee/radio")).json()["progress"]
+
+    assert german["state"] == english["state"] == "failed"
+    i18n.set_language("de")
+    assert german["error"] == i18n.t("api.errors.zigbee_not_connected")
+    i18n.set_language("en")
+    assert english["error"] == i18n.t("api.errors.zigbee_not_connected")
+    assert english["error"] != german["error"]
 
 
 async def test_a_window_that_cannot_be_opened_says_so_in_one_clean_sentence(pairing):

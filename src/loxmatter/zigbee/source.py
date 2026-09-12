@@ -117,10 +117,13 @@ __all__ = [
 class ZigbeeUnavailableError(RuntimeError):
     """The radio could not be brought up.
 
-    Carries an ALREADY TRANSLATED message: `api/zigbee.py` hands it straight
-    to the browser, and `progress().error` shows the same words on the
-    radios card. Deliberately not a `DeviceUnreachableError` - no device was
-    asked; there is no radio to ask one with."""
+    Carries a translated message, resolved when it is raised: the one
+    reader of this exception is the supervisor's log line, right then.
+    `progress().error` - the copy the radios card polls for as long as the
+    supervisor keeps retrying - is kept as an `i18n.Message` instead and
+    resolved when `GET /api/zigbee/radio` answers, so a language switch
+    reaches it at once. Deliberately not a `DeviceUnreachableError` - no
+    device was asked; there is no radio to ask one with."""
 
 
 # --------------------------------------------------------------- constants --
@@ -281,8 +284,17 @@ class ConnectionProgress:
     Read by `GET /api/zigbee/radio` (Task 11) so the radios card can show
     what is happening while the supervisor works its 1 s -> 60 s backoff.
     `attempts` counts FAILED attempts, so the card can say "still trying, 4
-    attempts" rather than implying a first try that is about to succeed, and
-    `error` is already translated - it is the sentence the user reads.
+    attempts" rather than implying a first try that is about to succeed.
+
+    `error` is the sentence of the most recent failure, as an
+    `i18n.Message` and NOT as text: the card polls it for as long as the
+    supervisor keeps retrying, and a sentence translated when the attempt
+    failed stayed in the language of that moment after the user switched -
+    next to the browser's own wrapper around it, already in the new one.
+    `as_json()` translates it when the route answers. It is kept through
+    the retry that follows a failure (`attempts > 0` in a working state),
+    so the card can say why it is trying again, and dropped once the stick
+    connects or a new setting starts from scratch.
 
     **The card keeps polling while the state is `applying`,
     `loading_quirks` or `opening_radio`** - three, not the plan's two. See
@@ -291,8 +303,17 @@ class ConnectionProgress:
 
     state: ConnectionState
     attempts: int
-    error: str | None
+    error: i18n.Message | None
     changed_at: str
+
+    def as_json(self) -> dict[str, object]:
+        """The body the radios card reads, with `error` translated NOW."""
+        return {
+            "state": self.state,
+            "attempts": self.attempts,
+            "error": None if self.error is None else self.error.text(),
+            "changed_at": self.changed_at,
+        }
 
 
 PairingState = Literal["joined", "interviewing", "ready", "failed"]
@@ -597,7 +618,7 @@ class ZigbeeSource:
         self,
         state: ConnectionState,
         *,
-        error: str | None = None,
+        error: i18n.Message | None = None,
         attempts: int | None = None,
         count_attempt: bool = False,
     ) -> None:
@@ -652,11 +673,49 @@ class ZigbeeSource:
         application.add_listener(listener)
         return application
 
-    def _startup_message(self, exc: BaseException) -> str:
+    async def _new_application_even_if_cancelled(self) -> Any:
+        """`_new_application()`, with an application that finishes being
+        built while its caller is cancelled shut down rather than dropped.
+
+        **Why cancellation reaches here at all.** The radios card lets the
+        user change the stick while the supervisor is retrying a failing
+        one, and `ZigbeeRuntime._release` cancels that supervisor wherever
+        it is - including inside this `await`. zigpy's
+        `ControllerApplication.new(start_radio=False)` opens the network
+        database before it returns, so an application abandoned mid-build
+        kept that database open behind the back of the source being built
+        next, on the same file."""
+        build = asyncio.ensure_future(self._new_application())
+        try:
+            return await asyncio.shield(build)
+        except asyncio.CancelledError:
+            try:
+                application = await build
+            except Exception:
+                logger.debug(
+                    "a Zigbee application cancelled mid-build failed anyway", exc_info=True
+                )
+            else:
+                await _shutdown_even_if_cancelled(application)
+            raise
+
+    def _startup_message(self, exc: BaseException) -> i18n.Message:
         for matches, key in _STARTUP_MESSAGES:
             if matches(exc):
-                return i18n.t(key)
-        return i18n.t("api.errors.zigbee_radio_failed", exc=_describe(exc))
+                return i18n.Message.of(key)
+        return i18n.Message.of("api.errors.zigbee_radio_failed", exc=_describe(exc))
+
+    def _retry_error(self) -> i18n.Message | None:
+        """The previous attempt's reason, for as long as this is a retry.
+
+        A retry (`attempts > 0`) keeps it, so the card can say "trying
+        again - the previous attempt failed because ..." instead of a reason
+        that vanishes for the length of every attempt and comes back when
+        that one fails too. A first attempt has no previous one to explain;
+        the reconnect after a lost link (`attempts` is still 0 there) starts
+        clean as well, because "the link is down" is exactly what it is
+        busy fixing."""
+        return self._progress.error if self._progress.attempts > 0 else None
 
     async def connect(self) -> None:
         """Opens the radio, from scratch, every time.
@@ -680,30 +739,30 @@ class ZigbeeSource:
         application is leaked with its non-daemon bellows serial thread
         still running. `cli._run` therefore starts the supervisor and
         connects nothing itself."""
-        self._set_progress("loading_quirks")
+        self._set_progress("loading_quirks", error=self._retry_error())
         try:
             if self._app is not None:
                 app, self._app = self._app, None
                 self._connected = False
-                await app.shutdown(db=True)
+                await _shutdown_even_if_cancelled(app)
             await ensure_quirks_loaded()
-            self._set_progress("opening_radio")
-            app = await self._new_application()
+            self._set_progress("opening_radio", error=self._retry_error())
+            app = await self._new_application_even_if_cancelled()
             try:
                 await app.startup(auto_form=True)
             except BaseException:
                 # Never keep an object whose startup() failed - see
                 # `test_a_failed_startup_is_shut_down_and_not_kept`.
-                await app.shutdown(db=True)
+                await _shutdown_even_if_cancelled(app)
                 raise
         except Exception as exc:
             # `attempts` counts FAILED attempts, so the card can say "still
             # trying, 4 attempts" rather than implying a first try that is
-            # about to succeed. The message is already translated: it is the
-            # one the user reads, and `api/zigbee.py` hands it straight out.
+            # about to succeed. `progress().error` keeps the message itself,
+            # not its text - see `ConnectionProgress`.
             message = self._startup_message(exc)
             self._set_progress("failed", error=message, count_attempt=True)
-            raise ZigbeeUnavailableError(message) from exc
+            raise ZigbeeUnavailableError(message.text()) from exc
         self._app = app
         self._connected = True
         self._link_lost.clear()
@@ -797,7 +856,7 @@ class ZigbeeSource:
         # device to appear after the reconnect is reported as a join that
         # nobody permitted.
         self._close_window()
-        self._set_progress("failed", error=i18n.t("api.errors.zigbee_not_connected"))
+        self._set_progress("failed", error=i18n.Message.of("api.errors.zigbee_not_connected"))
         if self._on_connection_change is not None:
             self._spawn(self._on_connection_change(False))
         if self._availability_checker is not None:
@@ -1493,6 +1552,27 @@ class ZigbeeSource:
         row = self._pairing.get(address)
         if row is not None:
             self._pairing[address] = replace(row, state="interviewing", changed_at=now_iso())
+
+
+async def _shutdown_even_if_cancelled(application: Any) -> None:
+    """`application.shutdown(db=True)`, carried to its end even when the
+    task awaiting it is cancelled halfway, and the cancellation re-raised
+    afterwards.
+
+    A shutdown interrupted halfway is the worst outcome of a radio change:
+    the application is already detached from the source, so nothing would
+    ever call it again, and the serial port it holds stays open - for the
+    very stick the user may pick again a moment later, which then fails as
+    busy. `ZigbeeRuntime._release` cancels the supervisor exactly once and
+    waits for it, so finishing the shutdown first costs that wait and
+    nothing else."""
+    shutdown = asyncio.ensure_future(application.shutdown(db=True))
+    try:
+        await asyncio.shield(shutdown)
+    except asyncio.CancelledError:
+        with contextlib.suppress(Exception):
+            await shutdown
+        raise
 
 
 def _describe(exc: BaseException | None) -> str:

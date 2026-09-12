@@ -469,9 +469,12 @@ api.errors.signal_belongs_to_removed_device:
 # different_sentences` checks that they stay five different sentences in
 # both languages.
 #
-# `ZigbeeSource` hands these out ALREADY TRANSLATED: they travel inside
-# `ZigbeeUnavailableError` and inside `progress().error`, which the radios
-# card shows verbatim.
+# `ZigbeeSource` translates these at two different moments. Inside
+# `ZigbeeUnavailableError` they are text at once - the supervisor logs it
+# right then. Inside `progress().error` they stay an `i18n.Message` and are
+# translated when `GET /api/zigbee/radio` answers, because the radios card
+# keeps showing that one for as long as the supervisor retries, and a
+# language switch has to reach it.
 api.errors.zigbee_stick_missing:
   en: "The Zigbee stick is no longer there. Check under Settings which stick is selected, and pick it again."
   de: "Der Zigbee-Stick ist nicht mehr da. Prüfen Sie in den Einstellungen, welcher Stick ausgewählt ist, und wählen Sie ihn erneut."

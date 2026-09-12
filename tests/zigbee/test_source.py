@@ -293,9 +293,10 @@ async def test_each_startup_failure_gets_its_own_words(build, raised, key) -> No
         await harness.source.connect()
 
     assert str(caught.value) == i18n.t(key)
-    # The card reads the same words out of `progress()`, already translated.
+    # The card reads the same words out of `progress()` - kept as the
+    # message and translated when the route answers.
     assert harness.source.progress().state == "failed"
-    assert harness.source.progress().error == i18n.t(key)
+    assert harness.source.progress().as_json()["error"] == i18n.t(key)
 
 
 def test_the_four_startup_messages_are_four_different_sentences() -> None:
@@ -492,6 +493,165 @@ async def test_progress_counts_failed_attempts_and_clears_them_on_success(build)
 
     await harness.source.disconnect()
     assert harness.source.progress().state == "idle"
+
+
+async def test_a_retry_carries_the_previous_reason_and_a_success_drops_it(build) -> None:
+    """The radios card's retry line says WHY it is trying again. Each retry
+    used to start with `error: None`, so the reason vanished for the length
+    of every attempt and came back when that attempt failed too; the card
+    patched over it with a copy of its own, which then outlived a reload
+    and a language switch. The source carries it instead.
+
+    It is carried only through a RETRY. A first attempt has nothing to
+    explain, and the reconnect after a lost link (`attempts` still 0)
+    starts clean because "the link is down" is what it is fixing.
+
+    Fault to prove it: set the two working states with `error=None`
+    (the retry loses its reason), or carry the error whatever `attempts`
+    is (the reconnect after a lost link keeps a stale one)."""
+    seen: list[dict[str, object]] = []
+
+    class Observed(FakeApplication):
+        async def startup(self, *, auto_form: bool = False) -> None:
+            seen.append(harness.source.progress().as_json())
+            await super().startup(auto_form=auto_form)
+
+    first_ok = Observed(devices=[colour_lamp()])
+    harness = build(
+        FakeApplication(startup_error=TimeoutError()),
+        first_ok,
+        Observed(devices=[colour_lamp()]),
+    )
+
+    with pytest.raises(ZigbeeUnavailableError):
+        await harness.source.connect()
+    await harness.source.connect()
+    assert seen[0]["state"] == "opening_radio"
+    assert seen[0]["attempts"] == 1
+    assert seen[0]["error"] == i18n.t("api.errors.zigbee_not_a_coordinator")
+    assert harness.source.progress().error is None
+
+    first_ok.fire_connection_lost()
+    assert harness.source.progress().as_json()["error"] == i18n.t("api.errors.zigbee_not_connected")
+    await harness.source.connect()
+    assert (seen[1]["attempts"], seen[1]["error"]) == (0, None)
+
+    await harness.source.disconnect()
+
+
+async def test_a_failure_is_translated_when_it_is_read_not_when_it_happened(build) -> None:
+    """The radios card shows a failure for as long as the supervisor
+    retries - minutes, or forever for an unplugged stick. A sentence
+    translated when the attempt failed stayed in that language after the
+    user switched, beside the attempt counter the browser already rendered
+    in the new one: one line, two languages.
+
+    Fault to prove it: store `i18n.t(key)` in `progress().error` instead of
+    the message (in `_startup_message` or `_handle_connection_lost`)."""
+    harness = build(
+        FakeApplication(startup_error=FileNotFoundError()),
+        FakeApplication(devices=[colour_lamp()]),
+    )
+
+    i18n.set_language("de")
+    with pytest.raises(ZigbeeUnavailableError):
+        await harness.source.connect()
+    i18n.set_language("en")
+    assert harness.source.progress().as_json()["error"] == i18n.t("api.errors.zigbee_stick_missing")
+
+    await harness.source.connect()
+    i18n.set_language("de")
+    harness.applications[1].fire_connection_lost()
+    i18n.set_language("en")
+    assert harness.source.progress().as_json()["error"] == i18n.t("api.errors.zigbee_not_connected")
+    await harness.source.disconnect()
+
+
+async def test_a_connect_cancelled_mid_build_shuts_the_half_built_application_down(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The radios card lets the user change the stick while the supervisor
+    retries a failing one, and the change cancels the supervisor wherever it
+    is. zigpy's `ControllerApplication.new(start_radio=False)` has opened
+    the network database by the time it returns, so an application that
+    finished building after its caller was cancelled was dropped with that
+    database still open - on the same file the next source opens.
+
+    Fault to prove it: await `self._new_application()` directly in
+    `connect()`. The application is then never shut down."""
+
+    async def no_warm_up() -> float:
+        return 0.0
+
+    monkeypatch.setattr(source_module, "ensure_quirks_loaded", no_warm_up)
+    application = FakeApplication()
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def slow_factory(config: dict[str, Any]) -> FakeApplication:
+        entered.set()
+        await release.wait()
+        return application
+
+    source = ZigbeeSource(
+        path="/dev/serial/by-id/usb-SONOFF_Zigbee_3.0_USB_Dongle_Plus_V2-if00",
+        fingerprint=FINGERPRINT,
+        database=tmp_path / "zigbee.sqlite",
+        application_factory=slow_factory,
+    )
+    attempt = asyncio.ensure_future(source.connect())
+    await entered.wait()
+    attempt.cancel()
+    await asyncio.sleep(0)
+    release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await attempt
+
+    assert application.shutdown_calls == [True]
+    assert application.started is False
+
+
+async def test_a_connect_cancelled_while_releasing_the_old_application_finishes_releasing_it(
+    build,
+) -> None:
+    """The reconnect after a lost link shuts the previous application down
+    first - and a radio change arriving at that moment cancels it halfway.
+    The application is already detached from the source by then, so nothing
+    would ever call `shutdown()` on it again, and the serial port it holds
+    stays open for the stick the user may pick again a moment later.
+
+    Fault to prove it: `await app.shutdown(db=True)` directly in
+    `connect()`. The shutdown is then abandoned at its first `await`."""
+
+    class SlowShutdown(FakeApplication):
+        def __init__(self, **fields: Any) -> None:
+            super().__init__(**fields)
+            self.entered = asyncio.Event()
+            self.release = asyncio.Event()
+            self.finished = False
+
+        async def shutdown(self, *, db: bool = True) -> None:
+            self.shutdown_calls.append(db)
+            self.entered.set()
+            await self.release.wait()
+            self.started = False
+            self.finished = True
+
+    old = SlowShutdown(devices=[colour_lamp()])
+    harness = build(old, FakeApplication())
+    await harness.source.connect()
+    old.fire_connection_lost()
+
+    attempt = asyncio.ensure_future(harness.source.connect())
+    await old.entered.wait()
+    attempt.cancel()
+    await asyncio.sleep(0)
+    old.release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await attempt
+
+    assert old.finished is True
+    assert harness.factory.calls == 1, "nothing new was opened behind the cancellation"
 
 
 # ------------------------------------------------------------ configuration --

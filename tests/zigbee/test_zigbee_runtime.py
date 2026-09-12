@@ -32,11 +32,13 @@ from typing import Any
 
 import pytest
 
+from loxmatter import i18n
 from loxmatter.matter.models import NodeSnapshot
 from loxmatter.model.store import Store
 from loxmatter.model.zigbee_settings_store import ZigbeeRadioSettings
 from loxmatter.sources import SourceNotConfiguredError, Sources
 from loxmatter.zigbee import runtime as runtime_module
+from loxmatter.zigbee import source as source_module
 from loxmatter.zigbee.runtime import ZigbeeRuntime, build_zigbee_source
 from loxmatter.zigbee.source import ZigbeeSource
 
@@ -363,11 +365,9 @@ async def test_the_progress_of_a_running_attempt_is_readable(store):
 
     source.set_progress("loading_quirks")
     assert holder.progress().state == "loading_quirks"
-    source.set_progress("failed", attempts=4, error="the stick is not there")
-    assert (holder.progress().attempts, holder.progress().error) == (
-        4,
-        "the stick is not there",
-    )
+    failure = i18n.Message.of("api.errors.zigbee_stick_missing")
+    source.set_progress("failed", attempts=4, error=failure)
+    assert (holder.progress().attempts, holder.progress().error) == (4, failure)
 
 
 async def test_a_build_that_raises_does_not_kill_the_bridge(store):
@@ -677,6 +677,96 @@ async def test_a_cancelled_apply_does_not_leave_progress_stuck_on_applying(store
         await task
 
     assert holder.progress().state == "idle"
+
+
+async def test_a_change_mid_retry_releases_the_stick_the_attempt_was_opening(
+    store, tmp_path, monkeypatch
+):
+    """The radios card lets the user change the Zigbee stick while the
+    supervisor is retrying a failing one - that is exactly when the failure
+    text tells them to - so `apply()` has to be safe in the middle of an
+    attempt, not only between attempts.
+
+    Driven with the REAL `ZigbeeSource` (on a fake radio) and the REAL
+    supervisor, because what can go wrong is inside `connect()`: the change
+    cancels the supervisor while `startup()` is waiting on a silent port.
+    Afterwards the old application has been shut down exactly once, the new
+    source is the live one, and the old one reads `idle`.
+
+    Fault to prove it: remove the `shutdown` in `connect()`'s
+    `except BaseException` around `startup()`. The silent port's
+    application is then left open behind the new source."""
+    from fakes import FakeApplication
+
+    from loxmatter.radios.fingerprints import Fingerprint
+
+    async def no_warm_up() -> float:
+        return 0.0
+
+    monkeypatch.setattr(source_module, "ensure_quirks_loaded", no_warm_up)
+
+    class SilentPort(FakeApplication):
+        async def startup(self, *, auto_form: bool = False) -> None:
+            self.startup_calls.append(auto_form)
+            await asyncio.Event().wait()
+
+    silent = SilentPort()
+    answering = FakeApplication()
+    applications = {ITEAD: silent, MG24: answering}
+    built: list[ZigbeeSource] = []
+
+    async def build(settings: ZigbeeRadioSettings) -> Any:
+        if settings.path is None:
+            return None
+        application = applications[settings.path]
+
+        async def factory(config: dict[str, Any]) -> Any:
+            return application
+
+        source = ZigbeeSource(
+            path=settings.path,
+            fingerprint=Fingerprint(
+                name="", radio_type="ezsp", baudrate=115200, flow_control="software"
+            ),
+            database=tmp_path / "zigbee.sqlite",
+            application_factory=factory,
+        )
+        built.append(source)
+        return source
+
+    class _Runtime:
+        async def seed_from_snapshot(self, snapshots: Any) -> None:
+            return None
+
+        async def resend_all(self) -> int:
+            return 0
+
+    sources = Sources([_Matter()])  # type: ignore[list-item]
+    holder = ZigbeeRuntime(store, _Runtime(), sources, build_source=build)  # type: ignore[arg-type]
+    try:
+        holder.apply(_settings(ITEAD))
+        await holder.wait_for_apply()
+        for _ in range(50):
+            if silent.startup_calls:
+                break
+            await asyncio.sleep(0)
+        assert built[0].progress().state == "opening_radio"
+
+        holder.apply(_settings(MG24))
+        await holder.wait_for_apply()
+        for _ in range(50):
+            if answering.started:
+                break
+            await asyncio.sleep(0)
+
+        assert silent.shutdown_calls == [True]
+        assert holder.current() is built[1]
+        assert built[0].progress().state == "idle"
+        assert answering.started is True
+    finally:
+        await holder.stop()
+        for source in built:
+            await source.disconnect()
 
 
 async def test_build_zigbee_source_builds_nothing_without_a_path(store, monkeypatch):

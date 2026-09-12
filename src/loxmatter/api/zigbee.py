@@ -350,7 +350,10 @@ def build_zigbee_router(
             # stick as ZNP at 38400.
             "configured_radio_type": stored.radio_type,
             "configured_baudrate": stored.baudrate,
-            "progress": asdict(zigbee_runtime.progress()),
+            # Translated here, per answer, and not when the attempt failed:
+            # the card polls this for as long as the supervisor retries, and
+            # a language switch must reach it on the next poll.
+            "progress": zigbee_runtime.progress().as_json(),
         }
 
     @router.put("/zigbee/radio", status_code=202)
@@ -383,7 +386,7 @@ def build_zigbee_router(
         # again from `GET`, is what makes the fast answer honest rather
         # than merely fast.
         zigbee_runtime.apply(settings)
-        return {"progress": asdict(zigbee_runtime.progress())}
+        return {"progress": zigbee_runtime.progress().as_json()}
 
     # ------------------------------------------------------------- pairing --
 

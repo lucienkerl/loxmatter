@@ -202,3 +202,20 @@ def test_every_category_has_an_api_categories_key_in_both_languages(category):
     translations = i18n._STRINGS.get(key, {})
     assert "en" in translations, f"{key} is missing an 'en' entry"
     assert "de" in translations, f"{key} is missing a 'de' entry"
+
+
+def test_a_message_is_translated_when_it_is_read():
+    """`i18n.Message` exists for a sentence that is stored and shown later
+    - the Zigbee failure the radios card polls for as long as the
+    supervisor retries. Made in one language, read in the other, it must
+    answer in the language of the READ.
+
+    Fault to prove it: resolve the text in `Message.of` and keep it."""
+    i18n.set_language("de")
+    message = i18n.Message.of("test.greeting", name="Ada")
+    i18n.set_language("en")
+    assert message.text() == "Hello, Ada!"
+    assert str(message) == "Hello, Ada!"
+    i18n.set_language("de")
+    assert message.text() == "Hallo, Ada!"
+
