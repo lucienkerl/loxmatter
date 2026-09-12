@@ -1992,7 +1992,7 @@
                even without a sidecar, since it explains why the check
                itself has nothing to say. -->
           <p class="hint" x-show="!updateRunning() && updateStatus?.updater_present && updateAvailable && !updateAvailable.target && !updateAvailable.error"
-             x-cloak x-text="t('web.system.update_up_to_date', { checked_at: updateAvailable.checked_at })"></p>
+             x-cloak x-text="t('web.system.update_up_to_date', { checked_at: formatTimestamp(updateAvailable.checked_at) })"></p>
           <p class="hint" x-show="!updateRunning() && updateAvailable?.error" x-cloak
              x-text="updateAvailable.error"></p>
 
