@@ -454,6 +454,50 @@ api.errors.signal_belongs_to_removed_device:
   en: "signal {signal_key!r} belongs to device {device_id}, which was removed"
   de: "Signal {signal_key!r} gehoert zu Geraet {device_id}, das entfernt wurde"
 
+# The ways a Zigbee radio can fail to come up (design 2026-09-12, section
+# 4.6). Each one names the NEXT THING TO DO, because each sends the user
+# somewhere different - to the radios card, to the Compose stack, to their
+# second loxmatter instance, or to the firmware on the stick. One generic
+# "connection failed" would send them nowhere, which is why these are five
+# keys and not one, and why `test_the_four_startup_messages_are_four_
+# different_sentences` checks that they stay five different sentences in
+# both languages.
+#
+# `ZigbeeSource` hands these out ALREADY TRANSLATED: they travel inside
+# `ZigbeeUnavailableError` and inside `progress().error`, which the radios
+# card shows verbatim.
+api.errors.zigbee_stick_missing:
+  en: "The Zigbee stick is no longer there. Check under Settings which stick is selected, and pick it again."
+  de: "Der Zigbee-Stick ist nicht mehr da. Prüfen Sie in den Einstellungen, welcher Stick ausgewählt ist, und wählen Sie ihn erneut."
+api.errors.zigbee_no_device_permission:
+  en: "The container is not allowed to open this USB device. Refreshing the Compose stack from the update card grants it the access it needs."
+  de: "Der Container darf dieses USB-Gerät nicht öffnen. Ein Auffrischen des Compose-Stacks über die Update-Karte gibt ihm den nötigen Zugriff."
+api.errors.zigbee_stick_busy:
+  en: "Another program is already using this stick — a second loxmatter instance on this host is the usual reason. Stop it, or pick a different stick."
+  de: "Ein anderes Programm benutzt diesen Stick bereits – meist eine zweite loxmatter-Instanz auf diesem Host. Beenden Sie sie, oder wählen Sie einen anderen Stick."
+api.errors.zigbee_not_a_coordinator:
+  en: "This stick does not answer as a Zigbee coordinator. It may be running Thread or bootloader firmware instead."
+  de: "Dieser Stick antwortet nicht als Zigbee-Koordinator. Möglicherweise läuft auf ihm Thread- oder Bootloader-Firmware."
+api.errors.zigbee_network_mismatch:
+  # The bridge STOPS here and does not overwrite. Restoring the network
+  # this bridge knows is destructive and needs the write-once-EUI64
+  # confirmation, which is not built yet (design 4.8) - so the text offers
+  # the option that exists and does not promise the one that does not.
+  en: "This stick already carries a different Zigbee network. loxmatter will not overwrite it. Use a stick without a network, or reset this one in the tool it was set up with."
+  de: "Auf diesem Stick liegt bereits ein anderes Zigbee-Netz. loxmatter überschreibt es nicht. Verwenden Sie einen Stick ohne Netz, oder setzen Sie diesen mit dem Werkzeug zurück, mit dem er eingerichtet wurde."
+api.errors.zigbee_radio_failed:
+  # The fall-through of the five above. It exists because a cause nobody
+  # anticipated must still produce a sentence with the reason in it - an
+  # empty message is the one outcome that helps nobody.
+  en: "The Zigbee radio could not be started: {exc}"
+  de: "Das Zigbee-Funkmodul konnte nicht gestartet werden: {exc}"
+api.errors.zigbee_not_connected:
+  # A radio IS configured, so this is 502 and not the 503 of
+  # `api.errors.source_not_configured`: there is a source, its stick simply
+  # is not answering right now. The supervisor is already retrying.
+  en: "The Zigbee radio is configured, but the link to the stick is down. The bridge keeps trying to reconnect."
+  de: "Das Zigbee-Funkmodul ist eingerichtet, aber die Verbindung zum Stick ist unterbrochen. Die Brücke versucht weiter, sie aufzubauen."
+
 # The five messages of `ThreadDatasetUnavailableError` (matter/otbr.py).
 # NONE of them may contain the dataset itself - it carries the network key
 # of the Thread network and belongs neither in a response nor in a log

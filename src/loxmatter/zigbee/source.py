@@ -1,0 +1,1048 @@
+# loxmatter - connects Matter devices to a Loxone Miniserver.
+# Copyright (C) 2026 Lucien Kerl
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+"""`ZigbeeSource` - zigpy behind the `DeviceSource` boundary.
+
+Satisfies the protocol without an adapter, exactly as `BridgeMatterClient`
+does (boundary design section 3.3). One class per technology, nothing
+wrapped around it.
+
+**bellows keeps its own event loop in its own thread** (`use_thread=True`,
+the default) and proxies calls both ways. That is kept deliberately: ASH
+acknowledges frames on a deadline and loxmatter's main loop does synchronous
+SQLite work, so a blocked main loop would otherwise cause NCP resets
+(research E.1). Home Assistant runs it the same way. The consequence is that
+`disconnect()` MUST always run - the thread is a non-daemon worker, and
+without the shutdown it leaks and the stick is left mid-frame.
+
+**zigpy and bellows never reconnect by themselves.** A lost link surfaces
+exactly once, as the listener event `connection_lost(exc)`; bellows' watchdog
+(every 10 s, four consecutive failures) turns a wedged NCP into the same
+event. So `sources/supervisor.py`'s existing loop is exactly right, and the
+only work here is making that event reach it.
+
+This module and `configure.py` are the only files in loxmatter that reach
+into zigpy, and they do it **lazily, inside functions**: importing the radio
+libraries costs real time, and an installation with no Zigbee stick should
+never pay it. Two consequences of that rule are worth stating, because both
+were decided rather than fallen into:
+
+- **Failures are matched by NAME, over the whole MRO** (`_is_unreachable`).
+  Naming `zigpy.exceptions.DeliveryError` in an `except` clause would drag
+  the import to module level, and the fake-driven suite could not exercise
+  the mapping at all. The price is that a typo in a name would be invisible
+  to a test that only ever sees the fakes - so
+  `tests/zigbee/test_zigpy_names.py` checks every name here against the
+  installed library, and that is the test that has to stay.
+- **zigpy's configuration keys are spelled out as constants below** rather
+  than imported from `zigpy.config`, for the same reason and with the same
+  guard: the same test builds a real config from them and runs it through
+  zigpy's own schema.
+
+Everything this module reads out of a zigpy device goes through the public
+surface - `Device.non_zdo_endpoints`, `Endpoint.in_clusters`,
+`Cluster.attributes`, `Cluster.get` - and never through `Cluster._attr_cache`,
+which is an `AttributeCache` object in zigpy 2.2.0 and offers no way to
+enumerate what it holds.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import contextlib
+import errno
+import logging
+from collections.abc import Awaitable, Callable, Iterator
+from dataclasses import dataclass, replace
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+from types import ModuleType
+from typing import Any, Final, Literal
+
+from loxmatter import i18n
+from loxmatter.matter.models import NodeSnapshot, Technology
+from loxmatter.radios.fingerprints import Fingerprint
+from loxmatter.sources import DeviceCall, DeviceUnreachableError, RuntimeEventHandler
+from loxmatter.timestamps import now_iso
+from loxmatter.zigbee.quirks import ensure_quirks_loaded
+from loxmatter.zigbee.translate import DeviceFacts, EndpointFacts, build_snapshot, rename_payload
+
+logger = logging.getLogger(__name__)
+
+__all__ = [
+    "ZIGBEE_CHANNELS",
+    "ApplicationFactory",
+    "ConnectionProgress",
+    "ConnectionState",
+    "PairingRow",
+    "PairingState",
+    "ZigbeeSource",
+    "ZigbeeUnavailableError",
+    "channels_excluding",
+]
+
+
+class ZigbeeUnavailableError(RuntimeError):
+    """The radio could not be brought up.
+
+    Carries an ALREADY TRANSLATED message: `api/zigbee.py` hands it straight
+    to the browser, and `progress().error` shows the same words on the
+    radios card. Deliberately not a `DeviceUnreachableError` - no device was
+    asked; there is no radio to ask one with."""
+
+
+# --------------------------------------------------------------- constants --
+
+# zigpy's configuration keys. Spelled out rather than imported so that
+# building a config costs no zigpy import (see the module docstring);
+# `tests/zigbee/test_zigpy_names.py` asserts each one equals the
+# corresponding `zigpy.config.CONF_*` and that the result validates against
+# `ControllerApplication.SCHEMA`.
+CONF_DEVICE: Final = "device"
+CONF_DEVICE_PATH: Final = "path"
+CONF_DEVICE_BAUDRATE: Final = "baudrate"
+CONF_DEVICE_FLOW_CONTROL: Final = "flow_control"
+CONF_DATABASE: Final = "database_path"
+CONF_NWK: Final = "network"
+CONF_NWK_CHANNELS: Final = "channels"
+CONF_NWK_VALIDATE_SETTINGS: Final = "validate_network_settings"
+CONF_OTA: Final = "ota"
+CONF_OTA_ENABLED: Final = "enabled"
+CONF_TOPO_SCAN_ENABLED: Final = "topology_scan_enabled"
+
+# The four ZigBee channels a coordinator may form on. zigpy's own default
+# set; the Thread channel is removed from it in `channels_excluding`.
+ZIGBEE_CHANNELS: Final[tuple[int, ...]] = (11, 15, 20, 25)
+
+# zigpy asserts `0 <= time_s <= 254` in `ControllerApplication.permit`, and
+# no unlimited mode is offered: Zigbee2MQTT removed its permanent option in
+# 2.0 as a security concern (design 3.1).
+PERMIT_MAX_SECONDS: Final = 254
+
+# The four attribute events a cluster emits (`zigpy.zcl`,
+# `AttributeReportedEvent` and its siblings). All four, not just the report:
+# a value read during configure-on-join and a value written by this bridge
+# are just as much news for Loxone as one the device sent by itself.
+ATTRIBUTE_EVENTS: Final[tuple[str, ...]] = (
+    "attribute_report",
+    "attribute_read",
+    "attribute_updated",
+    "attribute_written",
+)
+
+# ColorCapabilities. The one attribute the interview does not read and the
+# colour controls depend on - see `_read_colour_capabilities`.
+_COLOR_CONTROL_CLUSTER: Final = 0x0300
+_COLOR_CAPABILITIES_ATTRIBUTE: Final = 0x400A
+
+# A ZCL status of 0 is SUCCESS; everything else is a device that was reached
+# and refused.
+_ZCL_SUCCESS: Final = 0
+
+# The exception names that mean "asked, got nothing back", matched against
+# every class in a raised exception's MRO. `ZigbeeException` and
+# `RadioException` are zigpy's two roots and would be enough on their own;
+# the three leaves are named as well because they are the ones the design
+# and every bug report will call the failure by.
+_UNREACHABLE_EXCEPTION_NAMES: Final[frozenset[str]] = frozenset(
+    {
+        "ZigbeeException",
+        "RadioException",
+        "DeliveryError",
+        "ControllerException",
+        "InvalidResponse",
+        "TimeoutError",
+    }
+)
+
+# Which radio library opens which stick. Imported by name, at call time:
+# `bellows` and `zigpy_znp` each pull in a serial stack, and an installation
+# without a Zigbee stick never calls this.
+_RADIO_MODULES: Final[dict[str, str]] = {
+    "ezsp": "bellows.zigbee.application",
+    "znp": "zigpy_znp.zigbee.application",
+    "deconz": "zigpy_deconz.zigbee.application",
+}
+
+
+def _named(exc: BaseException, name: str) -> bool:
+    """Whether `name` appears anywhere in the exception's class hierarchy."""
+    return any(cls.__name__ == name for cls in type(exc).__mro__)
+
+
+def _is_unreachable(exc: BaseException) -> bool:
+    return any(_named(exc, name) for name in _UNREACHABLE_EXCEPTION_NAMES)
+
+
+# Spec 4.6's table, in order. `OSError` is the base class of both
+# `FileNotFoundError` and `PermissionError`, so the EBUSY row must match on
+# `errno` and must come after the two specific ones; `TimeoutError` is an
+# `OSError` as well, with `errno is None`, which is why the busy row cannot
+# swallow it.
+_STARTUP_MESSAGES: Final[tuple[tuple[Callable[[BaseException], bool], str], ...]] = (
+    (lambda exc: isinstance(exc, FileNotFoundError), "api.errors.zigbee_stick_missing"),
+    (lambda exc: isinstance(exc, PermissionError), "api.errors.zigbee_no_device_permission"),
+    (
+        lambda exc: isinstance(exc, OSError) and exc.errno == errno.EBUSY,
+        "api.errors.zigbee_stick_busy",
+    ),
+    (lambda exc: isinstance(exc, TimeoutError), "api.errors.zigbee_not_a_coordinator"),
+    (
+        lambda exc: _named(exc, "NetworkSettingsInconsistent"),
+        "api.errors.zigbee_network_mismatch",
+    ),
+)
+
+
+def channels_excluding(thread_channel: int | None) -> list[int]:
+    """The channels a Zigbee network may form on, minus the one OTBR is
+    already using.
+
+    Zigbee and Thread share the 2.4 GHz band and, on the test Pi, the same
+    host. Forming on the border router's channel is the one collision here
+    that costs nothing to avoid.
+
+    A missing border router leaves the list whole - it must never stop
+    Zigbee from forming - and so does a Thread channel that is not one of
+    the four candidates anyway."""
+    if thread_channel is None:
+        return list(ZIGBEE_CHANNELS)
+    return [channel for channel in ZIGBEE_CHANNELS if channel != thread_channel]
+
+
+ConnectionState = Literal["idle", "loading_quirks", "opening_radio", "connected", "failed"]
+
+
+@dataclass(frozen=True)
+class ConnectionProgress:
+    """How far the current or last connection attempt got.
+
+    Read by `GET /api/zigbee/radio` (Task 11) so the radios card can show
+    what is happening while the supervisor works its 1 s -> 60 s backoff.
+    `attempts` counts FAILED attempts, so the card can say "still trying, 4
+    attempts" rather than implying a first try that is about to succeed, and
+    `error` is already translated - it is the sentence the user reads."""
+
+    state: ConnectionState
+    attempts: int
+    error: str | None
+    changed_at: str
+
+
+PairingState = Literal["joined", "interviewing", "ready", "failed"]
+
+
+@dataclass(frozen=True)
+class PairingRow:
+    """One device on the pairing tab, keyed by IEEE (design 3.1).
+
+    Keyed by IEEE and not by NWK: a rejoining device gets a new short
+    address and would otherwise appear twice, once under each.
+
+    `discovered` is the distinction section 4.8 insists on: zigpy interviews
+    devices of an ADOPTED network on its own, so a device can appear when
+    nobody opened a join window, and calling that "a device joined just now"
+    would be false.
+
+    The states this file produces are the four the source itself can see.
+    "configuring" and "waiting to wake" arrive with configure-on-join
+    (Task 9); "stuck" is not a state at all but an age, computed by the
+    route from `changed_at` (Task 12)."""
+
+    ieee: str
+    state: PairingState
+    manufacturer: str
+    model: str
+    quirk_applied: bool
+    discovered: bool
+    changed_at: str
+
+
+# What `connect()` needs to build an application. One argument, the
+# validated config; everything else about the radio is already in it.
+ApplicationFactory = Callable[[dict[str, Any]], Awaitable[Any]]
+
+
+def _radio_module(radio_type: str) -> ModuleType:
+    """The radio library for a fingerprinted stick, imported on demand.
+
+    `importlib` rather than a plain import, and not only for laziness:
+    `bellows` and `zha` ship no `py.typed`, so a direct import would need a
+    mypy exception per module, while the application object is `Any` to this
+    file either way."""
+    import importlib
+
+    try:
+        module_name = _RADIO_MODULES[radio_type]
+    except KeyError:  # pragma: no cover - `RadioType` has no fourth value
+        raise ValueError(f"unknown radio type {radio_type!r}") from None
+    return importlib.import_module(module_name)
+
+
+async def _default_application(config: dict[str, Any]) -> Any:
+    """Builds a `ControllerApplication` WITHOUT starting its radio.
+
+    `start_radio=False` loads zigpy's database and nothing else (research
+    E.2), so the catalogue is known even when the stick is missing; the
+    radio is opened by the separate `startup(auto_form=True)` in `connect()`,
+    which is the call whose failure has to be told apart.
+
+    The device resolver is `zhaquirks.ZHA_DEVICE_REGISTRY.resolve` and NOT
+    the `DEVICE_REGISTRY.resolve` the design names: in the installed
+    zha-quirks, `DEVICE_REGISTRY` is the legacy v1 registry and has no
+    `resolve` at all - the unified one that applies both quirk generations,
+    and that marks what it transformed with `_quirk_registry_entry`, is
+    `ZHA_DEVICE_REGISTRY`. Verified against the installed package, not read
+    off the document."""
+    import zhaquirks
+
+    application_class = _radio_module(config["_radio_type"]).ControllerApplication
+    return await application_class.new(
+        {key: value for key, value in config.items() if not key.startswith("_")},
+        start_radio=False,
+        device_resolver=zhaquirks.ZHA_DEVICE_REGISTRY.resolve,
+    )
+
+
+class _ApplicationListener:
+    """What zigpy calls on `add_listener()`, by method name.
+
+    A separate object rather than the source itself: `ControllerApplication`
+    calls whatever method matches the event's name, and `DeviceSource`'s own
+    surface (`connect`, `remove`, `send`, ...) must not be reachable that
+    way by accident.
+
+    Every method here is called from zigpy's thread-proxied event path and
+    must return at once - so they only record and enqueue."""
+
+    def __init__(self, source: ZigbeeSource) -> None:
+        self._source = source
+        self.application: Any = None
+
+    def connection_lost(self, exc: BaseException | None = None) -> None:
+        self._source._handle_connection_lost(self.application, exc)
+
+    def device_joined(self, device: Any) -> None:
+        self._source._handle_device_event(device, "joined")
+
+    def raw_device_initialized(self, device: Any) -> None:
+        self._source._handle_device_event(device, "interviewing")
+
+    def device_initialized(self, device: Any) -> None:
+        self._source._handle_device_event(device, "ready")
+
+    def device_removed(self, device: Any) -> None:
+        self._source._handle_device_removed(device)
+
+
+class ZigbeeSource:
+    """Zigbee as a `DeviceSource`.
+
+    Everything zigpy-shaped stops here: what leaves this class is a
+    `NodeSnapshot` with Matter paths, a `DeviceUnreachableError`, or a
+    `ZigbeeUnavailableError` with a sentence a person can act on."""
+
+    def __init__(
+        self,
+        *,
+        path: str,
+        fingerprint: Fingerprint,
+        database: Path,
+        application_factory: ApplicationFactory = _default_application,
+        on_connection_change: Callable[[bool], Awaitable[None]] | None = None,
+        thread_channel: int | None = None,
+    ) -> None:
+        self._path = path
+        self._fingerprint = fingerprint
+        self._database = Path(database)
+        self._application_factory = application_factory
+        self._on_connection_change = on_connection_change
+        self._thread_channel = thread_channel
+
+        self._app: Any | None = None
+        self._connected = False
+        self._link_lost = asyncio.Event()
+        self._progress = ConnectionProgress(
+            state="idle", attempts=0, error=None, changed_at=now_iso()
+        )
+
+        self._queue: asyncio.Queue[str] | None = None
+        self._dispatch_task: asyncio.Task[None] | None = None
+        self._handler: RuntimeEventHandler | None = None
+        self._resolve_device_id: Callable[[str], int | None] | None = None
+        self._unsubscribers: list[Callable[[], None]] = []
+        self._listening: set[str] = set()
+        # The last set of paths and values each device was told to the
+        # handler with. A path that is not in here has no signal row yet,
+        # and a value that is has to go through `on_attribute` rather than
+        # through a fresh snapshot - see `_deliver`.
+        self._delivered: dict[str, dict[str, Any]] = {}
+        # Devices whose ColorCapabilities were asked for on this connection.
+        # Cleared on every connect, so a lamp that was switched off at the
+        # wall is asked again after a reconnect, and not before.
+        self._capabilities_asked: set[tuple[str, int]] = set()
+
+        self._pairing: dict[str, PairingRow] = {}
+        self._permit_until: datetime | None = None
+        # Tasks a synchronous listener starts. Held so the garbage collector
+        # cannot take one mid-flight (the `_pulse_tasks` pattern in
+        # `loxone/runtime.py`).
+        self._tasks: set[asyncio.Task[None]] = set()
+
+    # ------------------------------------------------------------ identity --
+
+    @property
+    def technology(self) -> Technology:
+        return "zigbee"
+
+    @property
+    def connected(self) -> bool:
+        """Whether the link to the coordinator currently HOLDS.
+
+        An explicit flag, set in `connect()` and cleared by the
+        `connection_lost` listener and by `disconnect()`. Deliberately NOT
+        `bellows.is_controller_running`, which is never cleared on a lost
+        link (R1 section 2) and would report a dead radio as healthy for as
+        long as the process lives - the 8 September outage, one layer
+        down."""
+        return self._connected
+
+    def progress(self) -> ConnectionProgress:
+        return self._progress
+
+    def pairing_rows(self) -> list[PairingRow]:
+        """The pairing tab's rows, oldest first."""
+        return list(self._pairing.values())
+
+    # ----------------------------------------------------------- lifecycle --
+
+    def _set_progress(
+        self,
+        state: ConnectionState,
+        *,
+        error: str | None = None,
+        attempts: int | None = None,
+        count_attempt: bool = False,
+    ) -> None:
+        if count_attempt:
+            attempts = self._progress.attempts + 1
+        elif attempts is None:
+            attempts = self._progress.attempts
+        self._progress = ConnectionProgress(
+            state=state, attempts=attempts, error=error, changed_at=now_iso()
+        )
+
+    def _config(self) -> dict[str, Any]:
+        """The zigpy configuration, every non-default value with its reason.
+
+        `_radio_type` is this module's own key, stripped again by
+        `_default_application` before zigpy's schema ever sees the dict; it
+        travels here so a test can read which stick the source would have
+        opened without opening one."""
+        return {
+            "_radio_type": self._fingerprint.radio_type,
+            CONF_DEVICE: {
+                CONF_DEVICE_PATH: self._path,
+                CONF_DEVICE_BAUDRATE: self._fingerprint.baudrate,
+                # "hardware" or "software", straight from the fingerprint
+                # table: zigpy maps them to rtscts and xonxoff respectively
+                # (`zigpy.serial`), and probing for it is exactly what the
+                # table exists to avoid.
+                CONF_DEVICE_FLOW_CONTROL: self._fingerprint.flow_control,
+            },
+            # Next to the store in the same volume (design 8.5).
+            CONF_DATABASE: str(self._database),
+            # A stick that already carries a network is adopted by zigpy
+            # unless this is on; with it, a mismatch against the stored
+            # backup raises `NetworkSettingsInconsistent` and the bridge
+            # stops instead of overwriting somebody's network (section 4.8).
+            CONF_NWK_VALIDATE_SETTINGS: True,
+            CONF_NWK: {CONF_NWK_CHANNELS: channels_excluding(self._thread_channel)},
+            # OTA is ON by default, with three internet providers and a
+            # broadcast every 3.9 h. A bridge that silently updates the
+            # user's lamps from the internet is not what this project
+            # promises (design 8.5, G9).
+            CONF_OTA: {CONF_OTA_ENABLED: False},
+            # Kept at its 4 h default: it is what makes neighbour tables
+            # and, later, "join via this router" possible.
+            CONF_TOPO_SCAN_ENABLED: True,
+        }
+
+    async def _new_application(self) -> Any:
+        application = await self._application_factory(self._config())
+        listener = _ApplicationListener(self)
+        listener.application = application
+        application.add_listener(listener)
+        return application
+
+    def _startup_message(self, exc: BaseException) -> str:
+        for matches, key in _STARTUP_MESSAGES:
+            if matches(exc):
+                return i18n.t(key)
+        return i18n.t("api.errors.zigbee_radio_failed", exc=_describe(exc))
+
+    async def connect(self) -> None:
+        """Opens the radio, from scratch, every time.
+
+        **`ensure_quirks_loaded()` stays inside this method**, so the
+        ordering guarantee - quirks in the registry before zigpy builds a
+        single device object - lives in exactly one place and cannot be
+        forgotten by a second caller. That is safe only because `connect()`
+        is never called on a request path: every caller is a background
+        worker, `cli._run` at startup and `sources/supervisor.py`'s loop for
+        every reconnection, including the first one after a radio is
+        configured from the web UI. Putting this behind an HTTP handler
+        would put a 9-15 s warm-up, plus `startup()`, plus a possible 7.5 s
+        silent-port timeout on that request."""
+        self._set_progress("loading_quirks")
+        try:
+            if self._app is not None:
+                app, self._app = self._app, None
+                self._connected = False
+                await app.shutdown(db=True)
+            await ensure_quirks_loaded()
+            self._set_progress("opening_radio")
+            app = await self._new_application()
+            try:
+                await app.startup(auto_form=True)
+            except BaseException:
+                # Never keep an object whose startup() failed - see
+                # `test_a_failed_startup_is_shut_down_and_not_kept`.
+                await app.shutdown(db=True)
+                raise
+        except Exception as exc:
+            # `attempts` counts FAILED attempts, so the card can say "still
+            # trying, 4 attempts" rather than implying a first try that is
+            # about to succeed. The message is already translated: it is the
+            # one the user reads, and `api/zigbee.py` hands it straight out.
+            message = self._startup_message(exc)
+            self._set_progress("failed", error=message, count_attempt=True)
+            raise ZigbeeUnavailableError(message) from exc
+        self._app = app
+        self._connected = True
+        self._link_lost.clear()
+        self._capabilities_asked.clear()
+        # zigpy built new device objects while loading its database, so the
+        # listeners of the previous connection point at objects that no
+        # longer exist. Registering them again here rather than in
+        # `subscribe()` is what keeps a reconnected bridge from going
+        # silent while looking perfectly healthy (R1 section 6).
+        self._register_cluster_listeners()
+        self._set_progress("connected", attempts=0)
+        if self._on_connection_change is not None:
+            await self._on_connection_change(True)
+
+    async def disconnect(self) -> None:
+        """Shuts the application down - always.
+
+        bellows' serial thread is a non-daemon worker: without this it
+        leaks, and the stick is left mid-frame for the next start to pay
+        for (research E.1, G14). Idempotent, and it reports `False` to the
+        connection hook either way, because the caller that clears the radio
+        setting entirely (Task 11) needs the badge to say so."""
+        app, self._app = self._app, None
+        self._connected = False
+        self._release_cluster_listeners()
+        self._delivered.clear()
+        dispatch_task, self._dispatch_task = self._dispatch_task, None
+        self._queue = None
+        if dispatch_task is not None:
+            dispatch_task.cancel()
+            try:
+                await dispatch_task
+            except asyncio.CancelledError:
+                pass
+        try:
+            if app is not None:
+                await app.shutdown(db=True)
+        finally:
+            self._set_progress("idle", attempts=0)
+            if self._on_connection_change is not None:
+                await self._on_connection_change(False)
+
+    async def wait_for_link_loss(self) -> None:
+        """Returns as soon as the link is gone - or at once when it never
+        existed.
+
+        The second half is the contract `BridgeMatterClient.wait_for_link_loss`
+        already has, and it is what puts `supervise()` into its 1 s -> 60 s
+        backoff loop for a source that was never connected at all: the
+        supervisor opens with this call, and a radio that is missing at
+        startup is retried on exactly the same schedule as one that dies an
+        hour later."""
+        if not self._connected:
+            return
+        await self._link_lost.wait()
+
+    def _handle_connection_lost(self, application: Any, exc: BaseException | None) -> None:
+        if application is not self._app:
+            # A late event from an application that has already been
+            # replaced or shut down. Acting on it would tear down a
+            # connection that is fine.
+            logger.debug("ignoring connection_lost from a replaced application: %r", exc)
+            return
+        logger.warning("the link to the Zigbee coordinator was lost: %s", _describe(exc))
+        self._connected = False
+        self._link_lost.set()
+        self._set_progress("failed", error=i18n.t("api.errors.zigbee_not_connected"))
+        if self._on_connection_change is not None:
+            self._spawn(self._on_connection_change(False))
+
+    def _spawn(self, coroutine: Awaitable[None]) -> None:
+        task = asyncio.ensure_future(coroutine)
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+
+    # ----------------------------------------------------------- catalogue --
+
+    def _devices(self) -> list[Any]:
+        app = self._app
+        if app is None:
+            return []
+        return list(app.devices.values())
+
+    def _device_or_none(self, address: str) -> Any | None:
+        """The zigpy device whose IEEE reads as `address`.
+
+        Compared as text rather than converted: `app.devices` is keyed by
+        zigpy's `EUI64`, the store speaks the string form, and building an
+        `EUI64` here would be a zigpy import on the command path for no
+        gain."""
+        for device in self._devices():
+            if str(device.ieee) == address:
+                return device
+        return None
+
+    async def _read_colour_capabilities(self, device: Any) -> None:
+        """Makes sure `ColorCapabilities` is in the cache before the facts
+        are read out of it.
+
+        `profiles.capabilities` gates the colour controls on `FeatureMap`
+        (0xFFFC) with a fallback to `ColorCapabilities` (0x400A), and zigpy
+        offers no FeatureMap at all - so without this attribute every Zigbee
+        lamp loses its colour picker. zigpy's interview does not read it
+        (it reads Basic's manufacturer and model and nothing else), so it is
+        read here, once per connection and only when the cache does not
+        already have it.
+
+        A failure is swallowed on purpose: a lamp switched off at the wall
+        must not empty the whole device catalogue. It is logged, and the
+        colour picker is missing until the lamp answers - which is the
+        fail-safe direction, and still the wrong outcome, which is why the
+        read is attempted at all."""
+        if not self._connected:
+            return
+        address = str(device.ieee)
+        for endpoint in device.non_zdo_endpoints:
+            cluster = endpoint.in_clusters.get(_COLOR_CONTROL_CLUSTER)
+            if cluster is None:
+                continue
+            if cluster.get(_COLOR_CAPABILITIES_ATTRIBUTE) is not None:
+                continue
+            key = (address, endpoint.endpoint_id)
+            if key in self._capabilities_asked:
+                continue
+            self._capabilities_asked.add(key)
+            try:
+                await cluster.read_attributes([_COLOR_CAPABILITIES_ATTRIBUTE])
+            except Exception as exc:  # noqa: BLE001 — see the docstring above
+                logger.info(
+                    "could not read the colour capabilities of %s endpoint %s: %s",
+                    address,
+                    endpoint.endpoint_id,
+                    _describe(exc),
+                )
+
+    def _endpoint_facts(self, endpoint: Any) -> EndpointFacts:
+        attributes: dict[tuple[int, int], object] = {}
+        for cluster_id, cluster in endpoint.in_clusters.items():
+            for attribute_id in cluster.attributes:
+                value = cluster.get(attribute_id)
+                if value is not None:
+                    attributes[(cluster_id, attribute_id)] = value
+        return EndpointFacts(
+            endpoint=endpoint.endpoint_id,
+            # Both are `None` until the endpoint has been interviewed. 0
+            # matches no row of the device-type table, which is exactly the
+            # right outcome: no device type is written for it yet.
+            profile_id=endpoint.profile_id or 0,
+            device_type=endpoint.device_type or 0,
+            in_cluster_ids=frozenset(endpoint.in_clusters),
+            attributes=attributes,
+        )
+
+    def _facts(self, device: Any) -> DeviceFacts:
+        node_desc = device.node_desc
+        return DeviceFacts(
+            ieee=str(device.ieee),
+            manufacturer=device.manufacturer or "",
+            model=device.model or "",
+            # A device with no node descriptor yet is treated as battery
+            # powered: that is the conservative half of the pair, since it
+            # buys a sleeping device six hours of silence instead of two
+            # (Task 8's thresholds) before it is declared dead.
+            is_mains_powered=bool(node_desc is not None and node_desc.is_mains_powered),
+            available=self._connected,
+            # The attribute `zha.quirks.DeviceRegistry.resolve` sets on a
+            # device it transformed. This is loxmatter's equivalent of Z2M's
+            # "Unsupported" badge, and it explains missing values before the
+            # user asks.
+            quirk_applied=hasattr(device, "_quirk_registry_entry"),
+            # Endpoint 0 is zigpy's ZDO and carries no ZCL clusters.
+            endpoints=tuple(
+                self._endpoint_facts(endpoint) for endpoint in device.non_zdo_endpoints
+            ),
+        )
+
+    async def _snapshot(self, device: Any) -> NodeSnapshot:
+        await self._read_colour_capabilities(device)
+        return build_snapshot(self._facts(device))
+
+    async def snapshots(self) -> list[NodeSnapshot]:
+        """The device catalogue, whether or not the stick is there.
+
+        `sources.supervisor.attach()` calls this unconditionally and
+        `cli._run` runs `attach` for every source at startup, so raising
+        here would take the whole bridge down because a USB stick was
+        unplugged - and Matter is the mandatory source, not this one.
+
+        zigpy loaded its database without touching the radio
+        (`new(start_radio=False)`), so the devices are known even when the
+        link is gone; they simply carry `available=False`, which is the
+        truth. Before the first application exists at all, the honest answer
+        is an empty list - nothing has read the database yet."""
+        return [await self._snapshot(device) for device in self._devices()]
+
+    # -------------------------------------------------------------- events --
+
+    async def subscribe(
+        self,
+        resolve_device_id: Callable[[str], int | None],
+        handler: RuntimeEventHandler,
+    ) -> None:
+        """Reports attribute changes to `handler`, and tolerates a radio
+        that is not there.
+
+        Unlike `BridgeMatterClient.subscribe`, a second call is not an
+        error: `attach()` runs on every reconnect, and for this source the
+        cluster listeners are rebuilt by `connect()` anyway - the handler
+        and the dispatch task are meant to outlive an outage, the way
+        `Runtime`'s loops are."""
+        self._handler = handler
+        self._resolve_device_id = resolve_device_id
+        if self._queue is None:
+            self._queue = asyncio.Queue()
+        if self._dispatch_task is None or self._dispatch_task.done():
+            self._dispatch_task = asyncio.create_task(self._dispatch_loop(self._queue))
+        self._register_cluster_listeners()
+        await self._seed_baseline()
+
+    async def _seed_baseline(self) -> None:
+        """Remembers what each known device currently reads as, WITHOUT
+        telling the handler.
+
+        `attach()` calls `snapshots()` right after this and seeds the
+        runtime from that, so announcing the same thing here would write
+        every signal row twice. A device the store does not know yet is
+        deliberately left out: its first update then arrives as a full
+        snapshot, which is the only thing that creates its rows."""
+        resolve = self._resolve_device_id
+        if resolve is None:
+            return
+        for device in self._devices():
+            address = str(device.ieee)
+            if resolve(address) is None:
+                continue
+            snapshot = await self._snapshot(device)
+            self._delivered[address] = dict(snapshot.attributes)
+
+    def _release_cluster_listeners(self) -> None:
+        for unsubscribe in self._unsubscribers:
+            unsubscribe()
+        self._unsubscribers = []
+        self._listening.clear()
+
+    def _register_cluster_listeners(self) -> None:
+        self._release_cluster_listeners()
+        for device in self._devices():
+            self._listen_to_device(device)
+
+    def _listen_to_device(self, device: Any) -> None:
+        """Registers the four attribute events on every cluster of one
+        device.
+
+        The callbacks do NOTHING but `put_nowait`. zigpy emits cluster
+        events synchronously through `EventBase.emit`, which catches no
+        exception at all, so anything that can fail - resolving a device id
+        against SQLite, building a snapshot, the handler itself - has to
+        happen on the dispatch task instead. A raising callback would
+        otherwise escape into whatever zigpy was doing when the attribute
+        arrived, and event delivery would stop for every device."""
+        queue = self._queue
+        if queue is None:
+            return
+        address = str(device.ieee)
+        if address in self._listening:
+            return
+        self._listening.add(address)
+        for endpoint in device.non_zdo_endpoints:
+            for cluster in endpoint.in_clusters.values():
+                for event_name in ATTRIBUTE_EVENTS:
+                    # The default argument binds this device's address per
+                    # loop iteration instead of reading the name from the
+                    # enclosing scope too late.
+                    def on_attribute_event(_event: Any, address: str = address) -> None:
+                        queue.put_nowait(address)
+
+                    self._unsubscribers.append(cluster.on_event(event_name, on_attribute_event))
+
+    async def _dispatch_loop(self, queue: asyncio.Queue[str]) -> None:
+        while True:
+            address = await queue.get()
+            try:
+                await self._deliver(address)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                # A failure on a single update must not end delivery as a
+                # whole - the same stance as
+                # `BridgeMatterClient._dispatch_loop` and
+                # `Runtime._heartbeat_loop`.
+                logger.exception("delivery of a Zigbee update failed")
+            finally:
+                queue.task_done()
+
+    async def _deliver(self, address: str, *, force_snapshot: bool = False) -> None:
+        """Tells the handler what changed about one device.
+
+        Two shapes, and which one is used is not a matter of taste:
+        `Store.register_signals` computes `exported` only when a row is
+        CREATED, and only `on_node_snapshot` creates rows. So a path nobody
+        has seen before goes out as a whole snapshot, and a path that
+        already has a row goes out as the single value it is. Delivering
+        everything as an attribute would silently discard the first reading
+        of every sensor; delivering everything as a snapshot would rewrite
+        every signal row on every report."""
+        handler = self._handler
+        resolve = self._resolve_device_id
+        if handler is None or resolve is None:
+            return
+        device = self._device_or_none(address)
+        if device is None:
+            logger.debug("update for a device zigpy no longer knows: %s", address)
+            return
+        device_id = resolve(address)
+        if device_id is None:
+            logger.debug("discarding an update for a device the store does not know: %s", address)
+            return
+
+        snapshot = await self._snapshot(device)
+        attributes = dict(snapshot.attributes)
+        previous = self._delivered.get(address)
+        if previous is None or force_snapshot or set(attributes) - set(previous):
+            await handler.on_node_snapshot(device_id, snapshot)
+            # Only after the handler returned: if it raised - it writes into
+            # the store - the debt stays outstanding and the next update
+            # catches it up.
+            self._delivered[address] = attributes
+            return
+        for path, value in attributes.items():
+            if previous.get(path) != value:
+                await handler.on_attribute(device_id, path, value)
+        self._delivered[address] = attributes
+
+    async def follow(self, address: str, *, seed_even_without_new_paths: bool = False) -> None:
+        """Re-reads one device and hands the result to the handler.
+
+        The commissioning route's counterpart to the dispatch loop: after a
+        device has been registered in the store, this is what gives it its
+        signal rows and its first values, without waiting for the next
+        report - which for a quiet device may never come."""
+        await self._deliver(address, force_snapshot=seed_even_without_new_paths)
+
+    # ------------------------------------------------------------- commands --
+
+    def _require_app(self) -> Any:
+        app = self._app
+        if app is None or not self._connected:
+            raise DeviceUnreachableError(i18n.t("api.errors.zigbee_not_connected"))
+        return app
+
+    def _require_device(self, address: str) -> Any:
+        self._require_app()
+        device = self._device_or_none(address)
+        if device is None:
+            raise DeviceUnreachableError(
+                i18n.t("api.errors.device_unreachable", exc=f"unknown Zigbee device {address}")
+            )
+        return device
+
+    async def send(self, call: DeviceCall) -> None:
+        """Executes one translated `DeviceCall` on one cluster.
+
+        The payload is renamed at this edge and NOT passed through: the
+        field names `commands/translate.py` produces are Matter's, zigpy's
+        command schema declares its own, and the two differ in more than
+        case (`colorTemperatureMireds` is `color_temp_mireds`). A field the
+        command does not declare is dropped rather than sent -
+        `move_to_level_with_on_off` carries no options fields at all, and
+        offering them would make zigpy reject the whole command."""
+        device = self._require_device(call.address)
+        endpoint = device.endpoints.get(call.endpoint)
+        cluster = None if endpoint is None else endpoint.in_clusters.get(call.cluster_id)
+        command = None if cluster is None else cluster.server_commands.get(call.command_id)
+        if cluster is None or command is None:
+            raise DeviceUnreachableError(
+                i18n.t(
+                    "api.errors.device_unreachable",
+                    exc=(
+                        f"endpoint {call.endpoint} of {call.address} has no command "
+                        f"{call.command_id} on cluster {call.cluster_id}"
+                    ),
+                )
+            )
+        allowed = frozenset(field.name for field in command.schema.fields)
+        payload = rename_payload(call.cluster_id, call.command_id, call.payload, allowed)
+        with _as_device_error():
+            result = await cluster.command(call.command_id, **payload)
+        status = getattr(result, "status", None)
+        if status is not None and int(status) != _ZCL_SUCCESS:
+            # Delivered and refused. From the caller's point of view that is
+            # the same outcome as no answer at all, and the same 502.
+            raise DeviceUnreachableError(
+                i18n.t(
+                    "api.errors.device_unreachable",
+                    exc=f"the device answered command {call.command_id} with status {int(status)}",
+                )
+            )
+
+    async def remove(self, address: str) -> None:
+        """Asks the device to leave, and forgets it either way.
+
+        `app.remove()` deletes the device from zigpy's database whether or
+        not the leave request is ever delivered (R1 section 4), and nothing
+        waits for a confirmation here: a sleeping battery device never sends
+        one, and holding the DELETE open for it would be the same bug
+        `bounded_source_call` exists to prevent. The removal copy in the web
+        UI says exactly this."""
+        device = self._require_device(address)
+        app = self._require_app()
+        with _as_device_error():
+            await app.remove(device.ieee)
+        self._forget(address)
+
+    def _forget(self, address: str) -> None:
+        self._pairing.pop(address, None)
+        self._delivered.pop(address, None)
+        self._listening.discard(address)
+
+    async def permit(self, seconds: int) -> datetime:
+        """Opens the network for new devices, and answers when it closes.
+
+        The END TIMESTAMP, not the duration: a page reloaded halfway through
+        the window then counts down to the truth rather than starting over.
+        `seconds` is bounded by the protocol maximum zigpy itself asserts,
+        and a value outside it is REFUSED rather than clamped - "forever"
+        must not look like it worked."""
+        if not 0 <= seconds <= PERMIT_MAX_SECONDS:
+            raise ValueError(
+                f"a join window lasts between 0 and {PERMIT_MAX_SECONDS} seconds, not {seconds}"
+            )
+        app = self._require_app()
+        with _as_device_error():
+            await app.permit(time_s=seconds)
+        until = datetime.now(UTC) + timedelta(seconds=seconds)
+        self._permit_until = until if seconds > 0 else None
+        return until
+
+    # -------------------------------------------------------------- pairing --
+
+    def _window_is_open(self) -> bool:
+        return self._permit_until is not None and datetime.now(UTC) < self._permit_until
+
+    def _handle_device_event(self, device: Any, state: PairingState) -> None:
+        address = str(device.ieee)
+        existing = self._pairing.get(address)
+        row = PairingRow(
+            ieee=address,
+            state=state,
+            manufacturer=device.manufacturer or "",
+            model=device.model or "",
+            quirk_applied=hasattr(device, "_quirk_registry_entry"),
+            # Decided once, when the row is created: zigpy interviews
+            # devices of an adopted network on its own, so a device that
+            # appeared without a join window must not later be relabelled a
+            # join just because its interview finished while one was open.
+            discovered=existing.discovered if existing is not None else not self._window_is_open(),
+            changed_at=now_iso(),
+        )
+        self._pairing[address] = row
+        if state == "ready":
+            self._listen_to_device(device)
+            queue = self._queue
+            if queue is not None:
+                queue.put_nowait(address)
+
+    def _handle_device_removed(self, device: Any) -> None:
+        self._forget(str(device.ieee))
+
+    def mark_failed(self, address: str) -> None:
+        """Marks a pairing row as "could not read this device".
+
+        zigpy reports a failed interview on the DEVICE's listeners
+        (`device_init_failure`), not on the application's, so the pairing
+        API (Task 12) is what wires it up - this is the one line it needs
+        here. ZHA has no failure state at all, and a hung interview there
+        sits on "Starting interview" forever; that is the single thing the
+        pairing tab exists to do better."""
+        row = self._pairing.get(address)
+        if row is not None:
+            self._pairing[address] = replace(row, state="failed", changed_at=now_iso())
+
+
+def _describe(exc: BaseException | None) -> str:
+    """An exception as a sentence fragment that is never empty.
+
+    `str(TimeoutError())` is the empty string, and a 502 whose detail is
+    blank tells the person reading it nothing at all."""
+    if exc is None:
+        return "unknown cause"
+    return str(exc) or type(exc).__name__
+
+
+@contextlib.contextmanager
+def _as_device_error() -> Iterator[None]:
+    """zigpy's failure vocabulary, reduced to the one word shared code
+    knows.
+
+    `DeliveryError`, `ControllerException`, `ZigbeeException` and
+    `TimeoutError` all mean the same thing to a caller: asked, no answer.
+    They are translated HERE, so no `except` clause outside this package
+    ever names a zigpy type - and so `api/devices.py`'s removal route, which
+    caught `MatterUnavailableError` alone, does not turn a Zigbee removal
+    failure into an unhandled 500.
+
+    Anything else propagates unchanged: a `KeyError` from this file's own
+    mistake is a bug, not an unreachable device, and dressing it up as one
+    would hide it."""
+    try:
+        yield
+    except Exception as exc:
+        if _is_unreachable(exc):
+            raise DeviceUnreachableError(
+                i18n.t("api.errors.device_unreachable", exc=_describe(exc))
+            ) from exc
+        raise
