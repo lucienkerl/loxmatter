@@ -1243,6 +1243,71 @@ class _RecordingSender:
         return None
 
 
+async def test_the_heartbeat_goes_quiet_when_matter_is_down(monkeypatch, tmp_path):
+    """The sibling `test_the_heartbeat_keeps_pulsing_when_only_zigbee_is_down`
+    pins only half of what the heartbeat's wiring has to get right. Nothing
+    at the `cli._run` level pinned the other half: `link_ok=lambda: True`
+    would pass every test that existed here before this one, because none of
+    them ever made the Matter link go down while `_run` kept serving - the
+    predicate itself is only exercised elsewhere, at `Runtime`, against an
+    injected stand-in.
+
+    Fault to prove it: wire `link_ok=lambda: True` (or anything else that
+    ignores `client.connected`) in `cli._run`. `link_ok()` below then still
+    answers `True` with the Matter listener already dead, and the heartbeat a
+    real `Runtime` drives from it never falls silent."""
+    _, runtimes, clients, _supervisor = _install_run_spies(monkeypatch)
+    monkeypatch.setattr(cli, "ZigbeeSource", _NeverConnectingZigbeeSource)
+    # As in the sibling test: the bridge is asked while it is SERVING, not
+    # while it is shutting down - `_HangingUvicornServer` keeps `_run` inside
+    # `serve()` for the whole test, so `finally` never runs and never
+    # disconnects the Matter client for reasons unrelated to the fault.
+    monkeypatch.setattr(cli.uvicorn, "Server", _HangingUvicornServer)
+    store = Store(tmp_path / "t.sqlite")
+
+    task = asyncio.create_task(
+        cli._run(store, "ws://test/ws", "127.0.0.1", 7000, 8080, zigbee_device=ZIGBEE_PATH)
+    )
+    await asyncio.sleep(0)
+    while not runtimes or not runtimes[0].started:
+        await asyncio.sleep(0)
+
+    try:
+        link_ok = runtimes[0].link_ok
+        assert link_ok() is True, "the Matter link is up before this test kills it"
+
+        # Matter goes down WHILE `_run` keeps serving. `BridgeMatterClient
+        # .connected`'s own docstring: "once it [the listener task] has
+        # ended, the connection is gone, no matter what `_upstream` still
+        # holds" - so ending the listener task, without touching `_upstream`
+        # at all, is what a real dropped connection looks like from here.
+        client = clients[0]
+        assert client._listener_task is not None
+        client._listener_task.cancel()
+        while not client._listener_task.done():
+            await asyncio.sleep(0)
+
+        assert client.connected is False
+        assert link_ok() is False
+
+        # Not merely the predicate: the heartbeat it actually drives. A real
+        # `Runtime` with that same `link_ok` must NOT put `bridge_alive` on
+        # the wire while the mandatory source is down.
+        sender = _RecordingSender()
+        heartbeat_store = Store(tmp_path / "heartbeat.sqlite")
+        runtime = Runtime(heartbeat_store, sender, heartbeat_seconds=0.01, link_ok=link_ok)
+        await runtime.start()
+        await asyncio.sleep(0.05)
+        await runtime.stop()
+        heartbeat_store.close()
+
+        assert HEARTBEAT_KEY not in [key for key, _value in sender.sent]
+    finally:
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+
 async def test_a_zigbee_radio_that_will_not_come_up_does_not_stop_the_bridge(
     monkeypatch, tmp_path, caplog
 ):
@@ -1395,8 +1460,16 @@ async def test_a_freshly_built_zigbee_source_has_the_store_so_configure_on_join_
     assert zigbee._path == ZIGBEE_PATH
     assert zigbee._database == tmp_path / "matter" / "zigbee.sqlite"
     # The radio's own signal, wired to the runtime rather than to the
-    # watchdog.
+    # watchdog. Identity alone only proves the two attributes point at the
+    # same function - calling it is what proves the pipe actually carries a
+    # value through to the runtime the Miniserver reads from.
+    #
+    # `_run`'s own `finally` already disconnected this (never-connected)
+    # source by now, which appends its own `False` - so the assertion below
+    # checks what THIS call added, not the full history.
     assert zigbee._on_connection_change == runtimes[0].set_zigbee_connected
+    await zigbee._on_connection_change(True)
+    assert runtimes[0].zigbee_sent[-1] is True
 
 
 async def test_a_zigbee_stick_without_a_matter_data_dir_does_not_crash_startup(

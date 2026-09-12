@@ -287,7 +287,19 @@ class PollingLoop:
     async def _run(self) -> None:
         while True:
             await self._sleep(self._tick)
-            await self._poll_due()
+            try:
+                await self._poll_due()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                # The same stance `AvailabilityChecker.mark_all_offline`
+                # documents for its own per-device guard: a failure on one
+                # tick - a bug in this file, not necessarily a single
+                # device's fault - must not end the loop. Without this, the
+                # task dies silently (nothing ever awaits it outside
+                # `stop()`), and every device this loop exists to poll
+                # stops being polled forever.
+                logger.exception("a polling tick failed unexpectedly")
 
     async def _poll_due(self) -> None:
         """One tick.
@@ -310,7 +322,22 @@ class PollingLoop:
             device = self._source._device_or_none(address)
             cluster = _cluster_or_none(device, endpoint_id, cluster_id, attribute_id)
             if cluster is None:
-                del self._schedule.due[(address, endpoint_id, cluster_id, attribute_id)]
+                # `.pop(key, None)`, not `del` - a concurrent
+                # `ZigbeeSource.remove()` on the SAME address can run its
+                # course entirely during the `await` below, on a PRIOR
+                # entry in this very `due` list: `_forget()` ->
+                # `PollingSchedule.forget()` deletes every entry for that
+                # address at once, this one included, before this loop ever
+                # reaches it. A bare `del` then raises `KeyError` on an
+                # entry that is already gone - correctly gone, just not by
+                # this line - which used to kill this task outright (see
+                # `_run`'s guard) and, on the reconnect path, `disconnect()`
+                # along with it: `PollingLoop.stop()` only suppresses
+                # `asyncio.CancelledError`, so that `KeyError` re-raised
+                # straight out of it, above `await app.shutdown(db=True)`,
+                # skipping the shutdown that closes bellows' non-daemon
+                # serial thread.
+                self._schedule.due.pop((address, endpoint_id, cluster_id, attribute_id), None)
                 continue
             # Rescheduled BEFORE the read is attempted - the same "write the
             # debt before the attempt" ordering `_configure_cluster` already

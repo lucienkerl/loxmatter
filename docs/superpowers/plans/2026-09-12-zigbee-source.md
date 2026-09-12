@@ -3475,12 +3475,14 @@ async def test_the_polling_loop_stops_on_disconnect():
 - [ ] **Step 3: Implement.** First, `run()` and `_run()` gain the throwaway CLI flag this task's own Interfaces promised — "until it lands, read the path from a CLI option `--zigbee-device` defaulting to `None`" — matching the existing `--update-dir` option's shape exactly:
 
 ```python
-    zigbee_device: str | None = typer.Option(  # noqa: B008
+    zigbee_device: str | None = typer.Option(
         None,
         "--zigbee-device",
-        help=i18n.t("cli.run.help_zigbee_device"),  # noqa: B008
+        help=i18n.t("cli.run.help_zigbee_device"),
     ),
 ```
+
+(No `# noqa: B008` here, unlike some of this file's older options: B008 does not fire on `str | None` in the first place — `ruff check` on the implemented code reports the two comments above as unused `RUF100`. Task 10's own implementation removed them for exactly that reason; carrying them in this plan would only hand the same avoidable failure to Task 11.)
 
 added to `run()`'s parameter list, threaded through the `_run(...)` call in `run()`'s body, and added to `_run`'s own signature as `zigbee_device: str | None = None,` — a keyword with a default, the same shape `update_dir` already has, so every existing direct call to `_run(...)` in the test suite keeps working unchanged. Add the i18n key to `strings.yaml`, `en` and `de`, next to `cli.run.help_update_dir`:
 
@@ -3539,7 +3541,7 @@ Then, in `cli._run`:
     invoke = sources.send
 ```
 
-(`matter_data_dir or Path("/data/matter")`: `matter_data_dir` is itself optional, for the unrelated fabric-backup route, and can be `None` on an installation that never set it. Task 11's own permanent builder inherits this same fallback - see that task's Step 6 - so a Zigbee stick and no `--matter-data-dir` do not crash startup with an `AttributeError` on `None / "zigbee.sqlite"`, which is what the two-line form the earlier draft of this step had would have done the first time both were true at once.)
+(`matter_data_dir or Path("/data/matter")`: `matter_data_dir` is itself optional, for the unrelated fabric-backup route, and can be `None` on an installation that never set it. Task 11's own permanent builder inherits this same fallback - see that task's Step 6 - so a Zigbee stick and no `--matter-data-dir` do not crash startup with a `TypeError` on `None / "zigbee.sqlite"`, which is what the two-line form the earlier draft of this step had would have done the first time both were true at once.)
 
 **`cli._run` calls `zigbee.connect()` nowhere — not inline, and not as a background task.** Two earlier drafts of this step did, the second one backgrounding what the first one awaited; both are wrong, and the reasons were established by reading `sources/supervisor.py` and `zigbee/source.py` rather than reasoning from this document:
 
@@ -4562,7 +4564,7 @@ async def build_zigbee_source(
     )
 ```
 
-`cli._run` passes `functools.partial(build_zigbee_source, database=(matter_data_dir or Path("/data/matter")) / "zigbee.sqlite", on_connection_change=runtime.set_zigbee_connected, store=store)` as `ZigbeeRuntime`'s `build_source` — `database`, `on_connection_change` and `store` never change between a startup build and an apply-time rebuild, so binding them once here is what keeps `build_source(settings)` a one-argument callable both `ZigbeeRuntime.__init__` (for the very first source) and `_apply_in_background` (for every one after) can call identically. `database`'s fallback matches Task 10's own temporary builder exactly (see that task's Step 3) - `matter_data_dir` is optional, for the unrelated fabric-backup route, and a radio change made on an installation that never set it must not crash a running bridge with an `AttributeError` on `None / "zigbee.sqlite"`. A test exercising `ZigbeeRuntime` injects its own `build_source` and never touches OTBR at all — the fetch is this function's concern alone, which is exactly why it is a function, not a method inlined into `_apply_in_background`.
+`cli._run` passes `functools.partial(build_zigbee_source, database=(matter_data_dir or Path("/data/matter")) / "zigbee.sqlite", on_connection_change=runtime.set_zigbee_connected, store=store)` as `ZigbeeRuntime`'s `build_source` — `database`, `on_connection_change` and `store` never change between a startup build and an apply-time rebuild, so binding them once here is what keeps `build_source(settings)` a one-argument callable both `ZigbeeRuntime.__init__` (for the very first source) and `_apply_in_background` (for every one after) can call identically. `database`'s fallback matches Task 10's own temporary builder exactly (see that task's Step 3) - `matter_data_dir` is optional, for the unrelated fabric-backup route, and a radio change made on an installation that never set it must not crash a running bridge with a `TypeError` on `None / "zigbee.sqlite"`. A test exercising `ZigbeeRuntime` injects its own `build_source` and never touches OTBR at all — the fetch is this function's concern alone, which is exactly why it is a function, not a method inlined into `_apply_in_background`.
 
 **Add the failing test that pins `store` through this move, in `tests/zigbee/test_zigbee_runtime.py`:**
 

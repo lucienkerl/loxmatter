@@ -878,3 +878,210 @@ async def test_a_polled_devices_stale_entry_is_dropped_once_the_device_is_really
         assert cluster_of(device, ON_OFF).reads == []
     finally:
         await source.disconnect()
+
+
+# --------------------------------------------- a removal racing a live tick --
+#
+# `due` is materialised once, up front, but `await cluster.read_attributes(...)`
+# yields inside the loop that walks it. `ZigbeeSource.remove()` can run to
+# completion during that await, on the SAME address as a later, not yet
+# visited entry - `_forget()` -> `PollingSchedule.forget()` deletes every
+# entry for that address at once, this later one included. The three tests
+# below reproduce that race against the real `ZigbeeSource.remove()`, not a
+# stand-in for it.
+
+
+async def test_a_device_removed_mid_tick_does_not_corrupt_the_polling_loop(store, tmp_path) -> None:
+    """Two due entries on the SAME device, one processed before the removal
+    completes and one after. The second one's `cluster` resolves to `None` -
+    the device is gone from `app.devices` by then - and retiring it must be a
+    no-op, not a crash, because `PollingSchedule.forget()` already retired it
+    a moment earlier, from inside the first entry's own read.
+
+    Fault to prove it: use `del self._schedule.due[key]` instead of
+    `.pop(key, None)` in `_poll_due`'s "this entry is stale" branch. The
+    second entry then raises `KeyError` on a key `forget()` already removed,
+    and the tick - and the loop's task, once `_run` calls this without its
+    own guard - dies right there, mid-tick, with the schedule left however
+    the exception happened to catch it."""
+    device = lamp()
+    application = on_a_network(device)
+    source = _source_for(application, store, tmp_path)
+    await source.connect()
+    try:
+        # `source._polling`, not a schedule of the test's own: `remove()` ->
+        # `_forget()` forgets entries on THE SOURCE'S OWN schedule, and the
+        # whole race depends on that being the SAME object this loop reads
+        # from - a separate schedule would never see the forget at all.
+        schedule = _fixed_schedule()
+        source._polling = schedule
+        schedule.schedule(LAMP, 1, ON_OFF, 0x0000, at=0.0)
+        schedule.schedule(LAMP, 1, LEVEL, 0x0000, at=0.0)
+        loop = PollingLoop(source, schedule, now=lambda: 200.0)
+
+        async def read_then_remove(attributes: list[int], allow_cache: bool = False) -> Any:
+            # What a concurrent `ZigbeeSource.remove(LAMP)` does while this
+            # read is in flight: deletes the device from `app.devices` AND
+            # calls `PollingSchedule.forget(LAMP)`, wiping every entry for
+            # this address - including the ON_OFF entry this very read just
+            # rescheduled, and the LEVEL entry `_poll_due` has not reached
+            # yet.
+            await source.remove(LAMP)
+            return {}, {}
+
+        cluster_of(device, ON_OFF).read_attributes = read_then_remove
+
+        await loop._poll_due()  # must not raise
+
+        # Both entries are gone: the ON_OFF one because the removal forgot
+        # it, the LEVEL one for the same reason - not because this tick
+        # retired it a second time.
+        assert schedule.due == {}
+        assert application.removed == [LAMP]
+    finally:
+        await source.disconnect()
+
+
+class _Metronome:
+    """An injected `sleep` that lets a test step `PollingLoop._run` one tick
+    at a time, instead of waiting out real seconds.
+
+    Copied from `test_availability.py`'s clock of the same name and for the
+    identical reason: `PollingLoop` and `AvailabilityChecker` are documented
+    siblings (`PollingLoop`'s own class docstring: "The two loops are
+    siblings on purpose"), and both need their periodic loop driven
+    deterministically rather than for real. Each `tick()` releases exactly
+    one sleep and returns only once the task has reached the NEXT one, so a
+    tick is complete by the time the assertions run - or, if the tick's own
+    task died instead of reaching another sleep, `tick()` times out, which
+    is exactly the signal a missing guard needs to be caught by."""
+
+    def __init__(self) -> None:
+        self._asleep = asyncio.Event()
+        self._resume = asyncio.Event()
+
+    async def sleep(self, seconds: float) -> None:
+        self._asleep.set()
+        await self._resume.wait()
+        self._resume.clear()
+
+    async def wait_until_asleep(self) -> None:
+        await asyncio.wait_for(self._asleep.wait(), timeout=1.0)
+        self._asleep.clear()
+
+    async def tick(self) -> None:
+        self._resume.set()
+        await self.wait_until_asleep()
+
+
+async def test_a_failing_tick_does_not_end_the_polling_loop(store, tmp_path) -> None:
+    """`_run`'s `while True` has no guard of its own - `_poll_due` guards
+    each entry's own read, but nothing guarded the TICK itself, so any
+    exception `_poll_due` did not itself catch (the stale `del`'s `KeyError`
+    among them) ended the task silently: nothing outside `stop()` ever awaits
+    it, so it simply stops polling everything, forever, with no error
+    anywhere but asyncio's "Task exception was never retrieved" log.
+
+    `AvailabilityChecker.mark_all_offline` documents the identical stance for
+    its own per-device guard; this is the same protection one level up, since
+    `PollingLoop`'s single call to `_poll_due` per tick makes the tick and
+    the "device" `mark_all_offline` guards the same granularity here.
+
+    Fault to prove it: remove the `try`/`except` around `await
+    self._poll_due()` in `_run`. The first `tick()` below then raises the
+    `RuntimeError` right back out of `_run`, ending the task before it ever
+    reaches a second sleep - and `tick()` itself, waiting on a sleep that
+    will now never come, times out instead of returning."""
+    device = lamp()
+    application = on_a_network(device)
+    source = _source_for(application, store, tmp_path)
+    await source.connect()
+    try:
+        schedule = _fixed_schedule()
+        metronome = _Metronome()
+        loop = PollingLoop(source, schedule, sleep=metronome.sleep, now=lambda: 0.0)
+
+        calls = 0
+
+        async def failing_then_fine() -> None:
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise RuntimeError("a tick failed for a reason unrelated to any one device")
+
+        loop._poll_due = failing_then_fine  # type: ignore[method-assign]
+        loop.start()
+        await metronome.wait_until_asleep()  # the task reached its first sleep
+
+        await metronome.tick()  # releases sleep #1; the failing `_poll_due` runs
+        await metronome.tick()  # releases sleep #2; the loop is still alive to reach it
+
+        assert calls == 2, "the loop stopped ticking after the first failure"
+        assert loop._task is not None and not loop._task.done()
+    finally:
+        await loop.stop()
+        await source.disconnect()
+
+
+async def test_the_stale_del_would_make_disconnect_skip_the_applications_shutdown(
+    store, tmp_path
+) -> None:
+    """The cascade the stale `del` produces end-to-end, through the real
+    `ZigbeeSource.disconnect()` - not merely `_poll_due()` in isolation.
+
+    `PollingLoop.stop()` cancels its task and awaits it inside
+    `contextlib.suppress(asyncio.CancelledError)` ALONE: a task that has
+    already completed with a DIFFERENT exception re-raises that exception
+    straight out of `await task`. `ZigbeeSource.disconnect()` calls
+    `_stop_polling_loop()` ABOVE `await app.shutdown(db=True)`, so that
+    re-raised exception skips the shutdown that closes bellows' non-daemon
+    serial thread - on the reconnect path the supervisor drives, the very
+    path most likely to hit this.
+
+    This reproduces the crashed task directly, the way `_run`'s `while True`
+    would have left it after exactly one such tick, rather than waiting out a
+    real periodic tick to get there.
+
+    Fault to prove it: put the `del` back in `_poll_due`. `application.
+    shutdown_calls` is then empty and the `KeyError` propagates out of
+    `disconnect()` instead of the assertion below ever running."""
+    device = lamp()
+    application = on_a_network(device)
+    source = _source_for(application, store, tmp_path)
+    await source.connect()
+    try:
+        # `source._polling`, replaced with a FIXED jitter: the default
+        # (`random.uniform(2700, 4500)`) would put both entries due well
+        # past `now=200.0`, and the tick below would find nothing due at
+        # all - a test that never triggers a single read would pass
+        # regardless of `del` vs `.pop`, having proven nothing.
+        schedule = _fixed_schedule()
+        source._polling = schedule
+        schedule.schedule(LAMP, 1, ON_OFF, 0x0000, at=0.0)
+        schedule.schedule(LAMP, 1, LEVEL, 0x0000, at=0.0)
+        loop = PollingLoop(source, schedule, now=lambda: 200.0)
+
+        async def read_then_remove(attributes: list[int], allow_cache: bool = False) -> Any:
+            await source.remove(LAMP)
+            return {}, {}
+
+        cluster_of(device, ON_OFF).read_attributes = read_then_remove
+
+        # What `_run`'s `while True` would have left behind after exactly
+        # this tick: a task that has already run to completion, wired into
+        # the source the way `.start()` would have left it. `asyncio.wait`
+        # rather than a bare `await task` - the exception (if any) stays on
+        # the task, for `disconnect()` below to hit, instead of surfacing
+        # here where nothing is checking for it yet.
+        task = asyncio.ensure_future(loop._poll_due())
+        await asyncio.wait([task])
+        loop._task = task
+        source._polling_loop = loop
+
+        await source.disconnect()
+
+        assert application.shutdown_calls == [True], (
+            "disconnect() skipped app.shutdown() - bellows' serial thread leaks"
+        )
+    finally:
+        await source.disconnect()
