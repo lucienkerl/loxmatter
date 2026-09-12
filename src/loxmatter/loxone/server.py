@@ -148,6 +148,7 @@ from loxmatter.api.groups import build_groups_router
 from loxmatter.api.language import build_i18n_router, build_language_router
 from loxmatter.api.live import BEARER_SUBPROTOCOL, ObservableRuntime, build_live_router
 from loxmatter.api.project_sync import build_project_sync_router
+from loxmatter.api.radios import build_radios_router
 from loxmatter.api.settings import build_settings_router
 from loxmatter.api.update import build_update_router
 from loxmatter.api.version import build_version_router
@@ -392,6 +393,14 @@ def build_app(
     # `monkeypatch` on a shared constant, and two tests running side by
     # side would step on each other's files.
     update_dir: Path = Path("/data/update"),
+    # Task 6, phase "Radios in the Web UI": the host's /dev and /sys as the
+    # bridge's own container sees them - both mounted read-only, see
+    # `loxmatter.radios.inventory`'s module docstring and
+    # deploy/testhost/docker-compose.yml. Parameters, not module constants,
+    # for the same reason `update_dir` is: tests point them at a `tmp_path`
+    # tree instead.
+    radios_host_dev: Path = Path("/host/dev"),
+    radios_sys_root: Path = Path("/sys"),
 ) -> FastAPI:
     # Callers that predate the device source boundary pass only `client`;
     # for them the registry is the Matter client alone, which is exactly
@@ -514,6 +523,10 @@ def build_app(
     # `api/update.py`'s module docstring for why an update to a published
     # version deliberately gets no SECOND password prompt on top of it.
     app.include_router(build_update_router(store, update_dir), dependencies=api_guard)
+    app.include_router(
+        build_radios_router(update_dir, host_dev=radios_host_dev, sys_root=radios_sys_root),
+        dependencies=api_guard,
+    )
     app.include_router(build_language_router(store), dependencies=api_guard)
     app.include_router(build_version_router(), dependencies=api_guard)
     app.include_router(build_live_router(runtime), dependencies=api_guard)

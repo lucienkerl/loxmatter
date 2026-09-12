@@ -679,6 +679,27 @@ api.update.fail_unknown_channel:
   en: "The stored update channel is not recognized. Open Settings and choose the update channel again."
   de: "Der gespeicherte Update-Kanal wird nicht erkannt. Öffnen Sie die Einstellungen und wählen Sie den Update-Kanal erneut aus."
 
+# api.radios — /api/radios (api/radios.py), design "Radios in the Web UI"
+# (2026-09-11), section 7.
+api.radios.fail_sidecar_not_ready:
+  en: "Radios cannot be changed right now: the updater service is missing, outdated or lacks access to /dev"
+  de: "Funkgeräte lassen sich gerade nicht ändern: Der Updater-Dienst fehlt, ist veraltet oder hat keinen Zugriff auf /dev"
+api.radios.fail_thread_device_required:
+  en: "Choose a USB stick to enable Thread"
+  de: "Zum Einschalten von Thread einen USB-Stick auswählen"
+api.radios.fail_unknown_device:
+  en: "This USB stick is not attached to the host"
+  de: "Dieser USB-Stick ist nicht am Host angeschlossen"
+api.radios.fail_unknown_adapter:
+  en: "This Bluetooth adapter does not exist on the host"
+  de: "Diesen Bluetooth-Adapter gibt es am Host nicht"
+api.radios.fail_busy:
+  en: "An update or another radio change is still running"
+  de: "Ein Update oder eine andere Funkgeräte-Änderung läuft noch"
+api.radios.fail_unwritable:
+  en: "The request could not be written: {exc}"
+  de: "Der Auftrag konnte nicht geschrieben werden: {exc}"
+
 # --- projectsync — ProjectFormatError/AmbiguousMiniserverError messages.
 # `api.project_sync` catches these and passes `str(exc)` straight through
 # as the HTTPException detail, which the WebUI displays - so these must run
