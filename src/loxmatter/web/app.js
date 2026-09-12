@@ -3835,11 +3835,19 @@ function app() {
       // the first `loadRadios()` call, same as before this fix - only a
       // REPORTED `null` renders as unknown.
       if (this.radios && this.radios.current === null) {
-        return [{ value: "", label: t("web.radios.thread_unknown"), inUse: false, missing: false }];
+        return [{ value: "", label: t("web.radios.thread_unknown"), inUse: false, missing: false, zigbee: false }];
       }
       const current = this.radios?.current;
       const inUse = this.radiosCurrentThread();
-      const options = [{ value: "", label: t("web.radios.no_thread_stick"), inUse: inUse === "", missing: false }];
+      // `zigbee` is set on EVERY option, `false` where it does not apply:
+      // Alpine binds an `undefined` from a dotted expression as `""`, and
+      // for a boolean attribute `""` means present - so `:disabled` on an
+      // option without the key disabled it. Measured in the browser: "No
+      // Thread stick (Thread off)" came out disabled, and Thread could no
+      // longer be turned off from the card.
+      const options = [
+        { value: "", label: t("web.radios.no_thread_stick"), inUse: inUse === "", missing: false, zigbee: false },
+      ];
       for (const radio of this.radios?.serial ?? []) {
         const name = radio.product || radio.manufacturer || radio.tty;
         const suffix = radio.serial ? ` · …${radio.serial.slice(-4)}` : "";
@@ -3859,6 +3867,7 @@ function app() {
           label: t("web.radios.missing", { path: current.thread_device }),
           inUse: true,
           missing: true,
+          zigbee: false,
         });
       }
       return options;
@@ -4511,6 +4520,11 @@ function app() {
           if (this.zigbee && response?.progress) {
             this.zigbee = { ...this.zigbee, progress: response.progress };
           }
+          // The Thread row reads which stick is the Zigbee one
+          // (`is_zigbee`) from `GET /api/radios`, and the setting just
+          // changed: without a reload it kept offering the new Zigbee stick
+          // and disabling the old one until Rescan.
+          if (this.radios) this.loadRadios();
         } catch (error) {
           this.zigbeeApplyError = error.message;
         }

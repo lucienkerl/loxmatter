@@ -8968,6 +8968,7 @@ def test_the_thread_options_mark_the_current_stick_and_a_missing_one():
         "label": "web.radios.missing",
         "inUse": True,
         "missing": True,
+        "zigbee": False,
     }
 
 
@@ -9505,7 +9506,13 @@ def test_radios_options_report_unknown_instead_of_a_fabricated_default_with_no_c
     )
     assert values == {
         "thread": [
-            {"value": "", "label": "web.radios.thread_unknown", "inUse": False, "missing": False}
+            {
+                "value": "",
+                "label": "web.radios.thread_unknown",
+                "inUse": False,
+                "missing": False,
+                "zigbee": False,
+            }
         ],
         "bluetooth": [
             {"value": "", "label": "web.radios.bluetooth_unknown", "inUse": False, "blocked": False}
@@ -10978,6 +10985,15 @@ const run = (expr, extra = {}) =>
   new Function('s', 'extra', 'with (extra) { with (s) { return (' + expr + '); } }')(state, extra);
 const exec = (statement, extra = {}) =>
   new Function('s', 'extra', 'with (extra) { with (s) { ' + statement + ' } }')(state, extra);
+// Whether Alpine SETS a boolean attribute (`:disabled`) for this expression.
+// Not `Boolean(run(expr))`: Alpine binds an `undefined` from a dotted
+// expression as `""`, and a boolean attribute given `""` is present - which
+// is how "No Thread stick" once rendered disabled with every test green.
+const boundTrue = (expr, extra = {}) => {
+  let value = run(expr, extra);
+  if (value === undefined && expr.includes('.')) value = '';
+  return ![null, undefined, false].includes(value);
+};
 globalThis.setTimeout = () => 1; globalThis.clearTimeout = () => {};
 globalThis.setInterval = () => 1; globalThis.clearInterval = () => {};
 """
@@ -11611,10 +11627,15 @@ async def test_the_thread_row_offers_the_zigbee_stick_disabled_with_its_reason(a
     confirmed a restart dialog, and only then read the refusal. The row
     lists it disabled, with the reason, from the server's `is_zigbee`.
 
-    The SERVED `:disabled` and `x-text` of the Thread `<option>`.
+    The SERVED `:disabled` and `x-text` of the Thread `<option>`, bound the
+    way Alpine binds them (`boundTrue`) - measured in the browser, an option
+    without a `zigbee` key came out DISABLED, because Alpine turns an
+    `undefined` from `option.zigbee` into `""`. "No Thread stick (Thread
+    off)" was that option.
 
     Fault to prove it: drop `:disabled="option.zigbee"` from the Thread
-    option, or read something other than `is_zigbee` for it."""
+    option, read something other than `is_zigbee` for it, or leave `zigbee`
+    off the "No Thread stick" option."""
     client, _, _ = api
     page = _without_comments((await client.get("/")).text)
     thread_option = next(
@@ -11631,7 +11652,7 @@ async def test_the_thread_row_offers_the_zigbee_stick_disabled_with_its_reason(a
         _BINDINGS_JS + f"state.radios = {json.dumps(radios)};"
         "console.log(JSON.stringify(state.radiosThreadOptions().map((option) => ["
         "  option.value,"
-        f"  Boolean(run({json.dumps(thread_option.get(':disabled', 'false'))}, {{ option }})),"
+        f"  boundTrue({json.dumps(thread_option.get(':disabled', 'false'))}, {{ option }}),"
         f"  run({json.dumps(thread_option['x-text'])}, {{ option }}),"
         "])));",
         translations=_web_strings(),
@@ -11640,3 +11661,34 @@ async def test_the_thread_row_offers_the_zigbee_stick_disabled_with_its_reason(a
     assert rows["/dev/serial/by-id/usb-B"] == (True, "ttyACM0 · in use for Zigbee")
     assert rows["/dev/serial/by-id/usb-A"][0] is False
     assert rows[""][0] is False
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_a_zigbee_apply_refreshes_the_thread_rows_lock():
+    """The Thread row learns which stick is the Zigbee one from
+    `GET /api/radios`. Measured in the browser harness: after a Zigbee
+    Apply it kept offering the newly chosen stick for Thread - and would
+    have kept the previous one disabled - until Rescan.
+
+    Fault to prove it: drop the `loadRadios()` call after a successful
+    `PUT` in `applyZigbeeRadio()`."""
+    values = _app_state(
+        _BINDINGS_JS
+        + f"state.radios = {json.dumps(RADIOS_READY)};"
+        + _zigbee_state(
+            f"state.zigbeeDraft.path = {json.dumps(ITEAD)}; state.zigbeeDirty = true;"
+            "const body = JSON.parse(JSON.stringify(state.zigbee));"
+            "const asked = [];"
+            "state.request = async (method, url) => {"
+            "  asked.push(method + ' ' + url);"
+            f"  if (url === '/api/radios') return {json.dumps(RADIOS_READY)};"
+            "  return method === 'GET' ? body : { progress: body.progress };"
+            "};"
+            "(async () => {"
+            "  await state.applyZigbeeRadio();"
+            "  await new Promise((resolve) => setImmediate(resolve));"
+            "  console.log(JSON.stringify(asked));"
+            "})();"
+        )
+    )
+    assert values.index("PUT /api/zigbee/radio") < values.index("GET /api/radios")
