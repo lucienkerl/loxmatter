@@ -2559,7 +2559,9 @@ The class that satisfies `DeviceSource` without an adapter. zigpy is imported **
   - `ZigbeeUnavailableError(RuntimeError)` — the radio could not be brought up. Carries an already-translated message.
   - `ZigbeeSource(*, path: str, fingerprint: Fingerprint, database: Path, application_factory: ApplicationFactory = _default_factory)` satisfying `DeviceSource`.
   - `ZigbeeSource.permit(seconds: int) -> datetime` and `ZigbeeSource.pairing_rows() -> list[PairingRow]` — used by Task 12, not part of `DeviceSource` (commissioning is deliberately outside the protocol).
-  - `ConnectionProgress(state: ConnectionState, attempts: int, error: str | None, changed_at: str)` (frozen dataclass) and `ZigbeeSource.progress() -> ConnectionProgress`, where `ConnectionState = Literal["idle", "loading_quirks", "opening_radio", "connected", "failed"]`. Read by Task 11's `GET /api/zigbee/radio` so the card can show what a connection attempt is doing; `error` carries an already-translated message when `state == "failed"`.
+  - `ConnectionProgress(state: ConnectionState, attempts: int, error: str | None, changed_at: str)` (frozen dataclass) and `ZigbeeSource.progress() -> ConnectionProgress`, where `ConnectionState = Literal["idle", "loading_quirks", "opening_radio", "connected", "failed"]` as this task builds it — the five states `ZigbeeSource` itself can be in. Read by Task 11's `GET /api/zigbee/radio` so the card can show what a connection attempt is doing; `error` carries an already-translated message when `state == "failed"`.
+
+    **Correction after Task 11 (commit `4caa260`): `ConnectionState` gained a sixth member, `"applying"`.** It belongs to `ZigbeeRuntime`, not to `ZigbeeSource` — no `ZigbeeSource` ever sets it, so the five above are still the whole story for this task's own code — but it is the same `Literal` and the same `progress.state` field the card reads, for the window `ZigbeeRuntime._swap` spends with no `ZigbeeSource` at all: the old one already `disconnect()`-ed, the new one not yet built (in production, a bellows `shutdown(db=True)` plus an up-to-5 s OTBR read). Without it, `ZigbeeRuntime.progress()` fell through to reporting `idle` — the one state that means "nothing is configured" — for that whole window, so a running radio swap was indistinguishable from a dead one in both the 202 and the card's first `GET`, and the card never started polling. Tasks 12-14 must treat `ConnectionState` as the six-member `Literal` in `src/loxmatter/zigbee/source.py`, not as written above.
   - `ZigbeeSource(..., on_connection_change: Callable[[bool], Awaitable[None]] | None = None)` — awaited with `True` after a successful `startup()` and with `False` on link loss and on `disconnect()`. Task 10 wires it to `Runtime.set_zigbee_connected`; Task 11's holder uses the same hook to keep the card honest.
 
 - [ ] **Step 1: Write the fake** `tests/zigbee/fakes.py` (GPL header first). It stands in for `zigpy.application.ControllerApplication` so that **no test in this plan imports zigpy**:
@@ -4717,7 +4719,9 @@ def build_zigbee_router(store, *, zigbee_runtime, host_dev, sys_root, update_dir
 
 `_settings_from(body, serial)` fills radio type, baud rate and flow control from `match_fingerprint(radio)` when the table recognises the stick, and from the request's own Advanced fields when it does not — falling back to `DEFAULT_UNKNOWN`'s values, never to a guess presented as a detection. A `path` of `None` is "no Zigbee stick" and is always accepted: clearing the setting can never be refused, or a user whose stick has been reassigned to Thread could not get out of the conflict. It awaits nothing to do with the radio, and every rejection detail goes through `i18n.t`.
 
-The card polls `GET /api/zigbee/radio` every 2 s while `progress.state` is `"loading_quirks"` or `"opening_radio"`, exactly as `loadRadios()` polls while a sidecar job runs, and stops when the state reaches `"connected"` or `"failed"`. `"failed"` is not terminal for the supervisor — it keeps retrying — so the card shows the error together with the attempt count and keeps polling at a slower cadence rather than claiming the change is over.
+**Correction after this task was implemented (commit `4caa260`, fixing a defect this task's own review found): the polling rule is three states, not two.** `ConnectionState` gained a sixth member, `"applying"` — held by `ZigbeeRuntime`, never by a `ZigbeeSource` — for the window `_swap` spends between releasing the old radio and building the new one, during which there is no source at all to ask. Before the fix, `progress()` fell through to `"idle"` for that whole window (in production, a bellows `shutdown(db=True)` plus an up-to-5 s OTBR read) — the one state that means "nothing is configured here" — so a running radio swap read as a dead one in both the 202 response and the card's first `GET`, and the card never started polling: exactly the "a running job the user cannot tell from a dead one" failure this plan names as a Global Constraint. Do not drop `"applying"` as redundant with `"loading_quirks"`/`"opening_radio"` — it covers the one window in which neither of those can be true, because there is no `ZigbeeSource` yet to report them.
+
+The card polls `GET /api/zigbee/radio` every 2 s while `progress.state` is `"applying"`, `"loading_quirks"` or `"opening_radio"`, exactly as `loadRadios()` polls while a sidecar job runs, and stops when the state reaches `"connected"` or `"failed"`. `"failed"` is not terminal for the supervisor — it keeps retrying — so the card shows the error together with the attempt count and keeps polling at a slower cadence rather than claiming the change is over.
 
 Interruption recovery needs nothing extra here, and that is worth stating because this plan requires it of anything that writes durable state: the stored setting **is** the recovery record. A bridge killed mid-apply starts up, reads the setting, and Task 10's startup path connects to it — the same place it would have ended up. There is no non-terminal phase that can freeze, which is the failure the radios sidecar had.
 
@@ -4737,6 +4741,8 @@ web.radios.zigbee_is_thread_stick:
 `web.radios.zigbee_is_thread_stick` is the short suffix in the option label, alongside the existing `web.radios.in_use` and `web.radios.option_blocked`, which is the pattern the Bluetooth row already uses for an rfkill-blocked adapter. The long sentence is the API's refusal, shown when a stale page posts anyway.
 
 Plus the strings the progress and presence reporting need, each `en` + `de`: `web.radios.zigbee_loading_quirks` (say that the first connection prepares device support and takes a few seconds — the user is looking at a 9-15 s pause and deserves to know it is expected), `web.radios.zigbee_opening_radio`, `web.radios.zigbee_connected`, `web.radios.zigbee_failed_retrying` (carrying the attempt count and the error, because the supervisor never gives up and the card must not imply it has), and `web.radios.zigbee_device_missing` (the stored stick is not present — name replugging it or choosing another, the way the Thread row already does).
+
+**Correction (commit `4caa260`): also add `web.radios.zigbee_applying`**, for the `"applying"` state described above — the window between releasing the old radio and building the new one, in which there is no source to ask at all. It already exists in `src/loxmatter/i18n/strings.yaml`; an implementer working from this task alone must not skip it.
 
 - [ ] **Step 8: Run to verify they pass.**
 
@@ -5067,7 +5073,7 @@ EOF
 - Test: `tests/api/test_web.py`
 
 **Interfaces:**
-- Consumes: `GET`/`PUT /api/zigbee/radio` (Task 11).
+- Consumes: `GET`/`PUT /api/zigbee/radio` (Task 11), whose `progress.state` is the six-member `ConnectionState` in `src/loxmatter/zigbee/source.py` (`"idle"`, `"applying"`, `"loading_quirks"`, `"opening_radio"`, `"connected"`, `"failed"`) — not the five Task 7's Interfaces block names, which predates `"applying"` (commit `4caa260`). `zigbeeProgressText()` and `zigbeeRadioPolling()` must handle all six: `"applying"`, `"loading_quirks"` and `"opening_radio"` are the working states (poll, show progress text), `"idle"` and `"connected"` and `"failed"` are stopped states (do not poll) — `"failed"` still shows an error and an attempt count, because the supervisor keeps retrying underneath it.
 - Produces: `zigbeeRadioOptions()`, `zigbeeRadioChanged()`, `applyZigbeeRadio()`, `zigbeeAdvancedOpen`, `zigbeeProgressText()`, `zigbeeRadioPolling()` in `app.js`; the sprite symbol `i-transport-zigbee`; `transportBadge` gains its `zigbee` entry.
 
 - [ ] **Step 1: Write the failing tests** in `tests/api/test_web.py`, using the node harness — a Python test that fetches the page proves only that the file was served.
@@ -5194,30 +5200,50 @@ async def test_the_row_says_what_a_running_connection_attempt_is_doing(api):
     Global Constraint about long-running work, and the 2a-1 lesson behind
     it.
 
+    `ConnectionState` has six members, not five: `"applying"` (commit
+    `4caa260`, after this task was originally written) covers the window a
+    radio swap spends with no `ZigbeeSource` at all - the old one released,
+    the new one not yet built. Without it the card read `idle`, the "nothing
+    is configured" state, for that whole window and never started polling -
+    the same failure this test already exists to catch, just for a
+    different gap. The polling rule is therefore three states, not two.
+
     Runs the REAL `zigbeeProgressText` in node, because a markup assertion
     cannot fail for a binding that is merely wrong.
 
     Fault to prove it: render a bare connected/not-connected boolean. A
-    warm-up in progress then reads exactly like a broken stick."""
+    warm-up in progress then reads exactly like a broken stick. Also fails
+    if `zigbeeRadioPolling` polls only for `loading_quirks`/`opening_radio`
+    and drops `applying` as an apparent duplicate - the assertion below on
+    `values["applying_polling"]` exists specifically to catch that."""
     values = _app_state(
         setup="console.log(JSON.stringify({"
+        "  applying: state.zigbeeProgressText({ state: 'applying', attempts: 0 }),"
         "  quirks: state.zigbeeProgressText({ state: 'loading_quirks', attempts: 0 }),"
         "  opening: state.zigbeeProgressText({ state: 'opening_radio', attempts: 0 }),"
         "  failed: state.zigbeeProgressText({ state: 'failed', attempts: 4, error: 'nope' }),"
+        "  applying_polling: state.zigbeeRadioPolling({ state: 'applying' }),"
         "  polling: state.zigbeeRadioPolling({ state: 'loading_quirks' }),"
         "  settled: state.zigbeeRadioPolling({ state: 'connected' }),"
         "}));",
         translations={
+            "web.radios.zigbee_applying": "Applying the change - releasing the previous radio",
             "web.radios.zigbee_loading_quirks": "Preparing device support...",
             "web.radios.zigbee_opening_radio": "Opening the stick...",
             "web.radios.zigbee_failed_retrying": "Failed ({attempts}): {error}",
         },
     )
+    assert values["applying"] == "Applying the change - releasing the previous radio"
     assert values["quirks"] == "Preparing device support..."
     assert values["opening"] == "Opening the stick..."
     assert "4" in values["failed"] and "nope" in values["failed"]
-    # The card polls while an attempt is running and stops once it settles,
-    # exactly as `loadRadios()` does for a sidecar job.
+    # The card polls while an attempt is running - three states
+    # (`applying`, `loading_quirks`, `opening_radio`), not two - and stops
+    # once it settles (`connected` or `failed`), exactly as `loadRadios()`
+    # does for a sidecar job. `applying` is not redundant with the other
+    # two: it is the only one of the three a `ZigbeeSource` never reports
+    # itself, because during it there is no `ZigbeeSource` to ask.
+    assert values["applying_polling"] is True
     assert values["polling"] is True
     assert values["settled"] is False
 
@@ -5267,7 +5293,7 @@ The row's markup must make the difference from its neighbours visible rather tha
 
 - [ ] **Step 5: Check it in a browser.** Start the app and look at the Settings tab at the narrowest real card width, in **both** themes: the three rows read as three rows, the Thread stick is visibly disabled with its reason, and the Advanced disclosure opens without shifting the rows below it. Screenshot both themes into the task report. A test that renders markup cannot see a layout that collapses.
 
-  Check the progress line too, because it is the part a static render cannot judge: with the row mid-attempt, the text must not reflow the card or push the Apply button around as it changes between the three states, and the failed state has to stay readable when the error is a long one. Point the row at a path that does not exist to see the missing-stick text for real.
+  Check the progress line too, because it is the part a static render cannot judge: with the row mid-attempt, the text must not reflow the card or push the Apply button around as it changes across a successful attempt's four states (`"applying"` → `"loading_quirks"` → `"opening_radio"` → `"connected"`), and the failed state has to stay readable when the error is a long one. Point the row at a path that does not exist to see the missing-stick text for real.
 
 - [ ] **Step 6: Run the checks** (all five, four-part pytest).
 
