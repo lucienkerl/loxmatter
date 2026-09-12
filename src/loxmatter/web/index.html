@@ -338,6 +338,42 @@
       <section x-show="view === 'devices'">
         <div class="card">
           <h2 x-text="t('web.devices.commission_heading')"></h2>
+          <!--
+            The two tabs (design 2026-09-12, section 3.1), in the `nav.tabs`
+            shape the language card and the update channel already use -
+            with one deliberate difference from both: those disable their
+            buttons, and this strip never does. The Zigbee tab is ABSENT
+            without a configured stick, not disabled: a tab that explains
+            why it does nothing is worse than no tab, and an installation
+            with no Zigbee stick is the normal case. The whole strip goes
+            with it, so the card of such an installation is exactly the card
+            it always was.
+
+            `zigbeeTabVisible()` reads the STORED setting, never whether the
+            pairing list answered - see app.js.
+          -->
+          <template x-if="zigbeeTabVisible()">
+            <nav class="tabs commission-tabs" role="tablist">
+              <button
+                type="button"
+                role="tab"
+                :aria-selected="commissionTabShown() === 'matter' ? 'true' : 'false'"
+                :class="{ active: commissionTabShown() === 'matter' }"
+                @click="selectCommissionTab('matter')"
+                x-text="t('web.devices.commission_tab_matter')"
+              ></button>
+              <button
+                type="button"
+                role="tab"
+                :aria-selected="commissionTabShown() === 'zigbee' ? 'true' : 'false'"
+                :class="{ active: commissionTabShown() === 'zigbee' }"
+                @click="selectCommissionTab('zigbee')"
+                x-text="t('web.zigbee.tab')"
+              ></button>
+            </nav>
+          </template>
+          <!-- The Matter tab: the card as it has always been, unchanged. -->
+          <div x-show="commissionTabShown() === 'matter'">
           <div x-show="commissionStep === null">
             <!--
               Layout since the "Code first" design (2026-09-07): the
@@ -468,8 +504,8 @@
               <span x-text="t('web.devices.room_label')"></span>
               <select x-model="commissionRoom">
                 <option value="" x-text="t('web.devices.room_none')"></option>
-                <template x-for="chip in roomChips().filter((c) => c.key !== '')" :key="chip.key">
-                  <option :value="chip.key" x-text="chip.key"></option>
+                <template x-for="room in roomSelectOptions()" :key="room">
+                  <option :value="room" x-text="room"></option>
                 </template>
                 <option value="__new__" x-text="t('web.devices.room_new')"></option>
               </select>
@@ -567,6 +603,135 @@
             :class="commissionMessageIsError ? 'banner danger' : 'banner ok'"
             x-text="commissionMessage"
           ></p>
+          </div>
+
+          <!--
+            The Zigbee tab (design 2026-09-12, section 3.1), in the design's
+            order: reset guidance and ONE button first, not an open network -
+            ZHA opens the window as the page loads and burns it while the
+            user is still reading how to reset their device. Then, while
+            the window is open, the countdown with Stop and Keep open
+            longer. Then one row per device, keyed by IEEE.
+          -->
+          <div class="zigbee-pairing" x-show="commissionTabShown() === 'zigbee'" x-cloak>
+            <!-- The list's own failure, as the API words it. A 503 here is a
+                 radio swap in flight or a stick just cleared; the tab stays
+                 either way, and says which. -->
+            <p class="banner danger" x-show="zigbeePairingError" x-cloak x-text="zigbeePairingError"></p>
+            <div class="zigbee-reset">
+              <p class="hint" x-text="t('web.zigbee.reset_intro')"></p>
+              <ul class="zigbee-reset-hints">
+                <li x-text="t('web.zigbee.reset_hint_lamp')"></li>
+                <li x-text="t('web.zigbee.reset_hint_battery')"></li>
+              </ul>
+            </div>
+            <!-- Start and the running window's two buttons share one line
+                 of the same height; the countdown is the line under them. -->
+            <div class="row zigbee-window" x-show="!zigbeeWindowOpen()">
+              <button
+                class="primary"
+                @click="startZigbeeSearch()"
+                :disabled="zigbeePermitBusy || zigbeePairingUnavailable"
+                x-text="t('web.zigbee.start')"
+              ></button>
+            </div>
+            <div class="row zigbee-window" x-show="zigbeeWindowOpen()" x-cloak>
+              <button @click="stopZigbeeSearch()" :disabled="zigbeePermitBusy" x-text="t('web.zigbee.stop')"></button>
+              <button @click="extendZigbeeSearch()" :disabled="zigbeePermitBusy" x-text="t('web.zigbee.extend')"></button>
+            </div>
+            <p class="zigbee-countdown" x-show="zigbeeWindowOpen()" x-cloak
+               x-text="t('web.zigbee.countdown', { seconds: zigbeeCountdown() })"></p>
+            <p class="banner danger" x-show="zigbeePermitError" x-cloak x-text="zigbeePermitError"></p>
+            <p class="hint" x-show="zigbeeWindowOpen() && zigbeeRows().length === 0" x-cloak
+               x-text="t('web.zigbee.searching_empty')"></p>
+            <ul class="zigbee-rows" x-show="zigbeeRows().length > 0" x-cloak>
+              <template x-for="row in zigbeeRows()" :key="row.ieee">
+                <li class="zigbee-row" :class="'tone-' + zigbeeRowTone(row)">
+                  <div class="zigbee-row-head">
+                    <span class="zigbee-row-dot" aria-hidden="true"></span>
+                    <div class="zigbee-row-text">
+                      <strong class="zigbee-row-title" x-text="zigbeeRowTitle(row)"></strong>
+                      <span class="zigbee-row-state" x-text="zigbeeRowState(row)"></span>
+                      <code class="zigbee-row-ieee" x-show="zigbeeRowTitle(row) !== row.ieee" x-text="row.ieee"></code>
+                    </div>
+                  </div>
+                  <!-- The quirk hint sits on a row that has finished its
+                       interview, and apart from the state line: a device
+                       with no quirk is not a failed one, and users confuse
+                       the two. -->
+                  <p class="hint zigbee-row-quirk" x-show="zigbeeRowNameable(row)"
+                     x-text="row.quirk_applied ? t('web.zigbee.quirk_applied') : t('web.zigbee.quirk_none')"></p>
+                  <!-- Name and room. Before adoption they are what "Add to
+                       devices" sends; after it, each saves on its own when
+                       the field is left (or the select changes). The room
+                       control is the commissioning card's: the same options
+                       (`roomSelectOptions()`), the same "" for no room and
+                       the same "+ New room…" field (`resolveRoomChoice()`). -->
+                  <div class="zigbee-row-fields" x-show="zigbeeRowNameable(row)">
+                    <label class="inline-field zigbee-name-field">
+                      <span x-text="t('web.zigbee.name_label')"></span>
+                      <input
+                        type="text"
+                        x-model="zigbeeRowDrafts[row.ieee].name"
+                        @input="zigbeeRowEdited(row.ieee, 'name')"
+                        @blur="saveZigbeeName(row.ieee)"
+                        @keydown.enter="zigbeeRowAdopted(row) ? $el.blur() : adoptZigbeeDevice(row.ieee)"
+                      />
+                    </label>
+                    <label class="inline-field">
+                      <span x-text="t('web.devices.room_label')"></span>
+                      <select
+                        x-model="zigbeeRowDrafts[row.ieee].room"
+                        @change="zigbeeRowEdited(row.ieee, 'room'); saveZigbeeRoom(row.ieee)"
+                      >
+                        <option value="" x-text="t('web.devices.room_none')"></option>
+                        <template x-for="room in roomSelectOptions()" :key="room">
+                          <option :value="room" x-text="room"></option>
+                        </template>
+                        <option value="__new__" x-text="t('web.devices.room_new')"></option>
+                      </select>
+                    </label>
+                    <input
+                      x-show="zigbeeRowDrafts[row.ieee].room === '__new__'"
+                      x-cloak
+                      type="text"
+                      class="new-room-input"
+                      x-model="zigbeeRowDrafts[row.ieee].newRoom"
+                      @input="zigbeeRowEdited(row.ieee, 'room')"
+                      @blur="saveZigbeeRoom(row.ieee)"
+                      :placeholder="t('web.devices.room_new_placeholder')"
+                      :aria-label="t('web.devices.room_new_placeholder')"
+                    />
+                  </div>
+                  <p class="hint" x-show="zigbeeRowNameable(row) && zigbeeRowAdopted(row)" x-cloak
+                     x-text="zigbeeRowWasSaved(row) ? t('web.zigbee.saved') : t('web.zigbee.adopted_hint')"></p>
+                  <div class="row zigbee-row-actions">
+                    <button
+                      class="primary"
+                      x-show="zigbeeRowOffers(row, 'adopt')"
+                      :disabled="zigbeeRowLocked(row)"
+                      @click="adoptZigbeeDevice(row.ieee)"
+                      x-text="t('web.zigbee.adopt')"
+                    ></button>
+                    <button
+                      x-show="zigbeeRowOffers(row, 'retry')"
+                      :disabled="zigbeeRowLocked(row)"
+                      @click="retryZigbeeDevice(row.ieee)"
+                      x-text="t('web.zigbee.retry')"
+                    ></button>
+                    <button
+                      x-show="zigbeeRowOffers(row, 'remove')"
+                      :disabled="zigbeeRowLocked(row)"
+                      @click="removeZigbeeDevice(row.ieee)"
+                      x-text="t('web.zigbee.remove')"
+                    ></button>
+                  </div>
+                  <p class="banner danger zigbee-row-error" x-show="zigbeeRowError(row)" x-cloak
+                     x-text="zigbeeRowError(row)"></p>
+                </li>
+              </template>
+            </ul>
+          </div>
 
         </div>
 

@@ -1344,6 +1344,122 @@ web.devices.more_commands_short:
 web.devices.commission_room_hint:
   en: "optional, can be changed later"
   de: "optional, später änderbar"
+
+# --- The Zigbee tab of the commissioning card (design 2026-09-12, 3.1) ---
+# The two tab labels. Product names, the same in both languages - and the
+# Matter one lives under `web.devices` because that half is the card the
+# Devices view always had.
+web.devices.commission_tab_matter:
+  en: "Matter"
+  de: "Matter"
+web.zigbee.tab:
+  en: "Zigbee"
+  de: "Zigbee"
+# The reset guidance the tab OPENS on, before any window is open. The two
+# cases cover almost every device (design 3.1); the lead-in says why a reset
+# comes first, because a device still paired elsewhere never looks for a new
+# network and the search then finds nothing without saying why.
+web.zigbee.reset_intro:
+  en: "Reset the device first, so it looks for a new network:"
+  de: "Setzen Sie das Gerät zuerst zurück, damit es ein neues Netz sucht:"
+web.zigbee.reset_hint_lamp:
+  en: "A lamp: switch it off and on five to ten times in a row."
+  de: "Eine Lampe: fünf- bis zehnmal hintereinander aus- und wieder einschalten."
+web.zigbee.reset_hint_battery:
+  en: "A battery device: hold its button until the LED blinks."
+  de: "Ein Batteriegerät: die Taste gedrückt halten, bis die LED blinkt."
+web.zigbee.start:
+  en: "Search for devices"
+  de: "Nach Geräten suchen"
+web.zigbee.stop:
+  en: "Stop"
+  de: "Beenden"
+# Re-sends the maximum, so the window runs a full 254 s from the press.
+web.zigbee.extend:
+  en: "Keep open longer"
+  de: "Länger offen lassen"
+# Counted down in the browser to the server's own end timestamp.
+web.zigbee.countdown:
+  en: "Open for new devices: {seconds} s"
+  de: "Offen für neue Geräte: {seconds} s"
+web.zigbee.searching_empty:
+  en: "No device has joined yet. Reset it now - it appears here within a few seconds."
+  de: "Noch ist kein Gerät beigetreten. Setzen Sie es jetzt zurück – es erscheint hier nach wenigen Sekunden."
+# The seven row states of design 3.1. `stuck` and `waiting_wake` are the two
+# ZHA does not have, and neither may read as a failure: a stuck row is
+# usually a battery device that fell asleep, and it is still waiting.
+# `{device}` is "<manufacturer> <model>"; while neither is known the row
+# says `state_joined` instead.
+web.zigbee.state_joined:
+  en: "Found a device - reading its details"
+  de: "Gerät gefunden – seine Angaben werden gelesen"
+web.zigbee.state_interviewing:
+  en: "Found {device} - reading its details"
+  de: "{device} gefunden – seine Angaben werden gelesen"
+web.zigbee.state_configuring:
+  en: "Setting it up"
+  de: "Wird eingerichtet"
+web.zigbee.state_ready:
+  en: "Ready to use"
+  de: "Einsatzbereit"
+web.zigbee.state_failed:
+  en: "Could not read this device"
+  de: "Dieses Gerät konnte nicht gelesen werden"
+web.zigbee.state_stuck:
+  en: "No progress for a while. Battery devices fall asleep - press the device's button every few seconds."
+  de: "Seit einer Weile kein Fortschritt. Batteriegeräte schlafen ein – drücken Sie alle paar Sekunden die Taste am Gerät."
+web.zigbee.state_waiting_wake:
+  en: "Waiting for the device to wake up - press its button"
+  de: "Wartet, bis das Gerät aufwacht – drücken Sie seine Taste"
+web.zigbee.retry:
+  en: "Retry"
+  de: "Erneut versuchen"
+web.zigbee.remove:
+  en: "Remove"
+  de: "Entfernen"
+# The hint on a row that has finished its interview. A different thing, in a
+# different place, from a failed interview: a device with no quirk works
+# with the standard Zigbee functions and is not broken.
+web.zigbee.quirk_applied:
+  en: "Device-specific support (quirk) applied"
+  de: "Gerätespezifische Anpassung (Quirk) angewendet"
+web.zigbee.quirk_none:
+  en: "No device-specific support (quirk): standard Zigbee functions only, so some values may be missing"
+  de: "Keine gerätespezifische Anpassung (Quirk): nur Zigbee-Standardfunktionen, einzelne Werte können fehlen"
+web.zigbee.name_label:
+  en: "Name"
+  de: "Name"
+# The step that makes the device one of the bridge's own: device list,
+# export, Loxone. A button and not a blur, because the prefilled name is
+# often exactly right and a user who agrees with it has no field to leave.
+web.zigbee.adopt:
+  en: "Add to devices"
+  de: "Zu den Geräten hinzufügen"
+web.zigbee.adopted_hint:
+  en: "In the device list. Name and room are saved when you leave the field."
+  de: "In der Geräteliste. Name und Raum werden gespeichert, sobald Sie das Feld verlassen."
+web.zigbee.saved:
+  en: "Saved."
+  de: "Gespeichert."
+# The honest removal copy of design 3.1: `remove()` forgets the device
+# whether or not the leave request is ever delivered, and nothing stops the
+# device rejoining.
+web.zigbee.remove_confirm:
+  en: |
+    Remove "{name}"?
+
+    The bridge asks the device to leave the network and forgets it either way. A device that is asleep right now does not hear that request: factory-reset it before pairing it anywhere else.
+  de: |
+    "{name}" entfernen?
+
+    Die Brücke bittet das Gerät, das Netz zu verlassen, und vergisst es in jedem Fall. Ein Gerät, das gerade schläft, erhält diese Bitte nicht: Setzen Sie es auf Werkseinstellungen zurück, bevor Sie es anderswo koppeln.
+# Appended when the device was already added to the device list: the same
+# orphans `web.devices.remove_confirm` names for a tile's removal.
+web.zigbee.remove_confirm_adopted:
+  en: |
+    It also leaves the device list. In Loxone, every virtual input/output with the key prefix "d{id}_" is left orphaned - delete those by hand in Loxone Config.
+  de: |
+    Es verschwindet auch aus der Geräteliste. In Loxone bleiben alle virtuellen Ein- und Ausgänge mit dem Schlüssel-Präfix "d{id}_" verwaist – diese in Loxone Config von Hand löschen.
 # --- Tile menu (kebab-menu design, 2026-09-05) ---
 # `menu` is the accessible name of the kebab button: it carries no word,
 # so it needs one. `menu_room_heading` labels the room section in the

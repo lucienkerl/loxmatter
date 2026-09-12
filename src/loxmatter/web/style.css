@@ -3307,3 +3307,183 @@ footer.hint-block {
     min-height: 44px;
   }
 }
+
+/* ---------------------------------------------------------------------
+ * The Zigbee tab of the commissioning card (design 2026-09-12, 3.1).
+ * ------------------------------------------------------------------- */
+
+/* The `nav.tabs` strip, inside a card rather than under the header: no bar
+ * background of its own and no side padding, so the tabs line up with the
+ * heading above them. */
+nav.tabs.commission-tabs {
+  padding: 0;
+  margin: 0 0 1rem;
+  background: none;
+}
+
+.zigbee-reset-hints {
+  margin: 0.2rem 0 0.9rem;
+  padding-left: 1.2rem;
+  font-size: 0.88rem;
+}
+
+.zigbee-reset .hint {
+  margin: 0;
+}
+
+/* Start, and the Stop/Keep open pair that replaces it, sit on one line of
+ * the same height, so the button just pressed stays where the finger is.
+ * The countdown is its own line below them: beside the two buttons it
+ * wrapped the second one onto a line of its own at 375 px, in both
+ * languages. */
+.zigbee-window {
+  min-height: 2.5rem;
+}
+
+.zigbee-countdown {
+  margin: 0.5rem 0 0;
+}
+
+/* Digits of one width, so the countdown does not jiggle every second. */
+p.zigbee-countdown {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.zigbee-rows {
+  list-style: none;
+  margin: 1rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.zigbee-row {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.7rem 0.8rem;
+}
+
+.zigbee-row-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+}
+
+/* The state as a colour as well as a sentence: green once ready, red for a
+ * failed interview, amber for the two states that wait on the device - and
+ * the accent colour while the bridge is still at work. */
+.zigbee-row-dot {
+  flex: none;
+  box-sizing: border-box;
+  width: 0.6rem;
+  height: 0.6rem;
+  margin-top: 0.45rem;
+  border-radius: 50%;
+  /* Still at work: a ring rather than a dot, because the accent colour and
+   * the amber of the waiting states are too close to tell apart by colour
+   * alone. */
+  border: 2px solid var(--accent);
+  background: transparent;
+}
+.zigbee-row.tone-ok .zigbee-row-dot {
+  border-color: var(--ok);
+  background: var(--ok);
+}
+.zigbee-row.tone-danger .zigbee-row-dot {
+  border-color: var(--danger);
+  background: var(--danger);
+}
+.zigbee-row.tone-warn .zigbee-row-dot {
+  border-color: var(--warn);
+  background: var(--warn);
+}
+
+.zigbee-row-text {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-width: 0;
+}
+
+.zigbee-row-title {
+  overflow-wrap: anywhere;
+}
+
+.zigbee-row-state {
+  font-size: 0.88rem;
+}
+.zigbee-row.tone-ok .zigbee-row-state {
+  color: var(--ok);
+}
+.zigbee-row.tone-danger .zigbee-row-state {
+  color: var(--danger);
+}
+.zigbee-row.tone-warn .zigbee-row-state {
+  color: var(--warn);
+}
+
+/* The IEEE tells two identical bulbs apart; it is not what the row is
+ * about, so it is the quietest line. */
+.zigbee-row-ieee {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+
+.zigbee-row-quirk {
+  margin: 0.5rem 0 0;
+}
+
+.zigbee-row-fields {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 1rem;
+  margin-top: 0.6rem;
+}
+
+/* Label above control, not beside it: the row is narrow on a phone, and a
+ * label beside the name field took a fifth of the width the name needs. */
+.zigbee-row-fields .inline-field {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.2rem;
+  min-width: 0;
+  max-width: 100%;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+/* The name gets a line of its own: `<Manufacturer> <Model>` is long by
+ * nature ("IKEA of Sweden TRADFRI bulb E27 WW 806lm"), and a prefilled name
+ * cut off inside its field is a name nobody can check before keeping it.
+ * The global `input[type="text"]` minimum is for device names on a wide
+ * card; the row's own border already sets the limit here. */
+.zigbee-row-fields .zigbee-name-field {
+  flex: 1 1 100%;
+}
+.zigbee-row-fields input[type="text"] {
+  min-width: 0;
+}
+.zigbee-row-fields select {
+  max-width: 100%;
+}
+.zigbee-row-fields .new-room-input {
+  flex: 0 1 11rem;
+  align-self: flex-end;
+}
+
+.zigbee-row > p.hint {
+  margin: 0.4rem 0 0;
+}
+
+.zigbee-row-actions {
+  margin-top: 0.6rem;
+}
+
+.zigbee-row-error {
+  margin: 0.6rem 0 0;
+}
