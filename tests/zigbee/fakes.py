@@ -40,9 +40,10 @@ what this file offers.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import time
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import AsyncIterator, Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -207,6 +208,13 @@ class FakeDefaultResponse:
     status: int = 0
 
 
+@dataclass
+class FakeWriteStatusRecord:
+    """One record of `Cluster.write_attributes`' answer."""
+
+    status: int = 0
+
+
 @dataclass(frozen=True)
 class FakeAttributeEvent:
     """One of zigpy's four attribute events.
@@ -266,12 +274,37 @@ class FakeCluster:
         # neither cached nor readable is a device that does not answer.
         self.readable: dict[int, Any] = dict(readable or {})
         self.reads: list[list[int]] = []
+        # Whether each of those reads allowed the cache. A stale value in
+        # `cached` and a fresh one in `readable` is the only way to tell a
+        # cached read from a real one, which is exactly zigpy's own
+        # behaviour: `allow_cache=True` answers from `_attr_cache` and skips
+        # the request entirely for anything it already holds.
+        self.cached_reads: list[bool] = []
         self.sent: list[tuple[int, dict[str, Any]]] = []
         self.read_error: Exception | None = None
         self.command_error: Exception | None = None
         self.command_status: int = 0
         self._listeners: dict[str, list[Callable[[Any], None]]] = {}
         self.endpoint: FakeEndpoint | None = None
+
+        # -- configure-on-join ---------------------------------------------
+        # How often `bind()` was reached, what `configure_reporting_multiple`
+        # was handed, and what it should answer. `reporting_statuses` is per
+        # ATTRIBUTE ID, because that is the granularity zigpy answers at: a
+        # lamp that refuses colour temperature and accepts on/off is a real
+        # device, not a hypothesis.
+        self.binds: int = 0
+        self.bind_error: Exception | None = None
+        self.reporting: list[dict[Any, Any]] = []
+        self.reporting_error: Exception | None = None
+        self.reporting_statuses: dict[int, int] = {}
+        self.writes: list[dict[Any, Any]] = []
+        self.write_error: Exception | None = None
+        # `zigpy.util.ListenableMixin`, which is a SEPARATE mechanism from
+        # the `EventBase` one above: `add_listener` registers an object and
+        # `listener_event` calls it by method name. Client commands - among
+        # them an IAS alarm - arrive only this way.
+        self.command_listeners: list[Any] = []
 
     # -- what zigpy's `EventBase` offers -----------------------------------
 
@@ -299,6 +332,38 @@ class FakeCluster:
     @property
     def listener_count(self) -> int:
         return sum(len(listeners) for listeners in self._listeners.values())
+
+    # -- what zigpy's `ListenableMixin` offers ------------------------------
+
+    def add_listener(self, listener: Any) -> int:
+        self.command_listeners.append(listener)
+        return id(listener)
+
+    def listener_event(self, method_name: str, *args: Any) -> None:
+        """`zigpy.util.ListenableMixin.listener_event` - by method name,
+        with every listener exception CAUGHT AND DISCARDED (verified against
+        zigpy 2.2.0).
+
+        The swallowing is the point: a handler that raises here goes
+        silently dead, which is why every method name this bridge relies on
+        is pinned in `test_zigpy_names.py`."""
+        for listener in list(self.command_listeners):
+            method = getattr(listener, method_name, None)
+            if method is None:
+                continue
+            try:
+                method(*args)
+            except Exception:
+                logger.debug("listener %r raised on %s", listener, method_name, exc_info=True)
+
+    def receive_command(self, command_id: int, args: Any, *, tsn: int = 7) -> None:
+        """A CLIENT command arriving from the device.
+
+        `Cluster.handle_message` dispatches a cluster-frame command as
+        `listener_event("cluster_command", hdr.tsn, hdr.command_id, args)`
+        and NOT as any attribute event - which is exactly why an IAS alarm
+        is invisible to a bridge that only subscribes to reports."""
+        self.listener_event("cluster_command", tsn, command_id, args)
 
     # -- what the source reads ---------------------------------------------
 
@@ -336,10 +401,87 @@ class FakeCluster:
             raise KeyError(key)
         return self._cached.get(key, default)
 
+    # -- what configure-on-join does ---------------------------------------
+
+    def _note(self, what: str) -> None:
+        """Appends to the device's ordered journal, when there is one.
+
+        Order is the only way to measure "the quirk hook runs before
+        anything else" and "fast poll mode brackets the WHOLE routine";
+        counting calls cannot tell a correct pass from one that does the
+        right things in the wrong sequence."""
+        endpoint = self.endpoint
+        device = None if endpoint is None else endpoint.device
+        if device is not None:
+            device.journal.append(what)
+
+    async def bind(self, **kwargs: Any) -> list[int]:
+        """`Cluster.bind()` - the ZDO Bind_req for this cluster.
+
+        Real zigpy resolves this through `self._endpoint.device.zdo.bind`,
+        so a quirk that overrides `bind` (and several do - the whole purpose
+        of `TuyaNoBindPowerConfigurationCluster` is to NOT send it) is only
+        honoured when the call goes through the cluster OBJECT."""
+        self._note(f"bind:{self.cluster_id:#06x}")
+        self.binds += 1
+        if self.bind_error is not None:
+            raise self.bind_error
+        return [0]
+
+    async def configure_reporting_multiple(self, config: Mapping[Any, Any]) -> dict[Any, int]:
+        """`Cluster.configure_reporting_multiple(dict[ZCLAttributeDef, ReportingConfig])`.
+
+        Keyed by the attribute DEFINITION, exactly as zigpy 2.2.0 is: it
+        reads `attr_def.id` and `attr_def.zcl_type` off every key. A bare
+        integer key raises here for the same reason it would raise there,
+        rather than being quietly accepted - a fake that forgave it would
+        hide the `find_attribute` trap that 28 shipped quirks walk into.
+
+        The answer is a status PER ATTRIBUTE, which is also zigpy's: a lamp
+        that accepts on/off and refuses colour temperature answers exactly
+        that."""
+        for key in config:
+            if not isinstance(key, FakeAttributeDef):
+                raise TypeError(
+                    f"{key!r} has no attribute 'id' - configure_reporting_multiple is "
+                    f"keyed by the attribute definition, not by its id"
+                )
+        self._note(f"report:{self.cluster_id:#06x}")
+        self.reporting.append(dict(config))
+        if self.reporting_error is not None:
+            raise self.reporting_error
+        return {definition: self.reporting_statuses.get(definition.id, 0) for definition in config}
+
+    async def write_attributes(
+        self, attributes: Mapping[Any, Any], **kwargs: Any
+    ) -> list[list[FakeWriteStatusRecord]]:
+        self._note(f"write:{self.cluster_id:#06x}")
+        self.writes.append(dict(attributes))
+        if self.write_error is not None:
+            raise self.write_error
+        for key, value in attributes.items():
+            attribute_id = key.id if isinstance(key, FakeAttributeDef) else key
+            if attribute_id not in self.attributes:
+                # `Cluster.write_attributes` resolves every key through
+                # `find_attribute`, which raises for an id the cluster does
+                # not declare. Forgiving that here would let a write to the
+                # wrong attribute number pass the whole suite.
+                raise KeyError(attribute_id)
+            self._cached[attribute_id] = value
+        return [[FakeWriteStatusRecord(status=0)]]
+
+    def update_attribute(self, attribute_id: int, value: Any) -> None:
+        """`Cluster.update_attribute` - the cache, then the
+        `attribute_updated` event, which is how a value that arrived as a
+        COMMAND becomes indistinguishable from a reported one."""
+        self.report(attribute_id, value, event="attribute_updated")
+
     async def read_attributes(
         self, attributes: list[int], allow_cache: bool = False
     ) -> tuple[dict[int, Any], dict[int, Any]]:
+        self._note(f"read:{self.cluster_id:#06x}")
         self.reads.append(list(attributes))
+        self.cached_reads.append(bool(allow_cache))
         if self.read_error is not None:
             raise self.read_error
         success: dict[int, Any] = {}
@@ -356,6 +498,7 @@ class FakeCluster:
         return success, failure
 
     async def command(self, command_id: int, **kwargs: Any) -> FakeDefaultResponse:
+        self._note(f"command:{self.cluster_id:#06x}:{command_id}")
         self.sent.append((command_id, dict(kwargs)))
         if self.command_error is not None:
             raise self.command_error
@@ -408,6 +551,11 @@ class FakeEndpoint:
         }
         self.out_clusters: dict[int, FakeCluster] = {}
         self.device_ieee = ""
+        # Set by `FakeDevice.__init__`. `Cluster.endpoint.device` is the
+        # path zigpy itself uses (`Cluster.bind` reaches the ZDO through
+        # it), and it is what lets a cluster write into the device's
+        # ordered journal.
+        self.device: FakeDevice | None = None
         for cluster in self.in_clusters.values():
             cluster.endpoint = self
 
@@ -456,6 +604,9 @@ class FakeDevice:
         node_desc: FakeNodeDescriptor | None = None,
         quirk_applied: bool = False,
         last_seen: float | None | _LastSeenUnset = _LAST_SEEN_UNSET,
+        custom_configuration: bool = False,
+        skip_configuration: bool = False,
+        fast_poll: bool = True,
     ) -> None:
         self.ieee = ieee
         self.nwk = 0x1234
@@ -466,9 +617,27 @@ class FakeDevice:
             time.time() if isinstance(last_seen, _LastSeenUnset) else last_seen
         )
         self.is_initialized = True
+        # Everything the device was asked to do, in order. See
+        # `FakeCluster._note`.
+        self.journal: list[str] = []
+        self.application: FakeApplication | None = None
+        # `Device.skip_configuration` is a plain property on the real
+        # thing; 79 shipped quirks set it, and they set it because binding
+        # or configuring reporting actively breaks those devices.
+        self.skip_configuration = skip_configuration
+        self.command_listeners: list[Any] = []
+        self._fast_poll = fast_poll
+        if custom_configuration:
+            # `apply_custom_configuration` exists ONLY on a quirked device
+            # (`CustomDevice`, `CustomZigpyDevice`); the base
+            # `zigpy.device.Device` has no such method at all, which is why
+            # the routine tests for it with `hasattr` rather than calling
+            # it blind.
+            self.apply_custom_configuration = self._apply_custom_configuration
         self._endpoints = list(endpoints)
         for endpoint in self._endpoints:
             endpoint.device_ieee = ieee
+            endpoint.device = self
         # zigpy keeps the ZDO at endpoint 0, which carries no ZCL clusters -
         # hence `non_zdo_endpoints`, which is what the source iterates.
         self.endpoints: dict[int, Any] = {0: object()}
@@ -483,9 +652,58 @@ class FakeDevice:
     def non_zdo_endpoints(self) -> list[FakeEndpoint]:
         return list(self._endpoints)
 
+    async def _apply_custom_configuration(self, *args: Any, **kwargs: Any) -> None:
+        """The Tuya "spell". On a real quirked device this walks every
+        custom cluster and calls its own `apply_custom_configuration`, which
+        for the Tuya quirks is a specific `Basic` read of
+        `[4, 0, 1, 5, 7, 0xFFFE]` - without which many of those devices
+        never send anything at all."""
+        self.journal.append("apply_custom_configuration")
+
+    @property
+    def fast_poll_mode(self) -> Any:
+        """`Device.fast_poll_mode()` - an ASYNC CONTEXT MANAGER on zigpy
+        2.2.0, not a coroutine, which is what lets it bracket a whole
+        routine instead of one call.
+
+        Absent entirely when the device was built with `fast_poll=False`,
+        so a test can drive an object that has none."""
+        if not self._fast_poll:
+            raise AttributeError("fast_poll_mode")
+        return self._fast_poll_mode
+
+    @contextlib.asynccontextmanager
+    async def _fast_poll_mode(self, initial_timeout: float = 4.0) -> AsyncIterator[None]:
+        self.journal.append("fast_poll:start")
+        try:
+            yield
+        finally:
+            self.journal.append("fast_poll:stop")
+
     def add_listener(self, listener: Any) -> int:
         self.listeners.append(listener)
+        self.command_listeners.append(listener)
         return id(listener)
+
+    def listener_event(self, method_name: str, *args: Any) -> None:
+        """`zigpy.util.ListenableMixin.listener_event` on the DEVICE, which
+        is where `device_last_seen_updated` is announced."""
+        for listener in list(self.command_listeners):
+            method = getattr(listener, method_name, None)
+            if method is None:
+                continue
+            try:
+                method(*args)
+            except Exception:
+                logger.debug("listener %r raised on %s", listener, method_name, exc_info=True)
+
+    def heard_from(self, moment: float | None = None) -> None:
+        """A packet arrived. zigpy sets `last_seen` and fires
+        `device_last_seen_updated` with the new timestamp - EVERY incoming
+        packet does, which is what makes it the cheapest possible signal
+        that a sleepy device is awake right now."""
+        self.last_seen = time.time() if moment is None else moment
+        self.listener_event("device_last_seen_updated", self.last_seen)
 
     def clusters(self) -> list[FakeCluster]:
         return [
@@ -494,6 +712,21 @@ class FakeDevice:
 
 
 # ---------------------------------------------------------- the application --
+
+
+@dataclass
+class FakeNodeInfo:
+    """`zigpy.state.NodeInfo`, as far as this bridge reads it."""
+
+    ieee: str = "00:12:4b:00:ff:ee:dd:cc"
+    nwk: int = 0x0000
+
+
+@dataclass
+class FakeApplicationState:
+    """`zigpy.state.State`. Only `node_info` is read here."""
+
+    node_info: FakeNodeInfo = field(default_factory=FakeNodeInfo)
 
 
 class FakeApplication:
@@ -509,6 +742,15 @@ class FakeApplication:
         remove_error: BaseException | None = None,
     ) -> None:
         self.devices: dict[str, FakeDevice] = {device.ieee: device for device in devices}
+        for device in self.devices.values():
+            device.application = self
+        # `app.state.node_info.ieee` - the coordinator's own address, which
+        # is what an IAS sensor has to be told to send its alarms to.
+        self.state = FakeApplicationState()
+        # Every priority the application was asked to hold, in order, and
+        # whether it is holding one right now. `PacketPriority.HIGH` is 1.
+        self.priorities: list[int] = []
+        self.priority_depth: int = 0
         self.startup_error = startup_error
         self.permit_error = permit_error
         self.remove_error = remove_error
@@ -524,6 +766,19 @@ class FakeApplication:
         # exists here only so `test_connected_is_an_explicit_flag_cleared_on_loss`
         # has something wrong to be tempted by.
         self.is_running = False
+
+    @contextlib.asynccontextmanager
+    async def request_priority(self, priority: int) -> AsyncIterator[None]:
+        """`ControllerApplication.request_priority(priority)`, an async
+        context manager in zigpy 2.2.0. Everything sent inside it jumps the
+        per-device queue, which is what a device that is awake right now
+        and will not be again for hours deserves."""
+        self.priorities.append(priority)
+        self.priority_depth += 1
+        try:
+            yield
+        finally:
+            self.priority_depth -= 1
 
     def add_listener(self, listener: Any) -> int:
         self.listeners.append(listener)
@@ -582,9 +837,11 @@ class FakeApplication:
 
     def fire_device_initialized(self, device: FakeDevice) -> None:
         self.devices[device.ieee] = device
+        device.application = self
         self.listener_event("device_initialized", device)
 
     def fire_device_joined(self, device: FakeDevice) -> None:
+        device.application = self
         self.listener_event("device_joined", device)
 
     def fire_device_reinterviewed(self, replacement: FakeDevice) -> None:
@@ -598,6 +855,7 @@ class FakeApplication:
         A bridge with no method by that name keeps its listeners on an
         object nobody will ever report through again."""
         self.devices[replacement.ieee] = replacement
+        replacement.application = self
         self.listener_event("device_reinterviewed", replacement)
 
 
@@ -695,3 +953,22 @@ def contact_sensor(ieee: str = "00:15:8d:00:02:aa:bb:cc") -> FakeDevice:
             )
         ],
     )
+
+
+class FakeNoBindCluster(FakeCluster):
+    """A quirk that overrides `bind` to do nothing.
+
+    `zhaquirks`' `TuyaNoBindPowerConfigurationCluster` is the real one, and
+    its entire purpose is that the bind must NOT be sent - some Tuya devices
+    stop answering afterwards. A bind that reaches the base class instead of
+    this override is the very defect the quirk exists to prevent, and it is
+    invisible to anything that only counts binds."""
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.no_bind_calls = 0
+
+    async def bind(self, **kwargs: Any) -> list[int]:
+        self._note(f"no-bind:{self.cluster_id:#06x}")
+        self.no_bind_calls += 1
+        return [0]

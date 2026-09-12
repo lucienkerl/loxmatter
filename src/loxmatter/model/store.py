@@ -62,6 +62,7 @@ from loxmatter.model.locale_store import LocaleStore
 from loxmatter.model.resend_settings_store import ResendSettingsStore
 from loxmatter.model.settings_store import BridgeSettingsStore
 from loxmatter.model.update_settings_store import UpdateSettingsStore
+from loxmatter.model.zigbee_pending_store import ZigbeePendingStore
 from loxmatter.profiles.categories import category_for
 from loxmatter.profiles.relevance import (
     ROOT_NODE_DEVICE_TYPE,
@@ -134,7 +135,12 @@ DEFAULT_LISTEN_PORT = 8080
 # even though nothing in this codebase reads them past this migration - see
 # `_migrate_to_v9`'s docstring for why (rollback compatibility with
 # `deploy/updater/update-once.sh`).
-_SCHEMA_VERSION = 9
+# Version 10 (Zigbee source design, 2026-09-12, section 6.4) adds the table
+# `zigbee_pending_config`, see `_migrate_to_v10` - already present in a
+# fresh database via `_SCHEMA`, so the migration is only needed for existing
+# ones. A NEW TABLE is the safest shape the rollback promise above allows:
+# version-9 code never names it, so it cannot trip over it.
+_SCHEMA_VERSION = 10
 
 
 def schema_version() -> int:
@@ -224,6 +230,12 @@ CREATE TABLE IF NOT EXISTS group_command (
     slug        TEXT NOT NULL,
     takes_value INTEGER NOT NULL,
     UNIQUE (group_id, cluster_id, command_id)
+);
+CREATE TABLE IF NOT EXISTS zigbee_pending_config (
+    address    TEXT NOT NULL,
+    endpoint   INTEGER NOT NULL,
+    cluster_id INTEGER NOT NULL,
+    PRIMARY KEY (address, endpoint, cluster_id)
 );
 """
 
@@ -741,6 +753,37 @@ def _migrate_to_v9(db: sqlite3.Connection) -> None:
         db.execute("UPDATE device SET address = CAST(node_id AS TEXT) WHERE address = ''")
 
 
+def _migrate_to_v10(db: sqlite3.Connection) -> None:
+    """Adds `zigbee_pending_config` (Zigbee source design 2026-09-12,
+    section 6.4).
+
+    **ADDITIVE, and a new table rather than a column, for the reason
+    `_migrate_to_v9` spells out at length**: `deploy/updater/update-once.sh`
+    rolls a failed update back to the OLD image WITHOUT restoring the
+    database, on the stated invariant that an older version starts up fine
+    on a newer schema. A new table is the safest possible shape of that -
+    version-9 code never names `zigbee_pending_config`, so it cannot trip
+    over it, and the rows simply wait until a version that understands them
+    runs again. Dropping any existing column here would break that promise
+    instead.
+
+    `CREATE TABLE IF NOT EXISTS` and not `CREATE TABLE`, for the same reason
+    as in `_migrate_to_v5` and `_migrate_to_v8`: a freshly created database
+    already has the table via `_SCHEMA` and is nevertheless at
+    `PRAGMA user_version = 0`, so it runs through this migration too. No
+    backfill - no existing database has ever configured a Zigbee device."""
+    db.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS zigbee_pending_config (
+            address    TEXT NOT NULL,
+            endpoint   INTEGER NOT NULL,
+            cluster_id INTEGER NOT NULL,
+            PRIMARY KEY (address, endpoint, cluster_id)
+        );
+        """
+    )
+
+
 # Migrations in order, applied from whichever version is stored - to extend
 # for a later schema change: simply append, with the next version number as
 # the key.
@@ -754,6 +797,7 @@ _MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     7: _migrate_to_v7,
     8: _migrate_to_v8,
     9: _migrate_to_v9,
+    10: _migrate_to_v10,
 }
 
 
@@ -1150,6 +1194,8 @@ class Store:
         self.resend_settings = ResendSettingsStore(self._db)
         # Same connection again - see `update_settings_store.py`.
         self.update_settings = UpdateSettingsStore(self._db)
+        # And once more - see `zigbee_pending_store.py`.
+        self.zigbee_pending = ZigbeePendingStore(self._db)
 
     def close(self) -> None:
         self._db.close()
@@ -1307,7 +1353,16 @@ class Store:
         gone from this connection's view while `device.active` still
         reads 1 - for a later, unrelated `commit()` anywhere else in
         `Store` to flush that half-removed state to disk by surprise.
+
+        **Its unfinished Zigbee configuration goes too.** A pending row
+        names a `(address, endpoint, cluster)` that still has to be bound
+        and configured; a device that has been removed and re-paired has
+        lost every binding it had, so inheriting the old pairing's rows
+        would mean retrying work against a device that was never asked for
+        it in the first place. The address is read BEFORE the row is
+        deactivated, because that is the only handle the pending table has.
         """
+        pending_address = self._zigbee_address(device_id)
         affected = [
             int(row["group_id"])
             for row in self._db.execute(
@@ -1321,8 +1376,24 @@ class Store:
             self._db.rollback()
             raise
         self._db.commit()
+        if pending_address is not None:
+            self.zigbee_pending.forget(pending_address)
         for group_id in affected:
             self.register_group_commands(group_id)
+
+    def _zigbee_address(self, device_id: int) -> str | None:
+        """The Zigbee IEEE of a device, or `None` for anything else.
+
+        `technology = 'zigbee'` is checked here and not left to the caller:
+        a Matter device's address is a node id, and handing that to
+        `ZigbeePendingStore.forget` would delete the rows of whatever Zigbee
+        device happens to share the text."""
+        row = self._db.execute(
+            "SELECT address FROM device WHERE id = ? AND technology = 'zigbee'", (device_id,)
+        ).fetchone()
+        if row is None:
+            return None
+        return str(row["address"])
 
     def udp_port(self, device_id: int) -> int:
         row = self._db.execute("SELECT udp_port FROM device WHERE id = ?", (device_id,)).fetchone()

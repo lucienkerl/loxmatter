@@ -88,6 +88,7 @@ from loxmatter.radios.fingerprints import Fingerprint
 from loxmatter.sources import DeviceCall, DeviceUnreachableError, RuntimeEventHandler
 from loxmatter.timestamps import now_iso
 from loxmatter.zigbee.availability import AvailabilityChecker, is_available
+from loxmatter.zigbee.configure import PollingSchedule, configure_device
 from loxmatter.zigbee.quirks import ensure_quirks_loaded
 from loxmatter.zigbee.translate import DeviceFacts, EndpointFacts, build_snapshot, rename_payload
 
@@ -278,9 +279,12 @@ class PairingRow:
     would be false.
 
     The states this file produces are the four the source itself can see.
-    "configuring" and "waiting to wake" arrive with configure-on-join
-    (Task 9); "stuck" is not a state at all but an age, computed by the
-    route from `changed_at` (Task 12)."""
+    "configuring" and "waiting to wake" are still outstanding: the facts
+    behind them exist now - `configure.py` returns a `ConfigureOutcome` and
+    writes a row per deferred cluster into `store.zigbee_pending` - but
+    nothing turns them into a row state yet, because the pairing route that
+    would show one does not exist until Task 12. "stuck" is not a state at
+    all but an age, computed by that same route from `changed_at`."""
 
     ieee: str
     state: PairingState
@@ -415,6 +419,7 @@ class ZigbeeSource:
         application_factory: ApplicationFactory = _default_application,
         on_connection_change: Callable[[bool], Awaitable[None]] | None = None,
         thread_channel: int | None = None,
+        store: Any | None = None,
     ) -> None:
         self._path = path
         self._fingerprint = fingerprint
@@ -422,6 +427,14 @@ class ZigbeeSource:
         self._application_factory = application_factory
         self._on_connection_change = on_connection_change
         self._thread_channel = thread_channel
+        # loxmatter's own store, for configure-on-join's pending table
+        # (`zigbee/configure.py`). Optional, and `None` in every test that
+        # is not about configuration: without it a joining device is
+        # delivered to the handler exactly as before and nothing is bound -
+        # which is honest, because with no table to defer into there would
+        # be nowhere to record a sleeping device's unfinished business.
+        self._store = store
+        self._polling = PollingSchedule()
 
         self._app: Any | None = None
         self._connected = False
@@ -1132,6 +1145,7 @@ class ZigbeeSource:
     def _forget(self, address: str) -> None:
         self._pairing.pop(address, None)
         self._delivered.pop(address, None)
+        self._polling.forget(address)
         self._release_device_listeners(address)
 
     async def permit(self, seconds: int) -> datetime:
@@ -1177,9 +1191,45 @@ class ZigbeeSource:
         self._pairing[address] = row
         if state == "ready":
             self._listen_to_device(device)
+            if self._store is not None:
+                # Configure-on-join, and only THEN the snapshot: zigpy
+                # configures nothing by itself, so a device delivered before
+                # this ran would arrive with an empty attribute cache and
+                # get no signal rows at all (`zigbee/configure.py`).
+                # Deliberately not awaited here - this method is called
+                # synchronously from zigpy's event path and must return at
+                # once.
+                self._spawn(self._configure_then_deliver(device))
+                return
             queue = self._queue
             if queue is not None:
                 queue.put_nowait(address)
+
+    async def _configure_then_deliver(self, device: Any) -> None:
+        """Runs configure-on-join and announces the device either way.
+
+        Either way, because a sleeping device that deferred every cluster is
+        still a device the user has just paired and expects to see. What it
+        will not have yet is values - which is exactly what the pending
+        table and `watch_for_wakeups` exist to fix later.
+
+        **`_deliver` is awaited here rather than enqueued**, and that is the
+        whole ordering guarantee: a `put_nowait` would only schedule the
+        announcement, and whether the dispatch loop got to it before or
+        after the configuration finished would be a matter of when the
+        routine happened to yield. Awaiting it makes "configured, then
+        announced" a property of this code instead of of the scheduler."""
+        address = str(device.ieee)
+        try:
+            await configure_device(device, store=self._store, polling=self._polling)
+        except Exception:
+            logger.exception("configuring %s after it joined failed", address)
+        try:
+            await self._deliver(address)
+        except Exception:
+            # The same stance as `_dispatch_loop`: one device's delivery
+            # must not take the join path down.
+            logger.exception("delivery of a freshly joined Zigbee device failed")
 
     def _handle_device_removed(self, device: Any) -> None:
         self._forget(str(device.ieee))

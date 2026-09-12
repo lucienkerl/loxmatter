@@ -14,8 +14,8 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Every zigpy name `zigbee/source.py` depends on, checked against the
-installed library.
+"""Every zigpy name `zigbee/source.py` and `zigbee/configure.py` depend on,
+checked against the installed library.
 
 **This is the one test module in the Zigbee suite that imports zigpy, and
 it exists precisely because the others must not.** `tests/zigbee/fakes.py`
@@ -48,7 +48,24 @@ import re
 import pytest
 
 from loxmatter.radios.fingerprints import Fingerprint
+from loxmatter.zigbee import configure as configure_module
 from loxmatter.zigbee import source as source_module
+from loxmatter.zigbee.configure import (
+    IAS_CIE_ADDRESS_ATTRIBUTE,
+    IAS_ENROLL_REQUEST_COMMAND,
+    IAS_ENROLL_RESPONSE_COMMAND,
+    IAS_ENROLL_SUCCESS,
+    IAS_STATUS_CHANGE_NOTIFICATION_COMMAND,
+    IAS_ZONE_CLUSTER,
+    IAS_ZONE_STATUS_ATTRIBUTE,
+    IAS_ZONE_TYPE_ATTRIBUTE,
+    IDENTIFY_CLUSTER,
+    IDENTIFY_COMMAND,
+    PACKET_PRIORITY_HIGH,
+    POLL_CONTROL_CHECKIN_COMMAND,
+    POLL_CONTROL_CLUSTER,
+    REPORTING,
+)
 from loxmatter.zigbee.source import (
     _RADIO_MODULES,
     _STARTUP_MESSAGES,
@@ -683,3 +700,208 @@ def test_the_quirk_resolver_the_source_uses_exists_and_marks_what_it_applied() -
     assert "_quirk_registry_entry" in inspect.getsource(source_module.ZigbeeSource._facts), (
         "the snapshot must read the attribute the resolver actually sets"
     )
+
+
+# ------------------------------------------------------ configure-on-join --
+# Everything below belongs to `zigbee/configure.py`, which spells zigpy's
+# numbers out as constants for the same reason `source.py` does - no zigpy
+# import at module import time - and is therefore exposed to exactly the
+# same class of silently wrong name.
+
+
+def test_the_ias_zone_numbers_are_the_ones_the_installed_library_declares() -> None:
+    """The task's make-or-break names. Every one of them is a bare integer
+    in `configure.py`, and a wrong one fails INVISIBLY: an enrolment written
+    to the wrong attribute is a write the device answers with a status
+    nobody reads, and a sensor that is not enrolled sends no alarms at all
+    while pairing, configuring and going green.
+
+    Fault to prove it: set `IAS_CIE_ADDRESS_ATTRIBUTE` to 0x0011 (`zone_id`,
+    the neighbouring attribute). Nothing in the fake-driven suite notices,
+    because the fake would be given the same number."""
+    from zigpy.zcl.clusters.security import IasZone
+
+    assert IasZone.cluster_id == IAS_ZONE_CLUSTER
+    assert IasZone.attributes[IAS_ZONE_TYPE_ATTRIBUTE].name == "zone_type"
+    assert IasZone.attributes[IAS_ZONE_STATUS_ATTRIBUTE].name == "zone_status"
+    assert IasZone.attributes[IAS_CIE_ADDRESS_ATTRIBUTE].name == "cie_addr"
+
+    # The answer, a SERVER command, with the field names the routine passes
+    # by keyword.
+    enroll_response = IasZone.server_commands[IAS_ENROLL_RESPONSE_COMMAND]
+    assert enroll_response.name == "enroll_response"
+    assert [field.name for field in enroll_response.schema.fields] == [
+        "enroll_response_code",
+        "zone_id",
+    ]
+    assert int(IasZone.EnrollResponse.Success) == IAS_ENROLL_SUCCESS
+
+    # The two CLIENT commands: an alarm and a request to be enrolled. These
+    # are the ids that decide whether a sensor ever triggers.
+    notification = IasZone.client_commands[IAS_STATUS_CHANGE_NOTIFICATION_COMMAND]
+    assert notification.name == "status_change_notification"
+    # `args[0]` is only `zone_status` because it is the FIRST field.
+    assert next(field.name for field in notification.schema.fields) == "zone_status"
+    assert IasZone.client_commands[IAS_ENROLL_REQUEST_COMMAND].name == "enroll"
+    assert IAS_STATUS_CHANGE_NOTIFICATION_COMMAND != IAS_ENROLL_REQUEST_COMMAND
+
+
+def test_a_client_command_is_dispatched_as_cluster_command_and_not_as_an_attribute_event() -> None:
+    """THE design trap this task exists to avoid: an IAS alarm never appears
+    among the four attribute events `source.py` subscribes to. It arrives
+    through `ListenableMixin`, by the method name `cluster_command`, on a
+    listener registered with `Cluster.add_listener` - a completely separate
+    mechanism from the `EventBase.on_event` one.
+
+    A bridge that only subscribes to reports sees a sensor that works
+    perfectly and never triggers.
+
+    Fault to prove it: rename `_IasZoneListener.cluster_command`. zigpy
+    swallows the miss without a word."""
+    import zigpy.zcl
+
+    emitted = set(
+        re.findall(
+            r'listener_event\(\s*"(\w+)"', inspect.getsource(zigpy.zcl.Cluster.handle_message)
+        )
+    )
+    assert "cluster_command" in emitted
+    assert not [name for name in ATTRIBUTE_EVENTS if name in emitted]
+    # The signature the handler is called with: `(tsn, command_id, args)`.
+    handler = inspect.signature(configure_module._IasZoneListener.cluster_command).parameters
+    assert list(handler) == ["self", "tsn", "command_id", "args"]
+    body = inspect.getsource(zigpy.zcl.Cluster.handle_message)
+    assert 'listener_event("cluster_command", hdr.tsn, hdr.command_id, args)' in body
+    # And the listener really is registered the ListenableMixin way.
+    assert "add_listener" in inspect.getsource(configure_module._install_ias_handlers)
+
+
+def test_the_wake_up_events_are_names_zigpy_really_emits() -> None:
+    """A deferred cluster is retried when the device is next heard from, and
+    "heard from" is two zigpy events: `device_last_seen_updated`, which
+    EVERY incoming packet fires, and PollControl's `checkin`.
+
+    Fault to prove it: rename `_WakeUpWatcher.device_last_seen_updated` to
+    `device_last_seen`. The sensor's battery reporting is then never
+    configured, and nothing anywhere says so."""
+    import zigpy.device
+    from zigpy.zcl.clusters.general import PollControl
+
+    emitted = set(re.findall(r'listener_event\(\s*"(\w+)"', inspect.getsource(zigpy.device)))
+    assert "device_last_seen_updated" in emitted
+    listened = {
+        name
+        for name in vars(configure_module._WakeUpWatcher)
+        if not name.startswith("_") and callable(vars(configure_module._WakeUpWatcher)[name])
+    }
+    assert listened == {"device_last_seen_updated", "cluster_command"}
+    assert "device_last_seen_updated" in emitted
+
+    assert PollControl.cluster_id == POLL_CONTROL_CLUSTER
+    assert PollControl.client_commands[POLL_CONTROL_CHECKIN_COMMAND].name == "checkin"
+
+
+def test_the_device_calls_configure_on_join_makes_exist_and_are_shaped_as_it_assumes() -> None:
+    """`fast_poll_mode` is an ASYNC CONTEXT MANAGER, not a coroutine - which
+    is the only reason it can bracket the whole routine - and
+    `request_priority` is one too. `apply_custom_configuration` exists ONLY
+    on a quirked device, which is why the routine tests for it rather than
+    calling it blind.
+
+    Fault to prove it: `await device.fast_poll_mode()` instead of
+    `async with`. Every configuration pass then raises before it binds
+    anything."""
+    import zigpy.application
+    import zigpy.device
+    import zigpy.state
+    import zigpy.types
+
+    assert inspect.isasyncgenfunction(zigpy.device.Device.fast_poll_mode.__wrapped__)
+    assert inspect.isasyncgenfunction(
+        zigpy.application.ControllerApplication.request_priority.__wrapped__
+    )
+    assert isinstance(zigpy.device.Device.skip_configuration, property)
+    # The base device has no quirk hook at all.
+    assert not hasattr(zigpy.device.Device, "apply_custom_configuration")
+    from zhaquirks.device import CustomZigpyDevice
+
+    assert hasattr(CustomZigpyDevice, "apply_custom_configuration")
+
+    assert int(zigpy.types.PacketPriority.HIGH) == PACKET_PRIORITY_HIGH
+    # The coordinator's own address, which the CIE write hands the sensor.
+    assert "ieee" in zigpy.state.NodeInfo.__dataclass_fields__
+    assert "node_info" in zigpy.state.State.__dataclass_fields__
+
+
+def test_reporting_is_configured_the_way_zigpy_2_2_0_takes_it() -> None:
+    """`configure_reporting_multiple` is keyed by the attribute DEFINITION
+    and takes a `ReportingConfig`, and it answers with a status PER
+    ATTRIBUTE. All three matter: a bare id would raise for the 28 quirks
+    that declare an id twice, a tuple would raise outright, and a single
+    overall status would lose the lamp that accepts on/off and refuses
+    colour temperature - the case the polling fallback exists for.
+
+    Fault to prove it: pass `{attribute_id: (min, max, change)}`."""
+    import zigpy.zcl
+    from zigpy.zcl.helpers import ReportingConfig
+
+    parameters = inspect.signature(zigpy.zcl.Cluster.configure_reporting_multiple).parameters
+    assert "config" in parameters
+    assert list(ReportingConfig.__dataclass_fields__) == [
+        "min_interval",
+        "max_interval",
+        "reportable_change",
+    ]
+    body = inspect.getsource(zigpy.zcl.Cluster.configure_reporting_multiple)
+    assert "attr_def.id" in body, "the key really is the definition"
+    assert callable(zigpy.zcl.Cluster.bind)
+    assert callable(zigpy.zcl.Cluster.update_attribute)
+    # `allow_cache` is a real parameter and defaults to False, which is what
+    # the final read relies on.
+    read = inspect.signature(zigpy.zcl.Cluster.read_attributes).parameters
+    assert read["allow_cache"].default is False
+
+
+@pytest.mark.parametrize(("cluster_id", "attribute_id"), sorted(REPORTING))
+def test_every_reporting_row_names_an_attribute_that_exists(cluster_id, attribute_id) -> None:
+    """A row for an attribute the cluster does not declare would be dropped
+    silently by `_wanted_reporting` - the device would simply never report
+    that value, and nothing would say why.
+
+    Fault to prove it: add `(0x0006, 0x0001)` to `REPORTING`. OnOff has no
+    attribute 0x0001."""
+    from zigpy.zcl import Cluster
+
+    cluster_class = Cluster._registry[cluster_id]
+    assert attribute_id in cluster_class.attributes, (
+        f"{cluster_class.__name__} declares no attribute {attribute_id:#06x}"
+    )
+
+
+def test_the_static_reads_and_the_identify_blink_name_real_attributes() -> None:
+    """`zone_type` decides the Matter target cluster and the polarity, the
+    three Color attributes are what the colour picker and the temperature
+    slider hang off, and `power_source` is Basic's own answer.
+
+    Fault to prove it: read 0x400D for `color_temp_physical_max`."""
+    from zigpy.zcl import Cluster
+    from zigpy.zcl.clusters.general import Identify
+
+    expected = {
+        0x0000: {0x0007: "power_source"},
+        0x0300: {
+            0x400A: "color_capabilities",
+            0x400B: "color_temp_physical_min",
+            0x400C: "color_temp_physical_max",
+        },
+        0x0500: {0x0001: "zone_type"},
+    }
+    for cluster_id, attribute_ids in configure_module.STATIC_READS.items():
+        cluster_class = Cluster._registry[cluster_id]
+        for attribute_id in attribute_ids:
+            assert cluster_class.attributes[attribute_id].name == expected[cluster_id][attribute_id]
+
+    assert Identify.cluster_id == IDENTIFY_CLUSTER
+    identify = Identify.server_commands[IDENTIFY_COMMAND]
+    assert identify.name == "identify"
+    assert [field.name for field in identify.schema.fields] == ["identify_time"]

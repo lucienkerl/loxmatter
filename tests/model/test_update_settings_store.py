@@ -118,6 +118,13 @@ _KNOWN_TABLES = frozenset(
         "setting",
         "signal",
         "sqlite_sequence",
+        # Schema 10, configure-on-join (Zigbee source design, section 6.4).
+        # Listed here rather than removing the assertion: this test is
+        # about the UPDATE SETTINGS not getting a table of their own, and
+        # an exact set is the only shape that catches that. A deliberate
+        # new table for a different feature belongs on this list; a new
+        # table for these two settings would still fail the test.
+        "zigbee_pending_config",
     }
 )
 
