@@ -27,7 +27,7 @@ from conftest import authenticate, load_snapshot
 from loxmatter.export.commands import extract_commands
 from loxmatter.loxone.server import build_app
 from loxmatter.model.store import Store
-from loxmatter.sources import DeviceCall
+from loxmatter.sources import DeviceCall, SourceNotConfiguredError
 
 
 @pytest.fixture
@@ -42,8 +42,16 @@ def failing_nodes() -> set[str]:
 
 
 @pytest.fixture
+def unconfigured_nodes() -> set[str]:
+    """Addresses whose invocation raises `SourceNotConfiguredError` - the
+    503 path (boundary design open point 12): the member was never asked,
+    unlike `failing_nodes`, which was asked and did not answer."""
+    return set()
+
+
+@pytest.fixture
 async def api(
-    tmp_path, invocations, failing_nodes, fake_runtime, fake_client
+    tmp_path, invocations, failing_nodes, unconfigured_nodes, fake_runtime, fake_client
 ) -> AsyncIterator[tuple[httpx.AsyncClient, Store, int]]:
     store = Store(tmp_path / "t.sqlite")
     member_ids = []
@@ -56,6 +64,8 @@ async def api(
     group = store.create_group("Living room", member_ids)
 
     async def invoke(call: DeviceCall) -> None:
+        if call.address in unconfigured_nodes:
+            raise SourceNotConfiguredError(call.technology)
         if call.address in failing_nodes:
             raise RuntimeError("no route to host")
         invocations.append(call)
@@ -148,3 +158,42 @@ async def test_a_failing_member_is_a_502_on_the_webui_route(api, failing_nodes):
     response = await client.post(f"/api/commands/{key}", json={"value": "1"})
     assert response.status_code == 502
     assert members[0].label in response.json()["detail"]
+
+
+async def test_an_all_unconfigured_group_is_a_503_not_a_502(api, unconfigured_nodes):
+    """Boundary design open point 12: every member was never ASKED - its
+    technology has no running source right now - so this must not read
+    like "did not answer" (502)."""
+    client, store, group_id = api
+    members = store.group_members(group_id)
+    unconfigured_nodes.update(m.address for m in members)
+    key = next(c.key for c in store.group_commands(group_id) if c.slug == "on")
+    response = await client.get(f"/cmd/{key}/1")
+    assert response.status_code == 503
+
+
+async def test_an_all_unconfigured_group_is_a_503_on_the_webui_route(api, unconfigured_nodes):
+    client, store, group_id = api
+    members = store.group_members(group_id)
+    unconfigured_nodes.update(m.address for m in members)
+    key = next(c.key for c in store.group_commands(group_id) if c.slug == "on")
+    response = await client.post(f"/api/commands/{key}", json={"value": "1"})
+    assert response.status_code == 503
+
+
+async def test_a_mix_of_unreachable_and_unconfigured_members_stays_a_502(
+    api, failing_nodes, unconfigured_nodes
+):
+    """As soon as one member was actually asked and did not answer, this is
+    not the all-unconfigured 503 case any more - `GroupOutcome.unreachable`
+    is non-empty, and the existing 502 path names every failed member."""
+    client, store, group_id = api
+    members = store.group_members(group_id)
+    failing_nodes.add(members[0].address)
+    unconfigured_nodes.add(members[1].address)
+    key = next(c.key for c in store.group_commands(group_id) if c.slug == "on")
+    response = await client.get(f"/cmd/{key}/1")
+    assert response.status_code == 502
+    detail = response.json()["detail"]
+    assert members[0].label in detail
+    assert members[1].label in detail

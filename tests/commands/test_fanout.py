@@ -22,10 +22,10 @@ import asyncio
 
 import pytest
 
-from loxmatter.commands.fanout import dispatch_group, plan_group_calls
+from loxmatter.commands.fanout import GroupOutcome, dispatch_group, plan_group_calls
 from loxmatter.commands.translate import UnsupportedValueError
 from loxmatter.model.store import GroupTarget, StoredCommand
-from loxmatter.sources import DeviceCall
+from loxmatter.sources import DeviceCall, SourceNotConfiguredError
 
 
 def command(
@@ -111,7 +111,7 @@ async def test_the_calls_of_one_member_keep_their_order():
         seen.append((call.address, call.command_id))
         await asyncio.sleep(0)
 
-    assert await dispatch_group(plans, invoke) == []
+    assert (await dispatch_group(plans, invoke)).failed == []
     for address in ("11", "22"):
         own = [command_id for node, command_id in seen if node == address]
         expected = [
@@ -162,7 +162,7 @@ async def test_a_member_s_second_call_waits_for_the_first_to_return():
         # `wait_for` and the real assertion error is buried under a
         # timeout from the still-running task.
         colour_released.set()
-    assert await task == []
+    assert (await task).failed == []
     assert level_invoked is True
 
 
@@ -182,7 +182,7 @@ async def test_members_are_dispatched_concurrently():
             await asyncio.wait_for(started.wait(), timeout=2)
             second.set()
 
-    assert await dispatch_group(plans, invoke) == []
+    assert (await dispatch_group(plans, invoke)).failed == []
 
 
 async def test_a_failing_member_does_not_stop_the_others():
@@ -196,7 +196,8 @@ async def test_a_failing_member_does_not_stop_the_others():
             raise RuntimeError("no route to host")
         reached.append(call.address)
 
-    assert await dispatch_group(plans, invoke) == ["B"]
+    outcome = await dispatch_group(plans, invoke)
+    assert outcome.failed == ["B"]
     assert sorted(reached) == ["11", "33"]
 
 
@@ -212,7 +213,7 @@ async def test_duplicate_labels_among_the_failed_members_are_disambiguated_by_id
     async def invoke(call: DeviceCall) -> None:
         raise RuntimeError("no route to host")
 
-    assert await dispatch_group(plans, invoke) == ["Lamp (1)", "Lamp (2)"]
+    assert (await dispatch_group(plans, invoke)).failed == ["Lamp (1)", "Lamp (2)"]
 
 
 async def test_a_unique_label_among_the_failed_members_stays_bare():
@@ -232,7 +233,7 @@ async def test_a_unique_label_among_the_failed_members_stays_bare():
             return
         raise RuntimeError("no route to host")
 
-    assert await dispatch_group(plans, invoke) == ["Lamp", "Kitchen Lamp"]
+    assert (await dispatch_group(plans, invoke)).failed == ["Lamp", "Kitchen Lamp"]
 
 
 async def test_every_failing_member_is_named_not_just_the_first():
@@ -251,4 +252,40 @@ async def test_every_failing_member_is_named_not_just_the_first():
         if call.address == "33":
             raise RuntimeError("no route to host")
 
-    assert await dispatch_group(plans, invoke) == ["A", "C"]
+    assert (await dispatch_group(plans, invoke)).failed == ["A", "C"]
+
+
+async def test_a_source_not_configured_failure_is_classified_as_unconfigured():
+    """Boundary design open point 12: a member whose technology has no
+    running source was never ASKED, unlike a member that was asked and
+    stayed silent - `GroupOutcome` keeps the two apart so a caller can
+    answer 503 instead of 502 when every failure is of this kind.
+
+    Fault to prove it: classify every group failure as unreachable (drop
+    the `isinstance(result, SourceNotConfiguredError)` check) - the 503
+    case then reads as a 502 to every caller."""
+    plans = plan_group_calls(
+        [on_target(1, 11, "A"), on_target(2, 22, "B"), on_target(3, 33, "C")], "1"
+    )
+
+    async def invoke(call: DeviceCall) -> None:
+        if call.address == "11":
+            raise SourceNotConfiguredError("zigbee")
+        if call.address == "33":
+            raise RuntimeError("no route to host")
+
+    outcome = await dispatch_group(plans, invoke)
+    assert outcome == GroupOutcome(failed=["A", "C"], unreachable=["C"], unconfigured=["A"])
+
+
+async def test_an_all_unconfigured_group_reports_no_unreachable_members():
+    """The 503-shaped case: every failure is `SourceNotConfiguredError`, so
+    `unreachable` must stay empty - that emptiness is exactly what a caller
+    checks to decide 503 over 502."""
+    plans = plan_group_calls([on_target(1, 11, "A"), on_target(2, 22, "B")], "1")
+
+    async def invoke(call: DeviceCall) -> None:
+        raise SourceNotConfiguredError("zigbee")
+
+    outcome = await dispatch_group(plans, invoke)
+    assert outcome == GroupOutcome(failed=["A", "B"], unreachable=[], unconfigured=["A", "B"])

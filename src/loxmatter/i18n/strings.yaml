@@ -307,6 +307,18 @@ api.categories.lock:
 api.categories.other:
   en: "other"
   de: "Sonstige"
+
+# api.technologies - a device's source, as a person should read it
+# (`loxmatter.sources.technology_display_name`, boundary design open point
+# 13). An unknown value (a rolled-back row whose technology this version
+# has never heard of) falls back to the raw, untranslated value rather than
+# raising - see that function's docstring.
+api.technologies.matter:
+  en: "Matter"
+  de: "Matter"
+api.technologies.zigbee:
+  en: "Zigbee"
+  de: "Zigbee"
 api.errors.group_category_mismatch:
   # `{actual}`/`{expected}` arrive PRE-TRANSLATED (`_check_members` in
   # store.py looks them up via `api.categories.*` above before calling
@@ -411,6 +423,18 @@ api.errors.source_not_configured:
 api.errors.group_partially_unreachable:
   en: "reached {reached} of {total} members; no answer from: {devices}"
   de: "{reached} von {total} Mitgliedern erreicht, keine Antwort von: {devices}"
+api.errors.device_timed_out:
+  # `Sources.send`'s bound (boundary design open point 11) - a source was
+  # asked and stayed silent past `SOURCE_CALL_TIMEOUT_SECONDS`.
+  en: "the device did not answer within {seconds} s"
+  de: "das Geraet hat innerhalb von {seconds} s nicht geantwortet"
+api.errors.group_source_not_configured:
+  # The all-unconfigured case of a group fan-out (boundary design open
+  # point 12): every failed member was never asked, because the
+  # technology's source is not running right now - 503, not 502, the same
+  # distinction `api.errors.source_not_configured` makes for one device.
+  en: "{technology} is not set up in this installation, so {total} members were not reached"
+  de: "{technology} ist in dieser Installation nicht eingerichtet, daher wurden {total} Mitglieder nicht erreicht"
 api.errors.command_belongs_to_removed_device:
   en: "command {command_key!r} belongs to device {device_id}, which was removed"
   de: "Kommando {command_key!r} gehoert zu Geraet {device_id}, das entfernt wurde"

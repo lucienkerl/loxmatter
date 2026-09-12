@@ -40,6 +40,7 @@ creating thread, and this module deliberately does not deviate from that.
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
@@ -54,6 +55,7 @@ from loxmatter.matter.models import (
     SignalRef,
     Technology,
     parse_technology,
+    technology_or_none,
 )
 from loxmatter.model.auth_store import AuthStore
 from loxmatter.model.locale_store import LocaleStore
@@ -77,6 +79,8 @@ from loxmatter.profiles.table import (
 )
 from loxmatter.profiles.transport import network_features_of
 from loxmatter.timestamps import now_iso
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_UDP_PORT = 7000
 # `_DEFAULT_LISTEN_PORT` lifted here from `api/export.py` (device dashboard
@@ -1347,9 +1351,34 @@ class Store:
         """All active devices (Task 2, Phase 5) - for `GET /api/devices`.
 
         A removed device (`forget_device`) no longer shows up here, exactly
-        as with `device_id_for`."""
+        as with `device_id_for`.
+
+        A row whose `technology` this version does not know is skipped
+        rather than raising (boundary design open point 10): the updater
+        rolls a failed update back to the OLD image WITHOUT restoring the
+        database, so a device row written by a NEWER loxmatter can survive
+        into an older one. `_as_device` calls `parse_technology`, which
+        raises loudly - right for a single, specifically requested device
+        (`device(id)`) - but here that would take down the ENTIRE list for
+        the sake of the one row it cannot place, and the bridge could not
+        start while `/health` still answered "healthy". Hiding the one
+        device is strictly better."""
         rows = self._db.execute("SELECT * FROM device WHERE active = 1 ORDER BY id").fetchall()
-        return [self._as_device(r) for r in rows]
+        devices: list[StoredDevice] = []
+        for row in rows:
+            if technology_or_none(str(row["technology"])) is None:
+                # See the docstring above: a row from a newer schema after
+                # a rollback. Hidden, not fatal - and logged once per call
+                # rather than silently, because a device disappearing from
+                # the UI needs an explanation somewhere.
+                logger.warning(
+                    "device %s has technology %r, which this version does not know - hiding it",
+                    row["id"],
+                    row["technology"],
+                )
+                continue
+            devices.append(self._as_device(row))
+        return devices
 
     def device(self, device_id: int) -> StoredDevice:
         """A single active device - `UnknownDeviceError` if it was never

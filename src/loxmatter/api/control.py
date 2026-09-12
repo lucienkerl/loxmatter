@@ -153,7 +153,7 @@ from loxmatter.commands.fanout import dispatch_group, plan_group_calls
 from loxmatter.commands.translate import UnsupportedValueError, to_device_calls
 from loxmatter.model.store import Store, UnknownCommandError, UnknownDeviceError
 from loxmatter.profiles.table import command_control, command_slug, duplicate_control_command
-from loxmatter.sources import DeviceCall, SourceNotConfiguredError
+from loxmatter.sources import DeviceCall, SourceNotConfiguredError, technology_display_name
 
 Invoker = Callable[[DeviceCall], Awaitable[None]]
 
@@ -400,26 +400,56 @@ def build_control_router(store: Store, invoke: Invoker, values: ValueReader) -> 
         except UnsupportedValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-        failed = await dispatch_group(plans, invoke)
-        if failed:
+        # `dispatch_group` classifies a failure by `isinstance(result,
+        # SourceNotConfiguredError)` from the exception it caught itself -
+        # it never hands that exception back out (boundary design open
+        # point 12: `GroupOutcome` carries labels, not exceptions). This
+        # thin wrapper is how the 503 branch below still gets a technology
+        # name to show: it observes the very same exception on its way
+        # past, without invoking anything twice.
+        unconfigured_technologies: list[str] = []
+
+        async def _invoke(call: DeviceCall) -> None:
+            try:
+                await invoke(call)
+            except SourceNotConfiguredError as exc:
+                unconfigured_technologies.append(exc.technology)
+                raise
+
+        outcome = await dispatch_group(plans, _invoke)
+        if outcome.unconfigured and not outcome.unreachable:
+            # Every failed member was never ASKED - see `GroupOutcome`'s
+            # docstring. 503, not 502: nothing to answer, nothing silent.
+            technology = unconfigured_technologies[0] if unconfigured_technologies else ""
+            raise HTTPException(
+                status_code=503,
+                detail=i18n.t(
+                    "api.errors.group_source_not_configured",
+                    technology=technology_display_name(technology),
+                    total=len(outcome.unconfigured),
+                ),
+            )
+        if outcome.failed:
             # The failed labels are logged, not just counted (review fix
             # from Task 5): the status code exists for the human reading
             # the log, and "reached 2 of 4" alone still leaves them
-            # grepping the HTTP response for which two.
+            # grepping the HTTP response for which two. `outcome.failed`
+            # names every failed member regardless of kind, so a mix of
+            # unreachable and unconfigured members is still named in full.
             logger.warning(
                 "group command %r reached %d of %d members; no answer from: %s",
                 key,
-                len(plans) - len(failed),
+                len(plans) - len(outcome.failed),
                 len(plans),
-                ", ".join(failed),
+                ", ".join(outcome.failed),
             )
             raise HTTPException(
                 status_code=502,
                 detail=i18n.t(
                     "api.errors.group_partially_unreachable",
-                    reached=len(plans) - len(failed),
+                    reached=len(plans) - len(outcome.failed),
                     total=len(plans),
-                    devices=", ".join(failed),
+                    devices=", ".join(outcome.failed),
                 ),
             )
         return {"status": "ok", "key": key}

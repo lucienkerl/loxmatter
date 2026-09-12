@@ -159,7 +159,12 @@ from loxmatter.diagnostics.logbuffer import LogBufferHandler
 from loxmatter.loxone.sender import UdpSender
 from loxmatter.matter.client import BridgeMatterClient
 from loxmatter.model.store import Store
-from loxmatter.sources import DeviceCall, SourceNotConfiguredError, Sources
+from loxmatter.sources import (
+    DeviceCall,
+    SourceNotConfiguredError,
+    Sources,
+    technology_display_name,
+)
 from loxmatter.timestamps import now_iso
 
 Invoker = Callable[[DeviceCall], Awaitable[None]]
@@ -656,9 +661,10 @@ def build_app(
 
         The status codes are the device path's, unchanged: 404 unknown
         key, 400 unsuitable value, 502 at least one member did not
-        answer. The Miniserver evaluates none of them - they are for the
-        human reading the log, which is also why the 502 detail names the
-        members instead of just counting them.
+        answer, 503 no member was even asked (boundary design open point
+        12 - see `GroupOutcome`). The Miniserver evaluates none of them -
+        they are for the human reading the log, which is also why the
+        detail names the members instead of just counting them.
         """
         try:
             group_command = store.resolve_group_command(key)
@@ -671,26 +677,56 @@ def build_app(
         except UnsupportedValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-        failed = await dispatch_group(plans, invoke)
-        if failed:
+        # See `api/control.py::_execute_group_command` for why this thin
+        # wrapper exists: `dispatch_group` classifies a failure from the
+        # exception it caught itself, but never hands that exception back
+        # out - `GroupOutcome` carries labels, not exceptions. This
+        # observes the same exception on its way past, without invoking
+        # anything twice, so the 503 branch below can still name a
+        # technology.
+        unconfigured_technologies: list[str] = []
+
+        async def _invoke(call: DeviceCall) -> None:
+            try:
+                await invoke(call)
+            except SourceNotConfiguredError as exc:
+                unconfigured_technologies.append(exc.technology)
+                raise
+
+        outcome = await dispatch_group(plans, _invoke)
+        if outcome.unconfigured and not outcome.unreachable:
+            # Every failed member was never ASKED - see `GroupOutcome`'s
+            # docstring. 503, not 502: nothing to answer, nothing silent.
+            technology = unconfigured_technologies[0] if unconfigured_technologies else ""
+            raise HTTPException(
+                status_code=503,
+                detail=i18n.t(
+                    "api.errors.group_source_not_configured",
+                    technology=technology_display_name(technology),
+                    total=len(outcome.unconfigured),
+                ),
+            )
+        if outcome.failed:
             # The failed labels are logged, not just counted (review fix
             # from Task 5): the status code exists for the human reading
             # the log, and "reached 2 of 4" alone still leaves them
-            # grepping the HTTP response for which two.
+            # grepping the HTTP response for which two. `outcome.failed`
+            # names every failed member regardless of kind, so a mix of
+            # unreachable and unconfigured members is still named in full.
             logger.warning(
                 "group command %r reached %d of %d members; no answer from: %s",
                 key,
-                len(plans) - len(failed),
+                len(plans) - len(outcome.failed),
                 len(plans),
-                ", ".join(failed),
+                ", ".join(outcome.failed),
             )
             raise HTTPException(
                 status_code=502,
                 detail=i18n.t(
                     "api.errors.group_partially_unreachable",
-                    reached=len(plans) - len(failed),
+                    reached=len(plans) - len(outcome.failed),
                     total=len(plans),
-                    devices=", ".join(failed),
+                    devices=", ".join(outcome.failed),
                 ),
             )
         return {"status": "ok", "key": key}

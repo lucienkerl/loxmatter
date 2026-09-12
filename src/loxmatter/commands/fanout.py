@@ -43,9 +43,9 @@ from dataclasses import dataclass
 
 from loxmatter.commands.translate import to_device_calls
 from loxmatter.model.store import GroupTarget
-from loxmatter.sources import DeviceCall
+from loxmatter.sources import DeviceCall, SourceNotConfiguredError
 
-__all__ = ["MemberPlan", "dispatch_group", "plan_group_calls"]
+__all__ = ["GroupOutcome", "MemberPlan", "dispatch_group", "plan_group_calls"]
 
 
 @dataclass(frozen=True)
@@ -101,10 +101,42 @@ async def _run_member(plan: MemberPlan, invoke: Callable[[DeviceCall], Awaitable
         await invoke(call)
 
 
+@dataclass(frozen=True)
+class GroupOutcome:
+    """Which members failed, and why - the distinction the single-device
+    path has had since the boundary design and the group path had not
+    (boundary design open point 12).
+
+    A member whose technology has no running source was never ASKED; a
+    member that did not answer was. Reporting both as "no answer from X"
+    told a user whose Zigbee stick they had just removed from the
+    configuration that six lamps were unreachable, which sent them looking
+    at the lamps.
+    """
+
+    # PLAN ORDER, every failed member, exactly the list `dispatch_group`
+    # returned before this change - same content, same order, same
+    # disambiguation. Stored rather than derived from the two lists below,
+    # and that is the whole point of the field: `unreachable + unconfigured`
+    # would silently regroup the members by KIND, so a group whose second
+    # and third members failed for different reasons would be reported in an
+    # order that depends on the failure, not on the group. This module's
+    # docstring promises the opposite - "the returned list is in plan order,
+    # so the message a caller builds from it is reproducible" - and both
+    # `api/control.py` and `loxone/server.py` build their 502 detail from
+    # it.
+    failed: list[str]
+    # Subsets of `failed`, each itself in plan order, for the callers that
+    # need to tell a 502 from a 503.
+    unreachable: list[str]
+    unconfigured: list[str]
+
+
 async def dispatch_group(
     plans: Sequence[MemberPlan], invoke: Callable[[DeviceCall], Awaitable[None]]
-) -> list[str]:
-    """Runs every member concurrently and returns the labels that failed.
+) -> GroupOutcome:
+    """Runs every member concurrently and returns which labels failed, and
+    why.
 
     `return_exceptions=True` rather than letting the first failure
     propagate: a group of six with two dead lamps must switch the other
@@ -112,7 +144,7 @@ async def dispatch_group(
     exception would name one lamp when three are unreachable, which reads
     like a single device fault instead of a network fault.
 
-    The returned list is in plan order, so the message a caller builds
+    `GroupOutcome.failed` is in plan order, so the message a caller builds
     from it is reproducible.
 
     **Disambiguation (final review, Item 3).** Device labels are not
@@ -127,7 +159,16 @@ async def dispatch_group(
     `loxone/server.py` both build their 502 detail and log line from this
     return value, so fixing the ambiguity once here keeps the two in
     sync automatically - the same reason this module exists as one
-    implementation for both routes, see the module docstring).
+    implementation for both routes, see the module docstring). The
+    disambiguation is computed once over the whole failed set, so a label
+    reads the same in `failed` as it does in whichever of `unreachable`/
+    `unconfigured` it lands in.
+
+    **`unreachable` vs `unconfigured` (boundary design open point 12).** A
+    member classified by `isinstance(result, SourceNotConfiguredError)`:
+    that one was never asked (its technology has no running source right
+    now), everything else in `failed` was asked and did not answer. Both
+    subsets preserve plan order, same as `failed` itself.
     """
     results = await asyncio.gather(
         *(_run_member(plan, invoke) for plan in plans), return_exceptions=True
@@ -139,15 +180,26 @@ async def dispatch_group(
     # is a member whose own `invoke` raises CancelledError being reported
     # as a failed label instead of propagating - `Exception` alone would
     # silently count a cancelled member as a successful switch.
-    failed = [
-        plan
+    failed_pairs = [
+        (plan, result)
         for plan, result in zip(plans, results, strict=True)
         if isinstance(result, BaseException)
     ]
-    label_counts = Counter(plan.device_label for plan in failed)
-    return [
+    label_counts = Counter(plan.device_label for plan, _ in failed_pairs)
+    labels = [
         plan.device_label
         if label_counts[plan.device_label] == 1
         else f"{plan.device_label} ({plan.device_id})"
-        for plan in failed
+        for plan, _ in failed_pairs
     ]
+    unconfigured = [
+        label
+        for (_, result), label in zip(failed_pairs, labels, strict=True)
+        if isinstance(result, SourceNotConfiguredError)
+    ]
+    unreachable = [
+        label
+        for (_, result), label in zip(failed_pairs, labels, strict=True)
+        if not isinstance(result, SourceNotConfiguredError)
+    ]
+    return GroupOutcome(failed=labels, unreachable=unreachable, unconfigured=unconfigured)

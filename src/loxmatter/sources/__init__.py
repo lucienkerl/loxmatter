@@ -25,6 +25,7 @@ a device came from.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from typing import Protocol
@@ -33,12 +34,15 @@ from loxmatter import i18n
 from loxmatter.matter.models import NodeSnapshot, Technology
 
 __all__ = [
+    "SOURCE_CALL_TIMEOUT_SECONDS",
     "DeviceCall",
     "DeviceSource",
+    "DeviceUnreachableError",
     "RuntimeEventHandler",
     "SourceNotConfiguredError",
     "Sources",
     "Technology",
+    "technology_display_name",
 ]
 
 
@@ -112,6 +116,56 @@ class DeviceSource(Protocol):
     async def remove(self, address: str) -> None: ...
 
 
+SOURCE_CALL_TIMEOUT_SECONDS = 10.0
+
+
+class DeviceUnreachableError(RuntimeError):
+    """A source asked a device and got nothing back.
+
+    The one exception type shared code may catch for that outcome, across
+    every technology (boundary design open point 11). Before it existed,
+    `api/devices.py`'s removal route caught `MatterUnavailableError` alone,
+    so a second source raising its own type on the very same failure would
+    have surfaced as an unhandled 500.
+
+    Each source raises this at ITS OWN EDGE. That is what keeps zigpy's
+    exception names - `DeliveryError`, `ControllerError`, `ZigbeeException`,
+    a non-SUCCESS ZCL status - inside `loxmatter/zigbee/`, where they
+    belong: no `except` clause in shared code may name one.
+
+    Distinct from `SourceNotConfiguredError` on purpose, and the difference
+    is the difference between 502 and 503: this means the device was ASKED
+    and stayed silent, that one means nothing was asked at all.
+    """
+
+
+def technology_display_name(technology: str) -> str:
+    """A technology's name as a person should read it.
+
+    Boundary design open point 13: `api.errors.source_not_configured`
+    interpolated the raw, lowercase stored value ("zigbee is not set up in
+    this installation"), while every other user-facing identifier in this
+    codebase goes through a lookup first (see `api.categories.*`). An
+    unknown value falls back to itself rather than raising - this runs
+    inside an error path, and an error about an error helps nobody.
+
+    The fallback is a `KeyError` catch and NOT a comparison of the result
+    against the key. `i18n.t` does `entry = _STRINGS[key]` and RAISES
+    `KeyError` on a missing key - it never hands the key back - so a
+    `name == key` test would be dead code guarding nothing, and the very
+    miss it was written for would propagate a `KeyError` out of an error
+    path. That is exactly the "error about an error" the paragraph above
+    rules out. The miss is reachable: `technology` is read from the
+    `device` table, so a row written by a NEWER loxmatter and left behind
+    by an updater rollback arrives here with a name that has no string -
+    the same rollback case `technology_or_none` exists for in Step 4.
+    """
+    try:
+        return i18n.t(f"api.technologies.{technology}")
+    except KeyError:
+        return technology
+
+
 class SourceNotConfiguredError(LookupError):
     """A stored device belongs to a technology no running source serves.
 
@@ -119,7 +173,12 @@ class SourceNotConfiguredError(LookupError):
     message in quotes, and this message reaches the web UI."""
 
     def __init__(self, technology: str) -> None:
-        super().__init__(i18n.t("api.errors.source_not_configured", technology=technology))
+        super().__init__(
+            i18n.t(
+                "api.errors.source_not_configured",
+                technology=technology_display_name(technology),
+            )
+        )
         self.technology = technology
 
 
@@ -145,5 +204,54 @@ class Sources:
     def all_connected(self) -> bool:
         return all(source.connected for source in self._by_technology.values())
 
+    def replace(self, technology: str, source: DeviceSource | None) -> None:
+        """Swaps or removes the source serving one technology.
+
+        For Task 11's in-process radio change, which is the one thing in
+        this project that gains or loses a source WITHOUT a restart: zigpy
+        runs in-process, so configuring a stick has to add a source to a
+        registry that `build_app` captured at startup, and clearing one has
+        to remove it.
+
+        `None` removes, and removing is the point rather than a tidy-up:
+        after it, `get()` raises `SourceNotConfiguredError` again, which is
+        how a command aimed at a Zigbee device that no longer has a radio
+        becomes a 503 "not set up in this installation" instead of a 502
+        "asked, no answer". The device was not asked; there is nothing to
+        ask.
+
+        Deliberately NOT a general-purpose registry mutator: `__init__`
+        keeps rejecting two sources for one technology, and this method is
+        the single, named exception to "the registry is built once".
+        """
+        if source is None:
+            self._by_technology.pop(technology, None)
+            return
+        if source.technology != technology:
+            raise ValueError(
+                f"source for {source.technology!r} cannot serve technology {technology!r}"
+            )
+        self._by_technology[technology] = source
+
     async def send(self, call: DeviceCall) -> None:
-        await self.get(call.technology).send(call)
+        """The invoker. Bounded, because this is the one place that knows a
+        human or a Miniserver is waiting.
+
+        zigpy retries a request twice and waits 5 s per attempt for a mains
+        device and 28 s for an end device or one without a node descriptor
+        (research E.6), so an unbounded call here holds a Loxone virtual
+        output open for over a minute. The bound is read from the module at
+        call time so tests can shorten it.
+
+        A timeout is reported as `DeviceUnreachableError`, not as
+        `TimeoutError`: from the caller's point of view "asked, no answer"
+        is exactly what happened, and it maps to the same 502 as every other
+        way of not answering.
+        """
+        source = self.get(call.technology)
+        try:
+            await asyncio.wait_for(source.send(call), SOURCE_CALL_TIMEOUT_SECONDS)
+        except TimeoutError as exc:
+            raise DeviceUnreachableError(
+                i18n.t("api.errors.device_timed_out", seconds=SOURCE_CALL_TIMEOUT_SECONDS)
+            ) from exc

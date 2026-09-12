@@ -104,7 +104,7 @@ from loxmatter.profiles.categories import CATEGORY_RANK, category_for
 from loxmatter.profiles.endpoints import endpoint_labels
 from loxmatter.profiles.table import Exportability, is_exportable
 from loxmatter.profiles.transport import transport_for
-from loxmatter.sources import SourceNotConfiguredError, Sources
+from loxmatter.sources import DeviceUnreachableError, SourceNotConfiguredError, Sources
 
 logger = logging.getLogger(__name__)
 
@@ -634,7 +634,11 @@ def build_device_router(
         try:
             # Order: see module docstring - the fabric first, then the store.
             await source.remove(device.address)
-        except MatterUnavailableError as exc:
+        except (MatterUnavailableError, DeviceUnreachableError, TimeoutError) as exc:
+            # One vocabulary across sources (boundary design open point 11).
+            # `MatterUnavailableError` stays in the tuple rather than being
+            # replaced: it is what the Matter client has always raised here
+            # and every existing test asserts on it.
             raise HTTPException(status_code=502, detail=str(exc)) from exc
         store.forget_device(device.id)
 

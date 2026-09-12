@@ -27,7 +27,7 @@ from conftest import authenticate, load_snapshot
 from loxmatter.export.commands import extract_commands
 from loxmatter.loxone.server import build_app
 from loxmatter.model.store import Store
-from loxmatter.sources import DeviceCall, Sources
+from loxmatter.sources import DeviceCall, DeviceUnreachableError, Sources
 
 
 class _FakeZigbeeSource:
@@ -37,8 +37,16 @@ class _FakeZigbeeSource:
     def __init__(self) -> None:
         self.removed: list[str] = []
         self.sent: list[DeviceCall] = []
+        # A source that does not answer removal (boundary design open
+        # point 11) - unlike `MatterUnavailableError`, this comes from a
+        # NON-Matter source, so `remove_device` must widen past the single
+        # type it has always caught here to still answer 502 rather than
+        # an unhandled 500.
+        self.fail_remove_with: BaseException | None = None
 
     async def remove(self, address: str) -> None:
+        if self.fail_remove_with is not None:
+            raise self.fail_remove_with
         self.removed.append(address)
 
     async def send(self, call: DeviceCall) -> None:
@@ -104,7 +112,10 @@ async def test_removal_without_the_devices_source_is_503(zigbee_plug):
     response = await client.delete(f"/api/devices/{device_id}")
 
     assert response.status_code == 503
-    assert "zigbee" in response.json()["detail"]
+    # "Zigbee", not "zigbee": the detail goes through
+    # `technology_display_name` now (boundary design open point 13), not
+    # the raw stored value.
+    assert "Zigbee" in response.json()["detail"]
 
 
 async def test_cmd_without_the_devices_source_is_503(zigbee_plug):
@@ -125,6 +136,21 @@ async def test_the_control_route_without_the_devices_source_is_503(zigbee_plug):
     response = await client.post(f"/api/commands/{on_key}", json={"value": "1"})
 
     assert response.status_code == 503
+
+
+async def test_a_zigbee_removal_that_does_not_answer_is_a_502_not_a_500(zigbee_plug):
+    """The real defect this task fixes: `remove_device` used to catch only
+    `MatterUnavailableError`, so a non-Matter source raising its own "asked,
+    no answer" type on removal surfaced as an unhandled 500.
+
+    Fault to prove it: drop `DeviceUnreachableError` from the removal
+    route's exception tuple."""
+    client, device_id, _, zigbee = await zigbee_plug(with_zigbee=True)
+    zigbee.fail_remove_with = DeviceUnreachableError("the device did not answer within 10 s")
+
+    response = await client.delete(f"/api/devices/{device_id}")
+
+    assert response.status_code == 502
 
 
 async def test_cmd_reaches_the_zigbee_source(zigbee_plug):

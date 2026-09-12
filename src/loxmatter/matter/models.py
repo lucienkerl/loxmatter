@@ -47,6 +47,25 @@ def parse_technology(value: str) -> Technology:
     return cast(Technology, value)
 
 
+def technology_or_none(value: str) -> Technology | None:
+    """Like `parse_technology`, but answers `None` instead of raising.
+
+    For the one caller that must survive a row it cannot place:
+    `Store.devices()`. A value this code has never heard of means the
+    database was written by a NEWER loxmatter - the updater rolls a failed
+    update back to the old image and deliberately does NOT restore the
+    database - and one such row used to make the whole device list raise,
+    so the bridge could not start while `/health` still answered. Hiding
+    the one device it cannot place is strictly better (boundary design open
+    point 10).
+
+    Single-device lookups keep using `parse_technology`: `device(id)` asked
+    for one specific device, and silently returning something else - or
+    nothing - would be worse there than a loud failure.
+    """
+    return cast(Technology, value) if value in _TECHNOLOGIES else None
+
+
 class SignalKind(str, Enum):
     ATTRIBUTE = "attribute"
     EVENT = "event"
