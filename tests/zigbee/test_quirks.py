@@ -142,3 +142,50 @@ async def test_a_cancelled_warm_up_is_waited_out_and_never_started_twice(monkeyp
 
     assert calls == [1]
     assert quirks_loaded() is True
+
+
+async def test_a_twice_cancelled_warm_up_still_waits_for_setup_to_finish(monkeypatch):
+    """`Task.cancel()` can keep delivering a fresh `CancelledError` at every
+    await point until the coroutine actually returns - so a SECOND
+    cancellation, arriving while `ensure_quirks_loaded` is already inside
+    its own wait for the executor future, must not abandon that wait
+    either. It would release the lock with `setup` still running in its
+    thread, and let the next attempt start a second `zhaquirks.setup()`
+    beside the first, both filling one process-wide registry.
+
+    Fault to prove it: replace the `while not running.done(): ...` loop
+    in `ensure_quirks_loaded` with a single `with
+    contextlib.suppress(Exception): await running` - one catch only. The
+    second `cancel()` below then raises straight out of that bare `await`,
+    the lock is released before `setup` is done, and `second` runs `setup`
+    again while `first`'s is still blocked on `release` - `calls` comes out
+    `[1, 1]` instead of `[1]`."""
+    monkeypatch.setattr(quirks_module, "_lock", asyncio.Lock())
+    calls: list[int] = []
+    inside = threading.Event()
+    release = threading.Event()
+
+    def setup() -> None:
+        calls.append(1)
+        inside.set()
+        release.wait(5)
+
+    first = asyncio.ensure_future(ensure_quirks_loaded(setup=setup))
+    while not inside.is_set():
+        await asyncio.sleep(0.01)
+    first.cancel()
+    # `setup` is still blocked on `release`, so this second cancellation
+    # lands on the wait loop's OWN `await asyncio.shield(running)` - the
+    # case a single `except` cannot survive.
+    await asyncio.sleep(0.05)
+    first.cancel()
+    await asyncio.sleep(0.05)
+    second = asyncio.ensure_future(ensure_quirks_loaded(setup=setup))
+    await asyncio.sleep(0.05)
+    release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await first
+    await second
+
+    assert calls == [1]
+    assert quirks_loaded() is True

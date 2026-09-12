@@ -684,11 +684,26 @@ class ZigbeeSource:
         `ControllerApplication.new(start_radio=False)` opens the network
         database before it returns, so an application abandoned mid-build
         kept that database open behind the back of the source being built
-        next, on the same file."""
+        next, on the same file.
+
+        **Why the wait loop, not a bare `await build`.** `Task.cancel()`
+        can keep delivering a fresh `CancelledError` at every await point
+        until this coroutine actually returns, and a bare `await build`
+        right after the first `except` is itself such a point - a second
+        cancellation there abandons the wait on `build` exactly as the
+        first one would have, leaving its eventual application (and the
+        network database it opened) built and never shut down. Looping on
+        a fresh `asyncio.shield(build)` until `build` actually reports done
+        closes that: only then is the plain `await build` below guaranteed
+        not to suspend, and so guaranteed safe from a further
+        cancellation."""
         build = asyncio.ensure_future(self._new_application())
         try:
             return await asyncio.shield(build)
         except asyncio.CancelledError:
+            while not build.done():
+                with contextlib.suppress(asyncio.CancelledError):
+                    await asyncio.shield(build)
             try:
                 application = await build
             except Exception:
@@ -1556,7 +1571,8 @@ class ZigbeeSource:
 
 async def _shutdown_even_if_cancelled(application: Any) -> None:
     """`application.shutdown(db=True)`, carried to its end even when the
-    task awaiting it is cancelled halfway, and the cancellation re-raised
+    task awaiting it is cancelled halfway - possibly more than once, while
+    that wait is itself still under way - and the cancellation re-raised
     afterwards.
 
     A shutdown interrupted halfway is the worst outcome of a radio change:
@@ -1565,11 +1581,23 @@ async def _shutdown_even_if_cancelled(application: Any) -> None:
     very stick the user may pick again a moment later, which then fails as
     busy. `ZigbeeRuntime._release` cancels the supervisor exactly once and
     waits for it, so finishing the shutdown first costs that wait and
-    nothing else."""
+    nothing else.
+
+    A single `except` that falls through to a bare `await shutdown` is not
+    enough: `Task.cancel()` can keep delivering a fresh `CancelledError` at
+    every await point until this coroutine actually returns, and that bare
+    `await` is itself such a point - a second cancellation right there
+    abandons the wait exactly as the first one would have. The loop below
+    keeps re-shielding `shutdown` until it actually reports done - only
+    then is a plain `await` on it guaranteed not to suspend, and so
+    guaranteed safe from a further cancellation."""
     shutdown = asyncio.ensure_future(application.shutdown(db=True))
     try:
         await asyncio.shield(shutdown)
     except asyncio.CancelledError:
+        while not shutdown.done():
+            with contextlib.suppress(asyncio.CancelledError):
+                await asyncio.shield(shutdown)
         with contextlib.suppress(Exception):
             await shutdown
         raise

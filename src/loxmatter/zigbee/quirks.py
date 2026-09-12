@@ -91,14 +91,25 @@ async def ensure_quirks_loaded(*, setup: Callable[[], None] = _default_setup) ->
         started = time.monotonic()
         running = asyncio.get_running_loop().run_in_executor(None, setup)
         try:
-            # Shielded, and waited out when the caller is cancelled. A radio
-            # change cancels the supervisor wherever it is, this `await`
-            # included, and the executor thread cannot be cancelled with it:
-            # releasing the lock here while `setup` still ran would let the
-            # next attempt start a SECOND `zhaquirks.setup()` beside the
-            # first - both filling one process-wide registry at once.
+            # Shielded, and waited out when the caller is cancelled - even
+            # across a SECOND cancellation while that wait is itself under
+            # way (`Task.cancel()` can keep delivering one at every await
+            # point until this coroutine actually returns). A radio change
+            # cancels the supervisor wherever it is, this `await` included,
+            # and the executor thread cannot be cancelled with it: releasing
+            # the lock here while `setup` still ran would let the next
+            # attempt start a SECOND `zhaquirks.setup()` beside the first -
+            # both filling one process-wide registry at once. A bare
+            # `await running` after only ONE `except` does not hold that
+            # guarantee - a second cancellation right there abandons the
+            # wait exactly as the first one would have - so the loop below
+            # keeps re-shielding `running` until it actually reports done,
+            # before this ever falls through to the check that follows.
             await asyncio.shield(running)
         except asyncio.CancelledError:
+            while not running.done():
+                with contextlib.suppress(asyncio.CancelledError):
+                    await asyncio.shield(running)
             with contextlib.suppress(Exception):
                 await running
             if running.done() and not running.cancelled() and running.exception() is None:

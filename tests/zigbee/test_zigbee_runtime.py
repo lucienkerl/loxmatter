@@ -679,13 +679,15 @@ async def test_a_cancelled_apply_does_not_leave_progress_stuck_on_applying(store
     assert holder.progress().state == "idle"
 
 
-async def test_a_change_mid_retry_releases_the_stick_the_attempt_was_opening(
+async def test_a_change_mid_first_attempt_releases_the_stick_the_attempt_was_opening(
     store, tmp_path, monkeypatch
 ):
     """The radios card lets the user change the Zigbee stick while the
     supervisor is retrying a failing one - that is exactly when the failure
     text tells them to - so `apply()` has to be safe in the middle of an
-    attempt, not only between attempts.
+    attempt, not only between attempts. This drives that mid-attempt change
+    against the FIRST attempt (`attempts == 0`, the silent port never having
+    failed yet) - the case the name once claimed was a retry.
 
     Driven with the REAL `ZigbeeSource` (on a fake radio) and the REAL
     supervisor, because what can go wrong is inside `connect()`: the change

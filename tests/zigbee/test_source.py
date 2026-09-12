@@ -611,6 +611,60 @@ async def test_a_connect_cancelled_mid_build_shuts_the_half_built_application_do
     assert application.started is False
 
 
+async def test_a_twice_cancelled_connect_still_shuts_the_half_built_application_down(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`Task.cancel()` can keep delivering a fresh `CancelledError` at
+    every await point until the coroutine actually returns - so a SECOND
+    cancellation, arriving while `_new_application_even_if_cancelled` is
+    already inside its own wait for the half-built application, must not
+    abandon that wait either. It would leave the eventual application (and
+    the network database it opened) built and never shut down - the same
+    outcome `test_a_connect_cancelled_mid_build_shuts_the_half_built_application_down`
+    exists to rule out for a SINGLE cancellation.
+
+    Fault to prove it: replace the `while not build.done(): ...` loop in
+    `_new_application_even_if_cancelled` with a bare `application = await
+    build` (one catch only, as the single-cancellation code path used to
+    read). The second `cancel()` below then raises straight out of that
+    bare `await`, and `application.shutdown_calls` stays empty."""
+
+    async def no_warm_up() -> float:
+        return 0.0
+
+    monkeypatch.setattr(source_module, "ensure_quirks_loaded", no_warm_up)
+    application = FakeApplication()
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def slow_factory(config: dict[str, Any]) -> FakeApplication:
+        entered.set()
+        await release.wait()
+        return application
+
+    source = ZigbeeSource(
+        path="/dev/serial/by-id/usb-SONOFF_Zigbee_3.0_USB_Dongle_Plus_V2-if00",
+        fingerprint=FINGERPRINT,
+        database=tmp_path / "zigbee.sqlite",
+        application_factory=slow_factory,
+    )
+    attempt = asyncio.ensure_future(source.connect())
+    await entered.wait()
+    attempt.cancel()
+    await asyncio.sleep(0)
+    # `slow_factory` is still blocked on `release`, so this second
+    # cancellation lands on the wait loop's OWN await, not on the first
+    # one - the case a single `except` cannot survive.
+    attempt.cancel()
+    await asyncio.sleep(0)
+    release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await attempt
+
+    assert application.shutdown_calls == [True]
+    assert application.started is False
+
+
 async def test_a_connect_cancelled_while_releasing_the_old_application_finishes_releasing_it(
     build,
 ) -> None:
@@ -644,6 +698,62 @@ async def test_a_connect_cancelled_while_releasing_the_old_application_finishes_
 
     attempt = asyncio.ensure_future(harness.source.connect())
     await old.entered.wait()
+    attempt.cancel()
+    await asyncio.sleep(0)
+    old.release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await attempt
+
+    assert old.finished is True
+    assert harness.factory.calls == 1, "nothing new was opened behind the cancellation"
+
+
+async def test_a_twice_cancelled_release_still_finishes_shutting_the_old_application_down(
+    build,
+) -> None:
+    """`Task.cancel()` can keep delivering a fresh `CancelledError` at
+    every await point until the coroutine actually returns - so a SECOND
+    cancellation, arriving while `_shutdown_even_if_cancelled` is already
+    inside its own wait for the old application's `shutdown()`, must not
+    abandon that wait either. The application is already detached from the
+    source by then, so nothing would ever call `shutdown()` on it again,
+    and the serial port it holds would stay open - the same outcome
+    `test_a_connect_cancelled_while_releasing_the_old_application_finishes_releasing_it`
+    exists to rule out for a SINGLE cancellation.
+
+    Fault to prove it: replace the `while not shutdown.done(): ...` loop
+    in `_shutdown_even_if_cancelled` with a bare `with
+    contextlib.suppress(Exception): await shutdown` (one catch only, as
+    the single-cancellation code path used to read). The second `cancel()`
+    below then raises straight out of that bare `await`, and `old.finished`
+    stays `False`."""
+
+    class SlowShutdown(FakeApplication):
+        def __init__(self, **fields: Any) -> None:
+            super().__init__(**fields)
+            self.entered = asyncio.Event()
+            self.release = asyncio.Event()
+            self.finished = False
+
+        async def shutdown(self, *, db: bool = True) -> None:
+            self.shutdown_calls.append(db)
+            self.entered.set()
+            await self.release.wait()
+            self.started = False
+            self.finished = True
+
+    old = SlowShutdown(devices=[colour_lamp()])
+    harness = build(old, FakeApplication())
+    await harness.source.connect()
+    old.fire_connection_lost()
+
+    attempt = asyncio.ensure_future(harness.source.connect())
+    await old.entered.wait()
+    attempt.cancel()
+    await asyncio.sleep(0)
+    # `old.shutdown()` is still blocked on `release`, so this second
+    # cancellation lands on the wait loop's OWN await, not on the first
+    # one - the case a single `except` cannot survive.
     attempt.cancel()
     await asyncio.sleep(0)
     old.release.set()
