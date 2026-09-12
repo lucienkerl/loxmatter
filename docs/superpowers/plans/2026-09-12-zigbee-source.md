@@ -64,7 +64,7 @@ Every task's requirements implicitly include this section.
 
   **Measured baseline, 12 September 2026, after Task 1 landed (`f7b6b20`): 2069 passed, 2 skipped.** This number is authoritative and supersedes the arithmetic in Task 1's own steps, which predicted 2068 — Task 1 added six tests, not the five it estimated. Task 1 is complete and committed; its step text is left as the historical record rather than rewritten. Every forward-looking total in Tasks 2 onwards is counted from **2069**.
 
-  **Measured baseline, 12 September 2026, after Task 8 landed (`464a078`): 2249 passed, 2 skipped.** Tasks 2 through 8 stopped restating a running total in their own "run the checks" steps (Task 4's Step 13 already switched to "confirm the new total equals the previous total plus the tests added here" rather than a hard number), so this is the number a Task 9, 10 or 11 baseline run should actually see before that task's own new tests are added — including the nine new tests this correction adds to Task 10 and the four it adds to Task 11's Step 1 (Task 9 adds its own, separately). Every count stated inside Tasks 10 and 11 below (their fault counts, in particular) is counted against this baseline; it does not itself change when a task merely rearranges *which* file a test lives in.
+  **Measured baseline, 12 September 2026, after Task 8 landed (`464a078`): 2249 passed, 2 skipped.** Tasks 2 through 8 stopped restating a running total in their own "run the checks" steps (Task 4's Step 13 already switched to "confirm the new total equals the previous total plus the tests added here" rather than a hard number), so this is the number a Task 9, 10 or 11 baseline run should actually see before that task's own new tests are added — including the fifteen new tests this correction adds to Task 10, the five it adds to Task 11's Step 1, and the three it adds to Task 12's Step 1 (Task 9 adds its own, separately). Every count stated inside Tasks 10, 11 and 12 below (their fault counts, in particular) is counted against this baseline; it does not itself change when a task merely rearranges *which* file a test lives in.
 
   `tests/zigbee` is listed in part A2 above because Task 1 creates it and Tasks 6-9 fill it with the largest suites in this plan — and those suites are, by this plan's own admission, the only evidence that will exist for the translation until a second stick is bought. A directory that no part names is a directory CI never runs. **The only run where `tests/zigbee` must be dropped from the A2 command is Task 1 Step 1**, the baseline, because the directory does not exist yet and pytest exits with `ERROR: file or directory not found`. From Task 1 Step 8 onwards it is always included.
 - **Every test that names a protection must be shown to catch it.** Introduce the stated fault, run the test, see it **FAIL**, revert, see it **PASS**, and paste both outputs into the task report. A reviewer on this branch found tests that passed with their stated fault in place; several had to be rewritten. A test that stays green with the fault in place is wrong.
@@ -95,12 +95,14 @@ Every task's requirements implicitly include this section.
 | `src/loxmatter/zigbee/translate.py` (new) | snapshot synthesis, device types, IAS, sentinels, command lists, argument names | 6 |
 | `src/loxmatter/zigbee/source.py` (new) | `ZigbeeSource`: lifecycle, events, send, remove | 7 |
 | `src/loxmatter/zigbee/availability.py` (new) | last-seen checker, ping before offline, link-loss sweep | 8 |
-| `src/loxmatter/zigbee/configure.py` (new) | configure-on-join, IAS enrolment, sleepy deferral | 9 |
+| `src/loxmatter/zigbee/configure.py` (new) | configure-on-join, IAS enrolment, sleepy deferral | 9; `PollingLoop` in 10 |
 | `src/loxmatter/model/zigbee_pending_store.py` (new) | per-(device, cluster) configuration-pending rows | 9 |
-| `src/loxmatter/cli.py`, `src/loxmatter/loxone/runtime.py` | heartbeat meaning, `zigbee_connected`, startup wiring | 10 |
+| `src/loxmatter/cli.py`, `src/loxmatter/loxone/runtime.py` | heartbeat meaning, `zigbee_connected`, startup wiring, `_build_zigbee_source(store)` | 10 |
+| `src/loxmatter/zigbee/source.py` | `_resume_pending_devices`, `PollingLoop` lifecycle in 10; `configuring_addresses()` in 12 | 7; 10; 12 |
 | `src/loxmatter/model/zigbee_settings_store.py` (new) | the persisted Zigbee radio setting | 11 |
 | `src/loxmatter/radios/inventory.py` | resolved device identity for Thread exclusion | 11 |
-| `src/loxmatter/api/zigbee.py` (new) | radio setting, permit, pairing rows, retry, remove | 11, 12 |
+| `src/loxmatter/zigbee/runtime.py` (new) | `ZigbeeRuntime`, `build_zigbee_source(..., store=...)` | 11 |
+| `src/loxmatter/api/zigbee.py` (new) | radio setting, permit, pairing rows, retry, remove, `_row_status` overlay | 11, 12 |
 | `src/loxmatter/web/index.html`, `app.js`, `style.css` | Zigbee row, badge, pairing tab | 13, 14 |
 | `src/loxmatter/i18n/strings.yaml` | every `api.zigbee.*`, `web.zigbee.*`, `web.radios.zigbee_*` key | 3, 5, 11-14 |
 | `README.md`, `CHANGELOG.md`, `docs/superpowers/specs/2026-09-09-first-run-checklist.md` | residual exposure, change notes, hardware checklist | 15 |
@@ -3171,18 +3173,27 @@ This closes boundary design open point 9.1. `Runtime(link_ok=sources.all_connect
 That correction is why starting and stopping this component needs its own task, and not only "call `start()` somewhere": **whoever starts a background loop takes on owning its stop, and that ownership has two parts, not one.** First, the checker's sweep must know the source's connection state, which is exactly the fact this task's whole first half (the heartbeat) already treats as the thing worth reporting correctly — starting a sweep that reports the opposite of what the heartbeat says in the same moment would make the two ends of one task disagree about what "connected" means. Second, `subscribe()` runs again on every reconnect (`attach()`'s documented contract), so whoever calls `start()` on a fresh checker there must `await` a `stop()` on whatever checker the previous `subscribe()` left running, or every reconnect leaks one more dangling sweep task reading a progressively staler application object. Task 8 proved the checker's own decisions (which threshold, who gets pinged, who never does) against a fake clock and a fake source, and none of that needed the periodic sweep actually *running* in a live process, or run more than once, to be tested. Running it for real, more than once, over the life of a process is what this task is the first to do, so the ownership questions above are its questions to close, not Task 8's.
 
 **Files:**
-- Modify: `src/loxmatter/cli.py`, `src/loxmatter/loxone/runtime.py`, `src/loxmatter/zigbee/source.py`, `src/loxmatter/zigbee/availability.py`, `src/loxmatter/i18n/strings.yaml`
-- Test: `tests/test_cli.py`, `tests/loxone/test_runtime.py`, `tests/zigbee/test_source.py`, `tests/zigbee/test_availability.py`
+- Modify: `src/loxmatter/cli.py`, `src/loxmatter/loxone/runtime.py`, `src/loxmatter/zigbee/source.py`, `src/loxmatter/zigbee/availability.py`, `src/loxmatter/zigbee/configure.py`, `src/loxmatter/i18n/strings.yaml`
+- Test: `tests/test_cli.py`, `tests/loxone/test_runtime.py`, `tests/zigbee/test_source.py`, `tests/zigbee/test_availability.py`, `tests/zigbee/test_configure.py`
 
 `availability.py` is listed even though Task 8 created it: **check first whether the correction in Task 8's "Measured correction" note is already applied.** If it is (a follow-up fix may already have landed between Task 8 and this task running), this task only adds the tests below that pin the corrected behaviour down through `subscribe()`/`disconnect()` and leaves the file itself alone. If it is not, this task applies that correction itself before starting the sweep — shipping the uncorrected checker live would be worse than the gap this task was written to close.
 
+**Three more things this task closes, found by checking what Tasks 1-9 actually committed against what the remaining briefs consume, the same way the paragraph above already checks Task 8's checker.** All three are startup-and-lifecycle wiring of exactly the kind this task already owns, so they are fixed here rather than opening three more one-paragraph tasks:
+
+1. **`ZigbeeSource.__init__` has taken a `store` keyword since Task 9 landed** — `configure_device`'s pending table depends on it, and Task 9's own docstring on `self._store` explains why it is optional (no table, no binding, honestly, rather than a crash) — but nothing anywhere constructs a `ZigbeeSource` with `store=` actually set. This task's own Step 3 is the first code in the whole plan that builds a `ZigbeeSource` at all, so `_build_zigbee_source` below is the first place this can be gotten right or wrong. (Task 11's later, permanent builder must keep doing the same; see that task's own Interfaces and Step 6.)
+2. **`ZigbeePendingStore.addresses_with_pending()`'s own docstring says what it is for** — "for a bridge that has just started and wants to know which devices to watch for" (`model/zigbee_pending_store.py`) — and nothing calls it anywhere in Tasks 9-15 as written. A device whose configuration was interrupted by a bridge restart keeps a truthful row in `zigbee_pending_config` and gets no wake-up watcher: `device_last_seen_updated` and `checkin` on it are never noticed again, and the row sits there, correct and useless, until the device is factory-reset and re-paired.
+3. **`configure.py`'s `PollingSchedule` records WHEN a cluster that refused a reporting configuration should next be read**, and nothing anywhere reads `.due`. Left unconsumed, a lamp that refused reporting (common — see `configure.py`'s own module docstring and `_bind_and_report`) shows its last value forever, and — because `PollingSchedule`'s own docstring says that same poll "doubles as the liveness check Task 8's availability sweep uses" — is *also* wrongly marked offline once `MAINS_THRESHOLD_SECONDS` passes, despite working exactly as designed. This is the pair `_devices_to_check`/`_check_one` in `availability.py` were built to trust and cannot currently be given: a device this task's own availability sweep declares offline because nothing polled it is indistinguishable, from Loxone's side, from one that is actually dead.
+
 **Interfaces:**
-- Consumes: `ZigbeeSource` (Task 7), `ensure_quirks_loaded` (Task 1), `AvailabilityChecker.start()` / `AvailabilityChecker.stop()` and `ZigbeeSource.connected` (Task 7/8 — the checker's sweep now gates every report on this flag; see the correction note at the end of Task 8), the radio setting (Task 11 — until it lands, read the path from a CLI option `--zigbee-device` defaulting to `None`).
+- Consumes: `ZigbeeSource` (Task 7), `ensure_quirks_loaded` (Task 1), `AvailabilityChecker.start()` / `AvailabilityChecker.stop()` and `ZigbeeSource.connected` (Task 7/8 — the checker's sweep now gates every report on this flag; see the correction note at the end of Task 8), the radio setting (Task 11 — until it lands, read the path from a CLI option `--zigbee-device` defaulting to `None`), `store.zigbee_pending`, `PollingSchedule`, `watch_for_wakeups` (Task 9).
 - Produces:
   - `loxmatter.loxone.runtime.ZIGBEE_CONNECTED_KEY = "zigbee_connected"`, declared beside `HEARTBEAT_KEY`.
   - `Runtime.cache_zigbee_connected(connected: bool) -> None` and `Runtime.set_zigbee_connected(connected: bool) -> None` — the cache/send pair, shaped exactly like the existing `_cache_online`/`set_online`. Step 3 builds both; there is no generic mechanism to reuse, because `HEARTBEAT_KEY` is the only non-device key `Runtime` sends today.
   - `cli._run` passes `on_connection_change=runtime.set_zigbee_connected` into `ZigbeeSource` (Task 7's Interfaces) and seeds `cache_zigbee_connected(False)` before `attach()`.
   - `ZigbeeSource.subscribe()` now calls `self._availability_checker.start()` after building a fresh checker. Stopping the previous one first (`_stop_availability_checker()`, called from both `subscribe()` and `disconnect()`) is confirmed or added as part of the availability.py correction above, not new to this bullet — `start()` is the one call nothing before this task ever made. No new public name: the checker's lifecycle stays entirely inside `ZigbeeSource`, the same way the dispatch task's does, so neither `cli._run` nor Task 11's `ZigbeeRuntime` has to remember to manage it — every `attach()`/reconnect/radio-swap gets it for free through `subscribe()`/`disconnect()`, which they already call.
+  - `_build_zigbee_source(store)` (Step 3), the throwaway CLI-flag-backed builder named in this task's own Interfaces above, passes `store=store` into `ZigbeeSource(...)` — the concrete fix for point 1 above.
+  - `ZigbeeSource._resume_pending_devices()`, called once from `subscribe()` after `_seed_baseline()` — the concrete fix for point 2. Re-installs `configure.py`'s wake-up watcher on every address `store.zigbee_pending.addresses_with_pending()` still owes work to.
+  - `loxmatter.zigbee.configure.PollingLoop`, the concrete fix for point 3 — built fresh in `subscribe()` (next to the availability checker), started there, and stopped in `disconnect()`/before its own replacement the same way `_stop_availability_checker()` already works. Runs `PollingSchedule.due` for real: one uncached `read_attributes` per due entry, rescheduled *before* the read is attempted — the same "write the debt before the attempt" ordering `configure.py`'s pending table already uses on the same page, and for the same reason.
 
 - [ ] **Step 1: Write the failing tests.**
 
@@ -3347,11 +3358,139 @@ async def test_the_availability_sweep_stops_on_disconnect():
     `stop()` entirely, which is why this test must run after `start()` is
     wired, not before). `asyncio.all_tasks()` then grows by one dangling
     sweep task on every single reconnect."""
+
+
+async def test_a_freshly_built_zigbee_source_has_the_store_so_configure_on_join_can_defer():
+    """`ZigbeeSource.__init__` has taken `store` since Task 9 - the pending
+    table `configure_device` writes to before every attempt - but nothing
+    before this task ever constructed a `ZigbeeSource` with it set.
+    `_build_zigbee_source` (Step 3) is the first code anywhere in this plan
+    that builds one at all, so it is the first place this can go wrong, and
+    Task 11's later, permanent builder inherits whatever this one gets
+    right or wrong (see that task's own Step 6).
+
+    Fault to prove it: build `ZigbeeSource(...)` in `_build_zigbee_source`
+    without passing `store=store`. A device interrupted mid-configuration is
+    then never reconfigured - not because `configure_device` was never
+    called, but because it had no table to write what it still owed into."""
+
+
+async def test_a_device_with_pending_configuration_is_watched_again_after_a_restart():
+    """`ZigbeePendingStore.addresses_with_pending()` exists for exactly this
+    moment - its own docstring says "for a bridge that has just started and
+    wants to know which devices to watch for" - and nothing calls it before
+    this task. A device whose configuration was interrupted by a bridge
+    restart has a correct row in `zigbee_pending_config` and, without this,
+    no watcher: `device_last_seen_updated` and `checkin` on it are never
+    noticed, and the row sits there, truthful and useless, until the device
+    is factory-reset and re-paired.
+
+    Fault to prove it: skip `_resume_pending_devices()` in `subscribe()`. A
+    device marked pending before `subscribe()` runs then never has
+    `retry_pending` called on it, no matter how many times it reports in
+    afterwards - `test_a_deferred_cluster_is_retried_when_the_device_is_next_
+    heard_from` (Task 9) proves the retry itself works; this proves nothing
+    after a restart ever asks for it."""
+    store = _store_with_pending_cluster(
+        address="00:11:22:33:44:55:66:77", endpoint=1, cluster_id=0x0402
+    )
+    harness = build(
+        FakeApplication(devices=[thermometer(ieee="00:11:22:33:44:55:66:77")]), store=store
+    )
+    await harness.source.connect()
+    await harness.source.subscribe(_lamp_resolver(device_id=1), harness.handler)
+    device = harness.source._device_or_none("00:11:22:33:44:55:66:77")
+    device.journal.clear()
+    device.listener_event("device_last_seen_updated", time.time())
+    await _settle(harness.source)
+    assert cluster_of(device, 0x0402).bound
+
+
+async def test_the_polling_schedule_is_actually_read_and_rescheduled():
+    """`configure.py`'s `PollingSchedule` records WHEN a cluster that
+    refused reporting should next be polled - the module's own docstring's
+    words - and nothing before this task ever read `.due`. Without a
+    consumer, a lamp that refused reporting shows its last value forever,
+    and loses the liveness proxy the availability sweep leans on for it
+    besides (see the rationale paragraph above this task's Interfaces).
+
+    Fault to prove it: `PollingLoop._poll_due` reads the due attribute but
+    does not call `self._schedule.schedule(...)` again afterwards. The
+    first poll after the interval elapses happens; no later one ever does,
+    because nothing put a new due time back into `.due`."""
+
+
+async def test_polling_pauses_while_disconnected_instead_of_forgetting_the_schedule():
+    """THE mistake this task's own three-point rationale exists to catch
+    before it ships, not merely a missing feature: while the radio is down,
+    `ZigbeeSource._device_or_none` answers `None` for every address, because
+    `_devices()` returns `[]` once `self._app is None` - the exact shape
+    `_poll_due` uses, further down, to notice a device that has genuinely
+    been removed and retire its schedule entry. Without an explicit
+    `self._source.connected` check FIRST, a USB replug is indistinguishable
+    from a removed device, and every scheduled poll on every device is
+    silently and permanently dropped on the first blip - worse than the
+    missing consumer this task exists to add, and the same class of mistake
+    Task 10's own availability-sweep correction (above) exists to prevent
+    for the sibling loop.
+
+    Fault to prove it: delete the `if not self._source.connected: return`
+    line from `_poll_due`, so it falls through to the same device-lookup
+    path a real removal uses. A disconnect during a tick then empties
+    `PollingSchedule.due` instead of leaving it for the next tick to find
+    once the radio is back, and the affected lamps never poll again even
+    after the stick is reconnected."""
+
+
+async def test_a_polled_devices_stale_entry_is_dropped_once_the_device_is_really_gone():
+    """A removed device, or one that rejoined and lost the endpoint,
+    cluster or attribute a due entry names, must not be polled forever into
+    the void - `_cluster_or_none` answering `None` IS the retirement
+    signal, but only while the source is genuinely connected (the previous
+    test is why the order matters).
+
+    Fault to prove it: leave the stale entry in `PollingSchedule.due`
+    instead of deleting it when `_cluster_or_none` returns `None`.
+    `_poll_due` then retries the same dead reference on every tick,
+    forever, logging one failure per tick for a device that will never
+    answer again."""
+
+
+async def test_the_polling_loop_stops_on_disconnect():
+    """The same leak `test_the_availability_sweep_stops_on_disconnect`
+    (above) catches, for the second background loop this task starts: a
+    `PollingLoop` whose task survives `disconnect()` keeps sleeping and
+    waking against an application object `disconnect()` has already thrown
+    away, one more leaked task per reconnect.
+
+    Fault to prove it: do not call `_stop_polling_loop()` from
+    `disconnect()`. `asyncio.all_tasks()` grows by one dangling polling
+    task on every single reconnect, exactly as it would for the
+    availability checker without its own `_stop_availability_checker()`
+    call."""
 ```
 
 - [ ] **Step 2: Run to verify they fail.**
 
-- [ ] **Step 3: Implement.** In `cli._run`:
+- [ ] **Step 3: Implement.** First, `run()` and `_run()` gain the throwaway CLI flag this task's own Interfaces promised — "until it lands, read the path from a CLI option `--zigbee-device` defaulting to `None`" — matching the existing `--update-dir` option's shape exactly:
+
+```python
+    zigbee_device: str | None = typer.Option(  # noqa: B008
+        None,
+        "--zigbee-device",
+        help=i18n.t("cli.run.help_zigbee_device"),  # noqa: B008
+    ),
+```
+
+added to `run()`'s parameter list, threaded through the `_run(...)` call in `run()`'s body, and added to `_run`'s own signature as `zigbee_device: str | None = None,` — a keyword with a default, the same shape `update_dir` already has, so every existing direct call to `_run(...)` in the test suite keeps working unchanged. Add the i18n key to `strings.yaml`, `en` and `de`, next to `cli.run.help_update_dir`:
+
+```yaml
+cli.run.help_zigbee_device:
+  en: "by-id path of the Zigbee coordinator's USB serial device (e.g. /dev/serial/by-id/...) - a throwaway stand-in for the radio setting Task 11 adds. Superseded the moment that setting exists; absent, no Zigbee source is built at all."
+  de: "by-id-Pfad des USB-Seriengeräts des Zigbee-Koordinators (z. B. /dev/serial/by-id/...) - ein Übergangswert bis zur Funkeinstellung aus Task 11. Sobald diese existiert, wird dieser hier abgelöst; ohne Angabe wird keine Zigbee-Quelle gebaut."
+```
+
+Then, in `cli._run`:
 
 ```python
     sender = UdpSender(miniserver, port)
@@ -3364,10 +3503,43 @@ async def test_the_availability_sweep_stops_on_disconnect():
     # Zigbee's own health reaches Loxone as `zigbee_connected` and as the
     # per-device `d<id>_online` keys instead.
     runtime = Runtime(store, sender, link_ok=lambda: client.connected)
+
+    def _build_zigbee_source(store: Store) -> ZigbeeSource | None:
+        """This task's own throwaway stand-in for Task 11's radio setting -
+        reads the path from `--zigbee-device` rather than from
+        `ZigbeeRadioSettings`, which does not exist until that task lands.
+        Superseded there by `zigbee.runtime.build_zigbee_source` (Task 11's
+        Step 6); nothing ships with this version in place, the same way
+        nothing ships with `thread_channel` left at its default (Task 11's
+        own note on this function says both explicitly).
+
+        **`store=store` is the one thing this stand-in must not get wrong.**
+        `ZigbeeSource.__init__` has accepted `store` since Task 9, and
+        without it `configure_device` has no pending table to write a
+        deferred cluster into - the entire interruption-recovery design in
+        `configure.py` (mark before the attempt, clear after) would be dead
+        code from the very first startup this plan produces, silently,
+        because a `ZigbeeSource` built with no store still connects, still
+        joins devices, and still shows them in the catalogue. Nothing about
+        that failure mode is visible without reading `configure.py` closely,
+        which is exactly how it went unnoticed until this review.
+        """
+        if zigbee_device is None:
+            return None
+        return ZigbeeSource(
+            path=zigbee_device,
+            fingerprint=fingerprints.DEFAULT_UNKNOWN,
+            database=(matter_data_dir or Path("/data/matter")) / "zigbee.sqlite",
+            on_connection_change=runtime.set_zigbee_connected,
+            store=store,
+        )
+
     zigbee = _build_zigbee_source(store)  # None when no radio is configured
     sources = Sources([client] if zigbee is None else [client, zigbee])
     invoke = sources.send
 ```
+
+(`matter_data_dir or Path("/data/matter")`: `matter_data_dir` is itself optional, for the unrelated fabric-backup route, and can be `None` on an installation that never set it. Task 11's own permanent builder inherits this same fallback - see that task's Step 6 - so a Zigbee stick and no `--matter-data-dir` do not crash startup with an `AttributeError` on `None / "zigbee.sqlite"`, which is what the two-line form the earlier draft of this step had would have done the first time both were true at once.)
 
 **`cli._run` calls `zigbee.connect()` nowhere — not inline, and not as a background task.** Two earlier drafts of this step did, the second one backgrounding what the first one awaited; both are wrong, and the reasons were established by reading `sources/supervisor.py` and `zigbee/source.py` rather than reasoning from this document:
 
@@ -3529,9 +3701,176 @@ class AvailabilityChecker:
         self._availability_checker = AvailabilityChecker(self, handler, resolve_device_id)
         self._availability_checker.start()
         await self._seed_baseline()
+        await self._stop_polling_loop()
+        self._polling_loop = PollingLoop(self, self._polling)
+        self._polling_loop.start()
+        self._resume_pending_devices()
 ```
 
-`disconnect()` needs no change here beyond the `_stop_availability_checker()` call confirmed or added above — there is nothing left in it for this task to start.
+Three more pieces go with that call, closing the two remaining points from this task's own rationale above. First, in `ZigbeeSource.__init__`, next to `self._availability_checker: AvailabilityChecker | None = None`:
+
+```python
+        self._polling_loop: PollingLoop | None = None
+```
+
+Second, the stop half, matching `_stop_availability_checker()`'s own shape exactly:
+
+```python
+    async def _stop_polling_loop(self) -> None:
+        loop, self._polling_loop = self._polling_loop, None
+        if loop is not None:
+            await loop.stop()
+```
+
+`disconnect()` calls it right next to `await self._stop_availability_checker()`, for the identical reason given there — a loop that outlives `disconnect()` is left reading an application object that no longer exists:
+
+```python
+        await self._stop_availability_checker()
+        await self._stop_polling_loop()
+```
+
+Third, the fix for this task's second rationale point - a device still owed configuration when the bridge last stopped gets no watcher without it:
+
+```python
+    def _resume_pending_devices(self) -> None:
+        """Re-installs `configure.py`'s wake-up watcher on every device the
+        pending table still owes work to, after a restart.
+
+        `ZigbeePendingStore.addresses_with_pending()` exists for exactly
+        this moment - its own docstring says "for a bridge that has just
+        started and wants to know which devices to watch for"
+        (`model/zigbee_pending_store.py`) - and nothing called it before
+        this task. Without this, a device interrupted mid-configuration by
+        a bridge restart keeps a correct row in `zigbee_pending_config` and
+        gets no watcher: `device_last_seen_updated` and `checkin` on it are
+        never noticed again, and the row sits there, truthful and useless,
+        until the device is factory-reset and re-paired.
+
+        Called from `subscribe()`, which already runs after the catalogue
+        is loaded (`_seed_baseline()`, just above, already relies on the
+        same ordering) - so `_device_or_none` has something to find."""
+        if self._store is None:
+            return
+        for address in self._store.zigbee_pending.addresses_with_pending():
+            device = self._device_or_none(address)
+            if device is not None:
+                watch_for_wakeups(device, store=self._store, polling=self._polling)
+```
+
+And in `src/loxmatter/zigbee/configure.py`, the consumer loop itself - the fix for this task's third rationale point. `Awaitable` joins the existing `from collections.abc import Callable` import, and `PollingLoop` joins `__all__`:
+
+```python
+class PollingLoop:
+    """Runs `PollingSchedule.due` for real, on a real periodic tick.
+
+    `PollingSchedule.schedule()` has recorded WHEN a cluster that refused a
+    reporting configuration should next be read since Task 9 landed -
+    nothing before this class ever looked at `.due` at all: a lamp that
+    refused reporting showed its last value forever, and lost the liveness
+    proxy the availability sweep leans on for it besides (`PollingSchedule`'s
+    own docstring: "That poll doubles as the liveness check Task 8's
+    availability sweep uses").
+
+    Owned and started by `ZigbeeSource` exactly the way `AvailabilityChecker`
+    (`availability.py`) is: built fresh in `subscribe()`, started there,
+    stopped in `disconnect()` and before a fresh one replaces it in a later
+    `subscribe()` call. The two loops are siblings on purpose."""
+
+    def __init__(
+        self,
+        source: Any,
+        schedule: PollingSchedule,
+        *,
+        sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+        now: Callable[[], float] = time.time,
+        tick: float = 60.0,
+    ) -> None:
+        self._source = source
+        self._schedule = schedule
+        self._sleep = sleep
+        self._now = now
+        self._tick = tick
+        self._task: asyncio.Task[None] | None = None
+
+    def start(self) -> None:
+        if self._task is None or self._task.done():
+            self._task = asyncio.ensure_future(self._run())
+
+    async def stop(self) -> None:
+        task, self._task = self._task, None
+        if task is None:
+            return
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+    async def _run(self) -> None:
+        while True:
+            await self._sleep(self._tick)
+            await self._poll_due()
+
+    async def _poll_due(self) -> None:
+        """One tick.
+
+        **The connected check comes FIRST and gates everything else.** A
+        device that `ZigbeeSource._device_or_none(address)` answers `None`
+        for while the radio is merely down looks identical, from here, to
+        one that was genuinely removed - `_devices()` returns `[]` either
+        way once `self._app is None`. Treating the two the same would
+        silently and permanently drop every scheduled poll on every device
+        on the first USB blip, which is worse than the missing consumer
+        this class exists to add. Only while the source IS connected does
+        `_cluster_or_none` returning `None`, below, mean "this is really
+        gone" rather than "the radio is briefly away"."""
+        if not self._source.connected:
+            return
+        moment = self._now()
+        due = [key for key, at in self._schedule.due.items() if at <= moment]
+        for address, endpoint_id, cluster_id, attribute_id in due:
+            device = self._source._device_or_none(address)
+            cluster = _cluster_or_none(device, endpoint_id, cluster_id, attribute_id)
+            if cluster is None:
+                del self._schedule.due[(address, endpoint_id, cluster_id, attribute_id)]
+                continue
+            # Rescheduled BEFORE the read is attempted - the same "write the
+            # debt before the attempt" ordering `_configure_cluster` already
+            # uses on the pending table, and for the same reason: a read
+            # that fails or hangs must not leave this entry stuck in the
+            # past, where the very next tick would retry it at once instead
+            # of waiting out the normal interval.
+            self._schedule.schedule(address, endpoint_id, cluster_id, attribute_id, at=moment)
+            try:
+                await cluster.read_attributes([attribute_id], allow_cache=False)
+            except Exception as exc:  # noqa: BLE001 — a missed poll is not an error here
+                logger.info(
+                    "polling %s cluster %#06x attribute %#06x failed: %s",
+                    address,
+                    cluster_id,
+                    attribute_id,
+                    _describe(exc),
+                )
+
+
+def _cluster_or_none(device: Any, endpoint_id: int, cluster_id: int, attribute_id: int) -> Any | None:
+    """The cluster one due poll targets, or `None` when the device, its
+    endpoint, its cluster or the attribute itself is no longer there - a
+    rejoin (Task 9's own `test_a_rejoin_with_a_new_nwk_configures_again`)
+    can reshape any of the four."""
+    if device is None:
+        return None
+    endpoint = next(
+        (endpoint for endpoint in device.non_zdo_endpoints if endpoint.endpoint_id == endpoint_id),
+        None,
+    )
+    if endpoint is None:
+        return None
+    cluster = endpoint.in_clusters.get(cluster_id)
+    if cluster is None or cluster.attributes.get(attribute_id) is None:
+        return None
+    return cluster
+```
+
+`source.py`'s import line for this module grows from `from loxmatter.zigbee.configure import PollingSchedule, configure_device` to `from loxmatter.zigbee.configure import PollingLoop, PollingSchedule, configure_device, watch_for_wakeups`.
 
 **And in `src/loxmatter/loxone/runtime.py`, build the `zigbee_connected` signal.** Spec §4.9 requires it and the second test above asserts it, and there is nothing to build on: `Runtime` sends exactly one non-device key today (`HEARTBEAT_KEY`, from `_heartbeat_loop`) and has no generic mechanism for a second one. Add the key beside it:
 
@@ -3585,14 +3924,14 @@ Wire it in `cli._run`: pass `on_connection_change=runtime.set_zigbee_connected` 
 
 - [ ] **Step 4: Run to verify they pass.**
 
-- [ ] **Step 5: Prove each protection catches its fault.** Nine faults (five of the heartbeat/startup, plus the four availability-sweep tests above). Prove `test_a_device_marked_offline_by_link_loss_does_not_flip_back_on_the_next_sweep` exactly against the mutation the measurement used — remove the `self._source.connected` check from `_sweep()`/`_check_one()` — and paste it first: it is the one this task's correction note exists for, and if it does not fail on that specific mutation the correction has not actually landed in the tree being tested. FAIL, revert, PASS, both pasted.
+- [ ] **Step 5: Prove each protection catches its fault.** Fifteen faults (five of the heartbeat/startup, the four availability-sweep tests, and the six store-wiring/resume-devices/polling-loop tests above). Prove `test_a_device_marked_offline_by_link_loss_does_not_flip_back_on_the_next_sweep` exactly against the mutation the measurement used — remove the `self._source.connected` check from `_sweep()`/`_check_one()` — and paste it first: it is the one this task's correction note exists for, and if it does not fail on that specific mutation the correction has not actually landed in the tree being tested. Prove `test_polling_pauses_while_disconnected_instead_of_forgetting_the_schedule` the same deliberate way, against exactly the mutation its own docstring names — it is this task's second such regression, caught before it shipped rather than after, and is worth the same care. FAIL, revert, PASS, both pasted.
 
 - [ ] **Step 6: Run the checks** (all five, four-part pytest).
 
 - [ ] **Step 7: Commit**
 
 ```bash
-git add src/loxmatter/cli.py src/loxmatter/loxone/runtime.py src/loxmatter/zigbee/source.py src/loxmatter/zigbee/availability.py src/loxmatter/i18n/strings.yaml tests
+git add src/loxmatter/cli.py src/loxmatter/loxone/runtime.py src/loxmatter/zigbee/source.py src/loxmatter/zigbee/availability.py src/loxmatter/zigbee/configure.py src/loxmatter/i18n/strings.yaml tests
 git commit -m "$(cat <<'EOF'
 fix(loxone): keep the watchdog meaning what it has always meant
 
@@ -3620,6 +3959,17 @@ back to online. availability.py now gates every report on whether the
 source is still connected, checked per device rather than once per sweep,
 skips the coordinator's own entry, and guards mark_all_offline() per device
 so one failure cannot freeze the rest at their last value.
+
+Closes three more gaps a review found the same way - built by Task 9, wired
+by nobody: the source this task builds is the first anywhere to pass its
+store into ZigbeeSource, without which configure-on-join's pending table and
+its whole interruption-recovery design would have been dead code; a device
+still owed configuration when the bridge last stopped is watched again on
+restart, from the pending table's own address list; and PollingSchedule's
+due entries are now actually polled and rescheduled, gated on the source's
+connection state so a USB blip cannot be mistaken for a removed device and
+silently empty the schedule for good - the same class of regression the
+availability sweep above was corrected against.
 
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
 EOF
@@ -4163,6 +4513,7 @@ async def build_zigbee_source(
     *,
     database: Path,
     on_connection_change: Callable[[bool], Awaitable[None]] | None,
+    store: Store,
 ) -> ZigbeeSource | None:
     """The one place a `ZigbeeSource` is built - at startup and on every
     radio change alike, now that `ZigbeeRuntime` owns both. Two call sites
@@ -4179,6 +4530,18 @@ async def build_zigbee_source(
     `ZigbeeSource` happens far less often - once at startup, once per radio
     change - so paying for the fetch here is the same trade Task 7 already
     made for `ensure_quirks_loaded()`.
+
+    **`store` is carried across from Task 10's temporary builder, not a new
+    parameter this task invents.** `_build_zigbee_source(store)`'s own name
+    said as much, and this function is explicitly what that name is
+    replaced by (see the note above and this task's own Step 6) - a move
+    that dropped the parameter rather than carrying it would silently undo
+    Task 10's fix and leave `configure_device` with no pending table again
+    from the very first radio change made through the settings UI, even
+    though the CLI-flag startup path Task 10 built kept working. Without
+    it, a device paired before Task 11 landed keeps working; one paired
+    after the FIRST radio change made through this function's caller would
+    not.
     """
     if settings.path is None:
         return None
@@ -4195,10 +4558,31 @@ async def build_zigbee_source(
         database=database,
         on_connection_change=on_connection_change,
         thread_channel=channel,
+        store=store,
     )
 ```
 
-`cli._run` passes `functools.partial(build_zigbee_source, database=matter_data_dir / "zigbee.sqlite", on_connection_change=runtime.set_zigbee_connected)` as `ZigbeeRuntime`'s `build_source` — `database` and `on_connection_change` never change between a startup build and an apply-time rebuild, so binding them once here is what keeps `build_source(settings)` a one-argument callable both `ZigbeeRuntime.__init__` (for the very first source) and `_apply_in_background` (for every one after) can call identically. A test exercising `ZigbeeRuntime` injects its own `build_source` and never touches OTBR at all — the fetch is this function's concern alone, which is exactly why it is a function, not a method inlined into `_apply_in_background`.
+`cli._run` passes `functools.partial(build_zigbee_source, database=(matter_data_dir or Path("/data/matter")) / "zigbee.sqlite", on_connection_change=runtime.set_zigbee_connected, store=store)` as `ZigbeeRuntime`'s `build_source` — `database`, `on_connection_change` and `store` never change between a startup build and an apply-time rebuild, so binding them once here is what keeps `build_source(settings)` a one-argument callable both `ZigbeeRuntime.__init__` (for the very first source) and `_apply_in_background` (for every one after) can call identically. `database`'s fallback matches Task 10's own temporary builder exactly (see that task's Step 3) - `matter_data_dir` is optional, for the unrelated fabric-backup route, and a radio change made on an installation that never set it must not crash a running bridge with an `AttributeError` on `None / "zigbee.sqlite"`. A test exercising `ZigbeeRuntime` injects its own `build_source` and never touches OTBR at all — the fetch is this function's concern alone, which is exactly why it is a function, not a method inlined into `_apply_in_background`.
+
+**Add the failing test that pins `store` through this move, in `tests/zigbee/test_zigbee_runtime.py`:**
+
+```python
+async def test_build_zigbee_source_passes_the_store_through_for_configure_on_join():
+    """`store` is not a new capability this task adds - `ZigbeeSource` has
+    taken it since Task 9, and Task 10's temporary `_build_zigbee_source`
+    already passed it, CLI-flag path and all. This is the one thing the
+    move to `build_zigbee_source` must not drop, because nothing about a
+    missing store makes a radio change through the settings UI fail
+    visibly: the source still connects, still joins devices, still shows
+    them on the pairing tab - it just never binds a single cluster.
+
+    Fault to prove it: drop `store=store` from the `ZigbeeSource(...)` call
+    inside `build_zigbee_source`, or drop `store=store` from the
+    `functools.partial(...)` binding in `cli._run`. Either fault leaves
+    every device paired after the fix landed silently unconfigured -
+    exactly the regression this task's own move was supposed to carry
+    forward, not reintroduce."""
+```
 
 **The router**, `build_zigbee_router(store, *, zigbee_runtime, host_dev, sys_root, update_dir)`:
 
@@ -4354,7 +4738,7 @@ Plus the strings the progress and presence reporting need, each `en` + `de`: `we
 
 - [ ] **Step 8: Run to verify they pass.**
 
-- [ ] **Step 9: Prove each protection catches its fault.** Nineteen faults: fifteen from the exclusion and API tests, plus the four Thread-channel tests added to Step 1. FAIL, revert, PASS, both pasted. **The Thread-exclusion faults are the single most important ones in this plan** — prove them first and paste them first, and prove them against the measured two-stick fixture rather than against invented paths. Two of the fifteen are specifically the hardware measurement's: comparing path strings instead of resolved major:minor (`test_the_two_sticks_on_the_maintainers_pi_end_up_on_opposite_sides`), and ignoring `thread_enabled` (`test_a_stick_freed_by_turning_thread_off_becomes_selectable_again`). The first must turn the MG24 selectable; if it does not, the fixture is not reproducing the real machine and the test is worthless — stop and fix the fixture. The four added in Step 2 (synchronous apply, warm-up on the request path, no progress, no presence) are proved the same way as the rest; for the first two, a fake source whose `connect()` blocks longer than the test client's timeout turns "the handler waited" into a failing test rather than a slow one. The four Thread-channel faults come last but are not lower stakes than they look: the whole reason `channels_excluding` shipped inert in Task 7 was that nothing called its input, and a mistake in `thread_channel_from_dataset` or `current_thread_channel` reintroduces exactly that silently, since a Zigbee network still forms perfectly well on the Thread channel it was supposed to avoid — there is no error, only a collision nobody is told about.
+- [ ] **Step 9: Prove each protection catches its fault.** Twenty faults: fifteen from the exclusion and API tests, the four Thread-channel tests added to Step 1, and `test_build_zigbee_source_passes_the_store_through_for_configure_on_join` above. FAIL, revert, PASS, both pasted. **The Thread-exclusion faults are the single most important ones in this plan** — prove them first and paste them first, and prove them against the measured two-stick fixture rather than against invented paths. Two of the fifteen are specifically the hardware measurement's: comparing path strings instead of resolved major:minor (`test_the_two_sticks_on_the_maintainers_pi_end_up_on_opposite_sides`), and ignoring `thread_enabled` (`test_a_stick_freed_by_turning_thread_off_becomes_selectable_again`). The first must turn the MG24 selectable; if it does not, the fixture is not reproducing the real machine and the test is worthless — stop and fix the fixture. The four added in Step 2 (synchronous apply, warm-up on the request path, no progress, no presence) are proved the same way as the rest; for the first two, a fake source whose `connect()` blocks longer than the test client's timeout turns "the handler waited" into a failing test rather than a slow one. The four Thread-channel faults come last but are not lower stakes than they look: the whole reason `channels_excluding` shipped inert in Task 7 was that nothing called its input, and a mistake in `thread_channel_from_dataset` or `current_thread_channel` reintroduces exactly that silently, since a Zigbee network still forms perfectly well on the Thread channel it was supposed to avoid — there is no error, only a collision nobody is told about.
 
 - [ ] **Step 10: Run the checks** (all five, four-part pytest).
 
@@ -4394,13 +4778,15 @@ EOF
 
 Commissioning is deliberately **outside** `DeviceSource` (boundary design §3.2): Matter takes a code and returns one device, Zigbee opens the network and devices arrive later, possibly several. This route calls `ZigbeeSource` by name.
 
+**This task also turns two facts Task 9 built into the two states design 3.1's table promises, and nothing else does it.** `PairingRow.state` (Task 7) has carried exactly four values - `joined`, `interviewing`, `ready`, `failed` - and Task 9's own docstring on `PairingRow` says why no more: *"'configuring' and 'waiting to wake' are still outstanding: the facts behind them exist now ... but nothing turns them into a row state yet, because the pairing route that would show one does not exist until Task 12."* That route is this one, and a check of Tasks 10-15 as written confirms the debt was never paid: neither string appears anywhere in them. Left unfixed, a device that takes the better part of 30 seconds to bind (a sleepy sensor's cluster, per `configure.py`'s own numbers) reports "Ready to use" the instant it is `device_initialized`, before a single cluster has actually been configured, and a device whose configuration was deferred because it is asleep shows "ready" forever with no values ever arriving and no hint why - exactly the ZHA-shaped confusion design 3.1 calls out this tab as existing to fix ("Guessing silently is what makes ZHA's 'Configuring' hang feel like a bug", design 6.4).
+
 **Files:**
-- Modify: `src/loxmatter/api/zigbee.py`, `src/loxmatter/i18n/strings.yaml`
-- Test: `tests/api/test_zigbee_api.py`
+- Modify: `src/loxmatter/api/zigbee.py`, `src/loxmatter/zigbee/source.py`, `src/loxmatter/i18n/strings.yaml`
+- Test: `tests/api/test_zigbee_api.py`, `tests/zigbee/test_source.py`
 
 **Interfaces:**
-- Consumes: `ZigbeeSource.permit`, the pairing-row state Task 7 keeps, `Store.register_device`, `Runtime.on_node_snapshot`.
-- Produces: `POST /api/zigbee/permit`, `GET /api/zigbee/pairing`, `POST /api/zigbee/pairing/{ieee}/retry`, `DELETE /api/zigbee/pairing/{ieee}`, `PATCH /api/zigbee/pairing/{ieee}` (name and room).
+- Consumes: `ZigbeeSource.permit`, the pairing-row state Task 7 keeps, `Store.register_device`, `Runtime.on_node_snapshot`, `store.zigbee_pending.addresses_with_pending()` (Task 9 — the fact behind "waiting to wake").
+- Produces: `POST /api/zigbee/permit`, `GET /api/zigbee/pairing`, `POST /api/zigbee/pairing/{ieee}/retry`, `DELETE /api/zigbee/pairing/{ieee}`, `PATCH /api/zigbee/pairing/{ieee}` (name and room), `ZigbeeSource.configuring_addresses() -> frozenset[str]` (the fact behind "configuring"), the two extra values `GET /api/zigbee/pairing` can report on top of `PairingRow.state`'s own four — `"configuring"` and `"waiting_wake"` (the wire spelling Task 14's own fixture already expects; the design document's prose label for the second is "waiting to wake").
 
 - [ ] **Step 1: Write the failing tests.**
 
@@ -4485,20 +4871,166 @@ async def test_removal_forgets_the_device_even_when_the_leave_is_never_delivered
 
     Fault to prove it: keep the row when the leave is not acknowledged. The
     UI then shows a device the bridge has already forgotten."""
+
+
+async def test_a_ready_row_shows_configuring_while_configure_on_join_is_still_running():
+    """Design 3.1's table: "configuring - device_initialized, our
+    configure-on-join running - Setting it up". `ZigbeeSource` has set the
+    row to "ready" on `device_initialized` since Task 7 and only started
+    running `configure_device` in the background afterwards since Task 9 -
+    nothing before this task ever surfaced that in-progress window on the
+    row the pairing tab actually reads, so a device that takes the better
+    part of 30 s to bind a sleepy cluster reported "Ready to use" a whole
+    configuration pass before it deserved to.
+
+    Fault to prove it: return `row.state` unchanged instead of overlaying
+    `configuring_addresses()`. A device still being bound then reports
+    "ready" the instant it is `device_initialized`, before a single cluster
+    is actually configured."""
+
+
+async def test_a_ready_row_with_a_deferred_cluster_shows_waiting_to_wake():
+    """Design 3.1's table: "waiting to wake - configuration deferred -
+    Waiting for the device to wake up - press its button". The fact behind
+    this state has existed since Task 9 (`store.zigbee_pending`); nothing
+    before this task ever turned it into something the tab could show -
+    Task 9's own `PairingRow` docstring names this route by number as the
+    thing it was waiting for.
+
+    Read from the pending table FRESH on every request, not cached on the
+    row or on the source: a bridge restart between the deferral and the
+    next page load must still show it, because the pending row itself is
+    what survives the restart (`zigbee_pending_config` being on disk is the
+    entire point of it, per `configure.py`'s own module docstring).
+
+    Fault to prove it: compute this from an in-memory flag set only inside
+    `ZigbeeSource._configure_then_deliver` instead of from
+    `store.zigbee_pending.addresses_with_pending()`. The state is right
+    until the next restart and silently wrong - back to a bare "ready" -
+    after one, for exactly the device it matters most for: a battery
+    sensor that was asleep when the bridge went down and is still owed a
+    cluster when it comes back up."""
+
+
+async def test_a_row_returns_to_ready_once_the_last_pending_cluster_clears():
+    """The wake-up path (`configure.py`'s `retry_pending`, resumed after a
+    restart by Task 10's `_resume_pending_devices`) clears
+    `zigbee_pending_config` one row at a time as each deferred cluster
+    finally succeeds. Reading the pending table fresh, as the previous test
+    requires, is also what makes this transition need no code of its own:
+    once `addresses_with_pending()` no longer names the device, the overlay
+    stops applying and the row reports the "ready" `PairingRow.state` it
+    has held since `device_initialized`.
+
+    Fault to prove it: cache the "waiting to wake" overlay the first time it
+    is computed instead of recomputing it on every request. A device that
+    finishes configuring on its next wake-up then shows "waiting to wake"
+    forever - on the one tab whose entire reason for existing (design 3.1)
+    is not doing what ZHA does."""
 ```
 
-- [ ] **Step 2: Run to verify they fail**, implement, run to verify they pass.
+- [ ] **Step 2: Run to verify they fail**, implement, run to verify they pass. The last three tests need `ZigbeeSource` changed as well as the route — see the dedicated subsection below, which is not optional: without it, "configuring" and "waiting to wake" have no fact to read.
+
+**The two states, and exactly where each one comes from.** Neither is stored on `PairingRow` — `PairingRow.state` keeps meaning exactly what Task 7 defined ("the four the source itself can see"), and both new values are computed at request time, in the route, by overlaying two independent facts onto a `"ready"` row. That split matters for the second one specifically: "waiting to wake" must survive a bridge restart, because the pending row it is read from was written *before* the restart (`configure.py`'s whole "mark before the attempt" design), so it cannot be an in-memory flag that a restart would silently clear.
+
+In `src/loxmatter/zigbee/source.py`, `ZigbeeSource` gains the "configuring" half — the only one of the two that genuinely is a fact about a live process, since it is true only while a task this same object started is still running:
+
+```python
+    def __init__(self, ...) -> None:
+        ...
+        # Every address `_configure_then_deliver` is currently running
+        # configure-on-join for. Task 12's pairing route overlays
+        # "configuring" onto a "ready" row for exactly these addresses
+        # (design 3.1's table) - nothing else needs to know about this set.
+        self._configuring: set[str] = set()
+
+    async def _configure_then_deliver(self, device: Any) -> None:
+        """Runs configure-on-join and announces the device either way.
+        ...  (docstring unchanged from Task 9)
+        """
+        address = str(device.ieee)
+        self._configuring.add(address)
+        try:
+            await configure_device(device, store=self._store, polling=self._polling)
+        except Exception:
+            logger.exception("configuring %s after it joined failed", address)
+        finally:
+            # Cleared before delivery, not after: a snapshot arriving while
+            # this address still counted as "configuring" would have the
+            # pairing tab and the device's own first values disagree about
+            # whether it was ready.
+            self._configuring.discard(address)
+        try:
+            await self._deliver(address)
+        except Exception:
+            logger.exception("delivering %s after configure-on-join failed", address)
+
+    def configuring_addresses(self) -> frozenset[str]:
+        """Every address currently mid configure-on-join, for Task 12's
+        pairing route to overlay onto a `"ready"` row. A snapshot, not a
+        live view: the set backing it can change under the caller between
+        one call and the next, which is fine - a request that catches the
+        tail end of a configuration pass and reports "ready" a beat early
+        is not the failure mode this exists to prevent; reporting "ready"
+        for the WHOLE ~30 s pass is."""
+        return frozenset(self._configuring)
+```
+
+`PairingRow`'s own docstring (Task 9) is now stale and is corrected as part of this task: replace *"'configuring' and 'waiting to wake' are still outstanding ... because the pairing route that would show one does not exist until Task 12"* with a note that both are computed by that route now, from `configuring_addresses()` and `store.zigbee_pending.addresses_with_pending()` respectively, never stored on the row itself.
+
+In `src/loxmatter/api/zigbee.py`, the overlay itself — plugged into whatever `GET /api/zigbee/pairing` already does to turn a `PairingRow` into a response body, applied to each row before it is returned:
+
+```python
+# "waiting_wake", not the design table's own prose label ("waiting to
+# wake") - Task 14's tab already tests for the wire form under this exact
+# spelling (`test_every_row_state_renders_its_own_text`'s `state_name`
+# parametrisation), so this is the one spot where matching the design
+# document's English prose instead of the sibling task's already-written
+# fixture would be the wrong call.
+PairingRowStatus = Literal[
+    "joined", "interviewing", "ready", "failed", "configuring", "waiting_wake"
+]
+
+
+def _row_status(row: PairingRow, *, configuring: frozenset[str], pending: Sequence[str]) -> PairingRowStatus:
+    """The status the pairing tab actually shows - `PairingRow.state`
+    itself, widened by the two facts Task 9 built and nothing consumed
+    until this task: `ZigbeeSource.configuring_addresses()` for a live
+    configuration pass, `store.zigbee_pending.addresses_with_pending()` for
+    a cluster still owed after one. Order matters - checked in the order a
+    device actually passes through them - and both only ever apply to a
+    `"ready"` row: `joined`, `interviewing` and `failed` are not
+    `"configuring"` or `"waiting_wake"` no matter what either set contains,
+    because a device cannot be mid configure-on-join before it has even
+    finished interviewing. Applied AFTER whatever this route already does
+    to turn a stalled `joined`/`interviewing` row into `"stuck"` (the third
+    fact `PairingRow`'s own docstring named, computed from `changed_at` and
+    already covered by this task's own `test_a_row_with_no_progress_
+    becomes_stuck_and_names_the_real_cause` before this review) — the two
+    overlays are independent and never both apply to the same row, since
+    "stuck" only ever replaces `joined`/`interviewing`, never `"ready"`.
+    """
+    if row.state != "ready":
+        return row.state
+    if row.ieee in configuring:
+        return "configuring"
+    if row.ieee in pending:
+        return "waiting_wake"
+    return "ready"
+```
+
+`GET /api/zigbee/pairing`'s handler calls `store.zigbee_pending.addresses_with_pending()` once per request (not once per row — one query for the whole list) and `source.configuring_addresses()` once, then passes both into `_row_status` for every row it serialises.
 
 - [ ] **Step 3: Add the i18n keys** for every route error (`api.zigbee.permit_failed`, `api.zigbee.unknown_device`), each `en` + `de`.
 
-- [ ] **Step 4: Prove each protection catches its fault.** Ten faults. FAIL, revert, PASS, both pasted.
+- [ ] **Step 4: Prove each protection catches its fault.** Thirteen faults (the original ten, plus the three "configuring"/"waiting to wake" tests above). FAIL, revert, PASS, both pasted.
 
 - [ ] **Step 5: Run the checks** (all five, four-part pytest).
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add src/loxmatter/api/zigbee.py src/loxmatter/i18n/strings.yaml tests/api/test_zigbee_api.py
+git add src/loxmatter/api/zigbee.py src/loxmatter/zigbee/source.py src/loxmatter/i18n/strings.yaml tests/api/test_zigbee_api.py tests/zigbee/test_source.py
 git commit -m "$(cat <<'EOF'
 feat(api): open the Zigbee network for pairing, and say what is happening
 
@@ -4511,6 +5043,13 @@ rather than turning into an error.
 
 Removal copy is honest: the bridge asks the device to leave and forgets it
 either way.
+
+Also turns two facts Task 9 built but never surfaced into the two states
+design 3.1 promises and ZHA does not have: a row now shows "configuring"
+while configure-on-join is actually running, from a live set ZigbeeSource
+keeps, and "waiting to wake" for as long as the pending table says a cluster
+is still owed - read fresh on every request, so it is still correct after a
+bridge restart, not merely until the next one.
 
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
 EOF
@@ -4967,7 +5506,11 @@ The packed Loxone colour number in Task 3 is no longer in that category: it was 
 
 **This section predates a later correction and understated two things Tasks 1-8 had actually produced but nothing yet consumed — found by re-checking the section below against what those tasks committed, rather than trusting this table's word for it.** `AvailabilityChecker.start()`/`.stop()` (Task 8) were built and the checker was already constructed fresh inside `ZigbeeSource.subscribe()`, but nothing in Tasks 9-15 as originally written ever called `start()` — the sweep would never have run on any installation. Separately, `ZigbeeSource(thread_channel=...)` and `channels_excluding` (Task 7) existed with `thread_channel` defaulting to `None` and no caller ever passing anything else — `channels_excluding`'s own docstring flags this as "outstanding debt for Tasks 10 and 11" — so the Thread-channel exclusion the design requires had no implementation anywhere. Both are now closed: the first in Task 10 (which also had to correct a second, more serious problem the same review measured — see Task 8's "Measured correction" note — a naive `start()` would have shipped a checker whose sweep contradicted `mark_all_offline()` one tick after every link loss), the second in Task 11, via `matter/otbr.py`'s new `thread_channel_from_dataset`/`current_thread_channel` and the single builder function (`build_zigbee_source`) that now owns constructing every `ZigbeeSource` in the tree.
 
-**3. Type consistency.** `GroupOutcome` (Task 5) carries `failed` as a stored, plan-ordered field with `unreachable`/`unconfigured` as order-preserving subsets, so `fanout.py`'s documented ordering guarantee survives the change; both call sites read it under those names. `Sources.replace` (Task 5) is consumed only by `ZigbeeRuntime` (Task 11). `ConnectionProgress`/`progress()` and `on_connection_change` (Task 7) are consumed by `ZigbeeRuntime` and `GET /api/zigbee/radio` (Task 11) and by `Runtime.set_zigbee_connected` (Task 10); `ZIGBEE_CONNECTED_KEY`, `cache_zigbee_connected` and `set_zigbee_connected` (Task 10) are used under those names in Tasks 7 and 11. `build_snapshot`, `rename_payload`, `DeviceFacts`, `EndpointFacts` (Task 6) are consumed under exactly those names in Task 7. `DeviceUnreachableError` and `SOURCE_CALL_TIMEOUT_SECONDS` (Task 5) are used under those names in Tasks 7 and 9. `Fingerprint`/`match_fingerprint`/`DEFAULT_UNKNOWN` (Task 4) are consumed in Tasks 7, 11 and 13. `ensure_quirks_loaded` (Task 1) is called in Tasks 7 and 10. `device_identity`/`is_same_device` (Task 11) are used only there. `ZigbeePendingStore` (Task 9) is reached as `store.zigbee_pending` in Task 9 alone. `transportBadge` (Task 13) keeps its existing signature. `AvailabilityChecker.start()`/`.stop()` (Task 8) are now called from `ZigbeeSource.subscribe()`/`disconnect()` (Task 10) and nowhere else — no new public name was needed. `thread_channel_from_dataset`/`current_thread_channel` (Task 11, in `matter/otbr.py`) are consumed only by `build_zigbee_source` in the same task.
+**A second later correction found the same shape of gap in what Task 9 produced.** Task 9's own report named three things it deliberately left unwired for a later task — the pattern its own module docstrings and `PairingRow`'s "still outstanding" note both point at — and a systematic check of every interface Tasks 1-9 produce against every task that was supposed to consume it found that none of the three had a taker anywhere in Tasks 10-15 as written: `ZigbeeSource(store=...)` was never constructed by either of the two functions that build a `ZigbeeSource` (Task 10's temporary `_build_zigbee_source`, Task 11's permanent `build_zigbee_source`), so `configure_device`'s pending table and its whole interruption-recovery design would have been dead code from the first startup this plan produces; `PollingSchedule.due` had no reader anywhere, so a lamp that refused reporting would show a stale value forever and lose its liveness proxy for the availability sweep besides; and `PairingRow`'s "configuring"/"waiting to wake" states, named by Task 9's own docstring as waiting on this pairing route, were still absent from Task 12 as written. All three are now closed — the first two in Task 10, with the store fix also carried into Task 11's permanent builder (its Step 6, and this task's Step 9 fault list), the third in Task 12 — each checked, per this review's own instruction, against what would actually happen the first time the wiring ran rather than merely against whether a call now exists: the polling fix in particular is gated on `ZigbeeSource.connected` for the same reason the availability sweep above is, because an ungated version would have looked identical to the availability regression this section already records — correct-looking code that is wrong the first time the radio actually drops.
+
+**`ZigbeePendingStore.addresses_with_pending()` (Task 9) is a fourth instance of the same pattern, found during the same check and not previously named anywhere in this plan.** Its own docstring says what it is for — "for a bridge that has just started and wants to know which devices to watch for" — and nothing before this correction ever called it: a device whose configuration was interrupted by a bridge restart kept a correct row in `zigbee_pending_config` and got no wake-up watcher, so it was never retried again short of a factory reset. Closed in Task 10, alongside the other two, as `ZigbeeSource._resume_pending_devices()`.
+
+**3. Type consistency.** `GroupOutcome` (Task 5) carries `failed` as a stored, plan-ordered field with `unreachable`/`unconfigured` as order-preserving subsets, so `fanout.py`'s documented ordering guarantee survives the change; both call sites read it under those names. `Sources.replace` (Task 5) is consumed only by `ZigbeeRuntime` (Task 11). `ConnectionProgress`/`progress()` and `on_connection_change` (Task 7) are consumed by `ZigbeeRuntime` and `GET /api/zigbee/radio` (Task 11) and by `Runtime.set_zigbee_connected` (Task 10); `ZIGBEE_CONNECTED_KEY`, `cache_zigbee_connected` and `set_zigbee_connected` (Task 10) are used under those names in Tasks 7 and 11. `build_snapshot`, `rename_payload`, `DeviceFacts`, `EndpointFacts` (Task 6) are consumed under exactly those names in Task 7. `DeviceUnreachableError` and `SOURCE_CALL_TIMEOUT_SECONDS` (Task 5) are used under those names in Tasks 7 and 9. `Fingerprint`/`match_fingerprint`/`DEFAULT_UNKNOWN` (Task 4) are consumed in Tasks 7, 11 and 13. `ensure_quirks_loaded` (Task 1) is called in Tasks 7 and 10. `device_identity`/`is_same_device` (Task 11) are used only there. `ZigbeePendingStore` (Task 9) is reached as `store.zigbee_pending` in Task 9 itself, in `_build_zigbee_source`/`build_zigbee_source` (Tasks 10/11, `store=store` into `ZigbeeSource`), in `ZigbeeSource._resume_pending_devices` (Task 10, via `addresses_with_pending()`) and in the pairing route's `_row_status` (Task 12, via the same method) — this section previously said Task 9 alone, which a later correction found and closed the same way the two paragraphs above this table already record for `AvailabilityChecker.start()`/`.stop()` and `thread_channel`/`channels_excluding`: built with no caller anywhere in Tasks 10-15 as originally written. `PollingSchedule` (Task 9) is read by the new `PollingLoop` (Task 10) and nowhere else. `transportBadge` (Task 13) keeps its existing signature. `AvailabilityChecker.start()`/`.stop()` (Task 8) are now called from `ZigbeeSource.subscribe()`/`disconnect()` (Task 10) and nowhere else — no new public name was needed. `thread_channel_from_dataset`/`current_thread_channel` (Task 11, in `matter/otbr.py`) are consumed only by `build_zigbee_source` in the same task.
 
 **4. Ordering.** Every task depends only on earlier ones. Tasks 1-5 touch no Zigbee runtime code and are independently mergeable; Task 3 improves Matter on its own and could ship alone. Task 10 wires a source that Tasks 7-9 must already provide. Tasks 13 and 14 consume APIs from Tasks 11 and 12.
 
