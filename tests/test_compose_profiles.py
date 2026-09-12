@@ -118,3 +118,55 @@ def test_only_the_bridge_and_the_updater_see_the_host_dev_tree_read_only() -> No
             assert mounts == ["/dev:/host/dev:ro"], name
         else:
             assert mounts == [], name
+
+
+def test_the_bridge_may_open_serial_devices_without_naming_one():
+    """Design 2026-09-12 section 8.1. A `devices:` entry cannot be used
+    here: it fails the WHOLE stack at `docker compose up` when the node is
+    absent (which is why otbr sits behind a profile), and it is copied into
+    the container at create time, so hotplug is invisible. The cgroup rule
+    grants the access instead, and the existing read-only /dev bind supplies
+    the names.
+
+    188 = USB serial converters (ttyUSB*), 166 = ACM USB modems (ttyACM*),
+    both verified against the kernel's admin-guide/devices.txt (research
+    F.8). A GPIO-UART hat would be 204:64 and is deliberately not granted.
+
+    Fault to prove it: delete one of the two rules."""
+    rules = _stack()["services"]["loxmatter"]["device_cgroup_rules"]
+    assert "c 188:* rmw" in rules
+    assert "c 166:* rmw" in rules
+
+
+def test_only_the_bridge_may_open_serial_devices():
+    """The rule is coarse - it reaches EVERY USB-serial adapter on the host,
+    the Thread stick included (research F.9). That is acceptable for the one
+    service that needs to open a Zigbee coordinator and for no other, and it
+    is much narrower than `privileged: true`. Exclusion of the Thread stick
+    itself is enforced in loxmatter, by resolved major:minor (section 3.2).
+
+    Fault to prove it: add the same rules to `matter-server`."""
+    for name, service in _stack()["services"].items():
+        has_rules = "device_cgroup_rules" in service
+        assert has_rules == (name == "loxmatter"), name
+
+
+def test_otbr_asks_the_kernel_to_keep_its_stick_to_itself():
+    """OpenThread takes flock + TIOCEXCL only when the radio URL carries
+    `uart-exclusive` (research A.3); the compose file passed no lock at all.
+
+    This is a SECOND layer, not the guarantee: TIOCEXCL is bypassed by a
+    holder of CAP_SYS_ADMIN, which privileged otbr has. The real guarantee
+    is that loxmatter never offers or accepts the Thread stick (section 3.2,
+    Task 11).
+
+    `RADIO_URL` is an ENVIRONMENT variable of the otbr service, not part of
+    its `command:` - the image's "test" entrypoint reads it from the
+    environment, and `command:` carries only `--backbone-interface
+    ${BACKBONE_IF}`. Asserting against `command` would pass for the wrong
+    reason today (the parameter is absent from it either way) and would keep
+    passing after somebody deleted the lock.
+
+    Fault to prove it: drop the parameter from RADIO_URL."""
+    otbr = _stack()["services"]["otbr"]
+    assert "uart-exclusive" in str(otbr["environment"]["RADIO_URL"])
