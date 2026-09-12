@@ -191,6 +191,9 @@ cli.run.help_matter_data_dir:
 cli.run.help_update_dir:
   en: "Directory where this bridge and the update sidecar exchange request/state files (design \"Applying updates through the web UI\", section 7) — the same shared volume as --store-path in the reference deployment, a subdirectory of it. The default matches the sidecar's own default; change both together, or not at all. Alternative via the LOXMATTER_UPDATE_DIR environment variable."
   de: "Verzeichnis, über das diese Brücke und der Update-Beiwagen Anfrage-/Zustandsdateien austauschen (Entwurf \"Updates über die Oberfläche einspielen\", Abschnitt 7) — dasselbe gemeinsame Volume wie --store-path im Referenz-Deployment, ein Unterverzeichnis davon. Der Standard entspricht dem des Beiwagens; beide nur gemeinsam ändern. Alternative über die Umgebungsvariable LOXMATTER_UPDATE_DIR."
+cli.run.help_zigbee_device:
+  en: "by-id path of the Zigbee coordinator's USB serial device (e.g. /dev/serial/by-id/...) - a throwaway stand-in for the radio setting Task 11 adds. Superseded the moment that setting exists; absent, no Zigbee source is built at all."
+  de: "by-id-Pfad des USB-Seriengeräts des Zigbee-Koordinators (z. B. /dev/serial/by-id/...) - ein Übergangswert bis zur Funkeinstellung aus Task 11. Sobald diese existiert, wird dieser hier abgelöst; ohne Angabe wird keine Zigbee-Quelle gebaut."
 cli.run.warn_no_password:
   en: "No password has been set for this bridge yet. Until it is, nobody can sign in through the interface — and anyone who can reach the port can complete the initial setup and take over the bridge. Open the interface now and set a password."
   de: "Für diese Brücke ist noch kein Passwort vergeben. Bis das geschehen ist, lässt sich niemand über die Oberfläche anmelden — und jeder, der den Port erreicht, kann die Ersteinrichtung abschließen und die Brücke damit übernehmen. Öffne die Oberfläche jetzt und vergib ein Passwort."

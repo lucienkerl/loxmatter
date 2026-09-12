@@ -72,7 +72,7 @@ import contextlib
 import logging
 import random
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any, Final
 
@@ -81,6 +81,7 @@ logger = logging.getLogger(__name__)
 __all__ = [
     "REPORTING",
     "ConfigureOutcome",
+    "PollingLoop",
     "PollingSchedule",
     "configure_device",
     "read_current_values",
@@ -237,6 +238,118 @@ class PollingSchedule:
     def forget(self, address: str) -> None:
         for key in [key for key in self.due if key[0] == address]:
             del self.due[key]
+
+
+class PollingLoop:
+    """Runs `PollingSchedule.due` for real, on a real periodic tick.
+
+    `PollingSchedule.schedule()` has recorded WHEN a cluster that refused a
+    reporting configuration should next be read since configure-on-join
+    landed - nothing before this class ever looked at `.due` at all: a lamp
+    that refused reporting showed its last value forever, and lost the
+    liveness proxy the availability sweep leans on for it besides
+    (`PollingSchedule`'s own docstring: "That poll doubles as the liveness
+    check Task 8's availability sweep uses").
+
+    Owned and started by `ZigbeeSource` exactly the way `AvailabilityChecker`
+    (`availability.py`) is: built fresh in `subscribe()`, started there,
+    stopped in `disconnect()` and before a fresh one replaces it in a later
+    `subscribe()` call. The two loops are siblings on purpose."""
+
+    def __init__(
+        self,
+        source: Any,
+        schedule: PollingSchedule,
+        *,
+        sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+        now: Callable[[], float] = time.time,
+        tick: float = 60.0,
+    ) -> None:
+        self._source = source
+        self._schedule = schedule
+        self._sleep = sleep
+        self._now = now
+        self._tick = tick
+        self._task: asyncio.Task[None] | None = None
+
+    def start(self) -> None:
+        if self._task is None or self._task.done():
+            self._task = asyncio.ensure_future(self._run())
+
+    async def stop(self) -> None:
+        task, self._task = self._task, None
+        if task is None:
+            return
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+    async def _run(self) -> None:
+        while True:
+            await self._sleep(self._tick)
+            await self._poll_due()
+
+    async def _poll_due(self) -> None:
+        """One tick.
+
+        **The connected check comes FIRST and gates everything else.** A
+        device that `ZigbeeSource._device_or_none(address)` answers `None`
+        for while the radio is merely down looks identical, from here, to
+        one that was genuinely removed - `_devices()` returns `[]` either
+        way once `self._app is None`. Treating the two the same would
+        silently and permanently drop every scheduled poll on every device
+        on the first USB blip, which is worse than the missing consumer
+        this class exists to add. Only while the source IS connected does
+        `_cluster_or_none` returning `None`, below, mean "this is really
+        gone" rather than "the radio is briefly away"."""
+        if not self._source.connected:
+            return
+        moment = self._now()
+        due = [key for key, at in self._schedule.due.items() if at <= moment]
+        for address, endpoint_id, cluster_id, attribute_id in due:
+            device = self._source._device_or_none(address)
+            cluster = _cluster_or_none(device, endpoint_id, cluster_id, attribute_id)
+            if cluster is None:
+                del self._schedule.due[(address, endpoint_id, cluster_id, attribute_id)]
+                continue
+            # Rescheduled BEFORE the read is attempted - the same "write the
+            # debt before the attempt" ordering `_configure_cluster` already
+            # uses on the pending table, and for the same reason: a read
+            # that fails or hangs must not leave this entry stuck in the
+            # past, where the very next tick would retry it at once instead
+            # of waiting out the normal interval.
+            self._schedule.schedule(address, endpoint_id, cluster_id, attribute_id, at=moment)
+            try:
+                await cluster.read_attributes([attribute_id], allow_cache=False)
+            except Exception as exc:  # noqa: BLE001 — a missed poll is not an error here
+                logger.info(
+                    "polling %s cluster %#06x attribute %#06x failed: %s",
+                    address,
+                    cluster_id,
+                    attribute_id,
+                    _describe(exc),
+                )
+
+
+def _cluster_or_none(
+    device: Any, endpoint_id: int, cluster_id: int, attribute_id: int
+) -> Any | None:
+    """The cluster one due poll targets, or `None` when the device, its
+    endpoint, its cluster or the attribute itself is no longer there - a
+    rejoin (`test_a_rejoin_with_a_new_nwk_configures_again`) can reshape any
+    of the four."""
+    if device is None:
+        return None
+    endpoint = next(
+        (endpoint for endpoint in device.non_zdo_endpoints if endpoint.endpoint_id == endpoint_id),
+        None,
+    )
+    if endpoint is None:
+        return None
+    cluster = endpoint.in_clusters.get(cluster_id)
+    if cluster is None or cluster.attributes.get(attribute_id) is None:
+        return None
+    return cluster
 
 
 # --------------------------------------------------------------- the routine --

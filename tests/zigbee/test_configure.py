@@ -64,6 +64,7 @@ from loxmatter.model.store import Store
 from loxmatter.radios.fingerprints import Fingerprint
 from loxmatter.zigbee.configure import (
     REPORTING,
+    PollingLoop,
     PollingSchedule,
     configure_device,
     read_current_values,
@@ -722,3 +723,158 @@ def _hands_out(application: FakeApplication):
         return application
 
     return factory
+
+
+# ------------------------------------------------------- the polling consumer --
+#
+# `PollingSchedule.schedule()` has recorded WHEN a cluster that refused a
+# reporting configuration should next be read since this module was written,
+# and nothing read `.due` at all until `PollingLoop`. A lamp that refused
+# reporting showed its last value forever, and lost the liveness proxy the
+# availability sweep leans on for it besides.
+
+
+def _source_for(application: FakeApplication, store: Any, tmp_path: Path) -> ZigbeeSource:
+    return ZigbeeSource(
+        path="/dev/ttyUSB0",
+        fingerprint=Fingerprint(
+            name="SONOFF ZBDongle-E V2",
+            radio_type="ezsp",
+            baudrate=115200,
+            flow_control="software",
+        ),
+        database=tmp_path / "zigbee.sqlite",
+        application_factory=_hands_out(application),
+        store=store,
+    )
+
+
+def _fixed_schedule(interval: float = 100.0) -> PollingSchedule:
+    """A schedule whose jitter is a constant, so "was it rescheduled?" is a
+    question with an exact answer rather than a range."""
+    return PollingSchedule(jitter=lambda _low, _high: interval)
+
+
+async def test_the_polling_schedule_is_actually_read_and_rescheduled(store, tmp_path) -> None:
+    """`PollingSchedule` records WHEN a cluster that refused reporting should
+    next be polled - the module docstring's own words - and nothing read
+    `.due` before `PollingLoop`. Without a consumer, a lamp that refused
+    reporting shows its last value forever.
+
+    Fault to prove it: let `_poll_due` read the due attribute without
+    calling `self._schedule.schedule(...)` again afterwards. The first poll
+    after the interval elapses then happens - and the SECOND tick polls the
+    same entry all over again, because nothing put a new due time into
+    `.due`, so the entry stays stuck in the past forever."""
+    device = lamp()
+    application = on_a_network(device)
+    source = _source_for(application, store, tmp_path)
+    await source.connect()
+    try:
+        schedule = _fixed_schedule()
+        schedule.schedule(LAMP, 1, ON_OFF, 0x0000, at=0.0)  # due at 100.0
+        clock = [200.0]
+        loop = PollingLoop(source, schedule, now=lambda: clock[0])
+
+        await loop._poll_due()
+
+        on_off = cluster_of(device, ON_OFF)
+        assert on_off.reads == [[0x0000]]
+        # UNCACHED, for the reason `read_current_values` gives: a cached
+        # answer would republish a value nobody measured.
+        assert on_off.cached_reads == [False]
+        # Rescheduled a full interval into the future, off the moment the
+        # poll was attempted at.
+        assert schedule.due[(LAMP, 1, ON_OFF, 0x0000)] == 300.0
+
+        # The tick right afterwards must find nothing to do. Without the
+        # reschedule the entry is still due at 100.0 and is polled again.
+        await loop._poll_due()
+
+        assert on_off.reads == [[0x0000]]
+    finally:
+        await source.disconnect()
+
+
+async def test_polling_pauses_while_disconnected_instead_of_forgetting_the_schedule(
+    store, tmp_path
+) -> None:
+    """While the radio is down, `ZigbeeSource._device_or_none` answers `None`
+    for every address, because `_devices()` returns `[]` once `self._app is
+    None` - the exact shape `_poll_due` uses, further down, to notice a
+    device that has genuinely been removed and retire its schedule entry.
+    Without an explicit `self._source.connected` check FIRST, a USB replug is
+    indistinguishable from a removed device, and every scheduled poll on
+    every device is silently and permanently dropped on the first blip.
+
+    Fault to prove it: delete the `if not self._source.connected: return`
+    line from `_poll_due`, so it falls through to the same device-lookup path
+    a real removal uses. The disconnected tick then empties
+    `PollingSchedule.due` instead of leaving it for the next tick to find
+    once the radio is back, and the lamp never polls again even after the
+    stick is reconnected."""
+    device = lamp()
+    application = on_a_network(device)
+    source = _source_for(application, store, tmp_path)
+    await source.connect()
+    try:
+        schedule = _fixed_schedule()
+        schedule.schedule(LAMP, 1, ON_OFF, 0x0000, at=0.0)  # due at 100.0
+        clock = [200.0]
+        loop = PollingLoop(source, schedule, now=lambda: clock[0])
+
+        # The blip: `connect()`'s own failure path and `disconnect()` both
+        # leave `_app` at `None` while the device is still perfectly real.
+        await source.disconnect()
+        assert source.connected is False
+        await loop._poll_due()
+
+        assert cluster_of(device, ON_OFF).reads == [], "polled over a radio that is gone"
+        assert schedule.due[(LAMP, 1, ON_OFF, 0x0000)] == 100.0, (
+            "the blip retired the schedule entry as though the device were gone"
+        )
+
+        # The stick is back. The debt the blip left alone is now collected.
+        await source.connect()
+        await loop._poll_due()
+
+        assert cluster_of(device, ON_OFF).reads == [[0x0000]]
+    finally:
+        await source.disconnect()
+
+
+async def test_a_polled_devices_stale_entry_is_dropped_once_the_device_is_really_gone(
+    store, tmp_path
+) -> None:
+    """A removed device, or one that rejoined and lost the endpoint, cluster
+    or attribute a due entry names, must not be polled forever into the void
+    - `_cluster_or_none` answering `None` IS the retirement signal, but only
+    while the source is genuinely connected (the previous test is why the
+    order matters).
+
+    Fault to prove it: leave the stale entry in `PollingSchedule.due` instead
+    of deleting it when `_cluster_or_none` returns `None`. `_poll_due` then
+    retries the same dead reference on every tick, forever, logging one
+    failure per tick for a device that will never answer again."""
+    device = lamp()
+    application = on_a_network(device)
+    source = _source_for(application, store, tmp_path)
+    await source.connect()
+    try:
+        schedule = _fixed_schedule()
+        gone = "00:12:4b:00:1c:00:00:99"
+        # Four ways one entry can go stale, one per line: the device itself,
+        # its endpoint, its cluster, and the attribute on an existing
+        # cluster - a rejoin can reshape any of them.
+        schedule.schedule(gone, 1, ON_OFF, 0x0000, at=0.0)
+        schedule.schedule(LAMP, 9, ON_OFF, 0x0000, at=0.0)
+        schedule.schedule(LAMP, 1, 0x0402, 0x0000, at=0.0)
+        schedule.schedule(LAMP, 1, ON_OFF, 0x4242, at=0.0)
+        loop = PollingLoop(source, schedule, now=lambda: 200.0)
+
+        await loop._poll_due()
+
+        assert schedule.due == {}
+        assert cluster_of(device, ON_OFF).reads == []
+    finally:
+        await source.disconnect()

@@ -45,6 +45,10 @@ from fakes import (
     DeliveryError,
     FakeApplication,
     FakeApplicationFactory,
+    FakeCluster,
+    FakeDevice,
+    FakeEndpoint,
+    FakeNodeDescriptor,
     NetworkSettingsInconsistent,
     ZigbeeException,
     colour_lamp,
@@ -53,6 +57,7 @@ from fakes import (
 
 from loxmatter import i18n
 from loxmatter.matter.models import NodeSnapshot
+from loxmatter.model.store import Store
 from loxmatter.radios.fingerprints import Fingerprint
 from loxmatter.sources import DeviceCall, DeviceUnreachableError
 from loxmatter.zigbee import source as source_module
@@ -60,6 +65,10 @@ from loxmatter.zigbee.source import ZIGBEE_CHANNELS, ZigbeeSource, ZigbeeUnavail
 
 LAMP_IEEE = "00:12:4b:00:1c:a1:b2:c3"
 SENSOR_IEEE = "00:15:8d:00:02:aa:bb:cc"
+
+# TemperatureMeasurement, `measured_value` - one of `REPORTING`'s own rows,
+# so a cluster of this number really is one configure-on-join would bind.
+TEMPERATURE_CLUSTER = 0x0402
 
 FINGERPRINT = Fingerprint(
     name="SONOFF ZBDongle-E V2",
@@ -140,6 +149,7 @@ def build(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         *applications: FakeApplication,
         on_connection_change: Any = None,
         thread_channel: int | None = None,
+        store: Any = None,
     ) -> Harness:
         order: list[str] = []
         prepared = list(applications) or [FakeApplication()]
@@ -164,6 +174,7 @@ def build(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
             application_factory=recording_factory,
             on_connection_change=on_connection_change,
             thread_channel=thread_channel,
+            store=store,
         )
         return Harness(source, factory, prepared, order)
 
@@ -1218,3 +1229,229 @@ async def test_a_device_that_appears_without_a_window_is_not_reported_as_joined(
     rows = {row.ieee: row for row in harness.source.pairing_rows()}
     assert rows[joined.ieee].state == "ready"
     assert rows[joined.ieee].model == "TRADFRI bulb"
+
+
+# ------------------------------------------------- the two background loops --
+#
+# Both are started by `subscribe()` and stopped by `disconnect()` and by the
+# next `subscribe()`. They are measured through `asyncio.all_tasks()` rather
+# than through the attribute that holds them: a task that was never created
+# and a task that was created and leaked look identical from the attribute,
+# and the leak is the failure worth catching.
+
+
+def _live_tasks(qualname: str) -> list[asyncio.Task[Any]]:
+    """Every task of this event loop that is currently running `qualname`.
+
+    `asyncio.all_tasks()` lists PENDING tasks only, so a loop that
+    `stop()` has cancelled and awaited is gone from this list - which is
+    exactly what makes "stopped" and "still running" tell each other
+    apart."""
+    return [
+        task
+        for task in asyncio.all_tasks()
+        if getattr(task.get_coro(), "__qualname__", "") == qualname
+    ]
+
+
+_SWEEP_TASK = "AvailabilityChecker._run"
+_POLLING_TASK = "PollingLoop._run"
+
+
+async def test_the_availability_sweep_starts_when_the_source_is_subscribed(build) -> None:
+    """`AvailabilityChecker` has been rebuilt fresh inside
+    `ZigbeeSource.subscribe()` since it was written - but never started, by
+    that task's own deliberate scope. Without this, `CHECK_INTERVAL_SECONDS`
+    never elapses at all: a mains device that stopped reporting hours ago is
+    never pinged and never written off, and the web UI reports it reachable
+    forever, even though `mark_all_offline()` still fires correctly the
+    moment the coordinator itself is lost.
+
+    Fault to prove it: construct the checker in `subscribe()` without
+    calling `start()`. The periodic sweep then never runs, on any
+    installation, ever."""
+    harness = build(FakeApplication(devices=[colour_lamp()]))
+    await harness.source.connect()
+    assert _live_tasks(_SWEEP_TASK) == [], "a sweep was running before anything subscribed"
+
+    await harness.source.subscribe(_lamp_resolver(), harness.handler)
+
+    assert len(_live_tasks(_SWEEP_TASK)) == 1
+    await harness.source.disconnect()
+
+
+async def test_a_reconnect_stops_the_previous_sweep_before_starting_a_new_one(build) -> None:
+    """`attach()` calls `subscribe()` again on every reconnect (its
+    documented contract). Ten reconnects over a flaky USB cable must not
+    leave ten sweep tasks running, nine of them reading an application
+    object `disconnect()` has already thrown away.
+
+    Fault to prove it: build and start the new checker without first
+    awaiting `stop()` on the old one. `asyncio.all_tasks()` grows by one on
+    every single `subscribe()` call instead of staying flat."""
+    harness = build(FakeApplication(devices=[colour_lamp()]))
+    await harness.source.connect()
+
+    for _ in range(10):
+        await harness.source.subscribe(_lamp_resolver(), harness.handler)
+        # One turn of the loop, so a cancelled task really finishes rather
+        # than merely being marked - a cancellation that nobody awaited
+        # would otherwise still be counted as pending here.
+        await asyncio.sleep(0)
+
+    assert len(_live_tasks(_SWEEP_TASK)) == 1
+    assert len(_live_tasks(_POLLING_TASK)) == 1
+    await harness.source.disconnect()
+
+
+async def test_the_availability_sweep_stops_on_disconnect(build) -> None:
+    """A checker whose sweep task keeps running after `disconnect()` reads
+    `_devices()` against an application that no longer exists (harmless - it
+    returns `[]`), but the task itself is never cancelled: it leaks for the
+    rest of the process, one more each time the source reconnects or a radio
+    is swapped out from under it.
+
+    Fault to prove it: drop the `_stop_availability_checker()` call from
+    `disconnect()`. `asyncio.all_tasks()` then keeps one dangling sweep task
+    per reconnect."""
+    harness = build(FakeApplication(devices=[colour_lamp()]))
+    await harness.source.connect()
+    await harness.source.subscribe(_lamp_resolver(), harness.handler)
+    assert len(_live_tasks(_SWEEP_TASK)) == 1
+
+    await harness.source.disconnect()
+
+    assert _live_tasks(_SWEEP_TASK) == []
+
+
+async def test_the_polling_loop_stops_on_disconnect(build) -> None:
+    """The same leak `test_the_availability_sweep_stops_on_disconnect`
+    catches, for the second background loop `subscribe()` starts: a
+    `PollingLoop` whose task survives `disconnect()` keeps sleeping and
+    waking against an application object `disconnect()` has already thrown
+    away, one more leaked task per reconnect.
+
+    Fault to prove it: do not call `_stop_polling_loop()` from
+    `disconnect()`."""
+    harness = build(FakeApplication(devices=[colour_lamp()]))
+    await harness.source.connect()
+    await harness.source.subscribe(_lamp_resolver(), harness.handler)
+    assert len(_live_tasks(_POLLING_TASK)) == 1
+
+    await harness.source.disconnect()
+
+    assert _live_tasks(_POLLING_TASK) == []
+
+
+async def test_a_device_marked_offline_by_link_loss_does_not_flip_back_on_the_next_sweep(
+    build,
+) -> None:
+    """THE regression a review measured in the committed checker, not merely
+    a missing feature: `_sweep()`/`_check_one()` computing availability from
+    `is_available(device)` alone reads only `device.last_seen` - and a
+    device heard from ten seconds before the coordinator died still passes
+    that check for the next two (mains) or six (battery) hours.
+    `ZigbeeSource._facts()` gets this right (`self._connected and
+    is_available(device)`); the sweep has to as well, now that this is the
+    task that starts it.
+
+    Fault to prove it: revert `_sweep()`/`_check_one()` to decide
+    availability from `is_available(device)` alone, without checking
+    `self._source.connected`. The device is then reported online again one
+    sweep after `mark_all_offline()` reported it offline."""
+    harness = build(FakeApplication(devices=[colour_lamp()]))
+    await harness.source.connect()
+    # `colour_lamp()` defaults `last_seen` to "now" (`fakes.py`'s own
+    # `_LAST_SEEN_UNSET` sentinel) - heard from moments ago, exactly the
+    # shape that made the measured regression invisible to `is_available`
+    # alone.
+    await harness.source.subscribe(_lamp_resolver(device_id=1), harness.handler)
+    harness.app.fire_connection_lost()
+    await _settle(harness.source)
+    assert harness.handler.online == [(1, False)]
+
+    # The next scheduled tick, invoked directly rather than waited for -
+    # `AvailabilityChecker._sweep()` is what a real 30 s timer would call.
+    assert harness.source._availability_checker is not None
+    await harness.source._availability_checker._sweep()
+
+    assert harness.handler.online == [(1, False)]
+    await harness.source.disconnect()
+
+
+# ----------------------------------------------- picking up unfinished work --
+
+
+def _thermometer(ieee: str) -> FakeDevice:
+    """A battery temperature sensor with one reportable cluster.
+
+    Battery-powered on purpose: it is the device class whose configuration
+    is interrupted in the first place, because it is asleep when the bridge
+    tries to talk to it."""
+    return FakeDevice(
+        ieee,
+        manufacturer="IKEA of Sweden",
+        model="TRADFRI temperature",
+        node_desc=FakeNodeDescriptor(is_mains_powered=False),
+        endpoints=[
+            FakeEndpoint(
+                1,
+                profile_id=0x0104,
+                device_type=0x0302,
+                in_clusters=[
+                    FakeCluster(
+                        TEMPERATURE_CLUSTER,
+                        declared=[0x0000],
+                        cached={0x0000: 2100},
+                        readable={0x0000: 2150},
+                    )
+                ],
+            )
+        ],
+    )
+
+
+async def test_a_device_with_pending_configuration_is_watched_again_after_a_restart(
+    build, tmp_path
+) -> None:
+    """`ZigbeePendingStore.addresses_with_pending()` exists for exactly this
+    moment - its own docstring says "for a bridge that has just started and
+    wants to know which devices to watch for" - and nothing called it before
+    this wiring. A device whose configuration was interrupted by a bridge
+    restart has a correct row in `zigbee_pending_config` and, without this,
+    no watcher: `device_last_seen_updated` and `checkin` on it are never
+    noticed, and the row sits there, truthful and useless, until the device
+    is factory-reset and re-paired.
+
+    Fault to prove it: skip `_resume_pending_devices()` in `subscribe()`. The
+    device below then never has `retry_pending` called on it, no matter how
+    many times it reports in afterwards - the retry itself is proven by
+    `test_a_deferred_cluster_is_retried_when_the_device_is_next_heard_from`
+    in `test_configure.py`; this proves that after a restart anything ever
+    asks for it."""
+    address = "00:11:22:33:44:55:66:77"
+    store = Store(tmp_path / "loxmatter.sqlite")
+    try:
+        # The row a bridge that was killed mid-configuration leaves behind.
+        store.zigbee_pending.mark_pending(address, 1, TEMPERATURE_CLUSTER)
+        device = _thermometer(address)
+        harness = build(FakeApplication(devices=[device]), store=store)
+
+        await harness.source.connect()
+        await harness.source.subscribe(lambda _address: 1, harness.handler)
+        # Everything the restart itself did, forgotten: what follows must be
+        # caused by the device reporting in, not by the subscribe.
+        device.journal.clear()
+        assert device.endpoints[1].in_clusters[TEMPERATURE_CLUSTER].binds == 0
+
+        device.heard_from()
+        await _settle(harness.source)
+        # `retry_pending` runs as a task the listener started; give it room.
+        for _ in range(10):
+            await asyncio.sleep(0)
+
+        assert device.endpoints[1].in_clusters[TEMPERATURE_CLUSTER].binds == 1
+        assert store.zigbee_pending.pending_for(address) == []
+        await harness.source.disconnect()
+    finally:
+        store.close()

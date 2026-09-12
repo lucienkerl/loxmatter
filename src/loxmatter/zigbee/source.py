@@ -88,7 +88,12 @@ from loxmatter.radios.fingerprints import Fingerprint
 from loxmatter.sources import DeviceCall, DeviceUnreachableError, RuntimeEventHandler
 from loxmatter.timestamps import now_iso
 from loxmatter.zigbee.availability import AvailabilityChecker, is_available
-from loxmatter.zigbee.configure import PollingSchedule, configure_device
+from loxmatter.zigbee.configure import (
+    PollingLoop,
+    PollingSchedule,
+    configure_device,
+    watch_for_wakeups,
+)
 from loxmatter.zigbee.quirks import ensure_quirks_loaded
 from loxmatter.zigbee.translate import DeviceFacts, EndpointFacts, build_snapshot, rename_payload
 
@@ -450,13 +455,15 @@ class ZigbeeSource:
         # Rebuilt on every `subscribe()`, the same as the cluster listeners
         # just below: `attach()` runs on every reconnect, and a fresh
         # checker starts every device's grace counters clean rather than
-        # carrying stale counts across a rebuild it had no part in.
-        # **Not started here or anywhere else yet** - `start()` belongs to
-        # the task that wires a source into the running bridge, which does
-        # not exist until a later task. Until then this checker only ever
-        # answers `mark_all_offline()`, from `_handle_connection_lost`
-        # below - the one piece of Task 8 that cannot wait.
+        # carrying stale counts across a rebuild it had no part in. Started
+        # there too, and stopped by `disconnect()` and by the next
+        # `subscribe()` before it builds its replacement - whoever starts a
+        # background loop owns its stop.
         self._availability_checker: AvailabilityChecker | None = None
+        # The availability sweep's sibling: reads `PollingSchedule.due` for
+        # the clusters that refused a reporting configuration. Same
+        # lifecycle, for the same reason.
+        self._polling_loop: PollingLoop | None = None
         # Per device, so one device can be re-bound without disturbing the
         # rest - a reinterview replaces exactly one device object.
         self._unsubscribers: dict[str, list[Callable[[], None]]] = {}
@@ -665,8 +672,10 @@ class ZigbeeSource:
         # for the same reason bellows' serial thread does: it is a task that
         # outlives nothing here, and a `disconnect()` that left it running
         # would leave a sweeper asking a source that has no application at
-        # all. The next `subscribe()` builds a fresh one.
+        # all. The next `subscribe()` builds a fresh one. The polling loop
+        # is its sibling and goes down for the identical reason.
         await self._stop_availability_checker()
+        await self._stop_polling_loop()
         try:
             if app is not None:
                 await app.shutdown(db=True)
@@ -913,24 +922,64 @@ class ZigbeeSource:
         if self._dispatch_task is None or self._dispatch_task.done():
             self._dispatch_task = asyncio.create_task(self._dispatch_loop(self._queue))
         self._register_cluster_listeners()
-        # See the constructor: rebuilt fresh on every call, and not started
-        # here - only `mark_all_offline()` is wired up yet.
-        #
         # **The previous one is stopped first, and awaited.** Assigning over
         # it would leave its `_run()` task pending on a checker nobody can
         # reach any more, holding the device ids of a connection that is
         # gone; `attach()` runs on every reconnect, so that is one leaked
-        # sweeper per outage rather than a one-off. Harmless only for as
-        # long as nothing calls `start()`, which is exactly what the task
-        # that wires this into the running bridge will do.
+        # sweeper per outage rather than a one-off - and now that `start()`
+        # is called below, that leaked sweeper is a LIVE task reading a
+        # progressively staler application object.
         await self._stop_availability_checker()
+        # Rebuilt fresh on every call - and STARTED here: this is where a
+        # source is run through a real subscribe-to-disconnect service
+        # lifecycle, so it is where the periodic sweep
+        # (`CHECK_INTERVAL_SECONDS`) actually begins running. By the time it
+        # runs live it already gates every report on `self.connected` and
+        # excludes the coordinator (`availability.py`'s `_check_one` and
+        # `_devices_to_check`), or the sweep would contradict
+        # `mark_all_offline()` a tick later - see
+        # `test_a_device_marked_offline_by_link_loss_does_not_flip_back_on_the_next_sweep`.
         self._availability_checker = AvailabilityChecker(self, handler, resolve_device_id)
+        self._availability_checker.start()
         await self._seed_baseline()
+        await self._stop_polling_loop()
+        self._polling_loop = PollingLoop(self, self._polling)
+        self._polling_loop.start()
+        self._resume_pending_devices()
 
     async def _stop_availability_checker(self) -> None:
         checker, self._availability_checker = self._availability_checker, None
         if checker is not None:
             await checker.stop()
+
+    async def _stop_polling_loop(self) -> None:
+        loop, self._polling_loop = self._polling_loop, None
+        if loop is not None:
+            await loop.stop()
+
+    def _resume_pending_devices(self) -> None:
+        """Re-installs `configure.py`'s wake-up watcher on every device the
+        pending table still owes work to, after a restart.
+
+        `ZigbeePendingStore.addresses_with_pending()` exists for exactly
+        this moment - its own docstring says "for a bridge that has just
+        started and wants to know which devices to watch for"
+        (`model/zigbee_pending_store.py`) - and nothing called it before.
+        Without this, a device interrupted mid-configuration by a bridge
+        restart keeps a correct row in `zigbee_pending_config` and gets no
+        watcher: `device_last_seen_updated` and `checkin` on it are never
+        noticed again, and the row sits there, truthful and useless, until
+        the device is factory-reset and re-paired.
+
+        Called from `subscribe()`, which already runs after the catalogue
+        is loaded (`_seed_baseline()`, just above, already relies on the
+        same ordering) - so `_device_or_none` has something to find."""
+        if self._store is None:
+            return
+        for address in self._store.zigbee_pending.addresses_with_pending():
+            device = self._device_or_none(address)
+            if device is not None:
+                watch_for_wakeups(device, store=self._store, polling=self._polling)
 
     async def _seed_baseline(self) -> None:
         """Remembers what each known device currently reads as, WITHOUT

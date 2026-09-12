@@ -53,6 +53,13 @@ from loxmatter.timestamps import now_iso
 
 PULSE_MILLISECONDS = 200
 HEARTBEAT_KEY = "bridge_alive"
+# Whether the OPTIONAL Zigbee radio is up (design 2026-09-12, section 4.9).
+# Deliberately a key of its own rather than a term in the watchdog: the
+# heartbeat means "the bridge and the MANDATORY source are alive", and a
+# Zigbee stick that fell out must not make the Miniserver declare a bridge
+# dead whose Matter devices are all working. One more virtual input to wire
+# IF the user cares.
+ZIGBEE_CONNECTED_KEY = "zigbee_connected"
 
 logger = logging.getLogger(__name__)
 
@@ -401,6 +408,35 @@ class Runtime:
         key = self._online_key(device_id)
         await self._sender.send(key, online)
         self._notify_observers(key, online)
+
+    def cache_zigbee_connected(self, connected: bool) -> None:
+        """Enters the radio's state into the cache, WITHOUT sending.
+
+        The `_cache_online` half of the pair, and needed for the same
+        reason (review fix C1, 2026-09-02): `cli._run` seeds this before
+        `attach()`, and `attach()` ends in `resend_all()`, which sends every
+        cached value with `force=True`. A seed that sent for itself would
+        put `zigbee_connected` on the wire twice on every single startup.
+        """
+        self._last_values[ZIGBEE_CONNECTED_KEY] = connected
+
+    async def set_zigbee_connected(self, connected: bool) -> None:
+        """Reports a change of the radio's state to Loxone and the UI.
+
+        Caching first, then sending, then notifying observers - the exact
+        order `set_online` uses, and for the reason `add_observer`
+        documents: the observer must learn what actually happened, not what
+        was intended, so it is told only after the send has returned.
+
+        Caching is what makes the value survive a Miniserver restart: it
+        joins the set `resend_all()` restores (spec 6.4). Without it, a
+        Miniserver that rebooted while the radio was down would show the
+        input at its default until the radio next CHANGED state, which for
+        a healthy stick is never.
+        """
+        self.cache_zigbee_connected(connected)
+        await self._sender.send(ZIGBEE_CONNECTED_KEY, connected)
+        self._notify_observers(ZIGBEE_CONNECTED_KEY, connected)
 
     def _mark_heard(self, device_id: int) -> None:
         """Records that something has just arrived from this device.

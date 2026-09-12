@@ -22,7 +22,7 @@ from pathlib import Path
 import pytest
 
 from loxmatter.export.commands import extract_commands
-from loxmatter.loxone.runtime import HEARTBEAT_KEY, Runtime
+from loxmatter.loxone.runtime import HEARTBEAT_KEY, ZIGBEE_CONNECTED_KEY, Runtime
 from loxmatter.matter.discovery import extract_signals
 from loxmatter.matter.models import NodeSnapshot, SignalKind, SignalRef
 from loxmatter.model.store import Store
@@ -795,3 +795,72 @@ async def test_last_heard_is_set_by_an_event(tmp_path):
     assert runtime.last_heard_for(2) is not None
     # Another device stays untouched - the timestamp is per device.
     assert runtime.last_heard_for(3) is None
+
+
+async def test_zigbee_health_is_reported_as_its_own_signal(tmp_path):
+    """Where the optional radio's state belongs: one more virtual input to
+    wire IF the user cares, plus the per-device `d<id>_online` keys. NOT in
+    the watchdog - a Zigbee stick that fell out must not make the Miniserver
+    declare a bridge dead whose Matter devices are all working (boundary
+    design open point 9.1).
+
+    Fault to prove it: drop the signal - fold the radio's state into
+    `link_ok` and send no key of its own. Zigbee's state then reaches Loxone
+    nowhere at all, and the heartbeat lies about the bridge instead."""
+    store = Store(tmp_path / "s.sqlite")
+    sender = FakeSender()
+    seen: list[tuple[str, object]] = []
+    runtime = Runtime(store, sender, link_ok=lambda: True)
+    runtime.add_observer(lambda key, value: seen.append((key, value)))
+
+    await runtime.set_zigbee_connected(True)
+
+    assert (ZIGBEE_CONNECTED_KEY, True, False) in sender.sent
+    # A key of its own, and never the watchdog's.
+    assert ZIGBEE_CONNECTED_KEY != HEARTBEAT_KEY
+    assert HEARTBEAT_KEY not in sender
+    # The web UI learns it over the same stream, after the send returned.
+    assert seen == [(ZIGBEE_CONNECTED_KEY, True)]
+
+    # And it survives a Miniserver restart: `resend_all()` restores it,
+    # which is what `cache_zigbee_connected` is for. Without the cache a
+    # Miniserver that rebooted while the radio was down would show the input
+    # at its default until the radio next CHANGED state - for a healthy
+    # stick, never.
+    await runtime.set_zigbee_connected(False)
+    sender.sent.clear()
+    await runtime.resend_all()
+
+    assert (ZIGBEE_CONNECTED_KEY, False, True) in sender.sent
+
+
+async def test_the_seeded_radio_state_reaches_the_cache_without_sending(tmp_path):
+    """`cli._run` seeds this before `attach()`, and `attach()` ends in
+    `resend_all()`, which sends every cached value with `force=True`. Both
+    halves of that sentence are load-bearing, and they pull in opposite
+    directions - which is exactly why `_cache_online` is a separate method
+    from `set_online` (review fix C1, 2026-09-02) and why this one is too.
+
+    Fault to prove it: have `cache_zigbee_connected` record nothing. The
+    seed then reaches no cache, the first `resend_all()` carries no
+    `zigbee_connected` at all, and a Miniserver that rebooted while the
+    radio was down shows the input at its default until the radio next
+    CHANGES state - for a healthy stick, never.
+
+    The opposite fault - seeding by SENDING, which would put the key on the
+    wire twice on every startup - is measured one layer up, where it can
+    actually be committed: `test_the_radio_state_is_seeded_before_the_first_
+    resend` in `tests/test_cli.py` asserts that `cli._run` seeds through
+    this method and not through `set_zigbee_connected`. The bare
+    `sender.sent == []` below is this layer's half of that."""
+    store = Store(tmp_path / "s.sqlite")
+    sender = FakeSender()
+    runtime = Runtime(store, sender)
+
+    runtime.cache_zigbee_connected(False)
+
+    assert sender.sent == []
+
+    await runtime.resend_all()
+
+    assert [key for key, _value, _force in sender.sent] == [ZIGBEE_CONNECTED_KEY]

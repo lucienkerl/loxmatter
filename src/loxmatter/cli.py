@@ -59,8 +59,10 @@ from loxmatter.matter.models import NodeSnapshot, SignalKind
 from loxmatter.model.locale_store import LocaleStore
 from loxmatter.model.store import Store
 from loxmatter.profiles.table import is_exportable
+from loxmatter.radios import fingerprints
 from loxmatter.sources import Sources
 from loxmatter.sources.supervisor import attach, supervise
+from loxmatter.zigbee.source import ZigbeeSource
 
 logger = logging.getLogger(__name__)
 
@@ -539,6 +541,11 @@ def run(
         envvar="LOXMATTER_UPDATE_DIR",
         help=i18n.t("cli.run.help_update_dir"),  # noqa: B008
     ),
+    zigbee_device: str | None = typer.Option(
+        None,
+        "--zigbee-device",
+        help=i18n.t("cli.run.help_zigbee_device"),
+    ),
 ) -> None:
     log_handler = install_log_buffer()
     resolved_store_path = _resolve_store_path(store_path)
@@ -571,6 +578,7 @@ def run(
             api_token,
             log_handler,
             update_dir=update_dir,
+            zigbee_device=zigbee_device,
         )
     )
 
@@ -590,6 +598,10 @@ async def _run(
     # that existing test calls to `_run(...)` keep working unchanged
     # without this argument.
     update_dir: Path = Path("/data/update"),
+    # This task's throwaway stand-in for the radio setting Task 11 adds -
+    # a keyword with a default, the same shape `update_dir` already has, so
+    # every existing direct call to `_run(...)` keeps working unchanged.
+    zigbee_device: str | None = None,
 ) -> None:
     """Builds sender, runtime and client on top of `store` and keeps them
     running.
@@ -659,8 +671,50 @@ async def _run(
     passes none, e.g. a test)."""
     sender = UdpSender(miniserver, port)
     client = _build_client(url)
-    sources = Sources([client])
-    runtime = Runtime(store, sender, link_ok=sources.all_connected)
+    # The heartbeat keeps meaning "the bridge and the MANDATORY source are
+    # alive" (design 2026-09-12, section 4.9; boundary design open point
+    # 9.1). NOT `sources.all_connected`: that would silence the Loxone
+    # watchdog when only the Zigbee stick is gone, and the Miniserver would
+    # declare the whole bridge dead while every Matter device still worked.
+    # Zigbee's own health reaches Loxone as `zigbee_connected` and as the
+    # per-device `d<id>_online` keys instead.
+    runtime = Runtime(store, sender, link_ok=lambda: client.connected)
+
+    def _build_zigbee_source(store: Store) -> ZigbeeSource | None:
+        """This task's own throwaway stand-in for Task 11's radio setting -
+        reads the path from `--zigbee-device` rather than from
+        `ZigbeeRadioSettings`, which does not exist until that task lands.
+        Superseded there by `zigbee.runtime.build_zigbee_source`; nothing
+        ships with this version in place, the same way nothing ships with
+        `thread_channel` left at its default.
+
+        **`store=store` is the one thing this stand-in must not get wrong.**
+        `ZigbeeSource.__init__` has accepted `store` since configure-on-join
+        landed, and without it `configure_device` has no pending table to
+        write a deferred cluster into - the entire interruption-recovery
+        design in `configure.py` (mark before the attempt, clear after)
+        would be dead code from the very first startup, silently, because a
+        `ZigbeeSource` built with no store still connects, still joins
+        devices, and still shows them in the catalogue.
+
+        `matter_data_dir or Path("/data/matter")`: `matter_data_dir` is
+        itself optional, for the unrelated fabric-backup route, and can be
+        `None` on an installation that never set it - so a Zigbee stick and
+        no `--matter-data-dir` must not crash startup with a `TypeError` on
+        `None / "zigbee.sqlite"`.
+        """
+        if zigbee_device is None:
+            return None
+        return ZigbeeSource(
+            path=zigbee_device,
+            fingerprint=fingerprints.DEFAULT_UNKNOWN,
+            database=(matter_data_dir or Path("/data/matter")) / "zigbee.sqlite",
+            on_connection_change=runtime.set_zigbee_connected,
+            store=store,
+        )
+
+    zigbee = _build_zigbee_source(store)  # None when no radio is configured
+    sources = Sources([client] if zigbee is None else [client, zigbee])
     invoke = sources.send
 
     supervisor_tasks: list[asyncio.Task[None]] = []
@@ -672,6 +726,15 @@ async def _run(
         except MatterUnavailableError as exc:
             _fail(i18n.t("cli.common.fail_matter_not_ready", url=url, exc=exc))
         await runtime.start()
+        if zigbee is not None:
+            # Seeded BEFORE the `attach()` loop, whose `resend_all()` sends
+            # every cached value with `force=True`, so the first resend
+            # carries this key too. `False`, not `True`: the radio has not
+            # come up yet at this point - `cli._run` connects it nowhere,
+            # the supervisor does - and the first successful connect sets it
+            # to `True` through `on_connection_change`. An installation with
+            # no Zigbee radio seeds nothing and never sends the key at all.
+            runtime.cache_zigbee_connected(False)
         gained = 0
         for source in sources.all():
             gained += await attach(source, store, runtime)
