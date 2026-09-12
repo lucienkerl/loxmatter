@@ -3787,6 +3787,18 @@ function app() {
       );
     },
 
+    /** `updateAvailable.target` (update_check.py) is a version tag on the
+     * stable channel but the full 40-character commit SHA on dev (kept
+     * full there for update-once.sh's own use, see that module's
+     * comment) - so only the dev-channel case is a commit worth
+     * shortening for display; a stable version tag must reach the
+     * confirm dialog unchanged. */
+    updateTargetLabel() {
+      return this.updateStatus?.channel === "dev"
+        ? this.formatCommit(this.updateAvailable?.target)
+        : this.updateAvailable?.target;
+    },
+
     /** Whether the UPDATER SIDECAR ITSELF (not the bridge, and nothing to
      * do with `updateRunning()`) is running an image GHCR no longer
      * serves under `:stable` - i.e. whether refreshing it (the command
