@@ -198,7 +198,7 @@ written to `.env`:
 |---|---|
 | `validate` | Section 6.3. |
 | `backup` | `.env` copied to `.env.radios-<stamp>` beside it. |
-| `write` | Only these keys change: `RADIO_DEVICE` (always written as the by-id path), the `thread` entry of `COMPOSE_PROFILES` (added or removed, other entries kept), `BLUETOOTH_ADAPTER`. `RADIO_BAUDRATE` is written as `460800`, the installer's default, only if it is missing and Thread is being enabled. |
+| `write` | Only these keys change: `RADIO_DEVICE` (always written as the by-id path), the `thread` entry of `COMPOSE_PROFILES` (added or removed, other entries kept), `BLUETOOTH_ADAPTER`. `RADIO_BAUDRATE` is written as `460800`, the installer's default, only if it is missing and Thread is being enabled. A half sent as `null` (section 6.3) writes none of its keys: a request that leaves Thread alone touches neither `RADIO_DEVICE` nor `COMPOSE_PROFILES` nor `RADIO_BAUDRATE`, and one that leaves Bluetooth alone does not touch `BLUETOOTH_ADAPTER`. |
 | `apply_bluetooth` | Only if the adapter changed: recreate `matter-server` (`up -d --no-deps --force-recreate matter-server`). |
 | `verify_bluetooth` | A TCP connection to the host's port 5580 succeeds within 60 s. |
 | `apply_thread` | Thread enabled or its device changed: recreate `otbr`. Thread disabled: stop and remove `otbr`. |
@@ -238,6 +238,16 @@ reports, so the card can show when the two
 disagree instead of hiding it. `capable` is `false`, with a reason key,
 when `/host/dev` is not mounted in the sidecar (a sidecar container
 created before section 5's change).
+
+While a job is applying, both timestamps the card judges the sidecar by
+are refreshed from inside the long waits and during a rollback as well:
+`seen_at` here, and `updater_seen_at` in `state.json`, which nothing else
+can refresh at that moment because `entrypoint.sh` runs the two workers
+one after the other in the same loop. Without that, a healthy job that
+sits in `verify_thread` for up to 90 s goes silent for longer than
+`_MAX_SILENT_SECONDS` (30 s, `src/loxmatter/update.py`) and the card
+reports it as abandoned — which is exactly what the flagship stick switch
+did until this was added.
 
 ### 6.6 The Security Boundary, Extended
 

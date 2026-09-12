@@ -84,6 +84,29 @@ const UPDATE_APPLY_GRACE_MS = 20000;
 // `radiosAwaitingPickup()`/`radiosNeverCollected()`.
 const RADIOS_APPLY_GRACE_MS = 20000;
 
+// How long the sidecar may look silent DURING a running radios job before
+// the card calls that job abandoned. A stall is now reported only if it
+// PERSISTS across this window, not on the first stale poll.
+//
+// The root cause it guards against was in the sidecar itself and is fixed
+// there (`refresh_heartbeat()` in deploy/updater/radios-once.sh): while a
+// radios job applied, nothing refreshed `updater_seen_at` - entrypoint.sh
+// runs `update-once.sh` and `radios-once.sh` sequentially in one loop - so
+// 30 seconds (`_MAX_SILENT_SECONDS`, src/loxmatter/update.py) into the
+// flagship one-to-two-minute stick switch, a healthy job reported itself
+// abandoned, stopped polling and lost the step list.
+//
+// This constant is the second, independent protection: the same reasoning
+// as `UPDATE_APPLY_GRACE_MS` above, applied to the OTHER stall case. A
+// heartbeat can legitimately arrive late - a loaded Pi, a pass that took
+// longer than usual - and a single late poll is not evidence that anything
+// died, only that nothing was heard in that instant. Twenty seconds on top
+// of the sidecar's own 30-second window means roughly fifty seconds of
+// genuine silence before the user is told anything is wrong, which is
+// still far inside the "something is actually broken" range and no longer
+// inside the "this is just taking a while" one.
+const RADIOS_STALL_GRACE_MS = 20000;
+
 // --- Live diagnostics (Task 6, Spec 10.5) -----------------------------------
 //
 // Upper bound on the lines kept per stream (logs, UDP capture, command
@@ -764,6 +787,17 @@ function app() {
     // `confirmApplyRadios()` attempt, the same way `applyUpdate()` resets
     // `updateApplyMissed`.
     radiosJobAbandoned: false,
+    // When the sidecar was FIRST seen silent during the current job, or
+    // `null` whenever the last poll saw it answering. `radiosJobAbandoned`
+    // is only set once this has stood for `RADIOS_STALL_GRACE_MS` - see
+    // that constant, and `loadRadios()` for the two writes.
+    radiosStallSince: null,
+    // The error from a failed POST /api/radios, kept apart from
+    // `radiosError` (which `loadRadios()` clears as its own first
+    // statement on every poll, twice a second while a job runs). See
+    // `confirmApplyRadios()` for the case that proved one field could not
+    // carry both.
+    radiosApplyError: null,
 
     resendInterval: { interval_seconds: 300 },
     resendIntervalDraft: 300,
@@ -3590,16 +3624,47 @@ function app() {
         this.radiosPendingJobId = null;
         this.radiosPendingDeadline = null;
       }
+      // Both stall banners are sticky on purpose (they must survive the
+      // poll that would otherwise re-render them away), and that left them
+      // with no exit but a page reload: `confirmApplyRadios()` was the only
+      // place that ever cleared them, so a user who had seen one kept
+      // seeing it while leaving Settings, coming back and pressing Rescan.
+      // A sidecar that answers again with nothing running is proof the
+      // standing warning no longer describes anything - clear it. Placed
+      // BEFORE the two checks below on purpose: `radiosPendingMissed` is
+      // set further down under exactly these conditions (a terminal job, a
+      // healthy sidecar, a request that was never collected), and clearing
+      // after that write would erase the banner in the same poll that
+      // raised it. `rescanRadios()` is the other exit.
+      if (this.radios.sidecar === "ready" && !this.radiosPhaseActive()) {
+        this.radiosJobAbandoned = false;
+        this.radiosPendingMissed = false;
+        this.radiosStallSince = null;
+      }
       // Stall case (a) - Review-Fix Critical #2: `api/radios.py` returns
       // the frozen `job` regardless of sidecar health, so a dead sidecar
       // (crashed mid-job) never advances `phase` again. `radiosStalled()`
       // reads the CURRENT `radios.sidecar` value (see its own comment for
-      // why that stays a live check, not a sticky one); once observed even
-      // once, `radiosJobAbandoned` sticks so a later poll that happens to
-      // land on a momentary "outdated" reading right before the sidecar's
-      // own heartbeat catches up cannot un-flag it.
+      // why that stays a live check, not a sticky one).
+      //
+      // Requiring the silence to PERSIST for `RADIOS_STALL_GRACE_MS` is
+      // the fix for what that check did when it fired on the first stale
+      // poll: with the sidecar's own heartbeat frozen for the whole of a
+      // long step (see `refresh_heartbeat()` in radios-once.sh, which is
+      // where the real bug was), about 30 seconds into a completely
+      // healthy stick switch the card declared the job abandoned, stopped
+      // polling, dropped the step list and put up a red banner - and then
+      // the job finished successfully with the card never saying so. The
+      // first stale poll starts the clock; only silence that outlasts the
+      // window sets the flag, and any answering poll resets the clock.
       if (this.radiosStalled()) {
-        this.radiosJobAbandoned = true;
+        if (this.radiosStallSince === null) {
+          this.radiosStallSince = Date.now();
+        } else if (Date.now() - this.radiosStallSince >= RADIOS_STALL_GRACE_MS) {
+          this.radiosJobAbandoned = true;
+        }
+      } else {
+        this.radiosStallSince = null;
       }
       // Stall case (b): accepted but never collected - the same shape as
       // `loadUpdateStatus()`'s own deadline check. Clearing
@@ -3763,7 +3828,18 @@ function app() {
       }
       if (this.radiosBluetoothChanged()) {
         keys.push("web.radios.confirm_bluetooth");
-        if (!this.radiosThreadChanged()) keys.push("web.radios.confirm_thread_untouched");
+        // Only reassuring to someone who HAS Thread running. The text
+        // promises a border router that keeps running, a stick it keeps
+        // using and Thread devices that stay reachable; for an
+        // installation with Thread switched off - no stick, no router, no
+        // Thread devices - all three clauses are false, and a confirmation
+        // dialog is the last place to tell a user something untrue about
+        // what is about to happen to their installation. They are told
+        // about the Bluetooth change and nothing else, which is the whole
+        // truth for them.
+        if (!this.radiosThreadChanged() && current.thread_enabled) {
+          keys.push("web.radios.confirm_thread_untouched");
+        }
       }
       return keys;
     },
@@ -3877,6 +3953,28 @@ function app() {
         : t("web.radios.sidecar_refresh_unknown_path");
     },
 
+    /** The Rescan button's handler. Reloads the report, and is also the
+     * way out of a standing stall banner that `loadRadios()` cannot clear
+     * on its own: a job the sidecar really did abandon never reaches a
+     * terminal phase, so the "sidecar is ready and nothing is running"
+     * condition there is never true for it and the banner would otherwise
+     * stand until the page is reloaded by hand. Pressing Rescan is the
+     * user saying "look again", and a fresh look should not come back
+     * carrying the previous look's verdict.
+     *
+     * `radiosDirty` is cleared first for the reason it always was (Review
+     * -Fix Minor #8): otherwise `loadRadios()`'s own
+     * `if (current && !this.radiosDirty)` guard would skip its draft
+     * resync for the rest of the session. */
+    rescanRadios() {
+      this.radiosDirty = false;
+      this.radiosJobAbandoned = false;
+      this.radiosPendingMissed = false;
+      this.radiosStallSince = null;
+      this.radiosApplyError = null;
+      this.loadRadios();
+    },
+
     askApplyRadios() {
       if (!this.radiosChanged()) return;
       this.radiosConfirming = true;
@@ -3905,34 +4003,36 @@ function app() {
       // about this one.
       this.radiosJobAbandoned = false;
       this.radiosPendingMissed = false;
-      // Review-Fix Critical #1: captured locally instead of written
-      // straight to `this.radiosError`, because `loadRadios()` below
-      // unconditionally sets `this.radiosError = null` as its own first
-      // statement - synchronously, before its first `await` - which would
-      // otherwise clear this exact error before Alpine ever gets to
-      // render it. Applied back onto `this.radiosError` AFTER
-      // `loadRadios()` resolves instead, so a POST failure (503 sidecar
-      // not ready, 400 unknown device/adapter, 409 job already running,
-      // 503 unwritable directory) survives the refresh this function
-      // always runs afterwards. Follows the sibling pattern in
-      // `saveSettings()`, which sets `settingsError` and calls no loader
-      // afterwards at all - this function cannot do that, `loadRadios()`
-      // is what turns a bare job id into the polling that shows progress.
-      let applyError = null;
+      this.radiosStallSince = null;
+      this.radiosApplyError = null;
+      // Review-Fix Critical #1 found that writing this error to
+      // `this.radiosError` loses it immediately: `loadRadios()` below sets
+      // `this.radiosError = null` as its own first statement,
+      // synchronously, before its first `await`. Re-applying it after
+      // `loadRadios()` resolved fixed that for the errors whose path stops
+      // there - but not for a 409. A 409 means a job is already running
+      // (started in another tab, or from a phone), so the very
+      // `loadRadios()` that follows sees a running job and arms the
+      // two-second poll - and that poll's first tick runs the same
+      // `radiosError = null` again and wipes the explanation off the
+      // screen a moment after the user read it, leaving a card that just
+      // silently did nothing they asked for.
+      //
+      // Its own field instead, which no poll touches: cleared here at the
+      // start of the next attempt and by `rescanRadios()`, exactly like
+      // the stall flags above. `radiosError` keeps its own job, the
+      // failure of the GET itself.
       try {
         const response = await this.request("POST", "/api/radios", this.radiosRequestBody());
         this.radiosPendingJobId = response.id;
         this.radiosPendingDeadline = Date.now() + RADIOS_APPLY_GRACE_MS;
         this.radiosDirty = false;
       } catch (error) {
-        applyError = error.message;
+        this.radiosApplyError = error.message;
       } finally {
         this.radiosBusy = false;
       }
       await this.loadRadios();
-      if (applyError !== null) {
-        this.radiosError = applyError;
-      }
     },
 
     async saveSettings() {

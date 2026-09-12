@@ -131,10 +131,21 @@ profiles_with_thread() {
   fi
 }
 
+# Brackets every compose call with a heartbeat (see refresh_heartbeat):
+# recreating a container is the one thing here that can take longer than
+# `_MAX_SILENT_SECONDS` without any loop of this script's own running to
+# keep the timestamps moving. `compose_status` is captured rather than
+# returned directly because the refresh afterwards would otherwise become
+# this function's exit status, and every call site reads that status to
+# decide whether the step failed.
 compose() {
   log "\$ docker compose -f $STACK/docker-compose.yml --project-directory $STACK_HOST_PATH --env-file $ENV_FILE $*"
+  refresh_heartbeat
   docker compose -f "$STACK/docker-compose.yml" --project-directory "$STACK_HOST_PATH" \
     --env-file "$ENV_FILE" "$@" >> "$LOG" 2>&1
+  compose_status=$?
+  refresh_heartbeat
+  return $compose_status
 }
 
 # ----------------------------------------------------------------- report --
@@ -210,6 +221,65 @@ write_state() {
       capable: $capable, capable_reason: (if $reason == "" then null else $reason end),
       seen_at: $seen}' > "$STATE.tmp"
   mv "$STATE.tmp" "$STATE"
+}
+
+# ------------------------------------------------------------- heartbeat --
+
+# Rewrites exactly one timestamp field in one state file, atomically and
+# best-effort. Never touches anything else in it - see refresh_heartbeat
+# below for why that restraint is the whole point.
+touch_seen_at() {
+  [ -f "$1" ] || return 0
+  refreshed="$(jq --arg seen "$(now)" \
+    "if type == \"object\" and has(\"phase\") then $2 = \$seen else empty end" \
+    "$1" 2>/dev/null || true)"
+  [ -n "$refreshed" ] || return 0
+  if printf '%s\n' "$refreshed" > "$1.heartbeat-tmp" 2>/dev/null; then
+    mv "$1.heartbeat-tmp" "$1" 2>/dev/null || rm -f "$1.heartbeat-tmp" 2>/dev/null
+  else
+    rm -f "$1.heartbeat-tmp" 2>/dev/null
+  fi
+  return 0
+}
+
+# The counterpart of update-once.sh's `refresh_heartbeat()` - read that
+# function's comment first. It exists because most of a SUCCESSFUL update
+# used to spend most of its time looking, to the web UI, exactly like a
+# crashed sidecar. The radios job had the same hole, and worse, because
+# `sidecar_status()` (src/loxmatter/radios/sidecar.py) asks two questions
+# and an applying pass could answer neither:
+#
+#   * `updater_present(update_state)`, checked FIRST, reads
+#     `updater_seen_at` in state.json - and ONLY update-once.sh ever
+#     writes that file. entrypoint.sh runs the two workers one after the
+#     other in the same loop, so for as long as this script is applying a
+#     change update-once.sh cannot run at all and that timestamp simply
+#     stops moving.
+#   * `seen_at` in radios-state.json is written by `write_state`, which
+#     runs once per STEP - and a single step here is `verify_bluetooth`
+#     (up to 60 s) or `verify_thread` (up to 90 s). During a rollback
+#     nothing was written at all, `step()` being a no-op while $ROLLING.
+#
+# `_MAX_SILENT_SECONDS` is 30 (src/loxmatter/update.py), so about half a
+# minute into the flagship flow - switching the Thread stick, which the
+# design itself calls one to two minutes - a perfectly healthy job began
+# reporting itself to the card as an abandoned one.
+#
+# Deliberately NOT `write_state`, for the same reason update-once.sh's
+# heartbeat is deliberately not its `set_state`: this may only ever touch
+# the timestamps. `write_state` rebuilds the whole file from this
+# script's own JOB_* variables, which is right when the phase is really
+# changing and wrong here - the rollback path keeps the phase at
+# "rollback" on purpose for the entire recovery (see `step()`), and a
+# heartbeat that could overwrite a phase would undo that.
+#
+# Best-effort throughout, like `log()`: a momentarily unwritable volume
+# must not take down a pass that is otherwise making real progress. The
+# next write_state (or the next pass) rewrites both files anyway.
+refresh_heartbeat() {
+  touch_seen_at "$STATE" .seen_at
+  touch_seen_at "$UPDATE_STATE" .updater_seen_at
+  return 0
 }
 
 reject() {
@@ -454,9 +524,15 @@ elif [ "$THREAD_ACTION" = down ]; then
 fi
 if [ "$BLUETOOTH_CHANGE" = true ]; then env_set_or_fail BLUETOOTH_ADAPTER "$WANT_BLUETOOTH"; fi
 
+# The heartbeat inside this loop (and `verify_thread`'s below) is what
+# keeps a waiting job distinguishable from a dead sidecar - see
+# refresh_heartbeat. One `write_state` ran when this step began and the
+# next one cannot run until it ends, up to $BLUETOOTH_TIMEOUT seconds
+# later.
 verify_bluetooth() {
   waited=0
   while [ "$waited" -lt "$BLUETOOTH_TIMEOUT" ]; do
+    refresh_heartbeat
     if curl -s -o /dev/null --max-time 3 "$MATTER_SERVER_URL"; then return 0; fi
     sleep "$POLL_SECONDS"
     waited=$((waited + POLL_SECONDS))
@@ -483,6 +559,7 @@ verify_thread() {
   waited=0
   fixed=0
   while [ "$waited" -lt "$THREAD_TIMEOUT" ]; do
+    refresh_heartbeat
     case "$(docker exec otbr ot-ctl state 2>/dev/null | tr -d '\r' | head -n 1)" in
       leader|router|child) return 0 ;;
     esac
@@ -502,7 +579,18 @@ ROLLING=false
 FAILED_STEP=""
 
 step() {
-  if [ "$ROLLING" = false ]; then write_state "$1" ""; fi
+  if [ "$ROLLING" = false ]; then
+    write_state "$1" ""
+  else
+    # A rollback must keep the phase at "rollback" for the whole recovery
+    # (that is what this guard has always been for), but it must not keep
+    # the sidecar SILENT - and silent is exactly what it was: the one
+    # stretch of this script that wrote nothing whatsoever, while
+    # recreating containers and verifying them for up to another two and a
+    # half minutes. A timestamp-only heartbeat says "still here, still
+    # working" without touching the phase. See refresh_heartbeat.
+    refresh_heartbeat
+  fi
 }
 
 apply_and_verify() {

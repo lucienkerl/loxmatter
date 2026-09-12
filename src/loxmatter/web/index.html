@@ -2405,12 +2405,11 @@
                 <p class="banner warn" x-text="option.label + ': ' + t('web.radios.rfkill_blocked')"></p>
               </template>
               <div class="row">
-                <!-- Review-Fix Minor #8: clears `radiosDirty` before the
-                     reload it triggers, the same way `cancelApplyRadios()`
-                     now does (see there) - otherwise a Rescan right after
-                     an edit the user never applied would still skip its
-                     own draft resync for the rest of the session. -->
-                <button @click="radiosDirty = false; loadRadios()" x-text="t('web.radios.rescan')"></button>
+                <!-- `rescanRadios()` rather than an inline statement list
+                     (see app.js): it clears `radiosDirty` for Review-Fix
+                     Minor #8's reason AND the sticky stall banners, which
+                     otherwise had no exit but a page reload. -->
+                <button @click="rescanRadios()" x-text="t('web.radios.rescan')"></button>
                 <button
                   class="primary"
                   x-show="radios.sidecar === 'ready' && radiosChanged() && !radiosJobRunning()"
@@ -2464,6 +2463,10 @@
               <p class="banner danger" x-show="radiosNeverCollected()" x-cloak
                  x-text="t('web.radios.job_not_collected')"></p>
               <p x-show="radiosError" x-cloak class="banner danger" x-text="radiosError"></p>
+              <!-- A failed Apply, kept in its own field so the two-second
+                   job poll cannot erase it (see `confirmApplyRadios()` in
+                   app.js - a 409 arms that poll itself). -->
+              <p x-show="radiosApplyError" x-cloak class="banner danger" x-text="radiosApplyError"></p>
             </div>
           </template>
         </div>

@@ -1162,6 +1162,20 @@ def _app_state(setup: str = "", translations: dict[str, str] | None = None) -> d
     return json.loads(result.stdout)
 
 
+def _js_constant(name: str) -> int:
+    """The value of a `const NAME = <number>;` in app.js, read out of the
+    file rather than retyped here - the same rule `_x_show_expr` below
+    follows for markup. A test that hard-coded 20000 would keep passing
+    with its own stale copy of a window someone had since changed."""
+    match = re.search(
+        rf"^const {re.escape(name)} = (\d+);",
+        (WEB_DIR / "app.js").read_text(encoding="utf-8"),
+        flags=re.MULTILINE,
+    )
+    assert match, f"no `const {name} = <number>;` in app.js"
+    return int(match.group(1))
+
+
 def _x_show_expr(markup: str, t_key: str) -> str:
     """The literal `x-show="..."` expression on the `<p>` whose own
     `x-text` calls `t(t_key, ...)` - pulled straight out of the SERVED
@@ -8785,29 +8799,6 @@ def _bluetooth_option_exprs(markup: str) -> tuple[str, str]:
     return match.group(1), match.group(2)
 
 
-def _eval_alpine_click(expr: str) -> dict:
-    """Evaluates an Alpine `@click` handler EXPRESSION - a JS statement
-    list, not a single expression - against a stub object the same way
-    Alpine itself evaluates one: `with(this) { ... }`. That is what lets a
-    handler which reads and writes bare component fields
-    (`radiosDirty = false`) and calls bare component methods
-    (`loadRadios()`) run exactly as written, with no need to retype it as
-    `this.foo`. A plain (synchronous) function, like `_app_state`/
-    `_eval_js` above, so the one `subprocess.run` call in this file that
-    an `async def` test needs stays out of that test's own body (ASYNC221)."""
-    script = (
-        "const state = { radiosDirty: true, calls: [], "
-        "loadRadios() { this.calls.push('loadRadios'); } };\n"
-        f'(new Function("with(this){{ {expr} }}")).call(state);\n'
-        "console.log(JSON.stringify({ dirty: state.radiosDirty, calls: state.calls }));"
-    )
-    result = subprocess.run(
-        [NODE, "-e", script], capture_output=True, text=True, timeout=10, check=False
-    )
-    assert result.returncode == 0, result.stderr
-    return json.loads(result.stdout)
-
-
 def _eval_js_expr(expr: str, **bindings: str) -> object:
     """Evaluates `expr` in node with each keyword argument predefined as a
     name bound to already-SERIALIZED JS source (not a Python value) - the
@@ -9093,10 +9084,12 @@ def test_a_failed_apply_leaves_its_error_on_screen_after_the_refresh():
     this in node: `radiosError === null` right after a rejected POST).
     The stubbed `request` here throws only for the POST and succeeds for
     the GET `loadRadios()` makes afterwards, reproducing exactly that
-    sequence. Fault to prove it: write `this.radiosError = error.message`
-    straight into `confirmApplyRadios()`'s `catch` again, instead of
-    capturing it locally and re-applying it after `loadRadios()`
-    resolves."""
+    sequence. The error now lives in `radiosApplyError`, a field no poll
+    touches (see the 409 test below for why re-applying it to
+    `radiosError` afterwards was not enough); `radiosError` staying `null`
+    is what proves the two are not the same field again. Fault to prove
+    it: write `this.radiosError = error.message` in
+    `confirmApplyRadios()`'s `catch` instead."""
     values = _radios_values(
         """
         state.request = async (method) => {
@@ -9105,11 +9098,69 @@ def test_a_failed_apply_leaves_its_error_on_screen_after_the_refresh():
         };
         (async () => {
           await state.confirmApplyRadios();
-          console.log(JSON.stringify({ error: state.radiosError, busy: state.radiosBusy }));
+          console.log(JSON.stringify({
+            error: state.radiosApplyError,
+            loadError: state.radiosError,
+            busy: state.radiosBusy,
+          }));
         })();
         """
     )
-    assert values == {"error": "unknown adapter", "busy": False}
+    assert values == {"error": "unknown adapter", "loadError": None, "busy": False}
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_a_rejected_apply_survives_the_poll_that_the_rejection_itself_arms():
+    """The 409 case, which the fix above did not reach: "a radio change is
+    already running" comes back when a job was started somewhere else
+    (another tab, a phone). The `loadRadios()` that `confirmApplyRadios()`
+    always runs afterwards therefore SEES that running job and arms the
+    two-second poll - and that poll's first tick runs
+    `this.radiosError = null` again, erasing the explanation a second
+    after the user read it, leaving a card that silently did nothing they
+    asked for. Every other rejection (503, 400) leaves nothing running, so
+    no timer is armed and re-applying the message after `loadRadios()`
+    genuinely did fix those.
+
+    Runs the real timer callback rather than waiting two seconds for it.
+    Fault to prove it: put the apply error back on `this.radiosError`
+    (re-applied after `loadRadios()`, exactly as the previous fix had it) -
+    `afterTick` then reads `null`."""
+    running = {
+        **RADIOS_READY,
+        "job": {
+            "id": "elsewhere",
+            "phase": "apply_thread",
+            "steps": ["validate", "backup", "write", "apply_thread"],
+            "error": None,
+            "rolled_back": False,
+            "healthy": None,
+        },
+    }
+    values = _app_state(
+        f"""
+        let tick = null;
+        globalThis.setInterval = (fn) => {{ tick = fn; return 7; }};
+        globalThis.clearInterval = () => {{ tick = null; }};
+        state.radios = {json.dumps(running)};
+        state.request = async (method) => {{
+          if (method === 'POST') throw new Error('a radio change is already running');
+          return {json.dumps(running)};
+        }};
+        (async () => {{
+          await state.confirmApplyRadios();
+          const afterApply = state.radiosApplyError;
+          const armed = tick !== null;
+          await tick();
+          console.log(JSON.stringify({{ afterApply, armed, afterTick: state.radiosApplyError }}));
+        }})();
+        """
+    )
+    assert values == {
+        "afterApply": "a radio change is already running",
+        "armed": True,
+        "afterTick": "a radio change is already running",
+    }
 
 
 @pytest.mark.skipif(NODE is None, reason="node is required for this test")
@@ -9184,8 +9235,14 @@ async def test_a_dead_sidecar_mid_job_is_reported_as_abandoned_and_stops_polling
     (`_x_show_expr`, the technique this file already owns for this - see
     its own docstring), not merely present somewhere on the page.
 
-    Fault to prove it: drop the `if (this.radiosStalled()) { this.
-    radiosJobAbandoned = true; }` block from `loadRadios()`."""
+    The flag is now raised only once the silence OUTLASTS
+    `RADIOS_STALL_GRACE_MS` - see the regression test below for the half
+    that matters more to a user - so this polls twice, with the window
+    moved out from under the second poll.
+
+    Fault to prove it: drop the `if (this.radiosStalled()) { ... }` block
+    from `loadRadios()` entirely - `abandoned` then stays `false` and the
+    timer is never stopped."""
     running_and_dead = json.dumps(
         {
             **RADIOS_READY,
@@ -9209,9 +9266,21 @@ async def test_a_dead_sidecar_mid_job_is_reported_as_abandoned_and_stops_polling
         state.request = async () => ({running_and_dead});
         (async () => {{
           await state.loadRadios();
-          console.log(JSON.stringify({{
+          const firstPoll = {{
             running: state.radiosJobRunning(),
             stalled: state.radiosStalled(),
+            abandoned: state.radiosJobAbandoned,
+            timerCleared: state.radiosTimer === null,
+          }};
+          // The grace window elapsing, without waiting out 20 real
+          // seconds: the only clock here is `Date.now()` measured against
+          // `radiosStallSince`, so moving the start back is, to this code,
+          // exactly the same event as time passing.
+          state.radiosStallSince -= {_js_constant("RADIOS_STALL_GRACE_MS") + 1};
+          await state.loadRadios();
+          console.log(JSON.stringify({{
+            firstPoll,
+            running: state.radiosJobRunning(),
             abandoned: state.radiosJobAbandoned,
             timerCleared: state.radiosTimer === null,
             intervals,
@@ -9220,8 +9289,13 @@ async def test_a_dead_sidecar_mid_job_is_reported_as_abandoned_and_stops_polling
         """
     )
     assert values == {
+        "firstPoll": {
+            "running": True,
+            "stalled": True,
+            "abandoned": False,
+            "timerCleared": False,
+        },
         "running": False,
-        "stalled": True,
         "abandoned": True,
         "timerCleared": True,
         "intervals": -1,
@@ -9230,6 +9304,71 @@ async def test_a_dead_sidecar_mid_job_is_reported_as_abandoned_and_stops_polling
     client, _, _ = api
     page = (await client.get("/")).text
     assert _x_show_expr(page, "web.radios.job_abandoned") == "radiosJobAbandoned"
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_a_working_job_is_not_called_abandoned_over_a_momentary_silence():
+    """The regression commit dd09241 introduced, and the reason the grace
+    window above exists. The stall detector was faithful to its model but
+    had nothing truthful to detect against: `sidecar_status()` checks
+    `updater_present` first, off `state.json`, which ONLY `update-once.sh`
+    writes - and entrypoint.sh runs the two workers one after the other,
+    so for as long as a radios job applied that timestamp could not move.
+    About 30 seconds (`_MAX_SILENT_SECONDS`) into the flagship
+    one-to-two-minute stick switch the sidecar therefore read `missing`,
+    the card called a perfectly healthy job abandoned, stopped polling,
+    dropped the step list and put up a red banner - and the job then
+    finished successfully with the card never saying so.
+
+    The sidecar now keeps its heartbeat alive (see
+    `test_the_heartbeat_advances_through_a_long_verify` in
+    tests/test_updater_radios_script.py, the root-cause half). This is the
+    independent second protection: one silent poll, then an answering one,
+    must leave nothing flagged and the poll still running.
+
+    Fault to prove it: set `radiosJobAbandoned` on the first stalled poll
+    again, dropping the `RADIOS_STALL_GRACE_MS` comparison."""
+    job = {
+        "id": "j",
+        "phase": "verify_thread",
+        "steps": ["validate", "backup", "write", "apply_thread", "verify_thread"],
+        "error": None,
+        "rolled_back": False,
+        "healthy": None,
+    }
+    silent = json.dumps({**RADIOS_READY, "sidecar": "missing", "job": job})
+    answering = json.dumps({**RADIOS_READY, "sidecar": "ready", "job": job})
+    values = _app_state(
+        f"""
+        globalThis.setInterval = () => 999;
+        globalThis.clearInterval = () => {{}};
+        let answer = {silent};
+        state.request = async () => answer;
+        (async () => {{
+          await state.loadRadios();
+          const afterSilent = state.radiosJobAbandoned;
+          const stallStarted = state.radiosStallSince !== null;
+          answer = {answering};
+          await state.loadRadios();
+          console.log(JSON.stringify({{
+            afterSilent,
+            stallStarted,
+            afterRecovery: state.radiosJobAbandoned,
+            stallSince: state.radiosStallSince,
+            stillRunning: state.radiosJobRunning(),
+            polling: state.radiosTimer !== null,
+          }}));
+        }})();
+        """
+    )
+    assert values == {
+        "afterSilent": False,
+        "stallStarted": True,
+        "afterRecovery": False,
+        "stallSince": None,
+        "stillRunning": True,
+        "polling": True,
+    }
 
 
 @pytest.mark.skipif(NODE is None, reason="node is required for this test")
@@ -9440,21 +9579,174 @@ def test_radios_step_label_falls_back_for_an_unknown_step():
 
 
 @pytest.mark.skipif(NODE is None, reason="node is required for this test")
-async def test_rescan_clears_dirty_before_reloading(api):
-    """Review-Fix Minor #8, rescan half: without clearing `radiosDirty`
-    first, a Rescan right after an unapplied edit would still make
-    `loadRadios()`'s own `if (current && !this.radiosDirty)` guard skip
-    its draft resync for the rest of the session - the card would never
-    again notice a change made anywhere else. Extracts the real `@click`
-    handler from the served markup and evaluates it with Alpine's own
-    `with(this) { ... }` semantics against a stub object, rather than
-    just checking the source text contains the right words. Fault to
-    prove it: revert the Rescan button's `@click` to `loadRadios()`
-    alone, dropping the `radiosDirty = false;` statement in front of
-    it."""
+async def test_rescan_clears_dirty_and_the_standing_banners(api):
+    """Review-Fix Minor #8's rescan half (clearing `radiosDirty`, without
+    which `loadRadios()`'s own `if (current && !this.radiosDirty)` guard
+    skips its draft resync for the rest of the session) plus the exit the
+    sticky banners never had: `radiosJobAbandoned`/`radiosPendingMissed`
+    used to be cleared ONLY in `confirmApplyRadios()`, so a user who had
+    seen one kept seeing it through Rescan, through leaving Settings and
+    coming back, until they reloaded the page by hand. `loadRadios()`
+    clears them once the sidecar answers with nothing running; a job that
+    really was abandoned never reaches a terminal phase, so for that one
+    this button is the only way out.
+
+    Checks the served markup calls the real method, then runs that method
+    on the real component - the handler is no longer an inline statement
+    list, so Alpine's `with(this)` evaluation has nothing left to prove.
+
+    The GET deliberately answers with the sidecar STILL silent on a job
+    still mid-phase: that is precisely the case `loadRadios()`'s own
+    clearing branch cannot help with (a job that was really abandoned
+    never reaches a terminal phase), so the button's own resets are the
+    only thing that can clear anything here. A fresh look does start a
+    fresh stall clock, which is why `freshStallClock` is expected - that
+    is the new poll's judgment, not the old one's leftovers.
+
+    Fault to prove it: drop the flag resets from `rescanRadios()`, leaving
+    only `radiosDirty` (or point the button's `@click` back at
+    `loadRadios()` alone)."""
     client, _, _ = api
     page = (await client.get("/")).text
-    click_expr = _attr_before_t_key(page, "@click", "web.radios.rescan")
+    assert _attr_before_t_key(page, "@click", "web.radios.rescan") == "rescanRadios()"
 
-    values = _eval_alpine_click(click_expr)
-    assert values == {"dirty": False, "calls": ["loadRadios"]}
+    stuck = json.dumps(
+        {
+            **RADIOS_READY,
+            "sidecar": "missing",
+            "job": {
+                "id": "j",
+                "phase": "verify_thread",
+                "steps": ["validate", "backup", "write", "apply_thread", "verify_thread"],
+                "error": None,
+                "rolled_back": False,
+                "healthy": None,
+            },
+        }
+    )
+    values = _app_state(
+        f"""
+        globalThis.setInterval = () => 999;
+        globalThis.clearInterval = () => {{}};
+        let gets = 0;
+        state.radios = {stuck};
+        state.radiosDirty = true;
+        state.radiosJobAbandoned = true;
+        state.radiosPendingMissed = true;
+        state.radiosApplyError = 'a radio change is already running';
+        state.request = async () => {{ gets += 1; return {stuck}; }};
+        state.rescanRadios();
+        setTimeout(() => console.log(JSON.stringify({{
+          dirty: state.radiosDirty,
+          abandoned: state.radiosJobAbandoned,
+          missed: state.radiosNeverCollected(),
+          applyError: state.radiosApplyError,
+          freshStallClock: state.radiosStallSince !== null,
+          gets,
+        }})), 0);
+        """
+    )
+    assert values == {
+        "dirty": False,
+        "abandoned": False,
+        "missed": False,
+        "applyError": None,
+        "freshStallClock": True,
+        "gets": 1,
+    }
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_the_standing_banners_clear_once_the_sidecar_answers_again():
+    """The other exit, for the case that resolves itself: the sidecar
+    comes back and the job has reached a terminal phase. Before this,
+    `confirmApplyRadios()` was the only place that ever cleared either
+    flag - a red "the updater service stopped answering" banner therefore
+    stood over a job whose result was printed right above it, for the rest
+    of the session.
+
+    Fault to prove it: drop the `if (this.radios.sidecar === "ready" &&
+    !this.radiosPhaseActive())` block from `loadRadios()`."""
+    finished = json.dumps(
+        {
+            **RADIOS_READY,
+            "job": {
+                "id": "j",
+                "phase": "done",
+                "steps": ["validate", "backup", "write"],
+                "error": None,
+                "rolled_back": False,
+                "healthy": True,
+            },
+        }
+    )
+    values = _app_state(
+        f"""
+        globalThis.setInterval = () => 999;
+        globalThis.clearInterval = () => {{}};
+        state.radiosJobAbandoned = true;
+        state.radiosPendingMissed = true;
+        state.radiosStallSince = 1;
+        state.request = async () => ({finished});
+        (async () => {{
+          await state.loadRadios();
+          console.log(JSON.stringify({{
+            abandoned: state.radiosJobAbandoned,
+            missed: state.radiosNeverCollected(),
+            stallSince: state.radiosStallSince,
+            result: state.radiosResultKey(),
+          }}));
+        }})();
+        """
+    )
+    assert values == {
+        "abandoned": False,
+        "missed": False,
+        "stallSince": None,
+        "result": "web.radios.result_done",
+    }
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_a_bluetooth_change_promises_nothing_about_thread_when_thread_is_off():
+    """`web.radios.confirm_thread_untouched` reads "Thread is not touched.
+    The border router keeps running with the stick it uses now, and Thread
+    devices stay reachable." For an installation with Thread switched off
+    - no stick, no border router, no Thread devices - all three clauses
+    are false, and it was pushed for every Bluetooth-only change
+    regardless. A confirmation dialog is the last place to tell someone
+    something untrue about their own installation.
+
+    The Thread-on case is covered by
+    `test_the_radios_card_detects_a_change_and_picks_the_confirmation_text`
+    above (`RADIOS_READY` has `thread_enabled: true`), which is why
+    nothing caught this. Fault to prove it: drop the
+    `current.thread_enabled` condition from `radiosConfirmKeys()`."""
+    values = _radios_values(
+        """
+        state.radios.current.thread_enabled = false;
+        state.radios.current.thread_device = null;
+        state.radiosDraft = { threadDevice: '', bluetoothAdapter: 1 };
+        console.log(JSON.stringify({
+          changed: state.radiosChanged(),
+          threadChanged: state.radiosThreadChanged(),
+          keys: state.radiosConfirmKeys(),
+        }));
+        """
+    )
+    assert values == {
+        "changed": True,
+        "threadChanged": False,
+        "keys": ["web.radios.confirm_bluetooth"],
+    }
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+async def test_the_apply_error_has_its_own_banner(api):
+    """The field the poll cannot erase needs somewhere to render, or the
+    fix above is invisible. Fault to prove it: point the second radios
+    banner in index.html back at `radiosError`."""
+    client, _, _ = api
+    page = _without_comments((await client.get("/")).text)
+    assert 'x-show="radiosApplyError"' in page
+    assert 'x-text="radiosApplyError"' in page

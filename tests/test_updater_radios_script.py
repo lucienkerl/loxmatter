@@ -214,6 +214,93 @@ def _request(radios, **overrides):
     (radios.update_dir / "radios-request.json").write_text(json.dumps(body), encoding="utf-8")
 
 
+# A clock that advances one second per call, so a pass whose `sleep` is a
+# no-op still produces the advancing timestamps a real pass would - without
+# it every `now()` in a sub-second test run returns the same string and no
+# assertion could tell a refreshed heartbeat from a frozen one. Handles both
+# formats the script asks `date` for: the ISO stamp of `now()` and the
+# compact stamp in the `.env` backup filename.
+CLOCK_DATE_STUB = r"""#!/bin/sh
+n=$(cat "$FAKE/clock" 2>/dev/null || echo 0)
+n=$((n + 1))
+echo "$n" > "$FAKE/clock"
+case "$*" in
+  *%Y%m%d%H%M%S*) printf '202609112000%02d\n' $((n % 100)) ;;
+  *) printf '2026-09-11T20:%02d:%02dZ\n' $((n / 60)) $((n % 60)) ;;
+esac
+"""
+
+# Records, at every sleep the script performs, what the two state files
+# claim at that moment: the phase, `radios-state.json`'s own `seen_at`, and
+# `state.json`'s `updater_seen_at`. A pass that refreshes its heartbeat
+# produces advancing timestamps here; one that does not repeats the same
+# two values for the whole of a long step - which is the difference between
+# a job the web UI shows as working and one it reports as abandoned.
+SLEEP_HEARTBEAT_STUB = r"""#!/bin/sh
+printf '%s %s %s\n' \
+  "$(jq -r '.phase' "$RADIOS_STATE" 2>/dev/null)" \
+  "$(jq -r '.seen_at' "$RADIOS_STATE" 2>/dev/null)" \
+  "$(jq -r '.updater_seen_at' "$UPDATE_STATE_FILE" 2>/dev/null)" \
+  >> "$HEARTBEAT_LOG"
+exit 0
+"""
+
+
+# What `update-once.sh` leaves in state.json after a finished update. The
+# radios heartbeat has to move `updater_seen_at` inside this file and leave
+# every other key exactly as it found it: this is the update job's own
+# record, and the sidecar's reported version, which a heartbeat has no
+# business rewriting (update-once.sh's `refresh_heartbeat()` observes the
+# same restraint, and for the same reason).
+UPDATE_STATE_SEED = {
+    "phase": "done",
+    "id": "u-1",
+    "from": "0.3.9",
+    "to": "0.3.10",
+    "error": None,
+    "rolled_back": False,
+    "healthy": True,
+    "updater_version": "0.3.10",
+    "updater_seen_at": "2026-09-11T19:00:00Z",
+}
+
+
+def _heartbeat_run(radios, **extra_env):
+    """Installs the advancing clock and the recording `sleep`, seeds a
+    `state.json` whose `updater_seen_at` is already stale, and returns a
+    `run()` wrapper plus the sample log. The seeded `state.json` is what
+    `sidecar_status()` checks FIRST (`updater_present`), and only
+    `update-once.sh` ever writes it - the whole point being that during a
+    radios job that script cannot run at all."""
+    (radios.bindir / "date").write_text(CLOCK_DATE_STUB, encoding="utf-8")
+    (radios.bindir / "date").chmod(0o755)
+    (radios.bindir / "sleep").write_text(SLEEP_HEARTBEAT_STUB, encoding="utf-8")
+    (radios.bindir / "sleep").chmod(0o755)
+    update_state = radios.update_dir / "state.json"
+    update_state.write_text(json.dumps(UPDATE_STATE_SEED), encoding="utf-8")
+    log = radios.fake / "heartbeat.log"
+    return (
+        lambda: radios(
+            RADIOS_STATE=str(radios.update_dir / "radios-state.json"),
+            UPDATE_STATE_FILE=str(update_state),
+            HEARTBEAT_LOG=str(log),
+            **extra_env,
+        ),
+        log,
+    )
+
+
+def _samples(log, phase: str) -> list[tuple[str, str]]:
+    """The `(seen_at, updater_seen_at)` pairs recorded while the state file
+    said `phase`."""
+    lines = log.read_text(encoding="utf-8").splitlines() if log.exists() else []
+    return [(p[1], p[2]) for p in (line.split() for line in lines) if p and p[0] == phase]
+
+
+def _strictly_advancing(stamps: list[str]) -> bool:
+    return len(stamps) == len(set(stamps)) and stamps == sorted(stamps)
+
+
 def _mutating_docker_calls(calls: str) -> list[str]:
     return [
         line
@@ -952,6 +1039,94 @@ def test_old_backups_are_pruned_to_the_newest_five(radios):
     assert old_backups[1] not in remaining
     assert old_backups[2] not in remaining
     assert old_backups[6] in remaining
+
+
+def test_the_heartbeat_advances_through_a_long_verify(radios):
+    """The regression this file exists to keep out from now on: a healthy
+    job reporting itself abandoned about 30 seconds in.
+
+    `sidecar_status()` (src/loxmatter/radios/sidecar.py) asks
+    `updater_present(update_state)` FIRST, off `state.json`'s
+    `updater_seen_at` - and only `update-once.sh` writes that file, which
+    cannot run while this script does (entrypoint.sh runs the two workers
+    one after the other). `radios-state.json`'s own `seen_at` was written
+    once per STEP, and `verify_thread` is a single step lasting up to 90 s.
+    Both timestamps therefore froze for the whole of the flagship stick
+    switch, `_MAX_SILENT_SECONDS` is 30, and the card declared a working
+    job dead.
+
+    Asserting the job merely SUCCEEDS proves nothing about this - it
+    already did. What discriminates is that both timestamps keep moving
+    WHILE the verify waits, which is what the recorded samples show.
+
+    Fault to prove it: delete the `refresh_heartbeat` call from
+    `verify_thread`'s loop in deploy/updater/radios-once.sh."""
+    run, log = _heartbeat_run(radios)
+    (radios.fake / "thread_mode").write_text("needs_fix\n", encoding="utf-8")
+    _request(radios, bluetooth=None)
+    result, _, state = run()
+
+    assert result.returncode == 0, result.stderr
+    assert state["phase"] == "done"
+    samples = _samples(log, "verify_thread")
+    assert len(samples) >= 2, samples
+    assert _strictly_advancing([seen for seen, _ in samples]), samples
+    assert _strictly_advancing([updater for _, updater in samples]), samples
+    # The seeded value is what a sidecar that never refreshed would still
+    # be showing - every sample has to have left it behind.
+    assert all(updater > "2026-09-11T19:00:00Z" for _, updater in samples), samples
+
+
+def test_the_heartbeat_advances_through_a_rollback(radios):
+    """The same claim for the stretch that wrote nothing at all: `step()`
+    is a no-op while $ROLLING (the phase must stay "rollback" for the whole
+    recovery), so a rollback - which recreates containers and verifies them
+    again, up to another two and a half minutes - used to be completely
+    silent. The phase in every sample below is `rollback`, which is
+    precisely the window that had no writes.
+
+    Fault to prove it: restore `step()` to
+    `if [ "$ROLLING" = false ]; then write_state "$1" ""; fi` and delete
+    the `refresh_heartbeat` calls from `compose()` and `verify_bluetooth`."""
+    (radios.sys_bluetooth / "hci1").mkdir()
+    run, log = _heartbeat_run(radios)
+    (radios.fake / "matter_up").write_text("no\n", encoding="utf-8")
+    _request(radios, thread=None, bluetooth={"adapter": 1})
+    result, _, state = run()
+
+    assert result.returncode == 0, result.stderr
+    assert state["phase"] == "failed"
+    assert state["rolled_back"] is True
+    samples = _samples(log, "rollback")
+    assert len(samples) >= 2, samples
+    assert _strictly_advancing([seen for seen, _ in samples]), samples
+    assert _strictly_advancing([updater for _, updater in samples]), samples
+
+
+def test_the_heartbeat_leaves_the_update_job_record_alone(radios):
+    """The restraint half, the same one update-once.sh's own
+    `refresh_heartbeat()` observes: a heartbeat may move a timestamp and
+    touch nothing else. This script now writes into `state.json`, which
+    belongs to the OTHER worker - the update job's record of what it did,
+    and the sidecar's own reported version, which `api/update.py` reads.
+    Rewriting that file from here rather than editing one field in it
+    would quietly destroy all of it.
+
+    Fault to prove it: make `refresh_heartbeat` copy the radios state over
+    it (`cp "$STATE" "$UPDATE_STATE"`) instead of calling `touch_seen_at`."""
+    run, _ = _heartbeat_run(radios)
+    (radios.fake / "matter_up").write_text("no\n", encoding="utf-8")
+    (radios.sys_bluetooth / "hci1").mkdir()
+    _request(radios, thread=None, bluetooth={"adapter": 1})
+    result, _, state = run()
+
+    assert result.returncode == 0, result.stderr
+    update_state = json.loads((radios.update_dir / "state.json").read_text(encoding="utf-8"))
+    assert update_state["updater_seen_at"] > UPDATE_STATE_SEED["updater_seen_at"]
+    assert {k: v for k, v in update_state.items() if k != "updater_seen_at"} == {
+        k: v for k, v in UPDATE_STATE_SEED.items() if k != "updater_seen_at"
+    }
+    assert state["error"] == "verify_bluetooth_failed"
 
 
 def test_a_both_radios_rollback_still_attempts_the_other_radio_when_one_fails(radios):
