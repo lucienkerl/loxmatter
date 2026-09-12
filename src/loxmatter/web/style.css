@@ -466,6 +466,52 @@ button:disabled {
   background: var(--bg);
 }
 
+/* The Zigbee row of the radios card (design 2026-09-12, section 3.2). A
+ * rule above it, because it is a different kind of row from the two above
+ * it - its own Apply, applied at once, nothing restarted - and it should
+ * not read as a continuation of their Rescan/Apply controls. */
+.radios-zigbee {
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border);
+}
+
+/* A select holding a long stick name ("SONOFF Zigbee Dongle Plus MG24 ·
+ * in use for Thread") must shrink with a narrow card instead of pushing
+ * the Apply button out of it. */
+.radios-zigbee .row > label {
+  min-width: 0;
+  max-width: 100%;
+}
+.radios-zigbee select {
+  max-width: 100%;
+}
+
+/* The progress line changes wording several times during one successful
+ * attempt ("applying" -> "loading_quirks" -> "opening_radio" ->
+ * "connected"), and those sentences wrap to different line counts on a
+ * narrow card. Two reserved lines keep everything below it from jumping
+ * with each change; `:empty` gives the space back when there is nothing to
+ * say (`idle`). A long failure message wraps anywhere rather than widening
+ * the card. */
+.radios-zigbee-progress {
+  margin: 0.4rem 0;
+  min-height: 3em;
+  overflow-wrap: anywhere;
+}
+.radios-zigbee-progress:empty {
+  min-height: 0;
+}
+
+.radios-zigbee-advanced {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem 1rem;
+}
+.radios-zigbee-advanced input[type="number"] {
+  width: 9rem;
+}
+
 /* ---------------------------------------------------------------------
  * The update card's confirmation and running states (design "Applying
  * updates through the web UI", 2026-09-08, section 9). `index.html`

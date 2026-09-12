@@ -341,6 +341,15 @@ def build_zigbee_router(
             # `configured_path` of `None` reports `False` without being an
             # error, because nothing is configured.
             "configured_device_present": present,
+            # What the stored stick is OPENED with. For a recognised stick
+            # these are the fingerprint table's own values; for an
+            # unrecognised one they are what the user typed into the
+            # card's Advanced disclosure - and without them the card could
+            # only prefill that disclosure with `DEFAULT_UNKNOWN`, showing
+            # EZSP at 115200 beside a bridge that is in fact retrying the
+            # stick as ZNP at 38400.
+            "configured_radio_type": stored.radio_type,
+            "configured_baudrate": stored.baudrate,
             "progress": asdict(zigbee_runtime.progress()),
         }
 

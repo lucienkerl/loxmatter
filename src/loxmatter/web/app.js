@@ -107,6 +107,49 @@ const RADIOS_APPLY_GRACE_MS = 20000;
 // inside the "this is just taking a while" one.
 const RADIOS_STALL_GRACE_MS = 20000;
 
+// --- The Zigbee row on the radios card (design 2026-09-12, section 3.2) ---
+//
+// How often the row asks `GET /api/zigbee/radio` again. Two cadences,
+// because the connection states fall into two kinds (see
+// `zigbeeRadioPollInterval()`):
+//
+// - While an attempt is RUNNING (`applying`, `loading_quirks`,
+//   `opening_radio`) the states change within seconds - a 9-15 s quirks
+//   warm-up on a Pi, then `startup()` - and the user is watching for
+//   exactly that change. Once a second is what keeps the text from lagging
+//   a whole state behind. Unlike the radios job, nothing here is a file a
+//   sidecar picks up every two seconds: the answer is the bridge's own
+//   memory, so a fast poll has nothing slower to wait for.
+// - While the attempt has FAILED the supervisor is still retrying
+//   underneath, on its own 1 s -> 60 s backoff, forever
+//   (`sources/supervisor.py`). A card that stopped polling there would
+//   freeze on the first failure and never show the stick coming back when
+//   it is plugged in again; one that kept the fast cadence would ask once a
+//   second about something that changes at most once a minute.
+const ZIGBEE_WORKING_POLL_MS = 1000;
+const ZIGBEE_FAILED_POLL_MS = 5000;
+
+// What the Advanced disclosure starts from for a stick the fingerprint
+// table does not know: `fingerprints.DEFAULT_UNKNOWN`
+// (src/loxmatter/radios/fingerprints.py) - EZSP at 115200, "an editable
+// starting point the user can correct, never a detection". A copy, because
+// `GET /api/zigbee/radio` reports an unknown stick's fingerprint as `null`;
+// `test_the_unknown_stick_defaults_are_the_servers_own` keeps it equal to
+// the Python value.
+const ZIGBEE_UNKNOWN_FINGERPRINT = { name: "", radio_type: "ezsp", baudrate: 115200, flow_control: "software" };
+
+// The radio types the Advanced disclosure offers - `fingerprints.RadioType`,
+// the literal `PUT /api/zigbee/radio` validates against. A value outside it
+// would be a 422 from the schema, so the page offers exactly these.
+const ZIGBEE_RADIO_TYPES = ["ezsp", "znp", "deconz"];
+
+// The connection states in which an attempt is still under way. `applying`
+// is not a duplicate of the other two: it is the window of a radio swap in
+// which there is no `ZigbeeSource` at all (`ZigbeeRuntime.progress()`), and
+// without it the card read `idle` - "nothing is configured" - for that
+// whole window and never started polling.
+const ZIGBEE_WORKING_STATES = ["applying", "loading_quirks", "opening_radio"];
+
 // --- Live diagnostics (Task 6, Spec 10.5) -----------------------------------
 //
 // Upper bound on the lines kept per stream (logs, UDP capture, command
@@ -799,6 +842,50 @@ function app() {
     // carry both.
     radiosApplyError: null,
 
+    // The Zigbee row of the same card (design 2026-09-12, section 3.2). It
+    // shares nothing with the fields above on purpose: the stick is a
+    // bridge setting applied in this process through its own endpoint
+    // (`GET`/`PUT /api/zigbee/radio`), not a sidecar job - so it has its own
+    // draft, its own busy flag, its own errors and its own timer.
+    // `zigbee` is the last GET body; `zigbeeDraft` what the controls show;
+    // `zigbeeDirty` keeps a poll from overwriting a choice not applied yet.
+    zigbee: null,
+    zigbeeDraft: {
+      path: "",
+      radioType: ZIGBEE_UNKNOWN_FINGERPRINT.radio_type,
+      baudrate: ZIGBEE_UNKNOWN_FINGERPRINT.baudrate,
+    },
+    zigbeeDirty: false,
+    // Whether the Advanced disclosure is open, mirrored from the native
+    // `<details>` through its `toggle` event. Held here so the row can close
+    // it when the selection moves to a stick that has no Advanced values -
+    // otherwise returning to an unrecognised stick would find it already
+    // open, on fields the user never chose to look at.
+    zigbeeAdvancedOpen: false,
+    // Whether the user has typed into the Advanced fields. Only then is an
+    // Advanced value a CHANGE worth an Apply, and only then does picking
+    // another unrecognised stick keep what was typed instead of the defaults.
+    zigbeeAdvancedEdited: false,
+    zigbeeBusy: false,
+    // The failure of the GET itself - cleared by every successful load.
+    zigbeeError: null,
+    // The failure of a PUT, in a field no poll touches. The radios card
+    // above learned why the hard way (`radiosApplyError`): a loader that
+    // clears the one error field as its first statement erases an Apply
+    // failure before Alpine has rendered it.
+    zigbeeApplyError: null,
+    zigbeeTimer: null,
+    // The sentence of the last failed attempt, kept through the retry that
+    // follows it. The supervisor's next attempt starts with `error: null`,
+    // so without this the reason vanished from the card for every retry
+    // and came back when that retry failed too - a long message blinking
+    // in and out every few seconds, moving the rows below it each time.
+    zigbeeLastError: null,
+    // Incremented by every load, so a slow response that arrives after a
+    // newer one (a poll in flight when Apply is pressed) cannot put the
+    // older state back on screen.
+    zigbeeLoadSequence: 0,
+
     resendInterval: { interval_seconds: 300 },
     resendIntervalDraft: 300,
     resendIntervalBusy: false,
@@ -1313,6 +1400,7 @@ function app() {
       // was never armed in the first place.
       if (view !== "settings") {
         this.stopRadiosTimer();
+        this.stopZigbeeTimer();
       }
       if (view === "export") {
         await this.loadExportStatus();
@@ -1321,6 +1409,7 @@ function app() {
       } else if (view === "settings") {
         await this.loadSettings();
         await this.loadRadios();
+        await this.loadZigbeeRadio();
       }
     },
 
@@ -1550,11 +1639,11 @@ function app() {
 
     // The badge on a tile's category icon (design 2026-09-11, section 5.3).
     // `null` hides it: a device whose transport is unknown gets no badge
-    // rather than a guessed one, and Zigbee has no glyph before the Zigbee
-    // spec adds one. The map is the only place a transport meets its
-    // symbol - index.html just renders what this returns.
+    // rather than a guessed one. Zigbee joined the map with the Zigbee
+    // source design (2026-09-12, section 3.3). The map is the only place a
+    // transport meets its symbol - index.html just renders what this returns.
     transportBadge(device) {
-      const symbols = { thread: "i-transport-thread", ip: "i-transport-ip" };
+      const symbols = { thread: "i-transport-thread", ip: "i-transport-ip", zigbee: "i-transport-zigbee" };
       const symbol = symbols[device.transport];
       if (!symbol) return null;
       return { symbol, label: t("web.devices.transport_" + device.transport) };
@@ -4014,6 +4103,10 @@ function app() {
       this.radiosStallSince = null;
       this.radiosApplyError = null;
       this.loadRadios();
+      // The Zigbee row reads the same USB bus, so a rescan refreshes its
+      // stick list too. Its draft is left alone: a Zigbee choice not yet
+      // applied is not what the user asked Rescan to throw away.
+      this.loadZigbeeRadio();
     },
 
     askApplyRadios() {
@@ -4074,6 +4167,319 @@ function app() {
         this.radiosBusy = false;
       }
       await this.loadRadios();
+    },
+
+    // ---------------------------------------------------------------------
+    // The Zigbee row of the radios card (design 2026-09-12, section 3.2)
+    // ---------------------------------------------------------------------
+
+    /** Loads `GET /api/zigbee/radio` and, while a connection attempt is
+     * running or retrying, schedules the next load itself.
+     *
+     * A `setTimeout` chain rather than `setInterval`, because the cadence
+     * depends on the answer (`zigbeeRadioPollInterval()`): an attempt that
+     * fails moves from once a second to once every five without anyone
+     * having to notice the change and re-arm a timer.
+     *
+     * Never touches `zigbeeApplyError` - see that field. */
+    async loadZigbeeRadio() {
+      const sequence = ++this.zigbeeLoadSequence;
+      this.stopZigbeeTimer();
+      let body;
+      try {
+        body = await this.request("GET", "/api/zigbee/radio");
+      } catch (error) {
+        if (sequence !== this.zigbeeLoadSequence) return;
+        // The same rule as `loadRadios()`: a session that has ended will
+        // never answer the next poll either.
+        if (!this.authenticated) return;
+        this.zigbeeError = t("web.settings.load_error", { message: error.message });
+        // A bridge that did not answer once - busy, restarting - is not a
+        // reason to stop following an attempt that was running: keep asking,
+        // at the slow cadence, and the next answer clears this error.
+        if (this.zigbee && this.zigbeeRadioPollInterval(this.zigbee.progress) !== null) {
+          this.scheduleZigbeeLoad(ZIGBEE_FAILED_POLL_MS);
+        }
+        return;
+      }
+      if (sequence !== this.zigbeeLoadSequence) return;
+      this.zigbeeError = null;
+      this.zigbee = body;
+      this.noteZigbeeFailure(body.progress);
+      if (!this.zigbeeDirty) {
+        this.zigbeeDraft.path = body.configured_path ?? "";
+        this.resetZigbeeAdvanced();
+      }
+      const interval = this.zigbeeRadioPollInterval(body.progress);
+      if (interval !== null) this.scheduleZigbeeLoad(interval);
+    },
+
+    /** Keeps `zigbeeLastError` for a retry and drops it for anything
+     * else: `connected` and `idle` have nothing left to explain, and
+     * `applying` or a first attempt (`attempts === 0`) are about a new
+     * setting that the old reason says nothing about. */
+    noteZigbeeFailure(progress) {
+      if (progress?.state === "failed") {
+        this.zigbeeLastError = progress.error ?? null;
+      } else if (!this.zigbeeRadioPolling(progress) || progress.state === "applying" || !progress.attempts) {
+        this.zigbeeLastError = null;
+      }
+    },
+
+    scheduleZigbeeLoad(delay) {
+      this.stopZigbeeTimer();
+      // Only while the card is on screen - `selectView()` stops the timer
+      // on leaving Settings, and this keeps a load that was already in
+      // flight at that moment from arming a new one behind its back.
+      if (this.view !== "settings") return;
+      this.zigbeeTimer = setTimeout(() => {
+        this.zigbeeTimer = null;
+        this.loadZigbeeRadio();
+      }, delay);
+    },
+
+    stopZigbeeTimer() {
+      if (this.zigbeeTimer !== null) {
+        clearTimeout(this.zigbeeTimer);
+        this.zigbeeTimer = null;
+      }
+    },
+
+    /** Whether an attempt is still under way - the three working states
+     * of `ConnectionState` (src/loxmatter/zigbee/source.py). `connected`,
+     * `failed` and `idle` are not: nothing on screen is about to move on
+     * its own. */
+    zigbeeRadioPolling(progress) {
+      return ZIGBEE_WORKING_STATES.includes(progress?.state);
+    },
+
+    /** How long until the next load, or `null` for "do not ask again".
+     * `failed` is settled as far as `zigbeeRadioPolling()` is concerned but
+     * NOT for the supervisor, which keeps retrying underneath - see
+     * `ZIGBEE_FAILED_POLL_MS`. */
+    zigbeeRadioPollInterval(progress) {
+      if (this.zigbeeRadioPolling(progress)) return ZIGBEE_WORKING_POLL_MS;
+      if (progress?.state === "failed") return ZIGBEE_FAILED_POLL_MS;
+      return null;
+    },
+
+    /** The sticks `GET /api/zigbee/radio` reported, as `<option>`s.
+     *
+     * `disabled` is the server's `selectable`, read and never re-derived:
+     * the page and the `PUT` that refuses the Thread stick must not be
+     * able to disagree about which stick is safe. The Thread stick is
+     * LISTED - disabled, with the reason in its label - because a stick
+     * that is simply missing here, while the Thread row above shows it,
+     * reads as broken detection.
+     *
+     * `unrecognised` is a flag, not a sentence: the row turns it into the
+     * hint and the Advanced disclosure. `fingerprint` is what that
+     * disclosure starts from - the table's answer, or
+     * `ZIGBEE_UNKNOWN_FINGERPRINT` for a stick the table does not know. */
+    zigbeeRadioOptions() {
+      const configured = this.zigbee?.configured_path ?? null;
+      const options = [
+        {
+          value: "",
+          label: t("web.radios.zigbee_none"),
+          disabled: false,
+          unrecognised: false,
+          missing: false,
+          fingerprint: null,
+        },
+      ];
+      for (const stick of this.zigbee?.serial ?? []) {
+        const unrecognised = stick.fingerprint === null || stick.fingerprint === undefined;
+        const parts = [stick.fingerprint?.name || stick.product || stick.path.split("/").pop()];
+        if (stick.path === configured) parts.push(t("web.radios.in_use"));
+        if (stick.is_thread) parts.push(t("web.radios.zigbee_is_thread_stick"));
+        if (unrecognised) parts.push(t("web.radios.zigbee_option_unrecognised"));
+        options.push({
+          value: stick.path,
+          label: parts.join(" · "),
+          disabled: !stick.selectable,
+          unrecognised,
+          missing: false,
+          fingerprint: unrecognised ? { ...ZIGBEE_UNKNOWN_FINGERPRINT } : stick.fingerprint,
+        });
+      }
+      // The configured stick, when the scan no longer finds it: without an
+      // option of its own the select would show "No Zigbee stick" - a
+      // setting nobody made - while the bridge keeps retrying the real one.
+      if (configured !== null && !options.some((option) => option.value === configured)) {
+        options.push({
+          value: configured,
+          label: t("web.radios.missing", { path: configured }),
+          disabled: false,
+          unrecognised: false,
+          missing: true,
+          fingerprint: null,
+        });
+      }
+      return options;
+    },
+
+    zigbeeSelectedOption() {
+      return this.zigbeeRadioOptions().find((option) => option.value === this.zigbeeDraft.path) ?? null;
+    },
+
+    /** The Advanced fields back to what the selected stick starts from.
+     * Only for an unrecognised stick: a recognised one has no Advanced
+     * values that the server would read (`settings_for_path` ignores them),
+     * so showing any would be showing a setting that does nothing. */
+    resetZigbeeAdvanced() {
+      const selected = this.zigbeeSelectedOption();
+      if (selected?.unrecognised && selected.value === this.zigbee?.configured_path) {
+        // The stick the bridge is already using: show what it is being
+        // opened WITH (`configured_radio_type`/`configured_baudrate`), not
+        // the defaults - a user checking Advanced on a stick that will not
+        // connect is asking exactly that question.
+        this.zigbeeDraft.radioType = this.zigbee.configured_radio_type ?? ZIGBEE_UNKNOWN_FINGERPRINT.radio_type;
+        this.zigbeeDraft.baudrate = this.zigbee.configured_baudrate ?? ZIGBEE_UNKNOWN_FINGERPRINT.baudrate;
+      } else {
+        const fingerprint = selected?.fingerprint ?? ZIGBEE_UNKNOWN_FINGERPRINT;
+        this.zigbeeDraft.radioType = fingerprint.radio_type;
+        this.zigbeeDraft.baudrate = fingerprint.baudrate;
+      }
+      this.zigbeeAdvancedEdited = false;
+    },
+
+    /** The select's `@change`. A new choice makes the last Apply's error a
+     * statement about a stick that is no longer selected, so it goes. */
+    zigbeeSelectionChanged() {
+      this.zigbeeDirty = true;
+      this.zigbeeApplyError = null;
+      if (!this.zigbeeSelectedOption()?.unrecognised) this.zigbeeAdvancedOpen = false;
+      if (!this.zigbeeAdvancedEdited) this.resetZigbeeAdvanced();
+    },
+
+    zigbeeAdvancedChanged() {
+      this.zigbeeDirty = true;
+      this.zigbeeAdvancedEdited = true;
+      this.zigbeeApplyError = null;
+    },
+
+    zigbeeRadioTypeOptions() {
+      return ZIGBEE_RADIO_TYPES.map((type) => ({ value: type, label: t("web.radios.zigbee_radio_type_" + type) }));
+    },
+
+    /** Whether the draft differs from what the bridge has stored. An
+     * Advanced edit counts only for an unrecognised stick, for the reason
+     * `resetZigbeeAdvanced()` gives. */
+    zigbeeRadioChanged() {
+      if (!this.zigbee) return false;
+      if (this.zigbeeDraft.path !== (this.zigbee.configured_path ?? "")) return true;
+      return this.zigbeeAdvancedEdited && Boolean(this.zigbeeSelectedOption()?.unrecognised);
+    },
+
+    zigbeeBaudrateValid() {
+      const baudrate = Number(this.zigbeeDraft.baudrate);
+      return Number.isInteger(baudrate) && baudrate > 0;
+    },
+
+    /** Whether Apply may be pressed. Not while an attempt is running: the
+     * change the user just made is still being carried out, and a second
+     * one on top would only restart it. `failed` does NOT block - picking
+     * another stick is exactly what a failing one calls for. */
+    zigbeeCanApply() {
+      if (!this.zigbeeRadioChanged() || this.zigbeeBusy) return false;
+      if (this.zigbeeRadioPolling(this.zigbee?.progress)) return false;
+      const selected = this.zigbeeSelectedOption();
+      if (selected?.disabled) return false;
+      if (selected?.unrecognised && !this.zigbeeBaudrateValid()) return false;
+      return true;
+    },
+
+    /** The `PUT /api/zigbee/radio` body. The Advanced values travel only
+     * for an unrecognised stick; for a recognised one the server takes the
+     * table's answer and would ignore them anyway. */
+    zigbeeRequestBody() {
+      const path = this.zigbeeDraft.path || null;
+      const selected = this.zigbeeSelectedOption();
+      if (path === null || !selected?.unrecognised) return { path };
+      return {
+        path,
+        radio_type: this.zigbeeDraft.radioType,
+        baudrate: Number(this.zigbeeDraft.baudrate),
+      };
+    },
+
+    /** The row's own Apply. No confirmation step, unlike the Thread and
+     * Bluetooth rows: nothing is restarted and nothing else is touched, so
+     * there is nothing to warn about - the hint beside the row says so.
+     *
+     * `zigbeeBusy` stays set until the reload after the `PUT` has
+     * finished, so the Apply button cannot flash back up for the moment in
+     * which the draft already names the new stick and `zigbee` still names
+     * the old one. */
+    async applyZigbeeRadio() {
+      if (!this.zigbeeCanApply()) return;
+      this.zigbeeBusy = true;
+      this.zigbeeApplyError = null;
+      try {
+        try {
+          const response = await this.request("PUT", "/api/zigbee/radio", this.zigbeeRequestBody());
+          this.zigbeeDirty = false;
+          this.zigbeeAdvancedEdited = false;
+          if (this.zigbee && response?.progress) {
+            this.zigbee = { ...this.zigbee, progress: response.progress };
+          }
+        } catch (error) {
+          this.zigbeeApplyError = error.message;
+        }
+        await this.loadZigbeeRadio();
+      } finally {
+        this.zigbeeBusy = false;
+      }
+    },
+
+    /** The one line that says what the connection is doing.
+     *
+     * `present` is `configured_device_present`, and it wins over the
+     * state: a configured stick that is not plugged in fails its attempt
+     * the same way as one that is present and refusing to open, and the
+     * two need opposite actions from the user. `null` for `idle`, which is
+     * "nothing is configured" and needs no line at all. */
+    zigbeeProgressText(progress, present) {
+      if (!progress) return null;
+      if (present === false && this.zigbee?.configured_path) {
+        return t("web.radios.zigbee_device_missing", { path: this.zigbee.configured_path });
+      }
+      switch (progress.state) {
+        case "applying":
+          return t("web.radios.zigbee_applying");
+        case "loading_quirks":
+        case "opening_radio":
+          // A retry after failures is not "the first connection": the
+          // supervisor sets these states again on every attempt, and the
+          // first-connection wording would be untrue from the second on.
+          if (progress.attempts > 0) {
+            const attempt = progress.attempts + 1;
+            return this.zigbeeLastError
+              ? t("web.radios.zigbee_retrying_after", { attempt, error: this.zigbeeLastError })
+              : t("web.radios.zigbee_retrying", { attempt });
+          }
+          return t(
+            progress.state === "loading_quirks" ? "web.radios.zigbee_loading_quirks" : "web.radios.zigbee_opening_radio",
+          );
+        case "connected":
+          return t("web.radios.zigbee_connected");
+        case "failed":
+          return t("web.radios.zigbee_failed_retrying", {
+            error: progress.error ?? t("web.radios.zigbee_failed_unknown"),
+            attempts: progress.attempts,
+          });
+        default:
+          return null;
+      }
+    },
+
+    /** Whether that line reports a problem - a failed attempt or a stick
+     * that is not there - and should read as one. */
+    zigbeeProgressFailing(progress, present) {
+      if (!progress) return false;
+      if (present === false && this.zigbee?.configured_path) return true;
+      return progress.state === "failed";
     },
 
     async saveSettings() {

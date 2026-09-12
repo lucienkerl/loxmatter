@@ -792,6 +792,36 @@ async def test_nothing_configured_is_not_an_error(api):
     assert body["progress"]["state"] == "idle"
 
 
+async def test_the_stored_radio_parameters_are_reported_back(api):
+    """The card's Advanced disclosure shows what an unrecognised stick is
+    being opened WITH. Without these two keys it could only show
+    `DEFAULT_UNKNOWN` - EZSP at 115200 - while the bridge was retrying the
+    stick as ZNP at 38400 (measured in the card's browser harness, 12
+    September 2026).
+
+    Stored directly rather than through `PUT`: both sticks in this fixture
+    are recognised, and for a recognised stick `settings_for_path` ignores
+    the Advanced values, so no `PUT` here could store a non-default pair.
+    ZNP at 38400 is chosen because it differs from the defaults in both
+    fields - a route that echoed `DEFAULT_UNKNOWN` would fail on each.
+
+    Fault to prove it: drop `configured_radio_type`/`configured_baudrate`
+    from the `GET` body, or report `DEFAULT_UNKNOWN`'s values instead of the
+    stored ones."""
+    client, _update_dir, harness = api
+    harness.store.zigbee_settings.save(
+        replace(
+            settings_for_path(None, []),
+            path="/dev/serial/by-id/usb-Some_Other_CP210x_Bridge-if00",
+            radio_type="znp",
+            baudrate=38400,
+        )
+    )
+    body = (await client.get("/api/zigbee/radio")).json()
+    assert body["configured_radio_type"] == "znp"
+    assert body["configured_baudrate"] == 38400
+
+
 # --- Pairing ---------------------------------------------------------------
 #
 # These drive the REAL `ZigbeeSource` rather than a stand-in for it. The

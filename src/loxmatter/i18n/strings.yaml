@@ -1105,6 +1105,11 @@ web.devices.transport_thread:
 web.devices.transport_ip:
   en: "Matter over IP"
   de: "Matter über IP"
+web.devices.transport_zigbee:
+  # Not "Matter over Zigbee": a Zigbee device reaches the bridge through
+  # zigpy, not through Matter at all.
+  en: "Zigbee"
+  de: "Zigbee"
 web.devices.last_heard:
   en: "Last heard {text}"
   de: "Zuletzt gehört {text}"
@@ -2072,9 +2077,57 @@ web.radios.zigbee_failed_retrying:
   # so the card must not imply it has.
   en: "{error} (attempt {attempts} - the bridge keeps trying)"
   de: "{error} (Versuch {attempts} – die Brücke versucht es weiter)"
+web.radios.zigbee_retrying:
+  # `loading_quirks` and `opening_radio` come round again on every one of
+  # the supervisor's retries. From the second attempt on, "the first
+  # connection takes a few seconds" would be untrue; {attempt} is the
+  # number of the attempt now running.
+  en: "Trying again (attempt {attempt})"
+  de: "Neuer Verbindungsversuch (Versuch {attempt})"
+web.radios.zigbee_retrying_after:
+  # The same retry, with the reason the previous attempt failed kept on
+  # screen - see `zigbeeLastError` in app.js.
+  en: "Trying again (attempt {attempt}). Last attempt: {error}"
+  de: "Neuer Verbindungsversuch (Versuch {attempt}). Letzter Versuch: {error}"
+web.radios.zigbee_failed_unknown:
+  # Only if a failed attempt ever arrives without its own sentence.
+  en: "The Zigbee stick could not be opened"
+  de: "Der Zigbee-Stick konnte nicht geöffnet werden"
 web.radios.zigbee_device_missing:
-  en: "{path} (not present - plug it back in, or pick another stick)"
-  de: "{path} (nicht vorhanden – wieder einstecken oder einen anderen Stick wählen)"
+  # The progress line, not an option label: the select already shows the
+  # path (`web.radios.missing`). This wins over the connection state,
+  # because an unplugged stick fails exactly like one that is present and
+  # refusing to open, and the two need opposite actions.
+  en: "The chosen stick is not plugged in. Plug it back in, or pick another stick - the bridge keeps looking for it."
+  de: "Der gewählte Stick ist nicht eingesteckt. Stecken Sie ihn wieder ein oder wählen Sie einen anderen Stick – die Brücke sucht weiter nach ihm."
+web.radios.zigbee_option_unrecognised:
+  # The short suffix on an option, beside `web.radios.in_use`; the full
+  # sentence is `web.radios.fingerprint_unknown` below the select.
+  en: "not recognised"
+  de: "nicht erkannt"
+web.radios.zigbee_hint:
+  # The Thread and Bluetooth rows above warn about restarts and a sidecar
+  # job; this row does the opposite, and has to say so rather than leave
+  # the user to assume the same warning applies.
+  en: "A Zigbee stick change takes effect immediately and restarts nothing - Thread and Bluetooth are left as they are."
+  de: "Ein Wechsel des Zigbee-Sticks wirkt sofort und startet nichts neu – Thread und Bluetooth bleiben, wie sie sind."
+web.radios.zigbee_radio_type:
+  en: "Radio type"
+  de: "Funktyp"
+web.radios.zigbee_baudrate:
+  en: "Baud rate"
+  de: "Baudrate"
+web.radios.zigbee_radio_type_ezsp:
+  # Protocol names with the chip maker that speaks them, so a user can
+  # match the stick's packaging to an entry.
+  en: "EZSP (Silicon Labs)"
+  de: "EZSP (Silicon Labs)"
+web.radios.zigbee_radio_type_znp:
+  en: "ZNP (Texas Instruments)"
+  de: "ZNP (Texas Instruments)"
+web.radios.zigbee_radio_type_deconz:
+  en: "deCONZ (dresden elektronik)"
+  de: "deCONZ (dresden elektronik)"
 web.radios.rescan:
   en: "Rescan"
   de: "Neu einlesen"

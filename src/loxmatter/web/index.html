@@ -194,6 +194,18 @@
         <path d="M3 12h18" />
         <path d="M12 3a14 14 0 0 1 0 18a14 14 0 0 1 0-18z" />
       </symbol>
+      <!-- Zigbee (design 2026-09-12, section 3.3): a coordinator with three
+           devices on spokes - the star a Zigbee network grows from, and
+           unlike Thread's three peers it has a centre. Deliberately NOT the
+           official logo: "Zigbee" is a trademark of the Connectivity
+           Standards Alliance. -->
+      <symbol id="i-transport-zigbee" viewBox="0 0 24 24">
+        <circle cx="12" cy="13" r="2.6" />
+        <circle cx="4.5" cy="5.5" r="2" />
+        <circle cx="19.5" cy="5.5" r="2" />
+        <circle cx="12" cy="21" r="2" />
+        <path d="M10.2 11.2 5.9 6.9M13.8 11.2l4.3-4.3M12 15.6V19" />
+      </symbol>
     </svg>
     <!-- Until `/auth-info` has answered, the page deliberately shows nothing -
          otherwise the wrong screen would flash up depending on the response. -->
@@ -2480,6 +2492,90 @@
               <p x-show="radiosApplyError" x-cloak class="banner danger" x-text="radiosApplyError"></p>
             </div>
           </template>
+          <!-- The Zigbee row (design 2026-09-12, section 3.2). Outside the
+               `x-if="radios"` block above on purpose: it reads its own
+               endpoint, which the bridge answers itself, so a missing or
+               outdated updater sidecar must not hide it. Its own Apply, its
+               own busy flag and its own errors, for the same reason. -->
+          <template x-if="zigbee">
+            <div class="radios-zigbee">
+              <div class="row">
+                <label>
+                  <span x-text="t('web.radios.zigbee_label')"></span>
+                  <select
+                    x-model="zigbeeDraft.path"
+                    @change="zigbeeSelectionChanged()"
+                    :disabled="zigbeeBusy"
+                  >
+                    <!-- `option.disabled` is the server's `selectable`, so
+                         the Thread stick is listed with its reason and
+                         cannot be chosen. A disabled `<option>` that is
+                         already the current value still displays. -->
+                    <template x-for="option in zigbeeRadioOptions()" :key="option.value">
+                      <option :value="option.value" :disabled="option.disabled" x-text="option.label"></option>
+                    </template>
+                  </select>
+                </label>
+                <!-- Always present, disabled while there is nothing to
+                     apply - unlike the Apply of the rows above, which
+                     appears and disappears. Measured at 375 px: this
+                     button wraps under the select, and hiding it the
+                     moment it was pressed moved every line below it up by
+                     41 px, right as the progress line started talking. -->
+                <button
+                  class="primary"
+                  @click="applyZigbeeRadio()"
+                  :disabled="!zigbeeCanApply()"
+                  x-text="t('web.radios.apply')"
+                ></button>
+              </div>
+              <p class="hint" x-text="t('web.radios.zigbee_hint')"></p>
+              <p
+                class="hint radios-zigbee-progress"
+                :class="{ 'danger-text': zigbeeProgressFailing(zigbee.progress, zigbee.configured_device_present) }"
+                role="status"
+                x-text="zigbeeProgressText(zigbee.progress, zigbee.configured_device_present)"
+              ></p>
+              <p class="hint" x-show="zigbeeSelectedOption()?.unrecognised" x-cloak
+                 x-text="t('web.radios.fingerprint_unknown')"></p>
+              <details
+                class="commission-disclosure"
+                x-show="zigbeeSelectedOption()?.unrecognised"
+                x-cloak
+                :open="zigbeeAdvancedOpen"
+                @toggle="zigbeeAdvancedOpen = $el.open"
+              >
+                <summary x-text="t('web.radios.advanced')"></summary>
+                <div class="disclosure-body radios-zigbee-advanced">
+                  <label>
+                    <span class="field-label" x-text="t('web.radios.zigbee_radio_type')"></span>
+                    <select x-model="zigbeeDraft.radioType" @change="zigbeeAdvancedChanged()" :disabled="zigbeeBusy">
+                      <template x-for="option in zigbeeRadioTypeOptions()" :key="option.value">
+                        <option :value="option.value" x-text="option.label"></option>
+                      </template>
+                    </select>
+                  </label>
+                  <label>
+                    <span class="field-label" x-text="t('web.radios.zigbee_baudrate')"></span>
+                    <input
+                      type="number"
+                      min="1"
+                      step="1"
+                      x-model.number="zigbeeDraft.baudrate"
+                      @input="zigbeeAdvancedChanged()"
+                      :disabled="zigbeeBusy"
+                    />
+                  </label>
+                </div>
+              </details>
+              <!-- Two fields, as on the rows above: the poll clears
+                   `zigbeeError` on every answer, and must not take a
+                   failed Apply's explanation with it. -->
+              <p x-show="zigbeeError" x-cloak class="banner danger" x-text="zigbeeError"></p>
+              <p x-show="zigbeeApplyError" x-cloak class="banner danger" x-text="zigbeeApplyError"></p>
+            </div>
+          </template>
+          <p x-show="!zigbee && zigbeeError" x-cloak class="banner danger" x-text="zigbeeError"></p>
         </div>
 
         <div class="card">
