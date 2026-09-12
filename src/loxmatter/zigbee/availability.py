@@ -120,6 +120,17 @@ BATTERY_THRESHOLD_SECONDS: Final = 6 * 60 * 60
 # (30, 45)`, randomised between the two on every run). A single constant
 # rather than a range: nothing here depends on jitter, and a fixed number is
 # what a test can measure directly rather than sit out.
+#
+# **A FLOOR, not a period** - and here this module does NOT match ZHA, which
+# schedules a periodic timer that does not drift. `_run` is sleep-then-work,
+# so the real gap between two sweeps is this constant PLUS however long the
+# sweep itself took, and a sweep can take seconds: it pings quiet mains
+# devices one after another and waits for each read. With
+# `_CHECKIN_GRACE_PERIODS = 2`, a dead mains device is therefore written off
+# at `threshold + 2 x (30 s + sweep duration)`, not at `threshold + 60 s`.
+# Nothing here depends on the exact figure - every threshold is measured
+# against `_now()`, never against a count of sweeps - which is why the drift
+# is recorded rather than corrected.
 CHECK_INTERVAL_SECONDS: Final = 30.0
 
 # ZHA's own grace period (`zha/zigbee/device.py`, `_CHECKIN_GRACE_PERIODS`):
@@ -325,7 +336,16 @@ class AvailabilityChecker:
         return [device for device in self._source._devices() if not _is_coordinator(device)]
 
     async def _report(self, address: str, device_id: int, online: bool) -> None:
-        """Tells the handler, but only when the answer has changed."""
+        """Tells the handler, but only when the answer has changed.
+
+        The order of the two statements below is the whole guarantee, and it
+        is measured by
+        `test_a_device_the_handler_could_not_be_told_about_is_told_again`:
+        recorded ABOVE the `set_online` call, a device whose handler raised
+        would be filed as already-told and never retried, stranding it at
+        its last value forever - precisely what `mark_all_offline` exists to
+        prevent, and precisely the moment it is most likely to happen, since
+        `UdpSender.send` raises once its socket is closed."""
         if self._reported.get(address) == online:
             return
         await self._handler.set_online(device_id, online)
@@ -360,6 +380,17 @@ class AvailabilityChecker:
             # `ZigbeeSource._facts` already writes for a snapshot
             # (`self._connected and is_available(device)`), and there is no
             # point pinging over a radio that is gone either.
+            #
+            # The `pop` is this branch's own, not a duplicate of
+            # `mark_all_offline`'s `clear()`: a link that dies PARTWAY
+            # THROUGH a sweep leaves the tail of that same sweep arriving
+            # here before `_handle_connection_lost`'s spawned
+            # `mark_all_offline` task has run at all, and a device whose
+            # grace was half spent on silence the link caused would then
+            # come back with one ping left instead of two - see
+            # `test_a_link_that_dies_between_sweeps_returns_the_grace_counter`,
+            # which reaches this line without `mark_all_offline` anywhere
+            # near it.
             self._missed_checkins.pop(address, None)
             await self._report(address, device_id, False)
             return

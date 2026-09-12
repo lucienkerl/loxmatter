@@ -77,11 +77,16 @@ class RecordingHandler:
     those. The exception is the one the real sender raises: `UdpSender.send`
     answers `RuntimeError("the UDP sender is closed")` once its socket is
     gone, which is exactly the shape a shutdown racing a lost link
-    produces."""
+    produces.
+
+    It is a mutable set rather than the frozen argument it arrives as, so a
+    test can let the handler RECOVER partway through - a socket that is
+    replaced, which is the only way to ask whether a failed report is ever
+    retried (`test_a_device_the_handler_could_not_be_told_about_is_told_again`)."""
 
     def __init__(self, *, failing_device_ids: frozenset[int] = frozenset()) -> None:
         self.online: list[tuple[int, bool]] = []
-        self._failing_device_ids = failing_device_ids
+        self.failing_device_ids: set[int] = set(failing_device_ids)
 
     async def on_attribute(self, device_id: int, path: str, raw: object) -> None:
         raise AssertionError("AvailabilityChecker must never call on_attribute")
@@ -90,7 +95,7 @@ class RecordingHandler:
         raise AssertionError("AvailabilityChecker must never call on_event")
 
     async def set_online(self, device_id: int, online: bool) -> None:
-        if device_id in self._failing_device_ids:
+        if device_id in self.failing_device_ids:
             raise RuntimeError("the UDP sender is closed")
         self.online.append((device_id, online))
 
@@ -417,6 +422,96 @@ async def test_one_device_that_cannot_be_told_does_not_silence_the_rest(build_so
     assert sorted(handler.online) == [(1, False), (3, False), (4, False)], (
         "a sender that is closed for one device must not strand every device behind it"
     )
+
+
+async def test_a_device_the_handler_could_not_be_told_about_is_told_again(build_source) -> None:
+    """`_report`'s whole guarantee, and until now nothing measured it:
+    `self._reported[address] = online` sits AFTER `await set_online(...)`,
+    so a handler that raised leaves the change outstanding and the next
+    sweep says it again.
+
+    Moving that one line above the call leaves every other test in this file
+    green, which is what makes this the cheapest possible way to lose the
+    protection. And the loss is not cosmetic: the moment `set_online` is
+    most likely to raise is exactly this one - a `UdpSender` whose socket
+    has gone during a link loss - so the device filed as already-told is
+    stranded at its last value forever, which is the precise outcome
+    `mark_all_offline` exists to prevent.
+
+    Fault to prove it: record `self._reported[address] = online` BEFORE the
+    `await self._handler.set_online(...)` call. Device 2 below is then never
+    told anything, however many sweeps run afterwards."""
+    first = colour_lamp(ieee="00:12:4b:00:00:00:00:11")
+    second = colour_lamp(ieee="00:12:4b:00:00:00:00:12")
+    source, app = build_source(first, second)
+    await source.connect()
+    handler = RecordingHandler(failing_device_ids=frozenset({2}))
+    await source.subscribe(_resolver({first.ieee: 1, second.ieee: 2}), handler)
+
+    app.fire_connection_lost()
+    await _settle()
+    assert handler.online == [(1, False)], "device 2's sender was closed, so it heard nothing"
+
+    # The sender is replaced - a reconnected UDP socket - and the next
+    # scheduled sweep runs. The link is still down, so the answer for both
+    # devices is unchanged: device 1 is already told and must stay silent,
+    # device 2 is still owed the report that failed.
+    handler.failing_device_ids.clear()
+    checker = source._availability_checker
+    assert checker is not None
+    await checker._sweep()
+
+    assert handler.online == [(1, False), (2, False)], (
+        "a report the handler could not take is still outstanding, not filed as done"
+    )
+
+
+async def test_a_link_that_dies_between_sweeps_returns_the_grace_counter(build_source) -> None:
+    """The grace counter is cleared on FOUR paths, and this is the one
+    `mark_all_offline` hides: `_check_one`'s own link-down branch. Every
+    other test that loses a link goes through `_handle_connection_lost`,
+    which calls `mark_all_offline()` and its `clear()` on the same event -
+    so deleting this `pop` changes nothing any of them can see.
+
+    It is reached without `mark_all_offline` whenever a sweep runs while the
+    source is disconnected: the tail of a sweep whose link died partway
+    through arrives here before the spawned `mark_all_offline` task has run
+    at all. `_connected` is therefore set directly below, which is what
+    isolates this branch from the `clear()` that would otherwise mask it.
+
+    Without the `pop`, the plug's half-spent grace survives an outage it had
+    no part in, and it is written off after ONE ping on the way back rather
+    than two.
+
+    Fault to prove it: delete `self._missed_checkins.pop(address, None)`
+    from `_check_one`'s `if not self._source.connected` branch."""
+    device, basic = _mains_device("00:12:4b:00:00:00:01:10")
+    source, _app = build_source(device)
+    await source.connect()
+    handler = RecordingHandler()
+    checker = AvailabilityChecker(
+        source,
+        handler,
+        _resolver({device.ieee: 1}),
+        now=_fixed_clock(MAINS_THRESHOLD_SECONDS + 1),
+    )
+
+    await checker._sweep()  # quiet: one of two grace pings spent
+    assert len(basic.reads) == 1
+
+    # The link dies, and the sweep - not `mark_all_offline` - is what
+    # notices. This is the branch under test.
+    source._connected = False
+    await checker._sweep()
+    assert handler.online == [(1, False)], "a sweep with no link reports offline on its own"
+    assert len(basic.reads) == 1, "and pings nothing over a radio that is gone"
+
+    # The radio is back and the device is still quiet. It must get BOTH
+    # pings again, not the one its pre-outage count would have left it.
+    source._connected = True
+    await checker._sweep()
+    await checker._sweep()
+    assert len(basic.reads) == 3, "the outage returned the grace counter to zero"
 
 
 # ------------------------------------------------------------ coordinator --

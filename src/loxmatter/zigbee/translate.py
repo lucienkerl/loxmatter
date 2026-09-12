@@ -45,6 +45,7 @@ value is `None`.** See `build_snapshot`.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping
 from dataclasses import dataclass
 
@@ -196,6 +197,11 @@ BLOCKED_CLUSTER_IDS: frozenset[int] = frozenset({0x0000, 0x0003, 0x0019, 0x1000}
 # first audit were found that way, each type read off the installed zigpy
 # before it was written down.
 #
+# A FLOAT-typed measurement never belongs in this table, however reachable
+# it is: the ZCL's invalid value for those is NaN, and this table compares
+# with `==`. `_is_not_a_number` above is that rule's home instead - read its
+# docstring before adding a row for a concentration cluster.
+#
 # `_NO_SENTINEL` is a private marker object, not `None`: `dict.get()` on a
 # pair with no entry here already answers `None`, and a naive
 # `_SENTINELS.get(key) == value` would then coincidentally agree with the
@@ -205,6 +211,42 @@ BLOCKED_CLUSTER_IDS: frozenset[int] = frozenset({0x0000, 0x0003, 0x0019, 0x1000}
 # missing "value is None" check for an attribute with no sentinel entry
 # still passed, for this reason, until this marker was added).
 _NO_SENTINEL: object = object()
+
+
+def _is_not_a_number(value: object) -> bool:
+    """The invalid-value sentinel of every FLOAT-typed ZCL measurement.
+
+    `_SENTINELS` cannot express this one, and no row added to it ever
+    could: that table compares with `==`, and `float("nan") == float("nan")`
+    is `False` by definition, so a NaN entry could never match anything.
+    It needs its own arm beside the `value is None` rule.
+
+    **This reaches far more clusters than it looks.** 32 clusters in the
+    installed zigpy 2.2.0 declare `measured_value` / `min_measured_value` /
+    `max_measured_value` as `Single` - every concentration-measurement
+    cluster the ZCL defines, among them `PM25` (0x042A),
+    `CarbonDioxideConcentration` (0x040D), `CarbonMonoxideConcentration`
+    (0x040C) and `FormaldehydeConcentration` (0x042B). None of them is in
+    `BLOCKED_CLUSTER_IDS`, so `_apply_endpoint` passes every one of their
+    attributes straight out by number, and an air-quality sensor with no
+    reading yet would write `nan` into a Loxone virtual input - a value
+    nothing downstream recognises as "no reading" and nothing can compare
+    against either.
+
+    Reachable with real hardware, not only in theory: zha-quirks 2.2.2
+    declares these clusters in `zhaquirks/ikea/starkvind.py`,
+    `zhaquirks/xiaomi/aqara/airm_fhac01.py`, `zhaquirks/tuya/tuya_co.py`
+    and `zhaquirks/tuya/builder/__init__.py`.
+
+    `isinstance(value, float)` first, because `math.isnan` raises
+    `TypeError` on the bytes, strings and lists that also pass through
+    here. zigpy's `Single` is a `float` subclass (verified against the
+    installed 2.2.0), so the values this module actually receives are
+    covered.
+    """
+    return isinstance(value, float) and math.isnan(value)
+
+
 _SENTINELS: dict[tuple[int, int], int] = {
     # NEGATIVE, not 0x8000. The ZCL writes this sentinel as the bit pattern
     # 0x8000, but `TemperatureMeasurement.measured_value` is zigpy's
@@ -575,7 +617,11 @@ def _apply_endpoint(endpoint: EndpointFacts, attributes: dict[str, object]) -> N
         attributes[_device_type_list_path(endpoint.endpoint)] = [{"0": device_type, "1": 1}]
 
     for (cluster_id, attribute_id), value in endpoint.attributes.items():
-        if value is None or _SENTINELS.get((cluster_id, attribute_id), _NO_SENTINEL) == value:
+        if (
+            value is None
+            or _is_not_a_number(value)
+            or _SENTINELS.get((cluster_id, attribute_id), _NO_SENTINEL) == value
+        ):
             continue
 
         if cluster_id == _CLUSTER_IAS_ZONE:

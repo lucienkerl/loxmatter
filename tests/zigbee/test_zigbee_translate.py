@@ -343,6 +343,68 @@ def test_the_electrical_measurement_sentinels_match_the_installed_zigpy_types():
     assert _SENTINELS[(0x0B04, 0x050B)] == int16s.min_value
 
 
+def test_a_float_measurement_of_nan_becomes_an_absent_path():
+    """The ZCL's invalid value for a FLOAT-typed measurement is NaN, and no
+    `_SENTINELS` row can ever suppress it: that table compares with `==`,
+    and `float("nan") == float("nan")` is `False`. Without an `isnan` arm of
+    its own, `nan` travels straight out to a Loxone virtual input - a value
+    nothing downstream recognises as "no reading" and nothing can compare
+    against either.
+
+    The fixture is read out of the INSTALLED zigpy rather than invented:
+    every cluster that declares `measured_value`, `min_measured_value` or
+    `max_measured_value` as `Single` is collected from the cluster registry
+    and driven through `build_snapshot`. That is 32 clusters in zigpy 2.2.0,
+    every concentration measurement the ZCL defines, and none of them is
+    blocked - so all 96 attributes reach Loxone by number today.
+
+    Reachable with real devices: zha-quirks 2.2.2 declares these clusters in
+    `zhaquirks/ikea/starkvind.py`, `zhaquirks/xiaomi/aqara/airm_fhac01.py`,
+    `zhaquirks/tuya/tuya_co.py` and `zhaquirks/tuya/builder/__init__.py`.
+
+    A fixture whose value is not NaN would prove nothing here, so each pair
+    is driven twice: once with `nan`, which must be left out, and once with
+    a plausible reading, which must arrive unchanged.
+
+    Fault to prove it: drop `_is_not_a_number(value)` from
+    `_apply_endpoint`'s guard - or try to express the same rule as
+    `_SENTINELS[(0x042A, 0x0000)] = float("nan")`, which changes nothing at
+    all."""
+    from zigpy.types import Single
+    from zigpy.zcl import Cluster
+
+    float_measurements: list[tuple[int, int]] = []
+    for cluster_id, cluster in Cluster._registry.items():
+        for name in ("measured_value", "min_measured_value", "max_measured_value"):
+            attribute = getattr(cluster.AttributeDefs, name, None)
+            if attribute is not None and attribute.type is Single:
+                float_measurements.append((cluster_id, attribute.id))
+
+    assert issubclass(Single, float), "the isnan arm only sees these if they are floats"
+    # The comparison a `_SENTINELS` row would make, spelled exactly the way
+    # `_apply_endpoint` spells it. Through variables, because a literal
+    # `float("nan") == float("nan")` is what ruff's PLW0177 exists to
+    # forbid - and the reason it forbids it is the reason this rule cannot
+    # live in that table.
+    row: dict[tuple[int, int], float] = {(0x042A, 0x0000): float("nan")}
+    reading = float("nan")
+    assert row[(0x042A, 0x0000)] != reading, "a NaN row could never match a NaN reading"
+    assert len(float_measurements) >= 32, (
+        f"zigpy 2.2.0 declares 32 such clusters; found {len(float_measurements) // 3}"
+    )
+    # The four this project named as reachable through zha-quirks.
+    for cluster_id in (0x042A, 0x040D, 0x040C, 0x042B):
+        assert (cluster_id, 0x0000) in float_measurements
+        assert cluster_id not in BLOCKED_CLUSTER_IDS, "nothing else keeps these off the wire"
+
+    for cluster_id, attribute_id in float_measurements:
+        path = f"1/{cluster_id}/{attribute_id}"
+        absent = build_snapshot(_sensor({(cluster_id, attribute_id): float("nan")})).attributes
+        assert path not in absent, f"{path} published a NaN as if it were a measurement"
+        present = build_snapshot(_sensor({(cluster_id, attribute_id): 12.5})).attributes
+        assert present[path] == 12.5, f"{path} must still carry a real reading"
+
+
 def test_the_battery_voltage_is_converted_from_hundred_millivolt_units():
     """Zigbee's `BatteryVoltage` counts in 100 mV units; Matter's
     PowerSource `BatVoltage` (0/47/11) counts in mV. Without the factor a
