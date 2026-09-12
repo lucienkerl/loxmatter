@@ -725,6 +725,23 @@ function app() {
     settingsDraft: { bridge_ip: "", udp_port: 7000, listen_port: 8080 },
     settingsBusy: false,
     settingsError: null,
+
+    // The radios card (design "Radios in the Web UI", 2026-09-11, section
+    // 8). `radios` is the last GET /api/radios body; `radiosDraft` what the
+    // selects show. `radiosDirty` keeps a poll from overwriting a choice the
+    // user has made but not applied yet.
+    radios: null,
+    radiosDraft: { threadDevice: "", bluetoothAdapter: 0 },
+    radiosDirty: false,
+    radiosConfirming: false,
+    radiosError: null,
+    radiosBusy: false,
+    radiosTimer: null,
+    // The id POST /api/radios returned, until GET shows that job - the
+    // sidecar picks a request up within about 2 s, so the first poll after
+    // POST can still show the PREVIOUS job's terminal phase.
+    radiosPendingJobId: null,
+
     resendInterval: { interval_seconds: 300 },
     resendIntervalDraft: 300,
     resendIntervalBusy: false,
@@ -1236,6 +1253,7 @@ function app() {
         await this.loadSystem();
       } else if (view === "settings") {
         await this.loadSettings();
+        await this.loadRadios();
       }
     },
 
@@ -3499,6 +3517,174 @@ function app() {
       } catch (error) {
         this.settingsError = t("web.settings.load_error", { message: error.message });
       }
+    },
+
+    async loadRadios() {
+      this.radiosError = null;
+      try {
+        this.radios = await this.request("GET", "/api/radios");
+      } catch (error) {
+        this.radiosError = t("web.settings.load_error", { message: error.message });
+        return;
+      }
+      const current = this.radios.current;
+      if (current && !this.radiosDirty) {
+        this.radiosDraft = {
+          threadDevice: current.thread_enabled ? current.thread_device ?? "" : "",
+          bluetoothAdapter: current.bluetooth_adapter,
+        };
+      }
+      if (this.radiosPendingJobId !== null && this.radios.job?.id === this.radiosPendingJobId) {
+        this.radiosPendingJobId = null;
+      }
+      const keepPolling = this.radiosPendingJobId !== null || this.radiosJobRunning();
+      if (keepPolling && this.radiosTimer === null) {
+        this.radiosTimer = setInterval(() => this.loadRadios(), 2000);
+      } else if (!keepPolling && this.radiosTimer !== null) {
+        clearInterval(this.radiosTimer);
+        this.radiosTimer = null;
+      }
+    },
+
+    radiosCurrentThread() {
+      const current = this.radios?.current;
+      return current && current.thread_enabled ? current.thread_device ?? "" : "";
+    },
+
+    radiosThreadOptions() {
+      const current = this.radios?.current;
+      const inUse = this.radiosCurrentThread();
+      const options = [{ value: "", label: t("web.radios.no_thread_stick"), inUse: inUse === "", missing: false }];
+      for (const radio of this.radios?.serial ?? []) {
+        const name = radio.product || radio.manufacturer || radio.tty;
+        const suffix = radio.serial ? ` · …${radio.serial.slice(-4)}` : "";
+        options.push({ value: radio.path, label: name + suffix, inUse: radio.path === inUse, missing: false });
+      }
+      if (current && current.thread_enabled && current.thread_device && !current.thread_device_present) {
+        options.push({
+          value: current.thread_device,
+          label: t("web.radios.missing", { path: current.thread_device }),
+          inUse: true,
+          missing: true,
+        });
+      }
+      return options;
+    },
+
+    radiosBluetoothOptions() {
+      const inUse = this.radios?.current?.bluetooth_adapter;
+      return (this.radios?.bluetooth ?? []).map((adapter) => ({
+        value: adapter.index,
+        label:
+          adapter.bus === "uart"
+            ? t("web.radios.bus_uart", { name: adapter.name })
+            : adapter.bus === "usb"
+              ? t("web.radios.bus_usb", { name: adapter.name, product: adapter.product ?? "" })
+              : t("web.radios.bus_other", { name: adapter.name }),
+        inUse: adapter.index === inUse,
+        blocked: adapter.rfkill_blocked,
+      }));
+    },
+
+    radiosChanged() {
+      const current = this.radios?.current;
+      if (!current) return false;
+      return (
+        this.radiosDraft.threadDevice !== this.radiosCurrentThread() ||
+        Number(this.radiosDraft.bluetoothAdapter) !== current.bluetooth_adapter
+      );
+    },
+
+    /** Which confirmation paragraphs apply, in display order. */
+    radiosConfirmKeys() {
+      const current = this.radios?.current;
+      if (!current) return [];
+      const keys = [];
+      const before = this.radiosCurrentThread();
+      const after = this.radiosDraft.threadDevice;
+      if (before !== after) {
+        if (after === "") keys.push("web.radios.confirm_thread_off");
+        else if (before === "") keys.push("web.radios.confirm_thread_on");
+        else keys.push("web.radios.confirm_thread_switch");
+      }
+      if (Number(this.radiosDraft.bluetoothAdapter) !== current.bluetooth_adapter) {
+        keys.push("web.radios.confirm_bluetooth");
+      }
+      return keys;
+    },
+
+    radiosJobRunning() {
+      const phase = this.radios?.job?.phase;
+      return Boolean(phase) && !["idle", "done", "failed", "rejected", "unchanged"].includes(phase);
+    },
+
+    radiosStepClass(step) {
+      const job = this.radios?.job;
+      if (!job) return { done: false, now: false };
+      const steps = job.steps ?? [];
+      const at = steps.indexOf(job.phase);
+      const index = steps.indexOf(step);
+      if (!this.radiosJobRunning()) return { done: job.phase === "done", now: false };
+      return { done: index < at, now: index === at };
+    },
+
+    radiosResultKey() {
+      const job = this.radios?.job;
+      if (!job || this.radiosJobRunning()) return null;
+      if (job.phase === "done") return "web.radios.result_done";
+      if (job.phase === "unchanged") return "web.radios.result_unchanged";
+      if (job.phase === "rejected") return "web.radios.result_rejected";
+      if (job.phase === "failed") {
+        return job.healthy === false ? "web.radios.result_failed_unhealthy" : "web.radios.result_failed_restored";
+      }
+      return null;
+    },
+
+    radiosReason() {
+      const key = `web.radios.reason.${this.radios?.job?.error ?? "unknown"}`;
+      const text = t(key);
+      return text === key ? t("web.radios.reason.unknown") : text;
+    },
+
+    radiosSidecarMessage() {
+      const status = this.radios?.sidecar;
+      if (!status || status === "ready") return null;
+      if (status === "missing") return t("web.radios.sidecar_missing");
+      const path = this.radios.updater_stack_host_path;
+      return path
+        ? t("web.radios.sidecar_refresh", { path })
+        : t("web.radios.sidecar_refresh_unknown_path");
+    },
+
+    askApplyRadios() {
+      if (!this.radiosChanged()) return;
+      this.radiosConfirming = true;
+    },
+
+    cancelApplyRadios() {
+      this.radiosConfirming = false;
+    },
+
+    async confirmApplyRadios() {
+      this.radiosConfirming = false;
+      this.radiosBusy = true;
+      this.radiosError = null;
+      try {
+        const response = await this.request("POST", "/api/radios", {
+          thread: {
+            enabled: this.radiosDraft.threadDevice !== "",
+            device: this.radiosDraft.threadDevice || null,
+          },
+          bluetooth: { adapter: Number(this.radiosDraft.bluetoothAdapter) },
+        });
+        this.radiosPendingJobId = response.id;
+        this.radiosDirty = false;
+      } catch (error) {
+        this.radiosError = error.message;
+      } finally {
+        this.radiosBusy = false;
+      }
+      await this.loadRadios();
     },
 
     async saveSettings() {

@@ -457,6 +457,15 @@ button:disabled {
   border: 1px solid var(--warn);
 }
 
+/* An inline confirmation inside a card (radios card, design 2026-09-11). */
+.dialog-inline {
+  margin-top: 0.75rem;
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+}
+
 /* ---------------------------------------------------------------------
  * The update card's confirmation and running states (design "Applying
  * updates through the web UI", 2026-09-08, section 9). `index.html`

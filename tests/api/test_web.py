@@ -8692,3 +8692,207 @@ def test_the_transport_labels_exist_in_both_languages():
         finally:
             i18n.set_language("en")
         assert english and german and english != key
+
+
+# ---------------------------------------------------------------------------
+# The radios card (Task 7, design "Radios in the Web UI", 2026-09-11,
+# section 8): choosing the Thread stick and Bluetooth adapter from the web
+# UI, backed by Task 6's GET/POST /api/radios.
+# ---------------------------------------------------------------------------
+
+RADIOS_READY = {
+    "sidecar": "ready",
+    "updater_stack_host_path": "/home/pi/stack",
+    "serial": [
+        {
+            "path": "/dev/serial/by-id/usb-A",
+            "tty": "ttyUSB0",
+            "manufacturer": "SONOFF",
+            "product": "SONOFF Dongle Plus MG24",
+            "serial": "e26a50c9",
+            "vid_pid": "10c4:ea60",
+        },
+        {
+            "path": "/dev/serial/by-id/usb-B",
+            "tty": "ttyACM0",
+            "manufacturer": None,
+            "product": None,
+            "serial": None,
+            "vid_pid": None,
+        },
+    ],
+    "bluetooth": [
+        {"index": 0, "name": "hci0", "bus": "uart", "product": None, "rfkill_blocked": False}
+    ],
+    "current": {
+        "thread_enabled": True,
+        "thread_device": "/dev/serial/by-id/usb-A",
+        "thread_device_present": True,
+        "bluetooth_adapter": 0,
+        "otbr_running": True,
+    },
+    "job": None,
+}
+
+
+def _radios_values(setup: str) -> dict:
+    return _app_state(
+        f"state.radios = {json.dumps(RADIOS_READY)};\n"
+        "state.radiosDraft = { threadDevice: '/dev/serial/by-id/usb-A', bluetoothAdapter: 0 };\n"
+        + setup
+    )
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_the_radios_card_detects_a_change_and_picks_the_confirmation_text():
+    """Runs the real helpers in node. Fault to prove it: return
+    `confirm_thread_on` for a stick switch."""
+    values = _radios_values(
+        """
+        const out = { unchanged: state.radiosChanged() };
+        state.radiosDraft.threadDevice = '/dev/serial/by-id/usb-B';
+        out.switch = [state.radiosChanged(), state.radiosConfirmKeys()];
+        state.radiosDraft.threadDevice = '';
+        out.off = state.radiosConfirmKeys();
+        state.radiosDraft = { threadDevice: '/dev/serial/by-id/usb-A', bluetoothAdapter: 1 };
+        out.bluetooth = state.radiosConfirmKeys();
+        state.radios.current.thread_enabled = false;
+        state.radios.current.thread_device = null;
+        out.on = state.radiosConfirmKeys();
+        console.log(JSON.stringify(out));
+        """
+    )
+    assert values["unchanged"] is False
+    assert values["switch"] == [True, ["web.radios.confirm_thread_switch"]]
+    assert values["off"] == ["web.radios.confirm_thread_off"]
+    assert values["bluetooth"] == ["web.radios.confirm_bluetooth"]
+    assert values["on"] == ["web.radios.confirm_thread_on", "web.radios.confirm_bluetooth"]
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_the_thread_options_mark_the_current_stick_and_a_missing_one():
+    values = _radios_values(
+        """
+        const out = { normal: state.radiosThreadOptions() };
+        state.radios.current.thread_device = '/dev/ttyUSB7';
+        state.radios.current.thread_device_present = false;
+        out.missing = state.radiosThreadOptions();
+        console.log(JSON.stringify(out));
+        """
+    )
+    normal = values["normal"]
+    assert [o["value"] for o in normal] == [
+        "",
+        "/dev/serial/by-id/usb-A",
+        "/dev/serial/by-id/usb-B",
+    ]
+    assert [o["inUse"] for o in normal] == [False, True, False]
+    missing = values["missing"]
+    assert missing[-1] == {
+        "value": "/dev/ttyUSB7",
+        "label": "web.radios.missing",
+        "inUse": True,
+        "missing": True,
+    }
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_the_radios_job_states_map_to_step_classes_and_results():
+    values = _radios_values(
+        """
+        state.radios.job = { id: 'j', phase: 'verify_thread', steps: ['validate','backup','write','apply_thread','verify_thread'],
+                             error: null, rolled_back: false, healthy: null };
+        const out = { running: state.radiosJobRunning(),
+                      classes: state.radios.job.steps.map((s) => state.radiosStepClass(s)) };
+        state.radios.job.phase = 'failed'; state.radios.job.error = 'verify_thread_failed';
+        state.radios.job.rolled_back = true; state.radios.job.healthy = true;
+        out.failed = [state.radiosJobRunning(), state.radiosResultKey()];
+        state.radios.job.healthy = false;
+        out.unhealthy = state.radiosResultKey();
+        console.log(JSON.stringify(out));
+        """
+    )
+    assert values["running"] is True
+    assert values["classes"] == [
+        {"done": True, "now": False},
+        {"done": True, "now": False},
+        {"done": True, "now": False},
+        {"done": True, "now": False},
+        {"done": False, "now": True},
+    ]
+    assert values["failed"] == [False, "web.radios.result_failed_restored"]
+    assert values["unhealthy"] == "web.radios.result_failed_unhealthy"
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_the_sidecar_message_depends_on_the_sidecar_state():
+    values = _radios_values(
+        """
+        const out = {};
+        for (const s of ['ready', 'missing', 'outdated', 'unmounted']) {
+          state.radios.sidecar = s; out[s] = state.radiosSidecarMessage();
+        }
+        state.radios.sidecar = 'outdated'; state.radios.updater_stack_host_path = null;
+        out.nopath = state.radiosSidecarMessage();
+        console.log(JSON.stringify(out));
+        """
+    )
+    assert values["ready"] is None
+    assert values["missing"] == "web.radios.sidecar_missing"
+    assert values["outdated"] == values["unmounted"] == "web.radios.sidecar_refresh"
+    assert values["nopath"] == "web.radios.sidecar_refresh_unknown_path"
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_polling_continues_until_the_posted_job_appears():
+    """Fault to prove it: drop the `radiosPendingJobId` condition from
+    `keepPolling` - the interval then stops on the old job's result."""
+    values = _app_state(
+        f"""
+        let intervals = 0;
+        globalThis.setInterval = () => {{ intervals += 1; return 1; }};
+        globalThis.clearInterval = () => {{ intervals -= 1; }};
+        const old = {json.dumps({**RADIOS_READY, "job": {"id": "old", "phase": "done", "steps": [], "error": None, "rolled_back": False, "healthy": True}})};
+        const fresh = JSON.parse(JSON.stringify(old)); fresh.job.id = "new";
+        let answer = old;
+        state.request = async () => answer;
+        (async () => {{
+          state.radiosPendingJobId = "new";
+          await state.loadRadios();
+          const afterOld = intervals;
+          answer = fresh;
+          await state.loadRadios();
+          console.log(JSON.stringify({{ afterOld, afterNew: intervals, pending: state.radiosPendingJobId }}));
+        }})();
+        """
+    )
+    assert values == {"afterOld": 1, "afterNew": 0, "pending": None}
+
+
+async def test_the_radios_card_sits_in_the_settings_view(api):
+    client, _, _ = api
+    page = _without_comments((await client.get("/")).text)
+    settings = page[page.index("view === 'settings'") :]
+    card = settings[: settings.index("t('web.settings.language_heading')")]
+    for marker in (
+        "t('web.radios.heading')",
+        "radiosThreadOptions()",
+        "radiosBluetoothOptions()",
+        "askApplyRadios()",
+        "confirmApplyRadios()",
+        "radiosStepClass(",
+    ):
+        assert marker in card, marker
+
+
+def test_the_radios_texts_exist_in_both_languages():
+    """Reads the table directly: `i18n.raw_template` falls back to English
+    when `de` is missing, so it could never see a missing translation.
+    Fault to prove it: delete one `de:` line under `web.radios.*`."""
+    from loxmatter import i18n
+
+    keys = i18n.strings_with_prefix("web.radios.")
+    assert "web.radios.confirm_thread_switch" in keys
+    for key in keys:
+        entry = i18n._STRINGS[key]
+        assert entry.get("en") and entry.get("de"), key

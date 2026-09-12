@@ -2344,6 +2344,92 @@
         </div>
 
         <div class="card">
+          <!-- Radios (design "Radios in the Web UI", 2026-09-11, section
+               8). Detection is always shown; changing needs a ready
+               sidecar, otherwise the message explains what to run. -->
+          <h2 x-text="t('web.radios.heading')"></h2>
+          <p class="hint" x-text="t('web.radios.explanation')"></p>
+          <p class="hint" x-show="radiosSidecarMessage()" x-cloak x-text="radiosSidecarMessage()"></p>
+          <template x-if="radios">
+            <div>
+              <div class="row">
+                <label>
+                  <span x-text="t('web.radios.thread_label')"></span>
+                  <select
+                    x-model="radiosDraft.threadDevice"
+                    @change="radiosDirty = true"
+                    :disabled="radios.sidecar !== 'ready' || radiosJobRunning() || radiosBusy"
+                  >
+                    <template x-for="option in radiosThreadOptions()" :key="option.value">
+                      <option
+                        :value="option.value"
+                        x-text="option.label + (option.inUse ? ' · ' + t('web.radios.in_use') : '')"
+                      ></option>
+                    </template>
+                  </select>
+                </label>
+                <label>
+                  <span x-text="t('web.radios.bluetooth_label')"></span>
+                  <select
+                    x-model.number="radiosDraft.bluetoothAdapter"
+                    @change="radiosDirty = true"
+                    :disabled="radios.sidecar !== 'ready' || radiosJobRunning() || radiosBusy"
+                  >
+                    <template x-for="option in radiosBluetoothOptions()" :key="option.value">
+                      <option
+                        :value="option.value"
+                        x-text="option.label + (option.inUse ? ' · ' + t('web.radios.in_use') : '')"
+                      ></option>
+                    </template>
+                  </select>
+                </label>
+              </div>
+              <template x-for="option in radiosBluetoothOptions().filter((o) => o.blocked)" :key="'blocked-' + option.value">
+                <p class="hint warn" x-text="option.label + ': ' + t('web.radios.rfkill_blocked')"></p>
+              </template>
+              <div class="row">
+                <button @click="loadRadios()" x-text="t('web.radios.rescan')"></button>
+                <button
+                  class="primary"
+                  x-show="radios.sidecar === 'ready' && radiosChanged() && !radiosJobRunning()"
+                  x-cloak
+                  @click="askApplyRadios()"
+                  :disabled="radiosBusy"
+                  x-text="t('web.radios.apply')"
+                ></button>
+              </div>
+              <div class="dialog-inline" x-show="radiosConfirming" x-cloak>
+                <h3 x-text="t('web.radios.confirm_title')"></h3>
+                <template x-for="key in radiosConfirmKeys()" :key="key">
+                  <p x-text="t(key)"></p>
+                </template>
+                <p class="hint" x-text="t('web.radios.confirm_rollback')"></p>
+                <div class="row">
+                  <button class="primary" @click="confirmApplyRadios()" x-text="t('web.radios.confirm_apply')"></button>
+                  <button @click="cancelApplyRadios()" x-text="t('web.radios.cancel')"></button>
+                </div>
+              </div>
+              <template x-if="radios.job && (radiosJobRunning() || radiosResultKey())">
+                <div>
+                  <ul class="steps" x-show="radiosJobRunning()">
+                    <template x-for="step in radios.job.steps" :key="step">
+                      <li :class="radiosStepClass(step)" x-text="t('web.radios.step_' + step)"></li>
+                    </template>
+                  </ul>
+                  <p
+                    x-show="radiosResultKey()"
+                    x-cloak
+                    :class="radios.job.phase === 'done' || radios.job.phase === 'unchanged' ? 'hint' : 'banner danger'"
+                    x-text="radiosResultKey() && t(radiosResultKey(), { reason: radiosReason() })"
+                  ></p>
+                </div>
+              </template>
+              <p x-show="radiosError" x-cloak class="banner danger" x-text="radiosError"></p>
+            </div>
+          </template>
+        </div>
+
+        <div class="card">
           <h2 x-text="t('web.settings.language_heading')"></h2>
           <nav class="tabs">
             <button
