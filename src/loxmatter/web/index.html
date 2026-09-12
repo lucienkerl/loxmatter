@@ -1999,7 +1999,7 @@
           <!-- 2: Confirmation. -->
           <template x-if="updateConfirming">
             <div class="confirm">
-              <h3 x-text="t('web.system.update_confirm_title', { version: updateAvailable.target })"></h3>
+              <h3 x-text="t('web.system.update_confirm_title', { version: updateTargetLabel() })"></h3>
               <p class="banner warn" x-text="t('web.system.update_confirm_downtime')"></p>
               <div class="row">
                 <button @click="updateConfirming = false" x-text="t('web.system.update_cancel')"></button>
