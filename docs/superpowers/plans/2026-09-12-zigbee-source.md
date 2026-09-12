@@ -5189,7 +5189,42 @@ async def test_an_unrecognised_stick_is_selectable_and_says_so(api):
     the user say what it is. It is offered, marked as unrecognised, and the
     Advanced disclosure carries radio type and baud rate.
 
-    Fault to prove it: disable options with no fingerprint."""
+    A stick this far along has already cleared `_is_thread_stick` (the two
+    tests above prove that check), so `is_thread: false, selectable: true,
+    fingerprint: null` is a real, reachable shape from
+    `GET /api/zigbee/radio` - not a stand-in for one - the moment a stick
+    reaches loxmatter that `fingerprints.py`'s table has no row for at all.
+
+    Fault to prove it: disable options with no fingerprint. That fault
+    cannot be caught by the two tests above: their fingerprint-null stick
+    is ALSO the Thread stick, already disabled for its own reason, so
+    "disabled because no fingerprint" and "disabled because it is Thread"
+    agree by coincidence there. Only a fingerprint-null stick that is
+    NOT the Thread stick tells the two reasons apart."""
+    values = _app_state(
+        setup="state.zigbee = { serial: ["
+        "  { path: '/dev/serial/by-id/usb-Some_Other_CP210x_Bridge-if00',"
+        "      product: 'Some Other CP210x Bridge', fingerprint: null,"
+        "      is_thread: false, selectable: true },"
+        "], current: null };"
+        "console.log(JSON.stringify(state.zigbeeRadioOptions()));",
+    )
+    mystery = next(o for o in values if o["value"] == "/dev/serial/by-id/usb-Some_Other_CP210x_Bridge-if00")
+    # Offered: `disabled` reads `selectable`, exactly as the two tests above
+    # establish for a recognised stick - a missing fingerprint is not a
+    # second reason to refuse it.
+    assert mystery["disabled"] is False
+    # Marked as unrecognised: a plain flag the row template turns into text,
+    # the same way `radiosThreadOptions()`'s `missing` flag above is not
+    # itself a sentence.
+    assert mystery["unrecognised"] is True
+    # The Advanced disclosure carries radio type and baud rate: it has
+    # something to prefill even for a stick the table has never heard of -
+    # `fingerprints.DEFAULT_UNKNOWN`'s own values (`radio_type="ezsp"`,
+    # `baudrate=115200`), not a blank form the user has to fill in from
+    # nothing.
+    assert mystery["fingerprint"]["radio_type"] == "ezsp"
+    assert mystery["fingerprint"]["baudrate"] == 115200
 
 
 @pytest.mark.skipif(NODE is None, reason="node is required for this test")
@@ -5289,7 +5324,7 @@ The row's markup must make the difference from its neighbours visible rather tha
 
 - [ ] **Step 3: Run to verify they pass.**
 
-- [ ] **Step 4: Prove each protection catches its fault.** Seven faults. FAIL, revert, PASS, both pasted.
+- [ ] **Step 4: Prove each protection catches its fault.** Eight faults. FAIL, revert, PASS, both pasted.
 
 - [ ] **Step 5: Check it in a browser.** Start the app and look at the Settings tab at the narrowest real card width, in **both** themes: the three rows read as three rows, the Thread stick is visibly disabled with its reason, and the Advanced disclosure opens without shifting the rows below it. Screenshot both themes into the task report. A test that renders markup cannot see a layout that collapses.
 
