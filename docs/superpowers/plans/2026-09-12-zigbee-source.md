@@ -3207,12 +3207,22 @@ async def test_zigbee_health_is_reported_as_its_own_signal():
 
 async def test_a_zigbee_radio_that_will_not_come_up_does_not_stop_the_bridge():
     """Matter is mandatory and Zigbee is not. `client.connect()` failing
-    still ends startup; this one is logged and the bridge runs on, with the
-    supervisor retrying forever in the background.
+    still ends startup; the Zigbee attempt runs as a background task, so a
+    failure there cannot reach `_run` at all — this one is only logged, and
+    the bridge runs on, with the supervisor retrying forever in the
+    background.
 
-    Fault to prove it: let `ZigbeeUnavailableError` propagate out of
-    `_run`. A bridge whose Zigbee stick fell out then refuses to start, and
-    every Matter device goes with it."""
+    Fault to prove it: drop the `try`/`except` from inside
+    `_connect_zigbee_at_startup`, around `await zigbee.connect()`.
+    Backgrounding already keeps a raised `ZigbeeUnavailableError` from
+    reaching `_run` — proving this fault means checking what happens to
+    `zigbee_connect_task` itself, not whether `_run` raises: with the guard
+    gone, the intended `logger.warning` about a non-fatal Zigbee startup
+    failure never fires, and the exception instead surfaces only as
+    asyncio's own "Task exception was never retrieved" — a real failure
+    that no longer names itself as Zigbee's. Assert on the logged warning
+    (or on `zigbee_connect_task.exception()` after yielding control back to
+    the loop), not on `_run` propagating anything."""
 
 
 async def test_the_quirks_warm_up_does_not_delay_the_web_ui():
@@ -3221,7 +3231,16 @@ async def test_the_quirks_warm_up_does_not_delay_the_web_ui():
     would be unreachable for the whole of it, every start - which the
     updater's own health wait would read as a failed update.
 
-    Fault to prove it: await `ensure_quirks_loaded()` before `attach`."""
+    Fault to prove it: await the startup `zigbee.connect()` call inline,
+    before `attach`, instead of starting it as a background task.
+    `connect()` begins by awaiting `ensure_quirks_loaded()` (Task 7), so
+    awaiting `connect()` itself reproduces the exact delay this test exists
+    to catch, even though the call sitting in `cli._run` is named
+    `connect()` rather than `ensure_quirks_loaded()`. A fake slow `setup`
+    passed through to `ensure_quirks_loaded` and measured against wall-clock
+    time is what turns this from a docstring into a real assertion: `_run`
+    must reach `attach`/`uvicorn.Config` before that fake `setup` resolves,
+    not after."""
 
 
 async def test_no_zigbee_work_happens_when_no_radio_is_configured():
@@ -3340,6 +3359,12 @@ async def test_the_availability_sweep_stops_on_disconnect():
     invoke = sources.send
 ```
 
+Declared beside the existing `supervisor_tasks: list[asyncio.Task[None]] = []` (same shape, same reason — a task with no other reference can be garbage-collected mid-flight):
+
+```python
+    zigbee_connect_task: asyncio.Task[None] | None = None
+```
+
 and, after `client.connect()` and before `attach`:
 
 ```python
@@ -3347,13 +3372,29 @@ and, after `client.connect()` and before `attach`:
             # NOT fatal, unlike matter-server: a missing or broken Zigbee
             # stick degrades the bridge, it never stops it. The supervisor
             # retries forever on its own 1 s -> 60 s backoff.
-            try:
-                await zigbee.connect()
-            except ZigbeeUnavailableError as exc:
-                logger.warning("Zigbee radio not available at startup: %s", exc)
+            #
+            # Started as a background task, NOT awaited: `connect()` begins
+            # by awaiting `ensure_quirks_loaded()` (Task 7), an estimated
+            # 9-15 s on a Raspberry Pi, and `attach()` tolerates a
+            # disconnected Zigbee source without complaint —
+            # `snapshots()`/`subscribe()` are called unconditionally and
+            # `snapshots()` still returns the device catalogue, with
+            # `available=False`, when the radio never came up (Task 7's own
+            # `test_snapshots_and_subscribe_tolerate_being_disconnected`).
+            # Nothing downstream needs this connect attempt to have
+            # finished before uvicorn serves, so awaiting it here would
+            # only be paying the same cost this task exists to keep off the
+            # startup path.
+            async def _connect_zigbee_at_startup() -> None:
+                try:
+                    await zigbee.connect()
+                except ZigbeeUnavailableError as exc:
+                    logger.warning("Zigbee radio not available at startup: %s", exc)
+
+            zigbee_connect_task = asyncio.ensure_future(_connect_zigbee_at_startup())
 ```
 
-The quirks warm-up is started as a background task, never awaited on the startup path — `ZigbeeSource.connect()` awaits it itself, so the ordering guarantee lives in one place and uvicorn is never held behind it.
+`attach`, `runtime.start()` and `uvicorn.Config`/`.serve()` all proceed immediately after `zigbee_connect_task` is created — none of them awaits it. `ZigbeeSource.connect()` is still the one and only place that awaits `ensure_quirks_loaded()`, so the ordering guarantee from Task 7 — quirks before any device object is built — still lives in exactly that one place; what moved here is only *when cli._run itself waits for `connect()` to finish*, which is now "never," the same way the supervisor's own reconnect attempts never make anything else wait for them either.
 
 **First, confirm (or apply) the correction to `src/loxmatter/zigbee/availability.py`.** Check whether `_check_one()`, `mark_all_offline()` and a `_devices_to_check()` helper already look like the code below — a follow-up fix may already have landed between Task 8 and this task running. If they do, this task touches nothing in that file and only adds the tests above, which pin the corrected behaviour down through `subscribe()`/`disconnect()`. If they do not, apply exactly this (it replaces `_is_mains_powered`'s use inside `_check_one` with a new, correctly-chosen predicate as well — a second, independent finding from the same review: `_check_one` was gating pings on `is_mains_powered`, but the bit that actually says whether a device is listening between its own transmissions is `is_receiver_on_when_idle`, a different bit of the same MAC capability byte):
 
