@@ -56,6 +56,7 @@ SYSTEM_TOOLS = (
     "readlink",
     "cksum",
     "timeout",
+    "ls",
 )
 
 DOCKER_STUB = r"""#!/bin/sh
@@ -433,7 +434,14 @@ def test_the_request_file_is_read_from_disk_exactly_once(radios):
     a pipe) - that would add no `cat` invocation at all. `jq` is stubbed the
     same logging way as `cat` (see JQ_STUB_TEMPLATE) precisely so this can
     also assert that $REQUEST's own path never reaches any stub - `jq`
-    included - except that single `cat` call."""
+    included - except that single `cat` call.
+
+    Remaining blind spot, not closed here: this only proves the ARGV shape
+    - a read via shell redirection (`jq ... < "$REQUEST"`, which never puts
+    the path on `jq`'s own argv at all) or through some other, unstubbed
+    tool would leave no trace in this log either way. A later reader should
+    not take this test as proving more than "no stubbed command's argument
+    list ever names $REQUEST except that one `cat` call"."""
     radios.env_file.write_text(
         radios.env_file.read_text().replace("/dev/ttyUSB0", f"/dev/serial/by-id/{SONOFF}")
     )
@@ -725,3 +733,132 @@ def test_a_failing_compose_call_is_rolled_back_too(radios):
         True,
     )
     assert radios.env_file.read_bytes() == before
+
+
+def test_an_unwritable_env_file_ends_the_write_step_terminal(radios):
+    """Fix round 1, Important: a write failure used to die under `set -eu`
+    right where it happened - env_set ran as a plain statement, not an `if`
+    condition the way the backup's own `cp` already was. Reproduced by the
+    reviewer: .env possibly already truncated by env_set's own
+    `cat > "$target"`, the pass dead before any write_state call, phase
+    left at "write" (not terminal), rolled_back still false, healthy null,
+    a stale .radios-tmp file, and a handled marker blocking any retry.
+
+    Fault to prove it: call `env_set` directly at the call sites instead of
+    through `env_set_or_fail` (i.e. do not check its return value) - a
+    write failure then has no guard to catch it."""
+    if os.geteuid() == 0:
+        pytest.skip("root ignores file permissions")
+    os.chmod(radios.env_file, 0o444)
+    try:
+        _request(radios)
+        _, calls, state = radios()
+    finally:
+        os.chmod(radios.env_file, 0o644)
+    assert (state["phase"], state["error"]) == ("failed", "env_write_failed")
+    assert state["rolled_back"] is False
+    assert not list(radios.env_file.parent.glob("*.radios-tmp"))
+    assert _mutating_docker_calls(calls) == []
+
+
+def test_a_failed_env_restore_ends_terminal_with_its_own_error_key(radios):
+    """Fix round 1, Important: the rollback's own restore
+    (`cat "$BACKUP" > "$(env_target)"`) was just as unguarded as the write
+    step above - a failure there died under `set -eu` with rolled_back
+    still false (it was only ever set AFTER a successful restore) even
+    though a rollback really was attempted, and no error key of its own to
+    tell it apart from whatever originally failed forward.
+
+    Fault to prove it: run the restore as a plain statement, with no
+    `if !` around it, the way the write step's own fault above is proved -
+    a failure there has no guard to catch it and no ROLLED=true recorded
+    before the attempt.
+
+    Makes `cat` fail specifically when reading a file shaped like a backup
+    (`.radios-` followed by a digit - env_set's own `.radios-tmp` rewrite
+    has a different, non-digit suffix and is left alone) so the backup
+    genuinely exists on disk (an ordinary, unguarded `cp` made it) and only
+    the restore's own read of it fails."""
+    (radios.bindir / "cat").write_text(
+        "#!/bin/sh\n"
+        'printf \'cat %s\\n\' "$*" >> "$STUB_LOG"\n'
+        'case "$*" in\n'
+        "  *.radios-[0-9]*) exit 1 ;;\n"
+        "esac\n"
+        f'exec {radios.real_cat} "$@"\n',
+        encoding="utf-8",
+    )
+    (radios.bindir / "cat").chmod(0o755)
+    (radios.fake / "thread_mode").write_text("never")
+    _request(radios)
+    _, _, state = radios()
+    assert (state["phase"], state["error"]) == ("failed", "env_restore_failed")
+    assert state["rolled_back"] is True
+    assert state["healthy"] is False
+    assert list(radios.env_file.parent.glob(".env.radios-*"))
+
+
+def test_old_backups_are_pruned_to_the_newest_five(radios):
+    """Fix round 1, cheap item 1: .env carries LOXMATTER_API_TOKEN (see
+    deploy/testhost/.env.example) and nothing pruned its own backups
+    before - every applying job left one behind forever.
+
+    Fault to prove it: drop the `ls -1t ... | tail -n +6 | ...` prune line
+    after the backup succeeds."""
+    old_backups = []
+    for i in range(7):
+        p = radios.env_file.parent / f".env.radios-{i:014d}"
+        p.write_text("old\n", encoding="utf-8")
+        os.utime(p, (1_000_000 + i, 1_000_000 + i))
+        old_backups.append(p)
+    (radios.sys_bluetooth / "hci1").mkdir()
+    radios.env_file.write_text(
+        radios.env_file.read_text().replace("/dev/ttyUSB0", f"/dev/serial/by-id/{SONOFF}")
+    )
+    _request(radios, bluetooth={"adapter": 1})
+    _, _, state = radios()
+    assert state["phase"] == "done"
+    remaining = set(radios.env_file.parent.glob(".env.radios-*"))
+    assert len(remaining) == 5
+    # The 3 oldest of the 7 pre-existing backups must be gone; the new
+    # backup this run just made is always the newest and must survive.
+    assert old_backups[0] not in remaining
+    assert old_backups[1] not in remaining
+    assert old_backups[2] not in remaining
+    assert old_backups[6] in remaining
+
+
+def test_a_both_radios_rollback_still_attempts_the_other_radio_when_one_fails(radios):
+    """Fix round 1, cheap item 2: apply_and_verify (the forward pass)
+    deliberately returns at the first failure, but reusing it for the
+    rollback pass too meant a request changing BOTH radios, where Thread's
+    forward verify failed, could leave otbr on the NEW stick forever if the
+    Bluetooth rollback (checked first) also failed - the function returned
+    before ever attempting Thread's own rollback.
+
+    Fault to prove it: call `apply_and_verify` for the rollback dispatch
+    instead of the best-effort `rollback_and_verify`.
+
+    A static matter_up flag cannot tell the forward verify call apart from
+    the rollback's own - both read the identical file - so this counts
+    curl's own invocations instead: the first (the forward verify) reports
+    matter-server up; every one after (the rollback's own re-verify)
+    reports it down."""
+    (radios.sys_bluetooth / "hci1").mkdir()
+    (radios.fake / "thread_mode").write_text("never")
+    (radios.bindir / "curl").write_text(
+        "#!/bin/sh\n"
+        'printf \'curl %s\\n\' "$*" >> "$STUB_LOG"\n'
+        f'n="$(cat "{radios.fake}/curl_calls" 2>/dev/null || echo 0)"\n'
+        f'echo $((n + 1)) > "{radios.fake}/curl_calls"\n'
+        '[ "$n" -eq 0 ] && exit 0\n'
+        "exit 7\n",
+        encoding="utf-8",
+    )
+    (radios.bindir / "curl").chmod(0o755)
+    _request(radios, bluetooth={"adapter": 1})
+    _, calls, state = radios()
+    assert (state["phase"], state["error"]) == ("failed", "verify_thread_failed")
+    assert state["healthy"] is False
+    assert len(_compose(calls, "up", "matter-server")) == 2
+    assert len(_compose(calls, "up", "otbr")) == 2

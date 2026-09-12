@@ -81,15 +81,44 @@ env_target() {
 # inode stay what the operator set up - the same care as set_tag() in
 # update-once.sh. Values reaching here passed validation: a by-id path
 # ([A-Za-z0-9._:+-]), a number, or a profile list built below.
+#
+# Returns non-zero (never dies under `set -eu`) on any failed step, and
+# cleans up its own `.radios-tmp` either way - env_set_or_fail below is
+# what turns a failure here into a terminal state. This runs as a plain
+# statement at every call site, not as an `if` condition the way the
+# backup's own `cp` already is - nothing here was ever exempt from `set -e`
+# before this guard, so an unwritable .env or an ENOSPC card used to take
+# the whole pass down mid-write instead of failing cleanly.
 env_set() {
   target="$(env_target)"
   if grep -q "^$1=" "$target" 2>/dev/null; then
     escaped="$(printf '%s' "$2" | sed 's/[\\&|]/\\&/g')"
-    sed "s|^$1=.*|$1=$escaped|" "$target" > "$target.radios-tmp"
-    cat "$target.radios-tmp" > "$target"
+    if ! sed "s|^$1=.*|$1=$escaped|" "$target" > "$target.radios-tmp"; then
+      rm -f "$target.radios-tmp"
+      return 1
+    fi
+    if ! cat "$target.radios-tmp" > "$target"; then
+      rm -f "$target.radios-tmp"
+      return 1
+    fi
     rm -f "$target.radios-tmp"
   else
-    printf '%s=%s\n' "$1" "$2" >> "$target"
+    printf '%s=%s\n' "$1" "$2" >> "$target" || return 1
+  fi
+}
+
+# Every env_set call site below goes through here, so a write failure ends
+# in a terminal, retryable-next-time state instead of dying mid-write with
+# no write_state call and no log line - the exact gap a reviewer
+# reproduced: .env possibly already truncated by env_set's own
+# `cat > "$target"`, the phase left at "write" (not terminal), rolled_back
+# still false (it is only ever set once a restore is attempted), and a
+# handled marker that would block any retry of the same request forever.
+env_set_or_fail() {
+  if ! env_set "$1" "$2"; then
+    write_state failed env_write_failed
+    log "radios request $JOB_ID: could not write $1 to .env"
+    exit 0
   fi
 }
 
@@ -355,15 +384,28 @@ if ! cp "$(env_target)" "$BACKUP"; then
   exit 0
 fi
 
+# Keep only the newest 5: .env carries LOXMATTER_API_TOKEN (see
+# deploy/testhost/.env.example), and nothing here ever pruned its own
+# backups before - every applying job leaves one behind, an SD card that
+# already fills up one update at a time (update-once.sh's own backup
+# prune) would fill up one radios change at a time too, each copy carrying
+# a live secret nothing since ever removed. Same shape as that prune, one
+# filename per line piped through `rm`.
+# shellcheck disable=SC2012  # $(env_target).radios-* is stamped by this
+# same line above, never attacker- or user-supplied, so sorting by mtime
+# via `ls -t` is safe here the way it is not in general - see
+# update-once.sh's identical backup prune for the full reasoning.
+ls -1t "$(env_target)".radios-* 2>/dev/null | tail -n +6 | while read -r old; do rm -f "$old"; done
+
 write_state write ""
 if [ "$THREAD_ACTION" = up ]; then
-  env_set RADIO_DEVICE "$WANT_DEVICE"
-  env_set COMPOSE_PROFILES "$(profiles_with_thread on)"
-  if [ -z "$(env_value RADIO_BAUDRATE)" ]; then env_set RADIO_BAUDRATE 460800; fi
+  env_set_or_fail RADIO_DEVICE "$WANT_DEVICE"
+  env_set_or_fail COMPOSE_PROFILES "$(profiles_with_thread on)"
+  if [ -z "$(env_value RADIO_BAUDRATE)" ]; then env_set_or_fail RADIO_BAUDRATE 460800; fi
 elif [ "$THREAD_ACTION" = down ]; then
-  env_set COMPOSE_PROFILES "$(profiles_with_thread off)"
+  env_set_or_fail COMPOSE_PROFILES "$(profiles_with_thread off)"
 fi
-if [ "$BLUETOOTH_CHANGE" = true ]; then env_set BLUETOOTH_ADAPTER "$WANT_BLUETOOTH"; fi
+if [ "$BLUETOOTH_CHANGE" = true ]; then env_set_or_fail BLUETOOTH_ADAPTER "$WANT_BLUETOOTH"; fi
 
 verify_bluetooth() {
   waited=0
@@ -432,6 +474,39 @@ apply_and_verify() {
   return 0
 }
 
+# The rollback's own pass, unlike apply_and_verify just above, must not
+# stop at the first failure: a request changing BOTH radios whose Thread
+# verify failed still has a Bluetooth rollback to attempt (or the reverse)
+# - returning early after one side's rollback fails would leave the OTHER
+# radio recreated against the values that just failed verification, while
+# .env (already restored, further down, before this ever runs) names the
+# OLD value for both - .env and the running containers would then disagree
+# about which radio is which. Attempts every touched service regardless of
+# an earlier one's own outcome, and reports failure if ANY of them did, not
+# just the last one tried.
+rollback_and_verify() {
+  ok=true
+  if [ "$BLUETOOTH_CHANGE" = true ]; then
+    step apply_bluetooth
+    if compose up -d --no-deps --force-recreate matter-server; then
+      step verify_bluetooth
+      verify_bluetooth || ok=false
+    else
+      ok=false
+    fi
+  fi
+  if [ "$THREAD_ACTION" != none ]; then
+    step apply_thread
+    if apply_thread "$THREAD_ACTION"; then
+      step verify_thread
+      verify_thread "$THREAD_ACTION" || ok=false
+    else
+      ok=false
+    fi
+  fi
+  [ "$ok" = true ]
+}
+
 if apply_and_verify; then
   HEALTHY=true
   write_state done ""
@@ -442,10 +517,18 @@ fi
 ERROR_KEY="${FAILED_STEP}_failed"
 log "radios request $JOB_ID: $FAILED_STEP failed - restoring $BACKUP"
 write_state rollback "$ERROR_KEY"
-cat "$BACKUP" > "$(env_target)"
+# Set BEFORE the restore is attempted, not after: a restore that itself
+# fails (below) is still a rollback that was ATTEMPTED, and rolled_back
+# must say so rather than default back to whatever it was before this job.
 ROLLED=true
+if ! cat "$BACKUP" > "$(env_target)"; then
+  HEALTHY=false
+  write_state failed env_restore_failed
+  log "radios request $JOB_ID: could not restore .env from $BACKUP"
+  exit 0
+fi
 ROLLING=true
 THREAD_ACTION="$ROLLBACK_THREAD"
-if apply_and_verify; then HEALTHY=true; else HEALTHY=false; fi
+if rollback_and_verify; then HEALTHY=true; else HEALTHY=false; fi
 write_state failed "$ERROR_KEY"
 log "radios request $JOB_ID rolled back, healthy after rollback: $HEALTHY"
