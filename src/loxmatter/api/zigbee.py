@@ -383,14 +383,31 @@ def build_zigbee_router(
 
         Read per request, never captured: a radio change builds a NEW
         `ZigbeeSource`, and between the teardown and the rebuild there is
-        none at all (`ZigbeeRuntime._swap`). Both of those are honestly a
-        "there is no Zigbee radio right now" - which is what this answers,
-        with the status the rest of the bridge already uses for an
-        unconfigured source."""
+        none at all (`ZigbeeRuntime._swap`). Both are honestly "there is no
+        Zigbee radio right now", with the status the rest of the bridge
+        already uses for an unconfigured source - but they are not the same
+        sentence. In the swap window the user has just picked a stick, and
+        the pairing tab is only on screen because one is set up; telling
+        them to "pick one under Settings first" there would be false.
+        `ZigbeeRuntime.progress()` reports `applying` for exactly that
+        window, and it is what tells the two apart."""
         source = zigbee_runtime.current()
         if source is None:
+            if zigbee_runtime.progress().state == "applying":
+                raise HTTPException(status_code=503, detail=i18n.t("api.zigbee.radio_changing"))
             raise HTTPException(status_code=503, detail=i18n.t("api.errors.zigbee_not_configured"))
         return source
+
+    def _require_still_live(source: ZigbeeSource) -> None:
+        """A 503 if `source` stopped being the live one during an `await`.
+
+        A radio change releases the old source without clearing its rows -
+        the devices did not go anywhere - so a row check against the source
+        a request started with still passes after the swap has taken it
+        away. Anything written after an `await` has to ask this first."""
+        if zigbee_runtime.current() is not source:
+            _require_source()
+            raise HTTPException(status_code=503, detail=i18n.t("api.zigbee.radio_changing"))
 
     def _require_row(source: ZigbeeSource, ieee: str) -> PairingRow:
         """The pairing row this request is about.
@@ -406,6 +423,22 @@ def build_zigbee_router(
                 return row
         raise HTTPException(status_code=404, detail=i18n.t("api.zigbee.unknown_device"))
 
+    def _require_ready_row(source: ZigbeeSource, ieee: str) -> PairingRow:
+        """The row, and a 409 unless its STORED state is `"ready"`.
+
+        The stored `PairingRow.state`, not the status the tab displays: a
+        row displayed as "configuring" or "waiting_wake" is stored as
+        "ready" and may be named - a sleeping sensor can wait days for the
+        wake-up that clears its last pending cluster, and refusing its name
+        for that long would be absurd. What is refused is a row that has
+        gone back to "joined", "interviewing" or "failed": registering
+        then would store whatever half an interview produced, a device tile
+        with no signals and no way to tell why."""
+        row = _require_row(source, ieee)
+        if row.state != "ready":
+            raise HTTPException(status_code=409, detail=i18n.t("api.zigbee.not_ready_yet"))
+        return row
+
     @router.post("/zigbee/permit")
     async def open_join_window(body: ZigbeePermitIn) -> dict[str, object]:
         """Opens the network for new devices - or, with a duration of 0,
@@ -420,7 +453,16 @@ def build_zigbee_router(
         window that closed minutes ago.
 
         `permit_until` is `null` when no window is open: after a Stop, and
-        after a duration that has already elapsed."""
+        after a duration that has already elapsed.
+
+        **A Stop that finds nothing open is not an error.** After a lost
+        link the window has already closed with the radio
+        (`ZigbeeSource._close_window`), so the Stop the tab sends every time
+        the user leaves it has nothing left to do - and answering it with
+        "could not be opened" would put an error in front of the user on
+        every tab change after one radio blip. A Stop that fails while a
+        window IS still recorded as open stays a 502: the coordinator may
+        still be letting devices in, and that is worth saying."""
         source = _require_source()
 
         async def _permit() -> None:
@@ -435,6 +477,8 @@ def build_zigbee_router(
             # costs here.
             await bounded_source_call(_permit())
         except DeviceUnreachableError as exc:
+            if body.duration == 0 and source.permit_until() is None:
+                return {"permit_until": None}
             raise HTTPException(
                 status_code=502, detail=i18n.t("api.zigbee.permit_failed", exc=str(exc))
             ) from exc
@@ -558,24 +602,34 @@ def build_zigbee_router(
         `register_device` before `register_signals` before
         `register_commands`, the same order the Matter commissioning route
         and the CLI export use, because the last two need the freshly
-        assigned id. `set_room` afterwards and unconditionally, for the
-        reason that route gives: `register_device`'s own `room` argument
-        only takes effect on a newly inserted row, and a room chosen for a
-        device that is already known would otherwise be discarded without
-        comment.
+        assigned id. `set_room` afterwards whenever a room was sent - for
+        a device the store already knows too, and that is the point of it:
+        `register_device`'s own `room` argument only takes effect on a
+        newly inserted row, so a second save that moves an adopted device
+        would otherwise be discarded without comment. A save that sends no
+        room leaves the room alone, the `PATCH /api/devices/{id}`
+        convention.
 
         The values follow through `follow`, which is what reaches
-        `Runtime.on_node_snapshot` and creates the signal rows - with
-        `seed_even_without_new_paths`, or a device whose paths are all
-        already known would get rows and no numbers in them."""
+        `Runtime.on_node_snapshot`. `seed_even_without_new_paths` makes that
+        a whole snapshot even for a device whose every path has been
+        delivered before - which only a SECOND save of an already adopted
+        device can be. On a first adoption nothing has been delivered yet
+        (the source drops every update for a device the store does not
+        know), so a snapshot goes out with or without the flag.
+
+        **The row is checked twice: before the snapshot read and after it.**
+        The read is an `await`, and for a colour lamp whose capabilities
+        are not cached it is a real round trip to the device - time in
+        which the device can be removed from another tab, rejoin and fall
+        back to "joined", or lose its radio to a swap. Everything written
+        to the store below is written only once the second check has
+        passed, with no `await` between that check and the last store
+        write. Without it, a removal during the read left a registered
+        device no route could remove, in exactly the three places this
+        route exists to keep an unnamed device out of."""
         source = _require_source()
-        row = _require_row(source, ieee)
-        if row.state != "ready":
-            # A stale tab pressing save on a row that has since regressed -
-            # a reinterview, a failure. Registering then would store a
-            # device with whatever half an interview produced, which is a
-            # device tile with no signals and no way to tell why.
-            raise HTTPException(status_code=409, detail=i18n.t("api.zigbee.not_ready_yet"))
+        _require_ready_row(source, ieee)
         found: list[NodeSnapshot] = []
 
         async def _read() -> None:
@@ -590,6 +644,11 @@ def build_zigbee_router(
         if not found:
             raise HTTPException(status_code=404, detail=i18n.t("api.zigbee.unknown_device"))
         snapshot = found[0]
+        # The second look, after the await - see the docstring. From here to
+        # `register_commands` there is no `await`, so nothing can change the
+        # row between this check and the writes it guards.
+        _require_still_live(source)
+        _require_ready_row(source, ieee)
 
         device_id = store.register_device(snapshot, room=patch.room)
         if patch.name is not None:
@@ -609,6 +668,10 @@ def build_zigbee_router(
             logger.exception(
                 "could not seed the signals of the freshly adopted Zigbee device %s", ieee
             )
+        # Read-only from here on. A removal that lands during `follow` finds
+        # the device already registered and forgets it in the store itself
+        # (the DELETE route reads the device id AFTER its own await), so the
+        # 404 this lookup then raises describes a device that is really gone.
         configuring = source.configuring_addresses()
         pending = store.zigbee_pending.addresses_with_pending()
         return _row_out(

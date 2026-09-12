@@ -35,6 +35,7 @@ import httpx2 as httpx
 import pytest
 from conftest import authenticate
 
+from loxmatter import i18n
 from loxmatter.loxone.server import build_app
 from loxmatter.matter.models import NodeSnapshot
 from loxmatter.model.store import Store
@@ -1580,6 +1581,377 @@ async def test_a_row_that_is_gone_is_a_404_rather_than_a_silent_success(pairing)
     patched = await client.patch(f"/api/zigbee/pairing/{missing}", json={"name": "Ghost"})
     assert patched.status_code == 404
     assert patched.json()["detail"]
+
+
+# ------------------------------------- what can change while a name is saved --
+#
+# The adopt route checks the row, then AWAITS the device's snapshot, then
+# writes the store. That await is not a formality: a colour lamp whose
+# `ColorCapabilities` are not cached yet sends a real ZCL read to the air
+# inside it (`ZigbeeSource._read_colour_capabilities`), which takes as long
+# as the device takes to answer. Anything the check established can stop
+# being true in that time, and these tests hold the read open - through the
+# real routes, with the real source - while it does.
+
+COLOR_CONTROL_CLUSTER = 0x0300
+COLOR_CAPABILITIES_ATTRIBUTE = 0x400A
+COLOUR_LAMP_IEEE = "00:17:88:01:0b:cc:dd:ee"
+
+
+class _HeldColourCluster(_StubCluster):
+    """A Color Control cluster with `ColorCapabilities` DECLARED but not yet
+    cached, so the source asks the device for it - and a read that does not
+    answer until the test says so.
+
+    zigpy's `Cluster.read_attributes` is a network round trip; `reading` is
+    set the moment it starts and `answer` is what ends it. Waiting on
+    `reading` rather than on a count of `sleep(0)` rounds is what guarantees
+    the interference below lands INSIDE the await rather than before or
+    after it."""
+
+    def __init__(self) -> None:
+        super().__init__(COLOR_CONTROL_CLUSTER, {COLOR_CAPABILITIES_ATTRIBUTE: None})
+        self.reading = asyncio.Event()
+        self.answer = asyncio.Event()
+
+    async def read_attributes(self, attributes: list[int], **kwargs: Any) -> Any:
+        self.reading.set()
+        await self.answer.wait()
+        return {}, {}
+
+
+def _colour_lamp() -> tuple[_StubDevice, _HeldColourCluster]:
+    held = _HeldColourCluster()
+    lamp = _StubDevice(
+        COLOUR_LAMP_IEEE,
+        manufacturer="Signify Netherlands B.V.",
+        model="LCA001",
+        endpoints=[
+            _StubEndpoint(
+                11,
+                device_type=0x010D,
+                clusters=[_StubCluster(ON_OFF_CLUSTER, {ON_OFF_ATTRIBUTE: True}), held],
+            )
+        ],
+    )
+    return lamp, held
+
+
+async def _save_a_name_while(
+    client: httpx.AsyncClient, held: _HeldColourCluster, interfere: Any
+) -> tuple[list[str], httpx.Response]:
+    """Sends the name, runs `interfere` while the snapshot read is open, then
+    lets the read answer. Returns the order things happened in, so a test can
+    assert the interleaving it claims actually occurred."""
+    order: list[str] = []
+    saving = asyncio.ensure_future(
+        client.patch(f"/api/zigbee/pairing/{COLOUR_LAMP_IEEE}", json={"name": "Lamp"})
+    )
+    await asyncio.wait_for(held.reading.wait(), timeout=5)
+    order.append("read started")
+    await interfere()
+    order.append("interfered")
+    # The proof the interference landed inside the await: the save has not
+    # answered yet, and cannot, until the read does.
+    assert not saving.done(), "the save finished before the interference - nothing interleaved"
+    held.answer.set()
+    response = await asyncio.wait_for(saving, timeout=5)
+    order.append("save answered")
+    return order, response
+
+
+def _zigbee_devices(store: Store) -> list[Any]:
+    return [device for device in store.devices() if device.technology == "zigbee"]
+
+
+async def test_a_device_removed_while_its_name_is_being_saved_is_not_adopted(pairing):
+    """Remove pressed in a second tab while the first tab's save is reading
+    the device.
+
+    Without a second look at the row after the read, the save went on to
+    register a device the radio had already forgotten: DELETE answered 204,
+    the save answered 404, and the store still held the lamp. That device
+    reached the device list, the export and Loxone - the three places the
+    adopt route exists to keep an unnamed device out of - and could not be
+    removed from either tab: `DELETE /api/devices/{id}` asks the source
+    first, and the source answers "unknown Zigbee device".
+
+    Fault to prove it: drop the re-check of the row after `snapshot_for`."""
+    client, harness = pairing
+    lamp, held = _colour_lamp()
+    harness.app.device_initialized(lamp)
+    assert (await _rows(client))[COLOUR_LAMP_IEEE]["state"] == "ready"
+
+    removals: list[int] = []
+
+    async def remove_from_another_tab() -> None:
+        removals.append(
+            (await client.delete(f"/api/zigbee/pairing/{COLOUR_LAMP_IEEE}")).status_code
+        )
+
+    order, response = await _save_a_name_while(client, held, remove_from_another_tab)
+
+    assert order == ["read started", "interfered", "save answered"]
+    assert removals == [204]
+    assert response.status_code == 404, response.text
+    assert _zigbee_devices(harness.store) == [], "an orphan nothing can remove"
+    assert harness.store.device_id_for("zigbee", COLOUR_LAMP_IEEE) is None
+    assert harness.runtime.snapshots == [], "an orphan was seeded into the runtime"
+    assert await _rows(client) == {}
+
+
+async def test_a_device_that_rejoins_while_its_name_is_being_saved_is_refused(pairing):
+    """The device rejoins under a new short address while the save is
+    reading it. zigpy answers that with `device_joined` and a fresh
+    interview (`ControllerApplication.handle_join`, zigpy 2.2.0), so the row
+    is back at "joined" by the time the read returns.
+
+    Without the second look, the save registered it anyway and answered 200
+    with `"state": "joined"` in its own body - the half-interviewed
+    registration the 409 exists to refuse, let through by nothing more than
+    timing.
+
+    Fault to prove it: re-check that the row still exists, but not that it
+    is still ready."""
+    client, harness = pairing
+    lamp, held = _colour_lamp()
+    harness.app.device_initialized(lamp)
+    assert (await _rows(client))[COLOUR_LAMP_IEEE]["state"] == "ready"
+
+    async def rejoin() -> None:
+        lamp.nwk = 0x7A11
+        harness.app.join(lamp)
+
+    order, response = await _save_a_name_while(client, held, rejoin)
+
+    assert order == ["read started", "interfered", "save answered"]
+    assert response.status_code == 409, response.text
+    assert _zigbee_devices(harness.store) == []
+    assert harness.runtime.snapshots == []
+    assert (await _rows(client))[COLOUR_LAMP_IEEE]["state"] == "joined"
+
+
+async def test_a_radio_released_while_a_name_is_being_saved_adopts_nothing(pairing):
+    """The radio setting is cleared while the save is reading the device.
+
+    The rows survive a `disconnect()` on purpose - the devices did not go
+    anywhere - so the row check alone passes on the released source, and the
+    save would register a device off a stick the bridge has just let go of.
+    The live source is read again after the await, and a source that is no
+    longer the live one adopts nothing.
+
+    Fault to prove it: re-check the row against the source captured before
+    the await, without asking whether it is still the live one."""
+    client, harness = pairing
+    lamp, held = _colour_lamp()
+    harness.app.device_initialized(lamp)
+
+    async def clear_the_radio_setting() -> None:
+        harness.holder.apply(settings_for_path(None, []))
+        await harness.holder.wait_for_apply()
+        assert harness.holder.current() is None
+
+    order, response = await _save_a_name_while(client, held, clear_the_radio_setting)
+
+    assert order == ["read started", "interfered", "save answered"]
+    assert response.status_code == 503, response.text
+    assert _zigbee_devices(harness.store) == []
+    assert harness.runtime.snapshots == []
+
+
+async def test_a_ready_row_is_never_stuck_however_long_it_waits_for_a_name(pairing):
+    """A "ready" row is waiting for the USER, not for the device, and design
+    3.1's stall thresholds are about the device. A lamp that finished its
+    interview before lunch and is named after it has not stopped
+    progressing; calling it stuck would put Retry next to a device that
+    needs nothing and invite a pointless re-interview.
+
+    The same holds for the two states overlaid onto a ready row: a
+    configuration pass and a cluster owed to a sleeping device have clocks
+    of their own, and neither is a stalled interview.
+
+    Fault to prove it: let `_stuck` apply to a ready row as well. The input
+    that tells the two apart is a ready row older than BOTH thresholds."""
+    client, harness = pairing
+    ready = _lamp("00:12:4b:00:1c:00:00:61")
+    configuring = _lamp("00:12:4b:00:1c:00:00:62")
+    waiting = _StubDevice("00:15:8d:00:02:00:00:63", mains=False)
+    for device in (ready, configuring, waiting):
+        harness.app.device_initialized(device)
+    harness.source._configuring.add(configuring.ieee)
+    harness.store.zigbee_pending.mark_pending(waiting.ieee, 1, ON_OFF_CLUSTER)
+
+    long_ago = (datetime.now(UTC) - timedelta(seconds=600)).isoformat(timespec="microseconds")
+    harness.source._pairing = {
+        ieee: replace(row, changed_at=long_ago) for ieee, row in harness.source._pairing.items()
+    }
+
+    rows = await _rows(client)
+    assert rows[ready.ieee]["state"] == "ready"
+    assert rows[configuring.ieee]["state"] == "configuring"
+    assert rows[waiting.ieee]["state"] == "waiting_wake"
+
+
+async def test_a_device_with_no_node_descriptor_yet_waits_the_battery_threshold(pairing):
+    """zigpy emits `device_joined` BEFORE it has asked the device anything
+    (`handle_join` fires the event, then `schedule_initialize()`), so a row
+    that is still "joined" belongs to a device whose `node_desc` is `None` -
+    whether it is a mains lamp or a sleeping sensor is not known yet.
+
+    Not known is treated as battery powered: the longer threshold. Guessing
+    mains would declare a sleepy sensor stuck 30 s before it deserves it,
+    on the one row where the user cannot yet tell which kind it is.
+
+    Fault to prove it: read a missing node descriptor as mains powered. At
+    75 s - past the mains threshold, short of the battery one - the row then
+    shows "stuck"."""
+    client, harness = pairing
+    unknown = _StubDevice("00:15:8d:00:02:00:00:71", manufacturer="", model="")
+    unknown.node_desc = None  # type: ignore[assignment]
+    harness.app.join(unknown)
+    assert harness.source._pairing[unknown.ieee].is_mains_powered is False
+
+    stalled = (datetime.now(UTC) - timedelta(seconds=75)).isoformat(timespec="microseconds")
+    harness.source._pairing[unknown.ieee] = replace(
+        harness.source._pairing[unknown.ieee], changed_at=stalled
+    )
+    assert (await _rows(client))[unknown.ieee]["state"] == "joined"
+
+    long_stalled = (datetime.now(UTC) - timedelta(seconds=95)).isoformat(timespec="microseconds")
+    harness.source._pairing[unknown.ieee] = replace(
+        harness.source._pairing[unknown.ieee], changed_at=long_stalled
+    )
+    assert (await _rows(client))[unknown.ieee]["state"] == "stuck"
+
+
+async def test_saving_a_room_again_moves_a_device_that_is_already_adopted(pairing):
+    """A second save on a row that is already one of the bridge's own - the
+    tab keeps the name and room fields on it. `register_device` returns the
+    known id WITHOUT touching the row, its `room` argument included, so the
+    new room is written by `set_room` or not at all.
+
+    And a save that sends no room leaves the room alone: `None` is
+    "unchanged", the convention `PATCH /api/devices/{id}` already uses.
+
+    Fault to prove it: skip `set_room` for a device the store already knows
+    - the room then stays "Study" - or call it with `None` as well, which
+    clears it."""
+    client, harness = pairing
+    harness.app.device_initialized(_lamp())
+    first = await client.patch(
+        f"/api/zigbee/pairing/{LAMP_IEEE}", json={"name": "Reading lamp", "room": "Study"}
+    )
+    device_id = first.json()["device_id"]
+
+    moved = await client.patch(f"/api/zigbee/pairing/{LAMP_IEEE}", json={"room": "Kitchen"})
+
+    assert moved.status_code == 200, moved.text
+    assert moved.json()["device_id"] == device_id
+    assert harness.store.device(device_id).room == "Kitchen"
+    assert harness.store.device(device_id).label == "Reading lamp"
+
+    renamed = await client.patch(f"/api/zigbee/pairing/{LAMP_IEEE}", json={"name": "Desk lamp"})
+
+    assert renamed.status_code == 200, renamed.text
+    assert harness.store.device(device_id).room == "Kitchen"
+    assert harness.store.device(device_id).label == "Desk lamp"
+
+
+async def test_stop_after_the_link_was_lost_is_not_an_error(pairing):
+    """Stop, sent after the stick went away underneath an open window.
+
+    The window closed with the radio (`_close_window`), so there is nothing
+    to stop - and the pairing tab sends Stop every time the user leaves it.
+    A 502 "could not be opened" here would put an error in front of the user
+    on every tab change after one radio blip, about a window that is
+    already shut. The honest answer is the one a successful Stop gives.
+
+    Fault to prove it: let a failed Stop answer 502 like a failed open.
+
+    The rule is "nothing is open", not "Stop never fails": a Stop the radio
+    does not acknowledge while a window IS still open is still a 502,
+    because the coordinator may still be letting devices in. Fault for that
+    half: answer every Stop with 200."""
+    client, harness = pairing
+    await client.post("/api/zigbee/permit", json={"duration": 254})
+    harness.app.permit_error = TimeoutError()
+
+    unacknowledged = await client.post("/api/zigbee/permit", json={"duration": 0})
+
+    assert unacknowledged.status_code == 502, unacknowledged.text
+    assert (await client.get("/api/zigbee/pairing")).json()["permit_until"] is not None
+
+    harness.app.permit_error = None
+    harness.app.listener_event("connection_lost", OSError("link lost"))
+    await asyncio.sleep(0)
+
+    stopped = await client.post("/api/zigbee/permit", json={"duration": 0})
+
+    assert stopped.status_code == 200, stopped.text
+    assert stopped.json() == {"permit_until": None}
+
+
+async def test_a_window_that_cannot_be_opened_says_so_in_one_clean_sentence(pairing):
+    """The refusal after a lost link carries the source's own sentence, which
+    already ends in a full stop and already says the bridge is reconnecting.
+    The wrapper used to add a second full stop and say "reconnecting" a
+    second time, in both languages.
+
+    Fault to prove it: put the old wrapper text back."""
+    client, harness = pairing
+    harness.app.listener_event("connection_lost", OSError("link lost"))
+    await asyncio.sleep(0)
+
+    english = (await client.post("/api/zigbee/permit", json={"duration": 254})).json()["detail"]
+    harness.store.locale.set_language("de")
+    german = (await client.post("/api/zigbee/permit", json={"duration": 254})).json()["detail"]
+
+    assert ".." not in english, english
+    assert ".." not in german, german
+    assert english.lower().count("reconnect") == 1, english
+    assert german.count("Brücke") == 1, german
+
+
+async def test_the_swap_window_says_the_radio_is_changing_not_that_none_is_set_up(pairing):
+    """During a radio change there is briefly no source at all: the old one
+    is being shut down, and the new one may still be waiting up to 5 s for
+    the Thread channel. Every pairing route answers 503 in that window, and
+    it used to say "No Zigbee stick is set up... Pick one under Settings" -
+    inside a tab that is only visible BECAUSE a stick is set up, to a user
+    who has just picked one.
+
+    `ZigbeeRuntime.progress()` already tells the two apart with `applying`;
+    this is the same distinction in the pairing routes' words.
+
+    Fault to prove it: answer the not-configured message whenever there is
+    no source."""
+    client, harness = pairing
+    shutting_down = asyncio.Event()
+    finish_shutdown = asyncio.Event()
+
+    async def slow_shutdown(*, db: bool = True) -> None:
+        shutting_down.set()
+        await finish_shutdown.wait()
+
+    harness.app.shutdown = slow_shutdown  # type: ignore[method-assign]
+    harness.holder.apply(settings_for_path(None, []))
+    await asyncio.wait_for(shutting_down.wait(), timeout=5)
+    assert harness.holder.current() is None
+    assert harness.holder.progress().state == "applying"
+
+    swapping = await client.get("/api/zigbee/pairing")
+
+    finish_shutdown.set()
+    await harness.holder.wait_for_apply()
+    assert harness.holder.progress().state == "idle"
+
+    unconfigured = await client.get("/api/zigbee/pairing")
+
+    assert swapping.status_code == 503, swapping.text
+    assert unconfigured.status_code == 503, unconfigured.text
+    assert swapping.json()["detail"] == i18n.t("api.zigbee.radio_changing")
+    assert unconfigured.json()["detail"] == i18n.t("api.errors.zigbee_not_configured")
+    assert swapping.json()["detail"] != unconfigured.json()["detail"]
 
 
 async def test_the_pairing_routes_need_a_login(tmp_path, no_invoke):

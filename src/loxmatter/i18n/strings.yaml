@@ -526,13 +526,21 @@ api.errors.zigbee_not_configured:
 # user's next move is, because each sends them somewhere different: to the
 # radios card, back to the list, or simply to wait a moment.
 api.zigbee.permit_failed:
-  # The radio was asked to open the network and did not answer. The
-  # supervisor is already reconnecting, so the advice is to wait rather
-  # than to change anything - and {exc} carries the radio's own words,
-  # which is the only thing that separates a busy stick from an absent one
-  # in a bug report.
-  en: "The network could not be opened for new devices: {exc}. The bridge is reconnecting to the stick; try again in a moment."
-  de: "Das Netz konnte nicht für neue Geräte geöffnet werden: {exc}. Die Brücke verbindet sich gerade neu mit dem Stick; versuche es gleich noch einmal."
+  # The radio was asked to open the network and did not answer. {exc}
+  # carries the source's own sentence, which is the only thing that
+  # separates a busy stick from an absent one in a bug report - and it goes
+  # LAST, with nothing after it: some of those sentences end in a full stop
+  # and some do not, and the lost-link one already says the bridge is
+  # reconnecting. Text after {exc} doubled both.
+  en: "The network could not be opened for new devices. Reason: {exc}"
+  de: "Das Netz konnte nicht für neue Geräte geöffnet werden. Grund: {exc}"
+api.zigbee.radio_changing:
+  # The 503 of the pairing routes while a radio change is in flight - the
+  # old source released, the new one not built yet. NOT the "no stick is set
+  # up" sentence: the user has just picked a stick, and the pairing tab is
+  # only on screen because one is set up.
+  en: "The Zigbee radio is being changed. Wait a moment, then reload the page."
+  de: "Das Zigbee-Funkmodul wird gerade gewechselt. Warte einen Moment und lade die Seite dann neu."
 api.zigbee.unknown_device:
   # A row that is no longer there: the device was removed from another tab,
   # or the radio was swapped and took every row with it. Reloading is the

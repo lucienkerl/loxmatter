@@ -557,7 +557,7 @@ class ZigbeeSource:
         # four minutes on a network that is shut.
         self._permit_lock = asyncio.Lock()
         # Every address `_configure_then_deliver` is currently running
-        # configure-on-join for. Task 12's pairing route overlays
+        # configure-on-join for. The pairing route in `api/zigbee.py` overlays
         # "configuring" onto a "ready" row for exactly these addresses
         # (design 3.1's table) - nothing else needs to know about this set.
         self._configuring: set[str] = set()
@@ -1326,6 +1326,16 @@ class ZigbeeSource:
             app = self._require_app()
             with _as_device_error():
                 await app.permit(time_s=seconds)
+            # The link is looked at AGAIN after the await. bellows resolves
+            # the command's future when the NCP's answer arrives, and this
+            # coroutine resumes one loop iteration later - so a
+            # `connection_lost` (or a `disconnect()` for a radio swap) can
+            # run in between, close the window, and be undone by the write
+            # below: a countdown on a dead radio, and a join grace no
+            # coordinator is holding. The radio that answered is gone, so
+            # the window it opened is gone with it.
+            if self._app is not app or not self._connected:
+                raise DeviceUnreachableError(i18n.t("api.errors.zigbee_not_connected"))
             until = datetime.now(UTC) + timedelta(seconds=seconds)
             # Kept even for a Stop, and even once it is in the past: the end
             # of the LAST window is what `_join_came_from_a_window` measures
@@ -1447,8 +1457,8 @@ class ZigbeeSource:
             logger.exception("delivery of a freshly joined Zigbee device failed")
 
     def configuring_addresses(self) -> frozenset[str]:
-        """Every address currently mid configure-on-join, for Task 12's
-        pairing route to overlay onto a `"ready"` row. A snapshot, not a
+        """Every address currently mid configure-on-join, for the pairing
+        route in `api/zigbee.py` to overlay onto a `"ready"` row. A snapshot, not a
         live view: the set backing it can change under the caller between
         one call and the next, which is fine - a request that catches the
         tail end of a configuration pass and reports "ready" a beat early

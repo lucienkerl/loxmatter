@@ -1341,6 +1341,54 @@ async def test_two_overlapping_permits_leave_the_window_agreeing_with_the_radio(
     assert harness.source.permit_until() is None, "the tab would count down on a shut network"
 
 
+async def test_a_permit_the_radio_answers_after_the_link_was_lost_opens_no_window(build) -> None:
+    """The link is lost while `app.permit` is still in flight, and the call
+    then returns normally anyway.
+
+    Reachable, not theoretical: bellows resolves the command's future when
+    the NCP's answer frame arrives, and the coroutine waiting on it resumes
+    one loop iteration LATER - so a `connection_lost` handled in between
+    runs first. It closes the window (`_close_window`), and a `permit()`
+    that wrote its end time afterwards reopened it on a dead radio: the tab
+    counted down four minutes, and the first device to appear after the
+    reconnect was credited to a window no coordinator was holding.
+
+    Fault to prove it: write the end time without looking at the link again
+    after the await."""
+    harness = build(FakeApplication(), FakeApplication())
+    await harness.source.connect()
+    reached = asyncio.Event()
+    answer = asyncio.Event()
+    radio = harness.app
+    original = radio.permit
+
+    async def held_permit(time_s: int = 60, node: Any = None) -> None:
+        reached.set()
+        await answer.wait()
+        await original(time_s=time_s, node=node)
+
+    radio.permit = held_permit  # type: ignore[method-assign]
+    opening = asyncio.ensure_future(harness.source.permit(254))
+    await asyncio.wait_for(reached.wait(), timeout=2)
+
+    radio.fire_connection_lost()
+    assert not opening.done(), "the link was lost after the permit finished - nothing interleaved"
+    answer.set()
+
+    with pytest.raises(DeviceUnreachableError):
+        await asyncio.wait_for(opening, timeout=2)
+    assert radio.permits == [(254, None)], "the radio call itself must have completed"
+    assert harness.source.permit_until() is None, "a countdown on a dead radio"
+    # And the grace a real window would leave behind is not there either.
+    await harness.source.connect()
+    late = colour_lamp("00:12:4b:00:1c:00:00:06")
+    harness.source._app.fire_device_joined(late)
+    await _settle(harness.source)
+    rows = {row.ieee: row for row in harness.source.pairing_rows()}
+    assert rows[late.ieee].discovered is True
+    await harness.source.disconnect()
+
+
 async def test_a_row_is_keyed_by_ieee_and_survives_a_reinterview(build) -> None:
     """A rejoining device gets a new short address, and a reinterview
     replaces the device OBJECT entirely - new clusters, same IEEE.
@@ -1480,6 +1528,46 @@ async def test_configuring_addresses_covers_the_whole_configuration_pass(
         # sit on "Setting it up" forever.
         assert harness.source.configuring_addresses() == frozenset()
         assert harness.source.pairing_rows()[0].state == "ready"
+        await harness.source.disconnect()
+    finally:
+        store.close()
+
+
+async def test_a_configuration_pass_that_raises_does_not_leave_the_row_setting_up(
+    build, tmp_path, monkeypatch
+) -> None:
+    """A configure-on-join pass that raises instead of returning - a quirk's
+    cluster throwing something `configure_device` does not expect.
+
+    The address has to leave the configuring set on that path too. If it
+    were cleared only after a pass that returned, the pairing tab would show
+    the device as "Setting it up" for as long as the bridge runs, and the
+    device would still be delivered underneath that label.
+
+    Fault to prove it: clear the set in the `try`'s `else` branch instead
+    of in `finally`."""
+    store = Store(tmp_path / "loxmatter.sqlite")
+    try:
+        lamp = colour_lamp()
+        harness = build(FakeApplication(devices=[lamp]), store=store)
+        await harness.source.connect()
+        await harness.source.subscribe(_lamp_resolver(), harness.handler)
+        seen: list[frozenset[str]] = []
+
+        async def raising_configure_device(device: Any, **kwargs: Any) -> Any:
+            seen.append(harness.source.configuring_addresses())
+            raise KeyError("a cluster the quirk does not declare")
+
+        monkeypatch.setattr(source_module, "configure_device", raising_configure_device)
+
+        harness.app.fire_device_initialized(lamp)
+        await asyncio.gather(*tuple(harness.source._tasks))
+        await _settle(harness.source)
+
+        # It really ran, and really counted as configuring while it did -
+        # otherwise an empty set afterwards would prove nothing.
+        assert seen == [frozenset({LAMP_IEEE})]
+        assert harness.source.configuring_addresses() == frozenset()
         await harness.source.disconnect()
     finally:
         store.close()
