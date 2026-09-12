@@ -36,6 +36,7 @@ from loxmatter.profiles.relevance import (
     is_functional,
 )
 from loxmatter.zigbee.translate import (
+    _SENTINELS,
     BLOCKED_CLUSTER_IDS,
     DeviceFacts,
     EndpointFacts,
@@ -271,6 +272,75 @@ def test_the_temperature_sentinel_is_the_value_zigpy_actually_delivers():
     # and a real reading still gets through, so the row is not simply eating
     # the whole attribute
     assert build_snapshot(_sensor({(0x0402, 0x0000): -500})).attributes["1/1026/0"] == -500
+
+
+@pytest.mark.parametrize(
+    ("cluster", "attribute", "sentinel", "path"),
+    [
+        # ElectricalMeasurement (0x0B04 = 2820). The cluster an energy
+        # monitoring plug reports through, and one `BLOCKED_CLUSTER_IDS` does
+        # not cover - so every attribute of it reaches Loxone by number.
+        (0x0B04, 0x0505, 0xFFFF, "1/2820/1285"),  # rms_voltage (uint16_t)
+        (0x0B04, 0x0508, 0xFFFF, "1/2820/1288"),  # rms_current (uint16_t)
+        (0x0B04, 0x050B, -32768, "1/2820/1291"),  # active_power (int16s), SIGNED
+        # The measurement clusters' static bounds, signed where the cluster's
+        # own reading is signed.
+        (0x0402, 0x0001, -32768, "1/1026/1"),  # temperature min (int16s)
+        (0x0402, 0x0002, -32768, "1/1026/2"),  # temperature max (int16s)
+        (0x0403, 0x0001, -32768, "1/1027/1"),  # pressure min (int16s)
+        (0x0403, 0x0002, -32768, "1/1027/2"),  # pressure max (int16s)
+        (0x0405, 0x0001, 0xFFFF, "1/1029/1"),  # humidity min (uint16_t)
+        (0x0405, 0x0002, 0xFFFF, "1/1029/2"),  # humidity max (uint16_t)
+        (0x0404, 0x0001, 0xFFFF, "1/1028/1"),  # flow min (uint16_t)
+        (0x0404, 0x0002, 0xFFFF, "1/1028/2"),  # flow max (uint16_t)
+        (0x0408, 0x0001, 0xFFFF, "1/1032/1"),  # soil moisture min (uint16_t)
+        (0x0408, 0x0002, 0xFFFF, "1/1032/2"),  # soil moisture max (uint16_t)
+    ],
+)
+def test_the_electrical_and_bound_sentinels_become_an_absent_path(
+    cluster, attribute, sentinel, path
+):
+    """The second audit's rows, and the highest-stakes ones after
+    temperature: a plug that has not measured yet would otherwise publish
+    65535 volts, 65535 amps or -327.68 watts into Loxone as genuine
+    readings, and a sensor that leaves its bounds undefined would show an
+    implausible limit that - being static - is never corrected.
+
+    Fault to prove it: drop the rows from `_SENTINELS`."""
+    assert path not in build_snapshot(_sensor({(cluster, attribute): sentinel})).attributes
+    # and a plausible reading on the same path still gets through, so the row
+    # is not simply eating the whole attribute
+    assert build_snapshot(_sensor({(cluster, attribute): 230})).attributes[path] == 230
+
+
+def test_the_electrical_measurement_sentinels_match_the_installed_zigpy_types():
+    """Whether a row reads `0xFFFF` or `-32768` is a fact about the
+    INSTALLED library, not about the specification's printed bit pattern -
+    the trap `test_the_temperature_sentinel_is_the_value_zigpy_actually_delivers`
+    documents, one cluster over. `active_power` is the signed one of the
+    three, so a row copied from its two unsigned neighbours would never
+    match, and a plug with no reading would publish -327.68 watts.
+
+    Fault to prove it: give `active_power` the `0xFFFF` of its neighbours.
+
+    zigpy is imported here for the same reason it is imported there: the
+    module under test is pure, but the constants it compares against are
+    facts about the library."""
+    from zigpy.types import int16s, uint16_t
+    from zigpy.zcl.clusters.homeautomation import ElectricalMeasurement
+
+    assert ElectricalMeasurement.cluster_id == 0x0B04
+    assert ElectricalMeasurement.attributes[0x0505].type is uint16_t
+    assert ElectricalMeasurement.attributes[0x0508].type is uint16_t
+    assert ElectricalMeasurement.attributes[0x050B].type is int16s
+    assert uint16_t.max_value == 0xFFFF
+    assert int16s.min_value == -32768
+    with pytest.raises(ValueError):
+        int16s(0x8000)  # +32768 is not a value `active_power` can ever carry
+
+    assert _SENTINELS[(0x0B04, 0x0505)] == uint16_t.max_value
+    assert _SENTINELS[(0x0B04, 0x0508)] == uint16_t.max_value
+    assert _SENTINELS[(0x0B04, 0x050B)] == int16s.min_value
 
 
 def test_the_battery_voltage_is_converted_from_hundred_millivolt_units():

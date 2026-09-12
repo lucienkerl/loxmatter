@@ -248,6 +248,41 @@ _SENTINELS: dict[tuple[int, int], int] = {
     (0x0404, 0x0000): 0xFFFF,  # FlowMeasurement.MeasuredValue, invalid (uint16_t)
     (0x0408, 0x0000): 0xFFFF,  # SoilMoisture.MeasuredValue, invalid (uint16_t)
     #
+    # ElectricalMeasurement (0x0B04). Not in `BLOCKED_CLUSTER_IDS`, so every
+    # attribute of it reaches a Loxone signal by number - and an energy
+    # monitoring plug is one of the device classes this bridge exists for,
+    # which makes these the highest-stakes rows in the table after the
+    # temperature ones. Each type read off the INSTALLED zigpy 2.2.0
+    # (`zigpy.zcl.clusters.homeautomation.ElectricalMeasurement`), not off
+    # the specification: `rms_voltage.type.max_value == 65535`,
+    # `active_power.type.min_value == -32768`.
+    (0x0B04, 0x0505): 0xFFFF,  # ElectricalMeasurement.RMSVoltage, unavailable (uint16_t)
+    (0x0B04, 0x0508): 0xFFFF,  # ElectricalMeasurement.RMSCurrent, unavailable (uint16_t)
+    # SIGNED, like the temperature rows: `active_power` is `int16s`, so what
+    # zigpy hands over is -32768 and never +32768. Without this row a plug
+    # that has not measured yet publishes -327.68 watts.
+    (0x0B04, 0x050B): -0x8000,  # ElectricalMeasurement.ActivePower, unavailable (int16s)
+    #
+    # `min_measured_value` / `max_measured_value` (0x0001 / 0x0002) on the
+    # measurement clusters. The same "not defined" sentinel as each
+    # cluster's own `measured_value` above and, being static capability
+    # values rather than readings, exported once and then never corrected -
+    # so a sensor that leaves them undefined would show an implausible
+    # bound in Loxone forever. Signed where the cluster's own measurement is
+    # signed, unsigned where it is unsigned; each checked against the
+    # installed zigpy rather than assumed to follow the measured value's
+    # type. `IlluminanceMeasurement` is deliberately absent - see below.
+    (0x0402, 0x0001): -0x8000,  # TemperatureMeasurement.MinMeasuredValue (int16s)
+    (0x0402, 0x0002): -0x8000,  # TemperatureMeasurement.MaxMeasuredValue (int16s)
+    (0x0403, 0x0001): -0x8000,  # PressureMeasurement.MinMeasuredValue (int16s)
+    (0x0403, 0x0002): -0x8000,  # PressureMeasurement.MaxMeasuredValue (int16s)
+    (0x0405, 0x0001): 0xFFFF,  # RelativeHumidity.MinMeasuredValue (uint16_t)
+    (0x0405, 0x0002): 0xFFFF,  # RelativeHumidity.MaxMeasuredValue (uint16_t)
+    (0x0404, 0x0001): 0xFFFF,  # FlowMeasurement.MinMeasuredValue (uint16_t)
+    (0x0404, 0x0002): 0xFFFF,  # FlowMeasurement.MaxMeasuredValue (uint16_t)
+    (0x0408, 0x0001): 0xFFFF,  # SoilMoisture.MinMeasuredValue (uint16_t)
+    (0x0408, 0x0002): 0xFFFF,  # SoilMoisture.MaxMeasuredValue (uint16_t)
+    #
     # Examined and deliberately NOT added, so the next audit does not spend
     # the time again:
     #
@@ -261,6 +296,34 @@ _SENTINELS: dict[tuple[int, int], int] = {
     #   well, but loxmatter never reads the companion `scale` (0x0014) that
     #   makes it mean anything, so a row for it would suppress a value this
     #   bridge does not publish in the first place.
+    # - `IlluminanceMeasurement.min_measured_value` / `max_measured_value`
+    #   (0x0400/0x0001, 0x0400/0x0002). `uint16_t` in the installed zigpy, so
+    #   an 0xFFFF row would LOOK like its five siblings above - and would be
+    #   dead code. Illuminance is the one measurement cluster whose bounds
+    #   are not marked undefined with the all-ones pattern: the ZCL reserves
+    #   0x0000 for that here, because the scale is logarithmic and the top of
+    #   the range is a legal reading. Writing 0x0000 instead would be a
+    #   specification value nothing in the installed tree can confirm - zigpy
+    #   carries the type and no range at all - and this table's own rule is
+    #   that every constant in it is read off the library. Left out until a
+    #   real lux sensor shows which it sends. The cost is one implausible
+    #   bound on a signal zigpy's interview does not read in the first place.
+    # - The rest of `ElectricalMeasurement` - roughly 120 more attributes.
+    #   Examined as a block rather than one at a time, because they fall into
+    #   three kinds and none of them is a nullable reading this bridge
+    #   publishes today. The multipliers and divisors (0x02xx, 0x04xx, 0x06xx)
+    #   are scaling configuration with no "unavailable" value. The alarm
+    #   thresholds and overload limits (0x07xx, 0x08xx) are configured values,
+    #   excluded for the same reason as the thermostat setpoints above:
+    #   suppressing one would hide a real misconfiguration. The recorded
+    #   extremes (`rms_voltage_min`/`_max`, `active_power_min`/`_max`, ...)
+    #   and the phase B and C mirrors (0x09xx, 0x0Axx) do carry the same
+    #   sentinels as the three rows added above, but only a three-phase meter
+    #   reports the mirrors at all, and nothing in this project has yet seen
+    #   a device send any of them. Adding forty rows by pattern would make
+    #   this table unreadable without making one device correct that is not
+    #   correct already; the three attributes a single-phase energy plug
+    #   actually reports are the three that are written down.
 }
 
 # A table, not a camelCase -> snake_case helper (design 5.7): two of these
