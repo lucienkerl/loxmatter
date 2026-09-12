@@ -19,6 +19,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from dataclasses import replace
 
 import httpx2 as httpx
 import pytest
@@ -222,6 +223,113 @@ async def test_a_single_member_group_reads_in_the_singular(api, unconfigured_nod
     detail = response.json()["detail"]
     assert detail == i18n.t("api.errors.group_source_not_configured_one", technology="Matter")
     assert "1 member was not reached" in detail
+
+
+async def test_a_single_member_group_reads_in_the_singular_on_the_webui_route(
+    api, unconfigured_nodes
+):
+    """The web-UI twin of the test above - `api/control.py` picks between
+    the same two keys with its own copy of the branch, and until this test
+    existed nothing measured that copy: replacing its `key_for_total` with
+    the plural key unconditionally left the whole file green.
+
+    Fault to prove it: in `api/control.py`, always use
+    `api.errors.group_source_not_configured_many`."""
+    client, store, _group_id = api
+    lonely = store.devices()[0]
+    group = store.create_group("Hallway", [lonely.id])
+    unconfigured_nodes.add(lonely.address)
+    key = next(c.key for c in store.group_commands(group.id) if c.slug == "on")
+    response = await client.post(f"/api/commands/{key}", json={"value": "1"})
+    assert response.status_code == 503
+    detail = response.json()["detail"]
+    assert detail == i18n.t("api.errors.group_source_not_configured_one", technology="Matter")
+    assert "1 member was not reached" in detail
+
+
+@pytest.fixture
+async def mixed_technology_api(
+    tmp_path, invocations, unconfigured_nodes, fake_runtime, fake_client
+) -> AsyncIterator[tuple[httpx.AsyncClient, Store, int]]:
+    """A group whose FIRST member is Zigbee and whose second is Matter.
+
+    Separate from `api` because plan order is `group_members`' `ORDER BY
+    d.id`, so which technology comes first is decided by registration
+    order, and the point of these two tests is which end of
+    `GroupOutcome.unconfigured_technologies` the 503 reads. The Zigbee
+    member is first deliberately: with Matter first, a detail naming
+    "Matter" would also be produced by a route that ignored the field
+    entirely, since "matter" is the column default everywhere else in the
+    suite.
+
+    The Zigbee member is the Matter fixture re-stamped rather than a
+    hand-built snapshot - it has to carry the same device types and the
+    same commands as the other member, or the group's category check
+    refuses it and its command never lands in the intersection.
+    """
+    store = Store(tmp_path / "t.sqlite")
+    member_ids = []
+    for name, technology, address in (
+        ("ikea_kajplats_cws_lamp.json", "zigbee", "00:12:4b:00:1c:a1:b2:c3"),
+        ("ikea_kajplats_ws_lamp.json", "matter", None),
+    ):
+        snapshot = load_snapshot(name)
+        if address is not None:
+            snapshot = replace(snapshot, technology=technology, address=address)
+        device_id = store.register_device(snapshot)
+        store.register_signals(device_id, snapshot)
+        store.register_commands(device_id, extract_commands(snapshot))
+        member_ids.append(device_id)
+    group = store.create_group("Living room", member_ids)
+
+    async def invoke(call: DeviceCall) -> None:
+        if call.address in unconfigured_nodes:
+            raise SourceNotConfiguredError(call.technology)
+        invocations.append(call)
+
+    app = build_app(store, invoke, fake_runtime(store), client=fake_client)
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        await authenticate(store, client)
+        yield client, store, group.id
+    store.close()
+
+
+@pytest.mark.parametrize("route", ["loxone", "webui"])
+async def test_the_503_names_the_first_members_technology_not_the_last(
+    mixed_technology_api, unconfigured_nodes, route
+):
+    """`GroupOutcome.unconfigured_technologies` is a LIST in plan order, and
+    its whole justification is that a caller naming one technology names the
+    FIRST member's - not whichever coroutine happened to raise first. Both
+    routes read `[0]`, and that index was asserted only inside
+    `dispatch_group`; at the routes, `[0]` -> `[-1]` left the suite green,
+    because every group in it had exactly one technology.
+
+    A Zigbee lamp and a Matter lamp in one group, both without a source:
+    the detail must say Zigbee. It must also NOT say Matter - a route
+    reading `[-1]` names the Matter member, which is the wrong half of a
+    two-radio outage and sends the owner to restart the wrong service.
+
+    Fault to prove it: read `unconfigured_technologies[-1]` in
+    `api/control.py` and in `loxone/server.py`."""
+    client, store, group_id = mixed_technology_api
+    members = store.group_members(group_id)
+    assert [m.technology for m in members] == ["zigbee", "matter"]
+    unconfigured_nodes.update(m.address for m in members)
+    key = next(c.key for c in store.group_commands(group_id) if c.slug == "on")
+
+    if route == "loxone":
+        response = await client.get(f"/cmd/{key}/1")
+    else:
+        response = await client.post(f"/api/commands/{key}", json={"value": "1"})
+
+    assert response.status_code == 503
+    detail = response.json()["detail"]
+    assert detail == i18n.t(
+        "api.errors.group_source_not_configured_many", technology="Zigbee", total=len(members)
+    )
+    assert "Matter" not in detail
 
 
 async def test_a_group_half_of_which_switched_is_not_a_flat_503(

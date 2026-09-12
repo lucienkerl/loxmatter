@@ -174,7 +174,12 @@ def test_a_path_whose_value_is_none_is_left_out_entirely():
     paired my sensor and Loxone gets nothing" report.
 
     Fault to prove it: emit the path with `None` instead of omitting it.
-    See `test_a_late_value_creates_the_row` for the other half."""
+
+    This module owns only the leaving-out half. The other half - a value
+    that arrives later really does create the row - belongs to
+    `ZigbeeSource.follow` (design section 5.5, Task 7) and is tested with
+    that, because it needs a source, a `Runtime` and a `Store`, none of
+    which this pure module has or should acquire."""
     facts = _lamp({(0x0300, 0x0007): None})
 
     snapshot = build_snapshot(facts)
@@ -183,21 +188,9 @@ def test_a_path_whose_value_is_none_is_left_out_entirely():
     assert not any(value is None for value in snapshot.attributes.values())
 
 
-@pytest.mark.parametrize(
-    ("cluster", "attribute", "sentinel", "path"),
-    [
-        (0x0402, 0x0000, 0x8000, "1/1026/0"),  # temperature, invalid
-        (0x0405, 0x0000, 0xFFFF, "1/1029/0"),  # humidity, invalid
-        (0x0001, 0x0021, 0xFF, "0/47/12"),  # battery percentage, unknown
-    ],
-)
-def test_invalid_value_sentinels_become_an_absent_path(cluster, attribute, sentinel, path):
-    """These are not measurements, they are the ZCL's way of saying "no
-    reading". Passing them through would send -327.68 degrees or 127.5 %
-    into Loxone as if they were real.
-
-    Fault to prove it: pass them through as numbers."""
-    facts = DeviceFacts(
+def _sensor(attributes: Mapping[tuple[int, int], object]) -> DeviceFacts:
+    """A one-endpoint sensor carrying exactly the given attributes."""
+    return DeviceFacts(
         ieee="00:12:4b:00:1c:a1:b2:c5",
         manufacturer="m",
         model="d",
@@ -209,13 +202,86 @@ def test_invalid_value_sentinels_become_an_absent_path(cluster, attribute, senti
                 endpoint=1,
                 profile_id=ZHA_PROFILE,
                 device_type=0x0302,
-                in_cluster_ids=frozenset({cluster}),
-                attributes={(cluster, attribute): sentinel},
+                in_cluster_ids=frozenset(cluster for cluster, _ in attributes),
+                attributes=dict(attributes),
             ),
         ),
     )
 
-    assert path not in build_snapshot(facts).attributes
+
+@pytest.mark.parametrize(
+    ("cluster", "attribute", "sentinel", "path"),
+    [
+        # NEGATIVE. `TemperatureMeasurement.measured_value` is zigpy's
+        # `int16s`, so the ZCL bit pattern 0x8000 reaches this module as
+        # -32768; +32768 is a value that type cannot hold, and a fixture
+        # feeding it tested a row the library can never trigger. See
+        # `test_the_temperature_sentinel_is_the_value_zigpy_actually_delivers`.
+        (0x0402, 0x0000, -32768, "1/1026/0"),  # temperature, invalid (int16s)
+        (0x0405, 0x0000, 0xFFFF, "1/1029/0"),  # humidity, invalid (uint16_t)
+        (0x0400, 0x0000, 0xFFFF, "1/1024/0"),  # illuminance, invalid (uint16_t)
+        (0x0001, 0x0021, 0xFF, "0/47/12"),  # battery percentage, unknown (uint8_t)
+        (0x0001, 0x0020, 0xFF, "0/47/11"),  # battery voltage, unknown (uint8_t)
+    ],
+)
+def test_invalid_value_sentinels_become_an_absent_path(cluster, attribute, sentinel, path):
+    """These are not measurements, they are the ZCL's way of saying "no
+    reading". Passing them through would send -327.68 degrees, 65535 lux or
+    127.5 % into Loxone as if they were real.
+
+    Every constant above is the value the INSTALLED zigpy delivers for that
+    attribute's declared type, not the bit pattern the specification prints.
+
+    Fault to prove it: pass them through as numbers."""
+    assert path not in build_snapshot(_sensor({(cluster, attribute): sentinel})).attributes
+
+
+def test_the_temperature_sentinel_is_the_value_zigpy_actually_delivers():
+    """The one sentinel on a SIGNED attribute, and the reason the table is
+    checked against the library rather than against the specification's
+    printed bit pattern.
+
+    `TemperatureMeasurement.measured_value` is `zigpy.types.int16s`, so what
+    a sensor with no reading hands this module is -32768, not +32768 - a
+    value `int16s` cannot hold at all. A table entry of `0x8000` is
+    therefore a row that can never match, and the sensor publishes
+    -327.68 degrees into Loxone as a genuine measurement. This test pins the
+    real value AND asserts that the bit pattern is not what arrives, so a
+    revert to `0x8000` cannot be green again.
+
+    zigpy is imported here and nowhere else in this file: the module under
+    test is pure by design (see the module docstring), but the CONSTANT it
+    compares against is a fact about the library, and a test that reasons
+    about it from convention is exactly how this bug survived review.
+
+    Fault to prove it: put `0x8000` back in `_SENTINELS`."""
+    from zigpy.types import int16s
+    from zigpy.zcl.clusters.measurement import TemperatureMeasurement
+
+    attribute = TemperatureMeasurement.attributes[0x0000]
+    assert attribute.type is int16s
+    assert int16s.min_value == -32768
+    # What the ZCL's "invalid" encoding deserialises to on this attribute.
+    invalid, _rest = int16s.deserialize(b"\x00\x80")
+    assert int(invalid) == -32768
+    with pytest.raises(ValueError):
+        int16s(0x8000)  # +32768 is not a value this attribute can ever carry
+
+    assert "1/1026/0" not in build_snapshot(_sensor({(0x0402, 0x0000): int(invalid)})).attributes
+    # and a real reading still gets through, so the row is not simply eating
+    # the whole attribute
+    assert build_snapshot(_sensor({(0x0402, 0x0000): -500})).attributes["1/1026/0"] == -500
+
+
+def test_the_battery_voltage_is_converted_from_hundred_millivolt_units():
+    """Zigbee's `BatteryVoltage` counts in 100 mV units; Matter's
+    PowerSource `BatVoltage` (0/47/11) counts in mV. Without the factor a
+    healthy 3.0 V cell reports as 30 mV and every battery display in the
+    web UI and in Loxone reads as flat.
+
+    Fault to prove it: drop the `* 100`."""
+    snapshot = build_snapshot(_sensor({(0x0001, 0x0020): 30}))
+    assert snapshot.attributes["0/47/11"] == 3000
 
 
 # ------------------------------------------------------------ device types --

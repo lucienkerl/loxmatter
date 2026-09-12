@@ -139,6 +139,18 @@ _MATTER_DEVICE_TYPE_BY_ZONE_TYPE: dict[int, int] = {
 # vibration do not (see `_apply_ias_zone`). `_CLUSTER_BOOLEAN_STATE` and
 # `_CLUSTER_OCCUPANCY_SENSING` are defined further below, next to the other
 # cluster-number constants.
+#
+# DELIBERATE ASYMMETRY with `_MATTER_DEVICE_TYPE_BY_ZONE_TYPE` above: fire
+# (0x0028) and CO (0x002B) are typed as SmokeCoAlarm there but have no row
+# here, so such an endpoint declares SmokeCoAlarm while exporting only the
+# raw `<ep>/1280/2` bitmap. That is the intended outcome, not an oversight.
+# Matter's SmokeCoAlarm is a multi-attribute cluster (SmokeState,
+# COState, ExpressedState, ...) whose enum values this module cannot honestly
+# synthesise from two IAS alarm bits, and inventing them would be worse than
+# the bitmap: the device type still gets the endpoint the right label, the
+# right category and the right icon, and the bitmap stays visible as an
+# expert signal an owner can wire up by hand. A faithful translation belongs
+# with the SmokeCoAlarm cluster itself, not here.
 _IAS_STATE_TARGETS: dict[int, tuple[int, int, bool]] = {
     # Matter's BooleanState.StateValue is TRUE when CLOSED; IAS alarm1 is
     # TRUE when OPEN - the two are opposite (design 5.2, pinned from the
@@ -170,8 +182,12 @@ BLOCKED_CLUSTER_IDS: frozenset[int] = frozenset({0x0000, 0x0003, 0x0019, 0x1000}
 
 # Invalid-value sentinels the ZCL uses to say "no reading", keyed by the
 # Zigbee (cluster, attribute) that carries them. Passing these through would
-# send -327.68 degrees, 655.35 %, or a fully-charged 127.5 % battery into
-# Loxone as if they were real measurements.
+# send -327.68 degrees, 655.35 %, 65535 lux, or a fully-charged 127.5 %
+# battery into Loxone as if they were real measurements.
+#
+# Every constant here is the value the INSTALLED zigpy delivers for that
+# attribute's declared type, not the bit pattern the ZCL specification
+# prints - see the temperature row.
 #
 # `_NO_SENTINEL` is a private marker object, not `None`: `dict.get()` on a
 # pair with no entry here already answers `None`, and a naive
@@ -183,10 +199,20 @@ BLOCKED_CLUSTER_IDS: frozenset[int] = frozenset({0x0000, 0x0003, 0x0019, 0x1000}
 # still passed, for this reason, until this marker was added).
 _NO_SENTINEL: object = object()
 _SENTINELS: dict[tuple[int, int], int] = {
-    (0x0402, 0x0000): 0x8000,  # TemperatureMeasurement.MeasuredValue, invalid
-    (0x0405, 0x0000): 0xFFFF,  # RelativeHumidity.MeasuredValue, invalid
-    (0x0001, 0x0021): 0xFF,  # PowerConfiguration.BatteryPercentageRemaining, unknown
-    (0x0001, 0x0020): 0xFF,  # PowerConfiguration.BatteryVoltage, unknown
+    # NEGATIVE, not 0x8000. The ZCL writes this sentinel as the bit pattern
+    # 0x8000, but `TemperatureMeasurement.measured_value` is zigpy's
+    # `int16s` (verified against zigpy 2.2.0: `int16s.min_value == -32768`,
+    # `int16s.deserialize(b"\x00\x80") == -32768`), so what zigpy hands this
+    # module is -32768. +32768 is not a value `int16s` can hold at all -
+    # `int16s(0x8000)` raises - so a `0x8000` row here can never match, and
+    # a sensor with no reading would publish -327.68 degrees into Loxone as
+    # a genuine measurement. Every other row below is an UNSIGNED attribute,
+    # where the bit pattern and the value coincide.
+    (0x0402, 0x0000): -0x8000,  # TemperatureMeasurement.MeasuredValue, invalid (int16s)
+    (0x0405, 0x0000): 0xFFFF,  # RelativeHumidity.MeasuredValue, invalid (uint16_t)
+    (0x0400, 0x0000): 0xFFFF,  # IlluminanceMeasurement.MeasuredValue, invalid (uint16_t)
+    (0x0001, 0x0021): 0xFF,  # PowerConfiguration.BatteryPercentageRemaining, unknown (uint8_t)
+    (0x0001, 0x0020): 0xFF,  # PowerConfiguration.BatteryVoltage, unknown (uint8_t)
 }
 
 # A table, not a camelCase -> snake_case helper (design 5.7): two of these
