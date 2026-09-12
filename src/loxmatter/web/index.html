@@ -2380,25 +2380,27 @@
                          the Zigbee row below is set up with, which
                          `POST /api/radios` refuses for Thread. Listed and
                          disabled rather than dropped, the way the Zigbee
-                         row lists the Thread stick. One suffix for the
-                         stick's use, not two - the way `zigbeeRadioOptions()`
-                         (app.js) already reads for the Zigbee row's mirror
-                         case: a stick both in use for Thread AND set up for
-                         Zigbee used to read "... · in use · in use for
-                         Zigbee", two claims that seem to contradict each
-                         other. -->
+                         row lists the Thread stick. The label, with its one
+                         suffix, is `radiosThreadOptionLabel()` in app.js. -->
                     <template x-for="option in radiosThreadOptions()" :key="option.value">
                       <option
                         :value="option.value"
                         :disabled="option.zigbee"
-                        x-text="option.label
-                          + (option.inUse && option.zigbee ? ' · ' + t('web.radios.thread_zigbee_took_over')
-                              : option.inUse ? ' · ' + t('web.radios.in_use')
-                              : option.zigbee ? ' · ' + t('web.radios.thread_option_zigbee') : '')"
+                        x-text="radiosThreadOptionLabel(option)"
                       ></option>
                     </template>
                   </select>
                 </label>
+              </div>
+              <!-- Which stick Zigbee holds and how to free it. Directly under
+                   the Thread select it is about, not under the Bluetooth one
+                   beside it - which is why Thread and Bluetooth are two rows
+                   now rather than one. Its own line, the way
+                   `zigbeeThreadHint()`'s line is for the Zigbee row: the
+                   option's own suffix is what a narrow native select cuts
+                   off first. -->
+              <p class="hint radios-row-hint" x-show="radiosZigbeeHint()" x-cloak x-text="radiosZigbeeHint()"></p>
+              <div class="row radios-bluetooth-row">
                 <label>
                   <span x-text="t('web.radios.bluetooth_label')"></span>
                   <select
@@ -2420,19 +2422,12 @@
                       <option
                         :value="option.value"
                         :disabled="option.blocked"
-                        x-text="option.label
-                          + (option.inUse ? ' · ' + t('web.radios.in_use') : '')
-                          + (option.blocked ? ' · ' + t('web.radios.option_blocked') : '')"
+                        x-text="radiosBluetoothOptionLabel(option)"
                       ></option>
                     </template>
                   </select>
                 </label>
               </div>
-              <!-- Which stick Zigbee holds and how to free it. Its own line,
-                   the way `zigbeeThreadHint()`'s line is for the Zigbee row:
-                   the option's own suffix is what a narrow native select
-                   cuts off first. -->
-              <p class="hint" x-show="radiosZigbeeHint()" x-cloak x-text="radiosZigbeeHint()"></p>
               <template x-for="option in radiosBluetoothOptions().filter((o) => o.blocked)" :key="'blocked-' + option.value">
                 <!-- Review-Fix Minor #5: `.hint.warn` does not exist in
                      style.css (only `.badge.warn`, `.banner.warn` and

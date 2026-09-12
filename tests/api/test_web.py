@@ -9566,8 +9566,16 @@ async def test_blocked_bluetooth_adapters_are_marked_and_cannot_be_selected(api)
     open_option = json.dumps({"value": 0, "label": "hci0", "inUse": False, "blocked": False})
     assert _eval_js_expr(disabled_expr, option=blocked_option, t=t_stub) is True
     assert _eval_js_expr(disabled_expr, option=open_option, t=t_stub) is False
-    assert "web.radios.option_blocked" in _eval_js_expr(text_expr, option=blocked_option, t=t_stub)
-    assert "web.radios.option_blocked" not in _eval_js_expr(text_expr, option=open_option, t=t_stub)
+    # The label is a helper on the state (`radiosBluetoothOptionLabel`), so
+    # the `x-text` runs with the state as its scope, the way Alpine runs it.
+    labels = _radios_values(
+        _BINDINGS_JS + "console.log(JSON.stringify(["
+        f"  run({json.dumps(text_expr)}, {{ option: {blocked_option} }}),"
+        f"  run({json.dumps(text_expr)}, {{ option: {open_option} }}),"
+        "]));"
+    )
+    assert "web.radios.option_blocked" in labels[0]
+    assert "web.radios.option_blocked" not in labels[1]
 
 
 @pytest.mark.skipif(NODE is None, reason="node is required for this test")
@@ -11742,6 +11750,131 @@ async def test_the_radios_zigbee_hint_names_the_stick_and_the_way_out(api):
     assert text.startswith("ttyACM0 is set up for Zigbee, so it cannot be chosen here for Thread")
     assert "choose another stick for Zigbee" in text
     assert values["free"] is False
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+async def test_the_radios_zigbee_hint_sits_under_thread_and_names_the_product(api):
+    """Two things the task 13 screenshot in German showed wrong about the
+    line `test_the_radios_zigbee_hint_names_the_stick_and_the_way_out`
+    covers.
+
+    WHERE: it stood under the Bluetooth select. It is about the Thread
+    select, and a reader looks for an explanation under the control it
+    explains - so in document order it comes after the Thread select and
+    before the Bluetooth one.
+
+    WHAT IT CALLS THE STICK: "ttyUSB1 ist für Zigbee eingerichtet", while
+    the Zigbee row's own hint, one row further down, named the same stick
+    "SONOFF ZBDongle-E V2". A stick with no USB product string is named by
+    the fingerprint table's name when the Zigbee row has one for it, in the
+    hint AND in the Thread option it points at; the tty is the last resort.
+
+    Fault to prove it: move the hint back below the Bluetooth row, or drop
+    the fingerprint step from `radiosStickName()`."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+    elements = _served_elements(page)
+
+    def position(predicate) -> int:
+        found = [
+            index
+            for index, (tag, attributes, _) in enumerate(elements)
+            if predicate(tag, attributes)
+        ]
+        assert len(found) == 1, found
+        return found[0]
+
+    thread = position(
+        lambda tag, a: tag == "select" and a.get("x-model") == "radiosDraft.threadDevice"
+    )
+    hint = position(lambda tag, a: tag == "p" and a.get("x-text") == "radiosZigbeeHint()")
+    bluetooth = position(
+        lambda tag, a: tag == "select" and a.get("x-model.number") == "radiosDraft.bluetoothAdapter"
+    )
+    assert thread < hint < bluetooth
+
+    radios = json.loads(json.dumps(RADIOS_READY))
+    radios["serial"][1]["is_zigbee"] = True
+    zigbee = {
+        "serial": [
+            {
+                "path": "/dev/serial/by-id/usb-B",
+                "product": None,
+                "fingerprint": {"name": "SONOFF ZBDongle-E V2", "radio_type": "ezsp"},
+                "is_thread": False,
+                "selectable": True,
+            }
+        ],
+        "configured_path": "/dev/serial/by-id/usb-B",
+    }
+    values = _app_state(
+        f"state.radios = {json.dumps(radios)}; state.zigbee = {json.dumps(zigbee)};"
+        "console.log(JSON.stringify({"
+        "  hint: state.radiosZigbeeHint(),"
+        "  option: state.radiosThreadOptions().find((o) => o.value === '/dev/serial/by-id/usb-B').label,"
+        "  productWins: state.radiosThreadOptions().find((o) => o.value === '/dev/serial/by-id/usb-A').label,"
+        "}));",
+        translations=_web_strings(),
+    )
+    assert values["hint"].startswith("SONOFF ZBDongle-E V2 is set up for Zigbee")
+    assert values["option"] == "SONOFF ZBDongle-E V2"
+    # A stick WITH a product string keeps it: the fingerprint step only
+    # fills a gap, it does not rename what the row already showed.
+    assert values["productWins"] == "SONOFF Dongle Plus MG24 · …50c9"
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+async def test_the_closed_thread_and_bluetooth_selects_drop_the_in_use_suffix(api):
+    """The Zigbee row's rule (`test_the_configured_option_drops_in_use_while_it_is_the_open_draft`),
+    applied to the two rows above it. A native `<select>` shows its CLOSED
+    value with that option's own label, and cuts it off from the right -
+    measured on the maintainer's real stick in German at 375 px: "SONOFF
+    Dongle Plus MG24 · …50c9 · ir". The "in use" marker is left off while
+    the draft still points at the option in use, and comes back on that
+    option in the open list once the draft points elsewhere.
+
+    The SERVED `x-text` of both `<option>`s, with the state as scope. The
+    "taken over by Zigbee" suffix is NOT dropped: it is a conflict the user
+    has to act on, not a restatement of the selection.
+
+    Fault to prove it: drop the draft comparison from
+    `radiosThreadOptionLabel()` or `radiosBluetoothOptionLabel()`."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+
+    def option_text(select_attribute: str, select_value: str) -> str:
+        return next(
+            attributes["x-text"]
+            for tag, attributes, ancestors in _served_elements(page)
+            if tag == "option"
+            and any(ancestor.get(select_attribute) == select_value for _, ancestor in ancestors)
+        )
+
+    thread_text = option_text("x-model", "radiosDraft.threadDevice")
+    bluetooth_text = option_text("x-model.number", "radiosDraft.bluetoothAdapter")
+    values = _radios_values(
+        _BINDINGS_JS + "const label = (expr, value, options) =>"
+        "  run(expr, { option: options.find((o) => o.value === value) });"
+        f"const thread = {json.dumps(thread_text)}; const bluetooth = {json.dumps(bluetooth_text)};"
+        "const out = {};"
+        "out.threadClosed = label(thread, '/dev/serial/by-id/usb-A', state.radiosThreadOptions());"
+        "out.bluetoothClosed = label(bluetooth, 0, state.radiosBluetoothOptions());"
+        "state.radiosDraft = { threadDevice: '/dev/serial/by-id/usb-B', bluetoothAdapter: 1 };"
+        "out.threadOpen = label(thread, '/dev/serial/by-id/usb-A', state.radiosThreadOptions());"
+        "out.bluetoothOpen = label(bluetooth, 0, state.radiosBluetoothOptions());"
+        "state.radiosDraft.threadDevice = '/dev/serial/by-id/usb-A';"
+        "state.radios.serial[0].is_zigbee = true;"
+        "out.takenOver = label(thread, '/dev/serial/by-id/usb-A', state.radiosThreadOptions());"
+        "console.log(JSON.stringify(out));",
+        translations=_web_strings(),
+    )
+    assert values == {
+        "threadClosed": "SONOFF Dongle Plus MG24 · …50c9",
+        "bluetoothClosed": "hci0 · built in (UART)",
+        "threadOpen": "SONOFF Dongle Plus MG24 · …50c9 · in use",
+        "bluetoothOpen": "hci0 · built in (UART) · in use",
+        "takenOver": "SONOFF Dongle Plus MG24 · …50c9 · taken over by Zigbee",
+    }
 
 
 @pytest.mark.skipif(NODE is None, reason="node is required for this test")

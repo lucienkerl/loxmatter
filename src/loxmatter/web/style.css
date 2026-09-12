@@ -491,6 +491,18 @@ button:disabled {
   max-width: 100%;
 }
 
+/* Thread and Bluetooth are two rows, so that the Thread row's hint can sit
+ * directly under the Thread select it is about. The Bluetooth row carries
+ * its own margins because `.row + .row` does not reach across that hint
+ * paragraph - it stays in the DOM while `x-show` hides it - nor across the
+ * `<template>` of rfkill banners between it and the Rescan row. */
+.radios-card .radios-row-hint {
+  margin: 0.4rem 0 0;
+}
+.radios-card .radios-bluetooth-row {
+  margin: 0.75rem 0;
+}
+
 /* Below this width - the same threshold `.code-field` already uses further
  * up - the label and its select stacked inconsistently across the three
  * rows: Thread's whole label (span and select together) wrapped onto its

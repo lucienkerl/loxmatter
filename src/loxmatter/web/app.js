@@ -3849,7 +3849,7 @@ function app() {
         { value: "", label: t("web.radios.no_thread_stick"), inUse: inUse === "", missing: false, zigbee: false },
       ];
       for (const radio of this.radios?.serial ?? []) {
-        const name = radio.product || radio.manufacturer || radio.tty;
+        const name = this.radiosStickName(radio);
         const suffix = radio.serial ? ` · …${radio.serial.slice(-4)}` : "";
         // `zigbee` is the server's `is_zigbee`: the stick the Zigbee row is
         // set up with, which `POST /api/radios` refuses for Thread.
@@ -3873,15 +3873,60 @@ function app() {
       return options;
     },
 
+    /** A stick's name in the Thread row: the USB product string, else the
+     * name the fingerprint table gives the same stick in the Zigbee row,
+     * else the manufacturer, else the tty. The fingerprint step is what
+     * keeps a stick with no product string from being named "ttyUSB1" in
+     * this row while the Zigbee row, one card further down, calls it
+     * "SONOFF ZBDongle-E V2". `GET /api/radios` carries no fingerprint, so
+     * it is read from the Zigbee row's own answer when that has loaded. */
+    radiosStickName(radio) {
+      const fingerprint = (this.zigbee?.serial ?? []).find((stick) => stick.path === radio.path)?.fingerprint;
+      return radio.product || fingerprint?.name || radio.manufacturer || radio.tty;
+    },
+
+    /** The text of a Thread `<option>`. One suffix for the stick's use, not
+     * two: a stick both in use for Thread AND set up for Zigbee used to
+     * read "... · in use · in use for Zigbee".
+     *
+     * The plain "in use" is left off while the draft still points at that
+     * option, the rule `zigbeeRadioOptions()` already follows: a narrow
+     * native select cuts the CLOSED select's text off from the right, and
+     * the maintainer's real stick name came out as "SONOFF Dongle Plus MG24
+     * · …50c9 · ir". The selected option being the configured one already
+     * says it is in use, and the marker returns in the list as soon as the
+     * draft moves elsewhere. */
+    radiosThreadOptionLabel(option) {
+      if (option.inUse && option.zigbee) return option.label + " · " + t("web.radios.thread_zigbee_took_over");
+      if (option.inUse && this.radiosDraft.threadDevice !== option.value) {
+        return option.label + " · " + t("web.radios.in_use");
+      }
+      if (option.zigbee) return option.label + " · " + t("web.radios.thread_option_zigbee");
+      return option.label;
+    },
+
+    /** The text of a Bluetooth `<option>`, by the same "in use" rule as
+     * `radiosThreadOptionLabel()`. The blocked marker stays either way: an
+     * rfkill-blocked adapter is news even while it is the selected one. */
+    radiosBluetoothOptionLabel(option) {
+      let label = option.label;
+      if (option.inUse && this.radiosDraft.bluetoothAdapter !== option.value) {
+        label += " · " + t("web.radios.in_use");
+      }
+      if (option.blocked) label += " · " + t("web.radios.option_blocked");
+      return label;
+    },
+
     /** The line under the Thread select that says which stick Zigbee holds
      * and how to free it, or `null` when the list holds no Zigbee stick.
      *
      * Mirrors `zigbeeThreadHint()`: the option's own suffix is what a
      * narrow native select cuts off first (same 375 px measurement), and a
      * disabled option that gives no reason reads as detection being
-     * broken. `option.label` already carries the stick's name (plus the
-     * serial-id suffix `radiosThreadOptions()` bakes in), so it doubles as
-     * the `{name}` this hint names. */
+     * broken. `option.label` already carries the stick's name
+     * (`radiosStickName()`, plus the serial-id suffix
+     * `radiosThreadOptions()` bakes in), so it doubles as the `{name}` this
+     * hint names - the same words the user then finds in the list. */
     radiosZigbeeHint() {
       const option = this.radiosThreadOptions().find((candidate) => candidate.zigbee);
       if (!option) return null;
