@@ -22,10 +22,12 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import time
 from collections.abc import AsyncIterator
-from dataclasses import dataclass
-from datetime import UTC, datetime
+from dataclasses import dataclass, replace
+from datetime import UTC, datetime, timedelta
+from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -36,8 +38,13 @@ from conftest import authenticate
 from loxmatter.loxone.server import build_app
 from loxmatter.matter.models import NodeSnapshot
 from loxmatter.model.store import Store
+from loxmatter.model.zigbee_settings_store import settings_for_path
+from loxmatter.radios.fingerprints import Fingerprint
+from loxmatter.radios.inventory import scan_serial
 from loxmatter.sources import Sources
+from loxmatter.zigbee import source as source_module
 from loxmatter.zigbee.runtime import ZigbeeRuntime
+from loxmatter.zigbee.source import ZigbeeSource
 
 # Verbatim from `ls -l /dev/serial/by-id/` on the maintainer's Pi.
 REAL_ITEAD = (
@@ -217,9 +224,23 @@ class _AttachableRuntime:
     def __init__(self, store: Store) -> None:
         self._store = store
         self.seeded = 0
+        # What a source told it through the `RuntimeEventHandler` half of
+        # this object. The pairing suite subscribes a real `ZigbeeSource`
+        # to it, so an adoption that forgets to seed its device is visible
+        # here as a snapshot that never arrived.
+        self.snapshots: list[tuple[int, Any]] = []
 
     async def seed_from_snapshot(self, snapshots: Any) -> None:
         self.seeded += 1
+
+    async def on_node_snapshot(self, device_id: int, snapshot: Any) -> None:
+        self.snapshots.append((device_id, snapshot))
+
+    async def on_attribute(self, device_id: int, path: str, raw: Any) -> None:
+        return None
+
+    async def on_event(self, device_id: int, path: str) -> None:
+        return None
 
     async def resend_all(self) -> int:
         return 0
@@ -768,6 +789,830 @@ async def test_nothing_configured_is_not_an_error(api):
     assert body["configured_path"] is None
     assert body["configured_device_present"] is False
     assert body["progress"]["state"] == "idle"
+
+
+# --- Pairing ---------------------------------------------------------------
+#
+# These drive the REAL `ZigbeeSource` rather than a stand-in for it. The
+# pairing routes are thin on purpose - they overlay two facts onto a row and
+# serialise it - and a fake source would let every one of those facts be
+# whatever the test wanted, which is precisely how a suite comes to be green
+# about behaviour that cannot happen. What is faked here is one layer lower
+# and is the layer that needs a radio: zigpy's `ControllerApplication` and
+# its devices, in the smallest shape the source actually reaches into.
+#
+# `tests/zigbee/fakes.py` is the fuller version of the same idea and cannot
+# be imported here: `tests/api` is run on its own, so nothing puts
+# `tests/zigbee` on the path.
+
+ON_OFF_CLUSTER = 0x0006
+ON_OFF_ATTRIBUTE = 0x0000
+LAMP_IEEE = "00:12:4b:00:1c:a1:b2:c3"
+SENSOR_IEEE = "00:15:8d:00:02:aa:bb:cc"
+
+
+@dataclass(frozen=True)
+class _StubNodeDescriptor:
+    """`zigpy.zdo.types.NodeDescriptor`, as far as anything here reads it.
+
+    All THREE flags the Zigbee package reads, not only the one the pairing
+    row needs: `availability.py` asks a device for
+    `is_receiver_on_when_idle` and `is_coordinator` from its background
+    sweep, and a stub missing either of them turns into an `AttributeError`
+    from a task nothing in the test is looking at. Measured: it happened
+    here, and it surfaced only when an unrelated fault injection changed
+    the timing enough for the sweep to run."""
+
+    is_mains_powered: bool
+    is_receiver_on_when_idle: bool = True
+    is_coordinator: bool = False
+
+
+class _StubCluster:
+    """One ZCL cluster, read the way the source reads one: through
+    `attributes` (id -> definition) and `get(definition)`.
+
+    The DEFINITION and never the bare id - `Cluster.get(int)` raises for a
+    duplicate attribute id on the real thing, which is why the source hands
+    it the definition, and a fake that accepted an int here would hide that
+    the day somebody changed it back."""
+
+    def __init__(self, cluster_id: int, values: dict[int, Any]) -> None:
+        self.cluster_id = cluster_id
+        self.attributes = {attribute_id: object() for attribute_id in values}
+        self._by_definition = {
+            self.attributes[attribute_id]: value for attribute_id, value in values.items()
+        }
+
+    def get(self, definition: Any, default: Any = None) -> Any:
+        return self._by_definition.get(definition, default)
+
+
+class _StubEndpoint:
+    def __init__(self, endpoint_id: int, *, device_type: int, clusters: list[_StubCluster]) -> None:
+        self.endpoint_id = endpoint_id
+        self.profile_id = 0x0104
+        self.device_type = device_type
+        self.in_clusters = {cluster.cluster_id: cluster for cluster in clusters}
+
+
+class _StubDevice:
+    """`zigpy.device.Device`, in the shape `ZigbeeSource` reaches into."""
+
+    def __init__(
+        self,
+        ieee: str,
+        *,
+        manufacturer: str = "IKEA of Sweden",
+        model: str = "TRADFRI bulb",
+        mains: bool = True,
+        quirk_applied: bool = False,
+        endpoints: list[_StubEndpoint] | None = None,
+    ) -> None:
+        self.ieee = ieee
+        self.nwk = 0x1234
+        self.manufacturer = manufacturer
+        self.model = model
+        self.node_desc = _StubNodeDescriptor(mains, is_receiver_on_when_idle=mains)
+        self.last_seen = time.time()
+        # A device that failed its interview is NOT initialized, which is
+        # what makes a Retry a real second interview - see
+        # `schedule_initialize`.
+        self.is_initialized = True
+        self.initializations = 0
+        self.application: Any = None
+        self._endpoints = list(endpoints or [])
+        self.endpoints: dict[int, Any] = {0: object()}
+        self.endpoints.update({endpoint.endpoint_id: endpoint for endpoint in self._endpoints})
+        if quirk_applied:
+            # The attribute `zha.quirks.DeviceRegistry.resolve` sets on a
+            # device it transformed.
+            self._quirk_registry_entry = object()
+
+    @property
+    def non_zdo_endpoints(self) -> list[_StubEndpoint]:
+        return list(self._endpoints)
+
+    def schedule_initialize(self) -> None:
+        """zigpy's own entry point for (re-)interviewing a device: it
+        re-announces an already-initialized one and otherwise starts an
+        interview as a task."""
+        if self.is_initialized:
+            if self.application is not None:
+                self.application.device_initialized(self)
+            return
+        self.initializations += 1
+
+
+class _StubApplication:
+    """`zigpy.application.ControllerApplication`, as far as the source
+    reaches into it."""
+
+    def __init__(self, devices: list[_StubDevice] | None = None) -> None:
+        self.devices = {device.ieee: device for device in devices or []}
+        for device in self.devices.values():
+            device.application = self
+        self.listeners: list[Any] = []
+        self.permits: list[tuple[int, Any]] = []
+        self.removed: list[str] = []
+        self.permit_error: BaseException | None = None
+
+    def add_listener(self, listener: Any) -> int:
+        self.listeners.append(listener)
+        return id(listener)
+
+    def remove_listener(self, listener: Any) -> None:
+        if listener in self.listeners:
+            self.listeners.remove(listener)
+
+    async def startup(self, *, auto_form: bool = False) -> None:
+        return None
+
+    async def shutdown(self, *, db: bool = True) -> None:
+        return None
+
+    async def permit(self, time_s: int = 60, node: Any = None) -> None:
+        if self.permit_error is not None:
+            raise self.permit_error
+        self.permits.append((time_s, node))
+
+    async def remove(self, ieee: Any, remove_children: bool = True, rejoin: bool = False) -> None:
+        """zigpy deletes the device from its database whether or not the
+        leave request is ever delivered, and announces it at once. It never
+        waits for a confirmation, and this stub deliberately never sends
+        one - a sleeping device would not either."""
+        self.removed.append(str(ieee))
+        device = self.devices.pop(str(ieee), None)
+        if device is not None:
+            self.listener_event("device_removed", device)
+
+    def listener_event(self, method_name: str, *args: Any) -> None:
+        """`zigpy.util.ListenableMixin.listener_event`: every listener, by
+        METHOD NAME, with each one's exception caught and logged rather
+        than propagated (verified against zigpy 2.2.0).
+
+        The swallowing is the property worth imitating exactly - it is what
+        makes a misspelled event name the most silently dead thing in this
+        package, and a fake that let the exception through would make a
+        typo look like a loud failure instead of the quiet one it is."""
+        for listener in list(self.listeners):
+            method = getattr(listener, method_name, None)
+            if method is None:
+                continue
+            try:
+                method(*args)
+            except Exception:
+                logging.getLogger(__name__).debug(
+                    "listener %r raised on %s", listener, method_name, exc_info=True
+                )
+
+    def device_initialized(self, device: _StubDevice) -> None:
+        self.devices[device.ieee] = device
+        device.application = self
+        self.listener_event("device_initialized", device)
+
+    def join(self, device: _StubDevice) -> None:
+        self.devices[device.ieee] = device
+        device.application = self
+        self.listener_event("device_joined", device)
+
+    def init_failure(self, device: _StubDevice) -> None:
+        self.devices[device.ieee] = device
+        device.application = self
+        device.is_initialized = False
+        self.listener_event("device_init_failure", device)
+
+
+def _lamp(ieee: str = LAMP_IEEE, **fields: Any) -> _StubDevice:
+    """An on/off lamp with one readable attribute, so its snapshot carries a
+    real Matter path and `register_signals` has a row to create."""
+    return _StubDevice(
+        ieee,
+        endpoints=[
+            _StubEndpoint(
+                1,
+                device_type=0x0100,
+                clusters=[_StubCluster(ON_OFF_CLUSTER, {ON_OFF_ATTRIBUTE: False})],
+            )
+        ],
+        **fields,
+    )
+
+
+@dataclass
+class _PairingHarness:
+    store: Store
+    holder: ZigbeeRuntime
+    source: ZigbeeSource
+    app: _StubApplication
+    runtime: _AttachableRuntime
+
+
+@pytest.fixture
+async def pairing(tmp_path, no_invoke, monkeypatch) -> AsyncIterator[Any]:
+    """A real `ZigbeeSource`, connected to a stubbed application, behind the
+    real routes.
+
+    No supervisor: `ZigbeeRuntime` takes one as a parameter, and a test that
+    let the real one run would have a background loop reconnecting a radio
+    underneath every assertion. The source is connected here instead, once,
+    through its own public `connect()`."""
+    update_dir = tmp_path / "update"
+    update_dir.mkdir()
+    host_dev, sys_root = _host_two_sticks(tmp_path)
+    store = Store(tmp_path / "t.sqlite")
+    runtime = _AttachableRuntime(store)
+    sources = Sources([_Matter()])  # type: ignore[list-item]
+    app = _StubApplication()
+
+    # The real warm-up imports 462 quirk modules and costs seconds. Every
+    # Zigbee suite replaces it for that reason; nothing here depends on the
+    # registry.
+    async def no_warm_up() -> float:
+        return 0.0
+
+    monkeypatch.setattr(source_module, "ensure_quirks_loaded", no_warm_up)
+
+    async def application_factory(config: dict[str, Any]) -> Any:
+        return app
+
+    source = ZigbeeSource(
+        path=ITEAD_PATH,
+        fingerprint=Fingerprint(
+            name="ITEAD V2", radio_type="ezsp", baudrate=115200, flow_control="hardware"
+        ),
+        database=tmp_path / "zigbee.sqlite",
+        application_factory=application_factory,
+    )
+
+    async def build(settings: Any) -> Any:
+        return None if settings.path is None else source
+
+    async def never_supervise(*args: Any, **kwargs: Any) -> None:
+        return None
+
+    holder = ZigbeeRuntime(
+        store,
+        runtime,  # type: ignore[arg-type]
+        sources,
+        build_source=build,
+        supervise=never_supervise,
+    )
+    settings = settings_for_path(ITEAD_PATH, scan_serial(host_dev, sys_root))
+    store.zigbee_settings.save(settings)
+    await holder.open()
+    await source.connect()
+    # The same subscription `sources.supervisor.attach()` makes in
+    # production, and the reason it is here: `follow` is what reaches
+    # `Runtime.on_node_snapshot`, and a source with no handler would
+    # deliver into a void - an adoption that never seeded its device would
+    # then look exactly like one that did.
+    await source.subscribe(partial(store.device_id_for, "zigbee"), runtime)  # type: ignore[arg-type]
+
+    fastapi_app = build_app(
+        store,
+        no_invoke,
+        runtime,
+        sources=sources,
+        update_dir=update_dir,
+        radios_host_dev=host_dev,
+        radios_sys_root=sys_root,
+        zigbee_runtime=holder,
+    )
+    _radios_heartbeat(update_dir)
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=fastapi_app), base_url="http://test"
+    ) as client:
+        await authenticate(store, client)
+        yield client, _PairingHarness(store, holder, source, app, runtime)
+    await source.disconnect()
+    await holder.stop()
+    store.close()
+
+
+async def _rows(client: httpx.AsyncClient) -> dict[str, dict[str, Any]]:
+    response = await client.get("/api/zigbee/pairing")
+    assert response.status_code == 200, response.text
+    return {row["ieee"]: row for row in response.json()["rows"]}
+
+
+async def test_the_permit_window_is_the_protocol_maximum_and_has_a_server_side_end(pairing):
+    """254 s is the maximum zigpy will accept - it asserts
+    `0 <= t <= 254` - and the response carries the END TIMESTAMP, not the
+    duration, so a page that is reloaded halfway through still counts down
+    to the truth rather than restarting at 254.
+
+    Fault to prove it: return the duration and let the page count from
+    there.
+
+    The reload is the half that matters and it is checked here: the second
+    `GET` reports the SAME end the `POST` did, not a fresh window.
+
+    **The second between the two reads is load-bearing**, and it is the
+    reason this test sleeps at all. `permit_until` is reported to the
+    second, so a route that recomputed the end on every read - which is
+    what "the page counts from the duration" is, moved to the server -
+    would answer with a string identical to the `POST`'s for as long as
+    both land inside the same second. Measured: with that fault injected
+    and no sleep here, this test passed. A reload one second later is the
+    smallest input that tells a pinned end from a recomputed one."""
+    client, harness = pairing
+    before = datetime.now(UTC)
+
+    response = await client.post("/api/zigbee/permit", json={"duration": 254})
+
+    assert response.status_code == 200, response.text
+    permit_until = response.json()["permit_until"]
+    assert harness.app.permits == [(254, None)]
+    ends = datetime.fromisoformat(permit_until)
+    assert 253 <= (ends - before).total_seconds() <= 256, permit_until
+
+    # What a reloaded page reads. The same end, to the second - not a new
+    # window, and not a duration it would have to start counting from now.
+    await asyncio.sleep(1.1)
+    reloaded = (await client.get("/api/zigbee/pairing")).json()
+    assert reloaded["permit_until"] == permit_until
+
+
+async def test_no_unlimited_join_mode_is_offered(pairing):
+    """Z2M REMOVED its permanent permit_join option in 2.0 as a security
+    concern and sometimes unstable. A network left open forever is one any
+    passing device can join.
+
+    Fault to prove it: accept `duration: 0xFF` as "forever".
+
+    `0xFF` is the traditional spelling of it, and it is refused as an
+    out-of-range value like any other - in the SCHEMA, so it never reaches
+    zigpy's own `assert`, which under `python -O` is no check at all."""
+    client, harness = pairing
+
+    for forever in (0xFF, 255, 3600, -1):
+        response = await client.post("/api/zigbee/permit", json={"duration": forever})
+        assert response.status_code == 422, (forever, response.text)
+
+    assert harness.app.permits == [], "the radio was asked to open anyway"
+    assert (await client.get("/api/zigbee/pairing")).json()["permit_until"] is None
+
+
+async def test_stopping_closes_the_window_immediately(pairing):
+    """`permit(0)`. Leaving the tab does the same - ZHA's failure to close
+    its window is a standing complaint.
+
+    Fault to prove it: ignore a duration of 0."""
+    client, harness = pairing
+    await client.post("/api/zigbee/permit", json={"duration": 254})
+    assert (await client.get("/api/zigbee/pairing")).json()["permit_until"] is not None
+
+    response = await client.post("/api/zigbee/permit", json={"duration": 0})
+
+    assert response.status_code == 200, response.text
+    assert harness.app.permits[-1] == (0, None), "the radio was never told to close"
+    assert response.json()["permit_until"] is None
+    assert (await client.get("/api/zigbee/pairing")).json()["permit_until"] is None
+
+
+async def test_a_row_is_keyed_by_ieee_and_carries_what_the_tab_shows(pairing):
+    """One row per device, keyed by IEEE (design 3.1).
+
+    Fault to prove it: key rows by NWK. A rejoining device then appears
+    twice, once under each address it has had."""
+    client, harness = pairing
+    await client.post("/api/zigbee/permit", json={"duration": 254})
+    lamp = _lamp()
+    harness.app.join(lamp)
+    harness.app.device_initialized(lamp)
+
+    # The same device again under a new short address, which is what a
+    # rejoin gives it.
+    rejoined = _lamp()
+    rejoined.nwk = 0x4321
+    harness.app.device_initialized(rejoined)
+
+    # The LIST, not a dict keyed by IEEE: two rows for one device would
+    # collapse into one when indexed by the very field under test, and the
+    # duplicate is the whole failure - measured, with the fault injected.
+    body = (await client.get("/api/zigbee/pairing")).json()
+    assert [row["ieee"] for row in body["rows"]] == [LAMP_IEEE]
+    rows = await _rows(client)
+    assert rows[LAMP_IEEE]["state"] == "ready"
+    assert rows[LAMP_IEEE]["discovered"] is False
+
+
+async def test_a_device_discovered_without_a_join_window_is_not_reported_as_just_joined(pairing):
+    """zigpy interviews devices of an ADOPTED network on its own
+    (`_discover_unknown_device`), so devices can appear when nobody opened a
+    window. Telling the user "a device joined just now" would be false.
+
+    Fault to prove it: report every new device as a join."""
+    client, harness = pairing
+    stranger = _lamp("00:12:4b:00:1c:00:00:11")
+    harness.app.join(stranger)
+
+    await client.post("/api/zigbee/permit", json={"duration": 254})
+    invited = _lamp("00:12:4b:00:1c:00:00:12")
+    harness.app.join(invited)
+
+    rows = await _rows(client)
+    assert rows[stranger.ieee]["discovered"] is True
+    assert rows[invited.ieee]["discovered"] is False
+
+
+async def test_an_interview_that_fails_says_so_and_offers_retry_and_remove(pairing):
+    """ZHA has NO failure state at all - a hung interview sits on "Starting
+    interview" forever (HA core issues 124114, 99497, 123136, 162426). That
+    is the single thing this tab exists to do better.
+
+    Fault to prove it: drop the `device_init_failure` handler.
+
+    Both actions the failed row offers are exercised, because a failure
+    state with no way out of it is a dead end rather than an improvement."""
+    client, harness = pairing
+    await client.post("/api/zigbee/permit", json={"duration": 254})
+    sensor = _StubDevice(SENSOR_IEEE, manufacturer="", model="", mains=False)
+    harness.app.join(sensor)
+    assert (await _rows(client))[SENSOR_IEEE]["state"] == "joined"
+
+    harness.app.init_failure(sensor)
+
+    assert (await _rows(client))[SENSOR_IEEE]["state"] == "failed"
+
+    # Retry asks the device again and puts the row back on the clock.
+    retry = await client.post(f"/api/zigbee/pairing/{SENSOR_IEEE}/retry")
+    assert retry.status_code == 202, retry.text
+    assert sensor.initializations == 1
+    assert (await _rows(client))[SENSOR_IEEE]["state"] == "interviewing"
+
+    # And Remove is there for the device that never answers at all.
+    removed = await client.delete(f"/api/zigbee/pairing/{SENSOR_IEEE}")
+    assert removed.status_code == 204
+    assert harness.app.removed == [SENSOR_IEEE]
+    assert await _rows(client) == {}
+
+
+async def test_a_row_with_no_progress_becomes_stuck_and_names_the_real_cause(pairing):
+    """60 s for a mains device, 90 s for a battery one. A stuck row is NOT
+    an error row: it keeps waiting and keeps offering Retry and Remove,
+    because the usual cause is a battery device that fell asleep and the
+    usual fix is pressing its button - which the copy says.
+
+    Fault to prove it: mark it failed instead. The user then removes a
+    device that was about to finish.
+
+    The two thresholds are both measured, and against each other: at 75 s a
+    mains device is stuck and a battery one is not, which is the only input
+    that tells one threshold from one number used for both."""
+    client, harness = pairing
+    await client.post("/api/zigbee/permit", json={"duration": 254})
+    mains = _lamp("00:12:4b:00:1c:00:00:21")
+    battery = _StubDevice("00:15:8d:00:02:00:00:22", mains=False)
+    harness.app.join(mains)
+    harness.app.join(battery)
+
+    rows = await _rows(client)
+    assert rows[mains.ieee]["state"] == "joined"
+    assert rows[battery.ieee]["state"] == "joined"
+
+    # 75 s of no progress: past the mains threshold, short of the battery
+    # one. Written onto the rows rather than slept for, because the two
+    # thresholds are a minute and a half of wall clock.
+    stalled = (datetime.now(UTC) - timedelta(seconds=75)).isoformat(timespec="microseconds")
+    harness.source._pairing = {
+        ieee: replace(row, changed_at=stalled) for ieee, row in harness.source._pairing.items()
+    }
+
+    rows = await _rows(client)
+    assert rows[mains.ieee]["state"] == "stuck"
+    assert rows[battery.ieee]["state"] == "joined", "a sleeping sensor accused 15 s early"
+
+    # A stuck row is not an error row: both actions are still there, and
+    # Retry restarts the clock rather than the row being written off.
+    assert (await client.post(f"/api/zigbee/pairing/{mains.ieee}/retry")).status_code == 202
+    assert (await _rows(client))[mains.ieee]["state"] == "interviewing"
+
+    # Past 90 s the battery device is stuck too - the threshold is longer,
+    # not absent.
+    long_stalled = (datetime.now(UTC) - timedelta(seconds=95)).isoformat(timespec="microseconds")
+    harness.source._pairing[battery.ieee] = replace(
+        harness.source._pairing[battery.ieee], changed_at=long_stalled
+    )
+    assert (await _rows(client))[battery.ieee]["state"] == "stuck"
+
+
+async def test_the_quirk_hint_reports_what_zigpy_actually_resolved(pairing):
+    """The resolved device carries `_quirk_registry_entry`. This is
+    loxmatter's equivalent of Z2M's "Unsupported" badge, and it explains
+    missing values before the user asks - users routinely confuse a failed
+    interview with an unsupported device, so the two are shown as different
+    things in different places.
+
+    Fault to prove it: report "quirk applied" unconditionally."""
+    client, harness = pairing
+    quirked = _lamp("00:12:4b:00:1c:00:00:31", quirk_applied=True)
+    plain = _lamp("00:12:4b:00:1c:00:00:32")
+    harness.app.device_initialized(quirked)
+    harness.app.device_initialized(plain)
+
+    rows = await _rows(client)
+    assert rows[quirked.ieee]["quirk_applied"] is True
+    assert rows[plain.ieee]["quirk_applied"] is False
+    # And it is a different thing in a different place from a failure: the
+    # unquirked device is perfectly ready.
+    assert rows[plain.ieee]["state"] == "ready"
+
+
+async def test_the_name_is_prefilled_from_manufacturer_and_model_not_the_ieee(pairing):
+    """Z2M prefills the IEEE, which nobody keeps.
+
+    Fault to prove it: prefill the IEEE."""
+    client, harness = pairing
+    lamp = _lamp()
+    harness.app.device_initialized(lamp)
+
+    row = (await _rows(client))[LAMP_IEEE]
+
+    assert row["suggested_name"] == "IKEA of Sweden TRADFRI bulb"
+    assert LAMP_IEEE not in row["suggested_name"]
+
+
+async def test_naming_a_ready_row_adopts_the_device_with_its_room(pairing):
+    """Naming a device is what makes it one of the bridge's own: zigpy knows
+    it the moment its interview finishes, but nothing in loxmatter's store
+    does until the user says what to call it - which keeps a device somebody
+    is still deciding about out of the device list, the export template and
+    Loxone.
+
+    Fault to prove it: register the device but skip `register_signals` /
+    `follow`. The tile then exists with no signals under it, which is the
+    shape of the bug `commission_device` records for Matter. Both halves
+    were injected separately, and both failed this test.
+
+    **What this does NOT measure**, recorded rather than left to be
+    rediscovered: `seed_even_without_new_paths`. Dropping it was injected
+    too and this test stayed green, correctly - a device being adopted for
+    the first time has no delivered paths yet, so a plain `follow` seeds it
+    anyway. The flag only separates the two on a SECOND adoption, where
+    nothing is owed either. It is kept because the sibling Matter route
+    keeps it for a case that route can genuinely reach; here it is
+    belt-and-braces, and no test should claim otherwise."""
+    client, harness = pairing
+    lamp = _lamp()
+    harness.app.device_initialized(lamp)
+    assert (await _rows(client))[LAMP_IEEE]["device_id"] is None
+
+    response = await client.patch(
+        f"/api/zigbee/pairing/{LAMP_IEEE}", json={"name": "Reading lamp", "room": "Study"}
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert (body["name"], body["room"]) == ("Reading lamp", "Study")
+    device_id = body["device_id"]
+    assert device_id is not None
+    stored = harness.store.device(device_id)
+    assert (stored.label, stored.room, stored.technology) == ("Reading lamp", "Study", "zigbee")
+    # The signals exist - a named device with no signals is a tile with
+    # nothing under it.
+    assert [signal.key for signal in harness.store.signals(device_id)]
+    # And the runtime was told about it, which is what `follow` is for: the
+    # signal rows alone are rows with no values in them, and a Zigbee lamp
+    # that is simply off never reports anything by itself.
+    assert [seeded for seeded, _ in harness.runtime.snapshots] == [device_id]
+
+    # A row that is not ready is refused rather than half-registered.
+    sensor = _StubDevice("00:15:8d:00:02:00:00:41", mains=False)
+    harness.app.join(sensor)
+    refused = await client.patch(
+        f"/api/zigbee/pairing/{sensor.ieee}", json={"name": "Door", "room": ""}
+    )
+    assert refused.status_code == 409, refused.text
+
+
+async def test_removal_forgets_the_device_even_when_the_leave_is_never_delivered(pairing):
+    """`remove()` deletes the device from zigpy's database whether or not
+    the leave request arrives, and nothing stops the device rejoining. The
+    confirmation copy says exactly that, and a sleeping device must be
+    factory-reset before it can be paired elsewhere.
+
+    Fault to prove it: keep the row when the leave is not acknowledged. The
+    UI then shows a device the bridge has already forgotten.
+
+    The stub never sends a leave confirmation, exactly like a device that
+    was asleep or already gone; the timeout below is what turns a wait for
+    one into a failure rather than a hung suite."""
+    client, harness = pairing
+    lamp = _lamp()
+    harness.app.device_initialized(lamp)
+    adopted = await client.patch(f"/api/zigbee/pairing/{LAMP_IEEE}", json={"name": "Lamp"})
+    device_id = adopted.json()["device_id"]
+
+    response = await asyncio.wait_for(client.delete(f"/api/zigbee/pairing/{LAMP_IEEE}"), timeout=5)
+
+    assert response.status_code == 204
+    assert harness.app.removed == [LAMP_IEEE]
+    assert await _rows(client) == {}
+    # And the device the user had already adopted is gone from the store
+    # too, rather than left behind as a tile nothing will ever update.
+    assert all(device.id != device_id for device in harness.store.devices())
+
+
+async def test_a_ready_row_shows_configuring_while_configure_on_join_is_still_running(pairing):
+    """Design 3.1's table: "configuring - `device_initialized`, our
+    configure-on-join running - Setting it up". The row has been set to
+    "ready" on `device_initialized` since the source was written, with
+    `configure_device` only starting in the background afterwards, so a
+    device that takes the better part of 30 s to bind a sleepy cluster
+    reported "Ready to use" a whole configuration pass before it deserved
+    to.
+
+    Fault to prove it: return `row.state` unchanged instead of overlaying
+    `configuring_addresses()`.
+
+    That the set really covers the whole pass is measured against the real
+    `configure_device` in
+    `tests/zigbee/test_source.py::test_configuring_addresses_covers_the_whole_configuration_pass`;
+    what is measured here is the overlay."""
+    client, harness = pairing
+    lamp = _lamp()
+    harness.app.device_initialized(lamp)
+    assert (await _rows(client))[LAMP_IEEE]["state"] == "ready"
+
+    harness.source._configuring.add(LAMP_IEEE)
+    assert (await _rows(client))[LAMP_IEEE]["state"] == "configuring"
+
+    # And a row that has not finished interviewing is not "configuring" no
+    # matter what the set says - a device cannot be mid configure-on-join
+    # before it has been read.
+    joining = _lamp("00:12:4b:00:1c:00:00:51")
+    harness.app.join(joining)
+    harness.source._configuring.add(joining.ieee)
+    assert (await _rows(client))[joining.ieee]["state"] == "joined"
+
+    harness.source._configuring.discard(LAMP_IEEE)
+    assert (await _rows(client))[LAMP_IEEE]["state"] == "ready"
+
+
+async def test_a_ready_row_with_a_deferred_cluster_shows_waiting_to_wake(pairing):
+    """Design 3.1's table: "waiting to wake - configuration deferred -
+    Waiting for the device to wake up - press its button".
+
+    Read from the pending table FRESH on every request, not cached on the
+    row or on the source: a bridge restart between the deferral and the
+    next page load must still show it, because the pending row itself is
+    what survives the restart (`zigbee_pending_config` being on disk is the
+    entire point of it).
+
+    Fault to prove it: compute this from an in-memory flag set only inside
+    `ZigbeeSource._configure_then_deliver` instead of from
+    `store.zigbee_pending.addresses_with_pending()`. The state is right
+    until the next restart and silently wrong - back to a bare "ready" -
+    after one, for exactly the device it matters most for: a battery sensor
+    that was asleep when the bridge went down and is still owed a cluster
+    when it comes back up.
+
+    The restart is what this test actually stages: the pending row is
+    written straight into the store, with nothing in this process ever
+    having run a configuration pass - which is precisely the state a
+    restarted bridge wakes up in."""
+    client, harness = pairing
+    lamp = _lamp()
+    harness.app.device_initialized(lamp)
+    assert (await _rows(client))[LAMP_IEEE]["state"] == "ready"
+
+    harness.store.zigbee_pending.mark_pending(LAMP_IEEE, 1, ON_OFF_CLUSTER)
+
+    assert (await _rows(client))[LAMP_IEEE]["state"] == "waiting_wake"
+    # A live configuration pass wins over a cluster still owed: the device
+    # is being worked on right now, which is the more specific truth.
+    harness.source._configuring.add(LAMP_IEEE)
+    assert (await _rows(client))[LAMP_IEEE]["state"] == "configuring"
+
+
+async def test_a_row_returns_to_ready_once_the_last_pending_cluster_clears(pairing):
+    """The wake-up path clears `zigbee_pending_config` one row at a time as
+    each deferred cluster finally succeeds. Reading the pending table fresh
+    is what makes this transition need no code of its own: once
+    `addresses_with_pending()` no longer names the device, the overlay stops
+    applying and the row reports the "ready" state it has held since
+    `device_initialized`.
+
+    Fault to prove it: cache the "waiting to wake" overlay the first time it
+    is computed instead of recomputing it on every request. A device that
+    finishes configuring on its next wake-up then shows "waiting to wake"
+    forever - on the one tab whose entire reason for existing is not doing
+    what ZHA does."""
+    client, harness = pairing
+    lamp = _lamp()
+    harness.app.device_initialized(lamp)
+    harness.store.zigbee_pending.mark_pending(LAMP_IEEE, 1, ON_OFF_CLUSTER)
+    harness.store.zigbee_pending.mark_pending(LAMP_IEEE, 1, 0x0402)
+    assert (await _rows(client))[LAMP_IEEE]["state"] == "waiting_wake"
+
+    # One cluster succeeds on the next wake-up. One is still owed, so the
+    # row has not finished waiting.
+    harness.store.zigbee_pending.clear(LAMP_IEEE, 1, ON_OFF_CLUSTER)
+    assert (await _rows(client))[LAMP_IEEE]["state"] == "waiting_wake"
+
+    harness.store.zigbee_pending.clear(LAMP_IEEE, 1, 0x0402)
+    assert (await _rows(client))[LAMP_IEEE]["state"] == "ready"
+
+
+async def test_an_open_window_and_its_rows_do_not_survive_the_radio_going_away(pairing):
+    """The failure this branch keeps producing, in the shape pairing takes:
+    something disappears while a window is still open.
+
+    A permit lives in the COORDINATOR. A stick that was unplugged, or one
+    the user swapped for another, is not holding a network open for
+    anybody - so a tab still counting down is counting down to a fiction,
+    and the rows it is showing belong to a radio that is gone.
+
+    Fault to prove it: leave `_permit_until` alone on link loss, and read
+    the source once at router-build time instead of per request. The
+    countdown then runs on a dead radio, and after a swap the tab keeps
+    answering for the stick the user stopped using.
+
+    The swap window itself - the seconds in which the old source is gone
+    and the new one does not exist yet - answers 503 rather than an empty
+    list: "there is no Zigbee radio right now" is the truth, and an empty
+    list would read as "your devices are gone"."""
+    client, harness = pairing
+    harness.app.device_initialized(_lamp())
+    await client.post("/api/zigbee/permit", json={"duration": 254})
+    assert (await client.get("/api/zigbee/pairing")).json()["permit_until"] is not None
+
+    # The stick dies under the open window - bellows' single
+    # `connection_lost`, which is all a lost link ever produces.
+    harness.app.listener_event("connection_lost", OSError("link lost"))
+    await asyncio.sleep(0)
+
+    body = (await client.get("/api/zigbee/pairing")).json()
+    assert body["permit_until"] is None, "the tab would count down on a dead radio"
+    # The rows are still there - the devices did not go anywhere, the radio
+    # did - and a permit cannot be opened on it.
+    assert [row["ieee"] for row in body["rows"]] == [LAMP_IEEE]
+    refused = await client.post("/api/zigbee/permit", json={"duration": 254})
+    assert refused.status_code == 502
+    assert refused.json()["detail"]
+
+    # And the swap window, where there is no source at all to ask.
+    harness.holder._source = None
+    for route, method in (
+        ("/api/zigbee/pairing", client.get),
+        (f"/api/zigbee/pairing/{LAMP_IEEE}/retry", client.post),
+        (f"/api/zigbee/pairing/{LAMP_IEEE}", client.delete),
+    ):
+        response = await method(route)
+        assert response.status_code == 503, (route, response.text)
+        assert response.json()["detail"]
+
+
+async def test_a_row_that_is_gone_is_a_404_rather_than_a_silent_success(pairing):
+    """A row can disappear between the page being rendered and a button on
+    it being pressed: the device was removed from another tab, or the radio
+    was swapped and took every row with it.
+
+    Fault to prove it: let Retry and Remove answer 2xx for a device nothing
+    has heard of. The user then watches a row that will never change."""
+    client, _harness = pairing
+    missing = "00:12:4b:00:1c:00:00:99"
+
+    assert (await client.post(f"/api/zigbee/pairing/{missing}/retry")).status_code == 404
+    assert (await client.delete(f"/api/zigbee/pairing/{missing}")).status_code == 404
+    patched = await client.patch(f"/api/zigbee/pairing/{missing}", json={"name": "Ghost"})
+    assert patched.status_code == 404
+    assert patched.json()["detail"]
+
+
+async def test_the_pairing_routes_need_a_login(tmp_path, no_invoke):
+    """The same guard every other `/api` router carries. A join window is
+    the most privileged thing this bridge can open."""
+    store = Store(tmp_path / "t.sqlite")
+    host_dev, sys_root = _host_two_sticks(tmp_path)
+    runtime = _AttachableRuntime(store)
+    sources = Sources([_Matter()])  # type: ignore[list-item]
+
+    async def build(settings: Any) -> Any:
+        return None
+
+    holder = ZigbeeRuntime(store, runtime, sources, build_source=build)  # type: ignore[arg-type]
+    app = build_app(
+        store,
+        no_invoke,
+        runtime,
+        sources=sources,
+        update_dir=tmp_path,
+        radios_host_dev=host_dev,
+        radios_sys_root=sys_root,
+        zigbee_runtime=holder,
+    )
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        assert (await client.get("/api/zigbee/pairing")).status_code == 401
+        assert (await client.post("/api/zigbee/permit", json={"duration": 254})).status_code == 401
+        assert (await client.post("/api/zigbee/pairing/x/retry")).status_code == 401
+        assert (await client.delete("/api/zigbee/pairing/x")).status_code == 401
+        assert (await client.patch("/api/zigbee/pairing/x", json={})).status_code == 401
+    store.close()
 
 
 async def test_the_routes_need_a_login(tmp_path, no_invoke):

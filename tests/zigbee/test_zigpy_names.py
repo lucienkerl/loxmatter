@@ -212,6 +212,43 @@ def test_the_application_calls_the_source_makes_have_the_arguments_it_passes() -
     assert "auto_form=True" in inspect.getsource(ZigbeeSource.connect)
 
 
+def test_the_retry_a_failed_row_offers_is_zigpys_own_entry_point() -> None:
+    """`ZigbeeSource.retry_interview` calls `Device.schedule_initialize()`,
+    and everything about how the route is shaped follows from what that
+    method actually is.
+
+    It is SYNCHRONOUS and starts the interview as a task, which is why the
+    retry route answers 202 instead of holding a request open for a device
+    that may be asleep. It cancels any initialization still running by
+    itself, which is why the source does not call `cancel_initialization()`
+    first. And for a device that is ALREADY fully interviewed it does not
+    re-interview at all - it calls `ControllerApplication.device_initialized`,
+    a real method on the application, which re-announces the device through
+    the listener event of the same name.
+
+    Fault to prove it: call `device.initialize()` instead. That is a
+    coroutine, so the route would either await a whole interview or leave an
+    un-awaited coroutine behind - and it skips the cancellation that keeps
+    two interviews off one device."""
+    import zigpy.application
+    import zigpy.device
+
+    assert not inspect.iscoroutinefunction(zigpy.device.Device.schedule_initialize)
+    assert inspect.iscoroutinefunction(zigpy.device.Device.initialize)
+    body = inspect.getsource(zigpy.device.Device.schedule_initialize)
+    assert "self.cancel_initialization()" in body
+    assert "self._application.device_initialized(self)" in body
+    assert hasattr(zigpy.application.ControllerApplication, "device_initialized")
+    # `is_initialized` is the fact that decides between the two branches,
+    # and a failed interview leaves it False - which is what makes a Retry
+    # a real second interview rather than a re-announcement.
+    assert "all_endpoints_init" in inspect.getsource(zigpy.device.Device.is_initialized.fget)
+
+    retry = inspect.getsource(ZigbeeSource.retry_interview).split('"""')[-1]
+    assert "schedule_initialize()" in retry
+    assert "initialize()" not in retry.replace("schedule_initialize()", "")
+
+
 def test_the_four_attribute_events_are_the_ones_a_cluster_emits() -> None:
     """The source registers these four names on every cluster. A fifth name,
     or a renamed one, registers a listener that is never called - and a
@@ -376,12 +413,30 @@ def test_every_listener_method_is_an_event_zigpy_actually_emits() -> None:
     `_ApplicationListener.device_removed` to `device_remove` (the listener
     then goes dead and a removed device stays in the pairing tab forever),
     and delete `device_reinterviewed` (the gap this test was written for -
-    it would have caught that one for free)."""
-    import zigpy.application
+    it would have caught that one for free).
 
-    emitted = set(re.findall(r'listener_event\("(\w+)"', inspect.getsource(zigpy.application)))
+    **`zigpy.device` is read as well as `zigpy.application`, and that is
+    not tidiness.** `device_init_failure` - the failed interview, the one
+    state ZHA does not have - is emitted from
+    `zigpy.device.Device.initialize` as `self.application.listener_event(
+    "device_init_failure", self)`: emitted by the device, dispatched to the
+    APPLICATION's listeners. Scraping only `zigpy.application` would report
+    the handler below as a name zigpy never emits, and the comment this
+    module replaced had the fact backwards in the other direction - it said
+    the event goes to the device's own listeners, where a handler would
+    never have been called once."""
+    import zigpy.application
+    import zigpy.device
+
+    emitted = set(
+        re.findall(
+            r'listener_event\(\s*"(\w+)"',
+            inspect.getsource(zigpy.application) + inspect.getsource(zigpy.device),
+        )
+    )
     assert emitted >= {
         "connection_lost",
+        "device_init_failure",
         "device_initialized",
         "device_joined",
         "device_left",
@@ -389,6 +444,12 @@ def test_every_listener_method_is_an_event_zigpy_actually_emits() -> None:
         "device_removed",
         "raw_device_initialized",
     }, sorted(emitted)
+    # And it really is the APPLICATION's listeners that one is dispatched
+    # to, which is what puts the handler on `_ApplicationListener` rather
+    # than on a per-device one.
+    assert 'self.application.listener_event("device_init_failure", self)' in inspect.getsource(
+        zigpy.device.Device.initialize
+    )
 
     listened = {
         name
@@ -400,6 +461,7 @@ def test_every_listener_method_is_an_event_zigpy_actually_emits() -> None:
         "device_joined",
         "raw_device_initialized",
         "device_initialized",
+        "device_init_failure",
         "device_reinterviewed",
         "device_removed",
     }

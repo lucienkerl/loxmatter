@@ -35,7 +35,7 @@ from __future__ import annotations
 
 import asyncio
 import errno
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -1229,6 +1229,260 @@ async def test_a_device_that_appears_without_a_window_is_not_reported_as_joined(
     rows = {row.ieee: row for row in harness.source.pairing_rows()}
     assert rows[joined.ieee].state == "ready"
     assert rows[joined.ieee].model == "TRADFRI bulb"
+
+
+async def test_a_device_that_arrives_as_the_window_closes_is_still_a_join(build) -> None:
+    """A device announces itself through its parent, so an announcement sent
+    inside the window can reach the coordinator after it has run out. The
+    last device to squeeze into a 254 s window is exactly the one the user
+    is standing in front of, and reporting it as "was already on the
+    network" is both false and backwards: `discovered` exists to stop the
+    bridge claiming a join it did not see, not to deny one it did.
+
+    Fault to prove it: decide `discovered` from `_window_is_open()` - the
+    open window and nothing else. The device below, which arrives one
+    second after a window that was open, is then labelled as having been
+    there all along.
+
+    The other half of the grace is measured too: a device that turns up
+    long after the window is a discovery again, or the grace would just be
+    a window that never closes."""
+    harness = build(FakeApplication())
+    await harness.source.connect()
+
+    await harness.source.permit(1)
+    # The window is now over - `permit(1)` put its end one second out and
+    # this moves the clock past it without sleeping. The grace is not.
+    harness.source._permit_until = datetime.now(UTC) - timedelta(seconds=1)
+
+    late = colour_lamp("00:12:4b:00:1c:00:00:03")
+    harness.app.fire_device_joined(late)
+    await _settle(harness.source)
+    rows = {row.ieee: row for row in harness.source.pairing_rows()}
+    assert rows[late.ieee].discovered is False, "a device let in by the window, called a stranger"
+    # And the window itself reads as shut, which is what the tab counts.
+    assert harness.source.permit_until() is None
+
+    # Past the grace, the same arrival is a device that was already there.
+    harness.source._permit_until = datetime.now(UTC) - timedelta(
+        seconds=source_module.PERMIT_JOIN_GRACE_SECONDS + 1
+    )
+    stranger = colour_lamp("00:12:4b:00:1c:00:00:04")
+    harness.app.fire_device_joined(stranger)
+    await _settle(harness.source)
+    rows = {row.ieee: row for row in harness.source.pairing_rows()}
+    assert rows[stranger.ieee].discovered is True
+
+
+async def test_an_open_window_does_not_outlive_the_radio_that_was_holding_it(build) -> None:
+    """A permit lives in the COORDINATOR, not in this object. A stick that
+    was unplugged or wedged is not holding a network open for anybody, so a
+    tab still counting down four minutes is counting down to a fiction -
+    and the next device to appear after the reconnect would be reported as
+    a join nobody permitted.
+
+    This is the shape of bug this branch has produced four times: something
+    disappears while a window, a sweep or a loop is still running, and the
+    state left behind describes a world that no longer exists.
+
+    Fault to prove it: leave `_permit_until` alone in
+    `_handle_connection_lost` and in `disconnect()`."""
+    harness = build(FakeApplication(), FakeApplication())
+    await harness.source.connect()
+    await harness.source.permit(254)
+    assert harness.source.permit_until() is not None
+
+    harness.app.fire_connection_lost()
+    await _settle(harness.source)
+    assert harness.source.permit_until() is None
+    # And a device turning up now - the radio came back, the window did not
+    # - is not credited to a window nobody has open.
+    await harness.source.connect()
+    late = colour_lamp("00:12:4b:00:1c:00:00:05")
+    harness.source._app.fire_device_joined(late)
+    await _settle(harness.source)
+    rows = {row.ieee: row for row in harness.source.pairing_rows()}
+    assert rows[late.ieee].discovered is True
+
+    # The deliberate shutdown half: the same guarantee, and the one that
+    # matters for a radio SWAP, where this source is torn down and another
+    # takes its place.
+    await harness.source.permit(254)
+    assert harness.source.permit_until() is not None
+    await harness.source.disconnect()
+    assert harness.source.permit_until() is None
+
+
+async def test_two_overlapping_permits_leave_the_window_agreeing_with_the_radio(build) -> None:
+    """ "Keep open longer" pressed while a Stop is still in flight - two
+    tabs, a phone and a laptop, or one impatient double-click.
+    `app.permit` is a ZDO broadcast plus a call into the NCP, so the two
+    requests can finish in the opposite order to the one they were made in.
+
+    Whichever call the RADIO finished last is what the network is actually
+    doing, and the end time the tab counts down to has to agree with it.
+    Without the lock the loser writes its own end time after the winner's,
+    and the tab counts down four minutes on a network that is shut - the
+    single most dangerous direction for this particular lie, because the
+    user walks away believing pairing is still possible while a stranger's
+    device cannot in fact get in, or, with the ends reversed, believing the
+    network is closed while it is open.
+
+    Fault to prove it: drop `self._permit_lock` from `permit()`."""
+    harness = build(FakeApplication())
+    await harness.source.connect()
+    # The long window's call takes two event-loop rounds to reach the
+    # radio; the Stop takes none. Serialised, the Stop still lands last.
+    harness.app.permit_delays = {254: 2}
+
+    await asyncio.gather(harness.source.permit(254), harness.source.permit(0))
+
+    assert harness.app.permits == [(254, None), (0, None)]
+    assert harness.source.permit_until() is None, "the tab would count down on a shut network"
+
+
+async def test_a_row_is_keyed_by_ieee_and_survives_a_reinterview(build) -> None:
+    """A rejoining device gets a new short address, and a reinterview
+    replaces the device OBJECT entirely - new clusters, same IEEE.
+
+    Fault to prove it: key the rows by NWK. The device below then appears
+    twice, once under each address it has had, and the user removes one of
+    the two halves of a device that is perfectly fine."""
+    lamp = colour_lamp()
+    harness = build(FakeApplication(devices=[lamp]))
+    await harness.source.connect()
+    await harness.source.subscribe(_lamp_resolver(), harness.handler)
+
+    harness.app.fire_device_joined(lamp)
+    await _settle(harness.source)
+    assert [row.ieee for row in harness.source.pairing_rows()] == [LAMP_IEEE]
+
+    # The same device, a new short address and a brand-new object - which
+    # is exactly what zigpy's `_device_reinterviewed` builds.
+    replacement = colour_lamp()
+    replacement.nwk = 0x4321
+    harness.app.fire_device_reinterviewed(replacement)
+    await _settle(harness.source)
+
+    assert [row.ieee for row in harness.source.pairing_rows()] == [LAMP_IEEE]
+    assert harness.source.pairing_rows()[0].state == "ready"
+
+
+async def test_an_interview_that_fails_gets_a_row_that_says_so(build) -> None:
+    """ZHA has NO failure state at all - a hung interview there sits on
+    "Starting interview" forever (HA core issues 124114, 99497, 123136,
+    162426), and that is the single thing this tab exists to do better.
+
+    `device_init_failure` is dispatched to the APPLICATION's listeners even
+    though `zigpy.device.Device.initialize` is what emits it, so the
+    handler belongs on `_ApplicationListener`. A handler placed on the
+    device - where this file's own note used to say it belonged - would
+    never be called once, and zigpy swallows every listener exception, so
+    nothing anywhere would say so.
+
+    Fault to prove it: drop the `device_init_failure` handler."""
+    harness = build(FakeApplication())
+    await harness.source.connect()
+
+    await harness.source.permit(254)
+    sensor = contact_sensor("00:15:8d:00:02:00:00:09")
+    harness.app.fire_device_joined(sensor)
+    await _settle(harness.source)
+    assert harness.source.pairing_rows()[0].state == "joined"
+
+    harness.app.fire_device_init_failure(sensor)
+    await _settle(harness.source)
+    row = harness.source.pairing_rows()[0]
+    assert row.state == "failed"
+    # The row it failed on is the row the user opened the window for, not a
+    # device relabelled as having been there all along.
+    assert row.discovered is False
+
+
+async def test_a_retry_interviews_the_device_again_and_restarts_its_row(build) -> None:
+    """Retry is the other half of having a failure state at all: a row that
+    can fail and cannot be retried is a dead end, and the usual cause of a
+    failed interview - a battery device that was asleep for it - is fixed
+    by asking again while somebody presses its button.
+
+    `schedule_initialize()` is zigpy's own entry point for that, and it
+    starts the interview as a TASK, so nothing here waits for it.
+
+    Fault to prove it: have `retry_interview` only rewrite the row. The
+    device is then never asked anything again, and the row goes back to
+    "interviewing" forever."""
+    harness = build(FakeApplication())
+    await harness.source.connect()
+    sensor = contact_sensor("00:15:8d:00:02:00:00:0a")
+    harness.app.fire_device_joined(sensor)
+    harness.app.fire_device_init_failure(sensor)
+    await _settle(harness.source)
+    assert harness.source.pairing_rows()[0].state == "failed"
+
+    harness.source.retry_interview(sensor.ieee)
+
+    assert sensor.initializations == 1, "the device was never actually asked again"
+    assert harness.source.pairing_rows()[0].state == "interviewing"
+
+    # A device the radio does not know cannot be retried, and says so in
+    # the one vocabulary every source shares.
+    with pytest.raises(DeviceUnreachableError):
+        harness.source.retry_interview("00:15:8d:00:02:00:00:ff")
+
+
+async def test_configuring_addresses_covers_the_whole_configuration_pass(
+    build, tmp_path, monkeypatch
+) -> None:
+    """Design 3.1's table: "configuring - `device_initialized`, our
+    configure-on-join running - Setting it up". The row has been set to
+    "ready" on `device_initialized` since the source was written, with
+    `configure_device` only STARTING afterwards, so without this set a
+    device that takes the better part of 30 s to bind a sleepy cluster
+    reported "Ready to use" a whole configuration pass before it deserved
+    to.
+
+    Fault to prove it: never add to `self._configuring`. The set is then
+    empty for the whole pass and the pairing route has nothing to overlay.
+
+    The address leaves the set BEFORE the device is delivered, deliberately:
+    a snapshot arriving while it still counted as configuring would have the
+    pairing tab and the device's own first values disagree about whether it
+    was ready."""
+    store = Store(tmp_path / "loxmatter.sqlite")
+    try:
+        lamp = colour_lamp()
+        harness = build(FakeApplication(devices=[lamp]), store=store)
+        await harness.source.connect()
+        await harness.source.subscribe(_lamp_resolver(), harness.handler)
+
+        seen: list[frozenset[str]] = []
+        original = source_module.configure_device
+
+        async def watching_configure_device(device: Any, **kwargs: Any) -> Any:
+            # Read from inside the pass, which is the only place the claim
+            # "for as long as it runs" can actually be measured.
+            seen.append(harness.source.configuring_addresses())
+            return await original(device, **kwargs)
+
+        monkeypatch.setattr(source_module, "configure_device", watching_configure_device)
+
+        assert harness.source.configuring_addresses() == frozenset()
+        harness.app.fire_device_initialized(lamp)
+        # The configuration runs as a task the listener started; awaiting
+        # the tasks themselves is a real barrier, where a handful of
+        # `sleep(0)` rounds would go hollow the moment the routine grows an
+        # await.
+        await asyncio.gather(*tuple(harness.source._tasks))
+        await _settle(harness.source)
+
+        assert seen == [frozenset({LAMP_IEEE})]
+        # And it is empty again afterwards, so a finished device does not
+        # sit on "Setting it up" forever.
+        assert harness.source.configuring_addresses() == frozenset()
+        assert harness.source.pairing_rows()[0].state == "ready"
+        await harness.source.disconnect()
+    finally:
+        store.close()
 
 
 # ------------------------------------------------- the two background loops --

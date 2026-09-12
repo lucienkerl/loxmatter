@@ -522,6 +522,30 @@ api.errors.zigbee_not_configured:
   en: "No Zigbee stick is set up in this installation. Pick one under Settings first."
   de: "In dieser Installation ist kein Zigbee-Stick eingerichtet. Wähle zuerst unter Einstellungen einen aus."
 
+# The errors of the pairing routes (design 3.4). Each one says what the
+# user's next move is, because each sends them somewhere different: to the
+# radios card, back to the list, or simply to wait a moment.
+api.zigbee.permit_failed:
+  # The radio was asked to open the network and did not answer. The
+  # supervisor is already reconnecting, so the advice is to wait rather
+  # than to change anything - and {exc} carries the radio's own words,
+  # which is the only thing that separates a busy stick from an absent one
+  # in a bug report.
+  en: "The network could not be opened for new devices: {exc}. The bridge is reconnecting to the stick; try again in a moment."
+  de: "Das Netz konnte nicht für neue Geräte geöffnet werden: {exc}. Die Brücke verbindet sich gerade neu mit dem Stick; versuche es gleich noch einmal."
+api.zigbee.unknown_device:
+  # A row that is no longer there: the device was removed from another tab,
+  # or the radio was swapped and took every row with it. Reloading is the
+  # whole fix, and saying so beats a bare "not found".
+  en: "This device is no longer in the pairing list. Reload the page to see what the bridge currently knows."
+  de: "Dieses Gerät steht nicht mehr in der Kopplungsliste. Lade die Seite neu, um zu sehen, was die Brücke gerade kennt."
+api.zigbee.not_ready_yet:
+  # A save arriving for a row that has since gone back to interviewing.
+  # Registering it then would store whatever half an interview produced -
+  # a device tile with no signals and no hint why.
+  en: "This device is not ready yet — the bridge is still reading its details. Give it a moment, then set the name again."
+  de: "Dieses Gerät ist noch nicht bereit – die Brücke liest noch seine Angaben. Warte einen Moment und vergib den Namen dann erneut."
+
 # The five messages of `ThreadDatasetUnavailableError` (matter/otbr.py).
 # NONE of them may contain the dataset itself - it carries the network key
 # of the Thread network and belongs neither in a response nor in a log

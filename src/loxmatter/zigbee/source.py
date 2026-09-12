@@ -100,6 +100,8 @@ from loxmatter.zigbee.translate import DeviceFacts, EndpointFacts, build_snapsho
 logger = logging.getLogger(__name__)
 
 __all__ = [
+    "PERMIT_JOIN_GRACE_SECONDS",
+    "PERMIT_MAX_SECONDS",
     "ZIGBEE_CHANNELS",
     "ApplicationFactory",
     "ConnectionProgress",
@@ -148,6 +150,18 @@ ZIGBEE_CHANNELS: Final[tuple[int, ...]] = (11, 15, 20, 25)
 # no unlimited mode is offered: Zigbee2MQTT removed its permanent option in
 # 2.0 as a security concern (design 3.1).
 PERMIT_MAX_SECONDS: Final = 254
+
+# How long after a window has closed a device that turns up is still counted
+# as a join rather than as a device that was already on the network.
+#
+# A device announces itself through its parent, and the announcement crosses
+# the mesh before it reaches the coordinator, so one sent inside the window
+# can arrive after it. Without this, the device the user is standing in
+# front of - the last one to squeeze into a 254 s window - is the one the
+# tab labels "was already here", which is both false and exactly backwards:
+# `discovered` exists to keep the bridge from claiming a join it did not
+# see, not to deny one it did.
+PERMIT_JOIN_GRACE_SECONDS: Final = 10
 
 # The four attribute events a cluster emits (`zigpy.zcl`,
 # `AttributeReportedEvent` and its siblings). All four, not just the report:
@@ -297,12 +311,23 @@ class PairingRow:
     would be false.
 
     The states this file produces are the four the source itself can see.
-    "configuring" and "waiting to wake" are still outstanding: the facts
-    behind them exist now - `configure.py` returns a `ConfigureOutcome` and
-    writes a row per deferred cluster into `store.zigbee_pending` - but
-    nothing turns them into a row state yet, because the pairing route that
-    would show one does not exist until Task 12. "stuck" is not a state at
-    all but an age, computed by that same route from `changed_at`."""
+    The two beside them that design 3.1's table promises - "configuring" and
+    "waiting to wake" - are NOT stored here and deliberately so: they are
+    computed per request by `api/zigbee.py`'s pairing route, which overlays
+    them onto a `"ready"` row from `configuring_addresses()` (a live
+    configuration pass) and from `store.zigbee_pending.addresses_with_pending()`
+    (a cluster still owed after one). The second one has to be read from
+    disk on every request rather than remembered here, because the pending
+    row it comes from is written BEFORE the attempt and outlives a bridge
+    restart - a flag on this row would be silently wrong after one, for
+    exactly the sleeping battery sensor it matters most for. "stuck" is not
+    a state at all but an age, computed by that same route from `changed_at`
+    against `is_mains_powered`.
+
+    `is_mains_powered` is read the same conservative way `_facts` reads it:
+    a device with no node descriptor yet counts as battery powered, which
+    buys it the longer of the two stuck thresholds instead of calling a
+    sleepy device stuck 30 s early."""
 
     ieee: str
     state: PairingState
@@ -311,6 +336,7 @@ class PairingRow:
     quirk_applied: bool
     discovered: bool
     changed_at: str
+    is_mains_powered: bool = False
 
 
 # What `connect()` needs to build an application. One argument, the
@@ -399,6 +425,25 @@ class _ApplicationListener:
 
     def device_initialized(self, device: Any) -> None:
         self._source._handle_device_event(device, "ready")
+
+    def device_init_failure(self, device: Any) -> None:
+        """An interview that gave up - the one state ZHA does not have.
+
+        **Dispatched to the APPLICATION's listeners, not to the device's**,
+        even though it is `zigpy.device.Device.initialize` that emits it:
+        that method calls `self.application.listener_event(
+        "device_init_failure", self)` in both of its `except` branches
+        (verified against the installed zigpy 2.2.0, and pinned by
+        `tests/zigbee/test_zigpy_names.py` - which for this one event has to
+        read `zigpy.device` rather than `zigpy.application`). An earlier
+        note in this file claimed the opposite, and a handler placed on the
+        device where that note said would never have been called once.
+
+        Routed through the ordinary event path rather than through a
+        "mark the row failed" helper, so that a device whose very first
+        interview fails still gets a row with its `discovered` flag decided
+        the same way every other row's is."""
+        self._source._handle_device_event(device, "failed")
 
     def device_reinterviewed(self, device: Any) -> None:
         """A device that was interviewed AGAIN - a new object, same IEEE.
@@ -495,7 +540,27 @@ class ZigbeeSource:
         self._capabilities_asked: set[tuple[str, int]] = set()
 
         self._pairing: dict[str, PairingRow] = {}
+        # The END of the last join window that was opened, or `None` if none
+        # ever was. NOT "the window is open": a window that has run out, and
+        # one the user stopped, both leave their end time here, because
+        # `_join_came_from_a_window` needs to know when it was for
+        # `PERMIT_JOIN_GRACE_SECONDS`. "Is it open" is a comparison against
+        # the clock (`_window_is_open`), and `permit_until()` is what the
+        # API reports.
         self._permit_until: datetime | None = None
+        # One join window at a time. Two overlapping `permit()` calls -
+        # "Keep open longer" pressed while a "Stop" is still in flight, two
+        # tabs, a phone and a laptop - each await a broadcast plus a call
+        # into the NCP, and whichever one the radio finished LAST is the one
+        # the network is actually in. Without this lock the loser can still
+        # write its own end time afterwards, and the tab then counts down
+        # four minutes on a network that is shut.
+        self._permit_lock = asyncio.Lock()
+        # Every address `_configure_then_deliver` is currently running
+        # configure-on-join for. Task 12's pairing route overlays
+        # "configuring" onto a "ready" row for exactly these addresses
+        # (design 3.1's table) - nothing else needs to know about this set.
+        self._configuring: set[str] = set()
         # Tasks a synchronous listener starts. Held so the garbage collector
         # cannot take one mid-flight (the `_pulse_tasks` pattern in
         # `loxone/runtime.py`).
@@ -671,6 +736,11 @@ class ZigbeeSource:
         app, self._app = self._app, None
         self._connected = False
         self._link_lost.set()
+        # The same reason as in `_handle_connection_lost`: the stick this
+        # window lived in is being given up, and a radio swap builds a
+        # different source anyway. A window left behind here would be a
+        # countdown with no coordinator under it.
+        self._close_window()
         self._release_cluster_listeners()
         self._delivered.clear()
         dispatch_task, self._dispatch_task = self._dispatch_task, None
@@ -721,6 +791,12 @@ class ZigbeeSource:
         logger.warning("the link to the Zigbee coordinator was lost: %s", _describe(exc))
         self._connected = False
         self._link_lost.set()
+        # An open join window does not survive the radio that was holding
+        # it - see `_close_window`. Without this the pairing tab keeps
+        # counting down on a network no coordinator is opening, and the next
+        # device to appear after the reconnect is reported as a join that
+        # nobody permitted.
+        self._close_window()
         self._set_progress("failed", error=i18n.t("api.errors.zigbee_not_connected"))
         if self._on_connection_change is not None:
             self._spawn(self._on_connection_change(False))
@@ -912,6 +988,20 @@ class ZigbeeSource:
         truth. Before the first application exists at all, the honest answer
         is an empty list - nothing has read the database yet."""
         return [await self._snapshot(device) for device in self._devices()]
+
+    async def snapshot_for(self, address: str) -> NodeSnapshot | None:
+        """One device's snapshot, or `None` if zigpy does not know it.
+
+        For the pairing route, which registers a named device into the
+        store and needs the snapshot `Store.register_device` is keyed on.
+        One device rather than `snapshots()`'s whole catalogue, because
+        `_snapshot` can go to the air for `ColorCapabilities` and a route
+        that adopts one lamp must not pay that for every other lamp in the
+        house as well."""
+        device = self._device_or_none(address)
+        if device is None:
+            return None
+        return await self._snapshot(device)
 
     # -------------------------------------------------------------- events --
 
@@ -1217,22 +1307,70 @@ class ZigbeeSource:
         the window then counts down to the truth rather than starting over.
         `seconds` is bounded by the protocol maximum zigpy itself asserts,
         and a value outside it is REFUSED rather than clamped - "forever"
-        must not look like it worked."""
+        must not look like it worked. `permit(0)` is Stop, and it closes the
+        window at once.
+
+        **Serialised, and the end time is written under the same lock as
+        the radio call.** The two are one fact - what the network is doing,
+        and what the tab counts down to - and they are told apart by nothing
+        but this lock: `app.permit` awaits a broadcast and a call into the
+        NCP, so a Stop issued while a "Keep open longer" is still in flight
+        can reach the radio first and then have the older call write its own
+        four-minute end time over the closure. The window would be shut and
+        the page would keep counting."""
         if not 0 <= seconds <= PERMIT_MAX_SECONDS:
             raise ValueError(
                 f"a join window lasts between 0 and {PERMIT_MAX_SECONDS} seconds, not {seconds}"
             )
-        app = self._require_app()
-        with _as_device_error():
-            await app.permit(time_s=seconds)
-        until = datetime.now(UTC) + timedelta(seconds=seconds)
-        self._permit_until = until if seconds > 0 else None
+        async with self._permit_lock:
+            app = self._require_app()
+            with _as_device_error():
+                await app.permit(time_s=seconds)
+            until = datetime.now(UTC) + timedelta(seconds=seconds)
+            # Kept even for a Stop, and even once it is in the past: the end
+            # of the LAST window is what `_join_came_from_a_window` measures
+            # its grace against. `permit_until()` is where "is it open" is
+            # answered, and it answers `None` for both of those cases.
+            self._permit_until = until
         return until
+
+    def permit_until(self) -> datetime | None:
+        """When the OPEN join window closes, or `None` if none is open.
+
+        What `GET /api/zigbee/pairing` reports and the tab counts down to.
+        `None` covers all four ways there is nothing to count: no window was
+        ever opened, one ran out, the user pressed Stop, and the radio went
+        away underneath an open one."""
+        return self._permit_until if self._window_is_open() else None
+
+    def _close_window(self) -> None:
+        """Forgets the join window - the radio that was holding it is gone.
+
+        A permit lives in the coordinator, not in this object: a stick that
+        was unplugged, wedged, or swapped for another one is not holding a
+        network open for anybody, so a tab still counting down would be
+        counting down to a fiction. Clearing the end time also ends the join
+        grace, which is right for the same reason - the next device to
+        appear after the radio comes back was not let in by a window nobody
+        has open."""
+        self._permit_until = None
 
     # -------------------------------------------------------------- pairing --
 
     def _window_is_open(self) -> bool:
         return self._permit_until is not None and datetime.now(UTC) < self._permit_until
+
+    def _join_came_from_a_window(self) -> bool:
+        """Whether a device turning up right now was let in by the user.
+
+        The open window plus `PERMIT_JOIN_GRACE_SECONDS`, for the reason
+        that constant gives: an announcement sent inside the window can
+        reach the coordinator after it, and labelling that device "was
+        already on the network" would be a lie about the device the user is
+        holding."""
+        if self._permit_until is None:
+            return False
+        return datetime.now(UTC) < self._permit_until + timedelta(seconds=PERMIT_JOIN_GRACE_SECONDS)
 
     def _handle_device_event(self, device: Any, state: PairingState) -> None:
         address = str(device.ieee)
@@ -1247,8 +1385,16 @@ class ZigbeeSource:
             # devices of an adopted network on its own, so a device that
             # appeared without a join window must not later be relabelled a
             # join just because its interview finished while one was open.
-            discovered=existing.discovered if existing is not None else not self._window_is_open(),
+            discovered=(
+                existing.discovered if existing is not None else not self._join_came_from_a_window()
+            ),
             changed_at=now_iso(),
+            # The same conservative reading as `_facts`: no node descriptor
+            # yet means battery powered, and battery powered means the
+            # longer stuck threshold rather than the shorter one.
+            is_mains_powered=bool(
+                device.node_desc is not None and device.node_desc.is_mains_powered
+            ),
         )
         self._pairing[address] = row
         if state == "ready":
@@ -1282,10 +1428,17 @@ class ZigbeeSource:
         routine happened to yield. Awaiting it makes "configured, then
         announced" a property of this code instead of of the scheduler."""
         address = str(device.ieee)
+        self._configuring.add(address)
         try:
             await configure_device(device, store=self._store, polling=self._polling)
         except Exception:
             logger.exception("configuring %s after it joined failed", address)
+        finally:
+            # Cleared before delivery, not after: a snapshot arriving while
+            # this address still counted as "configuring" would have the
+            # pairing tab and the device's own first values disagree about
+            # whether it was ready.
+            self._configuring.discard(address)
         try:
             await self._deliver(address)
         except Exception:
@@ -1293,21 +1446,43 @@ class ZigbeeSource:
             # must not take the join path down.
             logger.exception("delivery of a freshly joined Zigbee device failed")
 
+    def configuring_addresses(self) -> frozenset[str]:
+        """Every address currently mid configure-on-join, for Task 12's
+        pairing route to overlay onto a `"ready"` row. A snapshot, not a
+        live view: the set backing it can change under the caller between
+        one call and the next, which is fine - a request that catches the
+        tail end of a configuration pass and reports "ready" a beat early
+        is not the failure mode this exists to prevent; reporting "ready"
+        for the WHOLE ~30 s pass is."""
+        return frozenset(self._configuring)
+
     def _handle_device_removed(self, device: Any) -> None:
         self._forget(str(device.ieee))
 
-    def mark_failed(self, address: str) -> None:
-        """Marks a pairing row as "could not read this device".
+    def retry_interview(self, address: str) -> None:
+        """Asks zigpy to interview this device again - the Retry the failed
+        and stuck rows of design 3.1 offer.
 
-        zigpy reports a failed interview on the DEVICE's listeners
-        (`device_init_failure`), not on the application's, so the pairing
-        API (Task 12) is what wires it up - this is the one line it needs
-        here. ZHA has no failure state at all, and a hung interview there
-        sits on "Starting interview" forever; that is the single thing the
-        pairing tab exists to do better."""
+        SYNCHRONOUS, and that is the whole shape of it: an interview is a
+        sequence of ZDO requests to a device that may be asleep and is
+        worth minutes on the pessimistic side, so the route schedules it and
+        answers, exactly as `PUT /api/zigbee/radio` schedules a
+        reconnection. `Device.schedule_initialize()` cancels any
+        initialization still running and starts a fresh one (verified
+        against zigpy 2.2.0); for a device that IS already fully
+        interviewed it instead re-announces it through
+        `ControllerApplication.device_initialized`, which lands back here as
+        an ordinary "ready" - a harmless outcome for a button the user only
+        sees on a row that is not ready.
+
+        The row goes back to `"interviewing"` with a fresh `changed_at`, so
+        that a retry restarts the stuck clock rather than leaving the row
+        stuck the moment it is pressed."""
+        device = self._require_device(address)
+        device.schedule_initialize()
         row = self._pairing.get(address)
         if row is not None:
-            self._pairing[address] = replace(row, state="failed", changed_at=now_iso())
+            self._pairing[address] = replace(row, state="interviewing", changed_at=now_iso())
 
 
 def _describe(exc: BaseException | None) -> str:

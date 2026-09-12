@@ -14,8 +14,20 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""`GET` and `PUT /api/zigbee/radio` - which stick is the Zigbee
-coordinator.
+"""The Zigbee radio setting, and the pairing surface the web UI drives.
+
+Two halves, and they are in one module because they are one stick: `GET`
+and `PUT /api/zigbee/radio` choose the coordinator, and
+`/api/zigbee/permit` and `/api/zigbee/pairing*` open it for new devices and
+say what is happening to each one that arrives.
+
+**Pairing is deliberately outside `DeviceSource`** (boundary design 3.2).
+Matter takes a code and returns one device; Zigbee opens the network and
+devices arrive afterwards, possibly several, possibly none. There is no
+honest shared method for those two, so these routes call `ZigbeeSource` by
+name - and read it from `ZigbeeRuntime` on every request rather than
+capturing it, because a radio change replaces the object and a captured one
+would go on answering for the stick the user stopped using.
 
 **A bridge-owned setting, not a sidecar request** (spec correction 3).
 zigpy runs in this process, so the change is applied by reconnecting the
@@ -32,18 +44,29 @@ stick as a perfectly good EZSP Zigbee coordinator, because it IS one -
 nothing in that layer can or should refuse it. This module is the only
 thing standing between the picker and a user selecting the radio their
 entire Thread network depends on.
+
+**The row states the pairing tab shows are not all stored anywhere.**
+`PairingRow.state` carries the four the source itself can see; the three
+beside them come from here, per request, and `_row_status` and `_stuck`
+below say where each one is read from and why none of them may be
+remembered on the row.
 """
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Sequence
 from dataclasses import asdict
+from datetime import UTC, datetime
 from pathlib import Path
+from typing import Final, Literal
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from loxmatter import i18n
+from loxmatter.export.commands import extract_commands
+from loxmatter.matter.models import NodeSnapshot
 from loxmatter.model.store import Store
 from loxmatter.model.zigbee_settings_store import ZigbeeRadioSettings, settings_for_path
 from loxmatter.radios.fingerprints import (
@@ -58,7 +81,27 @@ from loxmatter.radios.inventory import (
     scan_serial,
 )
 from loxmatter.radios.sidecar import read_radios_state
+from loxmatter.sources import DeviceUnreachableError, bounded_source_call
 from loxmatter.zigbee.runtime import ZigbeeRuntime
+from loxmatter.zigbee.source import PERMIT_MAX_SECONDS, PairingRow, ZigbeeSource
+
+logger = logging.getLogger(__name__)
+
+# "waiting_wake", not the design table's own prose label ("waiting to
+# wake") - the pairing tab tests for the wire form under this exact
+# spelling, so this is the one spot where matching the design document's
+# English prose instead of the sibling task's already-written fixture would
+# be the wrong call.
+PairingRowStatus = Literal[
+    "joined", "interviewing", "ready", "failed", "configuring", "waiting_wake", "stuck"
+]
+
+# Design 3.1: "no progress for 60 s (mains) / 90 s (battery)". Two numbers
+# because a battery device's interview is slow by nature - it answers when
+# it happens to be awake - and calling it stuck at the mains threshold would
+# accuse a device that is merely asleep 30 s before it deserves it.
+STUCK_AFTER_SECONDS_MAINS: Final = 60
+STUCK_AFTER_SECONDS_BATTERY: Final = 90
 
 
 class ZigbeeRadioIn(BaseModel):
@@ -85,6 +128,103 @@ class ZigbeeRadioIn(BaseModel):
     # into one.
     baudrate: int | None = Field(default=None, gt=0)
     flow_control: FlowControl | None = None
+
+
+class ZigbeePermitIn(BaseModel):
+    """How long to open the network for, in seconds.
+
+    **Bounded IN THE SCHEMA, at the protocol maximum zigpy itself asserts.**
+    254 s is what `ControllerApplication.permit` allows (`assert 0 <= time_s
+    <= 254`), and a request for more is a 422 here rather than an
+    `AssertionError` from inside the library - which under `python -O` would
+    be no check at all and an out-of-range broadcast instead.
+
+    **There is no unlimited mode, and `0xFF` is not one.** Zigbee2MQTT
+    removed its permanent `permit_join` in 2.0 as a security concern
+    (design 3.1): a network left open forever is a network any passing
+    device can join. `255` is refused like any other out-of-range value, so
+    the traditional "forever" spelling cannot slip through as one.
+
+    A duration of 0 is Stop: it closes the window at once, which is what
+    both the Stop button and leaving the tab send."""
+
+    duration: int = Field(ge=0, le=PERMIT_MAX_SECONDS)
+
+
+class ZigbeePairingPatch(BaseModel):
+    """The name and room of a device being adopted off the pairing tab.
+
+    Both optional and both `None` for "unchanged", the same convention
+    `PATCH /api/devices/{id}` already uses; an empty `room` means "no
+    room", which is the room `<select>`'s own encoding."""
+
+    name: str | None = None
+    room: str | None = None
+
+
+def _suggested_name(row: PairingRow) -> str:
+    """What the name field is prefilled with: `<Manufacturer> <Model>`.
+
+    Z2M prefills the IEEE, which nobody keeps - it is the one string about
+    a device that tells its owner nothing. The IEEE is the fallback only
+    when zigpy has neither name yet, which is true of a row that has not
+    finished interviewing; by the time the row is ready - the only row the
+    tab offers a name field on - both are there."""
+    suggested = " ".join(part for part in (row.manufacturer, row.model) if part)
+    return suggested or row.ieee
+
+
+def _row_status(
+    row: PairingRow, *, configuring: frozenset[str], pending: Sequence[str]
+) -> PairingRowStatus:
+    """The status the pairing tab actually shows - `PairingRow.state`
+    itself, widened by the two facts configure-on-join built and nothing
+    consumed until this route: `ZigbeeSource.configuring_addresses()` for a
+    live configuration pass, `store.zigbee_pending.addresses_with_pending()`
+    for a cluster still owed after one. Order matters - checked in the order
+    a device actually passes through them - and both only ever apply to a
+    `"ready"` row: `joined`, `interviewing` and `failed` are not
+    `"configuring"` or `"waiting_wake"` no matter what either set contains,
+    because a device cannot be mid configure-on-join before it has even
+    finished interviewing.
+
+    Independent of `_stuck`, which turns a stalled `joined`/`interviewing`
+    row into `"stuck"`. The two never both apply to the same row - "stuck"
+    only ever replaces `joined`/`interviewing`, never `"ready"` - so the
+    order the route applies them in is free; it runs this one first only so
+    that this function never has to be handed a status it did not produce.
+    """
+    if row.state != "ready":
+        return row.state
+    if row.ieee in configuring:
+        return "configuring"
+    if row.ieee in pending:
+        return "waiting_wake"
+    return "ready"
+
+
+def _stuck(row: PairingRow, status: PairingRowStatus, *, now: datetime) -> PairingRowStatus:
+    """A row that has stopped progressing, named for what it usually is.
+
+    Design 3.1: 60 s for a mains device, 90 s for a battery one. **A stuck
+    row is NOT an error row** - it keeps waiting and it keeps offering Retry
+    and Remove, because the usual cause is a battery device that fell asleep
+    and the usual fix is pressing its button. Presenting it as a failure is
+    how a user comes to remove a device that was about to finish.
+
+    Only `joined` and `interviewing` can be stuck. A `ready` row is not
+    waiting for anything, and a `failed` one has already been told what
+    happened."""
+    if status not in ("joined", "interviewing"):
+        return status
+    limit = STUCK_AFTER_SECONDS_MAINS if row.is_mains_powered else STUCK_AFTER_SECONDS_BATTERY
+    if (now - datetime.fromisoformat(row.changed_at)).total_seconds() >= limit:
+        return "stuck"
+    return status
+
+
+def _iso(moment: datetime | None) -> str | None:
+    return None if moment is None else moment.isoformat(timespec="seconds")
 
 
 def _thread_stick(update_dir: Path, serial: Sequence[SerialRadio]) -> tuple[str | None, bool]:
@@ -235,5 +375,247 @@ def build_zigbee_router(
         # than merely fast.
         zigbee_runtime.apply(settings)
         return {"progress": asdict(zigbee_runtime.progress())}
+
+    # ------------------------------------------------------------- pairing --
+
+    def _require_source() -> ZigbeeSource:
+        """The live source, or a 503 that says why there is none.
+
+        Read per request, never captured: a radio change builds a NEW
+        `ZigbeeSource`, and between the teardown and the rebuild there is
+        none at all (`ZigbeeRuntime._swap`). Both of those are honestly a
+        "there is no Zigbee radio right now" - which is what this answers,
+        with the status the rest of the bridge already uses for an
+        unconfigured source."""
+        source = zigbee_runtime.current()
+        if source is None:
+            raise HTTPException(status_code=503, detail=i18n.t("api.errors.zigbee_not_configured"))
+        return source
+
+    def _require_row(source: ZigbeeSource, ieee: str) -> PairingRow:
+        """The pairing row this request is about.
+
+        404 rather than a silent no-op: a row can disappear between the
+        page being rendered and a button on it being pressed - the device
+        was removed from another tab, or the radio was swapped and took
+        every row with it - and a Retry that answers 2xx for a device
+        nothing has heard of leaves the user watching a row that will never
+        change."""
+        for row in source.pairing_rows():
+            if row.ieee == ieee:
+                return row
+        raise HTTPException(status_code=404, detail=i18n.t("api.zigbee.unknown_device"))
+
+    @router.post("/zigbee/permit")
+    async def open_join_window(body: ZigbeePermitIn) -> dict[str, object]:
+        """Opens the network for new devices - or, with a duration of 0,
+        closes it.
+
+        Answers with the window's END TIMESTAMP rather than with the
+        duration it was given, and that is the whole point of the route's
+        shape: a page reloaded halfway through counts down to the truth
+        instead of starting a fresh 254 s of its own, and a second tab and a
+        phone agree with it. ZHA counts down in the browser from the moment
+        the page opened, which is why a reloaded ZHA page cheerfully shows a
+        window that closed minutes ago.
+
+        `permit_until` is `null` when no window is open: after a Stop, and
+        after a duration that has already elapsed."""
+        source = _require_source()
+
+        async def _permit() -> None:
+            await source.permit(body.duration)
+
+        try:
+            # Bounded like every other call into a source (boundary design
+            # open point 11). The wrapper exists only because
+            # `bounded_source_call` takes a coroutine that returns nothing,
+            # and the window's end is read back from the source below - one
+            # bound and one vocabulary is worth more than the two lines it
+            # costs here.
+            await bounded_source_call(_permit())
+        except DeviceUnreachableError as exc:
+            raise HTTPException(
+                status_code=502, detail=i18n.t("api.zigbee.permit_failed", exc=str(exc))
+            ) from exc
+        return {"permit_until": _iso(source.permit_until())}
+
+    def _row_out(
+        row: PairingRow,
+        *,
+        configuring: frozenset[str],
+        pending: Sequence[str],
+        now: datetime,
+    ) -> dict[str, object]:
+        status = _stuck(row, _row_status(row, configuring=configuring, pending=pending), now=now)
+        device_id = store.device_id_for("zigbee", row.ieee)
+        stored = None if device_id is None else store.device(device_id)
+        return {
+            "ieee": row.ieee,
+            "state": status,
+            "manufacturer": row.manufacturer,
+            "model": row.model,
+            # loxmatter's equivalent of Z2M's "Unsupported" badge, and a
+            # different thing in a different place from a failed interview:
+            # users routinely confuse the two, and a device that simply has
+            # no quirk is not broken.
+            "quirk_applied": row.quirk_applied,
+            "discovered": row.discovered,
+            "changed_at": row.changed_at,
+            "suggested_name": _suggested_name(row),
+            # `null` until the user has named the device and it became one
+            # of the bridge's own; the tab shows the name field for exactly
+            # that transition.
+            "device_id": device_id,
+            "name": None if stored is None else stored.label,
+            "room": None if stored is None else stored.room,
+        }
+
+    @router.get("/zigbee/pairing")
+    async def list_pairing() -> dict[str, object]:
+        """Every device the radio has seen since it came up, and what is
+        happening to it.
+
+        Both overlays are read ONCE for the whole list rather than once per
+        row - one query, one snapshot of the configuring set - and both are
+        read FRESH on every request. That second half is not an
+        optimisation: `zigbee_pending_config` is on disk precisely so that a
+        cluster owed to a sleeping device outlives a bridge restart, and a
+        "waiting to wake" cached on the row or on the source would be right
+        until the next restart and silently wrong - back to a bare "ready" -
+        afterwards, for exactly the battery sensor it matters most for. It
+        is also what makes the way BACK need no code at all: once the wake-up
+        path has cleared the last pending row, the overlay simply stops
+        applying."""
+        source = _require_source()
+        configuring = source.configuring_addresses()
+        pending = store.zigbee_pending.addresses_with_pending()
+        now = datetime.now(UTC)
+        return {
+            "permit_until": _iso(source.permit_until()),
+            "rows": [
+                _row_out(row, configuring=configuring, pending=pending, now=now)
+                for row in source.pairing_rows()
+            ],
+        }
+
+    @router.post("/zigbee/pairing/{ieee}/retry", status_code=202)
+    async def retry_pairing(ieee: str) -> dict[str, object]:
+        """Interviews a device again - the Retry a failed or stuck row
+        offers.
+
+        202, and deliberately: an interview talks to a device that may be
+        asleep, and holding the request open for it is the bug
+        `bounded_source_call` exists to prevent one layer down. The row goes
+        back to "interviewing" and the tab watches it from there."""
+        source = _require_source()
+        _require_row(source, ieee)
+        try:
+            source.retry_interview(ieee)
+        except DeviceUnreachableError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        return {"state": "interviewing"}
+
+    @router.delete("/zigbee/pairing/{ieee}", status_code=204)
+    async def remove_pairing(ieee: str) -> None:
+        """Asks the device to leave, and forgets it either way.
+
+        `app.remove()` deletes the device from zigpy's database whether or
+        not the leave request is ever delivered, and nothing stops the
+        device rejoining - the confirmation copy in the tab says exactly
+        that. Waiting for an acknowledgement a sleeping device will never
+        send would leave the UI showing a device the bridge has already
+        forgotten.
+
+        The radio first, then the store, for the reason
+        `api/devices.py`'s module docstring spells out: the failure that
+        leaves a visible, diagnosable state beats the one that leaves a
+        device nothing can reach any more."""
+        source = _require_source()
+        _require_row(source, ieee)
+        try:
+            await bounded_source_call(source.remove(ieee))
+        except DeviceUnreachableError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        device_id = store.device_id_for("zigbee", ieee)
+        if device_id is not None:
+            # Only if it was ever adopted. A device removed straight off the
+            # pairing tab never became one of the bridge's own, and there is
+            # nothing in the store to forget.
+            store.forget_device(device_id)
+
+    @router.patch("/zigbee/pairing/{ieee}")
+    async def name_pairing(ieee: str, patch: ZigbeePairingPatch) -> dict[str, object]:
+        """Names a device, and in doing so adopts it.
+
+        This is where a Zigbee device becomes one of the bridge's own:
+        zigpy knows it the moment its interview finishes, but nothing in
+        loxmatter's own store does until the user says what to call it.
+        Registering here rather than on `device_initialized` keeps a device
+        somebody is still deciding about out of the device list, the export
+        template and Loxone.
+
+        `register_device` before `register_signals` before
+        `register_commands`, the same order the Matter commissioning route
+        and the CLI export use, because the last two need the freshly
+        assigned id. `set_room` afterwards and unconditionally, for the
+        reason that route gives: `register_device`'s own `room` argument
+        only takes effect on a newly inserted row, and a room chosen for a
+        device that is already known would otherwise be discarded without
+        comment.
+
+        The values follow through `follow`, which is what reaches
+        `Runtime.on_node_snapshot` and creates the signal rows - with
+        `seed_even_without_new_paths`, or a device whose paths are all
+        already known would get rows and no numbers in them."""
+        source = _require_source()
+        row = _require_row(source, ieee)
+        if row.state != "ready":
+            # A stale tab pressing save on a row that has since regressed -
+            # a reinterview, a failure. Registering then would store a
+            # device with whatever half an interview produced, which is a
+            # device tile with no signals and no way to tell why.
+            raise HTTPException(status_code=409, detail=i18n.t("api.zigbee.not_ready_yet"))
+        found: list[NodeSnapshot] = []
+
+        async def _read() -> None:
+            snapshot = await source.snapshot_for(ieee)
+            if snapshot is not None:
+                found.append(snapshot)
+
+        try:
+            await bounded_source_call(_read())
+        except DeviceUnreachableError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        if not found:
+            raise HTTPException(status_code=404, detail=i18n.t("api.zigbee.unknown_device"))
+        snapshot = found[0]
+
+        device_id = store.register_device(snapshot, room=patch.room)
+        if patch.name is not None:
+            store.rename_device(device_id, patch.name)
+        if patch.room is not None:
+            store.set_room(device_id, patch.room)
+        store.register_signals(device_id, snapshot)
+        store.register_commands(device_id, extract_commands(snapshot))
+        try:
+            await bounded_source_call(source.follow(ieee, seed_even_without_new_paths=True))
+        except Exception:
+            # Follow-up work, and follow-up work must not retroactively
+            # cancel the adoption: the device IS registered by now, and an
+            # error here would send the user back to a row they have
+            # already named. The signal rows exist; their first values
+            # arrive with the next report.
+            logger.exception(
+                "could not seed the signals of the freshly adopted Zigbee device %s", ieee
+            )
+        configuring = source.configuring_addresses()
+        pending = store.zigbee_pending.addresses_with_pending()
+        return _row_out(
+            _require_row(source, ieee),
+            configuring=configuring,
+            pending=pending,
+            now=datetime.now(UTC),
+        )
 
     return router

@@ -40,6 +40,7 @@ what this file offers.
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import logging
 import time
@@ -617,6 +618,10 @@ class FakeDevice:
             time.time() if isinstance(last_seen, _LastSeenUnset) else last_seen
         )
         self.is_initialized = True
+        # How often `schedule_initialize()` really started an interview -
+        # which, exactly as in zigpy, is never for a device that is already
+        # initialized. See that method.
+        self.initializations = 0
         # Everything the device was asked to do, in order. See
         # `FakeCluster._note`.
         self.journal: list[str] = []
@@ -679,6 +684,30 @@ class FakeDevice:
             yield
         finally:
             self.journal.append("fast_poll:stop")
+
+    def cancel_initialization(self) -> None:
+        """`Device.cancel_initialization()` - cancels an interview that is
+        still running. A no-op here beyond the record, because this fake
+        never has one running."""
+        self.journal.append("cancel_initialization")
+
+    def schedule_initialize(self) -> None:
+        """`Device.schedule_initialize()`, in the two shapes zigpy 2.2.0
+        gives it.
+
+        An already-initialized device is NOT re-interviewed: zigpy returns
+        early and calls `self._application.device_initialized(self)`, which
+        re-announces it. Only a device whose interview never finished -
+        `is_initialized` is `node_desc is not None and all_endpoints_init` -
+        actually starts one, and it starts it as a TASK, which is why the
+        method is synchronous and why nothing here awaits an interview."""
+        self.journal.append("schedule_initialize")
+        self.cancel_initialization()
+        if self.is_initialized:
+            if self.application is not None:
+                self.application.device_initialized(self)
+            return
+        self.initializations += 1
 
     def add_listener(self, listener: Any) -> int:
         self.listeners.append(listener)
@@ -754,6 +783,9 @@ class FakeApplication:
         self.startup_error = startup_error
         self.permit_error = permit_error
         self.remove_error = remove_error
+        # Duration -> how many event-loop rounds `permit` yields for before
+        # it answers. See that method.
+        self.permit_delays: dict[int, int] = {}
         self.config: dict[str, Any] = {}
         self.listeners: list[Any] = []
         self.startup_calls: list[bool] = []
@@ -800,6 +832,17 @@ class FakeApplication:
         self.started = False
 
     async def permit(self, time_s: int = 60, node: Any = None) -> None:
+        """`ControllerApplication.permit`, which on a real radio is a ZDO
+        broadcast plus a call into the NCP - two awaits, not one.
+
+        `permit_delays` is what makes that visible: it maps a duration onto
+        the number of event-loop rounds this call yields for before it
+        returns, so a test can have a Stop overtake a longer window that is
+        still in flight. Without a way to reorder them, two overlapping
+        permits are indistinguishable from two sequential ones and the
+        source's lock could not be measured at all."""
+        for _ in range(self.permit_delays.get(time_s, 0)):
+            await asyncio.sleep(0)
         if self.permit_error is not None:
             raise self.permit_error
         self.permits.append((time_s, node))
@@ -835,10 +878,32 @@ class FakeApplication:
         no reconnection attempt of its own."""
         self.listener_event("connection_lost", exc if exc is not None else OSError("link lost"))
 
+    def device_initialized(self, device: FakeDevice) -> None:
+        """`ControllerApplication.device_initialized(device)` - a real
+        METHOD on the application, not a listener event, and the one
+        `Device.schedule_initialize()` calls for a device that is already
+        fully interviewed. It announces the device through the listener
+        event of the same name."""
+        self.fire_device_initialized(device)
+
     def fire_device_initialized(self, device: FakeDevice) -> None:
         self.devices[device.ieee] = device
         device.application = self
         self.listener_event("device_initialized", device)
+
+    def fire_device_init_failure(self, device: FakeDevice) -> None:
+        """An interview that gave up.
+
+        `zigpy.device.Device.initialize` catches `TimeoutError` and
+        `ZigbeeException` and announces this on the APPLICATION's listeners
+        - `self.application.listener_event("device_init_failure", self)` -
+        even though it is the device that emits it. The device stays in
+        `app.devices` and is NOT initialized, which is what lets a Retry
+        interview it again."""
+        self.devices[device.ieee] = device
+        device.application = self
+        device.is_initialized = False
+        self.listener_event("device_init_failure", device)
 
     def fire_device_joined(self, device: FakeDevice) -> None:
         device.application = self
