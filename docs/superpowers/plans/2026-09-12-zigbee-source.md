@@ -53,7 +53,7 @@ Every task's requirements implicitly include this section.
   # collision aborts collection when it is passed alongside tests/projectsync.
   uv run pytest -q tests/api
   # A2
-  uv run pytest -q tests/auth tests/commands tests/devtools tests/diagnostics tests/export tests/loxone tests/matter tests/model tests/profiles tests/projectsync tests/radios tests/sources
+  uv run pytest -q tests/auth tests/commands tests/devtools tests/diagnostics tests/export tests/loxone tests/matter tests/model tests/profiles tests/projectsync tests/radios tests/sources tests/zigbee
   # B
   uv run pytest -q tests/test_install_script.py tests/test_update_script.py tests/test_updater_script.py tests/test_updater_radios_script.py
   # C
@@ -61,6 +61,8 @@ Every task's requirements implicitly include this section.
   ```
 
   The four parts cover `tests/` exactly, so **the pass counts must sum to the whole-suite total**. A sum that does not is evidence something was silently skipped — stop and report it. Baseline before this plan: **2063 passed, 2 skipped**.
+
+  `tests/zigbee` is listed in part A2 above because Task 1 creates it and Tasks 6-9 fill it with the largest suites in this plan — and those suites are, by this plan's own admission, the only evidence that will exist for the translation until a second stick is bought. A directory that no part names is a directory CI never runs. **The only run where `tests/zigbee` must be dropped from the A2 command is Task 1 Step 1**, the baseline, because the directory does not exist yet and pytest exits with `ERROR: file or directory not found`. From Task 1 Step 8 onwards it is always included.
 - **Every test that names a protection must be shown to catch it.** Introduce the stated fault, run the test, see it **FAIL**, revert, see it **PASS**, and paste both outputs into the task report. A reviewer on this branch found tests that passed with their stated fault in place; several had to be rewritten. A test that stays green with the fault in place is wrong.
 - **A Python test that fetches a page proves only that the file was served.** It proves nothing about Alpine bindings, and a markup-substring assertion cannot fail for a binding that is merely wrong. Any web task must use the techniques already in `tests/api/test_web.py`: `_app_state(...)` runs the real `app.js` in node, `_x_show_expr(markup, key)` and `_running_step_lis(markup)` extract the real expressions out of the served markup rather than retyping them, and `_js_constant(name)` reads a constant out of the file.
 - **Anything that writes durable state must be recoverable from an interruption.** An interrupted radios pass used to leave a non-terminal phase that froze the card forever and could only be cleared over SSH. Plan the interrupted case explicitly wherever this plan persists state (Task 9's pending-configuration rows, Task 11's radio setting).
@@ -118,6 +120,8 @@ zigpy, bellows and the whole `zha` + five-radio-library tree enter the project, 
 
 - [ ] **Step 1: Baseline.** Run all four suite parts in the foreground (see Global Constraints) and record the four pass counts and their sum. Expected: **2063 passed, 2 skipped** in total. If the sum differs, stop and report BLOCKED rather than continuing on an unknown baseline.
 
+  **For this run only, drop `tests/zigbee` from the end of the A2 command** — Step 2 creates that directory, and pytest exits with `ERROR: file or directory not found` on a path that does not exist yet. Every later run in this plan, starting at Step 8, uses the A2 command exactly as Global Constraints spells it.
+
 - [ ] **Step 2: Write the failing tests** `tests/zigbee/test_quirks.py` (GPL header first; no `__init__.py` in `tests/zigbee/`, as in `tests/matter/`):
 
 ```python
@@ -139,7 +143,20 @@ import asyncio
 import threading
 import time
 
+import pytest
+
+from loxmatter.zigbee import quirks as quirks_module
 from loxmatter.zigbee.quirks import ensure_quirks_loaded, quirks_loaded
+
+
+@pytest.fixture(autouse=True)
+def _fresh_process_state():
+    """The three tests below share one process-wide flag - which is exactly
+    what the module under test is for - so each starts from a clean one
+    rather than depending on file order."""
+    quirks_module._reset_for_tests()
+    yield
+    quirks_module._reset_for_tests()
 
 
 async def test_the_warm_up_runs_exactly_once_however_often_it_is_awaited():
@@ -200,23 +217,6 @@ async def test_the_warm_up_runs_off_the_event_loop_thread():
     await ensure_quirks_loaded(setup=lambda: seen.append(threading.get_ident()))
 
     assert seen and seen[0] != loop_thread
-```
-
-Note for the implementer: these three tests share one process-wide flag, so each must reset it. Add this fixture at the top of the module, after the imports:
-
-```python
-import pytest
-
-from loxmatter.zigbee import quirks as quirks_module
-
-
-@pytest.fixture(autouse=True)
-def _fresh_process_state():
-    """The guard is deliberately process-wide (that is the whole point), so
-    each test starts from a clean one rather than depending on file order."""
-    quirks_module._reset_for_tests()
-    yield
-    quirks_module._reset_for_tests()
 ```
 
 - [ ] **Step 3: Run the tests to verify they fail**
@@ -538,19 +538,6 @@ def test_only_the_bridge_may_open_serial_devices():
         assert has_rules == (name == "loxmatter"), name
 
 
-def test_the_radio_device_is_still_never_named_by_a_non_thread_service():
-    """The rule this file has always enforced, restated against the change
-    above: granting the bridge access must not have been done by giving it a
-    `devices:` entry after all.
-
-    Fault to prove it: add `devices: ["/dev/ttyUSB1:/dev/ttyUSB1"]` to
-    `loxmatter`."""
-    for name, service in _stack()["services"].items():
-        if service.get("profiles") == ["thread"]:
-            continue
-        assert "devices" not in service, name
-
-
 def test_otbr_asks_the_kernel_to_keep_its_stick_to_itself():
     """OpenThread takes flock + TIOCEXCL only when the radio URL carries
     `uart-exclusive` (research A.3); the compose file passed no lock at all.
@@ -560,13 +547,19 @@ def test_otbr_asks_the_kernel_to_keep_its_stick_to_itself():
     is that loxmatter never offers or accepts the Thread stick (section 3.2,
     Task 11).
 
+    `RADIO_URL` is an ENVIRONMENT variable of the otbr service, not part of
+    its `command:` - the image's "test" entrypoint reads it from the
+    environment, and `command:` carries only `--backbone-interface
+    ${BACKBONE_IF}`. Asserting against `command` would pass for the wrong
+    reason today (the parameter is absent from it either way) and would keep
+    passing after somebody deleted the lock.
+
     Fault to prove it: drop the parameter from RADIO_URL."""
     otbr = _stack()["services"]["otbr"]
-    radio_url = " ".join(str(part) for part in otbr.get("command", []))
-    assert "uart-exclusive" in radio_url
+    assert "uart-exclusive" in str(otbr["environment"]["RADIO_URL"])
 ```
 
-Note for the implementer: read how `RADIO_URL` is actually spelled in the `otbr` service before writing the last assertion — it may sit in `command:`, in `environment:` or in both. Assert against the place the file really uses; if it is an environment variable, read that instead of `command`. Do not change the shape of the service to suit the test.
+The old rule this file has always enforced — that no non-Thread service names the radio device — is **already covered** by the existing `test_only_otbr_needs_the_radio_module`, which this task does not touch. A near-verbatim second copy of it was drafted here and deliberately dropped: it asserted the same thing over the same services and would have failed and passed in lockstep with the original, which makes it a maintenance cost with no independent protection. If the implementer believes the `device_cgroup_rules` change needs its own `devices:` guard, the right move is to extend the existing test's docstring with the new reason, not to add a second test.
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
@@ -634,11 +627,11 @@ with this comment above it:
 - [ ] **Step 5: Run the tests to verify they pass**
 
 Run: `uv run pytest -q tests/test_compose_profiles.py`
-Expected: PASS, all tests in the file including the four new ones.
+Expected: PASS, all tests in the file including the three new ones.
 
-- [ ] **Step 6: Prove each protection catches its fault.** Four faults, from the docstrings above: delete `c 166:* rmw`; add the rules to `matter-server`; add a `devices:` entry to `loxmatter`; drop `&uart-exclusive`. FAIL, revert, PASS, both outputs pasted.
+- [ ] **Step 6: Prove each protection catches its fault.** Three faults, from the docstrings above: delete `c 166:* rmw`; add the rules to `matter-server`; drop `&uart-exclusive`. FAIL, revert, PASS, both outputs pasted.
 
-- [ ] **Step 7: Run the checks** (all five, four-part pytest). Total: **2072 passed, 2 skipped**.
+- [ ] **Step 7: Run the checks** (all five, four-part pytest). Total: **2071 passed, 2 skipped**.
 
 - [ ] **Step 8: Commit**
 
@@ -798,8 +791,8 @@ def test_move_to_color_is_served_and_carries_execute_if_off():
     Fault to prove it: remove the (768, 7) entry from `_PAYLOAD_BUILDERS`.
     The call then raises `UnsupportedValueError` and the colour output is
     dead."""
-    command = _stored_command(cluster_id=768, command_id=7)
-    calls = to_device_calls(command, "16711680")  # packed Loxone red
+    command = cmd(768, 7, takes_value=True)
+    calls = to_device_calls(command, "100")  # packed Loxone full red
 
     colour = calls[0]
     assert (colour.cluster_id, colour.command_id) == (768, 7)
@@ -816,14 +809,16 @@ def test_move_to_color_still_sends_brightness_as_a_second_call():
     visibly power on in the old colour.
 
     Fault to prove it: return only the colour call."""
-    command = _stored_command(cluster_id=768, command_id=7)
-    calls = to_device_calls(command, "16711680")
+    command = cmd(768, 7, takes_value=True)
+    calls = to_device_calls(command, "100")
 
     assert len(calls) == 2
     assert (calls[1].cluster_id, calls[1].command_id) == (8, 4)
 ```
 
-Note for the implementer: `_stored_command` is a helper this module may or may not already have; reuse the existing way this file builds a `StoredCommand` rather than adding a second one. Read a neighbouring test first. Work out the correct packed Loxone value for full red from `loxone_rgb_to_rgb`'s encoding and use that — `16711680` is written here as the shape of the argument, and the real value must come from the existing encoding, not from this plan.
+Note for the implementer: the helper this module already has is `cmd(cluster, command, takes_value=False)`, defined at the top of `tests/commands/test_translate.py` — use it, do not add a second builder.
+
+**On the packed value `100`.** An earlier draft of this plan wrote `16711680`, the 24-bit hex RGB for red. That is wrong for Loxone and was corrected against `commands/color.py` before this plan was executed. Loxone does not pack bytes, it concatenates **whole percentages**: `AQa = red% + green% * 1000 + blue% * 1_000_000`, and `loxone_rgb_to_rgb` raises `LoxoneColourError(kind="channel_out_of_range")` for any channel above 100. `16711680 % 1000 = 680`, i.e. "red at 680 %", so the old value would have raised rather than producing a colour, and the test would have failed for a reason that had nothing to do with the builder under test. Full red is **`100`**; green is `100000` and blue `100000000`, as `color.py`'s own hardware-measured table records. The `rgb_to_cie_xy` expectations in Step 1 were checked independently and are correct — leave them alone.
 
 - [ ] **Step 6: Run to verify it fails**
 
@@ -895,7 +890,17 @@ Also update this module's docstring: it currently states that MoveToColor (7, xy
 - [ ] **Step 8: Run to verify it passes**
 
 Run: `uv run pytest -q tests/commands/test_translate.py`
-Expected: PASS — including the pre-existing `test_known_cluster_with_unknown_command_raises`, which uses **cluster 768, command 7** as its example of an unknown command. **That test must now be changed**, and it is a finding: pick another genuinely unserved pair in a known cluster — `(768, 0)` MoveToHue — and update the test and its docstring. Record the change in the task report with this reason; do not delete the test.
+Expected: FAIL at first, on the pre-existing tests that use `(768, 7)` as their example of an *unknown* command. Serving that pair is the whole point of this task, so those tests now assert the opposite of the truth. **There are three places to change, not one** — all three were verified to exist in the worktree on 12 September 2026, and missing any of them leaves either a failing suite or a docstring that lies:
+
+| Where | What it says today | What it must become |
+|---|---|---|
+| `tests/commands/test_translate.py::test_known_cluster_with_unknown_command_raises` | expects `to_device_calls(cmd(768, 7, takes_value=True), "255,0,0")` to raise | use `(768, 0)` MoveToHue, which stays genuinely unserved |
+| `tests/commands/test_translate.py::test_known_cluster_with_unknown_command_raises_in_german` | the German counterpart, same `(768, 7)` example | the same change to `(768, 0)` |
+| `src/loxmatter/commands/translate.py` module docstring | cross-references the first test by name, "(cluster 768/ColorControl, command 7)" | name the new example, "(cluster 768/ColorControl, command 0/MoveToHue)" |
+
+Neither test may be deleted: the rule they protect — that the dispatch keys on the **pair**, never on the cluster alone — is unchanged and still worth a test. Only their example moves, because this task made the old example valid. Record all three edits in the task report with this reason. Note that the same docstring's closing sentence lists "MoveToColor (7, xy)" among the unsupported commands; Step 7 already requires that sentence to be rewritten, and the two edits are to the same paragraph — make them together rather than in two passes.
+
+After the three edits: PASS.
 
 - [ ] **Step 9: Add the profile table entries** to `src/loxmatter/profiles/clusters.yaml`. These go here rather than into Zigbee code because all five are Matter clusters that are simply missing (design 5.5, research C.5), and they are safe for existing installations: keys are assigned only when a signal row is created, so an existing `c69_a0` keeps its key.
 
@@ -1212,7 +1217,17 @@ def test_the_matcher_never_opens_the_port():
         assert forbidden not in source, forbidden
 ```
 
-Note for the implementer: the twelve by-id strings above are **shaped** like real ones but were written for this plan. Before relying on them, check each against the regexes in research A.1's table and against the one real string the repository already has (`SONOFF` in `tests/api/test_radios_api.py`). If a regex does not match the string as written here, the **string** is what is wrong — fix it and say so in the report; do not loosen a regex to accept a string this plan invented.
+Note for the implementer: the twelve by-id strings above are **shaped** like real ones but were written for this plan. Before relying on them, check each against the regexes in research A.1's table and against the real strings the repository already has. If a regex does not match the string as written here, the **string** is what is wrong — fix it and say so in the report; do not loosen a regex to accept a string this plan invented.
+
+**The one REAL by-id string in this repository** appears three times (`tests/radios/test_inventory.py`, `tests/api/test_radios_api.py`, `tests/test_updater_radios_script.py`, all as the constant `SONOFF`) and is the maintainer's own stick:
+
+```
+usb-SONOFF_SONOFF_Dongle_Plus_MG24_e26a7d9118f9ef118f7767135c2a50c9-if00-port0
+```
+
+Compare that against the invented MG24 row above and note two differences the invented strings do not show: the **vendor appears twice** (`SONOFF_SONOFF_`), and the string ends **`-if00-port0`**, not `-if00`. Neither is cosmetic — both sit inside the span that `re.fullmatch` has to cover. Add this exact string to the parametrised table as a thirteenth row so the one stick that certainly exists is the one certainly covered.
+
+**Check the ZBDongle-P row against it first, before anything else in this task.** That row's pattern is `.*sonoff.*plus(?!_v2_)(?!.*mg24).*`, and it is the only row in the table whose correctness depends on a negative lookahead rather than on table order. Worked through by hand against the lowercased real path, the lookahead evaluates immediately after `plus`, where the remainder is `_mg24_e26a...`; `(?!.*mg24)` therefore fails, and — because the string contains only one `plus` — no backtracking rescues it, so the ZBDongle-P row correctly does **not** claim the MG24 stick. That is the answer this plan expects. **Verify it rather than trusting this paragraph**, because getting it wrong is not a cosmetic mismatch: ZNP is the one radio type whose `open()` toggles DTR/RTS and resets the chip, so a ZBDongle-P row that wrongly claims an EZSP stick resets the maintainer's coordinator every time the settings card is opened. If the lookahead does not behave as described, report it as a finding and fix the pattern — do not delete the lookahead, which is load-bearing for the genuine ZBDongle-P.
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
@@ -1509,7 +1524,8 @@ This closes boundary design open points 10, 11, 12 and 13 and spec §4.7, **befo
   - `Sources.send` is bounded: it raises `DeviceUnreachableError` after that many seconds.
   - `loxmatter.sources.technology_display_name(technology: str) -> str`
   - `loxmatter.matter.models.technology_or_none(value: str) -> Technology | None`
-  - `loxmatter.commands.fanout.GroupOutcome(unreachable: list[str], unconfigured: list[str])`, returned by `dispatch_group` in place of the bare label list.
+  - `loxmatter.commands.fanout.GroupOutcome(failed: list[str], unreachable: list[str], unconfigured: list[str])`, returned by `dispatch_group` in place of the bare label list. `failed` is the plan-ordered list `dispatch_group` returns today, unchanged; the other two are order-preserving subsets of it.
+  - `Sources.replace(technology: str, source: DeviceSource | None) -> None` — swaps or removes the source serving one technology in an already-built registry, for Task 11's in-process radio change. Consumed only there.
 
 - [ ] **Step 1: Write the failing tests.** In `tests/sources/test_sources.py`:
 
@@ -1570,7 +1586,9 @@ def test_one_unreadable_technology_row_does_not_fail_the_whole_device_list():
 
 - [ ] **Step 2: Run to verify they fail.** `uv run pytest -q tests/sources tests/model/test_store.py -k "abandoned or unreadable_technology"`. Expected: `ImportError` for `DeviceUnreachableError`, and the store test failing with `ValueError: unknown device technology 'zwave'`.
 
-- [ ] **Step 3: Define the vocabulary** in `src/loxmatter/sources/__init__.py`:
+- [ ] **Step 3: Define the vocabulary** in `src/loxmatter/sources/__init__.py`.
+
+**Add `import asyncio` to this module's imports first.** It is not there today — the file imports only `collections.abc`, `dataclasses`, `typing`, `loxmatter.i18n` and `loxmatter.matter.models` — and the bounded `Sources.send` below calls `asyncio.wait_for`. Add it in the existing `from __future__ import annotations` block's stdlib group, above `from collections.abc import ...`, so ruff's import ordering is satisfied without a reformat. Also extend `__all__` with `"DeviceUnreachableError"`, `"SOURCE_CALL_TIMEOUT_SECONDS"` and `"technology_display_name"`, which the module already maintains by hand.
 
 ```python
 SOURCE_CALL_TIMEOUT_SECONDS = 10.0
@@ -1605,10 +1623,22 @@ def technology_display_name(technology: str) -> str:
     codebase goes through a lookup first (see `api.categories.*`). An
     unknown value falls back to itself rather than raising - this runs
     inside an error path, and an error about an error helps nobody.
+
+    The fallback is a `KeyError` catch and NOT a comparison of the result
+    against the key. `i18n.t` does `entry = _STRINGS[key]` and RAISES
+    `KeyError` on a missing key - it never hands the key back - so a
+    `name == key` test would be dead code guarding nothing, and the very
+    miss it was written for would propagate a `KeyError` out of an error
+    path. That is exactly the "error about an error" the paragraph above
+    rules out. The miss is reachable: `technology` is read from the
+    `device` table, so a row written by a NEWER loxmatter and left behind
+    by an updater rollback arrives here with a name that has no string -
+    the same rollback case `technology_or_none` exists for in Step 4.
     """
-    key = f"api.technologies.{technology}"
-    name = i18n.t(key)
-    return technology if name == key else name
+    try:
+        return i18n.t(f"api.technologies.{technology}")
+    except KeyError:
+        return technology
 ```
 
 and change `SourceNotConfiguredError.__init__` to interpolate `technology_display_name(technology)` while keeping `self.technology` the raw value (callers compare against it). Then bound `Sources.send`:
@@ -1636,6 +1666,40 @@ and change `SourceNotConfiguredError.__init__` to interpolate `technology_displa
             raise DeviceUnreachableError(
                 i18n.t("api.errors.device_timed_out", seconds=SOURCE_CALL_TIMEOUT_SECONDS)
             ) from exc
+```
+
+Finally, let the registry be changed after it is built — Task 11 turns a Zigbee radio on and off while the bridge runs, and today `Sources` is frozen at construction:
+
+```python
+class Sources:  # the existing class - one method added, nothing else changes
+    def replace(self, technology: str, source: DeviceSource | None) -> None:
+        """Swaps or removes the source serving one technology.
+
+        For Task 11's in-process radio change, which is the one thing in
+        this project that gains or loses a source WITHOUT a restart: zigpy
+        runs in-process, so configuring a stick has to add a source to a
+        registry that `build_app` captured at startup, and clearing one has
+        to remove it.
+
+        `None` removes, and removing is the point rather than a tidy-up:
+        after it, `get()` raises `SourceNotConfiguredError` again, which is
+        how a command aimed at a Zigbee device that no longer has a radio
+        becomes a 503 "not set up in this installation" instead of a 502
+        "asked, no answer". The device was not asked; there is nothing to
+        ask.
+
+        Deliberately NOT a general-purpose registry mutator: `__init__`
+        keeps rejecting two sources for one technology, and this method is
+        the single, named exception to "the registry is built once".
+        """
+        if source is None:
+            self._by_technology.pop(technology, None)
+            return
+        if source.technology != technology:
+            raise ValueError(
+                f"source for {source.technology!r} cannot serve technology {technology!r}"
+            )
+        self._by_technology[technology] = source
 ```
 
 - [ ] **Step 4: Make the device list lenient.** In `src/loxmatter/matter/models.py`, add next to `parse_technology` (which keeps raising — it is right wherever a hard failure is right):
@@ -1711,15 +1775,27 @@ class GroupOutcome:
     at the lamps.
     """
 
+    # PLAN ORDER, every failed member, exactly the list `dispatch_group`
+    # returned before this change - same content, same order, same
+    # disambiguation. Stored rather than derived from the two lists below,
+    # and that is the whole point of the field: `unreachable + unconfigured`
+    # would silently regroup the members by KIND, so a group whose second
+    # and third members failed for different reasons would be reported in an
+    # order that depends on the failure, not on the group. This module's
+    # docstring promises the opposite - "the returned list is in plan order,
+    # so the message a caller builds from it is reproducible" - and both
+    # `api/control.py` and `loxone/server.py` build their 502 detail from
+    # it.
+    failed: list[str]
+    # Subsets of `failed`, each itself in plan order, for the callers that
+    # need to tell a 502 from a 503.
     unreachable: list[str]
     unconfigured: list[str]
-
-    @property
-    def failed(self) -> list[str]:
-        return self.unreachable + self.unconfigured
 ```
 
-and classify in `dispatch_group` by `isinstance(result, SourceNotConfiguredError)`. Both call sites (`api/control.py::_execute_group_command` and the group route in `loxone/server.py`) then map:
+`dispatch_group` keeps building its plan-ordered, disambiguated label list exactly as it does today — that code is not to be rewritten — and then classifies each failed member by `isinstance(result, SourceNotConfiguredError)` into the two subsets, preserving order in both. The disambiguation rule (`"Lamp (12)"` when a label is shared by more than one failed member) is computed once over the whole failed set, so a label reads the same in `failed` as it does in whichever subset it lands in.
+
+Both call sites (`api/control.py::_execute_group_command` and the group route in `loxone/server.py`) then map:
 
 - only `unconfigured`, nothing unreachable → **503**, new key `api.errors.group_source_not_configured`
 - anything unreachable → **502**, the existing `api.errors.group_partially_unreachable`, and when both kinds are present the detail names both sets
@@ -2247,6 +2323,22 @@ def build_snapshot(facts: DeviceFacts) -> NodeSnapshot:
 
 Endpoint 0 is synthesised, never taken from the device: `0/29/0` gets `[{"0": 0x0016, "1": 1}]` plus `{"0": 0x0011, "1": 1}` when `not facts.is_mains_powered`; `0/40/1`, `0/40/3`, `0/40/18` carry manufacturer, model and IEEE; the battery percentage moves from `(0x0001, 0x0021)` on its real endpoint to `0/47/12`.
 
+**`NodeSnapshot` takes three required string fields that this plan's test assertions never mention, and they have no defaults** — `vendor_name`, `product_name` and `unique_id` are declared before the first field with a default, so constructing the dataclass without them raises `TypeError` and every test in this module fails at once. `NodeSnapshot.from_raw` fills them for Matter from `0/40/1`, `0/40/3` and `0/40/18`; `build_snapshot` sets them from the same facts it writes into those three paths, so the snapshot is self-consistent whichever way a reader gets at the identity:
+
+```python
+    return NodeSnapshot(
+        technology="zigbee",
+        address=facts.ieee,
+        vendor_name=facts.manufacturer,
+        product_name=facts.model,
+        unique_id=facts.ieee,
+        attributes=attributes,
+        available=facts.available,
+    )
+```
+
+`available` is passed through rather than defaulted: `Runtime.seed_from_snapshot` and `attach()` read it to decide a device's initial `d<id>_online`, and defaulting it to `True` would report every device of a disconnected radio as reachable at startup — the exact failure Task 8 exists to prevent, reintroduced one layer earlier.
+
 - [ ] **Step 4: Run to verify they pass**
 
 Run: `uv run pytest -q tests/zigbee/test_translate.py`
@@ -2324,6 +2416,8 @@ The class that satisfies `DeviceSource` without an adapter. zigpy is imported **
   - `ZigbeeUnavailableError(RuntimeError)` — the radio could not be brought up. Carries an already-translated message.
   - `ZigbeeSource(*, path: str, fingerprint: Fingerprint, database: Path, application_factory: ApplicationFactory = _default_factory)` satisfying `DeviceSource`.
   - `ZigbeeSource.permit(seconds: int) -> datetime` and `ZigbeeSource.pairing_rows() -> list[PairingRow]` — used by Task 12, not part of `DeviceSource` (commissioning is deliberately outside the protocol).
+  - `ConnectionProgress(state: ConnectionState, attempts: int, error: str | None, changed_at: str)` (frozen dataclass) and `ZigbeeSource.progress() -> ConnectionProgress`, where `ConnectionState = Literal["idle", "loading_quirks", "opening_radio", "connected", "failed"]`. Read by Task 11's `GET /api/zigbee/radio` so the card can show what a connection attempt is doing; `error` carries an already-translated message when `state == "failed"`.
+  - `ZigbeeSource(..., on_connection_change: Callable[[bool], Awaitable[None]] | None = None)` — awaited with `True` after a successful `startup()` and with `False` on link loss and on `disconnect()`. Task 10 wires it to `Runtime.set_zigbee_connected`; Task 11's holder uses the same hook to keep the card honest.
 
 - [ ] **Step 1: Write the fake** `tests/zigbee/fakes.py` (GPL header first). It stands in for `zigpy.application.ControllerApplication` so that **no test in this plan imports zigpy**:
 
@@ -2512,6 +2606,45 @@ Implement in this order:
 
 1. `ZigbeeUnavailableError`, and `_STARTUP_MESSAGES`, an ordered list of `(exception predicate, i18n key)` pairs implementing spec §4.6's table. The EBUSY case must be matched on `errno`, not on the message text.
 2. `connect()`: shut the old application down (`await old.shutdown(db=True)`) **before** anything else, `await ensure_quirks_loaded()`, build the config, `new(start_radio=False, ...)`, `startup(auto_form=True)`. On any failure: shut the new object down, clear the field, raise `ZigbeeUnavailableError` with the translated message. Never reuse an object whose `startup()` failed.
+
+   `ensure_quirks_loaded()` stays **inside** `connect()`, so the ordering guarantee — quirks before any device object is built — lives in exactly one place and cannot be forgotten by a second caller. That is safe only because **`connect()` is never called on a request path.** Every caller is a background worker: `cli._run` at startup (Task 10), and `sources/supervisor.py`'s loop for every reconnection, including the first one after a radio is configured from the web UI (Task 11). If a future change ever puts `connect()` behind an HTTP handler, it puts a 9-15 s warm-up plus `startup()` plus a possible 7.5 s silent-port timeout on that request, which is what the Global Constraint about request paths forbids.
+
+   `connect()` therefore also maintains `ConnectionProgress`, because it is the only thing that knows how far an attempt got and nothing else can report it while it runs:
+
+```python
+    async def connect(self) -> None:
+        self._set_progress("loading_quirks")
+        try:
+            if self._app is not None:
+                app, self._app = self._app, None
+                await app.shutdown(db=True)
+            await ensure_quirks_loaded()
+            self._set_progress("opening_radio")
+            app = await self._new_application()
+            try:
+                await app.startup(auto_form=True)
+            except BaseException:
+                # Never keep an object whose startup() failed - see
+                # `test_a_failed_startup_is_shut_down_and_not_kept`.
+                await app.shutdown(db=True)
+                raise
+        except Exception as exc:
+            # `attempts` counts FAILED attempts, so the card can say "still
+            # trying, 4 attempts" rather than implying a first try that is
+            # about to succeed. The message is already translated: it is the
+            # one the user reads, and `api/zigbee.py` hands it straight out.
+            message = self._startup_message(exc)
+            self._set_progress("failed", error=message, count_attempt=True)
+            raise ZigbeeUnavailableError(message) from exc
+        self._app = app
+        self._connected = True
+        self._link_lost.clear()
+        self._set_progress("connected", attempts=0)
+        if self._on_connection_change is not None:
+            await self._on_connection_change(True)
+```
+
+   `_set_progress` stamps `changed_at` with `now_iso()` (`loxmatter.timestamps`, as the rest of the project does) and replaces the frozen dataclass wholesale. `disconnect()` and the `connection_lost` listener both set `"idle"` and `"failed"` respectively, and both await `on_connection_change(False)`. A source that has never been asked to connect reports `"idle"` with `attempts = 0`.
 3. The zigpy configuration, each value carrying its reason as a comment: `database_path` at the path given, **OTA off**, topology scan kept at its 4 h default, `validate_network_settings=True`, and a channel list that **excludes the Thread channel** read from OTBR's active dataset when one is available (fall back to the full `[11, 15, 20, 25]` when it is not — a missing border router must not stop Zigbee from forming).
 4. `connected`, `wait_for_link_loss`, `disconnect` — the explicit flag, the `asyncio.Event`, and a `disconnect` that always runs the shutdown.
 5. `snapshots()` — builds `DeviceFacts` from zigpy's device objects and calls `build_snapshot`; works while disconnected, with `available` from Task 8's checker (before Task 8 lands, `available=self._connected`).
@@ -2894,7 +3027,10 @@ This closes boundary design open point 9.1. `Runtime(link_ok=sources.all_connect
 
 **Interfaces:**
 - Consumes: `ZigbeeSource` (Task 7), `ensure_quirks_loaded` (Task 1), the radio setting (Task 11 — until it lands, read the path from a CLI option `--zigbee-device` defaulting to `None`).
-- Produces: `Runtime` gains `zigbee_connected` as a sent key, alongside `d<id>_online`.
+- Produces:
+  - `loxmatter.loxone.runtime.ZIGBEE_CONNECTED_KEY = "zigbee_connected"`, declared beside `HEARTBEAT_KEY`.
+  - `Runtime.cache_zigbee_connected(connected: bool) -> None` and `Runtime.set_zigbee_connected(connected: bool) -> None` — the cache/send pair, shaped exactly like the existing `_cache_online`/`set_online`. Step 3 builds both; there is no generic mechanism to reuse, because `HEARTBEAT_KEY` is the only non-device key `Runtime` sends today.
+  - `cli._run` passes `on_connection_change=runtime.set_zigbee_connected` into `ZigbeeSource` (Task 7's Interfaces) and seeds `cache_zigbee_connected(False)` before `attach()`.
 
 - [ ] **Step 1: Write the failing tests.**
 
@@ -2978,6 +3114,56 @@ and, after `client.connect()` and before `attach`:
 
 The quirks warm-up is started as a background task, never awaited on the startup path — `ZigbeeSource.connect()` awaits it itself, so the ordering guarantee lives in one place and uvicorn is never held behind it.
 
+**And in `src/loxmatter/loxone/runtime.py`, build the `zigbee_connected` signal.** Spec §4.9 requires it and the second test above asserts it, and there is nothing to build on: `Runtime` sends exactly one non-device key today (`HEARTBEAT_KEY`, from `_heartbeat_loop`) and has no generic mechanism for a second one. Add the key beside it:
+
+```python
+PULSE_MILLISECONDS = 200
+HEARTBEAT_KEY = "bridge_alive"
+# Whether the OPTIONAL Zigbee radio is up (design 2026-09-12, section 4.9).
+# Deliberately a key of its own rather than a term in the watchdog: the
+# heartbeat means "the bridge and the MANDATORY source are alive", and a
+# Zigbee stick that fell out must not make the Miniserver declare a bridge
+# dead whose Matter devices are all working. One more virtual input to wire
+# IF the user cares.
+ZIGBEE_CONNECTED_KEY = "zigbee_connected"
+```
+
+and the cache/send pair, modelled on `_cache_online`/`set_online` — which are two methods rather than one for a reason that applies here unchanged:
+
+```python
+class Runtime:  # the existing class - two methods added, next to `set_online`
+    def cache_zigbee_connected(self, connected: bool) -> None:
+        """Enters the radio's state into the cache, WITHOUT sending.
+
+        The `_cache_online` half of the pair, and needed for the same
+        reason (review fix C1, 2026-09-02): `cli._run` seeds this before
+        `attach()`, and `attach()` ends in `resend_all()`, which sends every
+        cached value with `force=True`. A seed that sent for itself would
+        put `zigbee_connected` on the wire twice on every single startup.
+        """
+        self._last_values[ZIGBEE_CONNECTED_KEY] = connected
+
+    async def set_zigbee_connected(self, connected: bool) -> None:
+        """Reports a change of the radio's state to Loxone and the UI.
+
+        Caching first, then sending, then notifying observers - the exact
+        order `set_online` uses, and for the reason `add_observer`
+        documents: the observer must learn what actually happened, not what
+        was intended, so it is told only after the send has returned.
+
+        Caching is what makes the value survive a Miniserver restart: it
+        joins the set `resend_all()` restores (spec 6.4). Without it, a
+        Miniserver that rebooted while the radio was down would show the
+        input at its default until the radio next CHANGED state, which for
+        a healthy stick is never.
+        """
+        self.cache_zigbee_connected(connected)
+        await self._sender.send(ZIGBEE_CONNECTED_KEY, connected)
+        self._notify_observers(ZIGBEE_CONNECTED_KEY, connected)
+```
+
+Wire it in `cli._run`: pass `on_connection_change=runtime.set_zigbee_connected` when constructing the `ZigbeeSource` (Task 7's Interfaces), and seed the startup value with `runtime.cache_zigbee_connected(False)` **before** the `attach()` loop, so the first `resend_all()` carries it. Seed `False`, not `True`: at that point the radio has not come up yet, and the startup connect attempt a few lines later either sets it to `True` or leaves it correctly at `False`. An installation with no Zigbee radio configured seeds nothing at all and never sends the key — Loxone simply never sees an input it has no use for.
+
 - [ ] **Step 4: Run to verify they pass.**
 
 - [ ] **Step 5: Prove each protection catches its fault.** Five faults. FAIL, revert, PASS, both pasted.
@@ -3012,17 +3198,20 @@ EOF
 **Read Spec Correction 3 before starting.** The Zigbee stick is a **bridge-owned** setting, not a sidecar request: zigpy runs in-process, so the change is applied by reconnecting the source — instantly, with no container recreated and no other radio disturbed. The sidecar's two-half request is not touched.
 
 **Files:**
-- Create: `src/loxmatter/model/zigbee_settings_store.py`, `src/loxmatter/api/zigbee.py`, `tests/model/test_zigbee_settings_store.py`, `tests/api/test_zigbee_api.py`
+- Create: `src/loxmatter/model/zigbee_settings_store.py`, `src/loxmatter/zigbee/runtime.py`, `src/loxmatter/api/zigbee.py`, `tests/model/test_zigbee_settings_store.py`, `tests/zigbee/test_zigbee_runtime.py`, `tests/api/test_zigbee_api.py`
 - Modify: `src/loxmatter/radios/inventory.py`, `src/loxmatter/model/store.py`, `src/loxmatter/loxone/server.py`, `src/loxmatter/cli.py`, `src/loxmatter/i18n/strings.yaml`
 - Test: `tests/radios/test_inventory.py`
 
 **Interfaces:**
-- Consumes: `match_fingerprint`/`DEFAULT_UNKNOWN` (Task 4), `ZigbeeSource` (Task 7), `RadioConfig.thread_device` (2a-1).
+- Consumes: `match_fingerprint`/`DEFAULT_UNKNOWN` (Task 4), `ZigbeeSource` and `ConnectionProgress` (Task 7), `Sources.replace` (Task 5), `supervise` (`sources/supervisor.py`, unchanged), `match_current_device`/`scan_serial` (`radios/inventory.py`, 2a-1), `RadioConfig.thread_device` (2a-1).
 - Produces:
+  - `loxmatter.zigbee.runtime.ZigbeeRuntime` — owns the live source and its supervisor task; `current()`, `progress()`, and a **synchronous** `apply(settings)` that schedules the change and returns at once. Consumed by `api/zigbee.py` and constructed in `cli._run`, which also passes it to `build_app`.
   - `loxmatter.radios.inventory.device_identity(path: str, host_dev: Path, *, stat: Callable[[str], os.stat_result] = os.stat) -> tuple[int, int] | None` — the resolved `(major, minor)` of a character device, or `None`.
   - `loxmatter.radios.inventory.is_same_device(left: str | None, right: str | None, host_dev: Path, *, stat=os.stat) -> bool`
   - `ZigbeeRadioSettings(path: str | None, radio_type: str, baudrate: int, flow_control: str, saved_at: str | None)` and `store.zigbee_settings` with `get()` / `save(...)` / `clear()`.
-  - `GET /api/zigbee/radio` and `PUT /api/zigbee/radio`.
+  - `GET /api/zigbee/radio`, returning the detected sticks, `configured_path`, `configured_device_present` and `progress`; and `PUT /api/zigbee/radio`, answering **202**.
+
+Note on Task 10's `_build_zigbee_source(store)`: `ZigbeeRuntime` is where that helper belongs once this task lands. Move it rather than leaving two places that construct a `ZigbeeSource` — `cli._run` then asks the holder for the startup source, and the startup path and the apply path build it identically. That is the same reasoning `sources/supervisor.py`'s docstring gives for `attach()` covering both startup and reconnect: two code paths that must do the same thing will drift, and the drift only shows up when something is missing after the one that runs less often.
 
 - [ ] **Step 1: Write the failing exclusion tests** in `tests/radios/test_inventory.py`:
 
@@ -3137,12 +3326,58 @@ async def test_clearing_the_setting_disconnects_the_source():
     Fault to prove it: only clear the stored value."""
 
 
-async def test_applying_a_new_stick_reconnects_in_process():
+async def test_applying_a_new_stick_answers_at_once_and_reconnects_in_the_background():
     """The point of Spec Correction 3: no container is recreated, so the
     Matter link and every Matter device are untouched, and the request that
     asked for the change survives to answer.
 
-    Fault to prove it: require a restart to pick the value up."""
+    It answers 202 WITHOUT waiting for the radio. A first-ever Zigbee
+    configuration is a 9-15 s quirks warm-up on a Pi, plus
+    `startup(auto_form=True)`, plus a possible 7.5 s timeout on a silent
+    port - all of which would otherwise sit on this request with nothing on
+    screen moving. The reconnection runs in the background and its progress
+    is readable from `GET /api/zigbee/radio`.
+
+    Fault to prove it: `await` the reconnection inside the handler. The
+    test's fake source blocks for longer than the request's own timeout, so
+    the PUT never returns - which is precisely what a Pi user would see."""
+
+
+async def test_the_apply_request_does_not_wait_for_the_quirks_warm_up():
+    """The Global Constraint, stated three times in this plan: the warm-up
+    never sits on a request path. This is the one route that could put it
+    there, because it is the only one that can cause a first-ever connect.
+
+    Fault to prove it: call `ensure_quirks_loaded()` from the handler, or
+    await `source.connect()` there - either puts the whole cost on the
+    request."""
+
+
+async def test_the_progress_of_a_running_attempt_is_readable():
+    """What makes the asynchronous answer honest rather than merely fast: a
+    PUT that returns immediately and reports nothing afterwards is a job the
+    user cannot distinguish from a dead one, which is the 2a-1 lesson this
+    plan records as a Global Constraint.
+
+    Fault to prove it: return a bare `connected` boolean. A 15 s warm-up
+    then reads as "not connected", identical to a stick that is broken."""
+
+
+async def test_a_configured_stick_that_is_gone_is_reported_as_missing():
+    """The in-process design's worst failure mode, and the one nothing else
+    surfaces: the stored by-id path names a node that will never come back -
+    the stick was pulled, or it came back under a different name - so the
+    supervisor retries forever on its 60 s ceiling and the card says only
+    "not connected". The user has no way to learn that the device they
+    chose is simply absent.
+
+    Sub-project 2a-1 solved exactly this for Thread: `GET /api/radios`
+    returns `thread_device_present`, computed by `match_current_device`
+    against the live scan. This is the same answer for the same question.
+
+    Fault to prove it: report only the stored path. A stick that was
+    unplugged is then indistinguishable from one that is present and
+    refusing to open, and the two need opposite actions from the user."""
 ```
 
 - [ ] **Step 3: Run both to verify they fail.**
@@ -3151,15 +3386,81 @@ async def test_applying_a_new_stick_reconnects_in_process():
 
 - [ ] **Step 5: Implement `ZigbeeSettingsStore`** on the `ResendSettingsStore` pattern — another view onto the same connection, its own module, keys `zigbee_path`, `zigbee_radio_type`, `zigbee_baudrate`, `zigbee_flow_control`, `zigbee_settings_saved_at`.
 
-- [ ] **Step 6: Implement `src/loxmatter/api/zigbee.py`** with `build_zigbee_router(store, *, source_holder, host_dev, sys_root, update_dir)`. `GET` returns the detected sticks with their fingerprint result, which one is in use, which one is the Thread device (with a reason string, never silently omitted), and the source's connection state. `PUT` validates — known path, not the Thread device — persists, and reconnects the source in process, reporting the outcome. Every rejection detail goes through `i18n.t`.
+- [ ] **Step 6: Implement the holder and the router.**
 
-Note for the implementer: the router needs to reach the live `ZigbeeSource` to reconnect it, and `build_app` builds routers before `_run` owns the source. Pass a small holder object (or a callable returning the current source) rather than the source itself, so a bridge started without Zigbee still serves `GET` and answers `PUT` with a clear 503. Decide the shape by reading how `build_app` already threads `client` and `sources`, and keep the same stance.
+**Why the apply is asynchronous, and why a synchronous version was rejected.** The obvious shape — `PUT` persists the setting, awaits `source.connect()`, and answers with the result — was written into an earlier draft of this plan and is wrong. On a first-ever Zigbee configuration that handler awaits an estimated **9-15 s** of `zhaquirks.setup()` on a Pi 4, then `startup(auto_form=True)`, then, if the stick is silent or is not a coordinator, a further **7.5 s** before `TimeoutError`. That is up to half a minute of a blocked HTTP request with nothing on screen moving, and it contradicts two of this plan's own Global Constraints at once: quirks loading must never sit on a request path, and long-running work must show progress or the user reads a healthy operation as a dead one. Task 10's background warm-up does not save it either — that one starts only when a radio is **already** configured, which is precisely not this case.
+
+So the `PUT` stores the setting and returns **202** at once, and the connection happens in the background where the user can watch it. The mechanism is the one the repository already has, twice over: `sources/supervisor.py` owns connection attempts with 1 s → 60 s backoff, and the radios card polls a status endpoint while a job runs. Nothing new is invented.
+
+This also makes the Zigbee flow resemble the Thread flow, which is what the maintainer asked for — it should barely matter to the user which kind of device they attach.
+
+**`ZigbeeRuntime`, the holder.** `build_app` builds routers before `_run` owns any source, so the router cannot be handed the source itself. It is handed this instead, constructed in `_run` and closed over by both:
+
+```python
+class ZigbeeRuntime:
+    """Owns the live Zigbee source and the task supervising it.
+
+    One object rather than a bare callable because applying a radio change
+    means three things at once - swap the source in the registry, stop the
+    old supervisor, start a new one - and doing two of the three is worse
+    than doing none.
+    """
+
+    def __init__(self, store, runtime, sources, *, build_source, supervise=supervise): ...
+
+    def current(self) -> ZigbeeSource | None: ...
+
+    def progress(self) -> ConnectionProgress: ...
+
+    def apply(self, settings: ZigbeeRadioSettings) -> None:
+        """Schedules the change. Returns IMMEDIATELY - see above.
+
+        Not `async`: the caller is an HTTP handler that must not await any
+        part of this, and a coroutine would invite exactly that mistake.
+        The work goes to a task held on `self` so it cannot be garbage
+        collected mid-flight (the `_pulse_tasks` pattern in
+        `loxone/runtime.py`).
+        """
+```
+
+`_apply_in_background` does, in order: cancel the old supervisor task and `await old.disconnect()` (so the port is genuinely released — `test_clearing_the_setting_disconnects_the_source`); `sources.replace("zigbee", None)`; and then, if the new settings name a path, build a fresh `ZigbeeSource`, `sources.replace("zigbee", new)`, and `ensure_future(supervise(new, store, runtime))`.
+
+Starting the supervisor is all it takes to connect, and that is the point of reusing it: `supervise()` opens with `await source.wait_for_link_loss()`, which Task 7 requires to return **at once** for a source that was never connected, so the supervisor falls straight into its own connect-and-back-off loop and performs the first attempt itself. There is no second connection path, no bespoke retry, and a stick that is missing at apply time is retried on the same 1 s → 60 s schedule as one that dies an hour later.
+
+**The router**, `build_zigbee_router(store, *, zigbee_runtime, host_dev, sys_root, update_dir)`:
+
+`GET /api/zigbee/radio` returns the detected sticks with their fingerprint result, which one is stored, which one is the Thread device (listed with a reason, never silently omitted), and:
+
+```python
+        {
+            "configured_path": stored.path,
+            # Whether the stored stick is ACTUALLY THERE, resolved through
+            # the live scan exactly as `GET /api/radios` does for Thread
+            # (`match_current_device` -> `thread_device_present`). Without
+            # it, a stored by-id path naming a node that will never return
+            # is indistinguishable from a stick that is present and
+            # refusing to open - and the supervisor retries the first case
+            # forever while the card says only "not connected".
+            "configured_device_present": present,
+            "progress": asdict(zigbee_runtime.progress()),
+        }
+```
+
+`present` is computed with the same `match_current_device` helper the radios API already uses, against `scan_serial(host_dev, sys_root)`; a `configured_path` of `None` reports `False` without being an error, because nothing is configured.
+
+`PUT /api/zigbee/radio` validates — known path, not the Thread device, both checks server-side — persists through `store.zigbee_settings`, calls `zigbee_runtime.apply(...)`, and returns **202** with the freshly-reset progress. It awaits nothing to do with the radio. Every rejection detail goes through `i18n.t`.
+
+The card polls `GET /api/zigbee/radio` every 2 s while `progress.state` is `"loading_quirks"` or `"opening_radio"`, exactly as `loadRadios()` polls while a sidecar job runs, and stops when the state reaches `"connected"` or `"failed"`. `"failed"` is not terminal for the supervisor — it keeps retrying — so the card shows the error together with the attempt count and keeps polling at a slower cadence rather than claiming the change is over.
+
+Interruption recovery needs nothing extra here, and that is worth stating because this plan requires it of anything that writes durable state: the stored setting **is** the recovery record. A bridge killed mid-apply starts up, reads the setting, and Task 10's startup path connects to it — the same place it would have ended up. There is no non-terminal phase that can freeze, which is the failure the radios sidecar had.
 
 - [ ] **Step 7: Add the i18n keys** (`en` + `de`): `web.radios.zigbee_label`, `web.radios.zigbee_none`, `web.radios.zigbee_is_thread_stick`, `web.radios.fingerprint_unknown`, `web.radios.advanced`, `api.errors.zigbee_is_thread_stick`, `api.errors.zigbee_unknown_device`, `api.errors.zigbee_not_configured`.
 
+Plus the strings the progress and presence reporting need, each `en` + `de`: `web.radios.zigbee_loading_quirks` (say that the first connection prepares device support and takes a few seconds — the user is looking at a 9-15 s pause and deserves to know it is expected), `web.radios.zigbee_opening_radio`, `web.radios.zigbee_connected`, `web.radios.zigbee_failed_retrying` (carrying the attempt count and the error, because the supervisor never gives up and the card must not imply it has), and `web.radios.zigbee_device_missing` (the stored stick is not present — name replugging it or choosing another, the way the Thread row already does).
+
 - [ ] **Step 8: Run to verify they pass.**
 
-- [ ] **Step 9: Prove each protection catches its fault.** Nine faults. FAIL, revert, PASS, both pasted. **The Thread-exclusion fault is the single most important one in this plan** — prove it first and paste it first.
+- [ ] **Step 9: Prove each protection catches its fault.** Thirteen faults. FAIL, revert, PASS, both pasted. **The Thread-exclusion fault is the single most important one in this plan** — prove it first and paste it first. The four added in Step 2 (synchronous apply, warm-up on the request path, no progress, no presence) are proved the same way as the rest; for the first two, a fake source whose `connect()` blocks longer than the test client's timeout turns "the handler waited" into a failing test rather than a slow one.
 
 - [ ] **Step 10: Run the checks** (all five, four-part pytest).
 
@@ -3325,7 +3626,7 @@ EOF
 
 **Interfaces:**
 - Consumes: `GET`/`PUT /api/zigbee/radio` (Task 11).
-- Produces: `zigbeeRadioOptions()`, `zigbeeRadioChanged()`, `applyZigbeeRadio()`, `zigbeeAdvancedOpen` in `app.js`; the sprite symbol `i-transport-zigbee`; `transportBadge` gains its `zigbee` entry.
+- Produces: `zigbeeRadioOptions()`, `zigbeeRadioChanged()`, `applyZigbeeRadio()`, `zigbeeAdvancedOpen`, `zigbeeProgressText()`, `zigbeeRadioPolling()` in `app.js`; the sprite symbol `i-transport-zigbee`; `transportBadge` gains its `zigbee` entry.
 
 - [ ] **Step 1: Write the failing tests** in `tests/api/test_web.py`, using the node harness — a Python test that fetches the page proves only that the file was served.
 
@@ -3365,7 +3666,8 @@ async def test_the_sprite_carries_the_zigbee_symbol(api):
     trademark of the Connectivity Standards Alliance.
 
     Fault to prove it: rename the symbol id."""
-    page = (await api.get("/static/index.html")).text
+    client, _, _ = api
+    page = (await client.get("/")).text
     assert 'id="i-transport-zigbee"' in page
 
 
@@ -3401,6 +3703,64 @@ async def test_an_unrecognised_stick_is_selectable_and_says_so(api):
 
 
 @pytest.mark.skipif(NODE is None, reason="node is required for this test")
+async def test_the_row_says_what_a_running_connection_attempt_is_doing(api):
+    """Task 11's `PUT` answers 202 and connects in the background, so the
+    card is the only thing that can tell the user a 9-15 s quirks warm-up is
+    a healthy operation rather than a dead one - which is this plan's own
+    Global Constraint about long-running work, and the 2a-1 lesson behind
+    it.
+
+    Runs the REAL `zigbeeProgressText` in node, because a markup assertion
+    cannot fail for a binding that is merely wrong.
+
+    Fault to prove it: render a bare connected/not-connected boolean. A
+    warm-up in progress then reads exactly like a broken stick."""
+    values = _app_state(
+        setup="console.log(JSON.stringify({"
+        "  quirks: state.zigbeeProgressText({ state: 'loading_quirks', attempts: 0 }),"
+        "  opening: state.zigbeeProgressText({ state: 'opening_radio', attempts: 0 }),"
+        "  failed: state.zigbeeProgressText({ state: 'failed', attempts: 4, error: 'nope' }),"
+        "  polling: state.zigbeeRadioPolling({ state: 'loading_quirks' }),"
+        "  settled: state.zigbeeRadioPolling({ state: 'connected' }),"
+        "}));",
+        translations={
+            "web.radios.zigbee_loading_quirks": "Preparing device support...",
+            "web.radios.zigbee_opening_radio": "Opening the stick...",
+            "web.radios.zigbee_failed_retrying": "Failed ({attempts}): {error}",
+        },
+    )
+    assert values["quirks"] == "Preparing device support..."
+    assert values["opening"] == "Opening the stick..."
+    assert "4" in values["failed"] and "nope" in values["failed"]
+    # The card polls while an attempt is running and stops once it settles,
+    # exactly as `loadRadios()` does for a sidecar job.
+    assert values["polling"] is True
+    assert values["settled"] is False
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+async def test_a_configured_stick_that_is_gone_says_so(api):
+    """The in-process design's worst failure mode reaching the screen: the
+    supervisor retries a stick that will never answer, forever, and without
+    this the card says only "not connected". `GET /api/zigbee/radio` returns
+    `configured_device_present` for exactly this, the way the Thread row
+    already uses `thread_device_present`.
+
+    Fault to prove it: ignore the flag and render the stored path alone. An
+    unplugged stick is then indistinguishable from one that is present and
+    refusing to open - and the two need opposite actions from the user."""
+    values = _app_state(
+        setup="state.zigbee = { serial: [], current: null,"
+        "  configured_path: '/dev/serial/by-id/gone', configured_device_present: false,"
+        "  progress: { state: 'failed', attempts: 9, error: 'no such device' } };"
+        "console.log(JSON.stringify({ text: state.zigbeeProgressText(state.zigbee.progress,"
+        "  state.zigbee.configured_device_present) }));",
+        translations={"web.radios.zigbee_device_missing": "The chosen stick is not plugged in."},
+    )
+    assert values["text"] == "The chosen stick is not plugged in."
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
 async def test_applying_the_zigbee_row_never_sends_a_radios_request(api):
     """Spec Correction 3, enforced in the page itself: the Zigbee row has
     its own Apply and its own endpoint. If it ever shared the sidecar's
@@ -3419,9 +3779,11 @@ The row's markup must make the difference from its neighbours visible rather tha
 
 - [ ] **Step 3: Run to verify they pass.**
 
-- [ ] **Step 4: Prove each protection catches its fault.** Five faults. FAIL, revert, PASS, both pasted.
+- [ ] **Step 4: Prove each protection catches its fault.** Seven faults. FAIL, revert, PASS, both pasted.
 
 - [ ] **Step 5: Check it in a browser.** Start the app and look at the Settings tab at the narrowest real card width, in **both** themes: the three rows read as three rows, the Thread stick is visibly disabled with its reason, and the Advanced disclosure opens without shifting the rows below it. Screenshot both themes into the task report. A test that renders markup cannot see a layout that collapses.
+
+  Check the progress line too, because it is the part a static render cannot judge: with the row mid-attempt, the text must not reflow the card or push the Apply button around as it changes between the three states, and the failed state has to stay readable when the error is a long one. Point the row at a path that does not exist to see the missing-stick text for real.
 
 - [ ] **Step 6: Run the checks** (all five, four-part pytest).
 
@@ -3536,7 +3898,8 @@ async def test_the_matter_tab_keeps_the_card_it_had(api):
     disclosures.
 
     Fault to prove it: drop the sticker `<svg>` while restructuring."""
-    page = (await api.get("/static/index.html")).text
+    client, _, _ = api
+    page = (await client.get("/")).text
     for marker in ('id="commission-code"', "code-sticker", "commission-disclosure"):
         assert marker in page
 ```
@@ -3653,9 +4016,11 @@ Run after the plan is written, before execution starts. This is a checklist for 
 
 No spec requirement is unassigned. Section 11's eight deferred items are deliberately absent, and Task 15 records them.
 
-**2. Placeholder scan.** No task contains "TBD", "implement later", "add appropriate error handling", "similar to Task N", or a code step without code. Tasks 7-14 elide some test **bodies** with an explicit instruction to write them in full and a note that a `pass` body is a plan failure; every one of those tests carries its complete docstring and its named fault, which is the part a fresh implementer cannot reconstruct. Where this plan supplies invented data — the twelve by-id strings in Task 4, the packed Loxone colour number in Task 3, the four pinned versions in Task 1 — it says so and tells the implementer to verify against the real source and report a mismatch rather than bend the code to the plan.
+**2. Placeholder scan.** No task contains "TBD", "implement later", "add appropriate error handling", "similar to Task N", or a code step without code. Tasks 7-14 elide some test **bodies** with an explicit instruction to write them in full and a note that a `pass` body is a plan failure; every one of those tests carries its complete docstring and its named fault, which is the part a fresh implementer cannot reconstruct. Where this plan supplies invented data — the twelve by-id strings in Task 4, the four pinned versions in Task 1 — it says so and tells the implementer to verify against the real source and report a mismatch rather than bend the code to the plan.
 
-**3. Type consistency.** `build_snapshot`, `rename_payload`, `DeviceFacts`, `EndpointFacts` (Task 6) are consumed under exactly those names in Task 7. `DeviceUnreachableError` and `SOURCE_CALL_TIMEOUT_SECONDS` (Task 5) are used under those names in Tasks 7 and 9. `Fingerprint`/`match_fingerprint`/`DEFAULT_UNKNOWN` (Task 4) are consumed in Tasks 7, 11 and 13. `ensure_quirks_loaded` (Task 1) is called in Tasks 7 and 10. `device_identity`/`is_same_device` (Task 11) are used only there. `ZigbeePendingStore` (Task 9) is reached as `store.zigbee_pending` in Task 9 alone. `transportBadge` (Task 13) keeps its existing signature.
+The packed Loxone colour number in Task 3 is no longer in that category: it was invented (`16711680`, hex RGB), was checked against `commands/color.py` during the review of this plan, was **wrong** — that encoding concatenates whole percentages, so the value meant "red at 680 %" and would have raised `LoxoneColourError` — and has been corrected to `100`. Task 4's by-id strings gained the same treatment one step short of correction: the real string the repository already carries is quoted in full, with the two ways it differs from the invented ones, and the one row whose correctness rests on a negative lookahead rather than on table order is called out to be verified first.
+
+**3. Type consistency.** `GroupOutcome` (Task 5) carries `failed` as a stored, plan-ordered field with `unreachable`/`unconfigured` as order-preserving subsets, so `fanout.py`'s documented ordering guarantee survives the change; both call sites read it under those names. `Sources.replace` (Task 5) is consumed only by `ZigbeeRuntime` (Task 11). `ConnectionProgress`/`progress()` and `on_connection_change` (Task 7) are consumed by `ZigbeeRuntime` and `GET /api/zigbee/radio` (Task 11) and by `Runtime.set_zigbee_connected` (Task 10); `ZIGBEE_CONNECTED_KEY`, `cache_zigbee_connected` and `set_zigbee_connected` (Task 10) are used under those names in Tasks 7 and 11. `build_snapshot`, `rename_payload`, `DeviceFacts`, `EndpointFacts` (Task 6) are consumed under exactly those names in Task 7. `DeviceUnreachableError` and `SOURCE_CALL_TIMEOUT_SECONDS` (Task 5) are used under those names in Tasks 7 and 9. `Fingerprint`/`match_fingerprint`/`DEFAULT_UNKNOWN` (Task 4) are consumed in Tasks 7, 11 and 13. `ensure_quirks_loaded` (Task 1) is called in Tasks 7 and 10. `device_identity`/`is_same_device` (Task 11) are used only there. `ZigbeePendingStore` (Task 9) is reached as `store.zigbee_pending` in Task 9 alone. `transportBadge` (Task 13) keeps its existing signature.
 
 **4. Ordering.** Every task depends only on earlier ones. Tasks 1-5 touch no Zigbee runtime code and are independently mergeable; Task 3 improves Matter on its own and could ship alone. Task 10 wires a source that Tasks 7-9 must already provide. Tasks 13 and 14 consume APIs from Tasks 11 and 12.
 
