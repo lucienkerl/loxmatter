@@ -192,3 +192,102 @@ def test_raw_mode_does_not_lift_the_capability_gate():
     stance ADMINISTRATIVE_CLUSTERS takes."""
     snapshot = _colour_snapshot({f"1/{_COLOUR_CLUSTER}/{FEATURE_MAP_ID}": 24})
     assert _colour_command_ids(snapshot, raw=True) == {10}
+
+
+# The two cases below exist because the five above could not tell the gate's
+# two rules apart. The reviewer of 12 September 2026 mutated
+# `profiles/capabilities.py` twice and the whole suite stayed green:
+# `COLOUR_FEATURE_XY = 0x08` changed to `0x10` (the XY constant made to point
+# at the colour-temperature bit), and `(768, 7)`'s requirement reduced from
+# `XY | HS` to plain `HS` (the deliberate half deleted). Every gated case
+# used FeatureMap 24, 31, or nothing - none of them separates XY from CT, and
+# none of them has HS without XY, so nothing measured either rule.
+#
+# It takes both cases to close both mutations, and neither closes the other:
+#
+# | FeatureMap | correct | XY -> 0x10 | (768,7) -> HS |
+# | 3  = HS|EHUE | {6, 10}    | {6, 10} (passes) | {6, 7, 10} (fails) |
+# | 9  = HS|XY   | {6, 7, 10} | {6, 10} (fails)  | {6, 7, 10} (passes) |
+
+
+def test_hue_without_xy_keeps_the_hue_command_and_loses_the_xy_one():
+    """FeatureMap 3 = HS|EnhancedHue: colour, declared without xy.
+
+    Command 6 clears the gate on the HS bit. Command 7 does not, and only
+    this shape of lamp proves it: 7 asks for XY **and** HS, so a lamp
+    declaring HS alone is the only one whose answer differs between that
+    rule and the plain `HS` a careless edit would leave behind.
+
+    Such a lamp exists in the Matter specification - the hue/saturation
+    feature stands on its own and xy is not implied by it - though not in
+    this repository's fixture set, which is why it is written out by hand
+    here rather than loaded."""
+    snapshot = _colour_snapshot({f"1/{_COLOUR_CLUSTER}/{FEATURE_MAP_ID}": 3})
+    assert _colour_command_ids(snapshot) == {6, 10}
+
+
+def test_hue_with_xy_and_no_colour_temperature_keeps_both_colour_commands():
+    """FeatureMap 9 = HS|XY: a colour lamp that cannot do white at all.
+
+    The counterpart to the case above, and the one that pins WHICH bit XY
+    is. Every other cleared case here declares CT as well (24 and 31 both
+    carry it), so a mix-up of the XY bit (0x08) with the colour-temperature
+    bit (0x10) changes none of their answers. This lamp declares XY and not
+    CT, so it clears command 7 with the constant right and fails it with
+    the constant wrong.
+
+    Command 10 rides along untouched, as everywhere else here: the gate is
+    an exception list and has no entry for the colour temperature.
+    """
+    snapshot = _colour_snapshot({f"1/{_COLOUR_CLUSTER}/{FEATURE_MAP_ID}": 9})
+    assert _colour_command_ids(snapshot) == {6, 7, 10}
+
+
+def test_a_feature_map_of_zero_does_not_silence_the_colour_capabilities():
+    """Review finding Minor, 12 September 2026: the fallback took the first
+    source PRESENT, so a device reporting `FeatureMap = 0` next to a full
+    `ColorCapabilities = 31` was denied on the strength of the zero.
+
+    Matter requires the two attributes to carry the same bits, so this
+    device is non-conformant either way - but a zero is the one shape of
+    disagreement that reads as an unpopulated attribute rather than as a
+    claim, and the charitable reading costs nothing."""
+    snapshot = _colour_snapshot(
+        {
+            f"1/{_COLOUR_CLUSTER}/{FEATURE_MAP_ID}": 0,
+            f"1/{_COLOUR_CLUSTER}/{COLOR_CAPABILITIES_ID}": 31,
+        }
+    )
+    assert _colour_command_ids(snapshot) == {6, 7, 10}
+
+
+def test_a_non_zero_feature_map_still_outranks_the_colour_capabilities():
+    """The other half of the same decision, and the reason this is not an
+    OR across the two sources: a lamp whose FeatureMap declares its own,
+    non-zero set is judged by that set alone.
+
+    These are the real white-spectrum lamp's 24 = XY|CT with an imagined
+    sloppy ColorCapabilities beside it. OR-ing would hand it 31 and draw
+    the colour picker that `profiles/capabilities.py` exists to withhold;
+    reading past a zero only, and never past a declaration, does not."""
+    snapshot = _colour_snapshot(
+        {
+            f"1/{_COLOUR_CLUSTER}/{FEATURE_MAP_ID}": 24,
+            f"1/{_COLOUR_CLUSTER}/{COLOR_CAPABILITIES_ID}": 31,
+        }
+    )
+    assert _colour_command_ids(snapshot) == {10}
+
+
+def test_every_source_declaring_zero_is_still_a_denial():
+    """A zero is skipped so a later source can answer - not discarded. With
+    nothing else to answer, the declaration of no features stands and the
+    colour commands stay withheld, exactly as for a device that declares
+    nothing at all."""
+    snapshot = _colour_snapshot(
+        {
+            f"1/{_COLOUR_CLUSTER}/{FEATURE_MAP_ID}": 0,
+            f"1/{_COLOUR_CLUSTER}/{COLOR_CAPABILITIES_ID}": 0,
+        }
+    )
+    assert _colour_command_ids(snapshot) == {10}

@@ -152,7 +152,7 @@ from loxmatter.api.models import CommandOut, ControlRange, ControlsOut, ValueIn
 from loxmatter.commands.fanout import dispatch_group, plan_group_calls
 from loxmatter.commands.translate import UnsupportedValueError, to_device_calls
 from loxmatter.model.store import Store, UnknownCommandError, UnknownDeviceError
-from loxmatter.profiles.table import command_control, command_slug
+from loxmatter.profiles.table import command_control, command_slug, duplicate_control_command
 from loxmatter.sources import DeviceCall, SourceNotConfiguredError
 
 Invoker = Callable[[DeviceCall], Awaitable[None]]
@@ -268,12 +268,41 @@ def build_control_router(store: Store, invoke: Invoker, values: ValueReader) -> 
         `test_button_offers_no_controls` checks) - a person diagnosing a
         foreign device would then be misled by that, instead of seeing:
         there would still be commands, just unnamed.
+
+        A second filter joined it on 12 September 2026, and it is not the
+        same kind of thing: `duplicate_control_command` drops a command
+        that would draw a widget an earlier command already draws - the
+        two ColorControl colour commands, which a colour lamp accepts
+        both of and which the modal rendered as two identical, mutually
+        interfering colour areas. That one does NOT count towards
+        `hidden_raw_commands`: nothing is hidden from the person
+        diagnosing, the control is right there under its twin, and the
+        dropped key stays executable through `POST /api/commands/{key}`.
         """
         _require_device(device_id)
         stored = store.commands(device_id)
+        # Per ENDPOINT, not per device: a bridge with two lamps behind one
+        # node offers each of them its own colour control, and the two must
+        # not shadow each other.
+        present: dict[int, set[tuple[int, int]]] = {}
+        for command in stored:
+            present.setdefault(command.endpoint, set()).add(
+                (command.cluster_id, command.command_id)
+            )
         named = []
+        unnamed = 0
         for command in stored:
             if command_slug(command.cluster_id, command.command_id) is None:
+                unnamed += 1
+                continue
+            # A second command that would draw the identical widget - see
+            # `profiles.table.duplicate_control_command`. NOT counted as a
+            # hidden raw command: `hidden_raw_commands` means "present but
+            # unnamed", and this one is named, offered under its
+            # preferred twin, and still executable by key.
+            if duplicate_control_command(
+                command.cluster_id, command.command_id, present[command.endpoint]
+            ):
                 continue
             control = command_control(command.cluster_id, command.command_id)
             named.append(
@@ -287,7 +316,7 @@ def build_control_router(store: Store, invoke: Invoker, values: ValueReader) -> 
                     else None,
                 )
             )
-        return ControlsOut(commands=named, hidden_raw_commands=len(stored) - len(named))
+        return ControlsOut(commands=named, hidden_raw_commands=unnamed)
 
     @router.post("/commands/{key}")
     async def execute_command(key: str, body: ValueIn) -> dict[str, str]:

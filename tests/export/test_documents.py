@@ -154,11 +154,11 @@ def test_filename_is_ascii_only():
 
 
 def test_filenames_of_labels_differing_only_by_separator_do_not_collide():
-    """ "Lampe 1", "Lampe_1" and "Lampe-1" all normalize to the same label
+    """ "Lamp 1", "Lamp_1" and "Lamp-1" all normalize to the same label
     segment - on different devices, the ID must still keep them apart."""
-    space = filename_for("VIU", 1, "Lampe 1")
-    underscore = filename_for("VIU", 2, "Lampe_1")
-    hyphen = filename_for("VIU", 3, "Lampe-1")
+    space = filename_for("VIU", 1, "Lamp 1")
+    underscore = filename_for("VIU", 2, "Lamp_1")
+    hyphen = filename_for("VIU", 3, "Lamp-1")
     assert len({space, underscore, hyphen}) == 3
 
 

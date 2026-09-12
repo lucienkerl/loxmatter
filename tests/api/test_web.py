@@ -9931,3 +9931,124 @@ def test_an_interrupted_job_is_not_reported_as_restored():
         "ordinary": "web.radios.result_failed_restored",
         "unhealthy": "web.radios.result_failed_unhealthy",
     }
+
+
+# ---------------------------------------------------------------------------
+# The colour picker: exactly one per subject.
+#
+# Runs the real `app.js` against the real `GET /api/devices/{id}/controls`
+# payload, through the `x-for` expression pulled out of the SERVED markup -
+# the same "extract the expression, don't retype it" rule `_x_show_expr`
+# follows. All three halves have to hold for the assertion to pass: the
+# route must stop offering the duplicate, `controlsByKind` must still return
+# what the modal iterates, and the markup must still iterate that. A test
+# that only fetched the page, or only searched it for a substring, could not
+# have failed for the bug this covers - the markup was never wrong; it was
+# handed two commands where one was meant (finding, review of e8040f4).
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+async def colour_lamp(tmp_path, no_invoke, fake_runtime, fake_client):
+    """The checked-in RGBW lamp, which accepts BOTH colour commands.
+
+    Yields a factory so a single test can also build the lamp as a device
+    that accepts only MoveToColor - the Zigbee shape, and the one that
+    proves the rule keeps a picker rather than merely removing one."""
+    store = Store(tmp_path / "t.sqlite")
+    app = build_app(store, no_invoke, fake_runtime(store), client=fake_client)
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        await authenticate(store, client)
+
+        def register(*, drop: set[tuple[int, int]] = frozenset()) -> int:
+            snapshot = load_snapshot("ikea_kajplats_cws_lamp.json")
+            device_id = store.register_device(snapshot)
+            store.register_signals(device_id, snapshot)
+            store.register_commands(
+                device_id,
+                [c for c in extract_commands(snapshot) if (c.cluster_id, c.command_id) not in drop],
+            )
+            return device_id
+
+        yield client, register
+    store.close()
+
+
+def _colour_picker_x_for(markup: str) -> str:
+    """The literal `x-for` expression of the block that draws the colour
+    area, read out of the served page. Identified by the colour field's own
+    class rather than by a line number, and taken as the nearest `x-for`
+    above it - if that block is ever rebound to something other than the
+    subject's `hue_sat` commands, this extraction follows the change and the
+    assertion below is made against what the browser would really loop
+    over."""
+    field = markup.index('class="colour-field"')
+    opened = list(re.finditer(r'x-for="([^"]*)"', markup[:field]))
+    assert opened, "no x-for precedes the colour field in the served markup"
+    return opened[-1].group(1)
+
+
+def _pickers_for(x_for: str, controls: dict, device_id: int) -> list[str]:
+    """The slugs the colour block would draw, evaluated in node.
+
+    `with (state)` is how Alpine resolves an expression against its data
+    object, including the `this` binding the helper methods need - so this
+    runs the markup's own expression rather than a Python reading of it."""
+    iterable = x_for.split(" in ", 1)[1]
+    values = _app_state(
+        f"""
+        state.controlsBySubject = {{ {device_id}: {json.dumps(controls)} }};
+        state.controlModalDevice = {device_id};
+        const draw = new Function("state", "with (state) {{ return (" + {json.dumps(iterable)} + "); }}");
+        console.log(JSON.stringify(draw(state).map((command) => command.slug)));
+        """
+    )
+    assert isinstance(values, list)
+    return values
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+async def test_a_colour_lamp_gets_exactly_one_colour_picker(colour_lamp):
+    """The lamp accepts MoveToHueAndSaturation (768/6) AND MoveToColor
+    (768/7), and both carry `control: hue_sat`. Before 12 September 2026
+    the modal therefore drew two colour areas: no slug label distinguishes
+    them, and both read and wrote the same `controlDrafts.hue` /
+    `.saturation`, so dragging one moved the other's marker.
+
+    The surviving one is command 6, and the slug says which: it writes
+    CurrentHue and CurrentSaturation, the two attributes the picker reads
+    its own position back from, and sets ColorMode to 0, which is what
+    decides whether the modal opens on the colour tab at all."""
+    client, register = colour_lamp
+    device_id = register()
+    page = _without_comments((await client.get("/")).text)
+    controls = (await client.get(f"/api/devices/{device_id}/controls")).json()
+
+    assert [c["slug"] for c in controls["commands"] if c["control"] == "hue_sat"] == ["color"]
+    assert _pickers_for(_colour_picker_x_for(page), controls, device_id) == ["color"]
+    # The suppressed twin is not "hidden": that number means present but
+    # UNNAMED, and this lamp has no unnamed command at all.
+    assert controls["hidden_raw_commands"] == 0
+    # Nothing else the modal builds is touched - the white tab still has
+    # its Kelvin slider, and the tab bar still appears.
+    assert [c["slug"] for c in controls["commands"] if c["control"] == "kelvin"] == ["colortemp"]
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+async def test_a_lamp_that_accepts_only_move_to_color_keeps_its_picker(colour_lamp):
+    """The Zigbee shape (design 2026-09-12, section 5.6): ZHA 2.2.2 sends
+    colour only as XY, and a lamp that never accepts MoveToHueAndSaturation
+    has no preferred twin to stand aside for.
+
+    This is the half that makes the rule a preference and not a ban. A fix
+    that simply dropped `color_xy` would pass the test above and leave
+    exactly the lamp that command 7 was named for with no colour control at
+    all."""
+    client, register = colour_lamp
+    device_id = register(drop={(768, 6)})
+    page = _without_comments((await client.get("/")).text)
+    controls = (await client.get(f"/api/devices/{device_id}/controls")).json()
+
+    assert [c["slug"] for c in controls["commands"] if c["control"] == "hue_sat"] == ["color_xy"]
+    assert _pickers_for(_colour_picker_x_for(page), controls, device_id) == ["color_xy"]

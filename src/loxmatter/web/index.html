@@ -3054,6 +3054,22 @@
           </div>
 
           <div x-show="!hasColourTabs(controlModalDevice) || controlTab === 'colour'">
+            <!-- At most ONE command arrives here, and the loop relies on
+                 it: every colour area below reads and writes the same
+                 `controlDrafts.hue`/`.saturation`, and this block draws no
+                 `command.slug` label, so a second one would be an
+                 indistinguishable twin whose marker moves when the first
+                 is dragged - which is exactly what a colour lamp got from
+                 the moment MoveToColor gained a `clusters.yaml` entry
+                 (2026-09-12) until the review that found it. The rule
+                 that keeps it to one
+                 sits in `profiles/table.py`
+                 (`duplicate_control_command`), applied by both controls
+                 routes - server-side, because which of two Matter
+                 commands should be the colour control is cluster
+                 knowledge, and this file's standing rule is that
+                 `command.slug` is a label here and never a case
+                 distinction. -->
             <template x-for="command in controlsByKind(controlModalDevice, 'hue_sat')" :key="command.key">
               <div class="control-row">
                 <!-- The marker sits IN the field, not next to it: `hue`

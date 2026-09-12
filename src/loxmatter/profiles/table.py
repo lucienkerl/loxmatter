@@ -432,6 +432,66 @@ def command_control(cluster_id: int, command_id: int) -> str:
     return str(control) if control else "unknown"
 
 
+# Groups of commands that build the SAME control out of the SAME value,
+# most preferred first. `command_control` says WHICH control a command
+# gets; this says which command gets to be it when a device accepts
+# several that would all draw the identical widget.
+#
+# ColorControl MoveToHueAndSaturation (6) and MoveToColor (7, xy) are such
+# a pair since 2026-09-12, when command 7 gained its `clusters.yaml` entry:
+# both carry `control: hue_sat`, and both take the packed Loxone colour
+# number verbatim (`commands.translate._payload_hue_saturation` and
+# `_payload_color_xy` differ only in which cluster field they fill). A
+# colour lamp that accepts both therefore grew TWO colour areas in the
+# control modal, indistinguishable from each other - the `hue_sat` block in
+# `web/index.html` draws no slug label - and both bound to the same
+# `controlDrafts.hue`/`.saturation`, so dragging one moved the other's
+# marker.
+#
+# Command 6 comes first, and that is the load-bearing half of this entry:
+# - The picker reads its position back from CurrentHue (768/0) and
+#   CurrentSaturation (768/1). Command 6 writes exactly those two
+#   attributes, so what the picker sends is what it reads back; command 7
+#   writes CurrentX/CurrentY and leaves hue and saturation to be derived,
+#   through a colour-space round trip the marker would then show the
+#   drift of.
+# - It also sets ColorMode (768/8) to 0, which is what `readStartValues`
+#   in `app.js` looks at to open the modal on the colour tab. Sending xy
+#   sets ColorMode to 1, and the next opening of the modal would land on
+#   the white tab of a lamp showing a colour.
+# - Command 6 is safe to prefer wherever it appears at all:
+#   `profiles.capabilities` already withholds both colour commands from a
+#   cluster that does not declare the hue/saturation feature, and a
+#   cluster that DOES declare it must accept MoveToHueAndSaturation
+#   (mandatory in both Matter and ZCL once the feature bit is set).
+#
+# The Zigbee case that motivated naming command 7 is untouched: a lamp
+# that accepts only MoveToColor has no 6 to prefer, so 7 is the one
+# command present and becomes the picker. Nothing here changes the EXPORT
+# either - `export.commands.extract_commands` does not consult this, so
+# Loxone keeps its own output for every command the device accepts.
+_INTERCHANGEABLE_CONTROL_COMMANDS: tuple[tuple[tuple[int, int], ...], ...] = (((768, 6), (768, 7)),)
+
+
+def duplicate_control_command(
+    cluster_id: int, command_id: int, present: frozenset[tuple[int, int]] | set[tuple[int, int]]
+) -> bool:
+    """Whether a preferred command for the identical control is also present.
+
+    `present` is every (cluster ID, command ID) pair the SAME subject
+    offers - one endpoint of a device, or one group. True means the UI
+    should not build a second widget for this command; it says nothing
+    about whether the command works, and `POST /api/commands/{key}` still
+    executes it.
+    """
+    for group in _INTERCHANGEABLE_CONTROL_COMMANDS:
+        if (cluster_id, command_id) not in group:
+            continue
+        rank = group.index((cluster_id, command_id))
+        return any(pair in present for pair in group[:rank])
+    return False
+
+
 def known_command_pairs() -> set[tuple[int, int]]:
     """All (cluster ID, command ID) pairs that `clusters.yaml` carries
     under `commands`.

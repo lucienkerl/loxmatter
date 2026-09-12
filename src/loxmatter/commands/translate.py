@@ -215,7 +215,7 @@ def _translate_loxone_colour_error(exc: LoxoneColourError) -> str:
 
 
 def _payload_hue_saturation(value: str) -> _Built:
-    """Gepackte Loxone-Farbzahl -> Matter-Hue/Saturation.
+    """Packed Loxone colour number -> Matter hue/saturation.
 
     Two conversions in a row, both backed by a source in `commands/color.py`:
     unpacking the Loxone encoding and converting the result to HSV.

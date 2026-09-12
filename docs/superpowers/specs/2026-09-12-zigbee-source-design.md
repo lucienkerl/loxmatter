@@ -529,6 +529,23 @@ rule: whoever touches it measures again.
 control: hue_sat}` so the command is exported rather than appearing as a raw
 `c768_cmd7`.
 
+**Before the hardware step: a database written between 12 September 2026's
+two commits carries a stale row.** Naming `(768, 7)` let `extract_commands`
+register a `color_xy` command for every lamp that accepts MoveToColor,
+including the white-spectrum lamps the capability gate added hours later
+withholds it from. The gate applies at extraction; `api/control.py`'s
+`controls` route reads the STORED command rows, and `store.register_commands`
+only inserts and updates — nothing in `model/store.py` ever deletes a command
+row, because a deleted row would take its key with it and a key is Loxone
+wiring. So a device commissioned in that window keeps the row, and its colour
+picker survives every restart and every code update. There is deliberately no
+migration and no prune for it: the maintainer's Pi never ran that state (the
+branch was neither merged nor pushed), and a delete path in the command table
+is a far larger decision than this. The one way to clear such a row is to
+forget the device and commission it again. A test installation showing a
+colour picker on a white-only lamp should be suspected of this before the
+gate is.
+
 ### 5.7 Command Argument Names
 
 A table, not a `camelCase` → `snake_case` helper — two of these do not follow

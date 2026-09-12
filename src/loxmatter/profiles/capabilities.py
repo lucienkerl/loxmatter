@@ -126,13 +126,41 @@ def declared_features(snapshot: NodeSnapshot, endpoint: int, cluster_id: int) ->
     `bool` is excluded explicitly for the same reason as in
     `profiles.transport.network_features_of`: it is a subclass of `int` in
     Python, and `True` would otherwise read as "hue/saturation".
+
+    **A source that declares nothing does not end the search** (review
+    finding Minor, 12 September 2026). The first version took the first
+    source PRESENT, so a device reporting `FeatureMap = 0` alongside
+    `ColorCapabilities = 31` was denied on the strength of the zero. Matter
+    requires the two attributes to carry the same bits, so any disagreement
+    is non-conformance; a zero is the one shape of it that can be read
+    charitably, because "this cluster has no features at all" is not a claim
+    a working ColorControl makes - it is what an unpopulated attribute looks
+    like.
+
+    Deliberately NOT an OR across the sources, which is the other way to
+    reach the same fix. OR would let `ColorCapabilities` ADD a bit to a
+    `FeatureMap` that declares its own, non-zero set - the WS lamp's real
+    `FeatureMap = 24` plus a sloppy `ColorCapabilities = 31` would then
+    produce exactly the colour picker this module exists to withhold. The
+    ordering in `_FEATURE_SOURCES` says FeatureMap is the more authoritative
+    of the two, and skipping past a zero keeps that ordering meaning
+    something, while OR would make it dead weight. The project's standing
+    asymmetry decides the tie: a wrongly locked control costs one missing
+    option, a wrongly released one misbehaves on hardware.
     """
+    fallback: int | None = None
     for attribute_id in _FEATURE_SOURCES.get(cluster_id, ()):
         value = snapshot.attributes.get(f"{endpoint}/{cluster_id}/{attribute_id}")
         if isinstance(value, bool) or not isinstance(value, int):
             continue
-        return value
-    return None
+        if value:
+            return value
+        if fallback is None:
+            # Remembered rather than discarded: every source saying zero is
+            # still a declaration of no features, and must stay
+            # distinguishable from no source at all.
+            fallback = value
+    return fallback
 
 
 def command_needs_missing_feature(

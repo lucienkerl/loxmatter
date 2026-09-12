@@ -106,6 +106,34 @@ async def test_replacing_the_members_recomputes_the_commands(api):
     assert "color" not in slugs_after
 
 
+async def test_a_group_of_colour_lamps_gets_exactly_one_colour_picker(api):
+    """The same rule the device route applies (`api/control.py`), and it
+    has to be applied here too: a group of colour lamps intersects to BOTH
+    ColorControl colour commands, and the control modal is the same one -
+    two `hue_sat` commands would draw the same pair of indistinguishable,
+    mutually interfering colour areas on a group tile.
+
+    The surviving one is `color` (768/6), for the reason
+    `profiles.table.duplicate_control_command` records: it writes the two
+    attributes the picker reads its position back from. `colortemp` is
+    listed alongside it to show the suppression is specific - a group
+    keeps everything else it had. Its `control` is not asserted: with no
+    member reporting a colour-temperature range yet, the group route turns
+    `kelvin` into `unknown` on purpose (see its comment there), and that
+    decision is not what this test is about."""
+    client, _store, lamps, _plug = api
+    group_id = (
+        await client.post("/api/groups", json={"label": "A", "member_ids": [lamps[0]]})
+    ).json()["id"]
+
+    body = (await client.get(f"/api/groups/{group_id}/controls")).json()
+    assert [c["slug"] for c in body["commands"] if c["control"] == "hue_sat"] == ["color"]
+    assert "colortemp" in {c["slug"] for c in body["commands"]}
+    # The dropped twin is not counted as hidden: that number means present
+    # but UNNAMED, and `color_xy` is named.
+    assert body["hidden_raw_commands"] == 0
+
+
 async def test_a_group_can_be_deleted(api):
     client, _store, lamps, _plug = api
     group_id = (await client.post("/api/groups", json={"label": "A", "member_ids": lamps})).json()[

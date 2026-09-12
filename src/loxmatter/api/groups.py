@@ -51,7 +51,7 @@ from loxmatter.model.store import (
     UnknownDeviceError,
     UnknownGroupError,
 )
-from loxmatter.profiles.table import command_control, command_slug
+from loxmatter.profiles.table import command_control, command_slug, duplicate_control_command
 
 # ColorTempPhysicalMinMireds / ColorTempPhysicalMaxMireds, the same pair
 # `api/control.py` reads for a single device.
@@ -194,9 +194,18 @@ def build_groups_router(store: Store, values: ValueReader) -> APIRouter:
         stored = store.group_commands(group_id)
         members = store.group_members(group_id)
         seed = members[0] if members else None
+        # The same two filters the device route applies, for the same
+        # reasons - a group command carries no endpoint, and a group has
+        # exactly one control modal, so one set for the whole group is the
+        # right scope here (see `api/control.py`).
+        present = {(command.cluster_id, command.command_id) for command in stored}
         named: list[CommandOut] = []
+        unnamed = 0
         for command in stored:
             if command_slug(command.cluster_id, command.command_id) is None:
+                unnamed += 1
+                continue
+            if duplicate_control_command(command.cluster_id, command.command_id, present):
                 continue
             control = command_control(command.cluster_id, command.command_id)
             control_range = _kelvin_range(group_id) if control == "kelvin" else None
@@ -229,7 +238,7 @@ def build_groups_router(store: Store, values: ValueReader) -> APIRouter:
             )
         return GroupControlsOut(
             commands=named,
-            hidden_raw_commands=len(stored) - len(named),
+            hidden_raw_commands=unnamed,
             seed_device_id=seed.id if seed is not None else None,
             seed_device_label=seed.label if seed is not None else None,
         )

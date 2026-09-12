@@ -44,11 +44,22 @@ _GERMAN_WORDS_TEXT = """
 GERMAN_WORDS = frozenset(_GERMAN_WORDS_TEXT.split())
 
 # Words that only German produces. Generated once from the pre-translation
-# tree (see Step 3a) and then frozen: transliterations like "Geraet" cannot
-# be found by pattern, because `ae`, `oe` and `ue` are ordinary English
-# ("does", "goes", "value", "true", "across"). A pattern for those would fire
-# on almost every English file, and a detector that cries wolf gets switched
-# off - which is worse than one that misses a word.
+# tree (see Step 3a): transliterations like "Geraet" cannot be found by
+# pattern, because `ae`, `oe` and `ue` are ordinary English ("does", "goes",
+# "value", "true", "across"). A pattern for those would fire on almost every
+# English file, and a detector that cries wolf gets switched off - which is
+# worse than one that misses a word.
+#
+# Not frozen, though, and the last paragraph below is the reason: the list
+# holds the words the pre-translation tree happened to contain, so a German
+# line written AFTER the translation can use vocabulary it never saw. That
+# is what happened to `commands/translate.py`'s `_payload_hue_saturation`,
+# whose docstring opened "Gepackte Loxone-Farbzahl -> ..." and passed this
+# check green for a day (found in review, 12 September 2026). Neither word
+# was in any list, and neither carries an umlaut or a transliteration.
+# CLAUDE.md's rule for that case is to extend the vocabulary, never to
+# exempt the file - so when a miss turns up, add the word AND the words
+# around it that the same sentence would have reached for.
 _GERMAN_STEMS_TEXT = """
     geraet geraete geraets uebersetzung uebersetzungen schluessel bruecke
     oberflaeche laeuft faellt haelt traegt ueber fuer koennen koennte muessen
@@ -80,6 +91,13 @@ _GERMAN_STEMS_TEXT = """
     virtuellen virtueller vollstaendige waechter waehlt waehrend waeren
     wuerde wuerden zaehlung zuerst zufaellig zugehoerige zuruecksetzen
     zuruecksetzt zusaetzliche zusammenfuehren zuverlaessig zwoelf
+
+    gepackt gepackte gepacktem gepackten gepackter gepacktes entpackt
+    entpackte entpackten packt packen farbe farben farbzahl farbzahlen
+    farbwert farbwerte farbton farbtoene farbraum farbkreis farbtemperatur
+    farbmodus farbauswahl farbwaehler farbflaeche farbig farbige farbigen
+    saettigung helligkeit zahl zahlen befehl befehle befehlen datei dateien
+    zeile zeilen wert werte werten leuchte leuchten lampe lampen
     """
 GERMAN_STEMS = frozenset(_GERMAN_STEMS_TEXT.split())
 

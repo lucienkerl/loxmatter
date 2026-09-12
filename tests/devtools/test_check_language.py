@@ -235,3 +235,28 @@ def test_a_one_line_docstring_in_a_test_file_is_still_checked():
     # """...""" would otherwise swallow the prose between them.
     text = '    """Prueft, dass das Geraet nicht erreichbar ist."""\n'
     assert check_language.scan_text(text, "tests/api/test_web.py")
+
+
+def test_the_vocabulary_gap_of_12_september_2026_is_closed():
+    """The real miss, and the reason the stem list is not frozen after all.
+
+    `commands/translate.py` opened `_payload_hue_saturation` with
+    "Gepackte Loxone-Farbzahl -> Matter-Hue/Saturation." and this script
+    printed "No German found" over it for a day. Neither word carries an
+    umlaut or a transliteration, and the list holds what the
+    pre-translation tree happened to contain - which a line written after
+    the translation need not stay inside of.
+    """
+    line = '    """Gepackte Loxone-Farbzahl -> Matter-Hue/Saturation.\n'
+    findings = check_language.scan_text(line, "src/loxmatter/commands/translate.py")
+    assert findings
+    assert findings[0].word == "Gepackte"
+
+
+def test_the_second_word_of_that_line_is_known_on_its_own():
+    """`scan_text` reports one finding per line and stops at the first
+    word, so the test above would pass with only "gepackte" added. The
+    neighbours it was asked for have to answer for themselves."""
+    for line in ("# die Farbzahl\n", "# der Farbwert\n", "# eine Saettigung\n"):
+        assert check_language.scan_text(line, "a.py"), line
+    assert check_language.scan_text("# Farbzahl\n", "a.py")[0].word == "Farbzahl"

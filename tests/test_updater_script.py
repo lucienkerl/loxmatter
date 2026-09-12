@@ -1919,12 +1919,12 @@ def test_a_failed_update_does_not_prune_backups(updater):
     backups_dir = updater.backup_dir
     backups_dir.mkdir(parents=True, exist_ok=True)
     now = time.time()
-    alte_dateien = []
+    old_backups = []
     for i in range(10):
         p = backups_dir / f"store-2020-01-01-{i:06d}.tgz"
         p.write_bytes(b"x")
         os.utime(p, (now - 100000 + i, now - 100000 + i))
-        alte_dateien.append(p)
+        old_backups.append(p)
 
     tar_path = updater.bindir / "tar"
     tar_path.write_text(
@@ -1946,7 +1946,7 @@ def test_a_failed_update_does_not_prune_backups(updater):
     _write_request(updater, target="0.3.0")
     _, _calls, state = updater()
     assert state["phase"] == "failed"
-    for p in alte_dateien:
+    for p in old_backups:
         assert p.exists(), f"{p.name} was pruned even though the update never succeeded"
 
 

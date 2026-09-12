@@ -180,16 +180,18 @@ def test_backfill_adds_a_command_that_was_locked_when_the_device_was_learned(tmp
         device_id = store.register_device(snapshot)
         store.register_signals(device_id, snapshot)
         # The old state: the same extraction without the pair that was locked back then.
-        alt = [c for c in extract_commands(snapshot) if (c.cluster_id, c.command_id) != (768, 6)]
-        store.register_commands(device_id, alt)
+        reduced = [
+            c for c in extract_commands(snapshot) if (c.cluster_id, c.command_id) != (768, 6)
+        ]
+        store.register_commands(device_id, reduced)
         assert not any(c.cluster_id == 768 and c.command_id == 6 for c in store.commands(device_id))
 
         assert store.backfill_commands([snapshot]) == 1
 
-        farbe = [c for c in store.commands(device_id) if (c.cluster_id, c.command_id) == (768, 6)]
-        assert len(farbe) == 1
-        assert farbe[0].slug == "color"
-        assert farbe[0].takes_value is True
+        colour = [c for c in store.commands(device_id) if (c.cluster_id, c.command_id) == (768, 6)]
+        assert len(colour) == 1
+        assert colour[0].slug == "color"
+        assert colour[0].takes_value is True
     finally:
         store.close()
 
@@ -204,15 +206,17 @@ def test_backfill_keeps_the_keys_of_commands_that_already_exist(tmp_path):
         snapshot = load("ikea_kajplats_cws_lamp.json")
         device_id = store.register_device(snapshot)
         store.register_signals(device_id, snapshot)
-        alt = [c for c in extract_commands(snapshot) if (c.cluster_id, c.command_id) != (768, 6)]
-        store.register_commands(device_id, alt)
-        vorher = {(c.cluster_id, c.command_id): c.key for c in store.commands(device_id)}
+        reduced = [
+            c for c in extract_commands(snapshot) if (c.cluster_id, c.command_id) != (768, 6)
+        ]
+        store.register_commands(device_id, reduced)
+        before = {(c.cluster_id, c.command_id): c.key for c in store.commands(device_id)}
 
         store.backfill_commands([snapshot])
 
-        nachher = {(c.cluster_id, c.command_id): c.key for c in store.commands(device_id)}
-        for paar, key in vorher.items():
-            assert nachher[paar] == key
+        after = {(c.cluster_id, c.command_id): c.key for c in store.commands(device_id)}
+        for pair, key in before.items():
+            assert after[pair] == key
 
     finally:
         store.close()
@@ -244,19 +248,19 @@ def test_backfill_leaves_a_device_missing_from_the_snapshots_untouched(tmp_path)
     same rule as for `backfill_device_types`."""
     store = Store(tmp_path / "t.sqlite")
     try:
-        lampe = load("ikea_kajplats_cws_lamp.json")
-        stecker = load("ikea_grillplats_plug.json")
-        lampen_id = store.register_device(lampe)
-        store.register_signals(lampen_id, lampe)
-        alt = [c for c in extract_commands(lampe) if (c.cluster_id, c.command_id) != (768, 6)]
-        store.register_commands(lampen_id, alt)
-        stecker_id = store.register_device(stecker)
-        store.register_signals(stecker_id, stecker)
-        store.register_commands(stecker_id, extract_commands(stecker))
-        stecker_vorher = len(store.commands(stecker_id))
+        lamp = load("ikea_kajplats_cws_lamp.json")
+        plug = load("ikea_grillplats_plug.json")
+        lamp_id = store.register_device(lamp)
+        store.register_signals(lamp_id, lamp)
+        reduced = [c for c in extract_commands(lamp) if (c.cluster_id, c.command_id) != (768, 6)]
+        store.register_commands(lamp_id, reduced)
+        plug_id = store.register_device(plug)
+        store.register_signals(plug_id, plug)
+        store.register_commands(plug_id, extract_commands(plug))
+        plug_before = len(store.commands(plug_id))
 
         # Only the lamp's snapshot is present - the plug is currently offline.
-        assert store.backfill_commands([lampe]) == 1
-        assert len(store.commands(stecker_id)) == stecker_vorher
+        assert store.backfill_commands([lamp]) == 1
+        assert len(store.commands(plug_id)) == plug_before
     finally:
         store.close()
