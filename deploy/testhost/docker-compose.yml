@@ -280,6 +280,11 @@ services:
       # data - because without a password set on the host, no `/api`
       # route responds, regardless of the token.
       - ./data:/matter-data:ro
+      # The host's /dev, read-only, only to read the names under
+      # /dev/serial/by-id (design "Radios in the Web UI", 2026-09-11,
+      # section 5). Without a device cgroup rule no device node here can be
+      # opened, so this grants no access to a radio.
+      - /dev:/host/dev:ro
     environment:
       # A dedicated, fixed location instead of the user-home default (see
       # `_resolve_store_path` in src/loxmatter/cli.py) - the mounted
@@ -378,6 +383,11 @@ services:
       # exists here because LOXMATTER_STORE on the bridge points at
       # exactly this volume, at exactly that filename.
       - loxmatter-store:/data
+      # The host's /dev, read-only, only to read the names under
+      # /dev/serial/by-id (design "Radios in the Web UI", 2026-09-11,
+      # section 5). Without a device cgroup rule no device node here can be
+      # opened, so this grants no access to a radio.
+      - /dev:/host/dev:ro
     environment:
       LOXMATTER_UPDATE_DIR: /data/update
       LOXMATTER_BACKUP_DIR: /data/backups

@@ -474,3 +474,44 @@ def test_the_digest_resolution_makes_no_call_when_docker_is_unreachable(tmp_path
     seen = log.read_text(encoding="utf-8")
     assert "DIGEST=\n" in seen
     assert "STACK_HOST_PATH=\n" in seen
+
+
+# ---------------------------------------------------------------------------
+# The radios job (design "Radios in the Web UI", 2026-09-11, section 6.1):
+# runs right after update-once.sh in the same pass, in the same loop, so the
+# two never overlap.
+# ---------------------------------------------------------------------------
+
+
+def test_the_radios_worker_runs_after_the_update_worker_in_one_pass(tmp_path: Path) -> None:
+    """Fault to prove it: remove the radios worker call from the loop."""
+    order = tmp_path / "order.log"
+    update = _script(tmp_path, "update.sh", f'echo update >> "{order}"')
+    radios = _script(tmp_path, "radios.sh", f'echo radios >> "{order}"')
+
+    result = _run(tmp_path, update, RADIOS_WORKER=str(radios), WORKER_TIMEOUT_SECONDS="5")
+
+    assert result.returncode == 0, result.stderr
+    assert order.read_text().split() == ["update", "radios"]
+
+
+def test_a_failing_update_worker_does_not_skip_the_radios_worker(tmp_path: Path) -> None:
+    order = tmp_path / "order.log"
+    update = _script(tmp_path, "update.sh", "exit 7")
+    radios = _script(tmp_path, "radios.sh", f'echo radios >> "{order}"')
+
+    result = _run(tmp_path, update, RADIOS_WORKER=str(radios), WORKER_TIMEOUT_SECONDS="5")
+
+    assert result.returncode == 0, result.stderr
+    assert order.read_text().split() == ["radios"]
+
+
+def test_a_missing_radios_worker_is_skipped_quietly(tmp_path: Path) -> None:
+    update = _script(tmp_path, "update.sh", "exit 0")
+
+    result = _run(
+        tmp_path, update, RADIOS_WORKER=str(tmp_path / "absent.sh"), WORKER_TIMEOUT_SECONDS="5"
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "absent.sh" not in result.stderr

@@ -106,3 +106,15 @@ def test_the_updater_does_not_use_latest() -> None:
     # need that same strictness.
     image = _stack()["services"]["loxmatter-updater"]["image"]
     assert "@sha256:" in image or ":latest" not in image
+
+
+def test_only_the_bridge_and_the_updater_see_the_host_dev_tree_read_only() -> None:
+    """Design 2026-09-11 "Radios in the Web UI", section 5: names under
+    /dev/serial/by-id only, never device access. Fault to prove it: mount
+    `/dev:/host/dev` without `:ro` on one of them."""
+    for name, service in _stack()["services"].items():
+        mounts = [str(v) for v in service.get("volumes", []) if str(v).startswith("/dev:")]
+        if name in ("loxmatter", "loxmatter-updater"):
+            assert mounts == ["/dev:/host/dev:ro"], name
+        else:
+            assert mounts == [], name
