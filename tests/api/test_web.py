@@ -8845,8 +8845,102 @@ def test_the_radios_card_detects_a_change_and_picks_the_confirmation_text():
     assert values["unchanged"] is False
     assert values["switch"] == [True, ["web.radios.confirm_thread_switch"]]
     assert values["off"] == ["web.radios.confirm_thread_off"]
-    assert values["bluetooth"] == ["web.radios.confirm_bluetooth"]
+    # Task 7d: a Bluetooth-only change says outright that Thread is not
+    # touched, and names no Thread restart - because none happens.
+    assert values["bluetooth"] == [
+        "web.radios.confirm_bluetooth",
+        "web.radios.confirm_thread_untouched",
+    ]
+    # A change that really does move Thread keeps the restart warning and
+    # drops the reassurance.
     assert values["on"] == ["web.radios.confirm_thread_on", "web.radios.confirm_bluetooth"]
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_only_the_halves_the_user_changed_are_sent():
+    """Task 7d: the request body carries `null` for a radio the user did
+    not touch, which every layer below reads as "leave this one alone".
+
+    Runs the real `confirmApplyRadios()` and captures what it actually
+    POSTs, rather than inspecting the helper it calls - the body is the
+    thing the sidecar acts on. `setInterval` is stubbed because a
+    successful POST arms the 2 s poll, which would otherwise keep node
+    alive past the end of the script.
+
+    Fault to prove it: send both halves unconditionally again (the
+    pre-7d body), whereupon the first case below carries a full Thread
+    half and the sidecar reads a legacy `.env` as a stick switch."""
+    values = _radios_values(
+        """
+        globalThis.setInterval = () => 1;
+        globalThis.clearInterval = () => {};
+        const bodies = [];
+        state.request = async (method, url, body) => {
+          if (method === 'POST') { bodies.push(body); return { id: 'j' }; }
+          return state.radios;
+        };
+        (async () => {
+          state.radiosDraft = { threadDevice: '/dev/serial/by-id/usb-A', bluetoothAdapter: 1 };
+          await state.confirmApplyRadios();
+          state.radiosDraft = { threadDevice: '/dev/serial/by-id/usb-B', bluetoothAdapter: 0 };
+          await state.confirmApplyRadios();
+          state.radiosDraft = { threadDevice: '', bluetoothAdapter: 1 };
+          await state.confirmApplyRadios();
+          console.log(JSON.stringify(bodies));
+        })();
+        """
+    )
+    assert values == [
+        {"thread": None, "bluetooth": {"adapter": 1}},
+        {"thread": {"enabled": True, "device": "/dev/serial/by-id/usb-B"}, "bluetooth": None},
+        {"thread": {"enabled": False, "device": None}, "bluetooth": {"adapter": 1}},
+    ]
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_an_unplugged_stick_does_not_turn_a_bluetooth_change_into_a_thread_change():
+    """The reported defect, at the card. The sidecar reports the
+    installer's legacy `/dev/ttyUSB0` and the stick is unplugged, so
+    `api/radios.py` maps nothing and reports that raw value with
+    `thread_device_present: false`. The card shows it as "(missing)" and
+    keeps it selected - it must NOT seed the draft to "no stick", which
+    would turn a fallen-out stick into a request to stop the border
+    router.
+
+    What this pins: in that state a Bluetooth change is a Bluetooth
+    change. The Thread half reads as unchanged, is sent as `null`, and the
+    confirmation neither promises a Thread restart nor stays silent about
+    it. Fault to prove it: compare the draft against
+    `radios.serial`/presence rather than against
+    `radiosCurrentThread()`, or drop the `radiosThreadChanged()` guard
+    around the Thread confirmation keys."""
+    values = _radios_values(
+        """
+        state.radios.current.thread_device = '/dev/ttyUSB0';
+        state.radios.current.thread_device_present = false;
+        state.radiosDraft = { threadDevice: '/dev/ttyUSB0', bluetoothAdapter: 1 };
+        console.log(JSON.stringify({
+          threadChanged: state.radiosThreadChanged(),
+          bluetoothChanged: state.radiosBluetoothChanged(),
+          changed: state.radiosChanged(),
+          keys: state.radiosConfirmKeys(),
+          body: state.radiosRequestBody(),
+          missingOptionStillSelected:
+            state.radiosThreadOptions().some((o) => o.value === '/dev/ttyUSB0' && o.missing),
+        }));
+        """
+    )
+    assert values["threadChanged"] is False
+    assert values["bluetoothChanged"] is True
+    assert values["changed"] is True
+    assert values["missingOptionStillSelected"] is True
+    assert values["keys"] == [
+        "web.radios.confirm_bluetooth",
+        "web.radios.confirm_thread_untouched",
+    ]
+    assert "web.radios.confirm_thread_switch" not in values["keys"]
+    assert "web.radios.confirm_thread_off" not in values["keys"]
+    assert values["body"] == {"thread": None, "bluetooth": {"adapter": 1}}
 
 
 @pytest.mark.skipif(NODE is None, reason="node is required for this test")

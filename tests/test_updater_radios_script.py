@@ -346,10 +346,30 @@ def test_a_change_with_no_env_file_is_rejected(radios):
             {"thread": {"enabled": True, "device": f"/dev/serial/by-id/{SONOFF}\nx"}},
             "request_malformed",
         ),
+        # Task 7d note: this stays a rejection, and it is no longer the
+        # unplugged-stick user's case. A non-null Thread half is a request
+        # to RUN Thread on that stick, and a stick that is not attached
+        # cannot run anything - `otbr` binds it through Compose `devices:`
+        # and would fail at `compose up`. A user whose configured stick
+        # fell out and who only wants to change Bluetooth now sends
+        # `"thread": null` instead, which is not validated against the
+        # host at all - see
+        # test_a_null_thread_half_leaves_thread_completely_alone below for
+        # that half of the contract.
         (
             {"thread": {"enabled": True, "device": "/dev/serial/by-id/usb-Gone"}},
             "thread_device_not_found",
         ),
+        # The half that IS present is still fully validated, `null`
+        # elsewhere in the request or not.
+        ({"thread": None, "bluetooth": {"adapter": 1}}, "bluetooth_adapter_not_found"),
+        # The widened schema accepts `null` for a half - and nothing else
+        # new. A half that is present must still be a complete, correct
+        # object.
+        ({"thread": 5}, "request_malformed"),
+        ({"thread": {"enabled": True}}, "request_malformed"),
+        ({"bluetooth": []}, "request_malformed"),
+        ({"bluetooth": {"adapter": None}}, "request_malformed"),
         (
             {"thread": {"enabled": True, "device": "/dev/serial/by-id/usb-Disk"}},
             "thread_device_not_a_serial_port",
@@ -595,6 +615,112 @@ def test_a_request_that_changes_nothing_ends_unchanged(radios):
         radios.env_file.read_text().replace("/dev/ttyUSB0", f"/dev/serial/by-id/{SONOFF}")
     )
     _request(radios)
+    before = radios.env_file.read_bytes()
+    _, calls, state = radios()
+    assert state["phase"] == "unchanged"
+    assert radios.env_file.read_bytes() == before
+    assert _mutating_docker_calls(calls) == []
+
+
+def test_a_null_thread_half_leaves_thread_completely_alone(radios):
+    """Task 7d, the defect this whole change exists for, in the shape the
+    maintainer's own Pi has it: `.env` holds the installer's
+    `RADIO_DEVICE=/dev/ttyUSB0` while the card and the API speak in mapped
+    by-id paths, and here the stick has been unplugged on top of that, so
+    the by-id link is gone from `/host/dev` as well.
+
+    Before this change the same user's Bluetooth-only request carried a
+    full Thread half and had two ways to go wrong, both of them bad: the
+    host presence check rejected the entire job (`thread_device_not_found`,
+    Bluetooth change silently dropped), and on a plugged-in stick the
+    legacy `.env` value never compared equal to the by-id path, so
+    `THREAD_ACTION` came out `up` and `otbr` was force-recreated with up to
+    90 s of `verify_thread` - one to two minutes of Thread downtime nobody
+    asked for or announced.
+
+    Two faults prove it, one at a time:
+
+    (a) Drop the `[ "$HAS_THREAD" = true ]` guard from the changes
+        section. `WANT_ENABLED` then defaults to `false` for the absent
+        half, falls into the `elif [ "$CUR_ENABLED" = true ]` branch and
+        reads as "Thread requested off": the job tears down a running
+        border router for a user who only touched Bluetooth. Caught below
+        by the step list (`apply_thread`/`verify_thread` appear) and by the
+        otbr assertions at the end - NOT by the job's own outcome, which
+        stays `done` either way. That is the difference between proving a
+        half was skipped and proving the job happened to survive it.
+    (b) Widen `.thread` back to a required object in the jq schema. The
+        request is rejected `request_malformed`.
+
+    One guard this test deliberately does NOT pin, measured rather than
+    assumed: removing `[ "$HAS_THREAD" = true ]` from the host presence
+    check alone leaves this test green, because `WANT_ENABLED` is only ever
+    assigned inside the `HAS_THREAD` branch and its default is already
+    `false`. That condition is redundant on purpose and kept as
+    documentation at the exact check that used to reject this user's whole
+    job over a device they had not asked to change.
+    """
+    (radios.host_dev / "serial" / "by-id" / SONOFF).unlink()  # the stick fell out
+    (radios.sys_bluetooth / "hci1").mkdir()
+    before = radios.env_file.read_text()
+    _request(radios, thread=None, bluetooth={"adapter": 1})
+    _, calls, state = radios()
+
+    assert (state["phase"], state["healthy"], state["rolled_back"]) == ("done", True, False)
+    # No apply_thread/verify_thread step is even offered to the card.
+    assert state["steps"] == ["validate", "backup", "write", "apply_bluetooth", "verify_bluetooth"]
+
+    after = radios.env_file.read_text()
+    assert "BLUETOOTH_ADAPTER=1\n" in after
+
+    # Every line except the one Bluetooth key is byte-identical: the legacy
+    # RADIO_DEVICE was not normalised to a by-id path behind the user's
+    # back, no COMPOSE_PROFILES line appeared, no RADIO_BAUDRATE default
+    # was written.
+    def _without_adapter(text: str) -> list[str]:
+        return [line for line in text.splitlines() if not line.startswith("BLUETOOTH_ADAPTER=")]
+
+    assert _without_adapter(after) == _without_adapter(before)
+    assert "RADIO_DEVICE=/dev/ttyUSB0" in after
+
+    # And otbr was never named in anything but the read-only report `ps`:
+    # not recreated, not removed, not restarted, never asked for its
+    # Thread state. A test that only checked the job's own outcome would
+    # pass with fault (a) in place; these are what actually prove the half
+    # was skipped rather than merely surviving.
+    assert _compose(calls, "otbr") == []
+    assert "otbr" not in "\n".join(_mutating_docker_calls(calls))
+    assert "ot-ctl" not in calls
+
+
+def test_a_null_bluetooth_half_leaves_the_adapter_alone(radios):
+    """The symmetric half of the contract: a Thread-only change must not
+    recreate matter-server or touch `BLUETOOTH_ADAPTER`.
+
+    Fault to prove it: drop the `[ "$HAS_BLUETOOTH" = true ]` guard from
+    the changes section. `WANT_BLUETOOTH` is then the empty string, which
+    differs from `.env`'s `0`, so `BLUETOOTH_CHANGE` comes out true and
+    every Thread-only job additionally writes `BLUETOOTH_ADAPTER=` (an
+    empty value docker-compose would carry into matter-server) and
+    recreates matter-server."""
+    _request(radios, bluetooth=None)
+    before = radios.env_file.read_text()
+    _, calls, state = radios()
+    assert state["phase"] == "done"
+    assert state["steps"] == ["validate", "backup", "write", "apply_thread", "verify_thread"]
+    assert "BLUETOOTH_ADAPTER=0\n" in radios.env_file.read_text()
+    assert "BLUETOOTH_ADAPTER=0\n" in before
+    assert _compose(calls, "matter-server") == []
+    # verify_bluetooth is the only thing in this script that runs curl.
+    assert "curl " not in calls
+
+
+def test_a_request_with_both_halves_null_changes_nothing(radios):
+    """The degenerate case the widened schema makes expressible. It must
+    end `unchanged` - the same terminal state a both-halves request that
+    matches `.env` already ends in - not `rejected`, and not a job that
+    recreates something for good measure."""
+    _request(radios, thread=None, bluetooth=None)
     before = radios.env_file.read_bytes()
     _, calls, state = radios()
     assert state["phase"] == "unchanged"

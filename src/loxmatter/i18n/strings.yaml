@@ -1915,6 +1915,9 @@ web.radios.confirm_thread_off:
 web.radios.confirm_bluetooth:
   en: "matter-server restarts. A commissioning in progress is aborted."
   de: "matter-server startet neu. Ein laufendes Anlernen wird abgebrochen."
+web.radios.confirm_thread_untouched:
+  en: "Thread is not touched. The border router keeps running with the stick it uses now, and Thread devices stay reachable."
+  de: "Thread wird nicht angefasst. Der Border-Router läuft mit dem Stick weiter, den er jetzt nutzt, und Thread-Geräte bleiben erreichbar."
 web.radios.confirm_rollback:
   en: "If it fails, the previous setting is restored automatically."
   de: "Schlägt es fehl, wird die vorherige Einstellung automatisch wiederhergestellt."

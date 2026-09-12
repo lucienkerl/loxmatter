@@ -289,34 +289,69 @@ write_state validate ""
 [ "$MARKER" = "$REQUEST_ID" ] || reject request_malformed
 [ "$CAPABLE" = true ] || reject "$CAPABLE_REASON"
 
+# Still a strict whitelist: the key set is exactly what it always was, and
+# every rule that applied to a half's contents still applies. Only the
+# value type widened - a half may now be `null`, which means "leave this
+# radio alone" (design 6.2/6.3). A request naming a radio still has to
+# describe it completely and correctly.
 printf '%s' "$REQUEST_BODY" | jq -e '
   type == "object"
   and (keys | sort) == ["bluetooth", "id", "requested_at", "thread"]
-  and (.thread | type) == "object" and (.thread | keys | sort) == ["device", "enabled"]
-  and (.bluetooth | type) == "object" and (.bluetooth | keys | sort) == ["adapter"]
-  and (.thread.enabled | type) == "boolean"
-  and ((.thread.device == null)
-       or ((.thread.device | type) == "string"
-           and (.thread.device | test("\\A/dev/serial/by-id/[A-Za-z0-9._:+-]+\\z"))))
-  and (.bluetooth.adapter | type) == "number"
-  and .bluetooth.adapter == (.bluetooth.adapter | floor)
-  and (.bluetooth.adapter | tostring | test("^[0-9]+$"))
-  and .bluetooth.adapter >= 0 and .bluetooth.adapter <= 15
+  and ((.thread == null)
+       or ((.thread | type) == "object" and (.thread | keys | sort) == ["device", "enabled"]
+           and (.thread.enabled | type) == "boolean"
+           and ((.thread.device == null)
+                or ((.thread.device | type) == "string"
+                    and (.thread.device | test("\\A/dev/serial/by-id/[A-Za-z0-9._:+-]+\\z"))))))
+  and ((.bluetooth == null)
+       or ((.bluetooth | type) == "object" and (.bluetooth | keys | sort) == ["adapter"]
+           and (.bluetooth.adapter | type) == "number"
+           and .bluetooth.adapter == (.bluetooth.adapter | floor)
+           and (.bluetooth.adapter | tostring | test("^[0-9]+$"))
+           and .bluetooth.adapter >= 0 and .bluetooth.adapter <= 15))
 ' >/dev/null 2>&1 || reject request_malformed
 
-# Guarded (not a bare assignment): a read failing here must reject, not let
+# Which radios this request is about at all. A half that is `null` is left
+# strictly alone from here on: not validated against the host, not written
+# to .env, not applied and not verified. The defaults below are what the
+# rest of the script sees for an absent half, and they are deliberately
+# inert - but nothing downstream may rely on that alone, so every branch
+# that could touch a radio tests its HAS_* flag as well.
+#
+# Guarded (not bare assignments): a read failing here must reject, not let
 # `set -eu` kill the pass with the marker already written (see above).
-if ! WANT_ENABLED="$(printf '%s' "$REQUEST_BODY" | jq -r '.thread.enabled' 2>/dev/null)"; then
+if ! HAS_THREAD="$(printf '%s' "$REQUEST_BODY" | jq -r 'if .thread == null then false else true end' 2>/dev/null)"; then
   reject request_malformed
 fi
-if ! WANT_DEVICE="$(printf '%s' "$REQUEST_BODY" | jq -r '.thread.device // empty' 2>/dev/null)"; then
-  reject request_malformed
-fi
-if ! WANT_BLUETOOTH="$(printf '%s' "$REQUEST_BODY" | jq -r '.bluetooth.adapter' 2>/dev/null)"; then
+if ! HAS_BLUETOOTH="$(printf '%s' "$REQUEST_BODY" | jq -r 'if .bluetooth == null then false else true end' 2>/dev/null)"; then
   reject request_malformed
 fi
 
-if [ "$WANT_ENABLED" = true ]; then
+WANT_ENABLED=false
+WANT_DEVICE=""
+if [ "$HAS_THREAD" = true ]; then
+  if ! WANT_ENABLED="$(printf '%s' "$REQUEST_BODY" | jq -r '.thread.enabled' 2>/dev/null)"; then
+    reject request_malformed
+  fi
+  if ! WANT_DEVICE="$(printf '%s' "$REQUEST_BODY" | jq -r '.thread.device // empty' 2>/dev/null)"; then
+    reject request_malformed
+  fi
+fi
+
+WANT_BLUETOOTH=""
+if [ "$HAS_BLUETOOTH" = true ]; then
+  if ! WANT_BLUETOOTH="$(printf '%s' "$REQUEST_BODY" | jq -r '.bluetooth.adapter' 2>/dev/null)"; then
+    reject request_malformed
+  fi
+fi
+
+# Only a request that actually asks for Thread is checked against the
+# host. The HAS_THREAD test is redundant against the default above and
+# kept anyway: this is the exact check that used to fail a user whose
+# configured stick had been unplugged - it rejected the whole job, the
+# Bluetooth change included, over a device nobody had asked to change.
+# Saying so at the check itself is worth one extra condition.
+if [ "$HAS_THREAD" = true ] && [ "$WANT_ENABLED" = true ]; then
   [ -n "$WANT_DEVICE" ] || reject thread_device_required
   device_link="$HOST_DEV${WANT_DEVICE#/dev}"
   [ -L "$device_link" ] || reject thread_device_not_found
@@ -333,19 +368,31 @@ if [ "$WANT_ENABLED" = true ]; then
   [ -n "$(env_value BACKBONE_IF)" ] || reject backbone_interface_missing
 fi
 
-[ -e "$SYS_BLUETOOTH/hci$WANT_BLUETOOTH" ] || reject bluetooth_adapter_not_found
+if [ "$HAS_BLUETOOTH" = true ]; then
+  [ -e "$SYS_BLUETOOTH/hci$WANT_BLUETOOTH" ] || reject bluetooth_adapter_not_found
+fi
 
 # ---------------------------------------------------------------- changes --
 
 read_current
 ORIG_ENABLED="$CUR_ENABLED"
 BLUETOOTH_CHANGE=false
-if [ "$WANT_BLUETOOTH" != "$CUR_BLUETOOTH" ]; then BLUETOOTH_CHANGE=true; fi
+if [ "$HAS_BLUETOOTH" = true ] && [ "$WANT_BLUETOOTH" != "$CUR_BLUETOOTH" ]; then
+  BLUETOOTH_CHANGE=true
+fi
+# An absent Thread half leaves THREAD_ACTION at none, which is what keeps
+# `write`, `apply_thread`, `verify_thread` and the rollback's own Thread
+# pass away from a radio nobody asked about. Note that the HAS_THREAD test
+# here is NOT redundant: without it a `null` half would fall into the
+# `elif` below and read as "Thread requested off", tearing down a running
+# border router for a user who only changed Bluetooth.
 THREAD_ACTION=none
-if [ "$WANT_ENABLED" = true ]; then
-  if [ "$CUR_ENABLED" = false ] || [ "$WANT_DEVICE" != "$CUR_DEVICE" ]; then THREAD_ACTION=up; fi
-elif [ "$CUR_ENABLED" = true ]; then
-  THREAD_ACTION=down
+if [ "$HAS_THREAD" = true ]; then
+  if [ "$WANT_ENABLED" = true ]; then
+    if [ "$CUR_ENABLED" = false ] || [ "$WANT_DEVICE" != "$CUR_DEVICE" ]; then THREAD_ACTION=up; fi
+  elif [ "$CUR_ENABLED" = true ]; then
+    THREAD_ACTION=down
+  fi
 fi
 
 if [ "$BLUETOOTH_CHANGE" = false ] && [ "$THREAD_ACTION" = none ]; then

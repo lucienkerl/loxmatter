@@ -54,6 +54,22 @@ class RadioConfig:
 
 
 @dataclass(frozen=True)
+class ThreadRequest:
+    """One half of a request. Passing `None` instead of this in
+    `request_radios` is what says "leave Thread alone" - see there."""
+
+    enabled: bool
+    device: str | None
+
+
+@dataclass(frozen=True)
+class BluetoothRequest:
+    """The Bluetooth counterpart of `ThreadRequest`."""
+
+    adapter: int
+
+
+@dataclass(frozen=True)
 class RadiosState:
     id: str | None
     phase: str
@@ -157,10 +173,17 @@ def _pending(update_dir: Path, state: RadiosState | None) -> bool:
 def request_radios(
     update_dir: Path,
     *,
-    thread_enabled: bool,
-    thread_device: str | None,
-    bluetooth_adapter: int,
+    thread: ThreadRequest | None,
+    bluetooth: BluetoothRequest | None,
 ) -> str:
+    """Writes one request file. A half given as `None` is written as a JSON
+    `null`, which `radios-once.sh` reads as "do not touch this radio": it
+    validates nothing about it, writes none of its `.env` keys, and neither
+    applies nor verifies it (design section 6.3).
+
+    Both keys are always written, `null` or not, so the sidecar's schema
+    check stays the strict whitelist it has always been - only the value
+    type widened. A request with both halves `null` ends `unchanged`."""
     update_state = update.read_state(update_dir)
     if update_state is not None and update_state.phase in update._RUNNING_PHASES:
         raise RadiosBusyError(update_state.phase)
@@ -173,8 +196,8 @@ def request_radios(
     job_id = str(uuid.uuid4())
     body = {
         "id": job_id,
-        "thread": {"enabled": thread_enabled, "device": thread_device},
-        "bluetooth": {"adapter": bluetooth_adapter},
+        "thread": None if thread is None else {"enabled": thread.enabled, "device": thread.device},
+        "bluetooth": None if bluetooth is None else {"adapter": bluetooth.adapter},
         "requested_at": datetime.now(UTC).strftime(update._TIMESTAMP_FORMAT),
     }
     update_dir.mkdir(parents=True, exist_ok=True)

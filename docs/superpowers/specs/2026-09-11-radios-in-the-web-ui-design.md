@@ -149,7 +149,7 @@ was only proven on hardware as it stands.
 
 | File | Writer | Content |
 |---|---|---|
-| `radios-request.json` | bridge | `{id, thread: {enabled, device}, bluetooth: {adapter}, requested_at}`, atomic via temp file and rename |
+| `radios-request.json` | bridge | `{id, thread, bluetooth, requested_at}`, atomic via temp file and rename. `thread` is `{enabled, device}` or `null`; `bluetooth` is `{adapter}` or `null` |
 | `radios-state.json` | sidecar | `{id, phase, steps[], error, rolled_back, healthy, current, capable, seen_at}` |
 | `radios-log.txt` | sidecar | raw output, capped like `log.txt` |
 
@@ -162,8 +162,22 @@ ends as `rejected` with an error key, and nothing is executed and nothing
 written to `.env`:
 
 - The request is a JSON object with exactly the keys `id`, `thread`,
-  `bluetooth`, `requested_at`; `thread` has exactly `enabled` and `device`;
-  `bluetooth` has exactly `adapter`.
+  `bluetooth`, `requested_at`. `thread` is `null` or an object with exactly
+  `enabled` and `device`; `bluetooth` is `null` or an object with exactly
+  `adapter`. The key set is a strict whitelist and does not change; only
+  the value type widened (amendment, 12 September 2026).
+- **A `null` half means "leave this radio alone".** It is not validated
+  against the host, none of its `.env` keys are written, and it is neither
+  applied nor verified — it cannot appear in the step list, and the
+  rollback pass does not touch it either. The bridge sends `null` for a
+  radio the user did not change (section 7). This is what lets a
+  Bluetooth-only change succeed while the configured Thread stick is
+  unplugged, and what stops a Bluetooth-only change from recreating `otbr`
+  on an installer-made `.env`, where the stored `/dev/ttyUSB0` never
+  compares equal to the by-id path the card speaks in. A half that *is*
+  present is validated in full, exactly as before: an attached stick a
+  request actually names must still exist, resolve to a tty, and have
+  `BACKBONE_IF` set.
 - `thread.enabled` is a boolean. `thread.enabled = true` requires a device.
 - `thread.device` is `null` or a string matching
   `^/dev/serial/by-id/[A-Za-z0-9._:+-]+$`; `/host` + that path exists, is a
@@ -173,7 +187,8 @@ written to `.env`:
   `/sys/class/bluetooth/hci<adapter>` exists.
 - Enabling Thread requires `BACKBONE_IF` to be set in `.env`; the sidecar
   does not guess an interface.
-- A request that changes nothing ends as `unchanged`.
+- A request that changes nothing ends as `unchanged` — including one whose
+  halves are both `null`.
 - A request is not started while `state.json` shows an update in a running
   phase; it waits for the next iteration.
 
@@ -270,12 +285,25 @@ lists:
   `unmounted`.
 - `job` is the latest `radios-state.json` job, or `null`.
 
-**`POST /api/radios`** with `{thread: {enabled, device}, bluetooth: {adapter}}`
-writes `radios-request.json` and answers `202 {id}`. It answers **409**
-while an update is in a running phase or a radio job has not reached a
-terminal phase, **400** for values that are obviously invalid against the
-bridge's own inventory, and **503** unless `sidecar` is `ready`. The
-sidecar still has the last word (section 6.3).
+**`POST /api/radios`** with `{thread, bluetooth}` writes
+`radios-request.json` and answers `202 {id}`. Both keys are required and
+either may be `null`: `{enabled, device}` or `null` for `thread`,
+`{adapter}` or `null` for `bluetooth`. `null` means "leave this radio
+alone" and is passed through to the sidecar unchanged (section 6.3); a
+**missing** key is a **422**, because a caller that forgot a half is a bug
+rather than a request to skip it. The full both-halves shape stays valid
+forever — this was an addition, not a replacement.
+
+Only the halves that are present are validated. The bridge never re-derives
+which halves changed: the card knows what the user touched and says so, and
+a layer that guessed instead could invert a real intent when its own report
+had gone stale (section 6, case 5).
+
+It answers **409** while an update is in a running phase or a radio job has
+not reached a terminal phase, **400** for values that are obviously invalid
+against the bridge's own inventory — only for a half that is actually
+present — and **503** unless `sidecar` is `ready`. The sidecar still has the
+last word (section 6.3).
 
 All error details through i18n with `en` and `de`.
 
@@ -286,7 +314,7 @@ Placement: the Settings tab, directly below the Miniserver connection.
 | State | Content |
 |---|---|
 | Normal | A Thread row: a selection of the detected USB sticks plus "No Thread stick", the current one marked "in use". A Bluetooth row: the detected adapters (`hci0 · built in (UART)`, or USB with product name), the current one marked "in use", a warning when rfkill blocks one. "Rescan". "Apply" appears only after a change. A current stick that is missing appears as its own entry marked missing. |
-| Confirmation | Text chosen by what changes. Thread stick switched: the border router restarts with the new stick, Thread devices are unreachable for one to two minutes and rejoin, the network stays the same. Thread disabled: Thread devices stay unreachable until it is enabled again. Bluetooth switched: matter-server restarts and a running commissioning is aborted. Every variant: a failure restores the old setting automatically. |
+| Confirmation | Text chosen by what changes, and it names what will actually happen. Thread stick switched: the border router restarts with the new stick, Thread devices are unreachable for one to two minutes and rejoin, the network stays the same. Thread disabled: Thread devices stay unreachable until it is enabled again. Bluetooth switched: matter-server restarts and a running commissioning is aborted. Bluetooth switched while Thread stays as it is: says so outright — Thread is not touched, the border router keeps running — because the request leaves that half out and nothing about Thread moves. Every variant: a failure restores the old setting automatically. |
 | Running | The steps from `radios-state.json`, rendered like the update card's steps, then "Applied" or "Failed, previous setting restored" with the reason. |
 | Sidecar not ready | The detection stays visible, read-only. `missing`: says changing radios needs the updater service. `outdated` and `unmounted`: the existing refresh command (`web`/`api` strings for refreshing the updater sidecar, reused, not rewritten). |
 

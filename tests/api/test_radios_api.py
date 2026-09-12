@@ -190,6 +190,9 @@ def _body(
 
 
 async def test_a_valid_change_writes_a_request(api):
+    """The full both-halves shape, which every version of this API has
+    accepted and must keep accepting - Task 7d added a `null` half beside
+    it, it did not replace it."""
     client, update_dir = api
     _update_heartbeat(update_dir)
     _radios_heartbeat(update_dir)
@@ -197,6 +200,65 @@ async def test_a_valid_change_writes_a_request(api):
     assert response.status_code == 202
     request = json.loads((update_dir / "radios-request.json").read_text(encoding="utf-8"))
     assert request["id"] == response.json()["id"]
+    assert request["thread"] == {"enabled": True, "device": f"/dev/serial/by-id/{SONOFF}"}
+    assert request["bluetooth"] == {"adapter": 0}
+
+
+async def test_a_thread_half_nobody_is_changing_is_passed_through_as_null(api):
+    """Task 7d, the API half of the fix. The user's configured Thread stick
+    has fallen out (no by-id entry is left to scan), and they want to change
+    only Bluetooth. Their Thread half is `null` - not a value that could be
+    wrong, but the absence of a request for that radio - so none of the
+    device checks may run on it, and the `null` must reach the sidecar
+    intact, since that is what tells the sidecar to skip validate, write,
+    apply and verify for Thread.
+
+    Fault to prove it: drop the `body.thread is not None` guard from the
+    device checks in `post_radios` (a 500 from `None.enabled`), or write a
+    fabricated both-halves body to the request file instead of passing the
+    `None` through (`request["thread"]` is then an object and the sidecar
+    would act on a radio nobody named)."""
+    client, update_dir = api
+    (update_dir.parent / "dev" / "serial" / "by-id" / SONOFF).unlink()
+    _update_heartbeat(update_dir)
+    _radios_heartbeat(update_dir)
+    response = await client.post("/api/radios", json={"thread": None, "bluetooth": {"adapter": 0}})
+    assert response.status_code == 202
+    request = json.loads((update_dir / "radios-request.json").read_text(encoding="utf-8"))
+    assert request["thread"] is None
+    assert request["bluetooth"] == {"adapter": 0}
+
+
+async def test_a_bluetooth_half_nobody_is_changing_is_passed_through_as_null(api):
+    """The symmetric case: a Thread-only change leaves matter-server
+    alone."""
+    client, update_dir = api
+    _update_heartbeat(update_dir)
+    _radios_heartbeat(update_dir)
+    response = await client.post(
+        "/api/radios",
+        json={
+            "thread": {"enabled": True, "device": f"/dev/serial/by-id/{SONOFF}"},
+            "bluetooth": None,
+        },
+    )
+    assert response.status_code == 202
+    request = json.loads((update_dir / "radios-request.json").read_text(encoding="utf-8"))
+    assert request["bluetooth"] is None
+    assert request["thread"] == {"enabled": True, "device": f"/dev/serial/by-id/{SONOFF}"}
+
+
+async def test_both_keys_must_be_present_even_when_null(api):
+    """Required-but-nullable, the same strictness the sidecar's own key
+    whitelist has: `null` is a deliberate "leave this alone", a missing key
+    is a caller that forgot. Fault to prove it: give `RadiosIn.thread` and
+    `RadiosIn.bluetooth` a `None` default, which silently accepts both."""
+    client, update_dir = api
+    _update_heartbeat(update_dir)
+    _radios_heartbeat(update_dir)
+    assert (await client.post("/api/radios", json={"bluetooth": {"adapter": 0}})).status_code == 422
+    assert (await client.post("/api/radios", json={"thread": None})).status_code == 422
+    assert not (update_dir / "radios-request.json").exists()
 
 
 async def test_no_request_unless_the_sidecar_is_ready(api):

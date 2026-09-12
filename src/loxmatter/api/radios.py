@@ -37,7 +37,9 @@ from loxmatter import i18n
 from loxmatter import update as update_files
 from loxmatter.radios.inventory import match_current_device, scan_bluetooth, scan_serial
 from loxmatter.radios.sidecar import (
+    BluetoothRequest,
     RadiosBusyError,
+    ThreadRequest,
     read_radios_state,
     request_radios,
     sidecar_status,
@@ -54,8 +56,15 @@ class BluetoothIn(BaseModel):
 
 
 class RadiosIn(BaseModel):
-    thread: ThreadIn
-    bluetooth: BluetoothIn
+    """Both keys are required, and either may be `null`: `null` means "leave
+    this radio alone" and is carried through to the sidecar unchanged
+    (design section 6.3). Required-but-nullable rather than optional, so
+    this schema stays as strict as the sidecar's own key whitelist - a card
+    that forgets a half is a bug, not a request to skip it. The full
+    both-halves shape every earlier version sent stays valid."""
+
+    thread: ThreadIn | None
+    bluetooth: BluetoothIn | None
 
 
 def _utc_now() -> datetime:
@@ -117,22 +126,40 @@ def build_radios_router(
         )
         if status != "ready":
             raise HTTPException(status_code=503, detail=i18n.t("api.radios.fail_sidecar_not_ready"))
-        if body.thread.enabled and body.thread.device is None:
-            raise HTTPException(
-                status_code=400, detail=i18n.t("api.radios.fail_thread_device_required")
-            )
-        if body.thread.enabled and body.thread.device not in {
-            radio.path for radio in scan_serial(host_dev, sys_root)
+        # Only the halves actually asked for are checked. A `null` half is
+        # not a value that could be wrong - it is the absence of a request
+        # for that radio, and the sidecar will not read, write, apply or
+        # verify anything about it. Validating one anyway is what used to
+        # strand the user whose configured Thread stick had fallen out: the
+        # unknown-device check below fired on a value they were not asking
+        # to change, and their Bluetooth change never happened.
+        if body.thread is not None and body.thread.enabled:
+            if body.thread.device is None:
+                raise HTTPException(
+                    status_code=400, detail=i18n.t("api.radios.fail_thread_device_required")
+                )
+            if body.thread.device not in {radio.path for radio in scan_serial(host_dev, sys_root)}:
+                raise HTTPException(
+                    status_code=400, detail=i18n.t("api.radios.fail_unknown_device")
+                )
+        if body.bluetooth is not None and body.bluetooth.adapter not in {
+            adapter.index for adapter in scan_bluetooth(sys_root)
         }:
-            raise HTTPException(status_code=400, detail=i18n.t("api.radios.fail_unknown_device"))
-        if body.bluetooth.adapter not in {adapter.index for adapter in scan_bluetooth(sys_root)}:
             raise HTTPException(status_code=400, detail=i18n.t("api.radios.fail_unknown_adapter"))
         try:
             job_id = request_radios(
                 update_dir,
-                thread_enabled=body.thread.enabled,
-                thread_device=body.thread.device if body.thread.enabled else None,
-                bluetooth_adapter=body.bluetooth.adapter,
+                thread=(
+                    None
+                    if body.thread is None
+                    else ThreadRequest(
+                        enabled=body.thread.enabled,
+                        device=body.thread.device if body.thread.enabled else None,
+                    )
+                ),
+                bluetooth=(
+                    None if body.bluetooth is None else BluetoothRequest(body.bluetooth.adapter)
+                ),
             )
         except RadiosBusyError as exc:
             raise HTTPException(status_code=409, detail=i18n.t("api.radios.fail_busy")) from exc

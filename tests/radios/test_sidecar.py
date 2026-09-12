@@ -24,8 +24,10 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from loxmatter.radios.sidecar import (
+    BluetoothRequest,
     RadioConfig,
     RadiosBusyError,
+    ThreadRequest,
     read_radios_state,
     request_radios,
     sidecar_status,
@@ -122,7 +124,9 @@ def test_a_fresh_capable_sidecar_is_ready(tmp_path):
 
 def _request(update_dir):
     return request_radios(
-        update_dir, thread_enabled=True, thread_device="/dev/serial/by-id/x", bluetooth_adapter=0
+        update_dir,
+        thread=ThreadRequest(enabled=True, device="/dev/serial/by-id/x"),
+        bluetooth=BluetoothRequest(adapter=0),
     )
 
 
@@ -136,6 +140,25 @@ def test_a_request_is_written_with_exactly_the_protocol_keys(tmp_path):
     assert body["thread"] == {"enabled": True, "device": "/dev/serial/by-id/x"}
     assert body["bluetooth"] == {"adapter": 0}
     assert not (tmp_path / "radios-request.json.tmp").exists()
+
+
+def test_a_half_that_is_not_changing_is_written_as_a_json_null(tmp_path):
+    """Task 7d: `None` for a half means "leave this radio alone", and it
+    has to reach the sidecar as a literal `null` under a key that is still
+    there - the sidecar's schema check is a strict whitelist on the key
+    set, so an OMITTED key would be rejected as `request_malformed`.
+
+    Fault to prove it: build the body by dropping `None` halves
+    (`{k: v for k, v in ... if v is not None}`) instead of writing `null`
+    - the key set then no longer matches and the real sidecar refuses the
+    request."""
+    _update_state(tmp_path)
+    _radios_state(tmp_path)
+    request_radios(tmp_path, thread=None, bluetooth=BluetoothRequest(adapter=1))
+    body = json.loads((tmp_path / "radios-request.json").read_text(encoding="utf-8"))
+    assert set(body) == {"id", "thread", "bluetooth", "requested_at"}
+    assert body["thread"] is None
+    assert body["bluetooth"] == {"adapter": 1}
 
 
 def test_no_request_while_an_update_runs(tmp_path):

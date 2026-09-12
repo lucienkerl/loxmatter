@@ -3694,29 +3694,76 @@ function app() {
       }));
     },
 
-    radiosChanged() {
+    /** Task 7d: each radio row is now "changed" or "unchanged" on its own,
+     * and every other radios helper is derived from these two so the
+     * button, the confirmation text and the request body can never
+     * disagree about which halves are moving. Both read `false` without a
+     * `current` to compare against - see `loadRadios()` on why a missing
+     * report is not evidence that anything is off. */
+    radiosThreadChanged() {
       const current = this.radios?.current;
       if (!current) return false;
-      return (
-        this.radiosDraft.threadDevice !== this.radiosCurrentThread() ||
-        Number(this.radiosDraft.bluetoothAdapter) !== current.bluetooth_adapter
-      );
+      return this.radiosDraft.threadDevice !== this.radiosCurrentThread();
     },
 
-    /** Which confirmation paragraphs apply, in display order. */
+    radiosBluetoothChanged() {
+      const current = this.radios?.current;
+      if (!current) return false;
+      return Number(this.radiosDraft.bluetoothAdapter) !== current.bluetooth_adapter;
+    },
+
+    radiosChanged() {
+      return this.radiosThreadChanged() || this.radiosBluetoothChanged();
+    },
+
+    /** The POST body: an unchanged half is sent as `null`, which every
+     * layer below reads as "leave this radio alone" (design 6.2/6.3).
+     *
+     * Task 7d, the point of the whole change: on an installer-made `.env`
+     * the stored value is `/dev/ttyUSB0` while this card and the API speak
+     * in mapped by-id paths, so the old both-halves body made the sidecar
+     * read every Bluetooth-only change as a stick SWITCH - `otbr`
+     * force-recreated and up to 90 s of `verify_thread`, one to two
+     * minutes of Thread downtime that no confirmation text ever announced.
+     * Sending `null` for the row the user did not touch is what stops
+     * that, and it is also what lets a Bluetooth change go through at all
+     * while the configured stick is unplugged: a half nobody is changing
+     * is never validated against the host, so it cannot be rejected for
+     * being absent. */
+    radiosRequestBody() {
+      return {
+        thread: this.radiosThreadChanged()
+          ? {
+              enabled: this.radiosDraft.threadDevice !== "",
+              device: this.radiosDraft.threadDevice || null,
+            }
+          : null,
+        bluetooth: this.radiosBluetoothChanged()
+          ? { adapter: Number(this.radiosDraft.bluetoothAdapter) }
+          : null,
+      };
+    },
+
+    /** Which confirmation paragraphs apply, in display order. Names only
+     * what this change will actually do: the Thread paragraphs appear
+     * exactly when the Thread half is really being sent, and a change that
+     * leaves Thread alone says so outright rather than leaving the user to
+     * infer it from silence - the border router staying up is the very
+     * thing they cannot afford to guess about. */
     radiosConfirmKeys() {
       const current = this.radios?.current;
       if (!current) return [];
       const keys = [];
-      const before = this.radiosCurrentThread();
-      const after = this.radiosDraft.threadDevice;
-      if (before !== after) {
+      if (this.radiosThreadChanged()) {
+        const before = this.radiosCurrentThread();
+        const after = this.radiosDraft.threadDevice;
         if (after === "") keys.push("web.radios.confirm_thread_off");
         else if (before === "") keys.push("web.radios.confirm_thread_on");
         else keys.push("web.radios.confirm_thread_switch");
       }
-      if (Number(this.radiosDraft.bluetoothAdapter) !== current.bluetooth_adapter) {
+      if (this.radiosBluetoothChanged()) {
         keys.push("web.radios.confirm_bluetooth");
+        if (!this.radiosThreadChanged()) keys.push("web.radios.confirm_thread_untouched");
       }
       return keys;
     },
@@ -3873,13 +3920,7 @@ function app() {
       // is what turns a bare job id into the polling that shows progress.
       let applyError = null;
       try {
-        const response = await this.request("POST", "/api/radios", {
-          thread: {
-            enabled: this.radiosDraft.threadDevice !== "",
-            device: this.radiosDraft.threadDevice || null,
-          },
-          bluetooth: { adapter: Number(this.radiosDraft.bluetoothAdapter) },
-        });
+        const response = await this.request("POST", "/api/radios", this.radiosRequestBody());
         this.radiosPendingJobId = response.id;
         this.radiosPendingDeadline = Date.now() + RADIOS_APPLY_GRACE_MS;
         this.radiosDirty = false;
