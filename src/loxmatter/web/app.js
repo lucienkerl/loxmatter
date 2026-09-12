@@ -3624,21 +3624,25 @@ function app() {
         this.radiosPendingJobId = null;
         this.radiosPendingDeadline = null;
       }
-      // Both stall banners are sticky on purpose (they must survive the
-      // poll that would otherwise re-render them away), and that left them
-      // with no exit but a page reload: `confirmApplyRadios()` was the only
-      // place that ever cleared them, so a user who had seen one kept
-      // seeing it while leaving Settings, coming back and pressing Rescan.
-      // A sidecar that answers again with nothing running is proof the
-      // standing warning no longer describes anything - clear it. Placed
-      // BEFORE the two checks below on purpose: `radiosPendingMissed` is
-      // set further down under exactly these conditions (a terminal job, a
-      // healthy sidecar, a request that was never collected), and clearing
-      // after that write would erase the banner in the same poll that
-      // raised it. `rescanRadios()` is the other exit.
+      // `radiosJobAbandoned` is sticky on purpose (it must survive the poll
+      // that would otherwise re-render it away), and that left it with no
+      // exit but a page reload: `confirmApplyRadios()` was the only place
+      // that ever cleared it, so a user who had seen it kept seeing it
+      // while leaving Settings, coming back and pressing Rescan. A sidecar
+      // that answers again with nothing running is proof the standing
+      // warning no longer describes anything - clear it here.
+      //
+      // Review-Fix Minor: `radiosPendingMissed` used to be cleared by this
+      // same condition, but `switchView("settings")` calls `loadRadios()`
+      // (see the `view === "settings"` branch above), so simply reopening
+      // Settings satisfied "sidecar ready, no phase active" and wiped the
+      // "never collected" banner with nothing having actually resolved -
+      // the request was still uncollected, the draft resynced to the
+      // unrevert state, and no explanation was left on screen. That flag
+      // must survive until the user acts on it, so it is intentionally
+      // left out of this clearing block; `rescanRadios()` is its only exit.
       if (this.radios.sidecar === "ready" && !this.radiosPhaseActive()) {
         this.radiosJobAbandoned = false;
-        this.radiosPendingMissed = false;
         this.radiosStallSince = null;
       }
       // Stall case (a) - Review-Fix Critical #2: `api/radios.py` returns

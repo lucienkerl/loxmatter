@@ -1103,6 +1103,71 @@ def test_the_heartbeat_advances_through_a_rollback(radios):
     assert _strictly_advancing([updater for _, updater in samples]), samples
 
 
+def _seconds(stamp: str) -> int:
+    """Turns one of this suite's synthetic `HH:MM:SSZ` stamps into a plain
+    tick count, so a gap between two of them can be measured in ticks
+    rather than merely ordered. `CLOCK_DATE_STUB` advances one simulated
+    second per `date` call and never lets a run reach a full hour, so a
+    bare minutes*60+seconds count is exact - no calendar arithmetic
+    needed."""
+    hh, mm, ss = stamp.rstrip("Z").split("T")[1].split(":")
+    return int(hh) * 3600 + int(mm) * 60 + int(ss)
+
+
+def test_step_itself_refreshes_the_heartbeat_across_a_rollback_transition(radios):
+    """The test above proves the "rollback" phase never goes silent, but
+    that claim survives on `compose()`'s own bracketing heartbeat and
+    `verify_bluetooth`'s own per-iteration one alone - both fire whether or
+    not `step()` refreshes anything. Proven experimentally: deleting only
+    the `refresh_heartbeat` call from `step()`'s `$ROLLING` branch
+    (deploy/updater/radios-once.sh:592) still leaves
+    `test_the_heartbeat_advances_through_a_rollback` passing, because
+    every sample it inspects is taken at a `sleep` inside
+    `verify_bluetooth`'s own loop, which has already refreshed the
+    heartbeat itself by the time that `sleep` runs - `step()`'s own two
+    calls (`step apply_bluetooth`, `step verify_bluetooth`) are invisible
+    to a check that only asks "did the timestamp move at all". So the
+    commit's claim that the heartbeat also advances "at each rollback
+    step" - as opposed to merely across it, via the calls it happens to
+    wrap - was not actually pinned by any test.
+
+    This test isolates `step()`'s own contribution using the fixed,
+    one-simulated-second-per-`date`-call clock (`CLOCK_DATE_STUB`) rather
+    than mere ordering: `step apply_bluetooth` and `step verify_bluetooth`
+    are each one `refresh_heartbeat` call, and `refresh_heartbeat` touches
+    two files, so together they are worth exactly 4 ticks of the shared
+    clock - on top of whatever `compose()` and `verify_bluetooth`'s own
+    loop already contribute between the same two points. Measured
+    empirically against this exact scenario (`uv run pytest -k
+    test_step_itself_refreshes_the_heartbeat_across_a_rollback_transition`,
+    recorded in task-7e-report.md): the gap from the last forward-pass
+    `verify_bluetooth` sample to the first `rollback` sample is 8 ticks
+    with `step()`'s refresh removed and 12 ticks with it restored - a
+    threshold of 10 sits cleanly between the two and asserts on the
+    ticks(!) rather than on which one of two hardcoded runs happened to
+    execute.
+
+    Fault to prove it: delete the `refresh_heartbeat` call from `step()`'s
+    `$ROLLING` branch (deploy/updater/radios-once.sh:592)."""
+    (radios.sys_bluetooth / "hci1").mkdir()
+    run, log = _heartbeat_run(radios)
+    (radios.fake / "matter_up").write_text("no\n", encoding="utf-8")
+    _request(radios, thread=None, bluetooth={"adapter": 1})
+    result, _, state = run()
+
+    assert result.returncode == 0, result.stderr
+    assert state["phase"] == "failed"
+    assert state["rolled_back"] is True
+    forward_samples = _samples(log, "verify_bluetooth")
+    rollback_samples = _samples(log, "rollback")
+    assert forward_samples, forward_samples
+    assert rollback_samples, rollback_samples
+    last_forward_updater = forward_samples[-1][1]
+    first_rollback_seen = rollback_samples[0][0]
+    gap_ticks = _seconds(first_rollback_seen) - _seconds(last_forward_updater)
+    assert gap_ticks >= 10, (gap_ticks, forward_samples, rollback_samples)
+
+
 def test_the_heartbeat_leaves_the_update_job_record_alone(radios):
     """The restraint half, the same one update-once.sh's own
     `refresh_heartbeat()` observes: a heartbeat may move a timestamp and

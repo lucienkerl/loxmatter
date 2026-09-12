@@ -9657,13 +9657,17 @@ async def test_rescan_clears_dirty_and_the_standing_banners(api):
 
 
 @pytest.mark.skipif(NODE is None, reason="node is required for this test")
-def test_the_standing_banners_clear_once_the_sidecar_answers_again():
-    """The other exit, for the case that resolves itself: the sidecar
-    comes back and the job has reached a terminal phase. Before this,
-    `confirmApplyRadios()` was the only place that ever cleared either
-    flag - a red "the updater service stopped answering" banner therefore
-    stood over a job whose result was printed right above it, for the rest
-    of the session.
+def test_the_abandoned_banner_clears_once_the_sidecar_answers_again():
+    """The other exit for `radiosJobAbandoned`, for the case that resolves
+    itself: the sidecar comes back and the job has reached a terminal
+    phase. Before this, `confirmApplyRadios()` was the only place that
+    ever cleared it - a red "the updater service stopped answering" banner
+    therefore stood over a job whose result was printed right above it,
+    for the rest of the session.
+
+    `radiosPendingMissed` is deliberately NOT part of this - see
+    `test_the_never_collected_banner_survives_leaving_and_returning_to_settings`
+    for why that flag has to survive this same condition instead.
 
     Fault to prove it: drop the `if (this.radios.sidecar === "ready" &&
     !this.radiosPhaseActive())` block from `loadRadios()`."""
@@ -9701,9 +9705,62 @@ def test_the_standing_banners_clear_once_the_sidecar_answers_again():
     )
     assert values == {
         "abandoned": False,
-        "missed": False,
+        "missed": True,
         "stallSince": None,
         "result": "web.radios.result_done",
+    }
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_the_never_collected_banner_survives_leaving_and_returning_to_settings():
+    """Review-Fix Minor: `switchView("settings")` calls `loadRadios()`
+    (see the `view === "settings"` branch in `selectView()`), so before
+    this fix, simply leaving Settings and coming back satisfied
+    `loadRadios()`'s own "sidecar ready, nothing running" clearing
+    condition and wiped the "never collected" banner - even though the
+    request the banner was warning about was still never picked up, and
+    the resynced draft had silently gone back to showing the change as
+    reverted. `rescanRadios()` (the explicit "look again" the user asked
+    for) is meant to be the only way out.
+
+    Raises `radiosPendingMissed` the real way - via an expired
+    `radiosPendingDeadline`, the same mechanism
+    `test_a_request_never_collected_is_reported_and_stops_polling` uses -
+    rather than setting the flag directly, then calls `loadRadios()` a
+    second time exactly the way `selectView("settings")` does when the
+    user flips back to the tab. Only `rescanRadios()` should clear it.
+
+    Fault to prove it: put `radiosPendingMissed = false;` back into the
+    `if (this.radios.sidecar === "ready" && !this.radiosPhaseActive())`
+    block in `loadRadios()`."""
+    values = _app_state(
+        f"""
+        globalThis.setInterval = () => 999;
+        globalThis.clearInterval = () => {{}};
+        state.radios = {json.dumps(RADIOS_READY)};
+        state.radiosPendingJobId = 'new-job';
+        state.radiosPendingDeadline = Date.now() - 1;
+        state.request = async () => state.radios;
+        (async () => {{
+          await state.loadRadios();
+          const afterFirstPoll = state.radiosNeverCollected();
+          // The view-switch call: sidecar answers "ready", no job running -
+          // exactly the condition that used to wipe the banner.
+          await state.loadRadios();
+          const afterReturningToSettings = state.radiosNeverCollected();
+          state.rescanRadios();
+          console.log(JSON.stringify({{
+            afterFirstPoll,
+            afterReturningToSettings,
+            afterRescan: state.radiosNeverCollected(),
+          }}));
+        }})();
+        """
+    )
+    assert values == {
+        "afterFirstPoll": True,
+        "afterReturningToSettings": True,
+        "afterRescan": False,
     }
 
 
