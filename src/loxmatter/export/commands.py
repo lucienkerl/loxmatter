@@ -25,6 +25,14 @@ through generously; for commands that would be the wrong way round,
 because the accepted commands include the administrative clusters -
 RemoveFabric, commissioning, TestEventTrigger. ADMINISTRATIVE_CLUSTERS
 stays blocked even in raw mode.
+
+The AcceptedCommandList is not the whole truth, though, and the second
+filter here says so: a device can accept a command it cannot carry out in
+any recognisable way. `profiles.capabilities` holds that knowledge - which
+feature a command needs and which attribute declares it - and the gate
+applies in raw mode as well, for the same reason ADMINISTRATIVE_CLUSTERS
+does: raw mode widens what gets a NAME, it does not widen what a device can
+actually do.
 """
 
 from __future__ import annotations
@@ -33,6 +41,7 @@ from dataclasses import dataclass
 
 from loxmatter.matter.models import NodeSnapshot
 from loxmatter.matter.paths import ACCEPTED_COMMAND_LIST_ID, parse_attribute_path
+from loxmatter.profiles.capabilities import command_needs_missing_feature
 from loxmatter.profiles.table import (
     ADMINISTRATIVE_CLUSTERS,
     command_slug,
@@ -66,6 +75,8 @@ def extract_commands(snapshot: NodeSnapshot, *, raw: bool = False) -> list[Devic
             continue
 
         for command_id in (int(c) for c in value if isinstance(c, (int, float))):
+            if command_needs_missing_feature(snapshot, endpoint, cluster_id, command_id):
+                continue
             slug = command_slug(cluster_id, command_id)
             if slug is None:
                 if not raw:

@@ -19,8 +19,9 @@ from pathlib import Path
 
 from loxmatter.export.commands import extract_commands
 from loxmatter.matter.models import NodeSnapshot
-from loxmatter.matter.paths import ACCEPTED_COMMAND_LIST_ID
+from loxmatter.matter.paths import ACCEPTED_COMMAND_LIST_ID, FEATURE_MAP_ID
 from loxmatter.profiles import table
+from loxmatter.profiles.capabilities import COLOR_CAPABILITIES_ID
 from loxmatter.profiles.table import ADMINISTRATIVE_CLUSTERS, command_slug
 
 FIXTURES = Path(__file__).parents[1] / "fixtures" / "nodes"
@@ -117,3 +118,77 @@ def test_gate_blocks_administrative_cluster_even_with_table_entry(monkeypatch):
 
     assert extract_commands(snapshot) == []
     assert extract_commands(snapshot, raw=True) == []
+
+
+# --- The ColorControl capability gate (profiles/capabilities.py) -------------
+#
+# Every case below uses the SAME AcceptedCommandList and varies only what the
+# cluster declares about itself. That is the point: the gate must read the
+# device's declaration, never the fixture it came from.
+
+_COLOUR_CLUSTER = 768
+_COLOUR_COMMANDS = [6, 7, 10]
+
+
+def _colour_snapshot(declaration: dict[str, object]) -> NodeSnapshot:
+    """A lamp that accepts both colour commands plus the colour temperature,
+    with whatever `declaration` says about its ColorControl features."""
+    return NodeSnapshot(
+        technology="matter",
+        address="999",
+        vendor_name="test",
+        product_name="test",
+        unique_id="test",
+        attributes={
+            f"1/{_COLOUR_CLUSTER}/{ACCEPTED_COMMAND_LIST_ID}": _COLOUR_COMMANDS,
+            **declaration,
+        },
+    )
+
+
+def _colour_command_ids(snapshot: NodeSnapshot, *, raw: bool = False) -> set[int]:
+    return {c.command_id for c in extract_commands(snapshot, raw=raw) if c.cluster_id == 768}
+
+
+def test_colour_commands_need_the_declared_feature():
+    """FeatureMap 31 (HS|EHUE|CL|XY|CT) clears both colour commands."""
+    snapshot = _colour_snapshot({f"1/{_COLOUR_CLUSTER}/{FEATURE_MAP_ID}": 31})
+    assert _colour_command_ids(snapshot) == {6, 7, 10}
+
+
+def test_a_white_only_lamp_is_denied_both_colour_commands():
+    """FeatureMap 24 = XY|CT, the real KAJPLATS white-spectrum lamp.
+
+    Command 6 fails on the missing hue/saturation bit. Command 7 is the
+    deliberate part: its payload needs only XY, which this lamp declares, but
+    the control built on top of it is a full-gamut colour picker that reads
+    its position back from CurrentHue/CurrentSaturation - attributes a lamp
+    without the HS feature does not have. See `profiles/capabilities.py`.
+
+    The colour temperature is untouched: it has no entry in the gate at all.
+    """
+    snapshot = _colour_snapshot({f"1/{_COLOUR_CLUSTER}/{FEATURE_MAP_ID}": 24})
+    assert _colour_command_ids(snapshot) == {10}
+
+
+def test_colour_capabilities_answers_when_there_is_no_feature_map():
+    """ColorCapabilities (0x400A) carries the same bits and is what a Zigbee
+    lamp brings - a ZCL cluster has no FeatureMap at all. Without this second
+    source the gate would deny every Zigbee colour lamp."""
+    snapshot = _colour_snapshot({f"1/{_COLOUR_CLUSTER}/{COLOR_CAPABILITIES_ID}": 31})
+    assert _colour_command_ids(snapshot) == {6, 7, 10}
+
+
+def test_a_lamp_that_declares_nothing_gains_no_colour_control():
+    """Silence is not consent. A snapshot carrying neither FeatureMap nor
+    ColorCapabilities makes no claim about colour, and a gate that reads that
+    as permission is not a gate."""
+    snapshot = _colour_snapshot({})
+    assert _colour_command_ids(snapshot) == {10}
+
+
+def test_raw_mode_does_not_lift_the_capability_gate():
+    """Raw mode widens what gets a NAME, not what a device can do - the same
+    stance ADMINISTRATIVE_CLUSTERS takes."""
+    snapshot = _colour_snapshot({f"1/{_COLOUR_CLUSTER}/{FEATURE_MAP_ID}": 24})
+    assert _colour_command_ids(snapshot, raw=True) == {10}
