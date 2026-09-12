@@ -45,9 +45,8 @@ from pydantic import BaseModel, Field
 
 from loxmatter import i18n
 from loxmatter.model.store import Store
-from loxmatter.model.zigbee_settings_store import ZigbeeRadioSettings
+from loxmatter.model.zigbee_settings_store import ZigbeeRadioSettings, settings_for_path
 from loxmatter.radios.fingerprints import (
-    DEFAULT_UNKNOWN,
     FlowControl,
     RadioType,
     match_fingerprint,
@@ -59,7 +58,6 @@ from loxmatter.radios.inventory import (
     scan_serial,
 )
 from loxmatter.radios.sidecar import read_radios_state
-from loxmatter.timestamps import now_iso
 from loxmatter.zigbee.runtime import ZigbeeRuntime
 
 
@@ -139,31 +137,17 @@ def _is_thread_stick(
 def _settings_from(body: ZigbeeRadioIn, serial: Sequence[SerialRadio]) -> ZigbeeRadioSettings:
     """The setting to store, with the radio's own parameters filled in.
 
-    From `match_fingerprint(radio)` when the table recognises the stick,
-    and from the request's own Advanced fields when it does not - falling
-    back to `DEFAULT_UNKNOWN`'s values, never to a guess presented as a
-    detection. A recognised stick ignores the Advanced fields entirely: the
-    table is the measured answer, and a stale disclosure value silently
-    overriding it would open a coordinator at the wrong speed.
+    The rule itself lives in `settings_for_path`, which `cli._run`'s
+    `--zigbee-device` seeding calls too - there must not be two answers to
+    "which baud rate belongs to this stick". All this adds is the request's
+    Advanced disclosure as the source of the three overrides.
     """
-    radio = None if body.path is None else next((r for r in serial if r.path == body.path), None)
-    fingerprint = None if radio is None else match_fingerprint(radio)
-    if fingerprint is not None:
-        radio_type = fingerprint.radio_type
-        baudrate = fingerprint.baudrate
-        flow_control = fingerprint.flow_control
-    else:
-        radio_type = DEFAULT_UNKNOWN.radio_type if body.radio_type is None else body.radio_type
-        baudrate = DEFAULT_UNKNOWN.baudrate if body.baudrate is None else body.baudrate
-        flow_control = (
-            DEFAULT_UNKNOWN.flow_control if body.flow_control is None else body.flow_control
-        )
-    return ZigbeeRadioSettings(
-        path=body.path,
-        radio_type=radio_type,
-        baudrate=baudrate,
-        flow_control=flow_control,
-        saved_at=now_iso(),
+    return settings_for_path(
+        body.path,
+        serial,
+        radio_type=body.radio_type,
+        baudrate=body.baudrate,
+        flow_control=body.flow_control,
     )
 
 

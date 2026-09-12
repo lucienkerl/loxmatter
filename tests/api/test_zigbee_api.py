@@ -241,6 +241,11 @@ class _Harness:
     built: list[_FakeRadio]
     sources: Sources
     connect_delay: list[float]
+    # Held open for as long as a test wants the swap window to last - the
+    # window between the old source being released and the new one existing,
+    # which is `disconnect()` plus a border-router read on real hardware and
+    # is otherwise far too short to look inside.
+    hold_the_build: asyncio.Event
 
 
 @pytest.fixture
@@ -253,8 +258,11 @@ async def api(tmp_path, no_invoke) -> AsyncIterator[tuple[httpx.AsyncClient, Pat
     sources = Sources([_Matter()])  # type: ignore[list-item]
     built: list[_FakeRadio] = []
     connect_delay = [0.0]
+    hold_the_build = asyncio.Event()
+    hold_the_build.set()
 
     async def build(settings: Any) -> Any:
+        await hold_the_build.wait()
         if settings.path is None:
             return None
         radio = _FakeRadio(settings.path, connect_delay=connect_delay[0])
@@ -277,7 +285,12 @@ async def api(tmp_path, no_invoke) -> AsyncIterator[tuple[httpx.AsyncClient, Pat
         transport=httpx.ASGITransport(app=app), base_url="http://test"
     ) as client:
         await authenticate(store, client)
-        yield client, update_dir, _Harness(store, holder, built, sources, connect_delay)
+        yield (
+            client,
+            update_dir,
+            _Harness(store, holder, built, sources, connect_delay, hold_the_build),
+        )
+    hold_the_build.set()
     await holder.stop()
     store.close()
 
@@ -639,6 +652,58 @@ async def test_the_apply_request_does_not_wait_for_the_quirks_warm_up(api):
     assert harness.built[0].connected is False
     body = (await client.get("/api/zigbee/radio")).json()
     assert body["progress"]["state"] == "loading_quirks"
+
+
+async def test_the_swap_window_reports_applying_and_never_idle(api):
+    """The contract Task 13's card is built against, checked where the card
+    reads it: the 202's own body and the `GET` that follows it.
+
+    `_swap` releases the old source before it builds the new one, so for the
+    length of that window there is no `ZigbeeSource` to ask - on a Pi, a
+    bellows `app.shutdown(db=True)` plus `current_thread_channel()`'s
+    up-to-5 s HTTP timeout. Both readings below used to say `idle`, the one
+    state that means "no radio is configured in this installation", and the
+    card's rule is to poll while the state is a working one: it would have
+    decided nothing was happening and never polled at all. "A running job
+    the user cannot tell from a dead one" is the Global Constraint this
+    plan states three times.
+
+    Every other progress test in this file calls `wait_for_apply()` first
+    and therefore looks only AFTER the window. This one holds the window
+    open and looks inside it.
+
+    Fault to prove it: drop the `self._applying` branch from
+    `ZigbeeRuntime.progress()` - both readings go back to `idle`. Or set
+    the marker inside `_apply_in_background` instead of synchronously in
+    `apply()`: `ensure_future` runs no line of the coroutine before the
+    handler returns, so the 202 alone goes back to `idle`."""
+    client, _update_dir, harness = api
+    # A stick is already configured and connected, so `idle` cannot be
+    # confused with "this installation never had a radio".
+    await client.put("/api/zigbee/radio", json={"path": ITEAD_PATH})
+    await harness.holder.wait_for_apply()
+    await asyncio.sleep(0)
+    assert (await client.get("/api/zigbee/radio")).json()["progress"]["state"] == "connected"
+
+    harness.hold_the_build.clear()  # the swap now stops mid-window
+    put = await client.put("/api/zigbee/radio", json={"path": ITEAD_PATH})
+
+    assert put.status_code == 202
+    assert put.json()["progress"]["state"] == "applying"
+    # And it keeps saying so for as long as the window lasts, across as many
+    # polls as the card cares to make.
+    for _ in range(3):
+        body = (await client.get("/api/zigbee/radio")).json()
+        assert body["progress"]["state"] == "applying"
+        assert body["configured_path"] == ITEAD_PATH
+    # The window really is the one with no source behind it.
+    assert harness.holder.current() is None
+    assert harness.built[0].disconnects == 1
+
+    harness.hold_the_build.set()
+    await harness.holder.wait_for_apply()
+    await asyncio.sleep(0)
+    assert (await client.get("/api/zigbee/radio")).json()["progress"]["state"] != "applying"
 
 
 async def test_the_progress_of_a_running_attempt_is_readable(api):

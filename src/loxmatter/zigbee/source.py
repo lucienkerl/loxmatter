@@ -249,7 +249,15 @@ def channels_excluding(thread_channel: int | None) -> list[int]:
     return [channel for channel in ZIGBEE_CHANNELS if channel != thread_channel]
 
 
-ConnectionState = Literal["idle", "loading_quirks", "opening_radio", "connected", "failed"]
+# `applying` is the ONE state no `ZigbeeSource` ever sets. It belongs to
+# `ZigbeeRuntime` and covers the window in which there is no source to ask:
+# the old one has been disconnected and the new one is still being built.
+# It lives in this Literal rather than in a second enum beside it because
+# the card reads ONE `progress` object and switches on ONE field; a parallel
+# "is a change in flight" boolean would be a second thing to forget.
+ConnectionState = Literal[
+    "idle", "applying", "loading_quirks", "opening_radio", "connected", "failed"
+]
 
 
 @dataclass(frozen=True)
@@ -260,7 +268,12 @@ class ConnectionProgress:
     what is happening while the supervisor works its 1 s -> 60 s backoff.
     `attempts` counts FAILED attempts, so the card can say "still trying, 4
     attempts" rather than implying a first try that is about to succeed, and
-    `error` is already translated - it is the sentence the user reads."""
+    `error` is already translated - it is the sentence the user reads.
+
+    **The card keeps polling while the state is `applying`,
+    `loading_quirks` or `opening_radio`** - three, not the plan's two. See
+    `ZigbeeRuntime.progress()` for what the third one is and why leaving it
+    out reported a running radio change as `idle`."""
 
     state: ConnectionState
     attempts: int

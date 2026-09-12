@@ -170,6 +170,13 @@ class ZigbeeRuntime:
         self._idle_progress = ConnectionProgress(
             state="idle", attempts=0, error=None, changed_at=now_iso()
         )
+        # What `progress()` reports while a change is in flight, and the
+        # count of changes that are. A counter rather than a flag because
+        # `apply()` can be called again while the first swap still holds
+        # `_swapping`: the first one's `finally` must not clear a marker the
+        # second one still needs.
+        self._applying: ConnectionProgress | None = None
+        self._applies_pending = 0
 
     async def open(self) -> ZigbeeSource | None:
         """Builds the source the STORED setting names and registers it.
@@ -206,7 +213,30 @@ class ZigbeeRuntime:
 
     def progress(self) -> ConnectionProgress:
         """How far the current attempt got - `idle` while no radio is
-        configured, which is not an error and must not read as one."""
+        configured, which is not an error and must not read as one.
+
+        **`applying` covers the window in which there is nothing to ask.**
+        `_swap` tears the old source down before it builds the new one, so
+        between those two there is no `ZigbeeSource` at all and this method
+        used to fall through to `_idle_progress` - reporting a radio change
+        that is very much running as the one state that means "nothing is
+        configured here". In production that window is
+        `ZigbeeSource.disconnect()` (a bellows `app.shutdown(db=True)` on a
+        Pi) plus `current_thread_channel()`'s up-to-5 s HTTP timeout, and
+        the card's polling rule keys off this very field: it would have read
+        `idle` in the 202 and again in its first `GET`, decided nothing was
+        happening, and never started polling. That is the "a running job the
+        user cannot tell from a dead one" failure the plan names as a Global
+        Constraint, so the window gets a state of its own.
+
+        The marker is set SYNCHRONOUSLY in `apply()`, not inside the
+        background task: `asyncio.ensure_future` does not run a single line
+        of the coroutine before the handler that called it has returned, so
+        a marker set in `_apply_in_background` would still leave `idle` in
+        the 202 the user's browser reads first.
+        """
+        if self._applying is not None:
+            return self._applying
         return self._idle_progress if self._source is None else self._source.progress()
 
     def apply(self, settings: ZigbeeRadioSettings) -> None:
@@ -216,6 +246,10 @@ class ZigbeeRuntime:
         Not `async`: the caller is an HTTP handler that must not await any
         part of this, and a coroutine would invite exactly that mistake.
         """
+        self._applies_pending += 1
+        self._applying = ConnectionProgress(
+            state="applying", attempts=0, error=None, changed_at=now_iso()
+        )
         task = asyncio.ensure_future(self._apply_in_background(settings))
         self._applies.add(task)
         task.add_done_callback(self._applies.discard)
@@ -260,17 +294,28 @@ class ZigbeeRuntime:
             logger.exception("the Zigbee supervisor ended with an error")
 
     async def _apply_in_background(self, settings: ZigbeeRadioSettings) -> None:
-        async with self._swapping:
-            try:
-                await self._swap(settings)
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                # A failure here is a programming error or a build that
-                # raised, not a radio that would not open - the supervisor
-                # owns that case and reports it through `progress()`. It
-                # must not vanish: this runs in a task nobody awaits.
-                logger.exception("applying the Zigbee radio setting failed")
+        try:
+            async with self._swapping:
+                try:
+                    await self._swap(settings)
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    # A failure here is a programming error or a build that
+                    # raised, not a radio that would not open - the
+                    # supervisor owns that case and reports it through
+                    # `progress()`. It must not vanish: this runs in a task
+                    # nobody awaits.
+                    logger.exception("applying the Zigbee radio setting failed")
+        finally:
+            # In a `finally` and not after the `async with`, so that a
+            # cancelled apply - `stop()` during shutdown, or a task the loop
+            # tears down - cannot leave `progress()` stuck on `applying`
+            # forever, which would read as a change that never ends.
+            self._applies_pending -= 1
+            if self._applies_pending <= 0:
+                self._applies_pending = 0
+                self._applying = None
 
     async def _swap(self, settings: ZigbeeRadioSettings) -> None:
         await self._release()
@@ -298,9 +343,32 @@ class ZigbeeRuntime:
         `SourceNotConfiguredError` - "there is no Zigbee radio", which is
         true - rather than being handed a source whose application is being
         shut down underneath it.
+
+        **The `disconnect()` is guarded, and that guard is the whole point
+        of this paragraph.** Letting it raise out of here stopped the swap
+        AFTER the teardown and BEFORE the rebuild: no source, no supervisor,
+        nothing retrying, and `progress()` reporting the state that means
+        "no radio is configured" while the stored setting named the new
+        stick. Nothing recovered that but a restart of the bridge. And it is
+        reachable rather than theoretical - `ZigbeeSource.disconnect()` runs
+        `await app.shutdown(db=True)` inside `try`/**`finally`**, not
+        `try`/`except`, and `_stop_polling_loop()` re-raising is precisely
+        the cascade the commit directly beneath this one fixed.
+
+        Releasing the OLD stick is best effort by nature: whatever went
+        wrong, the user asked for a different radio, and the new one is
+        still openable. So the failure is logged with its traceback - the
+        one place anybody can learn that a serial port may still be held -
+        and the swap goes on to build what was asked for.
         """
         await self._stop_supervisor()
         source, self._source = self._source, None
         self._sources.replace("zigbee", None)
-        if source is not None:
+        if source is None:
+            return
+        try:
             await source.disconnect()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("releasing the previous Zigbee radio failed; continuing with the new")

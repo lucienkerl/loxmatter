@@ -25,7 +25,6 @@ import logging
 import os
 import sqlite3
 from collections.abc import Mapping
-from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 from typing import NoReturn
@@ -60,10 +59,11 @@ from loxmatter.matter.discovery import (
 from loxmatter.matter.models import NodeSnapshot, SignalKind
 from loxmatter.model.locale_store import LocaleStore
 from loxmatter.model.store import Store
+from loxmatter.model.zigbee_settings_store import settings_for_path
 from loxmatter.profiles.table import is_exportable
+from loxmatter.radios.inventory import scan_serial
 from loxmatter.sources import Sources
 from loxmatter.sources.supervisor import attach, supervise
-from loxmatter.timestamps import now_iso
 from loxmatter.zigbee.runtime import ZigbeeRuntime, build_zigbee_source
 
 logger = logging.getLogger(__name__)
@@ -600,10 +600,19 @@ async def _run(
     # that existing test calls to `_run(...)` keep working unchanged
     # without this argument.
     update_dir: Path = Path("/data/update"),
-    # This task's throwaway stand-in for the radio setting Task 11 adds -
-    # a keyword with a default, the same shape `update_dir` already has, so
+    # Seeds the stored radio setting on an installation that has none - see
+    # the seeding block further down for what it does and does not do. A
+    # keyword with a default, the same shape `update_dir` already has, so
     # every existing direct call to `_run(...)` keeps working unchanged.
     zigbee_device: str | None = None,
+    # `build_app`'s own defaults, repeated here rather than left to it,
+    # because the seeding below has to scan the SAME two trees the picker
+    # scans: a `--zigbee-device` fingerprinted against a different `/dev`
+    # than the one the UI lists would be a second answer to the question
+    # `settings_for_path` exists to have exactly one answer to. Injectable
+    # so a test can point them at a `tmp_path`.
+    radios_host_dev: Path = Path("/host/dev"),
+    radios_sys_root: Path = Path("/sys"),
 ) -> None:
     """Builds sender, runtime and client on top of `store` and keeps them
     running.
@@ -713,14 +722,46 @@ async def _run(
     zigbee_runtime = ZigbeeRuntime(
         store, runtime, sources, build_source=build_source, supervise=supervise
     )
-    # The stored setting, not a CLI flag: `--zigbee-device` was Task 10's
-    # throwaway way in and is superseded here. It stays as an override for
-    # a bridge whose web UI is not reachable - written through the same
-    # store, so the two paths cannot describe different sticks.
+    # `--zigbee-device` SEEDS the stored setting, once, and never overrules
+    # one. Two separate reasons, both measured:
+    #
+    # 1. **It only writes when nothing is stored.** A flag left behind in a
+    #    compose file used to re-apply itself on every single restart,
+    #    silently overwriting whatever stick the user had since chosen in
+    #    the web UI - a setting reverting itself at 03:00 with nothing in
+    #    the log to connect it to a line in a YAML file nobody had looked at
+    #    in months. `saved_at is None` is the test for "nobody has ever
+    #    expressed a choice", because that key is written by every path that
+    #    stores one and is removed only by `clear()`. Choosing "no Zigbee
+    #    stick" in the UI therefore counts as a choice and is respected; a
+    #    genuine reset through `clear()` makes the flag usable again.
+    # 2. **It fingerprints the path it was given.** `replace(stored, ...)`
+    #    kept the PREVIOUS stick's radio type, baud rate and flow control
+    #    and pinned them to the new path - ZNP's 38400/software onto an EZSP
+    #    stick, which opens the radio at the wrong speed and looks exactly
+    #    like broken hardware. `settings_for_path` is the same function the
+    #    `PUT` handler uses, so the two doors into this setting cannot
+    #    disagree about which parameters belong to a stick.
+    #
+    # An unrecognised or absent path is still stored, on `DEFAULT_UNKNOWN`'s
+    # values: a stick can be missing at boot and appear a second later, and
+    # the supervisor's 1 s -> 60 s retry is what that case is for.
     if zigbee_device is not None:
         stored = store.zigbee_settings.get()
-        if stored.path != zigbee_device:
-            store.zigbee_settings.save(replace(stored, path=zigbee_device, saved_at=now_iso()))
+        if stored.saved_at is None:
+            store.zigbee_settings.save(
+                settings_for_path(zigbee_device, scan_serial(radios_host_dev, radios_sys_root))
+            )
+        elif stored.path != zigbee_device:
+            # Said out loud, because the alternative is the silence that
+            # made defect 1 above invisible for as long as it lasted.
+            logger.warning(
+                i18n.t(
+                    "cli.run.warn_zigbee_device_ignored",
+                    flag=zigbee_device,
+                    stored=stored.path if stored.path is not None else "-",
+                )
+            )
     zigbee = await zigbee_runtime.open()  # None when no radio is configured
     invoke = sources.send
 
@@ -781,6 +822,8 @@ async def _run(
                 log_handler=log_handler,
                 update_dir=update_dir,
                 zigbee_runtime=zigbee_runtime,
+                radios_host_dev=radios_host_dev,
+                radios_sys_root=radios_sys_root,
             ),
             host=host,
             port=listen,

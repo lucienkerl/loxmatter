@@ -527,6 +527,158 @@ async def test_build_zigbee_source_excludes_the_thread_channel_it_read(store, mo
     assert len(calls) == 1, "once per build, not once per connect attempt"
 
 
+async def test_an_old_source_whose_disconnect_raises_still_ends_with_a_working_new_one(store):
+    """THE fourth instance of this branch's recurring defect: something
+    disappearing at the wrong moment, mishandled.
+
+    `_release` tears the old source down BEFORE `_swap` builds the new one.
+    An unguarded `disconnect()` that raises therefore stopped the swap
+    exactly between those two, and what it left behind was not a partial
+    change but a dead bridge: no source, no supervisor, nothing retrying,
+    `progress()` reporting `idle` - which means "no radio is configured" -
+    while the stored setting named the new stick. Only a restart recovered.
+
+    It is reachable rather than theoretical. `ZigbeeSource.disconnect()`
+    runs `await app.shutdown(db=True)` inside `try`/**`finally`**, not
+    `try`/`except`, and `_stop_polling_loop()` re-raising is precisely the
+    cascade the commit directly beneath this one fixed. The fake below
+    models that shape: it finishes its own cleanup and THEN raises, so
+    "the teardown happened" and "the teardown reported success" are
+    different facts, as they are on real hardware.
+
+    Fault to prove it: drop the `try`/`except` around `await
+    source.disconnect()` in `_release`."""
+    store.zigbee_settings.save(_settings())
+    sources = Sources([_Matter()])  # type: ignore[list-item]
+
+    class _RaisingOnRelease(_FakeSource):
+        async def disconnect(self) -> None:
+            await super().disconnect()  # the cleanup DID happen
+            raise RuntimeError("the polling loop would not stop")
+
+    built: list[Any] = []
+
+    async def build(settings: ZigbeeRadioSettings) -> Any:
+        if settings.path is None:
+            return None
+        source = _RaisingOnRelease(settings.path) if not built else _FakeSource(settings.path)
+        built.append(source)
+        return source
+
+    supervised: list[Any] = []
+
+    async def supervise(source: Any, store_: Any, runtime_: Any) -> None:
+        supervised.append(source)
+        source.set_progress("loading_quirks")
+        await asyncio.Event().wait()
+
+    holder = ZigbeeRuntime(store, object(), sources, build_source=build, supervise=supervise)  # type: ignore[arg-type]
+    old = await holder.open()
+    holder.supervise_current()
+    await asyncio.sleep(0)
+
+    holder.apply(_settings(path=MG24))
+    await holder.wait_for_apply()
+    await asyncio.sleep(0)
+
+    # The old stick really was released - that is what makes the raise a
+    # report of failure rather than a teardown that did not happen.
+    assert old.disconnects == 1
+    # And the swap went on regardless: a new source, in the registry, with
+    # a supervisor of its own.
+    new = holder.current()
+    assert new is not None and new.path == MG24
+    assert sources.get("zigbee") is new
+    assert [s.path for s in supervised] == [ITEAD, MG24]
+    assert holder._supervisor is not None and not holder._supervisor.done()
+    # And the state the user reads is NOT the one that means "nothing is
+    # configured here".
+    assert holder.progress().state != "idle"
+
+
+async def test_progress_says_applying_for_the_whole_window_the_old_source_is_gone(store):
+    """The window `_swap` opens between tearing the old source down and
+    having built the new one, measured from the outside.
+
+    In production that window is `ZigbeeSource.disconnect()` - a bellows
+    `app.shutdown(db=True)` on a Pi - plus `current_thread_channel()`'s
+    up-to-5 s HTTP timeout, and for all of it there is no `ZigbeeSource` to
+    ask. `progress()` used to fall through to `_idle_progress` there, so a
+    running radio change reported the one state that means "no radio is
+    configured". The card's rule is to poll while the state is a working
+    one; it would have read `idle` in the 202 and again in its first `GET`
+    and never started.
+
+    Every other test in this file calls `wait_for_apply()` before it looks,
+    so none of them could see this. This one looks INSIDE.
+
+    Fault to prove it: drop the `self._applying` branch from `progress()`,
+    or set the marker inside `_apply_in_background` instead of
+    synchronously in `apply()` - the second fault leaves the FIRST reading
+    below, the one an HTTP handler takes before it returns its 202, still
+    saying `idle`."""
+    store.zigbee_settings.save(_settings())
+    sources = Sources([_Matter()])  # type: ignore[list-item]
+    release_the_build = asyncio.Event()
+    inside: list[str] = []
+
+    async def build(settings: ZigbeeRadioSettings) -> Any:
+        if settings.path == MG24:
+            await release_the_build.wait()
+        return None if settings.path is None else _FakeSource(settings.path)
+
+    holder = ZigbeeRuntime(store, object(), sources, build_source=build, supervise=_never_ending)  # type: ignore[arg-type]
+    await holder.open()
+    holder.supervise_current()
+    await asyncio.sleep(0)
+
+    holder.apply(_settings(path=MG24))
+    # Read exactly where the `PUT` handler reads it: after `apply()`
+    # returned, before the background task has run a single line.
+    inside.append(holder.progress().state)
+    for _ in range(4):
+        await asyncio.sleep(0)
+        inside.append(holder.progress().state)
+
+    assert inside == ["applying"] * 5, inside
+    assert holder.current() is None, "the window really is the one with no source"
+
+    release_the_build.set()
+    await holder.wait_for_apply()
+    assert holder.current() is not None
+    assert holder.progress().state != "applying", "the marker must not outlive the swap"
+
+
+async def test_a_cancelled_apply_does_not_leave_progress_stuck_on_applying(store):
+    """`applying` is a marker a `finally` has to clear, and shutdown is when
+    it would not be: `ZigbeeRuntime.stop()` runs while the loop is tearing
+    tasks down, and a marker cleared only on the success path would leave
+    the last thing the card ever read saying a change is still running.
+
+    Fault to prove it: clear `self._applying` after the `async with` rather
+    than in a `finally`."""
+    sources = Sources([_Matter()])  # type: ignore[list-item]
+    started = asyncio.Event()
+
+    async def build(settings: ZigbeeRadioSettings) -> Any:
+        started.set()
+        await asyncio.Event().wait()  # never finishes
+        return None
+
+    holder = ZigbeeRuntime(store, object(), sources, build_source=build, supervise=_never_ending)  # type: ignore[arg-type]
+
+    holder.apply(_settings())
+    await started.wait()
+    assert holder.progress().state == "applying"
+
+    task = next(iter(holder._applies))
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert holder.progress().state == "idle"
+
+
 async def test_build_zigbee_source_builds_nothing_without_a_path(store, monkeypatch):
     """And asks OTBR nothing either: there is no network to keep off a
     channel.

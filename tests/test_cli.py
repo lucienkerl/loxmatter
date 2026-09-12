@@ -36,6 +36,7 @@ from loxmatter.matter import client as matter_client
 from loxmatter.matter.client import BridgeMatterClient, MatterUnavailableError
 from loxmatter.matter.models import NodeSnapshot
 from loxmatter.model.store import Store
+from loxmatter.model.zigbee_settings_store import ZigbeeRadioSettings
 from loxmatter.sources.supervisor import supervise
 from loxmatter.zigbee import runtime as zigbee_runtime_module
 from loxmatter.zigbee.source import ZigbeeSource, ZigbeeUnavailableError
@@ -1526,3 +1527,221 @@ async def test_the_radio_state_is_seeded_before_the_first_resend(monkeypatch, tm
     # the seed before all of them, so the very first resend already carries
     # the key.
     assert runtimes[0].call_order == ["zigbee-cache", "seed", "resend", "seed", "resend"]
+
+
+# --- `--zigbee-device`: a seed, never an override ---------------------------
+
+# A Home Assistant Connect ZBT-2, chosen because every one of its three
+# parameters can be told apart from `DEFAULT_UNKNOWN`'s: the fingerprint
+# table says 460800/hardware where the fallback says 115200/software. A
+# stick whose row happened to match the fallback would let "fingerprint the
+# path" and "do not bother" pass the same assertions.
+ZBT2_NAME = "usb-Nabu_Casa_ZBT-2_1234-if00"
+ZBT2_PATH = f"/dev/serial/by-id/{ZBT2_NAME}"
+
+
+def _host_with_the_zbt2(tmp_path: Path) -> tuple[Path, Path]:
+    """The two trees `scan_serial` reads, holding exactly one known stick.
+
+    The same shape `tests/api/test_zigbee_api.py` builds, minus the
+    character devices: nothing here resolves a device node, only the
+    fingerprint lookup runs."""
+    host_dev, sys_root = tmp_path / "dev", tmp_path / "sys"
+    (host_dev / "serial" / "by-id").mkdir(parents=True)
+    (host_dev / "ttyUSB0").write_text("", encoding="utf-8")
+    (host_dev / "serial" / "by-id" / ZBT2_NAME).symlink_to(Path("../..") / "ttyUSB0")
+    usb = sys_root / "devices" / "usb1" / "1-1.1"
+    (usb / "1-1.1:1.0" / "ttyUSB0").mkdir(parents=True)
+    (usb / "idVendor").write_text("303a\n", encoding="utf-8")
+    (usb / "idProduct").write_text("4001\n", encoding="utf-8")
+    (usb / "manufacturer").write_text("Nabu Casa\n", encoding="utf-8")
+    (sys_root / "class" / "tty" / "ttyUSB0").mkdir(parents=True)
+    (sys_root / "class" / "tty" / "ttyUSB0" / "device").symlink_to(usb / "1-1.1:1.0" / "ttyUSB0")
+    return host_dev, sys_root
+
+
+async def _run_once(monkeypatch: pytest.MonkeyPatch, store: Store, **kwargs: Any) -> dict[str, Any]:
+    monkeypatch.setattr(cli.uvicorn, "Server", _SpyUvicornServer)
+    captured = _capture_build_app(monkeypatch)
+    await cli._run(store, "ws://test/ws", "127.0.0.1", 7000, 8080, **kwargs)
+    return captured
+
+
+def _stored_after_the_run(path: Path) -> ZigbeeRadioSettings:
+    """What survived the process, read the way the NEXT start reads it.
+
+    `_run` closes the store in its own `finally`, so the setting has to be
+    read back through a fresh connection - which is the honest test anyway:
+    the whole point of storing the radio is that a container recreation
+    finds it again."""
+    store = Store(path)
+    try:
+        return store.zigbee_settings.get()
+    finally:
+        store.close()
+
+
+async def test_the_zigbee_flag_stores_the_parameters_of_the_stick_it_names(monkeypatch, tmp_path):
+    """The flag's path is FINGERPRINTED, exactly as the `PUT` handler
+    fingerprints the stick the user picks in the interface.
+
+    The seeding used to be `replace(stored, path=..., saved_at=...)`, which
+    keeps whatever radio type, baud rate and flow control were already in
+    the row and pins them to the new path. `ZigbeeSettingsStore.save`'s own
+    docstring names that exact outcome - "a path from the new stick and a
+    baud rate from the old one, and open the new stick at the wrong speed -
+    a failure that looks exactly like a broken stick and is invisible in the
+    setting the user can see" - as the reason its five keys share one
+    transaction. It then arrived through this door instead.
+
+    Fault to prove it: go back to `replace(stored, path=zigbee_device,
+    saved_at=now_iso())`. The ZBT-2 below is then stored at 115200/software
+    - `DEFAULT_UNKNOWN`'s values, which is what an empty row reads as - and
+    opened at less than a quarter of its speed, with no flow control it
+    needs."""
+    _install_run_spies(monkeypatch)
+    monkeypatch.setattr(zigbee_runtime_module, "ZigbeeSource", _NeverConnectingZigbeeSource)
+    host_dev, sys_root = _host_with_the_zbt2(tmp_path)
+    store = Store(tmp_path / "t.sqlite")
+
+    await _run_once(
+        monkeypatch,
+        store,
+        zigbee_device=ZBT2_PATH,
+        radios_host_dev=host_dev,
+        radios_sys_root=sys_root,
+    )
+
+    stored = _stored_after_the_run(tmp_path / "t.sqlite")
+    assert stored.path == ZBT2_PATH
+    assert (stored.radio_type, stored.baudrate, stored.flow_control) == (
+        "ezsp",
+        460800,
+        "hardware",
+    )
+    assert stored.saved_at is not None
+
+
+async def test_the_zigbee_flag_never_overrules_a_setting_that_already_exists(
+    monkeypatch, tmp_path, caplog
+):
+    """A flag left behind in a compose file must not re-apply itself on
+    every restart.
+
+    It used to: `if stored.path != zigbee_device: save(...)` reran on every
+    single start, so a stick chosen in the interface was silently replaced
+    by the one in a YAML file nobody had looked at in months - at 03:00,
+    with nothing in the log connecting the two. The stored setting is the
+    user's own latest word and wins; the flag is for an installation that
+    has never had one.
+
+    Fault to prove it: gate on `stored.path != zigbee_device` again, or on
+    `stored.path is None` (which would also re-apply the flag over a
+    deliberate "no Zigbee stick in this installation")."""
+    _install_run_spies(monkeypatch)
+    monkeypatch.setattr(zigbee_runtime_module, "ZigbeeSource", _NeverConnectingZigbeeSource)
+    host_dev, sys_root = _host_with_the_zbt2(tmp_path)
+    store = Store(tmp_path / "t.sqlite")
+    chosen = ZigbeeRadioSettings(
+        path="/dev/serial/by-id/usb-CHOSEN_IN_THE_UI-if00",
+        radio_type="znp",
+        baudrate=38400,
+        flow_control="software",
+        saved_at="2026-09-12T09:00:00Z",
+    )
+    store.zigbee_settings.save(chosen)
+
+    with caplog.at_level(logging.WARNING, logger="loxmatter.cli"):
+        await _run_once(
+            monkeypatch,
+            store,
+            zigbee_device=ZBT2_PATH,
+            radios_host_dev=host_dev,
+            radios_sys_root=sys_root,
+        )
+
+    assert _stored_after_the_run(tmp_path / "t.sqlite") == chosen
+    # And said out loud, because the silence is what made the old behaviour
+    # impossible to diagnose.
+    assert any(ZBT2_PATH in record.getMessage() for record in caplog.records)
+
+
+async def test_the_zigbee_flag_does_not_overrule_a_deliberate_no_zigbee_stick(
+    monkeypatch, tmp_path
+):
+    """Choosing "no Zigbee stick" in the interface is a choice, not an empty
+    row, and `saved_at` is what tells them apart - it is written by every
+    path that stores a setting and removed only by `clear()`.
+
+    Fault to prove it: gate the seeding on `stored.path is None`. The user
+    who unplugged their stick and said so then finds it configured again
+    after the next container recreation."""
+    _install_run_spies(monkeypatch)
+    monkeypatch.setattr(zigbee_runtime_module, "ZigbeeSource", _NeverConnectingZigbeeSource)
+    host_dev, sys_root = _host_with_the_zbt2(tmp_path)
+    store = Store(tmp_path / "t.sqlite")
+    store.zigbee_settings.save(
+        ZigbeeRadioSettings(
+            path=None,
+            radio_type="ezsp",
+            baudrate=115200,
+            flow_control="software",
+            saved_at="2026-09-12T09:00:00Z",
+        )
+    )
+
+    captured = await _run_once(
+        monkeypatch,
+        store,
+        zigbee_device=ZBT2_PATH,
+        radios_host_dev=host_dev,
+        radios_sys_root=sys_root,
+    )
+
+    assert _stored_after_the_run(tmp_path / "t.sqlite").path is None
+    assert [source.technology for source in captured["sources"].all()] == ["matter"]
+
+
+async def test_without_the_flag_the_stored_setting_is_what_opens(monkeypatch, tmp_path):
+    """The fourth combination, and the one the shipped help text used to
+    deny outright: with no `--zigbee-device` on the command line a source IS
+    built, from the store.
+
+    Fault to prove it: read the flag directly instead of the stored
+    setting. Every installation then loses its Zigbee radio the moment the
+    flag is taken out of the compose file, which is precisely what the old
+    help text told the user to expect."""
+    _install_run_spies(monkeypatch)
+    monkeypatch.setattr(zigbee_runtime_module, "ZigbeeSource", _NeverConnectingZigbeeSource)
+    store = Store(tmp_path / "t.sqlite")
+    store.zigbee_settings.save(
+        ZigbeeRadioSettings(
+            path=ZIGBEE_PATH,
+            radio_type="ezsp",
+            baudrate=115200,
+            flow_control="software",
+            saved_at="2026-09-12T09:00:00Z",
+        )
+    )
+
+    captured = await _run_once(monkeypatch, store)
+
+    assert captured["sources"].get("zigbee").kwargs["path"] == ZIGBEE_PATH
+
+
+async def test_no_flag_and_no_stored_setting_builds_no_zigbee_source(monkeypatch, tmp_path):
+    """The fresh install, and the combination that keeps the other three
+    honest: nothing configured anywhere means no source, no supervisor and
+    no Zigbee state on the wire to Loxone.
+
+    Fault to prove it: seed from the flag's default (`None`) as though it
+    were a value - `settings_for_path(None, ...)` writes a row with a
+    `saved_at`, which would then read as a deliberate "no Zigbee stick" and
+    lock the flag out for good on an installation that had never used it."""
+    _install_run_spies(monkeypatch)
+    store = Store(tmp_path / "t.sqlite")
+
+    captured = await _run_once(monkeypatch, store)
+
+    assert [source.technology for source in captured["sources"].all()] == ["matter"]
+    assert _stored_after_the_run(tmp_path / "t.sqlite").saved_at is None, "nothing was written"

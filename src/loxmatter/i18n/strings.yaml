@@ -192,8 +192,11 @@ cli.run.help_update_dir:
   en: "Directory where this bridge and the update sidecar exchange request/state files (design \"Applying updates through the web UI\", section 7) — the same shared volume as --store-path in the reference deployment, a subdirectory of it. The default matches the sidecar's own default; change both together, or not at all. Alternative via the LOXMATTER_UPDATE_DIR environment variable."
   de: "Verzeichnis, über das diese Brücke und der Update-Beiwagen Anfrage-/Zustandsdateien austauschen (Entwurf \"Updates über die Oberfläche einspielen\", Abschnitt 7) — dasselbe gemeinsame Volume wie --store-path im Referenz-Deployment, ein Unterverzeichnis davon. Der Standard entspricht dem des Beiwagens; beide nur gemeinsam ändern. Alternative über die Umgebungsvariable LOXMATTER_UPDATE_DIR."
 cli.run.help_zigbee_device:
-  en: "by-id path of the Zigbee coordinator's USB serial device (e.g. /dev/serial/by-id/...) - a throwaway stand-in for the radio setting Task 11 adds. Superseded the moment that setting exists; absent, no Zigbee source is built at all."
-  de: "by-id-Pfad des USB-Seriengeräts des Zigbee-Koordinators (z. B. /dev/serial/by-id/...) - ein Übergangswert bis zur Funkeinstellung aus Task 11. Sobald diese existiert, wird dieser hier abgelöst; ohne Angabe wird keine Zigbee-Quelle gebaut."
+  en: "by-id path of the Zigbee coordinator's USB serial device (e.g. /dev/serial/by-id/...), used ONLY to set up an installation that has never chosen a radio. Its type and baud rate are read from the stick itself. Once a radio has been chosen - here or in the interface - the stored setting wins and this flag is ignored with a warning; without the flag, the stored setting is used."
+  de: "by-id-Pfad des USB-Seriengeräts des Zigbee-Koordinators (z. B. /dev/serial/by-id/...), nur zur Ersteinrichtung einer Installation, die noch nie einen Funkstick gewählt hat. Typ und Baudrate werden vom Stick selbst gelesen. Sobald ein Funkstick gewählt wurde – hier oder in der Oberfläche –, gilt die gespeicherte Einstellung und diese Option wird mit einer Warnung übergangen; ohne Angabe wird die gespeicherte Einstellung verwendet."
+cli.run.warn_zigbee_device_ignored:
+  en: "--zigbee-device names {flag}, but this bridge already has a Zigbee radio setting ({stored}) and the stored one wins. Change the radio in the interface, under Radios - or remove the flag, which no longer does anything here."
+  de: "--zigbee-device nennt {flag}, aber diese Brücke hat bereits eine Zigbee-Funkeinstellung ({stored}), und die gespeicherte gilt. Ändern Sie den Funkstick in der Oberfläche unter Funk – oder entfernen Sie die Option, die hier nichts mehr bewirkt."
 cli.run.warn_no_password:
   en: "No password has been set for this bridge yet. Until it is, nobody can sign in through the interface — and anyone who can reach the port can complete the initial setup and take over the bridge. Open the interface now and set a password."
   de: "Für diese Brücke ist noch kein Passwort vergeben. Bis das geschehen ist, lässt sich niemand über die Oberfläche anmelden — und jeder, der den Port erreicht, kann die Ersteinrichtung abschließen und die Brücke damit übernehmen. Öffne die Oberfläche jetzt und vergib ein Passwort."
@@ -2014,6 +2017,13 @@ web.radios.fingerprint_unknown:
 web.radios.advanced:
   en: "Advanced"
   de: "Erweitert"
+web.radios.zigbee_applying:
+  # The window between releasing the old stick and having built the new
+  # one - a `shutdown(db=True)` plus an up-to-5 s border-router read, during
+  # which there is no source to ask and the card used to be told `idle`,
+  # the one state that means "nothing is configured here".
+  en: "Applying the change - releasing the previous radio"
+  de: "Änderung wird übernommen – der bisherige Funkstick wird freigegeben"
 web.radios.zigbee_loading_quirks:
   # The user is looking at a 9-15 s pause on a Pi and deserves to know it
   # is expected, not a hang.

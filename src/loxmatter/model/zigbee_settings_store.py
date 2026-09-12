@@ -41,9 +41,12 @@ Thread and Bluetooth are untouched by construction.
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Sequence
 from dataclasses import dataclass
 
-from loxmatter.radios.fingerprints import DEFAULT_UNKNOWN
+from loxmatter.radios.fingerprints import DEFAULT_UNKNOWN, match_fingerprint
+from loxmatter.radios.inventory import SerialRadio
+from loxmatter.timestamps import now_iso
 
 _PATH_KEY = "zigbee_path"
 _RADIO_TYPE_KEY = "zigbee_radio_type"
@@ -80,6 +83,59 @@ class ZigbeeRadioSettings:
     baudrate: int
     flow_control: str
     saved_at: str | None
+
+
+def settings_for_path(
+    path: str | None,
+    serial: Sequence[SerialRadio],
+    *,
+    radio_type: str | None = None,
+    baudrate: int | None = None,
+    flow_control: str | None = None,
+) -> ZigbeeRadioSettings:
+    """A complete setting for `path`, with the parameters of THAT stick.
+
+    **The one place that decides which radio type, baud rate and flow
+    control belong to a path**, and it exists because there was briefly more
+    than one. `PUT /api/zigbee/radio` fingerprinted the chosen stick;
+    `--zigbee-device` wrote `replace(stored, path=...)` and carried the
+    PREVIOUS stick's parameters onto the new path - the exact failure
+    `ZigbeeSettingsStore.save`'s docstring names as the reason its five keys
+    share one transaction, arriving through a different door. A ZNP stick's
+    38400/software pinned onto an EZSP stick opens the new radio at the
+    wrong speed, which looks exactly like a broken stick and is invisible in
+    the setting the user can see.
+
+    From `match_fingerprint(radio)` when the table recognises the stick, and
+    from the three overrides when it does not - falling back to
+    `DEFAULT_UNKNOWN`'s values, never to a guess presented as a detection. A
+    recognised stick ignores the overrides entirely: the table is the
+    measured answer, and a stale value silently beating it would open a
+    coordinator at the wrong speed just as surely.
+
+    A `path` that no scan found is treated as unrecognised rather than
+    refused: the callers differ on whether an unknown path is an error at
+    all (the API refuses it with a 400 before ever reaching here; the CLI
+    flag accepts it, because a stick can be absent at boot and appear a
+    second later), and that decision is not this function's to make.
+    """
+    radio = None if path is None else next((r for r in serial if r.path == path), None)
+    fingerprint = None if radio is None else match_fingerprint(radio)
+    if fingerprint is not None:
+        return ZigbeeRadioSettings(
+            path=path,
+            radio_type=fingerprint.radio_type,
+            baudrate=fingerprint.baudrate,
+            flow_control=fingerprint.flow_control,
+            saved_at=now_iso(),
+        )
+    return ZigbeeRadioSettings(
+        path=path,
+        radio_type=DEFAULT_UNKNOWN.radio_type if radio_type is None else radio_type,
+        baudrate=DEFAULT_UNKNOWN.baudrate if baudrate is None else baudrate,
+        flow_control=DEFAULT_UNKNOWN.flow_control if flow_control is None else flow_control,
+        saved_at=now_iso(),
+    )
 
 
 class ZigbeeSettingsStore:
