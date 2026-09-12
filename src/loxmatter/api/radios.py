@@ -110,6 +110,24 @@ def build_radios_router(
             }
         return {
             "sidecar": status,
+            # Why the card needs this, and why it cannot work it out from
+            # `sidecar` alone: the two sidecar workers run SEQUENTIALLY in
+            # one loop (deploy/updater/entrypoint.sh), so while
+            # `update-once.sh` is inside a long pass - `pull`, `build`,
+            # `recreate`, the up-to-120 s `health` wait - `radios-once.sh`
+            # cannot run at all and `radios-state.json`'s `seen_at`
+            # necessarily goes stale. `sidecar_status()` reads that
+            # staleness as `outdated` (and, once `updater_seen_at` goes
+            # stale too, as `missing`), which is how a perfectly current,
+            # perfectly busy sidecar came to be reported as an old one.
+            # The card's `outdated` text then told the user to run
+            # `docker compose up -d --no-deps loxmatter-updater` on the
+            # host - which would have sent SIGTERM into the container
+            # performing their update, mid-update. Saying "an update is
+            # running" instead costs one boolean and is simply true.
+            "update_running": (
+                update_state is not None and update_state.phase in update_files._RUNNING_PHASES
+            ),
             "updater_stack_host_path": (
                 update_state.updater_stack_host_path if update_state is not None else None
             ),

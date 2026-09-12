@@ -3915,6 +3915,22 @@ function app() {
       return { done: index < at, now: index === at };
     },
 
+    /** The rollback phase, which the step list alone cannot render.
+     * `rollback` is not a member of `radios.job.steps` (it is not a step
+     * of the forward pass - it is the undoing of one), so
+     * `radiosStepClass()`'s `steps.indexOf(job.phase)` is `-1` and NO
+     * step comes out `done` and none `now`. The result line cannot fill
+     * the gap either: `rollback` is not terminal, so `radiosResultKey()`
+     * returns `null`. The card therefore showed a completely unmarked
+     * step list and no text at all for up to about two and a half
+     * minutes - silence over the single most alarming moment in the
+     * flow, while the system undoes a change that just failed. The
+     * update card's sibling state has said this out loud for a while
+     * (`web.system.update_rolled_back`); this is the radios counterpart. */
+    radiosRollingBack() {
+      return this.radios?.job?.phase === "rollback";
+    },
+
     radiosResultKey() {
       const job = this.radios?.job;
       if (!job || this.radiosJobRunning()) return null;
@@ -3922,6 +3938,16 @@ function app() {
       if (job.phase === "unchanged") return "web.radios.result_unchanged";
       if (job.phase === "rejected") return "web.radios.result_rejected";
       if (job.phase === "failed") {
+        // A pass that was killed mid-job, healed into `failed` at the
+        // next startup by `load_previous_state()` in radios-once.sh (see
+        // its own comment). It needs its own sentence because BOTH of the
+        // ordinary failure texts below would be false for it: nothing was
+        // restored (the rollback is precisely what never ran, so .env may
+        // already hold the new values), and nothing "did not come back up
+        // either" (no rollback was attempted to come back up). The
+        // honest report is that the change was neither finished nor
+        // undone, and that the settings shown below are worth a look.
+        if (job.error === "interrupted") return "web.radios.result_interrupted";
         return job.healthy === false ? "web.radios.result_failed_unhealthy" : "web.radios.result_failed_restored";
       }
       return null;
@@ -3950,6 +3976,17 @@ function app() {
     radiosSidecarMessage() {
       const status = this.radios?.sidecar;
       if (!status || status === "ready") return null;
+      // Before either of the two "the sidecar is old" branches below, and
+      // before `missing` as well, because a long update makes BOTH
+      // timestamps stale in turn (measured: `health` reads `outdated`,
+      // `pull` reads `missing`) - see the `update_running` comment in
+      // src/loxmatter/api/radios.py. Neither of those readings is true
+      // during an update, and the refresh command the `outdated` text
+      // prints would kill the very update it is being shown during. This
+      // says what is actually happening instead, and prints no command at
+      // all: there is nothing for the user to do but wait, and the card
+      // recovers on its own the moment the update finishes.
+      if (this.radios?.update_running) return t("web.radios.sidecar_busy_update");
       if (status === "missing") return t("web.radios.sidecar_missing");
       const path = this.radios.updater_stack_host_path;
       return path

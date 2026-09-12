@@ -9807,3 +9807,127 @@ async def test_the_apply_error_has_its_own_banner(api):
     page = _without_comments((await client.get("/")).text)
     assert 'x-show="radiosApplyError"' in page
     assert 'x-text="radiosApplyError"' in page
+
+
+# ---------------------------------------------------------------------------
+# Review round 2 (2026-09-12): the card must not print a console command that
+# would kill a running update, the rollback must not render as silence, and an
+# interrupted job must not claim the previous setting came back.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_no_refresh_command_is_offered_while_a_software_update_runs():
+    """`sidecar_status()` derives `outdated` from "radios-state.json's
+    seen_at is older than 30 s" - but entrypoint.sh runs the two workers
+    sequentially in one loop, so while `update-once.sh` is inside `pull`,
+    `build`, `recreate` or the up-to-120 s `health` wait, `radios-once.sh`
+    cannot run at all and that timestamp necessarily goes stale (measured:
+    `health` reads `outdated`, `pull` reads `missing`). For the whole
+    duration of any update the card therefore told the user to run
+    `docker compose up -d --no-deps loxmatter-updater` on the host - which
+    would have sent SIGTERM into the container performing that very
+    update.
+
+    The genuine case is checked in the same test, so this cannot be
+    "passed" by suppressing the command everywhere.
+
+    Fault to prove it: drop the `if (this.radios?.update_running)` branch
+    from `radiosSidecarMessage()`."""
+    values = _radios_values(
+        """
+        const out = {};
+        state.radios.update_running = true;
+        for (const s of ['missing', 'outdated', 'unmounted']) {
+          state.radios.sidecar = s;
+          out[s] = state.radiosSidecarMessage();
+        }
+        state.radios.update_running = false;
+        state.radios.sidecar = 'outdated';
+        out.genuinelyOutdated = state.radiosSidecarMessage();
+        console.log(JSON.stringify(out));
+        """,
+        translations=_web_strings(),
+    )
+    for status in ("missing", "outdated", "unmounted"):
+        assert "software update" in values[status], status
+        assert "docker compose" not in values[status], status
+    assert "docker compose" in values["genuinelyOutdated"]
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_the_rollback_phase_says_what_is_happening_instead_of_going_blank():
+    """`rollback` is not a member of `radios.job.steps` (it undoes the
+    steps, it is not one of them), so `radiosStepClass()`'s
+    `steps.indexOf(job.phase)` is -1 and NO step comes out done or now;
+    and `rollback` is not terminal, so `radiosResultKey()` is null. The
+    card therefore showed an entirely unmarked step list and no text at
+    all for up to about two and a half minutes - silence over the most
+    alarming moment in the flow.
+
+    Fault to prove it: drop `radiosRollingBack()` from app.js."""
+    values = _radios_values(
+        """
+        state.radios.job = { id: 'j', phase: 'rollback',
+                             steps: ['validate','backup','write','apply_thread','verify_thread'],
+                             error: 'verify_thread_failed', rolled_back: true, healthy: null };
+        console.log(JSON.stringify({
+          rolling: state.radiosRollingBack(),
+          running: state.radiosJobRunning(),
+          result: state.radiosResultKey(),
+          marked: state.radios.job.steps.filter((s) => {
+            const c = state.radiosStepClass(s);
+            return c.done || c.now;
+          }).length,
+        }));
+        """
+    )
+    # `marked: 0` is the blankness this message exists to cover, kept in
+    # the assertion so the reason for the message stays visible.
+    assert values == {"rolling": True, "running": True, "result": None, "marked": 0}
+
+
+async def test_the_rollback_message_is_wired_to_the_rollback_phase(api):
+    """The banner has to be bound to the flag, not merely present on the
+    page - the technique this file already owns (`_x_show_expr`), for the
+    same reason.
+
+    Fault to prove it: bind the `<p>` to `radiosJobRunning()` instead."""
+    client, _, _ = api
+    page = _without_comments((await client.get("/")).text)
+    assert _x_show_expr(page, "web.radios.rolling_back") == "radiosRollingBack()"
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_an_interrupted_job_is_not_reported_as_restored():
+    """A pass killed mid-job is healed into `failed` with the error key
+    `interrupted` by `load_previous_state()` in radios-once.sh. Both
+    ordinary failure texts would be false for it: nothing was restored
+    (the rollback is precisely what never ran) and nothing "did not come
+    back up either" (no rollback was attempted).
+
+    The ordinary failure is asserted in the same test, so this cannot be
+    "passed" by giving every failure the interrupted text.
+
+    Fault to prove it: drop the `job.error === "interrupted"` branch from
+    `radiosResultKey()`."""
+    values = _radios_values(
+        """
+        const job = { id: 'j', phase: 'failed', steps: ['validate','backup','write'],
+                      error: 'interrupted', rolled_back: false, healthy: null };
+        state.radios.job = job;
+        const out = { interrupted: state.radiosResultKey(), reason: state.radiosReason() };
+        job.error = 'verify_thread_failed';
+        out.ordinary = state.radiosResultKey();
+        job.healthy = false;
+        out.unhealthy = state.radiosResultKey();
+        console.log(JSON.stringify(out));
+        """,
+        translations=_web_strings(),
+    )
+    assert values == {
+        "interrupted": "web.radios.result_interrupted",
+        "reason": "the updater service was interrupted",
+        "ordinary": "web.radios.result_failed_restored",
+        "unhealthy": "web.radios.result_failed_unhealthy",
+    }

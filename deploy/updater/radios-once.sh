@@ -114,8 +114,38 @@ env_set() {
 # `cat > "$target"`, the phase left at "write" (not terminal), rolled_back
 # still false (it is only ever set once a restore is attempted), and a
 # handled marker that would block any retry of the same request forever.
+# A failed write also RESTORES the backup before giving up. Without that,
+# this path left the very thing it was guarding against on disk: a .env
+# possibly truncated mid-write by env_set's own `cat > "$target"`, with a
+# fresh, complete, unused copy of the good file sitting right beside it
+# under the name this same pass had just stamped. The recovery is the one
+# the rollback path further down already performs verbatim; there was no
+# reason for a write failure to be the one terminal exit that did not
+# attempt it. Nothing has been applied at this point - the `write` step
+# runs before any compose call - so a successful restore fully undoes the
+# job, which is what rolled_back: true then reports.
+#
+# The error key stays env_write_failed whether or not the restore works,
+# and a failed restore is NOT escalated to env_restore_failed. The two
+# ways to get here are not alike. On an ENOSPC mid-write .env really is
+# damaged and the restore is the repair. On an unwritable .env (a
+# read-only file, a read-only mount) the write never began - the
+# redirection failed to open the file, so nothing was truncated - and the
+# restore is then guaranteed to fail for the very same reason, against a
+# file that was never harmed. Reporting "the .env file could not be
+# restored from its backup", with healthy: false, would be a more
+# alarming message for the case where LESS went wrong. env_write_failed
+# is the true cause in both, so it is what gets reported; ROLLED is set
+# only when the restore actually succeeded, because only then is the
+# previous setting genuinely back.
 env_set_or_fail() {
   if ! env_set "$1" "$2"; then
+    if [ -n "${BACKUP:-}" ] && [ -f "$BACKUP" ] && cat "$BACKUP" > "$(env_target)" 2>/dev/null; then
+      ROLLED=true
+      log "radios request $JOB_ID: restored .env from $BACKUP after a failed write"
+    else
+      log "radios request $JOB_ID: could not restore .env from ${BACKUP:-(no backup)}"
+    fi
     write_state failed env_write_failed
     log "radios request $JOB_ID: could not write $1 to .env"
     exit 0
@@ -186,6 +216,10 @@ JOB_STEPS='[]'
 JOB_ERROR=""
 ROLLED=false
 HEALTHY=null
+# Set by load_previous_state's self-heal below to the phase the dead pass
+# was found in, and read once afterwards for the log line. Declared here
+# because `set -u` is on and the self-heal only sometimes assigns it.
+INTERRUPTED_PHASE=""
 
 load_previous_state() {
   [ -f "$STATE" ] || return 0
@@ -196,6 +230,82 @@ load_previous_state() {
   JOB_ERROR="$(jq -r '.error // empty' "$STATE")"
   ROLLED="$(jq -c 'if .rolled_back == true then true else false end' "$STATE")"
   HEALTHY="$(jq -c 'if (.healthy | type) == "boolean" then .healthy else null end' "$STATE")"
+
+  # Self-heal, the counterpart of update-once.sh's own top-of-pass
+  # recovery (the `if [ -f "$STATE" ] && refresh_heartbeat` block there):
+  # any NON-TERMINAL phase found here proves the previous pass died.
+  #
+  # That inference is sound because of how this script is invoked. One
+  # invocation is exactly one pass: no job outlives the process that
+  # started it, there is no background work, and entrypoint.sh starts the
+  # next pass only after this one has exited. So a phase like
+  # "apply_thread" sitting in the state file at STARTUP cannot mean "a job
+  # is working on it" - nothing is running that could be. It can only mean
+  # the pass that wrote it was killed before it reached a terminal phase:
+  # `docker stop` (entrypoint.sh forwards the SIGTERM), the host powering
+  # off, entrypoint.sh's own 600-second worker timeout, or an OOM kill.
+  #
+  # Without this, such a state was PERMANENT and it stranded the user, for
+  # exactly the reason the phase is still there to begin with: this pass
+  # would re-assert the dead phase with a FRESH seen_at (write_state, just
+  # below, rebuilds the whole file), the handled marker would send the
+  # request check straight to `exit 0`, and the next pass would do the
+  # same thing two seconds later, forever. The card then saw a sidecar
+  # whose heartbeat was perfectly healthy and a job that never advanced -
+  # so not even the stall detection fired - leaving the step list frozen,
+  # both selects disabled, Apply hidden and every POST /api/radios a 409
+  # (`request_radios` in src/loxmatter/radios/sidecar.py refuses while the
+  # phase is non-terminal). Surviving a reload, a logout and a new
+  # browser, because it was server-side state, its only exit was deleting
+  # radios-state.json over SSH - the console trip this whole feature
+  # exists to abolish.
+  #
+  # No signal trap is needed to make this work, and deliberately so: a
+  # trap could only ever cover the signals it is installed for, while this
+  # covers every way a pass can fail to finish, SIGKILL and a power cut
+  # included. The cost is that the recovery lands on the NEXT pass rather
+  # than at the moment of death - about two seconds later in a running
+  # container, or at the next container start after a `docker stop`, which
+  # is the first moment anything could be reported to anyone anyway.
+  #
+  # `failed` rather than a new phase of its own: the terminal set is
+  # closed (see the comment on the case arm below), and `interrupted` as
+  # the ERROR key is what tells this apart from a job that really failed
+  # its verification. HEALTHY is left exactly as it was found - usually
+  # null - because nothing here knows whether the half-applied change
+  # works; claiming either way would be inventing a measurement. What the
+  # user is told follows from the error key alone
+  # (`web.radios.result_interrupted`, via `radiosResultKey()` in app.js):
+  # neither finished nor undone, look and decide - NOT the "previous
+  # setting restored" the ordinary failure path reports, which for an
+  # interrupted pass would be a plain lie. .env may well already carry the
+  # new values, and `otbr` may be half recreated, because the rollback is
+  # the very thing that never got to run.
+  #
+  # THE PHASE LIST BELOW IS ONE OF THREE COPIES. The terminal phases of
+  # the radios job - idle, done, failed, rejected, unchanged - are written
+  # out in full in:
+  #   1. this case arm;
+  #   2. `TERMINAL_PHASES` in src/loxmatter/radios/sidecar.py, which
+  #      decides whether POST /api/radios is a 409;
+  #   3. the inline array in `radiosPhaseActive()` in
+  #      src/loxmatter/web/app.js, which decides whether the card treats a
+  #      job as still running.
+  # Nothing at runtime ties the three together - they live in three
+  # processes, one of them POSIX sh - so
+  # `tests/test_updater_radios_script.py` compares all three textually
+  # instead. A phase added to one and not the others means, concretely: a
+  # job the bridge thinks is finished and the card thinks is still
+  # running, or a pass that self-heals a phase the bridge still refuses
+  # requests for.
+  case "$JOB_PHASE" in
+    idle|done|failed|rejected|unchanged) ;;
+    *)
+      INTERRUPTED_PHASE="$JOB_PHASE"
+      JOB_PHASE=failed
+      JOB_ERROR=interrupted
+      ;;
+  esac
 }
 
 write_state() {
@@ -273,6 +383,23 @@ touch_seen_at() {
 # "rollback" on purpose for the entire recovery (see `step()`), and a
 # heartbeat that could overwrite a phase would undo that.
 #
+# Writing into state.json - ANOTHER worker's file - is safe here because
+# of SEQUENTIALITY, and for no other reason. entrypoint.sh runs
+# update-once.sh to completion and only then runs this script, in one
+# loop, so at the moment this line executes there is provably no
+# update-once.sh process alive to race with. That is the whole of the
+# argument.
+#
+# In particular it is NOT the `has("phase")` test in `touch_seen_at`
+# above that makes this safe. That test is a SHAPE check - "is this file
+# a state file at all", so a corrupt or half-written one is left alone -
+# and a shape check is not a lock: it does not exclude a concurrent
+# writer, and two processes could both pass it and then both write. If
+# the two workers are ever made to overlap (a second loop, a manual
+# invocation while the loop runs, a future entrypoint that parallelises
+# them), this function needs real mutual exclusion and the phase test
+# will not supply it.
+#
 # Best-effort throughout, like `log()`: a momentarily unwritable volume
 # must not take down a pass that is otherwise making real progress. The
 # next write_state (or the next pass) rewrites both files anyway.
@@ -290,6 +417,12 @@ reject() {
 
 load_previous_state
 write_state "$JOB_PHASE" "$JOB_ERROR"
+# State first, then log - the order reject() above already observes, and
+# for the same reason: recording the outcome is the part that must not be
+# skippable.
+if [ -n "$INTERRUPTED_PHASE" ]; then
+  log "radios request ${JOB_ID:-?}: the previous pass died in phase $INTERRUPTED_PHASE - recorded as failed (interrupted)"
+fi
 
 # ---------------------------------------------------------------- request --
 
@@ -619,6 +752,16 @@ apply_and_verify() {
 # about which radio is which. Attempts every touched service regardless of
 # an earlier one's own outcome, and reports failure if ANY of them did, not
 # just the last one tried.
+#
+# THIS FUNCTION AND apply_and_verify MUST BE EDITED TOGETHER. Everything
+# above explains why they differ; this says what to do about it. They
+# apply the same services in the same order through the same helpers, and
+# every change to the forward pass - a service added, a reordering, a
+# different helper, another step - belongs in both. Only the handling of a
+# failure may diverge, for the reason given above. A change made to one
+# alone does not announce itself: most of the tests in
+# tests/test_updater_radios_script.py exercise the forward pass, while
+# this one runs only after a verification has already failed.
 rollback_and_verify() {
   ok=true
   if [ "$BLUETOOTH_CHANGE" = true ]; then

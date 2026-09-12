@@ -2437,6 +2437,17 @@
                       <li :class="radiosStepClass(step)" x-text="radiosStepLabel(step)"></li>
                     </template>
                   </ul>
+                  <!-- The rollback has no step of its own to highlight
+                       (`rollback` is not in `radios.job.steps`, so every
+                       `radiosStepClass()` above reads neither done nor
+                       now) and no result line yet (it is not a terminal
+                       phase) - without this the card went silent for the
+                       whole recovery. `banner warn`, not `danger`: at
+                       this point the change has failed but the previous
+                       setting is actively coming back, which is the
+                       system working, not a verdict. -->
+                  <p class="banner warn" x-show="radiosRollingBack()" x-cloak
+                     x-text="t('web.radios.rolling_back')"></p>
                   <p
                     x-show="radiosResultKey()"
                     x-cloak

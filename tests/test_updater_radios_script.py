@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 from pathlib import Path
 
@@ -1228,3 +1229,220 @@ def test_a_both_radios_rollback_still_attempts_the_other_radio_when_one_fails(ra
     assert state["healthy"] is False
     assert len(_compose(calls, "up", "matter-server")) == 2
     assert len(_compose(calls, "up", "otbr")) == 2
+
+
+# ---------------------------------------------------------------------------
+# Review round 2 (2026-09-12): a pass that was killed rather than finished,
+# and the anti-drift checks for the two lists this script shares with the
+# bridge and the card.
+# ---------------------------------------------------------------------------
+
+
+def _seed_dead_pass(radios, phase: str, job_id: str = "job-1") -> None:
+    """Exactly what a killed pass leaves on disk: a non-terminal phase, the
+    handled marker written when the request was accepted, and the request
+    itself still sitting there unconsumed."""
+    (radios.update_dir / "radios-state.json").write_text(
+        json.dumps(
+            {
+                "id": job_id,
+                "phase": phase,
+                "steps": ["validate", "backup", "write", "apply_thread", "verify_thread"],
+                "error": None,
+                "rolled_back": False,
+                "healthy": None,
+                "current": {
+                    "thread_enabled": True,
+                    "thread_device": "/dev/ttyUSB0",
+                    "bluetooth_adapter": 0,
+                    "otbr_running": True,
+                },
+                "capable": True,
+                "capable_reason": None,
+                "seen_at": "2026-09-11T20:00:00Z",
+            }
+        ),
+        encoding="utf-8",
+    )
+    (radios.update_dir / "radios-handled").mkdir(exist_ok=True)
+    (radios.update_dir / "radios-handled" / job_id).write_text("", encoding="utf-8")
+    _request(radios)
+
+
+@pytest.mark.parametrize(
+    "phase",
+    [
+        "validate",
+        "backup",
+        "write",
+        "apply_bluetooth",
+        "verify_bluetooth",
+        "apply_thread",
+        "verify_thread",
+        "rollback",
+    ],
+)
+def test_an_interrupted_pass_heals_into_a_terminal_phase(radios, phase):
+    """One invocation is exactly one pass, so a non-terminal phase found at
+    startup proves the previous pass died - `docker stop` (entrypoint.sh
+    forwards the SIGTERM), a host power-off, the 600-second worker timeout,
+    an OOM kill.
+
+    Before the self-heal this state was PERMANENT, and it stranded the
+    user: `load_previous_state` read the dead phase, `write_state`
+    re-asserted it with a FRESH `seen_at`, and the handled marker sent the
+    request check straight to `exit 0`. The card then saw a perfectly
+    healthy heartbeat over a job that never advanced - so the stall
+    detection never fired either - which left the step list frozen, both
+    selects disabled, Apply hidden, and every POST /api/radios a 409 from
+    `request_radios`. It survived a reload, a logout and a new browser,
+    and its only exit was deleting radios-state.json over SSH.
+
+    The discriminating assertion is the SECOND invocation, not the exit
+    status: the unfixed script also exits 0 on both passes (the reviewer
+    measured `rc=0 phase=apply_thread` twice, with the `seen_at` a second
+    apart and no compose call at all). What it never does is reach a phase
+    the bridge counts as terminal.
+
+    Fault to prove it: delete the `case "$JOB_PHASE" in` self-heal arm at
+    the end of `load_previous_state`."""
+    from loxmatter.radios.sidecar import TERMINAL_PHASES
+
+    _seed_dead_pass(radios, phase=phase)
+
+    first_run, calls, first = radios()
+    assert first_run.returncode == 0, first_run.stderr
+    assert first["phase"] in TERMINAL_PHASES
+    assert (first["phase"], first["error"]) == ("failed", "interrupted")
+    # Nothing is invented about a job nobody watched finish: no claim that
+    # the previous setting came back, and no health verdict.
+    assert first["rolled_back"] is False
+    assert first["healthy"] is None
+
+    _, calls_after, second = radios()
+    assert second["phase"] in TERMINAL_PHASES
+    assert (second["phase"], second["error"]) == ("failed", "interrupted")
+
+    # Healing is a report, not a resumption: the dead job is not picked up
+    # and finished behind the user's back.
+    assert _mutating_docker_calls(calls) == []
+    assert _mutating_docker_calls(calls_after) == []
+
+
+def test_a_failed_env_write_restores_the_backup(radios):
+    """Round 2, carried Minor: `env_set_or_fail` wrote its state and exited
+    without ever restoring `$BACKUP`, leaving a possibly-truncated .env
+    beside a fresh, complete, unused copy of the good one - while the
+    recovery it needed already existed three lines away in the rollback
+    path.
+
+    Makes env_set's own copy step fail while leaving everything else
+    writable, so the restore can actually succeed: the stubbed `cat`
+    refuses exactly the `.radios-tmp` file env_set writes and delegates
+    every other read - the backup's included - to the real binary. (The
+    read-only-.env test above is the other half of this path, where the
+    restore cannot succeed because the file was never writable to begin
+    with; that case still reports env_write_failed and rolled_back false.)
+
+    Fault to prove it: drop the `cat "$BACKUP" > "$(env_target)"` branch
+    from `env_set_or_fail`."""
+    (radios.bindir / "cat").write_text(
+        "#!/bin/sh\n"
+        'printf \'cat %s\\n\' "$*" >> "$STUB_LOG"\n'
+        'case "$*" in\n'
+        "  *.radios-tmp) exit 1 ;;\n"
+        "esac\n"
+        f'exec {radios.real_cat} "$@"\n',
+        encoding="utf-8",
+    )
+    (radios.bindir / "cat").chmod(0o755)
+    before = radios.env_file.read_bytes()
+    _request(radios, bluetooth={"adapter": 1})
+    (radios.sys_bluetooth / "hci1").mkdir()
+
+    _, calls, state = radios()
+    assert (state["phase"], state["error"]) == ("failed", "env_write_failed")
+    assert state["rolled_back"] is True
+    assert radios.env_file.read_bytes() == before
+    assert _mutating_docker_calls(calls) == []
+
+
+def _script_error_keys() -> set[str]:
+    """Every `web.radios.reason.*` key this script can put in the state
+    file, read out of the script itself rather than listed by hand - a
+    hand-kept list would only ever prove it agrees with itself, which is
+    exactly how the two missing keys got in.
+
+    Comment lines are dropped first, so prose like "reject it" cannot be
+    mistaken for a call site."""
+    script = SCRIPT.read_text(encoding="utf-8")
+    code = "\n".join(line for line in script.splitlines() if not line.lstrip().startswith("#"))
+    keys = set()
+    keys.update(re.findall(r"\breject ([a-z][a-z0-9_]*)", code))
+    keys.update(re.findall(r"\bwrite_state failed ([a-z][a-z0-9_]*)", code))
+    keys.update(re.findall(r"\bCAPABLE_REASON=([a-z][a-z0-9_]*)", code))
+    keys.update(re.findall(r"\bJOB_ERROR=([a-z][a-z0-9_]*)", code))
+    # `ERROR_KEY="${FAILED_STEP}_failed"` - the key is built from whichever
+    # step set FAILED_STEP.
+    keys.update(f"{step}_failed" for step in re.findall(r"\bFAILED_STEP=([a-z][a-z0-9_]*)", code))
+    return keys
+
+
+def test_every_error_key_the_script_can_write_has_a_reason_text():
+    """The test that would have caught `env_write_failed` and
+    `env_restore_failed` shipping with no text at all. The existing
+    `test_the_radios_texts_exist_in_both_languages` iterates the keys that
+    EXIST in strings.yaml, so a key the script writes and the table has
+    never heard of is invisible to it - and `radiosReason()` then falls
+    back, leaving the user with "Failed (an unknown reason), previous
+    setting restored." for two disk failures, the place the cause matters
+    most.
+
+    Fault to prove it: delete `web.radios.reason.env_write_failed` from
+    strings.yaml."""
+    from loxmatter import i18n
+
+    keys = _script_error_keys()
+    # The extraction itself has to be shown to work: a regex that quietly
+    # stopped matching would make every assertion below vacuously true.
+    assert {
+        "request_malformed",
+        "host_dev_not_mounted",
+        "env_backup_failed",
+        "env_write_failed",
+        "env_restore_failed",
+        "interrupted",
+        "verify_thread_failed",
+    } <= keys
+    assert len(keys) >= 15
+
+    table = set(i18n.strings_with_prefix("web.radios.reason."))
+    assert sorted(key for key in keys if f"web.radios.reason.{key}" not in table) == []
+
+
+def test_the_terminal_phase_list_is_the_same_in_all_three_places():
+    """The radios job's terminal phases are written out in full in three
+    processes - this script's self-heal arm, `TERMINAL_PHASES` in
+    radios/sidecar.py (which decides whether POST /api/radios is a 409),
+    and the inline array in app.js's `radiosPhaseActive()` (which decides
+    whether the card treats a job as running). Nothing at runtime ties
+    them together, one of them being POSIX sh, so they are compared
+    textually here.
+
+    Drift is not cosmetic: a phase terminal in one place and not another
+    means a job the bridge thinks is finished while the card still shows
+    it running, or a pass that self-heals a phase the bridge still refuses
+    new requests for.
+
+    Fault to prove it: drop `unchanged` from the script's case arm."""
+    from loxmatter.radios.sidecar import TERMINAL_PHASES
+
+    script = SCRIPT.read_text(encoding="utf-8")
+    arm = re.search(r'case "\$JOB_PHASE" in\n\s*([a-z|]+)\)', script)
+    assert arm, "load_previous_state must decide the self-heal with a case arm on $JOB_PHASE"
+    assert set(arm.group(1).split("|")) == set(TERMINAL_PHASES)
+
+    app_js = (ROOT / "src" / "loxmatter" / "web" / "app.js").read_text(encoding="utf-8")
+    inline = re.search(r"radiosPhaseActive\(\)\s*\{.*?\[([^\]]*)\]", app_js, flags=re.DOTALL)
+    assert inline, "app.js's radiosPhaseActive() must test an inline phase array"
+    assert set(json.loads(f"[{inline.group(1)}]")) == set(TERMINAL_PHASES)

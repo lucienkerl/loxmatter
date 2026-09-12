@@ -183,6 +183,37 @@ async def test_the_latest_job_is_reported(api):
     }
 
 
+async def test_a_running_update_is_reported_alongside_the_stale_sidecar(api):
+    """The card cannot tell "the sidecar is old" from "the sidecar is busy
+    with an update" out of `sidecar` alone, and the difference decides
+    whether it prints a console command that would kill that update.
+
+    entrypoint.sh runs `update-once.sh` and `radios-once.sh` sequentially
+    in one loop, so during a long update pass `radios-once.sh` cannot run
+    and `radios-state.json`'s `seen_at` necessarily goes stale - which is
+    exactly what is seeded here: a fresh updater heartbeat in a running
+    phase, and a radios heartbeat from last year. `sidecar` reads
+    `outdated`, truthfully as far as the timestamps go and misleadingly as
+    far as the user is concerned; `update_running` is what makes the
+    honest message possible.
+
+    Fault to prove it: hard-code `"update_running": False` in
+    `api/radios.py`'s GET body."""
+    client, update_dir = api
+    _update_heartbeat(update_dir, phase="health")
+    _radios_heartbeat(update_dir, seen_at="2025-01-01T00:00:00Z")
+    body = (await client.get("/api/radios")).json()
+    assert body["sidecar"] == "outdated"
+    assert body["update_running"] is True
+
+    # Same stale radios heartbeat, no update running: the genuine
+    # "refresh the sidecar" case, which must NOT be suppressed.
+    _update_heartbeat(update_dir, phase="idle")
+    body = (await client.get("/api/radios")).json()
+    assert body["sidecar"] == "outdated"
+    assert body["update_running"] is False
+
+
 def _body(
     device: str | None = f"/dev/serial/by-id/{SONOFF}", enabled: bool = True, adapter: int = 0
 ):

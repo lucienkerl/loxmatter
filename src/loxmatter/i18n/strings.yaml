@@ -1957,6 +1957,9 @@ web.radios.job_abandoned:
 web.radios.job_not_collected:
   en: "The request was accepted, but the updater service never picked it up. Nothing was changed - try again."
   de: "Der Auftrag wurde angenommen, aber der Updater-Dienst hat ihn nie abgeholt. Es wurde nichts geändert – bitte erneut versuchen."
+web.radios.rolling_back:
+  en: "That did not work. The previous setting is being restored - this can take up to two and a half minutes. Please leave the Pi switched on."
+  de: "Das hat nicht funktioniert. Die vorherige Einstellung wird gerade wiederhergestellt – das kann bis zu zweieinhalb Minuten dauern. Bitte lassen Sie den Pi eingeschaltet."
 web.radios.result_done:
   en: "Applied."
   de: "Übernommen."
@@ -1972,6 +1975,12 @@ web.radios.result_failed_restored:
 web.radios.result_failed_unhealthy:
   en: "Failed ({reason}), and the previous setting did not come back up either. See radios-log.txt in the updater's data volume."
   de: "Fehlgeschlagen ({reason}), und auch die vorherige Einstellung kam nicht wieder hoch. Siehe radios-log.txt im Datenvolume des Updaters."
+web.radios.result_interrupted:
+  en: "Interrupted. The updater service stopped while this change was being applied, so it was neither finished nor undone. Check the settings below and apply them again if they are not what you want."
+  de: "Abgebrochen. Der Updater-Dienst wurde beendet, während diese Änderung übernommen wurde – sie wurde daher weder fertig übernommen noch rückgängig gemacht. Prüfen Sie die Einstellungen unten und übernehmen Sie sie erneut, falls sie nicht passen."
+web.radios.sidecar_busy_update:
+  en: "A software update is running. Radios cannot be changed until it has finished; this card comes back on its own."
+  de: "Es läuft gerade ein Software-Update. Funkgeräte lassen sich erst ändern, wenn es fertig ist; diese Karte kommt von selbst zurück."
 web.radios.sidecar_missing:
   en: "Changing radios needs the updater service, which is not running."
   de: "Zum Ändern der Funkgeräte braucht es den Updater-Dienst, und der läuft nicht."
@@ -2011,6 +2020,15 @@ web.radios.reason.env_file_missing:
 web.radios.reason.env_backup_failed:
   en: "the .env file could not be backed up"
   de: "die .env-Datei ließ sich nicht sichern"
+web.radios.reason.env_write_failed:
+  en: "the .env file could not be written"
+  de: "die .env-Datei ließ sich nicht schreiben"
+web.radios.reason.env_restore_failed:
+  en: "the .env file could not be restored from its backup"
+  de: "die .env-Datei ließ sich nicht aus der Sicherung wiederherstellen"
+web.radios.reason.interrupted:
+  en: "the updater service was interrupted"
+  de: "der Updater-Dienst wurde unterbrochen"
 web.radios.reason.apply_bluetooth_failed:
   en: "matter-server could not be restarted"
   de: "matter-server ließ sich nicht neu starten"
