@@ -1867,6 +1867,12 @@ web.radios.bluetooth_label:
 web.radios.no_thread_stick:
   en: "No Thread stick (Thread off)"
   de: "Kein Thread-Stick (Thread aus)"
+web.radios.thread_unknown:
+  en: "Unknown (needs a newer or running updater service)"
+  de: "Unbekannt (braucht einen neueren oder laufenden Updater-Dienst)"
+web.radios.bluetooth_unknown:
+  en: "Unknown (needs a newer or running updater service)"
+  de: "Unbekannt (braucht einen neueren oder laufenden Updater-Dienst)"
 web.radios.in_use:
   en: "in use"
   de: "in Verwendung"
@@ -1885,6 +1891,9 @@ web.radios.bus_other:
 web.radios.rfkill_blocked:
   en: "Blocked by rfkill - unblocking needs root on the host, see docs/SETUP.md"
   de: "Durch rfkill gesperrt – Entsperren braucht Root auf dem Host, siehe docs/SETUP.md"
+web.radios.option_blocked:
+  en: "blocked"
+  de: "gesperrt"
 web.radios.rescan:
   en: "Rescan"
   de: "Neu einlesen"
@@ -1936,6 +1945,15 @@ web.radios.step_apply_thread:
 web.radios.step_verify_thread:
   en: "Check the Thread network (up to 90 s)"
   de: "Thread-Netz prüfen (bis 90 s)"
+web.radios.step_unknown:
+  en: "Unknown step ({step})"
+  de: "Unbekannter Schritt ({step})"
+web.radios.job_abandoned:
+  en: "The updater service stopped answering while this job was running. It may not have finished - check the previous setting still matches what you expect, and try again once the service is back."
+  de: "Der Updater-Dienst hat während dieses Auftrags aufgehört zu antworten. Er ist möglicherweise nicht fertig geworden – prüfen Sie, ob die vorherige Einstellung noch passt, und versuchen Sie es erneut, sobald der Dienst wieder läuft."
+web.radios.job_not_collected:
+  en: "The request was accepted, but the updater service never picked it up. Nothing was changed - try again."
+  de: "Der Auftrag wurde angenommen, aber der Updater-Dienst hat ihn nie abgeholt. Es wurde nichts geändert – bitte erneut versuchen."
 web.radios.result_done:
   en: "Applied."
   de: "Übernommen."

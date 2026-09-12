@@ -8735,12 +8735,92 @@ RADIOS_READY = {
 }
 
 
-def _radios_values(setup: str) -> dict:
+def _radios_values(setup: str, *, translations: dict[str, str] | None = None) -> dict:
     return _app_state(
         f"state.radios = {json.dumps(RADIOS_READY)};\n"
         "state.radiosDraft = { threadDevice: '/dev/serial/by-id/usb-A', bluetoothAdapter: 0 };\n"
-        + setup
+        + setup,
+        translations=translations,
     )
+
+
+def _attr_before_t_key(markup: str, attr: str, t_key: str) -> str:
+    """Like `_x_show_expr` above, generalized to any attribute - the
+    literal `attr="..."` on the tag whose own `x-text` calls
+    `t(t_key, ...)`, pulled from the SERVED markup rather than retyped."""
+    match = re.search(
+        re.escape(attr) + r'="([^"]*)"[^>]*x-text="t\(\'' + re.escape(t_key) + r"'",
+        markup,
+        flags=re.DOTALL,
+    )
+    assert match, f"no {attr} immediately precedes t('{t_key}', ...) in the markup"
+    return match.group(1)
+
+
+def _class_before_text(markup: str, text_needle: str) -> str:
+    """Like `_x_show_expr`, generalized to `class` instead of `x-show`
+    and to a plain substring instead of a `t(...)` call - for markup
+    whose `x-text` concatenates a translated string with other JS rather
+    than calling `t()` directly (the rfkill warning: `option.label + ':
+    ' + t('web.radios.rfkill_blocked')`)."""
+    match = re.search(
+        r'class="([^"]*)"[^>]*x-text="[^"]*' + re.escape(text_needle),
+        markup,
+        flags=re.DOTALL,
+    )
+    assert match, f"no class attr found before an x-text containing {text_needle!r}"
+    return match.group(1)
+
+
+def _bluetooth_option_exprs(markup: str) -> tuple[str, str]:
+    """The `(:disabled, x-text)` pair on the Bluetooth `<option>` inside
+    the radios card, pulled from the SERVED markup - the same "extract
+    the real expression, don't retype it" technique `_running_step_lis`
+    above already uses."""
+    start = markup.index('x-model.number="radiosDraft.bluetoothAdapter"')
+    end = markup.index("</select>", start)
+    block = markup[start:end]
+    match = re.search(r':disabled="([^"]*)"\s*\n\s*x-text="([^"]*)"', block, flags=re.DOTALL)
+    assert match, "no :disabled/x-text pair found on the Bluetooth <option>"
+    return match.group(1), match.group(2)
+
+
+def _eval_alpine_click(expr: str) -> dict:
+    """Evaluates an Alpine `@click` handler EXPRESSION - a JS statement
+    list, not a single expression - against a stub object the same way
+    Alpine itself evaluates one: `with(this) { ... }`. That is what lets a
+    handler which reads and writes bare component fields
+    (`radiosDirty = false`) and calls bare component methods
+    (`loadRadios()`) run exactly as written, with no need to retype it as
+    `this.foo`. A plain (synchronous) function, like `_app_state`/
+    `_eval_js` above, so the one `subprocess.run` call in this file that
+    an `async def` test needs stays out of that test's own body (ASYNC221)."""
+    script = (
+        "const state = { radiosDirty: true, calls: [], "
+        "loadRadios() { this.calls.push('loadRadios'); } };\n"
+        f'(new Function("with(this){{ {expr} }}")).call(state);\n'
+        "console.log(JSON.stringify({ dirty: state.radiosDirty, calls: state.calls }));"
+    )
+    result = subprocess.run(
+        [NODE, "-e", script], capture_output=True, text=True, timeout=10, check=False
+    )
+    assert result.returncode == 0, result.stderr
+    return json.loads(result.stdout)
+
+
+def _eval_js_expr(expr: str, **bindings: str) -> object:
+    """Evaluates `expr` in node with each keyword argument predefined as a
+    name bound to already-SERIALIZED JS source (not a Python value) - the
+    same convention `_eval_js` above uses for `t`, extended to arbitrary
+    names so a markup expression that reads e.g. `option` and calls `t`
+    can be evaluated exactly as extracted."""
+    preamble = "\n".join(f"const {name} = {value};" for name, value in bindings.items())
+    script_src = f"{preamble}\nconsole.log(JSON.stringify({expr}));\n"
+    result = subprocess.run(
+        [NODE, "-e", script_src], capture_output=True, text=True, timeout=10, check=False
+    )
+    assert result.returncode == 0, result.stderr
+    return json.loads(result.stdout)
 
 
 @pytest.mark.skipif(NODE is None, reason="node is required for this test")
@@ -8896,3 +8976,391 @@ def test_the_radios_texts_exist_in_both_languages():
     for key in keys:
         entry = i18n._STRINGS[key]
         assert entry.get("en") and entry.get("de"), key
+
+
+# ---------------------------------------------------------------------------
+# Radios card review fixes (2026-09-12): the reviewer's two Critical findings
+# (a failed Apply that shows nothing, and a job that stops being advanced but
+# never stops looking like it is running) plus five smaller ones, and the
+# untested surface the reviewer named directly: `confirmApplyRadios`,
+# `askApplyRadios`, `cancelApplyRadios`, `radiosReason`, `radiosBluetoothOptions`
+# (never called by any test above), and the `:disabled`/`x-show` bindings on
+# the card.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_a_failed_apply_leaves_its_error_on_screen_after_the_refresh():
+    """Review-Fix Critical #1: `loadRadios()`'s own first statement sets
+    `this.radiosError = null` synchronously, before its first `await` -
+    so a `catch` that writes straight to `this.radiosError` and then
+    unconditionally awaits `loadRadios()` clears the error in the same
+    turn, before Alpine ever gets to render it (the reviewer measured
+    this in node: `radiosError === null` right after a rejected POST).
+    The stubbed `request` here throws only for the POST and succeeds for
+    the GET `loadRadios()` makes afterwards, reproducing exactly that
+    sequence. Fault to prove it: write `this.radiosError = error.message`
+    straight into `confirmApplyRadios()`'s `catch` again, instead of
+    capturing it locally and re-applying it after `loadRadios()`
+    resolves."""
+    values = _radios_values(
+        """
+        state.request = async (method) => {
+          if (method === 'POST') throw new Error('unknown adapter');
+          return state.radios;
+        };
+        (async () => {
+          await state.confirmApplyRadios();
+          console.log(JSON.stringify({ error: state.radiosError, busy: state.radiosBusy }));
+        })();
+        """
+    )
+    assert values == {"error": "unknown adapter", "busy": False}
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_ask_apply_radios_is_a_noop_without_a_change_and_cancel_clears_dirty():
+    """`askApplyRadios`/`cancelApplyRadios` were untested per the
+    reviewer. Also covers Review-Fix Minor #8's cancel half: leaving
+    `radiosDirty` set after Cancel used to make `loadRadios()`'s own
+    `if (current && !this.radiosDirty)` guard skip its draft resync for
+    the rest of the session. Fault to prove it (two, one per behaviour):
+    (a) drop the `if (!this.radiosChanged()) return;` guard from
+    `askApplyRadios()`; (b) drop `this.radiosDirty = false;` from
+    `cancelApplyRadios()`."""
+    values = _radios_values(
+        """
+        const out = { noopWithoutChange: state.radiosConfirming };
+        state.askApplyRadios();
+        out.stillNoChange = state.radiosConfirming;
+
+        state.radiosDraft.threadDevice = '/dev/serial/by-id/usb-B';
+        state.askApplyRadios();
+        out.confirmingAfterAsk = state.radiosConfirming;
+
+        state.radiosDirty = true;
+        state.cancelApplyRadios();
+        out.confirmingAfterCancel = state.radiosConfirming;
+        out.dirtyAfterCancel = state.radiosDirty;
+        console.log(JSON.stringify(out));
+        """
+    )
+    assert values == {
+        "noopWithoutChange": False,
+        "stillNoChange": False,
+        "confirmingAfterAsk": True,
+        "confirmingAfterCancel": False,
+        "dirtyAfterCancel": False,
+    }
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_radios_reason_falls_back_to_the_unknown_text_for_an_unrecognized_error():
+    """`radiosReason` was untested per the reviewer. Loads the REAL
+    translation table (`_web_strings()`, the same reasoning
+    `test_the_build_phase_is_tied_across_every_place_it_lives` gives for
+    doing the same) rather than none at all: without real translations
+    `t()` always returns its own key for EVERY key (see `t()`'s own
+    comment), which would make `text === key` trivially true for any
+    error string, real or fabricated, and prove nothing about the
+    fallback branch actually firing. Fault to prove it: drop the
+    `text === key ? t(...) : text` ternary in `radiosReason()` so it
+    always returns the raw (here: missing) key instead."""
+    values = _radios_values(
+        """
+        state.radios.job = { id: 'j', phase: 'failed', steps: [],
+                              error: 'not-a-real-reason', rolled_back: false, healthy: false };
+        console.log(JSON.stringify({ reason: state.radiosReason() }));
+        """,
+        translations=_web_strings(),
+    )
+    assert values == {"reason": "an unknown reason"}
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+async def test_a_dead_sidecar_mid_job_is_reported_as_abandoned_and_stops_polling(api):
+    """Review-Fix Critical #2a: `api/radios.py` returns the frozen `job`
+    regardless of sidecar health - `sidecar_status()` (radios/sidecar.py)
+    is what actually notices a crashed sidecar, flipping to
+    `missing`/`outdated` on its own heartbeat. Before this fix
+    `radiosJobRunning()` read a job in this state as running forever: the
+    step list stayed frozen, the Apply button stayed hidden, both selects
+    stayed disabled, and the 2s poll never stopped. Also confirms the
+    stall banner in index.html is wired to the exact flag this sets
+    (`_x_show_expr`, the technique this file already owns for this - see
+    its own docstring), not merely present somewhere on the page.
+
+    Fault to prove it: drop the `if (this.radiosStalled()) { this.
+    radiosJobAbandoned = true; }` block from `loadRadios()`."""
+    running_and_dead = json.dumps(
+        {
+            **RADIOS_READY,
+            "sidecar": "missing",
+            "job": {
+                "id": "j",
+                "phase": "apply_thread",
+                "steps": ["validate", "backup", "write", "apply_thread"],
+                "error": None,
+                "rolled_back": False,
+                "healthy": None,
+            },
+        }
+    )
+    values = _app_state(
+        f"""
+        let intervals = 0;
+        globalThis.setInterval = () => {{ intervals += 1; return 999; }};
+        globalThis.clearInterval = () => {{ intervals -= 1; }};
+        state.radiosTimer = 999;
+        state.request = async () => ({running_and_dead});
+        (async () => {{
+          await state.loadRadios();
+          console.log(JSON.stringify({{
+            running: state.radiosJobRunning(),
+            stalled: state.radiosStalled(),
+            abandoned: state.radiosJobAbandoned,
+            timerCleared: state.radiosTimer === null,
+            intervals,
+          }}));
+        }})();
+        """
+    )
+    assert values == {
+        "running": False,
+        "stalled": True,
+        "abandoned": True,
+        "timerCleared": True,
+        "intervals": -1,
+    }
+
+    client, _, _ = api
+    page = (await client.get("/")).text
+    assert _x_show_expr(page, "web.radios.job_abandoned") == "radiosJobAbandoned"
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+async def test_a_request_never_collected_is_reported_and_stops_polling(api):
+    """Review-Fix Critical #2b: the radios counterpart of
+    `updateNeverCollected()` - `confirmApplyRadios()` sets
+    `radiosPendingJobId`/`radiosPendingDeadline` right after a successful
+    POST, and `loadRadios()` is supposed to keep polling only until
+    either `radios.job.id` matches or `RADIOS_APPLY_GRACE_MS` runs out.
+    Simulates the deadline already having passed (`Date.now() - 1`)
+    instead of waiting out the real 20s. `RADIOS_READY.job` is `null`, so
+    the id-match branch never fires - only the deadline branch can
+    explain the result below. Fault to prove it: drop the
+    `this.radiosPendingDeadline !== null && Date.now() >= this.
+    radiosPendingDeadline` check from `loadRadios()`."""
+    values = _app_state(
+        f"""
+        let intervals = 0;
+        globalThis.setInterval = () => {{ intervals += 1; return 1; }};
+        globalThis.clearInterval = () => {{ intervals -= 1; }};
+        state.radios = {json.dumps(RADIOS_READY)};
+        state.radiosPendingJobId = 'new-job';
+        state.radiosPendingDeadline = Date.now() - 1;
+        state.radiosTimer = 999;
+        state.request = async () => state.radios;
+        (async () => {{
+          await state.loadRadios();
+          console.log(JSON.stringify({{
+            missed: state.radiosNeverCollected(),
+            pending: state.radiosPendingJobId,
+            deadline: state.radiosPendingDeadline,
+            timerCleared: state.radiosTimer === null,
+            intervals,
+          }}));
+        }})();
+        """
+    )
+    assert values == {
+        "missed": True,
+        "pending": None,
+        "deadline": None,
+        "timerCleared": True,
+        "intervals": -1,
+    }
+
+    client, _, _ = api
+    page = (await client.get("/")).text
+    assert _x_show_expr(page, "web.radios.job_not_collected") == "radiosNeverCollected()"
+
+
+async def test_leaving_settings_stops_the_radios_timer(api):
+    """Review-Fix Important #3, first half - the same leak the sibling
+    test in `test_the_build_phase_is_tied_across_every_place_it_lives`'s
+    neighbourhood already found and fixed for the update timer
+    (`select_view_body`/`this.stopUpdateTimer()` there) had no
+    counterpart for the radios timer at all: navigating away from
+    "Settings" left `loadRadios()` firing every 2s from a card nobody can
+    see. `selectView` reaches into `window`/`history` (`writeHash`) that
+    this suite cannot run headless in node - the same reason the sibling
+    test above extracts and inspects the function's source instead of
+    executing it; same technique here, narrowed to the specific `if`
+    this fix adds rather than a bare "is the call present anywhere"
+    check. Fault to prove it: drop the
+    `if (view !== "settings") { this.stopRadiosTimer(); }` block from
+    `selectView()`."""
+    client, _, _ = api
+    script = (await client.get("/static/app.js")).text
+    select_view_start = script.index("async selectView(view) {")
+    select_view_end = script.index("\n    },", select_view_start)
+    select_view_body = script[select_view_start:select_view_end]
+    guard_start = select_view_body.index('if (view !== "settings")')
+    guard_end = select_view_body.index("}", guard_start)
+    guard_block = select_view_body[guard_start : guard_end + 1]
+    assert "this.stopRadiosTimer();" in guard_block
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_a_lost_session_stops_the_radios_timer():
+    """Review-Fix Important #3, second half - the same rule
+    `loadUpdateStatus()`'s own 401 branch already follows (see its own
+    comment): a session that has ended elsewhere will never answer this
+    poll either, so leaving the timer armed would fire it every 2s
+    against a session that will never come back until the page is
+    reloaded by hand. `radiosError` staying `null` (not the load-error
+    text) is what proves the EARLY-RETURN branch ran, not just any error
+    path. Fault to prove it: drop the `if (!this.authenticated) { this.
+    stopRadiosTimer(); return; }` branch from `loadRadios()`'s `catch`."""
+    values = _app_state(
+        """
+        let intervals = 0;
+        globalThis.clearInterval = () => { intervals -= 1; };
+        state.radiosTimer = 999;
+        state.authenticated = false;
+        state.request = async () => { throw new Error('session expired'); };
+        (async () => {
+          await state.loadRadios();
+          console.log(JSON.stringify({
+            timer: state.radiosTimer, intervals, error: state.radiosError,
+          }));
+        })();
+        """
+    )
+    assert values == {"timer": None, "intervals": -1, "error": None}
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_radios_options_report_unknown_instead_of_a_fabricated_default_with_no_current():
+    """Review-Fix Critical/Minor #4: `current: null` (`api/radios.py`,
+    sidecar missing or outdated) used to fall straight through to the
+    constructor defaults ("" / adapter 0) because `loadRadios()` only
+    ever sets the draft `if (current ...)` - rendering "No Thread stick
+    (Thread off)" and adapter 0 marked "in use" as if they were a
+    confirmed report, a fabrication where "unknown" is the truth. Fault
+    to prove it: drop the `this.radios.current === null` guard from
+    `radiosThreadOptions()` (equivalently `radiosBluetoothOptions()`)."""
+    values = _radios_values(
+        """
+        state.radios.current = null;
+        console.log(JSON.stringify({
+          thread: state.radiosThreadOptions(),
+          bluetooth: state.radiosBluetoothOptions(),
+        }));
+        """
+    )
+    assert values == {
+        "thread": [
+            {"value": "", "label": "web.radios.thread_unknown", "inUse": False, "missing": False}
+        ],
+        "bluetooth": [
+            {"value": "", "label": "web.radios.bluetooth_unknown", "inUse": False, "blocked": False}
+        ],
+    }
+
+
+async def test_the_rfkill_warning_uses_the_banner_warn_class(api):
+    """Review-Fix Minor #5: `.hint.warn` does not exist in style.css
+    (only `.badge.warn`, `.banner.warn`, `.status-pill.warn` - checked
+    directly against style.css, see its own grep in the review) - before
+    this fix the one warning this card can show rendered as ordinary grey
+    fine print. Extracts the real `class` attribute from the served
+    markup (`_class_before_text`, the same technique `_x_show_expr` uses
+    for `x-show`) instead of retyping it, so a future revert back to
+    "hint warn" breaks this test rather than a hand-typed copy of it.
+    Fault to prove it: revert the class in index.html to "hint warn"."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+    assert _class_before_text(page, "rfkill_blocked") == "banner warn"
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+async def test_blocked_bluetooth_adapters_are_marked_and_cannot_be_selected(api):
+    """Review-Fix Minor #6: `radiosBluetoothOptions()` already computed
+    `blocked` (`adapter.rfkill_blocked`) but nothing in index.html used
+    it - a user could select an rfkill-blocked adapter, confirm, and wait
+    out a 60s `verify_bluetooth` failure and a rollback for a state the
+    card already knew was wrong; the server only checks existence, not
+    rfkill. Covers both halves the reviewer named: the JS data itself
+    (`radiosBluetoothOptions` - never called by any test before this
+    file's Task 7 review) and the real `:disabled`/`x-text` expressions
+    extracted from the served markup, evaluated in node against both a
+    blocked and an open option - not merely that the word appears
+    somewhere on the page. Fault to prove it: drop
+    `:disabled="option.blocked"` and the blocked-label term from the
+    Bluetooth `<option>` in index.html."""
+    data = _radios_values(
+        """
+        state.radios.bluetooth.push({ index: 1, name: 'hci1', bus: 'usb', product: 'X', rfkill_blocked: true });
+        console.log(JSON.stringify(state.radiosBluetoothOptions()));
+        """
+    )
+    assert data[1] == {"value": 1, "label": "web.radios.bus_usb", "inUse": False, "blocked": True}
+
+    client, _, _ = api
+    page = (await client.get("/")).text
+    disabled_expr, text_expr = _bluetooth_option_exprs(page)
+    t_stub = "(key) => key"
+    blocked_option = json.dumps({"value": 1, "label": "hci1", "inUse": False, "blocked": True})
+    open_option = json.dumps({"value": 0, "label": "hci0", "inUse": False, "blocked": False})
+    assert _eval_js_expr(disabled_expr, option=blocked_option, t=t_stub) is True
+    assert _eval_js_expr(disabled_expr, option=open_option, t=t_stub) is False
+    assert "web.radios.option_blocked" in _eval_js_expr(text_expr, option=blocked_option, t=t_stub)
+    assert "web.radios.option_blocked" not in _eval_js_expr(text_expr, option=open_option, t=t_stub)
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_radios_step_label_falls_back_for_an_unknown_step():
+    """Review-Fix Minor #7: `x-text="t('web.radios.step_' + step)"` built
+    a key from SERVER data (`radios.job.steps`), and `t()` returns the
+    key itself when it is missing (see its own comment) - a sidecar
+    newer than this page would show the user the literal string
+    `web.radios.step_reticulate_splines`. Loads the real translation
+    table so a KNOWN step still resolves to its real sentence and only
+    the unknown one falls back - proving the fallback is conditional, not
+    that `radiosStepLabel` always returns the same thing. Fault to prove
+    it: drop the `text === key ? t(...) : text` ternary so it always
+    returns the raw key."""
+    values = _radios_values(
+        """
+        console.log(JSON.stringify({
+          known: state.radiosStepLabel('validate'),
+          unknown: state.radiosStepLabel('reticulate_splines'),
+        }));
+        """,
+        translations=_web_strings(),
+    )
+    assert values["known"] == "Check the setting"
+    assert values["unknown"] == "Unknown step (reticulate_splines)"
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+async def test_rescan_clears_dirty_before_reloading(api):
+    """Review-Fix Minor #8, rescan half: without clearing `radiosDirty`
+    first, a Rescan right after an unapplied edit would still make
+    `loadRadios()`'s own `if (current && !this.radiosDirty)` guard skip
+    its draft resync for the rest of the session - the card would never
+    again notice a change made anywhere else. Extracts the real `@click`
+    handler from the served markup and evaluates it with Alpine's own
+    `with(this) { ... }` semantics against a stub object, rather than
+    just checking the source text contains the right words. Fault to
+    prove it: revert the Rescan button's `@click` to `loadRadios()`
+    alone, dropping the `radiosDirty = false;` statement in front of
+    it."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+    click_expr = _attr_before_t_key(page, "@click", "web.radios.rescan")
+
+    values = _eval_alpine_click(click_expr)
+    assert values == {"dirty": False, "calls": ["loadRadios"]}

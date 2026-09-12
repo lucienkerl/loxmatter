@@ -78,6 +78,12 @@ const VALUE_FRESH_MS = 2500;
 // comment).
 const UPDATE_APPLY_GRACE_MS = 20000;
 
+// The same reasoning as `UPDATE_APPLY_GRACE_MS` above, for the radios job's
+// own sidecar loop (deploy/updater/entrypoint.sh runs both `update-once.sh`
+// and `radios-once.sh` from the same 2s-cadence loop) - see
+// `radiosAwaitingPickup()`/`radiosNeverCollected()`.
+const RADIOS_APPLY_GRACE_MS = 20000;
+
 // --- Live diagnostics (Task 6, Spec 10.5) -----------------------------------
 //
 // Upper bound on the lines kept per stream (logs, UDP capture, command
@@ -741,6 +747,23 @@ function app() {
     // sidecar picks a request up within about 2 s, so the first poll after
     // POST can still show the PREVIOUS job's terminal phase.
     radiosPendingJobId: null,
+    // The other half of the same race, mirroring `updateApplyDeadline` -
+    // `radiosPendingJobId` alone cannot tell "still within the sidecar's
+    // pickup window" from "given up waiting", see `radiosAwaitingPickup()`.
+    radiosPendingDeadline: null,
+    // Sticky, like `updateApplyMissed`: the one write, at the exact poll
+    // where `radiosPendingDeadline` passes with no id match, that
+    // `radiosNeverCollected()`'s `x-show` needs to react to.
+    radiosPendingMissed: false,
+    // Sticky flag for the OTHER stall case (Review-Fix Critical #2a): a job
+    // that WAS running and then the sidecar went quiet mid-step, per
+    // `radiosStalled()`. Once set, `radiosJobRunning()` reads `false` for
+    // this job - review finding "re-enable the controls" - so the form
+    // does not stay disabled and the Apply button hidden forever behind a
+    // phase nothing will ever advance again. Reset at the start of a fresh
+    // `confirmApplyRadios()` attempt, the same way `applyUpdate()` resets
+    // `updateApplyMissed`.
+    radiosJobAbandoned: false,
 
     resendInterval: { interval_seconds: 300 },
     resendIntervalDraft: 300,
@@ -1246,6 +1269,16 @@ function app() {
         // self-review calls out. Re-entering the tab restarts it, since
         // `loadSystem()` (below) calls `loadUpdateStatus()` again.
         this.stopUpdateTimer();
+      }
+      // Review-Fix Important #3: `loadRadios()`'s own timer is only ever
+      // armed while "Settings" is the visible view (see the `view ===
+      // "settings"` branch below) - the same leak `stopUpdateTimer()`
+      // above exists to close for the System tab's update timer.
+      // Unconditional and idempotent (`stopRadiosTimer()` is a no-op when
+      // nothing is running), so it is safe to call even when the timer
+      // was never armed in the first place.
+      if (view !== "settings") {
+        this.stopRadiosTimer();
       }
       if (view === "export") {
         await this.loadExportStatus();
@@ -3524,9 +3557,28 @@ function app() {
       try {
         this.radios = await this.request("GET", "/api/radios");
       } catch (error) {
+        // Same rule as `loadUpdateStatus()`'s own 401 branch (see its
+        // comment): a session that has ended elsewhere will never answer
+        // this poll either, so keeping the timer armed would just fire
+        // this same request every two seconds against a dead session
+        // until the page is reloaded by hand.
+        if (!this.authenticated) {
+          this.stopRadiosTimer();
+          return;
+        }
         this.radiosError = t("web.settings.load_error", { message: error.message });
         return;
       }
+      // No `current` at all - Review-Fix Critical/Minor #4: a `null`
+      // `current` (sidecar missing/outdated) means the bridge genuinely
+      // does not know what is configured, not that Thread is off and
+      // Bluetooth is adapter 0. The draft is deliberately left as it was
+      // (last known values, or the constructor defaults before the first
+      // load) - `radiosThreadOptions()`/`radiosBluetoothOptions()` render
+      // an explicit "unknown" placeholder in this case regardless of
+      // whatever the draft happens to hold, and `radiosChanged()`/
+      // `radiosConfirmKeys()` already refuse to treat any draft as a
+      // change without a `current` to compare it against.
       const current = this.radios.current;
       if (current && !this.radiosDirty) {
         this.radiosDraft = {
@@ -3536,11 +3588,50 @@ function app() {
       }
       if (this.radiosPendingJobId !== null && this.radios.job?.id === this.radiosPendingJobId) {
         this.radiosPendingJobId = null;
+        this.radiosPendingDeadline = null;
       }
-      const keepPolling = this.radiosPendingJobId !== null || this.radiosJobRunning();
+      // Stall case (a) - Review-Fix Critical #2: `api/radios.py` returns
+      // the frozen `job` regardless of sidecar health, so a dead sidecar
+      // (crashed mid-job) never advances `phase` again. `radiosStalled()`
+      // reads the CURRENT `radios.sidecar` value (see its own comment for
+      // why that stays a live check, not a sticky one); once observed even
+      // once, `radiosJobAbandoned` sticks so a later poll that happens to
+      // land on a momentary "outdated" reading right before the sidecar's
+      // own heartbeat catches up cannot un-flag it.
+      if (this.radiosStalled()) {
+        this.radiosJobAbandoned = true;
+      }
+      // Stall case (b): accepted but never collected - the same shape as
+      // `loadUpdateStatus()`'s own deadline check. Clearing
+      // `radiosPendingJobId` here is what lets `keepPolling` below give up
+      // on its own once the window closes, exactly as it already did the
+      // moment a real job showed up (branch above) - see
+      // `radiosNeverCollected()` for the sticky flag this sets.
+      if (
+        this.radiosPendingJobId !== null &&
+        this.radiosPendingDeadline !== null &&
+        Date.now() >= this.radiosPendingDeadline
+      ) {
+        this.radiosPendingMissed = true;
+        this.radiosPendingJobId = null;
+        this.radiosPendingDeadline = null;
+      }
+      // `radiosJobAbandoned` stops the poll outright: nothing further will
+      // ever change for a job the sidecar has gone silent on. The
+      // pending-pickup case needs no separate deadline check here - the
+      // branch above already clears `radiosPendingJobId` once the window
+      // closes, so this reads exactly like the pre-fix condition did.
+      const keepPolling =
+        !this.radiosJobAbandoned && (this.radiosPendingJobId !== null || this.radiosJobRunning());
       if (keepPolling && this.radiosTimer === null) {
         this.radiosTimer = setInterval(() => this.loadRadios(), 2000);
       } else if (!keepPolling && this.radiosTimer !== null) {
+        this.stopRadiosTimer();
+      }
+    },
+
+    stopRadiosTimer() {
+      if (this.radiosTimer) {
         clearInterval(this.radiosTimer);
         this.radiosTimer = null;
       }
@@ -3552,6 +3643,19 @@ function app() {
     },
 
     radiosThreadOptions() {
+      // Review-Fix Critical/Minor #4: `current: null` (sidecar missing or
+      // outdated, `api/radios.py`) means the bridge genuinely does not
+      // know what is configured. The normal list below would otherwise
+      // render the constructor default ("" - no stick) as if it were a
+      // confirmed fact, or leave a real stick from the last successful
+      // load marked "in use" when nothing has re-confirmed that since.
+      // Checked against `this.radios` (not just `current`) so this still
+      // returns the ordinary "nothing loaded yet" empty-ish list before
+      // the first `loadRadios()` call, same as before this fix - only a
+      // REPORTED `null` renders as unknown.
+      if (this.radios && this.radios.current === null) {
+        return [{ value: "", label: t("web.radios.thread_unknown"), inUse: false, missing: false }];
+      }
       const current = this.radios?.current;
       const inUse = this.radiosCurrentThread();
       const options = [{ value: "", label: t("web.radios.no_thread_stick"), inUse: inUse === "", missing: false }];
@@ -3572,6 +3676,10 @@ function app() {
     },
 
     radiosBluetoothOptions() {
+      // Same reasoning as `radiosThreadOptions()` above.
+      if (this.radios && this.radios.current === null) {
+        return [{ value: "", label: t("web.radios.bluetooth_unknown"), inUse: false, blocked: false }];
+      }
       const inUse = this.radios?.current?.bluetooth_adapter;
       return (this.radios?.bluetooth ?? []).map((adapter) => ({
         value: adapter.index,
@@ -3613,9 +3721,61 @@ function app() {
       return keys;
     },
 
-    radiosJobRunning() {
+    /** The raw "is `radios.job.phase` one of the non-terminal phases"
+     * check, shared by `radiosJobRunning()` below (which additionally
+     * accounts for `radiosJobAbandoned` - see there) and `radiosStalled()`
+     * (which must NOT, or it could never observe the very transition it
+     * exists to detect). */
+    radiosPhaseActive() {
       const phase = this.radios?.job?.phase;
       return Boolean(phase) && !["idle", "done", "failed", "rejected", "unchanged"].includes(phase);
+    },
+
+    radiosJobRunning() {
+      // Review-Fix Critical #2a: once `radiosJobAbandoned` is set (see
+      // `loadRadios()`/`radiosStalled()`), this job is never going to
+      // reach a terminal phase on its own - reading it as "still running"
+      // forever would leave the Apply button hidden and the selects
+      // disabled for the rest of the session, exactly the "stranded"
+      // outcome that fix calls out. `radiosStalled()`/`radiosPhaseActive()`
+      // still read the true underlying phase for their own purposes.
+      return this.radiosPhaseActive() && !this.radiosJobAbandoned;
+    },
+
+    /** Case (a) of Review-Fix Critical #2: a job phase frozen mid-run
+     * because the sidecar itself has gone quiet - the same "was running,
+     * then went silent" reading `updateStalled()` gives the update card
+     * (see its own comment there for the full reasoning). `api/radios.py`
+     * writes `job` straight off `radios-state.json` with no regard for
+     * whether anything is still alive to advance it; `sidecar_status()`
+     * (radios/sidecar.py) is what actually knows - `missing` (the whole
+     * updater container's heartbeat has gone stale) and `outdated` (this
+     * container is up, but `radios-state.json`'s own `seen_at` has not
+     * been refreshed recently) both mean nobody is going to write the
+     * NEXT phase into that file, however long the current one keeps
+     * looking like it is still `now`.
+     *
+     * Deliberately NOT `unmounted`: that status means the sidecar is
+     * alive and reporting, just incapable (`/host/dev` not mounted) - a
+     * real fact, but not "went silent mid-job", and `request_radios()`
+     * refuses to start a job at all while `capable` is `false`, so a
+     * running job could never observe that status in the first place.
+     *
+     * A live check on purpose, unlike the sticky `radiosJobAbandoned` it
+     * feeds (see `loadRadios()`): it has to be able to notice the flip
+     * from `ready` on every poll for that flag to ever get set. */
+    radiosStalled() {
+      const status = this.radios?.sidecar;
+      return this.radiosPhaseActive() && (status === "missing" || status === "outdated");
+    },
+
+    /** Case (b) of Review-Fix Critical #2, the radios counterpart of
+     * `updateNeverCollected()` - see its own comment for why this reads a
+     * sticky field (written once, in `loadRadios()`, at the exact poll
+     * where `radiosPendingDeadline` passes) rather than comparing
+     * `Date.now()` against the deadline directly. */
+    radiosNeverCollected() {
+      return this.radiosPendingMissed;
     },
 
     radiosStepClass(step) {
@@ -3646,6 +3806,20 @@ function app() {
       return text === key ? t("web.radios.reason.unknown") : text;
     },
 
+    /** Review-Fix Minor #7: `t()` returns the key itself when a
+     * translation is missing (see its own comment) - fine for most
+     * callers, but the step `<li>` in index.html builds its key from
+     * SERVER data (`radios.job.steps`), so a sidecar newer than this page
+     * can name a step nobody has translated into `strings.yaml` yet.
+     * Falls back to a readable sentence naming the raw step instead of
+     * the literal `web.radios.step_<name>` string - the same stance
+     * `radiosReason()` above already takes for `job.error`. */
+    radiosStepLabel(step) {
+      const key = `web.radios.step_${step}`;
+      const text = t(key);
+      return text === key ? t("web.radios.step_unknown", { step }) : text;
+    },
+
     radiosSidecarMessage() {
       const status = this.radios?.sidecar;
       if (!status || status === "ready") return null;
@@ -3663,12 +3837,41 @@ function app() {
 
     cancelApplyRadios() {
       this.radiosConfirming = false;
+      // Review-Fix Minor #8: without this, a cancelled edit left
+      // `radiosDirty` set and `loadRadios()`'s poll would keep skipping
+      // its own draft resync (see its `if (current && !this.radiosDirty)`
+      // guard) for the rest of the session - the card would never again
+      // notice a change made anywhere else (another tab, the console
+      // path).
+      this.radiosDirty = false;
     },
 
     async confirmApplyRadios() {
       this.radiosConfirming = false;
       this.radiosBusy = true;
       this.radiosError = null;
+      // A fresh attempt starts here, before the POST even lands - the
+      // same reasoning `applyUpdate()` gives for resetting
+      // `updateApplyMissed` up front: otherwise a retry that is itself
+      // picked up promptly would still show a STALE stall banner, a true
+      // fact about the PREVIOUS attempt wrongly presented as still true
+      // about this one.
+      this.radiosJobAbandoned = false;
+      this.radiosPendingMissed = false;
+      // Review-Fix Critical #1: captured locally instead of written
+      // straight to `this.radiosError`, because `loadRadios()` below
+      // unconditionally sets `this.radiosError = null` as its own first
+      // statement - synchronously, before its first `await` - which would
+      // otherwise clear this exact error before Alpine ever gets to
+      // render it. Applied back onto `this.radiosError` AFTER
+      // `loadRadios()` resolves instead, so a POST failure (503 sidecar
+      // not ready, 400 unknown device/adapter, 409 job already running,
+      // 503 unwritable directory) survives the refresh this function
+      // always runs afterwards. Follows the sibling pattern in
+      // `saveSettings()`, which sets `settingsError` and calls no loader
+      // afterwards at all - this function cannot do that, `loadRadios()`
+      // is what turns a bare job id into the polling that shows progress.
+      let applyError = null;
       try {
         const response = await this.request("POST", "/api/radios", {
           thread: {
@@ -3678,13 +3881,17 @@ function app() {
           bluetooth: { adapter: Number(this.radiosDraft.bluetoothAdapter) },
         });
         this.radiosPendingJobId = response.id;
+        this.radiosPendingDeadline = Date.now() + RADIOS_APPLY_GRACE_MS;
         this.radiosDirty = false;
       } catch (error) {
-        this.radiosError = error.message;
+        applyError = error.message;
       } finally {
         this.radiosBusy = false;
       }
       await this.loadRadios();
+      if (applyError !== null) {
+        this.radiosError = applyError;
+      }
     },
 
     async saveSettings() {

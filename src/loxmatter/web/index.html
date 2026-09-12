@@ -2375,20 +2375,42 @@
                     @change="radiosDirty = true"
                     :disabled="radios.sidecar !== 'ready' || radiosJobRunning() || radiosBusy"
                   >
+                    <!-- Review-Fix Minor #6: `option.blocked` used to be
+                         computed (`radiosBluetoothOptions()`) and then
+                         ignored here - nothing stopped choosing an
+                         rfkill-blocked adapter, only the server checked
+                         existence. `:disabled` blocks a NEW selection
+                         through the native control; an adapter already
+                         selected before it became blocked still renders
+                         (a disabled `<option>` that is the current value
+                         displays normally), which is the point - this
+                         must describe reality, not hide it. -->
                     <template x-for="option in radiosBluetoothOptions()" :key="option.value">
                       <option
                         :value="option.value"
-                        x-text="option.label + (option.inUse ? ' · ' + t('web.radios.in_use') : '')"
+                        :disabled="option.blocked"
+                        x-text="option.label
+                          + (option.inUse ? ' · ' + t('web.radios.in_use') : '')
+                          + (option.blocked ? ' · ' + t('web.radios.option_blocked') : '')"
                       ></option>
                     </template>
                   </select>
                 </label>
               </div>
               <template x-for="option in radiosBluetoothOptions().filter((o) => o.blocked)" :key="'blocked-' + option.value">
-                <p class="hint warn" x-text="option.label + ': ' + t('web.radios.rfkill_blocked')"></p>
+                <!-- Review-Fix Minor #5: `.hint.warn` does not exist in
+                     style.css (only `.badge.warn`, `.banner.warn` and
+                     `.status-pill.warn`) - the established pattern for a
+                     warning on this card, used by the update card. -->
+                <p class="banner warn" x-text="option.label + ': ' + t('web.radios.rfkill_blocked')"></p>
               </template>
               <div class="row">
-                <button @click="loadRadios()" x-text="t('web.radios.rescan')"></button>
+                <!-- Review-Fix Minor #8: clears `radiosDirty` before the
+                     reload it triggers, the same way `cancelApplyRadios()`
+                     now does (see there) - otherwise a Rescan right after
+                     an edit the user never applied would still skip its
+                     own draft resync for the rest of the session. -->
+                <button @click="radiosDirty = false; loadRadios()" x-text="t('web.radios.rescan')"></button>
                 <button
                   class="primary"
                   x-show="radios.sidecar === 'ready' && radiosChanged() && !radiosJobRunning()"
@@ -2413,7 +2435,7 @@
                 <div>
                   <ul class="steps" x-show="radiosJobRunning()">
                     <template x-for="step in radios.job.steps" :key="step">
-                      <li :class="radiosStepClass(step)" x-text="t('web.radios.step_' + step)"></li>
+                      <li :class="radiosStepClass(step)" x-text="radiosStepLabel(step)"></li>
                     </template>
                   </ul>
                   <p
@@ -2424,6 +2446,23 @@
                   ></p>
                 </div>
               </template>
+              <!-- Review-Fix Critical #2a: the sidecar died mid-job -
+                   `radiosJobRunning()` now reads `false` once
+                   `radiosJobAbandoned` is set (see app.js), so the step
+                   list above stops claiming progress on its own; this is
+                   the explanation for why it went blank instead of
+                   showing a result. Same `banner danger` + `x-cloak`
+                   pattern as the update card's own `updateStalled()`
+                   banner (index.html, System tab). -->
+              <p class="banner danger" x-show="radiosJobAbandoned" x-cloak
+                 x-text="t('web.radios.job_abandoned')"></p>
+              <!-- Review-Fix Critical #2b: accepted (a 202 from
+                   POST /api/radios) but never collected within
+                   `RADIOS_APPLY_GRACE_MS` - the radios counterpart of the
+                   update card's `updateNeverCollected()`/
+                   `web.system.update_not_collected` banner. -->
+              <p class="banner danger" x-show="radiosNeverCollected()" x-cloak
+                 x-text="t('web.radios.job_not_collected')"></p>
               <p x-show="radiosError" x-cloak class="banner danger" x-text="radiosError"></p>
             </div>
           </template>
