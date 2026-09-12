@@ -101,7 +101,7 @@ def build_radios_router(
             }
         return {
             "sidecar": status,
-            "sidecar_stack_host_path": (
+            "updater_stack_host_path": (
                 update_state.updater_stack_host_path if update_state is not None else None
             ),
             "serial": [asdict(radio) for radio in serial],

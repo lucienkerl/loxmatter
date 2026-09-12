@@ -20,6 +20,7 @@ section 7)."""
 from __future__ import annotations
 
 import json
+import os
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from pathlib import Path
@@ -116,7 +117,16 @@ async def test_without_a_sidecar_the_card_is_read_only_with_detection(api):
     client, _ = api
     body = (await client.get("/api/radios")).json()
     assert body["sidecar"] == "missing"
-    assert [r["product"] for r in body["serial"]] == ["SONOFF Dongle Plus MG24"]
+    assert body["serial"] == [
+        {
+            "path": f"/dev/serial/by-id/{SONOFF}",
+            "tty": "ttyUSB0",
+            "manufacturer": None,
+            "product": "SONOFF Dongle Plus MG24",
+            "serial": None,
+            "vid_pid": "10c4:ea60",
+        }
+    ]
     assert body["bluetooth"] == [
         {"index": 0, "name": "hci0", "bus": "uart", "product": None, "rfkill_blocked": False}
     ]
@@ -130,7 +140,7 @@ async def test_a_ready_sidecar_reports_current_with_the_legacy_path_mapped(api):
     _radios_heartbeat(update_dir)
     body = (await client.get("/api/radios")).json()
     assert body["sidecar"] == "ready"
-    assert body["sidecar_stack_host_path"] == "/home/pi/stack"
+    assert body["updater_stack_host_path"] == "/home/pi/stack"
     assert body["current"] == {
         "thread_enabled": True,
         "thread_device": f"/dev/serial/by-id/{SONOFF}",
@@ -224,6 +234,25 @@ async def test_disabling_thread_needs_no_device(api):
     ).status_code == 202
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX permission bits do not apply on Windows")
+async def test_an_unwritable_update_directory_returns_a_mapped_status_not_a_bare_500(api):
+    """Mirrors `tests/api/test_update_api.py`'s test of the same name: a
+    read-only remount after an SD-card fault, or a full disk, must land on
+    the mapped 503 (`api.radios.fail_unwritable`), not the bare 500 an
+    unhandled `PermissionError` from `request_radios`'s `write_text` would
+    otherwise produce."""
+    client, update_dir = api
+    _update_heartbeat(update_dir)
+    _radios_heartbeat(update_dir)
+    os.chmod(update_dir, 0o500)  # read + execute only - no write, no create
+    try:
+        response = await client.post("/api/radios", json=_body())
+    finally:
+        os.chmod(update_dir, 0o700)  # tmp_path cleanup needs this back
+    assert response.status_code == 503
+    assert response.json()["detail"]
+
+
 async def test_a_running_update_is_a_409(api):
     client, update_dir = api
     _update_heartbeat(update_dir, phase="recreate")
@@ -239,5 +268,5 @@ async def test_the_routes_need_a_login(tmp_path, no_invoke, fake_runtime):
     ) as client:
         # Without a password set and a session, no /api route answers with
         # content (README, "Locked down by default").
-        assert (await client.get("/api/radios")).status_code != 200
+        assert (await client.get("/api/radios")).status_code == 401
     store.close()

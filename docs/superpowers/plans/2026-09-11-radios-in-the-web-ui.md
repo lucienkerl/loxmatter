@@ -1841,7 +1841,7 @@ it, and the bridge and the sidecar see the host's /dev read-only to read
 - Produces:
   - `build_radios_router(update_dir: Path, *, host_dev: Path, sys_root: Path, clock: Callable[[], datetime] = lambda: datetime.now(UTC)) -> APIRouter`
   - `build_app(..., radios_host_dev: Path = Path("/host/dev"), radios_sys_root: Path = Path("/sys"))`
-  - `GET /api/radios` → `{sidecar, sidecar_stack_host_path, serial[], bluetooth[], current | null, job | null}`
+  - `GET /api/radios` → `{sidecar, updater_stack_host_path, serial[], bluetooth[], current | null, job | null}`
   - `POST /api/radios` with `{thread: {enabled: bool, device: str | null}, bluetooth: {adapter: int}}` → `202 {id}`; 400/409/503 with i18n details
 
 - [ ] **Step 1: Add the i18n keys** to `src/loxmatter/i18n/strings.yaml`, next to the other `api.update.*` keys:
@@ -1961,7 +1961,7 @@ async def test_a_ready_sidecar_reports_current_with_the_legacy_path_mapped(api):
     _radios_heartbeat(update_dir)
     body = (await client.get("/api/radios")).json()
     assert body["sidecar"] == "ready"
-    assert body["sidecar_stack_host_path"] == "/home/pi/stack"
+    assert body["updater_stack_host_path"] == "/home/pi/stack"
     assert body["current"] == {
         "thread_enabled": True,
         "thread_device": f"/dev/serial/by-id/{SONOFF}",
@@ -2150,7 +2150,7 @@ def build_radios_router(
             }
         return {
             "sidecar": status,
-            "sidecar_stack_host_path": (
+            "updater_stack_host_path": (
                 update_state.updater_stack_host_path if update_state is not None else None
             ),
             "serial": [asdict(radio) for radio in serial],
@@ -2395,7 +2395,7 @@ If a test in the suite rejects dotted `web.*` keys with three segments after `we
 ```python
 RADIOS_READY = {
     "sidecar": "ready",
-    "sidecar_stack_host_path": "/home/pi/stack",
+    "updater_stack_host_path": "/home/pi/stack",
     "serial": [
         {"path": "/dev/serial/by-id/usb-A", "tty": "ttyUSB0", "manufacturer": "SONOFF",
          "product": "SONOFF Dongle Plus MG24", "serial": "e26a50c9", "vid_pid": "10c4:ea60"},
@@ -2494,7 +2494,7 @@ def test_the_sidecar_message_depends_on_the_sidecar_state():
         for (const s of ['ready', 'missing', 'outdated', 'unmounted']) {
           state.radios.sidecar = s; out[s] = state.radiosSidecarMessage();
         }
-        state.radios.sidecar = 'outdated'; state.radios.sidecar_stack_host_path = null;
+        state.radios.sidecar = 'outdated'; state.radios.updater_stack_host_path = null;
         out.nopath = state.radiosSidecarMessage();
         console.log(JSON.stringify(out));
         """
@@ -2689,7 +2689,7 @@ Methods, next to `loadSettings()`:
       const status = this.radios?.sidecar;
       if (!status || status === "ready") return null;
       if (status === "missing") return t("web.radios.sidecar_missing");
-      const path = this.radios.sidecar_stack_host_path;
+      const path = this.radios.updater_stack_host_path;
       return path
         ? t("web.radios.sidecar_refresh", { path })
         : t("web.radios.sidecar_refresh_unknown_path");
