@@ -546,6 +546,13 @@ forget the device and commission it again. A test installation showing a
 colour picker on a white-only lamp should be suspected of this before the
 gate is.
 
+On a colour-capable lamp the stale row is harmless in practice: such a lamp
+also carries `(768, 6)` hue/saturation, so `duplicate_control_command`'s
+dedup preference already hides the extra `color_xy` widget; a white-spectrum
+lamp never gets a `(768, 6)` row to prefer — its AcceptedCommandList runs
+`[7, 8, 9, 10, 71, 75, 76]`, with `7` and no `6` — so there the stale row has
+nothing to hide behind it, which is the case this caveat is actually about.
+
 ### 5.7 Command Argument Names
 
 A table, not a `camelCase` → `snake_case` helper — two of these do not follow

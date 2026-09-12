@@ -255,8 +255,10 @@ def test_the_vocabulary_gap_of_12_september_2026_is_closed():
 
 def test_the_second_word_of_that_line_is_known_on_its_own():
     """`scan_text` reports one finding per line and stops at the first
-    word, so the test above would pass with only "gepackte" added. The
-    neighbours it was asked for have to answer for themselves."""
-    for line in ("# die Farbzahl\n", "# der Farbwert\n", "# eine Saettigung\n"):
-        assert check_language.scan_text(line, "a.py"), line
+    word, so a probe led by a word the detector already knows (an article,
+    say) never reaches the stem it claims to pin. Each stem gets its own
+    line, as the line's first word, and the finding is checked by name so
+    it cannot be anything else."""
     assert check_language.scan_text("# Farbzahl\n", "a.py")[0].word == "Farbzahl"
+    assert check_language.scan_text("# Farbwert\n", "a.py")[0].word == "Farbwert"
+    assert check_language.scan_text("# Saettigung\n", "a.py")[0].word == "Saettigung"
