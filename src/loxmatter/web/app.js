@@ -126,8 +126,20 @@ const RADIOS_STALL_GRACE_MS = 20000;
 //   freeze on the first failure and never show the stick coming back when
 //   it is plugged in again; one that kept the fast cadence would ask once a
 //   second about something that changes at most once a minute.
+// - While the stick is CONNECTED nothing is expected to change - but it
+//   can: a stick pulled out at rest, or a link zigpy reports lost, turns
+//   `connected` into `failed` with nobody pressing anything, and a card
+//   that did not ask again kept saying "Connected" until Rescan or a
+//   reload. Fifteen seconds is inside the time a user who has just
+//   unplugged something spends looking at the card for the result, and
+//   far enough apart that a Settings tab left open for an afternoon costs
+//   the Pi one `/dev` and `/sys` walk a quarter-minute rather than one a
+//   second. (Loss is reported by the radio library the moment it happens,
+//   so a faster poll would only shorten the wait for the screen, not for
+//   the bridge.)
 const ZIGBEE_WORKING_POLL_MS = 1000;
 const ZIGBEE_FAILED_POLL_MS = 5000;
+const ZIGBEE_CONNECTED_POLL_MS = 15000;
 
 // What the Advanced disclosure starts from for a stick the fingerprint
 // table does not know: `fingerprints.DEFAULT_UNKNOWN`
@@ -875,12 +887,11 @@ function app() {
     // failure before Alpine has rendered it.
     zigbeeApplyError: null,
     zigbeeTimer: null,
-    // The sentence of the last failed attempt, kept through the retry that
-    // follows it. The supervisor's next attempt starts with `error: null`,
-    // so without this the reason vanished from the card for every retry
-    // and came back when that retry failed too - a long message blinking
-    // in and out every few seconds, moving the rows below it each time.
-    zigbeeLastError: null,
+    // What the row's screen-reader status says, written only when it
+    // CHANGES (`noteZigbeeAnnouncement()`). The visible progress line
+    // carries an attempt counter that moves on every retry; a live region
+    // bound to it re-read a long failure sentence every few seconds.
+    zigbeeAnnouncement: "",
     // Incremented by every load, so a slow response that arrives after a
     // newer one (a poll in flight when Apply is pressed) cannot put the
     // older state back on screen.
@@ -3677,6 +3688,9 @@ function app() {
 
     async loadRadios() {
       this.radiosError = null;
+      // Read before the answer replaces them - see `jobEnded` below.
+      const phaseWasActive = this.radiosPhaseActive();
+      const awaitedJobId = this.radiosPendingJobId;
       try {
         this.radios = await this.request("GET", "/api/radios");
       } catch (error) {
@@ -3702,6 +3716,15 @@ function app() {
       // whatever the draft happens to hold, and `radiosChanged()`/
       // `radiosConfirmKeys()` already refuse to treat any draft as a
       // change without a `current` to compare it against.
+      // A radios job that has just reached a terminal phase - seen running
+      // on an earlier poll, or finished before the first poll after its
+      // POST. Thread may have been turned off or moved, and the Zigbee row
+      // below reads which stick Thread holds: without a reload it kept the
+      // freed stick locked as "in use for Thread" until Rescan.
+      const job = this.radios.job;
+      const jobEnded =
+        Boolean(job) && !this.radiosPhaseActive() && (phaseWasActive || (awaitedJobId !== null && job.id === awaitedJobId));
+      if (jobEnded) this.loadZigbeeRadio();
       const current = this.radios.current;
       if (current && !this.radiosDirty) {
         this.radiosDraft = {
@@ -3820,7 +3843,15 @@ function app() {
       for (const radio of this.radios?.serial ?? []) {
         const name = radio.product || radio.manufacturer || radio.tty;
         const suffix = radio.serial ? ` · …${radio.serial.slice(-4)}` : "";
-        options.push({ value: radio.path, label: name + suffix, inUse: radio.path === inUse, missing: false });
+        // `zigbee` is the server's `is_zigbee`: the stick the Zigbee row is
+        // set up with, which `POST /api/radios` refuses for Thread.
+        options.push({
+          value: radio.path,
+          label: name + suffix,
+          inUse: radio.path === inUse,
+          missing: false,
+          zigbee: Boolean(radio.is_zigbee),
+        });
       }
       if (current && current.thread_enabled && current.thread_device && !current.thread_device_present) {
         options.push({
@@ -4205,7 +4236,7 @@ function app() {
       if (sequence !== this.zigbeeLoadSequence) return;
       this.zigbeeError = null;
       this.zigbee = body;
-      this.noteZigbeeFailure(body.progress);
+      this.noteZigbeeAnnouncement();
       if (!this.zigbeeDirty) {
         this.zigbeeDraft.path = body.configured_path ?? "";
         this.resetZigbeeAdvanced();
@@ -4214,16 +4245,24 @@ function app() {
       if (interval !== null) this.scheduleZigbeeLoad(interval);
     },
 
-    /** Keeps `zigbeeLastError` for a retry and drops it for anything
-     * else: `connected` and `idle` have nothing left to explain, and
-     * `applying` or a first attempt (`attempts === 0`) are about a new
-     * setting that the old reason says nothing about. */
-    noteZigbeeFailure(progress) {
-      if (progress?.state === "failed") {
-        this.zigbeeLastError = progress.error ?? null;
-      } else if (!this.zigbeeRadioPolling(progress) || progress.state === "applying" || !progress.attempts) {
-        this.zigbeeLastError = null;
+    /** Updates `zigbeeAnnouncement` - and only when its text differs, so
+     * Alpine does not rewrite the live region with the same sentence. */
+    noteZigbeeAnnouncement() {
+      const text = this.zigbeeAnnouncementText(this.zigbee?.progress, this.zigbee?.configured_device_present) ?? "";
+      if (text !== this.zigbeeAnnouncement) this.zigbeeAnnouncement = text;
+    },
+
+    /** What a screen reader is told: the progress line's news WITHOUT the
+     * attempt counter. A retry that fails for the reason the previous one
+     * did is not news; a different reason, a stick that is gone, a
+     * connection that holds are. */
+    zigbeeAnnouncementText(progress, present) {
+      if (!progress) return null;
+      if (this.zigbeeStickMissing(present)) return this.zigbeeProgressText(progress, present);
+      if (progress.state === "failed" || this.zigbeeRetrying(progress)) {
+        return progress.error ?? t("web.radios.zigbee_failed_unknown");
       }
+      return this.zigbeeProgressText(progress, present);
     },
 
     scheduleZigbeeLoad(delay) {
@@ -4260,7 +4299,14 @@ function app() {
     zigbeeRadioPollInterval(progress) {
       if (this.zigbeeRadioPolling(progress)) return ZIGBEE_WORKING_POLL_MS;
       if (progress?.state === "failed") return ZIGBEE_FAILED_POLL_MS;
+      if (progress?.state === "connected") return ZIGBEE_CONNECTED_POLL_MS;
       return null;
+    },
+
+    /** A working state on the second or later attempt: the supervisor
+     * retrying a setting that has already failed. */
+    zigbeeRetrying(progress) {
+      return this.zigbeeRadioPolling(progress) && progress.state !== "applying" && progress.attempts > 0;
     },
 
     /** The sticks `GET /api/zigbee/radio` reported, as `<option>`s.
@@ -4290,9 +4336,13 @@ function app() {
       ];
       for (const stick of this.zigbee?.serial ?? []) {
         const unrecognised = stick.fingerprint === null || stick.fingerprint === undefined;
-        const parts = [stick.fingerprint?.name || stick.product || stick.path.split("/").pop()];
-        if (stick.path === configured) parts.push(t("web.radios.in_use"));
-        if (stick.is_thread) parts.push(t("web.radios.zigbee_is_thread_stick"));
+        const parts = [this.zigbeeStickName(stick)];
+        // One suffix for the stick's use, not two: a stick set up for
+        // Zigbee that Thread was moved onto afterwards read "in use · in
+        // use for Thread", two claims that seem to contradict each other.
+        if (stick.is_thread && stick.path === configured) parts.push(t("web.radios.zigbee_thread_took_over"));
+        else if (stick.is_thread) parts.push(t("web.radios.zigbee_is_thread_stick"));
+        else if (stick.path === configured) parts.push(t("web.radios.in_use"));
         if (unrecognised) parts.push(t("web.radios.zigbee_option_unrecognised"));
         options.push({
           value: stick.path,
@@ -4317,6 +4367,32 @@ function app() {
         });
       }
       return options;
+    },
+
+    /** A stick's name as the list shows it: the fingerprint table's name,
+     * else the USB product string, else the by-id tail. */
+    zigbeeStickName(stick) {
+      return stick.fingerprint?.name || stick.product || stick.path.split("/").pop();
+    },
+
+    /** The line under the select that says which stick Thread is using
+     * and how to free it, or `null` when the list holds no Thread stick.
+     *
+     * The option's own suffix cannot carry this alone: a narrow native
+     * select cuts a label off from the right, exactly where the suffix
+     * sits (measured at 375 px in German), and a disabled option that
+     * gives no reason is the "detection is broken" report the listing
+     * exists to prevent. It is also the escape hatch - a dual-capable
+     * stick moves to Zigbee by turning Thread off or moving it, in the row
+     * above - and nothing else on the card says so. */
+    zigbeeThreadHint() {
+      const stick = (this.zigbee?.serial ?? []).find((candidate) => candidate.is_thread);
+      if (!stick) return null;
+      const key =
+        stick.path === this.zigbee.configured_path
+          ? "web.radios.zigbee_thread_took_over_hint"
+          : "web.radios.zigbee_thread_stick_hint";
+      return t(key, { name: this.zigbeeStickName(stick) });
     },
 
     zigbeeSelectedOption() {
@@ -4377,17 +4453,28 @@ function app() {
       return Number.isInteger(baudrate) && baudrate > 0;
     },
 
-    /** Whether Apply may be pressed. Not while an attempt is running: the
-     * change the user just made is still being carried out, and a second
-     * one on top would only restart it. `failed` does NOT block - picking
-     * another stick is exactly what a failing one calls for. */
+    /** Whether Apply may be pressed.
+     *
+     * Blocked only while a change is being carried out for the FIRST time
+     * - `applying`, or the first attempt at a new setting (`attempts ===
+     * 0`) - because a second change on top would only restart it. A retry
+     * of a setting that has already failed is NOT blocked, nor is
+     * `failed`: the failure text is telling the user to fix the radio type
+     * or pick another stick, and refusing that for the length of every
+     * retry refused it for most of the first minute, silently.
+     * `ZigbeeRuntime.apply()` takes a change mid-attempt: it cancels the
+     * supervisor and releases the stick before it opens the new one. */
     zigbeeCanApply() {
       if (!this.zigbeeRadioChanged() || this.zigbeeBusy) return false;
-      if (this.zigbeeRadioPolling(this.zigbee?.progress)) return false;
+      if (this.zigbeeFirstAttemptRunning(this.zigbee?.progress)) return false;
       const selected = this.zigbeeSelectedOption();
       if (selected?.disabled) return false;
       if (selected?.unrecognised && !this.zigbeeBaudrateValid()) return false;
       return true;
+    },
+
+    zigbeeFirstAttemptRunning(progress) {
+      return this.zigbeeRadioPolling(progress) && !this.zigbeeRetrying(progress);
     },
 
     /** The `PUT /api/zigbee/radio` body. The Advanced values travel only
@@ -4442,7 +4529,7 @@ function app() {
      * "nothing is configured" and needs no line at all. */
     zigbeeProgressText(progress, present) {
       if (!progress) return null;
-      if (present === false && this.zigbee?.configured_path) {
+      if (this.zigbeeStickMissing(present)) {
         return t("web.radios.zigbee_device_missing", { path: this.zigbee.configured_path });
       }
       switch (progress.state) {
@@ -4453,10 +4540,14 @@ function app() {
           // A retry after failures is not "the first connection": the
           // supervisor sets these states again on every attempt, and the
           // first-connection wording would be untrue from the second on.
+          // `error` on a retry is the PREVIOUS attempt's reason, which the
+          // bridge carries through the retry (`ConnectionProgress`) and
+          // translates per answer - so it is in the current language, and
+          // it does not vanish for the length of every attempt.
           if (progress.attempts > 0) {
             const attempt = progress.attempts + 1;
-            return this.zigbeeLastError
-              ? t("web.radios.zigbee_retrying_after", { attempt, error: this.zigbeeLastError })
+            return progress.error
+              ? t("web.radios.zigbee_retrying_after", { attempt, error: progress.error })
               : t("web.radios.zigbee_retrying", { attempt });
           }
           return t(
@@ -4474,12 +4565,24 @@ function app() {
       }
     },
 
-    /** Whether that line reports a problem - a failed attempt or a stick
-     * that is not there - and should read as one. */
+    /** Whether that line reports a problem - a failed attempt, the retry
+     * after one, or a stick that is not there - and should read as one.
+     *
+     * The retry counts: it carries the same failure sentence as the
+     * `failed` line either side of it, and colouring only the `failed`
+     * half flipped that sentence between red and grey on every retry. */
     zigbeeProgressFailing(progress, present) {
       if (!progress) return false;
-      if (present === false && this.zigbee?.configured_path) return true;
-      return progress.state === "failed";
+      if (this.zigbeeStickMissing(present)) return true;
+      return progress.state === "failed" || this.zigbeeRetrying(progress);
+    },
+
+    /** A stick is configured and the scan does not find it. The configured
+     * path is part of the question: on a fresh install
+     * `configured_device_present` is `false` too, with nothing to be
+     * missing. */
+    zigbeeStickMissing(present) {
+      return present === false && Boolean(this.zigbee?.configured_path);
     },
 
     async saveSettings() {

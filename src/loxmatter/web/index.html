@@ -2372,10 +2372,18 @@
                     @change="radiosDirty = true"
                     :disabled="radios.sidecar !== 'ready' || radiosJobRunning() || radiosBusy"
                   >
+                    <!-- `option.zigbee` is the server's `is_zigbee`: the stick
+                         the Zigbee row below is set up with, which
+                         `POST /api/radios` refuses for Thread. Listed and
+                         disabled rather than dropped, the way the Zigbee
+                         row lists the Thread stick. -->
                     <template x-for="option in radiosThreadOptions()" :key="option.value">
                       <option
                         :value="option.value"
-                        x-text="option.label + (option.inUse ? ' · ' + t('web.radios.in_use') : '')"
+                        :disabled="option.zigbee"
+                        x-text="option.label
+                          + (option.inUse ? ' · ' + t('web.radios.in_use') : '')
+                          + (option.zigbee ? ' · ' + t('web.radios.thread_option_zigbee') : '')"
                       ></option>
                     </template>
                   </select>
@@ -2529,13 +2537,21 @@
                   x-text="t('web.radios.apply')"
                 ></button>
               </div>
+              <!-- Which stick Thread holds and how to free it. Its own line,
+                   because the reason at the end of the option label is the
+                   part a narrow native select cuts off. -->
+              <p class="hint" x-show="zigbeeThreadHint()" x-cloak x-text="zigbeeThreadHint()"></p>
               <p class="hint" x-text="t('web.radios.zigbee_hint')"></p>
+              <!-- No `role="status"` on the visible line: it carries an
+                   attempt counter that changes on every retry, and a live
+                   region re-read the whole failure sentence each time. The
+                   hidden one below speaks only when the news changes. -->
               <p
                 class="hint radios-zigbee-progress"
                 :class="{ 'danger-text': zigbeeProgressFailing(zigbee.progress, zigbee.configured_device_present) }"
-                role="status"
                 x-text="zigbeeProgressText(zigbee.progress, zigbee.configured_device_present)"
               ></p>
+              <p class="visually-hidden" role="status" x-text="zigbeeAnnouncement"></p>
               <p class="hint" x-show="zigbeeSelectedOption()?.unrecognised" x-cloak
                  x-text="t('web.radios.fingerprint_unknown')"></p>
               <details

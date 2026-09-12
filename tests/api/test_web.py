@@ -32,6 +32,7 @@ import json
 import re
 import shutil
 import subprocess
+from html.parser import HTMLParser
 from pathlib import Path
 from xml.etree import ElementTree
 
@@ -1145,7 +1146,10 @@ def _app_state(setup: str = "", translations: dict[str, str] | None = None) -> d
     timestamps would both render as "web.devices.last_heard".
     """
     fill_strings = f"translationStrings = {json.dumps(translations)};\n" if translations else ""
-    tail = json.dumps("\n" + fill_strings + "return app();")
+    # `t` is a global in the browser, and markup expressions call it by
+    # name; inside this `new Function` it is a local, so the binding tests
+    # at the end of this file would not find it without the export.
+    tail = json.dumps("\n" + fill_strings + "globalThis.t = t;\nreturn app();")
     script = f"""
       const fs = require("node:fs");
       const src = fs.readFileSync({str(WEB_DIR / "app.js")!r}, "utf8");
@@ -10502,7 +10506,7 @@ def test_the_thread_stick_cannot_be_applied_even_as_a_changed_draft():
             f"state.zigbeeDraft.path = {json.dumps(ITEAD)};"
             "out.itead = [state.zigbeeRadioChanged(), state.zigbeeCanApply()];"
             "state.zigbee.progress = { state: 'loading_quirks', attempts: 0 };"
-            "out.itead_while_working = state.zigbeeCanApply();"
+            "out.itead_while_first_attempt = state.zigbeeCanApply();"
             "state.zigbee.progress = { state: 'failed', attempts: 2, error: 'x' };"
             "out.itead_while_failed = state.zigbeeCanApply();"
             "console.log(JSON.stringify(out));"
@@ -10510,25 +10514,31 @@ def test_the_thread_stick_cannot_be_applied_even_as_a_changed_draft():
     )
     assert values["mg24"] == [True, False]
     assert values["itead"] == [True, True]
-    # A running attempt blocks a second change; a failed one does not -
+    # A first attempt blocks a second change; a failed one does not -
     # picking another stick is exactly what a failing one calls for.
-    assert values["itead_while_working"] is False
+    # (`test_a_failing_stick_can_be_corrected_while_the_bridge_retries_it`
+    # covers the retries in between.)
+    assert values["itead_while_first_attempt"] is False
     assert values["itead_while_failed"] is True
 
 
 @pytest.mark.skipif(NODE is None, reason="node is required for this test")
-def test_the_zigbee_row_polls_by_state_at_two_cadences():
+def test_the_zigbee_row_polls_by_state_at_three_cadences():
     """All six `ConnectionState` members, through the REAL
     `loadZigbeeRadio()` and the timer it arms - not just the predicate.
 
     A failed attempt is settled for `zigbeeRadioPolling()` but NOT for the
     supervisor, which retries forever; a card that stopped asking there
     would never show a replugged stick coming back. So `failed` keeps a
-    slow timer, the three working states a fast one, and `idle` and
-    `connected` none.
+    slow timer and the three working states a fast one.
 
-    Fault to prove it: return `null` for `failed` in
-    `zigbeeRadioPollInterval()` (the `failed` row goes to `null`), or drop
+    `connected` keeps a slower one still. It used to keep none, so a stick
+    pulled out at rest - or a link zigpy reported lost - went on reading
+    "Connected" until Rescan or a reload. Only `idle`, nothing configured,
+    has nothing that could change by itself.
+
+    Fault to prove it: return `null` for `failed` or for `connected` in
+    `zigbeeRadioPollInterval()` (that row goes to `null`), or drop
     `applying` from `ZIGBEE_WORKING_STATES` (the `applying` row does)."""
     values = _app_state(
         _zigbee_state(
@@ -10553,13 +10563,14 @@ def test_the_zigbee_row_polls_by_state_at_two_cadences():
     )
     working = _js_constant("ZIGBEE_WORKING_POLL_MS")
     failed = _js_constant("ZIGBEE_FAILED_POLL_MS")
-    assert working < failed
+    connected = _js_constant("ZIGBEE_CONNECTED_POLL_MS")
+    assert working < failed < connected
     assert values == {
         "idle": None,
         "applying": working,
         "loading_quirks": working,
         "opening_radio": working,
-        "connected": None,
+        "connected": connected,
         "failed": failed,
     }
 
@@ -10672,8 +10683,8 @@ def test_an_older_zigbee_answer_cannot_overwrite_a_newer_one():
 def test_a_retry_does_not_claim_to_be_the_first_connection():
     """The supervisor walks `loading_quirks` -> `opening_radio` again on
     every retry, with `attempts` still counting the failures before it. The
-    first-attempt wording ("the first connection takes a few seconds") is
-    untrue from the second attempt on.
+    first-attempt wording ("Preparing device support - this can take a few
+    seconds") says nothing about the failures before it.
 
     Fault to prove it: drop the `progress.attempts > 0` branch in
     `zigbeeProgressText()`."""
@@ -10693,20 +10704,22 @@ def test_a_retry_does_not_claim_to_be_the_first_connection():
 
 
 @pytest.mark.skipif(NODE is None, reason="node is required for this test")
-def test_a_retry_keeps_the_reason_the_last_attempt_failed():
+def test_a_retry_shows_the_reason_the_bridge_carries_through_it():
     """Measured in the browser harness (12 September 2026): each retry
-    starts with `error: null`, so the failure sentence disappeared for the
+    started with `error: null`, so the failure sentence disappeared for the
     length of every retry and came back when it failed again - a three-line
-    message blinking out and in every few seconds and moving the Advanced
-    disclosure below it by a line each time. The row keeps the last reason
-    through the retry, and lets it go once the stick connects.
+    message blinking out and in every few seconds. The bridge now carries
+    the previous attempt's reason through the retry (`ConnectionProgress`),
+    translated per answer, and the row shows it as "Previous attempt".
 
-    Through the REAL `loadZigbeeRadio()`, because the carrying happens
-    there, not in the text helper.
+    It used to be a copy the PAGE kept from the last `failed` poll, which a
+    reload lost and which could not follow a language switch. So this runs
+    the REAL `loadZigbeeRadio()` with retry answers that carry the error,
+    and one that does not.
 
-    Fault to prove it: drop the `this.noteZigbeeFailure(body.progress);`
-    call from `loadZigbeeRadio()` (the retry row loses its reason), or
-    never clear `zigbeeLastError` (the connected row keeps it)."""
+    Fault to prove it: read a page-side copy instead of `progress.error` in
+    `zigbeeProgressText()` (the retry rows lose their reason), or drop the
+    `progress.error` branch (they read "Trying again" alone)."""
     values = _app_state(
         _zigbee_state(
             "globalThis.setTimeout = () => 1; globalThis.clearTimeout = () => {};"
@@ -10714,7 +10727,7 @@ def test_a_retry_keeps_the_reason_the_last_attempt_failed():
             f"base.configured_path = {json.dumps(ITEAD)}; base.configured_device_present = true;"
             "const answers = ["
             "  { state: 'failed', attempts: 1, error: 'The stick did not answer.' },"
-            "  { state: 'opening_radio', attempts: 1, error: null },"
+            "  { state: 'opening_radio', attempts: 1, error: 'The stick did not answer.' },"
             "  { state: 'connected', attempts: 0, error: null },"
             "  { state: 'opening_radio', attempts: 1, error: null },"
             "];"
@@ -10733,7 +10746,7 @@ def test_a_retry_keeps_the_reason_the_last_attempt_failed():
     )
     assert values == [
         "The stick did not answer. (attempt 1 - the bridge keeps trying)",
-        "Trying again (attempt 2). Last attempt: The stick did not answer.",
+        "Trying again (attempt 2). Previous attempt: The stick did not answer.",
         "Connected",
         "Trying again (attempt 2)",
     ]
@@ -10869,3 +10882,761 @@ def test_a_load_that_finishes_after_leaving_settings_arms_no_timer():
         )
     )
     assert values == {"armed": 0, "timer": None}
+
+
+# ---------------------------------------------------------------------------
+# The Zigbee row's bindings, run rather than read (review of Task 13).
+#
+# Seventeen mutations of the row survived the tests above: each one broke a
+# binding in index.html or the call that wires it, and every test above
+# either called the helper directly or checked that a substring was
+# present. The tests below take the REAL attribute out of the served page -
+# its `x-if`, `x-show`, `:disabled`, `x-model`, `@change`, `@click` - and
+# run it against the real `app()` object in node the way Alpine does (the
+# state as scope, a handler as a statement, `x-model` as an assignment).
+# No DOM library: the repository has none, and a browser runtime is not a
+# test dependency (pyproject.toml says why for playwright). What this
+# cannot see is layout; the browser harness in the task report covers that.
+# ---------------------------------------------------------------------------
+
+_VOID_ELEMENTS = frozenset(
+    {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "source", "wbr"}
+)
+
+
+class _ServedElements(HTMLParser):
+    """Every element of the served page as `(tag, attributes, ancestors)`,
+    where `ancestors` is the `(tag, attributes)` chain from `<html>` down.
+
+    Enough of an HTML tree for one question the regex helpers above cannot
+    answer: which conditions an element renders under."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.elements: list[tuple[str, dict[str, str], list[tuple[str, dict[str, str]]]]] = []
+        self._open: list[tuple[str, dict[str, str]]] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        attributes = {name: value or "" for name, value in attrs}
+        self.elements.append((tag, attributes, list(self._open)))
+        if tag not in _VOID_ELEMENTS:
+            self._open.append((tag, attributes))
+
+    def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        self.elements.append((tag, {name: value or "" for name, value in attrs}, list(self._open)))
+
+    def handle_endtag(self, tag: str) -> None:
+        for index in range(len(self._open) - 1, -1, -1):
+            if self._open[index][0] == tag:
+                del self._open[index:]
+                return
+
+
+def _served_elements(
+    markup: str,
+) -> list[tuple[str, dict[str, str], list[tuple[str, dict[str, str]]]]]:
+    parser = _ServedElements()
+    parser.feed(_without_comments(markup))
+    return parser.elements
+
+
+def _zigbee_row_element(
+    markup: str, tag: str, **wanted: str
+) -> tuple[dict[str, str], list[tuple[str, dict[str, str]]]]:
+    """The one `tag` inside the Zigbee row whose attributes include every
+    `wanted` pair. Keys are spelled for Python: `_` for `-`, a leading
+    `at_` for `@`, a leading `colon_` for `:`, and a trailing `_` dropped
+    (`class_`). Exactly one, or the test fails on the extraction."""
+
+    def spelled(name: str) -> str:
+        if name.startswith("at_"):
+            return "@" + name[3:].replace("_", "-")
+        if name.startswith("colon_"):
+            return ":" + name[6:].replace("_", "-")
+        return name.rstrip("_").replace("_", "-")
+
+    matches = [
+        (attributes, ancestors)
+        for element_tag, attributes, ancestors in _served_elements(markup)
+        if element_tag == tag
+        and any(
+            candidate.get("class") == "radios-zigbee"
+            for candidate in [attributes, *(ancestor for _, ancestor in ancestors)]
+        )
+        and all(attributes.get(spelled(name)) == value for name, value in wanted.items())
+    ]
+    assert len(matches) == 1, (
+        f"expected one <{tag}> {wanted} in the Zigbee row, found {len(matches)}"
+    )
+    return matches[0]
+
+
+# `run(expr)` evaluates an attribute expression, `exec(statement)` runs a
+# handler - both with the state as scope, the way Alpine evaluates them.
+_BINDINGS_JS = """
+const run = (expr, extra = {}) =>
+  new Function('s', 'extra', 'with (extra) { with (s) { return (' + expr + '); } }')(state, extra);
+const exec = (statement, extra = {}) =>
+  new Function('s', 'extra', 'with (extra) { with (s) { ' + statement + ' } }')(state, extra);
+globalThis.setTimeout = () => 1; globalThis.clearTimeout = () => {};
+globalThis.setInterval = () => 1; globalThis.clearInterval = () => {};
+"""
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_opening_settings_loads_the_zigbee_row():
+    """The row is `x-if="zigbee"`, and only a load fills `zigbee` - so a
+    Settings view that forgot to load it rendered no Zigbee row at all,
+    and every helper test above stayed green.
+
+    Through the REAL `selectView('settings')`, with `request` recording
+    what it was asked.
+
+    Fault to prove it: drop `await this.loadZigbeeRadio();` from
+    `selectView()`."""
+    values = _app_state(
+        _BINDINGS_JS
+        + _zigbee_state(
+            "globalThis.window = { location: { hash: '' }, history: { replaceState() {} } };"
+            "const body = JSON.parse(JSON.stringify(state.zigbee));"
+            "state.zigbee = null;"
+            "const asked = [];"
+            "state.request = async (method, url) => {"
+            "  asked.push(method + ' ' + url);"
+            "  if (url === '/api/zigbee/radio') return body;"
+            f"  if (url === '/api/radios') return {json.dumps(RADIOS_READY)};"
+            "  return { bridge_ip: '', udp_port: 7000, listen_port: 8080 };"
+            "};"
+            "(async () => {"
+            "  await state.selectView('settings');"
+            "  console.log(JSON.stringify({ asked, rendered: Boolean(run('zigbee')) }));"
+            "})();"
+        )
+    )
+    assert "GET /api/zigbee/radio" in values["asked"]
+    assert values["rendered"] is True
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+async def test_the_select_bindings_keep_a_choice_through_the_next_poll(api):
+    """What the user picks in the select survives the poll that follows -
+    the row polls every second during an attempt, and a poll that resynced
+    the draft snapped the choice back under their hand.
+
+    `zigbeeDirty` is what stops the resync, and the select's `@change` is
+    the only thing that sets it. So this runs the SERVED `x-model` (as the
+    assignment Alpine makes) and the SERVED `@change`, then a real poll.
+
+    Fault to prove it: drop `@change="zigbeeSelectionChanged()"` from the
+    Zigbee select (the extraction finds no handler), or bind it to
+    something that does not mark the draft dirty (the poll puts the
+    configured stick back)."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+    select, _ancestors = _zigbee_row_element(page, "select", x_model="zigbeeDraft.path")
+    assert select.get("@change"), "the Zigbee select has no @change"
+    values = _app_state(
+        _BINDINGS_JS
+        + _zigbee_state(
+            "const body = JSON.parse(JSON.stringify(state.zigbee));"
+            f"body.configured_path = {json.dumps(ITEAD)}; body.configured_device_present = true;"
+            "state.request = async () => body;"
+            "(async () => {"
+            "  await state.loadZigbeeRadio();"
+            f"  exec({json.dumps(select['x-model'])} + ' = __value', {{ __value: '' }});"
+            f"  exec({json.dumps(select['@change'])});"
+            "  await state.loadZigbeeRadio();"
+            "  console.log(JSON.stringify({ path: state.zigbeeDraft.path,"
+            "    applicable: !run(" + json.dumps("zigbeeBusy") + ") && state.zigbeeCanApply() }));"
+            "})();"
+        )
+    )
+    assert values == {"path": "", "applicable": True}
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+async def test_the_advanced_bindings_make_an_edit_a_change_apply_can_send(api):
+    """The case the Advanced disclosure exists for: the configured stick is
+    unrecognised, it is failing, and the user corrects its radio type or
+    baud rate. The path does not change, so ONLY the Advanced handlers can
+    turn that edit into something Apply will send.
+
+    Runs the SERVED `x-model` and `@change` of the radio-type select and the
+    SERVED `x-model.number` and `@input` of the baud-rate field, then the
+    SERVED `:disabled` of the Apply button.
+
+    Fault to prove it: drop `@change="zigbeeAdvancedChanged()"` or
+    `@input="zigbeeAdvancedChanged()"` (Apply stays disabled after the
+    edit), or have `zigbeeRadioChanged()` ignore `zigbeeAdvancedEdited`."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+    radio_type, _ = _zigbee_row_element(page, "select", x_model="zigbeeDraft.radioType")
+    baudrate, _ = _zigbee_row_element(page, "input", type="number")
+    apply_button, _ = _zigbee_row_element(page, "button", class_="primary")
+    values = _app_state(
+        _BINDINGS_JS
+        + _zigbee_state(
+            "const body = JSON.parse(JSON.stringify(state.zigbee));"
+            f"body.configured_path = {json.dumps(UNKNOWN_STICK)}; body.configured_device_present = true;"
+            "body.configured_radio_type = 'ezsp'; body.configured_baudrate = 115200;"
+            "body.progress = { state: 'failed', attempts: 3, error: 'no answer', changed_at: 'x' };"
+            "state.request = async () => body;"
+            "(async () => {"
+            "  await state.loadZigbeeRadio();"
+            f"  const disabled = () => run({json.dumps(apply_button[':disabled'])});"
+            "  const before = disabled();"
+            f"  exec({json.dumps(radio_type['x-model'])} + ' = __value', {{ __value: 'znp' }});"
+            f"  exec({json.dumps(radio_type.get('@change', ''))});"
+            "  const afterType = disabled();"
+            "  await state.loadZigbeeRadio();"
+            "  const afterPoll = [disabled(), state.zigbeeDraft.radioType];"
+            "  state.zigbeeAdvancedEdited = false; state.zigbeeDirty = false;"
+            "  state.zigbeeDraft.radioType = 'ezsp';"
+            f"  exec({json.dumps(baudrate['x-model.number'])} + ' = __value', {{ __value: 38400 }});"
+            f"  exec({json.dumps(baudrate.get('@input', ''))});"
+            "  const afterBaud = disabled();"
+            "  console.log(JSON.stringify({ before, afterType, afterPoll, afterBaud,"
+            "    body: state.zigbeeRequestBody() }));"
+            "})();"
+        )
+    )
+    assert values["before"] is True
+    assert values["afterType"] is False
+    assert values["afterPoll"] == [False, "znp"]
+    assert values["afterBaud"] is False
+    assert values["body"] == {"path": UNKNOWN_STICK, "radio_type": "ezsp", "baudrate": 38400}
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+async def test_the_apply_error_banner_binding_shows_the_refusal_and_keeps_it(api):
+    """The existing checks read that the banner's `x-text` names
+    `zigbeeApplyError`; a banner whose `x-show` was `false` passed them
+    while never appearing. This runs the SERVED `x-show` after a real
+    refused Apply and after the poll that follows it.
+
+    Fault to prove it: set the banner's `x-show` to `false`, or to
+    `zigbeeError`."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+    banner, _ = _zigbee_row_element(page, "p", x_text="zigbeeApplyError")
+    values = _app_state(
+        _BINDINGS_JS
+        + _zigbee_state(
+            "state.view = 'settings';"
+            f"state.zigbeeDraft.path = {json.dumps(ITEAD)}; state.zigbeeDirty = true;"
+            "const body = JSON.parse(JSON.stringify(state.zigbee));"
+            "state.request = async (method) => {"
+            "  if (method === 'PUT') throw new Error('This stick is in use for Thread.');"
+            "  return body;"
+            "};"
+            f"const shown = () => Boolean(run({json.dumps(banner['x-show'])}));"
+            "(async () => {"
+            "  const idle = shown();"
+            "  await state.applyZigbeeRadio();"
+            "  const refused = shown();"
+            "  await state.loadZigbeeRadio();"
+            "  console.log(JSON.stringify({ idle, refused, afterPoll: shown(),"
+            f"    text: run({json.dumps(banner['x-text'])}) }}));"
+            "})();"
+        )
+    )
+    assert values == {
+        "idle": False,
+        "refused": True,
+        "afterPoll": True,
+        "text": "This stick is in use for Thread.",
+    }
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+async def test_a_fresh_install_shows_no_missing_stick(api):
+    """A fresh install reports `configured_device_present: false` too -
+    there is nothing configured to be present. The "not plugged in"
+    sentence, in red, is for a stick that IS configured and gone; on a
+    fresh install it would tell a new user to plug back in something they
+    never had.
+
+    Runs the SERVED `x-text` and `:class` of the progress line.
+
+    Fault to prove it: drop the `configured_path` half of the check in
+    `zigbeeStickMissing()`."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+    line, _ = _zigbee_row_element(page, "p", class_="hint radios-zigbee-progress")
+    values = _app_state(
+        _BINDINGS_JS
+        + _zigbee_state(
+            "const out = {};"
+            f"out.freshText = run({json.dumps(line['x-text'])});"
+            f"out.freshClass = run({json.dumps(line[':class'])});"
+            f"state.zigbee.configured_path = {json.dumps(ITEAD)};"
+            "state.zigbee.progress = { state: 'failed', attempts: 2, error: 'gone' };"
+            f"out.goneText = run({json.dumps(line['x-text'])});"
+            f"out.goneClass = run({json.dumps(line[':class'])});"
+            "console.log(JSON.stringify(out));"
+        ),
+        translations=_web_strings(),
+    )
+    assert not values["freshText"]
+    assert values["freshClass"] == {"danger-text": False}
+    assert values["goneText"].startswith("The chosen stick is not plugged in")
+    assert values["goneClass"] == {"danger-text": True}
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+async def test_the_zigbee_apply_button_puts_to_its_own_endpoint(api):
+    """Spec Correction 3, through the button itself: the row's Apply goes to
+    `PUT /api/zigbee/radio` and never to `/api/radios`, whose sidecar job
+    recreates the container the page is talking to.
+
+    Runs the SERVED `@click` against a recording `request`. The source
+    check above (`test_applying_the_zigbee_row_never_sends_a_radios_request`)
+    only reads `radiosRequestBody()`; a button pointed at
+    `confirmApplyRadios()` - or an `applyZigbeeRadio()` that posted to
+    `/api/radios` - passed it.
+
+    Fault to prove it: send the Zigbee request to `/api/radios` in
+    `applyZigbeeRadio()`, or point the button's `@click` at the radios
+    Apply."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+    button, _ = _zigbee_row_element(page, "button", class_="primary")
+    values = _app_state(
+        _BINDINGS_JS
+        + f"state.radios = {json.dumps(RADIOS_READY)};"
+        + _zigbee_state(
+            f"state.zigbeeDraft.path = {json.dumps(ITEAD)}; state.zigbeeDirty = true;"
+            "const body = JSON.parse(JSON.stringify(state.zigbee));"
+            "const sent = [];"
+            "state.request = async (method, url, payload) => {"
+            "  sent.push([method, url, payload ?? null]);"
+            "  return method === 'GET' ? body : { progress: body.progress, id: 'job' };"
+            "};"
+            "(async () => {"
+            f"  await run({json.dumps(button['@click'])});"
+            "  console.log(JSON.stringify(sent.filter(([method]) => method !== 'GET')));"
+            "})();"
+        )
+    )
+    assert values == [["PUT", "/api/zigbee/radio", {"path": ITEAD}]]
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+async def test_the_zigbee_row_renders_without_the_radios_sidecar(api):
+    """The row reads an endpoint the bridge answers itself, so a missing or
+    outdated updater sidecar - `radios` never loaded - must not hide it.
+    A substring check could not tell whether the row sits inside
+    `<template x-if="radios">`; this evaluates EVERY `x-if` and `x-show`
+    the row renders under, with `radios` null.
+
+    The same chain with `zigbee` null must NOT render, which is what keeps
+    the check from passing on an extraction that found no conditions.
+
+    Fault to prove it: move the Zigbee `<template>` inside the
+    `x-if="radios"` block."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+    _row, ancestors = _zigbee_row_element(page, "div", class_="radios-zigbee")
+    conditions = [
+        attributes[name]
+        for _tag, attributes in ancestors
+        for name in ("x-if", "x-show")
+        if name in attributes
+    ]
+    values = _app_state(
+        _BINDINGS_JS
+        + _zigbee_state(
+            "state.radios = null; state.view = 'settings';"
+            "state.stringsReady = true; state.authenticated = true;"
+            f"const conditions = {json.dumps(conditions)};"
+            "const renders = () => conditions.every((condition) => Boolean(run(condition)));"
+            "const withoutSidecar = renders();"
+            "state.zigbee = null;"
+            "console.log(JSON.stringify({ withoutSidecar, withoutZigbee: renders() }));"
+        )
+    )
+    assert values == {"withoutSidecar": True, "withoutZigbee": False}
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+async def test_a_configured_stick_the_scan_lost_stays_the_selected_option(api):
+    """A native `<select>` whose value matches no `<option>` shows its first
+    one - here "No Zigbee stick", a setting nobody made, while the bridge
+    keeps retrying the real one. So the configured stick keeps an option of
+    its own when the scan no longer finds it.
+
+    Runs the SERVED `x-for` and `x-text` of the Zigbee `<option>` and the
+    SERVED `x-model` of the select, and asks which option the select would
+    show.
+
+    Fault to prove it: drop the configured-but-missing option from
+    `zigbeeRadioOptions()`."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+    select, _ = _zigbee_row_element(page, "select", x_model="zigbeeDraft.path")
+    loop, _ = _zigbee_row_element(page, "template", x_for="option in zigbeeRadioOptions()")
+    option, _ = _zigbee_row_element(
+        page, "option", colon_value="option.value", colon_disabled="option.disabled"
+    )
+    source = loop["x-for"].split(" in ", 1)[1]
+    values = _app_state(
+        _BINDINGS_JS
+        + _zigbee_state(
+            "const body = JSON.parse(JSON.stringify(state.zigbee));"
+            "body.serial = body.serial.filter((stick) => !stick.path.includes('Itead'));"
+            f"body.configured_path = {json.dumps(ITEAD)}; body.configured_device_present = false;"
+            "body.progress = { state: 'failed', attempts: 4, error: 'gone', changed_at: 'x' };"
+            "state.request = async () => body;"
+            "(async () => {"
+            "  await state.loadZigbeeRadio();"
+            f"  const value = run({json.dumps(select['x-model'])});"
+            f"  const shown = run({json.dumps(source)}).find((candidate) =>"
+            "    run(" + json.dumps(option[":value"]) + ", { option: candidate }) === value);"
+            "  console.log(JSON.stringify({ value, label: shown ? run("
+            + json.dumps(option["x-text"])
+            + ", { option: shown }) : null }));"
+            "})();"
+        ),
+        translations=_web_strings(),
+    )
+    assert values == {"value": ITEAD, "label": f"{ITEAD} (missing)"}
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+async def test_a_failing_stick_can_be_corrected_while_the_bridge_retries_it(api):
+    """The reviewer's case: an unrecognised stick is configured and failing,
+    and the user corrects its radio type under Advanced. Apply was enabled
+    in `failed` and disabled in `loading_quirks`/`opening_radio` of every
+    retry - so for most of the first minute the change the failure text
+    asks for was refused, silently. Choosing "No Zigbee stick" mid-retry
+    was refused the same way.
+
+    Blocked now only while a change is being carried out for the first
+    time: `applying`, or a first attempt (`attempts === 0`). The SERVED
+    `:disabled` of the Apply button, in each state.
+
+    Fault to prove it: block Apply in every working state again
+    (`zigbeeRadioPolling()` in `zigbeeCanApply()`)."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+    button, _ = _zigbee_row_element(page, "button", class_="primary")
+    values = _app_state(
+        _BINDINGS_JS
+        + _zigbee_state(
+            f"state.zigbee.configured_path = {json.dumps(UNKNOWN_STICK)};"
+            "state.zigbee.configured_device_present = true;"
+            f"state.zigbeeDraft.path = {json.dumps(UNKNOWN_STICK)};"
+            "state.zigbeeDraft.radioType = 'znp'; state.zigbeeAdvancedEdited = true;"
+            "state.zigbeeDirty = true;"
+            f"const enabled = () => !run({json.dumps(button[':disabled'])});"
+            "const out = {};"
+            "for (const [name, progress] of Object.entries({"
+            "  failed: { state: 'failed', attempts: 3, error: 'e' },"
+            "  retry_quirks: { state: 'loading_quirks', attempts: 3, error: 'e' },"
+            "  retry_opening: { state: 'opening_radio', attempts: 3, error: 'e' },"
+            "  first_quirks: { state: 'loading_quirks', attempts: 0, error: null },"
+            "  first_opening: { state: 'opening_radio', attempts: 0, error: null },"
+            "  applying: { state: 'applying', attempts: 0, error: null },"
+            "})) { state.zigbee.progress = progress; out[name] = enabled(); }"
+            "state.zigbee.progress = { state: 'opening_radio', attempts: 3, error: 'e' };"
+            "state.zigbeeDraft.path = ''; state.zigbeeAdvancedEdited = false;"
+            "out.none_mid_retry = enabled();"
+            "console.log(JSON.stringify(out));"
+        )
+    )
+    assert values == {
+        "failed": True,
+        "retry_quirks": True,
+        "retry_opening": True,
+        "first_quirks": False,
+        "first_opening": False,
+        "applying": False,
+        "none_mid_retry": True,
+    }
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_a_finished_radios_job_reloads_the_zigbee_row():
+    """Turning Thread off in the row above frees the MG24 for Zigbee - and
+    the Zigbee row kept it locked as "in use for Thread" until Rescan or
+    re-entering Settings, because nothing reloaded it.
+
+    The REAL `loadRadios()`: a job seen running and then `done` reloads the
+    Zigbee row once, and so does a job that was already `done` on the first
+    poll after its POST. An ordinary poll with nothing finishing does not
+    reload it - that would double every radios poll.
+
+    Fault to prove it: drop the `if (jobEnded) this.loadZigbeeRadio();`
+    line from `loadRadios()`."""
+    running = {**RADIOS_READY, "job": {"id": "j1", "phase": "otbr", "steps": ["otbr"]}}
+    done = {
+        **RADIOS_READY,
+        "current": {**RADIOS_READY["current"], "thread_enabled": False, "otbr_running": False},
+        "job": {"id": "j1", "phase": "done", "steps": ["otbr"], "error": None},
+    }
+    values = _app_state(
+        _BINDINGS_JS
+        + _zigbee_state(
+            "state.view = 'settings';"
+            "const zigbeeBody = JSON.parse(JSON.stringify(state.zigbee));"
+            "zigbeeBody.serial[0].is_thread = false; zigbeeBody.serial[0].selectable = true;"
+            "let zigbeeGets = 0; let radios;"
+            "state.request = async (method, url) => {"
+            "  if (url === '/api/zigbee/radio') { zigbeeGets += 1; return zigbeeBody; }"
+            "  return radios;"
+            "};"
+            "(async () => {"
+            "  const out = {};"
+            f"  radios = {json.dumps(RADIOS_READY)}; await state.loadRadios(); await state.loadRadios();"
+            "  out.quiet = zigbeeGets;"
+            f"  radios = {json.dumps(running)}; await state.loadRadios();"
+            "  out.running = zigbeeGets;"
+            f"  radios = {json.dumps(done)}; await state.loadRadios();"
+            "  await new Promise((resolve) => setImmediate(resolve));"
+            "  out.done = zigbeeGets;"
+            f"  radios = {json.dumps(done)}; await state.loadRadios();"
+            "  out.doneAgain = zigbeeGets;"
+            f"  out.mg24 = state.zigbeeRadioOptions().find((o) => o.value === {json.dumps(MG24)}).disabled;"
+            "  state.radios = null; zigbeeGets = 0; state.radiosPendingJobId = 'j1';"
+            f"  radios = {json.dumps(done)}; await state.loadRadios();"
+            "  out.fastJob = zigbeeGets;"
+            "  console.log(JSON.stringify(out));"
+            "})();"
+        )
+    )
+    assert values == {
+        "quiet": 0,
+        "running": 0,
+        "done": 1,
+        "doneAgain": 1,
+        "mg24": False,
+        "fastJob": 1,
+    }
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+async def test_the_thread_stick_hint_names_the_stick_and_the_way_out(api):
+    """The Thread stick is listed disabled with its reason at the END of
+    the option label - where a narrow native select cuts it off (measured
+    at 375 px in German: "… · in Verw"). And nothing on the card said how
+    to get it back. The line under the select says both, whenever the list
+    holds the Thread stick, and says nothing when it does not.
+
+    The SERVED `x-show`/`x-text` of that line.
+
+    Fault to prove it: remove the hint's `x-show` condition (it shows with
+    no Thread stick), or return `null` from `zigbeeThreadHint()`."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+    hint, _ = _zigbee_row_element(page, "p", x_text="zigbeeThreadHint()")
+    values = _app_state(
+        _BINDINGS_JS
+        + _zigbee_state(
+            "const out = {};"
+            f"out.locked = [Boolean(run({json.dumps(hint['x-show'])})), run({json.dumps(hint['x-text'])})];"
+            "state.zigbee.serial[0].is_thread = false; state.zigbee.serial[0].selectable = true;"
+            f"out.free = Boolean(run({json.dumps(hint['x-show'])}));"
+            "console.log(JSON.stringify(out));"
+        ),
+        translations=_web_strings(),
+    )
+    shown, text = values["locked"]
+    assert shown is True
+    assert text.startswith("SONOFF Zigbee Dongle Plus MG24 is in use for Thread")
+    assert "turn Thread off or move Thread to another stick" in text
+    assert values["free"] is False
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_a_zigbee_stick_thread_took_over_reads_as_one_claim():
+    """A stick set up for Zigbee that Thread was later moved onto read
+    "… · in use · in use for Thread" - two claims that seem to contradict
+    each other. It gets one suffix, and the hint names the conflict and
+    both ways out of it.
+
+    Fault to prove it: push `web.radios.in_use` for the configured stick
+    whether or not it is the Thread stick."""
+    values = _app_state(
+        _zigbee_state(
+            f"state.zigbee.configured_path = {json.dumps(MG24)};"
+            "state.zigbee.configured_device_present = true;"
+            "console.log(JSON.stringify({"
+            f"  label: state.zigbeeRadioOptions().find((o) => o.value === {json.dumps(MG24)}).label,"
+            "  hint: state.zigbeeThreadHint(),"
+            "}));"
+        ),
+        translations=_web_strings(),
+    )
+    assert values["label"] == "SONOFF Zigbee Dongle Plus MG24 · taken over by Thread"
+    assert values["hint"].startswith("SONOFF Zigbee Dongle Plus MG24 is set up for Zigbee")
+    assert "choose another stick for Zigbee here" in values["hint"]
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_the_german_retry_line_does_not_say_the_bridge_gave_up():
+    """ "Letzter Versuch" reads as "final attempt" - on a line whose whole
+    point (`web.radios.zigbee_failed_retrying`) is that the bridge never
+    gives up. Rendered with the real German table.
+
+    Fault to prove it: put "Letzter Versuch" back into
+    `web.radios.zigbee_retrying_after`."""
+    from loxmatter import i18n
+
+    i18n.set_language("de")
+    german = _web_strings()
+    i18n.set_language("en")
+    values = _app_state(
+        "console.log(JSON.stringify(state.zigbeeProgressText("
+        "  { state: 'opening_radio', attempts: 2, error: 'Der Stick antwortet nicht.' })));",
+        translations=german,
+    )
+    assert (
+        values
+        == "Neuer Verbindungsversuch (Versuch 3). Vorheriger Versuch: Der Stick antwortet nicht."
+    )
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_the_warm_up_line_is_true_for_a_reconnect_too():
+    """After a lost link the supervisor reconnects with `attempts` still 0,
+    so `loading_quirks` shows the first-attempt line - which used to say
+    "the first connection takes a few seconds". Both languages.
+
+    Fault to prove it: put "first connection" / "erste Verbindung" back
+    into `web.radios.zigbee_loading_quirks`."""
+    from loxmatter import i18n
+
+    lines = {}
+    for language in ("en", "de"):
+        i18n.set_language(language)
+        lines[language] = _app_state(
+            "console.log(JSON.stringify(state.zigbeeProgressText({ state: 'loading_quirks', attempts: 0 })));",
+            translations=_web_strings(),
+        )
+    i18n.set_language("en")
+    assert "first" not in lines["en"].lower()
+    assert "erste" not in lines["de"].lower()
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+async def test_the_retry_line_keeps_the_colour_of_the_failure_it_carries(api):
+    """The retry line carries the failure sentence of the `failed` line
+    either side of it, and was grey while that one was red - the same
+    words flipping colour every few seconds. The SERVED `:class`.
+
+    Fault to prove it: colour only `failed` in `zigbeeProgressFailing()`."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+    line, _ = _zigbee_row_element(page, "p", class_="hint radios-zigbee-progress")
+    values = _app_state(
+        _BINDINGS_JS
+        + _zigbee_state(
+            f"state.zigbee.configured_path = {json.dumps(ITEAD)};"
+            "state.zigbee.configured_device_present = true;"
+            "const out = {};"
+            "for (const [name, progress] of Object.entries({"
+            "  failed: { state: 'failed', attempts: 2, error: 'e' },"
+            "  retry: { state: 'opening_radio', attempts: 2, error: 'e' },"
+            "  first: { state: 'opening_radio', attempts: 0, error: null },"
+            "  connected: { state: 'connected', attempts: 0, error: null },"
+            "})) {"
+            "  state.zigbee.progress = progress;"
+            f"  out[name] = run({json.dumps(line[':class'])})['danger-text'];"
+            "}"
+            "console.log(JSON.stringify(out));"
+        )
+    )
+    assert values == {"failed": True, "retry": True, "first": False, "connected": False}
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+async def test_the_live_region_speaks_when_the_news_changes_not_the_counter(api):
+    """The progress line was `role="status"` and carries an attempt counter,
+    so a screen reader re-read a long failure sentence on every retry. The
+    visible line is no live region now; a hidden one is, bound to
+    `zigbeeAnnouncement`, which is written only when its text changes.
+
+    Through the REAL `loadZigbeeRadio()`, counting every write to the field
+    Alpine would re-render.
+
+    Fault to prove it: bind the live region to `zigbeeProgressText(...)`
+    (the markup check fails), put `role="status"` back on the visible line,
+    or write `zigbeeAnnouncement` on every load."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+    live = [
+        attributes
+        for tag, attributes, ancestors in _served_elements(page)
+        if attributes.get("role") == "status"
+        and any(ancestor.get("class") == "radios-zigbee" for _, ancestor in ancestors)
+    ]
+    assert len(live) == 1, live
+    assert live[0].get("x-text") == "zigbeeAnnouncement"
+    assert "radios-zigbee-progress" not in live[0].get("class", "")
+    values = _app_state(
+        _BINDINGS_JS
+        + _zigbee_state(
+            "const writes = [];"
+            "let stored = state.zigbeeAnnouncement;"
+            "Object.defineProperty(state, 'zigbeeAnnouncement', {"
+            "  get: () => stored, set: (value) => { writes.push(value); stored = value; } });"
+            "const base = JSON.parse(JSON.stringify(state.zigbee));"
+            f"base.configured_path = {json.dumps(ITEAD)}; base.configured_device_present = true;"
+            "const answers = ["
+            "  { state: 'failed', attempts: 1, error: 'No answer.' },"
+            "  { state: 'opening_radio', attempts: 1, error: 'No answer.' },"
+            "  { state: 'failed', attempts: 2, error: 'No answer.' },"
+            "  { state: 'failed', attempts: 3, error: 'No answer.' },"
+            "  { state: 'failed', attempts: 4, error: 'Busy.' },"
+            "  { state: 'connected', attempts: 0, error: null },"
+            "  { state: 'connected', attempts: 0, error: null },"
+            "];"
+            "(async () => {"
+            "  for (const progress of answers) {"
+            "    state.request = async () => ({ ...base, progress });"
+            "    await state.loadZigbeeRadio();"
+            "  }"
+            "  console.log(JSON.stringify(writes));"
+            "})();"
+        ),
+        translations=_web_strings(),
+    )
+    assert values == ["No answer.", "Busy.", "Connected"]
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+async def test_the_thread_row_offers_the_zigbee_stick_disabled_with_its_reason(api):
+    """The reverse of the Zigbee row's Thread lock. `POST /api/radios`
+    refuses the Zigbee stick for Thread, but the row offered it, the user
+    confirmed a restart dialog, and only then read the refusal. The row
+    lists it disabled, with the reason, from the server's `is_zigbee`.
+
+    The SERVED `:disabled` and `x-text` of the Thread `<option>`.
+
+    Fault to prove it: drop `:disabled="option.zigbee"` from the Thread
+    option, or read something other than `is_zigbee` for it."""
+    client, _, _ = api
+    page = _without_comments((await client.get("/")).text)
+    thread_option = next(
+        attributes
+        for tag, attributes, ancestors in _served_elements(page)
+        if tag == "option"
+        and any(
+            ancestor.get("x-for") == "option in radiosThreadOptions()" for _, ancestor in ancestors
+        )
+    )
+    radios = json.loads(json.dumps(RADIOS_READY))
+    radios["serial"][1]["is_zigbee"] = True
+    values = _app_state(
+        _BINDINGS_JS + f"state.radios = {json.dumps(radios)};"
+        "console.log(JSON.stringify(state.radiosThreadOptions().map((option) => ["
+        "  option.value,"
+        f"  Boolean(run({json.dumps(thread_option.get(':disabled', 'false'))}, {{ option }})),"
+        f"  run({json.dumps(thread_option['x-text'])}, {{ option }}),"
+        "])));",
+        translations=_web_strings(),
+    )
+    rows = {value: (disabled, label) for value, disabled, label in values}
+    assert rows["/dev/serial/by-id/usb-B"] == (True, "ttyACM0 · in use for Zigbee")
+    assert rows["/dev/serial/by-id/usb-A"][0] is False
+    assert rows[""][0] is False

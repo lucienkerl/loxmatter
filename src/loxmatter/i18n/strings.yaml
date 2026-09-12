@@ -513,8 +513,12 @@ api.errors.zigbee_not_connected:
 # user with a stick they can see in the Thread row two rows above and no
 # idea why they may not have it here.
 api.errors.zigbee_is_thread_stick:
-  en: "This stick is in use for Thread. Turn Thread off, or move it to another stick, before using this one for Zigbee."
-  de: "Dieser Stick wird für Thread verwendet. Schalte Thread ab oder wähle dort einen anderen Stick, bevor du diesen für Zigbee nutzt."
+  # The same advice as the card's own hint under the Zigbee select
+  # (`web.radios.zigbee_thread_stick_hint`), so a stale tab that posts
+  # anyway reads the sentence the current page already shows. "Sie", like
+  # every other sentence on the radios card.
+  en: "This stick is in use for Thread. Turn Thread off, or move Thread to another stick, in the Thread row - then this stick can be used for Zigbee."
+  de: "Dieser Stick wird für Thread verwendet. Schalten Sie Thread in der Thread-Zeile ab oder wählen Sie dort einen anderen Stick – dann lässt sich dieser Stick für Zigbee verwenden."
 api.errors.zigbee_unknown_device:
   # The same rule `POST /api/radios` already applies to the Thread device:
   # the bridge validates what it can see. Without it a typo becomes a zigpy
@@ -2041,6 +2045,11 @@ web.radios.rfkill_blocked:
 web.radios.option_blocked:
   en: "blocked"
   de: "gesperrt"
+web.radios.thread_option_zigbee:
+  # The Thread row's suffix for the stick the Zigbee row is set up with -
+  # the mirror of `web.radios.zigbee_is_thread_stick`.
+  en: "in use for Zigbee"
+  de: "für Zigbee in Verwendung"
 
 # --- The Zigbee coordinator row (Task 11-13) ---
 web.radios.zigbee_label:
@@ -2057,6 +2066,25 @@ web.radios.zigbee_is_thread_stick:
   # posts anyway.
   en: "in use for Thread"
   de: "für Thread in Verwendung"
+web.radios.zigbee_thread_took_over:
+  # The suffix for a stick that is set up for Zigbee AND in use for Thread -
+  # Thread was moved onto it afterwards. One suffix instead of "in use · in
+  # use for Thread", which read as two contradicting claims.
+  en: "taken over by Thread"
+  de: "von Thread belegt"
+web.radios.zigbee_thread_stick_hint:
+  # The line under the Zigbee select whenever the list holds the Thread
+  # stick. The option's own suffix is cut off by a narrow native select
+  # (measured at 375 px in German), so the reason and the way out live
+  # here, in full. {name} is the stick's name as the list shows it.
+  en: "{name} is in use for Thread, so it cannot be chosen here. To use it for Zigbee, turn Thread off or move Thread to another stick in the Thread row above."
+  de: "{name} wird für Thread verwendet und kann hier nicht gewählt werden. Um ihn für Zigbee zu nutzen, schalten Sie Thread in der Thread-Zeile oben ab oder wählen Sie dort einen anderen Stick."
+web.radios.zigbee_thread_took_over_hint:
+  # The same line when that stick is the one Zigbee is set up with: the
+  # bridge keeps trying to open a port the border router holds, and the
+  # user has a choice to make in either row.
+  en: "{name} is set up for Zigbee, but Thread is using it now. Turn Thread off or move Thread to another stick in the Thread row above, or choose another stick for Zigbee here."
+  de: "{name} ist für Zigbee eingerichtet, wird aber gerade von Thread verwendet. Schalten Sie Thread in der Thread-Zeile oben ab oder wählen Sie dort einen anderen Stick – oder wählen Sie hier einen anderen Stick für Zigbee."
 web.radios.fingerprint_unknown:
   en: "Not recognised - set the radio type and baud rate under Advanced"
   de: "Nicht erkannt – Funktyp und Baudrate unter Erweitert einstellen"
@@ -2072,9 +2100,10 @@ web.radios.zigbee_applying:
   de: "Änderung wird übernommen – der bisherige Funkstick wird freigegeben"
 web.radios.zigbee_loading_quirks:
   # The user is looking at a 9-15 s pause on a Pi and deserves to know it
-  # is expected, not a hang.
-  en: "Preparing device support - the first connection takes a few seconds"
-  de: "Geräteunterstützung wird vorbereitet – die erste Verbindung dauert ein paar Sekunden"
+  # is expected, not a hang. Not "the first connection": the same state
+  # opens the reconnect after a lost link, which is not a first anything.
+  en: "Preparing device support - this can take a few seconds"
+  de: "Geräteunterstützung wird vorbereitet – das kann einige Sekunden dauern"
 web.radios.zigbee_opening_radio:
   en: "Opening the stick"
   de: "Stick wird geöffnet"
@@ -2095,9 +2124,11 @@ web.radios.zigbee_retrying:
   de: "Neuer Verbindungsversuch (Versuch {attempt})"
 web.radios.zigbee_retrying_after:
   # The same retry, with the reason the previous attempt failed kept on
-  # screen - see `zigbeeLastError` in app.js.
-  en: "Trying again (attempt {attempt}). Last attempt: {error}"
-  de: "Neuer Verbindungsversuch (Versuch {attempt}). Letzter Versuch: {error}"
+  # screen (`ConnectionProgress.error` carries it through the retry).
+  # "Previous", not "last": "Letzter Versuch" reads as "final attempt" in
+  # German, and the supervisor never gives up.
+  en: "Trying again (attempt {attempt}). Previous attempt: {error}"
+  de: "Neuer Verbindungsversuch (Versuch {attempt}). Vorheriger Versuch: {error}"
 web.radios.zigbee_failed_unknown:
   # Only if a failed attempt ever arrives without its own sentence.
   en: "The Zigbee stick could not be opened"
