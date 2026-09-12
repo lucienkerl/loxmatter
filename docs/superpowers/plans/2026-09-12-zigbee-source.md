@@ -62,6 +62,8 @@ Every task's requirements implicitly include this section.
 
   The four parts cover `tests/` exactly, so **the pass counts must sum to the whole-suite total**. A sum that does not is evidence something was silently skipped — stop and report it. Baseline before this plan: **2063 passed, 2 skipped**.
 
+  **Measured baseline, 12 September 2026, after Task 1 landed (`f7b6b20`): 2069 passed, 2 skipped.** This number is authoritative and supersedes the arithmetic in Task 1's own steps, which predicted 2068 — Task 1 added six tests, not the five it estimated. Task 1 is complete and committed; its step text is left as the historical record rather than rewritten. Every forward-looking total in Tasks 2 onwards is counted from **2069**.
+
   `tests/zigbee` is listed in part A2 above because Task 1 creates it and Tasks 6-9 fill it with the largest suites in this plan — and those suites are, by this plan's own admission, the only evidence that will exist for the translation until a second stick is bought. A directory that no part names is a directory CI never runs. **The only run where `tests/zigbee` must be dropped from the A2 command is Task 1 Step 1**, the baseline, because the directory does not exist yet and pytest exits with `ERROR: file or directory not found`. From Task 1 Step 8 onwards it is always included.
 - **Every test that names a protection must be shown to catch it.** Introduce the stated fault, run the test, see it **FAIL**, revert, see it **PASS**, and paste both outputs into the task report. A reviewer on this branch found tests that passed with their stated fault in place; several had to be rewritten. A test that stays green with the fault in place is wrong.
 - **A Python test that fetches a page proves only that the file was served.** It proves nothing about Alpine bindings, and a markup-substring assertion cannot fail for a binding that is merely wrong. Any web task must use the techniques already in `tests/api/test_web.py`: `_app_state(...)` runs the real `app.js` in node, `_x_show_expr(markup, key)` and `_running_step_lis(markup)` extract the real expressions out of the served markup rather than retyping them, and `_js_constant(name)` reads a constant out of the file.
@@ -631,7 +633,7 @@ Expected: PASS, all tests in the file including the three new ones.
 
 - [ ] **Step 6: Prove each protection catches its fault.** Three faults, from the docstrings above: delete `c 166:* rmw`; add the rules to `matter-server`; drop `&uart-exclusive`. FAIL, revert, PASS, both outputs pasted.
 
-- [ ] **Step 7: Run the checks** (all five, four-part pytest). Total: **2071 passed, 2 skipped**.
+- [ ] **Step 7: Run the checks** (all five, four-part pytest). Total: **2072 passed, 2 skipped** (the measured 2069 after Task 1, plus the three tests above).
 
 - [ ] **Step 8: Commit**
 
@@ -1059,10 +1061,26 @@ Which stick is which, **without opening the port**. Probing is measured to cost 
 section 7, research A.1/A.4).
 
 Ported from Zigbee2MQTT's table, which is the only maintained one of its
-kind. Every row below is a real product; the two that matter most for this
-project are the SONOFF pair, because the maintainer's own MG24 shares its
-VID:PID with at least five other sticks and only the by-id string tells them
-apart."""
+kind. Every row below is a real product.
+
+The two rows that matter most are the ones MEASURED on the maintainer's Pi
+on 12 September 2026, because they are the whole argument for fingerprinting
+by name. Both of his sticks report `10c4:ea60` - a bare Silicon Labs CP210x
+UART bridge - and both sit at major 188. `lsusb` cannot tell them apart,
+`/dev/ttyUSB*` cannot tell them apart, and only the by-id string can:
+
+    usb-Itead_Sonoff_Zigbee_3.0_USB_Dongle_Plus_V2_e8bf...-if00-port0  (ttyUSB1)
+    usb-SONOFF_SONOFF_Dongle_Plus_MG24_e26a...-if00-port0              (ttyUSB0)
+
+The first is his ZIGBEE coordinator. The second is his THREAD stick, and
+`RADIO_DEVICE=/dev/ttyUSB0` in the live stack's `.env` confirms it. Note
+what that means for this module: the MG24 row below is CORRECT and stays -
+an MG24 genuinely is an EZSP coordinator, and is one for other people - so
+this table will happily fingerprint the maintainer's Thread stick as a
+usable Zigbee radio. That is not this module's bug to fix. Nothing here
+knows what an installation is currently USING a stick for; keeping the
+Thread stick out of the picker is Task 11's job, and it is done by resolved
+major:minor against the configured Thread device, not by model name."""
 
 from __future__ import annotations
 
@@ -1072,7 +1090,7 @@ from loxmatter.radios.fingerprints import ambiguous_vid_pids, match_fingerprint,
 from loxmatter.radios.inventory import SerialRadio
 
 
-def _stick(by_id: str, vid_pid: str, manufacturer: str | None = None) -> SerialRadio:
+def _stick(by_id: str, vid_pid: str | None, manufacturer: str | None = None) -> SerialRadio:
     return SerialRadio(
         path=f"/dev/serial/by-id/{by_id}",
         tty="ttyUSB0",
@@ -1081,6 +1099,16 @@ def _stick(by_id: str, vid_pid: str, manufacturer: str | None = None) -> SerialR
         serial=None,
         vid_pid=vid_pid,
     )
+
+
+# MEASURED on the maintainer's Raspberry Pi, 12 September 2026, verbatim
+# from `ls -l /dev/serial/by-id/`, which returns exactly these two entries.
+# They are the ONLY by-id strings in this suite known to exist; every other
+# row is shaped like a real one but was written for the plan.
+REAL_ITEAD = (
+    "usb-Itead_Sonoff_Zigbee_3.0_USB_Dongle_Plus_V2_e8bf16ad5953ef11844a28e0174bec31-if00-port0"
+)
+REAL_MG24 = "usb-SONOFF_SONOFF_Dongle_Plus_MG24_e26a7d9118f9ef118f7767135c2a50c9-if00-port0"
 
 
 @pytest.mark.parametrize(
@@ -1096,32 +1124,34 @@ def _stick(by_id: str, vid_pid: str, manufacturer: str | None = None) -> SerialR
         ),
         ("usb-Nabu_Casa_ZBT-2_abcd-if00", "303a:4001", "Nabu Casa", "ezsp", 460800, "hardware"),
         ("usb-Nabu_Casa_ZBT-2_abcd-if00", "303a:831a", "Nabu Casa", "ezsp", 460800, "hardware"),
+        # MEASURED, 12 September 2026: the maintainer's Zigbee coordinator,
+        # verbatim from `ls -l /dev/serial/by-id/`. `manufacturer` is passed
+        # as None on both measured rows because the sysfs `manufacturer`
+        # attribute was NOT captured - `lsusb` reported "Silicon Labs",
+        # which is the bridge chip's descriptor, not the product's. The
+        # ZBDongle-E V2 row carries no manufacturer constraint, so the value
+        # cannot affect the result; do not add such a constraint on the
+        # strength of an lsusb string that names the wrong vendor.
+        (REAL_ITEAD, "10c4:ea60", None, "ezsp", 115200, "software"),
+        # The CH9102 revision of the same product. Still invented.
         (
-            "usb-ITEAD_SONOFF_Zigbee_3.0_USB_Dongle_Plus_V2_9f1-if00",
+            "usb-Itead_Sonoff_Zigbee_3.0_USB_Dongle_Plus_V2_9f1c2d-if00-port0",
             "1a86:55d4",
-            "ITEAD",
+            None,
             "ezsp",
             115200,
             "software",
         ),
+        # MEASURED, 12 September 2026: the maintainer's THREAD stick. It is
+        # fingerprinted as a perfectly good EZSP coordinator, and that is
+        # the RIGHT answer for this module - an MG24 is one. What must never
+        # happen is offering it, and that is enforced in Task 11 against the
+        # configured Thread device, not here. Do not "fix" this by deleting
+        # the row: it would break the MG24 for every user who really does
+        # run one as their Zigbee coordinator.
+        (REAL_MG24, "10c4:ea60", None, "ezsp", 115200, "software"),
         (
-            "usb-ITEAD_SONOFF_Zigbee_3.0_USB_Dongle_Plus_V2_9f1-if00",
-            "10c4:ea60",
-            "ITEAD",
-            "ezsp",
-            115200,
-            "software",
-        ),
-        (
-            "usb-SONOFF_Zigbee_3.0_USB_Dongle_Plus_MG24_e26a-if00",
-            "10c4:ea60",
-            "SONOFF",
-            "ezsp",
-            115200,
-            "software",
-        ),
-        (
-            "usb-SONOFF_Zigbee_3.0_USB_Dongle_Max_MG24_77aa-if00",
+            "usb-SONOFF_Zigbee_3.0_USB_Dongle_Max_MG24_77aabb-if00-port0",
             "10c4:ea60",
             "SONOFF",
             "ezsp",
@@ -1129,15 +1159,49 @@ def _stick(by_id: str, vid_pid: str, manufacturer: str | None = None) -> SerialR
             "software",
         ),
         (
-            "usb-ITEAD_SONOFF_Zigbee_3.0_USB_Dongle_Plus_ab12-if00",
+            "usb-ITead_Sonoff_Zigbee_3.0_USB_Dongle_Plus_ab12cd34-if00-port0",
             "10c4:ea60",
             "ITEAD",
             "znp",
             115200,
             "software",
         ),
-        ("usb-SMLIGHT_SLZB-06M_1122-if00", "10c4:ea60", "SMLIGHT", "ezsp", 115200, "software"),
-        ("usb-SMLIGHT_SLZB-06p7_3344-if00", "10c4:ea60", "SMLIGHT", "znp", 115200, "software"),
+        (
+            "usb-SMLIGHT_SLZB-06M_1122-if00-port0",
+            "10c4:ea60",
+            "SMLIGHT",
+            "ezsp",
+            115200,
+            "software",
+        ),
+        (
+            "usb-SMLIGHT_SLZB-06p7_3344-if00-port0",
+            "10c4:ea60",
+            "SMLIGHT",
+            "znp",
+            115200,
+            "software",
+        ),
+        # The one genuine ordering hazard among the SMLIGHT rows: `SLZB-07`
+        # (EZSP) is tried BEFORE `SLZB-...07p7` (ZNP), and only the trailing
+        # `_` in `.*slzb-07(mg24)?_.*` keeps the EZSP row off this stick.
+        # Getting it wrong opens a ZNP stick as EZSP.
+        (
+            "usb-SMLIGHT_SLZB-07p7_5566-if00-port0",
+            "10c4:ea60",
+            "SMLIGHT",
+            "znp",
+            115200,
+            "software",
+        ),
+        (
+            "usb-SMLIGHT_SLZB-07_4455-if00-port0",
+            "10c4:ea60",
+            "SMLIGHT",
+            "ezsp",
+            115200,
+            "hardware",
+        ),
         (
             "usb-dresden_elektronik_ConBee_II_DE123-if00",
             "1cf1:0030",
@@ -1173,8 +1237,16 @@ def test_every_row_of_the_table_matches_its_own_stick(
 
 def test_the_shared_vid_pid_never_matches_on_its_own():
     """`10c4:ea60` is a plain Silicon Labs CP210x and is shared by at least
-    six sticks in this table, including the maintainer's SONOFF MG24. Z2M
-    refuses a VID:PID-only match for it and so does this.
+    six sticks in this table. Z2M refuses a VID:PID-only match for it and so
+    does this.
+
+    This is no longer an argument from the Z2M source: it is MEASURED. On
+    the maintainer's Pi, `lsusb` reports BOTH of his sticks as
+    `ID 10c4:ea60 Silicon Labs CP210x UART Bridge` - his Zigbee coordinator
+    and his live Thread border router - and both sit at major 188. On the
+    only hardware this project has, VID:PID is provably incapable of telling
+    a Zigbee coordinator from a Thread stick, so nothing may ever be decided
+    from it alone.
 
     Fault to prove it: allow the VID:PID-only match. The bare CP210x below
     is then reported as whichever `10c4:ea60` row happens to come first -
@@ -1215,19 +1287,64 @@ def test_the_matcher_never_opens_the_port():
     source = __import__("inspect").getsource(module)
     for forbidden in ("import serial", "import bellows", "import zigpy", "open("):
         assert forbidden not in source, forbidden
+
+
+def test_the_table_matches_whatever_case_the_kernel_used():
+    """MEASURED difference, 12 September 2026: the real stick spells itself
+    `Itead_Sonoff`, while every string invented for this plan spelled it
+    `ITEAD_SONOFF`. The matcher survives that only because
+    `match_fingerprint` lowercases the path before applying the patterns and
+    every pattern is written lowercase - which NO test pinned. A later
+    "simplification" that dropped the `.lower()` would have kept every
+    invented row green while silently losing the one coordinator the
+    maintainer actually owns.
+
+    Fault to prove it: remove `.lower()` from `radio.path.lower()` in
+    `match_fingerprint`. The mixed-case spelling below stops matching."""
+    for spelling in (
+        REAL_ITEAD,
+        REAL_ITEAD.upper(),
+        REAL_ITEAD.lower(),
+    ):
+        found = match_fingerprint(_stick(spelling, "10c4:ea60"))
+        assert found is not None, spelling
+        assert found.radio_type == "ezsp", spelling
+
+
+def test_the_two_sticks_on_the_maintainers_pi_are_told_apart_by_name_alone():
+    """The measurement this whole module exists for (12 September 2026).
+
+    Both sticks report `10c4:ea60` and both sit at major 188, so VID:PID,
+    `lsusb` and the device number are each incapable of separating them. A
+    matcher keyed on any of those would be a coin flip between his Zigbee
+    coordinator and his live Thread border router. Only the by-id name
+    works, which is why this table is keyed on it.
+
+    Both come back as EZSP coordinators, and that is the CORRECT answer
+    here: an MG24 genuinely is one, for anybody who runs it as one. Refusing
+    to OFFER the MG24 is Task 11's job and is decided against the configured
+    Thread device, never against this table.
+
+    Fault to prove it: key the matcher on `vid_pid` alone. Both sticks then
+    return the same row and the names compare equal."""
+    itead = match_fingerprint(_stick(REAL_ITEAD, "10c4:ea60"))
+    mg24 = match_fingerprint(_stick(REAL_MG24, "10c4:ea60"))
+    assert itead is not None and mg24 is not None
+    assert itead.name != mg24.name
+    assert (itead.radio_type, mg24.radio_type) == ("ezsp", "ezsp")
 ```
 
-Note for the implementer: the twelve by-id strings above are **shaped** like real ones but were written for this plan. Before relying on them, check each against the regexes in research A.1's table and against the real strings the repository already has. If a regex does not match the string as written here, the **string** is what is wrong — fix it and say so in the report; do not loosen a regex to accept a string this plan invented.
+**What is measured here and what is still invented.** `REAL_ITEAD` and `REAL_MG24` were read off the maintainer's Pi on 12 September 2026 and are verbatim; `ls -l /dev/serial/by-id/` returns exactly those two entries and nothing else. Every other by-id string in the table is **shaped** like a real one but was written for this plan. Before relying on an invented one, check it against the regexes in research A.1's table. If a regex does not match the string as written here, the **string** is what is wrong — fix it and say so in the report; do not loosen a regex to accept a string this plan invented.
 
-**The one REAL by-id string in this repository** appears three times (`tests/radios/test_inventory.py`, `tests/api/test_radios_api.py`, `tests/test_updater_radios_script.py`, all as the constant `SONOFF`) and is the maintainer's own stick:
+**Three findings from the measurement, already applied above — verify each rather than trusting this paragraph.**
 
-```
-usb-SONOFF_SONOFF_Dongle_Plus_MG24_e26a7d9118f9ef118f7767135c2a50c9-if00-port0
-```
+1. **Case is not a hazard, but nothing was pinning that.** The real stick spells itself `Itead_Sonoff`; every string this plan invented spelled it `ITEAD_SONOFF`. It matches anyway, because `match_fingerprint` lowercases `radio.path` and every pattern is written lowercase. The danger was never the data, it was that no test said so: with only upper-case rows, dropping the `.lower()` would have stayed green while losing the maintainer's coordinator. `test_the_table_matches_whatever_case_the_kernel_used` now pins it.
 
-Compare that against the invented MG24 row above and note two differences the invented strings do not show: the **vendor appears twice** (`SONOFF_SONOFF_`), and the string ends **`-if00-port0`**, not `-if00`. Neither is cosmetic — both sit inside the span that `re.fullmatch` has to cover. Add this exact string to the parametrised table as a thirteenth row so the one stick that certainly exists is the one certainly covered.
+2. **The serial length and the `-if00-port0` suffix are harmless**, because every pattern is bracketed by `.*`. Two rows are the exception and are the reason the SMLIGHT rows now carry four test strings instead of two: `.*slzb-07(mg24)?_.*` and `.*slzb-0(6p7|6p10|7p7)_.*` both end in `_.*`, so what follows the model number is load-bearing. `SLZB-07` (EZSP) is tried **before** `SLZB-07p7` (ZNP), and only that trailing `_` keeps the EZSP row off the ZNP stick. Verified: `usb-SMLIGHT_SLZB-07p7_5566-if00-port0` matches only the ZNP row, `usb-SMLIGHT_SLZB-07_4455-if00-port0` only the EZSP one.
 
-**Check the ZBDongle-P row against it first, before anything else in this task.** That row's pattern is `.*sonoff.*plus(?!_v2_)(?!.*mg24).*`, and it is the only row in the table whose correctness depends on a negative lookahead rather than on table order. Worked through by hand against the lowercased real path, the lookahead evaluates immediately after `plus`, where the remainder is `_mg24_e26a...`; `(?!.*mg24)` therefore fails, and — because the string contains only one `plus` — no backtracking rescues it, so the ZBDongle-P row correctly does **not** claim the MG24 stick. That is the answer this plan expects. **Verify it rather than trusting this paragraph**, because getting it wrong is not a cosmetic mismatch: ZNP is the one radio type whose `open()` toggles DTR/RTS and resets the chip, so a ZBDongle-P row that wrongly claims an EZSP stick resets the maintainer's coordinator every time the settings card is opened. If the lookahead does not behave as described, report it as a finding and fix the pattern — do not delete the lookahead, which is load-bearing for the genuine ZBDongle-P.
+3. **The ZBDongle-P lookahead behaves as the earlier draft predicted.** That row's pattern is `.*sonoff.*plus(?!_v2_)(?!.*mg24).*`, and it is the only row whose correctness rests on a negative lookahead rather than on table order. Checked against the lowercased real MG24 path: the lookahead evaluates immediately after `plus`, where the remainder is `_mg24_e26a...`, so `(?!.*mg24)` fails; because the string contains only one `plus`, no backtracking rescues it. The MG24 string matches **only** the `SONOFF Zigbee Dongle Plus MG24` row, and the real ITEAD string matches **only** `SONOFF ZBDongle-E V2`. Getting this wrong is not cosmetic: ZNP is the one radio type whose `open()` toggles DTR/RTS and resets the chip. The lookahead is load-bearing for the genuine ZBDongle-P — if it ever stops behaving as described, fix the pattern and report it; do not delete it.
+
+**What the measurement did NOT establish, and what must not be inferred from it.** The sysfs `manufacturer` attribute of either stick was not captured. `lsusb` reports both as `Silicon Labs`, which is the CP210x bridge chip's descriptor and not the product's, so it is not evidence about `SerialRadio.manufacturer`. Both measured rows therefore pass `manufacturer=None`, and neither row's `_Entry` carries a manufacturer constraint. **Do not add one** on the strength of an `lsusb` string that names the wrong vendor; if a manufacturer constraint is ever wanted for these rows, measure `/sys/.../manufacturer` on the Pi first.
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
@@ -1257,12 +1374,25 @@ its kind; the columns loxmatter already collects per stick
 (`radios.inventory.SerialRadio`) are exactly the ones it needs.
 
 **`10c4:ea60` must never match on VID:PID alone.** It is a plain Silicon
-Labs CP210x bridge, shared by at least six of the sticks below - including
-the maintainer's SONOFF MG24 - and Z2M explicitly refuses a VID:PID-only
-match for it. Only the by-id string tells them apart; a `10c4:ea60` with no
-telling by-id string is UNKNOWN, not a guess. `_AMBIGUOUS_VID_PIDS` plus the
-structural test in `tests/radios/test_fingerprints.py` keep that true for
-rows nobody has written yet.
+Labs CP210x bridge, shared by at least six of the sticks below, and Z2M
+explicitly refuses a VID:PID-only match for it. Only the by-id string tells
+them apart; a `10c4:ea60` with no telling by-id string is UNKNOWN, not a
+guess. `_AMBIGUOUS_VID_PIDS` plus the structural test in
+`tests/radios/test_fingerprints.py` keep that true for rows nobody has
+written yet.
+
+**This is measured, not inherited from Z2M.** On the maintainer's Pi
+(12 September 2026) `lsusb` reports BOTH attached sticks as
+`ID 10c4:ea60 Silicon Labs CP210x UART Bridge`, and both sit at major 188 -
+yet one is his Zigbee coordinator and the other is the radio his live Thread
+border router is running on. On the only hardware this project has, the
+USB vendor/product id cannot distinguish a Zigbee coordinator from a Thread
+stick, a serial console or a 3D printer. So: **never key anything on
+`vid_pid` alone, and never "improve" this matcher by doing so.** The
+vid_pid column narrows a candidate set; the by-id name decides. The
+`usb-Some_Other_CP210x_Bridge-if00` negative case in the test file is that
+rule's guard, and `test_the_two_sticks_on_the_maintainers_pi_are_told_apart_by_name_alone`
+is its measured witness.
 
 Flow control comes from this table too, not from a probe: bellows maps
 `None` to XON/XOFF and anything else to RTS/CTS, and ASH escapes 0x11/0x13,
@@ -1348,6 +1478,13 @@ _TABLE: Final[tuple[_Entry, ...]] = (
         flow_control="software",
         path_pattern=r".*sonoff.*plus_v2_.*",
     ),
+    # MEASURED CAUTION: this row matches the maintainer's own stick, which
+    # on his Pi is running THREAD, not Zigbee (`RADIO_DEVICE` points at it).
+    # The row is still correct - an MG24 is a real EZSP coordinator and is
+    # one for other users - and must NOT be deleted to protect him. This
+    # module answers "what radio does this chip speak", never "is this stick
+    # free to use". The second question is answered in `api/zigbee.py`
+    # against the configured Thread device, by resolved major:minor.
     _Entry(
         name="SONOFF Zigbee Dongle Plus MG24",
         vid_pids=frozenset({"10c4:ea60"}),
@@ -1482,9 +1619,11 @@ Note for the implementer: `re.fullmatch` against a pattern that starts and ends 
 - [ ] **Step 4: Run the tests to verify they pass**
 
 Run: `uv run pytest -q tests/radios/test_fingerprints.py`
-Expected: PASS, 16 passed (12 parametrised rows plus 4).
+Expected: PASS, 20 passed (14 parametrised rows plus 6).
 
-- [ ] **Step 5: Prove each protection catches its fault.** Four faults, from the docstrings: change the ZBDongle-P row to `ezsp`; allow the VID:PID-only match; return `DEFAULT_UNKNOWN` instead of `None`; add a `10c4:ea60` row with `path_pattern=None`. FAIL, revert, PASS, both pasted.
+- [ ] **Step 5: Prove each protection catches its fault.** Six faults, from the docstrings: change the ZBDongle-P row to `ezsp`; allow the VID:PID-only match; return `DEFAULT_UNKNOWN` instead of `None`; add a `10c4:ea60` row with `path_pattern=None`; remove the `.lower()` from `radio.path.lower()`; key the matcher on `vid_pid` alone. FAIL, revert, PASS, both pasted.
+
+  The last two are the ones the hardware measurement added, and the fifth is the subtle one: it must fail on `REAL_ITEAD` (spelled `Itead_Sonoff`) while the upper-case invented rows stay green. If removing `.lower()` turns **every** row red, the table is being matched case-sensitively somewhere else too — report that rather than reverting quietly.
 
 - [ ] **Step 6: Run the checks** (all five, four-part pytest).
 
@@ -3197,6 +3336,8 @@ EOF
 
 **Read Spec Correction 3 before starting.** The Zigbee stick is a **bridge-owned** setting, not a sidecar request: zigpy runs in-process, so the change is applied by reconnecting the source — instantly, with no container recreated and no other radio disturbed. The sidecar's two-half request is not touched.
 
+**This task is now backed by a hardware measurement, and it is the reason the task exists.** On the maintainer's Pi (12 September 2026) there are exactly two USB serial sticks. Both report `10c4:ea60`, both are major 188. One is his Zigbee coordinator; the other is an **MG24 that his Thread border router is currently running on**, confirmed by `RADIO_DEVICE=/dev/ttyUSB0`. Task 4's fingerprint table — correctly — reports that MG24 as a perfectly good EZSP Zigbee coordinator, because it is one. Nothing in the fingerprint layer can or should prevent it being offered. **This task is the only thing standing between the picker and a user selecting the radio their entire Thread network depends on.** Selecting it would take down every Thread device in the house. Treat the exclusion code below as the load-bearing part of this task, not as validation boilerplate.
+
 **Files:**
 - Create: `src/loxmatter/model/zigbee_settings_store.py`, `src/loxmatter/zigbee/runtime.py`, `src/loxmatter/api/zigbee.py`, `tests/model/test_zigbee_settings_store.py`, `tests/zigbee/test_zigbee_runtime.py`, `tests/api/test_zigbee_api.py`
 - Modify: `src/loxmatter/radios/inventory.py`, `src/loxmatter/model/store.py`, `src/loxmatter/loxone/server.py`, `src/loxmatter/cli.py`, `src/loxmatter/i18n/strings.yaml`
@@ -3208,6 +3349,9 @@ EOF
   - `loxmatter.zigbee.runtime.ZigbeeRuntime` — owns the live source and its supervisor task; `current()`, `progress()`, and a **synchronous** `apply(settings)` that schedules the change and returns at once. Consumed by `api/zigbee.py` and constructed in `cli._run`, which also passes it to `build_app`.
   - `loxmatter.radios.inventory.device_identity(path: str, host_dev: Path, *, stat: Callable[[str], os.stat_result] = os.stat) -> tuple[int, int] | None` — the resolved `(major, minor)` of a character device, or `None`.
   - `loxmatter.radios.inventory.is_same_device(left: str | None, right: str | None, host_dev: Path, *, stat=os.stat) -> bool`
+  - `loxmatter.api.zigbee._thread_stick(update_dir, serial) -> tuple[str | None, bool]` — the by-id path of the stick Thread is configured on, and whether Thread is actually using it.
+  - `loxmatter.api.zigbee._is_thread_stick(radio_path, thread_device, thread_in_use, host_dev) -> bool` — the exclusion decision, by resolved major:minor.
+  - Each entry of `GET /api/zigbee/radio`'s `serial` list carries `is_thread` and `selectable`; Task 13 reads both under those names.
   - `ZigbeeRadioSettings(path: str | None, radio_type: str, baudrate: int, flow_control: str, saved_at: str | None)` and `store.zigbee_settings` with `get()` / `save(...)` / `clear()`.
   - `GET /api/zigbee/radio`, returning the detected sticks, `configured_path`, `configured_device_present` and `progress`; and `PUT /api/zigbee/radio`, answering **202**.
 
@@ -3267,7 +3411,64 @@ def test_an_unresolvable_device_is_not_treated_as_a_match():
 
 Note for the implementer: `_char_device(major, minor)` builds an object with an `st_mode` that `stat.S_ISCHR` accepts and an `st_rdev` of `os.makedev(major, minor)`. A test cannot create a real device node without root, which is exactly why `stat` is injectable — and the injection point is the honest way to test this, not a shortcut around it.
 
-- [ ] **Step 2: Write the failing API tests** `tests/api/test_zigbee_api.py`, using the `_host(tmp_path)` tree and heartbeat helpers `tests/api/test_radios_api.py` already builds (import them or copy their shape — read that file first):
+- [ ] **Step 2: Write the failing API tests** `tests/api/test_zigbee_api.py`, using the `_host(tmp_path)` tree and heartbeat helpers `tests/api/test_radios_api.py` already builds (import them or copy their shape — read that file first).
+
+**The fixture this file needs, and why it is not the one next door.** `tests/api/test_radios_api.py::_host` builds a tree with **one** stick (its `SONOFF` constant — which, now that the hardware has been read, is the maintainer's **Thread** stick). This suite needs **both** sticks, because the entire question is which of two is offered. Build `_host_two_sticks(tmp_path)` in the new file on the same shape, with these values measured on the Pi on 12 September 2026:
+
+```python
+# Verbatim from `ls -l /dev/serial/by-id/` on the maintainer's Pi.
+REAL_ITEAD = (
+    "usb-Itead_Sonoff_Zigbee_3.0_USB_Dongle_Plus_V2_e8bf16ad5953ef11844a28e0174bec31-if00-port0"
+)
+REAL_MG24 = "usb-SONOFF_SONOFF_Dongle_Plus_MG24_e26a7d9118f9ef118f7767135c2a50c9-if00-port0"
+
+
+def _host_two_sticks(tmp_path: Path) -> tuple[Path, Path]:
+    """The maintainer's real Pi, as a directory tree.
+
+    Both sticks are `10c4:ea60` and both are major 188 - minors 0 and 1 -
+    because that is what the hardware reports. A fixture that gave them
+    different vendor ids, or different majors, would let a matcher keyed on
+    either of those pass while failing on the real machine.
+    """
+    host_dev, sys_root = tmp_path / "dev", tmp_path / "sys"
+    (host_dev / "serial" / "by-id").mkdir(parents=True)
+    for tty, by_id, minor in (
+        ("ttyUSB0", REAL_MG24, 0),  # the THREAD stick - RADIO_DEVICE names it
+        ("ttyUSB1", REAL_ITEAD, 1),  # the Zigbee coordinator
+    ):
+        node = host_dev / tty
+        node.write_text("", encoding="utf-8")
+        (host_dev / "serial" / "by-id" / by_id).symlink_to(Path("../..") / tty)
+        usb = sys_root / "devices" / "usb1" / f"1-1.{minor}"
+        (usb / f"1-1.{minor}:1.0" / tty).mkdir(parents=True)
+        (usb / "idVendor").write_text("10c4\n", encoding="utf-8")
+        (usb / "idProduct").write_text("ea60\n", encoding="utf-8")
+        (sys_root / "class" / "tty" / tty).mkdir(parents=True)
+        (sys_root / "class" / "tty" / tty / "device").symlink_to(usb / f"1-1.{minor}:1.0" / tty)
+    (sys_root / "class" / "bluetooth" / "hci0").mkdir(parents=True)
+    return host_dev, sys_root
+
+
+def _current(**fields: object) -> dict[str, object]:
+    """The sidecar's reported state, as the live Pi reports it: Thread on,
+    running on ttyUSB0, which is the MG24."""
+    body = {
+        "thread_enabled": True,
+        "thread_device": "/dev/ttyUSB0",
+        "thread_device_present": True,
+        "bluetooth_adapter": 0,
+        "otbr_running": True,
+    }
+    body.update(fields)
+    return body
+```
+
+Note the `thread_device` value: **`/dev/ttyUSB0`, not a by-id path.** That is what the installer actually writes, and it is the whole reason the comparison must resolve to major:minor. A fixture that stored the by-id path here would let a string compare pass.
+
+Because a test cannot create real device nodes without root, `is_same_device`'s injected `stat` is what makes the resolution testable — map both `/host/dev/ttyUSB0` and `/host/dev/serial/by-id/<REAL_MG24>` onto `_char_device(188, 0)` and the ITEAD pair onto `_char_device(188, 1)`, exactly as Step 1 does.
+
+The tests:
 
 ```python
 async def test_the_thread_stick_is_refused_by_the_api_not_only_hidden_by_the_card():
@@ -3280,6 +3481,67 @@ async def test_the_thread_stick_is_refused_by_the_api_not_only_hidden_by_the_car
     response = await api.put("/api/zigbee/radio", json={"path": THREAD_BY_ID})
     assert response.status_code == 400
     assert "thread" in response.json()["detail"].lower()
+
+
+async def test_the_two_sticks_on_the_maintainers_pi_end_up_on_opposite_sides(api):
+    """THE REAL INSTALLATION, PINNED (measured 12 September 2026).
+
+    `ls -l /dev/serial/by-id/` on the maintainer's Pi returns exactly two
+    entries, and `RADIO_DEVICE=/dev/ttyUSB0` in the live stack names the
+    MG24. Both sticks report `10c4:ea60` and both are major 188, so neither
+    the USB ids nor the major can separate them - only the resolved minor
+    and the by-id name can.
+
+    The ITEAD stick must be OFFERED and the MG24 must be REFUSED. If this
+    ever comes out the other way round on real hardware, the picker hands
+    the user the radio their Thread border router is running on, and
+    selecting it takes down every Thread device in the house.
+
+    Fault to prove it: compare path strings instead of resolved major:minor.
+    `/dev/ttyUSB0` and the MG24's by-id path are different strings, so the
+    MG24 becomes selectable and the fault is invisible until someone picks
+    it."""
+    client, update_dir, _ = api
+    body = (await client.get("/api/zigbee/radio")).json()
+    by_path = {stick["path"]: stick for stick in body["serial"]}
+    itead = by_path[f"/dev/serial/by-id/{REAL_ITEAD}"]
+    mg24 = by_path[f"/dev/serial/by-id/{REAL_MG24}"]
+
+    assert (itead["is_thread"], itead["selectable"]) == (False, True)
+    assert (mg24["is_thread"], mg24["selectable"]) == (True, False)
+
+    assert (await client.put("/api/zigbee/radio", json={"path": itead["path"]})).status_code == 202
+    refused = await client.put("/api/zigbee/radio", json={"path": mg24["path"]})
+    assert refused.status_code == 400
+    assert "thread" in refused.json()["detail"].lower()
+
+
+async def test_a_stick_freed_by_turning_thread_off_becomes_selectable_again(api):
+    """The escape hatch, and the reason the refusal is gated on
+    `thread_enabled` rather than on `RADIO_DEVICE` alone.
+
+    MEASURED in `deploy/updater/radios-once.sh`: the `down` path rewrites
+    `COMPOSE_PROFILES` and LEAVES `RADIO_DEVICE` naming the stick. A refusal
+    keyed on the stored device alone would therefore be permanent - the user
+    who disables Thread specifically in order to repurpose their MG24 would
+    find it greyed out forever, under a message telling them to release it
+    in a row where they already have. An MG24 is dual-capable hardware and
+    this is the only legitimate way to move it across.
+
+    Fault to prove it: ignore `thread_enabled` and refuse whenever the path
+    resolves to `RADIO_DEVICE`. The second half of this test then fails
+    while the first half still passes."""
+    client, update_dir, _ = api
+    mg24 = f"/dev/serial/by-id/{REAL_MG24}"
+    assert (await client.put("/api/zigbee/radio", json={"path": mg24})).status_code == 400
+
+    _radios_heartbeat(
+        update_dir, current={**_current(), "thread_enabled": False, "otbr_running": False}
+    )
+    body = (await client.get("/api/zigbee/radio")).json()
+    freed = next(s for s in body["serial"] if s["path"] == mg24)
+    assert (freed["is_thread"], freed["selectable"]) == (False, True)
+    assert (await client.put("/api/zigbee/radio", json={"path": mg24})).status_code == 202
 
 
 async def test_choosing_a_stick_does_not_touch_thread_or_bluetooth():
@@ -3429,10 +3691,91 @@ Starting the supervisor is all it takes to connect, and that is the point of reu
 
 **The router**, `build_zigbee_router(store, *, zigbee_runtime, host_dev, sys_root, update_dir)`:
 
-`GET /api/zigbee/radio` returns the detected sticks with their fingerprint result, which one is stored, which one is the Thread device (listed with a reason, never silently omitted), and:
+**The two module-level helpers that decide the exclusion.** These are the load-bearing part of the task; write them exactly:
 
 ```python
-        {
+def _thread_stick(update_dir: Path, serial: Sequence[SerialRadio]) -> tuple[str | None, bool]:
+    """Which stick this installation is CURRENTLY using for Thread.
+
+    Returns `(by-id path or None, in_use)`. The path comes from the same
+    place `GET /api/radios` reads it: the sidecar's reported
+    `RadioConfig.thread_device`, mapped onto a by-id path by
+    `match_current_device` because the installer writes `/dev/ttyUSB0`
+    while this card speaks by-id.
+
+    `in_use` is gated on `thread_enabled` (OR `otbr_running`, which is the
+    independently observed fact beside it), and that gate is deliberate.
+    MEASURED in `deploy/updater/radios-once.sh`: the `down` path rewrites
+    `COMPOSE_PROFILES` and LEAVES `RADIO_DEVICE` naming the stick. So "is
+    this the stored Thread device" is NOT the same question as "is Thread
+    using it", and answering only the first would permanently strand the
+    user who disables Thread in order to repurpose a dual-capable stick -
+    the only legitimate way to move an MG24 across.
+
+    No state, or no reported current, means nothing is known to be using
+    anything: `(None, False)`. That is not a licence to open a stick
+    blindly - it is the same "the bridge validates what it can see"
+    position `POST /api/radios` already takes.
+    """
+    state = read_radios_state(update_dir)
+    if state is None or state.current is None:
+        return None, False
+    device, _present = match_current_device(state.current.thread_device, serial)
+    return device, bool(state.current.thread_enabled or state.current.otbr_running)
+
+
+def _is_thread_stick(
+    radio_path: str, thread_device: str | None, thread_in_use: bool, host_dev: Path
+) -> bool:
+    """Whether this stick is the one Thread is running on.
+
+    By RESOLVED major:minor, never by string compare. The same physical
+    stick is `/dev/ttyUSB0` in `.env`, a by-id path on this card, and a
+    third name under the container's `/host/dev` mount - three strings, one
+    piece of hardware. MEASURED on the Pi: the two attached sticks are
+    major 188 minors 0 and 1 and share the vendor id `10c4:ea60`, so the
+    resolved minor is the only thing that separates them.
+    """
+    if thread_device is None or not thread_in_use:
+        return False
+    return is_same_device(radio_path, thread_device, host_dev)
+```
+
+**The two routes.** Shown with the enclosing `def` so the block parses standalone and the indentation is the real one:
+
+```python
+def build_zigbee_router(store, *, zigbee_runtime, host_dev, sys_root, update_dir) -> APIRouter:
+    router = APIRouter(prefix="/api")
+
+    @router.get("/zigbee/radio")
+    async def get_zigbee_radio() -> dict[str, object]:
+        serial = scan_serial(host_dev, sys_root)
+        thread_device, thread_in_use = _thread_stick(update_dir, serial)
+        stored = store.zigbee_settings.get()
+        sticks: list[dict[str, object]] = []
+        for radio in serial:
+            fingerprint = match_fingerprint(radio)
+            is_thread = _is_thread_stick(radio.path, thread_device, thread_in_use, host_dev)
+            sticks.append(
+                {
+                    "path": radio.path,
+                    "product": radio.product,
+                    "fingerprint": None if fingerprint is None else asdict(fingerprint),
+                    # LISTED WITH A REASON, never filtered out. A stick that
+                    # is simply absent from this list reads as a detection
+                    # bug to the user, who can see it in the Thread row two
+                    # rows above. `selectable` is a separate key rather than
+                    # `not is_thread` computed in the page, so the card
+                    # cannot drift from the server's own rule - and so that
+                    # a future second reason to refuse a stick has somewhere
+                    # to live.
+                    "is_thread": is_thread,
+                    "selectable": not is_thread,
+                }
+            )
+        _resolved, present = match_current_device(stored.path, serial)
+        return {
+            "serial": sticks,
             "configured_path": stored.path,
             # Whether the stored stick is ACTUALLY THERE, resolved through
             # the live scan exactly as `GET /api/radios` does for Thread
@@ -3440,27 +3783,67 @@ Starting the supervisor is all it takes to connect, and that is the point of reu
             # it, a stored by-id path naming a node that will never return
             # is indistinguishable from a stick that is present and
             # refusing to open - and the supervisor retries the first case
-            # forever while the card says only "not connected".
+            # forever while the card says only "not connected". A
+            # `configured_path` of `None` reports `False` without being an
+            # error, because nothing is configured.
             "configured_device_present": present,
             "progress": asdict(zigbee_runtime.progress()),
         }
+
+    @router.put("/zigbee/radio", status_code=202)
+    async def put_zigbee_radio(body: ZigbeeRadioIn) -> dict[str, object]:
+        serial = scan_serial(host_dev, sys_root)
+        if body.path is not None:
+            radio = next((item for item in serial if item.path == body.path), None)
+            if radio is None:
+                raise HTTPException(
+                    status_code=400, detail=i18n.t("api.errors.zigbee_unknown_device")
+                )
+            thread_device, thread_in_use = _thread_stick(update_dir, serial)
+            # THE most dangerous request this API can be sent, and the
+            # reason it is checked here and not only in the page: the card
+            # disables the option, but a stale tab, a second browser or a
+            # curl call must not be able to point zigpy at the radio a live
+            # Thread border router is running on. The card is a courtesy;
+            # this is the guarantee.
+            if _is_thread_stick(radio.path, thread_device, thread_in_use, host_dev):
+                raise HTTPException(
+                    status_code=400, detail=i18n.t("api.errors.zigbee_is_thread_stick")
+                )
+        settings = _settings_from(body, serial)
+        store.zigbee_settings.save(settings)
+        zigbee_runtime.apply(settings)
+        return {"progress": asdict(zigbee_runtime.progress())}
+
+    return router
 ```
 
-`present` is computed with the same `match_current_device` helper the radios API already uses, against `scan_serial(host_dev, sys_root)`; a `configured_path` of `None` reports `False` without being an error, because nothing is configured.
-
-`PUT /api/zigbee/radio` validates — known path, not the Thread device, both checks server-side — persists through `store.zigbee_settings`, calls `zigbee_runtime.apply(...)`, and returns **202** with the freshly-reset progress. It awaits nothing to do with the radio. Every rejection detail goes through `i18n.t`.
+`_settings_from(body, serial)` fills radio type, baud rate and flow control from `match_fingerprint(radio)` when the table recognises the stick, and from the request's own Advanced fields when it does not — falling back to `DEFAULT_UNKNOWN`'s values, never to a guess presented as a detection. A `path` of `None` is "no Zigbee stick" and is always accepted: clearing the setting can never be refused, or a user whose stick has been reassigned to Thread could not get out of the conflict. It awaits nothing to do with the radio, and every rejection detail goes through `i18n.t`.
 
 The card polls `GET /api/zigbee/radio` every 2 s while `progress.state` is `"loading_quirks"` or `"opening_radio"`, exactly as `loadRadios()` polls while a sidecar job runs, and stops when the state reaches `"connected"` or `"failed"`. `"failed"` is not terminal for the supervisor — it keeps retrying — so the card shows the error together with the attempt count and keeps polling at a slower cadence rather than claiming the change is over.
 
 Interruption recovery needs nothing extra here, and that is worth stating because this plan requires it of anything that writes durable state: the stored setting **is** the recovery record. A bridge killed mid-apply starts up, reads the setting, and Task 10's startup path connects to it — the same place it would have ended up. There is no non-terminal phase that can freeze, which is the failure the radios sidecar had.
 
-- [ ] **Step 7: Add the i18n keys** (`en` + `de`): `web.radios.zigbee_label`, `web.radios.zigbee_none`, `web.radios.zigbee_is_thread_stick`, `web.radios.fingerprint_unknown`, `web.radios.advanced`, `api.errors.zigbee_is_thread_stick`, `api.errors.zigbee_unknown_device`, `api.errors.zigbee_not_configured`.
+- [ ] **Step 7: Add the i18n keys** (`en` + `de`): `web.radios.zigbee_label`, `web.radios.zigbee_none`, `web.radios.fingerprint_unknown`, `web.radios.advanced`, `api.errors.zigbee_unknown_device`, `api.errors.zigbee_not_configured`.
+
+The two that carry the refusal are written out here, because their wording is the whole user-facing behaviour of this task and a vaguer sentence would leave the user stuck. They must say **what** is wrong, **why**, and **what to do about it** — never just "invalid device":
+
+```yaml
+api.errors.zigbee_is_thread_stick:
+  en: "This stick is in use for Thread. Turn Thread off, or move it to another stick, before using this one for Zigbee."
+  de: "Dieser Stick wird für Thread verwendet. Schalte Thread ab oder wähle dort einen anderen Stick, bevor du diesen für Zigbee nutzt."
+web.radios.zigbee_is_thread_stick:
+  en: "in use for Thread"
+  de: "für Thread in Verwendung"
+```
+
+`web.radios.zigbee_is_thread_stick` is the short suffix in the option label, alongside the existing `web.radios.in_use` and `web.radios.option_blocked`, which is the pattern the Bluetooth row already uses for an rfkill-blocked adapter. The long sentence is the API's refusal, shown when a stale page posts anyway.
 
 Plus the strings the progress and presence reporting need, each `en` + `de`: `web.radios.zigbee_loading_quirks` (say that the first connection prepares device support and takes a few seconds — the user is looking at a 9-15 s pause and deserves to know it is expected), `web.radios.zigbee_opening_radio`, `web.radios.zigbee_connected`, `web.radios.zigbee_failed_retrying` (carrying the attempt count and the error, because the supervisor never gives up and the card must not imply it has), and `web.radios.zigbee_device_missing` (the stored stick is not present — name replugging it or choosing another, the way the Thread row already does).
 
 - [ ] **Step 8: Run to verify they pass.**
 
-- [ ] **Step 9: Prove each protection catches its fault.** Thirteen faults. FAIL, revert, PASS, both pasted. **The Thread-exclusion fault is the single most important one in this plan** — prove it first and paste it first. The four added in Step 2 (synchronous apply, warm-up on the request path, no progress, no presence) are proved the same way as the rest; for the first two, a fake source whose `connect()` blocks longer than the test client's timeout turns "the handler waited" into a failing test rather than a slow one.
+- [ ] **Step 9: Prove each protection catches its fault.** Fifteen faults. FAIL, revert, PASS, both pasted. **The Thread-exclusion faults are the single most important ones in this plan** — prove them first and paste them first, and prove them against the measured two-stick fixture rather than against invented paths. Two of the fifteen are specifically the hardware measurement's: comparing path strings instead of resolved major:minor (`test_the_two_sticks_on_the_maintainers_pi_end_up_on_opposite_sides`), and ignoring `thread_enabled` (`test_a_stick_freed_by_turning_thread_off_becomes_selectable_again`). The first must turn the MG24 selectable; if it does not, the fixture is not reproducing the real machine and the test is worthless — stop and fix the fixture. The four added in Step 2 (synchronous apply, warm-up on the request path, no progress, no presence) are proved the same way as the rest; for the first two, a fake source whose `connect()` blocks longer than the test client's timeout turns "the handler waited" into a failing test rather than a slow one.
 
 - [ ] **Step 10: Run the checks** (all five, four-part pytest).
 
@@ -3681,9 +4064,10 @@ async def test_the_thread_stick_is_offered_with_a_reason_not_silently_dropped(ap
     Fault to prove it: filter the Thread device out of the list."""
     values = _app_state(
         setup="state.zigbee = { serial: ["
-        "  { path: '/dev/serial/by-id/a', product: 'SONOFF', fingerprint: null, is_thread: true },"
+        "  { path: '/dev/serial/by-id/a', product: 'SONOFF', fingerprint: null,"
+        "      is_thread: true, selectable: false },"
         "  { path: '/dev/serial/by-id/b', product: 'ZBT-1', fingerprint:"
-        "      { name: 'ZBT-1', radio_type: 'ezsp' }, is_thread: false },"
+        "      { name: 'ZBT-1', radio_type: 'ezsp' }, is_thread: false, selectable: true },"
         "], current: null };"
         "console.log(JSON.stringify(state.zigbeeRadioOptions()));",
         translations={"web.radios.zigbee_is_thread_stick": "used by Thread"},
@@ -3691,6 +4075,47 @@ async def test_the_thread_stick_is_offered_with_a_reason_not_silently_dropped(ap
     thread_option = next(o for o in values if o["value"] == "/dev/serial/by-id/a")
     assert thread_option["disabled"] is True
     assert "Thread" in thread_option["label"]
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+async def test_the_card_refuses_the_maintainers_own_thread_stick(api):
+    """The measured installation, reaching the screen (12 September 2026).
+
+    His two sticks are indistinguishable by USB ids and by major number, so
+    this is the shape the card must get right on the one machine that will
+    actually run it: the ITEAD stick selectable, the MG24 - which his Thread
+    border router is running on - listed, disabled, and labelled with the
+    reason.
+
+    `disabled` reads the server's `selectable`, NOT a rule the page invents,
+    so the two can never disagree about which sticks are safe. That is the
+    same reasoning behind `option.blocked` on the Bluetooth row.
+
+    Fault to prove it: have `zigbeeRadioOptions()` compute `disabled` from
+    the product name (say, anything containing "MG24") instead of reading
+    `selectable`. The MG24 stays disabled for the wrong reason and the test
+    still passes - so ALSO flip `selectable` to true on the MG24 entry and
+    confirm the option becomes enabled. If it does not, the page is
+    deciding for itself and the server check is decorative."""
+    values = _app_state(
+        setup="state.zigbee = { serial: ["
+        "  { path: '/dev/serial/by-id/usb-SONOFF_SONOFF_Dongle_Plus_MG24_e26a-if00-port0',"
+        "      product: 'SONOFF Dongle Plus MG24',"
+        "      fingerprint: { name: 'SONOFF Zigbee Dongle Plus MG24', radio_type: 'ezsp' },"
+        "      is_thread: true, selectable: false },"
+        "  { path: '/dev/serial/by-id/usb-Itead_Sonoff_Zigbee_3.0_USB_Dongle_Plus_V2_e8bf-if00-port0',"
+        "      product: 'SONOFF ZBDongle-E V2',"
+        "      fingerprint: { name: 'SONOFF ZBDongle-E V2', radio_type: 'ezsp' },"
+        "      is_thread: false, selectable: true },"
+        "], current: null };"
+        "console.log(JSON.stringify(state.zigbeeRadioOptions()));",
+        translations={"web.radios.zigbee_is_thread_stick": "in use for Thread"},
+    )
+    mg24 = next(o for o in values if "MG24" in o["value"])
+    itead = next(o for o in values if "Itead" in o["value"])
+    assert mg24["disabled"] is True
+    assert "Thread" in mg24["label"]
+    assert itead["disabled"] is False
 
 
 @pytest.mark.skipif(NODE is None, reason="node is required for this test")
@@ -4018,7 +4443,9 @@ No spec requirement is unassigned. Section 11's eight deferred items are deliber
 
 **2. Placeholder scan.** No task contains "TBD", "implement later", "add appropriate error handling", "similar to Task N", or a code step without code. Tasks 7-14 elide some test **bodies** with an explicit instruction to write them in full and a note that a `pass` body is a plan failure; every one of those tests carries its complete docstring and its named fault, which is the part a fresh implementer cannot reconstruct. Where this plan supplies invented data — the twelve by-id strings in Task 4, the four pinned versions in Task 1 — it says so and tells the implementer to verify against the real source and report a mismatch rather than bend the code to the plan.
 
-The packed Loxone colour number in Task 3 is no longer in that category: it was invented (`16711680`, hex RGB), was checked against `commands/color.py` during the review of this plan, was **wrong** — that encoding concatenates whole percentages, so the value meant "red at 680 %" and would have raised `LoxoneColourError` — and has been corrected to `100`. Task 4's by-id strings gained the same treatment one step short of correction: the real string the repository already carries is quoted in full, with the two ways it differs from the invented ones, and the one row whose correctness rests on a negative lookahead rather than on table order is called out to be verified first.
+The packed Loxone colour number in Task 3 is no longer in that category: it was invented (`16711680`, hex RGB), was checked against `commands/color.py` during the review of this plan, was **wrong** — that encoding concatenates whole percentages, so the value meant "red at 680 %" and would have raised `LoxoneColourError` — and has been corrected to `100`.
+
+**Task 4's by-id strings have now left that category too, and taking the measurement changed a decision.** Both sticks on the maintainer's Pi were read on 12 September 2026 and are quoted verbatim as `REAL_ITEAD` and `REAL_MG24`. Three things came out of it. The invented strings' upper-case `ITEAD_SONOFF` spelling was harmless (the matcher lowercases) but **nothing was pinning that**, so a case test was added. Both sticks report `10c4:ea60` and both are major 188, which turns "never match on VID:PID alone" from a borrowed Z2M rule into a measured fact about this project's own hardware, and is now stated as such in Task 4 and guarded by a test. And most seriously, the plan's justification for the SONOFF rows — "the maintainer's own MG24" — was **backwards**: his MG24 runs Thread, and the fingerprint table correctly reports it as a usable Zigbee coordinator, so the table alone would have offered him the radio his Thread network depends on. The fix is not in Task 4, whose answer is right; it is Task 11's exclusion, which is now written out as complete code, gated on `thread_enabled` so that disabling Thread genuinely frees the stick, and pinned by a test built from the real two-stick tree.
 
 **3. Type consistency.** `GroupOutcome` (Task 5) carries `failed` as a stored, plan-ordered field with `unreachable`/`unconfigured` as order-preserving subsets, so `fanout.py`'s documented ordering guarantee survives the change; both call sites read it under those names. `Sources.replace` (Task 5) is consumed only by `ZigbeeRuntime` (Task 11). `ConnectionProgress`/`progress()` and `on_connection_change` (Task 7) are consumed by `ZigbeeRuntime` and `GET /api/zigbee/radio` (Task 11) and by `Runtime.set_zigbee_connected` (Task 10); `ZIGBEE_CONNECTED_KEY`, `cache_zigbee_connected` and `set_zigbee_connected` (Task 10) are used under those names in Tasks 7 and 11. `build_snapshot`, `rename_payload`, `DeviceFacts`, `EndpointFacts` (Task 6) are consumed under exactly those names in Task 7. `DeviceUnreachableError` and `SOURCE_CALL_TIMEOUT_SECONDS` (Task 5) are used under those names in Tasks 7 and 9. `Fingerprint`/`match_fingerprint`/`DEFAULT_UNKNOWN` (Task 4) are consumed in Tasks 7, 11 and 13. `ensure_quirks_loaded` (Task 1) is called in Tasks 7 and 10. `device_identity`/`is_same_device` (Task 11) are used only there. `ZigbeePendingStore` (Task 9) is reached as `store.zigbee_pending` in Task 9 alone. `transportBadge` (Task 13) keeps its existing signature.
 
