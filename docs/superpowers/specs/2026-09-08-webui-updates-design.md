@@ -332,6 +332,15 @@ Together: even whoever takes over the bridge completely can only
 **install a published, newer loxmatter version** via this.
 No foreign image, no arbitrary command.
 
+**Addendum, 11 September 2026 — a fourth rule.** The design "Radios in the
+Web UI" (`2026-09-11-radios-in-the-web-ui-design.md`, section 6.6)
+deliberately extends the statement above: through the same files, the
+bridge can additionally change only which existing USB serial device
+`otbr` uses, whether Thread runs, and which existing Bluetooth adapter
+`matter-server` uses. The sidecar validates each value against the host's
+devices, touches no other key and no other service, and executes no value
+from a request as a command.
+
 **What the Docker socket means nonetheless** belongs unabridged in the README
 and the Compose comment: this container is root-equivalent on
 the host. It is secured by tightness, not by permissions — no

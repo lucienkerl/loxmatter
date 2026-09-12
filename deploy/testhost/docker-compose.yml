@@ -354,6 +354,15 @@ services:
   # Anyone who does not want this can strike this service. The bridge
   # notices via the stale heartbeat, hides the button, and names the
   # console route - no dead button, no message that sounds like a defect.
+  #
+  # Since design "Radios in the Web UI" (2026-09-11, section 6.6) this
+  # service also runs radios-once.sh: besides installing a published
+  # loxmatter version, it can change only which existing USB serial device
+  # otbr uses, whether Thread runs, and which existing Bluetooth adapter
+  # matter-server uses. The script validates each value against the host's
+  # devices, read through the /dev:/host/dev:ro mount below, touches no
+  # other .env key and no other service, and executes no value from a
+  # request as a command.
   loxmatter-updater:
     image: ghcr.io/lucienkerl/loxmatter-updater:stable
     container_name: loxmatter-updater

@@ -185,3 +185,39 @@ shell. The last one is the whole reason `host_path_for()` exists.
   wrong.
 - Two failure paths leave the checkout on the new ref while the old image
   runs. The container is unchanged, the compose file is not.
+
+## 14. Radios (design "Radios in the Web UI", 2026-09-11)
+
+0. Copy the stack's `.env` aside by hand before the first radio job.
+1. After installing a build with this feature, refresh the sidecar from the
+   console once. Before the refresh the Radios card is read-only and says
+   what to run; afterwards it shows the selects.
+2. The card lists the Thread stick and the Bluetooth adapter, both "in use".
+3. Send an invalid Bluetooth index through the API
+   (`POST /api/radios` with `{"thread": {…current…}, "bluetooth": {"adapter": 9}}`):
+   400 from the bridge. Then write the same body as `radios-request.json`
+   directly into the update directory: the sidecar rejects it with
+   `bluetooth_adapter_not_found`, and no container restarts (compare
+   `docker ps --format '{{.Names}} {{.RunningFor}}'` before and after).
+4. **Leaves the other radio alone.** Write `radios-request.json` directly
+   with `{"thread": null, "bluetooth": {"adapter": 0}}` (the current
+   adapter, or the only one present): the job reports `unchanged` for the
+   Bluetooth half and does not restart `matter-server`, and `otbr`'s
+   `RunningFor` is identical before and after — a `null` half is never
+   validated or applied. This is what the design added on 12 September
+   2026; before it, any radio request force-recreated `otbr` as well.
+5. **A `null` Thread half tolerates an unplugged stick.** Unplug the
+   configured stick, then send the same `{"thread": null, "bluetooth":
+   {"adapter": 0}}` request: it still ends `unchanged`/`done` rather than
+   being rejected for a missing device, because a `null` half is never
+   checked against the host.
+6. **Interrupts Thread devices — agree a time first.** Apply the same stick
+   by its by-id path (the installer wrote `/dev/ttyUSB0`). `otbr` is
+   recreated, `docker exec otbr ot-ctl state` reports `leader`, and the
+   Thread devices deliver values again within two minutes, read through the
+   running bridge.
+7. **Interrupts Thread devices.** Switch Thread off, then on again: `otbr`
+   disappears and returns, the devices with it.
+8. Apply without a change: "Nothing to change", no restart. A real
+   Bluetooth adapter switch cannot be exercised on a host with one adapter;
+   record that instead of counting it as passed.

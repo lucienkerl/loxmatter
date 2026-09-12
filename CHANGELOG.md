@@ -26,6 +26,17 @@ people who don't know the code.
 - These are the bridge's own groups, not Matter's. No Matter server this bridge
   can use offers group messaging, so nothing is created on the devices
   themselves.
+- **Choose the Thread stick and Bluetooth adapter in the settings.** The new
+  Radios card lists the USB sticks and Bluetooth adapters the host has,
+  shows which ones are in use, and lets you switch the Thread stick, turn
+  Thread off or on, or pick another Bluetooth adapter — no more editing
+  `.env` on the host. Changing only the Bluetooth adapter leaves the Thread
+  border router untouched, so it restarts and Thread devices go quiet for a
+  minute or two only when the Thread half of the change actually asks for
+  that. The updater service applies the change, checks that Thread or
+  matter-server really come back, and restores the previous setting if they
+  don't. The first time, the updater service itself needs one refresh from
+  the console; the card shows the command.
 - **Thread or IP at a glance.** Every device tile now carries a small badge on
   its icon showing whether the device talks to the bridge over Thread or over
   your IP network (Wi-Fi or Ethernet). Hover it for the name. A device that

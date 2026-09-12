@@ -208,6 +208,14 @@ to WiFi and Ethernet Matter devices over your existing network. Plug a radio in
 later, set `COMPOSE_PROFILES=thread` and `RADIO_DEVICE` in
 `deploy/testhost/.env`, and restart the stack.
 
+**Changing sticks or adapters later stays out of the console too.**
+Settings → Radios in the web UI lists the USB sticks and Bluetooth
+adapters your host has, marks the ones in use, and applies a change you
+pick — no `.env` edit needed. Switching only the Bluetooth adapter leaves
+the Thread border router running the whole time; switching only the
+Thread stick, or turning Thread off, leaves Bluetooth alone. If the new
+setting does not come up healthy, the previous one comes back on its own.
+
 Two Raspberry-Pi-specific steps — unblocking Bluetooth and restarting the Thread
 agent — the installer reports but deliberately does not perform. Those, and the
 full manual path, are in [docs/SETUP.md](docs/SETUP.md).
@@ -258,11 +266,14 @@ That service is worth understanding before you rely on it: it holds the
 Docker socket, and is therefore root-equivalent on the host — the same
 level of trust `docker compose` itself already runs at. It has no ports
 and no host network; it talks to the bridge only through files in a
-shared volume, and it never runs text from a request as a command. What
-it can do is install a published loxmatter version, and nothing else. If
-you would rather not have it on your host, delete the service from the
-compose file — the bridge notices it is gone and points you back to the
-console path above.
+shared volume. What it can do is install a published loxmatter version,
+and change which existing USB stick the Thread border router uses (or
+switch Thread off), and which existing Bluetooth adapter matter-server
+uses — nothing else. It checks each of those against the host's devices
+itself, touches no other setting and no other service, and never runs
+text from a request as a command. If you would rather not have it on
+your host, delete the service from the compose file — the bridge notices
+it is gone and points you back to the console path above.
 
 **It does not keep itself up to date.** It comes with the stack, the same
 way `matter-server` and the Thread border router do, and it installs
