@@ -5365,10 +5365,12 @@ The commissioning card gains two tabs, **Matter** and **Zigbee**. The Matter tab
 - Test: `tests/api/test_web.py`, plus a throwaway Alpine harness
 
 **Interfaces:**
-- Consumes: the routes of Task 12.
-- Produces: `commissionTab`, `zigbeePermitUntil`, `zigbeeCountdown()`, `zigbeeRowState(row)`, `startZigbeeSearch()`, `stopZigbeeSearch()`, `extendZigbeeSearch()`, `retryZigbeeDevice(ieee)`, `removeZigbeeDevice(ieee)` in `app.js`.
+- Consumes: the routes of Task 12, as they were actually committed (`b5876dc`), not as this plan predicted them. Four facts the tests below are built on, each verifiable in `src/loxmatter/api/zigbee.py`: every pairing route answers **503 `api.errors.zigbee_not_configured`** both when no source is configured **and** for the window of a radio swap (`_require_source`, which reads `ZigbeeRuntime.current()` per request); `permit_until` is **`null` whenever no window is open** — after a Stop, after the duration elapsed, and after the radio went away, because `connection_lost` and `disconnect()` both close the window while `GET /api/zigbee/pairing` goes on listing the rows (the devices did not go anywhere, the radio did); a `POST /zigbee/permit` after that is a **502**; and a `PATCH` on a row that is not `ready` is a **409 `api.zigbee.not_ready_yet`**.
+- Produces, in `app.js`: `commissionTab`, `selectCommissionTab(tab)`, `zigbeeTabVisible()`, `loadZigbeePairing()`, `zigbeePairing`, `zigbeePairingError`, `zigbeePermitUntil`, `zigbeeCountdown()`, `zigbeeRowState(row)`, `startZigbeeSearch()`, `stopZigbeeSearch()`, `extendZigbeeSearch()`, `retryZigbeeDevice(ieee)`, `removeZigbeeDevice(ieee)`.
 
-- [ ] **Step 1: Write the failing tests** in `tests/api/test_web.py`:
+  The first five were missing from this list as originally written, and the tests below are what found them: there was no name for "is the tab offered at all", none for the tab switch that has to close the join window, and none for the load whose 503 must **not** take the tab away. A body-less test can be written against a Produces list with holes in it; a real one cannot.
+
+- [ ] **Step 1: Write the failing tests** in `tests/api/test_web.py`. They need one import the file does not have yet — `from loxmatter.zigbee.source import PERMIT_MAX_SECONDS`, beside the existing `from loxmatter.api.language import _web_strings` — so that the duration the Start button sends is the server's own bound (`ZigbeePermitIn`) rather than a retyped 254 that would go on passing after the constant moved:
 
 ```python
 @pytest.mark.skipif(NODE is None, reason="node is required for this test")
@@ -5377,7 +5379,74 @@ async def test_the_zigbee_tab_is_absent_without_a_configured_source(api):
     worse than no tab - and an installation with no Zigbee stick is the
     normal case, not an error state.
 
+    Two halves, because the fault has two.
+
+    The MARKUP half: the tab button sits inside an `x-if` template, which
+    takes it out of the DOM, and carries no `disabled` binding of its own.
+    Every other `nav.tabs` strip in index.html - the language card, the
+    update channel - DOES carry one, so an implementer copying the nearest
+    example writes the fault by hand; this is the assertion that stops it.
+
+    The BEHAVIOUR half: the gate reads the STORED setting
+    (`configured_path` from `GET /api/zigbee/radio`) and not whether `GET
+    /api/zigbee/pairing` answered. That route returns 503 for an
+    unconfigured source AND for the window of a radio swap - the same
+    `_require_source` for both (Task 12) - so a tab gated on the list
+    having loaded would disappear under the user mid-swap, which is the
+    same bug as never showing it, arriving at a worse moment.
+
     Fault to prove it: render the tab disabled instead."""
+    client, _, _ = api
+    markup = _without_comments((await client.get("/")).text)
+
+    # The tag the label lives in, located the way
+    # `test_a_stalled_sidecar_gets_its_own_message_in_the_running_state`
+    # locates its own - `rindex` back to the opening tag, `index` forward
+    # to its `>` - rather than by retyping the markup here.
+    label_at = markup.index("t('web.zigbee.tab')")
+    tag = markup[markup.rindex("<button", 0, label_at) : markup.index(">", label_at)]
+    assert "disabled" not in tag, tag
+
+    # ABSENT: an `x-if` template encloses the button. `x-show` would leave
+    # a hidden control on the strip and `:disabled` a visible dead one -
+    # and the `</template>` check is what proves this template is the
+    # button's OWN enclosure rather than an earlier one already closed.
+    gate_at = markup.rindex("<template x-if=", 0, label_at)
+    assert "</template>" not in markup[gate_at:label_at]
+    gate_match = re.match(r'<template x-if="([^"]*)"', markup[gate_at:])
+    assert gate_match, markup[gate_at : gate_at + 120]
+    assert "zigbeeTabVisible()" in gate_match.group(1)
+
+    # And the gate's own answer, from the REAL helper.
+    values = _app_state(
+        setup="const answer = (zigbee, pairing, error) => {"
+        "  state.zigbee = zigbee;"
+        "  state.zigbeePairing = pairing;"
+        "  state.zigbeePairingError = error ?? null;"
+        "  return state.zigbeeTabVisible();"
+        "};"
+        "console.log(JSON.stringify({"
+        "  nothing_loaded: answer(null, null, null),"
+        "  unconfigured: answer({ configured_path: null }, null, null),"
+        "  configured: answer({ configured_path: '/dev/serial/by-id/a' },"
+        "    { permit_until: null, rows: [] }, null),"
+        "  mid_swap: answer({ configured_path: '/dev/serial/by-id/a' }, null,"
+        "    'There is no Zigbee radio configured.'),"
+        "}));"
+    )
+    # Nothing configured, and nothing known yet: no tab either way. The
+    # second is the state the page is in for the instant between login and
+    # the first answer, and a tab that flickered into existence there would
+    # be worse than one that arrives a moment late.
+    assert values["unconfigured"] is False
+    assert values["nothing_loaded"] is False
+    # Configured: offered.
+    assert values["configured"] is True
+    # Configured, and the pairing list is currently answering 503 because
+    # the radio is being swapped. The tab STAYS. This is the assertion that
+    # separates "reads the stored setting" from "reads whether the list
+    # loaded"; without it both implementations pass.
+    assert values["mid_swap"] is True
 
 
 @pytest.mark.skipif(NODE is None, reason="node is required for this test")
@@ -5388,13 +5457,27 @@ async def test_the_countdown_is_computed_from_the_server_timestamp(api):
     `permit_until`, and this counts down to it - so a reload, a second tab
     and a phone all show the same truth.
 
+    `permit_until` is `null` whenever the window is not open, and that is
+    not an edge case: it is what `GET /api/zigbee/pairing` reports after a
+    Stop, after the duration ran out, and after the radio went away while
+    the rows stayed (Task 12). Null is therefore zero seconds left - never
+    `NaN`, which renders as "Open for NaN s", and never a negative number
+    ticking downwards past zero.
+
     Fault to prove it: count down from a duration stored when the button was
     pressed."""
     values = _app_state(
         setup="state.zigbeePermitUntil = new Date(Date.now() + 60000).toISOString();"
-        "console.log(JSON.stringify({ left: state.zigbeeCountdown() }));"
+        "const open = state.zigbeeCountdown();"
+        "state.zigbeePermitUntil = null;"
+        "const closed = state.zigbeeCountdown();"
+        "state.zigbeePermitUntil = new Date(Date.now() - 5000).toISOString();"
+        "const past = state.zigbeeCountdown();"
+        "console.log(JSON.stringify({ left: open, closed, past }));"
     )
     assert 55 <= values["left"] <= 60
+    assert values["closed"] == 0
+    assert values["past"] == 0
 
 
 @pytest.mark.skipif(NODE is None, reason="node is required for this test")
@@ -5403,7 +5486,55 @@ async def test_the_window_is_not_open_before_the_user_asks(api):
     as the page loads and burns the window while the user is still reading
     how to reset their device.
 
+    Runs the REAL tab switch with `request` recording every call, and then
+    presses Start - because a test that only asserted "no permit on open"
+    would also pass for a tab whose button never opens the window at all,
+    which is the same screen from the user's side and the opposite bug.
+
+    The duration is the server's own `PERMIT_MAX_SECONDS`, imported rather
+    than retyped: `ZigbeePermitIn` bounds the field at exactly that value
+    and 422s anything above it, so a page and a schema that disagreed would
+    fail as a validation error nobody would read as "the maximum moved".
+
     Fault to prove it: call the permit route from the tab's init."""
+    values = _app_state(
+        setup="""
+        const calls = [];
+        state.request = async (method, path, body) => {
+          calls.push([method, path, body ?? null]);
+          if (path === "/api/zigbee/pairing") {
+            return { permit_until: null, rows: [] };
+          }
+          if (path === "/api/zigbee/permit") {
+            return { permit_until: "2026-09-12T20:04:14+00:00" };
+          }
+          throw new Error("unexpected " + method + " " + path);
+        };
+        state.zigbee = { configured_path: "/dev/serial/by-id/a" };
+        (async () => {
+          await state.selectCommissionTab("zigbee");
+          const onOpen = { calls: calls.slice(), permitUntil: state.zigbeePermitUntil };
+          await state.startZigbeeSearch();
+          console.log(JSON.stringify({
+            onOpen,
+            afterStart: calls,
+            permitUntilAfterStart: state.zigbeePermitUntil,
+          }));
+        })();
+        """
+    )
+
+    # Opening the tab reads the list and does nothing else. `permit_until`
+    # comes back null from that read, which is also exactly what the route
+    # reports for a window that has closed - so the tab never has to guess
+    # which of the two it is looking at.
+    assert [call[:2] for call in values["onOpen"]["calls"]] == [["GET", "/api/zigbee/pairing"]]
+    assert values["onOpen"]["permitUntil"] is None
+    # And the button does open it, at the protocol maximum the schema
+    # allows - the other half of the fault, and the one a "no request on
+    # open" assertion alone cannot see.
+    assert ["POST", "/api/zigbee/permit", {"duration": PERMIT_MAX_SECONDS}] in values["afterStart"]
+    assert values["permitUntilAfterStart"] == "2026-09-12T20:04:14+00:00"
 
 
 @pytest.mark.skipif(NODE is None, reason="node is required for this test")
@@ -5416,16 +5547,138 @@ async def test_every_row_state_renders_its_own_text(api, state_name):
     wake - are the ones ZHA does not have, and they are the reason this tab
     is worth building rather than copying.
 
+    Three of the seven are not stored on `PairingRow` at all: `configuring`
+    and `waiting_wake` are overlaid per request by `api/zigbee.py`'s
+    `_row_status`, `stuck` is an age computed by `_stuck`. They arrive in
+    the same `state` field as the other four and the page may not treat
+    them as a lesser kind - which is exactly what collapsing one into a
+    neighbour does.
+
+    Run twice, on purpose. WITHOUT a translation table `t()` returns the
+    key it was handed (`_app_state`'s own docstring), so the first run is
+    the assertion on the KEY: this state reads its own string and no
+    other's. WITH the real table - `_web_strings()`, what `GET /api/i18n`
+    actually sends the browser - the second run proves the key resolves to
+    a real sentence and that the seven sentences are seven, not six.
+    Neither run contains an English string typed into this file.
+
     Fault to prove it: collapse `stuck` into `failed`. A battery device that
     simply fell asleep is then presented as a broken one, and the user
     removes it."""
+    from loxmatter import i18n
+
+    states = [
+        "joined",
+        "interviewing",
+        "configuring",
+        "ready",
+        "failed",
+        "stuck",
+        "waiting_wake",
+    ]
+    key = f"web.zigbee.state_{state_name}"
+    # Both languages, from the shipped table. A state whose English
+    # sentence exists and whose German one does not is a German user
+    # reading a dotted key inside a German frame.
+    assert set(i18n._STRINGS[key]) >= {"en", "de"}
+
+    row_js = (
+        "{{ ieee: '00:12:4b:00:24:c2:1a:7e', state: {name!r}, manufacturer: 'IKEA of Sweden',"
+        " model: 'TRADFRI bulb E27', quirk_applied: true, discovered: true,"
+        " changed_at: '2026-09-12T20:00:00+00:00',"
+        " suggested_name: 'IKEA of Sweden TRADFRI bulb E27',"
+        " device_id: null, name: null, room: null }}"
+    )
+    calls = ", ".join(
+        f"{name}: state.zigbeeRowState({row_js.format(name=name)})" for name in states
+    )
+    setup = "console.log(JSON.stringify({" + calls + "}));"
+    keys = _app_state(setup=setup)
+    texts = _app_state(setup=setup, translations=_web_strings())
+
+    assert keys[state_name] == key
+    # A `{placeholder}` still standing means the row field it names is
+    # spelled differently on the wire than in strings.yaml - the sentence
+    # renders, and says "Found {model}".
+    assert "{" not in texts[state_name], texts[state_name]
+    others = {name: text for name, text in texts.items() if name != state_name}
+    assert texts[state_name] not in others.values(), (state_name, texts)
 
 
 @pytest.mark.skipif(NODE is None, reason="node is required for this test")
 async def test_a_stuck_row_still_offers_retry_and_remove_and_keeps_waiting(api):
     """A stuck row is NOT an error row.
 
+    `stuck` is not a state the source stores. `api/zigbee.py`'s `_stuck`
+    computes it from `changed_at` against `is_mains_powered` - 60 s for a
+    mains device, 90 s for a battery one - and sends it down in `state`
+    like any other, so the page sees an ordinary row and has to keep
+    treating it as one. The usual cause is a battery device that fell
+    asleep and the usual fix is pressing its button; a row presented as a
+    failure is how a user comes to remove a device that was about to
+    finish.
+
+    The two `x-show` expressions are pulled out of the SERVED markup and
+    evaluated through `with (state)`, which is the scope Alpine gives them
+    itself: a retyped copy would only prove it agrees with itself, and a
+    substring check on the markup cannot fail for a condition that is
+    merely wrong. `row` is a parameter of that function rather than a
+    property of `state`, so nothing on the component shadows it.
+
+    Retry has to be hidden SOMEWHERE, or `x-show="true"` would satisfy
+    every other assertion here. A ready row is that somewhere: it has
+    nothing to re-interview and shows the name and room fields instead
+    (design 3.1 offers Retry on the failed row only).
+
+    "Keeps waiting" is measured on the text: a stuck row still says what
+    design 3.1 says it says - press the device's button - rather than the
+    failed row's "could not read this device". That overlaps
+    `test_every_row_state_renders_its_own_text` deliberately. Hiding the
+    actions and relabelling the row are the same misreading of what stuck
+    means, and they are normally committed in the same edit.
+
     Fault to prove it: hide the actions while stuck."""
+    client, _, _ = api
+    markup = _without_comments((await client.get("/")).text)
+
+    def action_show(call: str) -> str:
+        at = markup.index(call)
+        tag = markup[markup.rindex("<button", 0, at) : markup.index(">", at)]
+        match = re.search(r'x-show="([^"]*)"', tag)
+        assert match, f"the {call} button must be gated by an x-show: {tag}"
+        return match.group(1)
+
+    retry_expr = action_show("retryZigbeeDevice(")
+    remove_expr = action_show("removeZigbeeDevice(")
+    evaluator = f"with (state) {{ return [Boolean({retry_expr}), Boolean({remove_expr})]; }}"
+
+    values = _app_state(
+        setup="const shown = new Function('state', 'row', " + json.dumps(evaluator) + ");\n"
+        "const out = {};\n"
+        "for (const name of ['joined', 'interviewing', 'configuring', 'ready',\n"
+        "                    'failed', 'stuck', 'waiting_wake']) {\n"
+        "  out[name] = shown(state, { ieee: '00:12:4b:00:24:c2:1a:7e', state: name,\n"
+        "    manufacturer: 'IKEA of Sweden', model: 'TRADFRI bulb E27',\n"
+        "    quirk_applied: true, discovered: true,\n"
+        "    changed_at: '2026-09-12T20:00:00+00:00',\n"
+        "    suggested_name: 'IKEA of Sweden TRADFRI bulb E27',\n"
+        "    device_id: null, name: null, room: null });\n"
+        "}\n"
+        "out.stuckText = state.zigbeeRowState({ state: 'stuck' });\n"
+        "out.failedText = state.zigbeeRowState({ state: 'failed' });\n"
+        "console.log(JSON.stringify(out));",
+        translations=_web_strings(),
+    )
+
+    # Both actions, on a stuck row, exactly as on the failed row the
+    # design names them for.
+    assert values["stuck"] == [True, True]
+    assert values["failed"] == [True, True]
+    # And not everywhere - otherwise the two lines above prove nothing.
+    assert values["ready"][0] is False
+    # Keeps waiting rather than reporting a failure.
+    assert values["stuckText"] and values["failedText"]
+    assert values["stuckText"] != values["failedText"]
 
 
 @pytest.mark.skipif(NODE is None, reason="node is required for this test")
@@ -5434,7 +5687,57 @@ async def test_leaving_the_tab_closes_the_join_window(api):
     standing complaint - an open Zigbee network is one any passing device
     can join.
 
+    Closing is `permit(0)` on the same route: `ZigbeePermitIn` allows a
+    duration of 0 and documents it as Stop, so this needs no second
+    endpoint and no second piece of server state.
+
+    It is sent ONLY when a window is actually open. `permit_until` is null
+    whenever it is not - after a Stop, after the duration elapsed, and
+    after the radio went away, which closes the window on the source's side
+    without being asked (`connection_lost` and `disconnect()` both do it,
+    while the rows stay listed). A tab change that sent `permit(0)`
+    unconditionally would aim a request at a bridge with no source and
+    collect the 503 of `_require_source`, or a 502 for a radio that has
+    just gone: an error banner for doing nothing wrong, on the very click
+    that was supposed to be tidy.
+
     Fault to prove it: leave the window open on tab change."""
+    values = _app_state(
+        setup="""
+        let calls = [];
+        state.request = async (method, path, body) => {
+          calls.push([method, path, body ?? null]);
+          if (path === "/api/zigbee/pairing") return { permit_until: null, rows: [] };
+          if (path === "/api/zigbee/permit") return { permit_until: null };
+          throw new Error("unexpected " + method + " " + path);
+        };
+        state.zigbee = { configured_path: "/dev/serial/by-id/a" };
+        (async () => {
+          // A window with a minute left on it, and the user presses Matter.
+          state.commissionTab = "zigbee";
+          state.zigbeePermitUntil = new Date(Date.now() + 60000).toISOString();
+          await state.selectCommissionTab("matter");
+          const closing = { calls, permitUntil: state.zigbeePermitUntil };
+
+          // And again with nothing open - the radio went away and the
+          // source closed the window without being asked. `calls` is
+          // REBOUND rather than emptied, so `closing.calls` above keeps
+          // the array it captured.
+          calls = [];
+          state.commissionTab = "zigbee";
+          state.zigbeePermitUntil = null;
+          await state.selectCommissionTab("matter");
+
+          console.log(JSON.stringify({ closing, quiet: calls }));
+        })();
+        """
+    )
+
+    closing_permits = [call for call in values["closing"]["calls"] if call[1].endswith("/permit")]
+    assert closing_permits == [["POST", "/api/zigbee/permit", {"duration": 0}]]
+    assert values["closing"]["permitUntil"] is None
+    # Nothing open, nothing sent.
+    assert [call for call in values["quiet"] if call[1].endswith("/permit")] == []
 
 
 async def test_the_matter_tab_keeps_the_card_it_had(api):
@@ -5449,7 +5752,9 @@ async def test_the_matter_tab_keeps_the_card_it_had(api):
         assert marker in page
 ```
 
-- [ ] **Step 2: Run to verify they fail**, then implement. The tab strip reuses the existing `nav.tabs` pattern (the Settings language card shows it) rather than inventing a second one. The Zigbee tab's order follows spec §3.1 exactly: reset guidance and one button first; then, while open, the countdown with **Stop** and **Keep open longer**; then one row per device keyed by IEEE.
+- [ ] **Step 2: Run to verify they fail**, then implement. The tab strip reuses the existing `nav.tabs` pattern (the Settings language card shows it) rather than inventing a second one — with one deliberate difference from it and from the update-channel strip: **both of those disable their buttons and this one must not**, because the Zigbee tab is absent rather than disabled. Wrap it in `<template x-if="zigbeeTabVisible()">`. The Zigbee tab's order follows spec §3.1 exactly: reset guidance and one button first; then, while open, the countdown with **Stop** and **Keep open longer**; then one row per device keyed by IEEE.
+
+  **Where the gate's data comes from, and what must not feed it.** `zigbeeTabVisible()` reads `configured_path` from `GET /api/zigbee/radio` — the stored setting, which Task 13 already loads into `state.zigbee` for the radios card. The Devices view therefore has to load it too (the radios card lives in Settings and its loader is armed only there), so call the same `GET /api/zigbee/radio` on entering Devices. Do **not** gate the tab on `GET /api/zigbee/pairing` having answered: that route returns 503 for the whole window of a radio swap as well as for an unconfigured source, and a tab that vanished under the user mid-swap would be a worse bug than a missing one. `loadZigbeePairing()` therefore keeps its 503 in `zigbeePairingError` and shows it inside the tab; it never takes the tab away.
 
 The ready row carries an inline name prefilled with `<Manufacturer> <Model>`, saved on blur, and a room `<select>` that **reuses the commissioning card's existing room control** — the same component and the same room-key encoding (`""` for no room), not a second one. The quirk hint sits on the ready row. The removal confirmation uses the honest copy of §3.1.
 
@@ -5457,7 +5762,7 @@ The ready row carries an inline name prefilled with `<Manufacturer> <Model>`, sa
 
 - [ ] **Step 4: Run to verify they pass.**
 
-- [ ] **Step 5: Prove each protection catches its fault.** Eight faults. FAIL, revert, PASS, both pasted.
+- [ ] **Step 5: Prove each protection catches its fault.** Seven faults, one per test function in Step 1. FAIL, revert, PASS, both pasted. `test_every_row_state_renders_its_own_text` is parametrised over seven states but carries one fault; collapsing `stuck` into `failed` fails both of those parametrisations, and proving it on `stuck` is enough.
 
 - [ ] **Step 6: Check the real bindings in a throwaway harness**, the way the transport badge was checked (boundary design §7.3): cut the tab's markup out of `index.html` **by script, not by retyping**, put `style.css` and the vendored `vendor/alpine.min.js` beside it, serve it over http, and drive it. Check the countdown from `permit_until`, all seven row states, and that leaving the tab closes the window. A Python test proves the file was served; this proves the bindings work. Delete the harness afterwards and record what it showed in the task report.
 
@@ -5495,7 +5800,7 @@ EOF
 
 - [ ] **Step 1: Record the spec corrections.** Append a short, dated "Corrections after implementation" section to `docs/superpowers/specs/2026-09-12-zigbee-source-design.md` carrying the five findings from this plan's own Spec Corrections section, each in one or two sentences. Do **not** rewrite the spec's body: it is the record of what was designed, and a design document quietly edited to match what was built stops being evidence of anything.
 
-- [ ] **Step 2: Write the residual-exposure note** in `README.md`, in the security section that already carries the updater's equivalent (the radios design §6.6 pattern). It must say plainly: the `/dev` listing leaks hardware inventory including serial numbers under `by-id`; the cgroup rule reaches **every** USB-serial adapter on the host, the Thread stick included, so code execution in the bridge could talk to any of them; the rule does **not** reach block devices, `/dev/mem` or i2c; and narrowing it to observed minors (`c 188:0 rmw`) is possible at the cost of "works after replugging into another port". Also record that zigpy's network key lives in its database in clear text, is never logged, and that the backup download is deliberately not built yet.
+- [ ] **Step 2: Write the residual-exposure note** in `README.md`. **There is no "security section" in that file** — checked on 12 September 2026, and this step used to say there was. The updater's equivalent lives in the **Updating** section, in the paragraph that opens "That service is worth understanding before you rely on it: it holds the Docker socket"; that paragraph is the pattern the radios design §6.6 asks for, and the Zigbee note goes beside it rather than into a section that would have to be invented for it. It must say plainly: the `/dev` listing leaks hardware inventory including serial numbers under `by-id`; the cgroup rule reaches **every** USB-serial adapter on the host, the Thread stick included, so code execution in the bridge could talk to any of them; the rule does **not** reach block devices, `/dev/mem` or i2c; and narrowing it to observed minors (`c 188:0 rmw`) is possible at the cost of "works after replugging into another port". Also record that zigpy's network key lives in its database in clear text, is never logged, and that the backup download is deliberately not built yet.
 
 - [ ] **Step 3: Write the change notes** in `CHANGELOG.md` under `## [Unreleased]`, in the voice that section already uses — read by people who do not know the code, saying what they can now do and what it costs. Cover: Zigbee devices can be paired and used alongside Matter; Matter is still required; a second USB stick is needed; the image is about 33 MB larger and the first start after an update is a few seconds slower on a Pi; the Thread stick can never be chosen; OTA updates of the user's lamps are off; and that colour now works on lamps that only accept XY, which improves some Matter lamps too.
 
