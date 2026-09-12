@@ -5089,6 +5089,15 @@ function app() {
       }
     },
 
+    // Same 7-character convention `git rev-parse --short` and every Git
+    // host use - a full 40-character SHA (the dev channel can ship one,
+    // see build_target_image() in update-once.sh) gains nothing on this
+    // tile over its first 7 characters, which already identify the commit
+    // unambiguously in this project's history.
+    formatCommit(commit) {
+      return commit ? commit.slice(0, 7) : commit;
+    },
+
     // Numbers get at most two decimal places (2026-09-07). Live values
     // arise from Matter attributes that arrive as integer hundredths and
     // inherit the usual floating-point imprecision when converted - 2253
