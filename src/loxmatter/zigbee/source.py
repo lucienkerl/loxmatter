@@ -567,12 +567,21 @@ class ZigbeeSource:
         ordering guarantee - quirks in the registry before zigpy builds a
         single device object - lives in exactly one place and cannot be
         forgotten by a second caller. That is safe only because `connect()`
-        is never called on a request path: every caller is a background
-        worker, `cli._run` at startup and `sources/supervisor.py`'s loop for
-        every reconnection, including the first one after a radio is
-        configured from the web UI. Putting this behind an HTTP handler
-        would put a 9-15 s warm-up, plus `startup()`, plus a possible 7.5 s
-        silent-port timeout on that request."""
+        is never called on a request path: its one caller is a background
+        worker, `sources/supervisor.py`'s loop, which performs the FIRST
+        connect as well as every reconnection - `wait_for_link_loss()`
+        returns at once for a source that was never connected - including
+        the first one after a radio is configured from the web UI. Putting
+        this behind an HTTP handler would put a 9-15 s warm-up, plus
+        `startup()`, plus a possible 7.5 s silent-port timeout on that
+        request.
+
+        **A second caller at startup would not merely be redundant.** This
+        method has no reentrancy guard: two overlapping calls both see
+        `self._app is None`, both open the one serial port, and the loser's
+        application is leaked with its non-daemon bellows serial thread
+        still running. `cli._run` therefore starts the supervisor and
+        connects nothing itself."""
         self._set_progress("loading_quirks")
         try:
             if self._app is not None:

@@ -2748,7 +2748,7 @@ Implement in this order:
 1. `ZigbeeUnavailableError`, and `_STARTUP_MESSAGES`, an ordered list of `(exception predicate, i18n key)` pairs implementing spec §4.6's table. The EBUSY case must be matched on `errno`, not on the message text.
 2. `connect()`: shut the old application down (`await old.shutdown(db=True)`) **before** anything else, `await ensure_quirks_loaded()`, build the config, `new(start_radio=False, ...)`, `startup(auto_form=True)`. On any failure: shut the new object down, clear the field, raise `ZigbeeUnavailableError` with the translated message. Never reuse an object whose `startup()` failed.
 
-   `ensure_quirks_loaded()` stays **inside** `connect()`, so the ordering guarantee — quirks before any device object is built — lives in exactly one place and cannot be forgotten by a second caller. That is safe only because **`connect()` is never called on a request path.** Every caller is a background worker: `cli._run` at startup (Task 10), and `sources/supervisor.py`'s loop for every reconnection, including the first one after a radio is configured from the web UI (Task 11). If a future change ever puts `connect()` behind an HTTP handler, it puts a 9-15 s warm-up plus `startup()` plus a possible 7.5 s silent-port timeout on that request, which is what the Global Constraint about request paths forbids.
+   `ensure_quirks_loaded()` stays **inside** `connect()`, so the ordering guarantee — quirks before any device object is built — lives in exactly one place and cannot be forgotten by a second caller. That is safe only because **`connect()` is never called on a request path.** Its one caller is a background worker: `sources/supervisor.py`'s loop, which performs the first connect as well as every reconnection — `wait_for_link_loss()` returns at once for a source that was never connected — including the first one after a radio is configured from the web UI (Task 11). `cli._run` deliberately does not call it at startup; see Task 10's Step 3 for why a second caller there races this one on a single serial port. If a future change ever puts `connect()` behind an HTTP handler, it puts a 9-15 s warm-up plus `startup()` plus a possible 7.5 s silent-port timeout on that request, which is what the Global Constraint about request paths forbids.
 
    `connect()` therefore also maintains `ConnectionProgress`, because it is the only thing that knows how far an attempt got and nothing else can report it while it runs:
 
@@ -3207,40 +3207,50 @@ async def test_zigbee_health_is_reported_as_its_own_signal():
 
 async def test_a_zigbee_radio_that_will_not_come_up_does_not_stop_the_bridge():
     """Matter is mandatory and Zigbee is not. `client.connect()` failing
-    still ends startup; the Zigbee attempt runs as a background task, so a
-    failure there cannot reach `_run` at all — this one is only logged, and
-    the bridge runs on, with the supervisor retrying forever in the
-    background.
+    still ends startup; a Zigbee radio that never comes up does not, and
+    `cli._run` does not connect it at all — the supervisor does, retrying
+    forever on its own 1 s -> 60 s backoff, and `supervise()` is the thing
+    that must turn a raised `ZigbeeUnavailableError` into a logged warning
+    plus another attempt rather than into a dead task.
 
-    Fault to prove it: drop the `try`/`except` from inside
-    `_connect_zigbee_at_startup`, around `await zigbee.connect()`.
-    Backgrounding already keeps a raised `ZigbeeUnavailableError` from
-    reaching `_run` — proving this fault means checking what happens to
-    `zigbee_connect_task` itself, not whether `_run` raises: with the guard
-    gone, the intended `logger.warning` about a non-fatal Zigbee startup
-    failure never fires, and the exception instead surfaces only as
-    asyncio's own "Task exception was never retrieved" — a real failure
-    that no longer names itself as Zigbee's. Assert on the logged warning
-    (or on `zigbee_connect_task.exception()` after yielding control back to
-    the loop), not on `_run` propagating anything."""
+    Build a source whose `connect()` always raises `ZigbeeUnavailableError`,
+    let `_run` start (uvicorn stubbed, as the neighbouring `_run` tests
+    already do), and assert on the supervisor's own log line - "rebuild of
+    source zigbee failed (...) - next attempt in 1 s" - and on `_run`
+    having reached `uvicorn.Config` regardless.
+
+    Fault to prove it: narrow `supervise()`'s inner `except Exception` to
+    `except CannotConnect` (or delete the inner `try` entirely). The
+    supervisor task then dies on the first `ZigbeeUnavailableError`, nothing
+    ever retries the radio, and a stick plugged in five minutes later is
+    never found - while `_run` itself still serves happily, which is exactly
+    why asserting only that "the bridge runs on" would keep passing."""
 
 
 async def test_the_quirks_warm_up_does_not_delay_the_web_ui():
     """`cli._run` starts uvicorn only AFTER `attach`, and the warm-up is an
-    estimated 9-15 s on a Pi 4. Held on that path, `/health` and the web UI
-    would be unreachable for the whole of it, every start - which the
-    updater's own health wait would read as a failed update.
+    estimated 9-15 s on a Pi 4. Held anywhere on that path, `/health` and
+    the web UI would be unreachable for the whole of it, every start -
+    which the updater's own health wait would read as a failed update.
 
-    Fault to prove it: await the startup `zigbee.connect()` call inline,
-    before `attach`, instead of starting it as a background task.
-    `connect()` begins by awaiting `ensure_quirks_loaded()` (Task 7), so
-    awaiting `connect()` itself reproduces the exact delay this test exists
-    to catch, even though the call sitting in `cli._run` is named
-    `connect()` rather than `ensure_quirks_loaded()`. A fake slow `setup`
-    passed through to `ensure_quirks_loaded` and measured against wall-clock
-    time is what turns this from a docstring into a real assertion: `_run`
-    must reach `attach`/`uvicorn.Config` before that fake `setup` resolves,
-    not after."""
+    What this proves, now that `cli._run` connects nothing itself: the
+    startup path contains NO wait on `ZigbeeSource.connect()` - neither an
+    inline `await`, nor an `await` on a supervisor task, nor any other
+    shape. The only caller of `connect()` is `supervise()`, started with
+    `ensure_future` and never awaited before `uvicorn.Config`, so a
+    Raspberry Pi's warm-up runs entirely beside a web UI that is already
+    answering.
+
+    Fault to prove it: put `await zigbee.connect()` into `cli._run` just
+    before `attach` - the shape an earlier draft of Step 3 had, and the one
+    thing that could plausibly be reintroduced here. `connect()` begins by
+    awaiting `ensure_quirks_loaded()` (Task 7), so awaiting it reproduces
+    the exact delay this test exists to catch, even though the call would
+    be named `connect()` rather than `ensure_quirks_loaded()`. A fake slow
+    `setup` passed through to `ensure_quirks_loaded` and measured against
+    wall-clock time is what turns this from a docstring into a real
+    assertion: `_run` must reach `attach`/`uvicorn.Config` before that fake
+    `setup` resolves, not after."""
 
 
 async def test_no_zigbee_work_happens_when_no_radio_is_configured():
@@ -3359,42 +3369,15 @@ async def test_the_availability_sweep_stops_on_disconnect():
     invoke = sources.send
 ```
 
-Declared beside the existing `supervisor_tasks: list[asyncio.Task[None]] = []` (same shape, same reason — a task with no other reference can be garbage-collected mid-flight):
+**`cli._run` calls `zigbee.connect()` nowhere — not inline, and not as a background task.** Two earlier drafts of this step did, the second one backgrounding what the first one awaited; both are wrong, and the reasons were established by reading `sources/supervisor.py` and `zigbee/source.py` rather than reasoning from this document:
 
-```python
-    zigbee_connect_task: asyncio.Task[None] | None = None
-```
+- **`supervise()` already performs the first connect, and doing it here as well races it.** `supervise()` opens with `await source.wait_for_link_loss()`, which returns *immediately* while `_connected` is `False` — its own docstring says so ("or at once when it never existed… a radio that is missing at startup is retried on exactly the same schedule as one that dies an hour later"). The supervisor therefore falls straight into `connect()` → `attach()` → the 1 s → 60 s backoff on failure, for a source that was never connected. With a second connect started in `cli._run`, the two overlap: the supervisor tasks are created a few lines after `attach`, and on a Pi the startup attempt is usually still inside the 9-15 s `ensure_quirks_loaded()` when that happens. `ZigbeeSource.connect()` has **no reentrancy guard** — both calls see `self._app is None`, both build an application on the one serial port, and the loser's application is leaked with its non-daemon bellows serial thread still running.
+- **And if the startup attempt wins the race instead, `attach()` never runs again.** `wait_for_link_loss()` would then park on `_link_lost` for the life of the connection, so the supervisor's own `connect()`/`attach()` pair is never reached: devices appear only as they happen to report, a quiet lamp never appears at all, `backfill_commands` never runs, and nothing is controllable.
+- **Backgrounding it does not even buy the catalogue it claimed to.** The earlier draft justified itself with "`snapshots()` still returns the device catalogue, with `available=False`, when the radio never came up". That is true of a connection that dropped *after* a first connect, and false before one: `_devices()` returns `[]` while `self._app is None`, and `snapshots()`'s own docstring says "Before the first application exists at all, the honest answer is an empty list — nothing has read the database yet." A backgrounded connect that is still loading quirks when `attach()` runs therefore hands `seed_from_snapshot`, `backfill_device_types`, `backfill_network_features` and `backfill_commands` an empty list, and `resend_all()` carries no Zigbee value at all.
 
-and, after `client.connect()` and before `attach`:
+So `cli._run` builds the source, puts it in `Sources`, seeds `cache_zigbee_connected(False)`, runs `attach` over it (which tolerates a disconnected source), and starts its supervisor — nothing else. The supervisor connects it, calls `attach()` again itself the moment it succeeds, and retries forever on failure without ever making uvicorn wait. That is the same "startup and reconnect MUST do the same thing" argument `attach()`'s own docstring gives, applied one level up: a Zigbee source that is connected by exactly one code path cannot have a startup path that drifts from the reconnect one.
 
-```python
-        if zigbee is not None:
-            # NOT fatal, unlike matter-server: a missing or broken Zigbee
-            # stick degrades the bridge, it never stops it. The supervisor
-            # retries forever on its own 1 s -> 60 s backoff.
-            #
-            # Started as a background task, NOT awaited: `connect()` begins
-            # by awaiting `ensure_quirks_loaded()` (Task 7), an estimated
-            # 9-15 s on a Raspberry Pi, and `attach()` tolerates a
-            # disconnected Zigbee source without complaint —
-            # `snapshots()`/`subscribe()` are called unconditionally and
-            # `snapshots()` still returns the device catalogue, with
-            # `available=False`, when the radio never came up (Task 7's own
-            # `test_snapshots_and_subscribe_tolerate_being_disconnected`).
-            # Nothing downstream needs this connect attempt to have
-            # finished before uvicorn serves, so awaiting it here would
-            # only be paying the same cost this task exists to keep off the
-            # startup path.
-            async def _connect_zigbee_at_startup() -> None:
-                try:
-                    await zigbee.connect()
-                except ZigbeeUnavailableError as exc:
-                    logger.warning("Zigbee radio not available at startup: %s", exc)
-
-            zigbee_connect_task = asyncio.ensure_future(_connect_zigbee_at_startup())
-```
-
-`attach`, `runtime.start()` and `uvicorn.Config`/`.serve()` all proceed immediately after `zigbee_connect_task` is created — none of them awaits it. `ZigbeeSource.connect()` is still the one and only place that awaits `ensure_quirks_loaded()`, so the ordering guarantee from Task 7 — quirks before any device object is built — still lives in exactly that one place; what moved here is only *when cli._run itself waits for `connect()` to finish*, which is now "never," the same way the supervisor's own reconnect attempts never make anything else wait for them either.
+`ZigbeeSource.connect()` is still the one and only place that awaits `ensure_quirks_loaded()`, so the ordering guarantee from Task 7 — quirks before any device object is built — still lives in exactly that one place. It simply now has a single caller: the supervisor's loop, a background worker that no request path and no other startup step waits for.
 
 **First, confirm (or apply) the correction to `src/loxmatter/zigbee/availability.py`.** Check whether `_check_one()`, `mark_all_offline()` and a `_devices_to_check()` helper already look like the code below — a follow-up fix may already have landed between Task 8 and this task running. If they do, this task touches nothing in that file and only adds the tests above, which pin the corrected behaviour down through `subscribe()`/`disconnect()`. If they do not, apply exactly this (it replaces `_is_mains_powered`'s use inside `_check_one` with a new, correctly-chosen predicate as well — a second, independent finding from the same review: `_check_one` was gating pings on `is_mains_powered`, but the bit that actually says whether a device is listening between its own transmissions is `is_receiver_on_when_idle`, a different bit of the same MAC capability byte):
 
@@ -3619,8 +3602,10 @@ the whole bridge dead while every Matter device still worked. The heartbeat
 now covers the mandatory source; Zigbee reports its own health as a signal
 and per device.
 
-A Zigbee radio that will not come up is logged and retried, never fatal, and
-the quirks warm-up runs in the background so the web UI answers throughout.
+A Zigbee radio that will not come up is logged and retried, never fatal.
+cli._run connects it nowhere: supervise() already performs the first connect
+as well as every later one, so the quirks warm-up runs in a supervisor task
+the web UI never waits for, and one serial port has one opener.
 
 Also starts the availability sweep Task 8 built: AvailabilityChecker has been
 constructed inside ZigbeeSource.subscribe() since that task landed, but
@@ -4046,7 +4031,7 @@ async def test_a_configured_stick_that_is_gone_is_reported_as_missing():
 
 - [ ] **Step 6: Implement the holder and the router.**
 
-**Why the apply is asynchronous, and why a synchronous version was rejected.** The obvious shape — `PUT` persists the setting, awaits `source.connect()`, and answers with the result — was written into an earlier draft of this plan and is wrong. On a first-ever Zigbee configuration that handler awaits an estimated **9-15 s** of `zhaquirks.setup()` on a Pi 4, then `startup(auto_form=True)`, then, if the stick is silent or is not a coordinator, a further **7.5 s** before `TimeoutError`. That is up to half a minute of a blocked HTTP request with nothing on screen moving, and it contradicts two of this plan's own Global Constraints at once: quirks loading must never sit on a request path, and long-running work must show progress or the user reads a healthy operation as a dead one. Task 10's background warm-up does not save it either — that one starts only when a radio is **already** configured, which is precisely not this case.
+**Why the apply is asynchronous, and why a synchronous version was rejected.** The obvious shape — `PUT` persists the setting, awaits `source.connect()`, and answers with the result — was written into an earlier draft of this plan and is wrong. On a first-ever Zigbee configuration that handler awaits an estimated **9-15 s** of `zhaquirks.setup()` on a Pi 4, then `startup(auto_form=True)`, then, if the stick is silent or is not a coordinator, a further **7.5 s** before `TimeoutError`. That is up to half a minute of a blocked HTTP request with nothing on screen moving, and it contradicts two of this plan's own Global Constraints at once: quirks loading must never sit on a request path, and long-running work must show progress or the user reads a healthy operation as a dead one. The supervisor Task 10 starts does not save it either — that one exists only for a radio that is **already** configured, which is precisely not this case.
 
 So the `PUT` stores the setting and returns **202** at once, and the connection happens in the background where the user can watch it. The mechanism is the one the repository already has, twice over: `sources/supervisor.py` owns connection attempts with 1 s → 60 s backoff, and the radios card polls a status endpoint while a job runs. Nothing new is invented.
 
@@ -4110,6 +4095,25 @@ def thread_channel_from_dataset(dataset: str) -> int | None:
     `dataset` is a credential-bearing blob (see `fetch_active_dataset`);
     this function never logs it or any slice of it, only the channel
     number it found.
+
+    Two fail-safe gaps, both measured, both deliberately left as notes
+    rather than code - an Active Operational Dataset fits in 254 bytes, so
+    neither can arise from a real border router:
+
+    - **The channel PAGE byte is skipped, not checked.** Page 0 is the
+      2.4 GHz band Zigbee shares; page 23 is the 915 MHz band, whose
+      channel numbers run from 0 and therefore overlap Zigbee's
+      candidates. A page-23 dataset naming channel 11 (`"000317000b"`)
+      returns 11 here, and `channels_excluding` then drops 2.4 GHz
+      channel 11 to avoid a network that is not on it. The cost is one
+      candidate needlessly removed from a list of four, never a wrong
+      network: this function only ever shortens that list, and
+      `channels_excluding` refuses nothing.
+    - **Thread's extended-TLV escape derails the scan.** A length byte of
+      `0xFF` means "two more bytes of extended length follow"; this parser
+      reads it as a 255-byte value, walks past the Channel TLV, and
+      returns `None` - the exclusion is lost, not wrong, which is the same
+      answer as no border router at all.
     """
     try:
         raw = bytes.fromhex(dataset)
