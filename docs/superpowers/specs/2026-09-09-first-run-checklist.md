@@ -195,10 +195,28 @@ shell. The last one is the whole reason `host_path_for()` exists.
 2. The card lists the Thread stick and the Bluetooth adapter, both "in use".
 3. Send an invalid Bluetooth index through the API
    (`POST /api/radios` with `{"thread": {…current…}, "bluetooth": {"adapter": 9}}`):
-   400 from the bridge. Then write the same body as `radios-request.json`
-   directly into the update directory: the sidecar rejects it with
-   `bluetooth_adapter_not_found`, and no container restarts (compare
+   400 from the bridge. Then go around the bridge and write a request
+   straight into the update directory as `radios-request.json`, to prove
+   the sidecar rejects it on its own:
+
+   ```json
+   {"id": "pi-check-3", "thread": null, "bluetooth": {"adapter": 9},
+    "requested_at": "2026-09-13T10:00:00Z"}
+   ```
+
+   The sidecar rejects it with `bluetooth_adapter_not_found`, and no
+   container restarts (compare
    `docker ps --format '{{.Names}} {{.RunningFor}}'` before and after).
+
+   Write that body, not the POST body from the first half of this step.
+   The sidecar's schema check is a strict whitelist over the exact key set
+   `["bluetooth", "id", "requested_at", "thread"]`; a POST body carries
+   neither `id` nor `requested_at` (the bridge adds both when it writes
+   the file), so pasting it here is rejected as `request_malformed`. That
+   still demonstrates "rejected without effect", but not the
+   host-validation check this step is for — and the difference costs a
+   hardware session to notice. Use a fresh `id` on each repeat: an id
+   already in `radios-handled/` is ignored rather than judged again.
 4. **Leaves the other radio alone.** Write `radios-request.json` directly
    with `{"thread": null, "bluetooth": {"adapter": 0}}` (the current
    adapter, or the only one present): the job reports `unchanged` for the

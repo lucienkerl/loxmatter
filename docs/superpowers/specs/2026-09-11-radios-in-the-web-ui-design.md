@@ -249,6 +249,13 @@ sits in `verify_thread` for up to 90 s goes silent for longer than
 reports it as abandoned — which is exactly what the flagship stick switch
 did until this was added.
 
+One gap remains open, deliberately: the refresh brackets each `docker
+compose` call rather than running during it, so a container recreate that
+by itself takes longer than the silence budget can still exceed it and be
+reported as abandoned. Closing that needs a refresh that runs concurrently
+with the call, and is a separate task — this section describes a hole made
+much smaller, not a closed one.
+
 ### 6.6 The Security Boundary, Extended
 
 The updater design (`2026-09-08-webui-updates-design.md`, section 10)
@@ -276,6 +283,8 @@ lists:
 ```text
 {
   "sidecar": "ready | missing | outdated | unmounted",
+  "update_running": false,
+  "updater_stack_host_path": "/home/pi/loxmatter/deploy/testhost",
   "serial": [SerialRadio],
   "bluetooth": [BluetoothAdapter],
   "current": {"thread_enabled": true, "thread_device": "/dev/serial/by-id/…",
@@ -290,6 +299,19 @@ lists:
   existing check, 30 s window); `outdated` when the updater is live but
   `radios-state.json` has no `seen_at` within the same window; `unmounted`
   when `radios-state.json` says `capable: false`; otherwise `ready`.
+- `update_running`: the update job is in one of its running phases
+  (`_RUNNING_PHASES`, `src/loxmatter/update.py`). The card needs this
+  because `sidecar` cannot express it: the two workers run sequentially in
+  one loop, so a long update necessarily starves the radios heartbeat and
+  reads back as `outdated` — and, once `updater_seen_at` goes stale too,
+  as `missing`. Both are false readings of a current, busy sidecar, and
+  the refresh command the `outdated` text prints would terminate the
+  running update. While this is `true` the card says an update is running
+  and prints no command.
+- `updater_stack_host_path`: the host path of the Compose stack, from
+  `state.json`. The card needs it to print the refresh command for the
+  genuine `outdated`/`unmounted` cases; `null` when no updater state has
+  been read, which selects the wording that names no path.
 - `current` is the sidecar's report with `thread_device` already mapped to
   its by-id entry (section 4); `null` unless `sidecar` is `ready` or
   `unmounted`.
@@ -364,28 +386,26 @@ introduced, the test fails, the fault is reverted.
 ### 10.2 On the Test Pi
 
 The updater's lesson was that the defects that mattered sat at boundaries
-no test saw. These steps extend `2026-09-09-first-run-checklist.md`:
+no test saw.
 
-0. Back up the Pi's `.env` by hand before the first radio job.
-1. Install the build, refresh the sidecar from the console once; the card
-   shows the read-only state before the refresh and the normal state after.
-2. The card lists the SONOFF stick and `hci0`, both "in use".
-3. An invalid Bluetooth index through the API is rejected by the real
-   sidecar, and no container restarts (compare start times before and
-   after).
-4. A real Thread change: the same stick, from `/dev/ttyUSB0` to its by-id
-   path. `otbr` is recreated, `ot-ctl state` reports `leader`, and the IKEA
-   Thread devices deliver values again within two minutes, read through the
-   running bridge.
-5. Thread disabled, then enabled again: `otbr` disappears and returns, and
-   the devices with it.
-6. Bluetooth "unchanged" ends without a restart. A real adapter switch
-   cannot be exercised on this Pi (only `hci0`); the report says so rather
-   than counting it as passed.
+**The procedure lives in `2026-09-09-first-run-checklist.md`, section 14**,
+and only there. It used to be written out a second time here, and the two
+copies had already drifted: this one claimed an invalid Bluetooth index is
+"rejected by the real sidecar", when the bridge answers 400 before the
+sidecar ever sees it — so a maintainer following this copy would have been
+proving the wrong boundary. A hardware session is expensive enough that
+the steps must exist once, in the document the maintainer actually works
+through at the Pi.
 
-Steps 4 and 5 interrupt the maintainer's Thread devices for minutes and
-are scheduled with the maintainer, not run unannounced. The rollback after a real
-failure is covered only by the automatic tests.
+What that section covers: the read-only card before the sidecar refresh
+and the normal card after; the stick and `hci0` both listed as "in use";
+rejection without effect, at both boundaries; a `null` half leaving the
+other radio alone, including with the configured stick unplugged; the real
+stick switch; Thread off and on again; and "nothing to change".
+
+Two of those steps interrupt the maintainer's Thread devices for minutes
+and are scheduled with the maintainer, not run unannounced. The rollback
+after a real failure is covered only by the automatic tests.
 
 ## 11. Explicitly Not Built
 
