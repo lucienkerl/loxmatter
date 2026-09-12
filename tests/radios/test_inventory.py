@@ -27,6 +27,8 @@ import pytest
 from loxmatter.radios.inventory import (
     BluetoothAdapter,
     SerialRadio,
+    device_identity,
+    is_same_device,
     match_current_device,
     scan_bluetooth,
     scan_serial,
@@ -222,3 +224,130 @@ def test_a_by_id_value_that_is_attached_is_present():
 def test_a_configured_stick_that_is_gone_is_reported_missing():
     assert match_current_device("/dev/ttyUSB3", []) == ("/dev/ttyUSB3", False)
     assert match_current_device(None, []) == (None, False)
+
+
+# --- Resolving a stick to the ONE piece of hardware it is ------------------
+
+
+def _char_device(major: int, minor: int) -> os.stat_result:
+    """A `stat` result that reads as a character device node.
+
+    A test cannot create a real one without root, which is exactly why
+    `device_identity` takes `stat` as a parameter. Only `st_mode` and
+    `st_rdev` are read, but the result is a genuine `os.stat_result` rather
+    than a stand-in object with two attributes: a fake that behaves where
+    the real type does not is the kind that makes a test green for
+    behaviour that cannot happen.
+
+    And this type does not behave. `st_rdev` is NOT one of the ten
+    positional fields - an eleventh tuple element is silently DROPPED and
+    `st_rdev` comes back as `None`, which is how the first run of this test
+    failed with `TypeError: an integer is required` rather than with a
+    wrong answer. The extras have to go in the second, dict argument.
+    """
+    mode = 0o020660  # S_IFCHR plus rw-rw----
+    return os.stat_result((mode, 0, 0, 1, 0, 0, 0, 0, 0, 0), {"st_rdev": os.makedev(major, minor)})
+
+
+def test_the_thread_stick_is_recognised_through_every_name_it_has():
+    """THE most dangerous mistake this feature can make: opening the
+    maintainer's live Thread coordinator as a Zigbee radio garbles their
+    Thread network.
+
+    Comparing PATH STRINGS does not work, and the reason is concrete: the
+    Pi's `.env` still holds `/dev/ttyUSB0` while this card offers by-id
+    paths, and the bridge sees the same node under yet another prefix
+    because /dev is bind-mounted at /host/dev. Three different strings, one
+    physical stick. The resolved major:minor is the same for all three.
+
+    Fault to prove it: compare the path strings. The by-id/ttyUSB0 pair then
+    slips through and the Thread stick is offered as a Zigbee coordinator."""
+    stats = {
+        "/host/dev/serial/by-id/usb-SONOFF_MG24-if00": _char_device(188, 0),
+        "/host/dev/ttyUSB0": _char_device(188, 0),
+        "/host/dev/ttyUSB1": _char_device(188, 1),
+    }
+    fake_stat = stats.__getitem__
+
+    assert (
+        is_same_device(
+            "/dev/serial/by-id/usb-SONOFF_MG24-if00",
+            "/dev/ttyUSB0",
+            Path("/host/dev"),
+            stat=fake_stat,
+        )
+        is True
+    )
+    assert (
+        is_same_device(
+            "/dev/serial/by-id/usb-SONOFF_MG24-if00",
+            "/dev/ttyUSB1",
+            Path("/host/dev"),
+            stat=fake_stat,
+        )
+        is False
+    )
+
+
+def test_an_unresolvable_device_is_not_treated_as_a_match():
+    """A stick that is not there cannot be proven to be a different one, but
+    it also must not be proven to be the SAME one - `None` is not equal to
+    `None` here.
+
+    Fault to prove it: return `True` when both resolve to `None`. Every
+    absent path then counts as the Thread stick and nothing is selectable."""
+
+    def _gone(path: str) -> os.stat_result:
+        raise FileNotFoundError(path)
+
+    assert is_same_device("/dev/ttyUSB9", "/dev/ttyUSB9", Path("/host/dev"), stat=_gone) is False
+    # And the half-resolved case, which is the one a user actually meets:
+    # the Thread stick fell out while the Zigbee one is still plugged in.
+    # `half` raises the way `os.stat` raises for a path that is not there -
+    # a plain `dict.__getitem__` would raise `KeyError`, which the real
+    # library never produces here, and a fake that raised it would be
+    # testing an `except` clause no running bridge can reach.
+    present = {"/host/dev/ttyUSB1": _char_device(188, 1)}
+
+    def half(path: str) -> os.stat_result:
+        try:
+            return present[path]
+        except KeyError:
+            raise FileNotFoundError(path) from None
+
+    assert is_same_device("/dev/ttyUSB1", "/dev/ttyUSB0", Path("/host/dev"), stat=half) is False
+    assert is_same_device("/dev/ttyUSB0", "/dev/ttyUSB1", Path("/host/dev"), stat=half) is False
+    # `None` on either side is the "nothing is configured for Thread" case.
+    assert is_same_device(None, "/dev/ttyUSB1", Path("/host/dev"), stat=half) is False
+    assert is_same_device("/dev/ttyUSB1", None, Path("/host/dev"), stat=half) is False
+
+
+def test_a_path_that_is_not_a_character_device_resolves_to_nothing():
+    """A regular file at `/dev/ttyUSB0` - what a half-populated container
+    mount or a leftover file looks like - is not a stick, and must not be
+    made to stand in for one.
+
+    Fault to prove it: drop the `S_ISCHR` check. The `st_rdev` of a regular
+    file is 0, so every plain file under the mount would resolve to
+    `(0, 0)` and they would all count as the same device: the Thread stick
+    and the Zigbee stick alike."""
+    plain = os.stat_result((0o100644, 0, 0, 1, 0, 0, 0, 0, 0, 0), {"st_rdev": 0})
+    stats = {"/host/dev/ttyUSB0": plain, "/host/dev/ttyUSB1": plain}
+
+    assert device_identity("/dev/ttyUSB0", Path("/host/dev"), stat=stats.__getitem__) is None
+    assert (
+        is_same_device("/dev/ttyUSB0", "/dev/ttyUSB1", Path("/host/dev"), stat=stats.__getitem__)
+        is False
+    )
+
+
+def test_the_host_dev_prefix_is_rewritten_the_way_the_sidecar_does_it():
+    """`radios-once.sh` maps a host path into the container with
+    `"$HOST_DEV${WANT_DEVICE#/dev}"`, and this has to agree with it or the
+    two halves of the same installation would look at different nodes.
+
+    Fault to prove it: join the paths with `host_dev / path`, which
+    `pathlib` resolves to the ABSOLUTE `/dev/ttyUSB0` - the container's own
+    (empty) /dev, not the host's."""
+    stats = {"/host/dev/ttyUSB0": _char_device(188, 0)}
+    assert device_identity("/dev/ttyUSB0", Path("/host/dev"), stat=stats.__getitem__) == (188, 0)

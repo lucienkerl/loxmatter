@@ -152,6 +152,7 @@ from loxmatter.api.radios import build_radios_router
 from loxmatter.api.settings import build_settings_router
 from loxmatter.api.update import build_update_router
 from loxmatter.api.version import build_version_router
+from loxmatter.api.zigbee import build_zigbee_router
 from loxmatter.auth.sessions import SESSION_COOKIE, session_is_valid
 from loxmatter.commands.fanout import dispatch_group, plan_group_calls
 from loxmatter.commands.translate import UnsupportedValueError, to_device_calls
@@ -166,6 +167,7 @@ from loxmatter.sources import (
     technology_display_name,
 )
 from loxmatter.timestamps import now_iso
+from loxmatter.zigbee.runtime import ZigbeeRuntime
 
 Invoker = Callable[[DeviceCall], Awaitable[None]]
 
@@ -406,6 +408,12 @@ def build_app(
     # tree instead.
     radios_host_dev: Path = Path("/host/dev"),
     radios_sys_root: Path = Path("/sys"),
+    # The holder of the live Zigbee source (`zigbee/runtime.py`). Passed
+    # rather than the source itself because this function runs BEFORE
+    # `cli._run` owns any source, and because a radio change replaces that
+    # source without a restart - a router that had captured the object
+    # would go on answering for the stick the user just stopped using.
+    zigbee_runtime: ZigbeeRuntime | None = None,
 ) -> FastAPI:
     # Callers that predate the device source boundary pass only `client`;
     # for them the registry is the Matter client alone, which is exactly
@@ -532,6 +540,23 @@ def build_app(
         build_radios_router(update_dir, host_dev=radios_host_dev, sys_root=radios_sys_root),
         dependencies=api_guard,
     )
+    # Only when a holder exists, and that is not defensiveness: the routes
+    # are the Zigbee radio SETTING, and applying one means swapping a live
+    # source, which nothing but `ZigbeeRuntime` can do. A build_app without
+    # one answering 202 to a change that nothing will ever perform would be
+    # worse than not offering the route at all. `cli._run` always passes
+    # one, so the production app always has it.
+    if zigbee_runtime is not None:
+        app.include_router(
+            build_zigbee_router(
+                store,
+                zigbee_runtime=zigbee_runtime,
+                host_dev=radios_host_dev,
+                sys_root=radios_sys_root,
+                update_dir=update_dir,
+            ),
+            dependencies=api_guard,
+        )
     app.include_router(build_language_router(store), dependencies=api_guard)
     app.include_router(build_version_router(), dependencies=api_guard)
     app.include_router(build_live_router(runtime), dependencies=api_guard)

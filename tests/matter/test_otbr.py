@@ -38,7 +38,9 @@ from loxmatter import i18n
 from loxmatter.matter.otbr import (
     DEFAULT_OTBR_URL,
     ThreadDatasetUnavailableError,
+    current_thread_channel,
     fetch_active_dataset,
+    thread_channel_from_dataset,
 )
 
 # A recorded but unusable dataset: the same shape as a real one (hex TLV),
@@ -194,3 +196,105 @@ async def test_an_explicit_address_overrides_the_default(monkeypatch: pytest.Mon
     await fetch_active_dataset(session_factory=lambda: session)
 
     assert session.requests[0][0] == "http://10.0.1.99:8081/node/dataset/active"
+
+
+# --- The channel Zigbee has to stay off ------------------------------------
+
+# A well-formed active dataset carrying two TLVs: an Active Timestamp
+# (type 0x0e, ignored by this parser) ahead of a Channel TLV (type 0x00,
+# length 3: one byte of channel page, then the channel itself as a 2-byte
+# big-endian integer - MeshCoP TLV numbering, Thread 1.3 "Network
+# Management TLVs"). Not first in the stream on purpose: a parser that
+# assumed the Channel TLV came first would pass against a fixture shaped
+# like this one and fail against a real border router that orders its TLVs
+# differently.
+DATASET_ON_CHANNEL_15 = "0e08" + "00" * 8 + "000300000f"
+
+
+def test_the_channel_tlv_is_found_regardless_of_where_it_sits_in_the_dataset():
+    """MeshCoP TLVs are a flat, ordered stream with no fixed layout beyond
+    "type, length, value, repeat" - OTBR is free to write them in any
+    order.
+
+    Fault to prove it: read the first three value bytes of the dataset as
+    the Channel TLV unconditionally, instead of scanning for type `0x00`.
+    This test's fixture, with the Channel TLV second, then reads as channel
+    0 - or raises, depending on how the first TLV's bytes are misread."""
+    assert thread_channel_from_dataset(DATASET_ON_CHANNEL_15) == 15
+
+
+def test_a_dataset_with_no_channel_tlv_answers_none_not_an_error():
+    """Every reason this parser cannot name a channel must read exactly
+    like "no border router at all" to `channels_excluding` - a courtesy
+    lost is not a reason to stop Zigbee from forming.
+
+    Fault to prove it: raise instead of returning `None` when the stream
+    runs out without a type-`0x00` TLV. Building a `ZigbeeSource` then
+    fails outright against a real, valid dataset that simply omits the
+    Channel TLV (permitted by the TLV format itself)."""
+    assert thread_channel_from_dataset("0e08" + "00" * 8) is None
+
+
+def test_a_truncated_tlv_stream_answers_none_rather_than_indexing_past_the_end():
+    """The shape of a response cut off mid-transfer, or simply corrupt: a
+    length byte claiming more value bytes than remain in the string.
+
+    Fault to prove it: slice the value out of the stream without first
+    checking that the claimed length fits. This test then fails with an
+    `IndexError`/`ValueError` instead of reading `None` - turning a
+    malformed dataset into a crash on the path that builds every
+    `ZigbeeSource`."""
+    assert thread_channel_from_dataset("0e08" + "00" * 2) is None
+
+
+async def test_current_thread_channel_answers_none_when_the_border_router_is_absent():
+    """The common case on any bridge with no Thread border router at all:
+    `fetch_active_dataset` raises `ThreadDatasetUnavailableError` the
+    instant the connection is refused. That must read as "nothing to
+    avoid", never propagate - a missing OPTIONAL border router must not
+    stop `ZigbeeRuntime` from building a `ZigbeeSource` at all, the same
+    rule Task 10 already applies to a missing Zigbee radio itself.
+
+    Fault to prove it: let `ThreadDatasetUnavailableError` escape instead of
+    catching it. Building a `ZigbeeSource` then fails on every installation
+    without a Thread border router configured - most of them."""
+    session = FakeSession()
+    session.raise_on_get = OSError("Connection refused")
+    assert await current_thread_channel(session_factory=lambda: session) is None
+
+
+async def test_current_thread_channel_reads_the_real_fetch_and_parse_path():
+    """The end-to-end call `ZigbeeRuntime`'s builder actually makes: fetch,
+    then parse, through the same fake session `fetch_active_dataset`'s own
+    tests already use.
+
+    Fault to prove it: answer `None` without parsing what was fetched -
+    which is what the whole chain degrades to if the parse is dropped or
+    its result discarded. The exclusion then goes silently inert again,
+    which is precisely the state Task 7 left `channels_excluding` in.
+
+    The plan's own suggested fault for this test - parsing the raw,
+    unvalidated body rather than `fetch_active_dataset`'s return value -
+    was INJECTED AND DID NOT FAIL, so it is not the fault this test
+    catches. `bytes.fromhex` skips ASCII whitespace on its own (measured
+    against the installed interpreter, see the test below), so a padded
+    body parses either way."""
+    session = FakeSession(status=200, body=DATASET_ON_CHANNEL_15)
+    assert await current_thread_channel(session_factory=lambda: session) == 15
+
+
+async def test_a_padded_response_still_yields_its_channel():
+    """A border router whose response carries a trailing newline.
+
+    MEASURED, and not what it first looks like: this passes because
+    `bytes.fromhex` ignores ASCII whitespace, NOT because
+    `validated_dataset` stripped it first. Both hold, so the padding is
+    harmless twice over - the point of pinning it here is that neither
+    layer may start rejecting it.
+
+    There is therefore no fault in `current_thread_channel` that this test
+    alone catches; it is a behaviour pin, not a guard, and saying so is
+    better than claiming a protection it does not provide."""
+    session = FakeSession(status=200, body=DATASET_ON_CHANNEL_15 + "\n")
+    assert await current_thread_channel(session_factory=lambda: session) == 15
+    assert thread_channel_from_dataset(DATASET_ON_CHANNEL_15 + "\n") == 15

@@ -34,9 +34,10 @@ from __future__ import annotations
 
 import os
 import re
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from stat import S_ISCHR
 from typing import Final, Literal
 
 _TTY_NAME: Final = re.compile(r"tty(USB|ACM)\d+")
@@ -154,6 +155,77 @@ def scan_bluetooth(sys_root: Path) -> list[BluetoothAdapter]:
             )
         )
     return sorted(adapters, key=lambda adapter: adapter.index)
+
+
+def device_identity(
+    path: str,
+    host_dev: Path,
+    *,
+    stat: Callable[[str], os.stat_result] = os.stat,
+) -> tuple[int, int] | None:
+    """The `(major, minor)` a host-visible `/dev/...` path resolves to.
+
+    `path` is always a path as the HOST sees it - `/dev/ttyUSB0` from the
+    installer's `.env`, or a `/dev/serial/by-id/...` entry from this card.
+    The bridge's own container sees neither: it has the host's `/dev`
+    bind-mounted at `host_dev`, so the prefix is rewritten exactly the way
+    `deploy/updater/radios-once.sh` already does it
+    (`"$HOST_DEV${WANT_DEVICE#/dev}"`).
+
+    `stat` follows symlinks, which is the point: a by-id entry is a symlink
+    to the `ttyUSB*` node, so both names of one stick resolve to the same
+    node and therefore to the same `st_rdev`.
+
+    `None` for everything that cannot be resolved to a character device -
+    an absent path, a permission error, a stale by-id symlink, a plain
+    file. It is deliberately NOT an error: a stick that is not there is the
+    ordinary state of a card listing devices that come and go, and
+    `is_same_device` turns this `None` into "cannot be proven to be the
+    same stick", which is the safe half of the answer for every caller.
+
+    `stat` is injectable because a test cannot create a device node without
+    root. That seam is the honest way to test the resolution - the
+    alternative is to compare path strings, which is the very bug this
+    function exists to prevent.
+    """
+    mapped = str(host_dev) + path[len("/dev") :] if path.startswith("/dev") else path
+    try:
+        info = stat(mapped)
+    except OSError:
+        return None
+    if not S_ISCHR(info.st_mode):
+        return None
+    return os.major(info.st_rdev), os.minor(info.st_rdev)
+
+
+def is_same_device(
+    left: str | None,
+    right: str | None,
+    host_dev: Path,
+    *,
+    stat: Callable[[str], os.stat_result] = os.stat,
+) -> bool:
+    """Whether two paths name the one physical stick.
+
+    By RESOLVED major:minor, never by string compare. MEASURED on the
+    maintainer's Pi (12 September 2026): the same stick is `/dev/ttyUSB0`
+    in the installer's `.env`, a `/dev/serial/by-id/usb-SONOFF_..._MG24_...`
+    entry on the settings card, and a third name under the container's
+    `/host/dev` mount. Three strings, one piece of hardware - and both
+    sticks attached to that machine report `10c4:ea60` and sit at major
+    188, so nothing but the resolved minor separates them.
+
+    A path that cannot be resolved answers `False`, and `None == None` is
+    emphatically NOT a match: two absent sticks are not known to be the
+    same one. Reading it the other way round would make every unresolvable
+    path count as the Thread stick, and nothing would ever be selectable.
+    """
+    if left is None or right is None:
+        return False
+    left_identity = device_identity(left, host_dev, stat=stat)
+    if left_identity is None:
+        return False
+    return left_identity == device_identity(right, host_dev, stat=stat)
 
 
 def match_current_device(

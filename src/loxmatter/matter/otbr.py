@@ -155,6 +155,88 @@ def validated_dataset(body: str, url: str) -> str:
     return dataset
 
 
+# MeshCoP TLV type for the Channel TLV (Thread 1.3 specification, "Network
+# Management TLVs" table): one byte of channel page followed by the
+# channel itself as a 2-byte big-endian integer - three value bytes in
+# total. Channel page 0 is the 2.4 GHz band, the one Zigbee also uses.
+_CHANNEL_TLV_TYPE: Final = 0x00
+_CHANNEL_TLV_VALUE_LENGTH: Final = 3
+
+
+def thread_channel_from_dataset(dataset: str) -> int | None:
+    """The 2.4 GHz channel a hex TLV active dataset names, or `None`.
+
+    `None` covers every shape this must tolerate without raising: no
+    Channel TLV present, one with the wrong length, or a stream truncated
+    partway through a type/length pair. This function is a courtesy - one
+    Zigbee/Thread channel collision avoided - never a gate, so a dataset it
+    cannot make sense of must read exactly like no border router at all
+    (`channels_excluding(None)`), not like an error that stops a
+    `ZigbeeSource` from being built at all.
+
+    `dataset` is a credential-bearing blob (see `fetch_active_dataset`);
+    this function never logs it or any slice of it, only the channel
+    number it found.
+
+    Two fail-safe gaps, both measured, both deliberately left as notes
+    rather than code - an Active Operational Dataset fits in 254 bytes, so
+    neither can arise from a real border router:
+
+    - **The channel PAGE byte is skipped, not checked.** Page 0 is the
+      2.4 GHz band Zigbee shares; page 23 is the 915 MHz band, whose
+      channel numbers run from 0 and therefore overlap Zigbee's
+      candidates. A page-23 dataset naming channel 11 (`"000317000b"`)
+      returns 11 here, and `channels_excluding` then drops 2.4 GHz
+      channel 11 to avoid a network that is not on it. The cost is one
+      candidate needlessly removed from a list of four, never a wrong
+      network: this function only ever shortens that list, and
+      `channels_excluding` refuses nothing.
+    - **Thread's extended-TLV escape derails the scan.** A length byte of
+      `0xFF` means "two more bytes of extended length follow"; this parser
+      reads it as a 255-byte value, walks past the Channel TLV, and
+      returns `None` - the exclusion is lost, not wrong, which is the same
+      answer as no border router at all.
+    """
+    try:
+        raw = bytes.fromhex(dataset)
+    except ValueError:
+        return None
+    index = 0
+    while index + 2 <= len(raw):
+        tlv_type = raw[index]
+        length = raw[index + 1]
+        value_start = index + 2
+        value_end = value_start + length
+        if value_end > len(raw):
+            return None
+        if tlv_type == _CHANNEL_TLV_TYPE and length == _CHANNEL_TLV_VALUE_LENGTH:
+            return int.from_bytes(raw[value_start + 1 : value_end], "big")
+        index = value_end
+    return None
+
+
+async def current_thread_channel(
+    base_url: str | None = None,
+    *,
+    session_factory: Callable[[], Any] | None = None,
+) -> int | None:
+    """The channel Zigbee should avoid, or `None` when there is nothing to
+    avoid.
+
+    Every reason this can fail to answer - no border router, an
+    unreachable one, a dataset with no Channel TLV - reads the same way to
+    the caller: form the Zigbee network on the full channel list
+    (`channels_excluding(None)`). A missing OPTIONAL border router must
+    never stop Zigbee from forming, the same rule Task 10 already applies
+    to a missing Zigbee radio itself.
+    """
+    try:
+        dataset = await fetch_active_dataset(base_url, session_factory=session_factory)
+    except ThreadDatasetUnavailableError:
+        return None
+    return thread_channel_from_dataset(dataset)
+
+
 async def fetch_active_dataset(
     base_url: str | None = None,
     *,

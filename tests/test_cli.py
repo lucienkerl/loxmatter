@@ -37,6 +37,7 @@ from loxmatter.matter.client import BridgeMatterClient, MatterUnavailableError
 from loxmatter.matter.models import NodeSnapshot
 from loxmatter.model.store import Store
 from loxmatter.sources.supervisor import supervise
+from loxmatter.zigbee import runtime as zigbee_runtime_module
 from loxmatter.zigbee.source import ZigbeeSource, ZigbeeUnavailableError
 
 FIXTURE = Path(__file__).parent / "fixtures" / "nodes" / "example_light.json"
@@ -496,6 +497,16 @@ def _install_run_spies(
     # a link loss that never comes - hence replaced here as well, and not in a
     # second layer of stand-ins next to it.
     monkeypatch.setattr(cli, "supervise", supervisor)
+
+    # The one OTBR read `build_zigbee_source` makes, per build. Left alone
+    # it would open a real aiohttp session against 127.0.0.1:8081 from
+    # every `_run` test that configures a stick - a network call in a unit
+    # test, whose answer depends on whether anything happens to be
+    # listening on the machine running the suite.
+    async def no_border_router(*args: Any, **kwargs: Any) -> int | None:
+        return None
+
+    monkeypatch.setattr(zigbee_runtime_module, "current_thread_channel", no_border_router)
     return senders, runtimes, clients, supervisor
 
 
@@ -1193,7 +1204,7 @@ async def test_the_heartbeat_keeps_pulsing_when_only_zigbee_is_down(monkeypatch,
     heartbeat below then falls silent while the Matter link is perfectly
     healthy."""
     _, runtimes, clients, _supervisor = _install_run_spies(monkeypatch)
-    monkeypatch.setattr(cli, "ZigbeeSource", _NeverConnectingZigbeeSource)
+    monkeypatch.setattr(zigbee_runtime_module, "ZigbeeSource", _NeverConnectingZigbeeSource)
     # The bridge is asked while it is SERVING - after the shutdown the Matter
     # client is disconnected too, and every `link_ok` would answer `False`.
     monkeypatch.setattr(cli.uvicorn, "Server", _HangingUvicornServer)
@@ -1257,7 +1268,7 @@ async def test_the_heartbeat_goes_quiet_when_matter_is_down(monkeypatch, tmp_pat
     answers `True` with the Matter listener already dead, and the heartbeat a
     real `Runtime` drives from it never falls silent."""
     _, runtimes, clients, _supervisor = _install_run_spies(monkeypatch)
-    monkeypatch.setattr(cli, "ZigbeeSource", _NeverConnectingZigbeeSource)
+    monkeypatch.setattr(zigbee_runtime_module, "ZigbeeSource", _NeverConnectingZigbeeSource)
     # As in the sibling test: the bridge is asked while it is SERVING, not
     # while it is shutting down - `_HangingUvicornServer` keeps `_run` inside
     # `serve()` for the whole test, so `finally` never runs and never
@@ -1329,7 +1340,7 @@ async def test_a_zigbee_radio_that_will_not_come_up_does_not_stop_the_bridge(
     # with an exception, so a stand-in would be the one thing that cannot
     # answer the question.
     monkeypatch.setattr(cli, "supervise", supervise)
-    monkeypatch.setattr(cli, "ZigbeeSource", _NeverConnectingZigbeeSource)
+    monkeypatch.setattr(zigbee_runtime_module, "ZigbeeSource", _NeverConnectingZigbeeSource)
     _CapturingUvicornServer.configs = []
     monkeypatch.setattr(cli.uvicorn, "Server", _CapturingUvicornServer)
     captured = _capture_build_app(monkeypatch)
@@ -1371,7 +1382,7 @@ async def test_the_quirks_warm_up_does_not_delay_the_web_ui(monkeypatch, tmp_pat
     bound turns that into a failure rather than a hung suite."""
     _install_run_spies(monkeypatch)
     monkeypatch.setattr(cli, "supervise", supervise)
-    monkeypatch.setattr(cli, "ZigbeeSource", _SlowToConnectZigbeeSource)
+    monkeypatch.setattr(zigbee_runtime_module, "ZigbeeSource", _SlowToConnectZigbeeSource)
     _CapturingUvicornServer.configs = []
     monkeypatch.setattr(cli.uvicorn, "Server", _CapturingUvicornServer)
     captured = _capture_build_app(monkeypatch)
@@ -1405,7 +1416,7 @@ async def test_no_zigbee_work_happens_when_no_radio_is_configured(monkeypatch, t
         built.append(kwargs)
         raise AssertionError("a Zigbee source was built without a radio configured")
 
-    monkeypatch.setattr(cli, "ZigbeeSource", _refuse)
+    monkeypatch.setattr(zigbee_runtime_module, "ZigbeeSource", _refuse)
     monkeypatch.setattr(cli.uvicorn, "Server", _SpyUvicornServer)
     captured = _capture_build_app(monkeypatch)
     store = Store(tmp_path / "t.sqlite")
@@ -1504,7 +1515,7 @@ async def test_the_radio_state_is_seeded_before_the_first_resend(monkeypatch, tm
 
     Fault to prove it: seed after the `attach()` loop, or seed `True`."""
     _, runtimes, _clients, _supervisor = _install_run_spies(monkeypatch)
-    monkeypatch.setattr(cli, "ZigbeeSource", _NeverConnectingZigbeeSource)
+    monkeypatch.setattr(zigbee_runtime_module, "ZigbeeSource", _NeverConnectingZigbeeSource)
     monkeypatch.setattr(cli.uvicorn, "Server", _SpyUvicornServer)
     store = Store(tmp_path / "t.sqlite")
 

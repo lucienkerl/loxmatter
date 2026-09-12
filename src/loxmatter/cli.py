@@ -19,11 +19,13 @@
 from __future__ import annotations
 
 import asyncio
+import functools
 import json
 import logging
 import os
 import sqlite3
 from collections.abc import Mapping
+from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 from typing import NoReturn
@@ -59,10 +61,10 @@ from loxmatter.matter.models import NodeSnapshot, SignalKind
 from loxmatter.model.locale_store import LocaleStore
 from loxmatter.model.store import Store
 from loxmatter.profiles.table import is_exportable
-from loxmatter.radios import fingerprints
 from loxmatter.sources import Sources
 from loxmatter.sources.supervisor import attach, supervise
-from loxmatter.zigbee.source import ZigbeeSource
+from loxmatter.timestamps import now_iso
+from loxmatter.zigbee.runtime import ZigbeeRuntime, build_zigbee_source
 
 logger = logging.getLogger(__name__)
 
@@ -680,41 +682,46 @@ async def _run(
     # per-device `d<id>_online` keys instead.
     runtime = Runtime(store, sender, link_ok=lambda: client.connected)
 
-    def _build_zigbee_source(store: Store) -> ZigbeeSource | None:
-        """This task's own throwaway stand-in for Task 11's radio setting -
-        reads the path from `--zigbee-device` rather than from
-        `ZigbeeRadioSettings`, which does not exist until that task lands.
-        Superseded there by `zigbee.runtime.build_zigbee_source`; nothing
-        ships with this version in place, the same way nothing ships with
-        `thread_channel` left at its default.
-
-        **`store=store` is the one thing this stand-in must not get wrong.**
-        `ZigbeeSource.__init__` has accepted `store` since configure-on-join
-        landed, and without it `configure_device` has no pending table to
-        write a deferred cluster into - the entire interruption-recovery
-        design in `configure.py` (mark before the attempt, clear after)
-        would be dead code from the very first startup, silently, because a
-        `ZigbeeSource` built with no store still connects, still joins
-        devices, and still shows them in the catalogue.
-
-        `matter_data_dir or Path("/data/matter")`: `matter_data_dir` is
-        itself optional, for the unrelated fabric-backup route, and can be
-        `None` on an installation that never set it - so a Zigbee stick and
-        no `--matter-data-dir` must not crash startup with a `TypeError` on
-        `None / "zigbee.sqlite"`.
-        """
-        if zigbee_device is None:
-            return None
-        return ZigbeeSource(
-            path=zigbee_device,
-            fingerprint=fingerprints.DEFAULT_UNKNOWN,
-            database=(matter_data_dir or Path("/data/matter")) / "zigbee.sqlite",
-            on_connection_change=runtime.set_zigbee_connected,
-            store=store,
-        )
-
-    zigbee = _build_zigbee_source(store)  # None when no radio is configured
-    sources = Sources([client] if zigbee is None else [client, zigbee])
+    # `database`, `on_connection_change` and `store` never change between a
+    # startup build and an apply-time rebuild, so binding them once here is
+    # what keeps `build_source(settings)` the one-argument callable both
+    # `ZigbeeRuntime.open()` (for the very first source) and its apply path
+    # (for every one after) call identically.
+    #
+    # **`store=store` is the one binding this must not get wrong.**
+    # `ZigbeeSource.__init__` has accepted `store` since configure-on-join
+    # landed, and without it `configure_device` has no pending table to
+    # write a deferred cluster into - the entire interruption-recovery
+    # design in `configure.py` (mark before the attempt, clear after) would
+    # be dead code, silently, because a `ZigbeeSource` built with no store
+    # still connects, still joins devices, and still shows them in the
+    # catalogue.
+    #
+    # `matter_data_dir or Path("/data/matter")`: `matter_data_dir` is
+    # itself optional, for the unrelated fabric-backup route, and can be
+    # `None` on an installation that never set it - so a Zigbee stick and
+    # no `--matter-data-dir` must not crash a running bridge with a
+    # `TypeError` on `None / "zigbee.sqlite"`, neither at startup nor on a
+    # radio change made hours later.
+    build_source = functools.partial(
+        build_zigbee_source,
+        database=(matter_data_dir or Path("/data/matter")) / "zigbee.sqlite",
+        on_connection_change=runtime.set_zigbee_connected,
+        store=store,
+    )
+    sources = Sources([client])
+    zigbee_runtime = ZigbeeRuntime(
+        store, runtime, sources, build_source=build_source, supervise=supervise
+    )
+    # The stored setting, not a CLI flag: `--zigbee-device` was Task 10's
+    # throwaway way in and is superseded here. It stays as an override for
+    # a bridge whose web UI is not reachable - written through the same
+    # store, so the two paths cannot describe different sticks.
+    if zigbee_device is not None:
+        stored = store.zigbee_settings.get()
+        if stored.path != zigbee_device:
+            store.zigbee_settings.save(replace(stored, path=zigbee_device, saved_at=now_iso()))
+    zigbee = await zigbee_runtime.open()  # None when no radio is configured
     invoke = sources.send
 
     supervisor_tasks: list[asyncio.Task[None]] = []
@@ -745,9 +752,18 @@ async def _run(
         # run again. Without it the bridge stays mute after a restart of a
         # source, without reporting it - exactly the outage of
         # 8 September 2026.
+        #
+        # Zigbee's own supervisor is started by `ZigbeeRuntime` instead, and
+        # not as a tidier arrangement: a radio change stops that supervisor
+        # and starts a new one for the new stick, so whoever can do that has
+        # to be the one holding the task. A second, independent supervisor
+        # started here would go on retrying the stick the user just gave up.
         supervisor_tasks = [
-            asyncio.ensure_future(supervise(source, store, runtime)) for source in sources.all()
+            asyncio.ensure_future(supervise(source, store, runtime))
+            for source in sources.all()
+            if source.technology != "zigbee"
         ]
+        zigbee_runtime.supervise_current()
 
         # `log_handler` arrives already finished (see the docstring above,
         # "Log ring" section) - `install_log_buffer()` itself has, since
@@ -764,6 +780,7 @@ async def _run(
                 api_token=api_token,
                 log_handler=log_handler,
                 update_dir=update_dir,
+                zigbee_runtime=zigbee_runtime,
             ),
             host=host,
             port=listen,
@@ -771,6 +788,17 @@ async def _run(
         )
         await uvicorn.Server(config).serve()
     finally:
+        try:
+            # Before the loop below, and before `sources.all()` is
+            # disconnected further down: this ends the Zigbee supervisor and
+            # any radio change still in flight. A supervisor left running
+            # while the sources are disconnected would see the link go and
+            # reopen the very stick the shutdown is releasing.
+            await zigbee_runtime.stop()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("The Zigbee runtime could not be stopped cleanly on shutdown")
         for supervisor_task in supervisor_tasks:
             supervisor_task.cancel()
             try:

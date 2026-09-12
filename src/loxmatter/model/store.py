@@ -63,6 +63,7 @@ from loxmatter.model.resend_settings_store import ResendSettingsStore
 from loxmatter.model.settings_store import BridgeSettingsStore
 from loxmatter.model.update_settings_store import UpdateSettingsStore
 from loxmatter.model.zigbee_pending_store import ZigbeePendingStore
+from loxmatter.model.zigbee_settings_store import ZigbeeSettingsStore
 from loxmatter.profiles.categories import category_for
 from loxmatter.profiles.relevance import (
     ROOT_NODE_DEVICE_TYPE,
@@ -1196,6 +1197,10 @@ class Store:
         self.update_settings = UpdateSettingsStore(self._db)
         # And once more - see `zigbee_pending_store.py`.
         self.zigbee_pending = ZigbeePendingStore(self._db)
+        # The Zigbee coordinator's own setting - see
+        # `zigbee_settings_store.py`. Same connection, same `setting` table,
+        # no schema bump.
+        self.zigbee_settings = ZigbeeSettingsStore(self._db)
 
     def close(self) -> None:
         self._db.close()

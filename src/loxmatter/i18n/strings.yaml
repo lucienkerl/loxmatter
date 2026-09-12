@@ -501,6 +501,24 @@ api.errors.zigbee_not_connected:
   en: "The Zigbee radio is configured, but the link to the stick is down. The bridge keeps trying to reconnect."
   de: "Das Zigbee-Funkmodul ist eingerichtet, aber die Verbindung zum Stick ist unterbrochen. Die Brücke versucht weiter, sie aufzubauen."
 
+# The two refusals of `PUT /api/zigbee/radio`. The first one's wording IS
+# the user-facing behaviour of the Thread exclusion: it has to say WHAT is
+# wrong, WHY, and WHAT TO DO about it. "Invalid device" would leave the
+# user with a stick they can see in the Thread row two rows above and no
+# idea why they may not have it here.
+api.errors.zigbee_is_thread_stick:
+  en: "This stick is in use for Thread. Turn Thread off, or move it to another stick, before using this one for Zigbee."
+  de: "Dieser Stick wird für Thread verwendet. Schalte Thread ab oder wähle dort einen anderen Stick, bevor du diesen für Zigbee nutzt."
+api.errors.zigbee_unknown_device:
+  # The same rule `POST /api/radios` already applies to the Thread device:
+  # the bridge validates what it can see. Without it a typo becomes a zigpy
+  # startup failure minutes later, with a message about a serial port.
+  en: "This USB device is not among the sticks the bridge can see. Rescan, and pick one from the list."
+  de: "Dieses USB-Gerät ist keiner der Sticks, die die Brücke sehen kann. Lies neu ein und wähle einen aus der Liste."
+api.errors.zigbee_not_configured:
+  en: "No Zigbee stick is set up in this installation. Pick one under Settings first."
+  de: "In dieser Installation ist kein Zigbee-Stick eingerichtet. Wähle zuerst unter Einstellungen einen aus."
+
 # The five messages of `ThreadDatasetUnavailableError` (matter/otbr.py).
 # NONE of them may contain the dataset itself - it carries the network key
 # of the Thread network and belongs neither in a response nor in a log
@@ -1974,6 +1992,47 @@ web.radios.rfkill_blocked:
 web.radios.option_blocked:
   en: "blocked"
   de: "gesperrt"
+
+# --- The Zigbee coordinator row (Task 11-13) ---
+web.radios.zigbee_label:
+  en: "Zigbee stick"
+  de: "Zigbee-Stick"
+web.radios.zigbee_none:
+  en: "No Zigbee stick"
+  de: "Kein Zigbee-Stick"
+web.radios.zigbee_is_thread_stick:
+  # The short suffix in the option label, beside `web.radios.in_use` and
+  # `web.radios.option_blocked` - the pattern the Bluetooth row already
+  # uses for an rfkill-blocked adapter. The long sentence is the API's
+  # refusal (`api.errors.zigbee_is_thread_stick`), shown when a stale page
+  # posts anyway.
+  en: "in use for Thread"
+  de: "für Thread in Verwendung"
+web.radios.fingerprint_unknown:
+  en: "Not recognised - set the radio type and baud rate under Advanced"
+  de: "Nicht erkannt – Funktyp und Baudrate unter Erweitert einstellen"
+web.radios.advanced:
+  en: "Advanced"
+  de: "Erweitert"
+web.radios.zigbee_loading_quirks:
+  # The user is looking at a 9-15 s pause on a Pi and deserves to know it
+  # is expected, not a hang.
+  en: "Preparing device support - the first connection takes a few seconds"
+  de: "Geräteunterstützung wird vorbereitet – die erste Verbindung dauert ein paar Sekunden"
+web.radios.zigbee_opening_radio:
+  en: "Opening the stick"
+  de: "Stick wird geöffnet"
+web.radios.zigbee_connected:
+  en: "Connected"
+  de: "Verbunden"
+web.radios.zigbee_failed_retrying:
+  # Carries the attempt count AND the error: the supervisor never gives up,
+  # so the card must not imply it has.
+  en: "{error} (attempt {attempts} - the bridge keeps trying)"
+  de: "{error} (Versuch {attempts} – die Brücke versucht es weiter)"
+web.radios.zigbee_device_missing:
+  en: "{path} (not present - plug it back in, or pick another stick)"
+  de: "{path} (nicht vorhanden – wieder einstecken oder einen anderen Stick wählen)"
 web.radios.rescan:
   en: "Rescan"
   de: "Neu einlesen"
