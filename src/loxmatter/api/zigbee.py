@@ -491,9 +491,11 @@ def build_zigbee_router(
         except DeviceUnreachableError as exc:
             if body.duration == 0 and source.permit_until() is None:
                 return {"permit_until": None}
-            raise HTTPException(
-                status_code=502, detail=i18n.t("api.zigbee.permit_failed", exc=str(exc))
-            ) from exc
+            # A failed Stop has its own sentence: "could not be opened" is
+            # false for a request that asked to close, and this refusal is
+            # the one that says the network may still be open.
+            key = "api.zigbee.close_failed" if body.duration == 0 else "api.zigbee.permit_failed"
+            raise HTTPException(status_code=502, detail=i18n.t(key, exc=str(exc))) from exc
         return {"permit_until": _iso(source.permit_until())}
 
     def _row_out(

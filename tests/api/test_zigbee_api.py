@@ -1970,6 +1970,25 @@ async def test_stop_after_the_link_was_lost_is_not_an_error(pairing):
     assert stopped.json() == {"permit_until": None}
 
 
+async def test_a_stop_the_radio_does_not_acknowledge_says_it_could_not_close(pairing):
+    """The pairing tab sends Stop when the button is pressed and when the tab
+    is left. A refused Stop used to answer with the refusal of an OPEN - "The
+    network could not be opened for new devices" - in front of a user who
+    had just asked to close it, and whose network may in fact still be open.
+
+    Fault to prove it: answer a failed Stop with `api.zigbee.permit_failed`."""
+    client, harness = pairing
+    await client.post("/api/zigbee/permit", json={"duration": 254})
+    harness.app.permit_error = TimeoutError()
+
+    refused = await client.post("/api/zigbee/permit", json={"duration": 0})
+
+    assert refused.status_code == 502, refused.text
+    detail = refused.json()["detail"]
+    assert detail.startswith("The network could not be closed for new devices"), detail
+    assert "could not be opened" not in detail
+
+
 async def test_a_failure_message_follows_a_language_switch(pairing, monkeypatch):
     """Fail in one language, switch, read in the other.
 

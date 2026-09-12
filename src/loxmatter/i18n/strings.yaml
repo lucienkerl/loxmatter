@@ -541,6 +541,14 @@ api.zigbee.permit_failed:
   # reconnecting. Text after {exc} doubled both.
   en: "The network could not be opened for new devices. Reason: {exc}"
   de: "Das Netz konnte nicht für neue Geräte geöffnet werden. Grund: {exc}"
+api.zigbee.close_failed:
+  # The same refusal for a Stop: a window still recorded as open that the
+  # radio did not acknowledge closing. Its own sentence, because "could not
+  # be opened" is false for a request that asked to close - and this is
+  # the one worth reading, since the coordinator may still be letting
+  # devices in. {exc} goes last, for `permit_failed`'s reason above.
+  en: "The network could not be closed for new devices, so it may still be open. Reason: {exc}"
+  de: "Das Netz konnte nicht für neue Geräte geschlossen werden und ist womöglich noch offen. Grund: {exc}"
 api.zigbee.radio_changing:
   # The 503 of the pairing routes while a radio change is in flight - the
   # old source released, the new one not built yet. NOT the "no stick is set
