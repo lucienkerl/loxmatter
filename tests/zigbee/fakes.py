@@ -41,11 +41,22 @@ what this file offers.
 from __future__ import annotations
 
 import logging
+import time
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+# `FakeDevice.__init__`'s default for `last_seen`: distinguishes "the
+# caller did not pass one - use a fresh timestamp, the way a device that
+# just finished its interview would" from an explicit `last_seen=None`,
+# which is zigpy's own spelling for "this device has never sent a single
+# packet" (`zigpy.device.Device.last_seen`, verified against zigpy 2.2.0).
+# `availability.is_available` treats the two very differently, so a fake
+# that could not tell them apart would hide exactly the branch that reads
+# `None` as "never seen".
+_LAST_SEEN_UNSET = object()
 
 
 # ------------------------------------------------- zigpy's exception names --
@@ -408,12 +419,14 @@ class FakeDevice:
         endpoints: Iterable[FakeEndpoint] = (),
         node_desc: FakeNodeDescriptor | None = None,
         quirk_applied: bool = False,
+        last_seen: float | None = _LAST_SEEN_UNSET,
     ) -> None:
         self.ieee = ieee
         self.nwk = 0x1234
         self.manufacturer = manufacturer
         self.model = model
         self.node_desc = node_desc if node_desc is not None else FakeNodeDescriptor()
+        self.last_seen = time.time() if last_seen is _LAST_SEEN_UNSET else last_seen
         self.is_initialized = True
         self._endpoints = list(endpoints)
         for endpoint in self._endpoints:

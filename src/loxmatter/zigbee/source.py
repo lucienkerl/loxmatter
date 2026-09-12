@@ -87,6 +87,7 @@ from loxmatter.matter.models import NodeSnapshot, Technology
 from loxmatter.radios.fingerprints import Fingerprint
 from loxmatter.sources import DeviceCall, DeviceUnreachableError, RuntimeEventHandler
 from loxmatter.timestamps import now_iso
+from loxmatter.zigbee.availability import AvailabilityChecker, is_available
 from loxmatter.zigbee.quirks import ensure_quirks_loaded
 from loxmatter.zigbee.translate import DeviceFacts, EndpointFacts, build_snapshot, rename_payload
 
@@ -433,6 +434,16 @@ class ZigbeeSource:
         self._dispatch_task: asyncio.Task[None] | None = None
         self._handler: RuntimeEventHandler | None = None
         self._resolve_device_id: Callable[[str], int | None] | None = None
+        # Rebuilt on every `subscribe()`, the same as the cluster listeners
+        # just below: `attach()` runs on every reconnect, and a fresh
+        # checker starts every device's grace counters clean rather than
+        # carrying stale counts across a rebuild it had no part in.
+        # **Not started here or anywhere else yet** - `start()` belongs to
+        # the task that wires a source into the running bridge, which does
+        # not exist until a later task. Until then this checker only ever
+        # answers `mark_all_offline()`, from `_handle_connection_lost`
+        # below - the one piece of Task 8 that cannot wait.
+        self._availability_checker: AvailabilityChecker | None = None
         # Per device, so one device can be re-bound without disturbing the
         # rest - a reinterview replaces exactly one device object.
         self._unsubscribers: dict[str, list[Callable[[], None]]] = {}
@@ -663,6 +674,12 @@ class ZigbeeSource:
         self._set_progress("failed", error=i18n.t("api.errors.zigbee_not_connected"))
         if self._on_connection_change is not None:
             self._spawn(self._on_connection_change(False))
+        if self._availability_checker is not None:
+            # THE reason this module exists (see `availability.py`): every
+            # device is pushed offline at once, rather than left showing
+            # whatever it last reported while the radio that would ever
+            # update it is gone.
+            self._spawn(self._availability_checker.mark_all_offline())
 
     def _spawn(self, coroutine: Awaitable[None]) -> None:
         task = asyncio.ensure_future(coroutine)
@@ -807,7 +824,15 @@ class ZigbeeSource:
             # buys a sleeping device six hours of silence instead of two
             # (Task 8's thresholds) before it is declared dead.
             is_mains_powered=bool(node_desc is not None and node_desc.is_mains_powered),
-            available=self._connected,
+            # `self._connected` alone used to be "the truth" here (see
+            # `snapshots`'s own docstring): with the whole radio down every
+            # device really is unreachable, and that half stays. What
+            # `is_available` adds is the per-device half - zigpy's own
+            # persisted `last_seen` against `availability.py`'s thresholds
+            # - so a reconnect reports the state the database already
+            # knows instead of seeding every device as freshly online (see
+            # `test_the_online_state_is_seeded_from_the_database_after_a_restart`).
+            available=self._connected and is_available(device),
             # The attribute `zha.quirks.DeviceRegistry.resolve` sets on a
             # device it transformed. This is loxmatter's equivalent of Z2M's
             # "Unsupported" badge, and it explains missing values before the
@@ -860,6 +885,9 @@ class ZigbeeSource:
         if self._dispatch_task is None or self._dispatch_task.done():
             self._dispatch_task = asyncio.create_task(self._dispatch_loop(self._queue))
         self._register_cluster_listeners()
+        # See the constructor: rebuilt fresh on every call, and not started
+        # here - only `mark_all_offline()` is wired up yet.
+        self._availability_checker = AvailabilityChecker(self, handler, resolve_device_id)
         await self._seed_baseline()
 
     async def _seed_baseline(self) -> None:
