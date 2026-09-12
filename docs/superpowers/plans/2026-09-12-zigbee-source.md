@@ -64,6 +64,8 @@ Every task's requirements implicitly include this section.
 
   **Measured baseline, 12 September 2026, after Task 1 landed (`f7b6b20`): 2069 passed, 2 skipped.** This number is authoritative and supersedes the arithmetic in Task 1's own steps, which predicted 2068 — Task 1 added six tests, not the five it estimated. Task 1 is complete and committed; its step text is left as the historical record rather than rewritten. Every forward-looking total in Tasks 2 onwards is counted from **2069**.
 
+  **Measured baseline, 12 September 2026, after Task 8 landed (`464a078`): 2249 passed, 2 skipped.** Tasks 2 through 8 stopped restating a running total in their own "run the checks" steps (Task 4's Step 13 already switched to "confirm the new total equals the previous total plus the tests added here" rather than a hard number), so this is the number a Task 9, 10 or 11 baseline run should actually see before that task's own new tests are added — including the nine new tests this correction adds to Task 10 and the four it adds to Task 11's Step 1 (Task 9 adds its own, separately). Every count stated inside Tasks 10 and 11 below (their fault counts, in particular) is counted against this baseline; it does not itself change when a task merely rearranges *which* file a test lives in.
+
   `tests/zigbee` is listed in part A2 above because Task 1 creates it and Tasks 6-9 fill it with the largest suites in this plan — and those suites are, by this plan's own admission, the only evidence that will exist for the translation until a second stick is bought. A directory that no part names is a directory CI never runs. **The only run where `tests/zigbee` must be dropped from the A2 command is Task 1 Step 1**, the baseline, because the directory does not exist yet and pytest exits with `ERROR: file or directory not found`. From Task 1 Step 8 onwards it is always included.
 - **Every test that names a protection must be shown to catch it.** Introduce the stated fault, run the test, see it **FAIL**, revert, see it **PASS**, and paste both outputs into the task report. A reviewer on this branch found tests that passed with their stated fault in place; several had to be rewritten. A test that stays green with the fault in place is wrong.
 - **A Python test that fetches a page proves only that the file was served.** It proves nothing about Alpine bindings, and a markup-substring assertion cannot fail for a binding that is merely wrong. Any web task must use the techniques already in `tests/api/test_web.py`: `_app_state(...)` runs the real `app.js` in node, `_x_show_expr(markup, key)` and `_running_step_lis(markup)` extract the real expressions out of the served markup rather than retyping them, and `_js_constant(name)` reads a constant out of the file.
@@ -2914,6 +2916,10 @@ EOF
 )"
 ```
 
+**Measured correction, 12 September 2026 — read before Task 10.** `AvailabilityChecker` is complete and committed as above, and its Step 3 correctly scoped out starting the sweep (Task 10's job, not this one). But a review that ran it against the real source measured something Task 8's own suite of 114 tests does not catch: `_sweep()`/`_check_one()` decide availability from `is_available(device)` alone, while `ZigbeeSource._facts()` (the snapshot path) decides it from `self._connected and is_available(device)`. The two disagree the instant a link is lost. Measured sequence: `mark_all_offline()` reports `[(1, False)]`, correctly — and the very next sweep tick reports `[(1, False), (1, True)]`, because the device's `last_seen` is recent (it was heard from seconds before the coordinator died) and nothing in the sweep ever asks whether the source is still connected. Started as Task 10 originally wired it, this ships a regression: every device the link-loss protection just marked offline is read as available again on the next tick, up to `CHECK_INTERVAL_SECONDS` later — the exact failure this module exists to prevent, self-inflicted. Seven targeted mutations (to `start()`, `stop()`, `_run()`, and all four grace-counter branches) left all 114 tests green, which is the same shape of finding as the faults this plan's Step 5 rounds exist to catch — nothing here asked the question a fault-injection pass over this specific interaction would have asked.
+
+The fix, applied to this file as a follow-up correction rather than by rewriting Task 8's steps above (the same convention the Task 1 baseline note below uses): `_check_one()` now checks `self._source.connected` before anything else and reports `False` at once when it is not, ahead of the `is_available()` branch — checked per device, inside the method every device already passes through one at a time, rather than once at the top of `_sweep()`. A sweep that spends several seconds pinging quiet mains devices in a row can have the link die partway through it, and only a per-device check stops the tail of that same sweep from reporting devices online again right after `mark_all_offline()` already told Loxone otherwise. A new `_devices_to_check()` helper — used by both `_sweep()` and `mark_all_offline()`, so the two cannot drift apart on which devices they cover — filters out the coordinator's own entry via `node_desc.is_coordinator` (zigpy 2.2.0; ZHA's own `_check_available`/`DeviceAvailabilityChecker` exempt it the same way), because zigpy keeps the coordinator in `app.devices` like any other node and nothing else was filtering it before. `mark_all_offline()` also now guards each device with its own `try`/`except`, so one that raises (a closed UDP socket, mid-shutdown) does not leave every device *after* it in the loop stuck at its last reported value. A new `_report()` step de-duplicates by the last value actually told to the handler, needed once the connection-loss branch and the periodic sweep can both decide the same device's fate. The same review additionally found `_check_one()` reading the wrong bit of the node descriptor to decide who gets pinged — `is_mains_powered` rather than `is_receiver_on_when_idle`, two different bits of the same MAC capability byte — corrected alongside the rest as `_answers_unsolicited_reads()`. Task 10's own wiring must additionally have `subscribe()` await the previous checker's `stop()` before building a new one, and `disconnect()` stop it too — `subscribe()` runs again on every reconnect, and replacing the reference without stopping the old task first leaks one dangling sweep per reconnect, each reading an application object that is progressively more stale.
+
 ---
 
 ### Task 9: Configure-on-Join
@@ -3160,16 +3166,23 @@ EOF
 
 This closes boundary design open point 9.1. `Runtime(link_ok=sources.all_connected)` would silence the Loxone watchdog when only the Zigbee stick is gone, and **Loxone would declare the whole bridge dead while every Matter device still works.**
 
+**This task also starts the availability sweep Task 8 built and left unstarted, on purpose — and it must wire an already-corrected checker, not the one Task 8 committed as-is.** `AvailabilityChecker` (Task 8) is already constructed fresh inside `ZigbeeSource.subscribe()` — read that method's own comment, "not started here - only `mark_all_offline()` is wired up yet" — and Task 8's Step 3 named exactly one wire to build: `mark_all_offline()` from the `connection_lost` listener. That scope was correct as far as it went, but a review has since measured that simply calling `start()` on the committed checker ships a regression, not merely a missing feature (see the "Measured correction" note at the end of Task 8): its sweep decides availability from `is_available(device)` alone, never from `ZigbeeSource.connected`, so the very first sweep tick after a lost link reports every device `mark_all_offline()` just marked offline as available again — because each one was, correctly, heard from only seconds before the link died. Task 8's own 114 tests do not catch this, because they drive the checker directly and never run a sweep tick after a real link loss.
+
+That correction is why starting and stopping this component needs its own task, and not only "call `start()` somewhere": **whoever starts a background loop takes on owning its stop, and that ownership has two parts, not one.** First, the checker's sweep must know the source's connection state, which is exactly the fact this task's whole first half (the heartbeat) already treats as the thing worth reporting correctly — starting a sweep that reports the opposite of what the heartbeat says in the same moment would make the two ends of one task disagree about what "connected" means. Second, `subscribe()` runs again on every reconnect (`attach()`'s documented contract), so whoever calls `start()` on a fresh checker there must `await` a `stop()` on whatever checker the previous `subscribe()` left running, or every reconnect leaks one more dangling sweep task reading a progressively staler application object. Task 8 proved the checker's own decisions (which threshold, who gets pinged, who never does) against a fake clock and a fake source, and none of that needed the periodic sweep actually *running* in a live process, or run more than once, to be tested. Running it for real, more than once, over the life of a process is what this task is the first to do, so the ownership questions above are its questions to close, not Task 8's.
+
 **Files:**
-- Modify: `src/loxmatter/cli.py`, `src/loxmatter/loxone/runtime.py`, `src/loxmatter/i18n/strings.yaml`
-- Test: `tests/test_cli.py`, `tests/loxone/test_runtime.py`
+- Modify: `src/loxmatter/cli.py`, `src/loxmatter/loxone/runtime.py`, `src/loxmatter/zigbee/source.py`, `src/loxmatter/zigbee/availability.py`, `src/loxmatter/i18n/strings.yaml`
+- Test: `tests/test_cli.py`, `tests/loxone/test_runtime.py`, `tests/zigbee/test_source.py`, `tests/zigbee/test_availability.py`
+
+`availability.py` is listed even though Task 8 created it: **check first whether the correction in Task 8's "Measured correction" note is already applied.** If it is (a follow-up fix may already have landed between Task 8 and this task running), this task only adds the tests below that pin the corrected behaviour down through `subscribe()`/`disconnect()` and leaves the file itself alone. If it is not, this task applies that correction itself before starting the sweep — shipping the uncorrected checker live would be worse than the gap this task was written to close.
 
 **Interfaces:**
-- Consumes: `ZigbeeSource` (Task 7), `ensure_quirks_loaded` (Task 1), the radio setting (Task 11 — until it lands, read the path from a CLI option `--zigbee-device` defaulting to `None`).
+- Consumes: `ZigbeeSource` (Task 7), `ensure_quirks_loaded` (Task 1), `AvailabilityChecker.start()` / `AvailabilityChecker.stop()` and `ZigbeeSource.connected` (Task 7/8 — the checker's sweep now gates every report on this flag; see the correction note at the end of Task 8), the radio setting (Task 11 — until it lands, read the path from a CLI option `--zigbee-device` defaulting to `None`).
 - Produces:
   - `loxmatter.loxone.runtime.ZIGBEE_CONNECTED_KEY = "zigbee_connected"`, declared beside `HEARTBEAT_KEY`.
   - `Runtime.cache_zigbee_connected(connected: bool) -> None` and `Runtime.set_zigbee_connected(connected: bool) -> None` — the cache/send pair, shaped exactly like the existing `_cache_online`/`set_online`. Step 3 builds both; there is no generic mechanism to reuse, because `HEARTBEAT_KEY` is the only non-device key `Runtime` sends today.
   - `cli._run` passes `on_connection_change=runtime.set_zigbee_connected` into `ZigbeeSource` (Task 7's Interfaces) and seeds `cache_zigbee_connected(False)` before `attach()`.
+  - `ZigbeeSource.subscribe()` now calls `self._availability_checker.start()` after building a fresh checker. Stopping the previous one first (`_stop_availability_checker()`, called from both `subscribe()` and `disconnect()`) is confirmed or added as part of the availability.py correction above, not new to this bullet — `start()` is the one call nothing before this task ever made. No new public name: the checker's lifecycle stays entirely inside `ZigbeeSource`, the same way the dispatch task's does, so neither `cli._run` nor Task 11's `ZigbeeRuntime` has to remember to manage it — every `attach()`/reconnect/radio-swap gets it for free through `subscribe()`/`disconnect()`, which they already call.
 
 - [ ] **Step 1: Write the failing tests.**
 
@@ -3216,6 +3229,95 @@ async def test_no_zigbee_work_happens_when_no_radio_is_configured():
     warm-up, no source in the registry.
 
     Fault to prove it: always construct the source."""
+
+
+async def test_the_availability_sweep_starts_when_the_source_is_subscribed():
+    """`AvailabilityChecker` has existed since Task 8, rebuilt fresh inside
+    `ZigbeeSource.subscribe()` every time - but never started, by that
+    task's own deliberate scope. Without this, `CHECK_INTERVAL_SECONDS`
+    never elapses at all: a mains device that stopped reporting hours ago
+    is never pinged and never written off, and the web UI reports it
+    reachable forever, even though `mark_all_offline()` still fires
+    correctly the moment the coordinator itself is lost (Task 8's own
+    protection, unaffected by this gap).
+
+    Fault to prove it: construct the checker in `subscribe()` without
+    calling `start()` - Task 8's original shape. The periodic sweep then
+    never runs, on any installation, ever."""
+
+
+async def test_a_reconnect_stops_the_previous_sweep_before_starting_a_new_one():
+    """`attach()` calls `subscribe()` again on every reconnect (its
+    documented contract). `_stop_availability_checker()` already guards
+    against replacing `self._availability_checker` without stopping its
+    task first - but that guard was written and proven against a checker
+    that was never started, so nothing before this task exercised it
+    against a checker with a live sweep task actually running. Confirm it
+    still holds now that `start()` is in the picture: ten reconnects over a
+    flaky USB cable must not leave ten sweep tasks running, nine of them
+    reading an application object `disconnect()` has already thrown away.
+
+    Fault to prove it: build and start the new checker without first
+    awaiting `stop()` on the old one (or without an old one being stopped
+    at all, if `_stop_availability_checker()` is itself missing).
+    `asyncio.all_tasks()` grows by one on every single `subscribe()` call
+    instead of staying flat."""
+
+
+async def test_a_device_marked_offline_by_link_loss_does_not_flip_back_on_the_next_sweep():
+    """THE regression a review measured in the committed checker, not merely
+    a missing feature: `_sweep()`/`_check_one()` compute availability from
+    `is_available(device)` alone, which reads only `device.last_seen` - and
+    a device heard from ten seconds before the coordinator died still
+    passes that check for the next two (mains) or six (battery) hours.
+    `ZigbeeSource._facts()` gets this right (`self._connected and
+    is_available(device)`); the sweep, before this task's correction, does
+    not.
+
+    Measured directly against the real checker: `mark_all_offline()` after
+    a link loss reports `[(1, False)]`, correctly - and the very next sweep
+    tick reports `[(1, False), (1, True)]`, flipping the device straight
+    back to "online" in Loxone. Seven separate mutations to `start()`,
+    `stop()`, `_run()` and all four grace-counter branches left Task 8's
+    114 tests green, because none of them ever runs a sweep tick after a
+    real link loss.
+
+    Fault to prove it: revert `_sweep()`/`_check_one()` to decide
+    availability from `is_available(device)` alone, without checking
+    `self._source.connected` - Task 8's committed shape. This test then
+    fails exactly as the measurement above describes: online again, one
+    sweep after offline."""
+    harness = build(FakeApplication(devices=[colour_lamp()]))
+    await harness.source.connect()
+    # `colour_lamp()` defaults `last_seen` to "now" (`fakes.py`'s own
+    # `_LAST_SEEN_UNSET` sentinel) - heard from moments ago, exactly the
+    # shape that made the measured regression invisible to `is_available`
+    # alone.
+    await harness.source.subscribe(_lamp_resolver(device_id=1), harness.handler)
+    harness.app.fire_connection_lost()
+    await _settle(harness.source)
+    assert harness.handler.online == [(1, False)]
+    # The next scheduled tick, invoked directly rather than waited for -
+    # `AvailabilityChecker._sweep()` is what a real 30 s timer would call.
+    await harness.source._availability_checker._sweep()
+    assert harness.handler.online == [(1, False)]
+
+
+async def test_the_availability_sweep_stops_on_disconnect():
+    """A checker whose sweep task keeps running after `disconnect()` reads
+    `_devices()` against an application that no longer exists (harmless -
+    it returns `[]`), but the task itself is never cancelled: it leaks for
+    the rest of the process, one more each time the source reconnects or a
+    radio is swapped out from under it (Task 11). `disconnect()` already
+    calls `_stop_availability_checker()` for a checker that was never
+    started; this confirms the same call actually cancels a LIVE sweep task
+    now that `start()` is wired in.
+
+    Fault to prove it: drop the `_stop_availability_checker()` call from
+    `disconnect()` (or have `start()` not being called mask a missing
+    `stop()` entirely, which is why this test must run after `start()` is
+    wired, not before). `asyncio.all_tasks()` then grows by one dangling
+    sweep task on every single reconnect."""
 ```
 
 - [ ] **Step 2: Run to verify they fail.**
@@ -3252,6 +3354,160 @@ and, after `client.connect()` and before `attach`:
 ```
 
 The quirks warm-up is started as a background task, never awaited on the startup path — `ZigbeeSource.connect()` awaits it itself, so the ordering guarantee lives in one place and uvicorn is never held behind it.
+
+**First, confirm (or apply) the correction to `src/loxmatter/zigbee/availability.py`.** Check whether `_check_one()`, `mark_all_offline()` and a `_devices_to_check()` helper already look like the code below — a follow-up fix may already have landed between Task 8 and this task running. If they do, this task touches nothing in that file and only adds the tests above, which pin the corrected behaviour down through `subscribe()`/`disconnect()`. If they do not, apply exactly this (it replaces `_is_mains_powered`'s use inside `_check_one` with a new, correctly-chosen predicate as well — a second, independent finding from the same review: `_check_one` was gating pings on `is_mains_powered`, but the bit that actually says whether a device is listening between its own transmissions is `is_receiver_on_when_idle`, a different bit of the same MAC capability byte):
+
+```python
+def _answers_unsolicited_reads(device: Any) -> bool:
+    """Whether anything is listening between this device's own transmissions.
+
+    `node_desc.is_receiver_on_when_idle` and NOT `is_mains_powered` - the two
+    are different bits of the same MAC capability byte (verified against the
+    installed zigpy 2.2.0), and it is this one, not the powered one, that
+    says whether a ping can be answered at all. An uninterviewed device
+    answers `None` here, treated the same as a sleepy one: not pinged, the
+    direction that costs nothing.
+    """
+    node_desc = device.node_desc
+    return bool(node_desc is not None and node_desc.is_receiver_on_when_idle)
+
+
+def _is_coordinator(device: Any) -> bool:
+    """Whether this "device" is the radio this bridge is talking through.
+
+    zigpy keeps the coordinator in `app.devices` alongside every real node -
+    nothing else filters it out, so without this both the sweep and
+    `mark_all_offline()` would ping and report on the bridge's own radio as
+    if it were a quiet mains device (ZHA's own `_check_available` and
+    `DeviceAvailabilityChecker` both exempt it the same way).
+    `NodeDescriptor.is_coordinator` answers `None` for a descriptor that has
+    not been read yet, which `bool()` turns into "an ordinary device" - the
+    safe reading, since an ordinary device merely gets checked.
+    """
+    node_desc = device.node_desc
+    return bool(node_desc is not None and node_desc.is_coordinator)
+
+
+class AvailabilityChecker:
+    # ... constructor unchanged, plus one more piece of state:
+    def __init__(self, source, handler, resolve_device_id, *, sleep=asyncio.sleep, now=time.time):
+        ...
+        # Per address, the last `available` this checker actually told the
+        # handler. Without it every device would be re-announced every
+        # thirty seconds forever, once `_check_one` and `mark_all_offline`
+        # can both decide the same device's fate.
+        self._reported: dict[str, bool] = {}
+
+    def _devices_to_check(self) -> list[Any]:
+        """The catalogue minus the radio itself - used by BOTH `_sweep()`
+        and `mark_all_offline()`, so the two cannot drift apart on which
+        devices they cover: a coordinator the sweep refuses to bring back
+        online must not be one `mark_all_offline` is willing to take down,
+        or it would be stuck offline for good."""
+        return [device for device in self._source._devices() if not _is_coordinator(device)]
+
+    async def _report(self, address: str, device_id: int, online: bool) -> None:
+        """Tells the handler, but only when the answer has changed."""
+        if self._reported.get(address) == online:
+            return
+        await self._handler.set_online(device_id, online)
+        # Only after the handler returned: if it raised, the change is
+        # still outstanding and the next sweep says it again.
+        self._reported[address] = online
+
+    async def mark_all_offline(self) -> None:
+        """THE feature this module exists for: pushes every known device
+        offline at once, in response to the coordinator going away.
+
+        **Every device is guarded on its own.** `_handle_connection_lost`
+        runs this through `_spawn`, so an exception escaping here reaches
+        nothing but asyncio's "never retrieved" logger, and the devices
+        after the one that raised would keep their last value forever -
+        precisely the outcome this method exists to prevent.
+        `RuntimeEventHandler.set_online` really does raise
+        (`UdpSender.send` raises once its socket is closed).
+        """
+        self._missed_checkins.clear()
+        for device in self._devices_to_check():
+            device_id = self._resolve_device_id(str(device.ieee))
+            if device_id is None:
+                continue
+            try:
+                await self._report(str(device.ieee), device_id, False)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("could not mark Zigbee device %s offline", device.ieee)
+
+    async def _sweep(self) -> None:
+        moment = self._now()
+        for device in self._devices_to_check():
+            await self._check_one(device, moment)
+
+    async def _check_one(self, device: Any, moment: float) -> None:
+        address = str(device.ieee)
+        device_id = self._resolve_device_id(address)
+        if device_id is None:
+            return
+        if not self._source.connected:
+            # THE gate: losing the coordinator does not touch `last_seen`,
+            # so a sweep that asked the device alone would answer "online"
+            # within thirty seconds of the link going down and undo what
+            # `mark_all_offline()` just told Loxone - the same answer
+            # `ZigbeeSource._facts` already uses for a snapshot
+            # (`self._connected and is_available(device)`). Checked here,
+            # inside the per-device method every device already passes
+            # through, rather than once at the top of `_sweep()` - a sweep
+            # that spends several seconds pinging earlier devices can have
+            # the link die partway through it, and only a per-device check
+            # stops the tail of that same sweep from reporting devices
+            # online again right after `mark_all_offline()` already
+            # answered (`test_a_device_marked_offline_by_link_loss_does_not_flip_back_on_the_next_sweep`).
+            self._missed_checkins.pop(address, None)
+            await self._report(address, device_id, False)
+            return
+        if is_available(device, now=moment):
+            self._missed_checkins.pop(address, None)
+            await self._report(address, device_id, True)
+            return
+        if not _answers_unsolicited_reads(device):
+            await self._report(address, device_id, False)
+            return
+        if device.manufacturer == _LUMI_MANUFACTURER:
+            await self._report(address, device_id, False)
+            return
+        missed = self._missed_checkins.get(address, 0)
+        if missed >= _CHECKIN_GRACE_PERIODS:
+            await self._report(address, device_id, False)
+            return
+        self._missed_checkins[address] = missed + 1
+        await self._ping(device, address)
+```
+
+(`_ping` itself, the LUMI/grace-counter comments and `is_available` are unchanged from Task 8's committed version — shown collapsed above only where the branching itself did not change, per this plan's own rule against retyping unchanged code; write the full method exactly as committed, with the two `await self._handler.set_online(...)` calls it does not have replaced by `await self._report(...)`.)
+
+**And in `src/loxmatter/zigbee/source.py`, start this now-corrected availability sweep.** `AvailabilityChecker` has been constructed inside `subscribe()` since Task 8, with the comment `# not started here - only mark_all_offline() is wired up yet`. Check first whether `subscribe()` and `disconnect()` already call a `_stop_availability_checker()` helper — a follow-up fix may already have landed alongside the `availability.py` correction above, adding exactly that: `_stop_availability_checker()` (stopping and clearing whichever checker is currently held, awaited, idempotent) called from `disconnect()` and from `subscribe()` before it rebuilds a fresh checker, so a checker from an earlier `subscribe()` call — `attach()` runs it again on every reconnect — is never simply dropped and leaked. If that helper does not exist yet, add it exactly as described and call it from both places, matching the shape `disconnect()` already uses for its own cleanup steps (`dispatch_task, self._dispatch_task = self._dispatch_task, None` and the like).
+
+**Either way, this task is the one that adds the single missing line: starting the checker.** Nothing before this task ever called `AvailabilityChecker.start()` on a real, running source — Task 8 proved the checker's own decisions against a fake clock, which needed the sweep built, never running. This is the first task that runs a `ZigbeeSource` through a real service lifecycle, so it is where the periodic sweep actually begins:
+
+```python
+        self._register_cluster_listeners()
+        await self._stop_availability_checker()
+        # Rebuilt fresh on every call, exactly as before this task - but now
+        # also STARTED here: this is the first task that runs a source
+        # through a real subscribe-to-disconnect service lifecycle, so it is
+        # where the periodic sweep (`CHECK_INTERVAL_SECONDS`) actually
+        # begins running. By the time it runs live it must already gate
+        # every report on `self.connected` (see the correction note at the
+        # end of Task 8) and exclude the coordinator, or the sweep will
+        # contradict `mark_all_offline()` a tick later
+        # (`test_a_device_marked_offline_by_link_loss_does_not_flip_back_on_the_next_sweep`).
+        self._availability_checker = AvailabilityChecker(self, handler, resolve_device_id)
+        self._availability_checker.start()
+        await self._seed_baseline()
+```
+
+`disconnect()` needs no change here beyond the `_stop_availability_checker()` call confirmed or added above — there is nothing left in it for this task to start.
 
 **And in `src/loxmatter/loxone/runtime.py`, build the `zigbee_connected` signal.** Spec §4.9 requires it and the second test above asserts it, and there is nothing to build on: `Runtime` sends exactly one non-device key today (`HEARTBEAT_KEY`, from `_heartbeat_loop`) and has no generic mechanism for a second one. Add the key beside it:
 
@@ -3305,14 +3561,14 @@ Wire it in `cli._run`: pass `on_connection_change=runtime.set_zigbee_connected` 
 
 - [ ] **Step 4: Run to verify they pass.**
 
-- [ ] **Step 5: Prove each protection catches its fault.** Five faults. FAIL, revert, PASS, both pasted.
+- [ ] **Step 5: Prove each protection catches its fault.** Nine faults (five of the heartbeat/startup, plus the four availability-sweep tests above). Prove `test_a_device_marked_offline_by_link_loss_does_not_flip_back_on_the_next_sweep` exactly against the mutation the measurement used — remove the `self._source.connected` check from `_sweep()`/`_check_one()` — and paste it first: it is the one this task's correction note exists for, and if it does not fail on that specific mutation the correction has not actually landed in the tree being tested. FAIL, revert, PASS, both pasted.
 
 - [ ] **Step 6: Run the checks** (all five, four-part pytest).
 
 - [ ] **Step 7: Commit**
 
 ```bash
-git add src/loxmatter/cli.py src/loxmatter/loxone/runtime.py src/loxmatter/i18n/strings.yaml tests
+git add src/loxmatter/cli.py src/loxmatter/loxone/runtime.py src/loxmatter/zigbee/source.py src/loxmatter/zigbee/availability.py src/loxmatter/i18n/strings.yaml tests
 git commit -m "$(cat <<'EOF'
 fix(loxone): keep the watchdog meaning what it has always meant
 
@@ -3324,6 +3580,20 @@ and per device.
 
 A Zigbee radio that will not come up is logged and retried, never fatal, and
 the quirks warm-up runs in the background so the web UI answers throughout.
+
+Also starts the availability sweep Task 8 built: AvailabilityChecker has been
+constructed inside ZigbeeSource.subscribe() since that task landed, but
+nothing ever called start(), so the periodic sweep never ran and a device
+gone quiet was never marked offline except by a lost coordinator link.
+
+A review measured that simply starting the checker as Task 8 committed it
+would have shipped a regression rather than only a missing feature: its
+sweep judged availability from last_seen alone, so the tick right after a
+lost link flipped every device mark_all_offline() had just reported offline
+back to online. availability.py now gates every report on whether the
+source is still connected, checked per device rather than once per sweep,
+skips the coordinator's own entry, and guards mark_all_offline() per device
+so one failure cannot freeze the rest at their last value.
 
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
 EOF
@@ -3338,13 +3608,15 @@ EOF
 
 **This task is now backed by a hardware measurement, and it is the reason the task exists.** On the maintainer's Pi (12 September 2026) there are exactly two USB serial sticks. Both report `10c4:ea60`, both are major 188. One is his Zigbee coordinator; the other is an **MG24 that his Thread border router is currently running on**, confirmed by `RADIO_DEVICE=/dev/ttyUSB0`. Task 4's fingerprint table — correctly — reports that MG24 as a perfectly good EZSP Zigbee coordinator, because it is one. Nothing in the fingerprint layer can or should prevent it being offered. **This task is the only thing standing between the picker and a user selecting the radio their entire Thread network depends on.** Selecting it would take down every Thread device in the house. Treat the exclusion code below as the load-bearing part of this task, not as validation boilerplate.
 
+**This task also closes the second half of that same collision: which RF channel Zigbee forms its network on.** Task 7 built `ZigbeeSource(thread_channel=...)` and `channels_excluding(thread_channel)` to keep a new Zigbee network off whatever channel OTBR's active dataset already occupies — the two share the 2.4 GHz band, and the border router usually sits on the same host. `thread_channel` defaults to `None`, and until now nothing ever passed anything else: `channels_excluding`'s own docstring names this as "outstanding debt for Tasks 10 and 11" and says exactly where the fix belongs — "the caller that already knows about OTBR", which must not become an HTTP call inside `connect()` (that runs on every supervisor retry, not once). This task is that caller, and not Task 10, for two reasons. First, `matter/otbr.py` is the module that already owns every OTBR read in this codebase, and this task is the one that touches Thread exclusion at all — Task 10 wires the heartbeat and never otherwise mentions OTBR. Second, and more concretely: the fetch belongs beside the single place a `ZigbeeSource` is actually built, and that place is `ZigbeeRuntime`'s builder, which this task creates and into which it moves Task 10's temporary `_build_zigbee_source` (see the note below) — fetching once per *build* rather than once per *connect attempt* is exactly the trade Task 7 already made for `ensure_quirks_loaded()`. Task 10's own temporary builder is allowed to leave `thread_channel` at its default, the same way it is allowed to read the radio path from a throwaway CLI flag: both are superseded the moment this task's builder replaces them, and nothing ships in between.
+
 **Files:**
 - Create: `src/loxmatter/model/zigbee_settings_store.py`, `src/loxmatter/zigbee/runtime.py`, `src/loxmatter/api/zigbee.py`, `tests/model/test_zigbee_settings_store.py`, `tests/zigbee/test_zigbee_runtime.py`, `tests/api/test_zigbee_api.py`
-- Modify: `src/loxmatter/radios/inventory.py`, `src/loxmatter/model/store.py`, `src/loxmatter/loxone/server.py`, `src/loxmatter/cli.py`, `src/loxmatter/i18n/strings.yaml`
-- Test: `tests/radios/test_inventory.py`
+- Modify: `src/loxmatter/radios/inventory.py`, `src/loxmatter/model/store.py`, `src/loxmatter/loxone/server.py`, `src/loxmatter/cli.py`, `src/loxmatter/matter/otbr.py`, `src/loxmatter/i18n/strings.yaml`
+- Test: `tests/radios/test_inventory.py`, `tests/matter/test_otbr.py`
 
 **Interfaces:**
-- Consumes: `match_fingerprint`/`DEFAULT_UNKNOWN` (Task 4), `ZigbeeSource` and `ConnectionProgress` (Task 7), `Sources.replace` (Task 5), `supervise` (`sources/supervisor.py`, unchanged), `match_current_device`/`scan_serial` (`radios/inventory.py`, 2a-1), `RadioConfig.thread_device` (2a-1).
+- Consumes: `Fingerprint`/`match_fingerprint`/`DEFAULT_UNKNOWN` (Task 4), `ZigbeeSource`, `ConnectionProgress` and `channels_excluding`/`thread_channel` (Task 7), `Sources.replace` (Task 5), `supervise` (`sources/supervisor.py`, unchanged), `match_current_device`/`scan_serial` (`radios/inventory.py`, 2a-1), `RadioConfig.thread_device` (2a-1), `fetch_active_dataset`/`ThreadDatasetUnavailableError` (`matter/otbr.py`, pre-existing).
 - Produces:
   - `loxmatter.zigbee.runtime.ZigbeeRuntime` — owns the live source and its supervisor task; `current()`, `progress()`, and a **synchronous** `apply(settings)` that schedules the change and returns at once. Consumed by `api/zigbee.py` and constructed in `cli._run`, which also passes it to `build_app`.
   - `loxmatter.radios.inventory.device_identity(path: str, host_dev: Path, *, stat: Callable[[str], os.stat_result] = os.stat) -> tuple[int, int] | None` — the resolved `(major, minor)` of a character device, or `None`.
@@ -3354,8 +3626,10 @@ EOF
   - Each entry of `GET /api/zigbee/radio`'s `serial` list carries `is_thread` and `selectable`; Task 13 reads both under those names.
   - `ZigbeeRadioSettings(path: str | None, radio_type: str, baudrate: int, flow_control: str, saved_at: str | None)` and `store.zigbee_settings` with `get()` / `save(...)` / `clear()`.
   - `GET /api/zigbee/radio`, returning the detected sticks, `configured_path`, `configured_device_present` and `progress`; and `PUT /api/zigbee/radio`, answering **202**.
+  - `loxmatter.matter.otbr.thread_channel_from_dataset(dataset: str) -> int | None` — the 2.4 GHz channel a hex TLV active dataset names, or `None` when there is no Channel TLV, or a malformed one, to be found.
+  - `loxmatter.matter.otbr.current_thread_channel(base_url=None, *, session_factory=None) -> int | None` — fetches and parses in one call; `None` for every reason OTBR cannot answer (absent, unreachable, no usable dataset), never an exception. This is what `ZigbeeRuntime`'s builder calls, once per build, to fill `ZigbeeSource(thread_channel=...)`.
 
-Note on Task 10's `_build_zigbee_source(store)`: `ZigbeeRuntime` is where that helper belongs once this task lands. Move it rather than leaving two places that construct a `ZigbeeSource` — `cli._run` then asks the holder for the startup source, and the startup path and the apply path build it identically. That is the same reasoning `sources/supervisor.py`'s docstring gives for `attach()` covering both startup and reconnect: two code paths that must do the same thing will drift, and the drift only shows up when something is missing after the one that runs less often.
+Note on Task 10's `_build_zigbee_source(store)`: `ZigbeeRuntime` is where that helper belongs once this task lands. Move it rather than leaving two places that construct a `ZigbeeSource` — `cli._run` then asks the holder for the startup source, and the startup path and the apply path build it identically. That is the same reasoning `sources/supervisor.py`'s docstring gives for `attach()` covering both startup and reconnect: two code paths that must do the same thing will drift, and the drift only shows up when something is missing after the one that runs less often. **The move carries the Thread-channel fetch with it** (see above and Step 6) — a helper moved without it would silently restore the gap this task exists to close.
 
 - [ ] **Step 1: Write the failing exclusion tests** in `tests/radios/test_inventory.py`:
 
@@ -3410,6 +3684,87 @@ def test_an_unresolvable_device_is_not_treated_as_a_match():
 ```
 
 Note for the implementer: `_char_device(major, minor)` builds an object with an `st_mode` that `stat.S_ISCHR` accepts and an `st_rdev` of `os.makedev(major, minor)`. A test cannot create a real device node without root, which is exactly why `stat` is injectable — and the injection point is the honest way to test this, not a shortcut around it.
+
+**Also write the failing Thread-channel tests**, in `tests/matter/test_otbr.py`, alongside the existing `fetch_active_dataset` suite — read that file first for `FakeSession`/`FakeResponse`, which these reuse unchanged:
+
+```python
+# A well-formed active dataset carrying two TLVs: an Active Timestamp
+# (type 0x0e, ignored by this parser) ahead of a Channel TLV (type 0x00,
+# length 3: one byte of channel page, then the channel itself as a 2-byte
+# big-endian integer - MeshCoP TLV numbering, Thread 1.3 "Network
+# Management TLVs"). Not first in the stream on purpose: a parser that
+# assumed the Channel TLV came first would pass against a fixture shaped
+# like this one and fail against a real border router that orders its TLVs
+# differently.
+DATASET_ON_CHANNEL_15 = "0e08" + "00" * 8 + "000300000f"
+
+
+def test_the_channel_tlv_is_found_regardless_of_where_it_sits_in_the_dataset():
+    """MeshCoP TLVs are a flat, ordered stream with no fixed layout beyond
+    "type, length, value, repeat" - OTBR is free to write them in any
+    order.
+
+    Fault to prove it: read the first three value bytes of the dataset as
+    the Channel TLV unconditionally, instead of scanning for type `0x00`.
+    This test's fixture, with the Channel TLV second, then reads as channel
+    0 - or raises, depending on how the first TLV's bytes are misread."""
+    assert thread_channel_from_dataset(DATASET_ON_CHANNEL_15) == 15
+
+
+def test_a_dataset_with_no_channel_tlv_answers_none_not_an_error():
+    """Every reason this parser cannot name a channel must read exactly
+    like "no border router at all" to `channels_excluding` - a courtesy
+    lost is not a reason to stop Zigbee from forming.
+
+    Fault to prove it: raise instead of returning `None` when the stream
+    runs out without a type-`0x00` TLV. Building a `ZigbeeSource` then
+    fails outright against a real, valid dataset that simply omits the
+    Channel TLV (permitted by the TLV format itself)."""
+    assert thread_channel_from_dataset("0e08" + "00" * 8) is None
+
+
+def test_a_truncated_tlv_stream_answers_none_rather_than_indexing_past_the_end():
+    """The shape of a response cut off mid-transfer, or simply corrupt: a
+    length byte claiming more value bytes than remain in the string.
+
+    Fault to prove it: slice the value out of the stream without first
+    checking that the claimed length fits. This test then fails with an
+    `IndexError`/`ValueError` instead of reading `None` - turning a
+    malformed dataset into a crash on the path that builds every
+    `ZigbeeSource`."""
+    assert thread_channel_from_dataset("0e08" + "00" * 2) is None
+
+
+async def test_current_thread_channel_answers_none_when_the_border_router_is_absent():
+    """The common case on any bridge with no Thread border router at all:
+    `fetch_active_dataset` raises `ThreadDatasetUnavailableError` the
+    instant the connection is refused. That must read as "nothing to
+    avoid", never propagate - a missing OPTIONAL border router must not
+    stop `ZigbeeRuntime` from building a `ZigbeeSource` at all, the same
+    rule Task 10 already applies to a missing Zigbee radio itself.
+
+    Fault to prove it: let `ThreadDatasetUnavailableError` escape instead of
+    catching it. Building a `ZigbeeSource` then fails on every installation
+    without a Thread border router configured - most of them."""
+    session = FakeSession()
+    session.raise_on_get = OSError("Connection refused")
+    assert await current_thread_channel(session_factory=lambda: session) is None
+
+
+async def test_current_thread_channel_reads_the_real_fetch_and_parse_path():
+    """The end-to-end call `ZigbeeRuntime`'s builder actually makes: fetch,
+    then parse, through the same fake session `fetch_active_dataset`'s own
+    tests already use.
+
+    Fault to prove it: call `thread_channel_from_dataset` on something other
+    than `fetch_active_dataset`'s return value (for example, the raw,
+    unvalidated response body). A border router that pads its response
+    with trailing whitespace - which `fetch_active_dataset` already strips
+    via `validated_dataset` - would then read as `None` instead of the real
+    channel, silently losing the exclusion on hardware that works fine."""
+    session = FakeSession(status=200, body=DATASET_ON_CHANNEL_15)
+    assert await current_thread_channel(session_factory=lambda: session) == 15
+```
 
 - [ ] **Step 2: Write the failing API tests** `tests/api/test_zigbee_api.py`, using the `_host(tmp_path)` tree and heartbeat helpers `tests/api/test_radios_api.py` already builds (import them or copy their shape — read that file first).
 
@@ -3642,7 +3997,7 @@ async def test_a_configured_stick_that_is_gone_is_reported_as_missing():
     refusing to open, and the two need opposite actions from the user."""
 ```
 
-- [ ] **Step 3: Run both to verify they fail.**
+- [ ] **Step 3: Run all three test files to verify they fail** (`tests/radios/test_inventory.py`, `tests/api/test_zigbee_api.py`, `tests/matter/test_otbr.py`).
 
 - [ ] **Step 4: Implement `device_identity` / `is_same_device`** in `src/loxmatter/radios/inventory.py`, mapping a host-visible `/dev/...` path onto the container's `host_dev` prefix the way `radios-once.sh` already does (`"$HOST_DEV${WANT_DEVICE#/dev}"`), resolving symlinks, and returning `None` for anything that is not a character device.
 
@@ -3688,6 +4043,117 @@ class ZigbeeRuntime:
 `_apply_in_background` does, in order: cancel the old supervisor task and `await old.disconnect()` (so the port is genuinely released — `test_clearing_the_setting_disconnects_the_source`); `sources.replace("zigbee", None)`; and then, if the new settings name a path, build a fresh `ZigbeeSource`, `sources.replace("zigbee", new)`, and `ensure_future(supervise(new, store, runtime))`.
 
 Starting the supervisor is all it takes to connect, and that is the point of reusing it: `supervise()` opens with `await source.wait_for_link_loss()`, which Task 7 requires to return **at once** for a source that was never connected, so the supervisor falls straight into its own connect-and-back-off loop and performs the first attempt itself. There is no second connection path, no bespoke retry, and a stick that is missing at apply time is retried on the same 1 s → 60 s schedule as one that dies an hour later.
+
+**First, implement the Thread-channel reader in `src/loxmatter/matter/otbr.py`.** `matter/otbr.py` is the only module in the tree that reads OTBR at all, and `fetch_active_dataset` already returns the active dataset as a hex TLV blob — nothing parses a channel out of it yet. Add these two functions beside it (no new imports: `Final` and `Callable` are already imported there):
+
+```python
+# MeshCoP TLV type for the Channel TLV (Thread 1.3 specification, "Network
+# Management TLVs" table): one byte of channel page followed by the
+# channel itself as a 2-byte big-endian integer - three value bytes in
+# total. Channel page 0 is the 2.4 GHz band, the one Zigbee also uses.
+_CHANNEL_TLV_TYPE: Final = 0x00
+_CHANNEL_TLV_VALUE_LENGTH: Final = 3
+
+
+def thread_channel_from_dataset(dataset: str) -> int | None:
+    """The 2.4 GHz channel a hex TLV active dataset names, or `None`.
+
+    `None` covers every shape this must tolerate without raising: no
+    Channel TLV present, one with the wrong length, or a stream truncated
+    partway through a type/length pair. This function is a courtesy - one
+    Zigbee/Thread channel collision avoided - never a gate, so a dataset it
+    cannot make sense of must read exactly like no border router at all
+    (`channels_excluding(None)`), not like an error that stops a
+    `ZigbeeSource` from being built at all.
+
+    `dataset` is a credential-bearing blob (see `fetch_active_dataset`);
+    this function never logs it or any slice of it, only the channel
+    number it found.
+    """
+    try:
+        raw = bytes.fromhex(dataset)
+    except ValueError:
+        return None
+    index = 0
+    while index + 2 <= len(raw):
+        tlv_type = raw[index]
+        length = raw[index + 1]
+        value_start = index + 2
+        value_end = value_start + length
+        if value_end > len(raw):
+            return None
+        if tlv_type == _CHANNEL_TLV_TYPE and length == _CHANNEL_TLV_VALUE_LENGTH:
+            return int.from_bytes(raw[value_start + 1 : value_end], "big")
+        index = value_end
+    return None
+
+
+async def current_thread_channel(
+    base_url: str | None = None,
+    *,
+    session_factory: Callable[[], Any] | None = None,
+) -> int | None:
+    """The channel Zigbee should avoid, or `None` when there is nothing to
+    avoid.
+
+    Every reason this can fail to answer - no border router, an
+    unreachable one, a dataset with no Channel TLV - reads the same way to
+    the caller: form the Zigbee network on the full channel list
+    (`channels_excluding(None)`). A missing OPTIONAL border router must
+    never stop Zigbee from forming, the same rule Task 10 already applies
+    to a missing Zigbee radio itself.
+    """
+    try:
+        dataset = await fetch_active_dataset(base_url, session_factory=session_factory)
+    except ThreadDatasetUnavailableError:
+        return None
+    return thread_channel_from_dataset(dataset)
+```
+
+**Then, "build a fresh `ZigbeeSource`" above means calling `build_source(settings)` — `ZigbeeRuntime`'s injected constructor argument, and the one and only place in the whole tree that calls `current_thread_channel`.** Its production implementation, `build_zigbee_source` in `zigbee/runtime.py`, is what Task 10's temporary `_build_zigbee_source(store)` is replaced by:
+
+```python
+async def build_zigbee_source(
+    settings: ZigbeeRadioSettings,
+    *,
+    database: Path,
+    on_connection_change: Callable[[bool], Awaitable[None]] | None,
+) -> ZigbeeSource | None:
+    """The one place a `ZigbeeSource` is built - at startup and on every
+    radio change alike, now that `ZigbeeRuntime` owns both. Two call sites
+    that built it separately were exactly the drift
+    `sources/supervisor.py`'s own docstring warns about for `attach()`, so
+    there is only one left.
+
+    Fetches the Thread channel to avoid HERE, once per build, rather than
+    inside `ZigbeeSource.connect()`. `channels_excluding`'s own docstring
+    names this call as its outstanding debt and says where it belongs: the
+    caller that already knows about OTBR, which must not become an HTTP
+    call inside `connect()` - that method runs on every one of the
+    supervisor's 1 s -> 60 s retries, not once. Building a new
+    `ZigbeeSource` happens far less often - once at startup, once per radio
+    change - so paying for the fetch here is the same trade Task 7 already
+    made for `ensure_quirks_loaded()`.
+    """
+    if settings.path is None:
+        return None
+    fingerprint = Fingerprint(
+        name="",
+        radio_type=settings.radio_type,
+        baudrate=settings.baudrate,
+        flow_control=settings.flow_control,
+    )
+    channel = await current_thread_channel()
+    return ZigbeeSource(
+        path=settings.path,
+        fingerprint=fingerprint,
+        database=database,
+        on_connection_change=on_connection_change,
+        thread_channel=channel,
+    )
+```
+
+`cli._run` passes `functools.partial(build_zigbee_source, database=matter_data_dir / "zigbee.sqlite", on_connection_change=runtime.set_zigbee_connected)` as `ZigbeeRuntime`'s `build_source` — `database` and `on_connection_change` never change between a startup build and an apply-time rebuild, so binding them once here is what keeps `build_source(settings)` a one-argument callable both `ZigbeeRuntime.__init__` (for the very first source) and `_apply_in_background` (for every one after) can call identically. A test exercising `ZigbeeRuntime` injects its own `build_source` and never touches OTBR at all — the fetch is this function's concern alone, which is exactly why it is a function, not a method inlined into `_apply_in_background`.
 
 **The router**, `build_zigbee_router(store, *, zigbee_runtime, host_dev, sys_root, update_dir)`:
 
@@ -3843,7 +4309,7 @@ Plus the strings the progress and presence reporting need, each `en` + `de`: `we
 
 - [ ] **Step 8: Run to verify they pass.**
 
-- [ ] **Step 9: Prove each protection catches its fault.** Fifteen faults. FAIL, revert, PASS, both pasted. **The Thread-exclusion faults are the single most important ones in this plan** — prove them first and paste them first, and prove them against the measured two-stick fixture rather than against invented paths. Two of the fifteen are specifically the hardware measurement's: comparing path strings instead of resolved major:minor (`test_the_two_sticks_on_the_maintainers_pi_end_up_on_opposite_sides`), and ignoring `thread_enabled` (`test_a_stick_freed_by_turning_thread_off_becomes_selectable_again`). The first must turn the MG24 selectable; if it does not, the fixture is not reproducing the real machine and the test is worthless — stop and fix the fixture. The four added in Step 2 (synchronous apply, warm-up on the request path, no progress, no presence) are proved the same way as the rest; for the first two, a fake source whose `connect()` blocks longer than the test client's timeout turns "the handler waited" into a failing test rather than a slow one.
+- [ ] **Step 9: Prove each protection catches its fault.** Nineteen faults: fifteen from the exclusion and API tests, plus the four Thread-channel tests added to Step 1. FAIL, revert, PASS, both pasted. **The Thread-exclusion faults are the single most important ones in this plan** — prove them first and paste them first, and prove them against the measured two-stick fixture rather than against invented paths. Two of the fifteen are specifically the hardware measurement's: comparing path strings instead of resolved major:minor (`test_the_two_sticks_on_the_maintainers_pi_end_up_on_opposite_sides`), and ignoring `thread_enabled` (`test_a_stick_freed_by_turning_thread_off_becomes_selectable_again`). The first must turn the MG24 selectable; if it does not, the fixture is not reproducing the real machine and the test is worthless — stop and fix the fixture. The four added in Step 2 (synchronous apply, warm-up on the request path, no progress, no presence) are proved the same way as the rest; for the first two, a fake source whose `connect()` blocks longer than the test client's timeout turns "the handler waited" into a failing test rather than a slow one. The four Thread-channel faults come last but are not lower stakes than they look: the whole reason `channels_excluding` shipped inert in Task 7 was that nothing called its input, and a mistake in `thread_channel_from_dataset` or `current_thread_channel` reintroduces exactly that silently, since a Zigbee network still forms perfectly well on the Thread channel it was supposed to avoid — there is no error, only a collision nobody is told about.
 
 - [ ] **Step 10: Run the checks** (all five, four-part pytest).
 
@@ -3864,6 +4330,13 @@ The Thread coordinator is refused by resolved major:minor, not by path
 string: the same stick is /dev/ttyUSB0 in .env, a by-id path in the UI and a
 third name under the container's mount, and opening it as a Zigbee radio
 would garble a live Thread network.
+
+Also closes the matching RF-level collision: ZigbeeSource has excluded
+OTBR's active channel from its own candidate list since Task 7, but nothing
+ever read that channel out of OTBR's dataset, so the exclusion was inert.
+The one place a ZigbeeSource is now built - at startup and on every radio
+change alike - fetches it once per build, never inside connect() itself,
+which runs on every one of the supervisor's retries.
 
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
 EOF
@@ -4447,7 +4920,9 @@ The packed Loxone colour number in Task 3 is no longer in that category: it was 
 
 **Task 4's by-id strings have now left that category too, and taking the measurement changed a decision.** Both sticks on the maintainer's Pi were read on 12 September 2026 and are quoted verbatim as `REAL_ITEAD` and `REAL_MG24`. Three things came out of it. The invented strings' upper-case `ITEAD_SONOFF` spelling was harmless (the matcher lowercases) but **nothing was pinning that**, so a case test was added. Both sticks report `10c4:ea60` and both are major 188, which turns "never match on VID:PID alone" from a borrowed Z2M rule into a measured fact about this project's own hardware, and is now stated as such in Task 4 and guarded by a test. And most seriously, the plan's justification for the SONOFF rows — "the maintainer's own MG24" — was **backwards**: his MG24 runs Thread, and the fingerprint table correctly reports it as a usable Zigbee coordinator, so the table alone would have offered him the radio his Thread network depends on. The fix is not in Task 4, whose answer is right; it is Task 11's exclusion, which is now written out as complete code, gated on `thread_enabled` so that disabling Thread genuinely frees the stick, and pinned by a test built from the real two-stick tree.
 
-**3. Type consistency.** `GroupOutcome` (Task 5) carries `failed` as a stored, plan-ordered field with `unreachable`/`unconfigured` as order-preserving subsets, so `fanout.py`'s documented ordering guarantee survives the change; both call sites read it under those names. `Sources.replace` (Task 5) is consumed only by `ZigbeeRuntime` (Task 11). `ConnectionProgress`/`progress()` and `on_connection_change` (Task 7) are consumed by `ZigbeeRuntime` and `GET /api/zigbee/radio` (Task 11) and by `Runtime.set_zigbee_connected` (Task 10); `ZIGBEE_CONNECTED_KEY`, `cache_zigbee_connected` and `set_zigbee_connected` (Task 10) are used under those names in Tasks 7 and 11. `build_snapshot`, `rename_payload`, `DeviceFacts`, `EndpointFacts` (Task 6) are consumed under exactly those names in Task 7. `DeviceUnreachableError` and `SOURCE_CALL_TIMEOUT_SECONDS` (Task 5) are used under those names in Tasks 7 and 9. `Fingerprint`/`match_fingerprint`/`DEFAULT_UNKNOWN` (Task 4) are consumed in Tasks 7, 11 and 13. `ensure_quirks_loaded` (Task 1) is called in Tasks 7 and 10. `device_identity`/`is_same_device` (Task 11) are used only there. `ZigbeePendingStore` (Task 9) is reached as `store.zigbee_pending` in Task 9 alone. `transportBadge` (Task 13) keeps its existing signature.
+**This section predates a later correction and understated two things Tasks 1-8 had actually produced but nothing yet consumed — found by re-checking the section below against what those tasks committed, rather than trusting this table's word for it.** `AvailabilityChecker.start()`/`.stop()` (Task 8) were built and the checker was already constructed fresh inside `ZigbeeSource.subscribe()`, but nothing in Tasks 9-15 as originally written ever called `start()` — the sweep would never have run on any installation. Separately, `ZigbeeSource(thread_channel=...)` and `channels_excluding` (Task 7) existed with `thread_channel` defaulting to `None` and no caller ever passing anything else — `channels_excluding`'s own docstring flags this as "outstanding debt for Tasks 10 and 11" — so the Thread-channel exclusion the design requires had no implementation anywhere. Both are now closed: the first in Task 10 (which also had to correct a second, more serious problem the same review measured — see Task 8's "Measured correction" note — a naive `start()` would have shipped a checker whose sweep contradicted `mark_all_offline()` one tick after every link loss), the second in Task 11, via `matter/otbr.py`'s new `thread_channel_from_dataset`/`current_thread_channel` and the single builder function (`build_zigbee_source`) that now owns constructing every `ZigbeeSource` in the tree.
+
+**3. Type consistency.** `GroupOutcome` (Task 5) carries `failed` as a stored, plan-ordered field with `unreachable`/`unconfigured` as order-preserving subsets, so `fanout.py`'s documented ordering guarantee survives the change; both call sites read it under those names. `Sources.replace` (Task 5) is consumed only by `ZigbeeRuntime` (Task 11). `ConnectionProgress`/`progress()` and `on_connection_change` (Task 7) are consumed by `ZigbeeRuntime` and `GET /api/zigbee/radio` (Task 11) and by `Runtime.set_zigbee_connected` (Task 10); `ZIGBEE_CONNECTED_KEY`, `cache_zigbee_connected` and `set_zigbee_connected` (Task 10) are used under those names in Tasks 7 and 11. `build_snapshot`, `rename_payload`, `DeviceFacts`, `EndpointFacts` (Task 6) are consumed under exactly those names in Task 7. `DeviceUnreachableError` and `SOURCE_CALL_TIMEOUT_SECONDS` (Task 5) are used under those names in Tasks 7 and 9. `Fingerprint`/`match_fingerprint`/`DEFAULT_UNKNOWN` (Task 4) are consumed in Tasks 7, 11 and 13. `ensure_quirks_loaded` (Task 1) is called in Tasks 7 and 10. `device_identity`/`is_same_device` (Task 11) are used only there. `ZigbeePendingStore` (Task 9) is reached as `store.zigbee_pending` in Task 9 alone. `transportBadge` (Task 13) keeps its existing signature. `AvailabilityChecker.start()`/`.stop()` (Task 8) are now called from `ZigbeeSource.subscribe()`/`disconnect()` (Task 10) and nowhere else — no new public name was needed. `thread_channel_from_dataset`/`current_thread_channel` (Task 11, in `matter/otbr.py`) are consumed only by `build_zigbee_source` in the same task.
 
 **4. Ordering.** Every task depends only on earlier ones. Tasks 1-5 touch no Zigbee runtime code and are independently mergeable; Task 3 improves Matter on its own and could ship alone. Task 10 wires a source that Tasks 7-9 must already provide. Tasks 13 and 14 consume APIs from Tasks 11 and 12.
 
