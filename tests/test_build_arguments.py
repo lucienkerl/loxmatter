@@ -73,6 +73,17 @@ def test_the_ci_passes_exactly_the_arguments_the_dockerfile_knows() -> None:
     assert passed == declared
 
 
+def test_the_image_byte_compiles_at_build_time() -> None:
+    """Without `UV_COMPILE_BYTECODE=1` the 462 zha-quirks modules are
+    byte-compiled inside the container at first import, and again after
+    every `--force-recreate` (research F.3/F.4) - double-digit seconds on a
+    Pi 4, every update, with the user watching.
+
+    Fault to prove it: delete the `ENV UV_COMPILE_BYTECODE=1` line."""
+    dockerfile = DOCKERFILE.read_text(encoding="utf-8")
+    assert "UV_COMPILE_BYTECODE=1" in dockerfile
+
+
 def test_both_architectures_are_built() -> None:
     # The Pi is the normal case for this project, not the exception. If
     # arm64 is missing, nobody notices until a user reads "no matching manifest".

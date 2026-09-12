@@ -50,6 +50,15 @@ COPY pyproject.toml uv.lock README.md ./
 COPY src ./src
 COPY scripts ./scripts
 
+# Byte-compile at build time instead of at first import (research F.3, F.4;
+# design 2026-09-12 section 8.4). Without this, the 462 quirk modules are
+# compiled inside the container on first import - and again after every
+# `--force-recreate`, i.e. after every update. On a Pi 4 that turns the
+# measured 9-15 s warm-up into double-digit seconds more, exactly while the
+# user is watching the update card. It costs about 16 MB in the image and
+# makes startup deterministic.
+ENV UV_COMPILE_BYTECODE=1
+
 RUN pip install --no-cache-dir uv==0.6.* \
     && uv sync --frozen --no-dev --no-editable
 
