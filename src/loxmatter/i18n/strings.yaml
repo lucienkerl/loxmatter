@@ -1599,6 +1599,9 @@ web.devices.expert_serial:
 web.devices.expert_section_address:
   en: "Address & technology"
   de: "Adresse & Technologie"
+web.devices.expert_technology:
+  en: "Technology"
+  de: "Technologie"
 web.devices.expert_technology_matter:
   en: "Matter"
   de: "Matter"

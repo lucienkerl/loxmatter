@@ -418,6 +418,54 @@ def test_backfill_network_features_fills_only_null_and_only_reachable_devices(tm
         store.close()
 
 
+def test_backfill_basic_information_fills_only_null_and_only_reachable_devices(tmp_path):
+    """Fault to prove it: remove the `vendor_name IS NULL OR ...` guard
+    from the SELECT in `backfill_basic_information` - the preset device's
+    manually set "Custom Vendor" is then overwritten with the fixture's
+    real "IKEA of Sweden"."""
+    store = Store(tmp_path / "s.sqlite")
+    try:
+        preset = _fixture("ikea_kajplats_ws_lamp.json")
+        missing = _fixture("ikea_grillplats_plug.json")
+        offline = _fixture("ikea_kajplats_cws_lamp.json")
+        preset_id = store.register_device(preset)
+        missing_id = store.register_device(missing)
+        offline_id = store.register_device(offline)
+        store._db.execute(
+            "UPDATE device SET vendor_name = NULL, product_name = NULL,"
+            " firmware = NULL, serial_number = NULL"
+        )
+        store._db.execute(
+            "UPDATE device SET vendor_name = ?, product_name = ?, firmware = ?,"
+            " serial_number = ? WHERE id = ?",
+            ("Custom Vendor", "Custom Product", "9.9.9", "CUSTOM-SERIAL", preset_id),
+        )
+        store._db.commit()
+
+        filled = store.backfill_basic_information([preset, missing])
+
+        assert filled == 1
+        preset_device = store.device(preset_id)
+        assert preset_device.vendor_name == "Custom Vendor"
+        assert preset_device.product_name == "Custom Product"
+        assert preset_device.firmware == "9.9.9"
+        assert preset_device.serial_number == "CUSTOM-SERIAL"
+
+        missing_device = store.device(missing_id)
+        assert missing_device.vendor_name == "IKEA of Sweden"
+        assert missing_device.product_name == "GRILLPLATS Plug"
+        assert missing_device.firmware == "1.4.6"
+        assert missing_device.serial_number is None
+
+        offline_device = store.device(offline_id)
+        assert offline_device.vendor_name is None
+        assert offline_device.product_name is None
+        assert offline_device.firmware is None
+        assert offline_device.serial_number is None
+    finally:
+        store.close()
+
+
 def test_commands_carry_the_owning_devices_identity(tmp_path):
     store = Store(tmp_path / "s.sqlite")
     try:

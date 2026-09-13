@@ -2092,6 +2092,50 @@ class Store:
         self._db.commit()
         return filled
 
+    def backfill_basic_information(self, snapshots: Sequence[NodeSnapshot]) -> int:
+        """Backfills device.vendor_name/product_name/firmware/serial_number
+        for devices missing any of the four, and returns how many rows
+        that touched.
+
+        Same rules as backfill_device_types/backfill_network_features:
+        only fills a column that is still NULL, never overwrites an
+        already-known value, a device missing from `snapshots` (offline)
+        is left alone, and `updated_at` is not touched - none of these
+        four end up in any export template. Unlike the other two
+        backfills, this one checks all four columns per row rather than
+        one, since a device could in principle already have some of them
+        filled - the UPDATE's `COALESCE` per column makes that safe even
+        though nothing writes only some of the four today."""
+        by_identity = {self._identity_of(snapshot): snapshot for snapshot in snapshots}
+        rows = self._db.execute(
+            "SELECT id, technology, address FROM device"
+            " WHERE (vendor_name IS NULL OR product_name IS NULL OR firmware IS NULL"
+            " OR serial_number IS NULL) AND active = 1"
+        ).fetchall()
+        filled = 0
+        for row in rows:
+            snapshot = by_identity.get((str(row["technology"]), str(row["address"])))
+            if snapshot is None:
+                continue
+            self._db.execute(
+                "UPDATE device SET"
+                " vendor_name = COALESCE(vendor_name, ?),"
+                " product_name = COALESCE(product_name, ?),"
+                " firmware = COALESCE(firmware, ?),"
+                " serial_number = COALESCE(serial_number, ?)"
+                " WHERE id = ?",
+                (
+                    _blank_to_none(snapshot.vendor_name),
+                    _blank_to_none(snapshot.product_name),
+                    _text_attribute(snapshot, "0/40/10"),
+                    _text_attribute(snapshot, "0/40/15"),
+                    int(row["id"]),
+                ),
+            )
+            filled += 1
+        self._db.commit()
+        return filled
+
     def rename_room(self, old: str, new: str) -> int:
         """Renames a room across all active devices AND all groups, and
         returns how many rows that was combined (`POST /api/rooms/rename`).

@@ -4391,9 +4391,14 @@ function app() {
       this.expertModalDevice = device.id;
       this.$nextTick(() => this.$refs.expertModal.showModal());
       try {
-        this.expertData = await this.request("GET", `/api/devices/${device.id}/expert`);
+        const data = await this.request("GET", `/api/devices/${device.id}/expert`);
+        if (this.expertModalDevice === device.id) {
+          this.expertData = data;
+        }
       } catch (error) {
-        this.expertError = t("web.devices.expert_load_error", { message: error.message });
+        if (this.expertModalDevice === device.id) {
+          this.expertError = t("web.devices.expert_load_error", { message: error.message });
+        }
       }
     },
 

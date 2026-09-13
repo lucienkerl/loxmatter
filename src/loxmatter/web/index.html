@@ -3363,7 +3363,7 @@
               <section class="expert-section">
                 <h3 x-text="t('web.devices.expert_section_address')"></h3>
                 <div class="expert-kv">
-                  <span class="k" x-text="t('web.devices.expert_technology_' + expertData.technology)"></span><span></span>
+                  <span class="k" x-text="t('web.devices.expert_technology')"></span><span x-text="expertData.transport ? t('web.devices.transport_' + expertData.transport) : t('web.devices.expert_technology_' + expertData.technology)"></span>
                   <span class="k" x-text="t('web.devices.expert_address_' + expertData.technology)"></span><span class="mono" x-text="expertData.address"></span>
                 </div>
                 <div class="expert-endpoints">

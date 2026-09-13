@@ -112,6 +112,18 @@ people who don't know the code.
   its icon showing whether the device talks to the bridge over Thread or over
   your IP network (Wi-Fi or Ethernet). Hover it for the name. A device that
   does not say how it is connected gets no badge rather than a guess.
+- **Rooms move to a sidebar.** The row of room chips above the device grid is
+  now a sidebar beside it, staying in view as you scroll and giving rooms
+  room to grow without crowding the top of the page. The device grid itself
+  is denser too, laying out more tiles per row on a wide screen.
+- **Expert Settings, for anyone who wants the technical details.** A new
+  entry in each device's kebab menu opens a modal with the things loxmatter
+  itself doesn't wire into Loxone: vendor, model, firmware version and
+  serial number, how the device is reached (Matter over Thread or IP, or
+  Zigbee) and its address, and every endpoint with the clusters it
+  exposes. Vendor, model, firmware and serial number show up for devices
+  you commission from now on; for devices you already have, they appear
+  after the bridge's next restart, once it has asked each device once more.
 
 ### Changed
 

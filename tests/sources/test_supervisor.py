@@ -82,6 +82,7 @@ class FakeStore:
         self.backfill_types_calls = 0
         self.backfill_commands_calls = 0
         self.backfill_features_calls = 0
+        self.backfill_basic_information_calls = 0
         self.lookups: list[tuple[str, str]] = []
 
     def device_id_for(self, technology: str, address: str) -> int | None:
@@ -94,6 +95,10 @@ class FakeStore:
 
     def backfill_network_features(self, snapshots) -> int:
         self.backfill_features_calls += 1
+        return 0
+
+    def backfill_basic_information(self, snapshots) -> int:
+        self.backfill_basic_information_calls += 1
         return 0
 
     def backfill_commands(self, snapshots) -> int:
@@ -157,6 +162,14 @@ async def test_attach_backfills_network_features():
     store = FakeStore()
     await attach(FakeClient(), store, FakeRuntime())
     assert store.backfill_features_calls == 1
+
+
+async def test_attach_backfills_basic_information():
+    """Fault to prove it: remove the `store.backfill_basic_information(...)`
+    line from `attach`."""
+    store = FakeStore()
+    await attach(FakeClient(), store, FakeRuntime())
+    assert store.backfill_basic_information_calls == 1
 
 
 async def test_supervise_rebuilds_after_a_link_loss():
