@@ -379,3 +379,20 @@ async def test_a_member_that_gets_nothing_is_not_a_failure():
     assert outcome == GroupOutcome(
         failed=[], unreachable=[], unconfigured=[], unconfigured_technologies=[]
     )
+
+
+async def test_a_superseded_member_counts_as_reached():
+    """Design 2026-09-13 (command coalescing), rule 6: a member whose request
+    a newer value replaced is neither failed nor unconfigured - that newer
+    value is on its way to it.
+
+    Fault to prove it: treat a `False` from `run` as a failure - the
+    outcome then names the member."""
+    target = on_target(1, 21, "Lamp")
+    plans = plan_group_calls(group_command(6, 1, "on", False), [target], "1")
+
+    async def run(calls):
+        return False
+
+    outcome = await dispatch_group(plans, invoke=None, run=run)
+    assert outcome.failed == []
