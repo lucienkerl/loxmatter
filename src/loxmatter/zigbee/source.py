@@ -1551,7 +1551,7 @@ class ZigbeeSource:
             raise DeviceUnreachableError(
                 i18n.t(
                     "api.errors.device_unreachable",
-                    exc=i18n.t("api.errors.zigbee_unknown_device", address=address),
+                    exc=i18n.t("api.errors.zigbee_device_not_in_network", address=address),
                 )
             )
         return device

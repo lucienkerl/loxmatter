@@ -414,7 +414,7 @@ api.errors.device_unreachable:
 # The reasons `zigbee/source.py` puts into `api.errors.device_unreachable`.
 # Each is its own string, so the reason is in the language of the sentence
 # around it.
-api.errors.zigbee_unknown_device:
+api.errors.zigbee_device_not_in_network:
   en: "unknown Zigbee device {address}"
   de: "unbekanntes Zigbee-Gerät {address}"
 api.errors.zigbee_no_such_command:

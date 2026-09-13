@@ -158,7 +158,7 @@ def test_the_call_bound_reads_as_a_whole_number_of_seconds(language):
     ("key", "values"),
     [
         ("api.errors.device_timed_out", {"seconds": 10.0}),
-        ("api.errors.zigbee_unknown_device", {"address": "00:12:4b:00:1c:a1:b2:c3"}),
+        ("api.errors.zigbee_device_not_in_network", {"address": "00:12:4b:00:1c:a1:b2:c3"}),
         ("api.errors.zigbee_command_refused", {"command_id": 1, "status": 134}),
     ],
 )
@@ -174,6 +174,29 @@ def test_the_new_device_error_strings_use_the_umlaut_not_its_transliteration(key
     message = i18n.t(key, **values)
     assert "Gerät" in message
     assert "Geraet" not in message
+
+
+def test_no_key_is_defined_twice():
+    """YAML keeps the LAST of two equal keys and says nothing, so a new key
+    that happens to reuse an existing name silently replaces the older
+    string for every caller of it. It happened on this branch: a new
+    `api.errors.zigbee_unknown_device` for an unknown device address sat
+    above the existing one for an unknown USB stick, lost to it, and the
+    device error came out as the stick sentence while every test that
+    compared the source against the same key stayed green.
+
+    Read from the file's own lines, because the loaded table can no longer
+    show a key that was overwritten.
+
+    Fault to prove it: define any existing key a second time."""
+    lines = i18n._STRINGS_PATH.read_text(encoding="utf-8").splitlines()
+    keys = [
+        line[: line.index(":")]
+        for line in lines
+        if line and not line[0].isspace() and not line.startswith("#") and ":" in line
+    ]
+    duplicates = sorted({key for key in keys if keys.count(key) > 1})
+    assert duplicates == []
 
 
 def test_no_value_is_wrapped_in_typographic_quotes():

@@ -1744,7 +1744,9 @@ async def test_the_reason_a_command_failed_is_in_the_language_of_the_sentence_ar
     assert reasons == [
         i18n.t(
             "api.errors.device_unreachable",
-            exc=i18n.t("api.errors.zigbee_unknown_device", address="00:00:00:00:00:00:00:01"),
+            exc=i18n.t(
+                "api.errors.zigbee_device_not_in_network", address="00:00:00:00:00:00:00:01"
+            ),
         ),
         i18n.t(
             "api.errors.device_unreachable",
@@ -1763,6 +1765,12 @@ async def test_the_reason_a_command_failed_is_in_the_language_of_the_sentence_ar
     ]
     for english in ("unknown Zigbee device", "has no command", "answered command"):
         assert all(english not in reason for reason in reasons)
+    # Read back as text too: the comparison above is against the same keys
+    # the source uses, and would pass for a key that resolves to the wrong
+    # sentence altogether.
+    assert "unbekanntes Zigbee-Gerät 00:00:00:00:00:00:00:01" in reasons[0]
+    assert "hat keinen Befehl 1 im Cluster 258" in reasons[1]
+    assert "mit Status 134 beantwortet" in reasons[2]
     i18n.set_language("en")
     await harness.source.disconnect()
 
