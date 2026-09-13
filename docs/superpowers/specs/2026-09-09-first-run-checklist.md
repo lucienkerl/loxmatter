@@ -500,21 +500,28 @@ That log keeps the last 500 lines only, so read it soon after the connect.
 Thread stays up throughout this step; if it does not, that is the finding.
 
 - **Do:** note otbr's and matter-server's `RunningFor`, the Thread channel
-  (`docker exec otbr ot-ctl channel`), and whether the ITEAD stick has ever
-  carried a Zigbee network before (a stick fresh from the box has not). In
-  Settings → Radios, pick the ITEAD stick in the Zigbee row and press its
-  Apply. Watch the row while it works, then run
+  (`docker exec otbr ot-ctl channel`), whether the ITEAD stick has ever
+  carried a Zigbee network before (a stick fresh from the box has not), and
+  the time (`date -u +%FT%TZ`) right before pressing Apply - call it
+  `$APPLY_TIME`. In Settings → Radios, pick the ITEAD stick in the Zigbee
+  row and press its Apply. Watch the row while it works, then run
 
   ```bash
-  docker logs loxmatter 2>&1 | grep -E 'source zigbee|zigbee quirks registry loaded in|Zigbee coordinator connected on'
+  docker logs --since "$APPLY_TIME" loxmatter 2>&1 | grep -E 'source zigbee|zigbee quirks registry loaded in|Zigbee coordinator connected on'
+  docker logs --since "$APPLY_TIME" loxmatter 2>&1 | grep -E 'WARNING|Traceback'
   docker exec loxmatter ls -l /data
   ```
+
+  The first grep matches only its three named patterns and would silently
+  hide a WARNING or a traceback on any other line - it is what shows the
+  four lines below, not what checks for their absence. The second grep,
+  scoped to the same window, is what actually checks it.
 
 - **Expect:** the row steps through "Applying the change", "Preparing device
   support - this can take a few seconds", "Opening the stick", "Connected",
   then shows "Firmware: …". No other container restarts; Thread and Matter
-  devices keep delivering values the whole time. The log carries, in this
-  order and without a WARNING or a traceback between them:
+  devices keep delivering values the whole time. The first grep's log
+  carries, in this order:
 
   ```text
   INFO:     loxmatter.sources.supervisor: source zigbee is not connected yet - connecting it
@@ -523,8 +530,19 @@ Thread stays up throughout this step; if it does not, that is the finding.
   INFO:     loxmatter.sources.supervisor: connection of source zigbee restored (0 commands backfilled)
   ```
 
-  `C` is one of 11, 15, 20 and 25 and is not the Thread channel. In the
-  Thread row's select the ITEAD stick is now marked "in use for Zigbee".
+  and the second grep, checking for exactly the WARNING or traceback the
+  first one would have hidden, prints nothing.
+
+  `C` is one of 11, 15, 20 and 25 and is not the Thread channel - but only
+  when the network was FORMED just now (a stick fresh from the box, or one
+  whose history has never carried a Zigbee network before). A stick that
+  instead already had a network keeps ADOPTING it here, on whatever channel
+  that network was already using: not necessarily from that list, and not
+  necessarily different from the Thread channel - zigpy does not say which
+  of the two happened, which is why the Record paragraph below reads a
+  channel equal to Thread's as evidence of adoption rather than expecting
+  one outcome or the other here. In the Thread row's select the ITEAD stick
+  is now marked "in use for Zigbee".
   `/data/zigbee.sqlite` exists, but that alone proves nothing: zigpy creates
   the database before it opens the port, so it also appears when the connect
   fails. If `docker logs` shows none of these lines, read the System tab's
@@ -693,6 +711,23 @@ are already commissioned.
   the moment of the apply rather than after the next restart.
 - **Record:** `RunningFor` of every container before and after, what the
   Zigbee devices' tiles show, and their `d<id>_online` values.
+
+Then the forget-only removal (finding I3) - the only way a Zigbee tile is
+ever removable with no stick configured, and unexercised so far.
+
+- **Do:** with "No Zigbee stick" still set, open a Zigbee device's tile menu
+  and press Remove. On the box that appears, press "Keep it" first, then
+  open the menu and press Remove again, and this time press "Remove from
+  loxmatter only".
+- **Expect:** "Keep it" hides the box and leaves the tile untouched, with
+  keyboard focus back on the tile's own menu button. The second Remove
+  offers the box again; "Remove from loxmatter only" removes the tile from
+  the device list and the export at once, without contacting the device -
+  the physical device is not told and stays joined to whatever network it
+  was on.
+- **Record:** whether the tile is gone from `GET /api/devices` afterwards,
+  and whether the device itself needs a factory reset before it can be
+  paired again (it does - nothing here told it to leave).
 
 ### What this section does not cover
 

@@ -126,11 +126,11 @@ people who don't know the code.
   now answers Loxone with an error after 10 seconds. On a slow Thread device
   matter-server may still deliver the command a little later, after Loxone
   has been told it failed.
-- **Removing a device that is offline works, and removing it twice does
-  too.** Removal waits up to two minutes for matter-server to reach the
-  device, instead of failing after 10 seconds while matter-server went on
-  removing it. A device matter-server has already forgotten is removed from
-  the bridge instead of failing with an error.
+- **Removing a device waits longer, and a second removal no longer fails.**
+  Removal now waits up to two minutes for matter-server to reach the
+  device, instead of giving up after 10 seconds while matter-server was
+  still working on it. A device matter-server has already forgotten counts
+  as removed instead of failing with an error.
 - **Some Matter sensor readings are no longer suggested for export.** For
   contact and water-leak sensors, occupancy sensors and light sensors, the
   bridge now names the one reading that matters — open or closed, occupied,
