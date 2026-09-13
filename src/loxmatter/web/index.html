@@ -924,14 +924,14 @@
                     class="room-chip"
                     :class="{ active: roomFilter === chip.key }"
                     @click="roomFilter = chip.key"
-                    x-show="renamingRoom !== chip.key"
+                    x-show="!(roomFilter === chip.key && renamingRoom === chip.key)"
                     :title="chip.label"
                   >
                     <span x-text="chip.label"></span>
                     <span x-text="chip.count"></span>
                   </button>
                   <input
-                    x-show="renamingRoom === chip.key"
+                    x-show="roomFilter === chip.key && renamingRoom === chip.key"
                     x-cloak
                     type="text"
                     class="room-rename-input"

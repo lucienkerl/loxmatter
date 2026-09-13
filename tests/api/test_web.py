@@ -6090,12 +6090,15 @@ async def test_the_dashboard_shell_and_room_bar_are_a_real_flex_layout(api):
     not the CSS that actually makes it a sidebar - reverting
     `.dashboard-shell` to `display: block` or `.room-bar` to a horizontal
     row would have left the suite green. This pins the two properties
-    that matter."""
+    that matter, scoped to the BASE rule (before the mobile
+    `@media (max-width: 640px)` override, which deliberately sets both
+    differently) since both selectors are declared twice now."""
     client, _, _ = api
     css = (await client.get("/static/style.css")).text
-    shell = css.split(".dashboard-shell {", 1)[1].split("}", 1)[0]
+    base_css = css.split("@media (max-width: 640px)", 1)[0]
+    shell = base_css.split(".dashboard-shell {", 1)[1].split("}", 1)[0]
     assert "display: flex" in shell
-    room_bar = css.split(".room-bar {", 1)[1].split("}", 1)[0]
+    room_bar = base_css.split(".room-bar {", 1)[1].split("}", 1)[0]
     assert "flex-direction: column" in room_bar
 
 
@@ -6104,10 +6107,13 @@ async def test_the_search_fields_height_cannot_silently_regress(api):
     (written for the horizontal room bar) sized the field's HEIGHT once
     the room bar became a vertical column, rendering it about 200px
     tall. Pins the fix so a future edit reintroducing a flex-basis here
-    fails a test instead of shipping silently."""
+    fails a test instead of shipping silently. Scoped to the BASE rule,
+    before the mobile `@media (max-width: 640px)` block, for the same
+    reason as the test above."""
     client, _, _ = api
     css = (await client.get("/static/style.css")).text
-    field = css.split(".search-field {", 1)[1].split("}", 1)[0]
+    base_css = css.split("@media (max-width: 640px)", 1)[0]
+    field = base_css.split(".search-field {", 1)[1].split("}", 1)[0]
     assert "flex: none" in field
 
 
