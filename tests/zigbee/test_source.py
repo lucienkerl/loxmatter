@@ -1847,6 +1847,48 @@ async def test_removing_a_device_zigpy_does_not_know_is_already_done(build) -> N
         await harness.source.remove(stranger)
 
 
+async def test_removing_a_device_zigpy_no_longer_knows_still_clears_its_own_state(
+    build,
+) -> None:
+    """N-3 (verification 2026-09-13): the test above proves `remove()` on an
+    address zigpy never had returns cleanly, but not that `_forget(address)`
+    - the bridge's OWN cleanup, unrelated to whatever zigpy's database
+    knows - still runs on that branch. It does, in one call outside the
+    `if device is not None:` above it, but nothing pinned that: a stale
+    pairing row, delivered-once mark, polling entry or cluster listener for
+    an address zigpy has dropped could survive a removal and nothing here
+    would have noticed.
+
+    The lamp joins for real first - a genuine pairing row, with a listener
+    bound on every cluster - and THEN zigpy's own database drops it (a
+    reset, or another coordinator; `app.devices` is the only place that
+    happens, `_pairing` is the bridge's own and does not hear about it).
+    Removing it through the bridge must still clear the bridge's half.
+
+    Fault to prove it: call `self._forget(address)` only inside the
+    `if device is not None:` branch, so the `else` (unknown to zigpy) skips
+    it."""
+    lamp = colour_lamp()
+    harness = build(FakeApplication(devices=[lamp]))
+    await harness.source.connect()
+    await harness.source.subscribe(_lamp_resolver(), harness.handler)
+    harness.app.fire_device_initialized(lamp)
+    await _settle(harness.source)
+    assert [row.ieee for row in harness.source.pairing_rows()] == [LAMP_IEEE]
+    assert [cluster.listener_count for cluster in lamp.clusters()] == [4, 4, 4]
+
+    # zigpy's own database has dropped it; the bridge's pairing row does not
+    # know that yet.
+    del harness.app.devices[lamp.ieee]
+
+    await asyncio.wait_for(harness.source.remove(LAMP_IEEE), 1)
+
+    assert harness.app.removed == [], "zigpy was asked about a device it no longer has"
+    assert harness.source.pairing_rows() == []
+    assert [cluster.listener_count for cluster in lamp.clusters()] == [0, 0, 0]
+    assert LAMP_IEEE not in harness.source._listening
+
+
 # ------------------------------------------------------------------ pairing --
 
 

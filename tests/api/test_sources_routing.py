@@ -32,6 +32,7 @@ from loxmatter.export.commands import extract_commands
 from loxmatter.loxone.server import build_app
 from loxmatter.matter.models import NodeSnapshot
 from loxmatter.model.store import Store
+from loxmatter.model.zigbee_settings_store import settings_for_path
 from loxmatter.sources import DeviceCall, DeviceUnreachableError, Sources
 
 
@@ -241,6 +242,63 @@ async def test_forgetting_is_refused_while_the_devices_source_is_configured(zigb
     assert zigbee.fake_client_removed() == []
     listed = [device.id for device in store.devices()]
     assert matter_device in listed and zigbee_device in listed
+
+
+async def test_forget_only_is_refused_during_a_radio_change(zigbee_plug):
+    """A radio change clears the shared `Sources` registry before the old
+    source's `disconnect()` returns (`ZigbeeRuntime._release`), which makes
+    `sources.get("zigbee")` raise `SourceNotConfiguredError` in exactly the
+    same way as "no stick is stored at all" - but the STORED setting still
+    names a stick. Offering, let alone accepting, forget-only there would
+    let a user permanently forget a device that stays joined to the network
+    the swap is about to reopen (verification finding N-1).
+
+    The route must tell the two situations apart by the stored setting, not
+    by the registry that is empty in both: refuse `forget_only=true` with
+    the ordinary transient 503 the pairing routes already use for a radio
+    change in flight, and offer nothing.
+
+    Fault to prove it: drop the `store.zigbee_settings.get().path is not
+    None` guard, so the registry being empty is always read as "no stick
+    at all"."""
+    client, device_id, _, zigbee = await zigbee_plug(with_zigbee=False)
+    store = zigbee.store
+    store.zigbee_settings.save(settings_for_path("/dev/ttyUSB0", []))
+
+    plain = await client.delete(f"/api/devices/{device_id}")
+    refused = await client.delete(f"/api/devices/{device_id}?forget_only=true")
+
+    assert plain.status_code == 503
+    assert "offer" not in plain.json()
+    assert plain.json()["detail"] == i18n.t("api.zigbee.radio_changing")
+    assert refused.status_code == 503
+    assert "offer" not in refused.json()
+    assert refused.json()["detail"] == i18n.t("api.zigbee.radio_changing")
+    assert device_id in [device.id for device in store.devices()]
+
+
+async def test_forget_only_is_offered_and_accepted_with_no_stick_stored(zigbee_plug):
+    """The other half of N-1: with NO stick stored at all - a fresh install,
+    or a user who tried Zigbee and gave the stick up - the registry being
+    empty means exactly what it says, and forget-only stays offered and
+    accepted, unlike during a radio change (see the test above).
+
+    Fault to prove it: same guard as above, inverted - treat a stored path
+    of `None` as "a radio change in progress" and refuse forget-only even
+    with nothing configured."""
+    client, device_id, _, zigbee = await zigbee_plug(with_zigbee=False)
+    store = zigbee.store
+    assert store.zigbee_settings.get().path is None
+
+    offered = await client.delete(f"/api/devices/{device_id}")
+
+    assert offered.status_code == 503
+    assert offered.json()["offer"] == "forget_only"
+
+    accepted = await client.delete(f"/api/devices/{device_id}?forget_only=true")
+
+    assert accepted.status_code == 204
+    assert device_id not in [device.id for device in store.devices()]
 
 
 async def test_cmd_without_the_devices_source_is_503(zigbee_plug):

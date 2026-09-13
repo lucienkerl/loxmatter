@@ -13880,8 +13880,18 @@ def test_a_window_replaced_elsewhere_is_left_open_by_the_stop_sent_on_leaving():
     end has passed sends nothing at all, and a window only ever seen through
     a list is never this page's to close.
 
+    A fourth run (verification finding N-3/S5) closes the one gap the first
+    three do not: the phone's Keep open lands, and THIS page polls before
+    leaving - so `zigbeePermitUntil`, what is on screen, has already moved
+    to the phone's window before the Stop on leaving is even sent.
+    `closeZigbeeWindow` must still send `zigbeeOpenedUntil`, this page's own
+    claim, as `only_if_until` - not the on-screen value a poll just wrote
+    over it.
+
     Fault to prove it: send the Stop on leaving without `only_if_until`, or
-    close on leaving with the window on screen when there is no claim."""
+    close on leaving with the window on screen when there is no claim, or -
+    the fourth run's own fault - send `this.zigbeePermitUntil` instead of
+    `this.zigbeeOpenedUntil` as the leaving Stop's claim."""
     values = _app_state(
         _BINDINGS_JS
         + _PAIRING_PAGE_JS
@@ -13920,6 +13930,33 @@ def test_a_window_replaced_elsewhere_is_left_open_by_the_stop_sent_on_leaving():
           await state.selectView('export');
           await settle();
           out.seenOnly = { permits: bridge.permits.splice(0), claim: state.zigbeeOpenedUntil };
+
+          // A foreign Keep open moves the window after this page opened it,
+          // and a poll in between updates only what is ON SCREEN, not this
+          // page's own claim - the Stop sent on leaving must still name
+          // what this page itself opened, never the screen (verification
+          // finding N-3/S5: a leaving Stop that sent the on-screen end
+          // instead would name the window that is CURRENTLY open and close
+          // it out from under the phone, instead of finding its own, stale
+          // claim mismatched and doing nothing).
+          await state.selectView('devices');
+          state.commissionTab = 'zigbee';
+          bridge.shift = 0;
+          await state.startZigbeeSearch();
+          const mine = state.zigbeeOpenedUntil;                  // T1, this page's claim
+          bridge.shift += 30000; const foreign = openFor(254);   // the phone's Keep open, T2
+          bridge.permits.length = 0; bridge.conditions.length = 0;
+          await state.loadZigbeePairing();                       // this page polls: sees T2
+          const shown = state.zigbeePermitUntil;
+          const claimAfterPoll = state.zigbeeOpenedUntil;
+          await state.selectView('export');
+          await settle();
+          out.polledAfterForeignKeepOpen = {
+            shownMovedToForeignWindow: shown === foreign && shown !== mine,
+            claimStayedMine: claimAfterPoll === mine,
+            conditionIsMine: bridge.conditions.splice(0)[0] === mine,
+            phoneStillOpen: openNow() === foreign,
+          };
           console.log(JSON.stringify(out));
         })();
         """
@@ -13932,6 +13969,12 @@ def test_a_window_replaced_elsewhere_is_left_open_by_the_stop_sent_on_leaving():
     }
     assert values["expired"] == {"permits": [], "phoneStillOpen": True, "claim": None}
     assert values["seenOnly"] == {"permits": [], "claim": None}
+    assert values["polledAfterForeignKeepOpen"] == {
+        "shownMovedToForeignWindow": True,
+        "claimStayedMine": True,
+        "conditionIsMine": True,
+        "phoneStillOpen": True,
+    }
 
 
 @pytest.mark.skipif(NODE is None, reason="node is required for this test")
@@ -14816,3 +14859,46 @@ async def test_a_device_without_its_radio_offers_to_be_removed_from_loxmatter_on
         "offer": "forget_only",
         "message": "Zigbee is not set up in this installation",
     }
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+async def test_keeping_the_device_returns_focus_to_the_tile_menu(api):
+    """Verification finding N-2 (2026-09-13): "Keep it" hides the
+    forget-only box by clearing `deviceForgetOffer`, which `x-show` turns
+    into `display: none` - but focus itself does not move. A keyboard user
+    who pressed Enter on that button was left focused on markup that had
+    just vanished, the same dead end `index.html` already documents for
+    the new-room field (Finding 2, re-review 2026-09-05).
+
+    Through the REAL `@click` handler of the SERVED "Keep it" button, with
+    fake `$el`/`$nextTick` standing in for the DOM this suite has no
+    engine for: `$el.closest('.card')` is the tile, `querySelector('summary')`
+    its kebab menu button - the same pair the fix's comment names.
+
+    Fault to prove it: drop the `$nextTick(() => ...)` call from the
+    button's `@click` (the offer still closes, but `focusCalls` stays
+    empty)."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+    buttons = [
+        attributes
+        for tag, attributes, ancestors in _served_elements(page)
+        if tag == "button"
+        and any("device-forget-offer" in a.get("class", "").split() for _, a in ancestors)
+    ]
+    keep = next(b for b in buttons if b["x-text"] == "t('web.devices.forget_only_keep')")
+    values = _app_state(
+        _BINDINGS_JS
+        + f"const keep = {json.dumps(keep)};"
+        + """
+        state.deviceForgetOffer = { deviceId: 7, technology: 'zigbee', reason: 'x' };
+        const focusCalls = [];
+        const summary = { focus: () => focusCalls.push('summary') };
+        const card = { querySelector: (selector) => (selector === 'summary' ? summary : null) };
+        const el = { closest: (selector) => (selector === '.card' ? card : null) };
+        exec(keep['@click'], { device: { id: 7 }, $el: el, $nextTick: (cb) => cb() });
+        console.log(JSON.stringify({ offer: state.deviceForgetOffer, focusCalls }));
+        """
+    )
+    assert values["offer"] is None
+    assert values["focusCalls"] == ["summary"]

@@ -760,6 +760,37 @@ def test_run_writes_the_bridges_own_log_to_stderr_for_the_container_log(monkeypa
     assert "loxmatter.cli:" in lines[0]
 
 
+def test_the_stderr_handler_lets_info_lines_through_too(capsys):
+    """N-3 (verification 2026-09-13): the test above only proves a WARNING
+    line reaches `docker logs` - nothing pinned the LEVEL the handler is
+    actually installed at. At WARNING, every INFO line the hardware
+    checklist greps for (15.6's "zigbee quirks registry loaded in", 15.7's
+    "connection ... restored", 15.9's post-apply line) would silently
+    vanish from `docker logs`, and this suite would stay green throughout.
+
+    Calls `_install_stderr_log()` directly - the same function `run()`
+    installs - and logs one INFO line through a child logger, the way
+    every module under `loxmatter.*` does; a handler on `loxmatter` catches
+    it by propagation exactly as it would in production.
+
+    Fault to prove it: `handler.setLevel(logging.WARNING)` in
+    `_install_stderr_log`."""
+    logger = logging.getLogger("loxmatter")
+    before_handlers = list(logger.handlers)
+    before_level = logger.level
+    logger.setLevel(logging.INFO)
+    cli._install_stderr_log()
+    try:
+        logging.getLogger("loxmatter.zigbee.source").info("warm-up finished in 0.4 s")
+    finally:
+        _reset_loxmatter_logger(before_handlers, before_level)
+
+    lines = [line for line in capsys.readouterr().err.splitlines() if "warm-up finished" in line]
+    assert len(lines) == 1
+    assert lines[0].startswith("INFO:")
+    assert "loxmatter.zigbee.source:" in lines[0]
+
+
 def test_subcommands_other_than_run_print_no_log_lines(monkeypatch, tmp_path):
     """The stream handler belongs to the server. A subcommand a person
     types - here `set-language` - must not start echoing log lines into

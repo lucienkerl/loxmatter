@@ -24,6 +24,7 @@ import logging
 import pytest
 
 from loxmatter.sources.supervisor import attach, supervise
+from loxmatter.zigbee.source import ZigbeeUnavailableError
 
 
 class FakeClient:
@@ -315,3 +316,49 @@ async def test_a_failure_that_repeats_carries_its_traceback_once(caplog):
         "OSError",
     ]
     assert "attempt 3" in failures[2].getMessage()
+
+
+async def test_two_different_causes_of_the_same_wrapper_type_both_explain_themselves(caplog):
+    """N-3 (verification 2026-09-13): the test above only varies the
+    exception TYPE (`FileNotFoundError`, then `OSError`) - which is not what
+    production ever raises here. Every real failure of this loop is a
+    `ZigbeeUnavailableError` (or `MatterUnavailableError`), the SAME
+    wrapper type every time, `raise`d `from` whatever actually went wrong
+    (`zigbee/source.py`). `_failure_identity` was written to tell such
+    failures apart by MESSAGE, not only by type - "missing" and "busy" both
+    surface as a `ZigbeeUnavailableError`, and folding the second into "the
+    same failure, attempt 2" because the type matches would have been
+    exactly the silent-repeat bug this whole module exists to avoid, just
+    one level further down than the type check catches.
+
+    Fault to prove it: key `explained` by `type(exc).__name__` alone (drop
+    the message half of `_failure_identity`) - the busy stick's failure
+    then logs as a bare repeat of the missing stick's, with no traceback of
+    its own."""
+    caplog.set_level(logging.INFO, logger="loxmatter.sources.supervisor")
+    missing = ZigbeeUnavailableError("could not open the stick: missing")
+    missing.__cause__ = FileNotFoundError(2, "No such file or directory")
+    busy = ZigbeeUnavailableError("could not open the stick: busy")
+    busy.__cause__ = OSError(16, "Device or resource busy")
+    client = FakeClient(
+        connect_failures=2, technology="zigbee", connected=False, errors=[missing, busy]
+    )
+
+    task = await _run_until(client, 20, drop=False)
+    await _stop(task)
+
+    assert client.connect_calls == 3
+    failures = [r for r in caplog.records if "rebuild of source zigbee failed" in r.getMessage()]
+    assert len(failures) == 2
+    with_traceback = [r for r in failures if r.exc_info]
+    # Both, not one: same wrapper type, different message, so each is its
+    # own failure with its own traceback - never "attempt 2" of the first.
+    assert [type(r.exc_info[1]).__name__ for r in with_traceback] == [
+        "ZigbeeUnavailableError",
+        "ZigbeeUnavailableError",
+    ]
+    # "failed again, attempt N" is the repeat branch's own phrasing
+    # (`explained` already had this identity) - neither may use it, since
+    # each cause is new to `explained` when it first occurs.
+    assert "failed again" not in failures[0].getMessage()
+    assert "failed again" not in failures[1].getMessage()

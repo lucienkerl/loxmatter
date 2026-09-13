@@ -42,7 +42,7 @@ from loxmatter.model.store import Store
 from loxmatter.model.zigbee_settings_store import settings_for_path
 from loxmatter.radios.fingerprints import Fingerprint
 from loxmatter.radios.inventory import scan_serial
-from loxmatter.sources import Sources
+from loxmatter.sources import DeviceUnreachableError, Sources
 from loxmatter.zigbee import source as source_module
 from loxmatter.zigbee.runtime import ZigbeeRuntime
 from loxmatter.zigbee.source import ZigbeeSource
@@ -1595,6 +1595,92 @@ async def test_a_conditional_stop_the_radio_refuses_still_says_it_could_not_clos
 
     assert refused.status_code == 502, refused.text
     assert refused.json()["detail"].startswith("The Zigbee network could not be closed")
+
+
+class _StubPermitSource:
+    """A minimal stand-in for `ZigbeeSource`'s permit surface, wired
+    directly into a fake `zigbee_runtime.current()`.
+
+    Verification finding N-3 (2026-09-13): the route's "timed out behind
+    another permit call" branch (`api/zigbee.py`, right below
+    `except DeviceUnreachableError as exc:`) was never exercised - reaching
+    it through a REAL race is not just hard to schedule reliably, it turns
+    out to be close to impossible with the real lock: measured with a toy
+    model of the same lock-and-`wait_for` shape, a permit call queued
+    behind the one that times out consistently finishes AFTER the route's
+    `except` block has already read the old, unmoved `permit_until()` -
+    the release that lets it proceed only happens as part of unwinding the
+    very cancellation that fires that `except` block, one scheduler tick
+    too late. The route does not care WHY `bounded_source_call` raised
+    `DeviceUnreachableError`, or why `permit_until()` reads differently
+    afterwards - only that it does - so this stub produces both directly,
+    without needing the raw race at all."""
+
+    def __init__(self, permit_until: datetime) -> None:
+        self._permit_until = permit_until
+
+    async def close_window_ending(self, ends: str) -> bool:
+        raise DeviceUnreachableError("timed out waiting for the radio")
+
+    async def permit(self, seconds: int) -> datetime:
+        raise AssertionError("not used by this test")
+
+    def permit_until(self) -> datetime | None:
+        return self._permit_until
+
+
+class _StubZigbeeRuntime:
+    def __init__(self, source: Any) -> None:
+        self._source = source
+
+    def current(self) -> Any:
+        return self._source
+
+    def progress(self) -> Any:
+        raise AssertionError("not needed while a source is current")
+
+
+async def test_a_timed_out_stop_reports_the_window_another_call_moved_it_to(
+    tmp_path, no_invoke, fake_runtime
+):
+    """N-3: a conditional Stop can time out (`bounded_source_call` raises
+    `DeviceUnreachableError`) behind another permit call that, by the time
+    the route looks again, has already moved the window on. That is not a
+    failed Stop - the page's own window is already gone, and the honest
+    answer is the window that IS open, exactly like the (untimed) "another
+    window" case already covered above.
+
+    Fault to prove it: delete the
+    `if condition is not None and _iso(source.permit_until()) != condition`
+    branch in `open_join_window` - the route then falls through to the
+    generic "could not be closed" 502, even though there is nothing left
+    of THIS page's window to fail closing."""
+    store = Store(tmp_path / "t.sqlite")
+    old_end = datetime.now(UTC) + timedelta(seconds=50)
+    new_end = datetime.now(UTC) + timedelta(seconds=200)
+    source = _StubPermitSource(new_end)
+    app = build_app(
+        store,
+        no_invoke,
+        fake_runtime(store),
+        zigbee_runtime=_StubZigbeeRuntime(source),  # type: ignore[arg-type]
+        update_dir=tmp_path / "update",
+        radios_host_dev=tmp_path / "host-dev",
+        radios_sys_root=tmp_path / "sys",
+    )
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        await authenticate(store, client)
+        condition = source_module.window_end_text(old_end)
+
+        response = await client.post(
+            "/api/zigbee/permit", json={"duration": 0, "only_if_until": condition}
+        )
+
+    assert response.status_code == 200, response.text
+    assert response.json() == {"permit_until": source_module.window_end_text(new_end)}
+    store.close()
 
 
 async def test_a_row_is_keyed_by_ieee_and_carries_what_the_tab_shows(pairing):
