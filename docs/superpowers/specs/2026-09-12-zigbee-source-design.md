@@ -114,10 +114,30 @@ its button until the LED blinks.
 reloaded page still shows the truth. 254 s is the protocol maximum — zigpy
 asserts `0 <= t <= 254` (R1 §3) — and no unlimited mode is offered;
 Zigbee2MQTT removed its permanent option in 2.0 as a security concern
-(research B). Two buttons while the window is open: **Stop** (`permit(0)`)
-and **Keep open longer** (re-send 254). Leaving the tab for good closes the
+(research B). Two buttons while the window is open: **Stop searching**
+(`permit(0)`) and **Keep open longer** (re-send 254), with the countdown
+under them as `m:ss` ("Open for new devices: 4:12 left"). Leaving the tab
+for good — switching to the Matter tab or to another view — closes the
 window; ZHA's failure to do that is a standing complaint. Interviews already
 running are unaffected — the permit gates only new joins.
+
+**Only the page that opened a window closes it on leaving.** A window a
+phone opened, which a laptop merely sees through its poll, is not the
+laptop's to close when its user clicks Export. The page remembers that it
+opened the window (Start or Keep open succeeded there) and forgets it when a
+Stop succeeds or a list shows no window; a Start still under way when the
+tab is left counts as opened there, and is closed the moment its answer
+lands off screen. The claim is kept in the browser tab's `sessionStorage`,
+so it survives a reload and is shared with no other tab. A Stop refused on
+leaving (`api.zigbee.close_failed`) is shown in a banner above the main
+navigation, where the user now is, with its own Stop button — not inside the
+pane they left.
+
+**A reload shows an open window.** A reload is not leaving for good, and it
+sends no Stop: that would also close a window another tab or a phone is
+watching. Entering the Devices view reads the pairing list once whichever
+tab is selected, and an open window selects the Zigbee tab so its countdown
+is on screen.
 
 **One row per device, keyed by IEEE.** The states, and the event that
 produces each (R1 §3):
@@ -125,9 +145,9 @@ produces each (R1 §3):
 | State | Trigger | What the row says |
 |---|---|---|
 | joined | `device_joined` | Found a device — reading its details |
-| interviewing | interview in progress | Found `<manufacturer> <model>` — reading its details |
+| interviewing | interview in progress | Reading its details … (the row's title already names `<manufacturer> <model>`; while neither is known, it says what joined says) |
 | configuring | `device_initialized`, our configure-on-join running | Setting it up |
-| ready | configure-on-join finished | Ready to use, green |
+| ready | configure-on-join finished | Ready to use, green — or, on a row not added to the device list yet, "Ready - add it to your devices" (a green "Ready to use" there read as finished, and the device never reached Loxone) |
 | interview failed | `device_init_failure` | Could not read this device, with **Retry** and **Remove** |
 | stuck | no progress for 60 s (mains) / 90 s (battery) | Names the real cause: battery devices fall asleep, press the device's button every few seconds |
 | waiting to wake | configuration deferred (section 6.4) | Waiting for the device to wake up — press its button |
@@ -136,11 +156,29 @@ The last two are the states ZHA does not have, and they are the reason this
 tab is worth building rather than copying. A stuck row is not an error row:
 it keeps waiting, and it keeps offering Retry and Remove.
 
-**On the ready row**, inline and saved on blur: a **name**, prefilled with
+**On the ready row**, inline: a **name**, prefilled with
 `<Manufacturer> <Model>` rather than the IEEE (Z2M prefills the IEEE, which
 nobody keeps), and a **room**, reusing the commissioning card's existing room
 `<select>` with its "No room" and "New room ..." options — the same component
-and the same room-key encoding (`""` for no room), not a second one.
+and the same room-key encoding (`""` for no room), not a second one. The same
+fields are on a row displayed as configuring or waiting to wake: both are
+stored as ready, and a sleeping sensor can wait days for its wake-up.
+
+**An explicit Add button, then save on blur.** A row not yet adopted carries
+an **Add** button, and the first `PATCH` is sent by it, not by a blur. That
+`PATCH` adopts the device — it puts it into the store, the export and Loxone
+— which is a step worth a deliberate press; and the prefilled name is often
+exactly right, so a user who keeps it has no field to leave and no blur
+would ever fire. Once the device is added, name and room save on their own:
+the name on blur (and Enter), the room when the select changes. The name
+field grows to show a long prefilled name in full rather than cutting it
+off, and stays a single line.
+
+**Rows already added fold away.** The list holds every device the radio has
+seen since it came up. Rows not added yet stay in the open; rows already in
+the device list fold into a closed disclosure titled with their count ("2
+devices already added"). A row added in the page stays open until the next
+load, so the line saying where it went is read.
 
 **A "quirk applied" / "no quirk" hint** sits on the ready row. zigpy tells
 us which it was: the resolved device carries `_quirk_registry_entry`
@@ -198,17 +236,24 @@ namespace follows the file's existing convention.
 | `web.devices.transport_zigbee` | Badge title and `aria-label` |
 | `web.zigbee.tab` / `web.devices.commission_tab_matter` | The two tab labels |
 | `web.zigbee.reset_hint_lamp`, `web.zigbee.reset_hint_battery` | Reset guidance before searching |
-| `web.zigbee.start`, `web.zigbee.stop`, `web.zigbee.extend` | The three buttons |
-| `web.zigbee.countdown` | "Open for {seconds} s" |
+| `web.zigbee.reset_intro` | The lead-in to the reset guidance |
+| `web.zigbee.start`, `web.zigbee.stop`, `web.zigbee.extend` | The three buttons ("Stop searching", not a bare "Stop") |
+| `web.zigbee.countdown` | "Open for new devices: {time} left", `{time}` as `m:ss` |
+| `web.zigbee.searching_empty` | The open window before any device joined |
 | `web.zigbee.state_joined`, `_interviewing`, `_configuring`, `_ready`, `_failed`, `_stuck`, `_waiting_wake` | The seven row states of 3.1 |
+| `web.zigbee.state_ready_to_add` | A ready row not added to the device list yet |
+| `web.zigbee.name_label`, `web.zigbee.adopt` | The name field and the Add button |
+| `web.zigbee.adopted_hint`, `web.zigbee.saved` | Where an added device went; a save on blur |
+| `web.zigbee.added_group_one`, `web.zigbee.added_group_many` | The title of the folded rows already added (two keys: `i18n.t` knows no plural forms) |
 | `web.zigbee.retry`, `web.zigbee.remove` | Row actions |
 | `web.zigbee.quirk_applied`, `web.zigbee.quirk_none` | The hint |
-| `web.zigbee.remove_confirm` | The honest removal copy of 3.1 |
+| `web.zigbee.remove_confirm`, `web.zigbee.remove_confirm_adopted` | The honest removal copy of 3.1, and what it adds for a device already in the device list |
 | `web.radios.zigbee_label`, `web.radios.zigbee_none` | The radios row |
 | `web.radios.zigbee_is_thread_stick` | Why the Thread stick is not offered |
 | `web.radios.fingerprint_unknown`, `web.radios.advanced` | Unknown stick and its disclosure |
 | `api.errors.zigbee_not_connected` | The radio is configured but the link is down |
-| `api.zigbee.permit_failed`, `api.zigbee.unknown_device` | Pairing route errors |
+| `api.zigbee.permit_failed`, `api.zigbee.close_failed`, `api.zigbee.unknown_device` | Pairing route errors; `close_failed` is a refused Stop, which says the network may still be open |
+| `api.zigbee.radio_changing`, `api.zigbee.not_ready_yet` | The pairing routes' 503 during a radio change, and the 409 of a row not stored as ready. The 503 does not tell the user to reload, and nor does `unknown_device`: the tab keeps asking and its list updates by itself |
 
 ## 4. The Zigbee Source
 
