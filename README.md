@@ -299,8 +299,9 @@ the names under `/dev/serial/by-id`. And the rule reaches **every**
 USB-serial adapter on the host, the Thread stick included: code running
 inside the bridge could talk to any of them, and could garble the radio
 your Thread border router depends on. The web UI and the API refuse to
-use the Thread stick for Zigbee, but that is a check in the bridge's own
-code, not a boundary. The rule does **not** reach block devices,
+use the Thread stick for Zigbee - and refuse every stick while the updater
+service has not reported which one Thread uses - but that is a check in the
+bridge's own code, not a boundary. The rule does **not** reach block devices,
 `/dev/mem` or i2c; those stay refused even though the read-only `/dev`
 shows them. You can narrow the rule to the device numbers you actually
 see — `c 188:0 rmw` allows only what is `/dev/ttyUSB0` right now — at
@@ -308,7 +309,8 @@ the cost that the stick stops working after it is plugged into another
 port and gets another number.
 
 The Zigbee network key sits in clear text in zigpy's own database
-(`zigbee.sqlite`), where zigpy keeps it; loxmatter never writes it to its
+(`zigbee.sqlite`, next to `loxmatter.sqlite` in the bridge's data volume),
+where zigpy keeps it; loxmatter never writes it to its
 log. There is deliberately no download for a Zigbee network backup yet,
 because that backup carries the key, and the updater's pre-update backup
 covers the bridge's own database (`loxmatter.sqlite`) only, not

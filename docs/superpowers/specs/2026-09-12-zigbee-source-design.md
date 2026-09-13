@@ -1176,22 +1176,22 @@ listed here so the body is not mistaken for the untouched design.
   (`4caa260`). The flag can therefore no longer rescue a wrong stored
   setting; see the follow-ups below.
 - **The colour command `(768, 7)` is gated on declared features**
-  (`e8040f4`, `c08d6bd`). It needs both XY and hue/saturation, because the
-  picker reads its position back from hue and saturation; a lamp declaring
-  XY alone gets no colour control. Where a lamp has both commands, the web
-  UI's picker sends `(768, 6)`; the Loxone export offers both.
+  (`e8040f4`, `c08d6bd`). As first built it needed both XY and
+  hue/saturation, so a lamp declaring XY alone got no colour control - the
+  opposite of 5.6's promise; 13.5 corrects that. Where a lamp has both
+  commands, the web UI's picker sends `(768, 6)`; the Loxone export offers
+  both.
 - **Two sentinel rules differ from section 10.1's table.** The temperature
   sentinel is `-0x8000`, because the attribute is `int16s` (`b927723`), and
   a `Single` measurement's invalid value is NaN, caught by its own check
   rather than a table row (`9b90c83`).
 - **`device_init_failure` arrives on the application's listeners**, not
   the device's (`b5876dc`).
-- **zigpy's database is not where section 8.5 puts it.** `cli._run` builds
+- **zigpy's database was not where section 8.5 puts it.** `cli._run` built
   it at `<--matter-data-dir>/zigbee.sqlite` (`31f1312`), and
   `deploy/testhost/docker-compose.yml` mounts that directory into the bridge
-  read-only (`./data:/matter-data:ro`). Read from the code and the compose
-  file, not run: as deployed, zigpy cannot create its database. This has to
-  be fixed before the first hardware session.
+  read-only (`./data:/matter-data:ro`), so as deployed zigpy could not have
+  created its database. Fixed before any hardware session; see 13.5.
 - **Section 10.3 is out of date on one point.** A second stick, the ITEAD
   SONOFF Zigbee 3.0 USB Dongle Plus V2, has been on the test Pi since
   12 September 2026, beside the MG24 that runs Thread. The loxmatter Zigbee
@@ -1212,3 +1212,76 @@ during implementation and left for later:
 - Comments in `zigbee/source.py` and `zigbee/runtime.py` that still name
   plan task numbers ("Task 8", "Task 10", "Task 11"), which mean nothing
   outside the plan.
+
+### 13.5 Hardening after the documentation pass
+
+Added 13 September 2026. Writing the hardware checklist read the deployed
+configuration more closely than the fake-based tests do, and found five
+defects. Still **nothing here has been exercised against Zigbee hardware**.
+
+1. **zigpy's database sits beside the store** (`922a21f`), at
+   `zigbee_database_beside(store.path)` in `zigbee/runtime.py`: the
+   directory of `loxmatter.sqlite`, however that path was given
+   (`--store-path`, `LOXMATTER_STORE`, the `~/.loxmatter/` default). On the
+   test host that is `/data/zigbee.sqlite` in the `loxmatter-store` volume,
+   which is what 8.5 said. `tests/test_compose_profiles.py` computes the
+   path with the same function for every bridge service in every compose
+   file under `deploy/` and refuses a read-only or missing mount. No
+   installation had a `zigbee.sqlite`, so nothing moved. The bridge image
+   has no `USER` line and runs as root, so it writes to that named volume
+   the way it already writes the store; the uid 1000 in the compose
+   comments is matter-server's. Nothing else reads the path: no
+   diagnostics, backup or export route, and the updater's pre-update backup
+   still covers `loxmatter.sqlite` only (section 11).
+2. **The Thread lock-out fails safe** (`d3fff85`). 3.2's comparison is
+   against the sidecar's report, and a missing, stale or unreadable report
+   used to exclude nothing - the MG24 was offered and a `PUT` naming it was
+   accepted. The rule now lives in `radios/thread_lockout.py` and answers
+   two questions differently:
+   - *Choosing* a stick needs a current report: fresh (within the 30 s
+     heartbeat window) and with no radios job running or waiting. Otherwise
+     every stick is unselectable, `GET /api/zigbee/radio` reports
+     `thread_status` (`unknown` or `changing`) with a translated
+     `thread_refusal` the card shows under the select, and `PUT` answers
+     503. "No Zigbee stick" is always accepted.
+   - *Opening* the stored stick - at boot, on every supervisor retry, on
+     every apply - is asked in `ZigbeeSource.connect()` through an open
+     guard, before the quirks warm-up and the port. A report of any age
+     that does not name the stick as Thread's lets it open; a report naming
+     it, or no readable report at all, keeps it closed with a reason, and
+     the supervisor opens it by itself once that changes. A stale report is
+     accepted here because the bridge commonly starts before the sidecar
+     after a reboot, and refusing would strand a working installation; the
+     file on the store's volume is the last good report, replaced
+     atomically on every sidecar pass, so no second copy was persisted. A
+     Thread stick moved through the product cannot be missed by it -
+     `POST /api/radios` refuses the Zigbee stick - and a hand edit of
+     `.env` while the sidecar is stopped is invisible to any report.
+   The cost: an installation without the updater service cannot choose a
+   Zigbee stick in the web UI, and a stick stored through `--zigbee-device`
+   is not opened until the sidecar has reported once.
+3. **Colour on lamps that only accept XY** (`f1ea277`, `3d9f167`). The
+   claim was true: with `(768, 7)` requiring XY and HS, a lamp declaring
+   ColorCapabilities 0x08 got no colour control and no Loxone colour
+   output, on Matter (FeatureMap 8) and Zigbee alike. zha-quirks ships such
+   a device, the Candeo C-ZB-LC20 RGB controller
+   (`CandeoRGBColorCluster`, `XY_attributes` only). `(768, 7)` is now
+   permitted for XY with HS, or for XY without CT: a lamp that tunes white
+   declares CT, so XY without CT is a colour lamp. The white-spectrum
+   KAJPLATS (24 = XY|CT) keeps only its kelvin control; a lamp with every
+   colour bit still draws one picker, `duplicate_control_command` hiding
+   the `color_xy` twin. An XY-only lamp's picker sends MoveToColor and has
+   no start marker, because CurrentHue/CurrentSaturation do not exist
+   there; the modal shows its "Start value unknown" note. Still denied: a
+   colour lamp declaring XY|CT without HS (Candeo's RGBCCT controller) is
+   bit-for-bit the white-spectrum lamp; only the device type could tell
+   them apart.
+4. **The coordinator's firmware is logged at INFO** (`a481bd8`). After each
+   successful connect the source reads `app.state.node_info`
+   (`manufacturer`, `model`, `version`, filled by bellows from its board
+   info and EmberZNet version) and logs one line, `Zigbee coordinator
+   connected on <path>: radio type …, firmware …`. The same appears as
+   `coordinator` in `GET /api/zigbee/radio` and as "Firmware: …" on the
+   card. The names are pinned in `tests/zigbee/test_zigpy_names.py`.
+5. **The Dockerfile no longer calls the 9-15 s warm-up measured**
+   (`7293cc0`); it is 8.4's extrapolation from an M1 Pro.

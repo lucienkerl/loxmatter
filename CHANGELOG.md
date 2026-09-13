@@ -54,6 +54,12 @@ people who don't know the code.
   router. The stick your Thread network runs on is listed but can never be
   chosen for Zigbee while Thread uses it; the row says why, and turning
   Thread off frees it. The Thread row, in turn, refuses the Zigbee stick.
+  Which stick Thread uses is reported by the updater service: while it has
+  not reported recently, no stick can be chosen for Zigbee at all, and the
+  row says so. A Zigbee stick already set up keeps working through a
+  restart, but is not opened while the bridge has no report at all, or if
+  Thread now runs on it. The row shows the firmware the stick reports once
+  it has connected.
 - **What Zigbee costs.** The bridge's image is larger. Measured while the
   feature was being designed, not on this release's image, the Zigbee
   libraries added about 33 MB of installed Python packages and about 13 MB
@@ -74,8 +80,14 @@ people who don't know the code.
   export, `color_xy`, which sends the colour as XY coordinates, the colour
   command Matter makes mandatory for full-colour lamps. Matter and Zigbee
   lamps get it alike. The existing colour output, its wiring in Loxone and
-  the colour picker in the browser are unchanged. A lamp that reports XY
-  colour but not hue and saturation still gets no colour control.
+  the colour picker in the browser are unchanged. A lamp that takes colour
+  only as XY — it reports XY but neither hue and saturation nor a colour
+  temperature — now gets a colour control for the first time, through this
+  output, and the picker in the browser uses it; the picker cannot show
+  where such a lamp currently is, and says so. Tunable-white lamps still get
+  no colour control. A colour lamp that reports XY and a colour temperature
+  but not hue and saturation looks exactly like a tunable-white one, and
+  gets none either.
 - **Thread or IP at a glance.** Every device tile now carries a small badge on
   its icon showing whether the device talks to the bridge over Thread or over
   your IP network (Wi-Fi or Ethernet). Hover it for the name. A device that

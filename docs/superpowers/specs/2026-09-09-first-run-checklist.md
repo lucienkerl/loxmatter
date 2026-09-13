@@ -266,16 +266,16 @@ record. A step that can interrupt Thread says so before it starts.
 For the API calls, `TOKEN` is `LOXMATTER_API_TOKEN` from
 `deploy/testhost/.env`, sent as `Authorization: Bearer $TOKEN`.
 
-### 15.0 A known blocker
+### 15.0 Where zigpy's database lands
 
-Read from the code and the compose file, not run: `cli._run` puts zigpy's
-database at `<--matter-data-dir>/zigbee.sqlite`, and the compose file passes
-`--matter-data-dir /matter-data` while mounting `./data:/matter-data:ro`
-into the bridge. As deployed, zigpy cannot create its database, and 15.7
-would fail with "The Zigbee radio could not be started: …". The path has to
-move to a writable place (the design put it at `/data/zigbee.sqlite`, in the
-bridge's own volume) in the code or the compose file before this section is
-run. 15.2 checks that the build under test has that fix.
+zigpy keeps its network database, `zigbee.sqlite`, in the same directory as
+the bridge's own store: `/data/zigbee.sqlite` in the `loxmatter-store`
+volume, beside `/data/loxmatter.sqlite`. The first build put it under
+`--matter-data-dir`, which this compose file mounts read-only; that was fixed
+before this section was run (`922a21f`), and
+`tests/test_compose_profiles.py` now refuses a read-only mount for it in
+every compose file. The bridge image has no `USER` line, so the bridge runs
+as root and writes to that volume the way it already writes the store.
 
 ### 15.1 Baseline, changing nothing
 
@@ -304,14 +304,11 @@ run. 15.2 checks that the build under test has that fix.
   `docker compose up -d`: the otbr environment changed (`&uart-exclusive`)
   and that would recreate the border router now, before 15.3.
 - **Expect:** the bridge healthy, otbr's `RunningFor` unchanged, no Zigbee
-  stick configured. The directory the build now puts `zigbee.sqlite` in is
-  writable from inside the bridge (15.0): for example
-  `docker exec loxmatter sh -c 'touch <that directory>/zigbee-probe && rm <that directory>/zigbee-probe'`
-  succeeds. `Read-only file system` means 15.0 is not fixed in this build;
-  stop.
-- **Record:** otbr's `RunningFor` before and after; the database directory
-  and the probe's result; `docker inspect loxmatter --format
-  '{{json .HostConfig.DeviceCgroupRules}}'` showing both rules.
+  stick configured, and no `/data/zigbee.sqlite` yet
+  (`docker exec loxmatter ls /data`).
+- **Record:** otbr's `RunningFor` before and after; the `ls /data` output;
+  `docker inspect loxmatter --format '{{json .HostConfig.DeviceCgroupRules}}'`
+  showing both rules.
 
 ### 15.3 The Thread lock-out, before anything opens a port
 
@@ -321,15 +318,18 @@ serial port: listing sticks reads `/sys` and the by-id names only.
 1. **Do:** `curl -s -H "Authorization: Bearer $TOKEN" http://localhost:8080/api/radios`.
    **Expect:** `current` is not `null`, with `"thread_enabled": true`,
    `"otbr_running": true` and `thread_device` naming the MG24 by-id path.
-   **Stop if not**: the lock-out is gated on the sidecar's report that
-   Thread is running, and without that report the MG24 would be offered for
-   Zigbee. **Record:** `current` as printed.
+   **Stop if not**: the lock-out compares every stick with this report.
+   Without a current one the bridge refuses to choose any stick at all
+   (step 5 checks that), so nothing later in this section can be run, and
+   a `current` naming the wrong stick would lock the wrong one.
+   **Record:** `current` as printed.
 2. **Do:** `curl -s -H "Authorization: Bearer $TOKEN" http://localhost:8080/api/zigbee/radio`.
-   **Expect:** `configured_path` is `null`, `progress.state` is `idle`; the
-   MG24 entry has `"is_thread": true, "selectable": false`; the ITEAD entry
-   has `"is_thread": false, "selectable": true` and the fingerprint
-   `SONOFF ZBDongle-E V2`, `ezsp`, 115200. **Record:** both entries as
-   printed.
+   **Expect:** `thread_status` is `known` and `thread_refusal` is `null`;
+   `configured_path` is `null`, `progress.state` is `idle`, `coordinator`
+   is `null`; the MG24 entry has `"is_thread": true, "selectable": false`;
+   the ITEAD entry has `"is_thread": false, "selectable": true` and the
+   fingerprint `SONOFF ZBDongle-E V2`, `ezsp`, 115200. **Record:** both
+   entries and `thread_status` as printed.
 3. **Do:** open Settings → Radios in the browser, in English and in German.
    **Expect:** in the Zigbee row the MG24 is listed as "in use for Thread"
    (`für Thread in Verwendung` in German) and cannot be picked; the line
@@ -347,6 +347,22 @@ serial port: listing sticks reads `/sys` and the by-id names only.
    `GET /api/zigbee/radio` still shows `configured_path: null`,
    `docker exec otbr ot-ctl state` still `leader`, otbr's `RunningFor`
    unchanged. **Record:** status, detail, otbr state and `RunningFor`.
+5. **The fail-safe without a report.** Stopping the updater service does
+   not touch Thread or the bridge; do it only while no update or radio
+   change is running.
+   **Do:** `docker stop loxmatter-updater`, wait 40 s (the report counts as
+   current for 30 s), then repeat step 2, open the Radios card, and send
+   the ITEAD stick past the card with step 4's command and the ITEAD path.
+   Then `docker start loxmatter-updater` and wait until step 2 shows
+   `thread_status: known` again.
+   **Expect:** `thread_status` is `unknown` and BOTH entries have
+   `"selectable": false`, the MG24 still `"is_thread": true` (the old report
+   still names it); the card shows "The bridge cannot currently tell which
+   stick Thread is using …" under the select, both sticks cannot be picked,
+   "No Zigbee stick" can; the `PUT` answers `503` with that sentence and
+   nothing is stored. **Record:** the `GET` body, the status and detail, a
+   screenshot of the card, and how long after `docker start` the status
+   read `known` again.
 
 ### 15.4 otbr with `&uart-exclusive`, and the recreate timing
 
@@ -399,20 +415,23 @@ stick only. Never point it at `ttyUSB0`.
 - **Record:** both outputs. `PermissionError` on the stick means the cgroup
   rule did not reach the container; go back to 15.2.
 
-### 15.6 The stick's firmware, before the bridge opens it
+### 15.6 The stick's firmware
 
-The ITEAD stick must run EZSP coordinator (NCP) firmware. The bridge will
-not tell you which version it runs: bellows reports the stack version only
-at DEBUG level, on the `bellows.ezsp` logger ("EZSP Stack Type: …, Stack
-Version: …, Protocol version: …"), and loxmatter logs at INFO.
+The ITEAD stick must run EZSP coordinator (NCP) firmware. bellows reports
+the stack version only at DEBUG level, so the bridge reads it back itself:
+after every successful connect it logs one INFO line, `Zigbee coordinator
+connected on <path>: radio type ezsp, firmware <version>, manufacturer …,
+model …`, reports the same in `coordinator` from `GET /api/zigbee/radio`,
+and shows "Firmware: <version>" under the Zigbee row.
 
-- **Do:** record the firmware version from whatever you already know about
-  this unit (the vendor's release it shipped with, or a flashing tool you
-  have used on it). Do not flash anything as part of this session.
-- **Expect:** an EZSP NCP build. If it is unknown, 15.7 is the test: a stick
-  on the wrong firmware fails with "This stick does not answer as a Zigbee
-  coordinator …".
-- **Record:** the version, or "unknown".
+- **Do:** nothing yet; do not flash anything as part of this session. If
+  you know the version from the vendor's release or a flashing tool, note
+  it now, so 15.7 can compare.
+- **Expect:** 15.7 connects and the log line names an EZSP NCP build. A
+  stick on the wrong firmware fails 15.7 with "This stick does not answer
+  as a Zigbee coordinator …" instead, and there is no such line.
+- **Record:** the version you already knew, or "unknown"; 15.7 records what
+  the bridge read.
 
 ### 15.7 Choose the stick in the web UI, with Thread running
 
@@ -422,15 +441,32 @@ Thread stays up throughout this step; if it does not, that is the finding.
   pick the ITEAD stick in the Zigbee row and press its Apply. Watch the row
   while it works, then read `docker logs loxmatter`.
 - **Expect:** the row steps through "Applying the change", "Preparing device
-  support - this can take a few seconds", "Opening the stick", "Connected".
-  No other container restarts; Thread and Matter devices keep delivering
-  values the whole time. The log carries
-  `zigbee quirks registry loaded in N s`. In the Thread row's select the
-  ITEAD stick is now marked "in use for Zigbee".
+  support - this can take a few seconds", "Opening the stick", "Connected",
+  then shows "Firmware: …". No other container restarts; Thread and Matter
+  devices keep delivering values the whole time. The log carries
+  `zigbee quirks registry loaded in N s` and one
+  `Zigbee coordinator connected on …` line, and `/data/zigbee.sqlite` now
+  exists (`docker exec loxmatter ls -l /data`). In the Thread row's select
+  the ITEAD stick is now marked "in use for Zigbee".
 - **Record:** the `N` from that log line, against the design's extrapolated
-  9–15 s for a Pi 4 (`zhaquirks.setup()`, design section 8.4); the time from
+  9–15 s for a Pi 4 (`zhaquirks.setup()`, design section 8.4); the whole
+  `Zigbee coordinator connected` line (the firmware for 15.6); the time from
   Apply to "Connected"; `RunningFor` of otbr and matter-server before and
   after; the failure text and attempt count if it does not connect.
+
+Then the stored stick after a restart with a stale report - the case of a
+Pi rebooting and the bridge coming up before the updater service. **Restarts
+the bridge; Matter values pause for its restart, Thread is not touched.**
+
+- **Do:** `docker stop loxmatter-updater`, wait 40 s, `docker restart
+  loxmatter`, and watch the Zigbee row. Then `docker start
+  loxmatter-updater`.
+- **Expect:** the ITEAD stick connects again without the updater service
+  running: the report on disk is stale but still names the MG24 as Thread's
+  and not the ITEAD stick. The log carries a fresh `Zigbee coordinator
+  connected` line.
+- **Record:** whether and how fast it connected, and the row's text while it
+  did.
 
 Then the reverse lock-out, which would recreate otbr on the wrong stick if it
 failed. **Can interrupt Thread devices if the guard is broken — agree a time
@@ -467,7 +503,12 @@ first.**
 - **Record:** manufacturer and model of each device; whether the row said
   "Device-specific support (quirk) applied" or "No device-specific support
   (quirk) …"; the time from Search to Ready for each; any row that stayed
-  stuck; whether the device and its signals appear in the export.
+  stuck; whether the device and its signals appear in the export. For a
+  lamp, which colour outputs the export offers (`color`, `color_xy`, or
+  none) and whether its Control dialog shows one colour area, none, or two:
+  a tunable-white lamp must show none, a colour lamp exactly one, and a
+  lamp that takes colour only as XY one whose marker is missing, with the
+  "Start value unknown" note.
 
 ### 15.9 Reporting arrives at the configured intervals
 
