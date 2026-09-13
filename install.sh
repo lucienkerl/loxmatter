@@ -945,8 +945,9 @@ report() {
     printf "\n  Keep an eye on the Thread radio - add this to 'crontab -e':\n"
     # Beside the checkout, not $HOME - --dir can put TARGET_DIR anywhere, and
     # a log path that silently assumed $HOME would stop matching the checkout
-    # it is named after.
-    printf '    */5 * * * * %s/scripts/otbr-watchdog.sh >> %s/otbr-watchdog.log 2>&1\n' \
+    # it is named after. Every minute and without `flock`: the script locks
+    # itself and leaves an otbr container that started under 90 s ago alone.
+    printf '    * * * * * %s/scripts/otbr-watchdog.sh >> %s/otbr-watchdog.log 2>&1\n' \
       "$TARGET_DIR" "${TARGET_DIR%/*}"
   else
     printf '\n  Running WiFi and Ethernet only. To add Thread later: plug the radio in,\n'

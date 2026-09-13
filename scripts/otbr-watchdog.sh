@@ -20,7 +20,9 @@
 #
 # Meant for a cron entry, see deploy/testhost/README.md:
 #
-#   */5 * * * * /home/pi/matter-loxone/scripts/otbr-watchdog.sh >> /home/pi/otbr-watchdog.log 2>&1
+#   * * * * * /home/pi/matter-loxone/scripts/otbr-watchdog.sh >> /home/pi/otbr-watchdog.log 2>&1
+#
+# No `flock` in the cron line: the script takes its own lock, below.
 #
 # WHY this is needed: the OTBR agent aborts if the radio module stops
 # responding (RCP timeout - a USB dropout, power supply, the module
@@ -34,10 +36,22 @@
 # interface (wpan*) with a mesh address exist? It disappears along with
 # the agent.
 #
-# Deliberately NO restart loop: if the restart fails because the radio
-# module itself is stuck, retrying every minute wouldn't help and would
-# just flood the log. At that point someone has to look - and finds what
-# happened in the log.
+# Deliberately NO restart loop inside a run: one restart, up to 60 s of
+# waiting, done. If the radio module itself is stuck, retrying would not
+# help. Cron starts a run every minute, so a recovery takes about a minute
+# instead of five; two things keep that from turning into restarts on top
+# of each other:
+#
+# - a lock: a run that is still waiting for the network makes the next run
+#   exit quietly instead of restarting the agent under it;
+# - a grace period: an otbr container started less than 90 s ago is left
+#   alone. That covers boot, an update, and this script's own restart - a
+#   normal attach takes 22-35 s on the Pi, and an agent restarted in the
+#   middle of one starts over.
+#
+# A stuck module therefore gets one restart attempt, and its log lines,
+# about every two minutes until someone looks - and finds what happened in
+# the log.
 set -euo pipefail
 
 SERVICE="otbr"
@@ -48,12 +62,28 @@ SERVICE="otbr"
 IF_INET6="${IF_INET6:-/proc/net/if_inet6}"
 STACK="$(cd "$(dirname "${BASH_SOURCE[0]}")/../deploy/testhost" && pwd)"
 STAMP="$(date '+%Y-%m-%d %H:%M:%S')"
+# The lock is this script file itself, opened for reading: it always exists
+# and is readable by whoever runs the script, so no lock file is left in
+# /tmp that a run as root could create and a run as pi then fail to open.
+# Overridable so the tests can give each run a lock of its own.
+LOCK_FILE="${OTBR_WATCHDOG_LOCK:-${BASH_SOURCE[0]}}"
+GRACE_SECONDS=90
+
+# One run at a time. `flock` is util-linux, present on Raspberry Pi OS; where
+# it is missing (a developer's Mac running the tests) the run goes ahead
+# without a lock, as it did before there was one.
+if command -v flock >/dev/null 2>&1; then
+  exec 9<"$LOCK_FILE"
+  if ! flock -n 9; then
+    exit 0
+  fi
+fi
 
 # In WiFi/Ethernet-only operation (COMPOSE_PROFILES without "thread", see
 # deploy/testhost/.env) this service doesn't exist at all. Without this
 # brake the watchdog would never find a Thread interface, would try a
-# restart every five minutes and write a failure to the log every time -
-# a watchdog would turn into an avalanche.
+# restart every minute and write a failure to the log every time - a
+# watchdog would turn into an avalanche.
 #
 # Important: this is ONLY the check for whether otbr is configured at
 # all - not whether docker works. Under `set -euo pipefail`, a missing or
@@ -84,6 +114,31 @@ if thread_is_up; then
   exit 0
 fi
 
+# Seconds since the epoch for docker's `2026-09-13T19:30:01.123456789Z`, in
+# UTC. The fraction and the zone letter are cut off and the `T` becomes a
+# space, because that is the one form both GNU date (Raspberry Pi OS) and
+# busybox date accept after `-d`. The BSD form after it is for macOS, where
+# the tests run. Prints nothing when neither can read it.
+epoch_of() {
+  local stamp="${1%%.*}"
+  stamp="${stamp%Z}"
+  stamp="${stamp/T/ }"
+  date -u -d "$stamp" '+%s' 2>/dev/null \
+    || date -u -j -f '%Y-%m-%d %H:%M:%S' "$stamp" '+%s' 2>/dev/null \
+    || true
+}
+
+# A container that has only just started is still attaching: leave it be.
+# When the start time cannot be read, the check is skipped rather than the
+# restart - a watchdog that stays quiet because of a date format would be
+# the outage of 3 September again.
+if STARTED_AT=$(docker inspect -f '{{.State.StartedAt}}' "$SERVICE" 2>/dev/null); then
+  STARTED="$(epoch_of "$STARTED_AT")"
+  if [ -n "$STARTED" ] && [ $(($(date -u '+%s') - STARTED)) -lt "$GRACE_SECONDS" ]; then
+    exit 0
+  fi
+fi
+
 printf '%s  No Thread interface - restarting %s\n' "$STAMP" "$SERVICE"
 
 # The agent's pid file lives in the container's WRITABLE LAYER and so
@@ -93,14 +148,14 @@ printf '%s  No Thread interface - restarting %s\n' "$STAMP" "$SERVICE"
 # asks whether that pid is alive, not whether it is the agent - answers
 # "thread border agent already started; not starting". The container
 # comes up with no Thread daemon at all, `docker ps` still reports "Up",
-# and the next run of this watchdog five minutes later is the first
-# chance to recover.
+# and the next run of this watchdog is the first chance to recover.
 #
 # Measured on the Pi on 11 September 2026: /run/otbr-agent.pid still held
 # 97 from a start three days earlier, and 97 is also the pid the agent
 # gets on a fresh start of this image - so the collision is systematic,
-# not bad luck. That incident cost five minutes of Thread outage on top
-# of the one the radio module had already caused.
+# not bad luck. That incident, when this watchdog still ran every five
+# minutes, cost five minutes of Thread outage on top of the one the radio
+# module had already caused.
 #
 # Before the restart and not after: afterwards would delete the pid file
 # of the agent that has just started. `/var/run` is a symlink to `/run`

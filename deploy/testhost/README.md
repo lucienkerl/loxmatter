@@ -343,7 +343,9 @@ mesh address exists — the same check the "System" view also shows.
 If it's missing, it restarts the `otbr` service and waits up to 60
 seconds for the network. As long as everything is running it writes nothing; the log file
 therefore contains exactly the incidents. A check every minute keeps an outage to
-about a minute (this line used to run it every five minutes).
+about a minute (this line used to run it every five minutes). The line needs no
+`flock`: the script takes a lock on itself, so a run that is still waiting for the
+network makes the next one exit quietly.
 
 **Before the restart it clears `/run/otbr-agent.pid` inside the
 container.** That file sits in the writable layer and survives a
@@ -356,13 +358,18 @@ next run gets another chance. Measured on 11 September 2026, when the
 watchdog still ran every five minutes: it cost five minutes of outage on top
 of the one the radio module had already caused.
 
+**It leaves a freshly started container alone.** When the `otbr` container started
+less than 90 seconds ago (`docker inspect -f '{{.State.StartedAt}}' otbr`), a run
+exits without doing anything. That covers boot, an update, and the watchdog's own
+restart: a normal attach takes 22 to 35 seconds on the Pi, and an agent restarted in
+the middle of one starts over.
+
 **It deliberately does not restart in a loop.** A run restarts at most once, waits up
 to 60 seconds and ends; it never retries on its own, because if the radio module itself
-is stuck, retrying wouldn't help. Cron does start the next run a minute later, though:
-a stuck module therefore gets one restart and one failure entry, with the last lines
-from the OTBR log, every minute until someone looks. A run that is still waiting when
-the next one starts is not detected, and the next one restarts again. Whoever looks
-finds what happened in the log.
+is stuck, retrying wouldn't help. Cron starts the next run a minute later, but the lock
+and the grace period hold it back while a restart is still in progress: a stuck module
+gets one restart and one failure entry, with the last lines from the OTBR log, about
+every two minutes until someone looks. Whoever looks finds what happened in the log.
 
 It's also worth adding an alert in Loxone: `d<n>_online` goes to 0 during such an
 outage, and that value is already available in the Miniserver anyway.
