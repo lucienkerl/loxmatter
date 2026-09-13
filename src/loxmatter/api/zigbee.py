@@ -64,7 +64,7 @@ from pathlib import Path
 from typing import Final, Literal
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from loxmatter import i18n
 from loxmatter.export.commands import extract_commands
@@ -84,7 +84,12 @@ from loxmatter.radios.inventory import (
 from loxmatter.radios.thread_lockout import is_thread_stick, read_thread_stick
 from loxmatter.sources import DeviceUnreachableError, bounded_source_call
 from loxmatter.zigbee.runtime import ZigbeeRuntime
-from loxmatter.zigbee.source import PERMIT_MAX_SECONDS, PairingRow, ZigbeeSource
+from loxmatter.zigbee.source import (
+    PERMIT_MAX_SECONDS,
+    PairingRow,
+    ZigbeeSource,
+    window_end_text,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -146,10 +151,26 @@ class ZigbeePermitIn(BaseModel):
     device can join. `255` is refused like any other out-of-range value, so
     the traditional "forever" spelling cannot slip through as one.
 
-    A duration of 0 is Stop: it closes the window at once, which is what
-    both the Stop button and leaving the tab send."""
+    A duration of 0 is Stop: it closes the window at once. The Stop button
+    sends it as it is.
+
+    **`only_if_until` makes a Stop conditional**, and it is what leaving the
+    tab sends: the end time of the window the page itself opened, exactly as
+    this route answered it. The window is closed only while it is still that
+    window; otherwise nothing is touched and the answer is the window that
+    is open. A page does not own a window it merely sees, and only the
+    source can compare against the current window without a race (see
+    `ZigbeeSource.close_window_ending`). Refused with anything but a Stop,
+    because "open, but only if" means nothing."""
 
     duration: int = Field(ge=0, le=PERMIT_MAX_SECONDS)
+    only_if_until: str | None = None
+
+    @model_validator(mode="after")
+    def _condition_only_on_a_stop(self) -> ZigbeePermitIn:
+        if self.only_if_until is not None and self.duration != 0:
+            raise ValueError("only_if_until is only accepted with a duration of 0")
+        return self
 
 
 class ZigbeePairingPatch(BaseModel):
@@ -225,7 +246,7 @@ def _stuck(row: PairingRow, status: PairingRowStatus, *, now: datetime) -> Pairi
 
 
 def _iso(moment: datetime | None) -> str | None:
-    return None if moment is None else moment.isoformat(timespec="seconds")
+    return None if moment is None else window_end_text(moment)
 
 
 def _settings_from(body: ZigbeeRadioIn, serial: Sequence[SerialRadio]) -> ZigbeeRadioSettings:
@@ -453,11 +474,20 @@ def build_zigbee_router(
         "could not be opened" would put an error in front of the user on
         every tab change after one radio blip. A Stop that fails while a
         window IS still recorded as open stays a 502: the coordinator may
-        still be letting devices in, and that is worth saying."""
+        still be letting devices in, and that is worth saying.
+
+        A conditional Stop (`only_if_until`, sent on leaving the tab) that
+        names a window which is no longer the open one answers 200, closes
+        nothing, and carries the window that IS open: the page's own window
+        is already gone, and what is open now belongs to someone else."""
         source = _require_source()
+        condition = body.only_if_until
 
         async def _permit() -> None:
-            await source.permit(body.duration)
+            if condition is None:
+                await source.permit(body.duration)
+            else:
+                await source.close_window_ending(condition)
 
         try:
             # Bounded like every other call into a source (boundary design
@@ -470,6 +500,11 @@ def build_zigbee_router(
         except DeviceUnreachableError as exc:
             if body.duration == 0 and source.permit_until() is None:
                 return {"permit_until": None}
+            if condition is not None and _iso(source.permit_until()) != condition:
+                # Timed out waiting behind another permit call, which moved
+                # the window on: the one this page asked to close is not the
+                # open one, so nothing of this page's is left to close.
+                return {"permit_until": _iso(source.permit_until())}
             # A failed Stop has its own sentence: "could not be opened" is
             # false for a request that asked to close, and this refusal is
             # the one that says the network may still be open.

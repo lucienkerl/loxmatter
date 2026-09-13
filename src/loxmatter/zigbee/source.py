@@ -114,7 +114,17 @@ __all__ = [
     "ZigbeeSource",
     "ZigbeeUnavailableError",
     "channels_excluding",
+    "window_end_text",
 ]
+
+
+def window_end_text(moment: datetime) -> str:
+    """A join window's end as the pairing routes spell it, to the second.
+
+    The one spelling: `GET /api/zigbee/pairing` and `POST /api/zigbee/permit`
+    answer with it, and `ZigbeeSource.close_window_ending` compares a page's
+    copy against it - so the page gets back exactly what it was given."""
+    return moment.isoformat(timespec="seconds")
 
 
 # Asked with the stick's path before `connect()` touches the port; a
@@ -1646,25 +1656,50 @@ class ZigbeeSource:
                 f"a join window lasts between 0 and {PERMIT_MAX_SECONDS} seconds, not {seconds}"
             )
         async with self._permit_lock:
-            app = self._require_app()
-            with _as_device_error():
-                await app.permit(time_s=seconds)
-            # The link is looked at AGAIN after the await. bellows resolves
-            # the command's future when the NCP's answer arrives, and this
-            # coroutine resumes one loop iteration later - so a
-            # `connection_lost` (or a `disconnect()` for a radio swap) can
-            # run in between, close the window, and be undone by the write
-            # below: a countdown on a dead radio, and a join grace no
-            # coordinator is holding. The radio that answered is gone, so
-            # the window it opened is gone with it.
-            if self._app is not app or not self._connected:
-                raise DeviceUnreachableError(i18n.t("api.errors.zigbee_not_connected"))
-            until = datetime.now(UTC) + timedelta(seconds=seconds)
-            # Kept even for a Stop, and even once it is in the past: the end
-            # of the LAST window is what `_join_came_from_a_window` measures
-            # its grace against. `permit_until()` is where "is it open" is
-            # answered, and it answers `None` for both of those cases.
-            self._permit_until = until
+            return await self._permit_holding_the_lock(seconds)
+
+    async def close_window_ending(self, ends: str) -> bool:
+        """Stop - but only while the open window is the one ending at `ends`.
+
+        `ends` is a window's end as the pairing routes spelled it
+        (`window_end_text`), which is all a page knows about the window it
+        opened. A page that is left closes only that window: one a phone
+        opened after the page's own was stopped, or after it ran out, ends
+        at another second and stays open. Answers whether it closed.
+
+        **The look and the close are one step under the permit lock.** A
+        Keep open from anywhere else that is under way holds the lock, so
+        this sees the end time it wrote, not the one before it; and nothing
+        can replace the window between the comparison and the radio call.
+        A page cannot make this comparison itself - its latest list can be
+        two seconds old - which is why it is made here."""
+        async with self._permit_lock:
+            current = self.permit_until()
+            if current is None or window_end_text(current) != ends:
+                return False
+            await self._permit_holding_the_lock(0)
+            return True
+
+    async def _permit_holding_the_lock(self, seconds: int) -> datetime:
+        app = self._require_app()
+        with _as_device_error():
+            await app.permit(time_s=seconds)
+        # The link is looked at AGAIN after the await. bellows resolves
+        # the command's future when the NCP's answer arrives, and this
+        # coroutine resumes one loop iteration later - so a
+        # `connection_lost` (or a `disconnect()` for a radio swap) can
+        # run in between, close the window, and be undone by the write
+        # below: a countdown on a dead radio, and a join grace no
+        # coordinator is holding. The radio that answered is gone, so
+        # the window it opened is gone with it.
+        if self._app is not app or not self._connected:
+            raise DeviceUnreachableError(i18n.t("api.errors.zigbee_not_connected"))
+        until = datetime.now(UTC) + timedelta(seconds=seconds)
+        # Kept even for a Stop, and even once it is in the past: the end
+        # of the LAST window is what `_join_came_from_a_window` measures
+        # its grace against. `permit_until()` is where "is it open" is
+        # answered, and it answers `None` for both of those cases.
+        self._permit_until = until
         return until
 
     def permit_until(self) -> datetime | None:

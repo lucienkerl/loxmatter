@@ -12390,7 +12390,8 @@ async def test_leaving_the_tab_closes_the_join_window(api):
     left.)
 
     And only a window THIS page opened: the window here is opened with the
-    tab's own Start, which is what makes it this page's to close
+    tab's own Start, which is what makes it this page's to close, and the
+    Stop carries its end time so the server closes nothing else
     (`test_only_a_window_opened_here_is_closed_on_leaving` covers a window
     seen only through the poll).
 
@@ -12412,9 +12413,10 @@ async def test_leaving_the_tab_closes_the_join_window(api):
           // Matter.
           state.commissionTab = "zigbee";
           await state.startZigbeeSearch();
+          const opened = state.zigbeePermitUntil;
           calls = [];
           await state.selectCommissionTab("matter");
-          const closing = { calls, permitUntil: state.zigbeePermitUntil };
+          const closing = { calls, opened, permitUntil: state.zigbeePermitUntil };
 
           // And again with nothing open - the radio went away and the
           // source closed the window without being asked. `calls` is
@@ -12431,7 +12433,10 @@ async def test_leaving_the_tab_closes_the_join_window(api):
     )
 
     closing_permits = [call for call in values["closing"]["calls"] if call[1].endswith("/permit")]
-    assert closing_permits == [["POST", "/api/zigbee/permit", {"duration": 0}]]
+    opened = values["closing"]["opened"]
+    assert closing_permits == [
+        ["POST", "/api/zigbee/permit", {"duration": 0, "only_if_until": opened}]
+    ]
     assert values["closing"]["permitUntil"] is None
     # Nothing open, nothing sent.
     assert [call for call in values["quiet"] if call[1].endswith("/permit")] == []
@@ -12685,6 +12690,7 @@ def test_leaving_the_devices_view_closes_the_join_window_and_stops_the_poll():
         "  await state.selectCommissionTab('zigbee');"
         "  const armedOnScreen = state.zigbeePairingTimer !== null;"
         "  await state.startZigbeeSearch();"
+        "  const opened = state.zigbeePermitUntil;"
         "  calls.length = 0;"
         "  release = null;"
         "  const inFlight = state.loadZigbeePairing();"
@@ -12693,13 +12699,15 @@ def test_leaving_the_devices_view_closes_the_join_window_and_stops_the_poll():
         "  await state.selectView('export');"
         "  release();"
         "  await inFlight;"
-        "  console.log(JSON.stringify({ armedOnScreen,"
+        "  console.log(JSON.stringify({ armedOnScreen, opened,"
         "    permits: calls.filter(([, p]) => p === '/api/zigbee/permit'),"
         "    timer: state.zigbeePairingTimer, armedAfterLeaving: armed - armedBefore }));"
         "})();"
     )
     assert values["armedOnScreen"] is True
-    assert values["permits"] == [["POST", "/api/zigbee/permit", {"duration": 0}]]
+    assert values["permits"] == [
+        ["POST", "/api/zigbee/permit", {"duration": 0, "only_if_until": values["opened"]}]
+    ]
     assert values["timer"] is None
     assert values["armedAfterLeaving"] == 0
 
@@ -12834,11 +12842,13 @@ def test_leaving_while_start_is_under_way_closes_the_window_it_opens():
         "  const permits = []; let answer;"
         "  state.commissionTab = 'zigbee'; state.view = 'devices';"
         "  state.zigbeePermitUntil = null; state.setZigbeeOpenedUntil(null);"
+        "  let opened = null;"
         "  state.request = async (method, path, payload) => {"
         "    if (path === '/api/zigbee/permit') {"
         "      permits.push(payload);"
         "      if (payload.duration > 0) await new Promise((resolve) => { answer = resolve; });"
-        "      return { permit_until: payload.duration > 0 ? future() : null };"
+        "      if (payload.duration > 0) opened = future();"
+        "      return { permit_until: payload.duration > 0 ? opened : null };"
         "    }"
         "    if (path === '/api/zigbee/pairing') return { permit_until: null, rows: [] };"
         "    if (path === '/api/zigbee/radio') return radioBody;"
@@ -12849,7 +12859,7 @@ def test_leaving_while_start_is_under_way_closes_the_window_it_opens():
         "  await leave();"
         "  answer();"
         "  await start;"
-        "  return { permits, open: state.zigbeeWindowOpen(), claim: state.zigbeeOpenedUntil };"
+        "  return { permits, opened, open: state.zigbeeWindowOpen(), claim: state.zigbeeOpenedUntil };"
         "};"
         "(async () => {"
         "  const matter = await runCase(() => state.selectCommissionTab('matter'));"
@@ -12861,8 +12871,11 @@ def test_leaving_while_start_is_under_way_closes_the_window_it_opens():
         "  console.log(JSON.stringify({ matter, exportView, cameBack }));"
         "})();"
     )
-    opened_then_closed = [{"duration": PERMIT_MAX_SECONDS}, {"duration": 0}]
     for case in ("matter", "exportView"):
+        opened_then_closed = [
+            {"duration": PERMIT_MAX_SECONDS},
+            {"duration": 0, "only_if_until": values[case]["opened"]},
+        ]
         assert values[case]["permits"] == opened_then_closed, (case, values[case])
         assert values[case]["open"] is False, case
         assert values[case]["claim"] is None, case
@@ -12886,16 +12899,17 @@ def test_only_a_window_opened_here_is_closed_on_leaving():
       then opened again by the phone: the page's claim ended with its
       window, so leaving sends nothing either.
 
-    Fault to prove it: drop the `zigbeeHoldsWindow()` check from
-    `closeZigbeeWindow()` (the second run sends Stops), or do not clear the
-    claim on a GET without a window (the third one does)."""
+    Fault to prove it: close on leaving with the window on screen when there
+    is no claim (the second run sends Stops), or do not clear the claim on a
+    GET without a window (the third one does)."""
     values = _app_state(
-        _BINDINGS_JS + _PAIRING_PAGE_JS + "const permits = [];"
+        _BINDINGS_JS + _PAIRING_PAGE_JS + "const permits = []; let opened = null;"
         "let pairing = { permit_until: null, rows: [] };"
         "state.request = async (method, path, payload) => {"
         "  if (path === '/api/zigbee/permit') {"
         "    permits.push(payload);"
-        "    return { permit_until: payload.duration > 0 ? future() : null };"
+        "    if (payload.duration > 0) opened = future();"
+        "    return { permit_until: payload.duration > 0 ? opened : null };"
         "  }"
         "  if (path === '/api/zigbee/pairing') return JSON.parse(JSON.stringify(pairing));"
         "  if (path === '/api/zigbee/radio') return radioBody;"
@@ -12904,7 +12918,7 @@ def test_only_a_window_opened_here_is_closed_on_leaving():
         "(async () => {"
         "  await state.startZigbeeSearch();"
         "  await state.selectView('export');"
-        "  const openedHere = permits.splice(0);"
+        "  const openedHere = { permits: permits.splice(0), opened };"
         "  state.commissionTab = 'matter';"
         "  pairing = { permit_until: future(), rows: [] };"
         "  await state.selectView('devices');"
@@ -12924,7 +12938,10 @@ def test_only_a_window_opened_here_is_closed_on_leaving():
         "  console.log(JSON.stringify({ openedHere, landed, seenOnly, claimEnded }));"
         "})();"
     )
-    assert values["openedHere"] == [{"duration": PERMIT_MAX_SECONDS}, {"duration": 0}]
+    assert values["openedHere"]["permits"] == [
+        {"duration": PERMIT_MAX_SECONDS},
+        {"duration": 0, "only_if_until": values["openedHere"]["opened"]},
+    ]
     assert values["landed"] == "zigbee"
     assert values["seenOnly"] == []
     assert values["claimEnded"] == [{"duration": PERMIT_MAX_SECONDS}]
@@ -12942,12 +12959,9 @@ def test_a_reload_lands_on_an_open_windows_countdown_and_closes_nothing():
     open window selects the Zigbee tab so its countdown is on screen - with
     no permit request at all. A closed one leaves the Matter tab alone.
 
-    The tab and "this page opened the window" survive the reload in
-    `sessionStorage` (per browser tab, shared with no other tab or phone):
-    a window opened here, then reloaded, is still this page's to close. The
-    claim crosses only a reload, which hands it over on `pagehide`; that
-    listener sends nothing (`test_a_reload_restores_the_claim_through_init`
-    fires it).
+    The tab and the end time of the window this page opened survive the
+    reload in `sessionStorage` (per browser tab, shared with no phone): a
+    window opened here, then reloaded, is still this page's to close.
 
     Fault to prove it: drop the tab switch from `peekZigbeePairing()`, or
     the `rememberCommission()` call from `setZigbeeOpenedUntil()`."""
@@ -12981,7 +12995,6 @@ def test_a_reload_lands_on_an_open_windows_countdown_and_closes_nothing():
         "  await state.selectCommissionTab('zigbee');"
         "  await state.startZigbeeSearch();"
         "  const claimed = state.zigbeeOpenedUntil;"
-        "  state.rememberCommission({ handedOver: true });"
         "  state.commissionTab = 'matter'; state.zigbeeOpenedUntil = null;"
         "  state.restoreCommission();"
         "  const reloaded = { tab: state.commissionTab,"
@@ -13399,6 +13412,7 @@ async def test_a_refused_stop_on_leaving_is_shown_where_the_user_went(api):
         "  await state.startZigbeeSearch();"
         "  refuse = true;"
         "  await state.selectView('export');"
+        "  await settle();"
         f"  const inExport = {{ banner: Boolean(run({json.dumps(banners[0]['x-show'])})),"
         "    pane: state.zigbeePermitError, message: state.zigbeeLeaveCloseError };"
         "  refuse = false;"
@@ -13772,13 +13786,18 @@ async def test_the_name_field_shows_a_long_name_and_stays_one_line(api):
 # A bridge that keeps one join window, the way `ZigbeeSource` does: a permit
 # writes its end time to the second, a list answers with the end time as it
 # was when the list was ASKED (an answer can be overtaken on its way), and a
-# window whose end has passed is no window. `bridge.shift` moves the clock a
-# window is opened on, so two windows opened in one test run end at different
-# seconds. `holdPermit`/`holdGet` keep a request on its way until released.
+# window whose end has passed is no window. A Stop carrying `only_if_until`
+# closes only the window ending then and otherwise answers the open one, as
+# `close_window_ending` does; `bridge.conditions` records what each permit
+# carried. `bridge.shift` moves the clock a window is opened on, so two
+# windows opened in one test run end at different seconds.
+# `holdPermit`/`holdGet` keep a request on its way until released
+# (`holdStop` does the same for a Stop).
 _BRIDGE_JS = """
 const iso = (ms) => new Date(Math.floor(ms / 1000) * 1000).toISOString();
-const bridge = { until: null, shift: 0, permits: [], gets: 0,
-  holdPermit: false, releasePermit: null, holdGet: false, releaseGet: null };
+const bridge = { until: null, shift: 0, permits: [], conditions: [], gets: 0,
+  holdPermit: false, releasePermit: null, holdStop: false, releaseStop: null,
+  holdGet: false, releaseGet: null };
 const openFor = (seconds) => {
   bridge.until = seconds > 0 ? iso(Date.now() + bridge.shift + seconds * 1000) : null;
   return bridge.until;
@@ -13787,8 +13806,15 @@ const openNow = () => (bridge.until !== null && Date.parse(bridge.until) > Date.
 const bridgeRequest = async (method, path, payload) => {
   if (path === '/api/zigbee/permit') {
     bridge.permits.push(payload.duration);
+    bridge.conditions.push(payload.only_if_until ?? null);
     if (bridge.holdPermit && payload.duration > 0) {
       await new Promise((resolve) => { bridge.releasePermit = resolve; });
+    }
+    if (bridge.holdStop && payload.duration === 0) {
+      await new Promise((resolve) => { bridge.releaseStop = resolve; });
+    }
+    if (payload.only_if_until !== undefined && payload.only_if_until !== openNow()) {
+      return { permit_until: openNow() };
     }
     return { permit_until: openFor(payload.duration) };
   }
@@ -13805,19 +13831,17 @@ state.request = bridgeRequest;
 """
 
 # Page loads in one browser tab, through the REAL `init()`: each `bootPage`
-# builds a fresh `app()` from app.js over the `sessionStorage` it is given,
-# logs in on the Devices view and records the window listeners `init()`
-# attaches, so a test can fire `pagehide` the way a reload does.
+# builds a fresh `app()` from app.js over the `sessionStorage` it is given and
+# logs in on the Devices view. A reload is a second `bootPage` over the same
+# storage.
 _BROWSER_TAB_JS = """
 const storageOver = (backing) => ({
   getItem: (key) => (key in backing ? backing[key] : null),
   setItem: (key, value) => { backing[key] = String(value); },
 });
 const bootPage = async (backing) => {
-  const handlers = {};
   const win = { location: { hash: '#/devices' }, history: { replaceState() {} }, confirm: () => true,
-    sessionStorage: storageOver(backing), setInterval: () => 1,
-    addEventListener: (type, listener) => { (handlers[type] ??= []).push(listener); } };
+    sessionStorage: storageOver(backing), setInterval: () => 1, addEventListener: () => {} };
   globalThis.window = win;
   const page = new Function(src + ';globalThis.t = t; return app();')();
   page.request = bridgeRequest;
@@ -13828,29 +13852,29 @@ const bootPage = async (backing) => {
   return {
     page,
     use() { globalThis.window = win; return page; },
-    fire(type, event = {}) { globalThis.window = win; (handlers[type] ?? []).forEach((listener) => listener(event)); },
   };
 };
 """
 
 
 @pytest.mark.skipif(NODE is None, reason="node is required for this test")
-def test_a_window_replaced_elsewhere_is_not_closed_on_leaving():
-    """The claim on a window was a flag, so it survived its window. Two
-    runs the reviewer reproduced, through the REAL Start, polls and view
+def test_a_window_replaced_elsewhere_is_left_open_by_the_stop_sent_on_leaving():
+    """Two runs the reviewer reproduced, through the REAL Start, polls and view
     change:
 
-    - The laptop opens a window; between two of its polls the phone stops it
-      and opens its own. The laptop's next list shows the phone's window -
-      and the laptop, leaving, closed it.
-    - The laptop's window runs out without a poll seeing it, and the phone
-      opens a new one. Same result.
+    - The laptop opens a window; the phone stops it and opens its own. The
+      laptop, left, closed the phone's window - also when its last poll was
+      older than the phone's window, which no comparison in the page can
+      see.
+    - The laptop's window runs out unseen, and the phone opens a new one.
 
-    The claim is the end time now: a list showing another end time ends it.
-    And a window only ever seen through a list is not closed either.
+    The laptop's Stop carries the end time of the window IT opened, and the
+    bridge closes only that window: the phone's stays open. A claim whose
+    end has passed sends nothing at all, and a window only ever seen through
+    a list is never this page's to close.
 
-    Fault to prove it: keep the claim when a list shows a different end time
-    (`settleZigbeeClaim()`) and close on any claim (`zigbeeHoldsWindow()`)."""
+    Fault to prove it: send the Stop on leaving without `only_if_until`, or
+    close on leaving with the window on screen when there is no claim."""
     values = _app_state(
         _BINDINGS_JS
         + _PAIRING_PAGE_JS
@@ -13858,29 +13882,28 @@ def test_a_window_replaced_elsewhere_is_not_closed_on_leaving():
         + """
         (async () => {
           const out = {};
-          // Replaced between two polls.
+          // Replaced - the laptop has not polled since.
           await state.startZigbeeSearch();
-          await state.loadZigbeePairing();
           const laptopWindow = state.zigbeeOpenedUntil;
-          bridge.shift += 20000; openFor(254);                  // the phone
-          await state.loadZigbeePairing();
-          out.replaced = { claimWasSet: laptopWindow !== null, claim: state.zigbeeOpenedUntil };
-          bridge.permits.length = 0;
+          bridge.shift += 20000; const phone = openFor(254);    // the phone
+          bridge.permits.length = 0; bridge.conditions.length = 0;
           await state.selectView('export');
-          out.replaced.permits = bridge.permits.splice(0);
+          await settle();
+          out.replaced = { condition: bridge.conditions.splice(0)[0] === laptopWindow,
+            permits: bridge.permits.splice(0), phoneStillOpen: openNow() === phone,
+            claim: state.zigbeeOpenedUntil };
 
           // Ran out unseen, then opened again on the phone.
           await state.selectView('devices');
           state.commissionTab = 'zigbee';
           bridge.shift = -260000;
           await state.startZigbeeSearch();                     // ends 6 s ago
-          const expiredClaim = state.zigbeeOpenedUntil;
-          bridge.shift = 0; openFor(254);                      // the phone
-          await state.loadZigbeePairing();
-          out.expired = { claimWasSet: expiredClaim !== null, claim: state.zigbeeOpenedUntil };
+          bridge.shift = 0; const again = openFor(254);         // the phone
           bridge.permits.length = 0;
           await state.selectView('export');
-          out.expired.permits = bridge.permits.splice(0);
+          await settle();
+          out.expired = { permits: bridge.permits.splice(0), phoneStillOpen: openNow() === again,
+            claim: state.zigbeeOpenedUntil };
 
           // Seen only.
           await state.selectView('devices');
@@ -13888,13 +13911,19 @@ def test_a_window_replaced_elsewhere_is_not_closed_on_leaving():
           bridge.shift = 40000; openFor(254);
           await state.loadZigbeePairing();
           await state.selectView('export');
+          await settle();
           out.seenOnly = { permits: bridge.permits.splice(0), claim: state.zigbeeOpenedUntil };
           console.log(JSON.stringify(out));
         })();
         """
     )
-    for case in ("replaced", "expired"):
-        assert values[case] == {"claimWasSet": True, "claim": None, "permits": []}, (case, values)
+    assert values["replaced"] == {
+        "condition": True,
+        "permits": [0],
+        "phoneStillOpen": True,
+        "claim": None,
+    }
+    assert values["expired"] == {"permits": [], "phoneStillOpen": True, "claim": None}
     assert values["seenOnly"] == {"permits": [], "claim": None}
 
 
@@ -13923,6 +13952,7 @@ def test_keep_open_moves_the_claim_to_the_new_end_time():
           const moved = state.zigbeeOpenedUntil !== first && state.zigbeeOpenedUntil === bridge.until;
           bridge.permits.length = 0;
           await state.selectView('export');
+          await settle();
           console.log(JSON.stringify({ moved, permits: bridge.permits }));
         })();
         """
@@ -13931,55 +13961,14 @@ def test_keep_open_moves_the_claim_to_the_new_end_time():
 
 
 @pytest.mark.skipif(NODE is None, reason="node is required for this test")
-def test_a_duplicated_tab_does_not_inherit_the_claim():
-    """Chrome's "Duplicate Tab" copies `sessionStorage`, and with it the claim:
-    the copy, left, closed the window the original was still counting down.
-    A reload passes through `pagehide` and hands the claim over; a copy never
-    did, so it takes none.
-
-    Two page loads through the REAL `init()`: the original opens a window, a
-    copy is made of its storage, and the copy is left first - nothing is
-    sent. The original, left afterwards, still closes its window.
-
-    Fault to prove it: take the stored claim in `restoreCommission()` without
-    `handedOver`."""
-    values = _app_state(
-        _BINDINGS_JS
-        + _PAIRING_PAGE_JS
-        + _BRIDGE_JS
-        + _BROWSER_TAB_JS
-        + """
-        (async () => {
-          const originalStorage = {};
-          const original = await bootPage(originalStorage);
-          original.use();
-          await original.page.selectCommissionTab('zigbee');
-          await original.page.startZigbeeSearch();
-          const copy = await bootPage({ ...originalStorage });
-          const copyOnZigbee = copy.page.commissionTabShown();
-          bridge.permits.length = 0;
-          await copy.use().selectView('export');
-          const fromCopy = bridge.permits.splice(0);
-          await original.use().selectView('export');
-          console.log(JSON.stringify({ copyOnZigbee, fromCopy, fromOriginal: bridge.permits }));
-        })();
-        """
-    )
-    # The copy still shows the window - it just is not the copy's to close.
-    assert values["copyOnZigbee"] == "zigbee"
-    assert values["fromCopy"] == []
-    assert values["fromOriginal"] == [0]
-
-
-@pytest.mark.skipif(NODE is None, reason="node is required for this test")
 def test_a_reload_restores_the_claim_through_init():
     """The tab and the claim survive a reload only because `init()` reads
     them back - a helper that restored them correctly but was never called
     kept every other test green.
 
-    A page load through the REAL `init()` opens a window, `pagehide` fires
-    (and sends nothing), and the next page load over the same storage lands
-    on the Zigbee tab and closes the window when it is left.
+    A page load through the REAL `init()` opens a window, and the next page
+    load over the same storage lands on the Zigbee tab and closes that window
+    when it is left, naming it by its end time.
 
     Fault to prove it: drop `this.restoreCommission()` from `init()`."""
     values = _app_state(
@@ -13993,82 +13982,18 @@ def test_a_reload_restores_the_claim_through_init():
           const before = await bootPage(storage);
           await before.page.selectCommissionTab('zigbee');
           await before.page.startZigbeeSearch();
-          bridge.permits.length = 0;
-          const getsBefore = bridge.gets;
-          before.fire('pagehide');
-          const sentOnPagehide = { permits: bridge.permits.length, gets: bridge.gets - getsBefore };
+          const opened = bridge.until;
+          bridge.permits.length = 0; bridge.conditions.length = 0;
           const after = await bootPage(storage);
           const landed = after.page.commissionTabShown();
           await after.use().selectView('export');
-          console.log(JSON.stringify({ sentOnPagehide, landed, permits: bridge.permits }));
-        })();
-        """
-    )
-    assert values["sentOnPagehide"] == {"permits": 0, "gets": 0}
-    assert values["landed"] == "zigbee"
-    assert values["permits"] == [0]
-
-
-@pytest.mark.skipif(NODE is None, reason="node is required for this test")
-def test_a_reload_while_start_is_on_its_way_still_claims_its_window():
-    """Start pressed, and the page reloaded before its answer came back. The
-    answer is lost with the page, the radio opens the network anyway - and
-    nothing claimed it, so leaving the reloaded page left it open.
-
-    Before the POST a pending marker is stored with its send time. The page
-    after the reload takes a window ending where that Start would have ended
-    it as its own; a window ending anywhere else is someone else's, and a
-    marker too old to be on its way any more is dropped.
-
-    Two page loads through the REAL `init()`, with the POST held open across
-    `pagehide`.
-
-    Fault to prove it: ignore the pending marker in `settleZigbeeClaim()`, or
-    never drop an implausible one."""
-    values = _app_state(
-        _BINDINGS_JS
-        + _PAIRING_PAGE_JS
-        + _BRIDGE_JS
-        + _BROWSER_TAB_JS
-        + """
-        (async () => {
-          const out = {};
-          const storage = {};
-          const before = await bootPage(storage);
-          await before.page.selectCommissionTab('zigbee');
-          bridge.holdPermit = true;
-          before.page.startZigbeeSearch();          // never answers this page
           await settle();
-          before.fire('pagehide');
-          // The radio opens it anyway; the answer never reaches a page, the
-          // old page being gone.
-          openFor(254);
-          bridge.holdPermit = false;
-          bridge.permits.length = 0;
-          const after = await bootPage(storage);
-          out.claimed = after.page.zigbeeOpenedUntil === bridge.until;
-          await after.use().selectView('export');
-          out.permits = bridge.permits.splice(0);
-
-          // A marker from long ago, and a window someone else opened now.
-          const stale = {};
-          stale['loxmatter.commission'] = JSON.stringify({ tab: 'zigbee', tabChosen: false,
-            openedUntil: null, pendingSince: Date.now() - 120000, handedOver: true });
-          openFor(254);
-          const late = await bootPage(stale);
-          out.lateClaim = late.page.zigbeeOpenedUntil;
-          out.lateMarker = JSON.parse(stale['loxmatter.commission']).pendingSince;
-          await late.use().selectView('export');
-          out.latePermits = bridge.permits.splice(0);
-          console.log(JSON.stringify(out));
+          console.log(JSON.stringify({ landed, permits: bridge.permits,
+            named: bridge.conditions[0] === opened, closed: openNow() === null }));
         })();
         """
     )
-    assert values["claimed"] is True
-    assert values["permits"] == [0]
-    assert values["lateClaim"] is None
-    assert values["lateMarker"] is None
-    assert values["latePermits"] == []
+    assert values == {"landed": "zigbee", "permits": [0], "named": True, "closed": True}
 
 
 @pytest.mark.skipif(NODE is None, reason="node is required for this test")
@@ -14103,11 +14028,150 @@ def test_a_list_asked_during_start_does_not_wipe_its_window():
           bridge.holdPermit = false; bridge.holdGet = false;
           bridge.permits.length = 0;
           await state.selectView('export');
+          await settle();
           console.log(JSON.stringify({ ...after, permits: bridge.permits }));
         })();
         """
     )
     assert values == {"counting": True, "claimed": True, "permits": [0]}
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_the_stop_sent_on_leaving_names_the_window_this_page_opened():
+    """What the page still decides, now that the server compares: WHICH end
+    time goes with the Stop, and whether a Stop goes at all. Through the REAL
+    Start, Keep open and view change, against a bridge that closes only the
+    window a condition names:
+
+    - Start, then leaving: one Stop, carrying the end time Start answered.
+    - Keep open, then leaving: the Stop carries the NEW end time, and the
+      window closes.
+    - Start still on its way when the view is left: nothing to name yet, so
+      nothing is sent on leaving; the Start's answer lands off screen and
+      the Stop carrying its end time follows it.
+    - No window opened here, one open on screen (a phone's): no Stop.
+
+    Fault to prove it: send the Stop without `only_if_until` from
+    `closeZigbeeWindow()`, keep the Start's end time on Keep open, or drop
+    the off-screen close after the await in `sendZigbeePermit()`."""
+    values = _app_state(
+        _BINDINGS_JS
+        + _PAIRING_PAGE_JS
+        + _BRIDGE_JS
+        + """
+        const leaveAndBack = async () => {
+          await state.selectView('export');
+          await settle();
+          const sent = bridge.permits.map((duration, i) => [duration, bridge.conditions[i]]);
+          bridge.permits.length = 0; bridge.conditions.length = 0;
+          await state.selectView('devices');
+          state.commissionTab = 'zigbee';
+          return sent;
+        };
+        (async () => {
+          const out = {};
+          await state.startZigbeeSearch();
+          out.startEnd = bridge.until;
+          bridge.permits.length = 0; bridge.conditions.length = 0;
+          out.afterStart = await leaveAndBack();
+
+          await state.startZigbeeSearch();
+          bridge.shift += 30000;
+          await state.extendZigbeeSearch();
+          out.keepOpenEnd = bridge.until;
+          bridge.permits.length = 0; bridge.conditions.length = 0;
+          out.afterKeepOpen = await leaveAndBack();
+          out.closedAfterKeepOpen = openNow() === null;
+
+          bridge.shift += 30000;
+          bridge.holdPermit = true;
+          const start = state.startZigbeeSearch();
+          await settle();
+          bridge.permits.length = 0; bridge.conditions.length = 0;
+          await state.selectView('export');
+          await settle();
+          out.sentWhileStartWasOnItsWay = bridge.permits.length;
+          bridge.releasePermit();
+          await start;
+          await settle();
+          out.lateEnd = bridge.conditions[0];
+          out.late = bridge.permits.splice(0);
+          out.closedAfterLateStart = openNow() === null;
+          bridge.holdPermit = false; bridge.conditions.length = 0;
+          await state.selectView('devices');
+          state.commissionTab = 'zigbee';
+
+          bridge.shift += 30000; openFor(254);                  // a phone
+          await state.loadZigbeePairing();
+          out.seenOnly = await leaveAndBack();
+          console.log(JSON.stringify(out));
+        })();
+        """
+    )
+    assert values["afterStart"] == [[0, values["startEnd"]]]
+    assert values["afterKeepOpen"] == [[0, values["keepOpenEnd"]]]
+    assert values["closedAfterKeepOpen"] is True
+    assert values["sentWhileStartWasOnItsWay"] == 0
+    assert values["late"] == [0]
+    assert isinstance(values["lateEnd"], str)
+    assert values["closedAfterLateStart"] is True
+    assert values["seenOnly"] == []
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_leaving_the_devices_view_does_not_wait_for_the_stop():
+    """The Stop sent on leaving was awaited inside `selectView()`, so a radio
+    slow to answer it held the view change back for up to the 10 s bound:
+    the user clicked Export and nothing happened.
+
+    The REAL `selectView('export')` with the bridge holding the Stop: the
+    view has changed and the Export view has loaded while the Stop is still
+    on its way. A refusal that arrives afterwards still reaches the
+    page-wide banner, and the page keeps its claim on the window.
+
+    Fault to prove it: `await this.closeZigbeeWindow()` in `selectView()`, or
+    do not give the claim back when a Stop is refused."""
+    values = _app_state(
+        _BINDINGS_JS
+        + _PAIRING_PAGE_JS
+        + _BRIDGE_JS
+        + """
+        const loaded = [];
+        state.request = async (method, path, payload) => {
+          if (path !== '/api/zigbee/permit' && path !== '/api/zigbee/pairing' && path !== '/api/zigbee/radio') {
+            loaded.push(path);
+          }
+          const answer = await bridgeRequest(method, path, payload);
+          if (path === '/api/zigbee/permit' && payload.duration === 0) {
+            const error = new Error('could not be closed'); error.status = 502; throw error;
+          }
+          return answer;
+        };
+        (async () => {
+          await state.startZigbeeSearch();
+          const opened = state.zigbeeOpenedUntil;
+          bridge.holdStop = true;
+          const navigation = state.selectView('export').then(() => 'navigated');
+          const outcome = await Promise.race([navigation, settle().then(settle).then(() => 'waiting')]);
+          const during = { outcome, view: state.view, loaded: [...loaded],
+            stopOnItsWay: bridge.releaseStop !== null, banner: state.zigbeeLeaveCloseShown() };
+          bridge.releaseStop();
+          await navigation;
+          await settle();
+          console.log(JSON.stringify({ during, bannerAfter: state.zigbeeLeaveCloseShown(),
+            claimKept: opened !== null && state.zigbeeOpenedUntil === opened }));
+        })();
+        """
+    )
+    during = values["during"]
+    assert during["outcome"] == "navigated"
+    assert during["view"] == "export"
+    assert during["loaded"], "the Export view loaded nothing while the Stop was on its way"
+    assert during["stopOnItsWay"] is True
+    assert during["banner"] is False
+    assert values["bannerAfter"] is True
+    # Refused, the window may still be open, and it is still this page's.
+    assert values["claimKept"] is True
 
 
 @pytest.mark.skipif(NODE is None, reason="node is required for this test")
@@ -14147,6 +14211,7 @@ async def test_coming_back_to_devices_moves_the_leave_error_into_the_pane(api):
         (async () => {
           await state.startZigbeeSearch();
           await state.selectView('export');
+          await settle();
           const away = { banner: bannerShown(), pane: paneError() };
           await state.selectView('devices');
           const back = { banner: bannerShown(), pane: paneError(), tab: state.commissionTabShown() };

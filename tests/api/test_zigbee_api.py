@@ -1455,6 +1455,148 @@ async def test_stopping_closes_the_window_immediately(pairing):
     assert (await client.get("/api/zigbee/pairing")).json()["permit_until"] is None
 
 
+async def test_a_conditional_stop_closes_the_window_it_names(pairing):
+    """Leaving the tab sends a Stop carrying the end time of the window the
+    page opened, exactly as this route spelled it. While that is still the
+    open window, it is closed like any Stop.
+
+    Fault to prove it: compare against the end time at microsecond precision
+    in `close_window_ending` (the page's copy never matches)."""
+    client, harness = pairing
+    opened = (await client.post("/api/zigbee/permit", json={"duration": 254})).json()
+
+    response = await client.post(
+        "/api/zigbee/permit", json={"duration": 0, "only_if_until": opened["permit_until"]}
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json() == {"permit_until": None}
+    assert harness.app.permits[-1] == (0, None), "the radio was never told to close"
+    assert (await client.get("/api/zigbee/pairing")).json()["permit_until"] is None
+
+
+async def test_a_conditional_stop_for_another_window_leaves_the_open_one_alone(pairing):
+    """The laptop opened a window; the phone stopped it and opened its own,
+    and the laptop - which has not polled since - is left. Its Stop names
+    the laptop's window, which is gone. The phone's window stays open, the
+    radio is not asked anything, and the answer is the window that IS open.
+
+    Fault to prove it: close on any conditional Stop, whatever it names."""
+    client, harness = pairing
+    await client.post("/api/zigbee/permit", json={"duration": 254})
+    laptops = source_module.window_end_text(datetime.now(UTC) + timedelta(seconds=100))
+    permits_before = list(harness.app.permits)
+
+    response = await client.post(
+        "/api/zigbee/permit", json={"duration": 0, "only_if_until": laptops}
+    )
+
+    open_now = (await client.get("/api/zigbee/pairing")).json()["permit_until"]
+    assert response.status_code == 200, response.text
+    assert open_now is not None
+    assert response.json() == {"permit_until": open_now}
+    assert harness.app.permits == permits_before, "the radio was asked to close"
+
+
+async def test_a_conditional_stop_with_no_window_open_is_a_quiet_200(pairing):
+    """Nothing open - never opened, run out, or stopped elsewhere. A page left
+    with an old claim gets the answer a Stop with nothing to do gets, and
+    the radio is not asked.
+
+    Fault to prove it: send the Stop to the radio before looking at the
+    window."""
+    client, harness = pairing
+    stale = source_module.window_end_text(datetime.now(UTC) + timedelta(seconds=30))
+
+    response = await client.post("/api/zigbee/permit", json={"duration": 0, "only_if_until": stale})
+
+    assert response.status_code == 200, response.text
+    assert response.json() == {"permit_until": None}
+    assert harness.app.permits == []
+
+
+async def test_a_condition_is_only_accepted_on_a_stop(pairing):
+    """ "Open, but only if" means nothing; refused by the schema rather than
+    silently ignored.
+
+    Fault to prove it: drop the model validator."""
+    client, harness = pairing
+
+    response = await client.post(
+        "/api/zigbee/permit", json={"duration": 254, "only_if_until": "2026-09-13T12:00:00+00:00"}
+    )
+
+    assert response.status_code == 422, response.text
+    assert harness.app.permits == []
+
+
+async def test_a_conditional_stop_waits_behind_a_keep_open_and_leaves_its_new_window(pairing):
+    """The race the page could not close by itself. A Keep open from another
+    tab is on its way to the radio when this page, holding the OLD end time,
+    is left. Looked at before the Keep open lands, the old end still
+    matches; the Stop then closes the window the Keep open has just
+    extended for the other tab's user.
+
+    The look and the close are one step under the permit lock: the Stop
+    waits for the Keep open, sees its new end time, and closes nothing.
+
+    Fault to prove it: compare the end time before taking the lock in
+    `close_window_ending`."""
+    client, harness = pairing
+    await client.post("/api/zigbee/permit", json={"duration": 254})
+    # An end time a second or more from what the Keep open will write, so the
+    # two spellings cannot coincide within one wall-clock second.
+    harness.source._permit_until = datetime.now(UTC) + timedelta(seconds=100)
+    old = source_module.window_end_text(harness.source._permit_until)
+    reached = asyncio.Event()
+    answer = asyncio.Event()
+    original = harness.app.permit
+
+    async def held_open(time_s: int = 60, node: Any = None) -> None:
+        if time_s > 0:
+            reached.set()
+            await answer.wait()
+        await original(time_s=time_s, node=node)
+
+    harness.app.permit = held_open  # type: ignore[method-assign]
+    keep_open = asyncio.ensure_future(client.post("/api/zigbee/permit", json={"duration": 254}))
+    await asyncio.wait_for(reached.wait(), timeout=2)
+    stop = asyncio.ensure_future(
+        client.post("/api/zigbee/permit", json={"duration": 0, "only_if_until": old})
+    )
+    # Time for the Stop to reach the source; it must still be waiting there.
+    await asyncio.sleep(0.05)
+    assert not stop.done(), "the Stop did not wait for the Keep open under way"
+    answer.set()
+    kept = await asyncio.wait_for(keep_open, timeout=5)
+    stopped = await asyncio.wait_for(stop, timeout=5)
+
+    extended = kept.json()["permit_until"]
+    assert extended != old
+    assert stopped.status_code == 200, stopped.text
+    assert stopped.json() == {"permit_until": extended}
+    assert (0, None) not in harness.app.permits, "the extended window was closed"
+    assert (await client.get("/api/zigbee/pairing")).json()["permit_until"] == extended
+
+
+async def test_a_conditional_stop_the_radio_refuses_still_says_it_could_not_close(pairing):
+    """A leaving Stop that names the open window and is refused by the radio
+    is the same 502 as a refused Stop button: the network may still be open,
+    and the page shows that where the user went.
+
+    Fault to prove it: answer a failed conditional Stop with 200."""
+    client, harness = pairing
+    opened = (await client.post("/api/zigbee/permit", json={"duration": 254})).json()
+    harness.app.permit_error = TimeoutError()
+
+    refused = await client.post(
+        "/api/zigbee/permit", json={"duration": 0, "only_if_until": opened["permit_until"]}
+    )
+
+    assert refused.status_code == 502, refused.text
+    assert refused.json()["detail"].startswith("The Zigbee network could not be closed")
+
+
 async def test_a_row_is_keyed_by_ieee_and_carries_what_the_tab_shows(pairing):
     """One row per device, keyed by IEEE (design 3.1).
 
