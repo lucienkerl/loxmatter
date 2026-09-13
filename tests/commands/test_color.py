@@ -277,3 +277,51 @@ def test_lumitech_brightness_is_the_middle_field(packed, prozent):
 def test_lumitech_brightness_rejects_a_number_that_is_not_lumitech():
     with pytest.raises(ValueError):
         lumitech_to_brightness(100100100)
+
+
+# --- White as a colour point -------------------------------------------------
+from loxmatter.commands.color import kelvin_to_cie_xy, kelvin_to_hue_saturation, planckian_xy
+
+
+@pytest.mark.parametrize(
+    ("kelvin", "x", "y"),
+    [
+        # Computed from Kim et al. (2002)'s published coefficients, not from
+        # this code: 2700 K is the warm end of Loxone's Lumitech range,
+        # 6500 K the cold end, 4000 K the branch boundary of both cubics.
+        (2700, 0.4593, 0.4107),
+        (4000, 0.3805, 0.3767),
+        (6500, 0.3135, 0.3237),
+    ],
+)
+def test_planckian_xy_matches_the_published_approximation(kelvin, x, y):
+    got_x, got_y = planckian_xy(kelvin)
+    assert got_x == pytest.approx(x, abs=0.0005)
+    assert got_y == pytest.approx(y, abs=0.0005)
+
+
+def test_planckian_xy_clamps_to_the_range_the_approximation_is_valid_for():
+    """Outside 1667-25000 K the cubics diverge. A white a lamp cannot reach
+    is approximated by the nearest one it can, like a tunable-white lamp
+    clamping to its own physical limits.
+
+    Fault to prove it: remove the clamp - 1000 K then lands far off the
+    locus and the equality below fails."""
+    assert planckian_xy(1000) == planckian_xy(1667)
+    assert planckian_xy(30000) == planckian_xy(25000)
+    assert planckian_xy(1667) == pytest.approx((0.5646, 0.4029), abs=0.0005)
+    assert planckian_xy(25000) == pytest.approx((0.2525, 0.2523), abs=0.0005)
+
+
+def test_kelvin_to_cie_xy_uses_the_zcl_encoding():
+    assert kelvin_to_cie_xy(2700) == (30102, 26913)
+    assert kelvin_to_cie_xy(6500) == (20545, 21212)
+
+
+def test_kelvin_to_hue_saturation_gives_a_warm_white_and_a_near_white():
+    """2700 K is an orange-ish, clearly desaturated white; 6500 K is almost
+    exactly D65 and therefore nearly unsaturated. Values computed through
+    xy -> sRGB (IEC 61966-2-1 inverse matrix and OETF) -> HSV."""
+    assert kelvin_to_hue_saturation(2700) == (21, 165)
+    _hue, saturation = kelvin_to_hue_saturation(6500)
+    assert saturation <= 8
