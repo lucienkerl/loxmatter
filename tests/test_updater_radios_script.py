@@ -89,6 +89,9 @@ case "$1" in
       *" rm "*otbr*) rm -f "$FAKE/otbr_state" ;;
     esac
     exit 0 ;;
+  logs)
+    printf '2026-09-11T20:00:00.000000000Z [C] Platform------: HandleRcpTimeout()\n'
+    exit "$(cat "$FAKE/logs_status" 2>/dev/null || echo 0)" ;;
 esac
 exit 0
 """
@@ -723,7 +726,7 @@ def test_a_null_thread_half_leaves_thread_completely_alone(radios):
     Bluetooth change silently dropped), and on a plugged-in stick the
     legacy `.env` value never compared equal to the by-id path, so
     `THREAD_ACTION` came out `up` and `otbr` was force-recreated with up to
-    90 s of `verify_thread` - one to two minutes of Thread downtime nobody
+    150 s of `verify_thread` - minutes of Thread downtime nobody
     asked for or announced.
 
     Two faults prove it, one at a time:
@@ -1083,7 +1086,7 @@ def test_the_heartbeat_advances_through_a_long_verify(radios):
     `updater_seen_at` - and only `update-once.sh` writes that file, which
     cannot run while this script does (entrypoint.sh runs the two workers
     one after the other). `radios-state.json`'s own `seen_at` was written
-    once per STEP, and `verify_thread` is a single step lasting up to 90 s.
+    once per STEP, and `verify_thread` is a single step lasting up to 150 s.
     Both timestamps therefore froze for the whole of the flagship stick
     switch, `_MAX_SILENT_SECONDS` is 30, and the card declared a working
     job dead.
@@ -1478,3 +1481,114 @@ def test_the_terminal_phase_list_is_the_same_in_all_three_places():
     inline = re.search(r"radiosPhaseActive\(\)\s*\{.*?\[([^\]]*)\]", app_js, flags=re.DOTALL)
     assert inline, "app.js's radiosPhaseActive() must test an inline phase array"
     assert set(json.loads(f"[{inline.group(1)}]")) == set(TERMINAL_PHASES)
+
+
+def _lines_between(calls: str, first: str, second: str) -> list[str]:
+    """The stub-log lines after the first line containing `first` and before
+    the next line after it containing `second`."""
+    lines = calls.splitlines()
+    start = next(i for i, line in enumerate(lines) if first in line)
+    end = next(i for i in range(start + 1, len(lines)) if second in lines[i])
+    return lines[start + 1 : end]
+
+
+def test_the_thread_verification_waits_60_s_before_its_fix_and_150_s_in_all(radios):
+    """13 September 2026: a normal attach took 22-35 s on the Pi, the fix
+    restarted otbr after 30 s, and three enable requests failed because the
+    restarted agent did not come back within the rest of the 90 s. The
+    defaults, run here with the default poll of 5 s against an agent that
+    never attaches, are now 60 s and 150 s.
+
+    Fault to prove it: put the defaults back to 30 and 90 - the log says
+    "after 30s" and the verification polls 18 times, not 30."""
+    (radios.fake / "thread_mode").write_text("never")
+    _request(radios)
+    _, calls, state = radios(
+        LOXMATTER_RADIOS_THREAD_TIMEOUT="",
+        LOXMATTER_RADIOS_THREAD_FIX_AFTER="",
+        LOXMATTER_RADIOS_POLL_SECONDS="",
+    )
+    assert (state["phase"], state["error"]) == ("failed", "verify_thread_failed")
+    log = (radios.update_dir / "radios-log.txt").read_text(encoding="utf-8")
+    assert re.findall(r"no Thread state after (\d+)s", log) == ["60", "60"]
+    forward = _lines_between(calls, "--force-recreate otbr", "--force-recreate otbr")
+    polls = [line for line in forward if "ot-ctl state" in line]
+    assert len(polls) == 30
+    before_fix = _lines_between(calls, "--force-recreate otbr", "restart otbr")
+    assert len([line for line in before_fix if "ot-ctl state" in line]) == 13
+
+
+def test_a_rollback_saves_the_otbr_log_before_it_recreates_the_container(radios):
+    """The recreate takes the failed agent's log with it, and on 13 September
+    2026 nothing else had it: rsyslog inside the container had not run for
+    two days. The last 400 lines are saved under the request id first, and
+    the job's own log names the file.
+
+    Fault to prove it: remove the block that saves the log - the file does
+    not exist and no `docker logs` call precedes the rollback's recreate."""
+    (radios.fake / "thread_mode").write_text("never")
+    _request(radios)
+    _, calls, state = radios()
+    assert state["rolled_back"] is True
+    saved = radios.update_dir / "radios-otbr-job-1.log"
+    assert "HandleRcpTimeout()" in saved.read_text(encoding="utf-8")
+    log = (radios.update_dir / "radios-log.txt").read_text(encoding="utf-8")
+    assert "radios-otbr-job-1.log" in log
+    lines = calls.splitlines()
+    saving = next(
+        i for i, line in enumerate(lines) if "docker logs --timestamps --tail 400 otbr" in line
+    )
+    recreates = [i for i, line in enumerate(lines) if "--force-recreate otbr" in line]
+    assert len(recreates) == 2
+    assert recreates[0] < saving < recreates[1]
+
+
+def test_a_rollback_to_thread_off_saves_the_otbr_log_before_it_removes_the_container(radios):
+    (radios.fake / "otbr_state").unlink()
+    (radios.fake / "thread_mode").write_text("never")
+    _request(radios)
+    _, calls, state = radios()
+    assert state["rolled_back"] is True
+    lines = calls.splitlines()
+    saving = next(i for i, line in enumerate(lines) if "docker logs" in line)
+    removal = next(i for i, line in enumerate(lines) if line in _compose(calls, "rm", "otbr"))
+    assert saving < removal
+    assert (radios.update_dir / "radios-otbr-job-1.log").is_file()
+
+
+def test_only_the_newest_five_saved_otbr_logs_are_kept(radios):
+    """Fault to prove it: remove the prune - seven files remain."""
+    for index in range(6):
+        old = radios.update_dir / f"radios-otbr-old-{index}.log"
+        old.write_text("old\n", encoding="utf-8")
+        os.utime(old, (1_700_000_000 + index, 1_700_000_000 + index))
+    (radios.fake / "thread_mode").write_text("never")
+    _request(radios)
+    radios()
+    kept = sorted(path.name for path in radios.update_dir.glob("radios-otbr-*.log"))
+    assert kept == [
+        "radios-otbr-job-1.log",
+        "radios-otbr-old-2.log",
+        "radios-otbr-old-3.log",
+        "radios-otbr-old-4.log",
+        "radios-otbr-old-5.log",
+    ]
+
+
+def test_a_failure_to_save_the_otbr_log_does_not_stop_the_rollback(radios):
+    (radios.fake / "thread_mode").write_text("never")
+    (radios.fake / "logs_status").write_text("1")
+    _request(radios)
+    _, calls, state = radios()
+    assert state["rolled_back"] is True
+    assert len(_compose(calls, "up", "otbr")) == 2
+    log = (radios.update_dir / "radios-log.txt").read_text(encoding="utf-8")
+    assert "could not save the otbr log" in log
+
+
+def test_a_job_that_succeeds_saves_no_otbr_log(radios):
+    _request(radios)
+    _, calls, state = radios()
+    assert state["phase"] == "done"
+    assert "docker logs" not in calls
+    assert list(radios.update_dir.glob("radios-otbr-*.log")) == []

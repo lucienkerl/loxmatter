@@ -2487,8 +2487,8 @@ web.radios.step_apply_thread:
   en: "Restart the Thread border router"
   de: "Thread-Border-Router neu starten"
 web.radios.step_verify_thread:
-  en: "Check the Thread network (up to 90 s)"
-  de: "Thread-Netz prüfen (bis 90 s)"
+  en: "Check the Thread network (up to 150 s)"
+  de: "Thread-Netz prüfen (bis 150 s)"
 web.radios.step_unknown:
   en: "Unknown step ({step})"
   de: "Unbekannter Schritt ({step})"
@@ -2580,8 +2580,8 @@ web.radios.reason.apply_thread_failed:
   en: "the Thread border router could not be restarted"
   de: "der Thread-Border-Router ließ sich nicht neu starten"
 web.radios.reason.verify_thread_failed:
-  en: "no Thread network within 90 s"
-  de: "kein Thread-Netz innerhalb von 90 s"
+  en: "no Thread network within 150 s"
+  de: "kein Thread-Netz innerhalb von 150 s"
 web.radios.reason.unknown:
   en: "an unknown reason"
   de: "ein unbekannter Grund"

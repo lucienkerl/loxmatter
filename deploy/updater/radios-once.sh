@@ -30,8 +30,21 @@ HOST_DEV="${LOXMATTER_HOST_DEV:-/host/dev}"
 SYS_BLUETOOTH="${LOXMATTER_SYS_BLUETOOTH:-/sys/class/bluetooth}"
 MATTER_SERVER_URL="${LOXMATTER_MATTER_SERVER_URL:-http://host.docker.internal:5580/}"
 BLUETOOTH_TIMEOUT="${LOXMATTER_RADIOS_BLUETOOTH_TIMEOUT:-60}"
-THREAD_TIMEOUT="${LOXMATTER_RADIOS_THREAD_TIMEOUT:-90}"
-THREAD_FIX_AFTER="${LOXMATTER_RADIOS_THREAD_FIX_AFTER:-30}"
+# How long `verify_thread` waits for a Thread state, and after how long it
+# applies the watchdog's fix once. A normal attach took 22-35 s on the Pi.
+# With the fix at 30 s, on 13 September 2026 three Thread enable requests
+# had otbr restarted in the middle of an attach that was about to succeed,
+# and the restarted agent did not come back within the 60 s the window
+# had left. 60 s lets a slow attach finish; 150 s gives a restarted
+# agent the same 90 s a fresh one had before. Neither changes how long the
+# job stays silent: the loop refreshes its heartbeat on every poll. They do
+# change how long a pass can run, and a pass must end inside entrypoint.sh's
+# WORKER_TIMEOUT_SECONDS (600 s): a request changing both radios whose
+# verifications fail forward and again in the rollback now counts up to
+# 2 x (60 + 150) = 420 s of polling, before the time each poll's own
+# `docker exec` and the recreates take.
+THREAD_TIMEOUT="${LOXMATTER_RADIOS_THREAD_TIMEOUT:-150}"
+THREAD_FIX_AFTER="${LOXMATTER_RADIOS_THREAD_FIX_AFTER:-60}"
 POLL_SECONDS="${LOXMATTER_RADIOS_POLL_SECONDS:-5}"
 
 REQUEST="$UPDATE_DIR/radios-request.json"
@@ -367,7 +380,7 @@ touch_seen_at() {
 #     stops moving.
 #   * `seen_at` in radios-state.json is written by `write_state`, which
 #     runs once per STEP - and a single step here is `verify_bluetooth`
-#     (up to 60 s) or `verify_thread` (up to 90 s). During a rollback
+#     (up to 60 s) or `verify_thread` (up to 150 s). During a rollback
 #     nothing was written at all, `step()` being a no-op while $ROLLING.
 #
 # `_MAX_SILENT_SECONDS` is 30 (src/loxmatter/update.py), so about half a
@@ -719,8 +732,8 @@ step() {
     # (that is what this guard has always been for), but it must not keep
     # the sidecar SILENT - and silent is exactly what it was: the one
     # stretch of this script that wrote nothing whatsoever, while
-    # recreating containers and verifying them for up to another two and a
-    # half minutes. A timestamp-only heartbeat says "still here, still
+    # recreating containers and verifying them for up to another three and
+    # a half minutes. A timestamp-only heartbeat says "still here, still
     # working" without touching the phase. See refresh_heartbeat.
     refresh_heartbeat
   fi
@@ -806,6 +819,26 @@ if ! cat "$BACKUP" > "$(env_target)"; then
   exit 0
 fi
 ROLLING=true
+# The rollback recreates or removes otbr, and with the container goes the
+# only record of why the agent did not form the network: rsyslog inside the
+# image is not reliable (it had not run for two days on 13 September 2026),
+# so `docker logs` is all there is. Saved beside the job's own log, one file
+# per request id - which the request check above limits to
+# [A-Za-z0-9._-] - and only the newest 5 kept.
+if [ "$ROLLBACK_THREAD" != none ] \
+  && [ -n "$(docker ps -a --filter 'name=^otbr$' --format '{{.Names}}' 2>/dev/null)" ]; then
+  OTBR_LOG="radios-otbr-$JOB_ID.log"
+  refresh_heartbeat
+  if docker logs --timestamps --tail 400 otbr > "$UPDATE_DIR/$OTBR_LOG" 2>&1; then
+    log "radios request $JOB_ID: saved the last 400 lines of the otbr log to $OTBR_LOG"
+  else
+    log "radios request $JOB_ID: could not save the otbr log (see $OTBR_LOG)"
+  fi
+  refresh_heartbeat
+  # shellcheck disable=SC2012  # names this script wrote itself, from a
+  # checked id - the same reasoning as the .env backup prune above.
+  ls -1t "$UPDATE_DIR"/radios-otbr-*.log 2>/dev/null | tail -n +6 | while read -r old; do rm -f "$old"; done
+fi
 THREAD_ACTION="$ROLLBACK_THREAD"
 if rollback_and_verify; then HEALTHY=true; else HEALTHY=false; fi
 write_state failed "$ERROR_KEY"
