@@ -20,9 +20,10 @@ from __future__ import annotations
 
 import pytest
 
+from loxmatter import i18n
 from loxmatter.commands.adapt import adapt_group_command
 from loxmatter.commands.color import kelvin_to_cie_xy, kelvin_to_hue_saturation, rgb_to_cie_xy
-from loxmatter.commands.translate import UnsupportedValueError
+from loxmatter.commands.translate import UnsupportedValueError, level_from_percent
 from loxmatter.model.store import StoredCommand
 from loxmatter.profiles.light_commands import (
     COLOUR_HS,
@@ -118,13 +119,22 @@ def test_colour_on_an_on_off_light_switches_it_on():
     assert shape(adapt_group_command(COLOUR_HS, ONOFF, BLUE_60)) == [(6, 1, {})]
 
 
-@pytest.mark.parametrize("member", [CWS, WS, WW, ONOFF, XY_ONLY])
-def test_brightness_zero_is_a_single_off_and_no_colour(member):
-    got = shape(adapt_group_command(COLOUR_HS, member, "0"))
-    assert len(got) == 1
-    assert got[0][:2] in {(8, 4), (6, 0)}
-    if got[0][:2] == (8, 4):
-        assert got[0][2]["level"] == 0
+_OFF_BY_LEVEL = [(8, 4, {"level": 0, "transitionTime": 0})]
+
+
+@pytest.mark.parametrize(
+    ("member", "expected"),
+    [
+        (CWS, _OFF_BY_LEVEL),
+        (WS, _OFF_BY_LEVEL),
+        (WW, _OFF_BY_LEVEL),
+        (XY_ONLY, _OFF_BY_LEVEL),
+        (ONOFF, [(6, 0, {})]),
+    ],
+    ids=["CWS", "WS", "WW", "XY_ONLY", "ONOFF"],
+)
+def test_brightness_zero_is_a_single_off_and_no_colour(member, expected):
+    assert shape(adapt_group_command(COLOUR_HS, member, "0")) == expected
 
 
 def test_white_on_a_lamp_with_colour_temperature_sends_the_temperature():
@@ -262,3 +272,50 @@ def test_brightness_above_zero_on_a_member_without_level_onoff_switches_it_on_fi
     assert shape(adapt_group_command(COLOUR_HS, BARE_LEVEL, BLUE_60)) == [
         (8, 0, {"level": 152, "transitionTime": 0})
     ]
+
+
+@pytest.mark.parametrize(
+    ("pair", "member"),
+    [(COLOUR_TEMPERATURE, WW), (LEVEL, ONOFF)],
+    ids=["colortemp on dim only", "level on on/off"],
+)
+def test_a_value_that_is_not_a_number_raises_even_where_the_member_takes_nothing(pair, member):
+    """The value is validated once, up front: a member that would receive no
+    call for it does not turn an invalid value into a quiet success."""
+    with pytest.raises(UnsupportedValueError):
+        adapt_group_command(pair, member, "banana")
+
+
+def test_toggle_on_a_member_without_toggle_is_nothing():
+    assert adapt_group_command(TOGGLE, XY_ONLY, "1") == []
+
+
+def test_the_on_off_fallback_needs_both_on_and_off():
+    only_on = rows("36", ON)
+    assert adapt_group_command(LEVEL_ONOFF, only_on, "40") == []
+    assert adapt_group_command(COLOUR_HS, only_on, BLUE_60) == []
+
+
+def test_on_or_off_is_decided_by_the_rounded_level_not_the_percent():
+    """0.1 % rounds to level 0, and level 0 is off."""
+    assert level_from_percent(0.1) == 0
+    assert shape(adapt_group_command(LEVEL_ONOFF, ONOFF, "0.1")) == [(6, 0, {})]
+
+
+def test_a_fractional_value_in_the_lumitech_range_is_not_a_lumitech_white():
+    """Pinned from the unmodified code on 13 September 2026: 200302700.5 is
+    rejected as a colour number that is not an integer, not decoded as
+    2700 K at 30 %."""
+    with pytest.raises(UnsupportedValueError) as info:
+        adapt_group_command(COLOUR_HS, CWS, "200302700.5")
+    assert str(info.value) == i18n.t("api.errors.loxone_colour_not_integer", value=200302700.5)
+
+
+def test_the_warm_end_of_the_locus_clips_negative_srgb_channels():
+    """1667 K lies outside the sRGB gamut, so its blue channel comes out
+    negative before clipping. Pinned from the unmodified code on
+    13 September 2026: (19, 254), a fully saturated orange-red."""
+    hue, saturation = kelvin_to_hue_saturation(1667)
+    assert saturation == 254
+    assert 0 <= hue <= 30
+    assert (hue, saturation) == (19, 254)
