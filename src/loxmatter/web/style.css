@@ -218,15 +218,16 @@ main {
 
 /* The devices view gets more width than every other view: the room
  * sidebar (device dashboard sidebar design, 2026-09-13) plus a card
- * grid need real horizontal room to deliver more grid columns on a
- * wide monitor, which is the whole point of narrowing the grid's
- * minimum card width in the first place - at the base 960px cap the
- * sidebar's own width canceled that out exactly (measured: still 3
- * columns, just narrower cards). 1440px matches the width this
- * feature's own design mockups were built at. Other views keep the
+ * grid need real horizontal room. A fixed 1440px cap (this rule's
+ * first version) still wasted real width on a monitor wider than
+ * that - reported directly from one: the grid stayed at 5 narrow
+ * columns with empty margin on both sides. No cap at all lets the
+ * grid use whatever the window actually offers; `.device-grid`'s own
+ * minimum card width is what keeps a card readable regardless of how
+ * many columns that produces on a given width. Other views keep the
  * narrower 960px, which suits their form/text layouts better. */
 main.main-wide {
-  max-width: 1440px;
+  max-width: none;
 }
 
 .card {
@@ -1882,7 +1883,7 @@ footer.hint-block {
  * of the tallest tile in its row. */
 .device-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
   gap: 0.6rem;
   align-items: stretch;
 }
@@ -1930,6 +1931,17 @@ footer.hint-block {
   margin-top: auto;
 }
 
+/* The search field and "New group" button sit in their own full-width
+ * row above the shell (device dashboard sidebar design, 2026-09-13,
+ * follow-up: they used to live inside `.room-bar`, but its 13rem width
+ * left the search field too narrow for its own placeholder text). */
+.dashboard-topbar {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-bottom: 0.8rem;
+}
+
 /* Two-column shell: the room bar (now a sidebar) on the left, the group
  * grid and room-grouped device grid on the right. `align-items: flex-start`
  * so the sidebar does not stretch to the grid's full height artificially -
@@ -1946,12 +1958,12 @@ footer.hint-block {
   min-width: 0;
 }
 
-/* The room bar is a fixed-width vertical column now, not a horizontal
- * row (device dashboard sidebar design, 2026-09-13) - search field on
- * top, room list below it, both stacked. `position: sticky` keeps room
- * navigation reachable while scrolling a long device grid; `top` clears
- * the sticky app header (`header.app-header`, `z-index: 10`,
- * `style.css:106-117`). */
+/* The room bar is a fixed-width vertical column holding only the room
+ * list now (device dashboard sidebar design, 2026-09-13, follow-up) -
+ * the search field and "New group" button moved out to `.dashboard-topbar`
+ * above. `position: sticky` keeps room navigation reachable while
+ * scrolling a long device grid; `top` clears the sticky app header
+ * (`header.app-header`, `z-index: 10`, `style.css:106-117`). */
 .room-bar {
   display: flex;
   flex-direction: column;
@@ -2069,12 +2081,16 @@ footer.hint-block {
   border: 1px solid var(--border);
   border-radius: 5px;
   padding: 0.15rem 0.4rem;
-  /* No grow/shrink: `.room-bar` is a vertical column now (device
-   * dashboard sidebar design, 2026-09-13), so a flex-basis here would
-   * size the field's HEIGHT, not its width the way it used to in the
-   * old horizontal row - `.room-bar`'s own `align-items: stretch`
-   * already gives the field its full sidebar width. */
-  flex: none;
+  /* Grows into the free rest of `.dashboard-topbar`'s row, capped at
+   * 22rem (device dashboard sidebar design, 2026-09-13, follow-up: the
+   * field briefly lived inside the vertical `.room-bar`, where this
+   * same flex-basis sized its HEIGHT instead of its width - moved back
+   * to a horizontal row, `flex: 1 1 12rem` is exactly the sizing rule
+   * that already worked here before the sidebar existed). Whoever lifts
+   * the cap gets a search field spanning half the window - worse than
+   * the lone box it is meant to get rid of. */
+  flex: 1 1 12rem;
+  max-width: 22rem;
 }
 
 /* The ring belongs on the group, not on its centre: on `input:focus`

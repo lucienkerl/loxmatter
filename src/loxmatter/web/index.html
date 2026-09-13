@@ -815,18 +815,15 @@
           x-text="t('web.devices.empty')"
         ></p>
 
-        <!-- Room bar (design 6.3), now the sidebar column of
-             `.dashboard-shell` (device dashboard sidebar design,
-             2026-09-13): does not show at all as long as not a single
-             device carries a room - with three devices and no room it
-             would be a line of noise beside a list that fits in one
-             glance anyway. The search field stays reachable in that case
-             regardless, because it also searches by name and category
-             without any rooms. The visibility check that used to sit on
-             this bar alone now covers the whole shell, sidebar and grid
-             together - see `.dashboard-shell` below. -->
-        <div class="dashboard-shell" x-show="devices.length > 0 || groups.length > 0" x-cloak>
-        <div class="room-bar">
+        <!-- Search field and "New group" button (design 6), their own
+             full-width bar above `.dashboard-shell` (device dashboard
+             sidebar design, 2026-09-13, follow-up: the sidebar's 13rem
+             column left the search field too narrow for its own
+             placeholder text - reported directly from real use, moved
+             back out rather than widening the whole sidebar for it).
+             Same visibility rule as the shell below: no devices and no
+             groups yet, nothing to search or group. -->
+        <div class="dashboard-topbar" x-show="devices.length > 0 || groups.length > 0" x-cloak>
           <!-- The border sits on the container, not on the field: the magnifying glass,
                the counter and the cross sit WITHIN the border, and the focus ring
                hangs on the whole group via :focus-within instead of on the
@@ -887,11 +884,15 @@
             :disabled="devices.length === 0"
             x-text="t('web.groups.new')"
           ></button>
-          <!-- The horizontal spacer that used to push the search field to
-               the right of the chip row is gone (device dashboard sidebar
-               design, 2026-09-13): the sidebar is a vertical column now,
-               the search field always sits at a fixed position above the
-               room list, and there is nothing left to push past. -->
+        </div>
+
+        <!-- Room bar (design 6.3), the sidebar column of `.dashboard-shell`
+             (device dashboard sidebar design, 2026-09-13): does not show
+             at all as long as not a single device carries a room - with
+             three devices and no room it would be a line of noise beside
+             a list that fits in one glance anyway. -->
+        <div class="dashboard-shell" x-show="devices.length > 0 || groups.length > 0" x-cloak>
+        <div class="room-bar">
           <template x-if="hasAnyRoom()">
             <span class="room-chips">
               <!-- Groups count towards "All" just as they do towards every

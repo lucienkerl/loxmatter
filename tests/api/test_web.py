@@ -4510,7 +4510,7 @@ async def test_the_device_grid_is_multi_column(api):
     client, _, _ = api
     css = (await client.get("/static/style.css")).text
     assert "auto-fill" in css
-    assert "minmax(200px" in css
+    assert "minmax(260px" in css
 
 
 async def test_device_tiles_in_the_same_row_stretch_to_equal_height(api):
@@ -6104,19 +6104,27 @@ async def test_the_dashboard_shell_and_room_bar_are_a_real_flex_layout(api):
     assert "flex-direction: column" in room_bar
 
 
-async def test_the_search_fields_height_cannot_silently_regress(api):
-    """A prior review found `.search-field`'s old `flex: 1 1 12rem`
-    (written for the horizontal room bar) sized the field's HEIGHT once
-    the room bar became a vertical column, rendering it about 200px
-    tall. Pins the fix so a future edit reintroducing a flex-basis here
-    fails a test instead of shipping silently. Scoped to the BASE rule,
-    before the mobile `@media (max-width: 640px)` block, for the same
-    reason as the test above."""
+async def test_the_search_field_sits_in_its_own_full_width_bar(api):
+    """The search field briefly lived inside the vertical `.room-bar`
+    sidebar, where its horizontal `flex: 1 1 12rem` sized the field's
+    HEIGHT instead of its width, rendering it about 200px tall - fixed
+    by moving it back out to its own full-width `.dashboard-topbar`
+    (device dashboard sidebar design, 2026-09-13, follow-up: the 13rem
+    sidebar column also left it too narrow for its own placeholder
+    text, reported directly from real use). Pins both halves of that
+    move: the field is no longer a child of `.room-bar`, and its CSS is
+    back to the flexible horizontal sizing that worked before the
+    sidebar existed."""
     client, _, _ = api
+    page = (await client.get("/")).text
+    topbar = page.split('class="dashboard-topbar"', 1)[1].split('class="dashboard-shell"', 1)[0]
+    assert 'class="search-field"' in topbar
+    room_bar = page.split('class="room-bar"', 1)[1].split("</div>", 1)[0]
+    assert 'class="search-field"' not in room_bar
     css = (await client.get("/static/style.css")).text
     base_css = css.split("@media (max-width: 640px)", 1)[0]
     field = base_css.split(".search-field {", 1)[1].split("}", 1)[0]
-    assert "flex: none" in field
+    assert "flex: 1 1 12rem" in field
 
 
 # ---------------------------------------------------------------------------
