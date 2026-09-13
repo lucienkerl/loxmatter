@@ -356,7 +356,7 @@ def export(
         device_id = store.register_device(snapshot)
         stored = store.register_signals(device_id, snapshot)
         # Output commands come from AcceptedCommandList, not from the
-        # attributes: Matter attributes are almost all read-only (task 6).
+        # attributes: Matter attributes are almost all read-only.
         stored_commands = store.register_commands(
             device_id, extract_commands(snapshot, raw=raw_commands)
         )
@@ -400,13 +400,13 @@ def export(
 
     # Text counts too: the virtual text input is its own template type and
     # comes in a later expansion stage (spec 6.6). The decision is made by
-    # `profiles.table.is_exportable` and nobody else (review fix 8,
+    # `profiles.table.is_exportable` and nobody else (since the review of
     # 2026-09-03) - previously a hand-copied inversion
     # `(Exportability.NONE, Exportability.TEXT)` stood here, a second one
     # in `api/export.py`, and both next to exactly the helper that was
     # meant to end this duplication once already.
     skipped = sum(1 for s in stored if not is_exportable(s.exportability))
-    # hidden_count (fix 3 follow-up, phase 6): the same number that
+    # hidden_count: the same number that
     # `api/export.py`'s `_device_preview` delivers as
     # `ExportDeviceOut.hidden_count` (`StoredSignal.functional`, from
     # `profiles.relevance.is_functional` - no second computation here,
@@ -423,7 +423,7 @@ def export(
     typer.echo(i18n.t("cli.export.echo_skipped_signals", count=skipped))
     typer.echo(i18n.t("cli.export.echo_hidden_signals", count=hidden_count))
 
-    # exported_at (task 5, phase 5): the WebUI's `GET /api/export/status`
+    # exported_at: the WebUI's `GET /api/export/status`
     # must answer "when last exported" regardless of whether the last
     # export ran via CLI or via API - both write the same database (see
     # Store.mark_exported). Already closed above, deliberately reopened
@@ -596,7 +596,7 @@ async def _run(
     host: str = "0.0.0.0",  # Same default as `run` — the Miniserver must reach the service
     api_token: str | None = None,
     log_handler: LogBufferHandler | None = None,
-    # Task 8, stage 2: the same default as `build_app`'s own - see there.
+    # The same default as `build_app`'s own - see there.
     # A keyword of its own instead of another positional parameter, so
     # that existing test calls to `_run(...)` keep working unchanged
     # without this argument.
@@ -643,7 +643,7 @@ async def _run(
     during `client.connect()`), cancels the entire `_run` task — that too
     reaches `finally` as a normal cancellation exception.
 
-    **Log ring (task 5, phase 5; call site corrected in task 7, fix 1).**
+    **Log ring.**
     `install_log_buffer()` attaches a `LogBufferHandler` to the logger
     `loxmatter` and is called at EXACTLY ONE place in the entire source
     tree — in `run()` above, as its very first statement, NOT here.
@@ -661,7 +661,7 @@ async def _run(
     in `tests/test_cli.py`, which proves exactly that with a line count,
     NOT merely with "a handler is present").
 
-    **Why the call site moved at all.** Until task 7, the call sat here in
+    **Why the call site moved at all.** It used to sit here in
     `_run()`, immediately before `uvicorn.Config(...)` — i.e. AFTER
     `client.connect()`, `subscribe()`, `runtime.start()`,
     `seed_from_snapshot()` and `resend_all()`, and after the warning from
@@ -675,7 +675,7 @@ async def _run(
 
     Without passing it on to `build_app()` below, `log_handler` would stay
     at its default value of `None` there, and the log stream of the
-    `/api/diagnostics/live` route (task 4 of this phase) would be
+    `/api/diagnostics/live` route would be
     permanently empty in a real run (see the `loxone.server.build_app`
     module docstring, the "`log_handler` is new..." section, which already
     named exactly this gap — see there also for the reverse case, a
@@ -815,8 +815,8 @@ async def _run(
         zigbee_runtime.supervise_current()
 
         # `log_handler` arrives already finished (see the docstring above,
-        # "Log ring" section) - `install_log_buffer()` itself has, since
-        # task 7 (fix 1), lived only in `run()`, BEFORE this entire setup.
+        # "Log ring" section) - `install_log_buffer()` itself lives only in
+        # `run()`, BEFORE this entire setup.
         config = uvicorn.Config(
             build_app(
                 store,

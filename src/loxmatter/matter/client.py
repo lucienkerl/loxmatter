@@ -50,7 +50,7 @@ waits for the readiness event before the client reports itself as
 connected; `disconnect()` cancels this task again before the connection is
 closed.
 
-subscribe() - a deviation from the assignment (task 8), verified against
+subscribe() - a deviation from the original design, verified against
 the installed python-matter-server==8.1.2:
 
 `MatterClient.subscribe_events(callback, event_filter, node_filter,
@@ -91,7 +91,7 @@ finds an empty diff and still seeds only because it requests it with
 docs/superpowers/specs/2026-09-04-live-values-for-new-devices-design.md.
 
 commission_with_code()/remove_node()/set_thread_dataset() - verified
-against the installed python-matter-server==8.1.2 (task 1, phase 5):
+against the installed python-matter-server==8.1.2:
 
 `MatterClient.commission_with_code(self, code: str, network_only: bool =
 False) -> MatterNodeData` - `MatterClient.remove_node(self, node_id: int) ->
@@ -152,7 +152,7 @@ class CommissioningError(RuntimeError):
     `NotConnected`/`ConnectionClosed`/`CannotConnect` separately and
     raises `MatterUnavailableError` for that, because only this way can
     one distinguish whether the device rejected the attempt or
-    matter-server was unreachable (spec 8.1/9, review fix task 1). The
+    matter-server was unreachable (spec 8.1/9, a review finding). The
     original exception is preserved via `__cause__`."""
 
 
@@ -486,7 +486,8 @@ class BridgeMatterClient:
         except (NotConnected, ConnectionClosed, CannotConnect) as exc:
             # A loss of connection to matter-server is not a rejection by
             # the device - both used to land indistinguishably in
-            # CommissioningError (review fix, see the task 1 report).
+            # CommissioningError, and the user could not tell a refused
+            # device from an unreachable matter-server (a review finding).
             # Catches this branch BEFORE the generic except Exception
             # below, otherwise it would be caught there instead.
             msg = i18n.t("api.errors.matter_server_unreachable", exc=exc)
@@ -666,7 +667,7 @@ class BridgeMatterClient:
         "matter")`, see `sources.supervisor.attach` - exactly this
         mapping happens here, BEFORE `handler` sees anything, because the
         keys in Loxone hang off the `device_id`, not the node ID (see the
-        module docstring, `Store` and the task 8 report). If
+        module docstring and `Store`). If
         `resolve_device_id` returns `None` (node not yet exported/
         registered, or removed in the meantime), the update is discarded -
         the same way `Runtime._signal_for` already does for an unknown

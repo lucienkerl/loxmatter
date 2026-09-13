@@ -16,7 +16,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-/* Style of the loxmatter UI (Task 7, Phase 5).
+/* Style of the loxmatter UI.
  *
  * Deliberately unadorned: this is a commissioning and diagnostics tool
  * (Spec 8.2), not a smart-home experience. Clarity over impact - colour is
@@ -1805,8 +1805,8 @@ footer.hint-block {
 /* Unchanged signals: collapsed behind a count summary,
    after that only plain chips without a status badge - they are already
    correct and should not distract the eye from what is new/changed above.
-   The same `.value-chip` building block as in the device dashboard
-   (Task 8), reused here for the same purpose: many small,
+   The same `.value-chip` building block as in the device dashboard,
+   reused here for the same purpose: many small,
    similar-looking facts arranged compactly side by side. */
 .projectsync-unchanged-disclosure {
   margin-top: 0.6rem;

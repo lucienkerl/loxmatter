@@ -17,7 +17,7 @@
 """Attribute and event names from the chip SDK's cluster catalog.
 
 The Matter client library installs `chip.clusters.Objects` as a dependency
-anyway (Task 4, main document 6.2: the signal key remains generic and
+anyway (main document 6.2: the signal key remains generic and
 unchanging - this module feeds only the display, never the key). For each
 cluster there is an `Attributes` and an `Events` class with names assigned by
 the Matter specification, indexed by `attribute_id` respectively `event_id`.

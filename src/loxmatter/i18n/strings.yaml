@@ -180,14 +180,14 @@ cli.run.echo_commands_backfilled:
   en: "{count} device(s) gained commands the bridge did not know when they were commissioned — their tiles now offer the matching controls."
   de: "{count} Gerät(e) haben Befehle bekommen, die die Brücke beim Einlernen noch nicht kannte — ihre Kacheln bieten jetzt die passenden Bedienelemente."
 cli.run.help_host:
-  en: "Address the HTTP service binds to. Default 0.0.0.0, because the Miniserver must be able to reach the service — see --api-token for the corresponding protection of the `/api` routes (Spec 9, Task 8)."
-  de: "Adresse, an die der HTTP-Dienst bindet. Standard 0.0.0.0, weil der Miniserver den Dienst erreichen muss — siehe --api-token für die dazugehörige Absicherung der `/api`-Routen (Spec 9, Task 8)."
+  en: "Address the HTTP service binds to. Default 0.0.0.0, because the Miniserver must be able to reach the service — see --api-token for the corresponding protection of the `/api` routes (Spec 9)."
+  de: "Adresse, an die der HTTP-Dienst bindet. Standard 0.0.0.0, weil der Miniserver den Dienst erreichen muss — siehe --api-token für die dazugehörige Absicherung der `/api`-Routen (Spec 9)."
 cli.run.help_api_token:
-  en: "Protects the WebUI's `/api` routes (commissioning, removal, fabric backup) with `Authorization: Bearer <Token>` — an alternative to the signed-in session, not required in addition to it (Spec 9, Task 8; Spec 11). `/cmd` and `/resync` always stay open — the Miniserver cannot send a header. Only use characters allowed in an HTTP header — no spaces, no comma, ASCII; `openssl rand -hex 32` satisfies that. Alternative via the LOXMATTER_API_TOKEN environment variable."
-  de: "Schützt die `/api`-Routen der WebUI (Einlernen, Entfernen, Fabric-Sicherung) mit `Authorization: Bearer <Token>` — alternativ zur angemeldeten Sitzung, nicht zusätzlich zu ihr erforderlich (Spec 9, Task 8; Spec 11). `/cmd` und `/resync` bleiben immer offen — der Miniserver kann keinen Header mitschicken. Nur Zeichen verwenden, die in einem HTTP-Header stehen dürfen — keine Leerzeichen, kein Komma, ASCII; `openssl rand -hex 32` erfüllt das. Alternative über die Umgebungsvariable LOXMATTER_API_TOKEN."
+  en: "Protects the WebUI's `/api` routes (commissioning, removal, fabric backup) with `Authorization: Bearer <Token>` — an alternative to the signed-in session, not required in addition to it (Spec 9; Spec 11). `/cmd` and `/resync` always stay open — the Miniserver cannot send a header. Only use characters allowed in an HTTP header — no spaces, no comma, ASCII; `openssl rand -hex 32` satisfies that. Alternative via the LOXMATTER_API_TOKEN environment variable."
+  de: "Schützt die `/api`-Routen der WebUI (Einlernen, Entfernen, Fabric-Sicherung) mit `Authorization: Bearer <Token>` — alternativ zur angemeldeten Sitzung, nicht zusätzlich zu ihr erforderlich (Spec 9; Spec 11). `/cmd` und `/resync` bleiben immer offen — der Miniserver kann keinen Header mitschicken. Nur Zeichen verwenden, die in einem HTTP-Header stehen dürfen — keine Leerzeichen, kein Komma, ASCII; `openssl rand -hex 32` erfüllt das. Alternative über die Umgebungsvariable LOXMATTER_API_TOKEN."
 cli.run.help_matter_data_dir:
-  en: "matter-server data directory (storage-path), mounted read-only into this service — basis for `GET /api/diagnostics/fabric-backup` (Spec 4.1, Task 6, Phase 5). Without it, the route responds with 503 instead of a backup. See deploy/testhost/docker-compose.yml for the corresponding volume mount."
-  de: "matter-server-Datenverzeichnis (storage-path), read-only in diesen Dienst eingehängt — Grundlage für `GET /api/diagnostics/fabric-backup` (Spec 4.1, Task 6, Phase 5). Ohne Angabe antwortet die Route mit 503 statt einer Sicherung. Siehe deploy/testhost/docker-compose.yml für die dazugehörige Volume-Einhängung."
+  en: "matter-server data directory (storage-path), mounted read-only into this service — basis for `GET /api/diagnostics/fabric-backup` (Spec 4.1). Without it, the route responds with 503 instead of a backup. See deploy/testhost/docker-compose.yml for the corresponding volume mount."
+  de: "matter-server-Datenverzeichnis (storage-path), read-only in diesen Dienst eingehängt — Grundlage für `GET /api/diagnostics/fabric-backup` (Spec 4.1). Ohne Angabe antwortet die Route mit 503 statt einer Sicherung. Siehe deploy/testhost/docker-compose.yml für die dazugehörige Volume-Einhängung."
 cli.run.help_update_dir:
   en: "Directory where this bridge and the update sidecar exchange request/state files (design \"Applying updates through the web UI\", section 7) — the same shared volume as --store-path in the reference deployment, a subdirectory of it. The default matches the sidecar's own default; change both together, or not at all. Alternative via the LOXMATTER_UPDATE_DIR environment variable."
   de: "Verzeichnis, über das diese Brücke und der Update-Beiwagen Anfrage-/Zustandsdateien austauschen (Entwurf \"Updates über die Oberfläche einspielen\", Abschnitt 7) — dasselbe gemeinsame Volume wie --store-path im Referenz-Deployment, ein Unterverzeichnis davon. Der Standard entspricht dem des Beiwagens; beide nur gemeinsam ändern. Alternative über die Umgebungsvariable LOXMATTER_UPDATE_DIR."
@@ -2178,8 +2178,8 @@ web.settings.resend_save_error:
 # --- web.radios — the radios card (design "Radios in the Web UI",
 # 2026-09-11, section 8): which USB stick the Thread border router uses,
 # and which Bluetooth adapter commissions Matter devices, chosen from the
-# detected hardware and applied by the updater sidecar (Task 6's
-# GET/POST /api/radios).
+# detected hardware and applied by the updater sidecar through
+# GET/POST /api/radios.
 web.radios.heading:
   en: "Radios"
   de: "Funkgeräte"
@@ -2247,7 +2247,7 @@ web.radios.thread_zigbee_took_over_hint:
   en: "{name} is in use for Thread, but it is set up for Zigbee. To free it for Zigbee, choose another stick for Zigbee, or turn Zigbee off (\"No Zigbee stick\"), in the Zigbee row below."
   de: "{name} wird für Thread verwendet, ist aber für Zigbee eingerichtet. Um ihn für Zigbee freizugeben, wählen Sie in der Zigbee-Zeile unten einen anderen Stick oder schalten Sie Zigbee ab („Kein Zigbee-Stick“)."
 
-# --- The Zigbee coordinator row (Task 11-13) ---
+# --- The Zigbee coordinator row ---
 web.radios.zigbee_label:
   en: "Zigbee stick"
   de: "Zigbee-Stick"

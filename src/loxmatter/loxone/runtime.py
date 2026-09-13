@@ -32,7 +32,7 @@ State restoration (spec 6.4) - UDP is stateless. After a Miniserver
 restart, all inputs sit at their default value until the next update
 arrives; for a temperature sensor that can be hours.
 
-Observers (spec 8.3, phase 5 task 3) - the WebUI shows live values over
+Observers (spec 8.3) - the WebUI shows live values over
 the same subscription that also feeds the UDP sender. No second path, no
 polling: `add_observer` attaches a UI to the same stream of attribute,
 event and online changes that already goes to Loxone - see
@@ -458,7 +458,7 @@ class Runtime:
 
     def last_values_for(self, device_id: int) -> dict[str, float | bool]:
         """All most-recently-known values of a device, indexed by signal
-        key - for the device and signal API (task 2, phase 5), which wants
+        key - for the device and signal API, which wants
         to show a live value per signal without running a second
         subscription itself.
 

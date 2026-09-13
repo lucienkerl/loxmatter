@@ -227,7 +227,7 @@ async def current_thread_channel(
     unreachable one, a dataset with no Channel TLV - reads the same way to
     the caller: form the Zigbee network on the full channel list
     (`channels_excluding(None)`). A missing OPTIONAL border router must
-    never stop Zigbee from forming, the same rule Task 10 already applies
+    never stop Zigbee from forming, the same rule startup already applies
     to a missing Zigbee radio itself.
     """
     try:

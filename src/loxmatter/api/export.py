@@ -14,7 +14,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Export via the API (Spec 8, Task 5) - the same templates as `loxmatter
+"""Export via the API (Spec 8) - the same templates as `loxmatter
 export` on the command line, from the same `Store`.
 
 `build_export_router` builds an `APIRouter` with prefix `/api/export`,
@@ -137,7 +137,7 @@ _README_NAME = "README.txt"
 def _readme_text() -> str:
     """Like the old module constant `_README_TEXT`, but resolved fresh per
     call instead of frozen at module import - the same rationale as for
-    removing `_ALREADY_SET_UP_DETAIL` in `api/auth.py` (Task 4)."""
+    removing `_ALREADY_SET_UP_DETAIL` in `api/auth.py`."""
     return i18n.t("api.export.readme_text").replace("\n", "\r\n")
 
 
@@ -154,8 +154,8 @@ def _device_preview(device: StoredDevice, store: Store) -> ExportDeviceOut:
     signals = store.signals(device.id)
     commands = store.commands(device.id)
     inputs = to_inputs(signals, device.id, device.label)
-    # `is_exportable` instead of an inversion noted here (review fix
-    # Fix 8, 2026-09-03): until then the rule "text, lists, structs and
+    # `is_exportable` instead of an inversion noted here (since the
+    # review of 2026-09-03): until then the rule "text, lists, structs and
     # null values produce no Loxone input" (Spec 6.6) stood as
     # `(Exportability.NONE, Exportability.TEXT)` both here and in
     # `cli.py` - two hand-copied inversions of exactly the helper that
@@ -163,7 +163,7 @@ def _device_preview(device: StoredDevice, store: Store) -> ExportDeviceOut:
     # `Exportability` value, CLI and API would have reported different
     # numbers of "skipped" signals without any test noticing.
     skipped = sum(1 for s in signals if not is_exportable(s.exportability))
-    # hidden_count (Task 8): how many signals the UI hides in the
+    # hidden_count: how many signals the UI hides in the
     # collapsed "expert" block - `StoredSignal.functional` comes
     # unchanged from `Store.register_signals`
     # (`profiles.relevance.is_functional`), no second computation here.
@@ -184,8 +184,8 @@ def _changed_since_export(device: StoredDevice) -> bool:
     """Whether the device has changed since its last export.
 
     A dedicated function, ever since `download?only_pending=true` had to
-    get the same question answered as `GET /api/export/status` (review fix
-    Fix 4, 2026-09-03). Two versions of this condition would be exactly
+    get the same question answered as `GET /api/export/status` (since the
+    review of 2026-09-03). Two versions of this condition would be exactly
     the fault the UI previously had: the table showed one selection, the
     ZIP contained another.
 
@@ -339,7 +339,7 @@ def build_export_router(store: Store) -> APIRouter:
         valid, non-empty ZIP instead of an empty archive or a server
         error.
 
-        **`only_pending` (review fix Fix 4, 2026-09-03).** The UI's "only
+        **`only_pending` (since the review of 2026-09-03).** The UI's "only
         devices not yet exported" filter previously applied only to the
         preview table; this endpoint did not know it at all and always
         delivered all devices - and also marked all of them as exported.

@@ -60,7 +60,7 @@ the content of this directory as a ZIP.
 This file is key material, not a log - whoever possesses it can take
 over the fabric. Two consequences, both documented below at the route:
 
-- **Protected since Task 8 (Phase 5, Spec 9).** Not via an additional
+- **Protected by the API guard (Spec 9).** Not via an additional
   `Depends(...)` parameter on this function itself, but uniformly for the
   entire router: `loxone.server.build_app` wires
   `build_diagnostics_router(...)` in (like all five `/api` routers) via
@@ -79,7 +79,7 @@ deliberately NEVER carries a query string, only the path. A
 `/cmd/{key}/{value}` call deliberately exposes its value openly in the
 path (that is the purpose of this log: to see which value arrived) - a
 query string, on the other hand, is not intended for any of today's
-routes and therefore only rides along as a precaution: Task 8's token
+routes and therefore only rides along as a precaution: the API token
 explicitly does NOT travel as a query parameter, but as an
 `Authorization` header or - for the browser WebSocket, which cannot set
 its own headers - as the subprotocol `bearer, <token>` (see
@@ -158,15 +158,15 @@ class RingBuffer[T]:
     therefore no longer safe; `list(ring)`, however, still is, because
     that too is a single, atomic C call.
 
-    **Observers (Task 4, Phase 5, Spec 10.5).** `add_observer`/
+    **Observers (Spec 10.5).** `add_observer`/
     `remove_observer` notify on every `append` - the same register/
     deregister shape as `LogBufferHandler.add_observer`, deliberately HERE
     rather than in yet another, dedicated class: the command log ring in
     `loxone.server` needs an observer chain (for `api.diagnostics_live`),
     but - unlike `LogBufferHandler` - has no owner type of its own that it
     could otherwise hang off (it is a mere local variable there).
-    `UdpSender.add_datagram_observer`/`remove_datagram_observer` are, as
-    of follow-up Task 7 (Fix 2), no longer a second, separate
+    `UdpSender.add_datagram_observer`/`remove_datagram_observer` are no
+    longer a second, separate
     implementation of the same mechanism, but thin forwards straight to
     `add_observer`/`remove_observer` here - see the `loxone.sender`
     module docstring, section "Observer chain". An observer error is
@@ -187,8 +187,8 @@ class RingBuffer[T]:
 
     **This warning does NOT apply symmetrically to `UdpSender.datagram_log`
     - an earlier version of this docstring wrongly claimed it did**
-    (review fix Minor #3, 2026-09-03; recognised as wrong and corrected in
-    follow-up Task 7, Fix 2). Ever since `UdpSender.add_datagram_observer`
+    (review fix Minor #3, 2026-09-03; later recognised as wrong and
+    corrected). Ever since `UdpSender.add_datagram_observer`
     became a thin forward to `self._datagram_log.add_observer` (see
     above), `sender.add_datagram_observer(cb)` and
     `sender.datagram_log.add_observer(cb)` are THE SAME call on the same
@@ -215,9 +215,9 @@ class RingBuffer[T]:
             # deregisters itself during its own call must not disrupt the
             # ongoing notification of the rest (the same pattern as
             # `Runtime._notify_observers`; `UdpSender.
-            # add_datagram_observer`/`remove_datagram_observer` have, as
-            # of follow-up Task 7, Fix 2, hung directly off THIS `append`,
-            # no separate copy of their own any more).
+            # add_datagram_observer`/`remove_datagram_observer` hang
+            # directly off THIS `append`, no separate copy of their own
+            # any more).
             try:
                 observer(item)
             except Exception:
@@ -256,7 +256,7 @@ class DatagramLogEntry:
     was actually on the wire.
 
     `forced` takes over unchanged the `force` argument `send()` was called
-    with (follow-up Task 6, 2026-09-03): `True` means "sent even though
+    with (since 2026-09-03): `True` means "sent even though
     the value did not change" - in this project that applies to EXACTLY
     three callers, `Runtime.resend_all()`, `Runtime.resend_marked()` and
     the heartbeat (`Runtime._heartbeat_loop`). `False`, on the other hand,

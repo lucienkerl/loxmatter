@@ -14,8 +14,8 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""The WebSocket mechanics shared by several live routes (Task 1, factored
-out of `api.live`): a queue per connection, noticing a disconnect, and
+"""The WebSocket mechanics shared by several live routes (factored out
+of `api.live`): a queue per connection, noticing a disconnect, and
 negotiating the subprotocol for the token in the handshake. `api.live` (the
 values route) was the first user; a second channel (diagnostics feed) is
 being added without building this mechanism a second time - exactly what
@@ -54,8 +54,8 @@ forever. `asyncio.wait(..., return_when=FIRST_COMPLETED)` in the caller
 lets the route react as soon as either of the two sub-tasks ends -
 disconnect OR a send error - and cleanly tears down the other one.
 
-**The token travels here in the subprotocol, not in the header (review fix
-Fix 1c, 2026-09-03).** The browser `WebSocket` API has no parameter for
+**The token travels here in the subprotocol, not in the header (since the
+review of 2026-09-03).** The browser `WebSocket` API has no parameter for
 custom headers - `Authorization` is therefore impossible on these routes.
 `app.js` therefore connects with `new WebSocket(url, ["bearer", token])`,
 which the browser sends as `Sec-WebSocket-Protocol: bearer, <token>`;
@@ -140,20 +140,19 @@ class BoundedQueue:
         docstring).
 
         **Conditionally dangerous for an `/api/diagnostics/live` connection
-        whose `log_handler` branch is wired up** (follow-up Task 7,
-        Fix 3b). The `logger.debug(...)` below runs on the loop thread,
-        OUTSIDE `LogBufferHandler.emit()` - so without its reentrancy lock
-        (see the `diagnostics.logbuffer` module docstring). If the logger
-        `loxmatter.api.streaming` ever ran at DEBUG, the transition into
-        dropping would produce a new log line that - if `on_log` is
-        registered for the same connection - would be enqueued again via
-        this very `put`: a dropped log line produces a new one that gets
-        enqueued again. Unreachable today, because `install_log_buffer()`
-        keeps the `loxmatter` logger at INFO and nothing in the project
-        offers a DEBUG switch (see design, section 7, point 2) - the
-        `_dropping` state above limits the re-enqueuing even then to a
-        single nested `put` call, not unbounded recursion, but a later
-        DEBUG switch should be aware of this spot."""
+        whose `log_handler` branch is wired up.** The `logger.debug(...)`
+        below runs on the loop thread, OUTSIDE `LogBufferHandler.emit()` -
+        so without its reentrancy lock (see the `diagnostics.logbuffer`
+        module docstring). If the logger `loxmatter.api.streaming` ever
+        ran at DEBUG, the transition into dropping would produce a new log
+        line that - if `on_log` is registered for the same connection -
+        would be enqueued again via this very `put`: a dropped log line
+        produces a new one that gets enqueued again. Unreachable today,
+        because `install_log_buffer()` keeps the `loxmatter` logger at INFO
+        and nothing in the project offers a DEBUG switch (see design,
+        section 7, point 2) - the `_dropping` state above limits the
+        re-enqueuing even then to a single nested `put` call, not unbounded
+        recursion, but a later DEBUG switch should be aware of this spot."""
         if self._queue.full():
             self._queue.get_nowait()  # discard the oldest entry, make room for the newest
             if not self._dropping:
@@ -208,7 +207,7 @@ def accepted_subprotocol(websocket: WebSocket) -> str | None:
     """The chosen subprotocol for `websocket.accept(subprotocol=...)`.
 
     MUST come back in the accept, otherwise the browser aborts the
-    handshake per RFC 6455 (review fix Fix 1c, 2026-09-03). `app.js`
+    handshake per RFC 6455 (since the review of 2026-09-03). `app.js`
     connects with `new WebSocket(url, ["bearer", token])` when a token is
     set - that is the only channel through which a browser WebSocket gets
     a secret into the handshake (see `loxone.server.build_api_guard`,

@@ -16,7 +16,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-// State and behavior of the loxmatter UI (Task 7, Phase 5).
+// State and behavior of the loxmatter UI.
 //
 // Identifiers are English, like the rest of this project's code - only
 // text that actually reaches a person on screen or in an error case is
@@ -203,7 +203,7 @@ const ZIGBEE_NAMEABLE_ROW_STATES = ["ready", "configuring", "waiting_wake"];
 // whose names come from `roomSelectOptions()`.
 const NEW_ROOM_CHOICE = "__new__";
 
-// --- Live diagnostics (Task 6, Spec 10.5) -----------------------------------
+// --- Live diagnostics (Spec 10.5) -------------------------------------------
 //
 // Upper bound on the lines kept per stream (logs, UDP capture, command
 // log). Without it each of the three rings would keep growing without
@@ -219,7 +219,7 @@ const DIAGNOSTICS_LINE_LIMIT = 500;
 
 // What marks a datagram as "noise" for `hideNoise` to hide: `message.forced`
 // (`api/diagnostics_live.py`, filled from `DatagramLogEntry.forced`, see
-// there) - NO LONGER the arrival rate in the browser (follow-up fix Task 6,
+// there) - NO LONGER the arrival rate in the browser (changed on
 // 2026-09-03). The earlier heuristic here assumed "no device in this
 // project regularly changes several signals within the same millisecond" -
 // `Runtime.on_event` (`loxone/runtime.py`) itself disproves that: a pulse
@@ -365,8 +365,8 @@ async function requestDownload(path, filename) {
   window.setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
 }
 
-// Module-global, deliberately NOT on the app() object (see the
-// implementation plan, Task 8: "t() must be callable globally") - every
+// Module-global, deliberately NOT on the app() object, because `t()` must
+// be callable globally - every
 // function in this file can reach it, including requestJson/
 // requestDownload/requestUpload, which have no access to the Alpine
 // component's `this`. Not reactive, because it does not need to be: a
@@ -1136,7 +1136,7 @@ function app() {
     resyncBusy: false,
     resyncError: null,
 
-    // --- Project file sync (Task 12) ---------------------------------------
+    // --- Project file sync ------------------------------------------------
     // `plan` carries the complete response from `/api/export/project-sync`
     // unchanged (entries AND the patched file as base64) -
     // `downloadPatchedProject` reads from it instead of making a second
@@ -1164,7 +1164,7 @@ function app() {
       selectedMiniserverIp: "",
     },
 
-    // --- Live diagnostics (Task 6, Spec 10.5) -------------------------------
+    // --- Live diagnostics (Spec 10.5) ---------------------------------------
     // Three streams, filled by exactly ONE WebSocket
     // (`/api/diagnostics/live`) instead of a one-time GET as before - see
     // `connectDiagnosticsLive`. `datagrams` and `commandLog` were already
@@ -1534,7 +1534,7 @@ function app() {
       this.view = view;
       writeHash(view);
       // Exactly ONE diagnostics connection, open only while "System" is
-      // actually the active view (trap 3, Task 6): it opens on switching
+      // actually the active view: it opens on switching
       // TO "system" and closes on every other value - the same pattern as
       // `connectLive()`/its cleanup for the value channel, just tied to
       // the view instead of the login.
@@ -1825,8 +1825,8 @@ function app() {
     },
 
     // Short list for the device view: only the functional signals
-    // (`signal.functional`, from `profiles.relevance.is_functional` -
-    // Task 8), and only the first few of those - the full tree (including
+    // (`signal.functional`, from `profiles.relevance.is_functional`),
+    // and only the first few of those - the full tree (including
     // the expert block) lives in the signal modal. The cap still applies
     // even though the functional set is small for the two devices known
     // so far (5 and 17 respectively): a device with more functional
@@ -4826,7 +4826,7 @@ function app() {
       }));
     },
 
-    /** Task 7d: each radio row is now "changed" or "unchanged" on its own,
+    /** Each radio row is "changed" or "unchanged" on its own,
      * and every other radios helper is derived from these two so the
      * button, the confirmation text and the request body can never
      * disagree about which halves are moving. Both read `false` without a
@@ -4851,7 +4851,7 @@ function app() {
     /** The POST body: an unchanged half is sent as `null`, which every
      * layer below reads as "leave this radio alone" (design 6.2/6.3).
      *
-     * Task 7d, the point of the whole change: on an installer-made `.env`
+     * Why the halves are separate: on an installer-made `.env`
      * the stored value is `/dev/ttyUSB0` while this card and the API speak
      * in mapped by-id paths, so the old both-halves body made the sidecar
      * read every Bluetooth-only change as a stick SWITCH - `otbr`
@@ -5559,7 +5559,7 @@ function app() {
       }
     },
 
-    /** Sets the shared language setting (PATCH /api/language, Task 1) and
+    /** Sets the shared language setting (PATCH /api/language) and
      * then reloads the whole page - the confirmed, simpler variant from
      * the design discussion (Spec section 7): no special case for toasts
      * already shown or WebSocket state, which would otherwise stay in the
@@ -5747,7 +5747,7 @@ function app() {
     // ---------------------------------------------------------------------
 
     // Now only loads the system check once via GET - datagrams, command
-    // log, and log lines have been delivered continuously since Task 6 by
+    // log, and log lines are delivered continuously by
     // the diagnostics channel (`connectDiagnosticsLive`, opens on
     // switching to this view in `selectView`). For the system check,
     // however, there is no third stream on `/api/diagnostics/live` - it
@@ -6249,7 +6249,7 @@ function app() {
     },
 
     // ---------------------------------------------------------------------
-    // Project file sync (Task 12)
+    // Project file sync
     // ---------------------------------------------------------------------
 
     /**
@@ -6617,7 +6617,7 @@ function app() {
     },
 
     // ---------------------------------------------------------------------
-    // Live diagnostics (Task 6, Spec 10.5)
+    // Live diagnostics (Spec 10.5)
     // ---------------------------------------------------------------------
 
     /**
@@ -6640,7 +6640,7 @@ function app() {
      * from the model, not a following of it.
      *
      * **Clears all three streams BEFORE the new connection is built**
-     * (follow-up fix Task 6, 2026-09-03): every (re)connection gets a
+     * (since 2026-09-03): every (re)connection gets a
      * snapshot of up to `SNAPSHOT_LIMIT` entries per stream from
      * `api/diagnostics_live.py`, in exactly the same message shape as a
      * running line and with no marker of its own identifying it as a

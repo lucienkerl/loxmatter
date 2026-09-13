@@ -27,14 +27,14 @@ spec 6.1. They are not freely chosen.
 Spec 6.1, "correction 2026-09-02": the schema originally came from a
 third-party reference implementation and differed in four points from
 what Loxone Config actually writes in 26 real templates — documented, not
-guessed. This task applies the four corrections:
+guessed. This module applies the four corrections:
 
 1. Every template carries an `<Info>` as its first child. `templateType`
    is `1` for `VirtualInUdp`, `3` for `VirtualOut`. `minVersion="14040925"`
    is, for both, the lowest value observed across the 26 templates — so it
    gates out the fewest config versions. Whether Loxone Config actually
-   accepts this value is not decided by this code but by the import proof
-   in task 7 step 6.
+   accepts this value is not decided by this code but by actually
+   importing a generated template into Loxone Config.
 2. `VirtualInUdpCmd` has 15 attributes, including `Unit` (format string,
    spec 7.3) and `HintText`.
 3. `VirtualOut` carries `HintText` between `CmdInit` and `CloseAfterSend`.
@@ -56,7 +56,7 @@ _UMLAUTS = {"ä": "ae", "ö": "oe", "ü": "ue", "ß": "ss", "Ä": "Ae", "Ö": "O
 
 # Lowest value observed per template type across the 26 real templates
 # (spec 6.1) — that gates out the fewest config versions. The actual proof
-# that Loxone Config accepts this value is the import in task 7.
+# that Loxone Config accepts this value is importing a generated template.
 _MIN_VERSION = "14040925"
 
 

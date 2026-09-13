@@ -29,10 +29,10 @@ generic, runtime-independent ring buffer in one place).
 project: `LogBufferHandler` must NEVER log by itself - not even on
 error.** Everywhere else in the project, "swallow an observer error, but
 log it" applies (see e.g. `api.diagnostics.RingBuffer.append`, which
-`UdpSender.add_datagram_observer` has also hung off since the task 7,
-fix 2 correction). Here, the log entry itself would be the next call to
-THIS SAME handler - `logger.exception(...)` in `emit()` would come
-straight back into `emit()` and create an infinite loop. That is why
+`UdpSender.add_datagram_observer` also hangs off). Here, the log entry
+itself would be the next call to THIS SAME handler - `logger.exception(...)`
+in `emit()` would come straight back into `emit()` and create an infinite
+loop. That is why
 `emit()` catches every error an observer raises WITHOUT logging it and
 without propagating it (see
 `test_a_throwing_observer_neither_breaks_logging_nor_logs`). Even an

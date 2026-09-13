@@ -39,7 +39,7 @@ not only a duplicate read path but also a shared blocking path.
 
 The queue, disconnect and subprotocol mechanics themselves (bounded size,
 drop-oldest, noticing a disconnect, echoing the bearer marker) were factored
-out into `api.streaming` by Task 1, because a second channel (diagnostics
+out into `api.streaming`, because a second channel (diagnostics
 feed) needs them unchanged - see there for the full rationale."""
 
 from __future__ import annotations
@@ -84,8 +84,8 @@ def build_live_router(runtime: ObservableRuntime) -> APIRouter:
     @router.websocket("/live")
     async def live(websocket: WebSocket) -> None:
         # Subprotocol negotiation and queue are shared mechanics, see
-        # `api.streaming` for the rationale (review fix Fix 1c / Important
-        # #1, documented there verbatim).
+        # `api.streaming` for the rationale (both review findings are
+        # documented there verbatim).
         subprotocol = accepted_subprotocol(websocket)
         await websocket.accept(subprotocol=subprotocol)
         queue = BoundedQueue(QUEUE_MAXSIZE, connection_label=str(websocket.client))

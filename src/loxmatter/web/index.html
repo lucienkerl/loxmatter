@@ -122,7 +122,7 @@
            icon. That is why "Other" gets its own symbol, instead of
            relying on a special case in JavaScript that someone would
            overlook at the next rework. The shape is the same as the old,
-           generic `#i-device` (Task 9 removed its definition, since
+           generic `#i-device` (its definition was removed once
            `#i-cat-other` took over its role). -->
       <symbol id="i-cat-other" viewBox="0 0 24 24">
         <rect x="4" y="4" width="16" height="16" rx="3" />
@@ -139,7 +139,7 @@
            state automatically from outside.
 
            Export and remove each had their own symbol here
-           (`#i-export`, `#i-remove`); Task 2 (kebab menu, 2026-09-05) moved
+           (`#i-export`, `#i-remove`); the kebab menu (2026-09-05) moved
            both actions from the footer into the menu and turned them into
            spelled-out text buttons - there is room there for a label
            instead of an icon. The two symbols have been dead ever since
@@ -1700,7 +1700,7 @@
            ================================================================ -->
       <section x-show="view === 'export'" x-cloak>
         <!--
-          Project file sync (Task 12, originally further down in "System" -
+          Project file sync (originally further down in "System" -
           moved up here as the topmost item at the user's request, because
           this is meant to become the primary path going forward instead
           of the template ZIPs below): upload an existing
@@ -2435,7 +2435,7 @@
         </div>
 
         <!--
-          Live diagnostics (Task 6, Spec 10.5): ONE WebSocket
+          Live diagnostics (Spec 10.5): ONE WebSocket
           (`/api/diagnostics/live`, opened/closed in `selectView`,
           app.js) continuously fills the three streams below instead of the previous
           one-off GET. This single card carries the four controls
@@ -2463,7 +2463,7 @@
             </label>
             <label>
               <!--
-                No "Debug" here (follow-up Task 7, Fix 3f): the ring
+                No "Debug" here: the ring
                 is pinned server-side to INFO (`install_log_buffer()` sets
                 both the handler and the logger level, see cli.py), so DEBUG
                 lines never arrive. An option that never shows
@@ -3035,7 +3035,7 @@
 
                 The open/closed state lives in the DOM, not in Alpine - the same
                 pattern as the tile menu, and the reason why the old
-                global open/close toggle (Task 8) is removed without replacement.
+                global open/close toggle was removed without replacement.
 
                 `x-init` instead of `:open` is mandatory, not a style choice: Alpine
                 re-evaluates a BINDING every time its dependencies change,

@@ -240,7 +240,7 @@ class Sources:
     def replace(self, technology: str, source: DeviceSource | None) -> None:
         """Swaps or removes the source serving one technology.
 
-        For Task 11's in-process radio change, which is the one thing in
+        For the in-process radio change, which is the one thing in
         this project that gains or loses a source WITHOUT a restart: zigpy
         runs in-process, so configuring a stick has to add a source to a
         registry that `build_app` captured at startup, and clearing one has

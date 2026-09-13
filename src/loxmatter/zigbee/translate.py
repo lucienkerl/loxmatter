@@ -528,11 +528,11 @@ def rename_payload(
 
     `cluster_id` and `command_id` are part of the interface for symmetry
     with the rest of this module, but the renaming itself never branches on
-    them: `allowed` already carries the per-command knowledge (in Task 7,
-    the real zigpy command's own schema field names), so a field the table
-    cannot rename, or one this specific command does not declare, is
-    dropped rather than invented - never passed through unfiltered, and
-    never renamed by guesswork."""
+    them: `allowed` already carries the per-command knowledge (in
+    `ZigbeeSource`, the real zigpy command's own schema field names), so a
+    field the table cannot rename, or one this specific command does not
+    declare, is dropped rather than invented - never passed through
+    unfiltered, and never renamed by guesswork."""
     del cluster_id, command_id
     renamed: dict[str, object] = {}
     for key, value in payload.items():

@@ -212,8 +212,8 @@ def _as_optional_str(value: object) -> str | None:
     state.json these are always a JSON string or `null`. A hand-edited or
     otherwise corrupted file could carry some other JSON type under one of
     these keys (a number, a list, an object); `UpdateState` promises
-    `str | None` for each of them, and Task 8 builds its HTTP response
-    model directly off that promise. Letting a value of the wrong type
+    `str | None` for each of them, and `api/update.py` builds its HTTP
+    response model directly off that promise. Letting a value of the wrong type
     through here - rather than falling back to `None` - would turn a
     typed field into a de facto `Any` the moment the file on disk drifted
     from the shape this module expects.
@@ -231,7 +231,7 @@ def read_state(update_dir: Path) -> UpdateState | None:
     there exactly like a broken update rather than like a momentary read
     hiccup. The sidecar writes atomically (temp file, then `mv`), so a
     half-written file is the exception here, not the rule - but it is one
-    that does not deserve to bubble up as a 500 in Task 8.
+    that does not deserve to bubble up as a 500 from `api/update.py`.
     """
     try:
         raw = json.loads((update_dir / "state.json").read_text(encoding="utf-8"))

@@ -14,8 +14,8 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Accepts the HTTP calls of the virtual outputs - and, since task 2
-(phase 5), also those of the WebUI.
+"""Accepts the HTTP calls of the virtual outputs - and also those of the
+WebUI.
 
 The Miniserver does not evaluate a virtual output's response - it fires
 and forgets. The status codes of the Loxone routes below are therefore
@@ -25,7 +25,7 @@ unknown key, 400 for an unsuitable value, 502 for a device that does not
 respond.
 
 `client` is new compared to phase 4: the WebUI routes under `/api` need the
-Matter client for commissioning and removing devices (task 1), the Loxone
+Matter client for commissioning and removing devices, the Loxone
 routes here do not need it. The parameter is therefore optional and
 defaults to `None` - precisely so that the three existing phase-4 calls of
 `build_app(store, invoke, runtime)` keep running unchanged. `None` does not
@@ -39,7 +39,7 @@ pass `sources` explicitly, `build_app` derives one from `client` alone
 (see below), so an existing caller that only ever knew `BridgeMatterClient`
 keeps working unchanged.
 
-`sender` and `matter_data_dir` are new in task 6 (diagnostics, spec 10.5),
+`sender` and `matter_data_dir` came with the diagnostics (spec 10.5),
 optional with default `None` for the same reason: the diagnostics routes
 need them (recording of sent datagrams, backing up the fabric
 credentials), the other routes in this file do not. `cli.py`'s `_run` now
@@ -48,25 +48,24 @@ just without these two diagnostic capabilities (see
 `api.diagnostics.build_diagnostics_router`, which also explains there what
 `None` concretely means for each of the two cases).
 
-**`log_handler` is new in task 4 of this phase (diagnostics livestream,
-spec 10.5).** Optional with default `None` for the same reason: not every
-caller has already called
-`diagnostics.logbuffer.install_log_buffer()`. `cli.py`'s `run()` now does
-that (task 5, phase 5; since the task 7, fix 1 follow-up as its very first
-instruction, BEFORE `_run()`) and passes the resulting handler through to
-`_run()` as a parameter, which forwards it unchanged here to `build_app()`
-- a caller that uses `build_app` directly (e.g. a test) still gets `None`
-unless it calls `install_log_buffer()` itself and passes it through.
-`None` here means "no log branch in the livestream", not "the livestream
-as a whole is missing" - the WebSocket route `/api/diagnostics/live`
-(below, `build_diagnostics_live_router`) still responds, just without log
-lines in it (see there).
+**`log_handler` came with the diagnostics livestream (spec 10.5).**
+Optional with default `None` for the same reason: not every caller has
+already called `diagnostics.logbuffer.install_log_buffer()`. `cli.py`'s
+`run()` now does that (as its very first instruction, BEFORE `_run()`)
+and passes the resulting handler through to `_run()` as a parameter,
+which forwards it unchanged here to `build_app()` - a caller that uses
+`build_app` directly (e.g. a test) still gets `None` unless it calls
+`install_log_buffer()` itself and passes it through. `None` here means
+"no log branch in the livestream", not "the livestream as a whole is
+missing" - the WebSocket route `/api/diagnostics/live` (below,
+`build_diagnostics_live_router`) still responds, just without log lines
+in it (see there).
 
-**`api_token` is new in task 8 (hardening, spec 9).** Up to this point,
+**`api_token` came with the hardening (spec 9).** Before the WebUI,
 this service offered only `/cmd` and `/resync` - being reachable meant, at
-most, being able to switch a device. Since task 1 (commissioning) and task
-2 (removal), it means more: whoever reaches the port can throw a device
-out of the fabric, and since task 6 can additionally download the entire
+most, being able to switch a device. With commissioning and removal, it
+means more: whoever reaches the port can throw a device out of the
+fabric, and with the diagnostics routes can additionally download the entire
 fabric backup (`GET /api/diagnostics/fabric-backup`, spec 4.1).
 `build_api_guard` (see there) therefore protects every route under `/api`
 from here on - both reading AND writing, because a pure write lock would
@@ -100,7 +99,7 @@ module docstring:
 - Only `request.url.path` is recorded, NEVER the query string - a
   `/cmd/{key}/{value}` call deliberately puts its value in the path (that
   is the purpose of this log), whereas a query string is not intended for
-  any route today and is only carried along as a precaution: task 8's
+  any route today and is only carried along as a precaution: the API
   token deliberately does NOT travel as a query parameter, but as an
   `Authorization` header or (for the browser WebSocket) as a subprotocol -
   precisely so that it does not end up in this log (see
@@ -186,7 +185,7 @@ _DIAGNOSTICS_PREFIX = "/api/diagnostics"
 # `_record_command` (review fix important, 2026-09-02).
 _CRASHED_STATUS = 0
 
-# Task 7, phase 5: the UI lives as a static directory next to this module,
+# The UI lives as a static directory next to this module,
 # not in its own package - `src/loxmatter/web/`, one level above `loxone/`
 # (hence `.parents[1]`). No build step, no bundler: `index.html`, `app.js`,
 # `style.css` and the vendored Alpine.js under `web/vendor/` are served
@@ -196,10 +195,10 @@ _WEB_DIR = Path(__file__).parents[1] / "web"
 
 
 def normalize_api_token(token: str | None) -> str | None:
-    """The ONE spot where it is decided whether a token is set (review fix
-    fix 2, 2026-09-03).
+    """The ONE spot where it is decided whether a token is set (since the
+    review of 2026-09-03).
 
-    `build_api_guard` asks here - until task 8 the startup warning also
+    `build_api_guard` asks here - until the WebUI login the startup warning also
     asked here (back then `cli._warn_if_missing_api_token`); since it
     concerns itself with the password rather than the token, it queries
     only the store and is accordingly named `cli._warn_if_no_password`.
@@ -258,7 +257,7 @@ def _token_from_websocket_subprotocol(header: str | None) -> str | None:
 
 
 def _tokens_match(presented: str, expected: str) -> bool:
-    """Constant-time comparison (review fix fix 2, 2026-09-03).
+    """Constant-time comparison (since the review of 2026-09-03).
 
     Compares the UTF-8 bytes, not the `str` objects: `compare_digest`
     raises `TypeError` on `str` arguments as soon as even one of them
@@ -273,7 +272,7 @@ def _tokens_match(presented: str, expected: str) -> bool:
 
 
 def build_api_guard(token: str | None, store: Store) -> Callable[..., Awaitable[None]]:
-    """Protects the `/api` routes, not the Miniserver's (task 8, phase 5).
+    """Protects the `/api` routes, not the Miniserver's.
 
     The Miniserver calls virtual outputs without a header - it cannot send
     a token along. `/cmd` and `/resync` must therefore stay open, and that
@@ -400,7 +399,7 @@ def build_app(
     # `monkeypatch` on a shared constant, and two tests running side by
     # side would step on each other's files.
     update_dir: Path = Path("/data/update"),
-    # Task 6, phase "Radios in the Web UI": the host's /dev and /sys as the
+    # The host's /dev and /sys as the
     # bridge's own container sees them - both mounted read-only, see
     # `loxmatter.radios.inventory`'s module docstring and
     # deploy/testhost/docker-compose.yml. Parameters, not module constants,
@@ -497,9 +496,7 @@ def build_app(
         middlewares, call order logged): the function decorated last via
         `@app.middleware("http")` ran first. A test below
         (`test_sync_language_is_the_outermost_middleware` in
-        `tests/loxone/test_server.py`) pins down exactly this order - see
-        also the corrected derivation in this task's implementation plan,
-        section "Middleware registration order".
+        `tests/loxone/test_server.py`) pins down exactly this order.
 
         `store.locale.get_language()` never throws (phase A) - no
         try/except needed, unlike `_append_command_log` further above,
@@ -515,12 +512,11 @@ def build_app(
             i18n.set_language(store.locale.get_language())
         return await call_next(request)
 
-    # `dependencies=api_guard` on each of the eleven `/api` routers (task 8,
-    # phase 5, see `build_api_guard` above; the eighth since `POST
-    # /api/export/project-sync`, task 11, phase 6, the ninth since
-    # `build_language_router`, the tenth since `build_update_router`, task
-    # 8 of this stage 2, the eleventh since `build_groups_router`, device
-    # groups task 7): this protects without exception every route of
+    # `dependencies=api_guard` on each of the eleven `/api` routers (see
+    # `build_api_guard` above; the eighth was `POST
+    # /api/export/project-sync`, the ninth `build_language_router`, the
+    # tenth `build_update_router`, the eleventh `build_groups_router`):
+    # this protects without exception every route of
     # these eleven routers, including the WebSocket routes `/api/live` and
     # `/api/diagnostics/live` - and explicitly NOT `/cmd`, `/resync`,
     # `/health`, `/` and `/static`, which are mounted further below
@@ -532,7 +528,7 @@ def build_app(
     app.include_router(build_export_router(store), dependencies=api_guard)
     app.include_router(build_project_sync_router(store), dependencies=api_guard)
     app.include_router(build_settings_router(store), dependencies=api_guard)
-    # Task 8, Stufe 2: same guard as every other `/api` router - see
+    # Same guard as every other `/api` router - see
     # `api/update.py`'s module docstring for why an update to a published
     # version deliberately gets no SECOND password prompt on top of it.
     app.include_router(build_update_router(store, update_dir), dependencies=api_guard)
@@ -581,7 +577,7 @@ def build_app(
         ),
         dependencies=api_guard,
     )
-    # Task 4 of this phase: the ongoing diagnostics livestream alongside
+    # The ongoing diagnostics livestream alongside
     # the three one-off diagnostics routes above - see
     # `api.diagnostics_live`'s module docstring for why this is its OWN
     # router instead of another route on `build_diagnostics_router` (the
@@ -602,7 +598,7 @@ def build_app(
     # anyone can be logged in.
     app.include_router(build_i18n_router(store))
 
-    # Task 7, phase 5: the WebUI itself. `StaticFiles` already rejects an
+    # The WebUI itself. `StaticFiles` already rejects an
     # access that wants to escape `_WEB_DIR` (e.g.
     # `/static/../../../etc/passwd`) with 404 on its own - a check of our
     # own here would only be a second, drifting copy of the same check
@@ -731,8 +727,8 @@ def build_app(
                 ),
             )
         if outcome.failed:
-            # The failed labels are logged, not just counted (review fix
-            # from Task 5): the status code exists for the human reading
+            # The failed labels are logged, not just counted (a review
+            # finding): the status code exists for the human reading
             # the log, and "reached 2 of 4" alone still leaves them
             # grepping the HTTP response for which two. `outcome.failed`
             # names every failed member regardless of kind, so a mix of

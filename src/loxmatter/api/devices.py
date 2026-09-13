@@ -27,7 +27,7 @@ throwing an `AttributeError` on `None`; all other routes (reading,
 renaming, setting the export flag) work entirely without a Matter
 connection and remain usable.
 
-**Removal (Task 2): `remove` first, then `forget_device`.** Removing
+**Removal: `remove` first, then `forget_device`.** Removing
 a device is two steps that cannot sit in one transaction (one is a
 network call to matter-server, the other a local SQLite write) - either
 one can succeed while the other fails. The two possible orders leave
@@ -234,7 +234,7 @@ def _device_out(device: StoredDevice, store: Store, runtime: RuntimeValues) -> D
     online = bool(values.get(f"d{device.id}_online", False))
     last_heard = runtime.last_heard_for(device.id)
     exportable_count = sum(1 for s in signals if is_exportable(s.exportability))
-    # next_export_count (follow-up Fix 7, Phase 6): the same composition as
+    # next_export_count: the same composition as
     # `ExportDeviceOut.inputs` in `api/export.py` (`to_inputs`, filtered on
     # `exported`) - no second, merely similar count here. The device tile
     # previously showed "159 signals, 110 exportable" above a list of five -

@@ -28,7 +28,7 @@ codes for `POST /api/commands/{key}` therefore follow the Loxone endpoint
 `/cmd/{key}/{value}` from Phase 4 (`loxone/server.py`) verbatim: 404
 unknown key, 400 mismatched value, 502 device does not respond.
 
-**Finding on the writability of an attribute (Task 4, 2026-09-02).** The
+**Finding on the writability of an attribute (2026-09-02).** The
 snapshot (`NodeSnapshot.attributes`) carries only values, no access
 rights - "writable" appears nowhere there. Checked against the installed
 packages, not guessed:
@@ -332,8 +332,8 @@ def build_control_router(store: Store, invoke: Invoker, values: ValueReader) -> 
         try:
             # The same check, for the same reason, as in `write_signal`
             # below and `PATCH /api/signals/{key}` (api/devices.py) - both
-            # carry the name review fix Important #4 from Task 2, closed
-            # there so far exclusively for signals: `resolve_command`
+            # carry the name review fix Important #4 from the device API,
+            # closed there so far exclusively for signals: `resolve_command`
             # searches the `command` table alone, without checking the
             # status of the associated device, and `forget_device` does
             # not delete a row there, only sets `device.active = 0`. A
@@ -428,8 +428,8 @@ def build_control_router(store: Store, invoke: Invoker, values: ValueReader) -> 
                 ),
             )
         if outcome.failed:
-            # The failed labels are logged, not just counted (review fix
-            # from Task 5): the status code exists for the human reading
+            # The failed labels are logged, not just counted (a review
+            # finding): the status code exists for the human reading
             # the log, and "reached 2 of 4" alone still leaves them
             # grepping the HTTP response for which two. `outcome.failed`
             # names every failed member regardless of kind, so a mix of

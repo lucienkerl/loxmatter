@@ -16,8 +16,8 @@
 
 """Translates a desired state into a Matter command.
 
-This module will later have two callers: the HTTP endpoint for the virtual
-outputs (task 6) and the WebUI (phase 5). If the logic lived in either one
+This module serves two callers: the HTTP endpoint for the virtual
+outputs and the WebUI. If the logic lived in either one
 of the two, the conversion would exist twice - with guaranteed drift in
 behaviour (spec 4.2).
 

@@ -297,7 +297,7 @@ ConnectionState = Literal[
 class ConnectionProgress:
     """How far the current or last connection attempt got.
 
-    Read by `GET /api/zigbee/radio` (Task 11) so the radios card can show
+    Read by `GET /api/zigbee/radio` so the radios card can show
     what is happening while the supervisor works its 1 s -> 60 s backoff.
     `attempts` counts FAILED attempts, so the card can say "still trying, 4
     attempts" rather than implying a first try that is about to succeed.
@@ -885,11 +885,11 @@ class ZigbeeSource:
         leaks, and the stick is left mid-frame for the next start to pay
         for (research E.1, G14). Idempotent, and it reports `False` to the
         connection hook either way, because the caller that clears the radio
-        setting entirely (Task 11) needs the badge to say so.
+        setting entirely needs the badge to say so.
 
         `_link_lost` is SET here, not merely left alone. A supervisor parked
         in `wait_for_link_loss()` holds a reference to that event and nothing
-        else; clearing `_connected` without setting it would leave Task 11's
+        else; clearing `_connected` without setting it would leave the
         "the user removed the radio" path waiting for a link that is already
         gone and will never be lost again. Setting it is idempotent, and
         `connect()` clears it before anyone can wait on it afresh."""
@@ -1108,7 +1108,7 @@ class ZigbeeSource:
             # A device with no node descriptor yet is treated as battery
             # powered: that is the conservative half of the pair, since it
             # buys a sleeping device six hours of silence instead of two
-            # (Task 8's thresholds) before it is declared dead.
+            # (the availability sweep's thresholds) before it is declared dead.
             is_mains_powered=bool(node_desc is not None and node_desc.is_mains_powered),
             # `self._connected` alone used to be "the truth" here (see
             # `snapshots`'s own docstring): with the whole radio down every

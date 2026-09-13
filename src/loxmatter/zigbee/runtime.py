@@ -114,21 +114,21 @@ async def build_zigbee_source(
     call inside `connect()` - that method runs on every one of the
     supervisor's 1 s -> 60 s retries, not once. Building a new
     `ZigbeeSource` happens far less often - once at startup, once per radio
-    change - so paying for the fetch here is the same trade Task 7 already
-    made for the quirks warm-up.
+    change - so paying for the fetch here is the same trade the quirks
+    warm-up already makes.
 
     (The warm-up is named in prose only, and deliberately not by its
     function name. The test in `tests/zigbee/test_source.py` that keeps it
     off every request path greps the source tree for that name, and it
     cannot tell a mention from a call.)
 
-    **`store` is carried across from Task 10's temporary builder, not a new
-    parameter this task invents.** `_build_zigbee_source(store)`'s own name
-    said as much, and this function is explicitly what that name is
-    replaced by - a move that dropped the parameter rather than carrying it
-    would silently undo Task 10's fix and leave `configure_device` with no
-    pending table again from the very first radio change made through the
-    settings UI, even though the CLI-flag startup path Task 10 built kept
+    **`store` is carried across from the earlier startup-only builder, not
+    a new parameter.** `_build_zigbee_source(store)`'s own name said as
+    much, and this function is explicitly what that name is replaced by -
+    a move that dropped the parameter rather than carrying it would
+    silently undo the fix that gave `configure_device` its pending table,
+    and leave it with none again from the very first radio change made
+    through the settings UI, even though the CLI-flag startup path kept
     working. Without it, a device paired before this landed keeps working;
     one paired after the FIRST radio change made through this function's
     caller would not.
@@ -209,7 +209,7 @@ class ZigbeeRuntime:
 
         The startup half of this object's job, and it goes through the same
         `build_source` every later change does - which is the whole reason
-        Task 10's separate builder was moved in here.
+        the separate startup builder was moved in here.
 
         Does not start the supervisor: `cli._run` attaches every source
         before supervising any, and a supervisor started here would connect

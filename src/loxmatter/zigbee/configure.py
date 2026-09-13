@@ -217,7 +217,7 @@ class PollingSchedule:
 
     Common on cheap lamps: `configure_reporting` answers with a status other
     than SUCCESS. ZHA polls those instead, every 2700-4500 s, and that poll
-    doubles as the liveness check Task 8's availability sweep uses. Treating
+    doubles as the liveness check the availability sweep uses. Treating
     a non-SUCCESS status as success is the failure this exists to prevent:
     the lamp then shows a stale state in Loxone forever and nothing
     anywhere reports that it does.
@@ -249,7 +249,7 @@ class PollingLoop:
     that refused reporting showed its last value forever, and lost the
     liveness proxy the availability sweep leans on for it besides
     (`PollingSchedule`'s own docstring: "That poll doubles as the liveness
-    check Task 8's availability sweep uses").
+    check the availability sweep uses").
 
     Owned and started by `ZigbeeSource` exactly the way `AvailabilityChecker`
     (`availability.py`) is: built fresh in `subscribe()`, started there,
