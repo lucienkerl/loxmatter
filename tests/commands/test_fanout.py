@@ -24,7 +24,7 @@ import pytest
 
 from loxmatter.commands.fanout import GroupOutcome, dispatch_group, plan_group_calls
 from loxmatter.commands.translate import UnsupportedValueError
-from loxmatter.model.store import GroupTarget, StoredCommand
+from loxmatter.model.store import GroupTarget, StoredCommand, StoredGroupCommand
 from loxmatter.sources import DeviceCall, SourceNotConfiguredError
 
 
@@ -59,15 +59,38 @@ def on_target(device_id: int, node_id: int, label: str) -> GroupTarget:
 
 
 def colour_target(device_id: int, node_id: int, label: str) -> GroupTarget:
+    """A colour lamp's light rows as `Store.group_targets` hands them over:
+    the adapter sends brightness only to a member that carries
+    `MoveToLevelWithOnOff`, so the row sits next to the colour one."""
     return GroupTarget(
         device_id=device_id,
         device_label=label,
-        commands=(command(device_id, node_id, 1, 768, 6, "color", True),),
+        commands=(
+            command(device_id, node_id, 1, 8, 4, "level_onoff", True),
+            command(device_id, node_id, 1, 768, 6, "color", True),
+        ),
     )
 
 
+def group_command(
+    cluster_id: int, command_id: int, slug: str, takes_value: bool
+) -> StoredGroupCommand:
+    return StoredGroupCommand(
+        key=f"g1_{slug}",
+        slug=slug,
+        group_id=1,
+        cluster_id=cluster_id,
+        command_id=command_id,
+        takes_value=takes_value,
+    )
+
+
+ON = group_command(6, 1, "on", False)
+COLOUR = group_command(768, 6, "color", True)
+
+
 def test_one_plan_per_member_carrying_that_member_s_address():
-    plans = plan_group_calls([on_target(1, 11, "A"), on_target(2, 22, "B")], "1")
+    plans = plan_group_calls(ON, [on_target(1, 11, "A"), on_target(2, 22, "B")], "1")
     assert [p.device_label for p in plans] == ["A", "B"]
     assert [call.address for p in plans for call in p.calls] == ["11", "22"]
 
@@ -81,13 +104,13 @@ def test_a_member_with_two_endpoints_gets_two_calls():
             command(1, 11, 2, 6, 1, "on", False),
         ),
     )
-    (plan,) = plan_group_calls([target], "1")
+    (plan,) = plan_group_calls(ON, [target], "1")
     assert [call.endpoint for call in plan.calls] == [1, 2]
 
 
 def test_a_bad_value_is_reported_before_anything_is_sent():
     with pytest.raises(UnsupportedValueError):
-        plan_group_calls([colour_target(1, 11, "A")], "not a number")
+        plan_group_calls(COLOUR, [colour_target(1, 11, "A")], "not a number")
 
 
 async def test_the_calls_of_one_member_keep_their_order():
@@ -104,7 +127,9 @@ async def test_the_calls_of_one_member_keep_their_order():
     `test_a_member_s_second_call_waits_for_the_first_to_return`'s job; do
     not delete this test as redundant with that one, each pins a
     different half of the ordering contract."""
-    plans = plan_group_calls([colour_target(1, 11, "A"), colour_target(2, 22, "B")], "60100060")
+    plans = plan_group_calls(
+        COLOUR, [colour_target(1, 11, "A"), colour_target(2, 22, "B")], "60100060"
+    )
     seen: list[tuple[str, int]] = []
 
     async def invoke(call: DeviceCall) -> None:
@@ -137,7 +162,7 @@ async def test_a_member_s_second_call_waits_for_the_first_to_return():
     call `invoke` for the second call until the `await` on the first one
     returns; a flat gather over both calls would start both immediately.
     """
-    (plan,) = plan_group_calls([colour_target(1, 11, "A")], "60100060")
+    (plan,) = plan_group_calls(COLOUR, [colour_target(1, 11, "A")], "60100060")
     colour_released = asyncio.Event()
     level_invoked = False
 
@@ -172,7 +197,7 @@ async def test_members_are_dispatched_concurrently():
     out; a concurrent one passes."""
     started = asyncio.Event()
     second = asyncio.Event()
-    plans = plan_group_calls([on_target(1, 11, "A"), on_target(2, 22, "B")], "1")
+    plans = plan_group_calls(ON, [on_target(1, 11, "A"), on_target(2, 22, "B")], "1")
 
     async def invoke(call: DeviceCall) -> None:
         if call.address == "11":
@@ -187,7 +212,7 @@ async def test_members_are_dispatched_concurrently():
 
 async def test_a_failing_member_does_not_stop_the_others():
     plans = plan_group_calls(
-        [on_target(1, 11, "A"), on_target(2, 22, "B"), on_target(3, 33, "C")], "1"
+        ON, [on_target(1, 11, "A"), on_target(2, 22, "B"), on_target(3, 33, "C")], "1"
     )
     reached: list[str] = []
 
@@ -208,7 +233,7 @@ async def test_duplicate_labels_among_the_failed_members_are_disambiguated_by_id
     `loxone/server.py` build "no answer from: {devices}" straight from
     this list, and "no answer from: Lamp, Lamp" does not tell a reader
     which of the two is actually unreachable."""
-    plans = plan_group_calls([on_target(1, 11, "Lamp"), on_target(2, 22, "Lamp")], "1")
+    plans = plan_group_calls(ON, [on_target(1, 11, "Lamp"), on_target(2, 22, "Lamp")], "1")
 
     async def invoke(call: DeviceCall) -> None:
         raise RuntimeError("no route to host")
@@ -224,6 +249,7 @@ async def test_a_unique_label_among_the_failed_members_stays_bare():
     read the same, not for every label the group happens to repeat
     somewhere among its reachable members."""
     plans = plan_group_calls(
+        ON,
         [on_target(1, 11, "Lamp"), on_target(2, 22, "Lamp"), on_target(3, 33, "Kitchen Lamp")],
         "1",
     )
@@ -242,7 +268,7 @@ async def test_every_failing_member_is_named_not_just_the_first():
     fail later in wall-clock time (the `sleep` below); a dispatcher that
     collected labels as members completed would return ["C", "A"] here."""
     plans = plan_group_calls(
-        [on_target(1, 11, "A"), on_target(2, 22, "B"), on_target(3, 33, "C")], "1"
+        ON, [on_target(1, 11, "A"), on_target(2, 22, "B"), on_target(3, 33, "C")], "1"
     )
 
     async def invoke(call: DeviceCall) -> None:
@@ -265,7 +291,7 @@ async def test_a_source_not_configured_failure_is_classified_as_unconfigured():
     the `isinstance(result, SourceNotConfiguredError)` check) - the 503
     case then reads as a 502 to every caller."""
     plans = plan_group_calls(
-        [on_target(1, 11, "A"), on_target(2, 22, "B"), on_target(3, 33, "C")], "1"
+        ON, [on_target(1, 11, "A"), on_target(2, 22, "B"), on_target(3, 33, "C")], "1"
     )
 
     async def invoke(call: DeviceCall) -> None:
@@ -287,7 +313,7 @@ async def test_an_all_unconfigured_group_reports_no_unreachable_members():
     """The 503-shaped case: every failure is `SourceNotConfiguredError`, so
     `unreachable` must stay empty - that emptiness is exactly what a caller
     checks to decide 503 over 502."""
-    plans = plan_group_calls([on_target(1, 11, "A"), on_target(2, 22, "B")], "1")
+    plans = plan_group_calls(ON, [on_target(1, 11, "A"), on_target(2, 22, "B")], "1")
 
     async def invoke(call: DeviceCall) -> None:
         raise SourceNotConfiguredError("zigbee")
@@ -313,7 +339,7 @@ async def test_the_unconfigured_technologies_are_in_plan_order():
     `SourceNotConfiguredError` as it flies past `invoke` (the wrapper both
     routes used to carry) instead of reading them off `failed_pairs`."""
     plans = plan_group_calls(
-        [on_target(1, 11, "A"), on_target(2, 22, "B"), on_target(3, 33, "C")], "1"
+        ON, [on_target(1, 11, "A"), on_target(2, 22, "B"), on_target(3, 33, "C")], "1"
     )
 
     async def invoke(call: DeviceCall) -> None:
@@ -326,3 +352,30 @@ async def test_the_unconfigured_technologies_are_in_plan_order():
     outcome = await dispatch_group(plans, invoke)
     assert outcome.unconfigured == ["A", "C"]
     assert outcome.unconfigured_technologies == ["zigbee", "matter"]
+
+
+async def test_a_member_that_gets_nothing_is_not_a_failure():
+    """Design 2026-09-13, 3.2: `colortemp` to a dim-only lamp produces no
+    call for it, and that member is neither failed nor unconfigured.
+
+    Fault to prove it: route light commands through `to_device_calls` in
+    `plan_group_calls` - the WW lamp's `on` and `off` rows then each become
+    a call for a command the group never named."""
+    ww_like = GroupTarget(
+        device_id=2,
+        device_label="WW",
+        commands=(
+            command(2, 14, 1, 6, 1, "on", False),
+            command(2, 14, 1, 6, 0, "off", False),
+        ),
+    )
+    plans = plan_group_calls(group_command(768, 10, "colortemp", True), [ww_like], "2700")
+    assert plans[0].calls == ()
+
+    async def invoke(call: DeviceCall) -> None:
+        await asyncio.sleep(0)
+
+    outcome = await dispatch_group(plans, invoke)
+    assert outcome == GroupOutcome(
+        failed=[], unreachable=[], unconfigured=[], unconfigured_technologies=[]
+    )
