@@ -14902,3 +14902,31 @@ async def test_keeping_the_device_returns_focus_to_the_tile_menu(api):
     )
     assert values["offer"] is None
     assert values["focusCalls"] == ["summary"]
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+async def test_the_light_members_hint_shows_only_for_a_light_group(api):
+    """The hint under the members heading says each lamp takes over what it
+    supports (design 2026-09-13, 5) - true for a light group only. The
+    category values are `Category.value` identifiers, so a plug's is
+    `"socket"`, and a draft with no member yet has none. `x-show` is plain
+    truthiness, so `Boolean` is the right coercion here.
+
+    Fault to prove it: `x-show="true"` - the socket and empty cases fail."""
+    client, _, _ = api
+    markup = _without_comments((await client.get("/")).text)
+    at = markup.index("t('web.groups.light_members_hint')")
+    tag = markup[markup.rindex("<span", 0, at) : markup.index(">", at)]
+    match = re.search(r'x-show="([^"]*)"', tag)
+    assert match, tag
+    evaluator = f"with (state) {{ return Boolean({match.group(1)}); }}"
+    values = _app_state(
+        setup="const shown = new Function('state', " + json.dumps(evaluator) + ");\n"
+        "const out = {};\n"
+        "for (const category of ['light', 'socket', null]) {\n"
+        "  state.groupDraftCategory = () => category;\n"
+        "  out[String(category)] = shown(state);\n"
+        "}\n"
+        "console.log(JSON.stringify(out));"
+    )
+    assert values == {"light": True, "socket": False, "null": False}

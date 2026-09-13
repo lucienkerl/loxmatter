@@ -258,7 +258,7 @@ class GroupPatch(BaseModel):
 class GroupMembersIn(BaseModel):
     """Body of `PUT /api/groups/{id}/members` - the COMPLETE list.
 
-    Not add/remove: the command intersection is recomputed after every
+    Not add/remove: the group's command list is recomputed after every
     change anyway, and two single removals would pass through an
     intermediate state nobody asked for (design 5).
     """
