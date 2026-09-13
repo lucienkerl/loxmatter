@@ -131,6 +131,17 @@ def _level(value: str) -> int:
     return max(0, min(LEVEL_MAX, round(percent * LEVEL_MAX / 100)))
 
 
+def parse_number(value: str) -> float:
+    """`_as_number` for callers outside this module (commands/adapt.py)."""
+    return _as_number(value)
+
+
+def level_from_percent(percent: float) -> int:
+    """A brightness percentage as a LevelControl level, the rule `_level`
+    applies to a value string."""
+    return max(0, min(LEVEL_MAX, round(percent * LEVEL_MAX / 100)))
+
+
 @dataclass(frozen=True)
 class _Built:
     """What a payload builder returns.
@@ -167,12 +178,7 @@ def _payload_level(value: str) -> _Built:
 
 
 def _payload_color_temperature(value: str) -> _Built:
-    return _Built(
-        {
-            "colorTemperatureMireds": kelvin_to_mireds(_as_number(value)),
-            **_OPTIONS_EXECUTE_IF_OFF,
-        }
-    )
+    return _Built(colour_temperature_payload(_as_number(value)))
 
 
 # Channel abbreviation from `LoxoneColourError.channel` (see `commands/color.py`)
@@ -214,6 +220,74 @@ def _translate_loxone_colour_error(exc: LoxoneColourError) -> str:
     )
 
 
+@dataclass(frozen=True)
+class LoxoneColour:
+    """One decoded value of the Loxone lighting controller's colour output:
+    either a colour (`rgb`) or a Lumitech white (`kelvin`), always with its
+    brightness. Exactly one of `kelvin` and `rgb` is set."""
+
+    kelvin: int | None
+    rgb: tuple[int, int, int] | None
+    brightness_percent: float
+
+
+def decode_loxone_colour(value: str) -> LoxoneColour:
+    """Decodes the colour output's number once, for the device path and the
+    group adapter alike. Raises `UnsupportedValueError` with the same
+    translated messages the two colour builders raised before."""
+    number = _as_number(value)
+
+    # White instead of color: the same Loxone output carries both meanings,
+    # distinguished by identifier 20 (see `color.is_lumitech` for the
+    # evidence and why the value ranges cannot overlap
+    # with each other). Before September 8, 2026, such a value fell through into the
+    # RGB unpacking, failed on a channel over 100 percent, and came
+    # back as 400 - the white controller in the Loxone app had no effect.
+    # Only integer values are even a possibility - `is_lumitech`
+    # expects an integer, and a fractional number is not supported in either
+    # of the two encodings.
+    if number == int(number) and is_lumitech(int(number)):
+        try:
+            kelvin = lumitech_to_kelvin(int(number))
+        except ValueError as exc:
+            raise UnsupportedValueError(
+                i18n.t("api.errors.lumitech_malformed", value=value)
+            ) from exc
+        return LoxoneColour(
+            kelvin=kelvin, rgb=None, brightness_percent=lumitech_to_brightness(int(number))
+        )
+    try:
+        red, green, blue = loxone_rgb_to_rgb(number)
+    except LoxoneColourError as exc:
+        raise UnsupportedValueError(_translate_loxone_colour_error(exc)) from exc
+    return LoxoneColour(
+        kelvin=None,
+        rgb=(red, green, blue),
+        brightness_percent=rgb_to_brightness(red, green, blue),
+    )
+
+
+def hue_saturation_payload(hue: int, saturation: int) -> dict[str, object]:
+    return {"hue": hue, "saturation": saturation, "transitionTime": 0, **_OPTIONS_EXECUTE_IF_OFF}
+
+
+def xy_payload(x: int, y: int) -> dict[str, object]:
+    return {"colorX": x, "colorY": y, "transitionTime": 0, **_OPTIONS_EXECUTE_IF_OFF}
+
+
+def colour_temperature_payload(kelvin: float) -> dict[str, object]:
+    return {"colorTemperatureMireds": kelvin_to_mireds(kelvin), **_OPTIONS_EXECUTE_IF_OFF}
+
+
+def _white(colour: LoxoneColour) -> _Built:
+    assert colour.kelvin is not None
+    return _Built(
+        colour_temperature_payload(colour.kelvin),
+        command_id=_COMMAND_COLOR_TEMPERATURE,
+        brightness_percent=colour.brightness_percent,
+    )
+
+
 def _payload_hue_saturation(value: str) -> _Built:
     """Packed Loxone colour number -> Matter hue/saturation.
 
@@ -248,43 +322,13 @@ def _payload_hue_saturation(value: str) -> _Built:
     with a connected Loxone RGB block. Open point,
     see design section 10.
     """
-    number = _as_number(value)
-
-    # White instead of color: the same Loxone output carries both meanings,
-    # distinguished by identifier 20 (see `color.is_lumitech` for the
-    # evidence and why the value ranges cannot overlap
-    # with each other). Before September 8, 2026, such a value fell through into the
-    # RGB unpacking, failed on a channel over 100 percent, and came
-    # back as 400 - the white controller in the Loxone app had no effect.
-    # Only integer values are even a possibility - `is_lumitech`
-    # expects an integer, and a fractional number is not supported in either
-    # of the two encodings.
-    if number == int(number) and is_lumitech(int(number)):
-        try:
-            kelvin = lumitech_to_kelvin(int(number))
-        except ValueError as exc:
-            raise UnsupportedValueError(
-                i18n.t("api.errors.lumitech_malformed", value=value)
-            ) from exc
-        return _Built(
-            {"colorTemperatureMireds": kelvin_to_mireds(kelvin), **_OPTIONS_EXECUTE_IF_OFF},
-            command_id=_COMMAND_COLOR_TEMPERATURE,
-            brightness_percent=lumitech_to_brightness(int(number)),
-        )
-
-    try:
-        red, green, blue = loxone_rgb_to_rgb(number)
-    except LoxoneColourError as exc:
-        raise UnsupportedValueError(_translate_loxone_colour_error(exc)) from exc
-    hue, saturation = rgb_to_hue_saturation(red, green, blue)
+    colour = decode_loxone_colour(value)
+    if colour.kelvin is not None:
+        return _white(colour)
+    assert colour.rgb is not None
+    hue, saturation = rgb_to_hue_saturation(*colour.rgb)
     return _Built(
-        {
-            "hue": hue,
-            "saturation": saturation,
-            "transitionTime": 0,
-            **_OPTIONS_EXECUTE_IF_OFF,
-        },
-        brightness_percent=rgb_to_brightness(red, green, blue),
+        hue_saturation_payload(hue, saturation), brightness_percent=colour.brightness_percent
     )
 
 
@@ -302,35 +346,12 @@ def _payload_color_xy(value: str) -> _Built:
     white and brightness, so which of the three a value means is decided by
     the value, not by the command it was exported as.
     """
-    number = _as_number(value)
-
-    if number == int(number) and is_lumitech(int(number)):
-        try:
-            kelvin = lumitech_to_kelvin(int(number))
-        except ValueError as exc:
-            raise UnsupportedValueError(
-                i18n.t("api.errors.lumitech_malformed", value=value)
-            ) from exc
-        return _Built(
-            {"colorTemperatureMireds": kelvin_to_mireds(kelvin), **_OPTIONS_EXECUTE_IF_OFF},
-            command_id=_COMMAND_COLOR_TEMPERATURE,
-            brightness_percent=lumitech_to_brightness(int(number)),
-        )
-
-    try:
-        red, green, blue = loxone_rgb_to_rgb(number)
-    except LoxoneColourError as exc:
-        raise UnsupportedValueError(_translate_loxone_colour_error(exc)) from exc
-    colour_x, colour_y = rgb_to_cie_xy(red, green, blue)
-    return _Built(
-        {
-            "colorX": colour_x,
-            "colorY": colour_y,
-            "transitionTime": 0,
-            **_OPTIONS_EXECUTE_IF_OFF,
-        },
-        brightness_percent=rgb_to_brightness(red, green, blue),
-    )
+    colour = decode_loxone_colour(value)
+    if colour.kelvin is not None:
+        return _white(colour)
+    assert colour.rgb is not None
+    colour_x, colour_y = rgb_to_cie_xy(*colour.rgb)
+    return _Built(xy_payload(colour_x, colour_y), brightness_percent=colour.brightness_percent)
 
 
 # The only place that defines which (cluster ID, command ID) pairs
