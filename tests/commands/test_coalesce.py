@@ -492,14 +492,18 @@ async def test_a_slow_device_that_still_answers_does_not_fail_the_request_behind
     calls: the waiting clock starts over with each one.
 
     Fault to prove it: never set `lane.progress_at` - the "off" raises
-    `DeviceUnreachableError` at the bound, while the lamp is answering."""
-    bound = 0.4
+    `DeviceUnreachableError` at the bound, while the lamp is answering.
+
+    Real time, so the margin is kept wide: the "off" would fail one bound
+    after the colour call returned (1.6 bound), and the level call returns at
+    1.2 bound - 0.8 s of slack for a loaded CI runner."""
+    bound = 2.0
     devices = TimedDevices(seconds=0.6 * bound)
     gate = CommandGate(devices, wait_timeout=bound)
     colour = asyncio.ensure_future(gate.run(colour_and_level("lamp", 40)))
     await _let_run()
     off = asyncio.ensure_future(gate.run([call("lamp", 6, 0)]))
-    assert await asyncio.wait_for(asyncio.gather(colour, off), timeout=3) == [True, True]
+    assert await asyncio.wait_for(asyncio.gather(colour, off), timeout=10) == [True, True]
     assert [(c.cluster_id, c.command_id) for c in devices.ran] == [(768, 6), (8, 4), (6, 0)]
     assert devices.max_active == {"lamp": 1}
 
