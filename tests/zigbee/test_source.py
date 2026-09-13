@@ -150,6 +150,7 @@ def build(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         on_connection_change: Any = None,
         thread_channel: int | None = None,
         store: Any = None,
+        open_guard: Any = None,
     ) -> Harness:
         order: list[str] = []
         prepared = list(applications) or [FakeApplication()]
@@ -175,6 +176,7 @@ def build(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
             on_connection_change=on_connection_change,
             thread_channel=thread_channel,
             store=store,
+            open_guard=open_guard,
         )
         return Harness(source, factory, prepared, order)
 
@@ -297,6 +299,46 @@ async def test_each_startup_failure_gets_its_own_words(build, raised, key) -> No
     # message and translated when the route answers.
     assert harness.source.progress().state == "failed"
     assert harness.source.progress().as_json()["error"] == i18n.t(key)
+
+
+async def test_a_stick_the_open_guard_refuses_is_never_touched(build) -> None:
+    """The Thread lock-out, at the one place every open passes through.
+    `thread_lockout.open_refusal` is asked with the stick's path before the
+    quirks warm-up and before any application is built; a refusal fails
+    the attempt with its own sentence, counted like any other failed
+    attempt, so the supervisor backs off and the card shows why. The next
+    attempt asks again, and opens once the guard allows it.
+
+    Fault to prove it: skip the guard in `connect()` (an application is
+    built and started on the refused stick), or call it after
+    `ensure_quirks_loaded()` (the warm-up shows up in `order`)."""
+    answers: list[i18n.Message | None] = [
+        i18n.Message.of("api.errors.zigbee_open_is_thread_stick"),
+        None,
+    ]
+    asked: list[str] = []
+
+    def guard(path: str) -> i18n.Message | None:
+        asked.append(path)
+        return answers.pop(0)
+
+    harness = build(FakeApplication(), open_guard=guard)
+
+    with pytest.raises(ZigbeeUnavailableError) as caught:
+        await harness.source.connect()
+
+    assert str(caught.value) == i18n.t("api.errors.zigbee_open_is_thread_stick")
+    assert asked == [harness.source._path]
+    assert harness.order == []
+    assert harness.app.startup_calls == []
+    progress = harness.source.progress()
+    assert (progress.state, progress.attempts) == ("failed", 1)
+    assert progress.as_json()["error"] == i18n.t("api.errors.zigbee_open_is_thread_stick")
+
+    await harness.source.connect()
+    assert harness.source.connected
+    assert len(asked) == 2
+    await harness.source.disconnect()
 
 
 def test_the_four_startup_messages_are_four_different_sentences() -> None:

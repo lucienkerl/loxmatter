@@ -1486,6 +1486,55 @@ async def test_a_freshly_built_zigbee_source_has_the_store_so_configure_on_join_
     assert runtimes[0].zigbee_sent[-1] is True
 
 
+async def test_every_open_of_the_built_zigbee_source_asks_the_thread_lock_out(
+    monkeypatch, tmp_path
+):
+    """The Thread lock-out used to exist only on the `PUT` that chooses a
+    stick. A stored setting reopened at boot, on a supervisor retry or on
+    an apply was never checked again - so a report gone missing, or Thread
+    moved onto that stick by hand, reached zigpy unchallenged. `_run` is
+    the one place the production source gets its guard, bound to the SAME
+    update directory and device trees the radios routes read, so the two
+    cannot disagree about which stick Thread is on.
+
+    Fault to prove it: drop `open_guard=` from `_run`'s `build_source`, or
+    bind it to a different `update_dir`."""
+    from loxmatter.radios.thread_lockout import open_refusal
+
+    _install_run_spies(monkeypatch)
+    monkeypatch.setattr(cli.uvicorn, "Server", _SpyUvicornServer)
+    captured = _capture_build_app(monkeypatch)
+    store = Store(tmp_path / "t.sqlite")
+
+    await cli._run(
+        store,
+        "ws://test/ws",
+        "127.0.0.1",
+        7000,
+        8080,
+        zigbee_device=ZIGBEE_PATH,
+        update_dir=tmp_path / "update",
+        radios_host_dev=tmp_path / "dev",
+        radios_sys_root=tmp_path / "sys",
+    )
+
+    guard = captured["sources"].get("zigbee")._open_guard
+    assert guard.func is open_refusal
+    assert guard.keywords == {
+        "update_dir": tmp_path / "update",
+        "host_dev": tmp_path / "dev",
+        "sys_root": tmp_path / "sys",
+    }
+    assert (captured["update_dir"], captured["radios_host_dev"], captured["radios_sys_root"]) == (
+        tmp_path / "update",
+        tmp_path / "dev",
+        tmp_path / "sys",
+    )
+    # And it answers: with no sidecar report under that directory, the
+    # stored stick is refused rather than opened.
+    assert guard(ZIGBEE_PATH).key == "api.errors.zigbee_open_thread_unknown"
+
+
 @pytest.mark.parametrize("matter_data_dir", [None, "matter-data"])
 async def test_the_zigbee_database_follows_the_store_and_never_the_matter_data_dir(
     monkeypatch, tmp_path, matter_data_dir

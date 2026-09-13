@@ -463,20 +463,189 @@ async def test_a_border_router_still_running_keeps_the_stick_locked(api):
     assert (await client.put("/api/zigbee/radio", json={"path": MG24_PATH})).status_code == 400
 
 
-async def test_with_no_sidecar_state_nothing_is_claimed_to_be_in_use(api, tmp_path):
-    """No state means nothing is KNOWN to be using anything. That is not a
-    licence to open a stick blindly - it is the same "the bridge validates
-    what it can see" position `POST /api/radios` already takes, and the
-    stick still has to be one the scan found.
+def _stale() -> str:
+    return (datetime.now(UTC) - timedelta(minutes=10)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-    Fault to prove it: treat a missing state file as "Thread is using
-    everything". Every stick is then permanently unselectable on any
-    installation without the radios sidecar, which is most of them."""
-    client, update_dir, _harness = api
-    (update_dir / "radios-state.json").unlink()
+
+# Every way the sidecar's report can fail to vouch for the Thread stick. Each
+# one used to exclude NOTHING - the MG24 was offered and accepted - because a
+# missing report read as "Thread uses no stick". `mg24_is_thread` is what a
+# stale report still says about the MG24: it is out of date, not wrong.
+_UNVOUCHED_REPORTS = {
+    "sidecar never ran": (lambda update_dir: (update_dir / "radios-state.json").unlink(), False),
+    "report unparseable": (
+        lambda update_dir: (update_dir / "radios-state.json").write_text("{", encoding="utf-8"),
+        False,
+    ),
+    "report not an object": (
+        lambda update_dir: (update_dir / "radios-state.json").write_text("[]", encoding="utf-8"),
+        False,
+    ),
+    "current block malformed": (
+        lambda update_dir: _radios_heartbeat(update_dir, current={"thread_enabled": "yes"}),
+        False,
+    ),
+    "report stale": (lambda update_dir: _radios_heartbeat(update_dir, seen_at=_stale()), True),
+}
+
+
+@pytest.mark.parametrize("case", list(_UNVOUCHED_REPORTS))
+async def test_without_a_current_thread_report_no_stick_can_be_chosen(api, case):
+    """THE FAIL-SAFE. With no current report the bridge cannot tell which
+    stick Thread is on, so it refuses to newly choose ANY stick - and says
+    why, once, in `thread_refusal`, for the card to show under the select.
+
+    Before this, every case here left both sticks selectable, and `PUT`
+    accepted the MG24: on the maintainer's Pi a sidecar that had not
+    reported yet was all it took to point zigpy at his live Thread radio.
+
+    Fault to prove it: have `read_thread_stick` answer `known` whatever the
+    report (the selectable and 503 assertions fail), or drop the
+    `selection_refusal()` check from `PUT` (the 503s become 202s)."""
+    client, update_dir, harness = api
+    break_report, mg24_is_thread = _UNVOUCHED_REPORTS[case]
+    break_report(update_dir)
+
     body = (await client.get("/api/zigbee/radio")).json()
-    assert [stick["selectable"] for stick in body["serial"]] == [True, True]
-    assert (await client.put("/api/zigbee/radio", json={"path": MG24_PATH})).status_code == 202
+    by_path = {stick["path"]: stick for stick in body["serial"]}
+    assert body["thread_status"] == "unknown"
+    assert body["thread_refusal"] == i18n.t("api.errors.zigbee_thread_unknown")
+    assert [stick["selectable"] for stick in body["serial"]] == [False, False]
+    assert by_path[MG24_PATH]["is_thread"] is mg24_is_thread
+    assert by_path[ITEAD_PATH]["is_thread"] is False
+
+    refused = await client.put("/api/zigbee/radio", json={"path": ITEAD_PATH})
+    assert refused.status_code == 503
+    assert refused.json()["detail"] == i18n.t("api.errors.zigbee_thread_unknown")
+    mg24 = await client.put("/api/zigbee/radio", json={"path": MG24_PATH})
+    # A stale report still names the MG24, and that refusal is the more
+    # specific one; with no report at all the MG24 is refused as "unknown".
+    assert mg24.status_code == (400 if mg24_is_thread else 503)
+    assert harness.store.zigbee_settings.get().path is None
+    assert harness.built == []
+
+
+async def test_no_zigbee_stick_stays_choosable_without_a_thread_report(api):
+    """The refusal covers sticks, never "No Zigbee stick": turning Zigbee
+    off opens no port, and is the one change a user must always be able to
+    make - a Zigbee stick they want released must not be held hostage to a
+    sidecar that is not running.
+
+    Fault to prove it: check `selection_refusal()` before `body.path is not
+    None` in `PUT`."""
+    client, update_dir, harness = api
+    assert (await client.put("/api/zigbee/radio", json={"path": ITEAD_PATH})).status_code == 202
+    (update_dir / "radios-state.json").unlink()
+
+    assert (await client.put("/api/zigbee/radio", json={"path": None})).status_code == 202
+    assert harness.store.zigbee_settings.get().path is None
+
+
+@pytest.mark.parametrize("changing", ["job running", "request not picked up"])
+async def test_while_a_radios_change_runs_no_stick_can_be_chosen(api, changing):
+    """A fresh report is still no guarantee while the sidecar is moving
+    Thread: `current` is re-read from `.env` step by step, so it can name
+    the old stick while Thread is on its way to the one being chosen here.
+    `request_radios` refuses a second request in exactly these two states,
+    and this refuses a Zigbee choice in them too.
+
+    Fault to prove it: leave `change_in_progress` out of
+    `read_thread_stick` (the status reads `known` and the PUT is 202)."""
+    client, update_dir, harness = api
+    if changing == "job running":
+        _radios_heartbeat(update_dir, id="job-1", phase="apply_thread")
+    else:
+        (update_dir / "radios-request.json").write_text(
+            json.dumps({"id": "job-2", "thread": None, "bluetooth": {"adapter": 0}}),
+            encoding="utf-8",
+        )
+
+    body = (await client.get("/api/zigbee/radio")).json()
+    assert body["thread_status"] == "changing"
+    assert body["thread_refusal"] == i18n.t("api.errors.zigbee_thread_changing")
+    assert [stick["selectable"] for stick in body["serial"]] == [False, False]
+    refused = await client.put("/api/zigbee/radio", json={"path": ITEAD_PATH})
+    assert refused.status_code == 503
+    assert refused.json()["detail"] == i18n.t("api.errors.zigbee_thread_changing")
+    assert harness.built == []
+
+
+async def test_a_current_report_carries_no_refusal(api):
+    """The other side of the fail-safe, so it cannot pass by refusing
+    everything always: a fresh, settled report makes `thread_status`
+    `known`, `thread_refusal` `null`, and only the Thread stick unselectable.
+
+    Fault to prove it: make `selection_refusal()` always answer."""
+    client, _update_dir, _harness = api
+    body = (await client.get("/api/zigbee/radio")).json()
+    assert (body["thread_status"], body["thread_refusal"]) == ("known", None)
+    assert {stick["path"]: stick["selectable"] for stick in body["serial"]} == {
+        MG24_PATH: False,
+        ITEAD_PATH: True,
+    }
+
+
+# --- Opening the STORED stick: `thread_lockout.open_refusal` --------------
+#
+# Asked by `ZigbeeSource.connect()` on every open - after a reboot, on each
+# supervisor retry, on each apply - against the same two-stick host tree.
+
+
+def _open_refusal(tmp_path: Path, path: str) -> str | None:
+    from loxmatter.radios.thread_lockout import open_refusal
+
+    message = open_refusal(
+        path, update_dir=tmp_path / "update", host_dev=tmp_path / "dev", sys_root=tmp_path / "sys"
+    )
+    return None if message is None else message.key
+
+
+async def test_a_stored_stick_is_not_opened_without_any_thread_report(api, tmp_path):
+    """No report at all - the sidecar never ran, or the file is gone or
+    damaged - and nothing says the stored stick is not Thread's, so it stays
+    closed, with a reason. The supervisor retries, so it opens by itself on
+    the first attempt after the sidecar reports.
+
+    Fault to prove it: answer `None` when `thread.reported` is false."""
+    _client, update_dir, _harness = api
+    (update_dir / "radios-state.json").unlink()
+    assert _open_refusal(tmp_path, ITEAD_PATH) == "api.errors.zigbee_open_thread_unknown"
+    (update_dir / "radios-state.json").write_text("not json", encoding="utf-8")
+    assert _open_refusal(tmp_path, ITEAD_PATH) == "api.errors.zigbee_open_thread_unknown"
+    _radios_heartbeat(update_dir)
+    assert _open_refusal(tmp_path, ITEAD_PATH) is None
+
+
+async def test_a_stored_stick_still_opens_on_a_stale_report_after_a_reboot(api, tmp_path):
+    """THE BOOT DECISION. After a reboot the bridge commonly starts before
+    the sidecar's first pass, so the report on disk is stale - and it is
+    also the last good report, kept on the same volume as the store. A
+    working Zigbee installation must not go dark for that: the stored ITEAD
+    stick opens, because the report names the MG24 as Thread's, not it.
+
+    Fault to prove it: require `report_is_fresh` in `open_refusal` (the
+    ITEAD stick is refused)."""
+    _client, update_dir, _harness = api
+    _radios_heartbeat(update_dir, seen_at=_stale())
+    assert _open_refusal(tmp_path, ITEAD_PATH) is None
+
+
+async def test_a_stored_stick_that_thread_now_runs_on_is_not_opened(api, tmp_path):
+    """The Thread row refuses the Zigbee stick, but `.env` can be edited by
+    hand: a stored Zigbee setting naming the stick Thread now runs on must
+    not be opened, fresh report or stale. And the escape hatch holds here
+    too - with Thread off, the same stick opens.
+
+    Fault to prove it: drop the `is_thread_stick` check from
+    `open_refusal`."""
+    _client, update_dir, _harness = api
+    assert _open_refusal(tmp_path, MG24_PATH) == "api.errors.zigbee_open_is_thread_stick"
+    _radios_heartbeat(update_dir, seen_at=_stale())
+    assert _open_refusal(tmp_path, MG24_PATH) == "api.errors.zigbee_open_is_thread_stick"
+    _radios_heartbeat(
+        update_dir, current={**_current(), "thread_enabled": False, "otbr_running": False}
+    )
+    assert _open_refusal(tmp_path, MG24_PATH) is None
 
 
 # --- What the change does, and does not, touch ----------------------------

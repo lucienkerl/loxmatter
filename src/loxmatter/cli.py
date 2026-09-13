@@ -62,6 +62,7 @@ from loxmatter.model.store import Store
 from loxmatter.model.zigbee_settings_store import settings_for_path
 from loxmatter.profiles.table import is_exportable
 from loxmatter.radios.inventory import scan_serial
+from loxmatter.radios.thread_lockout import open_refusal
 from loxmatter.sources import Sources
 from loxmatter.sources.supervisor import attach, supervise
 from loxmatter.zigbee.runtime import ZigbeeRuntime, build_zigbee_source, zigbee_database_beside
@@ -715,6 +716,15 @@ async def _run(
         database=zigbee_database_beside(store.path),
         on_connection_change=runtime.set_zigbee_connected,
         store=store,
+        # Every open of the stored stick asks the Thread report first - the
+        # same trees the radios routes scan, so the two cannot disagree
+        # about which stick Thread is on. See `radios/thread_lockout.py`.
+        open_guard=functools.partial(
+            open_refusal,
+            update_dir=update_dir,
+            host_dev=radios_host_dev,
+            sys_root=radios_sys_root,
+        ),
     )
     sources = Sources([client])
     zigbee_runtime = ZigbeeRuntime(

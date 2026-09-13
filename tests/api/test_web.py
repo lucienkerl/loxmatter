@@ -11086,6 +11086,52 @@ def test_opening_settings_loads_the_zigbee_row():
 
 
 @pytest.mark.skipif(NODE is None, reason="node is required for this test")
+async def test_without_a_thread_report_the_card_says_why_and_offers_no_stick(api):
+    """When the bridge cannot tell which stick Thread is on, `GET
+    /api/zigbee/radio` marks EVERY stick unselectable and carries the reason
+    in `thread_refusal` (`radios/thread_lockout.py`). The card must show
+    that sentence and must not offer Apply for any stick - while still
+    letting the user turn Zigbee off.
+
+    Runs the SERVED `x-show`/`x-text` of the reason line and the SERVED
+    `:disabled` of the Apply button, through `boundTrue`, against that body.
+
+    Fault to prove it: remove the reason line from the Zigbee row (the
+    extraction fails), or drop the `selected?.disabled` check from
+    `zigbeeCanApply()` (Apply comes out enabled for the ITEAD stick)."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+    reason, _ancestors = _zigbee_row_element(page, "p", x_text="zigbee.thread_refusal")
+    apply_button, _ancestors = _zigbee_row_element(page, "button", at_click="applyZigbeeRadio()")
+    values = _app_state(
+        _BINDINGS_JS
+        + _zigbee_state(
+            "for (const stick of state.zigbee.serial) stick.selectable = false;"
+            "state.zigbee.thread_status = 'unknown';"
+            "state.zigbee.thread_refusal = 'Thread unknown';"
+            f"state.zigbee.configured_path = {json.dumps(UNKNOWN_STICK)};"
+            "const out = {};"
+            f"out.shown = boundTrue({json.dumps(reason['x-show'])});"
+            f"out.text = run({json.dumps(reason['x-text'])});"
+            f"state.zigbeeDraft.path = {json.dumps(ITEAD)};"
+            f"out.itead = boundTrue({json.dumps(apply_button[':disabled'])});"
+            "state.zigbeeDraft.path = '';"
+            f"out.none = boundTrue({json.dumps(apply_button[':disabled'])});"
+            "state.zigbee.thread_status = 'known'; state.zigbee.thread_refusal = null;"
+            f"out.shown_when_known = boundTrue({json.dumps(reason['x-show'])});"
+            "console.log(JSON.stringify(out));"
+        )
+    )
+    assert values == {
+        "shown": True,
+        "text": "Thread unknown",
+        "itead": True,
+        "none": False,
+        "shown_when_known": False,
+    }
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
 async def test_the_select_bindings_keep_a_choice_through_the_next_poll(api):
     """What the user picks in the select survives the poll that follows -
     the row polls every second during an attempt, and a poll that resynced

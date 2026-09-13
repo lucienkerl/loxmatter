@@ -60,7 +60,7 @@ from loxmatter.radios.fingerprints import Fingerprint, FlowControl, RadioType
 from loxmatter.sources import Sources
 from loxmatter.sources.supervisor import supervise
 from loxmatter.timestamps import now_iso
-from loxmatter.zigbee.source import ConnectionProgress, ZigbeeSource
+from loxmatter.zigbee.source import ConnectionProgress, OpenGuard, ZigbeeSource
 
 logger = logging.getLogger(__name__)
 
@@ -94,6 +94,7 @@ async def build_zigbee_source(
     database: Path,
     on_connection_change: Callable[[bool], Awaitable[None]] | None,
     store: Store,
+    open_guard: OpenGuard | None = None,
 ) -> ZigbeeSource | None:
     """The one place a `ZigbeeSource` is built - at startup and on every
     radio change alike, now that `ZigbeeRuntime` owns both. Two call sites
@@ -150,6 +151,7 @@ async def build_zigbee_source(
         on_connection_change=on_connection_change,
         thread_channel=channel,
         store=store,
+        open_guard=open_guard,
     )
 
 

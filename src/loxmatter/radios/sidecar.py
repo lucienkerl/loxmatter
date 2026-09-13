@@ -142,6 +142,20 @@ def _seen_recently(seen_at: str | None, now: datetime) -> bool:
     return abs((now - seen).total_seconds()) <= update._MAX_SILENT_SECONDS
 
 
+def report_is_fresh(state: RadiosState | None, *, now: datetime) -> bool:
+    """Whether the sidecar wrote this report within the heartbeat window -
+    the window `sidecar_status` uses for "outdated"."""
+    return state is not None and _seen_recently(state.seen_at, now)
+
+
+def change_in_progress(update_dir: Path, state: RadiosState | None) -> bool:
+    """A radios job that has not reached a terminal phase, or a request the
+    sidecar has not picked up yet - the two conditions `request_radios`
+    refuses a new request for. While either holds, `current` may be about
+    to stop being true."""
+    return (state is not None and state.phase not in TERMINAL_PHASES) or _pending(update_dir, state)
+
+
 def sidecar_status(
     update_state: update.UpdateState | None,
     radios_state: RadiosState | None,

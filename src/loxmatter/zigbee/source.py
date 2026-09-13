@@ -114,6 +114,21 @@ __all__ = [
 ]
 
 
+# Asked with the stick's path before `connect()` touches the port; a
+# message is the reason not to open it. See `radios/thread_lockout.py`.
+OpenGuard = Callable[[str], "i18n.Message | None"]
+
+
+class _OpenRefusedError(RuntimeError):
+    """The open guard said no. Carries its sentence to `_startup_message`,
+    so a refusal travels the same path - progress, attempt count,
+    supervisor backoff - as a stick that would not open."""
+
+    def __init__(self, message: i18n.Message) -> None:
+        super().__init__(message.key)
+        self.message = message
+
+
 class ZigbeeUnavailableError(RuntimeError):
     """The radio could not be brought up.
 
@@ -504,8 +519,15 @@ class ZigbeeSource:
         on_connection_change: Callable[[bool], Awaitable[None]] | None = None,
         thread_channel: int | None = None,
         store: Any | None = None,
+        open_guard: OpenGuard | None = None,
     ) -> None:
         self._path = path
+        # `None` only where nothing is guarding - tests about other things.
+        # Production passes `thread_lockout.open_refusal` through
+        # `build_zigbee_source`, so the stored stick is checked against the
+        # Thread report on every open, not only when it was chosen: the
+        # choice may be months old, and Thread may have moved since.
+        self._open_guard = open_guard
         self._fingerprint = fingerprint
         self._database = Path(database)
         self._application_factory = application_factory
@@ -715,6 +737,8 @@ class ZigbeeSource:
             raise
 
     def _startup_message(self, exc: BaseException) -> i18n.Message:
+        if isinstance(exc, _OpenRefusedError):
+            return exc.message
         for matches, key in _STARTUP_MESSAGES:
             if matches(exc):
                 return i18n.Message.of(key)
@@ -760,6 +784,11 @@ class ZigbeeSource:
                 app, self._app = self._app, None
                 self._connected = False
                 await _shutdown_even_if_cancelled(app)
+            # Before the quirks warm-up and before the port: a stick that
+            # must not be opened costs neither, and is never touched.
+            refusal = None if self._open_guard is None else self._open_guard(self._path)
+            if refusal is not None:
+                raise _OpenRefusedError(refusal)
             await ensure_quirks_loaded()
             self._set_progress("opening_radio", error=self._retry_error())
             app = await self._new_application_even_if_cancelled()

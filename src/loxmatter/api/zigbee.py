@@ -43,7 +43,9 @@ live Thread border router is running on. The fingerprint table reports that
 stick as a perfectly good EZSP Zigbee coordinator, because it IS one -
 nothing in that layer can or should refuse it. This module is the only
 thing standing between the picker and a user selecting the radio their
-entire Thread network depends on.
+entire Thread network depends on. What counts as "Thread's stick" - and
+what happens when the bridge cannot tell - is decided in
+`radios/thread_lockout.py`, which `ZigbeeSource.connect()` asks as well.
 
 **The row states the pairing tab shows are not all stored anywhere.**
 `PairingRow.state` carries the four the source itself can see; the three
@@ -76,11 +78,10 @@ from loxmatter.radios.fingerprints import (
 )
 from loxmatter.radios.inventory import (
     SerialRadio,
-    is_same_device,
     match_current_device,
     scan_serial,
 )
-from loxmatter.radios.sidecar import read_radios_state
+from loxmatter.radios.thread_lockout import is_thread_stick, read_thread_stick
 from loxmatter.sources import DeviceUnreachableError, bounded_source_call
 from loxmatter.zigbee.runtime import ZigbeeRuntime
 from loxmatter.zigbee.source import PERMIT_MAX_SECONDS, PairingRow, ZigbeeSource
@@ -227,53 +228,6 @@ def _iso(moment: datetime | None) -> str | None:
     return None if moment is None else moment.isoformat(timespec="seconds")
 
 
-def _thread_stick(update_dir: Path, serial: Sequence[SerialRadio]) -> tuple[str | None, bool]:
-    """Which stick this installation is CURRENTLY using for Thread.
-
-    Returns `(by-id path or None, in_use)`. The path comes from the same
-    place `GET /api/radios` reads it: the sidecar's reported
-    `RadioConfig.thread_device`, mapped onto a by-id path by
-    `match_current_device` because the installer writes `/dev/ttyUSB0`
-    while this card speaks by-id.
-
-    `in_use` is gated on `thread_enabled` (OR `otbr_running`, which is the
-    independently observed fact beside it), and that gate is deliberate.
-    MEASURED in `deploy/updater/radios-once.sh`: the `down` path rewrites
-    `COMPOSE_PROFILES` and LEAVES `RADIO_DEVICE` naming the stick. So "is
-    this the stored Thread device" is NOT the same question as "is Thread
-    using it", and answering only the first would permanently strand the
-    user who disables Thread in order to repurpose a dual-capable stick -
-    the only legitimate way to move an MG24 across.
-
-    No state, or no reported current, means nothing is known to be using
-    anything: `(None, False)`. That is not a licence to open a stick
-    blindly - it is the same "the bridge validates what it can see"
-    position `POST /api/radios` already takes.
-    """
-    state = read_radios_state(update_dir)
-    if state is None or state.current is None:
-        return None, False
-    device, _present = match_current_device(state.current.thread_device, serial)
-    return device, bool(state.current.thread_enabled or state.current.otbr_running)
-
-
-def _is_thread_stick(
-    radio_path: str, thread_device: str | None, thread_in_use: bool, host_dev: Path
-) -> bool:
-    """Whether this stick is the one Thread is running on.
-
-    By RESOLVED major:minor, never by string compare. The same physical
-    stick is `/dev/ttyUSB0` in `.env`, a by-id path on this card, and a
-    third name under the container's `/host/dev` mount - three strings, one
-    piece of hardware. MEASURED on the Pi: the two attached sticks are
-    major 188 minors 0 and 1 and share the vendor id `10c4:ea60`, so the
-    resolved minor is the only thing that separates them.
-    """
-    if thread_device is None or not thread_in_use:
-        return False
-    return is_same_device(radio_path, thread_device, host_dev)
-
-
 def _settings_from(body: ZigbeeRadioIn, serial: Sequence[SerialRadio]) -> ZigbeeRadioSettings:
     """The setting to store, with the radio's own parameters filled in.
 
@@ -304,12 +258,13 @@ def build_zigbee_router(
     @router.get("/zigbee/radio")
     async def get_zigbee_radio() -> dict[str, object]:
         serial = scan_serial(host_dev, sys_root)
-        thread_device, thread_in_use = _thread_stick(update_dir, serial)
+        thread = read_thread_stick(update_dir, serial, now=datetime.now(UTC))
+        refusal = thread.selection_refusal()
         stored = store.zigbee_settings.get()
         sticks: list[dict[str, object]] = []
         for radio in serial:
             fingerprint = match_fingerprint(radio)
-            is_thread = _is_thread_stick(radio.path, thread_device, thread_in_use, host_dev)
+            is_thread = is_thread_stick(radio.path, thread, host_dev)
             sticks.append(
                 {
                     "path": radio.path,
@@ -322,14 +277,25 @@ def build_zigbee_router(
                     # `not is_thread` computed in the page, so the card
                     # cannot drift from the server's own rule - and so that
                     # a future second reason to refuse a stick has somewhere
-                    # to live.
+                    # to live. There is one: a Thread configuration the
+                    # bridge cannot currently vouch for makes EVERY stick
+                    # unselectable (`radios/thread_lockout.py`), and the
+                    # sentence for that is `thread_refusal` below, once, not
+                    # a suffix on every option.
                     "is_thread": is_thread,
-                    "selectable": not is_thread,
+                    "selectable": refusal is None and not is_thread,
                 }
             )
         _resolved, present = match_current_device(stored.path, serial)
         return {
             "serial": sticks,
+            # `known`, `unknown` (no current sidecar report) or `changing`
+            # (a radios job is running or waiting). Anything but `known`
+            # leaves only "No Zigbee stick" selectable, and
+            # `thread_refusal` says why and what to do - translated per
+            # answer, like `progress` below.
+            "thread_status": thread.status,
+            "thread_refusal": None if refusal is None else refusal.text(),
             "configured_path": stored.path,
             # Whether the stored stick is ACTUALLY THERE, resolved through
             # the live scan exactly as `GET /api/radios` does for Thread
@@ -365,17 +331,25 @@ def build_zigbee_router(
                 raise HTTPException(
                     status_code=400, detail=i18n.t("api.errors.zigbee_unknown_device")
                 )
-            thread_device, thread_in_use = _thread_stick(update_dir, serial)
+            thread = read_thread_stick(update_dir, serial, now=datetime.now(UTC))
             # THE most dangerous request this API can be sent, and the
             # reason it is checked here and not only in the page: the card
             # disables the option, but a stale tab, a second browser or a
             # curl call must not be able to point zigpy at the radio a live
             # Thread border router is running on. The card is a courtesy;
             # this is the guarantee.
-            if _is_thread_stick(radio.path, thread_device, thread_in_use, host_dev):
+            if is_thread_stick(radio.path, thread, host_dev):
                 raise HTTPException(
                     status_code=400, detail=i18n.t("api.errors.zigbee_is_thread_stick")
                 )
+            # And when the bridge cannot tell which stick Thread is on, it
+            # refuses them all rather than none: a missing report used to
+            # exclude nothing, and offered the live Thread radio. 503, the
+            # status `POST /api/radios` answers a sidecar that is not ready
+            # with - the refusal lifts by itself once the sidecar reports.
+            refusal = thread.selection_refusal()
+            if refusal is not None:
+                raise HTTPException(status_code=503, detail=refusal.text())
         settings = _settings_from(body, serial)
         store.zigbee_settings.save(settings)
         # Schedules, never awaits. `apply()` is deliberately synchronous so

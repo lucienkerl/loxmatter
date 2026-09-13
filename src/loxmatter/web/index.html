@@ -2774,6 +2774,13 @@
                    because the reason at the end of the option label is the
                    part a narrow native select cuts off. -->
               <p class="hint" x-show="zigbeeThreadHint()" x-cloak x-text="zigbeeThreadHint()"></p>
+              <!-- Why no stick can be chosen right now: the bridge cannot
+                   tell which stick Thread is on (`thread_refusal`, see
+                   radios/thread_lockout.py). The server has already made
+                   every stick unselectable, so Apply is off for all of
+                   them; this says why once, rather than as a suffix a
+                   narrow select would cut off. "No Zigbee stick" stays. -->
+              <p class="hint danger-text" x-show="zigbee.thread_refusal" x-cloak x-text="zigbee.thread_refusal"></p>
               <p class="hint" x-text="t('web.radios.zigbee_hint')"></p>
               <!-- No `role="status"` on the visible line: it carries an
                    attempt counter that changes on every retry, and a live

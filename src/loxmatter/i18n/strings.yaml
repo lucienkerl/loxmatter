@@ -519,6 +519,31 @@ api.errors.zigbee_is_thread_stick:
   # every other sentence on the radios card.
   en: "This stick is in use for Thread. Turn Thread off, or move Thread to another stick, in the Thread row - then this stick can be used for Zigbee."
   de: "Dieser Stick wird für Thread verwendet. Schalten Sie Thread in der Thread-Zeile ab oder wählen Sie dort einen anderen Stick – dann lässt sich dieser Stick für Zigbee verwenden."
+api.errors.zigbee_thread_unknown:
+  # Why no stick may be chosen: the updater sidecar has not reported the
+  # Thread configuration recently (radios/thread_lockout.py). Shown on the
+  # card under the Zigbee select, and as the PUT's refusal. Names the service
+  # the way `docker compose ps` shows it, because that is where the user
+  # will look.
+  en: "The bridge cannot currently tell which stick Thread is using, because the updater service (loxmatter-updater) has not reported recently. Until it does, no stick can be chosen for Zigbee. Make sure that service is running, and try again in a moment."
+  de: "Die Brücke kann gerade nicht erkennen, welchen Stick Thread verwendet, weil der Update-Dienst (loxmatter-updater) sich seit einer Weile nicht gemeldet hat. Bis er das tut, lässt sich kein Stick für Zigbee wählen. Stellen Sie sicher, dass dieser Dienst läuft, und versuchen Sie es gleich noch einmal."
+api.errors.zigbee_thread_changing:
+  # A Thread or Bluetooth change is running or waiting in the sidecar, so
+  # the reported Thread stick may be about to change.
+  en: "A Thread or Bluetooth change is still being carried out. Wait until it has finished, then choose the Zigbee stick."
+  de: "Eine Änderung an Thread oder Bluetooth wird gerade ausgeführt. Warten Sie, bis sie abgeschlossen ist, und wählen Sie dann den Zigbee-Stick."
+api.errors.zigbee_open_thread_unknown:
+  # The STORED stick is not opened: there is no sidecar report at all, so
+  # nothing says it is not the Thread stick. The supervisor keeps retrying,
+  # and this line stays on the card until the sidecar reports.
+  en: "The Zigbee stick has not been opened, because the bridge has no report yet of which stick Thread is using. The updater service (loxmatter-updater) provides that report - once it is running, the bridge opens the stick by itself."
+  de: "Der Zigbee-Stick wurde nicht geöffnet, weil der Brücke noch keine Meldung vorliegt, welchen Stick Thread verwendet. Diese Meldung liefert der Update-Dienst (loxmatter-updater) – sobald er läuft, öffnet die Brücke den Stick von selbst."
+api.errors.zigbee_open_is_thread_stick:
+  # The STORED Zigbee stick is the one Thread is now running on - moved
+  # there by hand, since the Thread row refuses it. Opening it would garble
+  # the Thread network, so it stays closed.
+  en: "The Zigbee stick has not been opened, because Thread is running on it. Choose another stick for Zigbee, or move Thread to a different stick."
+  de: "Der Zigbee-Stick wurde nicht geöffnet, weil Thread auf ihm läuft. Wählen Sie einen anderen Stick für Zigbee, oder verlegen Sie Thread auf einen anderen Stick."
 api.errors.zigbee_unknown_device:
   # The same rule `POST /api/radios` already applies to the Thread device:
   # the bridge validates what it can see. Without it a typo becomes a zigpy
