@@ -81,13 +81,24 @@ def _brightness(
     here: dict[Pair, StoredCommand], sample: StoredCommand, percent: float
 ) -> list[DeviceCall]:
     """Brightness the way this endpoint can take it: (8, 4) switches off at
-    0 and on above it, so it is preferred; (8, 0) only when it is all there
-    is; `on`/`off` for a light that cannot dim."""
+    0 and on above it, so it is preferred; `on`/`off` for a light that
+    cannot dim.
+
+    (8, 0) only when it is all there is, and then with the switching (8, 4)
+    would have done: MoveToLevel(0) leaves a lamp on, and MoveToLevel above
+    0 does not bring a lamp that is off back on (see `to_device_calls`). So
+    level 0 is `off` where the member carries it, and a level above 0 is
+    `on` first where the member carries it."""
     level = level_from_percent(percent)
     if LEVEL_ONOFF in here:
         return [_call(sample, LEVEL_ONOFF, {"level": level, "transitionTime": 0})]
     if LEVEL in here:
-        return [_call(sample, LEVEL, {"level": level, "transitionTime": 0})]
+        if level == 0:
+            if OFF in here:
+                return [_call(sample, OFF, {})]
+            return [_call(sample, LEVEL, {"level": 0, "transitionTime": 0})]
+        switch_on = [_call(sample, ON, {})] if ON in here else []
+        return switch_on + [_call(sample, LEVEL, {"level": level, "transitionTime": 0})]
     if ON in here and OFF in here:
         return [_call(sample, ON if level > 0 else OFF, {})]
     return []

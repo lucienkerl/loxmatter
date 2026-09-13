@@ -231,3 +231,34 @@ def test_a_white_as_a_colour_point_is_xy_whichever_colour_command_the_group_name
     white on `colortemp`."""
     got = shape(adapt_group_command(pair, BOTH_COLOURS, value))
     assert got[0][:2] == (768, 7)
+
+
+# A dimmable light with MoveToLevel but not MoveToLevelWithOnOff, with and
+# without on/off: constructed.
+LEVEL_ONLY = rows("34", OFF, ON, LEVEL)
+BARE_LEVEL = rows("35", LEVEL)
+
+
+def test_brightness_zero_on_a_member_without_level_onoff_switches_it_off():
+    """MoveToLevel(0) leaves a lamp on, so `off` goes where the member has it."""
+    assert shape(adapt_group_command(COLOUR_HS, LEVEL_ONLY, "0")) == [(6, 0, {})]
+    assert shape(adapt_group_command(LEVEL_ONOFF, LEVEL_ONLY, "0")) == [(6, 0, {})]
+    assert shape(adapt_group_command(COLOUR_HS, BARE_LEVEL, "0")) == [
+        (8, 0, {"level": 0, "transitionTime": 0})
+    ]
+
+
+def test_brightness_above_zero_on_a_member_without_level_onoff_switches_it_on_first():
+    """MoveToLevel does not bring a lamp that is off back on, so `on` goes
+    first where the member has it."""
+    assert shape(adapt_group_command(COLOUR_HS, LEVEL_ONLY, BLUE_60)) == [
+        (6, 1, {}),
+        (8, 0, {"level": 152, "transitionTime": 0}),
+    ]
+    assert shape(adapt_group_command(LEVEL_ONOFF, LEVEL_ONLY, "40")) == [
+        (6, 1, {}),
+        (8, 0, {"level": 102, "transitionTime": 0}),
+    ]
+    assert shape(adapt_group_command(COLOUR_HS, BARE_LEVEL, BLUE_60)) == [
+        (8, 0, {"level": 152, "transitionTime": 0})
+    ]
