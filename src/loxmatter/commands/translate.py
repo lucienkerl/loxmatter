@@ -127,8 +127,7 @@ def _as_number(value: str) -> float:
 
 
 def _level(value: str) -> int:
-    percent = _as_number(value)
-    return max(0, min(LEVEL_MAX, round(percent * LEVEL_MAX / 100)))
+    return level_from_percent(_as_number(value))
 
 
 def parse_number(value: str) -> float:
@@ -186,7 +185,7 @@ def _payload_none(_value: str) -> _Built:
 
 
 def _payload_level(value: str) -> _Built:
-    return _Built({"level": _level(value), "transitionTime": 0})
+    return _Built(level_payload(_level(value)))
 
 
 def _payload_color_temperature(value: str) -> _Built:
@@ -281,6 +280,10 @@ def decode_loxone_colour(value: str) -> LoxoneColour:
 
 def hue_saturation_payload(hue: int, saturation: int) -> dict[str, object]:
     return {"hue": hue, "saturation": saturation, "transitionTime": 0, **_OPTIONS_EXECUTE_IF_OFF}
+
+
+def level_payload(level: int) -> dict[str, object]:
+    return {"level": level, "transitionTime": 0}
 
 
 def xy_payload(x: int, y: int) -> dict[str, object]:
@@ -451,7 +454,7 @@ def to_device_calls(command: StoredCommand, value: str) -> list[DeviceCall]:
                 endpoint=command.endpoint,
                 cluster_id=_CLUSTER_LEVEL,
                 command_id=_COMMAND_MOVE_TO_LEVEL_WITH_ON_OFF,
-                payload={"level": 0, "transitionTime": 0},
+                payload=level_payload(0),
             )
         ]
 
@@ -466,7 +469,8 @@ def to_device_calls(command: StoredCommand, value: str) -> list[DeviceCall]:
             payload=built.payload,
         )
     ]
-    if built.brightness_percent is not None:
+    # `level` is set exactly when the value carries a brightness.
+    if level is not None:
         calls.append(
             DeviceCall(
                 technology=command.technology,
@@ -474,7 +478,7 @@ def to_device_calls(command: StoredCommand, value: str) -> list[DeviceCall]:
                 endpoint=command.endpoint,
                 cluster_id=_CLUSTER_LEVEL,
                 command_id=_COMMAND_MOVE_TO_LEVEL_WITH_ON_OFF,
-                payload={"level": level, "transitionTime": 0},
+                payload=level_payload(level),
             )
         )
     return calls

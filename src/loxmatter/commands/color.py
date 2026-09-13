@@ -297,8 +297,10 @@ def rgb_to_cie_xy(r: int, g: int, b: int) -> tuple[int, int]:
 _PLANCKIAN_MIN_KELVIN = 1667.0
 _PLANCKIAN_MAX_KELVIN = 25000.0
 
-# IEC 61966-2-1's own XYZ -> linear sRGB matrix, the inverse of
-# `_SRGB_TO_XYZ` above.
+# XYZ -> linear sRGB, D65: the exact inverse of `_SRGB_TO_XYZ` above at the
+# seven decimals Bruce Lindbloom publishes both matrices with (their product
+# is the identity to within 2e-7). It is not the rounded four-decimal matrix
+# printed in IEC 61966-2-1.
 _XYZ_TO_SRGB = (
     (3.2404542, -1.5371385, -0.4985314),
     (-0.9692660, 1.8760108, 0.0415560),

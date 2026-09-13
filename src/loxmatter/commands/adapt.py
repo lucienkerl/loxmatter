@@ -44,6 +44,7 @@ from loxmatter.commands.translate import (
     decode_loxone_colour,
     hue_saturation_payload,
     level_from_percent,
+    level_payload,
     parse_kelvin,
     parse_number,
     to_device_calls,
@@ -91,64 +92,61 @@ def _brightness(
     `on` first where the member carries it."""
     level = level_from_percent(percent)
     if LEVEL_ONOFF in here:
-        return [_call(sample, LEVEL_ONOFF, {"level": level, "transitionTime": 0})]
+        return [_call(sample, LEVEL_ONOFF, level_payload(level))]
     if LEVEL in here:
         if level == 0:
             if OFF in here:
                 return [_call(sample, OFF, {})]
-            return [_call(sample, LEVEL, {"level": 0, "transitionTime": 0})]
+            return [_call(sample, LEVEL, level_payload(0))]
         switch_on = [_call(sample, ON, {})] if ON in here else []
-        return switch_on + [_call(sample, LEVEL, {"level": level, "transitionTime": 0})]
+        return switch_on + [_call(sample, LEVEL, level_payload(level))]
     if ON in here and OFF in here:
         return [_call(sample, ON if level > 0 else OFF, {})]
     return []
 
 
-def _colour_order(named: Pair) -> tuple[Pair, Pair]:
-    """The group command's own colour command first, the other one second."""
-    return (named, COLOUR_XY if named == COLOUR_HS else COLOUR_HS)
-
-
 def _colour_point(
     here: dict[Pair, StoredCommand], sample: StoredCommand, kelvin: float
 ) -> list[DeviceCall]:
-    """A white temperature: the temperature command if carried, else the
-    white reproduced as a colour point (design 3.3) - XY when the member
-    carries it, HS only when it does not, whichever colour command the group
-    command names. The white is the same white on `color`, `color_xy` and
+    """A white temperature reproduced as a colour point (design 3.3), for a
+    member without the temperature command: XY when the member carries it,
+    HS only when it does not, whichever colour command the group command
+    names - the white is the same white on `color`, `color_xy` and
     `colortemp`."""
-    if COLOUR_TEMPERATURE in here:
-        return [_call(sample, COLOUR_TEMPERATURE, colour_temperature_payload(kelvin))]
-    for pair in (COLOUR_XY, COLOUR_HS):
-        if pair in here and pair == COLOUR_XY:
-            return [_call(sample, COLOUR_XY, xy_payload(*kelvin_to_cie_xy(kelvin)))]
-        if pair in here and pair == COLOUR_HS:
-            return [
-                _call(sample, COLOUR_HS, hue_saturation_payload(*kelvin_to_hue_saturation(kelvin)))
-            ]
+    if COLOUR_XY in here:
+        return [_call(sample, COLOUR_XY, xy_payload(*kelvin_to_cie_xy(kelvin)))]
+    if COLOUR_HS in here:
+        return [_call(sample, COLOUR_HS, hue_saturation_payload(*kelvin_to_hue_saturation(kelvin)))]
     return []
 
 
 def _colour(
     here: dict[Pair, StoredCommand], sample: StoredCommand, named: Pair, colour: LoxoneColour
 ) -> list[DeviceCall]:
+    """The colour part of a decoded colour-output value. A white goes as the
+    temperature command where the member carries it, else as a colour point.
+    A colour goes as the colour command the group command names where the
+    member carries it, else as the other one."""
     if colour.kelvin is not None:
+        if COLOUR_TEMPERATURE in here:
+            return [_call(sample, COLOUR_TEMPERATURE, colour_temperature_payload(colour.kelvin))]
         return _colour_point(here, sample, colour.kelvin)
     assert colour.rgb is not None
-    for pair in _colour_order(named):
-        if pair in here and pair == COLOUR_XY:
-            return [_call(sample, COLOUR_XY, xy_payload(*rgb_to_cie_xy(*colour.rgb)))]
-        if pair in here and pair == COLOUR_HS:
-            return [
-                _call(
-                    sample, COLOUR_HS, hue_saturation_payload(*rgb_to_hue_saturation(*colour.rgb))
-                )
-            ]
+    if COLOUR_XY in here and (named == COLOUR_XY or COLOUR_HS not in here):
+        return [_call(sample, COLOUR_XY, xy_payload(*rgb_to_cie_xy(*colour.rgb)))]
+    if COLOUR_HS in here:
+        return [
+            _call(sample, COLOUR_HS, hue_saturation_payload(*rgb_to_hue_saturation(*colour.rgb)))
+        ]
     return []
 
 
 def _endpoint_calls(
-    pair: Pair, here: dict[Pair, StoredCommand], value: str, decoded: LoxoneColour | None
+    pair: Pair,
+    here: dict[Pair, StoredCommand],
+    value: str,
+    decoded: LoxoneColour | None,
+    number: float | None,
 ) -> list[DeviceCall]:
     sample = next(iter(here.values()))
     if decoded is not None:
@@ -157,14 +155,14 @@ def _endpoint_calls(
         return _colour(here, sample, pair, decoded) + _brightness(
             here, sample, decoded.brightness_percent
         )
-    if pair == COLOUR_TEMPERATURE:
-        if COLOUR_TEMPERATURE in here:
-            return to_device_calls(here[COLOUR_TEMPERATURE], value)
-        return _colour_point(here, sample, parse_number(value))
     if pair in here:
         return to_device_calls(here[pair], value)
+    if pair == COLOUR_TEMPERATURE:
+        assert number is not None
+        return _colour_point(here, sample, number)
     if pair in (LEVEL, LEVEL_ONOFF):
-        return _brightness(here, sample, parse_number(value))
+        assert number is not None
+        return _brightness(here, sample, number)
     return []
 
 
@@ -175,14 +173,17 @@ def adapt_group_command(pair: Pair, rows: Sequence[StoredCommand], value: str) -
     (`Store.group_targets`). Endpoints are handled in ascending order and
     each gets its own calls, colour before brightness - the order
     `to_device_calls` documents. Raises `UnsupportedValueError` for a value
-    that cannot mean anything, before any call is built."""
+    that cannot mean anything, before any call is built: the value is parsed
+    here, once, so a member that would take nothing from it still rejects
+    it."""
     decoded = decode_loxone_colour(value) if pair in (COLOUR_HS, COLOUR_XY) else None
+    number: float | None = None
     if pair == COLOUR_TEMPERATURE:
-        parse_kelvin(value)
-    if pair in (LEVEL, LEVEL_ONOFF):
-        parse_number(value)
+        number = parse_kelvin(value)
+    elif pair in (LEVEL, LEVEL_ONOFF):
+        number = parse_number(value)
     calls: list[DeviceCall] = []
     for endpoint in sorted({row.endpoint for row in rows}):
         here = {(row.cluster_id, row.command_id): row for row in rows if row.endpoint == endpoint}
-        calls.extend(_endpoint_calls(pair, here, value, decoded))
+        calls.extend(_endpoint_calls(pair, here, value, decoded, number))
     return calls
