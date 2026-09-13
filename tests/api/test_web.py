@@ -5519,22 +5519,24 @@ async def test_exactly_one_dialog_of_each_kind_is_delivered(api):
     document, and every `id` in it thirtyfold (the same pitfall that
     `aria-labelledby` in the tile menu already had to dodge once). The
     count (one signal modal, one control modal from task 7, one group
-    dialog since the device groups of 2026-09-10) is the only assertion
-    that would even notice this regression: a `<dialog>` inside the tile
-    would otherwise look exactly the same in the shipped text as one at
-    the end of the page. The group dialog is the case in point - it holds
-    a checkbox per device, so inside the group `x-for` it would be
-    shipped once per group.
+    dialog since the device groups of 2026-09-10, one expert settings
+    modal since 2026-09-13) is the only assertion that would even notice
+    this regression: a `<dialog>` inside the tile would otherwise look
+    exactly the same in the shipped text as one at the end of the page.
+    The group dialog is the case in point - it holds a checkbox per
+    device, so inside the group `x-for` it would be shipped once per
+    group.
 
     The location check (after `</main>`) additionally proves that all
-    three sit outside the view sections and thus outside any
+    four sit outside the view sections and thus outside any
     device loop."""
     client, _, _ = api
     markup = _without_comments((await client.get("/")).text)
-    assert markup.count("<dialog") == 3
+    assert markup.count("<dialog") == 4
     assert 'x-ref="signalsModal"' in markup
     assert 'x-ref="controlModal"' in markup
     assert 'x-ref="groupDialog"' in markup
+    assert 'x-ref="expertModal"' in markup
     assert markup.index("<dialog") > markup.index("</main>")
 
 
@@ -14942,3 +14944,35 @@ async def test_keeping_the_device_returns_focus_to_the_tile_menu(api):
     )
     assert values["offer"] is None
     assert values["focusCalls"] == ["summary"]
+
+
+async def test_the_tile_menu_offers_expert_settings(api):
+    client, _, _ = api
+    page = (await client.get("/")).text
+    assert 'class="tile-menu"' in page
+    menu = page.split('class="tile-menu"', 1)[1].split("</details>", 1)[0]
+    assert "openExpertModal(device)" in menu
+
+
+async def test_the_expert_modal_reuses_the_signals_modals_backdrop_pattern(api):
+    """Same `isBackdropEvent`-based click-outside-to-close pattern as the
+    signals modal (`app.js:4338-4348`), not a second implementation of
+    it."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+    assert 'x-ref="expertModal"' in page
+    modal = page.split('x-ref="expertModal"', 1)[1].split("</dialog>", 1)[0]
+    assert "isBackdropEvent($event, $el)" in modal
+    assert "closeExpertModal()" in modal
+
+
+async def test_the_expert_modal_marks_signal_strength_and_ip_as_not_yet_available(api):
+    """The "coming later" section shows an em dash, never a fabricated
+    value - there is no live data behind either field yet (design doc
+    section 5.1)."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+    modal = page.split('x-ref="expertModal"', 1)[1].split("</dialog>", 1)[0]
+    assert "web.devices.expert_signal_strength" in modal
+    assert "web.devices.expert_ip_address" in modal
+    assert modal.count("—") == 2

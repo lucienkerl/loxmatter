@@ -2776,6 +2776,115 @@ footer.hint-block {
   border-color: var(--border);
 }
 
+/* Expert settings modal (design 2026-09-13, section 5): a smaller,
+ * read-only counterpart to the signals modal above - same dialog
+ * pattern, its own width since the content is three short sections
+ * instead of a long signal table. */
+.expert-modal {
+  width: min(38rem, 92vw);
+  max-height: 85vh;
+  overflow: auto;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--text);
+}
+
+/* Hardcoded, not a theme variable - same reasoning as `.signals-modal::backdrop`:
+ * `::backdrop` sits in the top layer, outside the document tree, and does
+ * not reliably inherit `:root` custom properties there. */
+.expert-modal::backdrop {
+  background: rgba(0, 0, 0, 0.45);
+}
+
+.expert-modal-body {
+  padding: 1rem 1.2rem 1.2rem;
+}
+
+.expert-modal-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.expert-modal-head h2 {
+  margin: 0;
+}
+
+.expert-modal-close {
+  flex: none;
+  background: none;
+  border: 1px solid transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 0.25rem;
+  line-height: 0;
+}
+
+.expert-modal-close:hover {
+  color: var(--text);
+  border-color: var(--border);
+}
+
+.expert-section {
+  margin-bottom: 1rem;
+}
+
+.expert-section h3 {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  margin: 0 0 0.5rem;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.expert-kv {
+  display: grid;
+  grid-template-columns: 9rem 1fr;
+  row-gap: 0.4rem;
+  font-size: 0.85rem;
+}
+
+.expert-kv .k {
+  color: var(--text-muted);
+}
+
+/* Not defined elsewhere: every other spot that wants the monospace
+ * stack (`--mono`, defined at the top of this file) applies it directly
+ * on its own selector rather than through a shared utility class. This
+ * is the first `class="mono"` in the markup, so it needs the rule. */
+.mono {
+  font-family: var(--mono);
+}
+
+.expert-endpoints {
+  margin-top: 0.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.expert-endpoint-line {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.35rem 0.6rem;
+  margin: 0;
+}
+
+.expert-section-later {
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  padding: 0.7rem 0.8rem;
+  background: var(--bg);
+}
+
 /* The summary in the head: the export count on the left, "Deselect all"
  * right-aligned via the flexible spacer (as with the modal head
  * above). Its own frame, so the number stands out from the signal table

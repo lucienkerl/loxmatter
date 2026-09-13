@@ -1567,6 +1567,62 @@ web.devices.menu_room_heading:
 web.devices.menu_signals:
   en: "Edit signals…"
   de: "Signale bearbeiten…"
+web.devices.menu_expert:
+  en: "Expert settings…"
+  de: "Experteneinstellungen…"
+
+# --- Expert settings modal (device-expert-settings design, 2026-09-13) ---
+web.devices.expert_heading:
+  en: "Expert settings — {device}"
+  de: "Experteneinstellungen — {device}"
+web.devices.expert_loading:
+  en: "Loading…"
+  de: "Wird geladen…"
+web.devices.expert_load_error:
+  en: "Could not load: {message}"
+  de: "Konnte nicht geladen werden: {message}"
+web.devices.expert_section_device:
+  en: "Device"
+  de: "Gerät"
+web.devices.expert_vendor:
+  en: "Vendor"
+  de: "Hersteller"
+web.devices.expert_model:
+  en: "Model"
+  de: "Modell"
+web.devices.expert_firmware:
+  en: "Firmware"
+  de: "Firmware"
+web.devices.expert_serial:
+  en: "Serial number"
+  de: "Seriennummer"
+web.devices.expert_section_address:
+  en: "Address & technology"
+  de: "Adresse & Technologie"
+web.devices.expert_technology_matter:
+  en: "Matter"
+  de: "Matter"
+web.devices.expert_technology_zigbee:
+  en: "Zigbee"
+  de: "Zigbee"
+web.devices.expert_address_matter:
+  en: "Node ID"
+  de: "Node-ID"
+web.devices.expert_address_zigbee:
+  en: "IEEE address"
+  de: "IEEE-Adresse"
+web.devices.expert_endpoint_line:
+  en: "Endpoint {endpoint} — {clusters}"
+  de: "Endpoint {endpoint} — {clusters}"
+web.devices.expert_section_later:
+  en: "Coming with a later update"
+  de: "Folgt mit einem späteren Update"
+web.devices.expert_signal_strength:
+  en: "Signal strength"
+  de: "Signalstärke"
+web.devices.expert_ip_address:
+  en: "IP address"
+  de: "IP-Adresse"
 
 # --- control modal: sliders instead of bare number fields for
 # value-carrying commands. `control_brightness` deliberately does NOT

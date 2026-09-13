@@ -984,6 +984,16 @@ function app() {
     // Like `signalsModalBackdropMousedown`, only for the control modal.
     controlModalBackdropMousedown: false,
 
+    // Like `signalsModalDevice`/`signalsModalBackdropMousedown`, only for
+    // the expert settings modal (design 2026-09-13). `expertData` and
+    // `expertError` are per-open-modal state, not page-wide like
+    // `signalsError` - the modal is read-only and fetched fresh on every
+    // open, so there is no other view competing for the same field.
+    expertModalDevice: null,
+    expertModalBackdropMousedown: false,
+    expertData: null,
+    expertError: null,
+
     // --- Settings ---------------------------------------------------
     // `bridgeSettings` is the state last loaded from the server (also read
     // elsewhere in this file); `settingsDraft` are the three input fields
@@ -4361,6 +4371,37 @@ function app() {
      */
     closeSignalsModal() {
       this.$refs.signalsModal.close();
+    },
+
+    // ---------------------------------------------------------------------
+    // Expert settings
+    // ---------------------------------------------------------------------
+
+    expertModalDeviceObject() {
+      return this.devices.find((device) => device.id === this.expertModalDevice) || null;
+    },
+
+    /** Opens the expert settings modal and loads its data. The `$nextTick`
+     * before `showModal()` is needed for the same reason as in
+     * `openSignalsModal`: the dialog's content is built by `x-if` and does
+     * not exist yet on the tick this runs. */
+    async openExpertModal(device) {
+      this.expertError = null;
+      this.expertData = null;
+      this.expertModalDevice = device.id;
+      this.$nextTick(() => this.$refs.expertModal.showModal());
+      try {
+        this.expertData = await this.request("GET", `/api/devices/${device.id}/expert`);
+      } catch (error) {
+        this.expertError = t("web.devices.expert_load_error", { message: error.message });
+      }
+    },
+
+    /** Closes via the native `close()` method, same as `closeSignalsModal`
+     * - the `@close` handler on the `<dialog>` in index.html is the one
+     * place that resets `expertModalDevice`/`expertData`/`expertError`. */
+    closeExpertModal() {
+      this.$refs.expertModal.close();
     },
 
     /**

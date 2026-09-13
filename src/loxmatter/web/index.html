@@ -1700,6 +1700,11 @@
                         ></button>
                         <button
                           class="tile-menu-item"
+                          @click="closeTileMenu($el); openExpertModal(device)"
+                          x-text="t('web.devices.menu_expert')"
+                        ></button>
+                        <button
+                          class="tile-menu-item"
                           @click="closeTileMenu($el); exportDevice(device)"
                           :disabled="!bridgeSettings.bridge_ip"
                           x-text="t('web.devices.export')"
@@ -3304,6 +3309,79 @@
                   </template>
                 </details>
               </template>
+            </div>
+          </template>
+        </div>
+      </template>
+    </dialog>
+
+    <!--
+      Expert settings modal: a per-device read-only technical panel
+      (design 2026-09-13, section 5). Structure, opening, closing, and
+      backdrop click follow the signal modal above exactly - see its
+      comments for the full reasoning: `@close` remains the ONLY place
+      that resets `expertModalDevice`/`expertData`/`expertError`;
+      `@mousedown` records in `expertModalBackdropMousedown` whether the
+      gesture started on the backdrop, and `@click.self` only then closes.
+    -->
+    <dialog
+      x-ref="expertModal"
+      class="expert-modal"
+      aria-labelledby="expert-modal-heading"
+      @close="expertModalDevice = null; expertData = null; expertError = null"
+      @mousedown="expertModalBackdropMousedown = isBackdropEvent($event, $el)"
+      @click.self="if (expertModalBackdropMousedown && isBackdropEvent($event, $el)) $el.close(); expertModalBackdropMousedown = false"
+    >
+      <template x-if="expertModalDeviceObject()">
+        <div class="expert-modal-body">
+          <div class="expert-modal-head">
+            <h2
+              id="expert-modal-heading"
+              x-text="t('web.devices.expert_heading', { device: expertModalDeviceObject().label })"
+            ></h2>
+            <span style="flex: 1 1 auto"></span>
+            <button
+              class="expert-modal-close"
+              :title="t('web.signals.modal_close')"
+              :aria-label="t('web.signals.modal_close')"
+              @click="closeExpertModal()"
+            ><svg class="icon" aria-hidden="true"><use href="#i-close"></use></svg></button>
+          </div>
+          <p class="hint" x-show="!expertData && !expertError" x-text="t('web.devices.expert_loading')"></p>
+          <p class="banner danger" x-show="expertError" x-cloak x-text="expertError"></p>
+          <template x-if="expertData">
+            <div>
+              <section class="expert-section">
+                <h3 x-text="t('web.devices.expert_section_device')"></h3>
+                <div class="expert-kv">
+                  <span class="k" x-text="t('web.devices.expert_vendor')"></span><span x-text="expertData.vendor ?? ''"></span>
+                  <span class="k" x-text="t('web.devices.expert_model')"></span><span x-text="expertData.model ?? ''"></span>
+                  <span class="k" x-text="t('web.devices.expert_firmware')"></span><span x-text="expertData.firmware ?? ''"></span>
+                  <span class="k" x-text="t('web.devices.expert_serial')"></span><span x-text="expertData.serial ?? ''"></span>
+                </div>
+              </section>
+              <section class="expert-section">
+                <h3 x-text="t('web.devices.expert_section_address')"></h3>
+                <div class="expert-kv">
+                  <span class="k" x-text="t('web.devices.expert_technology_' + expertData.technology)"></span><span></span>
+                  <span class="k" x-text="t('web.devices.expert_address_' + expertData.technology)"></span><span class="mono" x-text="expertData.address"></span>
+                </div>
+                <div class="expert-endpoints">
+                  <template x-for="ep in expertData.endpoints" :key="ep.endpoint">
+                    <p
+                      class="expert-endpoint-line mono"
+                      x-text="t('web.devices.expert_endpoint_line', { endpoint: ep.endpoint, clusters: ep.clusters.join(', ') })"
+                    ></p>
+                  </template>
+                </div>
+              </section>
+              <section class="expert-section expert-section-later">
+                <h3><svg class="icon" aria-hidden="true"><use href="#i-warn"></use></svg><span x-text="t('web.devices.expert_section_later')"></span></h3>
+                <div class="expert-kv">
+                  <span class="k" x-text="t('web.devices.expert_signal_strength')"></span><span>—</span>
+                  <span class="k" x-text="t('web.devices.expert_ip_address')"></span><span>—</span>
+                </div>
+              </section>
             </div>
           </template>
         </div>
