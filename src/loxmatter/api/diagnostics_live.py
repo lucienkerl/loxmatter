@@ -14,9 +14,9 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""WebSocket for the diagnostics live stream of the WebUI (Task 4, Phase 5, Spec 10.5).
+"""WebSocket for the diagnostics live stream of the WebUI (Spec 10.5).
 
-The system page today (Task 6) fetches logs, UDP capture and command log
+The system page today fetches logs, UDP capture and command log
 only once, when opened - `GET /api/diagnostics/{datagrams,commands}` and,
 once wired up, a logs equivalent. This file builds the running variant:
 ONE WebSocket, `/api/diagnostics/live`, that pushes all three sources
@@ -40,13 +40,13 @@ the fields of the respective entry type from
 otherwise the same piece of data (e.g. the timestamp) would be called two
 different things in two responses.
 
-- **Datagrams:** `sender.add_datagram_observer` (Task 2) - sees every
+- **Datagrams:** `sender.add_datagram_observer` - sees every
   datagram ACTUALLY sent, including full resend and pulse ends, which
   `Runtime`'s own observer chain (`api.live`) deliberately leaves out
   (see there). Exactly for that reason this branch hangs off `sender`,
   not `runtime` - a second `Runtime` observer would be a DIFFERENT view,
   not the same one.
-- **Commands:** `command_log.add_observer` (Task 4, new in
+- **Commands:** `command_log.add_observer` (new in
   `api.diagnostics.RingBuffer` - see there for why the observer chain
   hangs off the ring itself rather than off the `_record_command`
   middleware: this function's signature already receives the fully built
@@ -54,7 +54,7 @@ different things in two responses.
   `loxone.server`, and `command_log` - unlike `UdpSender`/
   `LogBufferHandler` - has no owner type of its own that a chain could
   otherwise hang off).
-- **Logs:** `log_handler.add_observer` (Task 3) - **NOT every line**, as
+- **Logs:** `log_handler.add_observer` - **NOT every line**, as
   documented there (a line logged synchronously FROM within an observer
   never reaches an observer, but does land in the ring). Per the
   contract of `LogBufferHandler.add_observer`, the observer must NOT
@@ -87,7 +87,7 @@ different things in two responses.
   loop is already closed (possible during shutdown, if a log line is
   produced at exactly that moment) - `on_log` catches that and logs
   NOTHING in the process, otherwise that would be exactly the recursion
-  that Task 3 rules out for this handler (see the
+  that the log buffer rules out for this handler (see the
   `diagnostics.logbuffer` module docstring, "The one rule...").
 
   `on_datagram` and `on_command` stick with a plain `queue.put(...)`:
@@ -111,17 +111,17 @@ other hand, is not optional: `loxone.server.build_app` always creates it,
 independent of `sender`/`client`/`log_handler`.
 
 **The snapshot runs BEFORE registering the observers - and it is exactly
-THIS order that can lose an entry, not the reverse one** (corrected in
-follow-up Task 7, Fix 3a: an earlier version of this docstring claimed
-the opposite). An entry that is produced exactly between "snapshot taken"
-and "observer registered" lands in NEITHER of the two paths - the
-snapshot had already been taken, the observer was not yet registered -
-and is thereby lost. The reverse order (register first, then take the
-snapshot) would instead have the other problem: an entry from exactly
-that window would appear TWICE, once live via the freshly registered
-observer and once in the snapshot taken afterwards. Losing rather than
-duplicating is the deliberate choice here - one line too few is barely
-noticeable in a live view, one line too many is.
+THIS order that can lose an entry, not the reverse one** (corrected: an
+earlier version of this docstring claimed the opposite). An entry that is
+produced exactly between "snapshot taken" and "observer registered" lands
+in NEITHER of the two paths - the snapshot had already been taken, the
+observer was not yet registered - and is thereby lost. The reverse order
+(register first, then take the snapshot) would instead have the other
+problem: an entry from exactly that window would appear TWICE, once live
+via the freshly registered observer and once in the snapshot taken
+afterwards. Losing rather than duplicating is the deliberate choice here -
+one line too few is barely noticeable in a live view, one line too many
+is.
 
 For datagrams and commands this is inconsequential anyway: there is no
 `await` between `list(...)` and the respective `add_observer`, and both
@@ -207,7 +207,7 @@ def build_diagnostics_live_router(
                     "key": entry.key,
                     "value": entry.value,
                     "timestamp": entry.timestamp,
-                    # Follow-up Task 6 (2026-09-03): the WebUI recognises a
+                    # Since 2026-09-03 the WebUI recognises a
                     # dispensable datagram (heartbeat, full resend) by this
                     # - no longer by the arrival rate in the browser, which
                     # would have wrongly caught every rapid succession of
@@ -256,7 +256,7 @@ def build_diagnostics_live_router(
                 # everywhere in `LogBufferHandler`: an observer must never
                 # throw back into the logging path, and it must not log
                 # anything here, otherwise that would be the recursion
-                # that Task 3 rules out for this handler (see the
+                # that the log buffer rules out for this handler (see the
                 # `diagnostics.logbuffer` module docstring, "The one
                 # rule...").
                 pass

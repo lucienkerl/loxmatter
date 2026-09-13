@@ -85,6 +85,21 @@ async def attach(source: DeviceSource, store: Store, runtime: Runtime) -> int:
     return gained
 
 
+def _failure_identity(exc: BaseException) -> tuple[str, str]:
+    """What makes two failed attempts "the same failure" for the log: the
+    exception's type and its text, and those of its cause.
+
+    The cause is part of it because a source reports its own failures in
+    its own words - `ZigbeeUnavailableError` carries a translated sentence -
+    while what actually went wrong, `FileNotFoundError` against `EBUSY`,
+    sits one level down."""
+    cause = exc.__cause__
+    described = f"{type(exc).__name__}: {exc}"
+    if cause is not None:
+        described += f" <- {type(cause).__name__}: {cause}"
+    return type(exc).__name__, described
+
+
 async def supervise(
     source: DeviceSource,
     store: Store,
@@ -108,8 +123,18 @@ async def supervise(
     """
     while True:
         try:
+            # Read BEFORE the wait, because the wait is what changes it. A
+            # source that was never connected - every Zigbee source, whose
+            # first connect this loop performs (see `cli._run`) - returns
+            # from `wait_for_link_loss()` at once, and announcing that as a
+            # lost connection put a WARNING into the log on every start of
+            # every installation with a stick, before anything had failed.
+            was_connected = source.connected
             await source.wait_for_link_loss()
-            logger.warning("connection of source %s lost - rebuilding it", source.technology)
+            if was_connected:
+                logger.warning("connection of source %s lost - rebuilding it", source.technology)
+            else:
+                logger.info("source %s is not connected yet - connecting it", source.technology)
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -128,6 +153,10 @@ async def supervise(
             await sleep(backoff_max)
             continue
         delay = backoff_start
+        # The failures of THIS outage already logged with their traceback,
+        # by `_failure_identity`. Cleared by starting a new outage.
+        explained: set[tuple[str, str]] = set()
+        attempt = 0
         while True:
             try:
                 await source.connect()
@@ -146,13 +175,36 @@ async def supervise(
                 # `attach()` repeats every few seconds as the same line without a
                 # cause - and on 8 September 2026 that was exactly the reason why
                 # nobody found the actual cause of the outage.
-                logger.warning(
-                    "rebuild of source %s failed (%s) - next attempt in %.0f s",
-                    source.technology,
-                    exc,
-                    delay,
-                    exc_info=exc,
-                )
+                #
+                # But once per distinct failure, not once per attempt. A Zigbee
+                # stick that is unplugged fails the same way every 60 s for as
+                # long as it stays out, and a full traceback each time pushed
+                # everything else out of the System tab's 500-line ring within
+                # hours - the warm-up and firmware lines included. The first
+                # occurrence of a failure carries its traceback; a repeat of
+                # the same one is a single line that says it is a repeat, so
+                # the cause is still one scroll up, and a DIFFERENT failure in
+                # the same outage gets its own traceback again.
+                attempt += 1
+                identity = _failure_identity(exc)
+                if identity in explained:
+                    logger.warning(
+                        "rebuild of source %s failed again, attempt %d (%s) - "
+                        "next attempt in %.0f s",
+                        source.technology,
+                        attempt,
+                        exc,
+                        delay,
+                    )
+                else:
+                    explained.add(identity)
+                    logger.warning(
+                        "rebuild of source %s failed (%s) - next attempt in %.0f s",
+                        source.technology,
+                        exc,
+                        delay,
+                        exc_info=exc,
+                    )
                 await sleep(delay)
                 delay = min(delay * 2, backoff_max)
             else:

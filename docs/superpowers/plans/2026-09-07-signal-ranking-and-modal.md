@@ -835,7 +835,7 @@ MSG
 
 **Files:**
 - Modify: `src/loxmatter/web/app.js:1064-1079`
-- Modify: `src/loxmatter/web/index.html` (Symbolblock um Zeile 170, Kachel um Zeile 665-690)
+- Modify: `src/loxmatter/web/index.html` (icon block around line 170, tile around lines 665-690)
 - Modify: `src/loxmatter/web/style.css`
 - Modify: `src/loxmatter/i18n/strings.yaml`
 - Test: `tests/api/test_web.py`

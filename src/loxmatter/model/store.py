@@ -40,6 +40,7 @@ creating thread, and this module deliberately does not deviate from that.
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
@@ -54,12 +55,15 @@ from loxmatter.matter.models import (
     SignalRef,
     Technology,
     parse_technology,
+    technology_or_none,
 )
 from loxmatter.model.auth_store import AuthStore
 from loxmatter.model.locale_store import LocaleStore
 from loxmatter.model.resend_settings_store import ResendSettingsStore
 from loxmatter.model.settings_store import BridgeSettingsStore
 from loxmatter.model.update_settings_store import UpdateSettingsStore
+from loxmatter.model.zigbee_pending_store import ZigbeePendingStore
+from loxmatter.model.zigbee_settings_store import ZigbeeSettingsStore
 from loxmatter.profiles.categories import category_for
 from loxmatter.profiles.relevance import (
     ROOT_NODE_DEVICE_TYPE,
@@ -78,6 +82,8 @@ from loxmatter.profiles.table import (
 from loxmatter.profiles.transport import network_features_of
 from loxmatter.timestamps import now_iso
 
+logger = logging.getLogger(__name__)
+
 DEFAULT_UDP_PORT = 7000
 # `_DEFAULT_LISTEN_PORT` lifted here from `api/export.py` (device dashboard
 # design, section 4): the new `BridgeSettingsStore` below needs the same
@@ -94,11 +100,11 @@ DEFAULT_LISTEN_PORT = 8080
 # Version 0 is "before this migration logic" (every existing database,
 # `PRAGMA user_version` never set); version 1 adds `signal.exported` and
 # backfills existing rows retroactively, see `_migrate_to_v1`. Version 2
-# (Task 5, Phase 5) adds `device.exported_at` and `device.updated_at`, see
-# `_migrate_to_v2`. Version 3 (Task 7, Phase 6) adds no column - it
+# (export status) adds `device.exported_at` and `device.updated_at`, see
+# `_migrate_to_v2`. Version 3 adds no column - it
 # re-derives `signal.title`, `signal.unit` and the default value of
 # `signal.exported` for EXISTING rows from the profile table, see
-# `_migrate_to_v3`. Version 4 (Task 8, Phase 6) adds `signal.functional`,
+# `_migrate_to_v3`. Version 4 (functional signals) adds `signal.functional`,
 # see `_migrate_to_v4`. Version 5 (WebUI login) adds the tables `setting`
 # and `session`, see `_migrate_to_v5` - both are already present in a fresh
 # database via `_SCHEMA`, so the migration is only needed for existing
@@ -114,7 +120,7 @@ DEFAULT_LISTEN_PORT = 8080
 # the database, never a `NodeSnapshot`.
 #
 # **Why the login move gets 5, not 4.** Both efforts arose in parallel and
-# each claimed 4. A database that has already seen Phase 6 is at 4 - a
+# each claimed 4. A database that has already run `_migrate_to_v4` is at 4 - a
 # second migration under the same number would be silently skipped by
 # `_migrate`, and the service would start without the tables it needs to
 # sign in. The number depends on the order in which the changes were
@@ -130,7 +136,12 @@ DEFAULT_LISTEN_PORT = 8080
 # even though nothing in this codebase reads them past this migration - see
 # `_migrate_to_v9`'s docstring for why (rollback compatibility with
 # `deploy/updater/update-once.sh`).
-_SCHEMA_VERSION = 9
+# Version 10 (Zigbee source design, 2026-09-12, section 6.4) adds the table
+# `zigbee_pending_config`, see `_migrate_to_v10` - already present in a
+# fresh database via `_SCHEMA`, so the migration is only needed for existing
+# ones. A NEW TABLE is the safest shape the rollback promise above allows:
+# version-9 code never names it, so it cannot trip over it.
+_SCHEMA_VERSION = 10
 
 
 def schema_version() -> int:
@@ -221,6 +232,12 @@ CREATE TABLE IF NOT EXISTS group_command (
     takes_value INTEGER NOT NULL,
     UNIQUE (group_id, cluster_id, command_id)
 );
+CREATE TABLE IF NOT EXISTS zigbee_pending_config (
+    address    TEXT NOT NULL,
+    endpoint   INTEGER NOT NULL,
+    cluster_id INTEGER NOT NULL,
+    PRIMARY KEY (address, endpoint, cluster_id)
+);
 """
 
 
@@ -260,7 +277,7 @@ def _migrate_to_v1(db: sqlite3.Connection) -> None:
     if not _add_column_if_missing(db, "signal", "exported", "INTEGER NOT NULL DEFAULT 1"):
         return
     # Derived from `is_exportable` instead of enumerated by hand here a
-    # third time (review fix Fix 8, 2026-09-03, together with the two
+    # third time (since the review of 2026-09-03, together with the two
     # copies in `cli.py` and `api/export.py`): an SQL query needs the
     # values as a list, not the function - but the list itself now still
     # comes from that one single source.
@@ -274,7 +291,7 @@ def _migrate_to_v1(db: sqlite3.Connection) -> None:
 
 
 def _migrate_to_v2(db: sqlite3.Connection) -> None:
-    """Adds `device.exported_at` and `device.updated_at` (Task 5, Phase 5) -
+    """Adds `device.exported_at` and `device.updated_at` -
     the basis for `GET /api/export/status`: when a device was last exported,
     and whether anything has changed since then.
 
@@ -299,7 +316,7 @@ def _migrate_to_v2(db: sqlite3.Connection) -> None:
 def _endpoint0_device_types(rows: Sequence[sqlite3.Row]) -> dict[int, dict[int, frozenset[int]]]:
     """Fallback rule for `profiles.relevance.device_types_by_endpoint` when
     no device snapshot is available, only already stored rows - shared
-    basis for `_migrate_to_v3` (Task 7) and `_migrate_to_v4` (Task 8): both
+    basis for `_migrate_to_v3` and `_migrate_to_v4`: both
     have to call `is_functional` without a `NodeSnapshot`, for exactly the
     same reason (see the docstring section "Where the device types per
     endpoint come from" below under `_migrate_to_v3`) and with exactly the
@@ -330,11 +347,11 @@ def _endpoint0_device_types(rows: Sequence[sqlite3.Row]) -> dict[int, dict[int, 
 
 def _migrate_to_v3(db: sqlite3.Connection) -> None:
     """Re-derives `title`, `unit` and the default value of `exported` for
-    EXISTING signals (Task 7) - the key itself stays untouched in every
+    EXISTING signals - the key itself stays untouched in every
     case, see the module docstring and main document 6.2.
 
-    **Why retroactive, not only for newly commissioned devices:** Task 6
-    already wired up `profiles.relevance.is_functional`, but only in
+    **Why retroactive, not only for newly commissioned devices:**
+    `profiles.relevance.is_functional` was already wired up, but only in
     `register_signals` - a device commissioned yesterday would never see
     the correction unless it is fully re-commissioned. Two rule sets whose
     difference depends solely on the commissioning date would be
@@ -388,7 +405,7 @@ def _migrate_to_v3(db: sqlite3.Connection) -> None:
     a real runtime value, which a migration never has - the stored value
     therefore remains, as a rule, the best truth available. The one
     exception: if the table entry today carries a field number
-    (`profiles.table.struct_field` - Task 5, the counter reading), the
+    (`profiles.table.struct_field` - the counter reading, say), the
     element derived from it counts as mappable (ANALOG), REGARDLESS of the
     stored value. Rationale: only someone who has checked the Matter
     specification text that this exact struct element is numeric enters a
@@ -402,7 +419,7 @@ def _migrate_to_v3(db: sqlite3.Connection) -> None:
     classification, only a new field number does.
 
     **Two open limits of this exception, deliberately accepted rather than
-    eliminated (Task 7, follow-up fix 1):**
+    eliminated:**
     - It does not see the runtime value: a counter that has NEVER been
       measured (Matter returns `null` for that, not a numeric value) is
       still raised to ANALOG and then counts as exported - a Loxone input
@@ -536,7 +553,7 @@ def _migrate_to_v3(db: sqlite3.Connection) -> None:
 
 
 def _migrate_to_v4(db: sqlite3.Connection) -> None:
-    """Adds `signal.functional` and backfills existing rows (Task 8).
+    """Adds `signal.functional` and backfills existing rows.
 
     **Why a separate column even though `exported` already exists.** Both
     start at the same value when a signal is created (`register_signals`) -
@@ -737,6 +754,37 @@ def _migrate_to_v9(db: sqlite3.Connection) -> None:
         db.execute("UPDATE device SET address = CAST(node_id AS TEXT) WHERE address = ''")
 
 
+def _migrate_to_v10(db: sqlite3.Connection) -> None:
+    """Adds `zigbee_pending_config` (Zigbee source design 2026-09-12,
+    section 6.4).
+
+    **ADDITIVE, and a new table rather than a column, for the reason
+    `_migrate_to_v9` spells out at length**: `deploy/updater/update-once.sh`
+    rolls a failed update back to the OLD image WITHOUT restoring the
+    database, on the stated invariant that an older version starts up fine
+    on a newer schema. A new table is the safest possible shape of that -
+    version-9 code never names `zigbee_pending_config`, so it cannot trip
+    over it, and the rows simply wait until a version that understands them
+    runs again. Dropping any existing column here would break that promise
+    instead.
+
+    `CREATE TABLE IF NOT EXISTS` and not `CREATE TABLE`, for the same reason
+    as in `_migrate_to_v5` and `_migrate_to_v8`: a freshly created database
+    already has the table via `_SCHEMA` and is nevertheless at
+    `PRAGMA user_version = 0`, so it runs through this migration too. No
+    backfill - no existing database has ever configured a Zigbee device."""
+    db.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS zigbee_pending_config (
+            address    TEXT NOT NULL,
+            endpoint   INTEGER NOT NULL,
+            cluster_id INTEGER NOT NULL,
+            PRIMARY KEY (address, endpoint, cluster_id)
+        );
+        """
+    )
+
+
 # Migrations in order, applied from whichever version is stored - to extend
 # for a later schema change: simply append, with the next version number as
 # the key.
@@ -750,6 +798,7 @@ _MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     7: _migrate_to_v7,
     8: _migrate_to_v8,
     9: _migrate_to_v9,
+    10: _migrate_to_v10,
 }
 
 
@@ -841,7 +890,7 @@ class StoredSignal:
     # break of key opacity from Spec 6.2 (the key itself stays untouched),
     # only their exposure in the dataclass.
     #
-    # device_id (Task 2, Phase 5): the device API resolves a signal via
+    # device_id: the device API resolves a signal via
     # `signal_by_key` WITHOUT device context in the path (`PATCH
     # /api/signals/{key}`) and still needs the associated device_id, e.g.
     # to look up a live value. Parsing the device_id out of the key string
@@ -855,7 +904,7 @@ class StoredSignal:
     # is not technically mappable (see Spec 6.6) never has an editable
     # checkbox here, see `exportable` in `api.models.SignalOut`.
     exported: bool
-    # functional (Task 8, Phase 6): whether `profiles.relevance.is_functional`
+    # functional: whether `profiles.relevance.is_functional`
     # classifies this signal as intended for this DEVICE TYPE - unlike
     # `exported`, NOT toggleable by the user and therefore stays unchanged
     # even when a user flips `exported` via checkbox. Both fields start at
@@ -1009,7 +1058,7 @@ def _normalized_room(room: str | None) -> str | None:
 
 @dataclass(frozen=True)
 class StoredDevice:
-    """A row from `device` (Spec 5) - for the device API (Task 2, Phase 5).
+    """A row from `device` (Spec 5) - for the device API.
 
     Deliberately carries no `online` status: reachability is runtime state
     (`Runtime`, fed from Matter subscriptions), not a stored property. An
@@ -1022,7 +1071,7 @@ class StoredDevice:
     address: str
     unique_id: str
     label: str
-    # exported_at/updated_at (Task 5, Phase 5) - the basis for `GET
+    # exported_at/updated_at - the basis for `GET
     # /api/export/status`. Both are ISO 8601 timestamps as text, `None`
     # means "never exported" or "not touched since registration"
     # respectively (see `_migrate_to_v2` for the case of a legacy
@@ -1094,8 +1143,8 @@ def changed_since_export(exported_at: str | None, updated_at: str | None) -> boo
 
 class UnknownCommandError(KeyError):
     """`KeyError.__str__` wraps the message in `repr()`, which makes
-    `str(exc)` put extra quote marks around the entire text - Task 6 turns
-    this into an HTTP error body that should not show that wrapping. The
+    `str(exc)` put extra quote marks around the entire text - `api/control.py`
+    turns this into an HTTP error body that should not show that wrapping. The
     subclass returns the message unchanged; `pytest.raises(KeyError, ...)`
     still catches it, since it inherits from `KeyError`."""
 
@@ -1105,7 +1154,7 @@ class UnknownCommandError(KeyError):
 
 class UnknownDeviceError(KeyError):
     """Like `UnknownCommandError`, for an unknown or already removed
-    (`forget_device`) device - the same rationale: the device API (Task 2)
+    (`forget_device`) device - the same rationale: the device API
     turns this into an HTTP 404 body that should not carry the
     `repr()` quote marks from `KeyError.__str__`."""
 
@@ -1127,6 +1176,10 @@ class CategoryMismatchError(ValueError):
 
 class Store:
     def __init__(self, path: Path | str) -> None:
+        # Kept so that files which belong next to this database can be
+        # placed there without every caller passing the path separately -
+        # zigpy's `zigbee.sqlite` is one (`zigbee.runtime.zigbee_database_beside`).
+        self.path = Path(path)
         self._db = sqlite3.connect(str(path))
         self._db.row_factory = sqlite3.Row
         self._db.executescript(_SCHEMA)
@@ -1146,6 +1199,12 @@ class Store:
         self.resend_settings = ResendSettingsStore(self._db)
         # Same connection again - see `update_settings_store.py`.
         self.update_settings = UpdateSettingsStore(self._db)
+        # And once more - see `zigbee_pending_store.py`.
+        self.zigbee_pending = ZigbeePendingStore(self._db)
+        # The Zigbee coordinator's own setting - see
+        # `zigbee_settings_store.py`. Same connection, same `setting` table,
+        # no schema bump.
+        self.zigbee_settings = ZigbeeSettingsStore(self._db)
 
     def close(self) -> None:
         self._db.close()
@@ -1303,7 +1362,16 @@ class Store:
         gone from this connection's view while `device.active` still
         reads 1 - for a later, unrelated `commit()` anywhere else in
         `Store` to flush that half-removed state to disk by surprise.
+
+        **Its unfinished Zigbee configuration goes too.** A pending row
+        names a `(address, endpoint, cluster)` that still has to be bound
+        and configured; a device that has been removed and re-paired has
+        lost every binding it had, so inheriting the old pairing's rows
+        would mean retrying work against a device that was never asked for
+        it in the first place. The address is read BEFORE the row is
+        deactivated, because that is the only handle the pending table has.
         """
+        pending_address = self._zigbee_address(device_id)
         affected = [
             int(row["group_id"])
             for row in self._db.execute(
@@ -1317,8 +1385,24 @@ class Store:
             self._db.rollback()
             raise
         self._db.commit()
+        if pending_address is not None:
+            self.zigbee_pending.forget(pending_address)
         for group_id in affected:
             self.register_group_commands(group_id)
+
+    def _zigbee_address(self, device_id: int) -> str | None:
+        """The Zigbee IEEE of a device, or `None` for anything else.
+
+        `technology = 'zigbee'` is checked here and not left to the caller:
+        a Matter device's address is a node id, and handing that to
+        `ZigbeePendingStore.forget` would delete the rows of whatever Zigbee
+        device happens to share the text."""
+        row = self._db.execute(
+            "SELECT address FROM device WHERE id = ? AND technology = 'zigbee'", (device_id,)
+        ).fetchone()
+        if row is None:
+            return None
+        return str(row["address"])
 
     def udp_port(self, device_id: int) -> int:
         row = self._db.execute("SELECT udp_port FROM device WHERE id = ?", (device_id,)).fetchone()
@@ -1344,12 +1428,37 @@ class Store:
         )
 
     def devices(self) -> list[StoredDevice]:
-        """All active devices (Task 2, Phase 5) - for `GET /api/devices`.
+        """All active devices - for `GET /api/devices`.
 
         A removed device (`forget_device`) no longer shows up here, exactly
-        as with `device_id_for`."""
+        as with `device_id_for`.
+
+        A row whose `technology` this version does not know is skipped
+        rather than raising (boundary design open point 10): the updater
+        rolls a failed update back to the OLD image WITHOUT restoring the
+        database, so a device row written by a NEWER loxmatter can survive
+        into an older one. `_as_device` calls `parse_technology`, which
+        raises loudly - right for a single, specifically requested device
+        (`device(id)`) - but here that would take down the ENTIRE list for
+        the sake of the one row it cannot place, and the bridge could not
+        start while `/health` still answered "healthy". Hiding the one
+        device is strictly better."""
         rows = self._db.execute("SELECT * FROM device WHERE active = 1 ORDER BY id").fetchall()
-        return [self._as_device(r) for r in rows]
+        devices: list[StoredDevice] = []
+        for row in rows:
+            if technology_or_none(str(row["technology"])) is None:
+                # See the docstring above: a row from a newer schema after
+                # a rollback. Hidden, not fatal - and logged once per call
+                # rather than silently, because a device disappearing from
+                # the UI needs an explanation somewhere.
+                logger.warning(
+                    "device %s has technology %r, which this version does not know - hiding it",
+                    row["id"],
+                    row["technology"],
+                )
+                continue
+            devices.append(self._as_device(row))
+        return devices
 
     def device(self, device_id: int) -> StoredDevice:
         """A single active device - `UnknownDeviceError` if it was never
@@ -1626,11 +1735,11 @@ class Store:
         endpoints still counts as one member that accepts it (see
         `group_targets`, which then sends to all of them).
 
-        **Rollback guard (Task 1 review finding, reapplied here).** The
+        **Rollback guard (a review finding, reapplied here).** The
         DELETE and INSERT/UPDATE loops below run inside the same
         `try`/`except (ValueError, sqlite3.Error): self._db.rollback();
         raise` guard as `register_commands`, `create_group` and
-        `set_group_members`. Task 1's plan had this method's shape without
+        `set_group_members`. This method was first planned without
         it: a write-time failure partway through the loops would leave the
         earlier writes sitting in the connection's open implicit
         transaction - not committed, but not rolled back either - for the
@@ -1758,7 +1867,7 @@ class Store:
         API route) checks via `device()` itself and reports an unknown
         device as 404 before this method is even called.
 
-        Sets `updated_at` (Task 5, Phase 5): a rename ends up in the next
+        Sets `updated_at`: a rename ends up in the next
         export as a new `Title` in the template - `GET /api/export/status`
         should then list the device as "changed since then", even if no
         signal is affected."""
@@ -1941,7 +2050,7 @@ class Store:
         the way to dissolve a room - `set_room`/`set_group_room` with
         `None` exist for that."""
         # `old` through the same normalization as `new`: since this method
-        # became reachable via `POST /api/rooms/rename` (Task 5), the
+        # became reachable via `POST /api/rooms/rename`, the
         # source name arrives as free text from the JSON body, no longer
         # exclusively as an already-trimmed value read back from storage -
         # unfiltered, " Kitchen " would otherwise match zero rows and look
@@ -1968,7 +2077,7 @@ class Store:
         return int(device_cur.rowcount) + int(group_cur.rowcount)
 
     def mark_exported(self, device_id: int) -> None:
-        """Sets `exported_at` to now (Task 5, Phase 5).
+        """Sets `exported_at` to now.
 
         Called both from `api.export.download` and from `cli.py`'s
         `export` command - both write to the same database (see the
@@ -2081,8 +2190,8 @@ class Store:
                     (device_id, ref.endpoint, ref.cluster_id, ref.element_id, ref.kind.value),
                 ).fetchone()
                 if existing is not None:
-                    # `functional` IS updated here, unlike `exported` (Task
-                    # 8): it is a pure property of the device
+                    # `functional` IS updated here, unlike `exported`:
+                    # it is a pure property of the device
                     # (`profiles.relevance.is_functional`), not toggleable
                     # by the user - a firmware update that changes an
                     # endpoint device type should be picked up here just
@@ -2132,7 +2241,7 @@ class Store:
                         int(functional),
                     ),
                 )
-            # Mark the device as "changed since then" (Task 5, Phase 5): a
+            # Mark the device as "changed since then": a
             # newly discovered signal, or one corrected in `unit`/
             # `exportability`, should reach `GET /api/export/status`, even
             # if `register_signals` itself did not assign a single new key
@@ -2152,8 +2261,8 @@ class Store:
         self._db.commit()
 
     def set_exported(self, key: str, exported: bool) -> None:
-        """Sets a signal's export flag (`PATCH /api/signals/{key}`,
-        Task 2). Like `set_title`, with no existence check - see there."""
+        """Sets a signal's export flag (`PATCH /api/signals/{key}`).
+        Like `set_title`, with no existence check - see there."""
         self._touch_owning_device(key)
         self._db.execute("UPDATE signal SET exported = ? WHERE key = ?", (int(exported), key))
         self._db.commit()
@@ -2167,8 +2276,8 @@ class Store:
         self._db.commit()
 
     def _touch_owning_device(self, signal_key: str) -> None:
-        """Sets `updated_at` of the device that `signal_key` belongs to
-        (Task 5, Phase 5) - `set_title`/`set_exported` do not get a
+        """Sets `updated_at` of the device that `signal_key` belongs to -
+        `set_title`/`set_exported` do not get a
         `device_id` (see their docstrings), hence the subquery. An unknown
         key matches no row and stays a silent no-op, exactly like the
         subsequent `UPDATE signal` in both callers - the caller (the API
@@ -2219,8 +2328,8 @@ class Store:
         return sorted((self._as_signal(r) for r in rows), key=_signal_order)
 
     def signal_by_key(self, key: str) -> StoredSignal | None:
-        """A single signal by its key - for `PATCH /api/signals/{key}`
-        (Task 2), which has no device path parameter and therefore cannot
+        """A single signal by its key - for `PATCH /api/signals/{key}`,
+        which has no device path parameter and therefore cannot
         go via `signals(device_id)`. `None` instead of an exception,
         analogous to `device_id_for` - the caller decides whether that
         is a 404."""
@@ -2344,7 +2453,7 @@ class Store:
                         int(command.takes_value),
                     ),
                 )
-            # Like at the end of `register_signals` (Task 5, Phase 5): even
+            # Like at the end of `register_signals`: even
             # a pure refresh without a new key counts as "changed since
             # then", e.g. when `clusters.yaml` subsequently assigns a
             # command `takes_value`.

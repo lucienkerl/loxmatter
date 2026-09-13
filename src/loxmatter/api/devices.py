@@ -27,7 +27,7 @@ throwing an `AttributeError` on `None`; all other routes (reading,
 renaming, setting the export flag) work entirely without a Matter
 connection and remain usable.
 
-**Removal (Task 2): `remove` first, then `forget_device`.** Removing
+**Removal: `remove` first, then `forget_device`.** Removing
 a device is two steps that cannot sit in one transaction (one is a
 network call to matter-server, the other a local SQLite write) - either
 one can succeed while the other fails. The two possible orders leave
@@ -81,6 +81,7 @@ from collections.abc import Awaitable, Callable
 from typing import Protocol
 
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import JSONResponse
 
 from loxmatter import i18n
 from loxmatter.api.models import (
@@ -104,7 +105,13 @@ from loxmatter.profiles.categories import CATEGORY_RANK, category_for
 from loxmatter.profiles.endpoints import endpoint_labels
 from loxmatter.profiles.table import Exportability, is_exportable
 from loxmatter.profiles.transport import transport_for
-from loxmatter.sources import SourceNotConfiguredError, Sources
+from loxmatter.sources import (
+    DeviceUnreachableError,
+    SourceNotConfiguredError,
+    Sources,
+    bounded_source_removal,
+    technology_display_name,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -229,7 +236,7 @@ def _device_out(device: StoredDevice, store: Store, runtime: RuntimeValues) -> D
     online = bool(values.get(f"d{device.id}_online", False))
     last_heard = runtime.last_heard_for(device.id)
     exportable_count = sum(1 for s in signals if is_exportable(s.exportability))
-    # next_export_count (follow-up Fix 7, Phase 6): the same composition as
+    # next_export_count: the same composition as
     # `ExportDeviceOut.inputs` in `api/export.py` (`to_inputs`, filtered on
     # `exported`) - no second, merely similar count here. The device tile
     # previously showed "159 signals, 110 exportable" above a list of five -
@@ -616,8 +623,26 @@ def build_device_router(
             )
         return _device_out(store.device(device_id), store, runtime)
 
-    @router.delete("/devices/{device_id}", status_code=204)
-    async def remove_device(device_id: int) -> None:
+    @router.delete("/devices/{device_id}", status_code=204, response_model=None)
+    async def remove_device(device_id: int, forget_only: bool = False) -> JSONResponse | None:
+        """Removes a device through its source, then forgets it (see the
+        module docstring for the order).
+
+        **A device whose technology has no configured source can still be
+        forgotten.** Matter-server is mandatory, but "no Zigbee stick" is a
+        legitimate, permanent state - a user who tried Zigbee and gave the
+        stick up - and a 503 for every Zigbee tile, forever, left tiles
+        nothing could delete. That 503 therefore carries `"offer":
+        "forget_only"`, which the device list recognises and answers with a
+        second, explicit choice; `?forget_only=true` then forgets the device
+        in the store exactly as a removal does - device list, export, group
+        memberships, pending Zigbee configuration - without contacting any
+        radio. The device itself is not told, and the page says so.
+
+        **Refused while the technology's source IS configured** (409): then
+        the source is the way to remove the device, and for Matter - whose
+        source is always there - forgetting a device the fabric still holds
+        is exactly the silent leftover the removal order exists to prevent."""
         device = _require_device(device_id)
         if sources is None:
             # `build_app` derives `sources` from `client`, so this is the
@@ -630,12 +655,74 @@ def build_device_router(
         try:
             source = sources.get(device.technology)
         except SourceNotConfiguredError as exc:
-            raise HTTPException(status_code=503, detail=str(exc)) from exc
+            # The registry raises this the same way for two different
+            # situations, and only one of them may offer "forget only":
+            #
+            # - No stick is stored at all - the user tried Zigbee and gave
+            #   the stick up. That is permanent, and the forget-only offer
+            #   below is the only way such a tile is ever removable.
+            # - A stick IS stored, but `sources.get()` still raises: a
+            #   radio change is in flight (`ZigbeeRuntime._release` clears
+            #   the registry before `disconnect()` returns) or the stick
+            #   failed to open. That is transient - the same "there is no
+            #   Zigbee radio right now" the pairing routes already answer
+            #   with `api.zigbee.radio_changing` - and forgetting the
+            #   device here would remove it from loxmatter while it is
+            #   still joined to the network the swap is about to reopen.
+            #   Read the STORED setting, not the registry that is empty in
+            #   both cases, exactly as `GET /api/zigbee/radio` does.
+            if exc.technology == "zigbee" and store.zigbee_settings.get().path is not None:
+                raise HTTPException(
+                    status_code=503, detail=i18n.t("api.zigbee.radio_changing")
+                ) from exc
+            if forget_only:
+                logger.info(
+                    "forgetting device %s (%s) without its radio: %s is not set up",
+                    device.id,
+                    device.address,
+                    technology_display_name(device.technology),
+                )
+                store.forget_device(device.id)
+                return None
+            return JSONResponse(
+                status_code=503, content={"detail": str(exc), "offer": "forget_only"}
+            )
+        if forget_only:
+            raise HTTPException(
+                status_code=409,
+                detail=i18n.t(
+                    "api.devices.forget_only_refused",
+                    technology=technology_display_name(device.technology),
+                ),
+            )
         try:
             # Order: see module docstring - the fabric first, then the store.
-            await source.remove(device.address)
-        except MatterUnavailableError as exc:
+            #
+            # Bounded like every other call into a source (boundary design
+            # open point 11), but by the removal's own, longer bound and not
+            # by a command's 10 s: matter-server forgets the node and then
+            # asks the device to leave the fabric, which for an offline
+            # Thread device takes longer than that - cut off early, the
+            # device stayed listed here while matter-server had dropped it.
+            # See `SOURCE_REMOVAL_TIMEOUT_SECONDS`. The expiry arrives as
+            # `DeviceUnreachableError`, caught right below.
+            await bounded_source_removal(source.remove(device.address))
+        except (MatterUnavailableError, DeviceUnreachableError) as exc:
+            # One vocabulary across sources (boundary design open point 11).
+            # `MatterUnavailableError` stays in the tuple rather than being
+            # replaced: it is what the Matter client has always raised here
+            # and every existing test asserts on it.
+            #
+            # A bare `TimeoutError` is deliberately NOT in this tuple. It was,
+            # and nothing could reach it: the only timeout this route can
+            # produce is the one above, and that arrives as
+            # `DeviceUnreachableError` - by design, since `str(TimeoutError())`
+            # is empty and would have made this a 502 with a blank detail. A
+            # source that lets a raw `TimeoutError` escape instead of raising
+            # `DeviceUnreachableError` at its own edge is a bug in that
+            # source, and should look like one.
             raise HTTPException(status_code=502, detail=str(exc)) from exc
         store.forget_device(device.id)
+        return None
 
     return router

@@ -14,8 +14,8 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Accepts the HTTP calls of the virtual outputs - and, since task 2
-(phase 5), also those of the WebUI.
+"""Accepts the HTTP calls of the virtual outputs - and also those of the
+WebUI.
 
 The Miniserver does not evaluate a virtual output's response - it fires
 and forgets. The status codes of the Loxone routes below are therefore
@@ -25,7 +25,7 @@ unknown key, 400 for an unsuitable value, 502 for a device that does not
 respond.
 
 `client` is new compared to phase 4: the WebUI routes under `/api` need the
-Matter client for commissioning and removing devices (task 1), the Loxone
+Matter client for commissioning and removing devices, the Loxone
 routes here do not need it. The parameter is therefore optional and
 defaults to `None` - precisely so that the three existing phase-4 calls of
 `build_app(store, invoke, runtime)` keep running unchanged. `None` does not
@@ -39,7 +39,7 @@ pass `sources` explicitly, `build_app` derives one from `client` alone
 (see below), so an existing caller that only ever knew `BridgeMatterClient`
 keeps working unchanged.
 
-`sender` and `matter_data_dir` are new in task 6 (diagnostics, spec 10.5),
+`sender` and `matter_data_dir` came with the diagnostics (spec 10.5),
 optional with default `None` for the same reason: the diagnostics routes
 need them (recording of sent datagrams, backing up the fabric
 credentials), the other routes in this file do not. `cli.py`'s `_run` now
@@ -48,25 +48,24 @@ just without these two diagnostic capabilities (see
 `api.diagnostics.build_diagnostics_router`, which also explains there what
 `None` concretely means for each of the two cases).
 
-**`log_handler` is new in task 4 of this phase (diagnostics livestream,
-spec 10.5).** Optional with default `None` for the same reason: not every
-caller has already called
-`diagnostics.logbuffer.install_log_buffer()`. `cli.py`'s `run()` now does
-that (task 5, phase 5; since the task 7, fix 1 follow-up as its very first
-instruction, BEFORE `_run()`) and passes the resulting handler through to
-`_run()` as a parameter, which forwards it unchanged here to `build_app()`
-- a caller that uses `build_app` directly (e.g. a test) still gets `None`
-unless it calls `install_log_buffer()` itself and passes it through.
-`None` here means "no log branch in the livestream", not "the livestream
-as a whole is missing" - the WebSocket route `/api/diagnostics/live`
-(below, `build_diagnostics_live_router`) still responds, just without log
-lines in it (see there).
+**`log_handler` came with the diagnostics livestream (spec 10.5).**
+Optional with default `None` for the same reason: not every caller has
+already called `diagnostics.logbuffer.install_log_buffer()`. `cli.py`'s
+`run()` now does that (as its very first instruction, BEFORE `_run()`)
+and passes the resulting handler through to `_run()` as a parameter,
+which forwards it unchanged here to `build_app()` - a caller that uses
+`build_app` directly (e.g. a test) still gets `None` unless it calls
+`install_log_buffer()` itself and passes it through. `None` here means
+"no log branch in the livestream", not "the livestream as a whole is
+missing" - the WebSocket route `/api/diagnostics/live` (below,
+`build_diagnostics_live_router`) still responds, just without log lines
+in it (see there).
 
-**`api_token` is new in task 8 (hardening, spec 9).** Up to this point,
+**`api_token` came with the hardening (spec 9).** Before the WebUI,
 this service offered only `/cmd` and `/resync` - being reachable meant, at
-most, being able to switch a device. Since task 1 (commissioning) and task
-2 (removal), it means more: whoever reaches the port can throw a device
-out of the fabric, and since task 6 can additionally download the entire
+most, being able to switch a device. With commissioning and removal, it
+means more: whoever reaches the port can throw a device out of the
+fabric, and with the diagnostics routes can additionally download the entire
 fabric backup (`GET /api/diagnostics/fabric-backup`, spec 4.1).
 `build_api_guard` (see there) therefore protects every route under `/api`
 from here on - both reading AND writing, because a pure write lock would
@@ -100,7 +99,7 @@ module docstring:
 - Only `request.url.path` is recorded, NEVER the query string - a
   `/cmd/{key}/{value}` call deliberately puts its value in the path (that
   is the purpose of this log), whereas a query string is not intended for
-  any route today and is only carried along as a precaution: task 8's
+  any route today and is only carried along as a precaution: the API
   token deliberately does NOT travel as a query parameter, but as an
   `Authorization` header or (for the browser WebSocket) as a subprotocol -
   precisely so that it does not end up in this log (see
@@ -148,9 +147,11 @@ from loxmatter.api.groups import build_groups_router
 from loxmatter.api.language import build_i18n_router, build_language_router
 from loxmatter.api.live import BEARER_SUBPROTOCOL, ObservableRuntime, build_live_router
 from loxmatter.api.project_sync import build_project_sync_router
+from loxmatter.api.radios import build_radios_router
 from loxmatter.api.settings import build_settings_router
 from loxmatter.api.update import build_update_router
 from loxmatter.api.version import build_version_router
+from loxmatter.api.zigbee import build_zigbee_router
 from loxmatter.auth.sessions import SESSION_COOKIE, session_is_valid
 from loxmatter.commands.fanout import dispatch_group, plan_group_calls
 from loxmatter.commands.translate import UnsupportedValueError, to_device_calls
@@ -158,8 +159,14 @@ from loxmatter.diagnostics.logbuffer import LogBufferHandler
 from loxmatter.loxone.sender import UdpSender
 from loxmatter.matter.client import BridgeMatterClient
 from loxmatter.model.store import Store
-from loxmatter.sources import DeviceCall, SourceNotConfiguredError, Sources
+from loxmatter.sources import (
+    DeviceCall,
+    SourceNotConfiguredError,
+    Sources,
+    technology_display_name,
+)
 from loxmatter.timestamps import now_iso
+from loxmatter.zigbee.runtime import ZigbeeRuntime
 
 Invoker = Callable[[DeviceCall], Awaitable[None]]
 
@@ -178,7 +185,7 @@ _DIAGNOSTICS_PREFIX = "/api/diagnostics"
 # `_record_command` (review fix important, 2026-09-02).
 _CRASHED_STATUS = 0
 
-# Task 7, phase 5: the UI lives as a static directory next to this module,
+# The UI lives as a static directory next to this module,
 # not in its own package - `src/loxmatter/web/`, one level above `loxone/`
 # (hence `.parents[1]`). No build step, no bundler: `index.html`, `app.js`,
 # `style.css` and the vendored Alpine.js under `web/vendor/` are served
@@ -188,10 +195,10 @@ _WEB_DIR = Path(__file__).parents[1] / "web"
 
 
 def normalize_api_token(token: str | None) -> str | None:
-    """The ONE spot where it is decided whether a token is set (review fix
-    fix 2, 2026-09-03).
+    """The ONE spot where it is decided whether a token is set (since the
+    review of 2026-09-03).
 
-    `build_api_guard` asks here - until task 8 the startup warning also
+    `build_api_guard` asks here - until the WebUI login the startup warning also
     asked here (back then `cli._warn_if_missing_api_token`); since it
     concerns itself with the password rather than the token, it queries
     only the store and is accordingly named `cli._warn_if_no_password`.
@@ -250,7 +257,7 @@ def _token_from_websocket_subprotocol(header: str | None) -> str | None:
 
 
 def _tokens_match(presented: str, expected: str) -> bool:
-    """Constant-time comparison (review fix fix 2, 2026-09-03).
+    """Constant-time comparison (since the review of 2026-09-03).
 
     Compares the UTF-8 bytes, not the `str` objects: `compare_digest`
     raises `TypeError` on `str` arguments as soon as even one of them
@@ -265,7 +272,7 @@ def _tokens_match(presented: str, expected: str) -> bool:
 
 
 def build_api_guard(token: str | None, store: Store) -> Callable[..., Awaitable[None]]:
-    """Protects the `/api` routes, not the Miniserver's (task 8, phase 5).
+    """Protects the `/api` routes, not the Miniserver's.
 
     The Miniserver calls virtual outputs without a header - it cannot send
     a token along. `/cmd` and `/resync` must therefore stay open, and that
@@ -392,6 +399,20 @@ def build_app(
     # `monkeypatch` on a shared constant, and two tests running side by
     # side would step on each other's files.
     update_dir: Path = Path("/data/update"),
+    # The host's /dev and /sys as the
+    # bridge's own container sees them - both mounted read-only, see
+    # `loxmatter.radios.inventory`'s module docstring and
+    # deploy/testhost/docker-compose.yml. Parameters, not module constants,
+    # for the same reason `update_dir` is: tests point them at a `tmp_path`
+    # tree instead.
+    radios_host_dev: Path = Path("/host/dev"),
+    radios_sys_root: Path = Path("/sys"),
+    # The holder of the live Zigbee source (`zigbee/runtime.py`). Passed
+    # rather than the source itself because this function runs BEFORE
+    # `cli._run` owns any source, and because a radio change replaces that
+    # source without a restart - a router that had captured the object
+    # would go on answering for the stick the user just stopped using.
+    zigbee_runtime: ZigbeeRuntime | None = None,
 ) -> FastAPI:
     # Callers that predate the device source boundary pass only `client`;
     # for them the registry is the Matter client alone, which is exactly
@@ -475,9 +496,7 @@ def build_app(
         middlewares, call order logged): the function decorated last via
         `@app.middleware("http")` ran first. A test below
         (`test_sync_language_is_the_outermost_middleware` in
-        `tests/loxone/test_server.py`) pins down exactly this order - see
-        also the corrected derivation in this task's implementation plan,
-        section "Middleware registration order".
+        `tests/loxone/test_server.py`) pins down exactly this order.
 
         `store.locale.get_language()` never throws (phase A) - no
         try/except needed, unlike `_append_command_log` further above,
@@ -493,12 +512,11 @@ def build_app(
             i18n.set_language(store.locale.get_language())
         return await call_next(request)
 
-    # `dependencies=api_guard` on each of the eleven `/api` routers (task 8,
-    # phase 5, see `build_api_guard` above; the eighth since `POST
-    # /api/export/project-sync`, task 11, phase 6, the ninth since
-    # `build_language_router`, the tenth since `build_update_router`, task
-    # 8 of this stage 2, the eleventh since `build_groups_router`, device
-    # groups task 7): this protects without exception every route of
+    # `dependencies=api_guard` on each of the eleven `/api` routers (see
+    # `build_api_guard` above; the eighth was `POST
+    # /api/export/project-sync`, the ninth `build_language_router`, the
+    # tenth `build_update_router`, the eleventh `build_groups_router`):
+    # this protects without exception every route of
     # these eleven routers, including the WebSocket routes `/api/live` and
     # `/api/diagnostics/live` - and explicitly NOT `/cmd`, `/resync`,
     # `/health`, `/` and `/static`, which are mounted further below
@@ -510,10 +528,33 @@ def build_app(
     app.include_router(build_export_router(store), dependencies=api_guard)
     app.include_router(build_project_sync_router(store), dependencies=api_guard)
     app.include_router(build_settings_router(store), dependencies=api_guard)
-    # Task 8, Stufe 2: same guard as every other `/api` router - see
+    # Same guard as every other `/api` router - see
     # `api/update.py`'s module docstring for why an update to a published
     # version deliberately gets no SECOND password prompt on top of it.
     app.include_router(build_update_router(store, update_dir), dependencies=api_guard)
+    app.include_router(
+        build_radios_router(
+            update_dir, host_dev=radios_host_dev, sys_root=radios_sys_root, store=store
+        ),
+        dependencies=api_guard,
+    )
+    # Only when a holder exists, and that is not defensiveness: the routes
+    # are the Zigbee radio SETTING, and applying one means swapping a live
+    # source, which nothing but `ZigbeeRuntime` can do. A build_app without
+    # one answering 202 to a change that nothing will ever perform would be
+    # worse than not offering the route at all. `cli._run` always passes
+    # one, so the production app always has it.
+    if zigbee_runtime is not None:
+        app.include_router(
+            build_zigbee_router(
+                store,
+                zigbee_runtime=zigbee_runtime,
+                host_dev=radios_host_dev,
+                sys_root=radios_sys_root,
+                update_dir=update_dir,
+            ),
+            dependencies=api_guard,
+        )
     app.include_router(build_language_router(store), dependencies=api_guard)
     app.include_router(build_version_router(), dependencies=api_guard)
     app.include_router(build_live_router(runtime), dependencies=api_guard)
@@ -536,7 +577,7 @@ def build_app(
         ),
         dependencies=api_guard,
     )
-    # Task 4 of this phase: the ongoing diagnostics livestream alongside
+    # The ongoing diagnostics livestream alongside
     # the three one-off diagnostics routes above - see
     # `api.diagnostics_live`'s module docstring for why this is its OWN
     # router instead of another route on `build_diagnostics_router` (the
@@ -557,7 +598,7 @@ def build_app(
     # anyone can be logged in.
     app.include_router(build_i18n_router(store))
 
-    # Task 7, phase 5: the WebUI itself. `StaticFiles` already rejects an
+    # The WebUI itself. `StaticFiles` already rejects an
     # access that wants to escape `_WEB_DIR` (e.g.
     # `/static/../../../etc/passwd`) with 404 on its own - a check of our
     # own here would only be a second, drifting copy of the same check
@@ -642,10 +683,15 @@ def build_app(
         """The group half of `/cmd/{key}/{value}` (design 2026-09-10, 3).
 
         The status codes are the device path's, unchanged: 404 unknown
-        key, 400 unsuitable value, 502 at least one member did not
-        answer. The Miniserver evaluates none of them - they are for the
-        human reading the log, which is also why the 502 detail names the
-        members instead of just counting them.
+        key, 400 unsuitable value, 502 at least one member failed while
+        the group was otherwise reachable, 503 NO member was even asked
+        (boundary design open point 12 - see `GroupOutcome`). The
+        Miniserver evaluates none of them - they are for the human reading
+        the log, and that is what decides what each detail says: the 502
+        names every failed member and counts how many were reached, since
+        the group did something and the human needs to know what; the 503
+        names the technology and the group size, since nothing was asked
+        and there is no per-member story to tell.
         """
         try:
             group_command = store.resolve_group_command(key)
@@ -658,26 +704,51 @@ def build_app(
         except UnsupportedValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-        failed = await dispatch_group(plans, invoke)
-        if failed:
-            # The failed labels are logged, not just counted (review fix
-            # from Task 5): the status code exists for the human reading
+        outcome = await dispatch_group(plans, invoke)
+        if outcome.unconfigured and len(outcome.unconfigured) == len(plans):
+            # 503 only when the WHOLE group was never ASKED - the same
+            # branch, and the same reasoning, as in
+            # `api/control.py::_execute_group_command`: any member that DID
+            # switch makes this a partial success, which belongs in the 502
+            # below because that one names the members and counts what was
+            # reached.
+            technology = outcome.unconfigured_technologies[0]
+            key_for_total = (
+                "api.errors.group_source_not_configured_one"
+                if len(outcome.unconfigured) == 1
+                else "api.errors.group_source_not_configured_many"
+            )
+            raise HTTPException(
+                status_code=503,
+                detail=i18n.t(
+                    key_for_total,
+                    technology=technology_display_name(technology),
+                    total=len(outcome.unconfigured),
+                ),
+            )
+        if outcome.failed:
+            # The failed labels are logged, not just counted (a review
+            # finding): the status code exists for the human reading
             # the log, and "reached 2 of 4" alone still leaves them
-            # grepping the HTTP response for which two.
+            # grepping the HTTP response for which two. `outcome.failed`
+            # names every failed member regardless of kind, so a mix of
+            # unreachable and unconfigured members - and a group where some
+            # members switched and the rest have no source - is still named
+            # in full, with its reached count.
             logger.warning(
                 "group command %r reached %d of %d members; no answer from: %s",
                 key,
-                len(plans) - len(failed),
+                len(plans) - len(outcome.failed),
                 len(plans),
-                ", ".join(failed),
+                ", ".join(outcome.failed),
             )
             raise HTTPException(
                 status_code=502,
                 detail=i18n.t(
                     "api.errors.group_partially_unreachable",
-                    reached=len(plans) - len(failed),
+                    reached=len(plans) - len(outcome.failed),
                     total=len(plans),
-                    devices=", ".join(failed),
+                    devices=", ".join(outcome.failed),
                 ),
             )
         return {"status": "ok", "key": key}

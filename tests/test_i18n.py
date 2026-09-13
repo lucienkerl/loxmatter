@@ -26,6 +26,8 @@ to prove the fallback case.
 
 from __future__ import annotations
 
+import re
+
 import pytest
 
 from loxmatter import i18n
@@ -134,6 +136,69 @@ def test_web_namespace_key_count_is_substantial():
     assert len(i18n.strings_with_prefix("web.")) > 100
 
 
+@pytest.mark.parametrize("language", ["en", "de"])
+def test_the_call_bound_reads_as_a_whole_number_of_seconds(language):
+    """`SOURCE_CALL_TIMEOUT_SECONDS` is a float, and this message is shown
+    to a person: interpolating it raw reads "the device did not answer
+    within 10.0 s", which is not how anybody writes ten seconds. The `:g`
+    in `api.errors.device_timed_out` is what keeps it "within 10 s", in
+    both languages.
+
+    Fault to prove it: drop `:g` from either value of that key. The
+    distinguishing input is a whole-number float - 0.05 renders the same
+    with and without `:g`, which is why the route-level timeout test cannot
+    measure this."""
+    i18n.set_language(language)
+    message = i18n.t("api.errors.device_timed_out", seconds=10.0)
+    assert "10 s" in message
+    assert "10.0" not in message
+
+
+@pytest.mark.parametrize(
+    ("key", "values"),
+    [
+        ("api.errors.device_timed_out", {"seconds": 10.0}),
+        ("api.errors.zigbee_device_not_in_network", {"address": "00:12:4b:00:1c:a1:b2:c3"}),
+        ("api.errors.zigbee_command_refused", {"command_id": 1, "status": 134}),
+    ],
+)
+def test_the_new_device_error_strings_use_the_umlaut_not_its_transliteration(key, values):
+    """These German values were written after the project's German prose
+    moved to real umlauts, and one of them still spelled "Geraet". The
+    older transliterated strings are a separate piece of work; these must
+    not add to them.
+
+    Fault to prove it: write "Geraet" into the `de` value of
+    `api.errors.device_timed_out` again."""
+    i18n.set_language("de")
+    message = i18n.t(key, **values)
+    assert "Gerät" in message
+    assert "Geraet" not in message
+
+
+def test_no_key_is_defined_twice():
+    """YAML keeps the LAST of two equal keys and says nothing, so a new key
+    that happens to reuse an existing name silently replaces the older
+    string for every caller of it. It happened on this branch: a new
+    `api.errors.zigbee_unknown_device` for an unknown device address sat
+    above the existing one for an unknown USB stick, lost to it, and the
+    device error came out as the stick sentence while every test that
+    compared the source against the same key stayed green.
+
+    Read from the file's own lines, because the loaded table can no longer
+    show a key that was overwritten.
+
+    Fault to prove it: define any existing key a second time."""
+    lines = i18n._STRINGS_PATH.read_text(encoding="utf-8").splitlines()
+    keys = [
+        line[: line.index(":")]
+        for line in lines
+        if line and not line[0].isspace() and not line.startswith("#") and ":" in line
+    ]
+    duplicates = sorted({key for key in keys if keys.count(key) > 1})
+    assert duplicates == []
+
+
 def test_no_value_is_wrapped_in_typographic_quotes():
     """No entry in strings.yaml may be wrapped as a whole in typographic
     quotation marks - neither „...“ (German)
@@ -184,3 +249,48 @@ def test_every_category_has_an_api_categories_key_in_both_languages(category):
     translations = i18n._STRINGS.get(key, {})
     assert "en" in translations, f"{key} is missing an 'en' entry"
     assert "de" in translations, f"{key} is missing a 'de' entry"
+
+
+def test_a_message_is_translated_when_it_is_read():
+    """`i18n.Message` exists for a sentence that is stored and shown later
+    - the Zigbee failure the radios card polls for as long as the
+    supervisor retries. Made in one language, read in the other, it must
+    answer in the language of the READ.
+
+    Fault to prove it: resolve the text in `Message.of` and keep it."""
+    i18n.set_language("de")
+    message = i18n.Message.of("test.greeting", name="Ada")
+    i18n.set_language("en")
+    assert message.text() == "Hello, Ada!"
+    assert str(message) == "Hello, Ada!"
+    i18n.set_language("de")
+    assert message.text() == "Hallo, Ada!"
+
+
+# The informal German address - "du" and its forms, and the imperatives the
+# Zigbee strings used before they were aligned with the rest of the radios
+# card. A word list, so it can only find what it names; it names every form
+# these strings have actually carried.
+_INFORMAL_GERMAN = re.compile(
+    r"\b(du|dich|dir|dein\w*|Lies|Wähle|Warte|Lade|Schalte|Vergib|Prüfe|Stecke)\b"
+)
+
+
+def test_the_zigbee_and_radios_sentences_say_sie_like_the_rest_of_the_card():
+    """The radios card addresses the user formally, with `Sie` (see
+    `web.radios.zigbee_device_missing` or `web.radios.job_abandoned`). The
+    Zigbee refusals it shows - and the pairing tab's, written in the same
+    pass - used the informal `du`, so one card spoke to the same person in
+    two registers.
+
+    Fault to prove it: put "Schalte Thread ab" back into
+    `api.errors.zigbee_is_thread_stick`."""
+    prefixes = ("web.radios.", "api.radios.", "api.errors.zigbee_", "api.zigbee.")
+    informal = {
+        key: i18n._STRINGS[key]["de"]
+        for key in i18n.strings_with_prefix("")
+        if key.startswith(prefixes)
+        and "de" in i18n._STRINGS[key]
+        and _INFORMAL_GERMAN.search(i18n._STRINGS[key]["de"])
+    }
+    assert informal == {}

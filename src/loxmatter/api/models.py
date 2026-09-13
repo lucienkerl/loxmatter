@@ -32,7 +32,7 @@ class SignalOut(BaseModel):
     """`exportable`/`reason` (Spec 6.6) and `exported` (user-toggleable, see
     `model.store.StoredSignal.exported`) say what TECHNICALLY fits a
     Loxone input and which OF THOSE should go into the next export -
-    `functional` (Task 8) answers a third, independent question: whether
+    `functional` answers a third, independent question: whether
     `profiles.relevance.is_functional` classifies this signal as intended
     for the DEVICE TYPE. The UI uses only this field to divide the signal
     list into "Functional" and "Expert" (`api.devices._signal_out` reads
@@ -76,7 +76,7 @@ class DeviceOut(BaseModel):
     """`signal_count`/`exportable_count` say how many signals exist and how
     many of them technically fit a Loxone input (Spec 6.6) - both
     regardless of whether they would actually be exported as a template.
-    `next_export_count` (follow-up Fix 7, Phase 6) is the distinct number
+    `next_export_count` is the distinct number
     that the device tile did not show at all until then: how many
     `LoxoneInput`s (including the online signal) the next export would
     actually produce (`export.signals.to_inputs`, filtered on `exported`)
@@ -192,7 +192,7 @@ class ControlRange(BaseModel):
 
 
 class CommandOut(BaseModel):
-    """A control for `GET /api/devices/{device_id}/controls` (Task 4).
+    """A control for `GET /api/devices/{device_id}/controls`.
 
     Deliberately carries only what a click needs - the key to trigger it
     and the slug as a label. `takes_value` tells the UI whether a
@@ -215,7 +215,7 @@ class CommandOut(BaseModel):
 
 
 class ControlsOut(BaseModel):
-    """Response of `GET /api/devices/{device_id}/controls` (Task 4).
+    """Response of `GET /api/devices/{device_id}/controls`.
 
     `hidden_raw_commands` (review fix Minor #4, 2026-09-02): how many of
     the device's commands were filtered out because `profiles.table.
@@ -304,7 +304,7 @@ class GroupControlsOut(BaseModel):
 
 class ValueIn(BaseModel):
     """Body of `POST /api/commands/{key}` and `POST /api/signals/{key}/write`
-    (Task 4) - the same string value that `/cmd/{key}/{value}` (Phase 4)
+    - the same string value that `/cmd/{key}/{value}` (Phase 4)
     accepts as a path segment. One value, one type, in both places (Spec 4.2)."""
 
     model_config = ConfigDict(frozen=True)
@@ -377,7 +377,7 @@ class CommissionRequest(BaseModel):
 
 
 class ExportDeviceOut(BaseModel):
-    """A device in the response of `GET /api/export/preview` (Task 5).
+    """A device in the response of `GET /api/export/preview`.
 
     Mirrors the output of `loxmatter export` on the command line
     (`cli.py`) as numbers instead of terminal lines: `inputs` and
@@ -389,7 +389,7 @@ class ExportDeviceOut(BaseModel):
     - so the UI can already show which files will be produced before the
     download.
 
-    `hidden_count` (Task 8): how many of this device's signals the signal
+    `hidden_count`: how many of this device's signals the signal
     list hides by default in the collapsed "expert" block, because
     `profiles.relevance.is_functional` does not classify them as intended
     (`StoredSignal.functional`) - regardless of whether they would be
@@ -435,7 +435,7 @@ class ExportGroupOut(BaseModel):
 
 
 class ExportPreviewOut(BaseModel):
-    """Response of `GET /api/export/preview` (Task 5) - a pure preview, no
+    """Response of `GET /api/export/preview` - a pure preview, no
     write access (see `api.export.preview`).
 
     `groups` (final fix pass, review finding Important #1): every group
@@ -452,7 +452,7 @@ class ExportPreviewOut(BaseModel):
 
 
 class ExportStatusOut(BaseModel):
-    """A device in the response of `GET /api/export/status` (Task 5).
+    """A device in the response of `GET /api/export/status`.
 
     `exported_at` is `None` as long as a device has never been exported
     via `GET /api/export/download` (API) or `loxmatter export` (CLI) -

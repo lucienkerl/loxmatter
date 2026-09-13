@@ -37,6 +37,27 @@ dependencies = [
     # Without this line, the WebUI's live updates do not work in any
     # installation that installs exactly this dependency list.
     "websockets>=12",
+    # Zigbee as the second device source (design 2026-09-12). zigpy runs
+    # IN PROCESS - no MQTT, no broker, no second container (boundary design
+    # 2026-09-11, section 1).
+    #
+    # `zha` and the five radio libraries cannot be avoided and are not
+    # optional extras (research F.6, proved twice in a scratch venv):
+    # `zha-quirks` imports `zha.quirks`, and `zhaquirks.setup()` reaches
+    # `zha/application/const.py`, which imports ALL SIX radio applications at
+    # module level. Either the whole tree is installed, or quirks are dropped
+    # and Tuya and Aqara devices misbehave - `override-dependencies` would
+    # resolve and then crash at runtime. gpiozero is equally unavoidable
+    # (`zigpy_zigate/common.py` imports it at module level).
+    #
+    # Measured on 11 September 2026 (research F.1): 32 packages added, zero
+    # updated, zero removed - no existing loxmatter pin moves, because zigpy
+    # declares its requirements unpinned. All 63 install from wheels on
+    # arm64, no source builds (F.2). Licences are all compatible with
+    # GPL-3.0-or-later (F.5).
+    "zigpy>=2.2.0",
+    "bellows>=1.0.1",
+    "zha-quirks>=2.2.2",
 ]
 
 [project.scripts]
@@ -100,6 +121,12 @@ files = ["src", "scripts"]
 # (matter-python-client) and is generated from matter.js models, not
 # from the CHIP SDK anymore; the missing type marking doesn't change.
 module = "chip.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# zha-quirks ships no py.typed marking/stubs - see
+# `_default_setup` in zigbee/quirks.py, the only place that imports it.
+module = "zhaquirks.*"
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]

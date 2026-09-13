@@ -253,7 +253,7 @@ def test_migrating_an_old_database_sets_the_schema_version(tmp_path):
     store = Store(path)
     store.close()
 
-    assert user_version(path) == 9
+    assert user_version(path) == 10
 
 
 def test_reopening_an_already_migrated_store_is_a_noop(tmp_path):
@@ -268,7 +268,7 @@ def test_reopening_an_already_migrated_store_is_a_noop(tmp_path):
     first = Store(path)
     first.set_exported("d1_1_power", True)
     first.close()
-    assert user_version(path) == 9
+    assert user_version(path) == 10
 
     second = Store(path)
     try:
@@ -277,14 +277,14 @@ def test_reopening_an_already_migrated_store_is_a_noop(tmp_path):
         second.close()
 
     assert power.exported is True
-    assert user_version(path) == 9
+    assert user_version(path) == 10
 
 
 def test_a_fresh_database_is_already_at_the_latest_version(tmp_path):
     path = tmp_path / "fresh.sqlite"
     store = Store(path)
     store.close()
-    assert user_version(path) == 9
+    assert user_version(path) == 10
 
 
 def test_migration_failure_leaves_the_database_unchanged(tmp_path, monkeypatch):
@@ -326,7 +326,7 @@ def test_migrating_an_old_database_adds_exported_at_and_updated_at_as_null(tmp_p
 
     assert device.exported_at is None
     assert device.updated_at is None
-    assert user_version(path) == 9
+    assert user_version(path) == 10
 
 
 def test_opening_a_v1_database_only_runs_the_v2_migration(tmp_path):
@@ -354,7 +354,7 @@ def test_opening_a_v1_database_only_runs_the_v2_migration(tmp_path):
     finally:
         store.close()
 
-    assert user_version(path) == 9
+    assert user_version(path) == 10
     assert device.exported_at is None
     assert device.updated_at is None
     assert signal.key == "d1_1_power"
@@ -370,7 +370,7 @@ def test_reopening_an_already_v2_database_is_a_noop(tmp_path):
 
     first = Store(path)
     first.close()
-    assert user_version(path) == 9
+    assert user_version(path) == 10
 
     second = Store(path)
     try:
@@ -378,7 +378,7 @@ def test_reopening_an_already_v2_database_is_a_noop(tmp_path):
     finally:
         second.close()
 
-    assert user_version(path) == 9
+    assert user_version(path) == 10
     assert device.exported_at is None
     assert device.updated_at is None
 
@@ -824,7 +824,7 @@ def test_migration_to_v5_adds_the_auth_tables_without_touching_devices(tmp_path)
 
     store = Store(path)
     try:
-        assert user_version(path) == 9
+        assert user_version(path) == 10
         assert store.auth.password_hash() is None
         store.auth.create_session("a", created_at=1, expires_at=2)
         assert store.auth.session_expires_at("a") == 2
@@ -852,7 +852,7 @@ def test_migration_to_v6_adds_the_resend_column_defaulting_to_off(tmp_path):
 
     store = Store(path)
     try:
-        assert user_version(path) == 9
+        assert user_version(path) == 10
         assert store.signal_by_key(key).resend is False
     finally:
         store.close()
@@ -881,7 +881,7 @@ def test_migration_to_v7_adds_room_and_device_types_as_null(tmp_path):
 
     store = Store(path)
     try:
-        assert user_version(path) == 9
+        assert user_version(path) == 10
         device = store.device(device_id)
         assert device.room is None
         assert device.device_types is None
@@ -905,7 +905,7 @@ def test_a_fresh_database_survives_the_v7_migration_without_duplicate_column(tmp
 
     store = Store(path)
     try:
-        assert user_version(path) == 9
+        assert user_version(path) == 10
     finally:
         store.close()
 
@@ -935,7 +935,81 @@ def test_a_v7_database_gains_the_group_tables(tmp_path):
     store.close()
 
 
-def test_a_fresh_database_ends_at_version_nine(tmp_path):
+def test_a_fresh_database_ends_at_version_ten(tmp_path):
     store = Store(tmp_path / "fresh.sqlite")
-    assert store._db.execute("PRAGMA user_version").fetchone()[0] == 9
+    assert store._db.execute("PRAGMA user_version").fetchone()[0] == 10
     store.close()
+
+
+def test_migration_10_adds_the_pending_table_and_only_adds(tmp_path):
+    """Schema 10 is ADDITIVE, like every migration since 9 and for the same
+    reason: `deploy/updater/update-once.sh` rolls a failed update back to
+    the OLD image WITHOUT restoring the database, on the stated invariant
+    that an older version starts up fine on a newer schema. A NEW TABLE is
+    the safest possible shape of that - version-9 code never names it, so it
+    cannot trip over it, and the rows simply wait until a version that
+    understands them runs again.
+
+    Fault to prove it: drop a column from `device` in the same migration.
+    The version-9 SQL test in this module then fails."""
+    path = tmp_path / "v9.sqlite"
+    db = sqlite3.connect(path)
+    db.executescript(
+        "CREATE TABLE device (id INTEGER PRIMARY KEY AUTOINCREMENT,"
+        " unique_id TEXT NOT NULL, node_id INTEGER NOT NULL,"
+        " technology TEXT NOT NULL DEFAULT 'matter', address TEXT NOT NULL DEFAULT '',"
+        " label TEXT NOT NULL, udp_port INTEGER NOT NULL,"
+        " active INTEGER NOT NULL DEFAULT 1, exported_at TEXT, updated_at TEXT,"
+        " room TEXT, device_types TEXT, network_features INTEGER);"
+    )
+    db.execute("PRAGMA user_version = 9")
+    db.commit()
+    db.close()
+
+    before = _columns(path, "device")
+
+    store = Store(path)
+    try:
+        assert user_version(path) == 10
+        tables = {
+            row[0]
+            for row in store._db.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
+        }
+        assert "zigbee_pending_config" in tables
+        # Every column a version-9 bridge reads is still there. This is the
+        # assertion the fault above trips, in this module rather than only
+        # in `test_store_identity.py`.
+        assert _columns(path, "device") == before
+        # And the new table really is usable through the store's own view.
+        store.zigbee_pending.mark_pending("00:15:8d:00:02:aa:bb:cc", 1, 0x0500)
+        assert store.zigbee_pending.pending_for("00:15:8d:00:02:aa:bb:cc") == [(1, 0x0500)]
+    finally:
+        store.close()
+
+
+def test_migration_10_is_idempotent_on_a_fresh_database(tmp_path):
+    """A fresh database already has the table from `_SCHEMA` and still runs
+    the whole chain from `user_version = 0`.
+
+    Fault to prove it: use a bare `CREATE TABLE` without `IF NOT EXISTS`."""
+    path = tmp_path / "fresh.sqlite"
+    Store(path).close()
+
+    db = sqlite3.connect(str(path))
+    db.execute("PRAGMA user_version = 0")
+    db.commit()
+    db.close()
+
+    store = Store(path)
+    try:
+        assert user_version(path) == 10
+    finally:
+        store.close()
+
+
+def _columns(path, table: str) -> set[str]:
+    db = sqlite3.connect(str(path))
+    try:
+        return {str(row[1]) for row in db.execute(f"PRAGMA table_info({table})")}
+    finally:
+        db.close()

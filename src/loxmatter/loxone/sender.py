@@ -28,7 +28,7 @@ Rate limiting - during a full resend after a Miniserver restart, hundreds
 of datagrams are due at once. They should arrive staggered, not in a burst
 (spec 6.4).
 
-**Recording (spec 10.5, task 6, phase 5).** `send()` keeps a ring buffer
+**Recording (spec 10.5).** `send()` keeps a ring buffer
 of the datagrams that most recently ACTUALLY went over the socket
 (`datagram_log`) - for `GET /api/diagnostics/datagrams`. Deliberately
 placed HERE and not in `Runtime.on_attribute`/`on_event` (which call
@@ -43,13 +43,12 @@ otherwise unusual for this project).
 
 The recording itself is wrapped in its own try/except (`_record_sent`): a
 diagnostic tool that could crash the very path it observes would be worse
-than no diagnostic tool at all - see the task 6 report, point 1 (cost in
-the hot path). The cost itself is minimal: one `deque.append` onto an
+than no diagnostic tool at all. It also sits in the hot path, so its cost
+matters - and that cost is minimal: one `deque.append` onto an
 already bounded buffer, no I/O, no allocation beyond the single
 `DatagramLogEntry`.
 
-**Observer chain (task 2, phase 5) - since the task 7, fix 2 follow-up, ONE
-subscribe/unsubscribe mechanism, not two.** `add_datagram_observer`/
+**Observer chain - ONE subscribe/unsubscribe mechanism, not two.** `add_datagram_observer`/
 `remove_datagram_observer` below used to be a separate, second list with
 its own copy-while-iterating and its own log-and-skip logic - word for word
 the same mechanism that `api.diagnostics.RingBuffer` (`self._datagram_log`,
@@ -79,6 +78,7 @@ from collections.abc import Callable
 from loxmatter import i18n
 from loxmatter.api.diagnostics import DatagramLogEntry, RingBuffer
 from loxmatter.loxone.values import datagram
+from loxmatter.sources import ReportingClosedError
 from loxmatter.timestamps import now_iso
 
 RATE_LIMIT_PER_SECOND = 50.0
@@ -129,9 +129,8 @@ class UdpSender:
         exactly why this chain hangs off the sender here and not off the
         runtime: see the module docstring, "Recording" section.
 
-        Thin forward onto `self._datagram_log.add_observer` since the
-        task 7, fix 2 follow-up - see the module docstring, "Observer
-        chain" section, for why this method nonetheless remains its own
+        Thin forward onto `self._datagram_log.add_observer` - see the
+        module docstring, "Observer chain" section, for why this method nonetheless remains its own
         public interface instead of being replaced by
         `sender.datagram_log.add_observer`.
 
@@ -149,7 +148,7 @@ class UdpSender:
     async def send(self, key: str, value: float | bool, *, force: bool = False) -> bool:
         """Sends when the value has changed or force is set."""
         if self._socket is None:
-            raise RuntimeError(i18n.t("api.server.udp_sender_closed"))
+            raise ReportingClosedError(i18n.t("api.server.udp_sender_closed"))
 
         packet = datagram(key, value)
         text = packet.decode()
@@ -158,7 +157,7 @@ class UdpSender:
 
         async with self._lock:
             if self._socket is None:
-                raise RuntimeError(i18n.t("api.server.udp_sender_closed"))
+                raise ReportingClosedError(i18n.t("api.server.udp_sender_closed"))
             loop = asyncio.get_running_loop()
             wait_time = self._next_send_time - loop.time()
             if wait_time > 0:
@@ -169,7 +168,7 @@ class UdpSender:
             # A skipped (debounced) value above never reaches this line,
             # whereas a force=True resend does: both are correct, since
             # both describe what actually went over the wire. `force` is
-            # passed through unchanged (task 6 follow-up, 2026-09-03):
+            # passed through unchanged (since 2026-09-03):
             # `DatagramLogEntry.forced` thereby records WHY it was sent -
             # the only reliable source of this distinction, see that
             # docstring.
@@ -180,15 +179,16 @@ class UdpSender:
 
     def _record_sent(self, key: str, text: str, forced: bool) -> None:
         """Appends an entry to `datagram_log` - isolated in its own
-        try/except (task 6 report, point 1): a failure while recording
+        try/except, because a diagnostic tool must never break the path
+        it observes: a failure while recording
         (none apparent today, but a later refactor could introduce one)
         must never retroactively turn an already-completed send into a
         failure - `send()` has already sent its datagram long before this
         point.
 
         Notifying the observer chain is handled by `RingBuffer.append`
-        itself (since the task 7, fix 2 follow-up - see the module
-        docstring, "Observer chain" section), no longer by a dedicated
+        itself (see the module docstring, "Observer chain" section), no
+        longer by a dedicated
         `_notify_datagram_observers` method here: `append` already calls
         every registered observer after appending, using the same
         copy-while-iterating and the same log-and-skip rule (see

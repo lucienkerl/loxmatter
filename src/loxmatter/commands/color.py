@@ -113,6 +113,7 @@ outputs color temperature separately, and the WebUI uses it as well.
 from __future__ import annotations
 
 import colorsys
+import math
 from typing import Literal
 
 LoxoneColourErrorKind = Literal["not_integer", "negative", "channel_out_of_range"]
@@ -209,6 +210,81 @@ def rgb_to_hue_saturation(r: int, g: int, b: int) -> tuple[int, int]:
     """
     h, s, _ = colorsys.rgb_to_hsv(r / 255, g / 255, b / 255)
     return round(h * 254), round(s * 254)
+
+
+# sRGB (IEC 61966-2-1) to CIE 1931 xy, D65. The matrix is the standard's
+# own linear-RGB-to-XYZ matrix; the gamma expansion above it is the
+# standard's EOTF, not the 2.2 approximation - the difference is visible in
+# mixed colours, which is exactly what a lamp shows.
+#
+# This module's standing rule applies: WHOEVER TOUCHES THIS MEASURES AGAIN.
+# The test checks the three primaries and the white point against published
+# chromaticities, not against this code's own output.
+_SRGB_TO_XYZ = (
+    (0.4124564, 0.3575761, 0.1804375),
+    (0.2126729, 0.7151522, 0.0721750),
+    (0.0193339, 0.1191920, 0.9503041),
+)
+
+# The ZCL caps CurrentX/CurrentY at 0xFEFF, not at 0xFFFF (Zigbee Cluster
+# Library, Color Control). A value above it is out of range on the wire.
+_CIE_MAX = 0xFEFF
+
+
+def _expand_gamma(channel: int) -> float:
+    value = channel / 255
+    if value <= 0.04045:
+        return value / 12.92
+    # `math.pow`, not `**`: typeshed types `float.__pow__` to return `Any`
+    # because a negative base with a fractional exponent can produce a
+    # complex number - `value` here is always in [0, 1], so that case
+    # cannot occur, but mypy (strict, `warn_return_any`) does not know
+    # that. `math.pow` is typed to always return `float`.
+    return math.pow((value + 0.055) / 1.055, 2.4)
+
+
+def _to_cie_component(ratio: float) -> int:
+    """Rounds a CIE X/(X+Y+Z) or Y/(X+Y+Z) ratio to the ZCL encoding, capped
+    at `_CIE_MAX`.
+
+    A separate function so the cap itself is directly testable: no colour
+    reachable through `rgb_to_cie_xy`'s actual domain (RGB, 0-255 per
+    channel) ever produces a ratio anywhere near 1.0 - the sRGB gamut's own
+    most extreme chromaticities are the primaries, x=0.64 for red and
+    y=0.60 for green, both far under 0xFEFF/65536=0.9961. A test that only
+    ever calls `rgb_to_cie_xy` with real colours therefore cannot exercise
+    the cap and would stay green even if it were deleted - see
+    `test_rgb_to_cie_xy_never_exceeds_the_zcl_maximum` in
+    `tests/commands/test_color.py`, which calls this function directly for
+    that reason.
+    """
+    return min(_CIE_MAX, round(ratio * 65536))
+
+
+def rgb_to_cie_xy(r: int, g: int, b: int) -> tuple[int, int]:
+    """RGB (0-255) to the ZCL/Matter CurrentX and CurrentY encoding.
+
+    Both are `x * 65536` capped at 0xFEFF, which is how ColorControl carries
+    a chromaticity: x = CurrentX / 65536.
+
+    Black is the one input with no chromaticity at all (X+Y+Z = 0). It
+    returns the D65 white point rather than raising or returning (0, 0):
+    the caller only ever reaches this with a colour it is about to send, and
+    "off" travels through LevelControl, never through here (see
+    `to_device_calls`). A (0, 0) would be a corner of the gamut that no lamp
+    can show and that no user asked for.
+    """
+    red, green, blue = _expand_gamma(r), _expand_gamma(g), _expand_gamma(b)
+    x_value, y_value, z_value = (
+        row[0] * red + row[1] * green + row[2] * blue for row in _SRGB_TO_XYZ
+    )
+    total = x_value + y_value + z_value
+    if total <= 0:
+        return (_to_cie_component(0.3127), _to_cie_component(0.3290))
+    return (
+        _to_cie_component(x_value / total),
+        _to_cie_component(y_value / total),
+    )
 
 
 # Lumitech: identifier, brightness, Kelvin in one number - `AA BBB CCCC`.

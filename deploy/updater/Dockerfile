@@ -30,8 +30,8 @@ RUN apk add --no-cache \
       coreutils \
       tar
 
-COPY entrypoint.sh update-once.sh /opt/loxmatter/
-RUN chmod +x /opt/loxmatter/entrypoint.sh /opt/loxmatter/update-once.sh
+COPY entrypoint.sh update-once.sh radios-once.sh /opt/loxmatter/
+RUN chmod +x /opt/loxmatter/entrypoint.sh /opt/loxmatter/update-once.sh /opt/loxmatter/radios-once.sh
 
 # Build identity, mirroring the bridge's own Dockerfile (see its
 # LOXMATTER_VERSION ARG/ENV pair and the comment there) - until now this

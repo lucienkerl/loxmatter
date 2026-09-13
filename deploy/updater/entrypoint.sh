@@ -72,6 +72,12 @@ WORKER="${WORKER:-/opt/loxmatter/update-once.sh}"
 # being there, and still reporting, when the bridge is not.
 WORKER_TIMEOUT_SECONDS="${WORKER_TIMEOUT_SECONDS:-600}"
 
+# The radios job (design "Radios in the Web UI", 2026-09-11, section 6.1)
+# runs right after update-once.sh in the same pass, so the two never
+# overlap. Skipped when absent, so a test or a trimmed image without it
+# keeps working.
+RADIOS_WORKER="${RADIOS_WORKER:-/opt/loxmatter/radios-once.sh}"
+
 # This container's own image, by digest - resolved exactly ONCE, here,
 # before the poll loop below ever starts $WORKER for the first time, and
 # exported so every pass reads it as a plain environment variable
@@ -159,12 +165,17 @@ STACK_HOST_PATH="$(docker inspect loxmatter-updater \
     ')"
 export LOXMATTER_STACK_HOST_PATH="$STACK_HOST_PATH"
 
-while [ "$terminated" -eq 0 ]; do
-  timeout "$WORKER_TIMEOUT_SECONDS" "$WORKER" &
+# Runs one worker under the shared timeout and signal-forwarding machinery,
+# and waits for it to actually finish. Shared by both calls in the loop
+# below so update-once.sh and radios-once.sh get identical treatment: same
+# timeout, same forwarding of an already-pending termination, same
+# reporting of a timeout kill.
+run_worker() {
+  timeout "$WORKER_TIMEOUT_SECONDS" "$1" &
   child_pid=$!
 
   # The two lines above are not one atomic step. `child_pid` was reset to
-  # "" at the end of the previous pass (below), and stays "" for however
+  # "" at the end of the previous call (below), and stays "" for however
   # long it takes the shell to get from starting the background job to
   # storing its PID. A SIGTERM landing in exactly that gap runs
   # forward_signal with child_pid still "" - its `[ -n "$child_pid" ]`
@@ -199,20 +210,35 @@ while [ "$terminated" -eq 0 ]; do
 
   if [ "$status" -eq 124 ]; then
     # `timeout` uses 124 for its own timeout exit, distinct from any exit
-    # status update-once.sh itself could produce - report the wait limit
-    # having fired, since it means an update run is stuck on the same
-    # host for longer than any legitimate operation should take.
-    echo "entrypoint: update-once.sh exceeded ${WORKER_TIMEOUT_SECONDS}s and was killed" >&2
+    # status the worker itself could produce - report the wait limit
+    # having fired, since it means a run is stuck on the same host for
+    # longer than any legitimate operation should take.
+    echo "entrypoint: ${1##*/} exceeded ${WORKER_TIMEOUT_SECONDS}s and was killed" >&2
   fi
+}
 
+while [ "$terminated" -eq 0 ]; do
+  run_worker "$WORKER"
   [ "$terminated" -eq 1 ] && break
+
+  # The radios job (design "Radios in the Web UI", 2026-09-11, section
+  # 6.1) runs right after update-once.sh in the same pass, so the two
+  # never overlap - both would otherwise be free to `docker compose up
+  # -d --force-recreate` the bridge at once. `-x` rather than merely
+  # existing: a request/state file protocol without an executable script
+  # behind it is exactly the same as no script at all, and this must stay
+  # silent for a test or a trimmed image that carries neither.
+  if [ -x "$RADIOS_WORKER" ]; then
+    run_worker "$RADIOS_WORKER"
+    [ "$terminated" -eq 1 ] && break
+  fi
 
   # LOOP_ONCE lets a test run exactly one pass and return, instead of
   # looping forever and needing to be killed. It only changes how many
   # times the `while` condition above is re-checked - every pass still
-  # goes through the same timeout-wrapped worker call and the same status
-  # handling production does - so it cannot open a gap between what a
-  # test observes and what the container actually runs.
+  # goes through the same timeout-wrapped worker calls and the same
+  # status handling production does - so it cannot open a gap between
+  # what a test observes and what the container actually runs.
   if [ "${LOOP_ONCE:-0}" = "1" ]; then
     break
   fi

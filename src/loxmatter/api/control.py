@@ -28,7 +28,7 @@ codes for `POST /api/commands/{key}` therefore follow the Loxone endpoint
 `/cmd/{key}/{value}` from Phase 4 (`loxone/server.py`) verbatim: 404
 unknown key, 400 mismatched value, 502 device does not respond.
 
-**Finding on the writability of an attribute (Task 4, 2026-09-02).** The
+**Finding on the writability of an attribute (2026-09-02).** The
 snapshot (`NodeSnapshot.attributes`) carries only values, no access
 rights - "writable" appears nowhere there. Checked against the installed
 packages, not guessed:
@@ -152,8 +152,8 @@ from loxmatter.api.models import CommandOut, ControlRange, ControlsOut, ValueIn
 from loxmatter.commands.fanout import dispatch_group, plan_group_calls
 from loxmatter.commands.translate import UnsupportedValueError, to_device_calls
 from loxmatter.model.store import Store, UnknownCommandError, UnknownDeviceError
-from loxmatter.profiles.table import command_control, command_slug
-from loxmatter.sources import DeviceCall, SourceNotConfiguredError
+from loxmatter.profiles.table import command_control, command_slug, duplicate_control_command
+from loxmatter.sources import DeviceCall, SourceNotConfiguredError, technology_display_name
 
 Invoker = Callable[[DeviceCall], Awaitable[None]]
 
@@ -268,12 +268,41 @@ def build_control_router(store: Store, invoke: Invoker, values: ValueReader) -> 
         `test_button_offers_no_controls` checks) - a person diagnosing a
         foreign device would then be misled by that, instead of seeing:
         there would still be commands, just unnamed.
+
+        A second filter joined it on 12 September 2026, and it is not the
+        same kind of thing: `duplicate_control_command` drops a command
+        that would draw a widget an earlier command already draws - the
+        two ColorControl colour commands, which a colour lamp accepts
+        both of and which the modal rendered as two identical, mutually
+        interfering colour areas. That one does NOT count towards
+        `hidden_raw_commands`: nothing is hidden from the person
+        diagnosing, the control is right there under its twin, and the
+        dropped key stays executable through `POST /api/commands/{key}`.
         """
         _require_device(device_id)
         stored = store.commands(device_id)
+        # Per ENDPOINT, not per device: a bridge with two lamps behind one
+        # node offers each of them its own colour control, and the two must
+        # not shadow each other.
+        present: dict[int, set[tuple[int, int]]] = {}
+        for command in stored:
+            present.setdefault(command.endpoint, set()).add(
+                (command.cluster_id, command.command_id)
+            )
         named = []
+        unnamed = 0
         for command in stored:
             if command_slug(command.cluster_id, command.command_id) is None:
+                unnamed += 1
+                continue
+            # A second command that would draw the identical widget - see
+            # `profiles.table.duplicate_control_command`. NOT counted as a
+            # hidden raw command: `hidden_raw_commands` means "present but
+            # unnamed", and this one is named, offered under its
+            # preferred twin, and still executable by key.
+            if duplicate_control_command(
+                command.cluster_id, command.command_id, present[command.endpoint]
+            ):
                 continue
             control = command_control(command.cluster_id, command.command_id)
             named.append(
@@ -287,7 +316,7 @@ def build_control_router(store: Store, invoke: Invoker, values: ValueReader) -> 
                     else None,
                 )
             )
-        return ControlsOut(commands=named, hidden_raw_commands=len(stored) - len(named))
+        return ControlsOut(commands=named, hidden_raw_commands=unnamed)
 
     @router.post("/commands/{key}")
     async def execute_command(key: str, body: ValueIn) -> dict[str, str]:
@@ -303,8 +332,8 @@ def build_control_router(store: Store, invoke: Invoker, values: ValueReader) -> 
         try:
             # The same check, for the same reason, as in `write_signal`
             # below and `PATCH /api/signals/{key}` (api/devices.py) - both
-            # carry the name review fix Important #4 from Task 2, closed
-            # there so far exclusively for signals: `resolve_command`
+            # carry the name review fix Important #4 from the device API,
+            # closed there so far exclusively for signals: `resolve_command`
             # searches the `command` table alone, without checking the
             # status of the associated device, and `forget_device` does
             # not delete a row there, only sets `device.active = 0`. A
@@ -371,26 +400,56 @@ def build_control_router(store: Store, invoke: Invoker, values: ValueReader) -> 
         except UnsupportedValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-        failed = await dispatch_group(plans, invoke)
-        if failed:
-            # The failed labels are logged, not just counted (review fix
-            # from Task 5): the status code exists for the human reading
+        outcome = await dispatch_group(plans, invoke)
+        if outcome.unconfigured and len(outcome.unconfigured) == len(plans):
+            # 503 only when the WHOLE group was never ASKED - see
+            # `GroupOutcome`'s docstring. `unconfigured and not unreachable`
+            # was not enough: a group of two where one lamp switched and the
+            # other had no source answered 503 "so 1 members were not
+            # reached", which names no member, gives no reached count, and
+            # says "nothing happened" about a group that was half switched.
+            # Any partial success therefore falls through to the 502 below,
+            # which names every failed member.
+            technology = outcome.unconfigured_technologies[0]
+            # Singular and plural as separate keys - `i18n.t` knows no
+            # plural rule, and one unreached member is the common case
+            # (same pattern as `web.devices.code_detect_remaining_*`).
+            key_for_total = (
+                "api.errors.group_source_not_configured_one"
+                if len(outcome.unconfigured) == 1
+                else "api.errors.group_source_not_configured_many"
+            )
+            raise HTTPException(
+                status_code=503,
+                detail=i18n.t(
+                    key_for_total,
+                    technology=technology_display_name(technology),
+                    total=len(outcome.unconfigured),
+                ),
+            )
+        if outcome.failed:
+            # The failed labels are logged, not just counted (a review
+            # finding): the status code exists for the human reading
             # the log, and "reached 2 of 4" alone still leaves them
-            # grepping the HTTP response for which two.
+            # grepping the HTTP response for which two. `outcome.failed`
+            # names every failed member regardless of kind, so a mix of
+            # unreachable and unconfigured members - and a group where some
+            # members switched and the rest have no source - is still named
+            # in full, with its reached count.
             logger.warning(
                 "group command %r reached %d of %d members; no answer from: %s",
                 key,
-                len(plans) - len(failed),
+                len(plans) - len(outcome.failed),
                 len(plans),
-                ", ".join(failed),
+                ", ".join(outcome.failed),
             )
             raise HTTPException(
                 status_code=502,
                 detail=i18n.t(
                     "api.errors.group_partially_unreachable",
-                    reached=len(plans) - len(failed),
+                    reached=len(plans) - len(outcome.failed),
                     total=len(plans),
-                    devices=", ".join(failed),
+                    devices=", ".join(outcome.failed),
                 ),
             )
         return {"status": "ok", "key": key}

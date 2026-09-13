@@ -19,10 +19,12 @@
 from __future__ import annotations
 
 import asyncio
+import functools
 import json
 import logging
 import os
 import sqlite3
+import sys
 from collections.abc import Mapping
 from datetime import datetime
 from pathlib import Path
@@ -58,9 +60,13 @@ from loxmatter.matter.discovery import (
 from loxmatter.matter.models import NodeSnapshot, SignalKind
 from loxmatter.model.locale_store import LocaleStore
 from loxmatter.model.store import Store
+from loxmatter.model.zigbee_settings_store import settings_for_path
 from loxmatter.profiles.table import is_exportable
+from loxmatter.radios.inventory import scan_serial
+from loxmatter.radios.thread_lockout import open_refusal
 from loxmatter.sources import Sources
 from loxmatter.sources.supervisor import attach, supervise
+from loxmatter.zigbee.runtime import ZigbeeRuntime, build_zigbee_source, zigbee_database_beside
 
 logger = logging.getLogger(__name__)
 
@@ -351,7 +357,7 @@ def export(
         device_id = store.register_device(snapshot)
         stored = store.register_signals(device_id, snapshot)
         # Output commands come from AcceptedCommandList, not from the
-        # attributes: Matter attributes are almost all read-only (task 6).
+        # attributes: Matter attributes are almost all read-only.
         stored_commands = store.register_commands(
             device_id, extract_commands(snapshot, raw=raw_commands)
         )
@@ -395,13 +401,13 @@ def export(
 
     # Text counts too: the virtual text input is its own template type and
     # comes in a later expansion stage (spec 6.6). The decision is made by
-    # `profiles.table.is_exportable` and nobody else (review fix 8,
+    # `profiles.table.is_exportable` and nobody else (since the review of
     # 2026-09-03) - previously a hand-copied inversion
     # `(Exportability.NONE, Exportability.TEXT)` stood here, a second one
     # in `api/export.py`, and both next to exactly the helper that was
     # meant to end this duplication once already.
     skipped = sum(1 for s in stored if not is_exportable(s.exportability))
-    # hidden_count (fix 3 follow-up, phase 6): the same number that
+    # hidden_count: the same number that
     # `api/export.py`'s `_device_preview` delivers as
     # `ExportDeviceOut.hidden_count` (`StoredSignal.functional`, from
     # `profiles.relevance.is_functional` - no second computation here,
@@ -418,7 +424,7 @@ def export(
     typer.echo(i18n.t("cli.export.echo_skipped_signals", count=skipped))
     typer.echo(i18n.t("cli.export.echo_hidden_signals", count=hidden_count))
 
-    # exported_at (task 5, phase 5): the WebUI's `GET /api/export/status`
+    # exported_at: the WebUI's `GET /api/export/status`
     # must answer "when last exported" regardless of whether the last
     # export ran via CLI or via API - both write the same database (see
     # Store.mark_exported). Already closed above, deliberately reopened
@@ -514,6 +520,33 @@ def _warn_if_no_password(store: Store) -> None:
     logger.warning(i18n.t("cli.run.warn_no_password"))
 
 
+def _install_stderr_log() -> logging.Handler:
+    """Sends the bridge's own log lines to stderr, where `docker logs` reads.
+
+    `install_log_buffer()` gives the `loxmatter` logger exactly one
+    handler, the ring the System tab shows - and one handler is enough to
+    keep Python's last-resort output away. Nothing the bridge logged, from
+    the password warning to a Zigbee stick that would not open, reached the
+    container log; only uvicorn's own lines did, because uvicorn configures
+    its loggers itself. The ring holds 500 lines and forgets the rest, so a
+    warm-up line logged before a burst of retries was gone by the time
+    anybody looked.
+
+    Installed by `run()` alone and next to the ring, so no other subcommand
+    - `export`, `set-password`, `fake-miniserver` - starts printing log
+    lines into a user's terminal. The format is uvicorn's own default
+    (`%(levelprefix)s %(message)s`, through its formatter, coloured only on
+    a terminal) plus the logger name, so a bridge line reads like the
+    uvicorn line beside it and can still be grepped by module."""
+    from uvicorn.logging import DefaultFormatter
+
+    handler = logging.StreamHandler(sys.stderr)
+    handler.setLevel(logging.INFO)
+    handler.setFormatter(DefaultFormatter("%(levelprefix)s %(name)s: %(message)s"))
+    logging.getLogger("loxmatter").addHandler(handler)
+    return handler
+
+
 @app.command(help=i18n.t("cli.run.help"))
 def run(
     url: str = typer.Option("ws://localhost:5580/ws", help=i18n.t("cli.common.help_matter_url")),
@@ -539,8 +572,14 @@ def run(
         envvar="LOXMATTER_UPDATE_DIR",
         help=i18n.t("cli.run.help_update_dir"),  # noqa: B008
     ),
+    zigbee_device: str | None = typer.Option(
+        None,
+        "--zigbee-device",
+        help=i18n.t("cli.run.help_zigbee_device"),
+    ),
 ) -> None:
     log_handler = install_log_buffer()
+    _install_stderr_log()
     resolved_store_path = _resolve_store_path(store_path)
     # Printed the same way as in `export` (review fix M10, 2026-09-02):
     # the most likely misconfiguration is an `export` database and a
@@ -571,6 +610,7 @@ def run(
             api_token,
             log_handler,
             update_dir=update_dir,
+            zigbee_device=zigbee_device,
         )
     )
 
@@ -585,11 +625,24 @@ async def _run(
     host: str = "0.0.0.0",  # Same default as `run` — the Miniserver must reach the service
     api_token: str | None = None,
     log_handler: LogBufferHandler | None = None,
-    # Task 8, stage 2: the same default as `build_app`'s own - see there.
+    # The same default as `build_app`'s own - see there.
     # A keyword of its own instead of another positional parameter, so
     # that existing test calls to `_run(...)` keep working unchanged
     # without this argument.
     update_dir: Path = Path("/data/update"),
+    # Seeds the stored radio setting on an installation that has none - see
+    # the seeding block further down for what it does and does not do. A
+    # keyword with a default, the same shape `update_dir` already has, so
+    # every existing direct call to `_run(...)` keeps working unchanged.
+    zigbee_device: str | None = None,
+    # `build_app`'s own defaults, repeated here rather than left to it,
+    # because the seeding below has to scan the SAME two trees the picker
+    # scans: a `--zigbee-device` fingerprinted against a different `/dev`
+    # than the one the UI lists would be a second answer to the question
+    # `settings_for_path` exists to have exactly one answer to. Injectable
+    # so a test can point them at a `tmp_path`.
+    radios_host_dev: Path = Path("/host/dev"),
+    radios_sys_root: Path = Path("/sys"),
 ) -> None:
     """Builds sender, runtime and client on top of `store` and keeps them
     running.
@@ -619,7 +672,7 @@ async def _run(
     during `client.connect()`), cancels the entire `_run` task — that too
     reaches `finally` as a normal cancellation exception.
 
-    **Log ring (task 5, phase 5; call site corrected in task 7, fix 1).**
+    **Log ring.**
     `install_log_buffer()` attaches a `LogBufferHandler` to the logger
     `loxmatter` and is called at EXACTLY ONE place in the entire source
     tree — in `run()` above, as its very first statement, NOT here.
@@ -637,7 +690,7 @@ async def _run(
     in `tests/test_cli.py`, which proves exactly that with a line count,
     NOT merely with "a handler is present").
 
-    **Why the call site moved at all.** Until task 7, the call sat here in
+    **Why the call site moved at all.** It used to sit here in
     `_run()`, immediately before `uvicorn.Config(...)` — i.e. AFTER
     `client.connect()`, `subscribe()`, `runtime.start()`,
     `seed_from_snapshot()` and `resend_all()`, and after the warning from
@@ -651,7 +704,7 @@ async def _run(
 
     Without passing it on to `build_app()` below, `log_handler` would stay
     at its default value of `None` there, and the log stream of the
-    `/api/diagnostics/live` route (task 4 of this phase) would be
+    `/api/diagnostics/live` route would be
     permanently empty in a real run (see the `loxone.server.build_app`
     module docstring, the "`log_handler` is new..." section, which already
     named exactly this gap — see there also for the reverse case, a
@@ -659,8 +712,98 @@ async def _run(
     passes none, e.g. a test)."""
     sender = UdpSender(miniserver, port)
     client = _build_client(url)
+    # The heartbeat keeps meaning "the bridge and the MANDATORY source are
+    # alive" (design 2026-09-12, section 4.9; boundary design open point
+    # 9.1). NOT `sources.all_connected`: that would silence the Loxone
+    # watchdog when only the Zigbee stick is gone, and the Miniserver would
+    # declare the whole bridge dead while every Matter device still worked.
+    # Zigbee's own health reaches Loxone as `zigbee_connected` and as the
+    # per-device `d<id>_online` keys instead.
+    runtime = Runtime(store, sender, link_ok=lambda: client.connected)
+
+    # `database`, `on_connection_change` and `store` never change between a
+    # startup build and an apply-time rebuild, so binding them once here is
+    # what keeps `build_source(settings)` the one-argument callable both
+    # `ZigbeeRuntime.open()` (for the very first source) and its apply path
+    # (for every one after) call identically.
+    #
+    # **`store=store` is the one binding this must not get wrong.**
+    # `ZigbeeSource.__init__` has accepted `store` since configure-on-join
+    # landed, and without it `configure_device` has no pending table to
+    # write a deferred cluster into - the entire interruption-recovery
+    # design in `configure.py` (mark before the attempt, clear after) would
+    # be dead code, silently, because a `ZigbeeSource` built with no store
+    # still connects, still joins devices, and still shows them in the
+    # catalogue.
+    #
+    # `database` sits beside the store, never under `matter_data_dir`: that
+    # directory is matter-server's own, lent to the fabric-backup route and
+    # mounted read-only by the shipped compose file - see
+    # `zigbee_database_beside`.
+    build_source = functools.partial(
+        build_zigbee_source,
+        database=zigbee_database_beside(store.path),
+        on_connection_change=runtime.set_zigbee_connected,
+        store=store,
+        # The stored stick is a host path; zigpy opens it under this mount,
+        # the same tree the guard below resolves through. See
+        # `ZigbeeSource._open_path`.
+        host_dev=radios_host_dev,
+        # Every open of the stored stick asks the Thread report first - the
+        # same trees the radios routes scan, so the two cannot disagree
+        # about which stick Thread is on. See `radios/thread_lockout.py`.
+        open_guard=functools.partial(
+            open_refusal,
+            update_dir=update_dir,
+            host_dev=radios_host_dev,
+            sys_root=radios_sys_root,
+        ),
+    )
     sources = Sources([client])
-    runtime = Runtime(store, sender, link_ok=sources.all_connected)
+    zigbee_runtime = ZigbeeRuntime(
+        store, runtime, sources, build_source=build_source, supervise=supervise
+    )
+    # `--zigbee-device` SEEDS the stored setting, once, and never overrules
+    # one. Two separate reasons, both measured:
+    #
+    # 1. **It only writes when nothing is stored.** A flag left behind in a
+    #    compose file used to re-apply itself on every single restart,
+    #    silently overwriting whatever stick the user had since chosen in
+    #    the web UI - a setting reverting itself at 03:00 with nothing in
+    #    the log to connect it to a line in a YAML file nobody had looked at
+    #    in months. `saved_at is None` is the test for "nobody has ever
+    #    expressed a choice", because that key is written by every path that
+    #    stores one and is removed only by `clear()`. Choosing "no Zigbee
+    #    stick" in the UI therefore counts as a choice and is respected; a
+    #    genuine reset through `clear()` makes the flag usable again.
+    # 2. **It fingerprints the path it was given.** `replace(stored, ...)`
+    #    kept the PREVIOUS stick's radio type, baud rate and flow control
+    #    and pinned them to the new path - ZNP's 38400/software onto an EZSP
+    #    stick, which opens the radio at the wrong speed and looks exactly
+    #    like broken hardware. `settings_for_path` is the same function the
+    #    `PUT` handler uses, so the two doors into this setting cannot
+    #    disagree about which parameters belong to a stick.
+    #
+    # An unrecognised or absent path is still stored, on `DEFAULT_UNKNOWN`'s
+    # values: a stick can be missing at boot and appear a second later, and
+    # the supervisor's 1 s -> 60 s retry is what that case is for.
+    if zigbee_device is not None:
+        stored = store.zigbee_settings.get()
+        if stored.saved_at is None:
+            store.zigbee_settings.save(
+                settings_for_path(zigbee_device, scan_serial(radios_host_dev, radios_sys_root))
+            )
+        elif stored.path != zigbee_device:
+            # Said out loud, because the alternative is the silence that
+            # made defect 1 above invisible for as long as it lasted.
+            logger.warning(
+                i18n.t(
+                    "cli.run.warn_zigbee_device_ignored",
+                    flag=zigbee_device,
+                    stored=stored.path if stored.path is not None else "-",
+                )
+            )
+    zigbee = await zigbee_runtime.open()  # None when no radio is configured
     invoke = sources.send
 
     supervisor_tasks: list[asyncio.Task[None]] = []
@@ -672,6 +815,15 @@ async def _run(
         except MatterUnavailableError as exc:
             _fail(i18n.t("cli.common.fail_matter_not_ready", url=url, exc=exc))
         await runtime.start()
+        if zigbee is not None:
+            # Seeded BEFORE the `attach()` loop, whose `resend_all()` sends
+            # every cached value with `force=True`, so the first resend
+            # carries this key too. `False`, not `True`: the radio has not
+            # come up yet at this point - `cli._run` connects it nowhere,
+            # the supervisor does - and the first successful connect sets it
+            # to `True` through `on_connection_change`. An installation with
+            # no Zigbee radio seeds nothing and never sends the key at all.
+            runtime.cache_zigbee_connected(False)
         gained = 0
         for source in sources.all():
             gained += await attach(source, store, runtime)
@@ -682,13 +834,22 @@ async def _run(
         # run again. Without it the bridge stays mute after a restart of a
         # source, without reporting it - exactly the outage of
         # 8 September 2026.
+        #
+        # Zigbee's own supervisor is started by `ZigbeeRuntime` instead, and
+        # not as a tidier arrangement: a radio change stops that supervisor
+        # and starts a new one for the new stick, so whoever can do that has
+        # to be the one holding the task. A second, independent supervisor
+        # started here would go on retrying the stick the user just gave up.
         supervisor_tasks = [
-            asyncio.ensure_future(supervise(source, store, runtime)) for source in sources.all()
+            asyncio.ensure_future(supervise(source, store, runtime))
+            for source in sources.all()
+            if source.technology != "zigbee"
         ]
+        zigbee_runtime.supervise_current()
 
         # `log_handler` arrives already finished (see the docstring above,
-        # "Log ring" section) - `install_log_buffer()` itself has, since
-        # task 7 (fix 1), lived only in `run()`, BEFORE this entire setup.
+        # "Log ring" section) - `install_log_buffer()` itself lives only in
+        # `run()`, BEFORE this entire setup.
         config = uvicorn.Config(
             build_app(
                 store,
@@ -701,6 +862,9 @@ async def _run(
                 api_token=api_token,
                 log_handler=log_handler,
                 update_dir=update_dir,
+                zigbee_runtime=zigbee_runtime,
+                radios_host_dev=radios_host_dev,
+                radios_sys_root=radios_sys_root,
             ),
             host=host,
             port=listen,
@@ -708,6 +872,17 @@ async def _run(
         )
         await uvicorn.Server(config).serve()
     finally:
+        try:
+            # Before the loop below, and before `sources.all()` is
+            # disconnected further down: this ends the Zigbee supervisor and
+            # any radio change still in flight. A supervisor left running
+            # while the sources are disconnected would see the link go and
+            # reopen the very stick the shutdown is releasing.
+            await zigbee_runtime.stop()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("The Zigbee runtime could not be stopped cleanly on shutdown")
         for supervisor_task in supervisor_tasks:
             supervisor_task.cancel()
             try:

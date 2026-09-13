@@ -21,7 +21,7 @@ The network layer comes in as `fetch`, instead of being hardwired here.
 That is not an end in itself: it means every test runs without a
 network, and the "no internet" case becomes a test case instead of a
 random occurrence in CI. It also keeps this module free of any HTTP
-client - `api/update.py` (Task 8) supplies the real fetcher, built on
+client - `api/update.py` supplies the real fetcher, built on
 whatever library the rest of the API layer already uses.
 
 A device without internet access is explicitly NOT an error here. This
@@ -46,7 +46,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 # The Fetch signature says "already-parsed JSON", not "raw response": the
-# real fetcher (Task 8) is the one place that turns a non-2xx status or an
+# real fetcher (in `api/update.py`) is the one place that turns a non-2xx status or an
 # HTML error page into an exception (or a decoded error body) before this
 # module ever sees it. What lands here is either a JSON object or - should
 # GitHub ever answer one of these two endpoints with an array - a JSON

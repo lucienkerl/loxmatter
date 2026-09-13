@@ -7,7 +7,7 @@ devices. These tests pin down that `otbr` therefore sits behind a
 profile and nobody outside that profile depends on it.
 """
 
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 import yaml
 
@@ -106,3 +106,194 @@ def test_the_updater_does_not_use_latest() -> None:
     # need that same strictness.
     image = _stack()["services"]["loxmatter-updater"]["image"]
     assert "@sha256:" in image or ":latest" not in image
+
+
+def test_only_the_bridge_and_the_updater_see_the_host_dev_tree_read_only() -> None:
+    """Design 2026-09-11 "Radios in the Web UI", section 5: names under
+    /dev/serial/by-id only, never device access. Fault to prove it: mount
+    `/dev:/host/dev` without `:ro` on one of them."""
+    for name, service in _stack()["services"].items():
+        mounts = [str(v) for v in service.get("volumes", []) if str(v).startswith("/dev:")]
+        if name in ("loxmatter", "loxmatter-updater"):
+            assert mounts == ["/dev:/host/dev:ro"], name
+        else:
+            assert mounts == [], name
+
+
+def test_the_bridge_looks_for_the_hosts_dev_where_compose_mounts_it() -> None:
+    """The bridge resolves and opens every stick under the directory it is
+    told the host's `/dev` sits at - `radios_host_dev`, whose default lives
+    in `cli._run` and again in `build_app`. Nothing passes it on the command
+    line, so the default IS the production value, and it has to be the
+    target compose binds `/dev` to. A mount moved to `/host-dev` (the
+    spelling the design first used) would leave the card listing no stick
+    and zigpy opening nothing, with every test still green.
+
+    Fault to prove it: change the bind to `/dev:/host-dev:ro`, or the
+    default of `radios_host_dev` in `cli._run`."""
+    import inspect
+
+    from loxmatter import cli
+    from loxmatter.loxone import server
+
+    volumes = [str(v) for v in _stack()["services"]["loxmatter"]["volumes"]]
+    targets = [v.split(":")[1] for v in volumes if v.split(":")[0] == "/dev"]
+    assert len(targets) == 1
+    for function in (cli._run, server.build_app):
+        default = inspect.signature(function).parameters["radios_host_dev"].default
+        assert PurePosixPath(default.as_posix()) == PurePosixPath(targets[0]), function
+
+
+def test_the_bridge_may_open_serial_devices_without_naming_one():
+    """Design 2026-09-12 section 8.1. A `devices:` entry cannot be used
+    here: it fails the WHOLE stack at `docker compose up` when the node is
+    absent (which is why otbr sits behind a profile), and it is copied into
+    the container at create time, so hotplug is invisible. The cgroup rule
+    grants the access instead, and the existing read-only /dev bind supplies
+    the names.
+
+    188 = USB serial converters (ttyUSB*), 166 = ACM USB modems (ttyACM*),
+    both verified against the kernel's admin-guide/devices.txt (research
+    F.8). A GPIO-UART hat would be 204:64 and is deliberately not granted.
+
+    Fault to prove it: delete one of the two rules."""
+    rules = _stack()["services"]["loxmatter"]["device_cgroup_rules"]
+    assert "c 188:* rmw" in rules
+    assert "c 166:* rmw" in rules
+
+
+def test_only_the_bridge_may_open_serial_devices():
+    """The rule is coarse - it reaches EVERY USB-serial adapter on the host,
+    the Thread stick included (research F.9). That is acceptable for the one
+    service that needs to open a Zigbee coordinator and for no other, and it
+    is much narrower than `privileged: true`. Exclusion of the Thread stick
+    itself is enforced in loxmatter, by resolved major:minor (section 3.2).
+
+    Fault to prove it: add the same rules to `matter-server`."""
+    for name, service in _stack()["services"].items():
+        has_rules = "device_cgroup_rules" in service
+        assert has_rules == (name == "loxmatter"), name
+
+
+def _radio_url(environment: dict[str, str]) -> str:
+    """otbr's `RADIO_URL` as Compose interpolates it from `environment`,
+    for the three variables it names and the `${NAME:-}` form it uses."""
+    url = str(_stack()["services"]["otbr"]["environment"]["RADIO_URL"])
+    for name in ("RADIO_DEVICE", "RADIO_BAUDRATE", "OTBR_RADIO_URL_EXTRA"):
+        value = environment.get(name, "")
+        url = url.replace(f"${{{name}:-}}", value).replace(f"${{{name}}}", value)
+    assert "${" not in url, url
+    return url
+
+
+def test_otbr_takes_the_exclusive_lock_only_when_the_installation_asks_for_it():
+    """OpenThread takes flock + TIOCEXCL on its stick when the radio URL
+    carries `&uart-exclusive` (research A.3), and whether the otbr image on
+    the test Pi accepts that parameter has never been measured (design open
+    point 5). Written into the compose file, it would have reached every
+    Thread installation the next time otbr is recreated - a Thread change
+    on the radios card does exactly that - and an image that refused it
+    would have left Thread down, with the radios job's rollback recreating
+    otbr from the same file.
+
+    So it is opt-in: `OTBR_RADIO_URL_EXTRA` in `.env`, empty by default.
+    Unset, the URL is byte for byte the one every installation already
+    runs; set to `&uart-exclusive`, it carries the lock. `radios-once.sh`
+    rewrites `.env` one named key at a time and restores it from a whole-file
+    backup, so the line survives a radios job - see
+    `test_a_radios_job_keeps_the_opt_in_otbr_radio_url_extra` in
+    `tests/test_updater_radios_script.py`.
+
+    `RADIO_URL` is an ENVIRONMENT variable of the otbr service, not part of
+    its `command:` - the image's "test" entrypoint reads it from the
+    environment, and `command:` carries only `--backbone-interface
+    ${BACKBONE_IF}`.
+
+    Fault to prove it: write `&uart-exclusive` into RADIO_URL again (the
+    default URL carries it), or drop `${OTBR_RADIO_URL_EXTRA:-}` (the opt-in
+    does nothing)."""
+    base = {"RADIO_DEVICE": "/dev/ttyUSB0", "RADIO_BAUDRATE": "460800"}
+    assert _radio_url(base) == "spinel+hdlc+uart:///dev/ttyUSB0?uart-baudrate=460800"
+    assert _radio_url({**base, "OTBR_RADIO_URL_EXTRA": "&uart-exclusive"}) == (
+        "spinel+hdlc+uart:///dev/ttyUSB0?uart-baudrate=460800&uart-exclusive"
+    )
+
+
+# --- Where zigpy's database lands ----------------------------------------------
+#
+# Every compose file under deploy/, not only the one `_stack()` reads: a second
+# deployment shape added later must not be able to put the database back onto
+# a read-only mount without this noticing.
+COMPOSE_FILES = sorted(
+    path
+    for path in (Path(__file__).resolve().parent.parent / "deploy").rglob("*.y*ml")
+    if "compose" in path.name
+)
+
+
+def _command_option(command: list[object], option: str) -> str | None:
+    items = [str(item) for item in command]
+    if option in items and items.index(option) + 1 < len(items):
+        return items[items.index(option) + 1]
+    return None
+
+
+def _environment(service: dict) -> dict[str, str]:
+    raw = service.get("environment") or {}
+    if isinstance(raw, list):
+        return dict(str(item).split("=", 1) for item in raw if "=" in str(item))
+    return {str(key): str(value) for key, value in raw.items()}
+
+
+def _mounts(service: dict) -> list[tuple[str, bool]]:
+    """`(target, read_only)` for every volume, in both compose syntaxes."""
+    mounts = []
+    for volume in service.get("volumes") or []:
+        if isinstance(volume, dict):
+            mounts.append((str(volume["target"]), volume.get("read_only") is True))
+            continue
+        parts = str(volume).split(":")
+        options = parts[2].split(",") if len(parts) > 2 else []
+        mounts.append((parts[1] if len(parts) > 1 else parts[0], "ro" in options))
+    return mounts
+
+
+def test_the_zigbee_database_lands_on_a_writable_mount_in_every_compose_file() -> None:
+    """zigpy creates `zigbee.sqlite` on the first Zigbee Apply, and cannot
+    if its directory is read-only. The first build derived the directory
+    from `--matter-data-dir`, which the testhost compose file mounts
+    `:ro` - so the very first Apply on the Pi would have failed.
+
+    The path is computed with the bridge's own rule
+    (`zigbee_database_beside`), from the store path each bridge service is
+    configured with, and then looked up among that service's mounts. A
+    directory on no mount at all fails too: it would be inside the
+    container's own layer and gone after the next update.
+
+    Fault to prove it, either half: mount `loxmatter-store:/data:ro`, or make
+    `zigbee_database_beside` answer `/matter-data/zigbee.sqlite` again."""
+    from loxmatter.zigbee.runtime import zigbee_database_beside
+
+    assert COMPOSE_FILES, "no compose file found under deploy/"
+    checked = 0
+    for compose in COMPOSE_FILES:
+        stack = yaml.safe_load(compose.read_text(encoding="utf-8"))
+        for name, service in (stack.get("services") or {}).items():
+            command = service.get("command") or []
+            if not command or str(command[0]) != "run":
+                continue  # not a `loxmatter run` bridge
+            store = _command_option(command, "--store-path") or _environment(service).get(
+                "LOXMATTER_STORE"
+            )
+            assert store, f"{compose.name}:{name} leaves the store on the home default"
+            directory = PurePosixPath(zigbee_database_beside(Path(store)).as_posix()).parent
+            covering = [
+                (target, read_only)
+                for target, read_only in _mounts(service)
+                if directory == PurePosixPath(target) or PurePosixPath(target) in directory.parents
+            ]
+            assert covering, f"{compose.name}:{name}: {directory} is on no mount"
+            target, read_only = max(covering, key=lambda mount: len(mount[0]))
+            assert not read_only, f"{compose.name}:{name}: {directory} is under {target}:ro"
+            checked += 1
+    assert checked, "no bridge service found in any compose file"

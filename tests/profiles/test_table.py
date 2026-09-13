@@ -27,10 +27,13 @@ from loxmatter.profiles.table import (
     Exportability,
     classify,
     command_control,
+    command_slug,
+    command_takes_value,
     is_exportable,
     known_attribute_section,
     known_command_pairs,
     lookup,
+    marked_non_functional,
     names_element,
     scale_factor,
     unit_format,
@@ -381,7 +384,10 @@ def test_every_known_command_names_its_widget(cluster_id, command_id, control):
 
 
 def test_a_command_outside_the_table_is_unknown():
-    assert command_control(768, 7) == "unknown"
+    """(768, 7) used to be this example (MoveToColor, xy) - it is now served
+    (see `commands/translate.py::_payload_color_xy`), so the example moves
+    to (768, 0), MoveToHue, which stays genuinely unserved."""
+    assert command_control(768, 0) == "unknown"
 
 
 def test_every_table_command_carries_a_control():
@@ -448,3 +454,35 @@ def test_the_colour_temperature_limits_remain_exportable():
     assert profile.unit == "mired"
     assert is_exportable(profile.exportability)
     assert not profile.slug.startswith("c768_a")
+
+
+def test_the_five_added_clusters_name_their_elements():
+    """Design 2026-09-12 section 5.5. These are Matter clusters that were
+    missing from the table, not Zigbee-only ones - a Matter occupancy sensor
+    got `c1030_a0` before this.
+
+    Fault to prove it: remove the `1030` entry. The slug falls back to the
+    generic name and the signal loses its title."""
+    assert lookup(SignalRef(1, 1030, 0, SignalKind.ATTRIBUTE), True).slug == "occupancy"
+    assert lookup(SignalRef(1, 69, 0, SignalKind.ATTRIBUTE), True).slug == "state"
+    assert lookup(SignalRef(1, 1024, 0, SignalKind.ATTRIBUTE), 5000).slug == "illuminance"
+    assert lookup(SignalRef(1, 768, 3, SignalKind.ATTRIBUTE), 41943).slug == "color_x"
+    assert lookup(SignalRef(1, 768, 4, SignalKind.ATTRIBUTE), 21627).slug == "color_y"
+
+
+def test_the_raw_ias_bitmap_is_expert_only():
+    """The edge derives 69/0 or 1030/0 from this same bitmap, so exporting
+    it as well would send one physical fact to Loxone twice.
+
+    Fault to prove it: drop `functional: false` from the 1280 entry."""
+    assert marked_non_functional(SignalRef(1, 1280, 2, SignalKind.ATTRIBUTE)) is True
+
+
+def test_move_to_color_is_an_analog_output_not_a_digital_one():
+    """`takes_value: true` is what makes this an analog output. Without the
+    table entry the raw export would offer a digital `c768_cmd7` and a
+    button press would send the literal "1" into the XY builder.
+
+    Fault to prove it: set `takes_value: false`."""
+    assert command_slug(768, 7) == "color_xy"
+    assert command_takes_value(768, 7) is True

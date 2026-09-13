@@ -17,23 +17,15 @@ test.english_only:
   en: "English only"
 
 # web.test.smoke: a template deliberately named test-only (analogous to
-# test.* above), so the WebUI translation pipeline (task 8) can check
-# itself against GET /api/i18n without depending on the real web.* table
-# (task 9, ~150 keys) that has not been written yet.
+# test.* above), so the WebUI translation pipeline can check itself against
+# GET /api/i18n without depending on the real web.* table.
 #
-# DELIBERATELY WITHOUT {placeholder} (a deviation from the implementation
-# plan's original design, which had "{value}" here - see the task 8
-# report): `api/language.py:_web_strings()` calls `i18n.t(key)` for every
-# web.* key WITHOUT values. `i18n.t()` interpolates server-side via
-# `str.format(**values)` - a key with a placeholder throws `KeyError`
-# there, and that takes down the ENTIRE `GET /api/i18n` response (a single
-# dict-comprehension call), not just the one key. With "{value}" this
-# already breaks FOUR long-merged tests in tests/api/test_language.py
-# (test_get_i18n_works_without_a_session, among others) - not a
-# hypothetical future problem but an immediate regression. The actual bug
-# lives in api/language.py/i18n/__init__.py (both outside this task's file
-# scope) and must be fixed before or during task 9, once real web.* keys
-# with placeholders are added there - see the task 8 report.
+# DELIBERATELY WITHOUT {placeholder}: when this key was added,
+# `api/language.py:_web_strings()` still called `i18n.t(key)` without
+# values, and a placeholder raised `KeyError` there and took down the
+# ENTIRE `GET /api/i18n` response, not just the one key - which broke four
+# tests in tests/api/test_language.py at once. `_web_strings()` has since
+# switched to `i18n.raw_template()`, and the browser fills placeholders in.
 web.test.smoke:
   en: "smoke test"
   de: "Rauchtest"
@@ -180,17 +172,23 @@ cli.run.echo_commands_backfilled:
   en: "{count} device(s) gained commands the bridge did not know when they were commissioned — their tiles now offer the matching controls."
   de: "{count} Gerät(e) haben Befehle bekommen, die die Brücke beim Einlernen noch nicht kannte — ihre Kacheln bieten jetzt die passenden Bedienelemente."
 cli.run.help_host:
-  en: "Address the HTTP service binds to. Default 0.0.0.0, because the Miniserver must be able to reach the service — see --api-token for the corresponding protection of the `/api` routes (Spec 9, Task 8)."
-  de: "Adresse, an die der HTTP-Dienst bindet. Standard 0.0.0.0, weil der Miniserver den Dienst erreichen muss — siehe --api-token für die dazugehörige Absicherung der `/api`-Routen (Spec 9, Task 8)."
+  en: "Address the HTTP service binds to. Default 0.0.0.0, because the Miniserver must be able to reach the service — see --api-token for the corresponding protection of the `/api` routes (Spec 9)."
+  de: "Adresse, an die der HTTP-Dienst bindet. Standard 0.0.0.0, weil der Miniserver den Dienst erreichen muss — siehe --api-token für die dazugehörige Absicherung der `/api`-Routen (Spec 9)."
 cli.run.help_api_token:
-  en: "Protects the WebUI's `/api` routes (commissioning, removal, fabric backup) with `Authorization: Bearer <Token>` — an alternative to the signed-in session, not required in addition to it (Spec 9, Task 8; Spec 11). `/cmd` and `/resync` always stay open — the Miniserver cannot send a header. Only use characters allowed in an HTTP header — no spaces, no comma, ASCII; `openssl rand -hex 32` satisfies that. Alternative via the LOXMATTER_API_TOKEN environment variable."
-  de: "Schützt die `/api`-Routen der WebUI (Einlernen, Entfernen, Fabric-Sicherung) mit `Authorization: Bearer <Token>` — alternativ zur angemeldeten Sitzung, nicht zusätzlich zu ihr erforderlich (Spec 9, Task 8; Spec 11). `/cmd` und `/resync` bleiben immer offen — der Miniserver kann keinen Header mitschicken. Nur Zeichen verwenden, die in einem HTTP-Header stehen dürfen — keine Leerzeichen, kein Komma, ASCII; `openssl rand -hex 32` erfüllt das. Alternative über die Umgebungsvariable LOXMATTER_API_TOKEN."
+  en: "Protects the WebUI's `/api` routes (commissioning, removal, fabric backup) with `Authorization: Bearer <Token>` — an alternative to the signed-in session, not required in addition to it (Spec 9; Spec 11). `/cmd` and `/resync` always stay open — the Miniserver cannot send a header. Only use characters allowed in an HTTP header — no spaces, no comma, ASCII; `openssl rand -hex 32` satisfies that. Alternative via the LOXMATTER_API_TOKEN environment variable."
+  de: "Schützt die `/api`-Routen der WebUI (Einlernen, Entfernen, Fabric-Sicherung) mit `Authorization: Bearer <Token>` — alternativ zur angemeldeten Sitzung, nicht zusätzlich zu ihr erforderlich (Spec 9; Spec 11). `/cmd` und `/resync` bleiben immer offen — der Miniserver kann keinen Header mitschicken. Nur Zeichen verwenden, die in einem HTTP-Header stehen dürfen — keine Leerzeichen, kein Komma, ASCII; `openssl rand -hex 32` erfüllt das. Alternative über die Umgebungsvariable LOXMATTER_API_TOKEN."
 cli.run.help_matter_data_dir:
-  en: "matter-server data directory (storage-path), mounted read-only into this service — basis for `GET /api/diagnostics/fabric-backup` (Spec 4.1, Task 6, Phase 5). Without it, the route responds with 503 instead of a backup. See deploy/testhost/docker-compose.yml for the corresponding volume mount."
-  de: "matter-server-Datenverzeichnis (storage-path), read-only in diesen Dienst eingehängt — Grundlage für `GET /api/diagnostics/fabric-backup` (Spec 4.1, Task 6, Phase 5). Ohne Angabe antwortet die Route mit 503 statt einer Sicherung. Siehe deploy/testhost/docker-compose.yml für die dazugehörige Volume-Einhängung."
+  en: "matter-server data directory (storage-path), mounted read-only into this service — basis for `GET /api/diagnostics/fabric-backup` (Spec 4.1). Without it, the route responds with 503 instead of a backup. See deploy/testhost/docker-compose.yml for the corresponding volume mount."
+  de: "matter-server-Datenverzeichnis (storage-path), read-only in diesen Dienst eingehängt — Grundlage für `GET /api/diagnostics/fabric-backup` (Spec 4.1). Ohne Angabe antwortet die Route mit 503 statt einer Sicherung. Siehe deploy/testhost/docker-compose.yml für die dazugehörige Volume-Einhängung."
 cli.run.help_update_dir:
   en: "Directory where this bridge and the update sidecar exchange request/state files (design \"Applying updates through the web UI\", section 7) — the same shared volume as --store-path in the reference deployment, a subdirectory of it. The default matches the sidecar's own default; change both together, or not at all. Alternative via the LOXMATTER_UPDATE_DIR environment variable."
   de: "Verzeichnis, über das diese Brücke und der Update-Beiwagen Anfrage-/Zustandsdateien austauschen (Entwurf \"Updates über die Oberfläche einspielen\", Abschnitt 7) — dasselbe gemeinsame Volume wie --store-path im Referenz-Deployment, ein Unterverzeichnis davon. Der Standard entspricht dem des Beiwagens; beide nur gemeinsam ändern. Alternative über die Umgebungsvariable LOXMATTER_UPDATE_DIR."
+cli.run.help_zigbee_device:
+  en: "by-id path of the Zigbee coordinator's USB serial device (e.g. /dev/serial/by-id/...), used ONLY to set up an installation that has never chosen a radio. Its type and baud rate are read from the stick itself. Once a radio has been chosen - here or in the interface - the stored setting wins and this flag is ignored with a warning; without the flag, the stored setting is used."
+  de: "by-id-Pfad des USB-Seriengeräts des Zigbee-Koordinators (z. B. /dev/serial/by-id/...), nur zur Ersteinrichtung einer Installation, die noch nie einen Funkstick gewählt hat. Typ und Baudrate werden vom Stick selbst gelesen. Sobald ein Funkstick gewählt wurde – hier oder in der Oberfläche –, gilt die gespeicherte Einstellung und diese Option wird mit einer Warnung übergangen; ohne Angabe wird die gespeicherte Einstellung verwendet."
+cli.run.warn_zigbee_device_ignored:
+  en: "--zigbee-device names {flag}, but this bridge already has a Zigbee radio setting ({stored}) and the stored one wins. Change the radio in the interface, under Radios - or remove the flag, which no longer does anything here."
+  de: "--zigbee-device nennt {flag}, aber diese Brücke hat bereits eine Zigbee-Funkeinstellung ({stored}), und die gespeicherte gilt. Ändern Sie den Funkstick in der Oberfläche unter Funk – oder entfernen Sie die Option, die hier nichts mehr bewirkt."
 cli.run.warn_no_password:
   en: "No password has been set for this bridge yet. Until it is, nobody can sign in through the interface — and anyone who can reach the port can complete the initial setup and take over the bridge. Open the interface now and set a password."
   de: "Für diese Brücke ist noch kein Passwort vergeben. Bis das geschehen ist, lässt sich niemand über die Oberfläche anmelden — und jeder, der den Port erreicht, kann die Ersteinrichtung abschließen und die Brücke damit übernehmen. Öffne die Oberfläche jetzt und vergib ein Passwort."
@@ -307,6 +305,18 @@ api.categories.lock:
 api.categories.other:
   en: "other"
   de: "Sonstige"
+
+# api.technologies - a device's source, as a person should read it
+# (`loxmatter.sources.technology_display_name`, boundary design open point
+# 13). An unknown value (a rolled-back row whose technology this version
+# has never heard of) falls back to the raw, untranslated value rather than
+# raising - see that function's docstring.
+api.technologies.matter:
+  en: "Matter"
+  de: "Matter"
+api.technologies.zigbee:
+  en: "Zigbee"
+  de: "Zigbee"
 api.errors.group_category_mismatch:
   # `{actual}`/`{expected}` arrive PRE-TRANSLATED (`_check_members` in
   # store.py looks them up via `api.categories.*` above before calling
@@ -401,6 +411,18 @@ api.errors.commissioning_failed:
 api.errors.device_unreachable:
   en: "device unreachable: {exc}"
   de: "Geraet nicht erreichbar: {exc}"
+# The reasons `zigbee/source.py` puts into `api.errors.device_unreachable`.
+# Each is its own string, so the reason is in the language of the sentence
+# around it.
+api.errors.zigbee_device_not_in_network:
+  en: "unknown Zigbee device {address}"
+  de: "unbekanntes Zigbee-Gerät {address}"
+api.errors.zigbee_no_such_command:
+  en: "endpoint {endpoint} of {address} has no command {command_id} on cluster {cluster_id}"
+  de: "Endpunkt {endpoint} von {address} hat keinen Befehl {command_id} im Cluster {cluster_id}"
+api.errors.zigbee_command_refused:
+  en: "the device answered command {command_id} with status {status}"
+  de: "das Gerät hat Befehl {command_id} mit Status {status} beantwortet"
 api.errors.source_not_configured:
   # A stored device belongs to a technology no running source serves -
   # possible once a second source exists and its radio is removed from
@@ -411,6 +433,28 @@ api.errors.source_not_configured:
 api.errors.group_partially_unreachable:
   en: "reached {reached} of {total} members; no answer from: {devices}"
   de: "{reached} von {total} Mitgliedern erreicht, keine Antwort von: {devices}"
+api.errors.device_timed_out:
+  # The bound of `bounded_source_call` or `bounded_source_removal`
+  # (boundary design open point 11) - a source was asked and stayed silent
+  # past `SOURCE_CALL_TIMEOUT_SECONDS` or `SOURCE_REMOVAL_TIMEOUT_SECONDS`.
+  # `:g` because those bounds are floats: "within 10 s", not "within 10.0 s".
+  en: "the device did not answer within {seconds:g} s"
+  de: "das Gerät hat innerhalb von {seconds:g} s nicht geantwortet"
+# The all-unconfigured case of a group fan-out (boundary design open point
+# 12): EVERY member was never asked, because the technology's source is not
+# running right now - 503, not 502, the same distinction
+# `api.errors.source_not_configured` makes for one device. A group with even
+# one member switched is a partial success and uses
+# `api.errors.group_partially_unreachable` instead.
+# Two keys rather than one with a plural rule: i18n.t knows no plural forms,
+# and a group of one is the common case (same pattern as
+# `web.devices.code_detect_remaining_*`).
+api.errors.group_source_not_configured_one:
+  en: "{technology} is not set up in this installation, so 1 member was not reached"
+  de: "{technology} ist in dieser Installation nicht eingerichtet, daher wurde 1 Mitglied nicht erreicht"
+api.errors.group_source_not_configured_many:
+  en: "{technology} is not set up in this installation, so {total} members were not reached"
+  de: "{technology} ist in dieser Installation nicht eingerichtet, daher wurden {total} Mitglieder nicht erreicht"
 api.errors.command_belongs_to_removed_device:
   en: "command {command_key!r} belongs to device {device_id}, which was removed"
   de: "Kommando {command_key!r} gehoert zu Geraet {device_id}, das entfernt wurde"
@@ -420,6 +464,146 @@ api.errors.unknown_signal_key:
 api.errors.signal_belongs_to_removed_device:
   en: "signal {signal_key!r} belongs to device {device_id}, which was removed"
   de: "Signal {signal_key!r} gehoert zu Geraet {device_id}, das entfernt wurde"
+
+# The ways a Zigbee radio can fail to come up (design 2026-09-12, section
+# 4.6). Each one names the NEXT THING TO DO, because each sends the user
+# somewhere different - to the radios card, to the Compose stack, to their
+# second loxmatter instance, or to the firmware on the stick. One generic
+# "connection failed" would send them nowhere, which is why these are five
+# keys and not one, and why `test_the_four_startup_messages_are_four_
+# different_sentences` checks that they stay five different sentences in
+# both languages.
+#
+# `ZigbeeSource` translates these at two different moments. Inside
+# `ZigbeeUnavailableError` they are text at once - the supervisor logs it
+# right then. Inside `progress().error` they stay an `i18n.Message` and are
+# translated when `GET /api/zigbee/radio` answers, because the radios card
+# keeps showing that one for as long as the supervisor retries, and a
+# language switch has to reach it.
+api.errors.zigbee_stick_missing:
+  en: "The Zigbee stick is no longer there. Check under Settings which stick is selected, and pick it again."
+  de: "Der Zigbee-Stick ist nicht mehr da. Prüfen Sie in den Einstellungen, welcher Stick ausgewählt ist, und wählen Sie ihn erneut."
+api.errors.zigbee_no_device_permission:
+  en: "The container is not allowed to open this USB device. Refreshing the Compose stack from the update card grants it the access it needs."
+  de: "Der Container darf dieses USB-Gerät nicht öffnen. Ein Auffrischen des Compose-Stacks über die Update-Karte gibt ihm den nötigen Zugriff."
+api.errors.zigbee_stick_busy:
+  en: "Another program is already using this stick — a second loxmatter instance on this host is the usual reason. Stop it, or pick a different stick."
+  de: "Ein anderes Programm benutzt diesen Stick bereits – meist eine zweite loxmatter-Instanz auf diesem Host. Beenden Sie sie, oder wählen Sie einen anderen Stick."
+api.errors.zigbee_not_a_coordinator:
+  en: "This stick does not answer as a Zigbee coordinator. It may be running Thread or bootloader firmware instead."
+  de: "Dieser Stick antwortet nicht als Zigbee-Koordinator. Möglicherweise läuft auf ihm Thread- oder Bootloader-Firmware."
+api.errors.zigbee_network_mismatch:
+  # The bridge STOPS here and does not overwrite. Restoring the network
+  # this bridge knows is destructive and needs the write-once-EUI64
+  # confirmation, which is not built yet (design 4.8) - so the text offers
+  # the option that exists and does not promise the one that does not.
+  en: "This stick already carries a different Zigbee network. loxmatter will not overwrite it. Use a stick without a network, or reset this one in the tool it was set up with."
+  de: "Auf diesem Stick liegt bereits ein anderes Zigbee-Netz. loxmatter überschreibt es nicht. Verwenden Sie einen Stick ohne Netz, oder setzen Sie diesen mit dem Werkzeug zurück, mit dem er eingerichtet wurde."
+api.errors.zigbee_radio_failed:
+  # The fall-through of the five above. It exists because a cause nobody
+  # anticipated must still produce a sentence with the reason in it - an
+  # empty message is the one outcome that helps nobody.
+  en: "The Zigbee radio could not be started: {exc}"
+  de: "Das Zigbee-Funkmodul konnte nicht gestartet werden: {exc}"
+api.errors.zigbee_not_connected:
+  # A radio IS configured, so this is 502 and not the 503 of
+  # `api.errors.source_not_configured`: there is a source, its stick simply
+  # is not answering right now. The supervisor is already retrying.
+  en: "The Zigbee radio is configured, but the link to the stick is down. The bridge keeps trying to reconnect."
+  de: "Das Zigbee-Funkmodul ist eingerichtet, aber die Verbindung zum Stick ist unterbrochen. Die Brücke versucht weiter, sie aufzubauen."
+
+# The two refusals of `PUT /api/zigbee/radio`. The first one's wording IS
+# the user-facing behaviour of the Thread exclusion: it has to say WHAT is
+# wrong, WHY, and WHAT TO DO about it. "Invalid device" would leave the
+# user with a stick they can see in the Thread row two rows above and no
+# idea why they may not have it here.
+api.errors.zigbee_is_thread_stick:
+  # The same advice as the card's own hint under the Zigbee select
+  # (`web.radios.zigbee_thread_stick_hint`), so a stale tab that posts
+  # anyway reads the sentence the current page already shows. "Sie", like
+  # every other sentence on the radios card.
+  en: "This stick is in use for Thread. Turn Thread off, or move Thread to another stick, in the Thread row - then this stick can be used for Zigbee."
+  de: "Dieser Stick wird für Thread verwendet. Schalten Sie Thread in der Thread-Zeile ab oder wählen Sie dort einen anderen Stick – dann lässt sich dieser Stick für Zigbee verwenden."
+api.errors.zigbee_thread_unknown:
+  # Why no stick may be chosen: the updater sidecar has not reported the
+  # Thread configuration recently (radios/thread_lockout.py). Shown on the
+  # card under the Zigbee select, and as the PUT's refusal. Names the service
+  # the way `docker compose ps` shows it, because that is where the user
+  # will look.
+  en: "The bridge cannot currently tell which stick Thread is using, because the updater service (loxmatter-updater) has not reported recently. Until it does, no stick can be chosen for Zigbee. Make sure that service is running, and try again in a moment."
+  de: "Die Brücke kann gerade nicht erkennen, welchen Stick Thread verwendet, weil der Update-Dienst (loxmatter-updater) sich seit einer Weile nicht gemeldet hat. Bis er das tut, lässt sich kein Stick für Zigbee wählen. Stellen Sie sicher, dass dieser Dienst läuft, und versuchen Sie es gleich noch einmal."
+api.errors.zigbee_thread_changing:
+  # A Thread or Bluetooth change is running or waiting in the sidecar, so
+  # the reported Thread stick may be about to change.
+  en: "A Thread or Bluetooth change is still being carried out. Wait until it has finished, then choose the Zigbee stick."
+  de: "Eine Änderung an Thread oder Bluetooth wird gerade ausgeführt. Warten Sie, bis sie abgeschlossen ist, und wählen Sie dann den Zigbee-Stick."
+api.errors.zigbee_open_thread_unknown:
+  # The STORED stick is not opened: there is no sidecar report at all, so
+  # nothing says it is not the Thread stick. The supervisor keeps retrying,
+  # and this line stays on the card until the sidecar reports.
+  en: "The Zigbee stick has not been opened, because the bridge has no report yet of which stick Thread is using. The updater service (loxmatter-updater) provides that report - once it is running, the bridge opens the stick by itself."
+  de: "Der Zigbee-Stick wurde nicht geöffnet, weil der Brücke noch keine Meldung vorliegt, welchen Stick Thread verwendet. Diese Meldung liefert der Update-Dienst (loxmatter-updater) – sobald er läuft, öffnet die Brücke den Stick von selbst."
+api.errors.zigbee_open_is_thread_stick:
+  # The STORED Zigbee stick is the one Thread is now running on - moved
+  # there by hand, since the Thread row refuses it. Opening it would garble
+  # the Thread network, so it stays closed.
+  en: "The Zigbee stick has not been opened, because Thread is running on it. Choose another stick for Zigbee, or move Thread to a different stick."
+  de: "Der Zigbee-Stick wurde nicht geöffnet, weil Thread auf ihm läuft. Wählen Sie einen anderen Stick für Zigbee, oder verlegen Sie Thread auf einen anderen Stick."
+api.errors.zigbee_unknown_device:
+  # The same rule `POST /api/radios` already applies to the Thread device:
+  # the bridge validates what it can see. Without it a typo becomes a zigpy
+  # startup failure minutes later, with a message about a serial port.
+  en: "This USB device is not among the sticks the bridge can see. Rescan, and pick one from the list."
+  de: "Dieses USB-Gerät ist keiner der Sticks, die die Brücke sehen kann. Lesen Sie neu ein und wählen Sie einen aus der Liste."
+api.errors.zigbee_not_configured:
+  en: "No Zigbee stick is set up in this installation. Pick one under Settings first."
+  de: "In dieser Installation ist kein Zigbee-Stick eingerichtet. Wählen Sie zuerst unter Einstellungen einen aus."
+
+# The errors of the pairing routes (design 3.4). Each one says what the
+# user's next move is, because each sends them somewhere different: to the
+# radios card, back to the list, or simply to wait a moment.
+api.zigbee.permit_failed:
+  # The radio was asked to open the network and did not answer. {exc}
+  # carries the source's own sentence, which is the only thing that
+  # separates a busy stick from an absent one in a bug report - and it goes
+  # LAST, with nothing after it: some of those sentences end in a full stop
+  # and some do not, and the lost-link one already says the bridge is
+  # reconnecting. Text after {exc} doubled both.
+  en: "The network could not be opened for new devices. Reason: {exc}"
+  de: "Das Netz konnte nicht für neue Geräte geöffnet werden. Grund: {exc}"
+api.zigbee.close_failed:
+  # The same refusal for a Stop: a window still recorded as open that the
+  # radio did not acknowledge closing. Its own sentence, because "could not
+  # be opened" is false for a request that asked to close - and this is
+  # the one worth reading, since the coordinator may still be letting
+  # devices in. {exc} goes last, for `permit_failed`'s reason above. It names
+  # the Zigbee network: shown on leaving, it can appear in Settings, where
+  # "the network" could as well be the bridge's own.
+  en: "The Zigbee network could not be closed for new devices, so it may still be open. Reason: {exc}"
+  de: "Das Zigbee-Netz konnte nicht für neue Geräte geschlossen werden und ist womöglich noch offen. Grund: {exc}"
+api.zigbee.radio_changing:
+  # The 503 of the pairing routes while a radio change is in flight - the
+  # old source released, the new one not built yet. NOT the "no stick is set
+  # up" sentence: the user has just picked a stick, and the pairing tab is
+  # only on screen because one is set up. No "reload the page": the tab
+  # shows every 503 of these routes in the list's own banner and keeps
+  # asking, and the first answer after the swap clears it.
+  en: "The Zigbee radio is being changed. Wait a moment - this list updates by itself."
+  de: "Das Zigbee-Funkmodul wird gerade gewechselt. Warten Sie einen Moment – diese Liste aktualisiert sich von selbst."
+api.zigbee.unknown_device:
+  # A row that is no longer there: the device was removed from another tab,
+  # or the radio was swapped and took every row with it. Shown on that row,
+  # which the tab's next poll takes off the list together with this
+  # message - so waiting is the whole fix, and saying so beats a bare "not
+  # found".
+  en: "This device is no longer in the pairing list. Wait a moment - this list updates by itself."
+  de: "Dieses Gerät steht nicht mehr in der Kopplungsliste. Warten Sie einen Moment – diese Liste aktualisiert sich von selbst."
+api.zigbee.not_ready_yet:
+  # A save arriving for a row that has since gone back to interviewing.
+  # Registering it then would store whatever half an interview produced -
+  # a device tile with no signals and no hint why.
+  en: "This device is not ready yet — the bridge is still reading its details. Give it a moment, then set the name again."
+  de: "Dieses Gerät ist noch nicht bereit – die Brücke liest noch seine Angaben. Warten Sie einen Moment und vergeben Sie den Namen dann erneut."
 
 # The five messages of `ThreadDatasetUnavailableError` (matter/otbr.py).
 # NONE of them may contain the dataset itself - it carries the network key
@@ -455,6 +639,12 @@ api.control.fail_not_wired:
 api.devices.fail_no_matter_client:
   en: "No matter-server client configured — the bridge is running without a Matter connection"
   de: "Matter-Client nicht verfuegbar - die Bruecke laeuft ohne Verbindung zu matter-server"
+# `DELETE /api/devices/{id}?forget_only=true` for a device whose technology
+# HAS a configured source: that source is how the device is removed. Shown
+# when a stick was set up again while the forget-only offer was on screen.
+api.devices.forget_only_refused:
+  en: "{technology} is set up in this installation, so the device is removed through it. Remove it again."
+  de: "{technology} ist in dieser Installation eingerichtet, daher wird das Gerät darüber entfernt. Entfernen Sie es erneut."
 api.devices.manual_dataset_origin:
   # Appears as {url} in `otbr.validated_dataset`'s messages when the
   # dataset did not come from the Border Router but from the form. Ends up
@@ -502,7 +692,7 @@ api.auth.fail_wrong_password:
   de: "Falsches Passwort."
 
 # api.diagnostics — system-check lines (api/diagnostics.py) and the two
-# 503 errors of the fabric backup (task 5, phase i18n).
+# 503 errors of the fabric backup.
 api.diagnostics.check_failed:
   en: "This check itself failed ({exc}) — that is a bug in the check, not necessarily in the checked system. The full traceback is in the server log."
   de: "Diese Pruefung selbst ist fehlgeschlagen ({exc}) - das ist ein Fehler in der Pruefung, nicht zwangslaeufig im gepruerften System. Der volle Traceback steht im Server-Log."
@@ -679,10 +869,37 @@ api.update.fail_unknown_channel:
   en: "The stored update channel is not recognized. Open Settings and choose the update channel again."
   de: "Der gespeicherte Update-Kanal wird nicht erkannt. Öffnen Sie die Einstellungen und wählen Sie den Update-Kanal erneut aus."
 
+# api.radios — /api/radios (api/radios.py), design "Radios in the Web UI"
+# (2026-09-11), section 7.
+api.radios.fail_sidecar_not_ready:
+  en: "Radios cannot be changed right now: the updater service is missing, outdated or lacks access to /dev"
+  de: "Funkgeräte lassen sich gerade nicht ändern: Der Updater-Dienst fehlt, ist veraltet oder hat keinen Zugriff auf /dev"
+api.radios.fail_thread_device_required:
+  en: "Choose a USB stick to enable Thread"
+  de: "Zum Einschalten von Thread einen USB-Stick auswählen"
+api.radios.fail_unknown_device:
+  en: "This USB stick is not attached to the host"
+  de: "Dieser USB-Stick ist nicht am Host angeschlossen"
+api.radios.fail_unknown_adapter:
+  en: "This Bluetooth adapter does not exist on the host"
+  de: "Diesen Bluetooth-Adapter gibt es am Host nicht"
+api.radios.fail_busy:
+  en: "An update or another radio change is still running"
+  de: "Ein Update oder eine andere Funkgeräte-Änderung läuft noch"
+api.radios.fail_zigbee_stick:
+  # The reverse of `api.errors.zigbee_is_thread_stick`: the stick the bridge
+  # is set up to use for Zigbee, asked for as the Thread stick. Names both
+  # ways out, because either one is a legitimate thing to want.
+  en: "This stick is set up for Zigbee. Choose another stick for Thread, or first choose another Zigbee stick (or none) in the Zigbee row."
+  de: "Dieser Stick ist für Zigbee eingerichtet. Wählen Sie für Thread einen anderen Stick, oder wählen Sie zuerst in der Zigbee-Zeile einen anderen Zigbee-Stick (oder keinen)."
+api.radios.fail_unwritable:
+  en: "The request could not be written: {exc}"
+  de: "Der Auftrag konnte nicht geschrieben werden: {exc}"
+
 # --- projectsync — ProjectFormatError/AmbiguousMiniserverError messages.
 # `api.project_sync` catches these and passes `str(exc)` straight through
 # as the HTTPException detail, which the WebUI displays - so these must run
-# through i18n.t() like every other user-facing string (task 7). ---
+# through i18n.t() like every other user-facing string. ---
 projectsync.no_ip_known:
   # Falls back into `_describe`'s parenthesized IP for a `LoxLIVE` block
   # that carries no `IntAddr` at all.
@@ -951,6 +1168,11 @@ web.devices.transport_thread:
 web.devices.transport_ip:
   en: "Matter over IP"
   de: "Matter über IP"
+web.devices.transport_zigbee:
+  # Not "Matter over Zigbee": a Zigbee device reaches the bridge through
+  # zigpy, not through Matter at all.
+  en: "Zigbee"
+  de: "Zigbee"
 web.devices.last_heard:
   en: "Last heard {text}"
   de: "Zuletzt gehört {text}"
@@ -1062,6 +1284,24 @@ web.devices.remove_confirm_groups_note:
     It also belongs to: {groups}. If it was the only member carrying a command, that command drops out of the group's intersection, and the group's virtual output for it answers 404 in Loxone from then on.
   de: |
     Es gehört außerdem zu: {groups}. War es das einzige Mitglied mit einem bestimmten Kommando, fällt dieses aus der Schnittmenge der Gruppe, und der für dieses Kommando zuständige virtuelle Ausgang der Gruppe antwortet in Loxone von da an mit 404.
+# The second step of removing a device whose technology has no configured
+# source - the 503 of `DELETE /api/devices/{id}` carrying "offer":
+# "forget_only" - shown on the device's tile with the two buttons below.
+# `{reason}` is the server's own sentence ("Zigbee is not set up in this
+# installation"), `{label}` the device's name. Honest about what is left
+# undone: the device was never asked to leave its network.
+web.devices.forget_only_offer:
+  # Quoted per the file's convention (see e.g. `api.devices.unknown_room`
+  # above): “curly” in `en`, „low-high“ in `de` - straight quotes here were
+  # a Minor finding of the 2026-09-13 verification (N-4).
+  en: "{reason}, so “{label}” could not be asked to leave its network. You can remove it from loxmatter only: it leaves the device list and the export, and the bridge stops sending its values to Loxone - but the device itself is not told. Factory-reset it before pairing it anywhere else."
+  de: "{reason}, daher konnte „{label}“ nicht gebeten werden, sein Netz zu verlassen. Sie können es nur aus loxmatter entfernen: Es verschwindet aus der Geräteliste und dem Export, und die Brücke sendet seine Werte nicht mehr an Loxone – das Gerät selbst erfährt davon aber nichts. Setzen Sie es auf Werkseinstellungen zurück, bevor Sie es anderswo koppeln."
+web.devices.forget_only:
+  en: "Remove from loxmatter only"
+  de: "Nur aus loxmatter entfernen"
+web.devices.forget_only_keep:
+  en: "Keep it"
+  de: "Behalten"
 web.devices.commission_code_required:
   en: "Please enter a pairing code first."
   de: "Bitte zuerst einen Pairing-Code eingeben."
@@ -1164,6 +1404,155 @@ web.devices.more_commands_short:
 web.devices.commission_room_hint:
   en: "optional, can be changed later"
   de: "optional, später änderbar"
+
+# --- The Zigbee tab of the commissioning card (design 2026-09-12, 3.1) ---
+# The two tab labels. Product names, the same in both languages - and the
+# Matter one lives under `web.devices` because that half is the card the
+# Devices view always had.
+web.devices.commission_tab_matter:
+  en: "Matter"
+  de: "Matter"
+web.zigbee.tab:
+  en: "Zigbee"
+  de: "Zigbee"
+# The reset guidance the tab OPENS on, before any window is open. The two
+# cases cover almost every device (design 3.1); the lead-in says why a reset
+# comes first, because a device still paired elsewhere never looks for a new
+# network and the search then finds nothing without saying why.
+web.zigbee.reset_intro:
+  en: "Reset the device first, so it looks for a new network:"
+  de: "Setzen Sie das Gerät zuerst zurück, damit es ein neues Netz sucht:"
+web.zigbee.reset_hint_lamp:
+  en: "A lamp: switch it off and on five to ten times in a row."
+  de: "Eine Lampe: fünf- bis zehnmal hintereinander aus- und wieder einschalten."
+web.zigbee.reset_hint_battery:
+  en: "A battery device: hold its button until the LED blinks."
+  de: "Ein Batteriegerät: die Taste gedrückt halten, bis die LED blinkt."
+web.zigbee.start:
+  en: "Search for devices"
+  de: "Nach Geräten suchen"
+# "Stop searching", not "Stop": beside "Keep open longer" a bare "Beenden"
+# could as well end the whole tab.
+web.zigbee.stop:
+  en: "Stop searching"
+  de: "Suche beenden"
+# Re-sends the maximum, so the window runs a full 254 s from the press.
+web.zigbee.extend:
+  en: "Keep open longer"
+  de: "Länger offen lassen"
+# Counted down in the browser to the server's own end timestamp. {time} is
+# `m:ss` ("4:12"), which says at a glance whether there is time to walk to
+# the lamp; "252 s" had to be divided first.
+web.zigbee.countdown:
+  en: "Open for new devices: {time} left"
+  de: "Offen für neue Geräte: noch {time}"
+web.zigbee.searching_empty:
+  en: "No device has joined yet. Reset it now - it appears here within a few seconds."
+  de: "Noch ist kein Gerät beigetreten. Setzen Sie es jetzt zurück – es erscheint hier nach wenigen Sekunden."
+# The seven row states of design 3.1. `stuck` and `waiting_wake` are the two
+# ZHA does not have, and neither may read as a failure: a stuck row is
+# usually a battery device that fell asleep, and it is still waiting.
+# The interviewing sentence names no device: the row's title above it already
+# does - so it cannot lean on a pronoun for it either (the German one had
+# nothing to refer to). While manufacturer and model are not known, the row
+# says `state_joined` instead.
+web.zigbee.state_joined:
+  en: "Found a device - reading its details"
+  de: "Gerät gefunden – seine Angaben werden gelesen"
+web.zigbee.state_interviewing:
+  en: "Reading the device's details …"
+  de: "Geräteangaben werden gelesen …"
+web.zigbee.state_configuring:
+  en: "Setting it up"
+  de: "Wird eingerichtet"
+web.zigbee.state_ready:
+  en: "Ready to use"
+  de: "Einsatzbereit"
+# A ready row NOT added yet. "Ready to use" in green read as finished there,
+# and a user who left at that point never pressed Add, so the device never
+# reached the device list or Loxone. It says what is left to do, and the
+# button beside it ("Add") needs no longer label because of it.
+web.zigbee.state_ready_to_add:
+  en: "Ready - add it to your devices"
+  de: "Bereit – jetzt hinzufügen"
+web.zigbee.state_failed:
+  en: "Could not read this device"
+  de: "Dieses Gerät konnte nicht gelesen werden"
+web.zigbee.state_stuck:
+  en: "No progress for a while. Battery devices fall asleep - press the device's button every few seconds."
+  de: "Seit einer Weile kein Fortschritt. Batteriegeräte schlafen ein – drücken Sie alle paar Sekunden die Taste am Gerät."
+web.zigbee.state_waiting_wake:
+  en: "Waiting for the device to wake up - press its button"
+  de: "Wartet, bis das Gerät aufwacht – drücken Sie seine Taste"
+web.zigbee.retry:
+  en: "Retry"
+  de: "Erneut versuchen"
+web.zigbee.remove:
+  en: "Remove"
+  de: "Entfernen"
+# The hint on a row that has finished its interview. A different thing, in a
+# different place, from a failed interview: a device with no quirk works
+# with the standard Zigbee functions and is not broken.
+web.zigbee.quirk_applied:
+  en: "Device-specific support (quirk) applied"
+  de: "Gerätespezifische Anpassung (Quirk) angewendet"
+web.zigbee.quirk_none:
+  en: "No device-specific support (quirk): standard Zigbee functions only, so some values may be missing"
+  de: "Keine gerätespezifische Anpassung (Quirk): nur Zigbee-Standardfunktionen, einzelne Werte können fehlen"
+web.zigbee.name_label:
+  en: "Name"
+  de: "Name"
+# The step that makes the device one of the bridge's own: device list,
+# export, Loxone. A button and not a blur, because the prefilled name is
+# often exactly right and a user who agrees with it has no field to leave.
+# Short, because the row's own sentence (`state_ready_to_add`) already says
+# where it adds the device to - and the longer German label wrapped onto two
+# lines beside the Remove button at 375 px.
+web.zigbee.adopt:
+  en: "Add"
+  de: "Hinzufügen"
+# The name saves when its field is left, the room as soon as one is chosen
+# in the select - one sentence for both would be false for one of them.
+web.zigbee.adopted_hint:
+  en: "In the device list. The name is saved when you leave its field, the room as soon as you choose it."
+  de: "In der Geräteliste. Der Name wird gespeichert, sobald Sie das Feld verlassen, der Raum, sobald Sie ihn auswählen."
+web.zigbee.saved:
+  en: "Saved."
+  de: "Gespeichert."
+# The accessible name of the group of rows still to be dealt with. Its
+# summary is hidden (the group is always open), so without this it read as
+# an unnamed group beside the "already added" one.
+web.zigbee.open_group_label:
+  en: "New devices"
+  de: "Neue Geräte"
+# The title of the collapsed group of rows already in the device list. Two
+# keys rather than one with a plural rule: i18n.t knows no plural forms (the
+# pattern of `web.devices.code_detect_remaining_*`).
+web.zigbee.added_group_one:
+  en: "1 device already added"
+  de: "1 Gerät bereits hinzugefügt"
+web.zigbee.added_group_many:
+  en: "{count} devices already added"
+  de: "{count} Geräte bereits hinzugefügt"
+# The honest removal copy of design 3.1: `remove()` forgets the device
+# whether or not the leave request is ever delivered, and nothing stops the
+# device rejoining.
+web.zigbee.remove_confirm:
+  en: |
+    Remove "{name}"?
+
+    The bridge asks the device to leave the network and forgets it either way. A device that is asleep right now does not hear that request: factory-reset it before pairing it anywhere else.
+  de: |
+    "{name}" entfernen?
+
+    Die Brücke bittet das Gerät, das Netz zu verlassen, und vergisst es in jedem Fall. Ein Gerät, das gerade schläft, erhält diese Bitte nicht: Setzen Sie es auf Werkseinstellungen zurück, bevor Sie es anderswo koppeln.
+# Appended when the device was already added to the device list: the same
+# orphans `web.devices.remove_confirm` names for a tile's removal.
+web.zigbee.remove_confirm_adopted:
+  en: |
+    It also leaves the device list. In Loxone, every virtual input/output with the key prefix "d{id}_" is left orphaned - delete those by hand in Loxone Config.
+  de: |
+    Es verschwindet auch aus der Geräteliste. In Loxone bleiben alle virtuellen Ein- und Ausgänge mit dem Schlüssel-Präfix "d{id}_" verwaist – diese in Loxone Config von Hand löschen.
 # --- Tile menu (kebab-menu design, 2026-09-05) ---
 # `menu` is the accessible name of the kebab button: it carries no word,
 # so it needs one. `menu_room_heading` labels the room section in the
@@ -1179,7 +1568,7 @@ web.devices.menu_signals:
   en: "Edit signals…"
   de: "Signale bearbeiten…"
 
-# --- control modal (task 7): sliders instead of bare number fields for
+# --- control modal: sliders instead of bare number fields for
 # value-carrying commands. `control_brightness` deliberately does NOT
 # exist: a device can have several percent commands (e.g. `level` and
 # `level_onoff`) whose sliders could otherwise not be told apart -
@@ -1825,6 +2214,354 @@ web.settings.resend_saved_toast:
 web.settings.resend_save_error:
   en: "Could not save resend interval: {message}"
   de: "Resend-Intervall konnte nicht gespeichert werden: {message}"
+
+# --- web.radios — the radios card (design "Radios in the Web UI",
+# 2026-09-11, section 8): which USB stick the Thread border router uses,
+# and which Bluetooth adapter commissions Matter devices, chosen from the
+# detected hardware and applied by the updater sidecar through
+# GET/POST /api/radios.
+web.radios.heading:
+  en: "Radios"
+  de: "Funkgeräte"
+web.radios.explanation:
+  en: "Which USB stick the Thread border router uses, and which Bluetooth adapter commissions Matter devices. Changes are applied by the updater service."
+  de: "Welchen USB-Stick der Thread-Border-Router nutzt und über welchen Bluetooth-Adapter Matter-Geräte angelernt werden. Änderungen setzt der Updater-Dienst um."
+web.radios.thread_label:
+  en: "Thread"
+  de: "Thread"
+web.radios.bluetooth_label:
+  en: "Bluetooth"
+  de: "Bluetooth"
+web.radios.no_thread_stick:
+  en: "No Thread stick (Thread off)"
+  de: "Kein Thread-Stick (Thread aus)"
+web.radios.thread_unknown:
+  en: "Unknown (needs a newer or running updater service)"
+  de: "Unbekannt (braucht einen neueren oder laufenden Updater-Dienst)"
+web.radios.bluetooth_unknown:
+  en: "Unknown (needs a newer or running updater service)"
+  de: "Unbekannt (braucht einen neueren oder laufenden Updater-Dienst)"
+web.radios.in_use:
+  en: "in use"
+  de: "in Verwendung"
+web.radios.missing:
+  en: "{path} (missing)"
+  de: "{path} (fehlt)"
+web.radios.bus_uart:
+  en: "{name} · built in (UART)"
+  de: "{name} · eingebaut (UART)"
+web.radios.bus_usb:
+  en: "{name} · USB {product}"
+  de: "{name} · USB {product}"
+web.radios.bus_other:
+  en: "{name}"
+  de: "{name}"
+web.radios.rfkill_blocked:
+  en: "Blocked by rfkill - unblocking needs root on the host, see docs/SETUP.md"
+  de: "Durch rfkill gesperrt – Entsperren braucht Root auf dem Host, siehe docs/SETUP.md"
+web.radios.option_blocked:
+  en: "blocked"
+  de: "gesperrt"
+web.radios.thread_option_zigbee:
+  # The Thread row's suffix for the stick the Zigbee row is set up with -
+  # the mirror of `web.radios.zigbee_is_thread_stick`.
+  en: "in use for Zigbee"
+  de: "für Zigbee in Verwendung"
+web.radios.thread_zigbee_took_over:
+  # The suffix for a stick that is IN USE FOR THREAD and set up for Zigbee -
+  # the mirror of `web.radios.zigbee_thread_took_over`. One suffix instead
+  # of "in use · in use for Zigbee", which read as two contradicting claims.
+  en: "taken over by Zigbee"
+  de: "von Zigbee belegt"
+web.radios.thread_zigbee_stick_hint:
+  # The line under the Thread select whenever the list holds the Zigbee
+  # stick - the mirror of `web.radios.zigbee_thread_stick_hint`. The
+  # option's own suffix is cut off by a narrow native select, so the reason
+  # and the way out live here, in full. {name} is the stick's name as the
+  # Thread row shows it.
+  en: "{name} is set up for Zigbee, so it cannot be chosen here for Thread. To use it for Thread, choose another stick for Zigbee, or turn Zigbee off (\"No Zigbee stick\"), in the Zigbee row below."
+  de: "{name} ist für Zigbee eingerichtet und kann hier für Thread nicht gewählt werden. Um ihn für Thread zu nutzen, wählen Sie in der Zigbee-Zeile unten einen anderen Stick oder schalten Sie Zigbee ab („Kein Zigbee-Stick“)."
+web.radios.thread_zigbee_took_over_hint:
+  # The same line when that stick is also the current Thread device - the
+  # mirror of `web.radios.zigbee_thread_took_over_hint`.
+  en: "{name} is in use for Thread, but it is set up for Zigbee. To free it for Zigbee, choose another stick for Zigbee, or turn Zigbee off (\"No Zigbee stick\"), in the Zigbee row below."
+  de: "{name} wird für Thread verwendet, ist aber für Zigbee eingerichtet. Um ihn für Zigbee freizugeben, wählen Sie in der Zigbee-Zeile unten einen anderen Stick oder schalten Sie Zigbee ab („Kein Zigbee-Stick“)."
+
+# --- The Zigbee coordinator row ---
+web.radios.zigbee_label:
+  en: "Zigbee stick"
+  de: "Zigbee-Stick"
+web.radios.zigbee_none:
+  en: "No Zigbee stick"
+  de: "Kein Zigbee-Stick"
+web.radios.zigbee_is_thread_stick:
+  # The short suffix in the option label, beside `web.radios.in_use` and
+  # `web.radios.option_blocked` - the pattern the Bluetooth row already
+  # uses for an rfkill-blocked adapter. The long sentence is the API's
+  # refusal (`api.errors.zigbee_is_thread_stick`), shown when a stale page
+  # posts anyway.
+  en: "in use for Thread"
+  de: "für Thread in Verwendung"
+web.radios.zigbee_thread_took_over:
+  # The suffix for a stick that is set up for Zigbee AND in use for Thread -
+  # Thread was moved onto it afterwards. One suffix instead of "in use · in
+  # use for Thread", which read as two contradicting claims.
+  en: "taken over by Thread"
+  de: "von Thread belegt"
+web.radios.zigbee_thread_stick_hint:
+  # The line under the Zigbee select whenever the list holds the Thread
+  # stick. The option's own suffix is cut off by a narrow native select
+  # (measured at 375 px in German), so the reason and the way out live
+  # here, in full. {name} is the stick's name as the list shows it.
+  en: "{name} is in use for Thread, so it cannot be chosen here. To use it for Zigbee, turn Thread off or move Thread to another stick in the Thread row above."
+  de: "{name} wird für Thread verwendet und kann hier nicht gewählt werden. Um ihn für Zigbee zu nutzen, schalten Sie Thread in der Thread-Zeile oben ab oder wählen Sie dort einen anderen Stick."
+web.radios.zigbee_thread_took_over_hint:
+  # The same line when that stick is the one Zigbee is set up with: the
+  # bridge keeps trying to open a port the border router holds, and the
+  # user has a choice to make in either row.
+  en: "{name} is set up for Zigbee, but Thread is using it now. Turn Thread off or move Thread to another stick in the Thread row above, or choose another stick for Zigbee here."
+  de: "{name} ist für Zigbee eingerichtet, wird aber gerade von Thread verwendet. Schalten Sie Thread in der Thread-Zeile oben ab oder wählen Sie dort einen anderen Stick – oder wählen Sie hier einen anderen Stick für Zigbee."
+web.radios.fingerprint_unknown:
+  en: "Not recognised - set the radio type and baud rate under Advanced"
+  de: "Nicht erkannt – Funktyp und Baudrate unter Erweitert einstellen"
+web.radios.advanced:
+  en: "Advanced"
+  de: "Erweitert"
+web.radios.zigbee_applying:
+  # The window between releasing the old stick and having built the new
+  # one - a `shutdown(db=True)` plus an up-to-5 s border-router read, during
+  # which there is no source to ask and the card used to be told `idle`,
+  # the one state that means "nothing is configured here".
+  en: "Applying the change - releasing the previous radio"
+  de: "Änderung wird übernommen – der bisherige Funkstick wird freigegeben"
+web.radios.zigbee_loading_quirks:
+  # The user is looking at a 9-15 s pause on a Pi and deserves to know it
+  # is expected, not a hang. Not "the first connection": the same state
+  # opens the reconnect after a lost link, which is not a first anything.
+  en: "Preparing device support - this can take a few seconds"
+  de: "Geräteunterstützung wird vorbereitet – das kann einige Sekunden dauern"
+web.radios.zigbee_opening_radio:
+  en: "Opening the stick"
+  de: "Stick wird geöffnet"
+web.radios.zigbee_connected:
+  en: "Connected"
+  de: "Verbunden"
+web.radios.zigbee_failed_retrying:
+  # Carries the attempt count AND the error: the supervisor never gives up,
+  # so the card must not imply it has.
+  en: "{error} (attempt {attempts} - the bridge keeps trying)"
+  de: "{error} (Versuch {attempts} – die Brücke versucht es weiter)"
+web.radios.zigbee_retrying:
+  # `loading_quirks` and `opening_radio` come round again on every one of
+  # the supervisor's retries. From the second attempt on, "the first
+  # connection takes a few seconds" would be untrue; {attempt} is the
+  # number of the attempt now running.
+  en: "Trying again (attempt {attempt})"
+  de: "Neuer Verbindungsversuch (Versuch {attempt})"
+web.radios.zigbee_retrying_after:
+  # The same retry, with the reason the previous attempt failed kept on
+  # screen (`ConnectionProgress.error` carries it through the retry).
+  # "Previous", not "last": "Letzter Versuch" reads as "final attempt" in
+  # German, and the supervisor never gives up.
+  en: "Trying again (attempt {attempt}). Previous attempt: {error}"
+  de: "Neuer Verbindungsversuch (Versuch {attempt}). Vorheriger Versuch: {error}"
+web.radios.zigbee_failed_unknown:
+  # Only if a failed attempt ever arrives without its own sentence.
+  en: "The Zigbee stick could not be opened"
+  de: "Der Zigbee-Stick konnte nicht geöffnet werden"
+web.radios.zigbee_device_missing:
+  # The progress line, not an option label: the select already shows the
+  # path (`web.radios.missing`). This wins over the connection state,
+  # because an unplugged stick fails exactly like one that is present and
+  # refusing to open, and the two need opposite actions.
+  en: "The chosen stick is not plugged in. Plug it back in, or pick another stick - the bridge keeps looking for it."
+  de: "Der gewählte Stick ist nicht eingesteckt. Stecken Sie ihn wieder ein oder wählen Sie einen anderen Stick – die Brücke sucht weiter nach ihm."
+web.radios.zigbee_option_unrecognised:
+  # The short suffix on an option, beside `web.radios.in_use`; the full
+  # sentence is `web.radios.fingerprint_unknown` below the select.
+  en: "not recognised"
+  de: "nicht erkannt"
+web.radios.zigbee_firmware:
+  # The line under the Zigbee row once the stick has connected: the firmware
+  # the coordinator reported (`coordinator.firmware` from
+  # `GET /api/zigbee/radio`), the one thing about a stick that decides
+  # whether it works as a coordinator at all. {firmware} is the radio
+  # library's own text, e.g. "7.4.4.0 build 0".
+  en: "Firmware: {firmware}"
+  de: "Firmware: {firmware}"
+web.radios.zigbee_hint:
+  # The Thread and Bluetooth rows above warn about restarts and a sidecar
+  # job; this row does the opposite, and has to say so rather than leave
+  # the user to assume the same warning applies.
+  en: "A Zigbee stick change takes effect immediately and restarts nothing - Thread and Bluetooth are left as they are."
+  de: "Ein Wechsel des Zigbee-Sticks wirkt sofort und startet nichts neu – Thread und Bluetooth bleiben, wie sie sind."
+web.radios.zigbee_radio_type:
+  en: "Radio type"
+  de: "Funktyp"
+web.radios.zigbee_baudrate:
+  en: "Baud rate"
+  de: "Baudrate"
+web.radios.zigbee_radio_type_ezsp:
+  # Protocol names with the chip maker that speaks them, so a user can
+  # match the stick's packaging to an entry.
+  en: "EZSP (Silicon Labs)"
+  de: "EZSP (Silicon Labs)"
+web.radios.zigbee_radio_type_znp:
+  en: "ZNP (Texas Instruments)"
+  de: "ZNP (Texas Instruments)"
+web.radios.zigbee_radio_type_deconz:
+  en: "deCONZ (dresden elektronik)"
+  de: "deCONZ (dresden elektronik)"
+web.radios.rescan:
+  en: "Rescan"
+  de: "Neu einlesen"
+web.radios.apply:
+  en: "Apply"
+  de: "Übernehmen"
+web.radios.confirm_title:
+  en: "Change radios?"
+  de: "Funkgeräte ändern?"
+web.radios.confirm_thread_switch:
+  en: "The Thread border router restarts with the new stick. Thread devices are unreachable for one to two minutes and rejoin on their own. The Thread network stays the same."
+  de: "Der Thread-Border-Router startet mit dem neuen Stick neu. Thread-Geräte sind ein bis zwei Minuten nicht erreichbar und treten danach von selbst wieder bei. Das Thread-Netz bleibt dasselbe."
+web.radios.confirm_thread_on:
+  en: "The Thread border router starts with this stick."
+  de: "Der Thread-Border-Router startet mit diesem Stick."
+web.radios.confirm_thread_off:
+  en: "The Thread border router stops. Thread devices stay unreachable until Thread is switched on again."
+  de: "Der Thread-Border-Router wird beendet. Thread-Geräte bleiben unerreichbar, bis Thread wieder eingeschaltet wird."
+web.radios.confirm_bluetooth:
+  en: "matter-server restarts. A commissioning in progress is aborted."
+  de: "matter-server startet neu. Ein laufendes Anlernen wird abgebrochen."
+web.radios.confirm_thread_untouched:
+  en: "Thread is not touched. The border router keeps running with the stick it uses now, and Thread devices stay reachable."
+  de: "Thread wird nicht angefasst. Der Border-Router läuft mit dem Stick weiter, den er jetzt nutzt, und Thread-Geräte bleiben erreichbar."
+web.radios.confirm_rollback:
+  en: "If it fails, the previous setting is restored automatically."
+  de: "Schlägt es fehl, wird die vorherige Einstellung automatisch wiederhergestellt."
+web.radios.confirm_apply:
+  en: "Change"
+  de: "Ändern"
+web.radios.cancel:
+  en: "Cancel"
+  de: "Abbrechen"
+web.radios.step_validate:
+  en: "Check the setting"
+  de: "Einstellung prüfen"
+web.radios.step_backup:
+  en: "Back up the configuration"
+  de: "Konfiguration sichern"
+web.radios.step_write:
+  en: "Write the configuration"
+  de: "Konfiguration schreiben"
+web.radios.step_apply_bluetooth:
+  en: "Restart matter-server"
+  de: "matter-server neu starten"
+web.radios.step_verify_bluetooth:
+  en: "Wait for matter-server"
+  de: "Auf matter-server warten"
+web.radios.step_apply_thread:
+  en: "Restart the Thread border router"
+  de: "Thread-Border-Router neu starten"
+web.radios.step_verify_thread:
+  en: "Check the Thread network (up to 90 s)"
+  de: "Thread-Netz prüfen (bis 90 s)"
+web.radios.step_unknown:
+  en: "Unknown step ({step})"
+  de: "Unbekannter Schritt ({step})"
+web.radios.job_abandoned:
+  en: "The updater service stopped answering while this job was running. It may not have finished - check the previous setting still matches what you expect, and try again once the service is back."
+  de: "Der Updater-Dienst hat während dieses Auftrags aufgehört zu antworten. Er ist möglicherweise nicht fertig geworden – prüfen Sie, ob die vorherige Einstellung noch passt, und versuchen Sie es erneut, sobald der Dienst wieder läuft."
+web.radios.job_not_collected:
+  en: "The request was accepted, but the updater service never picked it up. Nothing was changed - try again."
+  de: "Der Auftrag wurde angenommen, aber der Updater-Dienst hat ihn nie abgeholt. Es wurde nichts geändert – bitte erneut versuchen."
+web.radios.rolling_back:
+  en: "That did not work. The previous setting is being restored - this can take up to two and a half minutes. Please leave the Pi switched on."
+  de: "Das hat nicht funktioniert. Die vorherige Einstellung wird gerade wiederhergestellt – das kann bis zu zweieinhalb Minuten dauern. Bitte lassen Sie den Pi eingeschaltet."
+web.radios.result_done:
+  en: "Applied."
+  de: "Übernommen."
+web.radios.result_unchanged:
+  en: "Nothing to change."
+  de: "Nichts zu ändern."
+web.radios.result_rejected:
+  en: "Not applied: {reason}"
+  de: "Nicht übernommen: {reason}"
+web.radios.result_failed_restored:
+  en: "Failed ({reason}), previous setting restored."
+  de: "Fehlgeschlagen ({reason}), vorherige Einstellung wiederhergestellt."
+web.radios.result_failed_unhealthy:
+  en: "Failed ({reason}), and the previous setting did not come back up either. See radios-log.txt in the updater's data volume."
+  de: "Fehlgeschlagen ({reason}), und auch die vorherige Einstellung kam nicht wieder hoch. Siehe radios-log.txt im Datenvolume des Updaters."
+web.radios.result_interrupted:
+  en: "Interrupted. The updater service stopped while this change was being applied, so it was neither finished nor undone. Check the settings below and apply them again if they are not what you want."
+  de: "Abgebrochen. Der Updater-Dienst wurde beendet, während diese Änderung übernommen wurde – sie wurde daher weder fertig übernommen noch rückgängig gemacht. Prüfen Sie die Einstellungen unten und übernehmen Sie sie erneut, falls sie nicht passen."
+web.radios.sidecar_busy_update:
+  en: "A software update is running. Radios cannot be changed until it has finished; this card comes back on its own."
+  de: "Es läuft gerade ein Software-Update. Funkgeräte lassen sich erst ändern, wenn es fertig ist; diese Karte kommt von selbst zurück."
+web.radios.sidecar_missing:
+  en: "Changing radios needs the updater service, which is not running."
+  de: "Zum Ändern der Funkgeräte braucht es den Updater-Dienst, und der läuft nicht."
+web.radios.sidecar_refresh:
+  en: "Changing radios needs a newer updater service. Run once on the host: cd {path} && docker compose pull loxmatter-updater && docker compose up -d --no-deps loxmatter-updater"
+  de: "Zum Ändern der Funkgeräte braucht es einen neueren Updater-Dienst. Einmal auf dem Host ausführen: cd {path} && docker compose pull loxmatter-updater && docker compose up -d --no-deps loxmatter-updater"
+web.radios.sidecar_refresh_unknown_path:
+  en: "Changing radios needs a newer updater service. From your loxmatter checkout's deploy/testhost directory, run once: docker compose pull loxmatter-updater && docker compose up -d --no-deps loxmatter-updater"
+  de: "Zum Ändern der Funkgeräte braucht es einen neueren Updater-Dienst. Im Verzeichnis deploy/testhost Ihres loxmatter-Checkouts einmal ausführen: docker compose pull loxmatter-updater && docker compose up -d --no-deps loxmatter-updater"
+web.radios.reason.request_malformed:
+  en: "the request was malformed"
+  de: "der Auftrag war fehlerhaft"
+web.radios.reason.host_dev_not_mounted:
+  en: "the updater has no access to /dev"
+  de: "der Updater hat keinen Zugriff auf /dev"
+web.radios.reason.stack_host_path_unknown:
+  en: "the updater could not find its stack directory on the host"
+  de: "der Updater fand sein Stack-Verzeichnis auf dem Host nicht"
+web.radios.reason.thread_device_required:
+  en: "no USB stick was chosen"
+  de: "kein USB-Stick gewählt"
+web.radios.reason.thread_device_not_found:
+  en: "the USB stick is not attached"
+  de: "der USB-Stick steckt nicht"
+web.radios.reason.thread_device_not_a_serial_port:
+  en: "the device is not a USB serial port"
+  de: "das Gerät ist kein serieller USB-Anschluss"
+web.radios.reason.bluetooth_adapter_not_found:
+  en: "the Bluetooth adapter does not exist"
+  de: "den Bluetooth-Adapter gibt es nicht"
+web.radios.reason.backbone_interface_missing:
+  en: "BACKBONE_IF is not set in .env"
+  de: "BACKBONE_IF ist in der .env nicht gesetzt"
+web.radios.reason.env_file_missing:
+  en: "the .env file is missing"
+  de: "die .env-Datei fehlt"
+web.radios.reason.env_backup_failed:
+  en: "the .env file could not be backed up"
+  de: "die .env-Datei ließ sich nicht sichern"
+web.radios.reason.env_write_failed:
+  en: "the .env file could not be written"
+  de: "die .env-Datei ließ sich nicht schreiben"
+web.radios.reason.env_restore_failed:
+  en: "the .env file could not be restored from its backup"
+  de: "die .env-Datei ließ sich nicht aus der Sicherung wiederherstellen"
+web.radios.reason.interrupted:
+  en: "the updater service was interrupted"
+  de: "der Updater-Dienst wurde unterbrochen"
+web.radios.reason.apply_bluetooth_failed:
+  en: "matter-server could not be restarted"
+  de: "matter-server ließ sich nicht neu starten"
+web.radios.reason.verify_bluetooth_failed:
+  en: "matter-server did not answer within 60 s"
+  de: "matter-server antwortete nicht innerhalb von 60 s"
+web.radios.reason.apply_thread_failed:
+  en: "the Thread border router could not be restarted"
+  de: "der Thread-Border-Router ließ sich nicht neu starten"
+web.radios.reason.verify_thread_failed:
+  en: "no Thread network within 90 s"
+  de: "kein Thread-Netz innerhalb von 90 s"
+web.radios.reason.unknown:
+  en: "an unknown reason"
+  de: "ein unbekannter Grund"
 
 # --- web.export.projectsync — project file sync card ---
 web.export.projectsync_heading:

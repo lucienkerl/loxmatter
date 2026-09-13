@@ -20,7 +20,7 @@ import logging
 import sqlite3
 from collections.abc import Callable, Iterator
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 import pytest
 import typer
@@ -31,10 +31,15 @@ from loxmatter import cli, i18n
 from loxmatter.auth.passwords import hash_password, verify_password
 from loxmatter.cli import app, render_report
 from loxmatter.diagnostics.logbuffer import LogBufferHandler
+from loxmatter.loxone.runtime import HEARTBEAT_KEY, Runtime
 from loxmatter.matter import client as matter_client
 from loxmatter.matter.client import BridgeMatterClient, MatterUnavailableError
 from loxmatter.matter.models import NodeSnapshot
 from loxmatter.model.store import Store
+from loxmatter.model.zigbee_settings_store import ZigbeeRadioSettings
+from loxmatter.sources.supervisor import supervise
+from loxmatter.zigbee import runtime as zigbee_runtime_module
+from loxmatter.zigbee.source import ZigbeeSource, ZigbeeUnavailableError
 
 FIXTURE = Path(__file__).parent / "fixtures" / "nodes" / "example_light.json"
 
@@ -344,6 +349,18 @@ class _SpyRuntime:
         # a resend after the seeding is the whole point of Spec 6.4, a
         # resend before it would find a still-empty cache.
         self.call_order: list[str] = []
+        # The optional radio's own signal (design 2026-09-12, section 4.9).
+        # Seeded without sending before `attach()`, then written by the
+        # source's own `on_connection_change` hook.
+        self.zigbee_cached: list[bool] = []
+        self.zigbee_sent: list[bool] = []
+
+    def cache_zigbee_connected(self, connected: bool) -> None:
+        self.zigbee_cached.append(connected)
+        self.call_order.append("zigbee-cache")
+
+    async def set_zigbee_connected(self, connected: bool) -> None:
+        self.zigbee_sent.append(connected)
 
     async def on_attribute(self, device_id: int, path: str, raw: object) -> None:
         pass
@@ -481,6 +498,16 @@ def _install_run_spies(
     # a link loss that never comes - hence replaced here as well, and not in a
     # second layer of stand-ins next to it.
     monkeypatch.setattr(cli, "supervise", supervisor)
+
+    # The one OTBR read `build_zigbee_source` makes, per build. Left alone
+    # it would open a real aiohttp session against 127.0.0.1:8081 from
+    # every `_run` test that configures a stick - a network call in a unit
+    # test, whose answer depends on whether anything happens to be
+    # listening on the machine running the suite.
+    async def no_border_router(*args: Any, **kwargs: Any) -> int | None:
+        return None
+
+    monkeypatch.setattr(zigbee_runtime_module, "current_thread_channel", no_border_router)
     return senders, runtimes, clients, supervisor
 
 
@@ -702,6 +729,88 @@ def test_run_installs_the_log_buffer_before_the_password_warning_in_german(monke
     assert any("noch kein Passwort vergeben" in message for message in messages)
 
 
+def test_run_writes_the_bridges_own_log_to_stderr_for_the_container_log(monkeypatch, tmp_path):
+    """`docker logs` reads the process's stderr, and nothing of the
+    bridge's own reached it: the ring the System tab shows was the only
+    handler on the `loxmatter` logger, which also keeps Python's last-resort
+    output away. A Zigbee stick that would not open, the firmware line the
+    hardware checklist asks for and the password warning below were all
+    invisible there, and the ring forgets after 500 lines.
+
+    Exactly one stream handler, from `run` alone: the password warning,
+    logged before `_run` even starts, has to arrive on stderr once, in
+    uvicorn's `LEVEL:` shape with the logger's name.
+
+    Fault to prove it: drop `_install_stderr_log()` from `run` (nothing on
+    stderr), or call it twice (the line arrives twice)."""
+    _install_run_spies(monkeypatch, connect_error=CannotConnect("boom"))
+    monkeypatch.setattr(cli.uvicorn, "Server", _SpyUvicornServer)
+
+    result = CliRunner().invoke(
+        app, ["run", "--miniserver", "127.0.0.1", "--store-path", str(tmp_path / "run.sqlite")]
+    )
+
+    lines = [
+        line
+        for line in result.stderr.splitlines()
+        if "No password has been set for this bridge yet" in line
+    ]
+    assert len(lines) == 1, result.stderr
+    assert lines[0].startswith("WARNING:")
+    assert "loxmatter.cli:" in lines[0]
+
+
+def test_the_stderr_handler_lets_info_lines_through_too(capsys):
+    """N-3 (verification 2026-09-13): the test above only proves a WARNING
+    line reaches `docker logs` - nothing pinned the LEVEL the handler is
+    actually installed at. At WARNING, every INFO line the hardware
+    checklist greps for (15.6's "zigbee quirks registry loaded in", 15.7's
+    "connection ... restored", 15.9's post-apply line) would silently
+    vanish from `docker logs`, and this suite would stay green throughout.
+
+    Calls `_install_stderr_log()` directly - the same function `run()`
+    installs - and logs one INFO line through a child logger, the way
+    every module under `loxmatter.*` does; a handler on `loxmatter` catches
+    it by propagation exactly as it would in production.
+
+    Fault to prove it: `handler.setLevel(logging.WARNING)` in
+    `_install_stderr_log`."""
+    logger = logging.getLogger("loxmatter")
+    before_handlers = list(logger.handlers)
+    before_level = logger.level
+    logger.setLevel(logging.INFO)
+    cli._install_stderr_log()
+    try:
+        logging.getLogger("loxmatter.zigbee.source").info("warm-up finished in 0.4 s")
+    finally:
+        _reset_loxmatter_logger(before_handlers, before_level)
+
+    lines = [line for line in capsys.readouterr().err.splitlines() if "warm-up finished" in line]
+    assert len(lines) == 1
+    assert lines[0].startswith("INFO:")
+    assert "loxmatter.zigbee.source:" in lines[0]
+
+
+def test_subcommands_other_than_run_print_no_log_lines(monkeypatch, tmp_path):
+    """The stream handler belongs to the server. A subcommand a person
+    types - here `set-language` - must not start echoing log lines into
+    that person's terminal, and must not leave a handler on the process-wide
+    logger behind it.
+
+    Fault to prove it: install the stream handler at import time or in the
+    Typer callback instead of in `run`."""
+    store_path = tmp_path / "t.sqlite"
+    Store(store_path).close()
+    logger = logging.getLogger("loxmatter")
+    before = list(logger.handlers)
+
+    result = CliRunner().invoke(app, ["set-language", "de", "--store-path", str(store_path)])
+
+    assert result.exit_code == 0, result.output
+    assert logger.handlers == before
+    assert not any(isinstance(h, logging.StreamHandler) for h in logger.handlers)
+
+
 def test_run_installs_the_log_buffer_exactly_once_and_passes_it_to__run(monkeypatch, tmp_path):
     """`run()` has called `install_log_buffer()` at exactly one place -
     as its very first instruction - since the fix for Task 7, Fix 1. A
@@ -733,6 +842,7 @@ def test_run_installs_the_log_buffer_exactly_once_and_passes_it_to__run(monkeypa
         api_token: str | None = None,
         log_handler: LogBufferHandler | None = None,
         update_dir: Path = Path("/data/update"),
+        zigbee_device: str | None = None,
     ) -> None:
         received["log_handler"] = log_handler
 
@@ -1050,3 +1160,811 @@ def test_set_password_fails_loudly_instead_of_creating_a_new_database(tmp_path):
     assert result.exit_code != 0
     assert not path.exists()
     assert not path.parent.exists()
+
+
+# --- loxmatter run: the optional Zigbee radio -----------------------------------
+#
+# Matter is the MANDATORY source and Zigbee is not, and almost everything
+# below is one consequence of that sentence: the watchdog covers the
+# mandatory one, a radio that never comes up is logged rather than fatal,
+# nothing on the startup path waits for it, and an installation without a
+# stick pays nothing at all.
+
+ZIGBEE_PATH = "/dev/serial/by-id/usb-SONOFF_Zigbee_3.0_USB_Dongle_Plus_V2-if00"
+
+
+class _NeverConnectingZigbeeSource:
+    """A Zigbee source whose radio never comes up.
+
+    Satisfies `DeviceSource` as far as `_run` and `supervise` reach into it,
+    and nothing more. `connect()` raises the error a missing or wedged stick
+    really produces (`ZigbeeUnavailableError`, which is deliberately NOT a
+    `CannotConnect` and NOT a `DeviceUnreachableError`), and
+    `wait_for_link_loss()` returns at once, which is the contract that puts
+    the supervisor straight into its backoff loop for a source that was
+    never connected."""
+
+    def __init__(self, **kwargs: Any) -> None:
+        self.kwargs = kwargs
+        self.connect_calls = 0
+        self.disconnect_calls = 0
+        self.subscribe_calls = 0
+
+    @property
+    def technology(self) -> str:
+        return "zigbee"
+
+    @property
+    def connected(self) -> bool:
+        return False
+
+    async def connect(self) -> None:
+        self.connect_calls += 1
+        raise ZigbeeUnavailableError("the Zigbee stick could not be found")
+
+    async def disconnect(self) -> None:
+        self.disconnect_calls += 1
+
+    async def wait_for_link_loss(self) -> None:
+        return None
+
+    async def subscribe(self, resolve_device_id: Any, handler: Any) -> None:
+        self.subscribe_calls += 1
+
+    async def snapshots(self) -> list[NodeSnapshot]:
+        return []
+
+    async def send(self, call: Any) -> None:
+        raise AssertionError("nothing should be sent over a radio that never came up")
+
+    async def remove(self, address: str) -> None:
+        raise AssertionError("nothing should be removed over a radio that never came up")
+
+
+class _SlowToConnectZigbeeSource(_NeverConnectingZigbeeSource):
+    """A radio whose `connect()` takes as long as a Raspberry Pi's quirks
+    warm-up does - 9-15 s there, unbounded here.
+
+    `ZigbeeSource.connect()` opens by awaiting `ensure_quirks_loaded()`, so
+    a startup path that waited on `connect()` in any shape - inline, or on a
+    task it awaits - would hold `/health` and the whole web UI for the
+    duration of that warm-up, on every single start. The updater's own
+    health wait reads that as a failed update."""
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self.warm_up_finished = asyncio.Event()
+        self.connect_started = asyncio.Event()
+
+    async def connect(self) -> None:
+        self.connect_calls += 1
+        self.connect_started.set()
+        await self.warm_up_finished.wait()
+
+
+class _CapturingUvicornServer:
+    """`_SpyUvicornServer` that remembers the config it was handed, so a
+    test can assert `_run` REACHED `uvicorn.Config` rather than only that it
+    returned."""
+
+    configs: ClassVar[list[Any]] = []
+
+    def __init__(self, config: Any) -> None:
+        self.config = config
+        _CapturingUvicornServer.configs.append(config)
+
+    async def serve(self) -> None:
+        # One yield, so a supervisor task started a few lines earlier in
+        # `_run` gets its first turn - see `_YieldingUvicornServer`.
+        await asyncio.sleep(0)
+
+
+def _capture_build_app(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
+    """Records what `_run` handed `build_app`, the real one included.
+
+    `sources` is the only place the source registry `_run` built is visible
+    from the outside - `zigbee` itself is a local variable."""
+    captured: dict[str, Any] = {}
+    real = cli.build_app
+
+    def spy(store: Any, invoke: Any, runtime: Any, **kwargs: Any) -> Any:
+        captured.update(kwargs)
+        captured["runtime"] = runtime
+        return real(store, invoke, runtime, **kwargs)
+
+    monkeypatch.setattr(cli, "build_app", spy)
+    return captured
+
+
+async def test_the_heartbeat_keeps_pulsing_when_only_zigbee_is_down(monkeypatch, tmp_path):
+    """Boundary design open point 9.1. The Loxone watchdog means "the bridge
+    and the MANDATORY source are alive" - if it went quiet because a USB
+    stick was unplugged, the Miniserver would treat every Matter device as
+    dead too, and a user with no Zigbee devices at all could lose their whole
+    installation to a radio they never used.
+
+    Fault to prove it: pass `sources.all_connected` as `link_ok`. The
+    heartbeat below then falls silent while the Matter link is perfectly
+    healthy."""
+    _, runtimes, clients, _supervisor = _install_run_spies(monkeypatch)
+    monkeypatch.setattr(zigbee_runtime_module, "ZigbeeSource", _NeverConnectingZigbeeSource)
+    # The bridge is asked while it is SERVING - after the shutdown the Matter
+    # client is disconnected too, and every `link_ok` would answer `False`.
+    monkeypatch.setattr(cli.uvicorn, "Server", _HangingUvicornServer)
+    captured = _capture_build_app(monkeypatch)
+    store = Store(tmp_path / "t.sqlite")
+
+    task = asyncio.create_task(
+        cli._run(store, "ws://test/ws", "127.0.0.1", 7000, 8080, zigbee_device=ZIGBEE_PATH)
+    )
+    await asyncio.sleep(0)
+    while not runtimes or not runtimes[0].started:
+        await asyncio.sleep(0)
+
+    try:
+        link_ok = runtimes[0].link_ok
+        assert clients[0].connected is True, "the Matter link is what this test holds fixed"
+        assert captured["sources"].get("zigbee").connected is False
+        assert link_ok() is True
+
+        # Not merely the predicate: the heartbeat it actually drives. A real
+        # `Runtime` with that same `link_ok` must put `bridge_alive` on the
+        # wire while the Zigbee stick is missing.
+        sender = _RecordingSender()
+        heartbeat_store = Store(tmp_path / "heartbeat.sqlite")
+        runtime = Runtime(heartbeat_store, sender, heartbeat_seconds=0.01, link_ok=link_ok)
+        await runtime.start()
+        await asyncio.sleep(0.05)
+        await runtime.stop()
+        heartbeat_store.close()
+
+        assert HEARTBEAT_KEY in [key for key, _value in sender.sent]
+    finally:
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+
+class _RecordingSender:
+    def __init__(self) -> None:
+        self.sent: list[tuple[str, object]] = []
+
+    async def send(self, key: str, value: object, *, force: bool = False) -> bool:
+        self.sent.append((key, value))
+        return True
+
+    async def close(self) -> None:
+        return None
+
+
+async def test_the_heartbeat_goes_quiet_when_matter_is_down(monkeypatch, tmp_path):
+    """The sibling `test_the_heartbeat_keeps_pulsing_when_only_zigbee_is_down`
+    pins only half of what the heartbeat's wiring has to get right. Nothing
+    at the `cli._run` level pinned the other half: `link_ok=lambda: True`
+    would pass every test that existed here before this one, because none of
+    them ever made the Matter link go down while `_run` kept serving - the
+    predicate itself is only exercised elsewhere, at `Runtime`, against an
+    injected stand-in.
+
+    Fault to prove it: wire `link_ok=lambda: True` (or anything else that
+    ignores `client.connected`) in `cli._run`. `link_ok()` below then still
+    answers `True` with the Matter listener already dead, and the heartbeat a
+    real `Runtime` drives from it never falls silent."""
+    _, runtimes, clients, _supervisor = _install_run_spies(monkeypatch)
+    monkeypatch.setattr(zigbee_runtime_module, "ZigbeeSource", _NeverConnectingZigbeeSource)
+    # As in the sibling test: the bridge is asked while it is SERVING, not
+    # while it is shutting down - `_HangingUvicornServer` keeps `_run` inside
+    # `serve()` for the whole test, so `finally` never runs and never
+    # disconnects the Matter client for reasons unrelated to the fault.
+    monkeypatch.setattr(cli.uvicorn, "Server", _HangingUvicornServer)
+    store = Store(tmp_path / "t.sqlite")
+
+    task = asyncio.create_task(
+        cli._run(store, "ws://test/ws", "127.0.0.1", 7000, 8080, zigbee_device=ZIGBEE_PATH)
+    )
+    await asyncio.sleep(0)
+    while not runtimes or not runtimes[0].started:
+        await asyncio.sleep(0)
+
+    try:
+        link_ok = runtimes[0].link_ok
+        assert link_ok() is True, "the Matter link is up before this test kills it"
+
+        # Matter goes down WHILE `_run` keeps serving. `BridgeMatterClient
+        # .connected`'s own docstring: "once it [the listener task] has
+        # ended, the connection is gone, no matter what `_upstream` still
+        # holds" - so ending the listener task, without touching `_upstream`
+        # at all, is what a real dropped connection looks like from here.
+        client = clients[0]
+        assert client._listener_task is not None
+        client._listener_task.cancel()
+        while not client._listener_task.done():
+            await asyncio.sleep(0)
+
+        assert client.connected is False
+        assert link_ok() is False
+
+        # Not merely the predicate: the heartbeat it actually drives. A real
+        # `Runtime` with that same `link_ok` must NOT put `bridge_alive` on
+        # the wire while the mandatory source is down.
+        sender = _RecordingSender()
+        heartbeat_store = Store(tmp_path / "heartbeat.sqlite")
+        runtime = Runtime(heartbeat_store, sender, heartbeat_seconds=0.01, link_ok=link_ok)
+        await runtime.start()
+        await asyncio.sleep(0.05)
+        await runtime.stop()
+        heartbeat_store.close()
+
+        assert HEARTBEAT_KEY not in [key for key, _value in sender.sent]
+    finally:
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+
+async def test_a_zigbee_radio_that_will_not_come_up_does_not_stop_the_bridge(
+    monkeypatch, tmp_path, caplog
+):
+    """Matter is mandatory and Zigbee is not. `client.connect()` failing
+    still ends startup; a Zigbee radio that never comes up does not, and
+    `cli._run` does not connect it at all - the supervisor does, retrying
+    forever on its own 1 s -> 60 s backoff, and `supervise()` is the thing
+    that must turn a raised `ZigbeeUnavailableError` into a logged warning
+    plus another attempt rather than into a dead task.
+
+    Fault to prove it: narrow `supervise()`'s inner `except Exception` to
+    `except CannotConnect` (or delete the inner `try` entirely). The
+    supervisor task then dies on the first `ZigbeeUnavailableError`, nothing
+    ever retries the radio, and a stick plugged in five minutes later is
+    never found - while `_run` itself still serves happily, which is exactly
+    why asserting only that "the bridge runs on" would keep passing."""
+    _install_run_spies(monkeypatch)
+    # The REAL supervisor, deliberately: this test is about what it does
+    # with an exception, so a stand-in would be the one thing that cannot
+    # answer the question.
+    monkeypatch.setattr(cli, "supervise", supervise)
+    monkeypatch.setattr(zigbee_runtime_module, "ZigbeeSource", _NeverConnectingZigbeeSource)
+    _CapturingUvicornServer.configs = []
+    monkeypatch.setattr(cli.uvicorn, "Server", _CapturingUvicornServer)
+    captured = _capture_build_app(monkeypatch)
+    store = Store(tmp_path / "t.sqlite")
+
+    with caplog.at_level(logging.WARNING, logger="loxmatter.sources.supervisor"):
+        await cli._run(store, "ws://test/ws", "127.0.0.1", 7000, 8080, zigbee_device=ZIGBEE_PATH)
+
+    zigbee = captured["sources"].get("zigbee")
+    assert zigbee.connect_calls >= 1, "the supervisor never even tried the radio"
+    assert any(
+        "rebuild of source zigbee failed" in record.getMessage()
+        and "next attempt in 1 s" in record.getMessage()
+        for record in caplog.records
+    ), [record.getMessage() for record in caplog.records]
+    # And the bridge served regardless.
+    assert len(_CapturingUvicornServer.configs) == 1
+
+
+async def test_the_quirks_warm_up_does_not_delay_the_web_ui(monkeypatch, tmp_path):
+    """`cli._run` starts uvicorn only AFTER `attach`, and the warm-up is an
+    estimated 9-15 s on a Pi 4. Held anywhere on that path, `/health` and the
+    web UI would be unreachable for the whole of it, every start - which the
+    updater's own health wait would read as a failed update.
+
+    What this proves, now that `cli._run` connects nothing itself: the
+    startup path contains NO wait on `ZigbeeSource.connect()` - neither an
+    inline `await`, nor an `await` on a supervisor task, nor any other shape.
+    The only caller of `connect()` is `supervise()`, started with
+    `ensure_future` and never awaited before `uvicorn.Config`, so a Raspberry
+    Pi's warm-up runs entirely beside a web UI that is already answering.
+
+    Fault to prove it: put `await zigbee.connect()` into `cli._run` just
+    before `attach` - the shape an earlier draft had, and the one thing that
+    could plausibly be reintroduced. `connect()` begins by awaiting
+    `ensure_quirks_loaded()`, so awaiting it reproduces the exact delay this
+    test exists to catch. The warm-up below never finishes, so `_run` either
+    reaches `uvicorn.Config` beside it - or never returns at all, and the
+    bound turns that into a failure rather than a hung suite."""
+    _install_run_spies(monkeypatch)
+    monkeypatch.setattr(cli, "supervise", supervise)
+    monkeypatch.setattr(zigbee_runtime_module, "ZigbeeSource", _SlowToConnectZigbeeSource)
+    _CapturingUvicornServer.configs = []
+    monkeypatch.setattr(cli.uvicorn, "Server", _CapturingUvicornServer)
+    captured = _capture_build_app(monkeypatch)
+    store = Store(tmp_path / "t.sqlite")
+
+    await asyncio.wait_for(
+        cli._run(store, "ws://test/ws", "127.0.0.1", 7000, 8080, zigbee_device=ZIGBEE_PATH), 5
+    )
+
+    zigbee = captured["sources"].get("zigbee")
+    # The warm-up really was under way and really did not finish - without
+    # both halves this would pass for a source nobody ever connected.
+    assert zigbee.connect_started.is_set()
+    assert not zigbee.warm_up_finished.is_set()
+    assert len(_CapturingUvicornServer.configs) == 1
+    # And the supervisor's `connect()` is the only one: `_run` itself calls
+    # it nowhere, so one serial port has exactly one opener.
+    assert zigbee.connect_calls == 1
+    zigbee.warm_up_finished.set()
+
+
+async def test_no_zigbee_work_happens_when_no_radio_is_configured(monkeypatch, tmp_path):
+    """An installation without a Zigbee stick pays nothing: no source in the
+    registry, no radio state on the wire, nothing for Loxone to wire up.
+
+    Fault to prove it: always construct the source."""
+    _, runtimes, _clients, _supervisor = _install_run_spies(monkeypatch)
+    built: list[Any] = []
+
+    def _refuse(**kwargs: Any) -> Any:
+        built.append(kwargs)
+        raise AssertionError("a Zigbee source was built without a radio configured")
+
+    monkeypatch.setattr(zigbee_runtime_module, "ZigbeeSource", _refuse)
+    monkeypatch.setattr(cli.uvicorn, "Server", _SpyUvicornServer)
+    captured = _capture_build_app(monkeypatch)
+    store = Store(tmp_path / "t.sqlite")
+
+    await cli._run(store, "ws://test/ws", "127.0.0.1", 7000, 8080)
+
+    assert built == []
+    assert [source.technology for source in captured["sources"].all()] == ["matter"]
+    # Loxone never sees an input it has no use for.
+    assert runtimes[0].zigbee_cached == []
+
+
+async def test_a_freshly_built_zigbee_source_has_the_store_so_configure_on_join_can_defer(
+    monkeypatch, tmp_path
+):
+    """`ZigbeeSource.__init__` has taken `store` since configure-on-join
+    landed - the pending table `configure_device` writes to before every
+    attempt - but nothing before this wiring ever constructed a
+    `ZigbeeSource` with it set. `_build_zigbee_source` is the first code
+    anywhere that builds one at all, so it is the first place this can go
+    wrong, and Task 11's later, permanent builder inherits whatever this one
+    gets right or wrong.
+
+    Fault to prove it: build `ZigbeeSource(...)` in `_build_zigbee_source`
+    without passing `store=store`. A device interrupted mid-configuration is
+    then never reconfigured - not because `configure_device` was never
+    called, but because it had no table to write what it still owed into
+    (`test_a_device_with_pending_configuration_is_watched_again_after_a_restart`
+    in `tests/zigbee/test_source.py` measures that consequence against a
+    real device).
+
+    The other three arguments are asserted here too, because this one
+    function is the only place any of them is decided."""
+    _, runtimes, _clients, _supervisor = _install_run_spies(monkeypatch)
+    monkeypatch.setattr(cli.uvicorn, "Server", _SpyUvicornServer)
+    captured = _capture_build_app(monkeypatch)
+    store = Store(tmp_path / "t.sqlite")
+
+    await cli._run(
+        store,
+        "ws://test/ws",
+        "127.0.0.1",
+        7000,
+        8080,
+        tmp_path / "matter",
+        zigbee_device=ZIGBEE_PATH,
+    )
+
+    zigbee = captured["sources"].get("zigbee")
+    assert isinstance(zigbee, ZigbeeSource)
+    assert zigbee._store is store
+    assert zigbee._path == ZIGBEE_PATH
+    # Beside the store (`tmp_path / "t.sqlite"`), not under the matter data
+    # directory passed above - see the test directly below.
+    assert zigbee._database == tmp_path / "zigbee.sqlite"
+    # The radio's own signal, wired to the runtime rather than to the
+    # watchdog. Identity alone only proves the two attributes point at the
+    # same function - calling it is what proves the pipe actually carries a
+    # value through to the runtime the Miniserver reads from.
+    #
+    # `_run`'s own `finally` already disconnected this (never-connected)
+    # source by now, which appends its own `False` - so the assertion below
+    # checks what THIS call added, not the full history.
+    assert zigbee._on_connection_change == runtimes[0].set_zigbee_connected
+    await zigbee._on_connection_change(True)
+    assert runtimes[0].zigbee_sent[-1] is True
+
+
+async def test_every_open_of_the_built_zigbee_source_asks_the_thread_lock_out(
+    monkeypatch, tmp_path
+):
+    """The Thread lock-out used to exist only on the `PUT` that chooses a
+    stick. A stored setting reopened at boot, on a supervisor retry or on
+    an apply was never checked again - so a report gone missing, or Thread
+    moved onto that stick by hand, reached zigpy unchallenged. `_run` is
+    the one place the production source gets its guard, bound to the SAME
+    update directory and device trees the radios routes read, so the two
+    cannot disagree about which stick Thread is on.
+
+    Fault to prove it: drop `open_guard=` from `_run`'s `build_source`, or
+    bind it to a different `update_dir`."""
+    from loxmatter.radios.thread_lockout import open_refusal
+
+    _install_run_spies(monkeypatch)
+    monkeypatch.setattr(cli.uvicorn, "Server", _SpyUvicornServer)
+    captured = _capture_build_app(monkeypatch)
+    store = Store(tmp_path / "t.sqlite")
+
+    await cli._run(
+        store,
+        "ws://test/ws",
+        "127.0.0.1",
+        7000,
+        8080,
+        zigbee_device=ZIGBEE_PATH,
+        update_dir=tmp_path / "update",
+        radios_host_dev=tmp_path / "dev",
+        radios_sys_root=tmp_path / "sys",
+    )
+
+    guard = captured["sources"].get("zigbee")._open_guard
+    assert guard.func is open_refusal
+    assert guard.keywords == {
+        "update_dir": tmp_path / "update",
+        "host_dev": tmp_path / "dev",
+        "sys_root": tmp_path / "sys",
+    }
+    assert (captured["update_dir"], captured["radios_host_dev"], captured["radios_sys_root"]) == (
+        tmp_path / "update",
+        tmp_path / "dev",
+        tmp_path / "sys",
+    )
+    # And it answers: with no sidecar report under that directory, the
+    # stored stick is refused rather than opened.
+    assert guard(ZIGBEE_PATH).key == "api.errors.zigbee_open_thread_unknown"
+
+
+async def test_a_border_router_that_never_answers_does_not_hold_matter_or_the_web_ui(
+    monkeypatch, tmp_path
+):
+    """On an installation with a Zigbee stick, building the source used to
+    await `current_thread_channel()` - up to its 5 s timeout, for a border
+    router still starting after a reboot - before matter-server was
+    connected and before uvicorn served a single request. The channel is
+    now read on the source's first connect, in the supervisor's background
+    task, so a border router that does not answer at all holds neither.
+
+    Fault to prove it: await `current_thread_channel()` in
+    `build_zigbee_source` again (`_run` never reaches uvicorn and the outer
+    `wait_for` fires)."""
+    _, runtimes, _clients, _supervisor = _install_run_spies(monkeypatch)
+    served: list[bool] = []
+
+    class _RecordingServer(_SpyUvicornServer):
+        async def serve(self) -> None:
+            served.append(True)
+
+    async def silent_border_router(*args: Any, **kwargs: Any) -> int | None:
+        await asyncio.Event().wait()
+        return None
+
+    monkeypatch.setattr(zigbee_runtime_module, "current_thread_channel", silent_border_router)
+    monkeypatch.setattr(cli.uvicorn, "Server", _RecordingServer)
+    store = Store(tmp_path / "t.sqlite")
+
+    await asyncio.wait_for(
+        cli._run(store, "ws://test/ws", "127.0.0.1", 7000, 8080, zigbee_device=ZIGBEE_PATH),
+        timeout=5,
+    )
+
+    assert runtimes[0].started is True
+    assert served == [True]
+
+
+async def test_zigpy_opens_the_stick_under_the_host_dev_mount_the_run_binds(monkeypatch, tmp_path):
+    """The stored stick is a HOST path, `/dev/serial/by-id/...`, and the
+    bridge's container has no such directory: its own `/dev` is Docker's
+    private tmpfs, and the host's `/dev` is mounted at `/host/dev` only.
+    zigpy was handed the host path unchanged, so on the shipped container
+    every open failed with `FileNotFoundError` - "the Zigbee stick is no
+    longer there" - while the card, which resolves through the mount,
+    reported the stick present.
+
+    What zigpy opens is the node under the `radios_host_dev` the production
+    `_run` binds; what the source keeps as its own path - for the Thread
+    guard, the log line and the API - is still the host path.
+
+    Fault to prove it: drop `host_dev=` from `_run`'s `build_source`
+    binding, or put `self._path` back into `_config()`."""
+    _install_run_spies(monkeypatch)
+    host_dev, sys_root = _host_with_the_zbt2(tmp_path)
+    store = Store(tmp_path / "t.sqlite")
+
+    captured = await _run_once(
+        monkeypatch,
+        store,
+        zigbee_device=ZBT2_PATH,
+        radios_host_dev=host_dev,
+        radios_sys_root=sys_root,
+    )
+
+    zigbee = captured["sources"].get("zigbee")
+    opened = zigbee._config()["device"]["path"]
+    assert opened.startswith(f"{host_dev}/")
+    assert opened == f"{host_dev}/serial/by-id/{ZBT2_NAME}"
+    assert Path(opened).exists()
+    assert zigbee._path == ZBT2_PATH
+
+
+@pytest.mark.parametrize("matter_data_dir", [None, "matter-data"])
+async def test_the_zigbee_database_follows_the_store_and_never_the_matter_data_dir(
+    monkeypatch, tmp_path, matter_data_dir
+):
+    """zigpy's database belongs in the store's own directory (design 8.5),
+    because that is the directory the bridge writes to. `--matter-data-dir`
+    is matter-server's directory, lent to the fabric-backup route, and the
+    shipped compose file mounts it READ-ONLY - the first build put
+    `zigbee.sqlite` there, and the first Zigbee Apply on the Pi would have
+    failed to create it.
+
+    The store sits in a directory of its own here, apart from both
+    `tmp_path` and the matter data directory, so an answer derived from
+    either of those cannot pass by coincidence. With no matter data
+    directory at all the answer is the same, and startup does not crash on
+    `None / "zigbee.sqlite"`.
+
+    Fault to prove it: build `database` from `matter_data_dir` again (the
+    string case fails), or from a fixed path (both fail)."""
+    _install_run_spies(monkeypatch)
+    monkeypatch.setattr(cli.uvicorn, "Server", _SpyUvicornServer)
+    captured = _capture_build_app(monkeypatch)
+    (tmp_path / "store").mkdir()
+    store = Store(tmp_path / "store" / "loxmatter.sqlite")
+
+    await cli._run(
+        store,
+        "ws://test/ws",
+        "127.0.0.1",
+        7000,
+        8080,
+        None if matter_data_dir is None else tmp_path / matter_data_dir,
+        zigbee_device=ZIGBEE_PATH,
+    )
+
+    assert captured["sources"].get("zigbee")._database == tmp_path / "store" / "zigbee.sqlite"
+
+
+async def test_the_radio_state_is_seeded_before_the_first_resend(monkeypatch, tmp_path):
+    """`attach()` ends in `resend_all()`, which sends every cached value with
+    `force=True`. Seeding `zigbee_connected` before that loop is what puts
+    the key on the wire at startup at all; seeding it by SENDING would put it
+    there twice (review fix C1, 2026-09-02).
+
+    `False` and not `True`: at that point the radio has not come up - the
+    supervisor connects it a few lines later - and the first successful
+    connect sets it to `True` through `on_connection_change`.
+
+    Fault to prove it: seed after the `attach()` loop, or seed `True`."""
+    _, runtimes, _clients, _supervisor = _install_run_spies(monkeypatch)
+    monkeypatch.setattr(zigbee_runtime_module, "ZigbeeSource", _NeverConnectingZigbeeSource)
+    monkeypatch.setattr(cli.uvicorn, "Server", _SpyUvicornServer)
+    store = Store(tmp_path / "t.sqlite")
+
+    await cli._run(store, "ws://test/ws", "127.0.0.1", 7000, 8080, zigbee_device=ZIGBEE_PATH)
+
+    assert runtimes[0].zigbee_cached == [False]
+    # One `attach()` per source, each ending in its own `resend_all()` - and
+    # the seed before all of them, so the very first resend already carries
+    # the key.
+    assert runtimes[0].call_order == ["zigbee-cache", "seed", "resend", "seed", "resend"]
+
+
+# --- `--zigbee-device`: a seed, never an override ---------------------------
+
+# A Home Assistant Connect ZBT-2, chosen because every one of its three
+# parameters can be told apart from `DEFAULT_UNKNOWN`'s: the fingerprint
+# table says 460800/hardware where the fallback says 115200/software. A
+# stick whose row happened to match the fallback would let "fingerprint the
+# path" and "do not bother" pass the same assertions.
+ZBT2_NAME = "usb-Nabu_Casa_ZBT-2_1234-if00"
+ZBT2_PATH = f"/dev/serial/by-id/{ZBT2_NAME}"
+
+
+def _host_with_the_zbt2(tmp_path: Path) -> tuple[Path, Path]:
+    """The two trees `scan_serial` reads, holding exactly one known stick.
+
+    The same shape `tests/api/test_zigbee_api.py` builds, minus the
+    character devices: nothing here resolves a device node, only the
+    fingerprint lookup runs."""
+    host_dev, sys_root = tmp_path / "dev", tmp_path / "sys"
+    (host_dev / "serial" / "by-id").mkdir(parents=True)
+    (host_dev / "ttyUSB0").write_text("", encoding="utf-8")
+    (host_dev / "serial" / "by-id" / ZBT2_NAME).symlink_to(Path("../..") / "ttyUSB0")
+    usb = sys_root / "devices" / "usb1" / "1-1.1"
+    (usb / "1-1.1:1.0" / "ttyUSB0").mkdir(parents=True)
+    (usb / "idVendor").write_text("303a\n", encoding="utf-8")
+    (usb / "idProduct").write_text("4001\n", encoding="utf-8")
+    (usb / "manufacturer").write_text("Nabu Casa\n", encoding="utf-8")
+    (sys_root / "class" / "tty" / "ttyUSB0").mkdir(parents=True)
+    (sys_root / "class" / "tty" / "ttyUSB0" / "device").symlink_to(usb / "1-1.1:1.0" / "ttyUSB0")
+    return host_dev, sys_root
+
+
+async def _run_once(monkeypatch: pytest.MonkeyPatch, store: Store, **kwargs: Any) -> dict[str, Any]:
+    monkeypatch.setattr(cli.uvicorn, "Server", _SpyUvicornServer)
+    captured = _capture_build_app(monkeypatch)
+    await cli._run(store, "ws://test/ws", "127.0.0.1", 7000, 8080, **kwargs)
+    return captured
+
+
+def _stored_after_the_run(path: Path) -> ZigbeeRadioSettings:
+    """What survived the process, read the way the NEXT start reads it.
+
+    `_run` closes the store in its own `finally`, so the setting has to be
+    read back through a fresh connection - which is the honest test anyway:
+    the whole point of storing the radio is that a container recreation
+    finds it again."""
+    store = Store(path)
+    try:
+        return store.zigbee_settings.get()
+    finally:
+        store.close()
+
+
+async def test_the_zigbee_flag_stores_the_parameters_of_the_stick_it_names(monkeypatch, tmp_path):
+    """The flag's path is FINGERPRINTED, exactly as the `PUT` handler
+    fingerprints the stick the user picks in the interface.
+
+    The seeding used to be `replace(stored, path=..., saved_at=...)`, which
+    keeps whatever radio type, baud rate and flow control were already in
+    the row and pins them to the new path. `ZigbeeSettingsStore.save`'s own
+    docstring names that exact outcome - "a path from the new stick and a
+    baud rate from the old one, and open the new stick at the wrong speed -
+    a failure that looks exactly like a broken stick and is invisible in the
+    setting the user can see" - as the reason its five keys share one
+    transaction. It then arrived through this door instead.
+
+    Fault to prove it: go back to `replace(stored, path=zigbee_device,
+    saved_at=now_iso())`. The ZBT-2 below is then stored at 115200/software
+    - `DEFAULT_UNKNOWN`'s values, which is what an empty row reads as - and
+    opened at less than a quarter of its speed, with no flow control it
+    needs."""
+    _install_run_spies(monkeypatch)
+    monkeypatch.setattr(zigbee_runtime_module, "ZigbeeSource", _NeverConnectingZigbeeSource)
+    host_dev, sys_root = _host_with_the_zbt2(tmp_path)
+    store = Store(tmp_path / "t.sqlite")
+
+    await _run_once(
+        monkeypatch,
+        store,
+        zigbee_device=ZBT2_PATH,
+        radios_host_dev=host_dev,
+        radios_sys_root=sys_root,
+    )
+
+    stored = _stored_after_the_run(tmp_path / "t.sqlite")
+    assert stored.path == ZBT2_PATH
+    assert (stored.radio_type, stored.baudrate, stored.flow_control) == (
+        "ezsp",
+        460800,
+        "hardware",
+    )
+    assert stored.saved_at is not None
+
+
+async def test_the_zigbee_flag_never_overrules_a_setting_that_already_exists(
+    monkeypatch, tmp_path, caplog
+):
+    """A flag left behind in a compose file must not re-apply itself on
+    every restart.
+
+    It used to: `if stored.path != zigbee_device: save(...)` reran on every
+    single start, so a stick chosen in the interface was silently replaced
+    by the one in a YAML file nobody had looked at in months - at 03:00,
+    with nothing in the log connecting the two. The stored setting is the
+    user's own latest word and wins; the flag is for an installation that
+    has never had one.
+
+    Fault to prove it: gate on `stored.path != zigbee_device` again, or on
+    `stored.path is None` (which would also re-apply the flag over a
+    deliberate "no Zigbee stick in this installation")."""
+    _install_run_spies(monkeypatch)
+    monkeypatch.setattr(zigbee_runtime_module, "ZigbeeSource", _NeverConnectingZigbeeSource)
+    host_dev, sys_root = _host_with_the_zbt2(tmp_path)
+    store = Store(tmp_path / "t.sqlite")
+    chosen = ZigbeeRadioSettings(
+        path="/dev/serial/by-id/usb-CHOSEN_IN_THE_UI-if00",
+        radio_type="znp",
+        baudrate=38400,
+        flow_control="software",
+        saved_at="2026-09-12T09:00:00Z",
+    )
+    store.zigbee_settings.save(chosen)
+
+    with caplog.at_level(logging.WARNING, logger="loxmatter.cli"):
+        await _run_once(
+            monkeypatch,
+            store,
+            zigbee_device=ZBT2_PATH,
+            radios_host_dev=host_dev,
+            radios_sys_root=sys_root,
+        )
+
+    assert _stored_after_the_run(tmp_path / "t.sqlite") == chosen
+    # And said out loud, because the silence is what made the old behaviour
+    # impossible to diagnose.
+    assert any(ZBT2_PATH in record.getMessage() for record in caplog.records)
+
+
+async def test_the_zigbee_flag_does_not_overrule_a_deliberate_no_zigbee_stick(
+    monkeypatch, tmp_path
+):
+    """Choosing "no Zigbee stick" in the interface is a choice, not an empty
+    row, and `saved_at` is what tells them apart - it is written by every
+    path that stores a setting and removed only by `clear()`.
+
+    Fault to prove it: gate the seeding on `stored.path is None`. The user
+    who unplugged their stick and said so then finds it configured again
+    after the next container recreation."""
+    _install_run_spies(monkeypatch)
+    monkeypatch.setattr(zigbee_runtime_module, "ZigbeeSource", _NeverConnectingZigbeeSource)
+    host_dev, sys_root = _host_with_the_zbt2(tmp_path)
+    store = Store(tmp_path / "t.sqlite")
+    store.zigbee_settings.save(
+        ZigbeeRadioSettings(
+            path=None,
+            radio_type="ezsp",
+            baudrate=115200,
+            flow_control="software",
+            saved_at="2026-09-12T09:00:00Z",
+        )
+    )
+
+    captured = await _run_once(
+        monkeypatch,
+        store,
+        zigbee_device=ZBT2_PATH,
+        radios_host_dev=host_dev,
+        radios_sys_root=sys_root,
+    )
+
+    assert _stored_after_the_run(tmp_path / "t.sqlite").path is None
+    assert [source.technology for source in captured["sources"].all()] == ["matter"]
+
+
+async def test_without_the_flag_the_stored_setting_is_what_opens(monkeypatch, tmp_path):
+    """The fourth combination, and the one the shipped help text used to
+    deny outright: with no `--zigbee-device` on the command line a source IS
+    built, from the store.
+
+    Fault to prove it: read the flag directly instead of the stored
+    setting. Every installation then loses its Zigbee radio the moment the
+    flag is taken out of the compose file, which is precisely what the old
+    help text told the user to expect."""
+    _install_run_spies(monkeypatch)
+    monkeypatch.setattr(zigbee_runtime_module, "ZigbeeSource", _NeverConnectingZigbeeSource)
+    store = Store(tmp_path / "t.sqlite")
+    store.zigbee_settings.save(
+        ZigbeeRadioSettings(
+            path=ZIGBEE_PATH,
+            radio_type="ezsp",
+            baudrate=115200,
+            flow_control="software",
+            saved_at="2026-09-12T09:00:00Z",
+        )
+    )
+
+    captured = await _run_once(monkeypatch, store)
+
+    assert captured["sources"].get("zigbee").kwargs["path"] == ZIGBEE_PATH
+
+
+async def test_no_flag_and_no_stored_setting_builds_no_zigbee_source(monkeypatch, tmp_path):
+    """The fresh install, and the combination that keeps the other three
+    honest: nothing configured anywhere means no source, no supervisor and
+    no Zigbee state on the wire to Loxone.
+
+    Fault to prove it: seed from the flag's default (`None`) as though it
+    were a value - `settings_for_path(None, ...)` writes a row with a
+    `saved_at`, which would then read as a deliberate "no Zigbee stick" and
+    lock the flag out for good on an installation that had never used it."""
+    _install_run_spies(monkeypatch)
+    store = Store(tmp_path / "t.sqlite")
+
+    captured = await _run_once(monkeypatch, store)
+
+    assert [source.technology for source in captured["sources"].all()] == ["matter"]
+    assert _stored_after_the_run(tmp_path / "t.sqlite").saved_at is None, "nothing was written"

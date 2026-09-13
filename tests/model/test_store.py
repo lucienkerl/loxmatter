@@ -279,6 +279,25 @@ def test_devices_lists_only_active_devices(store):
     assert [d.id for d in store.devices()] == [plug_id]
 
 
+def test_one_unreadable_technology_row_does_not_fail_the_whole_device_list(store):
+    """Boundary design open point 10. `parse_technology` raises inside
+    `_as_device`, so a single row written by a NEWER loxmatter - after an
+    updater rollback, which restores the image but never the database -
+    made `Store.devices()` fail for every device, and the bridge could not
+    start rather than hiding the one device it could not place.
+
+    Fault to prove it: call `parse_technology` in `devices()` again instead
+    of `technology_or_none`."""
+    known_id = store.register_device(load("ikea_grillplats_plug.json"))
+    other_id = store.register_device(load("ikea_bilresa_button.json"))
+    store._db.execute("UPDATE device SET technology = 'zwave' WHERE id = ?", (other_id,))
+    store._db.commit()
+
+    devices = store.devices()
+
+    assert [d.id for d in devices] == [known_id]
+
+
 def test_device_returns_the_stored_row(store):
     snap = load("ikea_grillplats_plug.json")
     device_id = store.register_device(snap)

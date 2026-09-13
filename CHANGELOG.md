@@ -26,6 +26,88 @@ people who don't know the code.
 - These are the bridge's own groups, not Matter's. No Matter server this bridge
   can use offers group messaging, so nothing is created on the devices
   themselves.
+- **Choose the Thread stick and Bluetooth adapter in the settings.** The new
+  Radios card lists the USB sticks and Bluetooth adapters the host has,
+  shows which ones are in use, and lets you switch the Thread stick, turn
+  Thread off or on, or pick another Bluetooth adapter — no more editing
+  `.env` on the host. Changing only the Bluetooth adapter leaves the Thread
+  border router untouched, so it restarts and Thread devices go quiet for a
+  minute or two only when the Thread half of the change actually asks for
+  that. The updater service applies the change, checks that Thread or
+  matter-server really come back, and restores the previous setting if they
+  don't. The first time, the updater service itself needs one refresh from
+  the console; the card shows the command.
+- **Zigbee devices, alongside Matter.** A Zigbee lamp, plug or sensor can
+  now be paired from the Devices view, on a Zigbee tab beside the Matter one,
+  and its values reach Loxone the same way a Matter device's do, as signals
+  in the same export. The tab says how to put a device into pairing mode,
+  keeps the network open only while you are searching, and says what is
+  happening at each step, including when a battery device has fallen asleep
+  and needs its button pressed. Nothing reaches Loxone until you press
+  **Add**. Zigbee devices get their own badge on the tile.
+- **Matter is still required.** Zigbee comes in addition to Matter, not
+  instead of it: the bridge runs with matter-server exactly as before, and a
+  missing or failing Zigbee stick leaves your Matter devices alone.
+- **Zigbee needs a second USB stick**, a Zigbee coordinator of its own. Pick
+  it in the new Zigbee row of the Radios card. The bridge opens it itself,
+  so choosing one restarts neither matter-server nor the Thread border
+  router. The stick your Thread network runs on is listed but can never be
+  chosen for Zigbee while Thread uses it; the row says why, and turning
+  Thread off frees it. The Thread row, in turn, refuses the Zigbee stick.
+  Which stick Thread uses is reported by the updater service: while it has
+  not reported recently, no stick can be chosen for Zigbee at all, and the
+  row says so. A Zigbee stick already set up keeps working through a
+  restart, but is not opened while the bridge has no report at all, or if
+  Thread now runs on it. The row shows the firmware the stick reports once
+  it has connected.
+- **What Zigbee costs.** The bridge's image is larger. Measured while the
+  feature was being designed, not on this release's image, the Zigbee
+  libraries added about 33 MB of installed Python packages and about 13 MB
+  to the compressed download; the image now also ships them precompiled,
+  which adds somewhat more. With a Zigbee stick set up, the bridge also
+  needs time after every start to load what it knows about individual
+  Zigbee devices: an estimated 9 to 15 seconds on a Raspberry Pi 4, worked
+  out on a faster machine and not yet measured on a Pi. The web interface
+  and your Matter devices do not wait for it, and without a Zigbee stick it
+  does not happen at all. To open a stick chosen in the browser, the bridge
+  may now open any USB serial device on the host; the README's Updating
+  section says exactly what that grants.
+- **Firmware updates for your Zigbee devices stay off.** The Zigbee library
+  can update a lamp's firmware from the internet on its own schedule;
+  loxmatter switches that off, so nothing on your Zigbee network changes
+  without you.
+- **Removing a Zigbee device works without its stick.** A device the
+  Zigbee stick no longer knows — after a fresh network, or another stick —
+  is simply removed. With no Zigbee stick set up at all, the device's tile
+  says the device cannot be asked to leave its network and offers **Remove
+  from loxmatter only**: the device leaves the device list and the export,
+  and the bridge stops sending its values to Loxone, but the device itself
+  is not told — factory-reset it before pairing it anywhere else. Matter
+  devices are still always removed through matter-server first.
+- **Colour in XY form.** Colour lamps get a second colour output in the
+  export, `color_xy`, which sends the colour as XY coordinates, the colour
+  command Matter makes mandatory for full-colour lamps. Matter and Zigbee
+  lamps get it alike. The existing colour output, its wiring in Loxone and
+  the colour picker in the browser are unchanged. A lamp that takes colour
+  only as XY — it reports XY but neither hue and saturation nor a colour
+  temperature — now gets a colour control for the first time, through this
+  output, and the picker in the browser uses it; the picker cannot show
+  where such a lamp currently is, and says so. Tunable-white lamps still get
+  no colour control. A colour lamp that reports XY and a colour temperature
+  but not hue and saturation looks exactly like a tunable-white one by those
+  reports alone; it gets its colour control when it says it is a colour lamp
+  (an "extended colour light"), and none otherwise. A lamp that reports hue
+  and saturation gets its colour control whatever kind of lamp it says it
+  is.
+- **Your existing colour lamps show one change in the export.** The bridge
+  records the new `color_xy` output for colour lamps you commissioned before
+  this release, the next time it starts. The export view then marks those
+  lamps as changed once, until you export them again; nothing in Loxone
+  changes unless you do.
+- **Zigbee lamps and plugs are recognised as lamps and plugs.** The common
+  Zigbee 3.0 colour, tunable-white and plug devices get the lamp or plug
+  icon and category, and can join a group with Matter lamps or plugs of the
+  same kind.
 - **Thread or IP at a glance.** Every device tile now carries a small badge on
   its icon showing whether the device talks to the bridge over Thread or over
   your IP network (Wi-Fi or Ethernet). Hover it for the name. A device that
@@ -33,6 +115,35 @@ people who don't know the code.
 
 ### Changed
 
+- **The bridge's own log is in the container log.** `docker logs loxmatter`
+  used to show only the web server's lines; the bridge's own — a warning, a
+  device that would not answer, a radio that would not open — were only in
+  the System tab, which keeps the last 500. They now appear in both. A
+  connection that keeps failing the same way is explained once and then
+  counted, instead of repeating the whole explanation every minute.
+- **A Loxone command gives up after 10 seconds.** A command to a device that
+  does not answer used to wait for as long as matter-server did; the bridge
+  now answers Loxone with an error after 10 seconds. On a slow Thread device
+  matter-server may still deliver the command a little later, after Loxone
+  has been told it failed.
+- **Removing a device waits longer, and a second removal no longer fails.**
+  Removal now waits up to two minutes for matter-server to reach the
+  device, instead of giving up after 10 seconds while matter-server was
+  still working on it. A device matter-server has already forgotten counts
+  as removed instead of failing with an error.
+- **Some Matter sensor readings are no longer suggested for export.** For
+  contact and water-leak sensors, occupancy sensors and light sensors, the
+  bridge now names the one reading that matters — open or closed, occupied,
+  the light level — and suggests only that one. Their other readings, such
+  as a light sensor's minimum and maximum, move to the "Expert" section of
+  "Edit signals…". What you have already exported is not touched; only
+  devices you commission from now on start with the shorter list.
+- **Thread's exclusive stick lock is available, and off.** OpenThread can
+  lock its USB stick so no other program opens it by accident. It is not yet
+  known whether the border router image on every installation accepts that
+  setting, and one that does not would keep Thread down, so it is off unless
+  `.env` sets `OTBR_RADIO_URL_EXTRA=&uart-exclusive`. Nothing changes for an
+  installation that does not.
 - If you script against the API with a token: `GET /api/devices` no longer
   returns `node_id`. Each device now reports `technology`, `address` and
   `transport` instead, to make room for device types beyond Matter.

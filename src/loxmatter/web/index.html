@@ -122,7 +122,7 @@
            icon. That is why "Other" gets its own symbol, instead of
            relying on a special case in JavaScript that someone would
            overlook at the next rework. The shape is the same as the old,
-           generic `#i-device` (Task 9 removed its definition, since
+           generic `#i-device` (its definition was removed once
            `#i-cat-other` took over its role). -->
       <symbol id="i-cat-other" viewBox="0 0 24 24">
         <rect x="4" y="4" width="16" height="16" rx="3" />
@@ -139,7 +139,7 @@
            state automatically from outside.
 
            Export and remove each had their own symbol here
-           (`#i-export`, `#i-remove`); Task 2 (kebab menu, 2026-09-05) moved
+           (`#i-export`, `#i-remove`); the kebab menu (2026-09-05) moved
            both actions from the footer into the menu and turned them into
            spelled-out text buttons - there is room there for a label
            instead of an icon. The two symbols have been dead ever since
@@ -193,6 +193,18 @@
         <circle cx="12" cy="12" r="9" />
         <path d="M3 12h18" />
         <path d="M12 3a14 14 0 0 1 0 18a14 14 0 0 1 0-18z" />
+      </symbol>
+      <!-- Zigbee (design 2026-09-12, section 3.3): a coordinator with three
+           devices on spokes - the star a Zigbee network grows from, and
+           unlike Thread's three peers it has a centre. Deliberately NOT the
+           official logo: "Zigbee" is a trademark of the Connectivity
+           Standards Alliance. -->
+      <symbol id="i-transport-zigbee" viewBox="0 0 24 24">
+        <circle cx="12" cy="13" r="2.6" />
+        <circle cx="4.5" cy="5.5" r="2" />
+        <circle cx="19.5" cy="5.5" r="2" />
+        <circle cx="12" cy="21" r="2" />
+        <path d="M10.2 11.2 5.9 6.9M13.8 11.2l4.3-4.3M12 15.6V19" />
       </symbol>
     </svg>
     <!-- Until `/auth-info` has answered, the page deliberately shows nothing -
@@ -301,6 +313,21 @@
          x-text="t('web.system.update_restarting')"></div>
 
     <!--
+      A Stop sent because the user left the Zigbee tab or the Devices view,
+      and refused by the radio (`api.zigbee.close_failed`). Up here, in
+      every view, rather than inside the pane that was just left: it is the
+      one message saying the network may still be open, and the user is no
+      longer looking at that pane. It goes when a Stop succeeds, when the
+      window's end time passes, or when the user goes back to the tab - where
+      it moves beside that tab's own Stop button.
+    -->
+    <div class="banner danger zigbee-leave-banner" role="alert" x-show="zigbeeLeaveCloseShown()" x-cloak>
+      <span x-text="zigbeeLeaveCloseError"></span>
+      <button type="button" @click="retryZigbeeLeaveClose()" :disabled="zigbeePermitBusy"
+              x-text="t('web.zigbee.stop')"></button>
+    </div>
+
+    <!--
       Real links to the fragments of the four views (`VIEWS` in app.js),
       deliberately no more buttons with `@click`: only this way does the
       selected tab survive a page reload, can be bookmarked and opened
@@ -326,6 +353,42 @@
       <section x-show="view === 'devices'">
         <div class="card">
           <h2 x-text="t('web.devices.commission_heading')"></h2>
+          <!--
+            The two tabs (design 2026-09-12, section 3.1), in the `nav.tabs`
+            shape the language card and the update channel already use -
+            with one deliberate difference from both: those disable their
+            buttons, and this strip never does. The Zigbee tab is ABSENT
+            without a configured stick, not disabled: a tab that explains
+            why it does nothing is worse than no tab, and an installation
+            with no Zigbee stick is the normal case. The whole strip goes
+            with it, so the card of such an installation is exactly the card
+            it always was.
+
+            `zigbeeTabVisible()` reads the STORED setting, never whether the
+            pairing list answered - see app.js.
+          -->
+          <template x-if="zigbeeTabVisible()">
+            <nav class="tabs commission-tabs" role="tablist">
+              <button
+                type="button"
+                role="tab"
+                :aria-selected="commissionTabShown() === 'matter' ? 'true' : 'false'"
+                :class="{ active: commissionTabShown() === 'matter' }"
+                @click="selectCommissionTab('matter')"
+                x-text="t('web.devices.commission_tab_matter')"
+              ></button>
+              <button
+                type="button"
+                role="tab"
+                :aria-selected="commissionTabShown() === 'zigbee' ? 'true' : 'false'"
+                :class="{ active: commissionTabShown() === 'zigbee' }"
+                @click="selectCommissionTab('zigbee')"
+                x-text="t('web.zigbee.tab')"
+              ></button>
+            </nav>
+          </template>
+          <!-- The Matter tab: the card as it has always been, unchanged. -->
+          <div x-show="commissionTabShown() === 'matter'">
           <div x-show="commissionStep === null">
             <!--
               Layout since the "Code first" design (2026-09-07): the
@@ -456,8 +519,8 @@
               <span x-text="t('web.devices.room_label')"></span>
               <select x-model="commissionRoom">
                 <option value="" x-text="t('web.devices.room_none')"></option>
-                <template x-for="chip in roomChips().filter((c) => c.key !== '')" :key="chip.key">
-                  <option :value="chip.key" x-text="chip.key"></option>
+                <template x-for="room in roomSelectOptions()" :key="room">
+                  <option :value="room" x-text="room"></option>
                 </template>
                 <option value="__new__" x-text="t('web.devices.room_new')"></option>
               </select>
@@ -555,6 +618,183 @@
             :class="commissionMessageIsError ? 'banner danger' : 'banner ok'"
             x-text="commissionMessage"
           ></p>
+          </div>
+
+          <!--
+            The Zigbee tab (design 2026-09-12, section 3.1), in the design's
+            order: reset guidance and ONE button first, not an open network -
+            ZHA opens the window as the page loads and burns it while the
+            user is still reading how to reset their device. Then, while
+            the window is open, the countdown with Stop and Keep open
+            longer. Then one row per device, keyed by IEEE.
+          -->
+          <div class="zigbee-pairing" x-show="commissionTabShown() === 'zigbee'" x-cloak>
+            <!-- The list's own failure, as the API words it. A 503 here is a
+                 radio swap in flight or a stick just cleared; the tab stays
+                 either way, and says which. -->
+            <p class="banner danger" x-show="zigbeePairingError" x-cloak x-text="zigbeePairingError"></p>
+            <div class="zigbee-reset">
+              <p class="hint" x-text="t('web.zigbee.reset_intro')"></p>
+              <ul class="zigbee-reset-hints">
+                <li x-text="t('web.zigbee.reset_hint_lamp')"></li>
+                <li x-text="t('web.zigbee.reset_hint_battery')"></li>
+              </ul>
+            </div>
+            <!-- Start and the running window's two buttons share one line
+                 of the same height; the countdown is the line under them. -->
+            <div class="row zigbee-window" x-show="!zigbeeWindowOpen()">
+              <button
+                class="primary"
+                @click="startZigbeeSearch()"
+                :disabled="zigbeePermitBusy || zigbeePairingUnavailable"
+                x-text="t('web.zigbee.start')"
+              ></button>
+            </div>
+            <div class="row zigbee-window" x-show="zigbeeWindowOpen()" x-cloak>
+              <button @click="stopZigbeeSearch()" :disabled="zigbeePermitBusy" x-text="t('web.zigbee.stop')"></button>
+              <button
+                @click="extendZigbeeSearch()"
+                :disabled="zigbeePermitBusy || zigbeePairingUnavailable"
+                x-text="t('web.zigbee.extend')"
+              ></button>
+            </div>
+            <p class="zigbee-countdown" x-show="zigbeeWindowOpen()" x-cloak
+               x-text="t('web.zigbee.countdown', { time: zigbeeCountdownText() })"></p>
+            <p class="banner danger" x-show="zigbeePermitError" x-cloak x-text="zigbeePermitError"></p>
+            <p class="hint" x-show="zigbeeWindowOpen() && zigbeeRows().length === 0" x-cloak
+               x-text="t('web.zigbee.searching_empty')"></p>
+            <!--
+              Two groups (`zigbeeRowGroups()`): the rows still to be dealt
+              with, open, and the rows already in the device list, collapsed
+              under their count - the list holds every device the radio has
+              seen, and those pushed the device tiles far down. ONE row
+              template for both, so the two cannot drift apart: the open
+              group is a `<details>` held open with its summary hidden.
+              `zigbeeAddedExpanded` carries the collapsed group's state across
+              the poll, which re-renders the group every two seconds. The open
+              group's summary is hidden, so it takes its name from
+              `aria-label` instead of reading as an unnamed group.
+            -->
+            <div class="zigbee-row-groups" x-show="zigbeeRows().length > 0" x-cloak>
+              <template x-for="group in zigbeeRowGroups()" :key="group.key">
+                <details
+                  class="zigbee-row-group"
+                  :class="'zigbee-row-group-' + group.key"
+                  :open="group.key === 'open' || zigbeeAddedExpanded"
+                  :aria-label="group.key === 'open' ? t('web.zigbee.open_group_label') : null"
+                  @toggle="if (group.key === 'added') zigbeeAddedExpanded = $el.open"
+                >
+                  <summary x-show="group.key === 'added'" x-text="zigbeeAddedSummary(group.rows.length)"></summary>
+                  <ul class="zigbee-rows">
+                    <template x-for="row in group.rows" :key="row.ieee">
+                      <li class="zigbee-row" :class="'tone-' + zigbeeRowTone(row)">
+                        <div class="zigbee-row-head">
+                          <span class="zigbee-row-dot" aria-hidden="true"></span>
+                          <div class="zigbee-row-text">
+                            <strong class="zigbee-row-title" x-text="zigbeeRowTitle(row)"></strong>
+                            <span class="zigbee-row-state" x-text="zigbeeRowState(row)"></span>
+                            <code class="zigbee-row-ieee" x-show="zigbeeRowTitle(row) !== row.ieee" x-text="row.ieee"></code>
+                          </div>
+                        </div>
+                        <!-- The quirk hint sits on a row that has finished its
+                             interview, and apart from the state line: a device
+                             with no quirk is not a failed one, and users confuse
+                             the two. -->
+                        <p class="hint zigbee-row-quirk" x-show="zigbeeRowNameable(row)"
+                           x-text="row.quirk_applied ? t('web.zigbee.quirk_applied') : t('web.zigbee.quirk_none')"></p>
+                        <!-- Name and room. Before adoption they are what "Add"
+                             sends; after it, each saves on its own when the
+                             field is left (or the select changes). The room
+                             control is the commissioning card's: the same options
+                             (`roomSelectOptions()`), the same "" for no room and
+                             the same "+ New room…" field (`resolveRoomChoice()`).
+                             During a 503 (a radio swap) the fields are disabled
+                             like the buttons: nothing typed there could be saved
+                             until the list answers again. -->
+                        <div class="zigbee-row-fields" x-show="zigbeeRowNameable(row)">
+                          <label class="inline-field zigbee-name-field">
+                            <span x-text="t('web.zigbee.name_label')"></span>
+                            <!-- A one-row textarea, not an input: a prefilled
+                                 `<Manufacturer> <Model>` is long by nature, and an
+                                 input cut it off at 375 px, so nobody could check
+                                 the name before keeping it. The wrapper grows with
+                                 the text (style.css, `.zigbee-name-grow`); Enter
+                                 still submits, and a line break never gets in
+                                 (`zigbeeRowEdited()`). Not `.enter.prevent`:
+                                 the Enter that confirms an input method's
+                                 candidate (Japanese, Chinese) is a keydown too,
+                                 and it added a half-typed name. -->
+                            <span class="zigbee-name-grow" :data-value="zigbeeRowDrafts[row.ieee].name">
+                              <textarea
+                                rows="1"
+                                aria-multiline="false"
+                                x-model="zigbeeRowDrafts[row.ieee].name"
+                                @input="zigbeeRowEdited(row.ieee, 'name')"
+                                @blur="saveZigbeeName(row.ieee)"
+                                @keydown.enter="if (!$event.isComposing && $event.keyCode !== 229) { $event.preventDefault(); zigbeeRowAdopted(row) ? $el.blur() : adoptZigbeeDevice(row.ieee) }"
+                                :disabled="zigbeePairingUnavailable"
+                              ></textarea>
+                            </span>
+                          </label>
+                          <label class="inline-field">
+                            <span x-text="t('web.devices.room_label')"></span>
+                            <select
+                              x-model="zigbeeRowDrafts[row.ieee].room"
+                              @change="zigbeeRowEdited(row.ieee, 'room'); saveZigbeeRoom(row.ieee)"
+                              :disabled="zigbeePairingUnavailable"
+                            >
+                              <option value="" x-text="t('web.devices.room_none')"></option>
+                              <template x-for="room in roomSelectOptions()" :key="room">
+                                <option :value="room" x-text="room"></option>
+                              </template>
+                              <option value="__new__" x-text="t('web.devices.room_new')"></option>
+                            </select>
+                          </label>
+                          <input
+                            x-show="zigbeeRowDrafts[row.ieee].room === '__new__'"
+                            x-cloak
+                            type="text"
+                            class="new-room-input"
+                            x-model="zigbeeRowDrafts[row.ieee].newRoom"
+                            @input="zigbeeRowEdited(row.ieee, 'room')"
+                            @blur="saveZigbeeRoom(row.ieee)"
+                            :disabled="zigbeePairingUnavailable"
+                            :placeholder="t('web.devices.room_new_placeholder')"
+                            :aria-label="t('web.devices.room_new_placeholder')"
+                          />
+                        </div>
+                        <p class="hint zigbee-row-added-hint" tabindex="-1" x-show="zigbeeRowNameable(row) && zigbeeRowAdopted(row)" x-cloak
+                           x-text="zigbeeRowWasSaved(row) ? t('web.zigbee.saved') : t('web.zigbee.adopted_hint')"></p>
+                        <div class="row zigbee-row-actions">
+                          <button
+                            class="primary"
+                            x-show="zigbeeRowOffers(row, 'adopt')"
+                            :disabled="zigbeeRowLocked(row)"
+                            @click="adoptZigbeeDevice(row.ieee)"
+                            x-text="t('web.zigbee.adopt')"
+                          ></button>
+                          <button
+                            x-show="zigbeeRowOffers(row, 'retry')"
+                            :disabled="zigbeeRowLocked(row)"
+                            @click="retryZigbeeDevice(row.ieee)"
+                            x-text="t('web.zigbee.retry')"
+                          ></button>
+                          <button
+                            x-show="zigbeeRowOffers(row, 'remove')"
+                            :disabled="zigbeeRowLocked(row)"
+                            @click="removeZigbeeDevice(row.ieee)"
+                            x-text="t('web.zigbee.remove')"
+                          ></button>
+                        </div>
+                        <p class="banner danger zigbee-row-error" x-show="zigbeeRowError(row)" x-cloak
+                           x-text="zigbeeRowError(row)"></p>
+                      </li>
+                    </template>
+                  </ul>
+                </details>
+              </template>
+            </div>
+          </div>
 
         </div>
 
@@ -1128,8 +1368,8 @@
                         x-text="command.slug"
                       ></button>
                     </template>
-                    <!-- Value-carrying commands move into the control modal
-                         (task 7): for those, the tile now shows only this
+                    <!-- Value-carrying commands move into the control modal:
+                         for those, the tile now shows only this
                          one button, instead of rendering a bare
                          number field per command. -->
                     <button
@@ -1454,6 +1694,31 @@
                     <a href="#/settings" x-text="t('web.settings.miniserver_link')"></a>
                     <span x-text="t('web.devices.export_hint_suffix')"></span>
                   </p>
+                  <!-- The removal's second step, for a device whose
+                       technology has no configured source (the 503 carrying
+                       "offer": "forget_only"). On the tile the user removed
+                       it from, not in a second modal: the first question was
+                       the tile menu's own confirmation, and this is its
+                       honest answer - the device itself cannot be told. -->
+                  <div class="dialog-inline device-forget-offer" role="alert"
+                       x-show="deviceForgetOfferFor(device)" x-cloak>
+                    <p x-text="deviceForgetOfferText()"></p>
+                    <div class="row">
+                      <button type="button" class="danger" @click="forgetDeviceLocally(device)"
+                              :disabled="deviceForgetBusy" x-text="t('web.devices.forget_only')"></button>
+                      <!-- N-2 (verification 2026-09-13): `x-show` hides this
+                           box with `display: none` the instant
+                           `deviceForgetOffer` is cleared, but focus itself
+                           does not move - a keyboard user who pressed Enter
+                           here is left focused on a now-invisible button.
+                           Send focus back to the tile's own menu button
+                           (`.card` is the tile's wrapping element,
+                           `deviceCardClass` above), in `$nextTick` so the
+                           box has actually left the layout first. -->
+                      <button type="button" @click="deviceForgetOffer = null; $nextTick(() => $el.closest('.card')?.querySelector('summary')?.focus())"
+                              :disabled="deviceForgetBusy" x-text="t('web.devices.forget_only_keep')"></button>
+                    </div>
+                  </div>
                 </div>
               </template>
             </div>
@@ -1466,7 +1731,7 @@
            ================================================================ -->
       <section x-show="view === 'export'" x-cloak>
         <!--
-          Project file sync (Task 12, originally further down in "System" -
+          Project file sync (originally further down in "System" -
           moved up here as the topmost item at the user's request, because
           this is meant to become the primary path going forward instead
           of the template ZIPs below): upload an existing
@@ -2201,7 +2466,7 @@
         </div>
 
         <!--
-          Live diagnostics (Task 6, Spec 10.5): ONE WebSocket
+          Live diagnostics (Spec 10.5): ONE WebSocket
           (`/api/diagnostics/live`, opened/closed in `selectView`,
           app.js) continuously fills the three streams below instead of the previous
           one-off GET. This single card carries the four controls
@@ -2229,7 +2494,7 @@
             </label>
             <label>
               <!--
-                No "Debug" here (follow-up Task 7, Fix 3f): the ring
+                No "Debug" here: the ring
                 is pinned server-side to INFO (`install_log_buffer()` sets
                 both the handler and the logger level, see cli.py), so DEBUG
                 lines never arrive. An option that never shows
@@ -2341,6 +2606,267 @@
             ></span>
           </div>
           <p x-show="settingsError" x-cloak class="banner danger" x-text="settingsError"></p>
+        </div>
+
+        <div class="card radios-card">
+          <!-- Radios (design "Radios in the Web UI", 2026-09-11, section
+               8). Detection is always shown; changing needs a ready
+               sidecar, otherwise the message explains what to run.
+
+               `radios-card`: a hook for CSS that must reach every select on
+               this card, Thread and Bluetooth included, not only
+               `.radios-zigbee`'s own row - see style.css. -->
+          <h2 x-text="t('web.radios.heading')"></h2>
+          <p class="hint" x-text="t('web.radios.explanation')"></p>
+          <p class="hint" x-show="radiosSidecarMessage()" x-cloak x-text="radiosSidecarMessage()"></p>
+          <template x-if="radios">
+            <div>
+              <div class="row">
+                <label>
+                  <span x-text="t('web.radios.thread_label')"></span>
+                  <select
+                    x-model="radiosDraft.threadDevice"
+                    @change="radiosDirty = true"
+                    :disabled="radios.sidecar !== 'ready' || radiosJobRunning() || radiosBusy"
+                  >
+                    <!-- `option.zigbee` is the server's `is_zigbee`: the stick
+                         the Zigbee row below is set up with, which
+                         `POST /api/radios` refuses for Thread. Listed and
+                         disabled rather than dropped, the way the Zigbee
+                         row lists the Thread stick. The label, with its one
+                         suffix, is `radiosThreadOptionLabel()` in app.js. -->
+                    <template x-for="option in radiosThreadOptions()" :key="option.value">
+                      <option
+                        :value="option.value"
+                        :disabled="option.zigbee"
+                        x-text="radiosThreadOptionLabel(option)"
+                      ></option>
+                    </template>
+                  </select>
+                </label>
+              </div>
+              <!-- Which stick Zigbee holds and how to free it. Directly under
+                   the Thread select it is about, not under the Bluetooth one
+                   beside it - which is why Thread and Bluetooth are two rows
+                   now rather than one. Its own line, the way
+                   `zigbeeThreadHint()`'s line is for the Zigbee row: the
+                   option's own suffix is what a narrow native select cuts
+                   off first. -->
+              <p class="hint radios-row-hint" x-show="radiosZigbeeHint()" x-cloak x-text="radiosZigbeeHint()"></p>
+              <div class="row radios-bluetooth-row">
+                <label>
+                  <span x-text="t('web.radios.bluetooth_label')"></span>
+                  <select
+                    x-model.number="radiosDraft.bluetoothAdapter"
+                    @change="radiosDirty = true"
+                    :disabled="radios.sidecar !== 'ready' || radiosJobRunning() || radiosBusy"
+                  >
+                    <!-- Review-Fix Minor #6: `option.blocked` used to be
+                         computed (`radiosBluetoothOptions()`) and then
+                         ignored here - nothing stopped choosing an
+                         rfkill-blocked adapter, only the server checked
+                         existence. `:disabled` blocks a NEW selection
+                         through the native control; an adapter already
+                         selected before it became blocked still renders
+                         (a disabled `<option>` that is the current value
+                         displays normally), which is the point - this
+                         must describe reality, not hide it. -->
+                    <template x-for="option in radiosBluetoothOptions()" :key="option.value">
+                      <option
+                        :value="option.value"
+                        :disabled="option.blocked"
+                        x-text="radiosBluetoothOptionLabel(option)"
+                      ></option>
+                    </template>
+                  </select>
+                </label>
+              </div>
+              <template x-for="option in radiosBluetoothOptions().filter((o) => o.blocked)" :key="'blocked-' + option.value">
+                <!-- Review-Fix Minor #5: `.hint.warn` does not exist in
+                     style.css (only `.badge.warn`, `.banner.warn` and
+                     `.status-pill.warn`) - the established pattern for a
+                     warning on this card, used by the update card. -->
+                <p class="banner warn" x-text="option.label + ': ' + t('web.radios.rfkill_blocked')"></p>
+              </template>
+              <div class="row">
+                <!-- `rescanRadios()` rather than an inline statement list
+                     (see app.js): it clears `radiosDirty` for Review-Fix
+                     Minor #8's reason AND the sticky stall banners, which
+                     otherwise had no exit but a page reload. -->
+                <button @click="rescanRadios()" x-text="t('web.radios.rescan')"></button>
+                <button
+                  class="primary"
+                  x-show="radios.sidecar === 'ready' && radiosChanged() && !radiosJobRunning()"
+                  x-cloak
+                  @click="askApplyRadios()"
+                  :disabled="radiosBusy"
+                  x-text="t('web.radios.apply')"
+                ></button>
+              </div>
+              <div class="dialog-inline" x-show="radiosConfirming" x-cloak>
+                <h3 x-text="t('web.radios.confirm_title')"></h3>
+                <template x-for="key in radiosConfirmKeys()" :key="key">
+                  <p x-text="t(key)"></p>
+                </template>
+                <p class="hint" x-text="t('web.radios.confirm_rollback')"></p>
+                <div class="row">
+                  <button class="primary" @click="confirmApplyRadios()" x-text="t('web.radios.confirm_apply')"></button>
+                  <button @click="cancelApplyRadios()" x-text="t('web.radios.cancel')"></button>
+                </div>
+              </div>
+              <template x-if="radios.job && (radiosJobRunning() || radiosResultKey())">
+                <div>
+                  <ul class="steps" x-show="radiosJobRunning()">
+                    <template x-for="step in radios.job.steps" :key="step">
+                      <li :class="radiosStepClass(step)" x-text="radiosStepLabel(step)"></li>
+                    </template>
+                  </ul>
+                  <!-- The rollback has no step of its own to highlight
+                       (`rollback` is not in `radios.job.steps`, so every
+                       `radiosStepClass()` above reads neither done nor
+                       now) and no result line yet (it is not a terminal
+                       phase) - without this the card went silent for the
+                       whole recovery. `banner warn`, not `danger`: at
+                       this point the change has failed but the previous
+                       setting is actively coming back, which is the
+                       system working, not a verdict. -->
+                  <p class="banner warn" x-show="radiosRollingBack()" x-cloak
+                     x-text="t('web.radios.rolling_back')"></p>
+                  <p
+                    x-show="radiosResultKey()"
+                    x-cloak
+                    :class="radios.job.phase === 'done' || radios.job.phase === 'unchanged' ? 'hint' : 'banner danger'"
+                    x-text="radiosResultKey() && t(radiosResultKey(), { reason: radiosReason() })"
+                  ></p>
+                </div>
+              </template>
+              <!-- Review-Fix Critical #2a: the sidecar died mid-job -
+                   `radiosJobRunning()` now reads `false` once
+                   `radiosJobAbandoned` is set (see app.js), so the step
+                   list above stops claiming progress on its own; this is
+                   the explanation for why it went blank instead of
+                   showing a result. Same `banner danger` + `x-cloak`
+                   pattern as the update card's own `updateStalled()`
+                   banner (index.html, System tab). -->
+              <p class="banner danger" x-show="radiosJobAbandoned" x-cloak
+                 x-text="t('web.radios.job_abandoned')"></p>
+              <!-- Review-Fix Critical #2b: accepted (a 202 from
+                   POST /api/radios) but never collected within
+                   `RADIOS_APPLY_GRACE_MS` - the radios counterpart of the
+                   update card's `updateNeverCollected()`/
+                   `web.system.update_not_collected` banner. -->
+              <p class="banner danger" x-show="radiosNeverCollected()" x-cloak
+                 x-text="t('web.radios.job_not_collected')"></p>
+              <p x-show="radiosError" x-cloak class="banner danger" x-text="radiosError"></p>
+              <!-- A failed Apply, kept in its own field so the two-second
+                   job poll cannot erase it (see `confirmApplyRadios()` in
+                   app.js - a 409 arms that poll itself). -->
+              <p x-show="radiosApplyError" x-cloak class="banner danger" x-text="radiosApplyError"></p>
+            </div>
+          </template>
+          <!-- The Zigbee row (design 2026-09-12, section 3.2). Outside the
+               `x-if="radios"` block above on purpose: it reads its own
+               endpoint, which the bridge answers itself, so a missing or
+               outdated updater sidecar must not hide it. Its own Apply, its
+               own busy flag and its own errors, for the same reason. -->
+          <template x-if="zigbee">
+            <div class="radios-zigbee">
+              <div class="row">
+                <label>
+                  <span x-text="t('web.radios.zigbee_label')"></span>
+                  <select
+                    x-model="zigbeeDraft.path"
+                    @change="zigbeeSelectionChanged()"
+                    :disabled="zigbeeBusy"
+                  >
+                    <!-- `option.disabled` is the server's `selectable`, so
+                         the Thread stick is listed with its reason and
+                         cannot be chosen. A disabled `<option>` that is
+                         already the current value still displays. -->
+                    <template x-for="option in zigbeeRadioOptions()" :key="option.value">
+                      <option :value="option.value" :disabled="option.disabled" x-text="option.label"></option>
+                    </template>
+                  </select>
+                </label>
+                <!-- Always present, disabled while there is nothing to
+                     apply - unlike the Apply of the rows above, which
+                     appears and disappears. Measured at 375 px: this
+                     button wraps under the select, and hiding it the
+                     moment it was pressed moved every line below it up by
+                     41 px, right as the progress line started talking. -->
+                <button
+                  class="primary"
+                  @click="applyZigbeeRadio()"
+                  :disabled="!zigbeeCanApply()"
+                  x-text="t('web.radios.apply')"
+                ></button>
+              </div>
+              <!-- Which stick Thread holds and how to free it. Its own line,
+                   because the reason at the end of the option label is the
+                   part a narrow native select cuts off. -->
+              <p class="hint" x-show="zigbeeThreadHint()" x-cloak x-text="zigbeeThreadHint()"></p>
+              <!-- Why no stick can be chosen right now: the bridge cannot
+                   tell which stick Thread is on (`thread_refusal`, see
+                   radios/thread_lockout.py). The server has already made
+                   every stick unselectable, so Apply is off for all of
+                   them; this says why once, rather than as a suffix a
+                   narrow select would cut off. "No Zigbee stick" stays. -->
+              <p class="hint danger-text" x-show="zigbee.thread_refusal" x-cloak x-text="zigbee.thread_refusal"></p>
+              <p class="hint" x-text="t('web.radios.zigbee_hint')"></p>
+              <!-- No `role="status"` on the visible line: it carries an
+                   attempt counter that changes on every retry, and a live
+                   region re-read the whole failure sentence each time. The
+                   hidden one below speaks only when the news changes. -->
+              <p
+                class="hint radios-zigbee-progress"
+                :class="{ 'danger-text': zigbeeProgressFailing(zigbee.progress, zigbee.configured_device_present) }"
+                x-text="zigbeeProgressText(zigbee.progress, zigbee.configured_device_present)"
+              ></p>
+              <p class="visually-hidden" role="status" x-text="zigbeeAnnouncement"></p>
+              <!-- The firmware the stick reported on its last successful
+                   connect - otherwise only in bellows' DEBUG log. -->
+              <p class="hint" x-show="zigbee.coordinator?.firmware" x-cloak
+                 x-text="t('web.radios.zigbee_firmware', { firmware: zigbee.coordinator?.firmware })"></p>
+              <p class="hint" x-show="zigbeeSelectedOption()?.unrecognised" x-cloak
+                 x-text="t('web.radios.fingerprint_unknown')"></p>
+              <details
+                class="commission-disclosure"
+                x-show="zigbeeSelectedOption()?.unrecognised"
+                x-cloak
+                :open="zigbeeAdvancedOpen"
+                @toggle="zigbeeAdvancedOpen = $el.open"
+              >
+                <summary x-text="t('web.radios.advanced')"></summary>
+                <div class="disclosure-body radios-zigbee-advanced">
+                  <label>
+                    <span class="field-label" x-text="t('web.radios.zigbee_radio_type')"></span>
+                    <select x-model="zigbeeDraft.radioType" @change="zigbeeAdvancedChanged()" :disabled="zigbeeBusy">
+                      <template x-for="option in zigbeeRadioTypeOptions()" :key="option.value">
+                        <option :value="option.value" x-text="option.label"></option>
+                      </template>
+                    </select>
+                  </label>
+                  <label>
+                    <span class="field-label" x-text="t('web.radios.zigbee_baudrate')"></span>
+                    <input
+                      type="number"
+                      min="1"
+                      step="1"
+                      x-model.number="zigbeeDraft.baudrate"
+                      @input="zigbeeAdvancedChanged()"
+                      :disabled="zigbeeBusy"
+                    />
+                  </label>
+                </div>
+              </details>
+              <!-- Two fields, as on the rows above: the poll clears
+                   `zigbeeError` on every answer, and must not take a
+                   failed Apply's explanation with it. -->
+              <p x-show="zigbeeError" x-cloak class="banner danger" x-text="zigbeeError"></p>
+              <p x-show="zigbeeApplyError" x-cloak class="banner danger" x-text="zigbeeApplyError"></p>
+            </div>
+          </template>
+          <p x-show="!zigbee && zigbeeError" x-cloak class="banner danger" x-text="zigbeeError"></p>
         </div>
 
         <div class="card">
@@ -2540,7 +3066,7 @@
 
                 The open/closed state lives in the DOM, not in Alpine - the same
                 pattern as the tile menu, and the reason why the old
-                global open/close toggle (Task 8) is removed without replacement.
+                global open/close toggle was removed without replacement.
 
                 `x-init` instead of `:open` is mandatory, not a style choice: Alpine
                 re-evaluates a BINDING every time its dependencies change,
@@ -2686,7 +3212,7 @@
                             x-text="t('web.signals.resend_checkbox')"
                           ></span>
                         </label>
-                        <!-- Since task 8, the last cell carries only the
+                        <!-- The last cell now carries only the
                              kebab menu, nothing else: the warning pill
                              with `signal.reason` used to sit here in the
                              28px column and wrapped there as soon as the
@@ -2758,7 +3284,7 @@
     </dialog>
 
     <!--
-      Control modal (task 7): sliders instead of bare number fields for
+      Control modal: sliders instead of bare number fields for
       value-carrying commands. Structure, opening, closing, and
       backdrop click follow the signal modal above exactly - see its
       comments for the full reasoning: `@close` remains the
@@ -2915,6 +3441,22 @@
           </div>
 
           <div x-show="!hasColourTabs(controlModalDevice) || controlTab === 'colour'">
+            <!-- At most ONE command arrives here, and the loop relies on
+                 it: every colour area below reads and writes the same
+                 `controlDrafts.hue`/`.saturation`, and this block draws no
+                 `command.slug` label, so a second one would be an
+                 indistinguishable twin whose marker moves when the first
+                 is dragged - which is exactly what a colour lamp got from
+                 the moment MoveToColor gained a `clusters.yaml` entry
+                 (2026-09-12) until the review that found it. The rule
+                 that keeps it to one
+                 sits in `profiles/table.py`
+                 (`duplicate_control_command`), applied by both controls
+                 routes - server-side, because which of two Matter
+                 commands should be the colour control is cluster
+                 knowledge, and this file's standing rule is that
+                 `command.slug` is a label here and never a case
+                 distinction. -->
             <template x-for="command in controlsByKind(controlModalDevice, 'hue_sat')" :key="command.key">
               <div class="control-row">
                 <!-- The marker sits IN the field, not next to it: `hue`

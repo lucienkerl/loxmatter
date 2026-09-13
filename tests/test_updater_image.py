@@ -92,3 +92,12 @@ def test_the_base_image_is_pinned() -> None:
     source = DOCKERFILE.read_text(encoding="utf-8")
     assert re.search(r"^FROM alpine:3\.\d+", source, re.MULTILINE)
     assert "alpine:latest" not in source
+
+
+def test_the_image_ships_the_radios_job() -> None:
+    """Fault to prove it: remove radios-once.sh from the COPY line."""
+    source = DOCKERFILE.read_text(encoding="utf-8")
+    copy = next(line for line in source.splitlines() if line.startswith("COPY "))
+    chmod = next(line for line in source.splitlines() if "chmod +x" in line)
+    assert "radios-once.sh" in copy.split()
+    assert "/opt/loxmatter/radios-once.sh" in chmod.split()

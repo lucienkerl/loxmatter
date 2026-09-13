@@ -45,7 +45,7 @@ DEVICE_TYPE_LIST_ID = 0
 # the CSA specification's `zcl/data-model/chip/matter-devices.xml`. The
 # installed chip SDK itself (chip.clusters.Objects), by contrast, only
 # contains the cluster structure of the descriptor attribute
-# `DeviceTypeList`, no table of device-type numbers (checked in Task 1).
+# `DeviceTypeList`, no table of device-type numbers (checked in the installed package).
 # Cross-checked against the checked-in snapshots
 # tests/fixtures/nodes/ikea_grillplats_plug.json and
 # ikea_bilresa_button.json: their "<endpoint>/29/0" values contain exactly
@@ -150,7 +150,7 @@ def is_functional(ref: SignalRef, device_types: dict[int, frozenset[int]]) -> bo
     level (element 12), but carries the same cluster 47 with 36 other,
     unnamed attributes (charge state, battery chemistry, ANSI designations,
     fault lists) - without this second filter all 37 would be "wanted"
-    just because one of them is (Task 6, see
+    just because one of them is (see
     `test_an_unnamed_power_source_attribute_on_the_utility_endpoint_is_not_functional`).
 
     Events are not subject to the cluster-table filter from layer 3: they

@@ -19,6 +19,7 @@ import pytest
 from loxmatter.commands.color import (
     kelvin_to_mireds,
     loxone_rgb_to_rgb,
+    rgb_to_cie_xy,
     rgb_to_hue_saturation,
 )
 
@@ -48,6 +49,90 @@ def test_primary_colours_map_to_known_hues(rgb, hue, saturation):
     h, s = rgb_to_hue_saturation(*rgb)
     assert h == pytest.approx(hue, abs=1)
     assert s == pytest.approx(saturation, abs=1)
+
+
+def test_rgb_to_cie_xy_against_the_srgb_primaries():
+    """The published chromaticities of the sRGB primaries and of the D65
+    white point (IEC 61966-2-1). Checked as the ZCL encoding, which is what
+    goes on the wire: x = CurrentX / 65536, range 0x0000-0xFEFF.
+
+    Fault to prove it: swap the returned x and y. Red then reports the
+    chromaticity of a colour it is not, and the lamp shows it.
+    """
+    assert rgb_to_cie_xy(255, 0, 0) == (41943, 21627)  # x 0.6400, y 0.3300
+    assert rgb_to_cie_xy(0, 255, 0) == (19661, 39322)  # x 0.3000, y 0.6000
+    assert rgb_to_cie_xy(0, 0, 255) == (9830, 3932)  # x 0.1500, y 0.0600
+
+
+def test_rgb_to_cie_xy_puts_white_on_d65():
+    """White must land on the illuminant the sRGB standard defines, not
+    somewhere near it - a white that drifts is the most visible error this
+    conversion can make.
+
+    This test cannot, on its own, tell a gamma-corrected conversion apart
+    from one that skips gamma expansion entirely: at r=g=b, every channel
+    gets the same treatment regardless, so the ratios - and therefore the
+    chromaticity - come out identical either way. See
+    `test_rgb_to_cie_xy_applies_the_srgb_gamma_curve_not_a_shortcut` below
+    for the fault this test cannot catch."""
+    x, y = rgb_to_cie_xy(255, 255, 255)
+    assert abs(x / 65536 - 0.3127) < 0.001
+    assert abs(y / 65536 - 0.3290) < 0.001
+
+
+def test_rgb_to_cie_xy_applies_the_srgb_gamma_curve_not_a_shortcut():
+    """The primaries (above) and the white point (above) all sit at the 0/1
+    extremes of the gamma curve, where `_expand_gamma` and a bare
+    `channel / 255` agree exactly - both map 0 to 0 and 255 to 1. Neither
+    of those tests can therefore tell a correct, gamma-expanding conversion
+    apart from one that skips the curve. Only a genuinely mixed colour,
+    partway between two primaries, exercises it - which is what this test
+    checks and the others, despite an earlier draft's claim, do not.
+
+    Expected value for orange (255, 128, 0), computed independently from
+    the sRGB standard's own EOTF and RGB-to-XYZ matrix (IEC 61966-2-1), the
+    same way the primaries above were computed.
+
+    Fault to prove it: skip the gamma expansion (use the raw 0-1 channel
+    values), as in the other two tests' docstrings - this is the one test
+    of the three that actually fails when that happens.
+    """
+    assert rgb_to_cie_xy(255, 128, 0) == (35585, 26676)  # x 0.5431, y 0.4071
+
+
+def test_rgb_to_cie_xy_never_exceeds_the_zcl_maximum():
+    """CurrentX/CurrentY are capped at 0xFEFF by the ZCL, not at 0xFFFF. A
+    value above it is out of range on the wire.
+
+    This holds trivially for every real colour: the sRGB gamut's most
+    extreme chromaticities are its own primaries (x=0.64 for red, y=0.60
+    for green), both far under 0xFEFF/65536=0.9961 - no RGB triple in
+    `rgb_to_cie_xy`'s domain (0-255 per channel) can reach the cap. The
+    loop below therefore cannot fail no matter whether the cap exists; it
+    stays as a sanity check that the values are at least in the right
+    ballpark, not as the cap's protection.
+
+    Fault to prove it: return `round(x * 65536)` without the cap. As the
+    paragraph above explains, that fault does NOT fail here - see
+    `test_the_cap_itself_rejects_a_ratio_above_one` below, which is the
+    test that actually protects the cap."""
+    for colour in ((255, 0, 0), (0, 255, 0), (0, 0, 255), (255, 255, 255), (0, 0, 0)):
+        x, y = rgb_to_cie_xy(*colour)
+        assert 0 <= x <= 0xFEFF
+        assert 0 <= y <= 0xFEFF
+
+
+def test_the_cap_itself_rejects_a_ratio_above_one():
+    """The counterpart to the test above: since no real colour ever drives
+    `rgb_to_cie_xy` anywhere near the ZCL cap, the cap has to be tested
+    directly against the internal rounding helper instead.
+
+    Fault to prove it: return `round(ratio * 65536)` from `_to_cie_component`
+    without the `min(_CIE_MAX, ...)`."""
+    from loxmatter.commands.color import _to_cie_component
+
+    assert _to_cie_component(0.64) == 41943  # a real chromaticity, unaffected
+    assert _to_cie_component(1.5) == 0xFEFF  # would be 98304 uncapped
 
 
 @pytest.mark.parametrize(

@@ -16,7 +16,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-/* Style of the loxmatter UI (Task 7, Phase 5).
+/* Style of the loxmatter UI.
  *
  * Deliberately unadorned: this is a commissioning and diagnostics tool
  * (Spec 8.2), not a smart-home experience. Clarity over impact - colour is
@@ -183,6 +183,31 @@ nav.tabs button.active {
   color: var(--text);
   border-bottom-color: var(--accent);
   font-weight: 600;
+}
+
+/* On a phone the four view names did not fit in German: "Einstellungen"
+ * ended at 385 px in a 375 px viewport and pushed the whole page sideways.
+ * Below 400 px the bar's side padding and each tab's padding shrink, which
+ * fits all four in both languages; `overflow-x: auto` is the backstop for a
+ * narrower screen or a longer translation, so the bar scrolls on its own
+ * instead of the page. */
+nav.tabs {
+  overflow-x: auto;
+}
+
+@media (max-width: 400px) {
+  nav.tabs {
+    gap: 0;
+    padding-left: 0.5rem;
+    padding-right: 0.5rem;
+  }
+
+  nav.tabs a,
+  nav.tabs button {
+    padding-left: 0.6rem;
+    padding-right: 0.6rem;
+    white-space: nowrap;
+  }
 }
 
 main {
@@ -455,6 +480,116 @@ button:disabled {
   background: var(--warn-bg);
   color: var(--warn);
   border: 1px solid var(--warn);
+}
+
+/* An inline confirmation inside a card (radios card, design 2026-09-11). */
+.dialog-inline {
+  margin-top: 0.75rem;
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+}
+
+/* The forget-only offer on a device tile: its sentence starts at the box's
+ * own padding, not a paragraph margin below it. */
+.device-forget-offer > p {
+  margin-top: 0;
+}
+
+/* The Zigbee row of the radios card (design 2026-09-12, section 3.2). A
+ * rule above it, because it is a different kind of row from the two above
+ * it - its own Apply, applied at once, nothing restarted - and it should
+ * not read as a continuation of their Rescan/Apply controls. */
+.radios-zigbee {
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border);
+}
+
+/* A select holding a long stick name ("SONOFF Zigbee Dongle Plus MG24 ·
+ * in use for Thread") must shrink with a narrow card instead of pushing
+ * the Apply button out of it. Every select on the radios card, not only
+ * this row's: the Thread select carries the very same kind of label once a
+ * stick is in use for Zigbee (index.html), and a real product name plus
+ * that suffix - about 70 characters - overflowed a 375px card before this
+ * reached the Thread row too. */
+.radios-card .row > label {
+  min-width: 0;
+  max-width: 100%;
+}
+.radios-card select {
+  max-width: 100%;
+}
+
+/* Thread and Bluetooth are two rows, so that the Thread row's hint can sit
+ * directly under the Thread select it is about. The Bluetooth row carries
+ * its own margins because `.row + .row` does not reach across that hint
+ * paragraph - it stays in the DOM while `x-show` hides it - nor across the
+ * `<template>` of rfkill banners between it and the Rescan row. */
+.radios-card .radios-row-hint {
+  margin: 0.4rem 0 0;
+}
+.radios-card .radios-bluetooth-row {
+  margin: 0.75rem 0;
+}
+
+/* Below this width - the same threshold `.code-field` already uses further
+ * up - the label and its select stacked inconsistently across the three
+ * rows: Thread's whole label (span and select together) wrapped onto its
+ * own line because nothing constrained its width, Bluetooth's usually
+ * short label stayed on one line, and only Zigbee's (already narrowed by
+ * the rule above) happened to wrap its own select under its span. None of
+ * that depended on the row a maintainer cared about, only on how long that
+ * particular label's text was. Forcing every label into its own column
+ * makes Thread, Bluetooth and Zigbee stack the same way regardless of
+ * content length. */
+@media (max-width: 480px) {
+  .radios-card .row > label {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.25rem;
+  }
+}
+
+/* The progress line changes wording several times during one successful
+ * attempt ("applying" -> "loading_quirks" -> "opening_radio" ->
+ * "connected"), and those sentences wrap to different line counts on a
+ * narrow card. Two reserved lines keep everything below it from jumping
+ * with each change; `:empty` gives the space back when there is nothing to
+ * say (`idle`). A long failure message wraps anywhere rather than widening
+ * the card. */
+.radios-zigbee-progress {
+  margin: 0.4rem 0;
+  min-height: 3em;
+  overflow-wrap: anywhere;
+}
+.radios-zigbee-progress:empty {
+  min-height: 0;
+}
+
+/* Read by a screen reader, not shown: the Zigbee row's live region, which
+ * repeats the progress line's news without its attempt counter. */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.radios-zigbee-advanced {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem 1rem;
+}
+.radios-zigbee-advanced input[type="number"] {
+  width: 9rem;
 }
 
 /* ---------------------------------------------------------------------
@@ -1676,8 +1811,8 @@ footer.hint-block {
 /* Unchanged signals: collapsed behind a count summary,
    after that only plain chips without a status badge - they are already
    correct and should not distract the eye from what is new/changed above.
-   The same `.value-chip` building block as in the device dashboard
-   (Task 8), reused here for the same purpose: many small,
+   The same `.value-chip` building block as in the device dashboard,
+   reused here for the same purpose: many small,
    similar-looking facts arranged compactly side by side. */
 .projectsync-unchanged-disclosure {
   margin-top: 0.6rem;
@@ -2576,7 +2711,7 @@ footer.hint-block {
   border-radius: 8px;
 }
 
-/* Control modal (task 7): one row per slider, label above the
+/* Control modal: one row per slider, label above the
  * slider instead of next to it - on narrow windows the slider would
  * otherwise stay too short to aim at. Uses the same `.signals-modal`
  * framing as the signal modal, see there. */
@@ -2688,7 +2823,7 @@ footer.hint-block {
    was a `flex-wrap` container with no column dimensions, and with
    `multipress_ongoing` the second label alone slipped to the next line.
 
-   Finding (task 13): the previous 150px of the key column was NOT
+   Finding: the previous 150px of the key column was NOT
    measured, only estimated - the comment claimed otherwise anyway.
    `.key` carries neither `white-space` nor `overflow`, so the pill
    overflowed within its own cell without shifting the grid itself
@@ -2835,7 +2970,7 @@ footer.hint-block {
 /* Indented to the name column (58px checkbox + 0.5rem gap), so the
    disclosure visibly belongs to ITS row and not to the table.
 
-   Since task 8, the warning pill with `signal.reason` also lives here:
+   The warning pill with `signal.reason` now lives here as well:
    in the 28px kebab column of the grid (`.signal-grid`), a longer text
    (e.g. "Text - a virtual UDP input only knows numbers and digital
    values" from `_UNEXPORTABLE_REASONS`, `api/devices.py`) wrapped for
@@ -3202,4 +3337,310 @@ footer.hint-block {
     flex: 1 1 100%;
     min-height: 44px;
   }
+}
+
+/* ---------------------------------------------------------------------
+ * The Zigbee tab of the commissioning card (design 2026-09-12, 3.1).
+ * ------------------------------------------------------------------- */
+
+/* The `nav.tabs` strip, inside a card rather than under the header: no bar
+ * background of its own and no side padding, so the tabs line up with the
+ * heading above them. */
+nav.tabs.commission-tabs {
+  padding: 0;
+  margin: 0 0 1rem;
+  background: none;
+}
+
+.zigbee-reset-hints {
+  margin: 0.2rem 0 0.9rem;
+  padding-left: 1.2rem;
+  font-size: 0.88rem;
+}
+
+.zigbee-reset .hint {
+  margin: 0;
+}
+
+/* Start, and the Stop/Keep open pair that replaces it, sit on one line of
+ * the same height, so the button just pressed stays where the finger is.
+ * The countdown is its own line below them: beside the two buttons it
+ * wrapped the second one onto a line of its own at 375 px, in both
+ * languages. */
+.zigbee-window {
+  min-height: 2.5rem;
+}
+
+.zigbee-countdown {
+  margin: 0.5rem 0 0;
+}
+
+/* Digits of one width, so the countdown does not jiggle every second. */
+p.zigbee-countdown {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.zigbee-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+/* The two row groups: the open one looks like no group at all (its summary
+ * is hidden and it is always open), the "already added" one is a disclosure
+ * in the commissioning card's own style. */
+.zigbee-row-group {
+  margin-top: 1rem;
+}
+
+.zigbee-row-group > summary {
+  list-style: none;
+  cursor: pointer;
+  color: var(--text-muted);
+  font-size: 0.88rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  border-bottom: 1px dotted var(--border);
+  padding-bottom: 1px;
+}
+
+.zigbee-row-group > summary::-webkit-details-marker {
+  display: none;
+}
+
+.zigbee-row-group > summary::before {
+  content: "";
+  width: 0.42rem;
+  height: 0.42rem;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(45deg) translateY(-1px);
+  transition: transform 0.15s ease;
+}
+
+.zigbee-row-group[open] > summary::before {
+  transform: rotate(-135deg) translateY(-1px);
+}
+
+.zigbee-row-group > summary:hover,
+.zigbee-row-group[open] > summary {
+  color: var(--text);
+}
+
+.zigbee-row-group-added[open] > .zigbee-rows {
+  margin-top: 0.6rem;
+}
+
+.zigbee-row {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.7rem 0.8rem;
+}
+
+.zigbee-row-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+}
+
+/* The state as a colour as well as a sentence: green once ready, red for a
+ * failed interview, amber for the two states that wait on the device - and
+ * the accent colour while the bridge is still at work. */
+.zigbee-row-dot {
+  flex: none;
+  box-sizing: border-box;
+  width: 0.6rem;
+  height: 0.6rem;
+  margin-top: 0.45rem;
+  border-radius: 50%;
+  /* Still at work: a ring rather than a dot, because the accent colour and
+   * the amber of the waiting states are too close to tell apart by colour
+   * alone. */
+  border: 2px solid var(--accent);
+  background: transparent;
+}
+.zigbee-row.tone-ok .zigbee-row-dot {
+  border-color: var(--ok);
+  background: var(--ok);
+}
+.zigbee-row.tone-danger .zigbee-row-dot {
+  border-color: var(--danger);
+  background: var(--danger);
+}
+.zigbee-row.tone-warn .zigbee-row-dot {
+  border-color: var(--warn);
+  background: var(--warn);
+}
+/* Ready but not added yet: the device works, so the dot is green - but the
+ * sentence is what is left to do, and a green sentence read as finished. */
+.zigbee-row.tone-add .zigbee-row-dot {
+  border-color: var(--ok);
+  background: var(--ok);
+}
+
+.zigbee-row-text {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-width: 0;
+}
+
+.zigbee-row-title {
+  overflow-wrap: anywhere;
+}
+
+.zigbee-row-state {
+  font-size: 0.88rem;
+}
+.zigbee-row.tone-ok .zigbee-row-state {
+  color: var(--ok);
+}
+.zigbee-row.tone-danger .zigbee-row-state {
+  color: var(--danger);
+}
+.zigbee-row.tone-warn .zigbee-row-state {
+  color: var(--warn);
+}
+.zigbee-row.tone-add .zigbee-row-state {
+  color: var(--text);
+  font-weight: 600;
+}
+
+/* The IEEE tells two identical bulbs apart; it is not what the row is
+ * about, so it is the quietest line. */
+.zigbee-row-ieee {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+
+.zigbee-row-quirk {
+  margin: 0.5rem 0 0;
+}
+
+.zigbee-row-fields {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 1rem;
+  margin-top: 0.6rem;
+}
+
+/* Label above control, not beside it: the row is narrow on a phone, and a
+ * label beside the name field took a fifth of the width the name needs. */
+.zigbee-row-fields .inline-field {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.2rem;
+  min-width: 0;
+  max-width: 100%;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+/* The name gets a line of its own: `<Manufacturer> <Model>` is long by
+ * nature ("IKEA of Sweden TRADFRI bulb E27 WW 806lm"), and a prefilled name
+ * cut off inside its field is a name nobody can check before keeping it.
+ * The global `input[type="text"]` minimum is for device names on a wide
+ * card; the row's own border already sets the limit here. */
+.zigbee-row-fields .zigbee-name-field {
+  flex: 1 1 100%;
+}
+.zigbee-row-fields input[type="text"] {
+  min-width: 0;
+}
+
+/* The name field grows with its text instead of cutting it off: the
+ * textarea and an invisible copy of its value (`data-value`, bound in
+ * index.html) share one grid cell, so the cell - and with it the textarea -
+ * is as tall as the wrapped copy. Plain CSS, so it works in every browser
+ * without `field-sizing: content`, and it follows a resize or a rotated
+ * phone without a script. Both halves need the same font, padding and
+ * border, or the copy wraps at a different place than the text. */
+.zigbee-name-grow {
+  display: grid;
+}
+
+.zigbee-name-grow::after {
+  content: attr(data-value) " ";
+  white-space: pre-wrap;
+  visibility: hidden;
+}
+
+.zigbee-name-grow > textarea,
+.zigbee-name-grow::after {
+  grid-area: 1 / 1 / 2 / 2;
+  box-sizing: border-box;
+  min-width: 0;
+  margin: 0;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--text);
+  padding: 0.35rem 0.5rem;
+  font: inherit;
+  font-size: 0.9rem;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.zigbee-name-grow > textarea {
+  resize: none;
+  overflow: hidden;
+}
+
+.zigbee-name-grow > textarea:disabled {
+  opacity: 0.6;
+}
+.zigbee-row-fields select {
+  max-width: 100%;
+}
+.zigbee-row-fields .new-room-input {
+  flex: 0 1 11rem;
+  align-self: flex-end;
+}
+
+.zigbee-row > p.hint {
+  margin: 0.4rem 0 0;
+}
+
+.zigbee-row-actions {
+  margin-top: 0.6rem;
+}
+
+.zigbee-row-error {
+  margin: 0.6rem 0 0;
+}
+
+/* Where the focus lands after Add pressed on the button (the button is gone
+ * then). Only a keyboard user sees the ring, and it keeps off the letters. */
+.zigbee-row-added-hint:focus {
+  outline: none;
+}
+
+.zigbee-row-added-hint:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: 4px;
+}
+
+/* A Stop on leaving that the radio refused, above the main navigation. The
+ * sentence takes the line, the Stop button follows it and wraps below on a
+ * phone. */
+.zigbee-leave-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 1rem;
+  margin: 0.75rem 1.25rem;
+}
+
+.zigbee-leave-banner > span {
+  flex: 1 1 16rem;
 }

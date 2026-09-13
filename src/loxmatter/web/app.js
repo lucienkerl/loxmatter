@@ -16,7 +16,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-// State and behavior of the loxmatter UI (Task 7, Phase 5).
+// State and behavior of the loxmatter UI.
 //
 // Identifiers are English, like the rest of this project's code - only
 // text that actually reaches a person on screen or in an error case is
@@ -78,7 +78,132 @@ const VALUE_FRESH_MS = 2500;
 // comment).
 const UPDATE_APPLY_GRACE_MS = 20000;
 
-// --- Live diagnostics (Task 6, Spec 10.5) -----------------------------------
+// The same reasoning as `UPDATE_APPLY_GRACE_MS` above, for the radios job's
+// own sidecar loop (deploy/updater/entrypoint.sh runs both `update-once.sh`
+// and `radios-once.sh` from the same 2s-cadence loop) - see
+// `radiosAwaitingPickup()`/`radiosNeverCollected()`.
+const RADIOS_APPLY_GRACE_MS = 20000;
+
+// How long the sidecar may look silent DURING a running radios job before
+// the card calls that job abandoned. A stall is now reported only if it
+// PERSISTS across this window, not on the first stale poll.
+//
+// The root cause it guards against was in the sidecar itself and is fixed
+// there (`refresh_heartbeat()` in deploy/updater/radios-once.sh): while a
+// radios job applied, nothing refreshed `updater_seen_at` - entrypoint.sh
+// runs `update-once.sh` and `radios-once.sh` sequentially in one loop - so
+// 30 seconds (`_MAX_SILENT_SECONDS`, src/loxmatter/update.py) into the
+// flagship one-to-two-minute stick switch, a healthy job reported itself
+// abandoned, stopped polling and lost the step list.
+//
+// This constant is the second, independent protection: the same reasoning
+// as `UPDATE_APPLY_GRACE_MS` above, applied to the OTHER stall case. A
+// heartbeat can legitimately arrive late - a loaded Pi, a pass that took
+// longer than usual - and a single late poll is not evidence that anything
+// died, only that nothing was heard in that instant. Twenty seconds on top
+// of the sidecar's own 30-second window means roughly fifty seconds of
+// genuine silence before the user is told anything is wrong, which is
+// still far inside the "something is actually broken" range and no longer
+// inside the "this is just taking a while" one.
+const RADIOS_STALL_GRACE_MS = 20000;
+
+// --- The Zigbee row on the radios card (design 2026-09-12, section 3.2) ---
+//
+// How often the row asks `GET /api/zigbee/radio` again. Two cadences,
+// because the connection states fall into two kinds (see
+// `zigbeeRadioPollInterval()`):
+//
+// - While an attempt is RUNNING (`applying`, `loading_quirks`,
+//   `opening_radio`) the states change within seconds - a 9-15 s quirks
+//   warm-up on a Pi, then `startup()` - and the user is watching for
+//   exactly that change. Once a second is what keeps the text from lagging
+//   a whole state behind. Unlike the radios job, nothing here is a file a
+//   sidecar picks up every two seconds: the answer is the bridge's own
+//   memory, so a fast poll has nothing slower to wait for.
+// - While the attempt has FAILED the supervisor is still retrying
+//   underneath, on its own 1 s -> 60 s backoff, forever
+//   (`sources/supervisor.py`). A card that stopped polling there would
+//   freeze on the first failure and never show the stick coming back when
+//   it is plugged in again; one that kept the fast cadence would ask once a
+//   second about something that changes at most once a minute.
+// - While the stick is CONNECTED nothing is expected to change - but it
+//   can: a stick pulled out at rest, or a link zigpy reports lost, turns
+//   `connected` into `failed` with nobody pressing anything, and a card
+//   that did not ask again kept saying "Connected" until Rescan or a
+//   reload. Fifteen seconds is inside the time a user who has just
+//   unplugged something spends looking at the card for the result, and
+//   far enough apart that a Settings tab left open for an afternoon costs
+//   the Pi one `/dev` and `/sys` walk a quarter-minute rather than one a
+//   second. (Loss is reported by the radio library the moment it happens,
+//   so a faster poll would only shorten the wait for the screen, not for
+//   the bridge.)
+const ZIGBEE_WORKING_POLL_MS = 1000;
+const ZIGBEE_FAILED_POLL_MS = 5000;
+const ZIGBEE_CONNECTED_POLL_MS = 15000;
+
+// What the Advanced disclosure starts from for a stick the fingerprint
+// table does not know: `fingerprints.DEFAULT_UNKNOWN`
+// (src/loxmatter/radios/fingerprints.py) - EZSP at 115200, "an editable
+// starting point the user can correct, never a detection". A copy, because
+// `GET /api/zigbee/radio` reports an unknown stick's fingerprint as `null`;
+// `test_the_unknown_stick_defaults_are_the_servers_own` keeps it equal to
+// the Python value.
+const ZIGBEE_UNKNOWN_FINGERPRINT = { name: "", radio_type: "ezsp", baudrate: 115200, flow_control: "software" };
+
+// The radio types the Advanced disclosure offers - `fingerprints.RadioType`,
+// the literal `PUT /api/zigbee/radio` validates against. A value outside it
+// would be a 422 from the schema, so the page offers exactly these.
+const ZIGBEE_RADIO_TYPES = ["ezsp", "znp", "deconz"];
+
+// The connection states in which an attempt is still under way. `applying`
+// is not a duplicate of the other two: it is the window of a radio swap in
+// which there is no `ZigbeeSource` at all (`ZigbeeRuntime.progress()`), and
+// without it the card read `idle` - "nothing is configured" - for that
+// whole window and never started polling.
+const ZIGBEE_WORKING_STATES = ["applying", "loading_quirks", "opening_radio"];
+
+// --- The Zigbee tab of the commissioning card (design 2026-09-12, 3.1) ---
+//
+// How long Start and "Keep open longer" open the network for:
+// `PERMIT_MAX_SECONDS` in src/loxmatter/zigbee/source.py, the protocol
+// maximum zigpy asserts and the bound `ZigbeePermitIn` puts on the request.
+// A copy, because this file cannot import it;
+// `test_the_window_is_not_open_before_the_user_asks` compares what the
+// button sends against the Python constant, so the two cannot drift.
+const ZIGBEE_PERMIT_MAX_SECONDS = 254;
+
+// How often the tab asks `GET /api/zigbee/pairing` again while it is on
+// screen. Fast while something is expected to move within seconds - a join
+// window is open, or a device is joining, being interviewed, being set up,
+// or stuck and waiting for its button to be pressed. Slow otherwise, and
+// not stopped: a device waiting to wake can finish on its own at any time,
+// and a Stop pressed on a phone closes the window this page is counting
+// down.
+const ZIGBEE_PAIRING_FAST_POLL_MS = 2000;
+const ZIGBEE_PAIRING_SLOW_POLL_MS = 10000;
+
+// The seven row states of design 3.1, as `GET /api/zigbee/pairing` spells
+// them in `state`. Four are stored on the source's row; `configuring` and
+// `waiting_wake` are overlaid by the route, and `stuck` is an age.
+const ZIGBEE_ROW_STATES = ["joined", "interviewing", "configuring", "ready", "failed", "stuck", "waiting_wake"];
+
+// The rows nothing is expected to change on within seconds - see
+// `ZIGBEE_PAIRING_FAST_POLL_MS`.
+const ZIGBEE_SETTLED_ROW_STATES = ["ready", "waiting_wake", "failed"];
+
+// The displayed states a name and a room may be saved on. All three are
+// STORED as `ready` (`PairingRow.state`), which is what the route's 409
+// actually checks: a sleeping sensor can show `waiting_wake` for days, and
+// refusing its name for that long would be absurd.
+const ZIGBEE_NAMEABLE_ROW_STATES = ["ready", "configuring", "waiting_wake"];
+
+// The room `<select>`'s own value for "+ New room…", behind which a text
+// field for the new name opens. Shared by the commissioning card and the
+// Zigbee rows (`resolveRoomChoice()`); it cannot collide with a real room,
+// whose names come from `roomSelectOptions()`.
+const NEW_ROOM_CHOICE = "__new__";
+
+// --- Live diagnostics (Spec 10.5) -------------------------------------------
 //
 // Upper bound on the lines kept per stream (logs, UDP capture, command
 // log). Without it each of the three rings would keep growing without
@@ -94,7 +219,7 @@ const DIAGNOSTICS_LINE_LIMIT = 500;
 
 // What marks a datagram as "noise" for `hideNoise` to hide: `message.forced`
 // (`api/diagnostics_live.py`, filled from `DatagramLogEntry.forced`, see
-// there) - NO LONGER the arrival rate in the browser (follow-up fix Task 6,
+// there) - NO LONGER the arrival rate in the browser (changed on
 // 2026-09-03). The earlier heuristic here assumed "no device in this
 // project regularly changes several signals within the same millisecond" -
 // `Runtime.on_event` (`loxone/runtime.py`) itself disproves that: a pulse
@@ -137,15 +262,22 @@ class UnauthorizedError extends Error {
  * error with no response from the server at all).
  */
 async function readErrorDetail(response) {
+  return (await readError(response)).message;
+}
+
+/** `readErrorDetail`, plus the machine-readable `offer` an error body may
+ * carry next to its `detail` - `"forget_only"` on the 503 of removing a
+ * device whose technology has no configured source. */
+async function readError(response) {
   try {
     const body = await response.json();
     if (body && typeof body.detail === "string") {
-      return body.detail;
+      return { message: body.detail, offer: typeof body.offer === "string" ? body.offer : null };
     }
   } catch {
     // Response was not JSON - the generic text below is then enough.
   }
-  return t("web.errors.http_status", { status: response.status });
+  return { message: t("web.errors.http_status", { status: response.status }), offer: null };
 }
 
 /**
@@ -191,12 +323,14 @@ async function requestJson(method, path, body) {
     throw new UnauthorizedError();
   }
   if (!response.ok) {
-    const error = new Error(await readErrorDetail(response));
+    const { message, offer } = await readError(response);
+    const error = new Error(message);
     // `status` is attached here, not just the text: `submitPassword`
     // below needs to be able to tell a 409 on `/auth/setup` apart from
     // any other failure, and the message text for that is not a reliable
     // anchor (it could change independently of the status code).
     error.status = response.status;
+    error.offer = offer;
     throw error;
   }
   if (response.status === 204) {
@@ -240,8 +374,8 @@ async function requestDownload(path, filename) {
   window.setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
 }
 
-// Module-global, deliberately NOT on the app() object (see the
-// implementation plan, Task 8: "t() must be callable globally") - every
+// Module-global, deliberately NOT on the app() object, because `t()` must
+// be callable globally - every
 // function in this file can reach it, including requestJson/
 // requestDownload/requestUpload, which have no access to the Alpine
 // component's `this`. Not reactive, because it does not need to be: a
@@ -479,6 +613,61 @@ function writeHash(view) {
   }
 }
 
+// Where the commissioning card's tab choice survives a reload: this browser
+// tab's `sessionStorage`, which a reload keeps and which no other tab, and
+// no phone, shares. It holds:
+//
+// - `tab`, the tab last selected, so a reload lands on the same tab;
+// - `tabChosen`, whether the user picked a tab by hand while the current
+//   window was open (`peekZigbeePairing()` then leaves their choice alone);
+// - `openedUntil`, the END TIME of the join window this page opened, so a
+//   window opened here and then reloaded is still closed when the user
+//   leaves it for good.
+//
+// The end time is sent with the Stop on leaving, and the SERVER closes the
+// window only while it still ends then (`POST /api/zigbee/permit` with
+// `only_if_until`): a window a phone opened after this one was stopped, or
+// after it ran out, ends at another second and stays open. Only the server
+// knows the current window at the moment of the Stop, so the page does not
+// compare anything itself. A duplicated tab copies `sessionStorage` and with
+// it the end time; left, it closes that same window, which is still the
+// window this page's user opened.
+const COMMISSION_MEMORY_KEY = "loxmatter.commission";
+
+/** The remembered commission state, or the defaults. Every failure is the
+ * defaults: storage can be switched off, full, or - in a test outside a
+ * browser - not there at all, and none of that is worth an error. */
+function recallCommission() {
+  const defaults = { tab: "matter", tabChosen: false, openedUntil: null };
+  try {
+    const stored = JSON.parse(window.sessionStorage.getItem(COMMISSION_MEMORY_KEY) ?? "null");
+    return {
+      tab: stored?.tab === "zigbee" ? "zigbee" : "matter",
+      tabChosen: stored?.tabChosen === true,
+      openedUntil: typeof stored?.openedUntil === "string" ? stored.openedUntil : null,
+    };
+  } catch {
+    return defaults;
+  }
+}
+
+function storeCommission(memory) {
+  try {
+    window.sessionStorage.setItem(COMMISSION_MEMORY_KEY, JSON.stringify(memory));
+  } catch {
+    // Not remembered: a reload then opens on the Matter tab and the next
+    // pairing GET still shows an open window (`peekZigbeePairing()`).
+  }
+}
+
+/** Seconds as `m:ss` - "4:14", "0:09", "0:00". A countdown read in plain
+ * seconds ("254 s") has to be divided in the reader's head before it says
+ * whether there is time to walk to the lamp. */
+function formatMinutesSeconds(seconds) {
+  const whole = Math.max(0, Math.floor(Number(seconds) || 0));
+  return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, "0")}`;
+}
+
 // Control kinds ("none", "percent", "kelvin", "hue_sat") for which
 // the control modal builds its own control - everything outside
 // this list (including "unknown" itself, and any future value that
@@ -548,7 +737,7 @@ function app() {
     controlsBySubject: {},
     commandValueDrafts: {},
     commandBusyKey: null,
-    // Draft storage for the sliders in the control modal (task 7): filled
+    // Draft storage for the sliders in the control modal: filled
     // once on open from `readStartValues`, see there.
     controlDrafts: {},
     // The control modal's active tab. Set on open from the device's
@@ -578,6 +767,12 @@ function app() {
     nowTick: Date.now(),
     labelDrafts: {},
     deviceActionError: null,
+    // A removal the server could not route to a radio - the device's
+    // technology has no configured source - and offered to forget locally
+    // instead: `{ id, label, reason }`, shown on that device's tile
+    // (`deviceForgetOfferFor()`), or null.
+    deviceForgetOffer: null,
+    deviceForgetBusy: false,
 
     // --- Groups (design 2026-09-10, section 6) -----------------------------
     //
@@ -670,6 +865,78 @@ function app() {
     commissionRunCode: "",
     commissionRunRoom: "",
 
+    // The commissioning card's two tabs (design 2026-09-12, section 3.1).
+    // "matter" or "zigbee"; `commissionTabShown()` is what the card shows,
+    // because a Zigbee tab left selected when the stick is taken away must
+    // not leave the card empty.
+    commissionTab: "matter",
+    // The last `GET /api/zigbee/pairing` body - `{ permit_until, rows }` -
+    // or null before the first answer.
+    zigbeePairing: null,
+    // That GET's failure, as the API's own detail. A 503 is shown INSIDE
+    // the tab and never takes the tab away: the route answers 503 for the
+    // whole window of a radio swap too (`api.zigbee.radio_changing`), and
+    // the tab's gate reads the stored setting, not this.
+    zigbeePairingError: null,
+    // Whether that failure was a 503 - no source at all, so Start cannot
+    // work either and is disabled until the next answer.
+    zigbeePairingUnavailable: false,
+    // When the join window closes, as the server's ISO timestamp, or null
+    // while none is open. `zigbeeCountdown()` counts down to it locally;
+    // every GET overwrites it, because the GET is the truth and a POST body
+    // can be a losing request's stale answer.
+    zigbeePermitUntil: null,
+    zigbeePermitBusy: false,
+    // A failed Start, Keep open or Stop, in a field no poll clears.
+    zigbeePermitError: null,
+    // The end time of the window THIS page opened (Start or Keep open
+    // succeeded here), exactly as the server spelled it, or null. Leaving the
+    // tab or the view sends it with the Stop, and the server closes the
+    // window only while it still ends then (`closeZigbeeWindow()`): a window
+    // a phone opened, which this page merely sees through its poll, belongs
+    // to whoever is holding the phone. Cleared by a Stop and by a GET that
+    // shows no window.
+    zigbeeOpenedUntil: null,
+    // Whether the user picked a commissioning tab by hand while a window was
+    // open. Entering Devices selects the Zigbee tab once per open window
+    // (`peekZigbeePairing()`), never against a choice made during it; a GET
+    // that shows no window ends the choice with the window it was made in.
+    zigbeeTabChosen: false,
+    // Whether `zigbeePermitError` is a refused Stop ("may still be open"),
+    // which stops being true the moment a list shows no window - unlike a
+    // refused Start, whose reason is still the reason nothing is open.
+    zigbeePermitErrorIsStop: false,
+    // A Stop sent on leaving that the radio refused. Shown in a banner above
+    // the main navigation - where the user now IS - rather than inside the
+    // pane they just left, because it is the one message saying the network
+    // may still be open.
+    zigbeeLeaveCloseError: null,
+    // Per IEEE: true for a row "Add" was pressed on in this page. It stays
+    // among the open rows, so the line saying where the device went is seen,
+    // instead of vanishing into the collapsed "already added" group the
+    // moment the button is pressed.
+    zigbeeAddedHere: {},
+    // Whether the collapsed group of rows already added is open.
+    zigbeeAddedExpanded: false,
+    zigbeePairingTimer: null,
+    // Incremented by every GET and by every permit request, so an answer
+    // that was already under way when the window changed cannot put the
+    // old window back on screen.
+    zigbeePairingSequence: 0,
+    // Per IEEE: what the row's name and room controls show. `nameDirty` and
+    // `roomDirty` are set by the user's own input and cleared only by a
+    // save of that same value - a poll never overwrites a field someone is
+    // typing in, or a choice not saved yet.
+    zigbeeRowDrafts: {},
+    // Per IEEE: the last failed action on that row (save, retry, remove),
+    // shown on the row itself, 409 included.
+    zigbeeRowErrors: {},
+    // Per IEEE: the action currently running on that row, if any.
+    zigbeeRowBusy: {},
+    // Per IEEE: true once a blur has saved the name or room, until the
+    // next edit - the only sign a save on blur gives that it happened.
+    zigbeeRowSaved: {},
+
     // --- Signals (shared with the device view: the same list serves
     // there as the short list of functional signals) ------------------------
     signalsByDevice: {},
@@ -719,12 +986,100 @@ function app() {
 
     // --- Settings ---------------------------------------------------
     // `bridgeSettings` is the state last loaded from the server (also read
-    // by task 7 and task 9); `settingsDraft` are the three input fields
+    // elsewhere in this file); `settingsDraft` are the three input fields
     // on this tab, adopted only after "Save".
     bridgeSettings: { bridge_ip: null, udp_port: 7000, listen_port: 8080, saved_at: null },
     settingsDraft: { bridge_ip: "", udp_port: 7000, listen_port: 8080 },
     settingsBusy: false,
     settingsError: null,
+
+    // The radios card (design "Radios in the Web UI", 2026-09-11, section
+    // 8). `radios` is the last GET /api/radios body; `radiosDraft` what the
+    // selects show. `radiosDirty` keeps a poll from overwriting a choice the
+    // user has made but not applied yet.
+    radios: null,
+    radiosDraft: { threadDevice: "", bluetoothAdapter: 0 },
+    radiosDirty: false,
+    radiosConfirming: false,
+    radiosError: null,
+    radiosBusy: false,
+    radiosTimer: null,
+    // The id POST /api/radios returned, until GET shows that job - the
+    // sidecar picks a request up within about 2 s, so the first poll after
+    // POST can still show the PREVIOUS job's terminal phase.
+    radiosPendingJobId: null,
+    // The other half of the same race, mirroring `updateApplyDeadline` -
+    // `radiosPendingJobId` alone cannot tell "still within the sidecar's
+    // pickup window" from "given up waiting", see `radiosAwaitingPickup()`.
+    radiosPendingDeadline: null,
+    // Sticky, like `updateApplyMissed`: the one write, at the exact poll
+    // where `radiosPendingDeadline` passes with no id match, that
+    // `radiosNeverCollected()`'s `x-show` needs to react to.
+    radiosPendingMissed: false,
+    // Sticky flag for the OTHER stall case (Review-Fix Critical #2a): a job
+    // that WAS running and then the sidecar went quiet mid-step, per
+    // `radiosStalled()`. Once set, `radiosJobRunning()` reads `false` for
+    // this job - review finding "re-enable the controls" - so the form
+    // does not stay disabled and the Apply button hidden forever behind a
+    // phase nothing will ever advance again. Reset at the start of a fresh
+    // `confirmApplyRadios()` attempt, the same way `applyUpdate()` resets
+    // `updateApplyMissed`.
+    radiosJobAbandoned: false,
+    // When the sidecar was FIRST seen silent during the current job, or
+    // `null` whenever the last poll saw it answering. `radiosJobAbandoned`
+    // is only set once this has stood for `RADIOS_STALL_GRACE_MS` - see
+    // that constant, and `loadRadios()` for the two writes.
+    radiosStallSince: null,
+    // The error from a failed POST /api/radios, kept apart from
+    // `radiosError` (which `loadRadios()` clears as its own first
+    // statement on every poll, twice a second while a job runs). See
+    // `confirmApplyRadios()` for the case that proved one field could not
+    // carry both.
+    radiosApplyError: null,
+
+    // The Zigbee row of the same card (design 2026-09-12, section 3.2). It
+    // shares nothing with the fields above on purpose: the stick is a
+    // bridge setting applied in this process through its own endpoint
+    // (`GET`/`PUT /api/zigbee/radio`), not a sidecar job - so it has its own
+    // draft, its own busy flag, its own errors and its own timer.
+    // `zigbee` is the last GET body; `zigbeeDraft` what the controls show;
+    // `zigbeeDirty` keeps a poll from overwriting a choice not applied yet.
+    zigbee: null,
+    zigbeeDraft: {
+      path: "",
+      radioType: ZIGBEE_UNKNOWN_FINGERPRINT.radio_type,
+      baudrate: ZIGBEE_UNKNOWN_FINGERPRINT.baudrate,
+    },
+    zigbeeDirty: false,
+    // Whether the Advanced disclosure is open, mirrored from the native
+    // `<details>` through its `toggle` event. Held here so the row can close
+    // it when the selection moves to a stick that has no Advanced values -
+    // otherwise returning to an unrecognised stick would find it already
+    // open, on fields the user never chose to look at.
+    zigbeeAdvancedOpen: false,
+    // Whether the user has typed into the Advanced fields. Only then is an
+    // Advanced value a CHANGE worth an Apply, and only then does picking
+    // another unrecognised stick keep what was typed instead of the defaults.
+    zigbeeAdvancedEdited: false,
+    zigbeeBusy: false,
+    // The failure of the GET itself - cleared by every successful load.
+    zigbeeError: null,
+    // The failure of a PUT, in a field no poll touches. The radios card
+    // above learned why the hard way (`radiosApplyError`): a loader that
+    // clears the one error field as its first statement erases an Apply
+    // failure before Alpine has rendered it.
+    zigbeeApplyError: null,
+    zigbeeTimer: null,
+    // What the row's screen-reader status says, written only when it
+    // CHANGES (`noteZigbeeAnnouncement()`). The visible progress line
+    // carries an attempt counter that moves on every retry; a live region
+    // bound to it re-read a long failure sentence every few seconds.
+    zigbeeAnnouncement: "",
+    // Incremented by every load, so a slow response that arrives after a
+    // newer one (a poll in flight when Apply is pressed) cannot put the
+    // older state back on screen.
+    zigbeeLoadSequence: 0,
+
     resendInterval: { interval_seconds: 300 },
     resendIntervalDraft: 300,
     resendIntervalBusy: false,
@@ -822,7 +1177,7 @@ function app() {
     resyncBusy: false,
     resyncError: null,
 
-    // --- Project file sync (Task 12) ---------------------------------------
+    // --- Project file sync ------------------------------------------------
     // `plan` carries the complete response from `/api/export/project-sync`
     // unchanged (entries AND the patched file as base64) -
     // `downloadPatchedProject` reads from it instead of making a second
@@ -850,7 +1205,7 @@ function app() {
       selectedMiniserverIp: "",
     },
 
-    // --- Live diagnostics (Task 6, Spec 10.5) -------------------------------
+    // --- Live diagnostics (Spec 10.5) ---------------------------------------
     // Three streams, filled by exactly ONE WebSocket
     // (`/api/diagnostics/live`) instead of a one-time GET as before - see
     // `connectDiagnosticsLive`. `datagrams` and `commandLog` were already
@@ -931,6 +1286,12 @@ function app() {
       window.addEventListener("hashchange", () => {
         this.applyHash();
       });
+      // The commissioning tab and the end time of the window this tab
+      // opened survive a reload (`recallCommission()`). A reload does NOT
+      // close the window: the page counts down to the server's own end
+      // time, so a reloaded page shows the truth, and a Stop on unload would
+      // also close a window another tab or a phone is watching (design 3.1).
+      this.restoreCommission();
       await Promise.all([this.loadI18n(), this.loadAuthInfo()]);
       if (this.authenticated) {
         await this.startApp();
@@ -1214,7 +1575,7 @@ function app() {
       this.view = view;
       writeHash(view);
       // Exactly ONE diagnostics connection, open only while "System" is
-      // actually the active view (trap 3, Task 6): it opens on switching
+      // actually the active view: it opens on switching
       // TO "system" and closes on every other value - the same pattern as
       // `connectLive()`/its cleanup for the value channel, just tied to
       // the view instead of the login.
@@ -1230,12 +1591,45 @@ function app() {
         // `loadSystem()` (below) calls `loadUpdateStatus()` again.
         this.stopUpdateTimer();
       }
-      if (view === "export") {
+      // Review-Fix Important #3: `loadRadios()`'s own timer is only ever
+      // armed while "Settings" is the visible view (see the `view ===
+      // "settings"` branch below) - the same leak `stopUpdateTimer()`
+      // above exists to close for the System tab's update timer.
+      // Unconditional and idempotent (`stopRadiosTimer()` is a no-op when
+      // nothing is running), so it is safe to call even when the timer
+      // was never armed in the first place.
+      if (view !== "settings") {
+        this.stopRadiosTimer();
+        this.stopZigbeeTimer();
+      }
+      // The pairing list is polled only while the Zigbee tab is on screen,
+      // and leaving the Devices view is leaving that tab: the poll stops,
+      // and a join window this page opened is closed rather than left
+      // running behind a view nobody is looking at.
+      //
+      // Not awaited: the view the user asked for loads now, and a radio slow
+      // to answer the Stop (up to the 10 s bound) does not hold it up. A
+      // refused Stop still reaches the page-wide banner when it answers.
+      if (view !== "devices") {
+        this.stopZigbeePairingTimer();
+        void this.closeZigbeeWindow();
+      }
+      if (view === "devices") {
+        // The tab's gate is the STORED Zigbee setting, which the radios
+        // card loads only in Settings. Loaded once per visit, without the
+        // card's poll: a stick chosen or cleared in Settings reaches this
+        // view the next time it is entered, and a pairing list that starts
+        // answering 503 asks again (`loadZigbeePairing()`).
+        await this.loadZigbeeRadio({ poll: false });
+        if (this.zigbeeTabVisible()) await this.peekZigbeePairing();
+      } else if (view === "export") {
         await this.loadExportStatus();
       } else if (view === "system") {
         await this.loadSystem();
       } else if (view === "settings") {
         await this.loadSettings();
+        await this.loadRadios();
+        await this.loadZigbeeRadio();
       }
     },
 
@@ -1465,19 +1859,19 @@ function app() {
 
     // The badge on a tile's category icon (design 2026-09-11, section 5.3).
     // `null` hides it: a device whose transport is unknown gets no badge
-    // rather than a guessed one, and Zigbee has no glyph before the Zigbee
-    // spec adds one. The map is the only place a transport meets its
-    // symbol - index.html just renders what this returns.
+    // rather than a guessed one. Zigbee joined the map with the Zigbee
+    // source design (2026-09-12, section 3.3). The map is the only place a
+    // transport meets its symbol - index.html just renders what this returns.
     transportBadge(device) {
-      const symbols = { thread: "i-transport-thread", ip: "i-transport-ip" };
+      const symbols = { thread: "i-transport-thread", ip: "i-transport-ip", zigbee: "i-transport-zigbee" };
       const symbol = symbols[device.transport];
       if (!symbol) return null;
       return { symbol, label: t("web.devices.transport_" + device.transport) };
     },
 
     // Short list for the device view: only the functional signals
-    // (`signal.functional`, from `profiles.relevance.is_functional` -
-    // Task 8), and only the first few of those - the full tree (including
+    // (`signal.functional`, from `profiles.relevance.is_functional`),
+    // and only the first few of those - the full tree (including
     // the expert block) lives in the signal modal. The cap still applies
     // even though the functional set is small for the two devices known
     // so far (5 and 17 respectively): a device with more functional
@@ -1623,6 +2017,24 @@ function app() {
         label: key === "" ? t("web.devices.room_none") : key,
         count: counts.get(key),
       }));
+    },
+
+    // The named rooms a room `<select>` offers between its "No room" and
+    // "+ New room…" options, in the order every room list uses. One list
+    // for the commissioning card and for every Zigbee row, so a room
+    // created in one place is offered in the other on the next render.
+    roomSelectOptions() {
+      return this.roomChips()
+        .filter((chip) => chip.key !== "")
+        .map((chip) => chip.key);
+    },
+
+    // What a room `<select>` and its new-room field amount to, in the
+    // encoding the API expects: a room name, or "" for no room.
+    // `NEW_ROOM_CHOICE` stands for whatever was typed into the field
+    // behind it - "" while nothing has been.
+    resolveRoomChoice(choice, typed) {
+      return choice === NEW_ROOM_CHOICE ? String(typed ?? "").trim() : String(choice ?? "").trim();
     },
 
     // The bar does not show at all as long as not a single device or group
@@ -2438,8 +2850,55 @@ function app() {
         return;
       }
       this.deviceActionError = null;
+      this.deviceForgetOffer = null;
       try {
         await this.request("DELETE", `/api/devices/${device.id}`);
+      } catch (error) {
+        if (error.status === 503 && error.offer === "forget_only") {
+          this.deviceForgetOffer = { id: device.id, label: device.label, reason: error.message };
+        } else {
+          this.deviceActionError = t("web.devices.remove_error", { message: error.message });
+        }
+        return;
+      }
+      await this.afterDeviceRemoved(device);
+    },
+
+    /** The second step of a removal the server offered to do without the
+     * device's radio (`deviceForgetOffer`): the device leaves the store, the
+     * export and Loxone's values, and is never told. The copy beside the
+     * button says so. */
+    async forgetDeviceLocally(device) {
+      if (this.deviceForgetBusy) return;
+      this.deviceForgetBusy = true;
+      this.deviceActionError = null;
+      try {
+        await this.request("DELETE", `/api/devices/${device.id}?forget_only=true`);
+      } catch (error) {
+        this.deviceForgetOffer = null;
+        this.deviceActionError = t("web.devices.remove_error", { message: error.message });
+        return;
+      } finally {
+        this.deviceForgetBusy = false;
+      }
+      this.deviceForgetOffer = null;
+      await this.afterDeviceRemoved(device);
+    },
+
+    /** Whether the forget-only offer belongs to this tile. */
+    deviceForgetOfferFor(device) {
+      return this.deviceForgetOffer !== null && this.deviceForgetOffer.id === device?.id;
+    },
+
+    deviceForgetOfferText() {
+      const offer = this.deviceForgetOffer;
+      return offer === null ? "" : t("web.devices.forget_only_offer", { reason: offer.reason, label: offer.label });
+    },
+
+    /** What the page does once a device is gone from the bridge, however it
+     * was removed. */
+    async afterDeviceRemoved(device) {
+      try {
         this.devices = this.devices.filter((d) => d.id !== device.id);
         delete this.controlsBySubject[device.id];
         delete this.signalsByDevice[device.id];
@@ -2947,12 +3406,9 @@ function app() {
           body.thread_dataset = this.commissionThreadDataset.trim();
         }
         // Room (design 6.7): "" means "no room" and is not sent along at
-        // all; "__new__" is the selection field's special value, behind
-        // which the `commissionNewRoom` text field sits.
-        const room =
-          this.commissionRoom === "__new__"
-            ? this.commissionNewRoom.trim()
-            : this.commissionRoom.trim();
+        // all; `NEW_ROOM_CHOICE` is the selection field's special value,
+        // behind which the `commissionNewRoom` text field sits.
+        const room = this.resolveRoomChoice(this.commissionRoom, this.commissionNewRoom);
         if (room) {
           body.room = room;
         }
@@ -3085,6 +3541,773 @@ function app() {
       // at `display: none`, and a `focus()` on an invisible field quietly
       // does nothing at all.
       this.$nextTick(() => this.$refs.commissionCode?.focus());
+    },
+
+    // ---------------------------------------------------------------------
+    // The Zigbee tab of the commissioning card (design 2026-09-12, 3.1)
+    // ---------------------------------------------------------------------
+
+    /** Whether the card offers a Zigbee tab at all.
+     *
+     * The STORED setting (`configured_path` from `GET /api/zigbee/radio`),
+     * never whether the pairing list answered: that route is a 503 for the
+     * whole window of a radio swap as well as for a bridge with no stick,
+     * and a tab gated on it would vanish under the user mid-swap. Nothing
+     * loaded yet is no tab either - one that flickered into existence
+     * between login and the first answer would be worse than one that
+     * arrives a moment late. */
+    zigbeeTabVisible() {
+      return Boolean(this.zigbee?.configured_path);
+    },
+
+    /** The tab the card actually shows. A Zigbee tab that is selected but no
+     * longer offered - the stick was cleared in another browser - shows the
+     * Matter half rather than nothing. */
+    commissionTabShown() {
+      return this.commissionTab === "zigbee" && this.zigbeeTabVisible() ? "zigbee" : "matter";
+    },
+
+    /** The tab strip's click. Opening the Zigbee tab reads the list and does
+     * nothing else - the join window opens on Start, never on arrival.
+     * Leaving it for the Matter tab closes an open window this page opened.
+     *
+     * A click while a window is open is the user's choice for that window,
+     * which entering Devices again must not overrule (`peekZigbeePairing()`).
+     * A click while none is open chooses nothing about a window someone
+     * opens later. Clicking the tab already selected reloads nothing. */
+    async selectCommissionTab(tab) {
+      const leaving = this.commissionTab;
+      this.commissionTab = tab;
+      if (this.zigbeeWindowOpen()) this.zigbeeTabChosen = true;
+      this.rememberCommission();
+      if (leaving === "zigbee" && tab !== "zigbee") {
+        this.stopZigbeePairingTimer();
+        await this.closeZigbeeWindow();
+      }
+      if (tab === "zigbee" && leaving !== "zigbee") {
+        this.noteZigbeePaneShown();
+        await this.loadZigbeePairing();
+      }
+    },
+
+    /** Entering Devices with a stick configured: one look at the pairing
+     * list whichever tab is selected. A window that is open - opened before
+     * a reload, or by another tab or a phone - selects the Zigbee tab, so
+     * its countdown is on screen rather than behind the Matter tab: an open
+     * network is worth seeing. Selecting it closes nothing.
+     *
+     * Once per open window, not on every entry: a user who picked the Matter
+     * tab by hand while the window was open meant it, and is not moved back
+     * each time they return from another view. And never while a Matter
+     * commissioning is on screen (`commissionStep` set, running or showing
+     * its result): switching away would hide it. */
+    async peekZigbeePairing() {
+      if (this.zigbeePaneShown()) this.noteZigbeePaneShown();
+      await this.loadZigbeePairing();
+      if (this.view !== "devices" || this.commissionTabShown() === "zigbee") return;
+      if (!this.zigbeeWindowOpen() || this.zigbeeTabChosen || this.commissionStep !== null) return;
+      this.commissionTab = "zigbee";
+      this.rememberCommission();
+      this.noteZigbeePaneShown();
+      this.scheduleZigbeePairingLoad(this.zigbeePairingPollInterval());
+    },
+
+    /** The Zigbee pane has just come on screen, by a click or by entering
+     * Devices on it. A Stop refused on leaving moves from the page's banner
+     * into the pane, beside the Stop button it is about - otherwise the
+     * banner sat above the navigation while the pane's own error line, under
+     * the user's eyes, was empty. */
+    noteZigbeePaneShown() {
+      if (!this.zigbeeLeaveCloseError) return;
+      this.zigbeePermitError = this.zigbeeLeaveCloseError;
+      this.zigbeePermitErrorIsStop = true;
+      this.zigbeeLeaveCloseError = null;
+    },
+
+    /** What a reload kept (`recallCommission()`). */
+    restoreCommission() {
+      const memory = recallCommission();
+      this.commissionTab = memory.tab;
+      this.zigbeeTabChosen = memory.tabChosen;
+      this.zigbeeOpenedUntil = memory.openedUntil;
+    },
+
+    /** Writes the commission state to `sessionStorage`. */
+    rememberCommission() {
+      storeCommission({
+        tab: this.commissionTab,
+        tabChosen: this.zigbeeTabChosen,
+        openedUntil: this.zigbeeOpenedUntil,
+      });
+    },
+
+    /** Whether the Zigbee pane is the one on screen, logged in or not. */
+    zigbeePaneShown() {
+      return this.view === "devices" && this.commissionTabShown() === "zigbee";
+    },
+
+    setZigbeeOpenedUntil(until) {
+      if (this.zigbeeOpenedUntil === until) return;
+      this.zigbeeOpenedUntil = until;
+      this.rememberCommission();
+    },
+
+    /** Whether the pairing list is on screen right now - the only time it
+     * is polled. A session that has ended will not answer a poll either. */
+    zigbeePairingOnScreen() {
+      return this.authenticated && this.zigbeePaneShown();
+    },
+
+    /** Loads `GET /api/zigbee/pairing` and schedules the next load while
+     * the tab is on screen (`zigbeePairingPollInterval()`).
+     *
+     * A failure is shown inside the tab as the API's own detail and keeps
+     * the tab: a 503 is either a radio swap in flight or a stick that has
+     * just been cleared, and only the second takes the tab away - which is
+     * why a 503 also reloads the gate, once, without a poll of its own. */
+    async loadZigbeePairing() {
+      const sequence = ++this.zigbeePairingSequence;
+      this.stopZigbeePairingTimer();
+      let body;
+      try {
+        body = await this.request("GET", "/api/zigbee/pairing");
+      } catch (error) {
+        if (sequence !== this.zigbeePairingSequence) return;
+        if (!this.authenticated) return;
+        this.zigbeePairingError = error.message;
+        this.zigbeePairingUnavailable = error.status === 503;
+        if (error.status === 503) {
+          this.noteZigbeeSourceGone();
+          await this.loadZigbeeRadio({ poll: false });
+        }
+        this.scheduleZigbeePairingLoad(ZIGBEE_PAIRING_SLOW_POLL_MS);
+        return;
+      }
+      if (sequence !== this.zigbeePairingSequence) return;
+      this.zigbeePairingError = null;
+      this.zigbeePairingUnavailable = false;
+      this.syncZigbeeDrafts(body?.rows ?? []);
+      this.zigbeePairing = body;
+      this.zigbeePermitUntil = body?.permit_until ?? null;
+      if (this.zigbeePermitUntil === null) this.noteZigbeeWindowGone();
+      this.scheduleZigbeePairingLoad(this.zigbeePairingPollInterval());
+    },
+
+    /** No window open - closed by a Stop elsewhere, run out, or gone with the
+     * radio. What was only true while one was open goes with it: this page's
+     * claim on it, a refused Stop's "may still be open", in the banner and in
+     * the pane, and the user's tab choice for that window. */
+    noteZigbeeWindowGone() {
+      this.setZigbeeOpenedUntil(null);
+      this.zigbeeLeaveCloseError = null;
+      if (this.zigbeePermitErrorIsStop) {
+        this.zigbeePermitError = null;
+        this.zigbeePermitErrorIsStop = false;
+      }
+      if (this.zigbeeTabChosen) {
+        this.zigbeeTabChosen = false;
+        this.rememberCommission();
+      }
+    },
+
+    /** A 503 from any pairing route: there is no source right now - a radio
+     * swap in flight, or the stick was cleared. No source means no window,
+     * so nothing is counting down and nothing is left to close. The 503's
+     * detail is shown once, in the list's own banner, which the next list
+     * that answers clears - which is why a 503 from a button lands there too
+     * rather than in a field no poll clears. */
+    noteZigbeeSourceGone() {
+      this.zigbeePermitUntil = null;
+      this.noteZigbeeWindowGone();
+    },
+
+    /** A pairing route's failure on a button: a 503 goes to the list's banner
+     * (`noteZigbeeSourceGone()`); anything else is the caller's to show.
+     * Returns whether it was handled here. */
+    noteZigbeeUnavailable(error) {
+      if (error?.status !== 503) return false;
+      this.zigbeePairingError = error.message;
+      this.zigbeePairingUnavailable = true;
+      this.noteZigbeeSourceGone();
+      return true;
+    },
+
+    scheduleZigbeePairingLoad(delay) {
+      this.stopZigbeePairingTimer();
+      // The same guard `scheduleZigbeeLoad()` has for Settings: a load that
+      // was in flight when the tab or the view was left must not arm a new
+      // timer behind the user's back.
+      if (!this.zigbeePairingOnScreen()) return;
+      this.zigbeePairingTimer = setTimeout(() => {
+        this.zigbeePairingTimer = null;
+        if (this.zigbeePairingOnScreen()) this.loadZigbeePairing();
+      }, delay);
+    },
+
+    stopZigbeePairingTimer() {
+      if (this.zigbeePairingTimer !== null) {
+        clearTimeout(this.zigbeePairingTimer);
+        this.zigbeePairingTimer = null;
+      }
+    },
+
+    zigbeePairingPollInterval() {
+      const moving = (this.zigbeePairing?.rows ?? []).some(
+        (row) => !ZIGBEE_SETTLED_ROW_STATES.includes(row.state),
+      );
+      return this.zigbeeWindowOpen() || moving ? ZIGBEE_PAIRING_FAST_POLL_MS : ZIGBEE_PAIRING_SLOW_POLL_MS;
+    },
+
+    /** Seconds until the join window closes, counted down to the SERVER's
+     * end timestamp - so a reload, a second tab and a phone all show the
+     * same truth. `null` (no window open) and a time already past are 0,
+     * never `NaN` or a negative number.
+     *
+     * Reads `nowTick` so Alpine re-renders it every second; the arithmetic
+     * uses the clock itself, which that tick may trail by up to a second. */
+    zigbeeCountdown() {
+      void this.nowTick;
+      if (!this.zigbeePermitUntil) return 0;
+      const end = Date.parse(this.zigbeePermitUntil);
+      if (Number.isNaN(end)) return 0;
+      return Math.max(0, Math.ceil((end - Date.now()) / 1000));
+    },
+
+    /** The countdown as the line shows it, `m:ss`. `zigbeeCountdown()` stays
+     * in seconds: the window's arithmetic and its tests are in seconds. */
+    zigbeeCountdownText() {
+      return this.formatMinutesSeconds(this.zigbeeCountdown());
+    },
+
+    formatMinutesSeconds(seconds) {
+      return formatMinutesSeconds(seconds);
+    },
+
+    zigbeeWindowOpen() {
+      return this.zigbeeCountdown() > 0;
+    },
+
+    async startZigbeeSearch() {
+      await this.sendZigbeePermit(ZIGBEE_PERMIT_MAX_SECONDS);
+    },
+
+    /** "Keep open longer" re-sends the maximum: the window then runs a full
+     * 254 s from now. */
+    async extendZigbeeSearch() {
+      await this.sendZigbeePermit(ZIGBEE_PERMIT_MAX_SECONDS);
+    },
+
+    async stopZigbeeSearch() {
+      await this.sendZigbeePermit(0);
+    },
+
+    /** One `POST /api/zigbee/permit`. Its answer is shown at once, and the
+     * next GET - scheduled fast right behind it - overwrites it: two
+     * overlapping requests (Keep open and Stop pressed together) are
+     * serialised by the source, but the LOSING one can still carry an end
+     * time in its body while the radio is already closed. The sequence bump
+     * drops a GET that was under way before this request, for the same
+     * reason in the other direction.
+     *
+     * `leaving` marks a Stop sent because the user left the tab or the view:
+     * its refusal is shown where the user now is (`zigbeeLeaveCloseError`),
+     * not inside the pane they left.
+     *
+     * A Start or Keep open that lands after the user has left is closed
+     * again at once. Leaving while it was under way had no end time to send
+     * - it arrives only with this answer - so the network would otherwise
+     * stay open for 254 s behind a view showing nothing. The check is made
+     * AFTER the await, on what is on screen at the moment the answer
+     * arrives, so no earlier look can be out of date by the time it is
+     * acted on; a user who left and came back while it was under way keeps
+     * the window they are looking at.
+     *
+     * The sequence is bumped a second time once the answer is in: a GET
+     * sent WHILE the request was under way was asked before the radio had
+     * the new window, and landing after the answer it wrote "no window"
+     * over it - the countdown fell to 0 and the claim went with it.
+     *
+     * A Stop ends this page's claim as it is sent, so a second leave while
+     * it is on its way sends nothing more. A Stop the radio refuses gives the
+     * claim back: the window may still be open, and it is still this page's. */
+    async sendZigbeePermit(duration, { leaving = false, onlyIfUntil = null } = {}) {
+      this.zigbeePairingSequence += 1;
+      this.zigbeePermitBusy = true;
+      if (!leaving) {
+        this.zigbeePermitError = null;
+        this.zigbeePermitErrorIsStop = false;
+      }
+      const claim = this.zigbeeOpenedUntil;
+      if (duration === 0) this.setZigbeeOpenedUntil(null);
+      const payload = onlyIfUntil === null ? { duration } : { duration, only_if_until: onlyIfUntil };
+      let body;
+      try {
+        body = await this.request("POST", "/api/zigbee/permit", payload);
+      } catch (error) {
+        this.zigbeePermitBusy = false;
+        if (!this.noteZigbeeUnavailable(error)) {
+          if (duration === 0 && this.zigbeeOpenedUntil === null) this.setZigbeeOpenedUntil(claim);
+          if (leaving) {
+            this.zigbeeLeaveCloseError = error.message;
+          } else {
+            this.zigbeePermitError = error.message;
+            this.zigbeePermitErrorIsStop = duration === 0;
+          }
+        }
+        this.scheduleZigbeePairingLoad(ZIGBEE_PAIRING_FAST_POLL_MS);
+        return;
+      }
+      this.zigbeePairingSequence += 1;
+      this.zigbeePermitBusy = false;
+      this.zigbeePermitUntil = body?.permit_until ?? null;
+      if (duration > 0) this.setZigbeeOpenedUntil(this.zigbeePermitUntil);
+      if (duration === 0) this.zigbeeLeaveCloseError = null;
+      if (duration > 0 && !this.zigbeePaneShown()) {
+        await this.closeZigbeeWindow();
+        return;
+      }
+      this.scheduleZigbeePairingLoad(ZIGBEE_PAIRING_FAST_POLL_MS);
+    },
+
+    /** Leaving the tab for good closes the window this page opened - and
+     * only while it is still that window, which the SERVER decides: the Stop
+     * carries the end time this page was given (`only_if_until`), and a
+     * window that ends at another second - a phone's, opened after this
+     * page's was stopped or ran out - is left open. A Start still under way
+     * has no end time yet, and `sendZigbeePermit()` closes its window when
+     * its answer lands off screen.
+     *
+     * Nothing is sent without a claim, or once the claim's end has passed:
+     * that window has closed on its own, and a Stop sent then would reach a
+     * bridge that may have no source at all and come back as a 503 banner
+     * for having done nothing wrong. */
+    async closeZigbeeWindow() {
+      const claim = this.zigbeeOpenedUntil;
+      if (claim === null) return;
+      if (!(Date.parse(claim) > Date.now())) {
+        this.setZigbeeOpenedUntil(null);
+        return;
+      }
+      await this.sendZigbeePermit(0, { leaving: true, onlyIfUntil: claim });
+    },
+
+    /** The banner's own Stop button, for a close on leaving that was
+     * refused. */
+    async retryZigbeeLeaveClose() {
+      await this.sendZigbeePermit(0, { leaving: true });
+    },
+
+    /** Whether the page-wide "could not be closed" banner shows: a refused
+     * Stop, and a window that - as far as this page last heard - has not
+     * run out yet. Once the end time passes the network has closed on its
+     * own, and so does the banner. */
+    zigbeeLeaveCloseShown() {
+      return Boolean(this.zigbeeLeaveCloseError) && this.zigbeeWindowOpen();
+    },
+
+    /** The rows in display order: devices not adopted yet first - the ones
+     * the user is here for - newest first, then the ones already in the
+     * device list. The route lists every device the radio has seen since
+     * it came up, adopted ones included.
+     *
+     * A row added in this page keeps its place among the rows not added
+     * yet. Sorted behind them the moment Add answered, Alpine moved its
+     * element in the DOM - and a moved element loses the focus, so Enter in
+     * the name field dropped the user at the top of the page. */
+    zigbeeRows() {
+      const rows = [...(this.zigbeePairing?.rows ?? [])];
+      const adopted = (row) => (this.zigbeeRowAdopted(row) && !this.zigbeeAddedHere[row.ieee] ? 1 : 0);
+      return rows.sort(
+        (a, b) => adopted(a) - adopted(b) || String(b.changed_at).localeCompare(String(a.changed_at)),
+      );
+    },
+
+    /** The rows in two groups: the ones still to be dealt with, open, and
+     * the ones already in the device list, collapsed under a count. The
+     * list holds every device the radio has seen since it came up, and on
+     * a network of any size the adopted ones pushed the device tiles far
+     * down the page. A row added in this page stays open, so the line
+     * saying where it went is read rather than folded away as the button is
+     * pressed. An empty group is left out. */
+    zigbeeRowGroups() {
+      const open = [];
+      const added = [];
+      for (const row of this.zigbeeRows()) {
+        if (this.zigbeeRowAdopted(row) && !this.zigbeeAddedHere[row.ieee]) added.push(row);
+        else open.push(row);
+      }
+      const groups = [];
+      if (open.length > 0) groups.push({ key: "open", rows: open });
+      if (added.length > 0) groups.push({ key: "added", rows: added });
+      return groups;
+    },
+
+    /** The collapsed group's title, by the file's two-key plural rule
+     * (`_one` / `_many`, as `web.devices.code_detect_remaining_*`). */
+    zigbeeAddedSummary(count) {
+      return count === 1 ? t("web.zigbee.added_group_one") : t("web.zigbee.added_group_many", { count });
+    },
+
+    zigbeeRow(ieee) {
+      return (this.zigbeePairing?.rows ?? []).find((row) => row.ieee === ieee) ?? null;
+    },
+
+    /** What the row says, one sentence per state of design 3.1. `stuck` is
+     * NOT the failed sentence: the usual cause is a battery device that
+     * fell asleep, and a row that reads as broken is how a user comes to
+     * remove a device that was about to finish.
+     *
+     * The interviewing sentence does not name the device: the row's title
+     * already does (`suggested_name`), and "Signify Netherlands B.V. LCA001"
+     * twice in two lines was noise. While manufacturer and model are not
+     * known yet, the title is the IEEE and the row says what a joined one
+     * says.
+     *
+     * A ready row not added yet does not say "Ready to use": in green, that
+     * read as finished, and a user who left there never pressed Add - so the
+     * device never reached the device list or Loxone. It says what is left
+     * to do. */
+    zigbeeRowState(row) {
+      const state = ZIGBEE_ROW_STATES.includes(row?.state) ? row.state : "joined";
+      if (state === "interviewing" && !row.manufacturer && !row.model) return t("web.zigbee.state_joined");
+      if (state === "ready" && !this.zigbeeRowAdopted(row)) return t("web.zigbee.state_ready_to_add");
+      return t("web.zigbee.state_" + state);
+    },
+
+    /** The row's colour: green once ready, red for a failed interview,
+     * amber for the two that wait on the device itself - stuck and waiting
+     * to wake - and the running colour for the rest. A ready row not added
+     * yet keeps the green dot (the device works) but not the green sentence,
+     * which is an instruction there, not a result. */
+    zigbeeRowTone(row) {
+      if (row.state === "ready" && !this.zigbeeRowAdopted(row)) return "add";
+      if (row.state === "ready") return "ok";
+      if (row.state === "failed") return "danger";
+      if (row.state === "stuck" || row.state === "waiting_wake") return "warn";
+      return "running";
+    },
+
+    /** The row's heading: the name it was given, else `<Manufacturer>
+     * <Model>` (the route's `suggested_name`, which falls back to the IEEE
+     * only while neither is known). */
+    zigbeeRowTitle(row) {
+      return row.name || row.suggested_name || row.ieee;
+    },
+
+    zigbeeRowNameable(row) {
+      return ZIGBEE_NAMEABLE_ROW_STATES.includes(row?.state);
+    },
+
+    /** Which actions a row offers. Retry on the failed row and on the stuck
+     * one - a stuck row keeps waiting AND keeps both of its ways out.
+     * Remove on those two and on every row that has finished interviewing;
+     * a device that is still joining or being read either finishes or turns
+     * stuck within a minute and a half, and gets the button then. "Add" on
+     * a nameable row the bridge has not adopted yet. */
+    zigbeeRowOffers(row, action) {
+      if (action === "retry") return row.state === "failed" || row.state === "stuck";
+      if (action === "remove") {
+        return row.state === "failed" || row.state === "stuck" || this.zigbeeRowNameable(row);
+      }
+      if (action === "adopt") return this.zigbeeRowNameable(row) && this.zigbeeRowAdopted(row) === false;
+      return false;
+    },
+
+    zigbeeRowAdopted(row) {
+      return row.device_id !== null && row.device_id !== undefined;
+    },
+
+    /** Whether a row's buttons are disabled: an action is already running
+     * on it, or the list is answering 503 and every action would too - the
+     * rows of a radio swap stay on screen, and a button on them that could
+     * only fail is worse than one that waits.
+     *
+     * A boolean, never a lookup that can be `undefined`: Alpine binds an
+     * `undefined` from a dotted expression as `""`, and a `:disabled` given
+     * `""` disables. */
+    zigbeeRowLocked(row) {
+      return this.zigbeePairingUnavailable || Boolean(this.zigbeeRowBusy[row.ieee]);
+    },
+
+    zigbeeRowError(row) {
+      return this.zigbeeRowErrors[row.ieee] ?? "";
+    },
+
+    zigbeeRowWasSaved(row) {
+      return Boolean(this.zigbeeRowSaved[row.ieee]);
+    },
+
+    /** Brings the per-row drafts in line with a fresh list. A draft the user
+     * has touched and not saved keeps its value: the poll runs every two
+     * seconds, and one that wrote the stored name back into the field would
+     * take the word being typed away mid-keystroke - the same bug as a poll
+     * snapping a select back.
+     *
+     * What belongs to a device no longer listed goes: its draft, its error,
+     * its "Saved." - removed from another tab, or gone with a radio swap.
+     * Kept, they would come back on a row of the same IEEE paired again
+     * later. A row still listed keeps its error, a 409 included, until an
+     * action on it replaces it: the poll is not what fixed it. */
+    syncZigbeeDrafts(rows) {
+      const listed = new Set(rows.map((row) => row.ieee));
+      const perRowMaps = [this.zigbeeRowDrafts, this.zigbeeRowErrors, this.zigbeeRowSaved, this.zigbeeAddedHere];
+      for (const perRow of perRowMaps) {
+        for (const ieee of Object.keys(perRow)) {
+          if (!listed.has(ieee)) delete perRow[ieee];
+        }
+      }
+      for (const row of rows) {
+        const stored = { name: row.name || row.suggested_name || "", room: row.room ?? "" };
+        const draft = this.zigbeeRowDrafts[row.ieee];
+        if (!draft) {
+          this.zigbeeRowDrafts[row.ieee] = {
+            name: stored.name,
+            room: stored.room,
+            newRoom: "",
+            nameDirty: false,
+            roomDirty: false,
+          };
+          continue;
+        }
+        if (!draft.nameDirty) draft.name = stored.name;
+        if (!draft.roomDirty) {
+          draft.room = stored.room;
+          draft.newRoom = "";
+        }
+      }
+    },
+
+    /** The `@input` of a row's name field, and the `@change`/`@input` of
+     * its room controls: this draft now belongs to the user. */
+    zigbeeRowEdited(ieee, field) {
+      const draft = this.zigbeeRowDrafts[ieee];
+      if (!draft) return;
+      // The name field is a textarea, so a long name wraps where it can be
+      // read; a name is still one line. A pasted line break becomes a space.
+      if (field === "name" && /[\r\n]/.test(draft.name)) draft.name = draft.name.replace(/\s*[\r\n]+\s*/g, " ");
+      draft[field + "Dirty"] = true;
+      delete this.zigbeeRowSaved[ieee];
+    },
+
+    /** One `PATCH /api/zigbee/pairing/{ieee}`. The answer replaces the row -
+     * it is the row as the route now sees it, `device_id` included. A
+     * failure, 409 included, is shown on the row and nowhere else, and the
+     * next GET shows why. */
+    async patchZigbeeRow(ieee, patch) {
+      delete this.zigbeeRowErrors[ieee];
+      this.zigbeeRowBusy[ieee] = "save";
+      try {
+        const updated = await this.request("PATCH", `/api/zigbee/pairing/${encodeURIComponent(ieee)}`, patch);
+        const row = this.zigbeeRow(ieee);
+        if (row && updated) Object.assign(row, updated);
+        return updated ?? row;
+      } catch (error) {
+        if (!this.noteZigbeeUnavailable(error)) this.zigbeeRowErrors[ieee] = error.message;
+        return null;
+      } finally {
+        delete this.zigbeeRowBusy[ieee];
+      }
+    },
+
+    /** "Add": names the device and, in doing so, makes it one of
+     * the bridge's own (the route registers it). An explicit button rather
+     * than a blur, because this is the step that puts the device into the
+     * device list, the export and Loxone - and because the prefilled name
+     * is often exactly right, so a user who agrees with it has no field to
+     * leave. After it, name and room save on blur.
+     *
+     * Refused here, not only by the button's `:disabled`, while an action
+     * is already running on the row or the list is answering 503: Enter in
+     * the name field reaches this too, and two Enters sent two PATCHes
+     * while the button looked disabled. */
+    async adoptZigbeeDevice(ieee) {
+      if (this.zigbeeRowBusy[ieee] || this.zigbeePairingUnavailable) return;
+      const row = this.zigbeeRow(ieee);
+      const draft = this.zigbeeRowDrafts[ieee];
+      if (!row || !draft) return;
+      const name = draft.name.trim() || row.suggested_name;
+      const room = this.resolveRoomChoice(draft.room, draft.newRoom);
+      const patch = { name };
+      if (room) patch.room = room;
+      // Marked BEFORE the request: the answer lands in the row with
+      // `Object.assign`, which queues a render at once. Marked after it, that
+      // render put the now-adopted row into the folded "already added" group
+      // and the next one back into the open group - two rebuilds of the row,
+      // and the focus lost from the field Enter was pressed in.
+      this.zigbeeAddedHere[ieee] = true;
+      const trigger = typeof document === "undefined" ? null : document.activeElement;
+      const updated = await this.patchZigbeeRow(ieee, patch);
+      if (!updated) {
+        delete this.zigbeeAddedHere[ieee];
+        return;
+      }
+      await this.refreshAdoptedZigbeeDevice(updated.device_id);
+      this.settleZigbeeDraft(ieee, updated, { name, room });
+      // Not "Saved.": right after adding, the row's line says where the
+      // device went and that later edits save on their own - the one moment
+      // that sentence is news.
+      delete this.zigbeeRowSaved[ieee];
+      this.keepZigbeeFocusAfterAdd(trigger);
+    },
+
+    /** Add pressed on the button: the button is gone once the row is added,
+     * and the focus went with it, to the top of the page - a keyboard user
+     * started over from the first link. It moves to the line that says
+     * where the device went, which a screen reader then reads. Enter in the
+     * name field keeps its focus, since that field stays. */
+    keepZigbeeFocusAfterAdd(trigger) {
+      const row = trigger?.closest?.(".zigbee-row");
+      if (!row || typeof this.$nextTick !== "function") return;
+      this.$nextTick(() => {
+        if (trigger.isConnected && trigger.offsetParent !== null) return;
+        row.querySelector(".zigbee-row-added-hint")?.focus();
+      });
+    },
+
+    /** The name field's blur, on a device already adopted. Sent only when
+     * the name actually changed; an emptied field goes back to the stored
+     * name instead of saving a device with no name. */
+    async saveZigbeeName(ieee) {
+      const row = this.zigbeeRow(ieee);
+      const draft = this.zigbeeRowDrafts[ieee];
+      if (!row || !draft || !this.zigbeeRowAdopted(row) || !draft.nameDirty) return;
+      const name = draft.name.trim();
+      if (!name || name === row.name) {
+        draft.name = row.name || row.suggested_name || "";
+        draft.nameDirty = false;
+        return;
+      }
+      const updated = await this.patchZigbeeRow(ieee, { name });
+      if (!updated) return;
+      await this.refreshAdoptedZigbeeDevice(updated.device_id);
+      this.settleZigbeeDraft(ieee, updated, { name });
+    },
+
+    /** The room select's change and the new-room field's blur, on a device
+     * already adopted. "+ New room…" with nothing typed yet is not a
+     * choice, so it waits for the field. */
+    async saveZigbeeRoom(ieee) {
+      const row = this.zigbeeRow(ieee);
+      const draft = this.zigbeeRowDrafts[ieee];
+      if (!row || !draft || !this.zigbeeRowAdopted(row) || !draft.roomDirty) return;
+      const room = this.resolveRoomChoice(draft.room, draft.newRoom);
+      if (draft.room === NEW_ROOM_CHOICE && !room) return;
+      if (room === (row.room ?? "")) {
+        draft.room = row.room ?? "";
+        draft.newRoom = "";
+        draft.roomDirty = false;
+        return;
+      }
+      const updated = await this.patchZigbeeRow(ieee, { room });
+      if (!updated) return;
+      await this.refreshAdoptedZigbeeDevice(updated.device_id);
+      this.settleZigbeeDraft(ieee, updated, { room });
+    },
+
+    /** After a successful save: the draft takes the stored values again -
+     * but only a field that still holds what was SENT. A user who went on
+     * typing while the request was under way keeps what they typed. */
+    settleZigbeeDraft(ieee, updated, sent) {
+      const draft = this.zigbeeRowDrafts[ieee];
+      if (!draft) return;
+      if ("name" in sent && draft.name.trim() === sent.name) {
+        draft.name = updated.name || draft.name;
+        draft.nameDirty = false;
+      }
+      if ("room" in sent && this.resolveRoomChoice(draft.room, draft.newRoom) === sent.room) {
+        draft.room = updated.room ?? "";
+        draft.newRoom = "";
+        draft.roomDirty = false;
+      }
+      this.zigbeeRowSaved[ieee] = true;
+    },
+
+    /** A Zigbee device the bridge has just adopted, renamed or moved has to
+     * reach the device list, which reloads only on commissioning, removal
+     * and a reconnect: without this the new tile appeared on the next page
+     * load. Controls and signals are loaded for it the way
+     * `commissionDevice()` loads them, so the tile does not sit on "Loading
+     * signals…". */
+    async refreshAdoptedZigbeeDevice(deviceId) {
+      await this.loadDevices();
+      if (deviceId !== null && deviceId !== undefined) {
+        await Promise.all([this.loadControls(deviceId), this.loadSignals(deviceId)]);
+      }
+      this.reconcileRoomFilter();
+    },
+
+    async retryZigbeeDevice(ieee) {
+      delete this.zigbeeRowErrors[ieee];
+      this.zigbeeRowBusy[ieee] = "retry";
+      try {
+        const body = await this.request("POST", `/api/zigbee/pairing/${encodeURIComponent(ieee)}/retry`);
+        const row = this.zigbeeRow(ieee);
+        if (row && body?.state) row.state = body.state;
+      } catch (error) {
+        if (!this.noteZigbeeUnavailable(error)) this.zigbeeRowErrors[ieee] = error.message;
+      } finally {
+        delete this.zigbeeRowBusy[ieee];
+      }
+      this.scheduleZigbeePairingLoad(ZIGBEE_PAIRING_FAST_POLL_MS);
+    },
+
+    /** Removal, confirmed the way the device tile confirms one. The copy is
+     * honest about what the route does: it asks the device to leave and
+     * forgets it either way, and a device that was asleep never hears the
+     * request - so it has to be factory-reset before it pairs anywhere
+     * else. An adopted device leaves the device list too, and its Loxone
+     * objects are orphaned exactly as a tile's removal says. */
+    async removeZigbeeDevice(ieee) {
+      const row = this.zigbeeRow(ieee);
+      if (!row) return;
+      // Trimmed before anything is appended: both sentences are YAML block
+      // scalars and end in a newline, which the "\n\n" join turned into
+      // three blank lines in the dialog.
+      let confirmText = t("web.zigbee.remove_confirm", { name: this.zigbeeRowTitle(row) }).trimEnd();
+      const deviceId = this.zigbeeRowAdopted(row) ? row.device_id : null;
+      if (deviceId !== null) {
+        confirmText += "\n\n" + t("web.zigbee.remove_confirm_adopted", { id: deviceId }).trimEnd();
+        const affectedGroups = this.memberOfGroups({ id: deviceId });
+        if (affectedGroups.length > 0) {
+          confirmText +=
+            "\n\n" +
+            t("web.devices.remove_confirm_groups_note", {
+              groups: affectedGroups.map((group) => group.label).join(", "),
+            });
+        }
+      }
+      if (!window.confirm(confirmText)) return;
+      delete this.zigbeeRowErrors[ieee];
+      this.zigbeeRowBusy[ieee] = "remove";
+      try {
+        await this.request("DELETE", `/api/zigbee/pairing/${encodeURIComponent(ieee)}`);
+      } catch (error) {
+        if (!this.noteZigbeeUnavailable(error)) this.zigbeeRowErrors[ieee] = error.message;
+        delete this.zigbeeRowBusy[ieee];
+        return;
+      }
+      // A list GET already under way was asked before the DELETE landed and
+      // still carries the row: answered after this, it put the removed
+      // device back on screen. The bump drops it - and since a dropped GET
+      // arms no next poll, the next one is armed here.
+      this.zigbeePairingSequence += 1;
+      if (this.zigbeePairing) {
+        this.zigbeePairing.rows = this.zigbeePairing.rows.filter((candidate) => candidate.ieee !== ieee);
+      }
+      delete this.zigbeeRowBusy[ieee];
+      delete this.zigbeeRowDrafts[ieee];
+      delete this.zigbeeRowSaved[ieee];
+      delete this.zigbeeAddedHere[ieee];
+      this.scheduleZigbeePairingLoad(this.zigbeePairingPollInterval());
+      if (deviceId !== null) {
+        if (this.signalsModalDevice === deviceId) this.closeSignalsModal();
+        delete this.controlsBySubject[deviceId];
+        delete this.signalsByDevice[deviceId];
+        await this.loadDevices();
+        this.reconcileRoomFilter();
+        await this.loadGroups();
+        await this.loadAllGroupControls();
+      }
     },
 
     // ---------------------------------------------------------------------
@@ -3303,7 +4526,7 @@ function app() {
     },
 
     // ---------------------------------------------------------------------
-    // Control modal (task 7): sliders instead of bare number fields for
+    // Control modal: sliders instead of bare number fields for
     // value-carrying commands. Structure, opening, closing, and backdrop
     // click follow the signal modal above exactly - see its comments
     // for the rationale.
@@ -3501,6 +4724,1008 @@ function app() {
       }
     },
 
+    async loadRadios() {
+      this.radiosError = null;
+      // Read before the answer replaces them - see `jobEnded` below.
+      const phaseWasActive = this.radiosPhaseActive();
+      const awaitedJobId = this.radiosPendingJobId;
+      try {
+        this.radios = await this.request("GET", "/api/radios");
+      } catch (error) {
+        // Same rule as `loadUpdateStatus()`'s own 401 branch (see its
+        // comment): a session that has ended elsewhere will never answer
+        // this poll either, so keeping the timer armed would just fire
+        // this same request every two seconds against a dead session
+        // until the page is reloaded by hand.
+        if (!this.authenticated) {
+          this.stopRadiosTimer();
+          return;
+        }
+        this.radiosError = t("web.settings.load_error", { message: error.message });
+        return;
+      }
+      // No `current` at all - Review-Fix Critical/Minor #4: a `null`
+      // `current` (sidecar missing/outdated) means the bridge genuinely
+      // does not know what is configured, not that Thread is off and
+      // Bluetooth is adapter 0. The draft is deliberately left as it was
+      // (last known values, or the constructor defaults before the first
+      // load) - `radiosThreadOptions()`/`radiosBluetoothOptions()` render
+      // an explicit "unknown" placeholder in this case regardless of
+      // whatever the draft happens to hold, and `radiosChanged()`/
+      // `radiosConfirmKeys()` already refuse to treat any draft as a
+      // change without a `current` to compare it against.
+      // A radios job that has just reached a terminal phase - seen running
+      // on an earlier poll, or finished before the first poll after its
+      // POST. Thread may have been turned off or moved, and the Zigbee row
+      // below reads which stick Thread holds: without a reload it kept the
+      // freed stick locked as "in use for Thread" until Rescan.
+      const job = this.radios.job;
+      const jobEnded =
+        Boolean(job) && !this.radiosPhaseActive() && (phaseWasActive || (awaitedJobId !== null && job.id === awaitedJobId));
+      if (jobEnded) this.loadZigbeeRadio();
+      const current = this.radios.current;
+      if (current && !this.radiosDirty) {
+        this.radiosDraft = {
+          threadDevice: current.thread_enabled ? current.thread_device ?? "" : "",
+          bluetoothAdapter: current.bluetooth_adapter,
+        };
+      }
+      if (this.radiosPendingJobId !== null && this.radios.job?.id === this.radiosPendingJobId) {
+        this.radiosPendingJobId = null;
+        this.radiosPendingDeadline = null;
+      }
+      // `radiosJobAbandoned` is sticky on purpose (it must survive the poll
+      // that would otherwise re-render it away), and that left it with no
+      // exit but a page reload: `confirmApplyRadios()` was the only place
+      // that ever cleared it, so a user who had seen it kept seeing it
+      // while leaving Settings, coming back and pressing Rescan. A sidecar
+      // that answers again with nothing running is proof the standing
+      // warning no longer describes anything - clear it here.
+      //
+      // Review-Fix Minor: `radiosPendingMissed` used to be cleared by this
+      // same condition, but `switchView("settings")` calls `loadRadios()`
+      // (see the `view === "settings"` branch above), so simply reopening
+      // Settings satisfied "sidecar ready, no phase active" and wiped the
+      // "never collected" banner with nothing having actually resolved -
+      // the request was still uncollected, the draft resynced to the
+      // unrevert state, and no explanation was left on screen. That flag
+      // must survive until the user acts on it, so it is intentionally
+      // left out of this clearing block; `rescanRadios()` is its only exit.
+      if (this.radios.sidecar === "ready" && !this.radiosPhaseActive()) {
+        this.radiosJobAbandoned = false;
+        this.radiosStallSince = null;
+      }
+      // Stall case (a) - Review-Fix Critical #2: `api/radios.py` returns
+      // the frozen `job` regardless of sidecar health, so a dead sidecar
+      // (crashed mid-job) never advances `phase` again. `radiosStalled()`
+      // reads the CURRENT `radios.sidecar` value (see its own comment for
+      // why that stays a live check, not a sticky one).
+      //
+      // Requiring the silence to PERSIST for `RADIOS_STALL_GRACE_MS` is
+      // the fix for what that check did when it fired on the first stale
+      // poll: with the sidecar's own heartbeat frozen for the whole of a
+      // long step (see `refresh_heartbeat()` in radios-once.sh, which is
+      // where the real bug was), about 30 seconds into a completely
+      // healthy stick switch the card declared the job abandoned, stopped
+      // polling, dropped the step list and put up a red banner - and then
+      // the job finished successfully with the card never saying so. The
+      // first stale poll starts the clock; only silence that outlasts the
+      // window sets the flag, and any answering poll resets the clock.
+      if (this.radiosStalled()) {
+        if (this.radiosStallSince === null) {
+          this.radiosStallSince = Date.now();
+        } else if (Date.now() - this.radiosStallSince >= RADIOS_STALL_GRACE_MS) {
+          this.radiosJobAbandoned = true;
+        }
+      } else {
+        this.radiosStallSince = null;
+      }
+      // Stall case (b): accepted but never collected - the same shape as
+      // `loadUpdateStatus()`'s own deadline check. Clearing
+      // `radiosPendingJobId` here is what lets `keepPolling` below give up
+      // on its own once the window closes, exactly as it already did the
+      // moment a real job showed up (branch above) - see
+      // `radiosNeverCollected()` for the sticky flag this sets.
+      if (
+        this.radiosPendingJobId !== null &&
+        this.radiosPendingDeadline !== null &&
+        Date.now() >= this.radiosPendingDeadline
+      ) {
+        this.radiosPendingMissed = true;
+        this.radiosPendingJobId = null;
+        this.radiosPendingDeadline = null;
+      }
+      // `radiosJobAbandoned` stops the poll outright: nothing further will
+      // ever change for a job the sidecar has gone silent on. The
+      // pending-pickup case needs no separate deadline check here - the
+      // branch above already clears `radiosPendingJobId` once the window
+      // closes, so this reads exactly like the pre-fix condition did.
+      const keepPolling =
+        !this.radiosJobAbandoned && (this.radiosPendingJobId !== null || this.radiosJobRunning());
+      if (keepPolling && this.radiosTimer === null) {
+        this.radiosTimer = setInterval(() => this.loadRadios(), 2000);
+      } else if (!keepPolling && this.radiosTimer !== null) {
+        this.stopRadiosTimer();
+      }
+    },
+
+    stopRadiosTimer() {
+      if (this.radiosTimer) {
+        clearInterval(this.radiosTimer);
+        this.radiosTimer = null;
+      }
+    },
+
+    radiosCurrentThread() {
+      const current = this.radios?.current;
+      return current && current.thread_enabled ? current.thread_device ?? "" : "";
+    },
+
+    radiosThreadOptions() {
+      // Review-Fix Critical/Minor #4: `current: null` (sidecar missing or
+      // outdated, `api/radios.py`) means the bridge genuinely does not
+      // know what is configured. The normal list below would otherwise
+      // render the constructor default ("" - no stick) as if it were a
+      // confirmed fact, or leave a real stick from the last successful
+      // load marked "in use" when nothing has re-confirmed that since.
+      // Checked against `this.radios` (not just `current`) so this still
+      // returns the ordinary "nothing loaded yet" empty-ish list before
+      // the first `loadRadios()` call, same as before this fix - only a
+      // REPORTED `null` renders as unknown.
+      if (this.radios && this.radios.current === null) {
+        return [{ value: "", label: t("web.radios.thread_unknown"), inUse: false, missing: false, zigbee: false }];
+      }
+      const current = this.radios?.current;
+      const inUse = this.radiosCurrentThread();
+      // `zigbee` is set on EVERY option, `false` where it does not apply:
+      // Alpine binds an `undefined` from a dotted expression as `""`, and
+      // for a boolean attribute `""` means present - so `:disabled` on an
+      // option without the key disabled it. Measured in the browser: "No
+      // Thread stick (Thread off)" came out disabled, and Thread could no
+      // longer be turned off from the card.
+      const options = [
+        { value: "", label: t("web.radios.no_thread_stick"), inUse: inUse === "", missing: false, zigbee: false },
+      ];
+      for (const radio of this.radios?.serial ?? []) {
+        const name = this.stickName(radio);
+        const suffix = radio.serial ? ` · …${radio.serial.slice(-4)}` : "";
+        // `zigbee` is the server's `is_zigbee`: the stick the Zigbee row is
+        // set up with, which `POST /api/radios` refuses for Thread.
+        options.push({
+          value: radio.path,
+          label: name + suffix,
+          inUse: radio.path === inUse,
+          missing: false,
+          zigbee: Boolean(radio.is_zigbee),
+        });
+      }
+      if (current && current.thread_enabled && current.thread_device && !current.thread_device_present) {
+        options.push({
+          value: current.thread_device,
+          label: t("web.radios.missing", { path: current.thread_device }),
+          inUse: true,
+          missing: true,
+          zigbee: false,
+        });
+      }
+      return options;
+    },
+
+    /** A USB stick's name, in the Thread row and in the Zigbee row alike -
+     * one helper and one order, because two orders named the same MG24
+     * "SONOFF Dongle Plus MG24" in one row and "SONOFF Zigbee Dongle Plus
+     * MG24" in the other, and a user cannot tell those are one stick.
+     *
+     * The order: the USB product string, else the fingerprint table's name,
+     * else the manufacturer, else the tty, else the by-id tail. The product
+     * string comes first because it is what the stick calls itself - the
+     * name in its by-id path and on its packaging - and because the
+     * fingerprint table is a Zigbee table: in the Thread row, a stick
+     * running Thread named "... Zigbee Dongle ..." would read as the wrong
+     * stick. The fingerprint name fills the gap of a stick with no product
+     * string, which the Thread row would otherwise call "ttyUSB1".
+     *
+     * `GET /api/radios` and `GET /api/zigbee/radio` each carry part of that
+     * (only the first has manufacturer and tty, only the second has the
+     * fingerprint), so both answers are read, matched by path. */
+    stickName(stick) {
+      const sources = [
+        stick,
+        (this.radios?.serial ?? []).find((candidate) => candidate.path === stick.path),
+        (this.zigbee?.serial ?? []).find((candidate) => candidate.path === stick.path),
+      ].filter(Boolean);
+      const first = (read) => sources.map(read).find(Boolean);
+      return (
+        first((source) => source.product) ||
+        first((source) => source.fingerprint?.name) ||
+        first((source) => source.manufacturer) ||
+        first((source) => source.tty) ||
+        stick.path.split("/").pop()
+      );
+    },
+
+    /** The text of a Thread `<option>`. One suffix for the stick's use, not
+     * two: a stick both in use for Thread AND set up for Zigbee used to
+     * read "... · in use · in use for Zigbee".
+     *
+     * The plain "in use" is left off while the draft still points at that
+     * option, the rule `zigbeeRadioOptions()` already follows: a narrow
+     * native select cuts the CLOSED select's text off from the right, and
+     * the maintainer's real stick name came out as "SONOFF Dongle Plus MG24
+     * · …50c9 · ir". The selected option being the configured one already
+     * says it is in use, and the marker returns in the list as soon as the
+     * draft moves elsewhere. */
+    radiosThreadOptionLabel(option) {
+      if (option.inUse && option.zigbee) return option.label + " · " + t("web.radios.thread_zigbee_took_over");
+      if (option.inUse && this.radiosDraft.threadDevice !== option.value) {
+        return option.label + " · " + t("web.radios.in_use");
+      }
+      if (option.zigbee) return option.label + " · " + t("web.radios.thread_option_zigbee");
+      return option.label;
+    },
+
+    /** The text of a Bluetooth `<option>`, by the same "in use" rule as
+     * `radiosThreadOptionLabel()`. The blocked marker stays either way: an
+     * rfkill-blocked adapter is news even while it is the selected one. */
+    radiosBluetoothOptionLabel(option) {
+      let label = option.label;
+      if (option.inUse && this.radiosDraft.bluetoothAdapter !== option.value) {
+        label += " · " + t("web.radios.in_use");
+      }
+      if (option.blocked) label += " · " + t("web.radios.option_blocked");
+      return label;
+    },
+
+    /** The line under the Thread select that says which stick Zigbee holds
+     * and how to free it, or `null` when the list holds no Zigbee stick.
+     *
+     * Mirrors `zigbeeThreadHint()`: the option's own suffix is what a
+     * narrow native select cuts off first (same 375 px measurement), and a
+     * disabled option that gives no reason reads as detection being
+     * broken. `option.label` already carries the stick's name
+     * (`stickName()`, plus the serial-id suffix
+     * `radiosThreadOptions()` bakes in), so it doubles as the `{name}` this
+     * hint names - the same words the user then finds in the list. */
+    radiosZigbeeHint() {
+      const option = this.radiosThreadOptions().find((candidate) => candidate.zigbee);
+      if (!option) return null;
+      const key = option.inUse
+        ? "web.radios.thread_zigbee_took_over_hint"
+        : "web.radios.thread_zigbee_stick_hint";
+      return t(key, { name: option.label });
+    },
+
+    radiosBluetoothOptions() {
+      // Same reasoning as `radiosThreadOptions()` above.
+      if (this.radios && this.radios.current === null) {
+        return [{ value: "", label: t("web.radios.bluetooth_unknown"), inUse: false, blocked: false }];
+      }
+      const inUse = this.radios?.current?.bluetooth_adapter;
+      return (this.radios?.bluetooth ?? []).map((adapter) => ({
+        value: adapter.index,
+        label:
+          adapter.bus === "uart"
+            ? t("web.radios.bus_uart", { name: adapter.name })
+            : adapter.bus === "usb"
+              ? t("web.radios.bus_usb", { name: adapter.name, product: adapter.product ?? "" })
+              : t("web.radios.bus_other", { name: adapter.name }),
+        inUse: adapter.index === inUse,
+        blocked: adapter.rfkill_blocked,
+      }));
+    },
+
+    /** Each radio row is "changed" or "unchanged" on its own,
+     * and every other radios helper is derived from these two so the
+     * button, the confirmation text and the request body can never
+     * disagree about which halves are moving. Both read `false` without a
+     * `current` to compare against - see `loadRadios()` on why a missing
+     * report is not evidence that anything is off. */
+    radiosThreadChanged() {
+      const current = this.radios?.current;
+      if (!current) return false;
+      return this.radiosDraft.threadDevice !== this.radiosCurrentThread();
+    },
+
+    radiosBluetoothChanged() {
+      const current = this.radios?.current;
+      if (!current) return false;
+      return Number(this.radiosDraft.bluetoothAdapter) !== current.bluetooth_adapter;
+    },
+
+    radiosChanged() {
+      return this.radiosThreadChanged() || this.radiosBluetoothChanged();
+    },
+
+    /** The POST body: an unchanged half is sent as `null`, which every
+     * layer below reads as "leave this radio alone" (design 6.2/6.3).
+     *
+     * Why the halves are separate: on an installer-made `.env`
+     * the stored value is `/dev/ttyUSB0` while this card and the API speak
+     * in mapped by-id paths, so the old both-halves body made the sidecar
+     * read every Bluetooth-only change as a stick SWITCH - `otbr`
+     * force-recreated and up to 90 s of `verify_thread`, one to two
+     * minutes of Thread downtime that no confirmation text ever announced.
+     * Sending `null` for the row the user did not touch is what stops
+     * that, and it is also what lets a Bluetooth change go through at all
+     * while the configured stick is unplugged: a half nobody is changing
+     * is never validated against the host, so it cannot be rejected for
+     * being absent. */
+    radiosRequestBody() {
+      return {
+        thread: this.radiosThreadChanged()
+          ? {
+              enabled: this.radiosDraft.threadDevice !== "",
+              device: this.radiosDraft.threadDevice || null,
+            }
+          : null,
+        bluetooth: this.radiosBluetoothChanged()
+          ? { adapter: Number(this.radiosDraft.bluetoothAdapter) }
+          : null,
+      };
+    },
+
+    /** Which confirmation paragraphs apply, in display order. Names only
+     * what this change will actually do: the Thread paragraphs appear
+     * exactly when the Thread half is really being sent, and a change that
+     * leaves Thread alone says so outright rather than leaving the user to
+     * infer it from silence - the border router staying up is the very
+     * thing they cannot afford to guess about. */
+    radiosConfirmKeys() {
+      const current = this.radios?.current;
+      if (!current) return [];
+      const keys = [];
+      if (this.radiosThreadChanged()) {
+        const before = this.radiosCurrentThread();
+        const after = this.radiosDraft.threadDevice;
+        if (after === "") keys.push("web.radios.confirm_thread_off");
+        else if (before === "") keys.push("web.radios.confirm_thread_on");
+        else keys.push("web.radios.confirm_thread_switch");
+      }
+      if (this.radiosBluetoothChanged()) {
+        keys.push("web.radios.confirm_bluetooth");
+        // Only reassuring to someone who HAS Thread running. The text
+        // promises a border router that keeps running, a stick it keeps
+        // using and Thread devices that stay reachable; for an
+        // installation with Thread switched off - no stick, no router, no
+        // Thread devices - all three clauses are false, and a confirmation
+        // dialog is the last place to tell a user something untrue about
+        // what is about to happen to their installation. They are told
+        // about the Bluetooth change and nothing else, which is the whole
+        // truth for them.
+        if (!this.radiosThreadChanged() && current.thread_enabled) {
+          keys.push("web.radios.confirm_thread_untouched");
+        }
+      }
+      return keys;
+    },
+
+    /** The raw "is `radios.job.phase` one of the non-terminal phases"
+     * check, shared by `radiosJobRunning()` below (which additionally
+     * accounts for `radiosJobAbandoned` - see there) and `radiosStalled()`
+     * (which must NOT, or it could never observe the very transition it
+     * exists to detect). */
+    radiosPhaseActive() {
+      const phase = this.radios?.job?.phase;
+      return Boolean(phase) && !["idle", "done", "failed", "rejected", "unchanged"].includes(phase);
+    },
+
+    radiosJobRunning() {
+      // Review-Fix Critical #2a: once `radiosJobAbandoned` is set (see
+      // `loadRadios()`/`radiosStalled()`), this job is never going to
+      // reach a terminal phase on its own - reading it as "still running"
+      // forever would leave the Apply button hidden and the selects
+      // disabled for the rest of the session, exactly the "stranded"
+      // outcome that fix calls out. `radiosStalled()`/`radiosPhaseActive()`
+      // still read the true underlying phase for their own purposes.
+      return this.radiosPhaseActive() && !this.radiosJobAbandoned;
+    },
+
+    /** Case (a) of Review-Fix Critical #2: a job phase frozen mid-run
+     * because the sidecar itself has gone quiet - the same "was running,
+     * then went silent" reading `updateStalled()` gives the update card
+     * (see its own comment there for the full reasoning). `api/radios.py`
+     * writes `job` straight off `radios-state.json` with no regard for
+     * whether anything is still alive to advance it; `sidecar_status()`
+     * (radios/sidecar.py) is what actually knows - `missing` (the whole
+     * updater container's heartbeat has gone stale) and `outdated` (this
+     * container is up, but `radios-state.json`'s own `seen_at` has not
+     * been refreshed recently) both mean nobody is going to write the
+     * NEXT phase into that file, however long the current one keeps
+     * looking like it is still `now`.
+     *
+     * Deliberately NOT `unmounted`: that status means the sidecar is
+     * alive and reporting, just incapable (`/host/dev` not mounted) - a
+     * real fact, but not "went silent mid-job", and `request_radios()`
+     * refuses to start a job at all while `capable` is `false`, so a
+     * running job could never observe that status in the first place.
+     *
+     * A live check on purpose, unlike the sticky `radiosJobAbandoned` it
+     * feeds (see `loadRadios()`): it has to be able to notice the flip
+     * from `ready` on every poll for that flag to ever get set. */
+    radiosStalled() {
+      const status = this.radios?.sidecar;
+      return this.radiosPhaseActive() && (status === "missing" || status === "outdated");
+    },
+
+    /** Case (b) of Review-Fix Critical #2, the radios counterpart of
+     * `updateNeverCollected()` - see its own comment for why this reads a
+     * sticky field (written once, in `loadRadios()`, at the exact poll
+     * where `radiosPendingDeadline` passes) rather than comparing
+     * `Date.now()` against the deadline directly. */
+    radiosNeverCollected() {
+      return this.radiosPendingMissed;
+    },
+
+    radiosStepClass(step) {
+      const job = this.radios?.job;
+      if (!job) return { done: false, now: false };
+      const steps = job.steps ?? [];
+      const at = steps.indexOf(job.phase);
+      const index = steps.indexOf(step);
+      if (!this.radiosJobRunning()) return { done: job.phase === "done", now: false };
+      return { done: index < at, now: index === at };
+    },
+
+    /** The rollback phase, which the step list alone cannot render.
+     * `rollback` is not a member of `radios.job.steps` (it is not a step
+     * of the forward pass - it is the undoing of one), so
+     * `radiosStepClass()`'s `steps.indexOf(job.phase)` is `-1` and NO
+     * step comes out `done` and none `now`. The result line cannot fill
+     * the gap either: `rollback` is not terminal, so `radiosResultKey()`
+     * returns `null`. The card therefore showed a completely unmarked
+     * step list and no text at all for up to about two and a half
+     * minutes - silence over the single most alarming moment in the
+     * flow, while the system undoes a change that just failed. The
+     * update card's sibling state has said this out loud for a while
+     * (`web.system.update_rolled_back`); this is the radios counterpart. */
+    radiosRollingBack() {
+      return this.radios?.job?.phase === "rollback";
+    },
+
+    radiosResultKey() {
+      const job = this.radios?.job;
+      if (!job || this.radiosJobRunning()) return null;
+      if (job.phase === "done") return "web.radios.result_done";
+      if (job.phase === "unchanged") return "web.radios.result_unchanged";
+      if (job.phase === "rejected") return "web.radios.result_rejected";
+      if (job.phase === "failed") {
+        // A pass that was killed mid-job, healed into `failed` at the
+        // next startup by `load_previous_state()` in radios-once.sh (see
+        // its own comment). It needs its own sentence because BOTH of the
+        // ordinary failure texts below would be false for it: nothing was
+        // restored (the rollback is precisely what never ran, so .env may
+        // already hold the new values), and nothing "did not come back up
+        // either" (no rollback was attempted to come back up). The
+        // honest report is that the change was neither finished nor
+        // undone, and that the settings shown below are worth a look.
+        if (job.error === "interrupted") return "web.radios.result_interrupted";
+        return job.healthy === false ? "web.radios.result_failed_unhealthy" : "web.radios.result_failed_restored";
+      }
+      return null;
+    },
+
+    radiosReason() {
+      const key = `web.radios.reason.${this.radios?.job?.error ?? "unknown"}`;
+      const text = t(key);
+      return text === key ? t("web.radios.reason.unknown") : text;
+    },
+
+    /** Review-Fix Minor #7: `t()` returns the key itself when a
+     * translation is missing (see its own comment) - fine for most
+     * callers, but the step `<li>` in index.html builds its key from
+     * SERVER data (`radios.job.steps`), so a sidecar newer than this page
+     * can name a step nobody has translated into `strings.yaml` yet.
+     * Falls back to a readable sentence naming the raw step instead of
+     * the literal `web.radios.step_<name>` string - the same stance
+     * `radiosReason()` above already takes for `job.error`. */
+    radiosStepLabel(step) {
+      const key = `web.radios.step_${step}`;
+      const text = t(key);
+      return text === key ? t("web.radios.step_unknown", { step }) : text;
+    },
+
+    radiosSidecarMessage() {
+      const status = this.radios?.sidecar;
+      if (!status || status === "ready") return null;
+      // Before either of the two "the sidecar is old" branches below, and
+      // before `missing` as well, because a long update makes BOTH
+      // timestamps stale in turn (measured: `health` reads `outdated`,
+      // `pull` reads `missing`) - see the `update_running` comment in
+      // src/loxmatter/api/radios.py. Neither of those readings is true
+      // during an update, and the refresh command the `outdated` text
+      // prints would kill the very update it is being shown during. This
+      // says what is actually happening instead, and prints no command at
+      // all: there is nothing for the user to do but wait, and the card
+      // recovers on its own the moment the update finishes.
+      if (this.radios?.update_running) return t("web.radios.sidecar_busy_update");
+      if (status === "missing") return t("web.radios.sidecar_missing");
+      const path = this.radios.updater_stack_host_path;
+      return path
+        ? t("web.radios.sidecar_refresh", { path })
+        : t("web.radios.sidecar_refresh_unknown_path");
+    },
+
+    /** The Rescan button's handler. Reloads the report, and is also the
+     * way out of a standing stall banner that `loadRadios()` cannot clear
+     * on its own: a job the sidecar really did abandon never reaches a
+     * terminal phase, so the "sidecar is ready and nothing is running"
+     * condition there is never true for it and the banner would otherwise
+     * stand until the page is reloaded by hand. Pressing Rescan is the
+     * user saying "look again", and a fresh look should not come back
+     * carrying the previous look's verdict.
+     *
+     * `radiosDirty` is cleared first for the reason it always was (Review
+     * -Fix Minor #8): otherwise `loadRadios()`'s own
+     * `if (current && !this.radiosDirty)` guard would skip its draft
+     * resync for the rest of the session. */
+    rescanRadios() {
+      this.radiosDirty = false;
+      this.radiosJobAbandoned = false;
+      this.radiosPendingMissed = false;
+      this.radiosStallSince = null;
+      this.radiosApplyError = null;
+      this.loadRadios();
+      // The Zigbee row reads the same USB bus, so a rescan refreshes its
+      // stick list too. Its draft is left alone: a Zigbee choice not yet
+      // applied is not what the user asked Rescan to throw away.
+      this.loadZigbeeRadio();
+    },
+
+    askApplyRadios() {
+      if (!this.radiosChanged()) return;
+      this.radiosConfirming = true;
+    },
+
+    cancelApplyRadios() {
+      this.radiosConfirming = false;
+      // Review-Fix Minor #8: without this, a cancelled edit left
+      // `radiosDirty` set and `loadRadios()`'s poll would keep skipping
+      // its own draft resync (see its `if (current && !this.radiosDirty)`
+      // guard) for the rest of the session - the card would never again
+      // notice a change made anywhere else (another tab, the console
+      // path).
+      this.radiosDirty = false;
+    },
+
+    async confirmApplyRadios() {
+      this.radiosConfirming = false;
+      this.radiosBusy = true;
+      this.radiosError = null;
+      // A fresh attempt starts here, before the POST even lands - the
+      // same reasoning `applyUpdate()` gives for resetting
+      // `updateApplyMissed` up front: otherwise a retry that is itself
+      // picked up promptly would still show a STALE stall banner, a true
+      // fact about the PREVIOUS attempt wrongly presented as still true
+      // about this one.
+      this.radiosJobAbandoned = false;
+      this.radiosPendingMissed = false;
+      this.radiosStallSince = null;
+      this.radiosApplyError = null;
+      // Review-Fix Critical #1 found that writing this error to
+      // `this.radiosError` loses it immediately: `loadRadios()` below sets
+      // `this.radiosError = null` as its own first statement,
+      // synchronously, before its first `await`. Re-applying it after
+      // `loadRadios()` resolved fixed that for the errors whose path stops
+      // there - but not for a 409. A 409 means a job is already running
+      // (started in another tab, or from a phone), so the very
+      // `loadRadios()` that follows sees a running job and arms the
+      // two-second poll - and that poll's first tick runs the same
+      // `radiosError = null` again and wipes the explanation off the
+      // screen a moment after the user read it, leaving a card that just
+      // silently did nothing they asked for.
+      //
+      // Its own field instead, which no poll touches: cleared here at the
+      // start of the next attempt and by `rescanRadios()`, exactly like
+      // the stall flags above. `radiosError` keeps its own job, the
+      // failure of the GET itself.
+      try {
+        const response = await this.request("POST", "/api/radios", this.radiosRequestBody());
+        this.radiosPendingJobId = response.id;
+        this.radiosPendingDeadline = Date.now() + RADIOS_APPLY_GRACE_MS;
+        this.radiosDirty = false;
+      } catch (error) {
+        this.radiosApplyError = error.message;
+      } finally {
+        this.radiosBusy = false;
+      }
+      await this.loadRadios();
+    },
+
+    // ---------------------------------------------------------------------
+    // The Zigbee row of the radios card (design 2026-09-12, section 3.2)
+    // ---------------------------------------------------------------------
+
+    /** Loads `GET /api/zigbee/radio` and, while a connection attempt is
+     * running or retrying, schedules the next load itself.
+     *
+     * A `setTimeout` chain rather than `setInterval`, because the cadence
+     * depends on the answer (`zigbeeRadioPollInterval()`): an attempt that
+     * fails moves from once a second to once every five without anyone
+     * having to notice the change and re-arm a timer.
+     *
+     * Never touches `zigbeeApplyError` - see that field.
+     *
+     * `poll: false` is the Devices view's single load for the pairing tab's
+     * gate: the same body, and no timer armed behind it. */
+    async loadZigbeeRadio({ poll = true } = {}) {
+      const sequence = ++this.zigbeeLoadSequence;
+      this.stopZigbeeTimer();
+      let body;
+      try {
+        body = await this.request("GET", "/api/zigbee/radio");
+      } catch (error) {
+        if (sequence !== this.zigbeeLoadSequence) return;
+        // The same rule as `loadRadios()`: a session that has ended will
+        // never answer the next poll either.
+        if (!this.authenticated) return;
+        this.zigbeeError = t("web.settings.load_error", { message: error.message });
+        // A bridge that did not answer once - busy, restarting - is not a
+        // reason to stop following an attempt that was running: keep asking,
+        // at the slow cadence, and the next answer clears this error.
+        if (poll && this.zigbee && this.zigbeeRadioPollInterval(this.zigbee.progress) !== null) {
+          this.scheduleZigbeeLoad(ZIGBEE_FAILED_POLL_MS);
+        }
+        return;
+      }
+      if (sequence !== this.zigbeeLoadSequence) return;
+      this.zigbeeError = null;
+      this.zigbee = body;
+      this.noteZigbeeAnnouncement();
+      if (!this.zigbeeDirty) {
+        this.zigbeeDraft.path = body.configured_path ?? "";
+        this.resetZigbeeAdvanced();
+      }
+      const interval = this.zigbeeRadioPollInterval(body.progress);
+      if (poll && interval !== null) this.scheduleZigbeeLoad(interval);
+    },
+
+    /** Updates `zigbeeAnnouncement` - and only when its text differs, so
+     * Alpine does not rewrite the live region with the same sentence. */
+    noteZigbeeAnnouncement() {
+      const text = this.zigbeeAnnouncementText(this.zigbee?.progress, this.zigbee?.configured_device_present) ?? "";
+      if (text !== this.zigbeeAnnouncement) this.zigbeeAnnouncement = text;
+    },
+
+    /** What a screen reader is told: the progress line's news WITHOUT the
+     * attempt counter. A retry that fails for the reason the previous one
+     * did is not news; a different reason, a stick that is gone, a
+     * connection that holds are. */
+    zigbeeAnnouncementText(progress, present) {
+      if (!progress) return null;
+      if (this.zigbeeStickMissing(present)) return this.zigbeeProgressText(progress, present);
+      if (progress.state === "failed" || this.zigbeeRetrying(progress)) {
+        return progress.error ?? t("web.radios.zigbee_failed_unknown");
+      }
+      return this.zigbeeProgressText(progress, present);
+    },
+
+    scheduleZigbeeLoad(delay) {
+      this.stopZigbeeTimer();
+      // Only while the card is on screen - `selectView()` stops the timer
+      // on leaving Settings, and this keeps a load that was already in
+      // flight at that moment from arming a new one behind its back.
+      if (this.view !== "settings") return;
+      this.zigbeeTimer = setTimeout(() => {
+        this.zigbeeTimer = null;
+        this.loadZigbeeRadio();
+      }, delay);
+    },
+
+    stopZigbeeTimer() {
+      if (this.zigbeeTimer !== null) {
+        clearTimeout(this.zigbeeTimer);
+        this.zigbeeTimer = null;
+      }
+    },
+
+    /** Whether an attempt is still under way - the three working states
+     * of `ConnectionState` (src/loxmatter/zigbee/source.py). `connected`,
+     * `failed` and `idle` are not: nothing on screen is about to move on
+     * its own. */
+    zigbeeRadioPolling(progress) {
+      return ZIGBEE_WORKING_STATES.includes(progress?.state);
+    },
+
+    /** How long until the next load, or `null` for "do not ask again".
+     * `failed` is settled as far as `zigbeeRadioPolling()` is concerned but
+     * NOT for the supervisor, which keeps retrying underneath - see
+     * `ZIGBEE_FAILED_POLL_MS`. */
+    zigbeeRadioPollInterval(progress) {
+      if (this.zigbeeRadioPolling(progress)) return ZIGBEE_WORKING_POLL_MS;
+      if (progress?.state === "failed") return ZIGBEE_FAILED_POLL_MS;
+      if (progress?.state === "connected") return ZIGBEE_CONNECTED_POLL_MS;
+      return null;
+    },
+
+    /** A working state on the second or later attempt: the supervisor
+     * retrying a setting that has already failed. */
+    zigbeeRetrying(progress) {
+      return this.zigbeeRadioPolling(progress) && progress.state !== "applying" && progress.attempts > 0;
+    },
+
+    /** The sticks `GET /api/zigbee/radio` reported, as `<option>`s.
+     *
+     * `disabled` is the server's `selectable`, read and never re-derived:
+     * the page and the `PUT` that refuses the Thread stick must not be
+     * able to disagree about which stick is safe. The Thread stick is
+     * LISTED - disabled, with the reason in its label - because a stick
+     * that is simply missing here, while the Thread row above shows it,
+     * reads as broken detection.
+     *
+     * `unrecognised` is a flag, not a sentence: the row turns it into the
+     * hint and the Advanced disclosure. `fingerprint` is what that
+     * disclosure starts from - the table's answer, or
+     * `ZIGBEE_UNKNOWN_FINGERPRINT` for a stick the table does not know. */
+    zigbeeRadioOptions() {
+      const configured = this.zigbee?.configured_path ?? null;
+      const options = [
+        {
+          value: "",
+          label: t("web.radios.zigbee_none"),
+          disabled: false,
+          unrecognised: false,
+          missing: false,
+          fingerprint: null,
+        },
+      ];
+      for (const stick of this.zigbee?.serial ?? []) {
+        const unrecognised = stick.fingerprint === null || stick.fingerprint === undefined;
+        const parts = [this.stickName(stick)];
+        // One suffix for the stick's use, not two: a stick set up for
+        // Zigbee that Thread was moved onto afterwards read "in use · in
+        // use for Thread", two claims that seem to contradict each other.
+        // Also skip the "in use" suffix while the draft still points at the
+        // configured stick: on a narrow native select the marker is what
+        // gets cut off the CLOSED select's text, and "in Verwendung" was
+        // clipped to "in Verwendun". Dropping it there costs nothing - the
+        // configured stick being selected already says it is in use - and
+        // it returns in the open list as soon as the draft points
+        // elsewhere.
+        if (stick.is_thread && stick.path === configured) parts.push(t("web.radios.zigbee_thread_took_over"));
+        else if (stick.is_thread) parts.push(t("web.radios.zigbee_is_thread_stick"));
+        else if (stick.path === configured && this.zigbeeDraft.path !== configured)
+          parts.push(t("web.radios.in_use"));
+        if (unrecognised) parts.push(t("web.radios.zigbee_option_unrecognised"));
+        options.push({
+          value: stick.path,
+          label: parts.join(" · "),
+          disabled: !stick.selectable,
+          unrecognised,
+          missing: false,
+          fingerprint: unrecognised ? { ...ZIGBEE_UNKNOWN_FINGERPRINT } : stick.fingerprint,
+        });
+      }
+      // The configured stick, when the scan no longer finds it: without an
+      // option of its own the select would show "No Zigbee stick" - a
+      // setting nobody made - while the bridge keeps retrying the real one.
+      if (configured !== null && !options.some((option) => option.value === configured)) {
+        options.push({
+          value: configured,
+          label: t("web.radios.missing", { path: configured }),
+          disabled: false,
+          unrecognised: false,
+          missing: true,
+          fingerprint: null,
+        });
+      }
+      return options;
+    },
+
+    /** The line under the select that says which stick Thread is using
+     * and how to free it, or `null` when the list holds no Thread stick.
+     *
+     * The option's own suffix cannot carry this alone: a narrow native
+     * select cuts a label off from the right, exactly where the suffix
+     * sits (measured at 375 px in German), and a disabled option that
+     * gives no reason is the "detection is broken" report the listing
+     * exists to prevent. It is also the escape hatch - a dual-capable
+     * stick moves to Zigbee by turning Thread off or moving it, in the row
+     * above - and nothing else on the card says so. */
+    zigbeeThreadHint() {
+      const stick = (this.zigbee?.serial ?? []).find((candidate) => candidate.is_thread);
+      if (!stick) return null;
+      const key =
+        stick.path === this.zigbee.configured_path
+          ? "web.radios.zigbee_thread_took_over_hint"
+          : "web.radios.zigbee_thread_stick_hint";
+      return t(key, { name: this.stickName(stick) });
+    },
+
+    zigbeeSelectedOption() {
+      return this.zigbeeRadioOptions().find((option) => option.value === this.zigbeeDraft.path) ?? null;
+    },
+
+    /** The Advanced fields back to what the selected stick starts from.
+     * Only for an unrecognised stick: a recognised one has no Advanced
+     * values that the server would read (`settings_for_path` ignores them),
+     * so showing any would be showing a setting that does nothing. */
+    resetZigbeeAdvanced() {
+      const selected = this.zigbeeSelectedOption();
+      if (selected?.unrecognised && selected.value === this.zigbee?.configured_path) {
+        // The stick the bridge is already using: show what it is being
+        // opened WITH (`configured_radio_type`/`configured_baudrate`), not
+        // the defaults - a user checking Advanced on a stick that will not
+        // connect is asking exactly that question.
+        this.zigbeeDraft.radioType = this.zigbee.configured_radio_type ?? ZIGBEE_UNKNOWN_FINGERPRINT.radio_type;
+        this.zigbeeDraft.baudrate = this.zigbee.configured_baudrate ?? ZIGBEE_UNKNOWN_FINGERPRINT.baudrate;
+      } else {
+        const fingerprint = selected?.fingerprint ?? ZIGBEE_UNKNOWN_FINGERPRINT;
+        this.zigbeeDraft.radioType = fingerprint.radio_type;
+        this.zigbeeDraft.baudrate = fingerprint.baudrate;
+      }
+      this.zigbeeAdvancedEdited = false;
+    },
+
+    /** The select's `@change`. A new choice makes the last Apply's error a
+     * statement about a stick that is no longer selected, so it goes. */
+    zigbeeSelectionChanged() {
+      this.zigbeeDirty = true;
+      this.zigbeeApplyError = null;
+      if (!this.zigbeeSelectedOption()?.unrecognised) this.zigbeeAdvancedOpen = false;
+      if (!this.zigbeeAdvancedEdited) this.resetZigbeeAdvanced();
+    },
+
+    zigbeeAdvancedChanged() {
+      this.zigbeeDirty = true;
+      this.zigbeeAdvancedEdited = true;
+      this.zigbeeApplyError = null;
+    },
+
+    zigbeeRadioTypeOptions() {
+      return ZIGBEE_RADIO_TYPES.map((type) => ({ value: type, label: t("web.radios.zigbee_radio_type_" + type) }));
+    },
+
+    /** Whether the draft differs from what the bridge has stored. An
+     * Advanced edit counts only for an unrecognised stick, for the reason
+     * `resetZigbeeAdvanced()` gives. */
+    zigbeeRadioChanged() {
+      if (!this.zigbee) return false;
+      if (this.zigbeeDraft.path !== (this.zigbee.configured_path ?? "")) return true;
+      return this.zigbeeAdvancedEdited && Boolean(this.zigbeeSelectedOption()?.unrecognised);
+    },
+
+    zigbeeBaudrateValid() {
+      const baudrate = Number(this.zigbeeDraft.baudrate);
+      return Number.isInteger(baudrate) && baudrate > 0;
+    },
+
+    /** Whether Apply may be pressed.
+     *
+     * Blocked only while a change is being carried out for the FIRST time
+     * - `applying`, or the first attempt at a new setting (`attempts ===
+     * 0`) - because a second change on top would only restart it. A retry
+     * of a setting that has already failed is NOT blocked, nor is
+     * `failed`: the failure text is telling the user to fix the radio type
+     * or pick another stick, and refusing that for the length of every
+     * retry refused it for most of the first minute, silently.
+     * `ZigbeeRuntime.apply()` takes a change mid-attempt: it cancels the
+     * supervisor and releases the stick before it opens the new one. */
+    zigbeeCanApply() {
+      if (!this.zigbeeRadioChanged() || this.zigbeeBusy) return false;
+      if (this.zigbeeFirstAttemptRunning(this.zigbee?.progress)) return false;
+      const selected = this.zigbeeSelectedOption();
+      if (selected?.disabled) return false;
+      if (selected?.unrecognised && !this.zigbeeBaudrateValid()) return false;
+      return true;
+    },
+
+    zigbeeFirstAttemptRunning(progress) {
+      return this.zigbeeRadioPolling(progress) && !this.zigbeeRetrying(progress);
+    },
+
+    /** The `PUT /api/zigbee/radio` body. The Advanced values travel only
+     * for an unrecognised stick; for a recognised one the server takes the
+     * table's answer and would ignore them anyway. */
+    zigbeeRequestBody() {
+      const path = this.zigbeeDraft.path || null;
+      const selected = this.zigbeeSelectedOption();
+      if (path === null || !selected?.unrecognised) return { path };
+      return {
+        path,
+        radio_type: this.zigbeeDraft.radioType,
+        baudrate: Number(this.zigbeeDraft.baudrate),
+      };
+    },
+
+    /** The row's own Apply. No confirmation step, unlike the Thread and
+     * Bluetooth rows: nothing is restarted and nothing else is touched, so
+     * there is nothing to warn about - the hint beside the row says so.
+     *
+     * `zigbeeBusy` stays set until the reload after the `PUT` has
+     * finished, so the Apply button cannot flash back up for the moment in
+     * which the draft already names the new stick and `zigbee` still names
+     * the old one. */
+    async applyZigbeeRadio() {
+      if (!this.zigbeeCanApply()) return;
+      this.zigbeeBusy = true;
+      this.zigbeeApplyError = null;
+      try {
+        try {
+          const response = await this.request("PUT", "/api/zigbee/radio", this.zigbeeRequestBody());
+          this.zigbeeDirty = false;
+          this.zigbeeAdvancedEdited = false;
+          if (this.zigbee && response?.progress) {
+            this.zigbee = { ...this.zigbee, progress: response.progress };
+          }
+          // The Thread row reads which stick is the Zigbee one
+          // (`is_zigbee`) from `GET /api/radios`, and the setting just
+          // changed: without a reload it kept offering the new Zigbee stick
+          // and disabling the old one until Rescan.
+          if (this.radios) this.loadRadios();
+        } catch (error) {
+          this.zigbeeApplyError = error.message;
+        }
+        await this.loadZigbeeRadio();
+      } finally {
+        this.zigbeeBusy = false;
+      }
+    },
+
+    /** The one line that says what the connection is doing.
+     *
+     * `present` is `configured_device_present`, and it wins over the
+     * state: a configured stick that is not plugged in fails its attempt
+     * the same way as one that is present and refusing to open, and the
+     * two need opposite actions from the user. `null` for `idle`, which is
+     * "nothing is configured" and needs no line at all. */
+    zigbeeProgressText(progress, present) {
+      if (!progress) return null;
+      if (this.zigbeeStickMissing(present)) {
+        return t("web.radios.zigbee_device_missing", { path: this.zigbee.configured_path });
+      }
+      switch (progress.state) {
+        case "applying":
+          return t("web.radios.zigbee_applying");
+        case "loading_quirks":
+        case "opening_radio":
+          // A retry after failures is not "the first connection": the
+          // supervisor sets these states again on every attempt, and the
+          // first-connection wording would be untrue from the second on.
+          // `error` on a retry is the PREVIOUS attempt's reason, which the
+          // bridge carries through the retry (`ConnectionProgress`) and
+          // translates per answer - so it is in the current language, and
+          // it does not vanish for the length of every attempt.
+          if (progress.attempts > 0) {
+            const attempt = progress.attempts + 1;
+            return progress.error
+              ? t("web.radios.zigbee_retrying_after", { attempt, error: progress.error })
+              : t("web.radios.zigbee_retrying", { attempt });
+          }
+          return t(
+            progress.state === "loading_quirks" ? "web.radios.zigbee_loading_quirks" : "web.radios.zigbee_opening_radio",
+          );
+        case "connected":
+          return t("web.radios.zigbee_connected");
+        case "failed":
+          return t("web.radios.zigbee_failed_retrying", {
+            error: progress.error ?? t("web.radios.zigbee_failed_unknown"),
+            attempts: progress.attempts,
+          });
+        default:
+          return null;
+      }
+    },
+
+    /** Whether that line reports a problem - a failed attempt, the retry
+     * after one, or a stick that is not there - and should read as one.
+     *
+     * The retry counts: it carries the same failure sentence as the
+     * `failed` line either side of it, and colouring only the `failed`
+     * half flipped that sentence between red and grey on every retry. */
+    zigbeeProgressFailing(progress, present) {
+      if (!progress) return false;
+      if (this.zigbeeStickMissing(present)) return true;
+      return progress.state === "failed" || this.zigbeeRetrying(progress);
+    },
+
+    /** A stick is configured and the scan does not find it. The configured
+     * path is part of the question: on a fresh install
+     * `configured_device_present` is `false` too, with nothing to be
+     * missing. */
+    zigbeeStickMissing(present) {
+      return present === false && Boolean(this.zigbee?.configured_path);
+    },
+
     async saveSettings() {
       this.settingsError = null;
       if (!this.settingsDraft.bridge_ip.trim()) {
@@ -3522,7 +5747,7 @@ function app() {
       }
     },
 
-    /** Sets the shared language setting (PATCH /api/language, Task 1) and
+    /** Sets the shared language setting (PATCH /api/language) and
      * then reloads the whole page - the confirmed, simpler variant from
      * the design discussion (Spec section 7): no special case for toasts
      * already shown or WebSocket state, which would otherwise stay in the
@@ -3710,7 +5935,7 @@ function app() {
     // ---------------------------------------------------------------------
 
     // Now only loads the system check once via GET - datagrams, command
-    // log, and log lines have been delivered continuously since Task 6 by
+    // log, and log lines are delivered continuously by
     // the diagnostics channel (`connectDiagnosticsLive`, opens on
     // switching to this view in `selectView`). For the system check,
     // however, there is no third stream on `/api/diagnostics/live` - it
@@ -4224,7 +6449,7 @@ function app() {
     },
 
     // ---------------------------------------------------------------------
-    // Project file sync (Task 12)
+    // Project file sync
     // ---------------------------------------------------------------------
 
     /**
@@ -4592,7 +6817,7 @@ function app() {
     },
 
     // ---------------------------------------------------------------------
-    // Live diagnostics (Task 6, Spec 10.5)
+    // Live diagnostics (Spec 10.5)
     // ---------------------------------------------------------------------
 
     /**
@@ -4615,7 +6840,7 @@ function app() {
      * from the model, not a following of it.
      *
      * **Clears all three streams BEFORE the new connection is built**
-     * (follow-up fix Task 6, 2026-09-03): every (re)connection gets a
+     * (since 2026-09-03): every (re)connection gets a
      * snapshot of up to `SNAPSHOT_LIMIT` entries per stream from
      * `api/diagnostics_live.py`, in exactly the same message shape as a
      * running line and with no marker of its own identifying it as a

@@ -59,7 +59,23 @@ services:
     devices:
       - ${RADIO_DEVICE}:${RADIO_DEVICE}
     environment:
-      RADIO_URL: spinel+hdlc+uart://${RADIO_DEVICE}?uart-baudrate=${RADIO_BAUDRATE}
+      # OTBR_RADIO_URL_EXTRA is appended to the radio URL as it stands, and
+      # is empty unless .env sets it. Its one intended value is
+      # `&uart-exclusive`, which makes OpenThread take flock + TIOCEXCL on
+      # the stick (research A.3; the option landed upstream on 2026-05-04).
+      # A second layer only: TIOCEXCL is bypassed by a holder of
+      # CAP_SYS_ADMIN, which this privileged container has, and the real
+      # guarantee is that loxmatter never offers or accepts the Thread stick
+      # as a Zigbee coordinator (design section 3.2).
+      #
+      # OPT-IN, because it is UNVERIFIED against the otbr image installed on
+      # the test Pi (design open point 5): an image that refused the
+      # parameter would leave Thread down the next time otbr is recreated -
+      # which a Thread change on the radios card does - and that job's
+      # rollback recreates otbr from this same file. First-run checklist
+      # step 15.4 turns it on for one installation and watches Thread come
+      # back. The radios job rewrites .env key by key, so the line survives it.
+      RADIO_URL: spinel+hdlc+uart://${RADIO_DEVICE}?uart-baudrate=${RADIO_BAUDRATE}${OTBR_RADIO_URL_EXTRA:-}
       # Neither the original test VM nor this Pi has the legacy iptables
       # tables (mangle/nat/filter) loaded, and the image has no modprobe to
       # load them - NAT64/NAT44 and the legacy firewall rules (both need
@@ -280,6 +296,37 @@ services:
       # data - because without a password set on the host, no `/api`
       # route responds, regardless of the token.
       - ./data:/matter-data:ro
+      # The host's /dev, read-only, only to read the names under
+      # /dev/serial/by-id (design "Radios in the Web UI", 2026-09-11,
+      # section 5). Without a device cgroup rule no device node here can be
+      # opened, so this grants no access to a radio.
+      - /dev:/host/dev:ro
+    # What actually grants the bridge permission to OPEN a serial device -
+    # the /dev bind above only supplies stable names and hotplug visibility
+    # (design 2026-09-12, section 8.1; research F.8/F.9). Container root
+    # already holds CAP_MKNOD and Docker's default `c *:* m`, so it can
+    # mknod a node itself; removing these rules denies the open with EPERM.
+    #
+    # NOT a `devices:` entry, for two measured reasons: `docker compose up`
+    # fails the WHOLE stack when the named node is absent (the documented
+    # reason otbr sits behind a profile), and a `devices:` node is copied in
+    # at create time, so a stick plugged in later is invisible.
+    #
+    # Majors verified against the kernel's admin-guide/devices.txt:
+    #   188 = USB serial converters (ttyUSB*: CP210x, CH34x, FTDI)
+    #   166 = ACM USB modems (ttyACM*: CDC-ACM)
+    # A GPIO-UART hat would be 204:64 and is deliberately NOT granted; add
+    # `c 204:64 rmw` only for an installation that has one.
+    #
+    # The rule is coarse: it reaches every USB-serial adapter on the host,
+    # including the Thread RCP, whose RADIO_DEVICE defaults to a major-188
+    # node. Exclusion is enforced in loxmatter by resolved major:minor
+    # (design section 3.2), not here - and this is still a far smaller blast
+    # radius than `privileged: true`. It does not reach block devices,
+    # /dev/mem or i2c, which stay EPERM even though the bind shows them.
+    device_cgroup_rules:
+      - 'c 188:* rmw'
+      - 'c 166:* rmw'
     environment:
       # A dedicated, fixed location instead of the user-home default (see
       # `_resolve_store_path` in src/loxmatter/cli.py) - the mounted
@@ -349,6 +396,15 @@ services:
   # Anyone who does not want this can strike this service. The bridge
   # notices via the stale heartbeat, hides the button, and names the
   # console route - no dead button, no message that sounds like a defect.
+  #
+  # Since design "Radios in the Web UI" (2026-09-11, section 6.6) this
+  # service also runs radios-once.sh: besides installing a published
+  # loxmatter version, it can change only which existing USB serial device
+  # otbr uses, whether Thread runs, and which existing Bluetooth adapter
+  # matter-server uses. The script validates each value against the host's
+  # devices, read through the /dev:/host/dev:ro mount below, touches no
+  # other .env key and no other service, and executes no value from a
+  # request as a command.
   loxmatter-updater:
     image: ghcr.io/lucienkerl/loxmatter-updater:stable
     container_name: loxmatter-updater
@@ -378,6 +434,11 @@ services:
       # exists here because LOXMATTER_STORE on the bridge points at
       # exactly this volume, at exactly that filename.
       - loxmatter-store:/data
+      # The host's /dev, read-only, only to read the names under
+      # /dev/serial/by-id (design "Radios in the Web UI", 2026-09-11,
+      # section 5). Without a device cgroup rule no device node here can be
+      # opened, so this grants no access to a radio.
+      - /dev:/host/dev:ro
     environment:
       LOXMATTER_UPDATE_DIR: /data/update
       LOXMATTER_BACKUP_DIR: /data/backups

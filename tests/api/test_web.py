@@ -32,6 +32,7 @@ import json
 import re
 import shutil
 import subprocess
+from html.parser import HTMLParser
 from pathlib import Path
 from xml.etree import ElementTree
 
@@ -50,6 +51,7 @@ from loxmatter.api.language import _web_strings
 from loxmatter.export.commands import extract_commands
 from loxmatter.loxone.server import build_app
 from loxmatter.model.store import Store
+from loxmatter.zigbee.source import PERMIT_MAX_SECONDS
 
 WEB_DIR = Path(__file__).resolve().parents[2] / "src" / "loxmatter" / "web"
 
@@ -1145,7 +1147,10 @@ def _app_state(setup: str = "", translations: dict[str, str] | None = None) -> d
     timestamps would both render as "web.devices.last_heard".
     """
     fill_strings = f"translationStrings = {json.dumps(translations)};\n" if translations else ""
-    tail = json.dumps("\n" + fill_strings + "return app();")
+    # `t` is a global in the browser, and markup expressions call it by
+    # name; inside this `new Function` it is a local, so the binding tests
+    # at the end of this file would not find it without the export.
+    tail = json.dumps("\n" + fill_strings + "globalThis.t = t;\nreturn app();")
     script = f"""
       const fs = require("node:fs");
       const src = fs.readFileSync({str(WEB_DIR / "app.js")!r}, "utf8");
@@ -1160,6 +1165,20 @@ def _app_state(setup: str = "", translations: dict[str, str] | None = None) -> d
     )
     assert result.returncode == 0, result.stderr
     return json.loads(result.stdout)
+
+
+def _js_constant(name: str) -> int:
+    """The value of a `const NAME = <number>;` in app.js, read out of the
+    file rather than retyped here - the same rule `_x_show_expr` below
+    follows for markup. A test that hard-coded 20000 would keep passing
+    with its own stale copy of a window someone had since changed."""
+    match = re.search(
+        rf"^const {re.escape(name)} = (\d+);",
+        (WEB_DIR / "app.js").read_text(encoding="utf-8"),
+        flags=re.MULTILINE,
+    )
+    assert match, f"no `const {name} = <number>;` in app.js"
+    return int(match.group(1))
 
 
 def _x_show_expr(markup: str, t_key: str) -> str:
@@ -2630,7 +2649,7 @@ async def test_the_generic_network_errors_call_the_global_t_from_a_free_function
     script = (await client.get("/static/app.js")).text
     assert "Die Brücke ist nicht erreichbar" not in script
     assert script.count('t("web.errors.bridge_unreachable")') == 3
-    assert 'return t("web.errors.http_status", { status: response.status });' in script
+    assert 't("web.errors.http_status", { status: response.status })' in script
     assert "`HTTP ${response.status}`" not in script
 
 
@@ -3571,12 +3590,19 @@ async def test_remove_device_reconciles_the_room_filter(api):
     Without a browser engine there is no way to check either `roomFilter`
     or the rendered markup after a click (see the other tests in this
     file that admit the same limitation). Proven instead is that the
-    delivered method body of `removeDevice` itself calls
-    `reconcileRoomFilter()` after removing from `this.devices`."""
+    delivered method body that follows every removal - `removeDevice` and
+    the forget-only `forgetDeviceLocally` both end in `afterDeviceRemoved` -
+    calls `reconcileRoomFilter()` after removing from `this.devices`."""
     client, _, _ = api
     script = (await client.get("/static/app.js")).text
 
-    remove_start = script.index("async removeDevice(device) {")
+    for caller in ("async removeDevice(device) {", "async forgetDeviceLocally(device) {"):
+        start = script.index(caller)
+        assert (
+            "await this.afterDeviceRemoved(device);"
+            in script[start : script.index("\n    },", start)]
+        )
+    remove_start = script.index("async afterDeviceRemoved(device) {")
     remove_end = script.index("\n    },", remove_start)
     remove_body = script[remove_start:remove_end]
 
@@ -5671,7 +5697,7 @@ async def test_removing_a_device_closes_a_signals_modal_that_shows_it(api):
     with no discernible reason."""
     client, _, _ = api
     script = (await client.get("/static/app.js")).text
-    start = script.index("async removeDevice(device) {")
+    start = script.index("async afterDeviceRemoved(device) {")
     end = script.index("\n    },", start)
     body = script[start:end]
     assert "if (this.signalsModalDevice === device.id) {" in body
@@ -8644,8 +8670,10 @@ def test_the_transport_badge_helper_maps_transports_to_symbols_and_labels():
     assert values["thread"] == {"symbol": "i-transport-thread", "label": "Matter over Thread"}
     assert values["ip"] == {"symbol": "i-transport-ip", "label": "Matter over IP"}
     assert values["none"] is None
-    # No Zigbee glyph before the Zigbee spec; no badge beats a wrong one.
-    assert values["zigbee"] is None
+    # Zigbee has had its glyph since the Zigbee source design (2026-09-12,
+    # section 3.3); `test_the_zigbee_badge_has_a_glyph_now_that_the_spec_adds_one`
+    # checks what it maps to.
+    assert values["zigbee"]["symbol"] == "i-transport-zigbee"
 
 
 async def test_every_transport_badge_symbol_exists(api):
@@ -8653,7 +8681,7 @@ async def test_every_transport_badge_symbol_exists(api):
     same reason `test_every_category_has_an_icon_symbol` exists."""
     client, _, _ = api
     page = (await client.get("/")).text
-    for symbol in ("i-transport-thread", "i-transport-ip"):
+    for symbol in ("i-transport-thread", "i-transport-ip", "i-transport-zigbee"):
         assert f'<symbol id="{symbol}"' in page, symbol
 
 
@@ -8684,7 +8712,11 @@ async def test_the_badge_sits_inside_the_device_tiles_category_icon(api):
 def test_the_transport_labels_exist_in_both_languages():
     from loxmatter import i18n
 
-    for key in ("web.devices.transport_thread", "web.devices.transport_ip"):
+    for key in (
+        "web.devices.transport_thread",
+        "web.devices.transport_ip",
+        "web.devices.transport_zigbee",
+    ):
         english = i18n.t(key)
         i18n.set_language("de")
         try:
@@ -8692,3 +8724,6181 @@ def test_the_transport_labels_exist_in_both_languages():
         finally:
             i18n.set_language("en")
         assert english and german and english != key
+
+
+# ---------------------------------------------------------------------------
+# The radios card (Task 7, design "Radios in the Web UI", 2026-09-11,
+# section 8): choosing the Thread stick and Bluetooth adapter from the web
+# UI, backed by Task 6's GET/POST /api/radios.
+# ---------------------------------------------------------------------------
+
+RADIOS_READY = {
+    "sidecar": "ready",
+    "updater_stack_host_path": "/home/pi/stack",
+    "serial": [
+        {
+            "path": "/dev/serial/by-id/usb-A",
+            "tty": "ttyUSB0",
+            "manufacturer": "SONOFF",
+            "product": "SONOFF Dongle Plus MG24",
+            "serial": "e26a50c9",
+            "vid_pid": "10c4:ea60",
+        },
+        {
+            "path": "/dev/serial/by-id/usb-B",
+            "tty": "ttyACM0",
+            "manufacturer": None,
+            "product": None,
+            "serial": None,
+            "vid_pid": None,
+        },
+    ],
+    "bluetooth": [
+        {"index": 0, "name": "hci0", "bus": "uart", "product": None, "rfkill_blocked": False}
+    ],
+    "current": {
+        "thread_enabled": True,
+        "thread_device": "/dev/serial/by-id/usb-A",
+        "thread_device_present": True,
+        "bluetooth_adapter": 0,
+        "otbr_running": True,
+    },
+    "job": None,
+}
+
+
+def _radios_values(setup: str, *, translations: dict[str, str] | None = None) -> dict:
+    return _app_state(
+        f"state.radios = {json.dumps(RADIOS_READY)};\n"
+        "state.radiosDraft = { threadDevice: '/dev/serial/by-id/usb-A', bluetoothAdapter: 0 };\n"
+        + setup,
+        translations=translations,
+    )
+
+
+def _attr_before_t_key(markup: str, attr: str, t_key: str) -> str:
+    """Like `_x_show_expr` above, generalized to any attribute - the
+    literal `attr="..."` on the tag whose own `x-text` calls
+    `t(t_key, ...)`, pulled from the SERVED markup rather than retyped."""
+    match = re.search(
+        re.escape(attr) + r'="([^"]*)"[^>]*x-text="t\(\'' + re.escape(t_key) + r"'",
+        markup,
+        flags=re.DOTALL,
+    )
+    assert match, f"no {attr} immediately precedes t('{t_key}', ...) in the markup"
+    return match.group(1)
+
+
+def _class_before_text(markup: str, text_needle: str) -> str:
+    """Like `_x_show_expr`, generalized to `class` instead of `x-show`
+    and to a plain substring instead of a `t(...)` call - for markup
+    whose `x-text` concatenates a translated string with other JS rather
+    than calling `t()` directly (the rfkill warning: `option.label + ':
+    ' + t('web.radios.rfkill_blocked')`)."""
+    match = re.search(
+        r'class="([^"]*)"[^>]*x-text="[^"]*' + re.escape(text_needle),
+        markup,
+        flags=re.DOTALL,
+    )
+    assert match, f"no class attr found before an x-text containing {text_needle!r}"
+    return match.group(1)
+
+
+def _bluetooth_option_exprs(markup: str) -> tuple[str, str]:
+    """The `(:disabled, x-text)` pair on the Bluetooth `<option>` inside
+    the radios card, pulled from the SERVED markup - the same "extract
+    the real expression, don't retype it" technique `_running_step_lis`
+    above already uses."""
+    start = markup.index('x-model.number="radiosDraft.bluetoothAdapter"')
+    end = markup.index("</select>", start)
+    block = markup[start:end]
+    match = re.search(r':disabled="([^"]*)"\s*\n\s*x-text="([^"]*)"', block, flags=re.DOTALL)
+    assert match, "no :disabled/x-text pair found on the Bluetooth <option>"
+    return match.group(1), match.group(2)
+
+
+def _eval_js_expr(expr: str, **bindings: str) -> object:
+    """Evaluates `expr` in node with each keyword argument predefined as a
+    name bound to already-SERIALIZED JS source (not a Python value) - the
+    same convention `_eval_js` above uses for `t`, extended to arbitrary
+    names so a markup expression that reads e.g. `option` and calls `t`
+    can be evaluated exactly as extracted."""
+    preamble = "\n".join(f"const {name} = {value};" for name, value in bindings.items())
+    script_src = f"{preamble}\nconsole.log(JSON.stringify({expr}));\n"
+    result = subprocess.run(
+        [NODE, "-e", script_src], capture_output=True, text=True, timeout=10, check=False
+    )
+    assert result.returncode == 0, result.stderr
+    return json.loads(result.stdout)
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_the_radios_card_detects_a_change_and_picks_the_confirmation_text():
+    """Runs the real helpers in node. Fault to prove it: return
+    `confirm_thread_on` for a stick switch."""
+    values = _radios_values(
+        """
+        const out = { unchanged: state.radiosChanged() };
+        state.radiosDraft.threadDevice = '/dev/serial/by-id/usb-B';
+        out.switch = [state.radiosChanged(), state.radiosConfirmKeys()];
+        state.radiosDraft.threadDevice = '';
+        out.off = state.radiosConfirmKeys();
+        state.radiosDraft = { threadDevice: '/dev/serial/by-id/usb-A', bluetoothAdapter: 1 };
+        out.bluetooth = state.radiosConfirmKeys();
+        state.radios.current.thread_enabled = false;
+        state.radios.current.thread_device = null;
+        out.on = state.radiosConfirmKeys();
+        console.log(JSON.stringify(out));
+        """
+    )
+    assert values["unchanged"] is False
+    assert values["switch"] == [True, ["web.radios.confirm_thread_switch"]]
+    assert values["off"] == ["web.radios.confirm_thread_off"]
+    # Task 7d: a Bluetooth-only change says outright that Thread is not
+    # touched, and names no Thread restart - because none happens.
+    assert values["bluetooth"] == [
+        "web.radios.confirm_bluetooth",
+        "web.radios.confirm_thread_untouched",
+    ]
+    # A change that really does move Thread keeps the restart warning and
+    # drops the reassurance.
+    assert values["on"] == ["web.radios.confirm_thread_on", "web.radios.confirm_bluetooth"]
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_only_the_halves_the_user_changed_are_sent():
+    """Task 7d: the request body carries `null` for a radio the user did
+    not touch, which every layer below reads as "leave this one alone".
+
+    Runs the real `confirmApplyRadios()` and captures what it actually
+    POSTs, rather than inspecting the helper it calls - the body is the
+    thing the sidecar acts on. `setInterval` is stubbed because a
+    successful POST arms the 2 s poll, which would otherwise keep node
+    alive past the end of the script.
+
+    Fault to prove it: send both halves unconditionally again (the
+    pre-7d body), whereupon the first case below carries a full Thread
+    half and the sidecar reads a legacy `.env` as a stick switch."""
+    values = _radios_values(
+        """
+        globalThis.setInterval = () => 1;
+        globalThis.clearInterval = () => {};
+        const bodies = [];
+        state.request = async (method, url, body) => {
+          if (method === 'POST') { bodies.push(body); return { id: 'j' }; }
+          return state.radios;
+        };
+        (async () => {
+          state.radiosDraft = { threadDevice: '/dev/serial/by-id/usb-A', bluetoothAdapter: 1 };
+          await state.confirmApplyRadios();
+          state.radiosDraft = { threadDevice: '/dev/serial/by-id/usb-B', bluetoothAdapter: 0 };
+          await state.confirmApplyRadios();
+          state.radiosDraft = { threadDevice: '', bluetoothAdapter: 1 };
+          await state.confirmApplyRadios();
+          console.log(JSON.stringify(bodies));
+        })();
+        """
+    )
+    assert values == [
+        {"thread": None, "bluetooth": {"adapter": 1}},
+        {"thread": {"enabled": True, "device": "/dev/serial/by-id/usb-B"}, "bluetooth": None},
+        {"thread": {"enabled": False, "device": None}, "bluetooth": {"adapter": 1}},
+    ]
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_an_unplugged_stick_does_not_turn_a_bluetooth_change_into_a_thread_change():
+    """The reported defect, at the card. The sidecar reports the
+    installer's legacy `/dev/ttyUSB0` and the stick is unplugged, so
+    `api/radios.py` maps nothing and reports that raw value with
+    `thread_device_present: false`. The card shows it as "(missing)" and
+    keeps it selected - it must NOT seed the draft to "no stick", which
+    would turn a fallen-out stick into a request to stop the border
+    router.
+
+    What this pins: in that state a Bluetooth change is a Bluetooth
+    change. The Thread half reads as unchanged, is sent as `null`, and the
+    confirmation neither promises a Thread restart nor stays silent about
+    it. Fault to prove it: compare the draft against
+    `radios.serial`/presence rather than against
+    `radiosCurrentThread()`, or drop the `radiosThreadChanged()` guard
+    around the Thread confirmation keys."""
+    values = _radios_values(
+        """
+        state.radios.current.thread_device = '/dev/ttyUSB0';
+        state.radios.current.thread_device_present = false;
+        state.radiosDraft = { threadDevice: '/dev/ttyUSB0', bluetoothAdapter: 1 };
+        console.log(JSON.stringify({
+          threadChanged: state.radiosThreadChanged(),
+          bluetoothChanged: state.radiosBluetoothChanged(),
+          changed: state.radiosChanged(),
+          keys: state.radiosConfirmKeys(),
+          body: state.radiosRequestBody(),
+          missingOptionStillSelected:
+            state.radiosThreadOptions().some((o) => o.value === '/dev/ttyUSB0' && o.missing),
+        }));
+        """
+    )
+    assert values["threadChanged"] is False
+    assert values["bluetoothChanged"] is True
+    assert values["changed"] is True
+    assert values["missingOptionStillSelected"] is True
+    assert values["keys"] == [
+        "web.radios.confirm_bluetooth",
+        "web.radios.confirm_thread_untouched",
+    ]
+    assert "web.radios.confirm_thread_switch" not in values["keys"]
+    assert "web.radios.confirm_thread_off" not in values["keys"]
+    assert values["body"] == {"thread": None, "bluetooth": {"adapter": 1}}
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_the_thread_options_mark_the_current_stick_and_a_missing_one():
+    values = _radios_values(
+        """
+        const out = { normal: state.radiosThreadOptions() };
+        state.radios.current.thread_device = '/dev/ttyUSB7';
+        state.radios.current.thread_device_present = false;
+        out.missing = state.radiosThreadOptions();
+        console.log(JSON.stringify(out));
+        """
+    )
+    normal = values["normal"]
+    assert [o["value"] for o in normal] == [
+        "",
+        "/dev/serial/by-id/usb-A",
+        "/dev/serial/by-id/usb-B",
+    ]
+    assert [o["inUse"] for o in normal] == [False, True, False]
+    missing = values["missing"]
+    assert missing[-1] == {
+        "value": "/dev/ttyUSB7",
+        "label": "web.radios.missing",
+        "inUse": True,
+        "missing": True,
+        "zigbee": False,
+    }
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_the_radios_job_states_map_to_step_classes_and_results():
+    values = _radios_values(
+        """
+        state.radios.job = { id: 'j', phase: 'verify_thread', steps: ['validate','backup','write','apply_thread','verify_thread'],
+                             error: null, rolled_back: false, healthy: null };
+        const out = { running: state.radiosJobRunning(),
+                      classes: state.radios.job.steps.map((s) => state.radiosStepClass(s)) };
+        state.radios.job.phase = 'failed'; state.radios.job.error = 'verify_thread_failed';
+        state.radios.job.rolled_back = true; state.radios.job.healthy = true;
+        out.failed = [state.radiosJobRunning(), state.radiosResultKey()];
+        state.radios.job.healthy = false;
+        out.unhealthy = state.radiosResultKey();
+        console.log(JSON.stringify(out));
+        """
+    )
+    assert values["running"] is True
+    assert values["classes"] == [
+        {"done": True, "now": False},
+        {"done": True, "now": False},
+        {"done": True, "now": False},
+        {"done": True, "now": False},
+        {"done": False, "now": True},
+    ]
+    assert values["failed"] == [False, "web.radios.result_failed_restored"]
+    assert values["unhealthy"] == "web.radios.result_failed_unhealthy"
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_the_sidecar_message_depends_on_the_sidecar_state():
+    values = _radios_values(
+        """
+        const out = {};
+        for (const s of ['ready', 'missing', 'outdated', 'unmounted']) {
+          state.radios.sidecar = s; out[s] = state.radiosSidecarMessage();
+        }
+        state.radios.sidecar = 'outdated'; state.radios.updater_stack_host_path = null;
+        out.nopath = state.radiosSidecarMessage();
+        console.log(JSON.stringify(out));
+        """
+    )
+    assert values["ready"] is None
+    assert values["missing"] == "web.radios.sidecar_missing"
+    assert values["outdated"] == values["unmounted"] == "web.radios.sidecar_refresh"
+    assert values["nopath"] == "web.radios.sidecar_refresh_unknown_path"
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_polling_continues_until_the_posted_job_appears():
+    """Fault to prove it: drop the `radiosPendingJobId` condition from
+    `keepPolling` - the interval then stops on the old job's result."""
+    values = _app_state(
+        f"""
+        let intervals = 0;
+        globalThis.setInterval = () => {{ intervals += 1; return 1; }};
+        globalThis.clearInterval = () => {{ intervals -= 1; }};
+        const old = {json.dumps({**RADIOS_READY, "job": {"id": "old", "phase": "done", "steps": [], "error": None, "rolled_back": False, "healthy": True}})};
+        const fresh = JSON.parse(JSON.stringify(old)); fresh.job.id = "new";
+        let answer = old;
+        state.request = async () => answer;
+        (async () => {{
+          state.radiosPendingJobId = "new";
+          await state.loadRadios();
+          const afterOld = intervals;
+          answer = fresh;
+          await state.loadRadios();
+          console.log(JSON.stringify({{ afterOld, afterNew: intervals, pending: state.radiosPendingJobId }}));
+        }})();
+        """
+    )
+    assert values == {"afterOld": 1, "afterNew": 0, "pending": None}
+
+
+async def test_the_radios_card_sits_in_the_settings_view(api):
+    client, _, _ = api
+    page = _without_comments((await client.get("/")).text)
+    settings = page[page.index("view === 'settings'") :]
+    card = settings[: settings.index("t('web.settings.language_heading')")]
+    for marker in (
+        "t('web.radios.heading')",
+        "radiosThreadOptions()",
+        "radiosBluetoothOptions()",
+        "askApplyRadios()",
+        "confirmApplyRadios()",
+        "radiosStepClass(",
+    ):
+        assert marker in card, marker
+
+
+def test_the_radios_texts_exist_in_both_languages():
+    """Reads the table directly: `i18n.raw_template` falls back to English
+    when `de` is missing, so it could never see a missing translation.
+    Fault to prove it: delete one `de:` line under `web.radios.*`."""
+    from loxmatter import i18n
+
+    keys = i18n.strings_with_prefix("web.radios.")
+    assert "web.radios.confirm_thread_switch" in keys
+    for key in keys:
+        entry = i18n._STRINGS[key]
+        assert entry.get("en") and entry.get("de"), key
+
+
+# ---------------------------------------------------------------------------
+# Radios card review fixes (2026-09-12): the reviewer's two Critical findings
+# (a failed Apply that shows nothing, and a job that stops being advanced but
+# never stops looking like it is running) plus five smaller ones, and the
+# untested surface the reviewer named directly: `confirmApplyRadios`,
+# `askApplyRadios`, `cancelApplyRadios`, `radiosReason`, `radiosBluetoothOptions`
+# (never called by any test above), and the `:disabled`/`x-show` bindings on
+# the card.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_a_failed_apply_leaves_its_error_on_screen_after_the_refresh():
+    """Review-Fix Critical #1: `loadRadios()`'s own first statement sets
+    `this.radiosError = null` synchronously, before its first `await` -
+    so a `catch` that writes straight to `this.radiosError` and then
+    unconditionally awaits `loadRadios()` clears the error in the same
+    turn, before Alpine ever gets to render it (the reviewer measured
+    this in node: `radiosError === null` right after a rejected POST).
+    The stubbed `request` here throws only for the POST and succeeds for
+    the GET `loadRadios()` makes afterwards, reproducing exactly that
+    sequence. The error now lives in `radiosApplyError`, a field no poll
+    touches (see the 409 test below for why re-applying it to
+    `radiosError` afterwards was not enough); `radiosError` staying `null`
+    is what proves the two are not the same field again. Fault to prove
+    it: write `this.radiosError = error.message` in
+    `confirmApplyRadios()`'s `catch` instead."""
+    values = _radios_values(
+        """
+        state.request = async (method) => {
+          if (method === 'POST') throw new Error('unknown adapter');
+          return state.radios;
+        };
+        (async () => {
+          await state.confirmApplyRadios();
+          console.log(JSON.stringify({
+            error: state.radiosApplyError,
+            loadError: state.radiosError,
+            busy: state.radiosBusy,
+          }));
+        })();
+        """
+    )
+    assert values == {"error": "unknown adapter", "loadError": None, "busy": False}
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_a_rejected_apply_survives_the_poll_that_the_rejection_itself_arms():
+    """The 409 case, which the fix above did not reach: "a radio change is
+    already running" comes back when a job was started somewhere else
+    (another tab, a phone). The `loadRadios()` that `confirmApplyRadios()`
+    always runs afterwards therefore SEES that running job and arms the
+    two-second poll - and that poll's first tick runs
+    `this.radiosError = null` again, erasing the explanation a second
+    after the user read it, leaving a card that silently did nothing they
+    asked for. Every other rejection (503, 400) leaves nothing running, so
+    no timer is armed and re-applying the message after `loadRadios()`
+    genuinely did fix those.
+
+    Runs the real timer callback rather than waiting two seconds for it.
+    Fault to prove it: put the apply error back on `this.radiosError`
+    (re-applied after `loadRadios()`, exactly as the previous fix had it) -
+    `afterTick` then reads `null`."""
+    running = {
+        **RADIOS_READY,
+        "job": {
+            "id": "elsewhere",
+            "phase": "apply_thread",
+            "steps": ["validate", "backup", "write", "apply_thread"],
+            "error": None,
+            "rolled_back": False,
+            "healthy": None,
+        },
+    }
+    values = _app_state(
+        f"""
+        let tick = null;
+        globalThis.setInterval = (fn) => {{ tick = fn; return 7; }};
+        globalThis.clearInterval = () => {{ tick = null; }};
+        state.radios = {json.dumps(running)};
+        state.request = async (method) => {{
+          if (method === 'POST') throw new Error('a radio change is already running');
+          return {json.dumps(running)};
+        }};
+        (async () => {{
+          await state.confirmApplyRadios();
+          const afterApply = state.radiosApplyError;
+          const armed = tick !== null;
+          await tick();
+          console.log(JSON.stringify({{ afterApply, armed, afterTick: state.radiosApplyError }}));
+        }})();
+        """
+    )
+    assert values == {
+        "afterApply": "a radio change is already running",
+        "armed": True,
+        "afterTick": "a radio change is already running",
+    }
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_ask_apply_radios_is_a_noop_without_a_change_and_cancel_clears_dirty():
+    """`askApplyRadios`/`cancelApplyRadios` were untested per the
+    reviewer. Also covers Review-Fix Minor #8's cancel half: leaving
+    `radiosDirty` set after Cancel used to make `loadRadios()`'s own
+    `if (current && !this.radiosDirty)` guard skip its draft resync for
+    the rest of the session. Fault to prove it (two, one per behaviour):
+    (a) drop the `if (!this.radiosChanged()) return;` guard from
+    `askApplyRadios()`; (b) drop `this.radiosDirty = false;` from
+    `cancelApplyRadios()`."""
+    values = _radios_values(
+        """
+        const out = { noopWithoutChange: state.radiosConfirming };
+        state.askApplyRadios();
+        out.stillNoChange = state.radiosConfirming;
+
+        state.radiosDraft.threadDevice = '/dev/serial/by-id/usb-B';
+        state.askApplyRadios();
+        out.confirmingAfterAsk = state.radiosConfirming;
+
+        state.radiosDirty = true;
+        state.cancelApplyRadios();
+        out.confirmingAfterCancel = state.radiosConfirming;
+        out.dirtyAfterCancel = state.radiosDirty;
+        console.log(JSON.stringify(out));
+        """
+    )
+    assert values == {
+        "noopWithoutChange": False,
+        "stillNoChange": False,
+        "confirmingAfterAsk": True,
+        "confirmingAfterCancel": False,
+        "dirtyAfterCancel": False,
+    }
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_radios_reason_falls_back_to_the_unknown_text_for_an_unrecognized_error():
+    """`radiosReason` was untested per the reviewer. Loads the REAL
+    translation table (`_web_strings()`, the same reasoning
+    `test_the_build_phase_is_tied_across_every_place_it_lives` gives for
+    doing the same) rather than none at all: without real translations
+    `t()` always returns its own key for EVERY key (see `t()`'s own
+    comment), which would make `text === key` trivially true for any
+    error string, real or fabricated, and prove nothing about the
+    fallback branch actually firing. Fault to prove it: drop the
+    `text === key ? t(...) : text` ternary in `radiosReason()` so it
+    always returns the raw (here: missing) key instead."""
+    values = _radios_values(
+        """
+        state.radios.job = { id: 'j', phase: 'failed', steps: [],
+                              error: 'not-a-real-reason', rolled_back: false, healthy: false };
+        console.log(JSON.stringify({ reason: state.radiosReason() }));
+        """,
+        translations=_web_strings(),
+    )
+    assert values == {"reason": "an unknown reason"}
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+async def test_a_dead_sidecar_mid_job_is_reported_as_abandoned_and_stops_polling(api):
+    """Review-Fix Critical #2a: `api/radios.py` returns the frozen `job`
+    regardless of sidecar health - `sidecar_status()` (radios/sidecar.py)
+    is what actually notices a crashed sidecar, flipping to
+    `missing`/`outdated` on its own heartbeat. Before this fix
+    `radiosJobRunning()` read a job in this state as running forever: the
+    step list stayed frozen, the Apply button stayed hidden, both selects
+    stayed disabled, and the 2s poll never stopped. Also confirms the
+    stall banner in index.html is wired to the exact flag this sets
+    (`_x_show_expr`, the technique this file already owns for this - see
+    its own docstring), not merely present somewhere on the page.
+
+    The flag is now raised only once the silence OUTLASTS
+    `RADIOS_STALL_GRACE_MS` - see the regression test below for the half
+    that matters more to a user - so this polls twice, with the window
+    moved out from under the second poll.
+
+    Fault to prove it: drop the `if (this.radiosStalled()) { ... }` block
+    from `loadRadios()` entirely - `abandoned` then stays `false` and the
+    timer is never stopped."""
+    running_and_dead = json.dumps(
+        {
+            **RADIOS_READY,
+            "sidecar": "missing",
+            "job": {
+                "id": "j",
+                "phase": "apply_thread",
+                "steps": ["validate", "backup", "write", "apply_thread"],
+                "error": None,
+                "rolled_back": False,
+                "healthy": None,
+            },
+        }
+    )
+    values = _app_state(
+        f"""
+        let intervals = 0;
+        globalThis.setInterval = () => {{ intervals += 1; return 999; }};
+        globalThis.clearInterval = () => {{ intervals -= 1; }};
+        state.radiosTimer = 999;
+        state.request = async () => ({running_and_dead});
+        (async () => {{
+          await state.loadRadios();
+          const firstPoll = {{
+            running: state.radiosJobRunning(),
+            stalled: state.radiosStalled(),
+            abandoned: state.radiosJobAbandoned,
+            timerCleared: state.radiosTimer === null,
+          }};
+          // The grace window elapsing, without waiting out 20 real
+          // seconds: the only clock here is `Date.now()` measured against
+          // `radiosStallSince`, so moving the start back is, to this code,
+          // exactly the same event as time passing.
+          state.radiosStallSince -= {_js_constant("RADIOS_STALL_GRACE_MS") + 1};
+          await state.loadRadios();
+          console.log(JSON.stringify({{
+            firstPoll,
+            running: state.radiosJobRunning(),
+            abandoned: state.radiosJobAbandoned,
+            timerCleared: state.radiosTimer === null,
+            intervals,
+          }}));
+        }})();
+        """
+    )
+    assert values == {
+        "firstPoll": {
+            "running": True,
+            "stalled": True,
+            "abandoned": False,
+            "timerCleared": False,
+        },
+        "running": False,
+        "abandoned": True,
+        "timerCleared": True,
+        "intervals": -1,
+    }
+
+    client, _, _ = api
+    page = (await client.get("/")).text
+    assert _x_show_expr(page, "web.radios.job_abandoned") == "radiosJobAbandoned"
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_a_working_job_is_not_called_abandoned_over_a_momentary_silence():
+    """The regression commit dd09241 introduced, and the reason the grace
+    window above exists. The stall detector was faithful to its model but
+    had nothing truthful to detect against: `sidecar_status()` checks
+    `updater_present` first, off `state.json`, which ONLY `update-once.sh`
+    writes - and entrypoint.sh runs the two workers one after the other,
+    so for as long as a radios job applied that timestamp could not move.
+    About 30 seconds (`_MAX_SILENT_SECONDS`) into the flagship
+    one-to-two-minute stick switch the sidecar therefore read `missing`,
+    the card called a perfectly healthy job abandoned, stopped polling,
+    dropped the step list and put up a red banner - and the job then
+    finished successfully with the card never saying so.
+
+    The sidecar now keeps its heartbeat alive (see
+    `test_the_heartbeat_advances_through_a_long_verify` in
+    tests/test_updater_radios_script.py, the root-cause half). This is the
+    independent second protection: one silent poll, then an answering one,
+    must leave nothing flagged and the poll still running.
+
+    Fault to prove it: set `radiosJobAbandoned` on the first stalled poll
+    again, dropping the `RADIOS_STALL_GRACE_MS` comparison."""
+    job = {
+        "id": "j",
+        "phase": "verify_thread",
+        "steps": ["validate", "backup", "write", "apply_thread", "verify_thread"],
+        "error": None,
+        "rolled_back": False,
+        "healthy": None,
+    }
+    silent = json.dumps({**RADIOS_READY, "sidecar": "missing", "job": job})
+    answering = json.dumps({**RADIOS_READY, "sidecar": "ready", "job": job})
+    values = _app_state(
+        f"""
+        globalThis.setInterval = () => 999;
+        globalThis.clearInterval = () => {{}};
+        let answer = {silent};
+        state.request = async () => answer;
+        (async () => {{
+          await state.loadRadios();
+          const afterSilent = state.radiosJobAbandoned;
+          const stallStarted = state.radiosStallSince !== null;
+          answer = {answering};
+          await state.loadRadios();
+          console.log(JSON.stringify({{
+            afterSilent,
+            stallStarted,
+            afterRecovery: state.radiosJobAbandoned,
+            stallSince: state.radiosStallSince,
+            stillRunning: state.radiosJobRunning(),
+            polling: state.radiosTimer !== null,
+          }}));
+        }})();
+        """
+    )
+    assert values == {
+        "afterSilent": False,
+        "stallStarted": True,
+        "afterRecovery": False,
+        "stallSince": None,
+        "stillRunning": True,
+        "polling": True,
+    }
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+async def test_a_request_never_collected_is_reported_and_stops_polling(api):
+    """Review-Fix Critical #2b: the radios counterpart of
+    `updateNeverCollected()` - `confirmApplyRadios()` sets
+    `radiosPendingJobId`/`radiosPendingDeadline` right after a successful
+    POST, and `loadRadios()` is supposed to keep polling only until
+    either `radios.job.id` matches or `RADIOS_APPLY_GRACE_MS` runs out.
+    Simulates the deadline already having passed (`Date.now() - 1`)
+    instead of waiting out the real 20s. `RADIOS_READY.job` is `null`, so
+    the id-match branch never fires - only the deadline branch can
+    explain the result below. Fault to prove it: drop the
+    `this.radiosPendingDeadline !== null && Date.now() >= this.
+    radiosPendingDeadline` check from `loadRadios()`."""
+    values = _app_state(
+        f"""
+        let intervals = 0;
+        globalThis.setInterval = () => {{ intervals += 1; return 1; }};
+        globalThis.clearInterval = () => {{ intervals -= 1; }};
+        state.radios = {json.dumps(RADIOS_READY)};
+        state.radiosPendingJobId = 'new-job';
+        state.radiosPendingDeadline = Date.now() - 1;
+        state.radiosTimer = 999;
+        state.request = async () => state.radios;
+        (async () => {{
+          await state.loadRadios();
+          console.log(JSON.stringify({{
+            missed: state.radiosNeverCollected(),
+            pending: state.radiosPendingJobId,
+            deadline: state.radiosPendingDeadline,
+            timerCleared: state.radiosTimer === null,
+            intervals,
+          }}));
+        }})();
+        """
+    )
+    assert values == {
+        "missed": True,
+        "pending": None,
+        "deadline": None,
+        "timerCleared": True,
+        "intervals": -1,
+    }
+
+    client, _, _ = api
+    page = (await client.get("/")).text
+    assert _x_show_expr(page, "web.radios.job_not_collected") == "radiosNeverCollected()"
+
+
+async def test_leaving_settings_stops_the_radios_timer(api):
+    """Review-Fix Important #3, first half - the same leak the sibling
+    test in `test_the_build_phase_is_tied_across_every_place_it_lives`'s
+    neighbourhood already found and fixed for the update timer
+    (`select_view_body`/`this.stopUpdateTimer()` there) had no
+    counterpart for the radios timer at all: navigating away from
+    "Settings" left `loadRadios()` firing every 2s from a card nobody can
+    see. `selectView` reaches into `window`/`history` (`writeHash`) that
+    this suite cannot run headless in node - the same reason the sibling
+    test above extracts and inspects the function's source instead of
+    executing it; same technique here, narrowed to the specific `if`
+    this fix adds rather than a bare "is the call present anywhere"
+    check. Fault to prove it: drop the
+    `if (view !== "settings") { this.stopRadiosTimer(); }` block from
+    `selectView()`."""
+    client, _, _ = api
+    script = (await client.get("/static/app.js")).text
+    select_view_start = script.index("async selectView(view) {")
+    select_view_end = script.index("\n    },", select_view_start)
+    select_view_body = script[select_view_start:select_view_end]
+    guard_start = select_view_body.index('if (view !== "settings")')
+    guard_end = select_view_body.index("}", guard_start)
+    guard_block = select_view_body[guard_start : guard_end + 1]
+    assert "this.stopRadiosTimer();" in guard_block
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_a_lost_session_stops_the_radios_timer():
+    """Review-Fix Important #3, second half - the same rule
+    `loadUpdateStatus()`'s own 401 branch already follows (see its own
+    comment): a session that has ended elsewhere will never answer this
+    poll either, so leaving the timer armed would fire it every 2s
+    against a session that will never come back until the page is
+    reloaded by hand. `radiosError` staying `null` (not the load-error
+    text) is what proves the EARLY-RETURN branch ran, not just any error
+    path. Fault to prove it: drop the `if (!this.authenticated) { this.
+    stopRadiosTimer(); return; }` branch from `loadRadios()`'s `catch`."""
+    values = _app_state(
+        """
+        let intervals = 0;
+        globalThis.clearInterval = () => { intervals -= 1; };
+        state.radiosTimer = 999;
+        state.authenticated = false;
+        state.request = async () => { throw new Error('session expired'); };
+        (async () => {
+          await state.loadRadios();
+          console.log(JSON.stringify({
+            timer: state.radiosTimer, intervals, error: state.radiosError,
+          }));
+        })();
+        """
+    )
+    assert values == {"timer": None, "intervals": -1, "error": None}
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_radios_options_report_unknown_instead_of_a_fabricated_default_with_no_current():
+    """Review-Fix Critical/Minor #4: `current: null` (`api/radios.py`,
+    sidecar missing or outdated) used to fall straight through to the
+    constructor defaults ("" / adapter 0) because `loadRadios()` only
+    ever sets the draft `if (current ...)` - rendering "No Thread stick
+    (Thread off)" and adapter 0 marked "in use" as if they were a
+    confirmed report, a fabrication where "unknown" is the truth. Fault
+    to prove it: drop the `this.radios.current === null` guard from
+    `radiosThreadOptions()` (equivalently `radiosBluetoothOptions()`)."""
+    values = _radios_values(
+        """
+        state.radios.current = null;
+        console.log(JSON.stringify({
+          thread: state.radiosThreadOptions(),
+          bluetooth: state.radiosBluetoothOptions(),
+        }));
+        """
+    )
+    assert values == {
+        "thread": [
+            {
+                "value": "",
+                "label": "web.radios.thread_unknown",
+                "inUse": False,
+                "missing": False,
+                "zigbee": False,
+            }
+        ],
+        "bluetooth": [
+            {"value": "", "label": "web.radios.bluetooth_unknown", "inUse": False, "blocked": False}
+        ],
+    }
+
+
+async def test_the_rfkill_warning_uses_the_banner_warn_class(api):
+    """Review-Fix Minor #5: `.hint.warn` does not exist in style.css
+    (only `.badge.warn`, `.banner.warn`, `.status-pill.warn` - checked
+    directly against style.css, see its own grep in the review) - before
+    this fix the one warning this card can show rendered as ordinary grey
+    fine print. Extracts the real `class` attribute from the served
+    markup (`_class_before_text`, the same technique `_x_show_expr` uses
+    for `x-show`) instead of retyping it, so a future revert back to
+    "hint warn" breaks this test rather than a hand-typed copy of it.
+    Fault to prove it: revert the class in index.html to "hint warn"."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+    assert _class_before_text(page, "rfkill_blocked") == "banner warn"
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+async def test_blocked_bluetooth_adapters_are_marked_and_cannot_be_selected(api):
+    """Review-Fix Minor #6: `radiosBluetoothOptions()` already computed
+    `blocked` (`adapter.rfkill_blocked`) but nothing in index.html used
+    it - a user could select an rfkill-blocked adapter, confirm, and wait
+    out a 60s `verify_bluetooth` failure and a rollback for a state the
+    card already knew was wrong; the server only checks existence, not
+    rfkill. Covers both halves the reviewer named: the JS data itself
+    (`radiosBluetoothOptions` - never called by any test before this
+    file's Task 7 review) and the real `:disabled`/`x-text` expressions
+    extracted from the served markup, evaluated in node against both a
+    blocked and an open option - not merely that the word appears
+    somewhere on the page. Fault to prove it: drop
+    `:disabled="option.blocked"` and the blocked-label term from the
+    Bluetooth `<option>` in index.html."""
+    data = _radios_values(
+        """
+        state.radios.bluetooth.push({ index: 1, name: 'hci1', bus: 'usb', product: 'X', rfkill_blocked: true });
+        console.log(JSON.stringify(state.radiosBluetoothOptions()));
+        """
+    )
+    assert data[1] == {"value": 1, "label": "web.radios.bus_usb", "inUse": False, "blocked": True}
+
+    client, _, _ = api
+    page = (await client.get("/")).text
+    disabled_expr, text_expr = _bluetooth_option_exprs(page)
+    t_stub = "(key) => key"
+    blocked_option = json.dumps({"value": 1, "label": "hci1", "inUse": False, "blocked": True})
+    open_option = json.dumps({"value": 0, "label": "hci0", "inUse": False, "blocked": False})
+    assert _eval_js_expr(disabled_expr, option=blocked_option, t=t_stub) is True
+    assert _eval_js_expr(disabled_expr, option=open_option, t=t_stub) is False
+    # The label is a helper on the state (`radiosBluetoothOptionLabel`), so
+    # the `x-text` runs with the state as its scope, the way Alpine runs it.
+    labels = _radios_values(
+        _BINDINGS_JS + "console.log(JSON.stringify(["
+        f"  run({json.dumps(text_expr)}, {{ option: {blocked_option} }}),"
+        f"  run({json.dumps(text_expr)}, {{ option: {open_option} }}),"
+        "]));"
+    )
+    assert "web.radios.option_blocked" in labels[0]
+    assert "web.radios.option_blocked" not in labels[1]
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_radios_step_label_falls_back_for_an_unknown_step():
+    """Review-Fix Minor #7: `x-text="t('web.radios.step_' + step)"` built
+    a key from SERVER data (`radios.job.steps`), and `t()` returns the
+    key itself when it is missing (see its own comment) - a sidecar
+    newer than this page would show the user the literal string
+    `web.radios.step_reticulate_splines`. Loads the real translation
+    table so a KNOWN step still resolves to its real sentence and only
+    the unknown one falls back - proving the fallback is conditional, not
+    that `radiosStepLabel` always returns the same thing. Fault to prove
+    it: drop the `text === key ? t(...) : text` ternary so it always
+    returns the raw key."""
+    values = _radios_values(
+        """
+        console.log(JSON.stringify({
+          known: state.radiosStepLabel('validate'),
+          unknown: state.radiosStepLabel('reticulate_splines'),
+        }));
+        """,
+        translations=_web_strings(),
+    )
+    assert values["known"] == "Check the setting"
+    assert values["unknown"] == "Unknown step (reticulate_splines)"
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+async def test_rescan_clears_dirty_and_the_standing_banners(api):
+    """Review-Fix Minor #8's rescan half (clearing `radiosDirty`, without
+    which `loadRadios()`'s own `if (current && !this.radiosDirty)` guard
+    skips its draft resync for the rest of the session) plus the exit the
+    sticky banners never had: `radiosJobAbandoned`/`radiosPendingMissed`
+    used to be cleared ONLY in `confirmApplyRadios()`, so a user who had
+    seen one kept seeing it through Rescan, through leaving Settings and
+    coming back, until they reloaded the page by hand. `loadRadios()`
+    clears them once the sidecar answers with nothing running; a job that
+    really was abandoned never reaches a terminal phase, so for that one
+    this button is the only way out.
+
+    Checks the served markup calls the real method, then runs that method
+    on the real component - the handler is no longer an inline statement
+    list, so Alpine's `with(this)` evaluation has nothing left to prove.
+
+    The GET deliberately answers with the sidecar STILL silent on a job
+    still mid-phase: that is precisely the case `loadRadios()`'s own
+    clearing branch cannot help with (a job that was really abandoned
+    never reaches a terminal phase), so the button's own resets are the
+    only thing that can clear anything here. A fresh look does start a
+    fresh stall clock, which is why `freshStallClock` is expected - that
+    is the new poll's judgment, not the old one's leftovers.
+
+    Rescan also refreshes the Zigbee row's stick list - both rows read the
+    same USB bus - so the request stub answers each endpoint on its own and
+    counts them apart: `gets` is still exactly one radios load.
+
+    Fault to prove it: drop the flag resets from `rescanRadios()`, leaving
+    only `radiosDirty` (or point the button's `@click` back at
+    `loadRadios()` alone). For the Zigbee half: drop
+    `this.loadZigbeeRadio();` from `rescanRadios()`."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+    assert _attr_before_t_key(page, "@click", "web.radios.rescan") == "rescanRadios()"
+
+    stuck = json.dumps(
+        {
+            **RADIOS_READY,
+            "sidecar": "missing",
+            "job": {
+                "id": "j",
+                "phase": "verify_thread",
+                "steps": ["validate", "backup", "write", "apply_thread", "verify_thread"],
+                "error": None,
+                "rolled_back": False,
+                "healthy": None,
+            },
+        }
+    )
+    values = _app_state(
+        f"""
+        globalThis.setInterval = () => 999;
+        globalThis.clearInterval = () => {{}};
+        let gets = 0;
+        let zigbeeGets = 0;
+        state.radios = {stuck};
+        state.radiosDirty = true;
+        state.radiosJobAbandoned = true;
+        state.radiosPendingMissed = true;
+        state.radiosApplyError = 'a radio change is already running';
+        state.request = async (method, path) => {{
+          if (path === '/api/zigbee/radio') {{
+            zigbeeGets += 1;
+            return {{ serial: [], configured_path: null, configured_device_present: false,
+              progress: {{ state: 'idle', attempts: 0, error: null }} }};
+          }}
+          gets += 1;
+          return {stuck};
+        }};
+        state.rescanRadios();
+        setTimeout(() => console.log(JSON.stringify({{
+          dirty: state.radiosDirty,
+          abandoned: state.radiosJobAbandoned,
+          missed: state.radiosNeverCollected(),
+          applyError: state.radiosApplyError,
+          freshStallClock: state.radiosStallSince !== null,
+          gets,
+          zigbeeGets,
+        }})), 0);
+        """
+    )
+    assert values == {
+        "dirty": False,
+        "abandoned": False,
+        "missed": False,
+        "applyError": None,
+        "freshStallClock": True,
+        "gets": 1,
+        "zigbeeGets": 1,
+    }
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_the_abandoned_banner_clears_once_the_sidecar_answers_again():
+    """The other exit for `radiosJobAbandoned`, for the case that resolves
+    itself: the sidecar comes back and the job has reached a terminal
+    phase. Before this, `confirmApplyRadios()` was the only place that
+    ever cleared it - a red "the updater service stopped answering" banner
+    therefore stood over a job whose result was printed right above it,
+    for the rest of the session.
+
+    `radiosPendingMissed` is deliberately NOT part of this - see
+    `test_the_never_collected_banner_survives_leaving_and_returning_to_settings`
+    for why that flag has to survive this same condition instead.
+
+    Fault to prove it: drop the `if (this.radios.sidecar === "ready" &&
+    !this.radiosPhaseActive())` block from `loadRadios()`."""
+    finished = json.dumps(
+        {
+            **RADIOS_READY,
+            "job": {
+                "id": "j",
+                "phase": "done",
+                "steps": ["validate", "backup", "write"],
+                "error": None,
+                "rolled_back": False,
+                "healthy": True,
+            },
+        }
+    )
+    values = _app_state(
+        f"""
+        globalThis.setInterval = () => 999;
+        globalThis.clearInterval = () => {{}};
+        state.radiosJobAbandoned = true;
+        state.radiosPendingMissed = true;
+        state.radiosStallSince = 1;
+        state.request = async () => ({finished});
+        (async () => {{
+          await state.loadRadios();
+          console.log(JSON.stringify({{
+            abandoned: state.radiosJobAbandoned,
+            missed: state.radiosNeverCollected(),
+            stallSince: state.radiosStallSince,
+            result: state.radiosResultKey(),
+          }}));
+        }})();
+        """
+    )
+    assert values == {
+        "abandoned": False,
+        "missed": True,
+        "stallSince": None,
+        "result": "web.radios.result_done",
+    }
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_the_never_collected_banner_survives_leaving_and_returning_to_settings():
+    """Review-Fix Minor: `switchView("settings")` calls `loadRadios()`
+    (see the `view === "settings"` branch in `selectView()`), so before
+    this fix, simply leaving Settings and coming back satisfied
+    `loadRadios()`'s own "sidecar ready, nothing running" clearing
+    condition and wiped the "never collected" banner - even though the
+    request the banner was warning about was still never picked up, and
+    the resynced draft had silently gone back to showing the change as
+    reverted. `rescanRadios()` (the explicit "look again" the user asked
+    for) is meant to be the only way out.
+
+    Raises `radiosPendingMissed` the real way - via an expired
+    `radiosPendingDeadline`, the same mechanism
+    `test_a_request_never_collected_is_reported_and_stops_polling` uses -
+    rather than setting the flag directly, then calls `loadRadios()` a
+    second time exactly the way `selectView("settings")` does when the
+    user flips back to the tab. Only `rescanRadios()` should clear it.
+
+    Fault to prove it: put `radiosPendingMissed = false;` back into the
+    `if (this.radios.sidecar === "ready" && !this.radiosPhaseActive())`
+    block in `loadRadios()`."""
+    values = _app_state(
+        f"""
+        globalThis.setInterval = () => 999;
+        globalThis.clearInterval = () => {{}};
+        state.radios = {json.dumps(RADIOS_READY)};
+        state.radiosPendingJobId = 'new-job';
+        state.radiosPendingDeadline = Date.now() - 1;
+        state.request = async () => state.radios;
+        (async () => {{
+          await state.loadRadios();
+          const afterFirstPoll = state.radiosNeverCollected();
+          // The view-switch call: sidecar answers "ready", no job running -
+          // exactly the condition that used to wipe the banner.
+          await state.loadRadios();
+          const afterReturningToSettings = state.radiosNeverCollected();
+          state.rescanRadios();
+          console.log(JSON.stringify({{
+            afterFirstPoll,
+            afterReturningToSettings,
+            afterRescan: state.radiosNeverCollected(),
+          }}));
+        }})();
+        """
+    )
+    assert values == {
+        "afterFirstPoll": True,
+        "afterReturningToSettings": True,
+        "afterRescan": False,
+    }
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_a_bluetooth_change_promises_nothing_about_thread_when_thread_is_off():
+    """`web.radios.confirm_thread_untouched` reads "Thread is not touched.
+    The border router keeps running with the stick it uses now, and Thread
+    devices stay reachable." For an installation with Thread switched off
+    - no stick, no border router, no Thread devices - all three clauses
+    are false, and it was pushed for every Bluetooth-only change
+    regardless. A confirmation dialog is the last place to tell someone
+    something untrue about their own installation.
+
+    The Thread-on case is covered by
+    `test_the_radios_card_detects_a_change_and_picks_the_confirmation_text`
+    above (`RADIOS_READY` has `thread_enabled: true`), which is why
+    nothing caught this. Fault to prove it: drop the
+    `current.thread_enabled` condition from `radiosConfirmKeys()`."""
+    values = _radios_values(
+        """
+        state.radios.current.thread_enabled = false;
+        state.radios.current.thread_device = null;
+        state.radiosDraft = { threadDevice: '', bluetoothAdapter: 1 };
+        console.log(JSON.stringify({
+          changed: state.radiosChanged(),
+          threadChanged: state.radiosThreadChanged(),
+          keys: state.radiosConfirmKeys(),
+        }));
+        """
+    )
+    assert values == {
+        "changed": True,
+        "threadChanged": False,
+        "keys": ["web.radios.confirm_bluetooth"],
+    }
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+async def test_the_apply_error_has_its_own_banner(api):
+    """The field the poll cannot erase needs somewhere to render, or the
+    fix above is invisible. Fault to prove it: point the second radios
+    banner in index.html back at `radiosError`."""
+    client, _, _ = api
+    page = _without_comments((await client.get("/")).text)
+    assert 'x-show="radiosApplyError"' in page
+    assert 'x-text="radiosApplyError"' in page
+
+
+# ---------------------------------------------------------------------------
+# Review round 2 (2026-09-12): the card must not print a console command that
+# would kill a running update, the rollback must not render as silence, and an
+# interrupted job must not claim the previous setting came back.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_no_refresh_command_is_offered_while_a_software_update_runs():
+    """`sidecar_status()` derives `outdated` from "radios-state.json's
+    seen_at is older than 30 s" - but entrypoint.sh runs the two workers
+    sequentially in one loop, so while `update-once.sh` is inside `pull`,
+    `build`, `recreate` or the up-to-120 s `health` wait, `radios-once.sh`
+    cannot run at all and that timestamp necessarily goes stale (measured:
+    `health` reads `outdated`, `pull` reads `missing`). For the whole
+    duration of any update the card therefore told the user to run
+    `docker compose up -d --no-deps loxmatter-updater` on the host - which
+    would have sent SIGTERM into the container performing that very
+    update.
+
+    The genuine case is checked in the same test, so this cannot be
+    "passed" by suppressing the command everywhere.
+
+    Fault to prove it: drop the `if (this.radios?.update_running)` branch
+    from `radiosSidecarMessage()`."""
+    values = _radios_values(
+        """
+        const out = {};
+        state.radios.update_running = true;
+        for (const s of ['missing', 'outdated', 'unmounted']) {
+          state.radios.sidecar = s;
+          out[s] = state.radiosSidecarMessage();
+        }
+        state.radios.update_running = false;
+        state.radios.sidecar = 'outdated';
+        out.genuinelyOutdated = state.radiosSidecarMessage();
+        console.log(JSON.stringify(out));
+        """,
+        translations=_web_strings(),
+    )
+    for status in ("missing", "outdated", "unmounted"):
+        assert "software update" in values[status], status
+        assert "docker compose" not in values[status], status
+    assert "docker compose" in values["genuinelyOutdated"]
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_the_rollback_phase_says_what_is_happening_instead_of_going_blank():
+    """`rollback` is not a member of `radios.job.steps` (it undoes the
+    steps, it is not one of them), so `radiosStepClass()`'s
+    `steps.indexOf(job.phase)` is -1 and NO step comes out done or now;
+    and `rollback` is not terminal, so `radiosResultKey()` is null. The
+    card therefore showed an entirely unmarked step list and no text at
+    all for up to about two and a half minutes - silence over the most
+    alarming moment in the flow.
+
+    Fault to prove it: drop `radiosRollingBack()` from app.js."""
+    values = _radios_values(
+        """
+        state.radios.job = { id: 'j', phase: 'rollback',
+                             steps: ['validate','backup','write','apply_thread','verify_thread'],
+                             error: 'verify_thread_failed', rolled_back: true, healthy: null };
+        console.log(JSON.stringify({
+          rolling: state.radiosRollingBack(),
+          running: state.radiosJobRunning(),
+          result: state.radiosResultKey(),
+          marked: state.radios.job.steps.filter((s) => {
+            const c = state.radiosStepClass(s);
+            return c.done || c.now;
+          }).length,
+        }));
+        """
+    )
+    # `marked: 0` is the blankness this message exists to cover, kept in
+    # the assertion so the reason for the message stays visible.
+    assert values == {"rolling": True, "running": True, "result": None, "marked": 0}
+
+
+async def test_the_rollback_message_is_wired_to_the_rollback_phase(api):
+    """The banner has to be bound to the flag, not merely present on the
+    page - the technique this file already owns (`_x_show_expr`), for the
+    same reason.
+
+    Fault to prove it: bind the `<p>` to `radiosJobRunning()` instead."""
+    client, _, _ = api
+    page = _without_comments((await client.get("/")).text)
+    assert _x_show_expr(page, "web.radios.rolling_back") == "radiosRollingBack()"
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_an_interrupted_job_is_not_reported_as_restored():
+    """A pass killed mid-job is healed into `failed` with the error key
+    `interrupted` by `load_previous_state()` in radios-once.sh. Both
+    ordinary failure texts would be false for it: nothing was restored
+    (the rollback is precisely what never ran) and nothing "did not come
+    back up either" (no rollback was attempted).
+
+    The ordinary failure is asserted in the same test, so this cannot be
+    "passed" by giving every failure the interrupted text.
+
+    Fault to prove it: drop the `job.error === "interrupted"` branch from
+    `radiosResultKey()`."""
+    values = _radios_values(
+        """
+        const job = { id: 'j', phase: 'failed', steps: ['validate','backup','write'],
+                      error: 'interrupted', rolled_back: false, healthy: null };
+        state.radios.job = job;
+        const out = { interrupted: state.radiosResultKey(), reason: state.radiosReason() };
+        job.error = 'verify_thread_failed';
+        out.ordinary = state.radiosResultKey();
+        job.healthy = false;
+        out.unhealthy = state.radiosResultKey();
+        console.log(JSON.stringify(out));
+        """,
+        translations=_web_strings(),
+    )
+    assert values == {
+        "interrupted": "web.radios.result_interrupted",
+        "reason": "the updater service was interrupted",
+        "ordinary": "web.radios.result_failed_restored",
+        "unhealthy": "web.radios.result_failed_unhealthy",
+    }
+
+
+# ---------------------------------------------------------------------------
+# The colour picker: exactly one per subject.
+#
+# Runs the real `app.js` against the real `GET /api/devices/{id}/controls`
+# payload, through the `x-for` expression pulled out of the SERVED markup -
+# the same "extract the expression, don't retype it" rule `_x_show_expr`
+# follows. All three halves have to hold for the assertion to pass: the
+# route must stop offering the duplicate, `controlsByKind` must still return
+# what the modal iterates, and the markup must still iterate that. A test
+# that only fetched the page, or only searched it for a substring, could not
+# have failed for the bug this covers - the markup was never wrong; it was
+# handed two commands where one was meant (finding, review of e8040f4).
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+async def colour_lamp(tmp_path, no_invoke, fake_runtime, fake_client):
+    """The checked-in RGBW lamp, which accepts BOTH colour commands.
+
+    Yields a factory so a single test can also build the lamp as a device
+    that accepts only MoveToColor - the Zigbee shape, and the one that
+    proves the rule keeps a picker rather than merely removing one."""
+    store = Store(tmp_path / "t.sqlite")
+    app = build_app(store, no_invoke, fake_runtime(store), client=fake_client)
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        await authenticate(store, client)
+
+        def register(*, drop: set[tuple[int, int]] = frozenset()) -> int:
+            snapshot = load_snapshot("ikea_kajplats_cws_lamp.json")
+            device_id = store.register_device(snapshot)
+            store.register_signals(device_id, snapshot)
+            store.register_commands(
+                device_id,
+                [c for c in extract_commands(snapshot) if (c.cluster_id, c.command_id) not in drop],
+            )
+            return device_id
+
+        yield client, register
+    store.close()
+
+
+def _colour_picker_x_for(markup: str) -> str:
+    """The literal `x-for` expression of the block that draws the colour
+    area, read out of the served page. Identified by the colour field's own
+    class rather than by a line number, and taken as the nearest `x-for`
+    above it - if that block is ever rebound to something other than the
+    subject's `hue_sat` commands, this extraction follows the change and the
+    assertion below is made against what the browser would really loop
+    over."""
+    field = markup.index('class="colour-field"')
+    opened = list(re.finditer(r'x-for="([^"]*)"', markup[:field]))
+    assert opened, "no x-for precedes the colour field in the served markup"
+    return opened[-1].group(1)
+
+
+def _pickers_for(x_for: str, controls: dict, device_id: int) -> list[str]:
+    """The slugs the colour block would draw, evaluated in node.
+
+    `with (state)` is how Alpine resolves an expression against its data
+    object, including the `this` binding the helper methods need - so this
+    runs the markup's own expression rather than a Python reading of it."""
+    iterable = x_for.split(" in ", 1)[1]
+    values = _app_state(
+        f"""
+        state.controlsBySubject = {{ {device_id}: {json.dumps(controls)} }};
+        state.controlModalDevice = {device_id};
+        const draw = new Function("state", "with (state) {{ return (" + {json.dumps(iterable)} + "); }}");
+        console.log(JSON.stringify(draw(state).map((command) => command.slug)));
+        """
+    )
+    assert isinstance(values, list)
+    return values
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+async def test_a_colour_lamp_gets_exactly_one_colour_picker(colour_lamp):
+    """The lamp accepts MoveToHueAndSaturation (768/6) AND MoveToColor
+    (768/7), and both carry `control: hue_sat`. Before 12 September 2026
+    the modal therefore drew two colour areas: no slug label distinguishes
+    them, and both read and wrote the same `controlDrafts.hue` /
+    `.saturation`, so dragging one moved the other's marker.
+
+    The surviving one is command 6, and the slug says which: it writes
+    CurrentHue and CurrentSaturation, the two attributes the picker reads
+    its own position back from, and sets ColorMode to 0, which is what
+    decides whether the modal opens on the colour tab at all."""
+    client, register = colour_lamp
+    device_id = register()
+    page = _without_comments((await client.get("/")).text)
+    controls = (await client.get(f"/api/devices/{device_id}/controls")).json()
+
+    assert [c["slug"] for c in controls["commands"] if c["control"] == "hue_sat"] == ["color"]
+    assert _pickers_for(_colour_picker_x_for(page), controls, device_id) == ["color"]
+    # The suppressed twin is not "hidden": that number means present but
+    # UNNAMED, and this lamp has no unnamed command at all.
+    assert controls["hidden_raw_commands"] == 0
+    # Nothing else the modal builds is touched - the white tab still has
+    # its Kelvin slider, and the tab bar still appears.
+    assert [c["slug"] for c in controls["commands"] if c["control"] == "kelvin"] == ["colortemp"]
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+async def test_a_lamp_that_accepts_only_move_to_color_keeps_its_picker(colour_lamp):
+    """The Zigbee shape (design 2026-09-12, section 5.6): ZHA 2.2.2 sends
+    colour only as XY, and a lamp that never accepts MoveToHueAndSaturation
+    has no preferred twin to stand aside for.
+
+    This is the half that makes the rule a preference and not a ban. A fix
+    that simply dropped `color_xy` would pass the test above and leave
+    exactly the lamp that command 7 was named for with no colour control at
+    all."""
+    client, register = colour_lamp
+    device_id = register(drop={(768, 6)})
+    page = _without_comments((await client.get("/")).text)
+    controls = (await client.get(f"/api/devices/{device_id}/controls")).json()
+
+    assert [c["slug"] for c in controls["commands"] if c["control"] == "hue_sat"] == ["color_xy"]
+    assert _pickers_for(_colour_picker_x_for(page), controls, device_id) == ["color_xy"]
+
+
+# ---------------------------------------------------------------------------
+# The Zigbee row on the radios card, and the Zigbee transport badge (design
+# 2026-09-12, sections 3.2 and 3.3). The row reads `GET /api/zigbee/radio`
+# and applies through `PUT /api/zigbee/radio`, never through the sidecar.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+async def test_the_zigbee_badge_has_a_glyph_now_that_the_spec_adds_one(api):
+    """`transport_for` has returned "zigbee" since the boundary design, but
+    `transportBadge` deliberately had no symbol for it - the comment in
+    app.js says "Zigbee has no glyph before the Zigbee spec adds one". This
+    is that spec.
+
+    Runs the REAL `transportBadge` in node against a device object shaped
+    the way `GET /api/devices` returns one; a markup-substring assertion
+    could not fail for a binding that is merely wrong.
+
+    Fault to prove it: remove the `zigbee` entry from the symbols map. The
+    badge then returns null and a Zigbee device tile shows no transport at
+    all, while Thread and IP ones do."""
+    values = _app_state(
+        setup="console.log(JSON.stringify({"
+        "  zigbee: state.transportBadge({ transport: 'zigbee' }),"
+        "  thread: state.transportBadge({ transport: 'thread' }),"
+        "  unknown: state.transportBadge({ transport: null }),"
+        "}));",
+        translations={"web.devices.transport_zigbee": "Zigbee"},
+    )
+    assert values["zigbee"]["symbol"] == "i-transport-zigbee"
+    assert values["zigbee"]["label"] == "Zigbee"
+    assert values["thread"]["symbol"] == "i-transport-thread"
+    assert values["unknown"] is None
+
+
+async def test_the_sprite_carries_the_zigbee_symbol(api):
+    """The glyph the badge names must exist, or the tile renders an empty
+    box. Drawn in the sprite's own style - 24 viewBox, stroke 1.8,
+    currentColor - and deliberately NOT the official logo: "Zigbee" is a
+    trademark of the Connectivity Standards Alliance.
+
+    Fault to prove it: rename the symbol id."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+    assert 'id="i-transport-zigbee"' in page
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+async def test_the_thread_stick_is_offered_with_a_reason_not_silently_dropped(api):
+    """A stick that is simply missing from a list is a bug report waiting to
+    happen: the user sees their stick in the Thread row and not in the
+    Zigbee one and concludes the detection is broken. It is listed,
+    disabled, with the reason.
+
+    Fault to prove it: filter the Thread device out of the list."""
+    values = _app_state(
+        setup="state.zigbee = { serial: ["
+        "  { path: '/dev/serial/by-id/a', product: 'SONOFF', fingerprint: null,"
+        "      is_thread: true, selectable: false },"
+        "  { path: '/dev/serial/by-id/b', product: 'ZBT-1', fingerprint:"
+        "      { name: 'ZBT-1', radio_type: 'ezsp' }, is_thread: false, selectable: true },"
+        "], current: null };"
+        "console.log(JSON.stringify(state.zigbeeRadioOptions()));",
+        translations={"web.radios.zigbee_is_thread_stick": "used by Thread"},
+    )
+    thread_option = next(o for o in values if o["value"] == "/dev/serial/by-id/a")
+    assert thread_option["disabled"] is True
+    assert "Thread" in thread_option["label"]
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+async def test_the_card_refuses_the_maintainers_own_thread_stick(api):
+    """The measured installation, reaching the screen (12 September 2026).
+
+    His two sticks are indistinguishable by USB ids and by major number, so
+    this is the shape the card must get right on the one machine that will
+    actually run it: the ITEAD stick selectable, the MG24 - which his Thread
+    border router is running on - listed, disabled, and labelled with the
+    reason.
+
+    `disabled` reads the server's `selectable`, NOT a rule the page invents,
+    so the two can never disagree about which sticks are safe. That is the
+    same reasoning behind `option.blocked` on the Bluetooth row.
+
+    Fault to prove it: have `zigbeeRadioOptions()` compute `disabled` from
+    the product name (say, anything containing "MG24") instead of reading
+    `selectable`. The MG24 stays disabled for the wrong reason and the test
+    still passes - so ALSO flip `selectable` to true on the MG24 entry and
+    confirm the option becomes enabled. If it does not, the page is
+    deciding for itself and the server check is decorative."""
+    values = _app_state(
+        setup="state.zigbee = { serial: ["
+        "  { path: '/dev/serial/by-id/usb-SONOFF_SONOFF_Dongle_Plus_MG24_e26a-if00-port0',"
+        "      product: 'SONOFF Dongle Plus MG24',"
+        "      fingerprint: { name: 'SONOFF Zigbee Dongle Plus MG24', radio_type: 'ezsp' },"
+        "      is_thread: true, selectable: false },"
+        "  { path: '/dev/serial/by-id/usb-Itead_Sonoff_Zigbee_3.0_USB_Dongle_Plus_V2_e8bf-if00-port0',"
+        "      product: 'SONOFF ZBDongle-E V2',"
+        "      fingerprint: { name: 'SONOFF ZBDongle-E V2', radio_type: 'ezsp' },"
+        "      is_thread: false, selectable: true },"
+        "], current: null };"
+        "console.log(JSON.stringify(state.zigbeeRadioOptions()));",
+        translations={"web.radios.zigbee_is_thread_stick": "in use for Thread"},
+    )
+    mg24 = next(o for o in values if "MG24" in o["value"])
+    itead = next(o for o in values if "Itead" in o["value"])
+    assert mg24["disabled"] is True
+    assert "Thread" in mg24["label"]
+    assert itead["disabled"] is False
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+async def test_an_unrecognised_stick_is_selectable_and_says_so(api):
+    """Refusing to work with an unlisted stick would be worse than letting
+    the user say what it is. It is offered, marked as unrecognised, and the
+    Advanced disclosure carries radio type and baud rate.
+
+    A stick this far along has already cleared `_is_thread_stick` (the two
+    tests above prove that check), so `is_thread: false, selectable: true,
+    fingerprint: null` is a real, reachable shape from
+    `GET /api/zigbee/radio` - not a stand-in for one - the moment a stick
+    reaches loxmatter that `fingerprints.py`'s table has no row for at all.
+
+    Fault to prove it: disable options with no fingerprint. That fault
+    cannot be caught by the two tests above: their fingerprint-null stick
+    is ALSO the Thread stick, already disabled for its own reason, so
+    "disabled because no fingerprint" and "disabled because it is Thread"
+    agree by coincidence there. Only a fingerprint-null stick that is
+    NOT the Thread stick tells the two reasons apart."""
+    values = _app_state(
+        setup="state.zigbee = { serial: ["
+        "  { path: '/dev/serial/by-id/usb-Some_Other_CP210x_Bridge-if00',"
+        "      product: 'Some Other CP210x Bridge', fingerprint: null,"
+        "      is_thread: false, selectable: true },"
+        "], current: null };"
+        "console.log(JSON.stringify(state.zigbeeRadioOptions()));",
+    )
+    mystery = next(
+        o for o in values if o["value"] == "/dev/serial/by-id/usb-Some_Other_CP210x_Bridge-if00"
+    )
+    # Offered: `disabled` reads `selectable`, exactly as the two tests above
+    # establish for a recognised stick - a missing fingerprint is not a
+    # second reason to refuse it.
+    assert mystery["disabled"] is False
+    # Marked as unrecognised: a plain flag the row template turns into text,
+    # the same way `radiosThreadOptions()`'s `missing` flag above is not
+    # itself a sentence.
+    assert mystery["unrecognised"] is True
+    # The Advanced disclosure carries radio type and baud rate: it has
+    # something to prefill even for a stick the table has never heard of -
+    # `fingerprints.DEFAULT_UNKNOWN`'s own values (`radio_type="ezsp"`,
+    # `baudrate=115200`), not a blank form the user has to fill in from
+    # nothing.
+    assert mystery["fingerprint"]["radio_type"] == "ezsp"
+    assert mystery["fingerprint"]["baudrate"] == 115200
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+async def test_the_row_says_what_a_running_connection_attempt_is_doing(api):
+    """Task 11's `PUT` answers 202 and connects in the background, so the
+    card is the only thing that can tell the user a 9-15 s quirks warm-up is
+    a healthy operation rather than a dead one - which is this plan's own
+    Global Constraint about long-running work, and the 2a-1 lesson behind
+    it.
+
+    `ConnectionState` has six members, not five: `"applying"` (commit
+    `4caa260`, after this task was originally written) covers the window a
+    radio swap spends with no `ZigbeeSource` at all - the old one released,
+    the new one not yet built. Without it the card read `idle`, the "nothing
+    is configured" state, for that whole window and never started polling -
+    the same failure this test already exists to catch, just for a
+    different gap. The polling rule is therefore three states, not two.
+
+    Runs the REAL `zigbeeProgressText` in node, because a markup assertion
+    cannot fail for a binding that is merely wrong.
+
+    Fault to prove it: render a bare connected/not-connected boolean. A
+    warm-up in progress then reads exactly like a broken stick. Also fails
+    if `zigbeeRadioPolling` polls only for `loading_quirks`/`opening_radio`
+    and drops `applying` as an apparent duplicate - the assertion below on
+    `values["applying_polling"]` exists specifically to catch that."""
+    values = _app_state(
+        setup="console.log(JSON.stringify({"
+        "  applying: state.zigbeeProgressText({ state: 'applying', attempts: 0 }),"
+        "  quirks: state.zigbeeProgressText({ state: 'loading_quirks', attempts: 0 }),"
+        "  opening: state.zigbeeProgressText({ state: 'opening_radio', attempts: 0 }),"
+        "  failed: state.zigbeeProgressText({ state: 'failed', attempts: 4, error: 'nope' }),"
+        "  applying_polling: state.zigbeeRadioPolling({ state: 'applying' }),"
+        "  polling: state.zigbeeRadioPolling({ state: 'loading_quirks' }),"
+        "  settled: state.zigbeeRadioPolling({ state: 'connected' }),"
+        "}));",
+        translations={
+            "web.radios.zigbee_applying": "Applying the change - releasing the previous radio",
+            "web.radios.zigbee_loading_quirks": "Preparing device support...",
+            "web.radios.zigbee_opening_radio": "Opening the stick...",
+            "web.radios.zigbee_failed_retrying": "Failed ({attempts}): {error}",
+        },
+    )
+    assert values["applying"] == "Applying the change - releasing the previous radio"
+    assert values["quirks"] == "Preparing device support..."
+    assert values["opening"] == "Opening the stick..."
+    assert "4" in values["failed"] and "nope" in values["failed"]
+    # The card polls while an attempt is running - three states
+    # (`applying`, `loading_quirks`, `opening_radio`), not two - and stops
+    # once it settles (`connected` or `failed`), exactly as `loadRadios()`
+    # does for a sidecar job. `applying` is not redundant with the other
+    # two: it is the only one of the three a `ZigbeeSource` never reports
+    # itself, because during it there is no `ZigbeeSource` to ask.
+    assert values["applying_polling"] is True
+    assert values["polling"] is True
+    assert values["settled"] is False
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+async def test_a_configured_stick_that_is_gone_says_so(api):
+    """The in-process design's worst failure mode reaching the screen: the
+    supervisor retries a stick that will never answer, forever, and without
+    this the card says only "not connected". `GET /api/zigbee/radio` returns
+    `configured_device_present` for exactly this, the way the Thread row
+    already uses `thread_device_present`.
+
+    Fault to prove it: ignore the flag and render the stored path alone. An
+    unplugged stick is then indistinguishable from one that is present and
+    refusing to open - and the two need opposite actions from the user."""
+    values = _app_state(
+        setup="state.zigbee = { serial: [], current: null,"
+        "  configured_path: '/dev/serial/by-id/gone', configured_device_present: false,"
+        "  progress: { state: 'failed', attempts: 9, error: 'no such device' } };"
+        "console.log(JSON.stringify({ text: state.zigbeeProgressText(state.zigbee.progress,"
+        "  state.zigbee.configured_device_present) }));",
+        translations={"web.radios.zigbee_device_missing": "The chosen stick is not plugged in."},
+    )
+    assert values["text"] == "The chosen stick is not plugged in."
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+async def test_applying_the_zigbee_row_never_sends_a_radios_request(api):
+    """Spec Correction 3, enforced in the page itself: the Zigbee row has
+    its own Apply and its own endpoint. If it ever shared the sidecar's
+    request body, changing the Zigbee stick would recreate the bridge
+    container - the one the page is talking to.
+
+    Fault to prove it: build the Zigbee half into `radiosRequestBody()`.
+
+    Sliced between the two METHOD DEFINITIONS, not between the first
+    mentions of the two names: `radiosConfirmKeys()` is named in a comment
+    inside `loadRadios()`, above `radiosRequestBody()`, so slicing from the
+    first occurrence of each gave an empty string - in which "zigbee" can
+    never be found, whatever the method contains. The two assertions on
+    the slice itself keep it from going empty again."""
+    source = (WEB_DIR / "app.js").read_text(encoding="utf-8")
+    start = source.index("\n    radiosRequestBody() {")
+    body = source[start : source.index("\n    radiosConfirmKeys() {", start)]
+    assert "thread:" in body and "bluetooth:" in body
+    assert "zigbee" not in body.lower()
+
+
+def _zigbee_state(overrides: str = "") -> str:
+    """A `GET /api/zigbee/radio` body shaped the way the route returns one
+    on the maintainer's Pi while Thread runs: the MG24 refused, the ITEAD
+    stick selectable, and one stick the fingerprint table does not know.
+    `overrides` is JS run right after, to reshape it per test."""
+    return (
+        "state.zigbee = {"
+        "  serial: ["
+        "    { path: '/dev/serial/by-id/usb-SONOFF_SONOFF_Dongle_Plus_MG24_e26a-if00-port0',"
+        "      product: 'SONOFF Dongle Plus MG24',"
+        "      fingerprint: { name: 'SONOFF Zigbee Dongle Plus MG24', radio_type: 'ezsp',"
+        "        baudrate: 115200, flow_control: 'software' },"
+        "      is_thread: true, selectable: false },"
+        "    { path: '/dev/serial/by-id/usb-Itead_Sonoff_Zigbee_3.0_USB_Dongle_Plus_V2_e8bf-if00-port0',"
+        "      product: 'SONOFF ZBDongle-E V2',"
+        "      fingerprint: { name: 'SONOFF ZBDongle-E V2', radio_type: 'ezsp',"
+        "        baudrate: 115200, flow_control: 'software' },"
+        "      is_thread: false, selectable: true },"
+        "    { path: '/dev/serial/by-id/usb-Some_Other_CP210x_Bridge-if00',"
+        "      product: 'Some Other CP210x Bridge', fingerprint: null,"
+        "      is_thread: false, selectable: true },"
+        "  ],"
+        "  configured_path: null, configured_device_present: false,"
+        "  progress: { state: 'idle', attempts: 0, error: null, changed_at: 'x' },"
+        "};"
+        "state.zigbeeDraft.path = '';" + overrides
+    )
+
+
+MG24 = "/dev/serial/by-id/usb-SONOFF_SONOFF_Dongle_Plus_MG24_e26a-if00-port0"
+ITEAD = "/dev/serial/by-id/usb-Itead_Sonoff_Zigbee_3.0_USB_Dongle_Plus_V2_e8bf-if00-port0"
+UNKNOWN_STICK = "/dev/serial/by-id/usb-Some_Other_CP210x_Bridge-if00"
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_the_mg24_becomes_selectable_once_thread_is_off():
+    """The escape hatch the Thread lock-out deliberately leaves open: a
+    dual-capable stick moves from Thread to Zigbee by turning Thread off
+    first. `GET /api/zigbee/radio` then reports the MG24 with
+    `is_thread: false, selectable: true`, and the card must offer it -
+    without the "in use for Thread" suffix, which would now be untrue.
+
+    Fault to prove it: keep the suffix whenever the product name contains
+    "MG24" (a page that remembers which stick "is" the Thread stick instead
+    of reading the answer). The label then still claims Thread."""
+    values = _app_state(
+        _zigbee_state(
+            f"state.zigbee.serial[0].is_thread = false;"
+            f"state.zigbee.serial[0].selectable = true;"
+            f"console.log(JSON.stringify(state.zigbeeRadioOptions()"
+            f"  .find((o) => o.value === {json.dumps(MG24)})));"
+        ),
+        translations={"web.radios.zigbee_is_thread_stick": "in use for Thread"},
+    )
+    assert values["disabled"] is False
+    assert "Thread" not in values["label"]
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_the_unknown_stick_defaults_are_the_servers_own():
+    """`ZIGBEE_UNKNOWN_FINGERPRINT` and `ZIGBEE_RADIO_TYPES` are copies of
+    `fingerprints.DEFAULT_UNKNOWN` and `fingerprints.RadioType`, because
+    the route reports an unknown stick's fingerprint as `null`. A copy is
+    only safe with something holding it to the original: a page that
+    prefilled 57600 while the server defaults to 115200 would store a baud
+    rate the user never chose, and a radio type the schema does not know
+    is a 422.
+
+    Fault to prove it: change the baud rate in `ZIGBEE_UNKNOWN_FINGERPRINT`,
+    or drop `deconz` from `ZIGBEE_RADIO_TYPES`."""
+    from dataclasses import asdict
+    from typing import get_args
+
+    from loxmatter.radios.fingerprints import DEFAULT_UNKNOWN, RadioType
+
+    values = _app_state(
+        _zigbee_state(
+            "console.log(JSON.stringify({"
+            f"  unknown: state.zigbeeRadioOptions().find((o) => o.value === {json.dumps(UNKNOWN_STICK)}),"
+            "  types: state.zigbeeRadioTypeOptions().map((o) => o.value),"
+            "}));"
+        )
+    )
+    assert values["unknown"]["fingerprint"] == asdict(DEFAULT_UNKNOWN)
+    assert values["types"] == list(get_args(RadioType))
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_advanced_shows_what_the_configured_unknown_stick_is_opened_with():
+    """Measured in the browser harness: after applying an unrecognised stick
+    as ZNP at 38400 and reloading, Advanced read EZSP at 115200 - the
+    defaults - beside a progress line reporting that very stick failing.
+    The user opening Advanced to check the parameters would have read the
+    wrong ones and "corrected" nothing.
+
+    For the CONFIGURED stick the draft comes from `configured_radio_type` /
+    `configured_baudrate`; for any other unrecognised stick from the
+    defaults, because nothing is stored for it.
+
+    Fault to prove it: always prefill from `option.fingerprint` in
+    `resetZigbeeAdvanced()`."""
+    values = _app_state(
+        _zigbee_state(
+            "globalThis.setTimeout = () => 1; globalThis.clearTimeout = () => {};"
+            "const body = JSON.parse(JSON.stringify(state.zigbee));"
+            f"body.configured_path = {json.dumps(UNKNOWN_STICK)};"
+            "body.configured_device_present = true;"
+            "body.configured_radio_type = 'znp'; body.configured_baudrate = 38400;"
+            "body.serial.push({ path: '/dev/serial/by-id/usb-Another_Unknown-if00',"
+            "  product: 'Another', fingerprint: null, is_thread: false, selectable: true });"
+            "state.request = async () => body;"
+            "(async () => {"
+            "  await state.loadZigbeeRadio();"
+            "  const configured = { ...state.zigbeeDraft };"
+            "  state.zigbeeDraft.path = '/dev/serial/by-id/usb-Another_Unknown-if00';"
+            "  state.zigbeeSelectionChanged();"
+            "  console.log(JSON.stringify({ configured, other: { ...state.zigbeeDraft } }));"
+            "})();"
+        )
+    )
+    assert values["configured"] == {"path": UNKNOWN_STICK, "radioType": "znp", "baudrate": 38400}
+    assert values["other"]["radioType"] == "ezsp"
+    assert values["other"]["baudrate"] == 115200
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_the_zigbee_request_body_carries_advanced_values_only_for_an_unrecognised_stick():
+    """`PUT /api/zigbee/radio` reads the three Advanced fields only for a
+    stick the table does not know. Sending them for a recognised stick is
+    harmless to the server but tells a lie about what the page is setting;
+    NOT sending them for an unknown one silently drops what the user typed.
+
+    Fault to prove it: send `radio_type`/`baudrate` for every stick, or for
+    none."""
+    values = _app_state(
+        _zigbee_state(
+            "const out = {};"
+            f"state.zigbeeDraft.path = {json.dumps(ITEAD)};"
+            "out.recognised = state.zigbeeRequestBody();"
+            f"state.zigbeeDraft.path = {json.dumps(UNKNOWN_STICK)};"
+            "state.zigbeeDraft.radioType = 'znp'; state.zigbeeDraft.baudrate = '57600';"
+            "out.unknown = state.zigbeeRequestBody();"
+            "state.zigbeeDraft.path = '';"
+            "out.none = state.zigbeeRequestBody();"
+            "console.log(JSON.stringify(out));"
+        )
+    )
+    assert values["recognised"] == {"path": ITEAD}
+    assert values["unknown"] == {"path": UNKNOWN_STICK, "radio_type": "znp", "baudrate": 57600}
+    assert values["none"] == {"path": None}
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_the_thread_stick_cannot_be_applied_even_as_a_changed_draft():
+    """`:disabled` on the `<option>` stops a click; it does not stop a draft
+    that already holds the path - a stale value, or a stick that became the
+    Thread stick after it was picked. Apply must refuse it too, rather than
+    send a `PUT` the server is certain to answer with a 400.
+
+    Fault to prove it: drop the `selected?.disabled` check from
+    `zigbeeCanApply()`."""
+    values = _app_state(
+        _zigbee_state(
+            "const out = {};"
+            f"state.zigbeeDraft.path = {json.dumps(MG24)};"
+            "out.mg24 = [state.zigbeeRadioChanged(), state.zigbeeCanApply()];"
+            f"state.zigbeeDraft.path = {json.dumps(ITEAD)};"
+            "out.itead = [state.zigbeeRadioChanged(), state.zigbeeCanApply()];"
+            "state.zigbee.progress = { state: 'loading_quirks', attempts: 0 };"
+            "out.itead_while_first_attempt = state.zigbeeCanApply();"
+            "state.zigbee.progress = { state: 'failed', attempts: 2, error: 'x' };"
+            "out.itead_while_failed = state.zigbeeCanApply();"
+            "console.log(JSON.stringify(out));"
+        )
+    )
+    assert values["mg24"] == [True, False]
+    assert values["itead"] == [True, True]
+    # A first attempt blocks a second change; a failed one does not -
+    # picking another stick is exactly what a failing one calls for.
+    # (`test_a_failing_stick_can_be_corrected_while_the_bridge_retries_it`
+    # covers the retries in between.)
+    assert values["itead_while_first_attempt"] is False
+    assert values["itead_while_failed"] is True
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_the_zigbee_row_polls_by_state_at_three_cadences():
+    """All six `ConnectionState` members, through the REAL
+    `loadZigbeeRadio()` and the timer it arms - not just the predicate.
+
+    A failed attempt is settled for `zigbeeRadioPolling()` but NOT for the
+    supervisor, which retries forever; a card that stopped asking there
+    would never show a replugged stick coming back. So `failed` keeps a
+    slow timer and the three working states a fast one.
+
+    `connected` keeps a slower one still. It used to keep none, so a stick
+    pulled out at rest - or a link zigpy reported lost - went on reading
+    "Connected" until Rescan or a reload. Only `idle`, nothing configured,
+    has nothing that could change by itself.
+
+    Fault to prove it: return `null` for `failed` or for `connected` in
+    `zigbeeRadioPollInterval()` (that row goes to `null`), or drop
+    `applying` from `ZIGBEE_WORKING_STATES` (the `applying` row does)."""
+    values = _app_state(
+        _zigbee_state(
+            "const delays = {};"
+            "let armed = null;"
+            "globalThis.setTimeout = (fn, delay) => { armed = delay; return 1; };"
+            "globalThis.clearTimeout = () => { armed = null; };"
+            "state.view = 'settings';"
+            "const body = JSON.parse(JSON.stringify(state.zigbee));"
+            "(async () => {"
+            "  for (const s of ['idle', 'applying', 'loading_quirks', 'opening_radio',"
+            "                   'connected', 'failed']) {"
+            "    armed = null; state.zigbeeTimer = null;"
+            "    state.request = async () => ({ ...body, progress: { state: s, attempts: 1,"
+            "      error: 'e', changed_at: 'x' } });"
+            "    await state.loadZigbeeRadio();"
+            "    delays[s] = armed;"
+            "  }"
+            "  console.log(JSON.stringify(delays));"
+            "})();"
+        )
+    )
+    working = _js_constant("ZIGBEE_WORKING_POLL_MS")
+    failed = _js_constant("ZIGBEE_FAILED_POLL_MS")
+    connected = _js_constant("ZIGBEE_CONNECTED_POLL_MS")
+    assert working < failed < connected
+    assert values == {
+        "idle": None,
+        "applying": working,
+        "loading_quirks": working,
+        "opening_radio": working,
+        "connected": connected,
+        "failed": failed,
+    }
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_a_failed_zigbee_apply_survives_the_poll_it_arms():
+    """The radios card's first Critical, in the shape this row could repeat
+    it: the Apply fails, the reload after it sees an attempt still running
+    (started from another tab) and arms the fast poll - and a poll that
+    cleared the error field would erase the explanation a second after the
+    user saw it. The error lives in `zigbeeApplyError`, which no load
+    touches; this runs the reload AND the poll it armed.
+
+    Fault to prove it: write the error into `zigbeeError` in
+    `applyZigbeeRadio()`'s `catch` (the load clears it), or have
+    `loadZigbeeRadio()` reset `zigbeeApplyError`."""
+    values = _app_state(
+        _zigbee_state(
+            "let pending = null;"
+            "globalThis.setTimeout = (fn) => { pending = fn; return 1; };"
+            "globalThis.clearTimeout = () => { pending = null; };"
+            "state.view = 'settings';"
+            f"state.zigbeeDraft.path = {json.dumps(ITEAD)}; state.zigbeeDirty = true;"
+            "const body = JSON.parse(JSON.stringify(state.zigbee));"
+            "body.progress = { state: 'opening_radio', attempts: 0, error: null, changed_at: 'x' };"
+            "state.request = async (method) => {"
+            "  if (method === 'PUT') throw new Error('This stick is in use for Thread.');"
+            "  return body;"
+            "};"
+            "(async () => {"
+            "  await state.applyZigbeeRadio();"
+            "  const afterApply = state.zigbeeApplyError;"
+            "  const polled = pending !== null;"
+            "  const tick = pending; pending = null; await tick();"
+            "  console.log(JSON.stringify({ afterApply, polled, afterPoll: state.zigbeeApplyError,"
+            "    loadError: state.zigbeeError, busy: state.zigbeeBusy }));"
+            "})();"
+        )
+    )
+    assert values == {
+        "afterApply": "This stick is in use for Thread.",
+        "polled": True,
+        "afterPoll": "This stick is in use for Thread.",
+        "loadError": None,
+        "busy": False,
+    }
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_a_poll_does_not_overwrite_an_unapplied_zigbee_choice():
+    """The row polls every second during an attempt. A poll that resynced
+    the draft from `configured_path` every time would snap the select back
+    under the user's hand while they are choosing.
+
+    Fault to prove it: drop the `if (!this.zigbeeDirty)` guard in
+    `loadZigbeeRadio()`."""
+    values = _app_state(
+        _zigbee_state(
+            "globalThis.setTimeout = () => 1; globalThis.clearTimeout = () => {};"
+            "const body = JSON.parse(JSON.stringify(state.zigbee));"
+            f"body.configured_path = {json.dumps(ITEAD)};"
+            "state.request = async () => body;"
+            "(async () => {"
+            "  await state.loadZigbeeRadio();"
+            "  const clean = state.zigbeeDraft.path;"
+            "  state.zigbeeDraft.path = '';"
+            "  state.zigbeeSelectionChanged();"
+            "  await state.loadZigbeeRadio();"
+            "  console.log(JSON.stringify({ clean, dirty: state.zigbeeDraft.path }));"
+            "})();"
+        )
+    )
+    assert values == {"clean": ITEAD, "dirty": ""}
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_an_older_zigbee_answer_cannot_overwrite_a_newer_one():
+    """A poll in flight when Apply is pressed can answer AFTER the reload
+    that follows the `PUT`. Without a guard its older `failed` (or `idle`)
+    lands last and the card shows a state from before the change - the one
+    reading that tells the user nothing happened.
+
+    Fault to prove it: remove the `sequence !== this.zigbeeLoadSequence`
+    check after the `await` in `loadZigbeeRadio()`."""
+    values = _app_state(
+        _zigbee_state(
+            "globalThis.setTimeout = () => 1; globalThis.clearTimeout = () => {};"
+            "const base = JSON.parse(JSON.stringify(state.zigbee));"
+            "let releaseOld;"
+            "const old = new Promise((resolve) => { releaseOld = resolve; });"
+            "let calls = 0;"
+            "state.request = async () => {"
+            "  calls += 1;"
+            "  if (calls === 1) { await old;"
+            "    return { ...base, progress: { state: 'failed', attempts: 3, error: 'old' } }; }"
+            "  return { ...base, progress: { state: 'applying', attempts: 0, error: null } };"
+            "};"
+            "(async () => {"
+            "  const first = state.loadZigbeeRadio();"
+            "  await state.loadZigbeeRadio();"
+            "  releaseOld(); await first;"
+            "  console.log(JSON.stringify({ state: state.zigbee.progress.state }));"
+            "})();"
+        )
+    )
+    assert values == {"state": "applying"}
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_a_retry_does_not_claim_to_be_the_first_connection():
+    """The supervisor walks `loading_quirks` -> `opening_radio` again on
+    every retry, with `attempts` still counting the failures before it. The
+    first-attempt wording ("Preparing device support - this can take a few
+    seconds") says nothing about the failures before it.
+
+    Fault to prove it: drop the `progress.attempts > 0` branch in
+    `zigbeeProgressText()`."""
+    values = _app_state(
+        "console.log(JSON.stringify({"
+        "  first: state.zigbeeProgressText({ state: 'loading_quirks', attempts: 0 }),"
+        "  retry: state.zigbeeProgressText({ state: 'loading_quirks', attempts: 3 }),"
+        "  retry_open: state.zigbeeProgressText({ state: 'opening_radio', attempts: 3 }),"
+        "  idle: state.zigbeeProgressText({ state: 'idle', attempts: 0 }),"
+        "}));",
+        translations=_web_strings(),
+    )
+    assert values["first"].startswith("Preparing device support")
+    assert values["retry"] == "Trying again (attempt 4)"
+    assert values["retry_open"] == "Trying again (attempt 4)"
+    assert values["idle"] is None
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_a_retry_shows_the_reason_the_bridge_carries_through_it():
+    """Measured in the browser harness (12 September 2026): each retry
+    started with `error: null`, so the failure sentence disappeared for the
+    length of every retry and came back when it failed again - a three-line
+    message blinking out and in every few seconds. The bridge now carries
+    the previous attempt's reason through the retry (`ConnectionProgress`),
+    translated per answer, and the row shows it as "Previous attempt".
+
+    It used to be a copy the PAGE kept from the last `failed` poll, which a
+    reload lost and which could not follow a language switch. So this runs
+    the REAL `loadZigbeeRadio()` with retry answers that carry the error,
+    and one that does not.
+
+    Fault to prove it: read a page-side copy instead of `progress.error` in
+    `zigbeeProgressText()` (the retry rows lose their reason), or drop the
+    `progress.error` branch (they read "Trying again" alone)."""
+    values = _app_state(
+        _zigbee_state(
+            "globalThis.setTimeout = () => 1; globalThis.clearTimeout = () => {};"
+            f"const base = JSON.parse(JSON.stringify(state.zigbee));"
+            f"base.configured_path = {json.dumps(ITEAD)}; base.configured_device_present = true;"
+            "const answers = ["
+            "  { state: 'failed', attempts: 1, error: 'The stick did not answer.' },"
+            "  { state: 'opening_radio', attempts: 1, error: 'The stick did not answer.' },"
+            "  { state: 'connected', attempts: 0, error: null },"
+            "  { state: 'opening_radio', attempts: 1, error: null },"
+            "];"
+            "const out = [];"
+            "(async () => {"
+            "  for (const progress of answers) {"
+            "    state.request = async () => ({ ...base, progress });"
+            "    await state.loadZigbeeRadio();"
+            "    out.push(state.zigbeeProgressText(state.zigbee.progress,"
+            "      state.zigbee.configured_device_present));"
+            "  }"
+            "  console.log(JSON.stringify(out));"
+            "})();"
+        ),
+        translations=_web_strings(),
+    )
+    assert values == [
+        "The stick did not answer. (attempt 1 - the bridge keeps trying)",
+        "Trying again (attempt 2). Previous attempt: The stick did not answer.",
+        "Connected",
+        "Trying again (attempt 2)",
+    ]
+
+
+def _zigbee_row(markup: str) -> str:
+    start = markup.index('<div class="radios-zigbee">')
+    return _element_at(markup, start, "div")
+
+
+def _eval_in_state(expr: str, setup: str, translations: dict[str, str] | None = None) -> object:
+    """Evaluates a markup expression the way Alpine does: with the `app()`
+    object as scope, so a method called in the expression gets `this`
+    bound to the state. The expression comes out of the SERVED markup."""
+    return _app_state(
+        setup
+        + f"const scope = new Function('s', 'with (s) {{ return (' + {json.dumps(expr)} + '); }}');"
+        "console.log(JSON.stringify(scope(state)));",
+        translations=translations,
+    )
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+async def test_the_progress_line_binding_passes_the_presence_flag(api):
+    """`test_a_configured_stick_that_is_gone_says_so` proves the helper can
+    say "not plugged in" when it is HANDED the flag. This proves the row
+    hands it: the `x-text` on the progress line, extracted from the served
+    page and evaluated against the state.
+
+    Fault to prove it: drop `zigbee.configured_device_present` from the
+    `x-text` in index.html. The line then reads the failure text instead."""
+    client, _, _ = api
+    row = _zigbee_row(_without_comments((await client.get("/")).text))
+    match = re.search(r'class="hint radios-zigbee-progress".*?x-text="([^"]*)"', row, re.DOTALL)
+    assert match, "no progress line in the Zigbee row"
+    text = _eval_in_state(
+        match.group(1),
+        _zigbee_state(
+            "state.zigbee.configured_path = '/dev/serial/by-id/gone';"
+            "state.zigbee.progress = { state: 'failed', attempts: 9, error: 'no such device' };"
+        ),
+        translations=_web_strings(),
+    )
+    assert text.startswith("The chosen stick is not plugged in")
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+async def test_the_zigbee_option_binding_disables_what_the_helper_disables(api):
+    """`zigbeeRadioOptions()` computing `disabled` is worth nothing if the
+    `<option>` does not bind it - and worth just as little if this test only
+    ever evaluated the raw JS truthiness of `option.disabled`. "No Zigbee
+    stick" and the option for a configured stick the scan no longer finds
+    both spell `disabled: false` out in their object literal rather than
+    deriving it; deleting that key left `option.disabled` `undefined` for
+    exactly those two options and every assertion here still green, while
+    Alpine turns that `undefined` from a dotted `:disabled` expression into
+    `""`, which a boolean attribute treats as present - the user could no
+    longer remove a configured Zigbee stick that way. `boundTrue` (see
+    `_BINDINGS_JS`) models that coercion; extracted from the served markup
+    and evaluated for EVERY option `zigbeeRadioOptions()` returns, "No
+    Zigbee stick" and the missing-stick option included.
+
+    Fault to prove it: remove `:disabled="option.disabled"` from the Zigbee
+    `<option>` (the extraction fails), bind it to `option.unrecognised` (the
+    MG24 comes out enabled), or delete `disabled: false` from the "No
+    Zigbee stick" or the missing-stick option in `zigbeeRadioOptions()`
+    (app.js) - this test starts failing where the old one did not."""
+    client, _, _ = api
+    row = _zigbee_row(_without_comments((await client.get("/")).text))
+    options = row[row.index('x-for="option in zigbeeRadioOptions()"') :]
+    match = re.search(r'<option[^>]*:disabled="([^"]*)"', options)
+    assert match, "the Zigbee <option> binds no :disabled"
+    values = _app_state(
+        _BINDINGS_JS
+        + _zigbee_state("state.zigbee.configured_path = '/dev/serial/by-id/gone';")
+        + "console.log(JSON.stringify(state.zigbeeRadioOptions().map((option) => ["
+        "  option.value,"
+        f"  boundTrue({json.dumps(match.group(1))}, {{ option }}),"
+        "])));"
+    )
+    disabled = dict(values)
+    assert disabled[""] is False
+    assert disabled[MG24] is True
+    assert disabled[ITEAD] is False
+    assert disabled[UNKNOWN_STICK] is False
+    assert disabled["/dev/serial/by-id/gone"] is False
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_the_configured_option_drops_in_use_while_it_is_the_open_draft():
+    """A native `<select>` shows its CLOSED value using that option's own
+    label - and the "in use" marker sits at the very end of it, exactly
+    where a narrow select cuts a label off. Measured in German at 375 px:
+    "SONOFF ZBDongle-E V2 · in Verwendung" came out clipped to "...in
+    Verwendun". The suffix costs nothing while the draft still points at
+    the configured stick (that is what "configured" already means), and it
+    is not lost - it comes back on that same option as soon as the draft
+    points elsewhere, which is what the open list then shows.
+
+    Fault to prove it: drop `&& this.zigbeeDraft.path !== configured` from
+    the `in_use` branch of `zigbeeRadioOptions()` (app.js) - `closed` below
+    starts carrying the suffix again."""
+    values = _app_state(
+        _zigbee_state(
+            f"state.zigbee.configured_path = {json.dumps(ITEAD)};"
+            "state.zigbee.configured_device_present = true;"
+            f"state.zigbeeDraft.path = {json.dumps(ITEAD)};"
+            f"const closed = state.zigbeeRadioOptions().find((o) => o.value === {json.dumps(ITEAD)});"
+            "state.zigbeeDraft.path = '';"
+            f"const open = state.zigbeeRadioOptions().find((o) => o.value === {json.dumps(ITEAD)});"
+            "console.log(JSON.stringify({ closed: closed.label, open: open.label }));"
+        )
+    )
+    assert "web.radios.in_use" not in values["closed"]
+    assert "web.radios.in_use" in values["open"]
+
+
+async def test_the_zigbee_row_says_it_restarts_nothing_and_has_its_own_apply(api):
+    """The two rows above it warn about a restart and run through the
+    sidecar; this one does neither, and says so in the row itself. Its
+    Apply calls its own method - a shared Apply would route a Zigbee change
+    through the confirmation and the sidecar job.
+
+    Fault to prove it: move the hint out of the Zigbee row, or point its
+    button at `askApplyRadios()`."""
+    client, _, _ = api
+    page = _without_comments((await client.get("/")).text)
+    row = _zigbee_row(page)
+    assert "t('web.radios.zigbee_hint')" in row
+    assert '@click="applyZigbeeRadio()"' in row
+    assert "askApplyRadios()" not in row
+    assert 'class="commission-disclosure"' in row
+    assert 'x-text="zigbeeApplyError"' in row
+    # Below Thread and Bluetooth, inside the radios card.
+    settings = page[page.index("view === 'settings'") :]
+    card = settings[: settings.index("t('web.settings.language_heading')")]
+    assert card.index("radiosBluetoothOptions()") < card.index('<div class="radios-zigbee">')
+
+
+async def test_leaving_settings_stops_the_zigbee_timer(api):
+    """The same leak `test_leaving_settings_stops_the_radios_timer` closes
+    for the radios timer: a row polling once a second from a tab nobody is
+    looking at.
+
+    Fault to prove it: drop `this.stopZigbeeTimer();` from `selectView()`'s
+    `view !== "settings"` block."""
+    client, _, _ = api
+    script = (await client.get("/static/app.js")).text
+    start = script.index("async selectView(view) {")
+    body = script[start : script.index("\n    },", start)]
+    guard_start = body.index('if (view !== "settings")')
+    guard = body[guard_start : body.index("}", guard_start) + 1]
+    assert "this.stopZigbeeTimer();" in guard
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_a_load_that_finishes_after_leaving_settings_arms_no_timer():
+    """`selectView()` stops the timer, but a load already in flight at that
+    moment finishes afterwards - and would arm a new one behind its back.
+
+    Fault to prove it: drop the `this.view !== "settings"` return in
+    `scheduleZigbeeLoad()`."""
+    values = _app_state(
+        _zigbee_state(
+            "let armed = 0;"
+            "globalThis.setTimeout = () => { armed += 1; return 1; };"
+            "globalThis.clearTimeout = () => {};"
+            "state.view = 'devices';"
+            "const body = JSON.parse(JSON.stringify(state.zigbee));"
+            "body.progress = { state: 'loading_quirks', attempts: 0, error: null };"
+            "state.request = async () => body;"
+            "(async () => {"
+            "  await state.loadZigbeeRadio();"
+            "  console.log(JSON.stringify({ armed, timer: state.zigbeeTimer }));"
+            "})();"
+        )
+    )
+    assert values == {"armed": 0, "timer": None}
+
+
+# ---------------------------------------------------------------------------
+# The Zigbee row's bindings, run rather than read (review of Task 13).
+#
+# Seventeen mutations of the row survived the tests above: each one broke a
+# binding in index.html or the call that wires it, and every test above
+# either called the helper directly or checked that a substring was
+# present. The tests below take the REAL attribute out of the served page -
+# its `x-if`, `x-show`, `:disabled`, `x-model`, `@change`, `@click` - and
+# run it against the real `app()` object in node the way Alpine does (the
+# state as scope, a handler as a statement, `x-model` as an assignment).
+# No DOM library: the repository has none, and a browser runtime is not a
+# test dependency (pyproject.toml says why for playwright). What this
+# cannot see is layout; the browser harness in the task report covers that.
+# ---------------------------------------------------------------------------
+
+_VOID_ELEMENTS = frozenset(
+    {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "source", "wbr"}
+)
+
+
+class _ServedElements(HTMLParser):
+    """Every element of the served page as `(tag, attributes, ancestors)`,
+    where `ancestors` is the `(tag, attributes)` chain from `<html>` down.
+
+    Enough of an HTML tree for one question the regex helpers above cannot
+    answer: which conditions an element renders under."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.elements: list[tuple[str, dict[str, str], list[tuple[str, dict[str, str]]]]] = []
+        self._open: list[tuple[str, dict[str, str]]] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        attributes = {name: value or "" for name, value in attrs}
+        self.elements.append((tag, attributes, list(self._open)))
+        if tag not in _VOID_ELEMENTS:
+            self._open.append((tag, attributes))
+
+    def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        self.elements.append((tag, {name: value or "" for name, value in attrs}, list(self._open)))
+
+    def handle_endtag(self, tag: str) -> None:
+        for index in range(len(self._open) - 1, -1, -1):
+            if self._open[index][0] == tag:
+                del self._open[index:]
+                return
+
+
+def _served_elements(
+    markup: str,
+) -> list[tuple[str, dict[str, str], list[tuple[str, dict[str, str]]]]]:
+    parser = _ServedElements()
+    parser.feed(_without_comments(markup))
+    return parser.elements
+
+
+def _zigbee_row_element(
+    markup: str, tag: str, **wanted: str
+) -> tuple[dict[str, str], list[tuple[str, dict[str, str]]]]:
+    """The one `tag` inside the Zigbee row whose attributes include every
+    `wanted` pair. Keys are spelled for Python: `_` for `-`, a leading
+    `at_` for `@`, a leading `colon_` for `:`, and a trailing `_` dropped
+    (`class_`). Exactly one, or the test fails on the extraction."""
+
+    def spelled(name: str) -> str:
+        if name.startswith("at_"):
+            return "@" + name[3:].replace("_", "-")
+        if name.startswith("colon_"):
+            return ":" + name[6:].replace("_", "-")
+        return name.rstrip("_").replace("_", "-")
+
+    matches = [
+        (attributes, ancestors)
+        for element_tag, attributes, ancestors in _served_elements(markup)
+        if element_tag == tag
+        and any(
+            candidate.get("class") == "radios-zigbee"
+            for candidate in [attributes, *(ancestor for _, ancestor in ancestors)]
+        )
+        and all(attributes.get(spelled(name)) == value for name, value in wanted.items())
+    ]
+    assert len(matches) == 1, (
+        f"expected one <{tag}> {wanted} in the Zigbee row, found {len(matches)}"
+    )
+    return matches[0]
+
+
+# `run(expr)` evaluates an attribute expression, `exec(statement)` runs a
+# handler - both with the state as scope, the way Alpine evaluates them.
+_BINDINGS_JS = """
+const run = (expr, extra = {}) =>
+  new Function('s', 'extra', 'with (extra) { with (s) { return (' + expr + '); } }')(state, extra);
+const exec = (statement, extra = {}) =>
+  new Function('s', 'extra', 'with (extra) { with (s) { ' + statement + ' } }')(state, extra);
+// Whether Alpine SETS a boolean attribute (`:disabled`) for this expression.
+// Not `Boolean(run(expr))`: Alpine binds an `undefined` from a dotted
+// expression as `""`, and a boolean attribute given `""` is present - which
+// is how "No Thread stick" once rendered disabled with every test green.
+const boundTrue = (expr, extra = {}) => {
+  let value = run(expr, extra);
+  if (value === undefined && expr.includes('.')) value = '';
+  return ![null, undefined, false].includes(value);
+};
+globalThis.setTimeout = () => 1; globalThis.clearTimeout = () => {};
+globalThis.setInterval = () => 1; globalThis.clearInterval = () => {};
+"""
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_opening_settings_loads_the_zigbee_row():
+    """The row is `x-if="zigbee"`, and only a load fills `zigbee` - so a
+    Settings view that forgot to load it rendered no Zigbee row at all,
+    and every helper test above stayed green.
+
+    Through the REAL `selectView('settings')`, with `request` recording
+    what it was asked.
+
+    Fault to prove it: drop `await this.loadZigbeeRadio();` from
+    `selectView()`."""
+    values = _app_state(
+        _BINDINGS_JS
+        + _zigbee_state(
+            "globalThis.window = { location: { hash: '' }, history: { replaceState() {} } };"
+            "const body = JSON.parse(JSON.stringify(state.zigbee));"
+            "state.zigbee = null;"
+            "const asked = [];"
+            "state.request = async (method, url) => {"
+            "  asked.push(method + ' ' + url);"
+            "  if (url === '/api/zigbee/radio') return body;"
+            f"  if (url === '/api/radios') return {json.dumps(RADIOS_READY)};"
+            "  return { bridge_ip: '', udp_port: 7000, listen_port: 8080 };"
+            "};"
+            "(async () => {"
+            "  await state.selectView('settings');"
+            "  console.log(JSON.stringify({ asked, rendered: Boolean(run('zigbee')) }));"
+            "})();"
+        )
+    )
+    assert "GET /api/zigbee/radio" in values["asked"]
+    assert values["rendered"] is True
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+async def test_without_a_thread_report_the_card_says_why_and_offers_no_stick(api):
+    """When the bridge cannot tell which stick Thread is on, `GET
+    /api/zigbee/radio` marks EVERY stick unselectable and carries the reason
+    in `thread_refusal` (`radios/thread_lockout.py`). The card must show
+    that sentence and must not offer Apply for any stick - while still
+    letting the user turn Zigbee off.
+
+    Runs the SERVED `x-show`/`x-text` of the reason line (plain truthiness:
+    `x-show` is not a boolean attribute) and the SERVED `:disabled` of the
+    Apply button (through `boundTrue`, which is), against that body.
+
+    Fault to prove it: remove the reason line from the Zigbee row (the
+    extraction fails), or drop the `selected?.disabled` check from
+    `zigbeeCanApply()` (Apply comes out enabled for the ITEAD stick)."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+    reason, _ancestors = _zigbee_row_element(page, "p", x_text="zigbee.thread_refusal")
+    apply_button, _ancestors = _zigbee_row_element(page, "button", at_click="applyZigbeeRadio()")
+    values = _app_state(
+        _BINDINGS_JS
+        + _zigbee_state(
+            "for (const stick of state.zigbee.serial) stick.selectable = false;"
+            "state.zigbee.thread_status = 'unknown';"
+            "state.zigbee.thread_refusal = 'Thread unknown';"
+            f"state.zigbee.configured_path = {json.dumps(UNKNOWN_STICK)};"
+            "const out = {};"
+            f"out.shown = Boolean(run({json.dumps(reason['x-show'])}));"
+            f"out.text = run({json.dumps(reason['x-text'])});"
+            f"state.zigbeeDraft.path = {json.dumps(ITEAD)};"
+            f"out.itead = boundTrue({json.dumps(apply_button[':disabled'])});"
+            "state.zigbeeDraft.path = '';"
+            f"out.none = boundTrue({json.dumps(apply_button[':disabled'])});"
+            "state.zigbee.thread_status = 'known'; state.zigbee.thread_refusal = null;"
+            f"out.shown_when_known = Boolean(run({json.dumps(reason['x-show'])}));"
+            "console.log(JSON.stringify(out));"
+        )
+    )
+    assert values == {
+        "shown": True,
+        "text": "Thread unknown",
+        "itead": True,
+        "none": False,
+        "shown_when_known": False,
+    }
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+async def test_the_zigbee_row_shows_the_firmware_the_stick_reported(api):
+    """The firmware line under the Zigbee row, through its SERVED bindings:
+    shown with the version `GET /api/zigbee/radio` reported in
+    `coordinator.firmware`, and hidden - without an error - while there is
+    no coordinator yet, which is what the route answers before the first
+    successful connect and what every older body shape lacks entirely.
+    `x-show` is evaluated for plain truthiness, as Alpine does - it is not a
+    boolean attribute, so `boundTrue`'s coercion does not apply.
+
+    Fault to prove it: bind `x-text` to `coordinator.radio_type`, or drop
+    the `?.` so a `null` coordinator throws."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+    line = next(
+        attributes
+        for tag, attributes, _ancestors in _served_elements(page)
+        if tag == "p" and "web.radios.zigbee_firmware" in attributes.get("x-text", "")
+    )
+    values = _app_state(
+        _BINDINGS_JS
+        + _zigbee_state(
+            "const out = {};"
+            f"out.hidden = Boolean(run({json.dumps(line['x-show'])}));"
+            "state.zigbee.coordinator = null;"
+            f"out.hidden_null = Boolean(run({json.dumps(line['x-show'])}));"
+            "state.zigbee.coordinator = { radio_type: 'ezsp', manufacturer: 'ITEAD',"
+            "  model: 'Dongle-E', firmware: '7.4.4.0 build 0' };"
+            f"out.shown = Boolean(run({json.dumps(line['x-show'])}));"
+            f"out.text = run({json.dumps(line['x-text'])});"
+            "console.log(JSON.stringify(out));"
+        ),
+        translations={"web.radios.zigbee_firmware": "Firmware: {firmware}"},
+    )
+    assert values == {
+        "hidden": False,
+        "hidden_null": False,
+        "shown": True,
+        "text": "Firmware: 7.4.4.0 build 0",
+    }
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+async def test_the_select_bindings_keep_a_choice_through_the_next_poll(api):
+    """What the user picks in the select survives the poll that follows -
+    the row polls every second during an attempt, and a poll that resynced
+    the draft snapped the choice back under their hand.
+
+    `zigbeeDirty` is what stops the resync, and the select's `@change` is
+    the only thing that sets it. So this runs the SERVED `x-model` (as the
+    assignment Alpine makes) and the SERVED `@change`, then a real poll.
+
+    Fault to prove it: drop `@change="zigbeeSelectionChanged()"` from the
+    Zigbee select (the extraction finds no handler), or bind it to
+    something that does not mark the draft dirty (the poll puts the
+    configured stick back)."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+    select, _ancestors = _zigbee_row_element(page, "select", x_model="zigbeeDraft.path")
+    assert select.get("@change"), "the Zigbee select has no @change"
+    values = _app_state(
+        _BINDINGS_JS
+        + _zigbee_state(
+            "const body = JSON.parse(JSON.stringify(state.zigbee));"
+            f"body.configured_path = {json.dumps(ITEAD)}; body.configured_device_present = true;"
+            "state.request = async () => body;"
+            "(async () => {"
+            "  await state.loadZigbeeRadio();"
+            f"  exec({json.dumps(select['x-model'])} + ' = __value', {{ __value: '' }});"
+            f"  exec({json.dumps(select['@change'])});"
+            "  await state.loadZigbeeRadio();"
+            "  console.log(JSON.stringify({ path: state.zigbeeDraft.path,"
+            "    applicable: !run(" + json.dumps("zigbeeBusy") + ") && state.zigbeeCanApply() }));"
+            "})();"
+        )
+    )
+    assert values == {"path": "", "applicable": True}
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+async def test_the_advanced_bindings_make_an_edit_a_change_apply_can_send(api):
+    """The case the Advanced disclosure exists for: the configured stick is
+    unrecognised, it is failing, and the user corrects its radio type or
+    baud rate. The path does not change, so ONLY the Advanced handlers can
+    turn that edit into something Apply will send.
+
+    Runs the SERVED `x-model` and `@change` of the radio-type select and the
+    SERVED `x-model.number` and `@input` of the baud-rate field, then the
+    SERVED `:disabled` of the Apply button.
+
+    Fault to prove it: drop `@change="zigbeeAdvancedChanged()"` or
+    `@input="zigbeeAdvancedChanged()"` (Apply stays disabled after the
+    edit), or have `zigbeeRadioChanged()` ignore `zigbeeAdvancedEdited`."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+    radio_type, _ = _zigbee_row_element(page, "select", x_model="zigbeeDraft.radioType")
+    baudrate, _ = _zigbee_row_element(page, "input", type="number")
+    apply_button, _ = _zigbee_row_element(page, "button", class_="primary")
+    values = _app_state(
+        _BINDINGS_JS
+        + _zigbee_state(
+            "const body = JSON.parse(JSON.stringify(state.zigbee));"
+            f"body.configured_path = {json.dumps(UNKNOWN_STICK)}; body.configured_device_present = true;"
+            "body.configured_radio_type = 'ezsp'; body.configured_baudrate = 115200;"
+            "body.progress = { state: 'failed', attempts: 3, error: 'no answer', changed_at: 'x' };"
+            "state.request = async () => body;"
+            "(async () => {"
+            "  await state.loadZigbeeRadio();"
+            f"  const disabled = () => run({json.dumps(apply_button[':disabled'])});"
+            "  const before = disabled();"
+            f"  exec({json.dumps(radio_type['x-model'])} + ' = __value', {{ __value: 'znp' }});"
+            f"  exec({json.dumps(radio_type.get('@change', ''))});"
+            "  const afterType = disabled();"
+            "  await state.loadZigbeeRadio();"
+            "  const afterPoll = [disabled(), state.zigbeeDraft.radioType];"
+            "  state.zigbeeAdvancedEdited = false; state.zigbeeDirty = false;"
+            "  state.zigbeeDraft.radioType = 'ezsp';"
+            f"  exec({json.dumps(baudrate['x-model.number'])} + ' = __value', {{ __value: 38400 }});"
+            f"  exec({json.dumps(baudrate.get('@input', ''))});"
+            "  const afterBaud = disabled();"
+            "  console.log(JSON.stringify({ before, afterType, afterPoll, afterBaud,"
+            "    body: state.zigbeeRequestBody() }));"
+            "})();"
+        )
+    )
+    assert values["before"] is True
+    assert values["afterType"] is False
+    assert values["afterPoll"] == [False, "znp"]
+    assert values["afterBaud"] is False
+    assert values["body"] == {"path": UNKNOWN_STICK, "radio_type": "ezsp", "baudrate": 38400}
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+async def test_the_apply_error_banner_binding_shows_the_refusal_and_keeps_it(api):
+    """The existing checks read that the banner's `x-text` names
+    `zigbeeApplyError`; a banner whose `x-show` was `false` passed them
+    while never appearing. This runs the SERVED `x-show` after a real
+    refused Apply and after the poll that follows it.
+
+    Fault to prove it: set the banner's `x-show` to `false`, or to
+    `zigbeeError`."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+    banner, _ = _zigbee_row_element(page, "p", x_text="zigbeeApplyError")
+    values = _app_state(
+        _BINDINGS_JS
+        + _zigbee_state(
+            "state.view = 'settings';"
+            f"state.zigbeeDraft.path = {json.dumps(ITEAD)}; state.zigbeeDirty = true;"
+            "const body = JSON.parse(JSON.stringify(state.zigbee));"
+            "state.request = async (method) => {"
+            "  if (method === 'PUT') throw new Error('This stick is in use for Thread.');"
+            "  return body;"
+            "};"
+            f"const shown = () => Boolean(run({json.dumps(banner['x-show'])}));"
+            "(async () => {"
+            "  const idle = shown();"
+            "  await state.applyZigbeeRadio();"
+            "  const refused = shown();"
+            "  await state.loadZigbeeRadio();"
+            "  console.log(JSON.stringify({ idle, refused, afterPoll: shown(),"
+            f"    text: run({json.dumps(banner['x-text'])}) }}));"
+            "})();"
+        )
+    )
+    assert values == {
+        "idle": False,
+        "refused": True,
+        "afterPoll": True,
+        "text": "This stick is in use for Thread.",
+    }
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+async def test_a_fresh_install_shows_no_missing_stick(api):
+    """A fresh install reports `configured_device_present: false` too -
+    there is nothing configured to be present. The "not plugged in"
+    sentence, in red, is for a stick that IS configured and gone; on a
+    fresh install it would tell a new user to plug back in something they
+    never had.
+
+    Runs the SERVED `x-text` and `:class` of the progress line.
+
+    Fault to prove it: drop the `configured_path` half of the check in
+    `zigbeeStickMissing()`."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+    line, _ = _zigbee_row_element(page, "p", class_="hint radios-zigbee-progress")
+    values = _app_state(
+        _BINDINGS_JS
+        + _zigbee_state(
+            "const out = {};"
+            f"out.freshText = run({json.dumps(line['x-text'])});"
+            f"out.freshClass = run({json.dumps(line[':class'])});"
+            f"state.zigbee.configured_path = {json.dumps(ITEAD)};"
+            "state.zigbee.progress = { state: 'failed', attempts: 2, error: 'gone' };"
+            f"out.goneText = run({json.dumps(line['x-text'])});"
+            f"out.goneClass = run({json.dumps(line[':class'])});"
+            "console.log(JSON.stringify(out));"
+        ),
+        translations=_web_strings(),
+    )
+    assert not values["freshText"]
+    assert values["freshClass"] == {"danger-text": False}
+    assert values["goneText"].startswith("The chosen stick is not plugged in")
+    assert values["goneClass"] == {"danger-text": True}
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+async def test_the_zigbee_apply_button_puts_to_its_own_endpoint(api):
+    """Spec Correction 3, through the button itself: the row's Apply goes to
+    `PUT /api/zigbee/radio` and never to `/api/radios`, whose sidecar job
+    recreates the container the page is talking to.
+
+    Runs the SERVED `@click` against a recording `request`. The source
+    check above (`test_applying_the_zigbee_row_never_sends_a_radios_request`)
+    only reads `radiosRequestBody()`; a button pointed at
+    `confirmApplyRadios()` - or an `applyZigbeeRadio()` that posted to
+    `/api/radios` - passed it.
+
+    Fault to prove it: send the Zigbee request to `/api/radios` in
+    `applyZigbeeRadio()`, or point the button's `@click` at the radios
+    Apply."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+    button, _ = _zigbee_row_element(page, "button", class_="primary")
+    values = _app_state(
+        _BINDINGS_JS
+        + f"state.radios = {json.dumps(RADIOS_READY)};"
+        + _zigbee_state(
+            f"state.zigbeeDraft.path = {json.dumps(ITEAD)}; state.zigbeeDirty = true;"
+            "const body = JSON.parse(JSON.stringify(state.zigbee));"
+            "const sent = [];"
+            "state.request = async (method, url, payload) => {"
+            "  sent.push([method, url, payload ?? null]);"
+            "  return method === 'GET' ? body : { progress: body.progress, id: 'job' };"
+            "};"
+            "(async () => {"
+            f"  await run({json.dumps(button['@click'])});"
+            "  console.log(JSON.stringify(sent.filter(([method]) => method !== 'GET')));"
+            "})();"
+        )
+    )
+    assert values == [["PUT", "/api/zigbee/radio", {"path": ITEAD}]]
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+async def test_the_zigbee_row_renders_without_the_radios_sidecar(api):
+    """The row reads an endpoint the bridge answers itself, so a missing or
+    outdated updater sidecar - `radios` never loaded - must not hide it.
+    A substring check could not tell whether the row sits inside
+    `<template x-if="radios">`; this evaluates EVERY `x-if` and `x-show`
+    the row renders under, with `radios` null.
+
+    The same chain with `zigbee` null must NOT render, which is what keeps
+    the check from passing on an extraction that found no conditions.
+
+    Fault to prove it: move the Zigbee `<template>` inside the
+    `x-if="radios"` block."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+    _row, ancestors = _zigbee_row_element(page, "div", class_="radios-zigbee")
+    conditions = [
+        attributes[name]
+        for _tag, attributes in ancestors
+        for name in ("x-if", "x-show")
+        if name in attributes
+    ]
+    values = _app_state(
+        _BINDINGS_JS
+        + _zigbee_state(
+            "state.radios = null; state.view = 'settings';"
+            "state.stringsReady = true; state.authenticated = true;"
+            f"const conditions = {json.dumps(conditions)};"
+            "const renders = () => conditions.every((condition) => Boolean(run(condition)));"
+            "const withoutSidecar = renders();"
+            "state.zigbee = null;"
+            "console.log(JSON.stringify({ withoutSidecar, withoutZigbee: renders() }));"
+        )
+    )
+    assert values == {"withoutSidecar": True, "withoutZigbee": False}
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+async def test_a_configured_stick_the_scan_lost_stays_the_selected_option(api):
+    """A native `<select>` whose value matches no `<option>` shows its first
+    one - here "No Zigbee stick", a setting nobody made, while the bridge
+    keeps retrying the real one. So the configured stick keeps an option of
+    its own when the scan no longer finds it.
+
+    Runs the SERVED `x-for` and `x-text` of the Zigbee `<option>` and the
+    SERVED `x-model` of the select, and asks which option the select would
+    show.
+
+    Fault to prove it: drop the configured-but-missing option from
+    `zigbeeRadioOptions()`."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+    select, _ = _zigbee_row_element(page, "select", x_model="zigbeeDraft.path")
+    loop, _ = _zigbee_row_element(page, "template", x_for="option in zigbeeRadioOptions()")
+    option, _ = _zigbee_row_element(
+        page, "option", colon_value="option.value", colon_disabled="option.disabled"
+    )
+    source = loop["x-for"].split(" in ", 1)[1]
+    values = _app_state(
+        _BINDINGS_JS
+        + _zigbee_state(
+            "const body = JSON.parse(JSON.stringify(state.zigbee));"
+            "body.serial = body.serial.filter((stick) => !stick.path.includes('Itead'));"
+            f"body.configured_path = {json.dumps(ITEAD)}; body.configured_device_present = false;"
+            "body.progress = { state: 'failed', attempts: 4, error: 'gone', changed_at: 'x' };"
+            "state.request = async () => body;"
+            "(async () => {"
+            "  await state.loadZigbeeRadio();"
+            f"  const value = run({json.dumps(select['x-model'])});"
+            f"  const shown = run({json.dumps(source)}).find((candidate) =>"
+            "    run(" + json.dumps(option[":value"]) + ", { option: candidate }) === value);"
+            "  console.log(JSON.stringify({ value, label: shown ? run("
+            + json.dumps(option["x-text"])
+            + ", { option: shown }) : null }));"
+            "})();"
+        ),
+        translations=_web_strings(),
+    )
+    assert values == {"value": ITEAD, "label": f"{ITEAD} (missing)"}
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+async def test_a_failing_stick_can_be_corrected_while_the_bridge_retries_it(api):
+    """The reviewer's case: an unrecognised stick is configured and failing,
+    and the user corrects its radio type under Advanced. Apply was enabled
+    in `failed` and disabled in `loading_quirks`/`opening_radio` of every
+    retry - so for most of the first minute the change the failure text
+    asks for was refused, silently. Choosing "No Zigbee stick" mid-retry
+    was refused the same way.
+
+    Blocked now only while a change is being carried out for the first
+    time: `applying`, or a first attempt (`attempts === 0`). The SERVED
+    `:disabled` of the Apply button, in each state.
+
+    Fault to prove it: block Apply in every working state again
+    (`zigbeeRadioPolling()` in `zigbeeCanApply()`)."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+    button, _ = _zigbee_row_element(page, "button", class_="primary")
+    values = _app_state(
+        _BINDINGS_JS
+        + _zigbee_state(
+            f"state.zigbee.configured_path = {json.dumps(UNKNOWN_STICK)};"
+            "state.zigbee.configured_device_present = true;"
+            f"state.zigbeeDraft.path = {json.dumps(UNKNOWN_STICK)};"
+            "state.zigbeeDraft.radioType = 'znp'; state.zigbeeAdvancedEdited = true;"
+            "state.zigbeeDirty = true;"
+            f"const enabled = () => !run({json.dumps(button[':disabled'])});"
+            "const out = {};"
+            "for (const [name, progress] of Object.entries({"
+            "  failed: { state: 'failed', attempts: 3, error: 'e' },"
+            "  retry_quirks: { state: 'loading_quirks', attempts: 3, error: 'e' },"
+            "  retry_opening: { state: 'opening_radio', attempts: 3, error: 'e' },"
+            "  first_quirks: { state: 'loading_quirks', attempts: 0, error: null },"
+            "  first_opening: { state: 'opening_radio', attempts: 0, error: null },"
+            "  applying: { state: 'applying', attempts: 0, error: null },"
+            "})) { state.zigbee.progress = progress; out[name] = enabled(); }"
+            "state.zigbee.progress = { state: 'opening_radio', attempts: 3, error: 'e' };"
+            "state.zigbeeDraft.path = ''; state.zigbeeAdvancedEdited = false;"
+            "out.none_mid_retry = enabled();"
+            "console.log(JSON.stringify(out));"
+        )
+    )
+    assert values == {
+        "failed": True,
+        "retry_quirks": True,
+        "retry_opening": True,
+        "first_quirks": False,
+        "first_opening": False,
+        "applying": False,
+        "none_mid_retry": True,
+    }
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_a_finished_radios_job_reloads_the_zigbee_row():
+    """Turning Thread off in the row above frees the MG24 for Zigbee - and
+    the Zigbee row kept it locked as "in use for Thread" until Rescan or
+    re-entering Settings, because nothing reloaded it.
+
+    The REAL `loadRadios()`: a job seen running and then `done` reloads the
+    Zigbee row once, and so does a job that was already `done` on the first
+    poll after its POST. An ordinary poll with nothing finishing does not
+    reload it - that would double every radios poll.
+
+    Fault to prove it: drop the `if (jobEnded) this.loadZigbeeRadio();`
+    line from `loadRadios()`."""
+    running = {**RADIOS_READY, "job": {"id": "j1", "phase": "otbr", "steps": ["otbr"]}}
+    done = {
+        **RADIOS_READY,
+        "current": {**RADIOS_READY["current"], "thread_enabled": False, "otbr_running": False},
+        "job": {"id": "j1", "phase": "done", "steps": ["otbr"], "error": None},
+    }
+    values = _app_state(
+        _BINDINGS_JS
+        + _zigbee_state(
+            "state.view = 'settings';"
+            "const zigbeeBody = JSON.parse(JSON.stringify(state.zigbee));"
+            "zigbeeBody.serial[0].is_thread = false; zigbeeBody.serial[0].selectable = true;"
+            "let zigbeeGets = 0; let radios;"
+            "state.request = async (method, url) => {"
+            "  if (url === '/api/zigbee/radio') { zigbeeGets += 1; return zigbeeBody; }"
+            "  return radios;"
+            "};"
+            "(async () => {"
+            "  const out = {};"
+            f"  radios = {json.dumps(RADIOS_READY)}; await state.loadRadios(); await state.loadRadios();"
+            "  out.quiet = zigbeeGets;"
+            f"  radios = {json.dumps(running)}; await state.loadRadios();"
+            "  out.running = zigbeeGets;"
+            f"  radios = {json.dumps(done)}; await state.loadRadios();"
+            "  await new Promise((resolve) => setImmediate(resolve));"
+            "  out.done = zigbeeGets;"
+            f"  radios = {json.dumps(done)}; await state.loadRadios();"
+            "  out.doneAgain = zigbeeGets;"
+            f"  out.mg24 = state.zigbeeRadioOptions().find((o) => o.value === {json.dumps(MG24)}).disabled;"
+            "  state.radios = null; zigbeeGets = 0; state.radiosPendingJobId = 'j1';"
+            f"  radios = {json.dumps(done)}; await state.loadRadios();"
+            "  out.fastJob = zigbeeGets;"
+            "  console.log(JSON.stringify(out));"
+            "})();"
+        )
+    )
+    assert values == {
+        "quiet": 0,
+        "running": 0,
+        "done": 1,
+        "doneAgain": 1,
+        "mg24": False,
+        "fastJob": 1,
+    }
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+async def test_the_thread_stick_hint_names_the_stick_and_the_way_out(api):
+    """The Thread stick is listed disabled with its reason at the END of
+    the option label - where a narrow native select cuts it off (measured
+    at 375 px in German: "… · in Verw"). And nothing on the card said how
+    to get it back. The line under the select says both, whenever the list
+    holds the Thread stick, and says nothing when it does not.
+
+    The SERVED `x-show`/`x-text` of that line.
+
+    Fault to prove it: remove the hint's `x-show` condition (it shows with
+    no Thread stick), or return `null` from `zigbeeThreadHint()`."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+    hint, _ = _zigbee_row_element(page, "p", x_text="zigbeeThreadHint()")
+    values = _app_state(
+        _BINDINGS_JS
+        + _zigbee_state(
+            "const out = {};"
+            f"out.locked = [Boolean(run({json.dumps(hint['x-show'])})), run({json.dumps(hint['x-text'])})];"
+            "state.zigbee.serial[0].is_thread = false; state.zigbee.serial[0].selectable = true;"
+            f"out.free = Boolean(run({json.dumps(hint['x-show'])}));"
+            "console.log(JSON.stringify(out));"
+        ),
+        translations=_web_strings(),
+    )
+    shown, text = values["locked"]
+    assert shown is True
+    assert text.startswith("SONOFF Dongle Plus MG24 is in use for Thread")
+    assert "turn Thread off or move Thread to another stick" in text
+    assert values["free"] is False
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_a_zigbee_stick_thread_took_over_reads_as_one_claim():
+    """A stick set up for Zigbee that Thread was later moved onto read
+    "… · in use · in use for Thread" - two claims that seem to contradict
+    each other. It gets one suffix, and the hint names the conflict and
+    both ways out of it.
+
+    Fault to prove it: push `web.radios.in_use` for the configured stick
+    whether or not it is the Thread stick."""
+    values = _app_state(
+        _zigbee_state(
+            f"state.zigbee.configured_path = {json.dumps(MG24)};"
+            "state.zigbee.configured_device_present = true;"
+            "console.log(JSON.stringify({"
+            f"  label: state.zigbeeRadioOptions().find((o) => o.value === {json.dumps(MG24)}).label,"
+            "  hint: state.zigbeeThreadHint(),"
+            "}));"
+        ),
+        translations=_web_strings(),
+    )
+    assert values["label"] == "SONOFF Dongle Plus MG24 · taken over by Thread"
+    assert values["hint"].startswith("SONOFF Dongle Plus MG24 is set up for Zigbee")
+    assert "choose another stick for Zigbee here" in values["hint"]
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_the_german_retry_line_does_not_say_the_bridge_gave_up():
+    """ "Letzter Versuch" reads as "final attempt" - on a line whose whole
+    point (`web.radios.zigbee_failed_retrying`) is that the bridge never
+    gives up. Rendered with the real German table.
+
+    Fault to prove it: put "Letzter Versuch" back into
+    `web.radios.zigbee_retrying_after`."""
+    from loxmatter import i18n
+
+    i18n.set_language("de")
+    german = _web_strings()
+    i18n.set_language("en")
+    values = _app_state(
+        "console.log(JSON.stringify(state.zigbeeProgressText("
+        "  { state: 'opening_radio', attempts: 2, error: 'Der Stick antwortet nicht.' })));",
+        translations=german,
+    )
+    assert (
+        values
+        == "Neuer Verbindungsversuch (Versuch 3). Vorheriger Versuch: Der Stick antwortet nicht."
+    )
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_the_warm_up_line_is_true_for_a_reconnect_too():
+    """After a lost link the supervisor reconnects with `attempts` still 0,
+    so `loading_quirks` shows the first-attempt line - which used to say
+    "the first connection takes a few seconds". Both languages.
+
+    Fault to prove it: put "first connection" / "erste Verbindung" back
+    into `web.radios.zigbee_loading_quirks`."""
+    from loxmatter import i18n
+
+    lines = {}
+    for language in ("en", "de"):
+        i18n.set_language(language)
+        lines[language] = _app_state(
+            "console.log(JSON.stringify(state.zigbeeProgressText({ state: 'loading_quirks', attempts: 0 })));",
+            translations=_web_strings(),
+        )
+    i18n.set_language("en")
+    assert "first" not in lines["en"].lower()
+    assert "erste" not in lines["de"].lower()
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+async def test_the_retry_line_keeps_the_colour_of_the_failure_it_carries(api):
+    """The retry line carries the failure sentence of the `failed` line
+    either side of it, and was grey while that one was red - the same
+    words flipping colour every few seconds. The SERVED `:class`.
+
+    Fault to prove it: colour only `failed` in `zigbeeProgressFailing()`."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+    line, _ = _zigbee_row_element(page, "p", class_="hint radios-zigbee-progress")
+    values = _app_state(
+        _BINDINGS_JS
+        + _zigbee_state(
+            f"state.zigbee.configured_path = {json.dumps(ITEAD)};"
+            "state.zigbee.configured_device_present = true;"
+            "const out = {};"
+            "for (const [name, progress] of Object.entries({"
+            "  failed: { state: 'failed', attempts: 2, error: 'e' },"
+            "  retry: { state: 'opening_radio', attempts: 2, error: 'e' },"
+            "  first: { state: 'opening_radio', attempts: 0, error: null },"
+            "  connected: { state: 'connected', attempts: 0, error: null },"
+            "})) {"
+            "  state.zigbee.progress = progress;"
+            f"  out[name] = run({json.dumps(line[':class'])})['danger-text'];"
+            "}"
+            "console.log(JSON.stringify(out));"
+        )
+    )
+    assert values == {"failed": True, "retry": True, "first": False, "connected": False}
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+async def test_the_live_region_speaks_when_the_news_changes_not_the_counter(api):
+    """The progress line was `role="status"` and carries an attempt counter,
+    so a screen reader re-read a long failure sentence on every retry. The
+    visible line is no live region now; a hidden one is, bound to
+    `zigbeeAnnouncement`, which is written only when its text changes.
+
+    Through the REAL `loadZigbeeRadio()`, counting every write to the field
+    Alpine would re-render.
+
+    Fault to prove it: bind the live region to `zigbeeProgressText(...)`
+    (the markup check fails), put `role="status"` back on the visible line,
+    or write `zigbeeAnnouncement` on every load."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+    live = [
+        attributes
+        for tag, attributes, ancestors in _served_elements(page)
+        if attributes.get("role") == "status"
+        and any(ancestor.get("class") == "radios-zigbee" for _, ancestor in ancestors)
+    ]
+    assert len(live) == 1, live
+    assert live[0].get("x-text") == "zigbeeAnnouncement"
+    assert "radios-zigbee-progress" not in live[0].get("class", "")
+    values = _app_state(
+        _BINDINGS_JS
+        + _zigbee_state(
+            "const writes = [];"
+            "let stored = state.zigbeeAnnouncement;"
+            "Object.defineProperty(state, 'zigbeeAnnouncement', {"
+            "  get: () => stored, set: (value) => { writes.push(value); stored = value; } });"
+            "const base = JSON.parse(JSON.stringify(state.zigbee));"
+            f"base.configured_path = {json.dumps(ITEAD)}; base.configured_device_present = true;"
+            "const answers = ["
+            "  { state: 'failed', attempts: 1, error: 'No answer.' },"
+            "  { state: 'opening_radio', attempts: 1, error: 'No answer.' },"
+            "  { state: 'failed', attempts: 2, error: 'No answer.' },"
+            "  { state: 'failed', attempts: 3, error: 'No answer.' },"
+            "  { state: 'failed', attempts: 4, error: 'Busy.' },"
+            "  { state: 'connected', attempts: 0, error: null },"
+            "  { state: 'connected', attempts: 0, error: null },"
+            "];"
+            "(async () => {"
+            "  for (const progress of answers) {"
+            "    state.request = async () => ({ ...base, progress });"
+            "    await state.loadZigbeeRadio();"
+            "  }"
+            "  console.log(JSON.stringify(writes));"
+            "})();"
+        ),
+        translations=_web_strings(),
+    )
+    assert values == ["No answer.", "Busy.", "Connected"]
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+async def test_the_thread_row_offers_the_zigbee_stick_disabled_with_its_reason(api):
+    """The reverse of the Zigbee row's Thread lock. `POST /api/radios`
+    refuses the Zigbee stick for Thread, but the row offered it, the user
+    confirmed a restart dialog, and only then read the refusal. The row
+    lists it disabled, with the reason, from the server's `is_zigbee`.
+
+    The SERVED `:disabled` and `x-text` of the Thread `<option>`, bound the
+    way Alpine binds them (`boundTrue`) - measured in the browser, an option
+    without a `zigbee` key came out DISABLED, because Alpine turns an
+    `undefined` from `option.zigbee` into `""`. "No Thread stick (Thread
+    off)" was that option.
+
+    Fault to prove it: drop `:disabled="option.zigbee"` from the Thread
+    option, read something other than `is_zigbee` for it, or leave `zigbee`
+    off the "No Thread stick" option."""
+    client, _, _ = api
+    page = _without_comments((await client.get("/")).text)
+    thread_option = next(
+        attributes
+        for tag, attributes, ancestors in _served_elements(page)
+        if tag == "option"
+        and any(
+            ancestor.get("x-for") == "option in radiosThreadOptions()" for _, ancestor in ancestors
+        )
+    )
+    radios = json.loads(json.dumps(RADIOS_READY))
+    radios["serial"][1]["is_zigbee"] = True
+    values = _app_state(
+        _BINDINGS_JS + f"state.radios = {json.dumps(radios)};"
+        "console.log(JSON.stringify(state.radiosThreadOptions().map((option) => ["
+        "  option.value,"
+        f"  boundTrue({json.dumps(thread_option.get(':disabled', 'false'))}, {{ option }}),"
+        f"  run({json.dumps(thread_option['x-text'])}, {{ option }}),"
+        "])));",
+        translations=_web_strings(),
+    )
+    rows = {value: (disabled, label) for value, disabled, label in values}
+    assert rows["/dev/serial/by-id/usb-B"] == (True, "ttyACM0 · in use for Zigbee")
+    assert rows["/dev/serial/by-id/usb-A"][0] is False
+    assert rows[""][0] is False
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+async def test_the_radios_zigbee_hint_names_the_stick_and_the_way_out(api):
+    """The Zigbee stick is listed in the Thread row disabled with its
+    reason at the END of the option label - where a narrow native select
+    cuts it off first (`test_the_thread_row_offers_the_zigbee_stick_disabled_with_its_reason`
+    measured "ttyACM0 · in use for Zigbee"). And nothing on the card said
+    how to get it back. `radiosZigbeeHint()` (mirroring `zigbeeThreadHint()`)
+    is the line under the Thread select that says both, whenever the list
+    holds a Zigbee stick, and says nothing when it does not.
+
+    The SERVED `x-show`/`x-text` of that line.
+
+    Fault to prove it: remove the hint's `x-show` condition (it shows with
+    no Zigbee stick), or return `null` from `radiosZigbeeHint()`."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+    hint = next(
+        attributes
+        for tag, attributes, _ancestors in _served_elements(page)
+        if tag == "p" and attributes.get("x-text") == "radiosZigbeeHint()"
+    )
+    radios = json.loads(json.dumps(RADIOS_READY))
+    radios["serial"][1]["is_zigbee"] = True
+    values = _app_state(
+        _BINDINGS_JS + f"state.radios = {json.dumps(radios)};" + "const out = {};"
+        f"out.locked = [Boolean(run({json.dumps(hint['x-show'])})), run({json.dumps(hint['x-text'])})];"
+        "state.radios.serial[1].is_zigbee = false;"
+        f"out.free = Boolean(run({json.dumps(hint['x-show'])}));"
+        "console.log(JSON.stringify(out));",
+        translations=_web_strings(),
+    )
+    shown, text = values["locked"]
+    assert shown is True
+    assert text.startswith("ttyACM0 is set up for Zigbee, so it cannot be chosen here for Thread")
+    assert "choose another stick for Zigbee" in text
+    assert values["free"] is False
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+async def test_the_radios_zigbee_hint_sits_under_thread_and_names_the_product(api):
+    """Two things the task 13 screenshot in German showed wrong about the
+    line `test_the_radios_zigbee_hint_names_the_stick_and_the_way_out`
+    covers.
+
+    WHERE: it stood under the Bluetooth select. It is about the Thread
+    select, and a reader looks for an explanation under the control it
+    explains - so in document order it comes after the Thread select and
+    before the Bluetooth one.
+
+    WHAT IT CALLS THE STICK: "ttyUSB1 ist für Zigbee eingerichtet", while
+    the Zigbee row's own hint, one row further down, named the same stick
+    "SONOFF ZBDongle-E V2". A stick with no USB product string is named by
+    the fingerprint table's name when the Zigbee row has one for it, in the
+    hint AND in the Thread option it points at; the tty is the last resort.
+
+    Fault to prove it: move the hint back below the Bluetooth row, or drop
+    the fingerprint step from `stickName()`."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+    elements = _served_elements(page)
+
+    def position(predicate) -> int:
+        found = [
+            index
+            for index, (tag, attributes, _) in enumerate(elements)
+            if predicate(tag, attributes)
+        ]
+        assert len(found) == 1, found
+        return found[0]
+
+    thread = position(
+        lambda tag, a: tag == "select" and a.get("x-model") == "radiosDraft.threadDevice"
+    )
+    hint = position(lambda tag, a: tag == "p" and a.get("x-text") == "radiosZigbeeHint()")
+    bluetooth = position(
+        lambda tag, a: tag == "select" and a.get("x-model.number") == "radiosDraft.bluetoothAdapter"
+    )
+    assert thread < hint < bluetooth
+
+    radios = json.loads(json.dumps(RADIOS_READY))
+    radios["serial"][1]["is_zigbee"] = True
+    zigbee = {
+        "serial": [
+            {
+                "path": "/dev/serial/by-id/usb-B",
+                "product": None,
+                "fingerprint": {"name": "SONOFF ZBDongle-E V2", "radio_type": "ezsp"},
+                "is_thread": False,
+                "selectable": True,
+            }
+        ],
+        "configured_path": "/dev/serial/by-id/usb-B",
+    }
+    values = _app_state(
+        f"state.radios = {json.dumps(radios)}; state.zigbee = {json.dumps(zigbee)};"
+        "console.log(JSON.stringify({"
+        "  hint: state.radiosZigbeeHint(),"
+        "  option: state.radiosThreadOptions().find((o) => o.value === '/dev/serial/by-id/usb-B').label,"
+        "  productWins: state.radiosThreadOptions().find((o) => o.value === '/dev/serial/by-id/usb-A').label,"
+        "}));",
+        translations=_web_strings(),
+    )
+    assert values["hint"].startswith("SONOFF ZBDongle-E V2 is set up for Zigbee")
+    assert values["option"] == "SONOFF ZBDongle-E V2"
+    # A stick WITH a product string keeps it: the fingerprint step only
+    # fills a gap, it does not rename what the row already showed.
+    assert values["productWins"] == "SONOFF Dongle Plus MG24 · …50c9"
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+async def test_the_closed_thread_and_bluetooth_selects_drop_the_in_use_suffix(api):
+    """The Zigbee row's rule (`test_the_configured_option_drops_in_use_while_it_is_the_open_draft`),
+    applied to the two rows above it. A native `<select>` shows its CLOSED
+    value with that option's own label, and cuts it off from the right -
+    measured on the maintainer's real stick in German at 375 px: "SONOFF
+    Dongle Plus MG24 · …50c9 · ir". The "in use" marker is left off while
+    the draft still points at the option in use, and comes back on that
+    option in the open list once the draft points elsewhere.
+
+    The SERVED `x-text` of both `<option>`s, with the state as scope. The
+    "taken over by Zigbee" suffix is NOT dropped: it is a conflict the user
+    has to act on, not a restatement of the selection.
+
+    Fault to prove it: drop the draft comparison from
+    `radiosThreadOptionLabel()` or `radiosBluetoothOptionLabel()`."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+
+    def option_text(select_attribute: str, select_value: str) -> str:
+        return next(
+            attributes["x-text"]
+            for tag, attributes, ancestors in _served_elements(page)
+            if tag == "option"
+            and any(ancestor.get(select_attribute) == select_value for _, ancestor in ancestors)
+        )
+
+    thread_text = option_text("x-model", "radiosDraft.threadDevice")
+    bluetooth_text = option_text("x-model.number", "radiosDraft.bluetoothAdapter")
+    values = _radios_values(
+        _BINDINGS_JS + "const label = (expr, value, options) =>"
+        "  run(expr, { option: options.find((o) => o.value === value) });"
+        f"const thread = {json.dumps(thread_text)}; const bluetooth = {json.dumps(bluetooth_text)};"
+        "const out = {};"
+        "out.threadClosed = label(thread, '/dev/serial/by-id/usb-A', state.radiosThreadOptions());"
+        "out.bluetoothClosed = label(bluetooth, 0, state.radiosBluetoothOptions());"
+        "state.radiosDraft = { threadDevice: '/dev/serial/by-id/usb-B', bluetoothAdapter: 1 };"
+        "out.threadOpen = label(thread, '/dev/serial/by-id/usb-A', state.radiosThreadOptions());"
+        "out.bluetoothOpen = label(bluetooth, 0, state.radiosBluetoothOptions());"
+        "state.radiosDraft.threadDevice = '/dev/serial/by-id/usb-A';"
+        "state.radios.serial[0].is_zigbee = true;"
+        "out.takenOver = label(thread, '/dev/serial/by-id/usb-A', state.radiosThreadOptions());"
+        "console.log(JSON.stringify(out));",
+        translations=_web_strings(),
+    )
+    assert values == {
+        "threadClosed": "SONOFF Dongle Plus MG24 · …50c9",
+        "bluetoothClosed": "hci0 · built in (UART)",
+        "threadOpen": "SONOFF Dongle Plus MG24 · …50c9 · in use",
+        "bluetoothOpen": "hci0 · built in (UART) · in use",
+        "takenOver": "SONOFF Dongle Plus MG24 · …50c9 · taken over by Zigbee",
+    }
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+async def test_a_thread_stick_zigbee_took_over_reads_as_one_claim(api):
+    """The Thread-row mirror of `test_a_zigbee_stick_thread_took_over_reads_as_one_claim`:
+    a stick in use for Thread that Zigbee was later set up on read "... ·
+    in use · in use for Zigbee" - two claims that seem to contradict each
+    other. It gets one suffix, and the hint under the select names the
+    conflict and both ways out of it.
+
+    The SERVED `x-text` of the Thread `<option>`, evaluated the way Alpine
+    evaluates it, plus `radiosZigbeeHint()`.
+
+    Fault to prove it: push `web.radios.in_use` and
+    `web.radios.thread_option_zigbee` for the same option unconditionally
+    instead of the single `web.radios.thread_zigbee_took_over`."""
+    client, _, _ = api
+    page = _without_comments((await client.get("/")).text)
+    thread_option = next(
+        attributes
+        for tag, attributes, ancestors in _served_elements(page)
+        if tag == "option"
+        and any(
+            ancestor.get("x-for") == "option in radiosThreadOptions()" for _, ancestor in ancestors
+        )
+    )
+    values = _app_state(
+        _BINDINGS_JS
+        + f"state.radios = {json.dumps(RADIOS_READY)};"
+        + "state.radios.serial[0].is_zigbee = true;"
+        "const option = state.radiosThreadOptions().find((o) => o.value === '/dev/serial/by-id/usb-A');"
+        "console.log(JSON.stringify({"
+        f"  label: run({json.dumps(thread_option['x-text'])}, {{ option }}),"
+        "  hint: state.radiosZigbeeHint(),"
+        "}));",
+        translations=_web_strings(),
+    )
+    assert values["label"] == "SONOFF Dongle Plus MG24 · …50c9 · taken over by Zigbee"
+    assert values["hint"].startswith("SONOFF Dongle Plus MG24 · …50c9 is in use for Thread")
+    assert "choose another stick for Zigbee" in values["hint"]
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_a_zigbee_apply_refreshes_the_thread_rows_lock():
+    """The Thread row learns which stick is the Zigbee one from
+    `GET /api/radios`. Measured in the browser harness: after a Zigbee
+    Apply it kept offering the newly chosen stick for Thread - and would
+    have kept the previous one disabled - until Rescan.
+
+    Fault to prove it: drop the `loadRadios()` call after a successful
+    `PUT` in `applyZigbeeRadio()`."""
+    values = _app_state(
+        _BINDINGS_JS
+        + f"state.radios = {json.dumps(RADIOS_READY)};"
+        + _zigbee_state(
+            f"state.zigbeeDraft.path = {json.dumps(ITEAD)}; state.zigbeeDirty = true;"
+            "const body = JSON.parse(JSON.stringify(state.zigbee));"
+            "const asked = [];"
+            "state.request = async (method, url) => {"
+            "  asked.push(method + ' ' + url);"
+            f"  if (url === '/api/radios') return {json.dumps(RADIOS_READY)};"
+            "  return method === 'GET' ? body : { progress: body.progress };"
+            "};"
+            "(async () => {"
+            "  await state.applyZigbeeRadio();"
+            "  await new Promise((resolve) => setImmediate(resolve));"
+            "  console.log(JSON.stringify(asked));"
+            "})();"
+        )
+    )
+    assert values.index("PUT /api/zigbee/radio") < values.index("GET /api/radios")
+
+
+# ---------------------------------------------------------------------------
+# The Zigbee pairing tab on the commissioning card (design 2026-09-12,
+# section 3.1): the tab strip, the join window and its countdown, and one
+# row per device the radio has seen.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+async def test_the_zigbee_tab_is_absent_without_a_configured_source(api):
+    """Absent, not disabled. A tab that explains why it does nothing is
+    worse than no tab - and an installation with no Zigbee stick is the
+    normal case, not an error state.
+
+    Two halves, because the fault has two.
+
+    The MARKUP half: the tab button sits inside an `x-if` template, which
+    takes it out of the DOM, and carries no `disabled` binding of its own.
+    Every other `nav.tabs` strip in index.html - the language card, the
+    update channel - DOES carry one, so an implementer copying the nearest
+    example writes the fault by hand; this is the assertion that stops it.
+
+    The BEHAVIOUR half: the gate reads the STORED setting
+    (`configured_path` from `GET /api/zigbee/radio`) and not whether `GET
+    /api/zigbee/pairing` answered. That route returns 503 for an
+    unconfigured source AND for the window of a radio swap - the same
+    `_require_source` for both (Task 12) - so a tab gated on the list
+    having loaded would disappear under the user mid-swap, which is the
+    same bug as never showing it, arriving at a worse moment.
+
+    Fault to prove it: render the tab disabled instead."""
+    client, _, _ = api
+    markup = _without_comments((await client.get("/")).text)
+
+    # The tag the label lives in, located the way
+    # `test_a_stalled_sidecar_gets_its_own_message_in_the_running_state`
+    # locates its own - `rindex` back to the opening tag, `index` forward
+    # to its `>` - rather than by retyping the markup here.
+    label_at = markup.index("t('web.zigbee.tab')")
+    tag = markup[markup.rindex("<button", 0, label_at) : markup.index(">", label_at)]
+    assert "disabled" not in tag, tag
+
+    # ABSENT: an `x-if` template encloses the button. `x-show` would leave
+    # a hidden control on the strip and `:disabled` a visible dead one -
+    # and the `</template>` check is what proves this template is the
+    # button's OWN enclosure rather than an earlier one already closed.
+    gate_at = markup.rindex("<template x-if=", 0, label_at)
+    assert "</template>" not in markup[gate_at:label_at]
+    gate_match = re.match(r'<template x-if="([^"]*)"', markup[gate_at:])
+    assert gate_match, markup[gate_at : gate_at + 120]
+    assert "zigbeeTabVisible()" in gate_match.group(1)
+
+    # And the gate's own answer, from the REAL helper.
+    values = _app_state(
+        setup="const answer = (zigbee, pairing, error) => {"
+        "  state.zigbee = zigbee;"
+        "  state.zigbeePairing = pairing;"
+        "  state.zigbeePairingError = error ?? null;"
+        "  return state.zigbeeTabVisible();"
+        "};"
+        "console.log(JSON.stringify({"
+        "  nothing_loaded: answer(null, null, null),"
+        "  unconfigured: answer({ configured_path: null }, null, null),"
+        "  configured: answer({ configured_path: '/dev/serial/by-id/a' },"
+        "    { permit_until: null, rows: [] }, null),"
+        "  mid_swap: answer({ configured_path: '/dev/serial/by-id/a' }, null,"
+        "    'There is no Zigbee radio configured.'),"
+        "}));"
+    )
+    # Nothing configured, and nothing known yet: no tab either way. The
+    # second is the state the page is in for the instant between login and
+    # the first answer, and a tab that flickered into existence there would
+    # be worse than one that arrives a moment late.
+    assert values["unconfigured"] is False
+    assert values["nothing_loaded"] is False
+    # Configured: offered.
+    assert values["configured"] is True
+    # Configured, and the pairing list is currently answering 503 because
+    # the radio is being swapped. The tab STAYS. This is the assertion that
+    # separates "reads the stored setting" from "reads whether the list
+    # loaded"; without it both implementations pass.
+    assert values["mid_swap"] is True
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+async def test_the_countdown_is_computed_from_the_server_timestamp(api):
+    """ZHA starts its permit window when the page OPENS and runs a
+    browser-side setTimeout(254000), so a reloaded page silently restarts
+    the countdown while the real window is nearly over. The API returns
+    `permit_until`, and this counts down to it - so a reload, a second tab
+    and a phone all show the same truth.
+
+    `permit_until` is `null` whenever the window is not open, and that is
+    not an edge case: it is what `GET /api/zigbee/pairing` reports after a
+    Stop, after the duration ran out, and after the radio went away while
+    the rows stayed (Task 12). Null is therefore zero seconds left - never
+    `NaN`, which renders as "Open for NaN s", and never a negative number
+    ticking downwards past zero.
+
+    Fault to prove it: count down from a duration stored when the button was
+    pressed."""
+    values = _app_state(
+        setup="state.zigbeePermitUntil = new Date(Date.now() + 60000).toISOString();"
+        "const open = state.zigbeeCountdown();"
+        "state.zigbeePermitUntil = null;"
+        "const closed = state.zigbeeCountdown();"
+        "state.zigbeePermitUntil = new Date(Date.now() - 5000).toISOString();"
+        "const past = state.zigbeeCountdown();"
+        "console.log(JSON.stringify({ left: open, closed, past }));"
+    )
+    assert 55 <= values["left"] <= 60
+    assert values["closed"] == 0
+    assert values["past"] == 0
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+async def test_the_window_is_not_open_before_the_user_asks(api):
+    """The tab opens on reset guidance and one button. ZHA opens the network
+    as the page loads and burns the window while the user is still reading
+    how to reset their device.
+
+    Runs the REAL tab switch with `request` recording every call, and then
+    presses Start - because a test that only asserted "no permit on open"
+    would also pass for a tab whose button never opens the window at all,
+    which is the same screen from the user's side and the opposite bug.
+
+    The duration is the server's own `PERMIT_MAX_SECONDS`, imported rather
+    than retyped: `ZigbeePermitIn` bounds the field at exactly that value
+    and 422s anything above it, so a page and a schema that disagreed would
+    fail as a validation error nobody would read as "the maximum moved".
+
+    Fault to prove it: call the permit route from the tab's init."""
+    values = _app_state(
+        setup="""
+        const calls = [];
+        state.request = async (method, path, body) => {
+          calls.push([method, path, body ?? null]);
+          if (path === "/api/zigbee/pairing") {
+            return { permit_until: null, rows: [] };
+          }
+          if (path === "/api/zigbee/permit") {
+            return { permit_until: "2026-09-12T20:04:14+00:00" };
+          }
+          throw new Error("unexpected " + method + " " + path);
+        };
+        state.zigbee = { configured_path: "/dev/serial/by-id/a" };
+        (async () => {
+          await state.selectCommissionTab("zigbee");
+          const onOpen = { calls: calls.slice(), permitUntil: state.zigbeePermitUntil };
+          await state.startZigbeeSearch();
+          console.log(JSON.stringify({
+            onOpen,
+            afterStart: calls,
+            permitUntilAfterStart: state.zigbeePermitUntil,
+          }));
+        })();
+        """
+    )
+
+    # Opening the tab reads the list and does nothing else. `permit_until`
+    # comes back null from that read, which is also exactly what the route
+    # reports for a window that has closed - so the tab never has to guess
+    # which of the two it is looking at.
+    assert [call[:2] for call in values["onOpen"]["calls"]] == [["GET", "/api/zigbee/pairing"]]
+    assert values["onOpen"]["permitUntil"] is None
+    # And the button does open it, at the protocol maximum the schema
+    # allows - the other half of the fault, and the one a "no request on
+    # open" assertion alone cannot see.
+    assert ["POST", "/api/zigbee/permit", {"duration": PERMIT_MAX_SECONDS}] in values["afterStart"]
+    assert values["permitUntilAfterStart"] == "2026-09-12T20:04:14+00:00"
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+@pytest.mark.parametrize(
+    "state_name",
+    ["joined", "interviewing", "configuring", "ready", "failed", "stuck", "waiting_wake"],
+)
+async def test_every_row_state_renders_its_own_text(api, state_name):
+    """The seven states of design 3.1. The last two - stuck and waiting to
+    wake - are the ones ZHA does not have, and they are the reason this tab
+    is worth building rather than copying.
+
+    Three of the seven are not stored on `PairingRow` at all: `configuring`
+    and `waiting_wake` are overlaid per request by `api/zigbee.py`'s
+    `_row_status`, `stuck` is an age computed by `_stuck`. They arrive in
+    the same `state` field as the other four and the page may not treat
+    them as a lesser kind - which is exactly what collapsing one into a
+    neighbour does.
+
+    Run twice, on purpose. WITHOUT a translation table `t()` returns the
+    key it was handed (`_app_state`'s own docstring), so the first run is
+    the assertion on the KEY: this state reads its own string and no
+    other's. WITH the real table - `_web_strings()`, what `GET /api/i18n`
+    actually sends the browser - the second run proves the key resolves to
+    a real sentence and that the seven sentences are seven, not six.
+    Neither run contains an English string typed into this file.
+
+    The seven are rendered on a row already in the device list. A ready row
+    NOT added yet has an eighth sentence of its own
+    (`web.zigbee.state_ready_to_add`): "Ready to use" in green read as
+    finished there, and the device never reached Loxone because nobody
+    pressed Add. It is checked on every run to be a different sentence from
+    all seven, so it cannot quietly become one of them.
+
+    Fault to prove it: collapse `stuck` into `failed`. A battery device that
+    simply fell asleep is then presented as a broken one, and the user
+    removes it. For the eighth: let an unadopted ready row read
+    `state_ready`."""
+    from loxmatter import i18n
+
+    states = [
+        "joined",
+        "interviewing",
+        "configuring",
+        "ready",
+        "failed",
+        "stuck",
+        "waiting_wake",
+    ]
+    key = f"web.zigbee.state_{state_name}"
+    # Both languages, from the shipped table. A state whose English
+    # sentence exists and whose German one does not is a German user
+    # reading a dotted key inside a German frame.
+    assert set(i18n._STRINGS[key]) >= {"en", "de"}
+    assert set(i18n._STRINGS["web.zigbee.state_ready_to_add"]) >= {"en", "de"}
+
+    row_js = (
+        "{{ ieee: '00:12:4b:00:24:c2:1a:7e', state: {name!r}, manufacturer: 'IKEA of Sweden',"
+        " model: 'TRADFRI bulb E27', quirk_applied: true, discovered: true,"
+        " changed_at: '2026-09-12T20:00:00+00:00',"
+        " suggested_name: 'IKEA of Sweden TRADFRI bulb E27',"
+        " device_id: {device_id}, name: null, room: null }}"
+    )
+    calls = ", ".join(
+        f"{name}: state.zigbeeRowState({row_js.format(name=name, device_id=7)})" for name in states
+    )
+    to_add = f"state.zigbeeRowState({row_js.format(name='ready', device_id='null')})"
+    setup = "console.log(JSON.stringify({" + calls + ", ready_to_add: " + to_add + "}));"
+    keys = _app_state(setup=setup)
+    texts = _app_state(setup=setup, translations=_web_strings())
+
+    assert keys[state_name] == key
+    assert keys["ready_to_add"] == "web.zigbee.state_ready_to_add"
+    seven = {name: text for name, text in texts.items() if name != "ready_to_add"}
+    assert texts["ready_to_add"] not in seven.values(), texts
+    assert "{" not in texts["ready_to_add"], texts["ready_to_add"]
+    # A `{placeholder}` still standing means the row field it names is
+    # spelled differently on the wire than in strings.yaml - the sentence
+    # renders, and says "Found {model}".
+    assert "{" not in texts[state_name], texts[state_name]
+    others = {name: text for name, text in seven.items() if name != state_name}
+    assert texts[state_name] not in others.values(), (state_name, texts)
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+async def test_a_stuck_row_still_offers_retry_and_remove_and_keeps_waiting(api):
+    """A stuck row is NOT an error row.
+
+    `stuck` is not a state the source stores. `api/zigbee.py`'s `_stuck`
+    computes it from `changed_at` against `is_mains_powered` - 60 s for a
+    mains device, 90 s for a battery one - and sends it down in `state`
+    like any other, so the page sees an ordinary row and has to keep
+    treating it as one. The usual cause is a battery device that fell
+    asleep and the usual fix is pressing its button; a row presented as a
+    failure is how a user comes to remove a device that was about to
+    finish.
+
+    The two `x-show` expressions are pulled out of the SERVED markup and
+    evaluated through `with (state)`, which is the scope Alpine gives them
+    itself: a retyped copy would only prove it agrees with itself, and a
+    substring check on the markup cannot fail for a condition that is
+    merely wrong. `row` is a parameter of that function rather than a
+    property of `state`, so nothing on the component shadows it.
+
+    Retry has to be hidden SOMEWHERE, or `x-show="true"` would satisfy
+    every other assertion here. A ready row is that somewhere: it has
+    nothing to re-interview and shows the name and room fields instead
+    (design 3.1 offers Retry on the failed row only).
+
+    "Keeps waiting" is measured on the text: a stuck row still says what
+    design 3.1 says it says - press the device's button - rather than the
+    failed row's "could not read this device". That overlaps
+    `test_every_row_state_renders_its_own_text` deliberately. Hiding the
+    actions and relabelling the row are the same misreading of what stuck
+    means, and they are normally committed in the same edit.
+
+    Fault to prove it: hide the actions while stuck."""
+    client, _, _ = api
+    markup = _without_comments((await client.get("/")).text)
+
+    def action_show(call: str) -> str:
+        at = markup.index(call)
+        tag = markup[markup.rindex("<button", 0, at) : markup.index(">", at)]
+        match = re.search(r'x-show="([^"]*)"', tag)
+        assert match, f"the {call} button must be gated by an x-show: {tag}"
+        return match.group(1)
+
+    retry_expr = action_show("retryZigbeeDevice(")
+    remove_expr = action_show("removeZigbeeDevice(")
+    evaluator = f"with (state) {{ return [Boolean({retry_expr}), Boolean({remove_expr})]; }}"
+
+    values = _app_state(
+        setup="const shown = new Function('state', 'row', " + json.dumps(evaluator) + ");\n"
+        "const out = {};\n"
+        "for (const name of ['joined', 'interviewing', 'configuring', 'ready',\n"
+        "                    'failed', 'stuck', 'waiting_wake']) {\n"
+        "  out[name] = shown(state, { ieee: '00:12:4b:00:24:c2:1a:7e', state: name,\n"
+        "    manufacturer: 'IKEA of Sweden', model: 'TRADFRI bulb E27',\n"
+        "    quirk_applied: true, discovered: true,\n"
+        "    changed_at: '2026-09-12T20:00:00+00:00',\n"
+        "    suggested_name: 'IKEA of Sweden TRADFRI bulb E27',\n"
+        "    device_id: null, name: null, room: null });\n"
+        "}\n"
+        "out.stuckText = state.zigbeeRowState({ state: 'stuck' });\n"
+        "out.failedText = state.zigbeeRowState({ state: 'failed' });\n"
+        "console.log(JSON.stringify(out));",
+        translations=_web_strings(),
+    )
+
+    # Both actions, on a stuck row, exactly as on the failed row the
+    # design names them for.
+    assert values["stuck"] == [True, True]
+    assert values["failed"] == [True, True]
+    # And not everywhere - otherwise the two lines above prove nothing.
+    assert values["ready"][0] is False
+    # Keeps waiting rather than reporting a failure.
+    assert values["stuckText"] and values["failedText"]
+    assert values["stuckText"] != values["failedText"]
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+async def test_leaving_the_tab_closes_the_join_window(api):
+    """ZHA never closes its window when the page is left, and that is a
+    standing complaint - an open Zigbee network is one any passing device
+    can join.
+
+    Closing is `permit(0)` on the same route: `ZigbeePermitIn` allows a
+    duration of 0 and documents it as Stop, so this needs no second
+    endpoint and no second piece of server state.
+
+    It is sent ONLY when a window is actually open. `permit_until` is null
+    whenever it is not - after a Stop, after the duration elapsed, and
+    after the radio went away, which closes the window on the source's side
+    without being asked (`connection_lost` and `disconnect()` both do it,
+    while the rows stay listed). A tab change that sent `permit(0)`
+    unconditionally would aim a request at a bridge with no source - mid
+    swap, or with the setting just cleared - and collect the 503 of
+    `_require_source`: an error banner for doing nothing wrong, on the very
+    click that was supposed to be tidy. (A Stop after a lost link is a 200
+    with `permit_until: null` on the server's side; the 503 is what is
+    left.)
+
+    And only a window THIS page opened: the window here is opened with the
+    tab's own Start, which is what makes it this page's to close, and the
+    Stop carries its end time so the server closes nothing else
+    (`test_only_a_window_opened_here_is_closed_on_leaving` covers a window
+    seen only through the poll).
+
+    Fault to prove it: leave the window open on tab change."""
+    values = _app_state(
+        setup="""
+        let calls = [];
+        state.request = async (method, path, body) => {
+          calls.push([method, path, body ?? null]);
+          if (path === "/api/zigbee/pairing") return { permit_until: null, rows: [] };
+          if (path === "/api/zigbee/permit") {
+            return { permit_until: body.duration > 0 ? new Date(Date.now() + 60000).toISOString() : null };
+          }
+          throw new Error("unexpected " + method + " " + path);
+        };
+        state.zigbee = { configured_path: "/dev/serial/by-id/a" };
+        (async () => {
+          // A window opened with the tab's own Start, and the user presses
+          // Matter.
+          state.commissionTab = "zigbee";
+          await state.startZigbeeSearch();
+          const opened = state.zigbeePermitUntil;
+          calls = [];
+          await state.selectCommissionTab("matter");
+          const closing = { calls, opened, permitUntil: state.zigbeePermitUntil };
+
+          // And again with nothing open - the radio went away and the
+          // source closed the window without being asked. `calls` is
+          // REBOUND rather than emptied, so `closing.calls` above keeps
+          // the array it captured.
+          calls = [];
+          state.commissionTab = "zigbee";
+          state.zigbeePermitUntil = null;
+          await state.selectCommissionTab("matter");
+
+          console.log(JSON.stringify({ closing, quiet: calls }));
+        })();
+        """
+    )
+
+    closing_permits = [call for call in values["closing"]["calls"] if call[1].endswith("/permit")]
+    opened = values["closing"]["opened"]
+    assert closing_permits == [
+        ["POST", "/api/zigbee/permit", {"duration": 0, "only_if_until": opened}]
+    ]
+    assert values["closing"]["permitUntil"] is None
+    # Nothing open, nothing sent.
+    assert [call for call in values["quiet"] if call[1].endswith("/permit")] == []
+
+
+async def test_the_matter_tab_keeps_the_card_it_had(api):
+    """The Matter half must be the same card, not a rebuilt one: the code
+    field, its detection chip, the sticker illustration and both
+    disclosures.
+
+    Fault to prove it: drop the sticker `<svg>` while restructuring."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+    for marker in ('id="commission-code"', "code-sticker", "commission-disclosure"):
+        assert marker in page
+
+
+def _pairing_element(markup: str, tag: str, **wanted: str) -> dict[str, str]:
+    """The one `tag` inside the Zigbee tab whose attributes include every
+    `wanted` pair, spelled the way `_zigbee_row_element` spells them."""
+
+    def spelled(name: str) -> str:
+        if name.startswith("at_"):
+            return "@" + name[3:].replace("_", "-")
+        if name.startswith("colon_"):
+            return ":" + name[6:].replace("_", "-")
+        return name.rstrip("_").replace("_", "-")
+
+    matches = [
+        attributes
+        for element_tag, attributes, ancestors in _served_elements(markup)
+        if element_tag == tag
+        and any("zigbee-pairing" in ancestor.get("class", "").split() for _, ancestor in ancestors)
+        and all(attributes.get(spelled(name)) == value for name, value in wanted.items())
+    ]
+    assert len(matches) == 1, (
+        f"expected one <{tag}> {wanted} in the Zigbee tab, found {len(matches)}"
+    )
+    return matches[0]
+
+
+# A `GET /api/zigbee/pairing` body: one device already adopted as "Desk lamp"
+# and one ready device nobody has named yet.
+_PAIRING_BODY = {
+    "permit_until": None,
+    "rows": [
+        {
+            "ieee": "00:12:4b:00:24:c2:1a:7e",
+            "state": "ready",
+            "manufacturer": "IKEA of Sweden",
+            "model": "TRADFRI bulb E27",
+            "quirk_applied": True,
+            "discovered": False,
+            "changed_at": "2026-09-12T20:00:00+00:00",
+            "suggested_name": "IKEA of Sweden TRADFRI bulb E27",
+            "device_id": 7,
+            "name": "Desk lamp",
+            "room": None,
+        },
+        {
+            "ieee": "00:15:8d:00:07:77:88:07",
+            "state": "waiting_wake",
+            "manufacturer": "Aqara",
+            "model": "Motion sensor P1",
+            "quirk_applied": False,
+            "discovered": False,
+            "changed_at": "2026-09-12T20:01:00+00:00",
+            "suggested_name": "Aqara Motion sensor P1",
+            "device_id": None,
+            "name": None,
+            "room": None,
+        },
+    ],
+}
+_ADOPTED = "00:12:4b:00:24:c2:1a:7e"
+_UNNAMED = "00:15:8d:00:07:77:88:07"
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+async def test_a_poll_does_not_overwrite_a_name_being_typed(api):
+    """The list is polled every two seconds while a device is being set up,
+    and the name field is filled from it. A poll that wrote the stored name
+    back into the field took the word being typed away mid-keystroke - the
+    same bug as a poll snapping a select back under the user's hand.
+
+    The SERVED `x-model` (as the assignment Alpine makes) and `@input` of
+    the name field, then real polls, for an adopted row and for one not
+    added yet - whose typed name has nowhere to be saved until "Add to
+    devices" is pressed, so it must survive any number of polls.
+
+    Fault to prove it: sync the draft from every GET regardless of
+    `nameDirty` in `syncZigbeeDrafts()`."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+    name_input = _pairing_element(page, "textarea", x_model="zigbeeRowDrafts[row.ieee].name")
+    values = _app_state(
+        _BINDINGS_JS + f"const body = {json.dumps(_PAIRING_BODY)};"
+        "state.request = async () => JSON.parse(JSON.stringify(body));"
+        "(async () => {"
+        "  await state.loadZigbeePairing();"
+        "  const out = {};"
+        f"  for (const ieee of [{json.dumps(_ADOPTED)}, {json.dumps(_UNNAMED)}]) {{"
+        "    const row = state.zigbeeRow(ieee);"
+        f"    exec({json.dumps(name_input['x-model'])} + ' = __value', {{ row, __value: 'Hall li' }});"
+        f"    exec({json.dumps(name_input['@input'])}, {{ row }});"
+        "  }"
+        "  await state.loadZigbeePairing();"
+        "  await state.loadZigbeePairing();"
+        f"  out.adopted = state.zigbeeRowDrafts[{json.dumps(_ADOPTED)}].name;"
+        f"  out.unnamed = state.zigbeeRowDrafts[{json.dumps(_UNNAMED)}].name;"
+        "  console.log(JSON.stringify(out));"
+        "})();"
+    )
+    assert values == {"adopted": "Hall li", "unnamed": "Hall li"}
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+async def test_the_name_is_saved_on_blur_only_when_it_changed_and_a_refusal_stays_on_the_row(api):
+    """Saved on blur, which means a blur happens every time the user tabs
+    through the row - and a PATCH for each of those would re-register a
+    device nobody changed. Only a changed name is sent. A refused save (the
+    409 of a row that went back to interviewing while the name was being
+    typed) is shown on that row, and the next poll does not wipe it or the
+    name that was refused.
+
+    The SERVED `@input` and `@blur` of the name field.
+
+    Fault to prove it: drop the `name === row.name` early return from
+    `saveZigbeeName()`, or clear `zigbeeRowErrors` in `loadZigbeePairing()`."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+    name_input = _pairing_element(page, "textarea", x_model="zigbeeRowDrafts[row.ieee].name")
+    values = _app_state(
+        _BINDINGS_JS + f"const body = {json.dumps(_PAIRING_BODY)};"
+        "const sent = [];"
+        "let refuse = false;"
+        "state.request = async (method, path, payload) => {"
+        "  if (method === 'PATCH') {"
+        "    sent.push(payload);"
+        "    if (refuse) { const error = new Error('This device is not ready yet.'); error.status = 409; throw error; }"
+        "    return { ...body.rows[0], name: payload.name };"
+        "  }"
+        "  if (path === '/api/devices') return [];"
+        "  if (path === '/api/zigbee/pairing') return JSON.parse(JSON.stringify(body));"
+        "  return [];"
+        "};"
+        "(async () => {"
+        "  await state.loadZigbeePairing();"
+        f"  const row = () => state.zigbeeRow({json.dumps(_ADOPTED)});"
+        f"  const blur = () => run({json.dumps(name_input['@blur'])}, {{ row: row() }});"
+        "  const type = (value) => {"
+        f"    exec({json.dumps(name_input['x-model'])} + ' = __value', {{ row: row(), __value: value }});"
+        f"    exec({json.dumps(name_input['@input'])}, {{ row: row() }});"
+        "  };"
+        "  await blur();"
+        "  const untouched = sent.length;"
+        "  type('Desk lamp'); await blur();"
+        "  const retypedSame = sent.length;"
+        "  type('Reading lamp'); await blur();"
+        "  const changed = sent.slice();"
+        "  refuse = true;"
+        "  type('Hall light'); await blur();"
+        "  await state.loadZigbeePairing();"
+        "  console.log(JSON.stringify({ untouched, retypedSame, changed,"
+        "    error: state.zigbeeRowError(row()),"
+        f"    draft: state.zigbeeRowDrafts[{json.dumps(_ADOPTED)}].name }}));"
+        "})();"
+    )
+    assert values["untouched"] == 0
+    assert values["retypedSame"] == 0
+    assert values["changed"] == [{"name": "Reading lamp"}]
+    assert values["error"] == "This device is not ready yet."
+    assert values["draft"] == "Hall light"
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_an_added_zigbee_device_reaches_the_device_list():
+    """ "Add to devices" registers the device on the server - and the device
+    list in this page reloads only on commissioning, removal and a
+    reconnect. Without a reload of its own the new tile appeared on the
+    next page load, which reads as "adding did nothing".
+
+    The REAL `adoptZigbeeDevice()`: the PATCH carries the prefilled name
+    and the chosen room, and `GET /api/devices` follows it, with the new
+    device's controls and signals.
+
+    Fault to prove it: drop the `refreshAdoptedZigbeeDevice()` call from
+    `adoptZigbeeDevice()`."""
+    values = _app_state(
+        _BINDINGS_JS + f"const body = {json.dumps(_PAIRING_BODY)};"
+        "const asked = [];"
+        "state.request = async (method, path, payload) => {"
+        "  asked.push([method, path, payload ?? null]);"
+        f"  if (method === 'PATCH') return {{ ...body.rows[1], device_id: 9, name: payload.name, room: payload.room ?? null }};"
+        "  if (path === '/api/zigbee/pairing') return JSON.parse(JSON.stringify(body));"
+        "  if (path === '/api/devices') return [{ id: 9, label: 'Aqara Motion sensor P1', room: 'Hall' }];"
+        "  return [];"
+        "};"
+        "(async () => {"
+        "  await state.loadZigbeePairing();"
+        f"  state.zigbeeRowDrafts[{json.dumps(_UNNAMED)}].room = 'Hall';"
+        f"  await state.adoptZigbeeDevice({json.dumps(_UNNAMED)});"
+        "  console.log(JSON.stringify({ asked: asked.filter(([m, p]) => p !== '/api/zigbee/pairing'),"
+        "    devices: state.devices.map((d) => d.id) }));"
+        "})();"
+    )
+    requests = [call[:2] for call in values["asked"]]
+    assert values["asked"][0] == [
+        "PATCH",
+        f"/api/zigbee/pairing/{_UNNAMED.replace(':', '%3A')}",
+        {"name": "Aqara Motion sensor P1", "room": "Hall"},
+    ]
+    assert requests.index(["GET", "/api/devices"]) > 0
+    assert ["GET", "/api/devices/9/controls"] in requests
+    assert ["GET", "/api/devices/9/signals"] in requests
+    assert values["devices"] == [9]
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_leaving_the_devices_view_closes_the_join_window_and_stops_the_poll():
+    """The Matter tab is one way to leave the Zigbee tab; leaving the whole
+    Devices view is the other, and the more common one. Through the REAL
+    `selectView('export')`: an open window is closed with `permit(0)`, the
+    armed poll is cleared, and a list load that was already in flight when
+    the view changed arms no new timer when it finishes.
+
+    Fault to prove it: drop the `if (view !== "devices")` block from
+    `selectView()`, or the on-screen guard in `scheduleZigbeePairingLoad()`."""
+    values = _app_state(
+        "globalThis.window = { location: { hash: '' }, history: { replaceState() {} } };"
+        "let armed = 0; let cleared = 0;"
+        "globalThis.setTimeout = () => { armed += 1; return armed; };"
+        "globalThis.clearTimeout = () => { cleared += 1; };"
+        "const calls = [];"
+        f"const body = {json.dumps(_PAIRING_BODY)};"
+        "let release;"
+        "state.request = async (method, path, payload) => {"
+        "  calls.push([method, path, payload ?? null]);"
+        "  if (path === '/api/zigbee/pairing') {"
+        "    if (release === undefined) return JSON.parse(JSON.stringify(body));"
+        "    await new Promise((resolve) => { release = resolve; });"
+        "    return JSON.parse(JSON.stringify(body));"
+        "  }"
+        "  if (path === '/api/zigbee/permit') return { permit_until: payload.duration > 0"
+        "    ? new Date(Date.now() + 60000).toISOString() : null };"
+        "  return [];"
+        "};"
+        "state.authenticated = true; state.view = 'devices';"
+        "state.zigbee = { configured_path: '/dev/serial/by-id/a' };"
+        "(async () => {"
+        "  await state.selectCommissionTab('zigbee');"
+        "  const armedOnScreen = state.zigbeePairingTimer !== null;"
+        "  await state.startZigbeeSearch();"
+        "  const opened = state.zigbeePermitUntil;"
+        "  calls.length = 0;"
+        "  release = null;"
+        "  const inFlight = state.loadZigbeePairing();"
+        "  await new Promise((resolve) => setImmediate(resolve));"
+        "  const armedBefore = armed;"
+        "  await state.selectView('export');"
+        "  release();"
+        "  await inFlight;"
+        "  console.log(JSON.stringify({ armedOnScreen, opened,"
+        "    permits: calls.filter(([, p]) => p === '/api/zigbee/permit'),"
+        "    timer: state.zigbeePairingTimer, armedAfterLeaving: armed - armedBefore }));"
+        "})();"
+    )
+    assert values["armedOnScreen"] is True
+    assert values["permits"] == [
+        ["POST", "/api/zigbee/permit", {"duration": 0, "only_if_until": values["opened"]}]
+    ]
+    assert values["timer"] is None
+    assert values["armedAfterLeaving"] == 0
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+async def test_the_pairing_buttons_are_enabled_the_way_alpine_binds_them(api):
+    """Every `:disabled` in the Zigbee tab, evaluated through the served
+    markup and Alpine's own coercion (`boundTrue`): an expression that
+    reads `undefined` through a dot binds as `""`, which SETS the attribute.
+    That is how "No Thread stick" once became unselectable with every test
+    green, and a per-row lookup such as `zigbeeRowBusy[row.ieee]` is exactly
+    that shape for every row nothing is running on.
+
+    Idle: every button enabled. A 503 from the list (`radio_changing`):
+    Start and every row button disabled, because each of them could only
+    answer 503 too - and the tab and its detail stay.
+
+    Fault to prove it: bind a row button's `:disabled` to
+    `zigbeeRowBusy[row.ieee]`, or drop `zigbeePairingUnavailable` from
+    `zigbeeRowLocked()`."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+    buttons = [
+        attributes
+        for tag, attributes, ancestors in _served_elements(page)
+        if tag == "button"
+        and any("zigbee-pairing" in ancestor.get("class", "").split() for _, ancestor in ancestors)
+    ]
+    handlers = sorted(button.get("@click", "") for button in buttons)
+    assert handlers == sorted(
+        [
+            "startZigbeeSearch()",
+            "stopZigbeeSearch()",
+            "extendZigbeeSearch()",
+            "adoptZigbeeDevice(row.ieee)",
+            "retryZigbeeDevice(row.ieee)",
+            "removeZigbeeDevice(row.ieee)",
+        ]
+    )
+    expressions = {button["@click"]: button.get(":disabled", "false") for button in buttons}
+    values = _app_state(
+        _BINDINGS_JS + f"const body = {json.dumps(_PAIRING_BODY)};"
+        f"const expressions = {json.dumps(expressions)};"
+        "let fail = false;"
+        "state.request = async () => {"
+        "  if (fail) {"
+        "    const error = new Error('The Zigbee radio is being changed.'); error.status = 503; throw error;"
+        "  }"
+        "  return JSON.parse(JSON.stringify(body));"
+        "};"
+        "state.zigbee = { configured_path: '/dev/serial/by-id/a' };"
+        "state.authenticated = true;"
+        "const disabled = () => Object.fromEntries(Object.entries(expressions).map(([click, expr]) =>"
+        f"  [click, boundTrue(expr, {{ row: state.zigbeeRow({json.dumps(_ADOPTED)}) }})]));"
+        "(async () => {"
+        "  await state.loadZigbeePairing();"
+        "  const idle = disabled();"
+        "  fail = true;"
+        "  state.loadZigbeeRadio = async () => {};"
+        "  await state.loadZigbeePairing();"
+        "  console.log(JSON.stringify({ idle, swapping: disabled(),"
+        "    error: state.zigbeePairingError, tab: state.zigbeeTabVisible() }));"
+        "})();"
+    )
+    assert set(values["idle"].values()) == {False}, values["idle"]
+    swapping = values["swapping"]
+    assert swapping["startZigbeeSearch()"] is True
+    for click in (
+        "adoptZigbeeDevice(row.ieee)",
+        "retryZigbeeDevice(row.ieee)",
+        "removeZigbeeDevice(row.ieee)",
+    ):
+        assert swapping[click] is True, click
+    assert values["error"] == "The Zigbee radio is being changed."
+    assert values["tab"] is True
+
+
+# ---------------------------------------------------------------------------
+# The Zigbee tab, after review: who closes a window, what a reload shows, and
+# the brief's own rules measured through the served bindings.
+# ---------------------------------------------------------------------------
+
+# A page logged in on the Devices view with a stick configured and the Zigbee
+# tab selected. `window` carries what `selectView()` writes the view into and
+# what `removeZigbeeDevice()` confirms with.
+_PAIRING_PAGE_JS = (
+    "globalThis.window = { location: { hash: '' }, history: { replaceState() {} },"
+    "  confirm: () => true };"
+    "state.authenticated = true; state.view = 'devices';"
+    "state.zigbee = { configured_path: '/dev/serial/by-id/a' };"
+    "state.commissionTab = 'zigbee';"
+    "const future = () => new Date(Date.now() + 254000).toISOString();"
+    "const settle = () => new Promise((resolve) => setImmediate(resolve));"
+    "const radioBody = { configured_path: '/dev/serial/by-id/a', serial: [],"
+    "  configured_device_present: true,"
+    "  progress: { state: 'connected', attempts: 0, error: null, changed_at: 'x' } };"
+)
+
+
+def _pairing_row_js(state: str, device_id: object) -> str:
+    """One `GET /api/zigbee/pairing` row as JS, in the route's own shape."""
+    return (
+        "{ ieee: '00:12:4b:00:24:c2:1a:7e', state: "
+        + json.dumps(state)
+        + ", manufacturer: 'IKEA of Sweden', model: 'TRADFRI bulb E27',"
+        " quirk_applied: true, discovered: true, changed_at: '2026-09-12T20:00:00+00:00',"
+        " suggested_name: 'IKEA of Sweden TRADFRI bulb E27', device_id: "
+        + json.dumps(device_id)
+        + ", name: null, room: null }"
+    )
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_leaving_while_start_is_under_way_closes_the_window_it_opens():
+    """Start pressed, and the tab left before its answer arrived. Leaving
+    found no window to close - `zigbeePermitUntil` is only written once the
+    POST answers - and the answer then opened the network for 254 s behind
+    a view showing nothing. Measured in node for both ways of leaving: only
+    `{duration: 254}` was ever sent.
+
+    Through the REAL `startZigbeeSearch()`, with its POST held open while
+    the REAL `selectCommissionTab('matter')` or `selectView('export')` runs.
+    The window it opens is closed again the moment the answer lands off
+    screen. And the other side of it: a user who left and came BACK while
+    the POST was under way is looking at the tab again, and keeps the window
+    they asked for.
+
+    Fault to prove it: drop the off-screen check after the await in
+    `sendZigbeePermit()`."""
+    values = _app_state(
+        _BINDINGS_JS + _PAIRING_PAGE_JS + "const runCase = async (leave) => {"
+        "  const permits = []; let answer;"
+        "  state.commissionTab = 'zigbee'; state.view = 'devices';"
+        "  state.zigbeePermitUntil = null; state.setZigbeeOpenedUntil(null);"
+        "  let opened = null;"
+        "  state.request = async (method, path, payload) => {"
+        "    if (path === '/api/zigbee/permit') {"
+        "      permits.push(payload);"
+        "      if (payload.duration > 0) await new Promise((resolve) => { answer = resolve; });"
+        "      if (payload.duration > 0) opened = future();"
+        "      return { permit_until: payload.duration > 0 ? opened : null };"
+        "    }"
+        "    if (path === '/api/zigbee/pairing') return { permit_until: null, rows: [] };"
+        "    if (path === '/api/zigbee/radio') return radioBody;"
+        "    return [];"
+        "  };"
+        "  const start = state.startZigbeeSearch();"
+        "  await settle();"
+        "  await leave();"
+        "  answer();"
+        "  await start;"
+        "  return { permits, opened, open: state.zigbeeWindowOpen(), claim: state.zigbeeOpenedUntil };"
+        "};"
+        "(async () => {"
+        "  const matter = await runCase(() => state.selectCommissionTab('matter'));"
+        "  const exportView = await runCase(() => state.selectView('export'));"
+        "  const cameBack = await runCase(async () => {"
+        "    await state.selectCommissionTab('matter');"
+        "    await state.selectCommissionTab('zigbee');"
+        "  });"
+        "  console.log(JSON.stringify({ matter, exportView, cameBack }));"
+        "})();"
+    )
+    for case in ("matter", "exportView"):
+        opened_then_closed = [
+            {"duration": PERMIT_MAX_SECONDS},
+            {"duration": 0, "only_if_until": values[case]["opened"]},
+        ]
+        assert values[case]["permits"] == opened_then_closed, (case, values[case])
+        assert values[case]["open"] is False, case
+        assert values[case]["claim"] is None, case
+    assert values["cameBack"]["permits"] == [{"duration": PERMIT_MAX_SECONDS}]
+    assert values["cameBack"]["open"] is True
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_only_a_window_opened_here_is_closed_on_leaving():
+    """A phone opens the window; the laptop's two-second poll sees it; the
+    laptop's user clicks Export - and the laptop's Stop closed the window
+    under the phone. A page closes, on leaving, only a window it opened.
+
+    Three runs through the REAL tab switch and view change:
+
+    - Opened here (Start), then Export: closed.
+    - Opened by someone else, seen only through `GET /api/zigbee/pairing`:
+      entering Devices lands on its countdown, and neither the Matter tab
+      nor Export sends anything.
+    - Opened here, then closed elsewhere (a GET shows `permit_until: null`),
+      then opened again by the phone: the page's claim ended with its
+      window, so leaving sends nothing either.
+
+    Fault to prove it: close on leaving with the window on screen when there
+    is no claim (the second run sends Stops), or do not clear the claim on a
+    GET without a window (the third one does)."""
+    values = _app_state(
+        _BINDINGS_JS + _PAIRING_PAGE_JS + "const permits = []; let opened = null;"
+        "let pairing = { permit_until: null, rows: [] };"
+        "state.request = async (method, path, payload) => {"
+        "  if (path === '/api/zigbee/permit') {"
+        "    permits.push(payload);"
+        "    if (payload.duration > 0) opened = future();"
+        "    return { permit_until: payload.duration > 0 ? opened : null };"
+        "  }"
+        "  if (path === '/api/zigbee/pairing') return JSON.parse(JSON.stringify(pairing));"
+        "  if (path === '/api/zigbee/radio') return radioBody;"
+        "  return [];"
+        "};"
+        "(async () => {"
+        "  await state.startZigbeeSearch();"
+        "  await state.selectView('export');"
+        "  const openedHere = { permits: permits.splice(0), opened };"
+        "  state.commissionTab = 'matter';"
+        "  pairing = { permit_until: future(), rows: [] };"
+        "  await state.selectView('devices');"
+        "  const landed = state.commissionTabShown();"
+        "  await state.selectCommissionTab('matter');"
+        "  await state.selectCommissionTab('zigbee');"
+        "  await state.selectView('export');"
+        "  const seenOnly = permits.splice(0);"
+        "  pairing = { permit_until: null, rows: [] };"
+        "  await state.selectView('devices');"
+        "  await state.startZigbeeSearch();"
+        "  await state.loadZigbeePairing();"
+        "  pairing = { permit_until: future(), rows: [] };"
+        "  await state.loadZigbeePairing();"
+        "  await state.selectView('export');"
+        "  const claimEnded = permits.splice(0);"
+        "  console.log(JSON.stringify({ openedHere, landed, seenOnly, claimEnded }));"
+        "})();"
+    )
+    assert values["openedHere"]["permits"] == [
+        {"duration": PERMIT_MAX_SECONDS},
+        {"duration": 0, "only_if_until": values["openedHere"]["opened"]},
+    ]
+    assert values["landed"] == "zigbee"
+    assert values["seenOnly"] == []
+    assert values["claimEnded"] == [{"duration": PERMIT_MAX_SECONDS}]
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_a_reload_lands_on_an_open_windows_countdown_and_closes_nothing():
+    """Design 3.1: the page counts down to the server's end time "so a
+    reloaded page still shows the truth". A best-effort Stop on `pagehide`
+    contradicted that - a reload closed the window - and closed a window
+    another tab or a phone was watching as well. It is gone.
+
+    What a reload now does instead, through the REAL `selectView('devices')`
+    `startApp()` ends on: one pairing GET whichever tab is selected, and an
+    open window selects the Zigbee tab so its countdown is on screen - with
+    no permit request at all. A closed one leaves the Matter tab alone.
+
+    The tab and the end time of the window this page opened survive the
+    reload in `sessionStorage` (per browser tab, shared with no phone): a
+    window opened here, then reloaded, is still this page's to close.
+
+    Fault to prove it: drop the tab switch from `peekZigbeePairing()`, or
+    the `rememberCommission()` call from `setZigbeeOpenedUntil()`."""
+    source = (WEB_DIR / "app.js").read_text(encoding="utf-8")
+    assert "keepalive" not in source
+    values = _app_state(
+        _BINDINGS_JS + _PAIRING_PAGE_JS + "const stored = {};"
+        "window.sessionStorage = {"
+        "  getItem: (key) => (key in stored ? stored[key] : null),"
+        "  setItem: (key, value) => { stored[key] = String(value); },"
+        "};"
+        "const calls = [];"
+        "let pairing = { permit_until: future(), rows: [] };"
+        "state.request = async (method, path, payload) => {"
+        "  calls.push([method, path]);"
+        "  if (path === '/api/zigbee/permit') return { permit_until: payload.duration > 0 ? future() : null };"
+        "  if (path === '/api/zigbee/pairing') return JSON.parse(JSON.stringify(pairing));"
+        "  if (path === '/api/zigbee/radio') return radioBody;"
+        "  return [];"
+        "};"
+        "(async () => {"
+        "  state.restoreCommission();"
+        "  const fresh = state.commissionTab;"
+        "  await state.selectView('devices');"
+        "  const open = { tab: state.commissionTabShown(), counting: state.zigbeeCountdown() > 0,"
+        "    polling: state.zigbeePairingTimer !== null, calls: calls.splice(0) };"
+        "  state.commissionTab = 'matter';"
+        "  pairing = { permit_until: null, rows: [] };"
+        "  await state.selectView('devices');"
+        "  const closed = state.commissionTabShown();"
+        "  await state.selectCommissionTab('zigbee');"
+        "  await state.startZigbeeSearch();"
+        "  const claimed = state.zigbeeOpenedUntil;"
+        "  state.commissionTab = 'matter'; state.zigbeeOpenedUntil = null;"
+        "  state.restoreCommission();"
+        "  const reloaded = { tab: state.commissionTab,"
+        "    openedHere: claimed !== null && state.zigbeeOpenedUntil === claimed };"
+        "  console.log(JSON.stringify({ fresh, open, closed, reloaded }));"
+        "})();"
+    )
+    assert values["fresh"] == "matter"
+    assert values["open"]["tab"] == "zigbee"
+    assert values["open"]["counting"] is True
+    assert values["open"]["polling"] is True
+    assert not [call for call in values["open"]["calls"] if call[1] == "/api/zigbee/permit"]
+    assert ["GET", "/api/zigbee/pairing"] in values["open"]["calls"]
+    assert values["closed"] == "matter"
+    assert values["reloaded"] == {"tab": "zigbee", "openedHere": True}
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+async def test_every_row_stored_as_ready_offers_its_name_room_and_add(api):
+    """The brief's rule, measured on the served bindings: a row DISPLAYED as
+    `configuring` or `waiting_wake` is STORED as `ready`, the PATCH's 409
+    does not apply to it, and it must be nameable. A sleeping sensor can
+    show `waiting_wake` for days, and a field that appears only on `ready`
+    refuses its name for all of that time.
+
+    The `x-show` of the name/room fields and of the Add button, from the
+    served markup, for all seven states, on a row not added yet and on one
+    already added (which keeps its fields and loses Add).
+
+    Fault to prove it: drop `waiting_wake` from `ZIGBEE_NAMEABLE_ROW_STATES`,
+    or reduce the fields' `x-show` to `row.state === 'ready'`."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+    fields = _pairing_element(page, "div", class_="zigbee-row-fields")
+    add = _pairing_element(page, "button", at_click="adoptZigbeeDevice(row.ieee)")
+    states = ["joined", "interviewing", "configuring", "ready", "failed", "stuck", "waiting_wake"]
+    rows = ", ".join(
+        f"[{json.dumps(name)}, {json.dumps(adopted)}, {_pairing_row_js(name, 7 if adopted else None)}]"
+        for name in states
+        for adopted in (False, True)
+    )
+    values = _app_state(
+        _BINDINGS_JS + f"const out = {{}};for (const [name, adopted, row] of [{rows}]) {{"
+        "  out[name + (adopted ? ':added' : ':new')] = ["
+        f"    Boolean(run({json.dumps(fields['x-show'])}, {{ row }})),"
+        f"    Boolean(run({json.dumps(add['x-show'])}, {{ row }})),"
+        "  ];"
+        "}"
+        "console.log(JSON.stringify(out));"
+    )
+    nameable = {"configuring", "ready", "waiting_wake"}
+    for name in states:
+        assert values[f"{name}:new"] == [name in nameable, name in nameable], name
+        assert values[f"{name}:added"] == [name in nameable, False], name
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_entering_devices_loads_the_zigbee_gate():
+    """The tab's gate is `configured_path` from `GET /api/zigbee/radio`,
+    which the radios card loads only in Settings. Without a load of its own
+    on entering Devices, the tab never appeared after a page load unless
+    Settings had been visited first.
+
+    Through the REAL `selectView('devices')` on a page that has loaded
+    nothing: the radio GET is made, before the pairing GET it enables, and
+    it arms no Settings poll.
+
+    Fault to prove it: drop the `loadZigbeeRadio({ poll: false })` call from
+    `selectView()`."""
+    values = _app_state(
+        _BINDINGS_JS + _PAIRING_PAGE_JS + "state.zigbee = null; state.commissionTab = 'matter';"
+        "const calls = [];"
+        "state.request = async (method, path) => {"
+        "  calls.push([method, path]);"
+        "  if (path === '/api/zigbee/radio') return radioBody;"
+        "  if (path === '/api/zigbee/pairing') return { permit_until: null, rows: [] };"
+        "  return [];"
+        "};"
+        "(async () => {"
+        "  await state.selectView('devices');"
+        "  console.log(JSON.stringify({ calls, tab: state.zigbeeTabVisible(),"
+        "    settingsPoll: state.zigbeeTimer }));"
+        "})();"
+    )
+    calls = values["calls"]
+    assert ["GET", "/api/zigbee/radio"] in calls
+    assert calls.index(["GET", "/api/zigbee/radio"]) < calls.index(["GET", "/api/zigbee/pairing"])
+    assert values["tab"] is True
+    assert values["settingsPoll"] is None
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+async def test_choosing_a_room_on_an_added_row_saves_it(api):
+    """After Add, the room saves when the select changes - there is no
+    other button for it. The served `x-model` (as the assignment Alpine
+    makes) and `@change` of the row's room select, on the added row of
+    `_PAIRING_BODY`.
+
+    Fault to prove it: drop `saveZigbeeRoom(row.ieee)` from the select's
+    `@change`."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+    select = _pairing_element(page, "select", x_model="zigbeeRowDrafts[row.ieee].room")
+    values = _app_state(
+        _BINDINGS_JS + _PAIRING_PAGE_JS + f"const body = {json.dumps(_PAIRING_BODY)};"
+        "const patches = [];"
+        "state.request = async (method, path, payload) => {"
+        "  if (method === 'PATCH') { patches.push(payload); return { ...body.rows[0], room: payload.room }; }"
+        "  if (path === '/api/zigbee/pairing') return JSON.parse(JSON.stringify(body));"
+        "  return [];"
+        "};"
+        "(async () => {"
+        "  await state.loadZigbeePairing();"
+        f"  const row = state.zigbeeRow({json.dumps(_ADOPTED)});"
+        f"  exec({json.dumps(select['x-model'])} + ' = __value', {{ row, __value: 'Kitchen' }});"
+        f"  exec({json.dumps(select['@change'])}, {{ row }});"
+        "  await settle();"
+        "  console.log(JSON.stringify({ patches }));"
+        "})();"
+    )
+    assert values["patches"] == [{"room": "Kitchen"}]
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+async def test_the_countdown_line_reads_minutes_and_seconds(api):
+    """ "Open for new devices: 252 s" had to be divided before it said
+    whether there was time to walk to the lamp. The line reads `m:ss`.
+
+    The formatter on its own - 0, 254 and 9 seconds, the three shapes that
+    go wrong (no leading zero on the seconds, a missing minute) - and the
+    SERVED `x-text` of the countdown line with the real table, on a window
+    with 254 s left. `zigbeeCountdown()` itself stays in seconds; the brief's
+    own test counts on that.
+
+    Fault to prove it: bind the line to `zigbeeCountdown()` directly, or
+    drop the `padStart` from `formatMinutesSeconds()`."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+    line = _pairing_element(page, "p", class_="zigbee-countdown")
+    values = _app_state(
+        _BINDINGS_JS + _PAIRING_PAGE_JS + "state.zigbeePermitUntil = future();"
+        "console.log(JSON.stringify({"
+        "  formatted: [0, 254, 9].map((seconds) => state.formatMinutesSeconds(seconds)),"
+        f"  line: run({json.dumps(line['x-text'])}),"
+        "  seconds: state.zigbeeCountdown(),"
+        "}));",
+        translations=_web_strings(),
+    )
+    assert values["formatted"] == ["0:00", "4:14", "0:09"]
+    assert 253 <= values["seconds"] <= 254
+    expected = _web_strings()["web.zigbee.countdown"]
+    assert values["line"] in {
+        expected.replace("{time}", "4:14"),
+        expected.replace("{time}", "4:13"),
+    }, values["line"]
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+async def test_the_window_buttons_send_stop_and_keep_open_and_take_turns_with_start(api):
+    """The running window's two buttons, and the line they share with
+    Start, through the served markup.
+
+    - Stop sends `permit(0)`, Keep open sends the server's own maximum -
+      each `@click` run as Alpine runs it, against a recording request.
+    - Their `:disabled` binds false while nothing is being sent and true
+      while a permit request is under way (`boundTrue`, Alpine's coercion).
+    - The Start line and the Stop line take turns on `zigbeeWindowOpen()`:
+      exactly one of the two shows, whichever way the window is.
+
+    Fault to prove it: have Keep open call `stopZigbeeSearch()`, bind Stop's
+    `:disabled` to `!zigbeePermitBusy`, or show the Stop line
+    unconditionally."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+    stop = _pairing_element(page, "button", at_click="stopZigbeeSearch()")
+    extend = _pairing_element(page, "button", at_click="extendZigbeeSearch()")
+    lines = [
+        attributes
+        for tag, attributes, ancestors in _served_elements(page)
+        if tag == "div" and "zigbee-window" in attributes.get("class", "").split()
+    ]
+    assert len(lines) == 2, lines
+    values = _app_state(
+        _BINDINGS_JS + _PAIRING_PAGE_JS + "const permits = [];"
+        "state.request = async (method, path, payload) => {"
+        "  if (path === '/api/zigbee/permit') { permits.push(payload);"
+        "    return { permit_until: payload.duration > 0 ? future() : null }; }"
+        "  return { permit_until: null, rows: [] };"
+        "};"
+        f"const lines = {json.dumps([line['x-show'] for line in lines])};"
+        "const shown = () => lines.map((expr) => Boolean(run(expr)));"
+        "(async () => {"
+        "  const closedLines = shown();"
+        "  state.zigbeePermitUntil = future();"
+        "  const openLines = shown();"
+        f"  const idle = [boundTrue({json.dumps(stop[':disabled'])}), boundTrue({json.dumps(extend[':disabled'])})];"
+        "  state.zigbeePermitBusy = true;"
+        f"  const busy = [boundTrue({json.dumps(stop[':disabled'])}), boundTrue({json.dumps(extend[':disabled'])})];"
+        "  state.zigbeePermitBusy = false;"
+        f"  await run({json.dumps(extend['@click'])});"
+        "  const afterExtend = permits.splice(0);"
+        f"  await run({json.dumps(stop['@click'])});"
+        "  const afterStop = permits.splice(0);"
+        "  console.log(JSON.stringify({ closedLines, openLines, idle, busy, afterExtend, afterStop }));"
+        "})();"
+    )
+    assert sorted(values["closedLines"]) == [False, True]
+    assert values["openLines"] == [not shown for shown in values["closedLines"]]
+    assert values["idle"] == [False, False]
+    assert values["busy"] == [True, True]
+    assert values["afterExtend"] == [{"duration": PERMIT_MAX_SECONDS}]
+    assert values["afterStop"] == [{"duration": 0}]
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+async def test_the_tab_decides_which_pane_shows_and_rows_are_keyed_by_ieee(api):
+    """Two structural rules of the brief, from the served markup.
+
+    The Matter pane and the Zigbee pane are gated by the tab the card
+    SHOWS (`commissionTabShown()`): exactly one of them is visible whichever
+    tab is selected, and a Zigbee tab left selected after the stick was
+    cleared shows the Matter pane rather than nothing.
+
+    One row per device keyed by IEEE (design 3.1): the row template's `:key`
+    is `row.ieee`. Keyed by anything that changes - the state, the position -
+    Alpine rebuilds the row on every step of a join, and the name being
+    typed in it is thrown away with the old element.
+
+    Fault to prove it: key the rows by `row.state`, or gate the Matter pane
+    on `commissionTab === 'matter'`."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+    elements = _served_elements(page)
+    row_templates = [
+        attributes
+        for tag, attributes, _ in elements
+        if tag == "template" and attributes.get("x-for", "").startswith("row in ")
+    ]
+    assert len(row_templates) == 1, row_templates
+    assert row_templates[0][":key"] == "row.ieee"
+    matter = [
+        attributes
+        for tag, attributes, ancestors in elements
+        if tag == "div"
+        and "commissionTab" in attributes.get("x-show", "")
+        and "matter" in attributes.get("x-show", "")
+    ]
+    assert len(matter) == 1, matter
+    zigbee = _pairing_element(page, "div", class_="zigbee-reset")
+    pane = [
+        attributes
+        for tag, attributes, _ in elements
+        if tag == "div" and attributes.get("class") == "zigbee-pairing"
+    ]
+    assert len(pane) == 1 and zigbee
+    values = _app_state(
+        _BINDINGS_JS + f"const panes = [{json.dumps(matter[0]['x-show'])}, "
+        f"{json.dumps(pane[0]['x-show'])}];"
+        "const shown = () => panes.map((expr) => Boolean(run(expr)));"
+        "const out = {};"
+        "state.zigbee = { configured_path: '/dev/serial/by-id/a' };"
+        "state.commissionTab = 'matter'; out.matter = shown();"
+        "state.commissionTab = 'zigbee'; out.zigbee = shown();"
+        "state.zigbee = { configured_path: null }; out.stickCleared = shown();"
+        "console.log(JSON.stringify(out));"
+    )
+    assert values["matter"] == [True, False]
+    assert values["zigbee"] == [False, True]
+    assert values["stickCleared"] == [True, False]
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+async def test_add_sends_the_typed_name_once_however_often_enter_is_pressed(api):
+    """Two rules of "Add", through the served name field and button.
+
+    It sends the name TYPED, not the prefilled one - a user who replaced
+    "Aqara Motion sensor P1" with "Hall motion" and pressed Add got the
+    first.
+
+    And it is refused while an action is already running on the row or the
+    list answers 503. The button's `:disabled` said so, but Enter in the
+    name field reached `adoptZigbeeDevice()` directly: two quick Enters sent
+    two PATCHes while the button looked disabled, and during a radio swap
+    Enter sent one the button would not have.
+
+    Fault to prove it: drop the busy/unavailable guard from
+    `adoptZigbeeDevice()`, or send `row.suggested_name` from it."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+    name = _pairing_element(page, "textarea", x_model="zigbeeRowDrafts[row.ieee].name")
+    add = _pairing_element(page, "button", at_click="adoptZigbeeDevice(row.ieee)")
+    values = _app_state(
+        _BINDINGS_JS + _PAIRING_PAGE_JS + f"const body = {json.dumps(_PAIRING_BODY)};"
+        "const patches = []; let answer;"
+        "state.request = async (method, path, payload) => {"
+        "  if (method === 'PATCH') {"
+        "    patches.push(payload);"
+        "    await new Promise((resolve) => { answer = resolve; });"
+        "    return { ...body.rows[1], device_id: 9, name: payload.name };"
+        "  }"
+        "  if (path === '/api/zigbee/pairing') return JSON.parse(JSON.stringify(body));"
+        "  return [];"
+        "};"
+        "const $el = { blur() {} };"
+        "const $event = { isComposing: false, keyCode: 13, preventDefault() {} };"
+        "(async () => {"
+        "  await state.loadZigbeePairing();"
+        f"  const row = () => state.zigbeeRow({json.dumps(_UNNAMED)});"
+        f"  exec({json.dumps(name['x-model'])} + ' = __value', {{ row: row(), __value: 'Hall motion' }});"
+        f"  exec({json.dumps(name['@input'])}, {{ row: row() }});"
+        f"  exec({json.dumps(name['@keydown.enter'])}, {{ row: row(), $el, $event }});"
+        f"  exec({json.dumps(name['@keydown.enter'])}, {{ row: row(), $el, $event }});"
+        f"  exec({json.dumps(add['@click'])}, {{ row: row() }});"
+        "  const whileBusy = patches.slice();"
+        "  answer(); await settle(); await settle();"
+        "  state.zigbeePairing.rows[1].device_id = null;"
+        "  state.zigbeePairingUnavailable = true;"
+        f"  exec({json.dumps(name['@keydown.enter'])}, {{ row: row(), $el, $event }});"
+        "  const duringSwap = patches.length - whileBusy.length;"
+        "  console.log(JSON.stringify({ whileBusy, duringSwap }));"
+        "})();"
+    )
+    assert values["whileBusy"] == [{"name": "Hall motion"}]
+    assert values["duringSwap"] == 0
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_a_late_poll_does_not_bring_a_removed_row_back():
+    """Remove pressed while a poll was under way: the poll had been
+    answered before the DELETE landed, still carried the row, and put it
+    back on screen when it arrived - a device the user had just removed,
+    with Remove on it again.
+
+    Through the REAL `removeZigbeeDevice()` with a GET held open across the
+    DELETE. The row stays gone, and the poll the dropped GET would have
+    armed is armed anyway - a dropped GET schedules nothing.
+
+    Fault to prove it: drop the `zigbeePairingSequence` bump from
+    `removeZigbeeDevice()`."""
+    values = _app_state(
+        _BINDINGS_JS + _PAIRING_PAGE_JS + f"const body = {json.dumps(_PAIRING_BODY)};"
+        "let hold = false; let release;"
+        "state.request = async (method, path) => {"
+        "  if (method === 'DELETE') return null;"
+        "  if (path === '/api/zigbee/pairing') {"
+        "    if (hold) await new Promise((resolve) => { release = resolve; });"
+        "    return JSON.parse(JSON.stringify(body));"
+        "  }"
+        "  return [];"
+        "};"
+        "(async () => {"
+        "  await state.loadZigbeePairing();"
+        "  hold = true;"
+        "  const late = state.loadZigbeePairing();"
+        "  await settle();"
+        f"  await state.removeZigbeeDevice({json.dumps(_UNNAMED)});"
+        "  release(); await late;"
+        "  console.log(JSON.stringify({"
+        "    rows: state.zigbeePairing.rows.map((row) => row.ieee),"
+        "    polling: state.zigbeePairingTimer !== null }));"
+        "})();"
+    )
+    assert values["rows"] == [_ADOPTED]
+    assert values["polling"] is True
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+async def test_a_refused_stop_on_leaving_is_shown_where_the_user_went(api):
+    """Leaving the tab sends a Stop, and a radio can refuse it
+    (`api.zigbee.close_failed`: "... so it may still be open"). That
+    message landed inside the pane the user had just left - the one
+    sentence saying the network may still be open, in the one place nobody
+    was looking.
+
+    It is shown in a banner above the main navigation, in every view, with
+    a Stop button of its own; switching the user back to the tab instead
+    would undo the navigation they just made, and cannot follow them to
+    Export at all. Going back to the tab moves it beside that tab's Stop.
+
+    The served banner's `x-show`, in the Export view after a refused Stop;
+    the pane's own error stays empty; and the banner's button retries.
+
+    Fault to prove it: put a leaving Stop's refusal into
+    `zigbeePermitError`."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+    banners = [
+        attributes
+        for tag, attributes, _ in _served_elements(page)
+        if tag == "div" and "zigbee-leave-banner" in attributes.get("class", "").split()
+    ]
+    assert len(banners) == 1, banners
+    retry = [
+        attributes
+        for tag, attributes, ancestors in _served_elements(page)
+        if tag == "button"
+        and any("zigbee-leave-banner" in a.get("class", "").split() for _, a in ancestors)
+    ]
+    assert len(retry) == 1, retry
+    values = _app_state(
+        _BINDINGS_JS + _PAIRING_PAGE_JS + "const permits = []; let refuse = false;"
+        "state.request = async (method, path, payload) => {"
+        "  if (path === '/api/zigbee/permit') {"
+        "    permits.push(payload);"
+        "    if (payload.duration === 0 && refuse) {"
+        "      const error = new Error('could not be closed'); error.status = 502; throw error;"
+        "    }"
+        "    return { permit_until: payload.duration > 0 ? future() : null };"
+        "  }"
+        "  if (path === '/api/zigbee/pairing') return { permit_until: future(), rows: [] };"
+        "  if (path === '/api/zigbee/radio') return radioBody;"
+        "  return [];"
+        "};"
+        "(async () => {"
+        "  await state.startZigbeeSearch();"
+        "  refuse = true;"
+        "  await state.selectView('export');"
+        "  await settle();"
+        f"  const inExport = {{ banner: Boolean(run({json.dumps(banners[0]['x-show'])})),"
+        "    pane: state.zigbeePermitError, message: state.zigbeeLeaveCloseError };"
+        "  refuse = false;"
+        f"  await run({json.dumps(retry[0]['@click'])});"
+        f"  const retried = {{ banner: Boolean(run({json.dumps(banners[0]['x-show'])})),"
+        "    last: permits[permits.length - 1] };"
+        "  console.log(JSON.stringify({ inExport, retried }));"
+        "})();"
+    )
+    assert values["inExport"] == {"banner": True, "pane": None, "message": "could not be closed"}
+    assert values["retried"] == {"banner": False, "last": {"duration": 0}}
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_what_belongs_to_a_row_goes_with_it_and_a_listed_rows_refusal_stays():
+    """A row that leaves the list takes its draft, its error and its
+    "Saved." with it - removed from another tab, or gone with a radio swap.
+    Kept, they came back on the same IEEE paired again later: a stale 409
+    on a fresh row. A row STILL listed keeps its refusal: the poll is not
+    what fixed it.
+
+    Fault to prove it: drop the pruning loop from `syncZigbeeDrafts()`."""
+    values = _app_state(
+        _BINDINGS_JS + _PAIRING_PAGE_JS + f"const body = {json.dumps(_PAIRING_BODY)};"
+        "let rows = body.rows;"
+        "state.request = async () => ({ permit_until: null, rows: JSON.parse(JSON.stringify(rows)) });"
+        "(async () => {"
+        "  await state.loadZigbeePairing();"
+        f"  state.zigbeeRowErrors[{json.dumps(_ADOPTED)}] = 'This device is not ready yet.';"
+        f"  state.zigbeeRowErrors[{json.dumps(_UNNAMED)}] = 'This device is not ready yet.';"
+        f"  state.zigbeeRowSaved[{json.dumps(_UNNAMED)}] = true;"
+        f"  state.zigbeeRowDrafts[{json.dumps(_UNNAMED)}].name = 'Hall motion';"
+        "  rows = [body.rows[0]];"
+        "  await state.loadZigbeePairing();"
+        "  console.log(JSON.stringify({ errors: state.zigbeeRowErrors,"
+        "    drafts: Object.keys(state.zigbeeRowDrafts), saved: state.zigbeeRowSaved }));"
+        "})();"
+    )
+    assert values["errors"] == {_ADOPTED: "This device is not ready yet."}
+    assert values["drafts"] == [_ADOPTED]
+    assert values["saved"] == {}
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+async def test_a_row_s_fields_are_disabled_with_its_buttons_during_a_radio_swap(api):
+    """During a 503 (`radio_changing`) every button of a row was disabled -
+    and its name and room stayed editable, inviting typing that could not
+    be saved and an Enter that went nowhere. The fields follow the buttons.
+
+    Every `:disabled` on the name field, the room select and the new-room
+    field, from the served markup through `boundTrue`: false while the
+    list answers, true during the swap.
+
+    Fault to prove it: drop the name field's `:disabled`."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+    controls = [
+        _pairing_element(page, "textarea", x_model="zigbeeRowDrafts[row.ieee].name"),
+        _pairing_element(page, "select", x_model="zigbeeRowDrafts[row.ieee].room"),
+        _pairing_element(page, "input", x_model="zigbeeRowDrafts[row.ieee].newRoom"),
+    ]
+    expressions = [control.get(":disabled", "false") for control in controls]
+    values = _app_state(
+        _BINDINGS_JS + f"const body = {json.dumps(_PAIRING_BODY)};"
+        f"const expressions = {json.dumps(expressions)};"
+        "state.zigbee = { configured_path: '/dev/serial/by-id/a' };"
+        "state.authenticated = true;"
+        "let fail = false;"
+        "state.loadZigbeeRadio = async () => {};"
+        "state.request = async () => {"
+        "  if (fail) { const error = new Error('changing'); error.status = 503; throw error; }"
+        "  return JSON.parse(JSON.stringify(body));"
+        "};"
+        "const disabled = () => expressions.map((expr) =>"
+        f"  boundTrue(expr, {{ row: state.zigbeeRow({json.dumps(_ADOPTED)}) }}));"
+        "(async () => {"
+        "  await state.loadZigbeePairing();"
+        "  const idle = disabled();"
+        "  fail = true;"
+        "  await state.loadZigbeePairing();"
+        "  console.log(JSON.stringify({ idle, swapping: disabled() }));"
+        "})();"
+    )
+    assert values["idle"] == [False, False, False]
+    assert values["swapping"] == [True, True, True]
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_one_stick_has_one_name_in_the_thread_row_and_the_zigbee_row():
+    """The MG24 read "SONOFF Dongle Plus MG24" in the Thread row and
+    "SONOFF Zigbee Dongle Plus MG24" in the Zigbee row, one card further
+    down - two helpers with two orders. A user cannot tell those are the
+    same stick. One helper (`stickName()`), one order: the product string,
+    then the fingerprint name, then the manufacturer, then the tty.
+
+    Three sticks, each read in both rows: one with a product string and a
+    fingerprint name that differ; one with only a fingerprint name; one the
+    Zigbee answer knows only by path, whose manufacturer only the radios
+    answer carries.
+
+    Fault to prove it: put the fingerprint name before the product string
+    in `stickName()` (the Thread row then names a Thread stick "... Zigbee
+    Dongle ..."), or give the Zigbee row its own order again."""
+    radios = {
+        "serial": [
+            {
+                "path": "/dev/serial/by-id/usb-A",
+                "tty": "ttyUSB0",
+                "manufacturer": "SONOFF",
+                "product": "SONOFF Dongle Plus MG24",
+                "serial": None,
+                "vid_pid": None,
+            },
+            {
+                "path": "/dev/serial/by-id/usb-B",
+                "tty": "ttyACM0",
+                "manufacturer": None,
+                "product": None,
+                "serial": None,
+                "vid_pid": None,
+            },
+            {
+                "path": "/dev/serial/by-id/usb-C",
+                "tty": "ttyUSB2",
+                "manufacturer": "Silicon Labs",
+                "product": None,
+                "serial": None,
+                "vid_pid": None,
+            },
+        ],
+        "bluetooth": [],
+        "current": {
+            "thread_enabled": False,
+            "thread_device": None,
+            "thread_device_present": False,
+            "bluetooth_adapter": None,
+            "otbr_running": False,
+        },
+    }
+    zigbee = {
+        "serial": [
+            {
+                "path": "/dev/serial/by-id/usb-A",
+                "product": "SONOFF Dongle Plus MG24",
+                "fingerprint": {"name": "SONOFF Zigbee Dongle Plus MG24", "radio_type": "ezsp"},
+                "is_thread": False,
+                "selectable": True,
+            },
+            {
+                "path": "/dev/serial/by-id/usb-B",
+                "product": None,
+                "fingerprint": {"name": "SONOFF ZBDongle-E V2", "radio_type": "ezsp"},
+                "is_thread": False,
+                "selectable": True,
+            },
+            {
+                "path": "/dev/serial/by-id/usb-C",
+                "product": None,
+                "fingerprint": None,
+                "is_thread": False,
+                "selectable": True,
+            },
+        ],
+        "configured_path": None,
+        "configured_device_present": False,
+        "progress": {"state": "idle", "attempts": 0, "error": None, "changed_at": "x"},
+    }
+    values = _app_state(
+        f"state.radios = {json.dumps(radios)}; state.zigbee = {json.dumps(zigbee)};"
+        "const thread = Object.fromEntries(state.radiosThreadOptions().map((o) => [o.value, o.label]));"
+        "const zigbee = Object.fromEntries(state.zigbeeRadioOptions().map((o) => [o.value, o.label]));"
+        "console.log(JSON.stringify({ thread, zigbee }));"
+    )
+    expected = {
+        "/dev/serial/by-id/usb-A": "SONOFF Dongle Plus MG24",
+        "/dev/serial/by-id/usb-B": "SONOFF ZBDongle-E V2",
+        "/dev/serial/by-id/usb-C": "Silicon Labs",
+    }
+    for path, name in expected.items():
+        assert values["thread"][path] == name, path
+        assert values["zigbee"][path].split(" · ")[0] == name, path
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_the_interviewing_row_does_not_repeat_the_name_in_its_title():
+    """The row's title is `<Manufacturer> <Model>` already. The state line
+    under it said "Found Signify Netherlands B.V. LCA001 - reading its
+    details", the same name twice in two lines. It names no device now,
+    while the title does - and without manufacturer and model the title is
+    the IEEE, and the line says a device was found.
+
+    Fault to prove it: put `{device}` back into the interviewing sentence
+    and pass the name to it."""
+    values = _app_state(
+        "console.log(JSON.stringify({"
+        f"  named: state.zigbeeRowState({_pairing_row_js('interviewing', None)}),"
+        "  bare: state.zigbeeRowState({ ieee: '00:12', state: 'interviewing', manufacturer: null,"
+        "    model: null, device_id: null }),"
+        "}));",
+        translations=_web_strings(),
+    )
+    strings = _web_strings()
+    assert values["named"] == strings["web.zigbee.state_interviewing"]
+    assert "IKEA" not in values["named"] and "TRADFRI" not in values["named"]
+    assert values["bare"] == strings["web.zigbee.state_joined"]
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+async def test_rows_already_added_fold_under_their_count(api):
+    """The list holds every device the radio has seen since it came up,
+    added ones included, and on a real network it pushed the device tiles
+    far down the page. Rows not added yet stay open; added ones fold into a
+    closed group titled with their count, by the file's two-key plural rule.
+    A row added in THIS page stays open - its "in the device list" line is
+    the confirmation, and folding it away as Add is pressed reads as the
+    row vanishing.
+
+    The served summary's `x-show`/`x-text` and the group's `:open`, through
+    the real groups.
+
+    Fault to prove it: put added rows in the open group, or render the
+    summary with the `_many` key for one device."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+    elements = _served_elements(page)
+    summary = [
+        attributes
+        for tag, attributes, _ in elements
+        if tag == "summary" and "zigbeeAddedSummary" in attributes.get("x-text", "")
+    ]
+    details = [
+        attributes
+        for tag, attributes, _ in elements
+        if tag == "details" and "zigbee-row-group" in attributes.get("class", "").split()
+    ]
+    assert len(summary) == 1 and len(details) == 1
+    second_added = {**_PAIRING_BODY["rows"][0], "ieee": "00:12:4b:00:24:c2:1a:99", "device_id": 8}
+    values = _app_state(
+        _BINDINGS_JS + f"const body = {json.dumps(_PAIRING_BODY)};"
+        f"const second = {json.dumps(second_added)};"
+        "const groupsOf = () => state.zigbeeRowGroups().map((group) => ({ key: group.key,"
+        "  rows: group.rows.map((row) => row.ieee),"
+        f"  summary: Boolean(run({json.dumps(summary[0]['x-show'])}, {{ group }})),"
+        f"  title: run({json.dumps(summary[0]['x-text'])}, {{ group }}),"
+        f"  open: boundTrue({json.dumps(details[0][':open'])}, {{ group }}) }}));"
+        "const out = {};"
+        "state.zigbeePairing = JSON.parse(JSON.stringify(body)); out.one = groupsOf();"
+        "state.zigbeePairing.rows.push(second); out.two = groupsOf();"
+        f"state.zigbeeAddedHere[{json.dumps(_ADOPTED)}] = true; out.addedHere = groupsOf();"
+        "console.log(JSON.stringify(out));",
+        translations=_web_strings(),
+    )
+    strings = _web_strings()
+    assert values["one"] == [
+        {
+            "key": "open",
+            "rows": [_UNNAMED],
+            "summary": False,
+            "title": values["one"][0]["title"],
+            "open": True,
+        },
+        {
+            "key": "added",
+            "rows": [_ADOPTED],
+            "summary": True,
+            "title": strings["web.zigbee.added_group_one"],
+            "open": False,
+        },
+    ]
+    assert values["two"][1]["title"] == strings["web.zigbee.added_group_many"].replace(
+        "{count}", "2"
+    )
+    assert values["addedHere"][0]["rows"] == [_UNNAMED, _ADOPTED]
+    assert values["addedHere"][1]["rows"] == ["00:12:4b:00:24:c2:1a:99"]
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_a_503_from_a_button_lands_in_the_banner_the_next_list_clears():
+    """`api.zigbee.radio_changing` used to say "reload the page". The tab
+    recovers by itself, so it says to wait a moment - and that has to be
+    TRUE everywhere the sentence appears. It arrives from the list and from
+    every button on the tab (Start, Add, Retry, Remove), and a failed
+    button used to keep its message in a field no poll clears: the user
+    would wait for a list that had long updated, under a sentence that no
+    longer applied.
+
+    A 503 from Start goes into the list's own banner, where the next list
+    that answers clears it; the button's own error field stays empty.
+
+    Fault to prove it: keep a 503 from a permit request in
+    `zigbeePermitError`."""
+    from loxmatter import i18n
+
+    for key in ("api.zigbee.radio_changing", "api.zigbee.unknown_device"):
+        assert "reload" not in i18n._STRINGS[key]["en"].lower(), key
+        assert "neu laden" not in i18n._STRINGS[key]["de"].lower(), key
+        assert "Seite" not in i18n._STRINGS[key]["de"], key
+    values = _app_state(
+        _BINDINGS_JS + _PAIRING_PAGE_JS + "let swapping = true;"
+        "state.loadZigbeeRadio = async () => {};"
+        "state.request = async (method, path) => {"
+        "  if (swapping) { const error = new Error('The Zigbee radio is being changed.');"
+        "    error.status = 503; throw error; }"
+        "  return { permit_until: null, rows: [] };"
+        "};"
+        "(async () => {"
+        "  await state.startZigbeeSearch();"
+        "  const during = { list: state.zigbeePairingError, button: state.zigbeePermitError };"
+        "  swapping = false;"
+        "  await state.loadZigbeePairing();"
+        "  const after = { list: state.zigbeePairingError, button: state.zigbeePermitError };"
+        "  console.log(JSON.stringify({ during, after }));"
+        "})();"
+    )
+    assert values["during"] == {"list": "The Zigbee radio is being changed.", "button": None}
+    assert values["after"] == {"list": None, "button": None}
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+async def test_the_name_field_shows_a_long_name_and_stays_one_line(api):
+    """A prefilled `<Manufacturer> <Model>` - "IKEA of Sweden TRADFRI bulb
+    E27 WW 806lm" - was cut off inside a one-line input at 375 px, so nobody
+    could check the name before keeping it. The field is a one-row textarea
+    whose wrapper grows with the text (`data-value`), and it must still
+    behave as a single-line field: Enter submits instead of breaking the
+    line, and a pasted line break becomes a space.
+
+    The served field: its tag and row count, the wrapper's `:data-value`
+    reading the same draft as the field's `x-model`, the `.prevent` on
+    Enter, and the `@input` run on a pasted two-line name.
+
+    Fault to prove it: drop the line-break replacement from
+    `zigbeeRowEdited()`, or the `preventDefault()` from the Enter handler."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+    field = _pairing_element(page, "textarea", x_model="zigbeeRowDrafts[row.ieee].name")
+    assert field.get("rows") == "1"
+    wrappers = [
+        (attributes, ancestors)
+        for tag, attributes, ancestors in _served_elements(page)
+        if tag == "span" and "zigbee-name-grow" in attributes.get("class", "").split()
+    ]
+    assert len(wrappers) == 1
+    assert wrappers[0][0][":data-value"] == field["x-model"]
+    values = _app_state(
+        _BINDINGS_JS + _PAIRING_PAGE_JS + f"const body = {json.dumps(_PAIRING_BODY)};"
+        "state.request = async () => JSON.parse(JSON.stringify(body));"
+        "(async () => {"
+        "  await state.loadZigbeePairing();"
+        f"  const row = state.zigbeeRow({json.dumps(_UNNAMED)});"
+        f"  exec({json.dumps(field['x-model'])} + ' = __value', {{ row, __value: 'Hall\\r\\n motion' }});"
+        f"  exec({json.dumps(field['@input'])}, {{ row }});"
+        "  let prevented = false;"
+        "  const $event = { isComposing: false, keyCode: 13, preventDefault() { prevented = true; } };"
+        f"  exec({json.dumps(field['@keydown.enter'])}, {{ row, $event, $el: {{ blur() {{}} }} }});"
+        "  await settle();"
+        f"  console.log(JSON.stringify({{ name: state.zigbeeRowDrafts[{json.dumps(_UNNAMED)}].name, prevented }}));"
+        "})();"
+    )
+    assert values["name"] == "Hall motion"
+    # Enter does not break the line: the handler prevents the key's default.
+    assert values["prevented"] is True
+
+
+# ---------------------------------------------------------------------------
+# The Zigbee tab, second review: whose window a page closes, what crosses a
+# reload, when the tab selects itself, and the rules the first round left
+# unmeasured.
+# ---------------------------------------------------------------------------
+
+# A bridge that keeps one join window, the way `ZigbeeSource` does: a permit
+# writes its end time to the second, a list answers with the end time as it
+# was when the list was ASKED (an answer can be overtaken on its way), and a
+# window whose end has passed is no window. A Stop carrying `only_if_until`
+# closes only the window ending then and otherwise answers the open one, as
+# `close_window_ending` does; `bridge.conditions` records what each permit
+# carried. `bridge.shift` moves the clock a window is opened on, so two
+# windows opened in one test run end at different seconds.
+# `holdPermit`/`holdGet` keep a request on its way until released
+# (`holdStop` does the same for a Stop).
+_BRIDGE_JS = """
+const iso = (ms) => new Date(Math.floor(ms / 1000) * 1000).toISOString();
+const bridge = { until: null, shift: 0, permits: [], conditions: [], gets: 0,
+  holdPermit: false, releasePermit: null, holdStop: false, releaseStop: null,
+  holdGet: false, releaseGet: null };
+const openFor = (seconds) => {
+  bridge.until = seconds > 0 ? iso(Date.now() + bridge.shift + seconds * 1000) : null;
+  return bridge.until;
+};
+const openNow = () => (bridge.until !== null && Date.parse(bridge.until) > Date.now() ? bridge.until : null);
+const bridgeRequest = async (method, path, payload) => {
+  if (path === '/api/zigbee/permit') {
+    bridge.permits.push(payload.duration);
+    bridge.conditions.push(payload.only_if_until ?? null);
+    if (bridge.holdPermit && payload.duration > 0) {
+      await new Promise((resolve) => { bridge.releasePermit = resolve; });
+    }
+    if (bridge.holdStop && payload.duration === 0) {
+      await new Promise((resolve) => { bridge.releaseStop = resolve; });
+    }
+    if (payload.only_if_until !== undefined && payload.only_if_until !== openNow()) {
+      return { permit_until: openNow() };
+    }
+    return { permit_until: openFor(payload.duration) };
+  }
+  if (path === '/api/zigbee/pairing') {
+    bridge.gets += 1;
+    const seen = openNow();
+    if (bridge.holdGet) await new Promise((resolve) => { bridge.releaseGet = resolve; });
+    return { permit_until: seen, rows: [] };
+  }
+  if (path === '/api/zigbee/radio') return radioBody;
+  return [];
+};
+state.request = bridgeRequest;
+"""
+
+# Page loads in one browser tab, through the REAL `init()`: each `bootPage`
+# builds a fresh `app()` from app.js over the `sessionStorage` it is given and
+# logs in on the Devices view. A reload is a second `bootPage` over the same
+# storage.
+_BROWSER_TAB_JS = """
+const storageOver = (backing) => ({
+  getItem: (key) => (key in backing ? backing[key] : null),
+  setItem: (key, value) => { backing[key] = String(value); },
+});
+const bootPage = async (backing) => {
+  const win = { location: { hash: '#/devices' }, history: { replaceState() {} }, confirm: () => true,
+    sessionStorage: storageOver(backing), setInterval: () => 1, addEventListener: () => {} };
+  globalThis.window = win;
+  const page = new Function(src + ';globalThis.t = t; return app();')();
+  page.request = bridgeRequest;
+  page.loadI18n = async () => {};
+  page.loadAuthInfo = async () => { page.authenticated = true; };
+  page.startApp = async () => { await page.selectView(page.view); };
+  await page.init();
+  return {
+    page,
+    use() { globalThis.window = win; return page; },
+  };
+};
+"""
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_a_window_replaced_elsewhere_is_left_open_by_the_stop_sent_on_leaving():
+    """Two runs the reviewer reproduced, through the REAL Start, polls and view
+    change:
+
+    - The laptop opens a window; the phone stops it and opens its own. The
+      laptop, left, closed the phone's window - also when its last poll was
+      older than the phone's window, which no comparison in the page can
+      see.
+    - The laptop's window runs out unseen, and the phone opens a new one.
+
+    The laptop's Stop carries the end time of the window IT opened, and the
+    bridge closes only that window: the phone's stays open. A claim whose
+    end has passed sends nothing at all, and a window only ever seen through
+    a list is never this page's to close.
+
+    A fourth run (verification finding N-3/S5) closes the one gap the first
+    three do not: the phone's Keep open lands, and THIS page polls before
+    leaving - so `zigbeePermitUntil`, what is on screen, has already moved
+    to the phone's window before the Stop on leaving is even sent.
+    `closeZigbeeWindow` must still send `zigbeeOpenedUntil`, this page's own
+    claim, as `only_if_until` - not the on-screen value a poll just wrote
+    over it.
+
+    Fault to prove it: send the Stop on leaving without `only_if_until`, or
+    close on leaving with the window on screen when there is no claim, or -
+    the fourth run's own fault - send `this.zigbeePermitUntil` instead of
+    `this.zigbeeOpenedUntil` as the leaving Stop's claim."""
+    values = _app_state(
+        _BINDINGS_JS
+        + _PAIRING_PAGE_JS
+        + _BRIDGE_JS
+        + """
+        (async () => {
+          const out = {};
+          // Replaced - the laptop has not polled since.
+          await state.startZigbeeSearch();
+          const laptopWindow = state.zigbeeOpenedUntil;
+          bridge.shift += 20000; const phone = openFor(254);    // the phone
+          bridge.permits.length = 0; bridge.conditions.length = 0;
+          await state.selectView('export');
+          await settle();
+          out.replaced = { condition: bridge.conditions.splice(0)[0] === laptopWindow,
+            permits: bridge.permits.splice(0), phoneStillOpen: openNow() === phone,
+            claim: state.zigbeeOpenedUntil };
+
+          // Ran out unseen, then opened again on the phone.
+          await state.selectView('devices');
+          state.commissionTab = 'zigbee';
+          bridge.shift = -260000;
+          await state.startZigbeeSearch();                     // ends 6 s ago
+          bridge.shift = 0; const again = openFor(254);         // the phone
+          bridge.permits.length = 0;
+          await state.selectView('export');
+          await settle();
+          out.expired = { permits: bridge.permits.splice(0), phoneStillOpen: openNow() === again,
+            claim: state.zigbeeOpenedUntil };
+
+          // Seen only.
+          await state.selectView('devices');
+          state.commissionTab = 'zigbee';
+          bridge.shift = 40000; openFor(254);
+          await state.loadZigbeePairing();
+          await state.selectView('export');
+          await settle();
+          out.seenOnly = { permits: bridge.permits.splice(0), claim: state.zigbeeOpenedUntil };
+
+          // A foreign Keep open moves the window after this page opened it,
+          // and a poll in between updates only what is ON SCREEN, not this
+          // page's own claim - the Stop sent on leaving must still name
+          // what this page itself opened, never the screen (verification
+          // finding N-3/S5: a leaving Stop that sent the on-screen end
+          // instead would name the window that is CURRENTLY open and close
+          // it out from under the phone, instead of finding its own, stale
+          // claim mismatched and doing nothing).
+          await state.selectView('devices');
+          state.commissionTab = 'zigbee';
+          bridge.shift = 0;
+          await state.startZigbeeSearch();
+          const mine = state.zigbeeOpenedUntil;                  // T1, this page's claim
+          bridge.shift += 30000; const foreign = openFor(254);   // the phone's Keep open, T2
+          bridge.permits.length = 0; bridge.conditions.length = 0;
+          await state.loadZigbeePairing();                       // this page polls: sees T2
+          const shown = state.zigbeePermitUntil;
+          const claimAfterPoll = state.zigbeeOpenedUntil;
+          await state.selectView('export');
+          await settle();
+          out.polledAfterForeignKeepOpen = {
+            shownMovedToForeignWindow: shown === foreign && shown !== mine,
+            claimStayedMine: claimAfterPoll === mine,
+            conditionIsMine: bridge.conditions.splice(0)[0] === mine,
+            phoneStillOpen: openNow() === foreign,
+          };
+          console.log(JSON.stringify(out));
+        })();
+        """
+    )
+    assert values["replaced"] == {
+        "condition": True,
+        "permits": [0],
+        "phoneStillOpen": True,
+        "claim": None,
+    }
+    assert values["expired"] == {"permits": [], "phoneStillOpen": True, "claim": None}
+    assert values["seenOnly"] == {"permits": [], "claim": None}
+    assert values["polledAfterForeignKeepOpen"] == {
+        "shownMovedToForeignWindow": True,
+        "claimStayedMine": True,
+        "conditionIsMine": True,
+        "phoneStillOpen": True,
+    }
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_keep_open_moves_the_claim_to_the_new_end_time():
+    """ "Keep open longer" gives the window a new end time. A claim that stayed
+    on the old one would be ended by the very next poll, and leaving would
+    then leave a network the user opened here open for four minutes.
+
+    Through the REAL Start, poll, Keep open, poll and view change.
+
+    Fault to prove it: keep the Start's end time as the claim when Keep open
+    answers."""
+    values = _app_state(
+        _BINDINGS_JS
+        + _PAIRING_PAGE_JS
+        + _BRIDGE_JS
+        + """
+        (async () => {
+          await state.startZigbeeSearch();
+          await state.loadZigbeePairing();
+          const first = state.zigbeeOpenedUntil;
+          bridge.shift += 30000;
+          await state.extendZigbeeSearch();
+          await state.loadZigbeePairing();
+          const moved = state.zigbeeOpenedUntil !== first && state.zigbeeOpenedUntil === bridge.until;
+          bridge.permits.length = 0;
+          await state.selectView('export');
+          await settle();
+          console.log(JSON.stringify({ moved, permits: bridge.permits }));
+        })();
+        """
+    )
+    assert values == {"moved": True, "permits": [0]}
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_a_reload_restores_the_claim_through_init():
+    """The tab and the claim survive a reload only because `init()` reads
+    them back - a helper that restored them correctly but was never called
+    kept every other test green.
+
+    A page load through the REAL `init()` opens a window, and the next page
+    load over the same storage lands on the Zigbee tab and closes that window
+    when it is left, naming it by its end time.
+
+    Fault to prove it: drop `this.restoreCommission()` from `init()`."""
+    values = _app_state(
+        _BINDINGS_JS
+        + _PAIRING_PAGE_JS
+        + _BRIDGE_JS
+        + _BROWSER_TAB_JS
+        + """
+        (async () => {
+          const storage = {};
+          const before = await bootPage(storage);
+          await before.page.selectCommissionTab('zigbee');
+          await before.page.startZigbeeSearch();
+          const opened = bridge.until;
+          bridge.permits.length = 0; bridge.conditions.length = 0;
+          const after = await bootPage(storage);
+          const landed = after.page.commissionTabShown();
+          await after.use().selectView('export');
+          await settle();
+          console.log(JSON.stringify({ landed, permits: bridge.permits,
+            named: bridge.conditions[0] === opened, closed: openNow() === null }));
+        })();
+        """
+    )
+    assert values == {"landed": "zigbee", "permits": [0], "named": True, "closed": True}
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_a_list_asked_during_start_does_not_wipe_its_window():
+    """The sequence was bumped only before the POST. A poll sent WHILE Start
+    was on its way was asked before the radio had the window, and landing
+    after Start's answer it wrote "no window" over it: the countdown fell to
+    0, the claim was dropped, and leaving left the network open.
+
+    The REAL Start with its POST held, a REAL list load sent during it and
+    answered after it.
+
+    Fault to prove it: drop the second sequence bump from
+    `sendZigbeePermit()`."""
+    values = _app_state(
+        _BINDINGS_JS
+        + _PAIRING_PAGE_JS
+        + _BRIDGE_JS
+        + """
+        (async () => {
+          bridge.holdPermit = true;
+          const start = state.startZigbeeSearch();
+          await settle();
+          bridge.holdGet = true;
+          const poll = state.loadZigbeePairing();
+          await settle();
+          bridge.releasePermit();
+          await start;
+          bridge.releaseGet();
+          await poll;
+          const after = { counting: state.zigbeeCountdown() > 0, claimed: state.zigbeeOpenedUntil === bridge.until };
+          bridge.holdPermit = false; bridge.holdGet = false;
+          bridge.permits.length = 0;
+          await state.selectView('export');
+          await settle();
+          console.log(JSON.stringify({ ...after, permits: bridge.permits }));
+        })();
+        """
+    )
+    assert values == {"counting": True, "claimed": True, "permits": [0]}
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_the_stop_sent_on_leaving_names_the_window_this_page_opened():
+    """What the page still decides, now that the server compares: WHICH end
+    time goes with the Stop, and whether a Stop goes at all. Through the REAL
+    Start, Keep open and view change, against a bridge that closes only the
+    window a condition names:
+
+    - Start, then leaving: one Stop, carrying the end time Start answered.
+    - Keep open, then leaving: the Stop carries the NEW end time, and the
+      window closes.
+    - Start still on its way when the view is left: nothing to name yet, so
+      nothing is sent on leaving; the Start's answer lands off screen and
+      the Stop carrying its end time follows it.
+    - No window opened here, one open on screen (a phone's): no Stop.
+
+    Fault to prove it: send the Stop without `only_if_until` from
+    `closeZigbeeWindow()`, keep the Start's end time on Keep open, or drop
+    the off-screen close after the await in `sendZigbeePermit()`."""
+    values = _app_state(
+        _BINDINGS_JS
+        + _PAIRING_PAGE_JS
+        + _BRIDGE_JS
+        + """
+        const leaveAndBack = async () => {
+          await state.selectView('export');
+          await settle();
+          const sent = bridge.permits.map((duration, i) => [duration, bridge.conditions[i]]);
+          bridge.permits.length = 0; bridge.conditions.length = 0;
+          await state.selectView('devices');
+          state.commissionTab = 'zigbee';
+          return sent;
+        };
+        (async () => {
+          const out = {};
+          await state.startZigbeeSearch();
+          out.startEnd = bridge.until;
+          bridge.permits.length = 0; bridge.conditions.length = 0;
+          out.afterStart = await leaveAndBack();
+
+          await state.startZigbeeSearch();
+          bridge.shift += 30000;
+          await state.extendZigbeeSearch();
+          out.keepOpenEnd = bridge.until;
+          bridge.permits.length = 0; bridge.conditions.length = 0;
+          out.afterKeepOpen = await leaveAndBack();
+          out.closedAfterKeepOpen = openNow() === null;
+
+          bridge.shift += 30000;
+          bridge.holdPermit = true;
+          const start = state.startZigbeeSearch();
+          await settle();
+          bridge.permits.length = 0; bridge.conditions.length = 0;
+          await state.selectView('export');
+          await settle();
+          out.sentWhileStartWasOnItsWay = bridge.permits.length;
+          bridge.releasePermit();
+          await start;
+          await settle();
+          out.lateEnd = bridge.conditions[0];
+          out.late = bridge.permits.splice(0);
+          out.closedAfterLateStart = openNow() === null;
+          bridge.holdPermit = false; bridge.conditions.length = 0;
+          await state.selectView('devices');
+          state.commissionTab = 'zigbee';
+
+          bridge.shift += 30000; openFor(254);                  // a phone
+          await state.loadZigbeePairing();
+          out.seenOnly = await leaveAndBack();
+          console.log(JSON.stringify(out));
+        })();
+        """
+    )
+    assert values["afterStart"] == [[0, values["startEnd"]]]
+    assert values["afterKeepOpen"] == [[0, values["keepOpenEnd"]]]
+    assert values["closedAfterKeepOpen"] is True
+    assert values["sentWhileStartWasOnItsWay"] == 0
+    assert values["late"] == [0]
+    assert isinstance(values["lateEnd"], str)
+    assert values["closedAfterLateStart"] is True
+    assert values["seenOnly"] == []
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_leaving_the_devices_view_does_not_wait_for_the_stop():
+    """The Stop sent on leaving was awaited inside `selectView()`, so a radio
+    slow to answer it held the view change back for up to the 10 s bound:
+    the user clicked Export and nothing happened.
+
+    The REAL `selectView('export')` with the bridge holding the Stop: the
+    view has changed and the Export view has loaded while the Stop is still
+    on its way. A refusal that arrives afterwards still reaches the
+    page-wide banner, and the page keeps its claim on the window.
+
+    Fault to prove it: `await this.closeZigbeeWindow()` in `selectView()`, or
+    do not give the claim back when a Stop is refused."""
+    values = _app_state(
+        _BINDINGS_JS
+        + _PAIRING_PAGE_JS
+        + _BRIDGE_JS
+        + """
+        const loaded = [];
+        state.request = async (method, path, payload) => {
+          if (path !== '/api/zigbee/permit' && path !== '/api/zigbee/pairing' && path !== '/api/zigbee/radio') {
+            loaded.push(path);
+          }
+          const answer = await bridgeRequest(method, path, payload);
+          if (path === '/api/zigbee/permit' && payload.duration === 0) {
+            const error = new Error('could not be closed'); error.status = 502; throw error;
+          }
+          return answer;
+        };
+        (async () => {
+          await state.startZigbeeSearch();
+          const opened = state.zigbeeOpenedUntil;
+          bridge.holdStop = true;
+          const navigation = state.selectView('export').then(() => 'navigated');
+          const outcome = await Promise.race([navigation, settle().then(settle).then(() => 'waiting')]);
+          const during = { outcome, view: state.view, loaded: [...loaded],
+            stopOnItsWay: bridge.releaseStop !== null, banner: state.zigbeeLeaveCloseShown() };
+          bridge.releaseStop();
+          await navigation;
+          await settle();
+          console.log(JSON.stringify({ during, bannerAfter: state.zigbeeLeaveCloseShown(),
+            claimKept: opened !== null && state.zigbeeOpenedUntil === opened }));
+        })();
+        """
+    )
+    during = values["during"]
+    assert during["outcome"] == "navigated"
+    assert during["view"] == "export"
+    assert during["loaded"], "the Export view loaded nothing while the Stop was on its way"
+    assert during["stopOnItsWay"] is True
+    assert during["banner"] is False
+    assert values["bannerAfter"] is True
+    # Refused, the window may still be open, and it is still this page's.
+    assert values["claimKept"] is True
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+async def test_coming_back_to_devices_moves_the_leave_error_into_the_pane(api):
+    """A Stop refused on leaving shows in a banner above the navigation. Only
+    a tab click moved it into the pane: coming back through the Devices view
+    left the banner up there while the pane's own error line, under the
+    user's eyes, stayed empty.
+
+    The served banner's `x-show` and the pane's error line, after leaving to
+    Export with a refused Stop and coming back through the REAL
+    `selectView('devices')`.
+
+    Fault to prove it: drop the `noteZigbeePaneShown()` call at the top of
+    `peekZigbeePairing()`."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+    banner = next(
+        attributes
+        for tag, attributes, _ in _served_elements(page)
+        if tag == "div" and "zigbee-leave-banner" in attributes.get("class", "").split()
+    )
+    pane_error = _pairing_element(page, "p", x_text="zigbeePermitError")
+    values = _app_state(
+        _BINDINGS_JS
+        + _PAIRING_PAGE_JS
+        + _BRIDGE_JS
+        + f"const bannerShown = () => Boolean(run({json.dumps(banner['x-show'])}));"
+        + f"const paneError = () => run({json.dumps(pane_error['x-show'])}) ? run({json.dumps(pane_error['x-text'])}) : null;"
+        + """
+        state.request = async (method, path, payload) => {
+          if (path === '/api/zigbee/permit' && payload.duration === 0) {
+            const error = new Error('could not be closed'); error.status = 502; throw error;
+          }
+          return bridgeRequest(method, path, payload);
+        };
+        (async () => {
+          await state.startZigbeeSearch();
+          await state.selectView('export');
+          await settle();
+          const away = { banner: bannerShown(), pane: paneError() };
+          await state.selectView('devices');
+          const back = { banner: bannerShown(), pane: paneError(), tab: state.commissionTabShown() };
+          console.log(JSON.stringify({ away, back }));
+        })();
+        """
+    )
+    assert values["away"] == {"banner": True, "pane": None}
+    assert values["back"] == {"banner": False, "pane": "could not be closed", "tab": "zigbee"}
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_a_refused_stop_goes_when_the_window_does_and_a_refused_start_stays():
+    """A refused Stop says the network "may still be open". Once a list shows
+    no window that is false, and the sentence stayed - no poll cleared the
+    pane's error line. A refused Start is different: its reason is still why
+    nothing is open, and wiping it two seconds later hid it.
+
+    The REAL Stop and Start refused by the bridge, then a REAL list with no
+    window.
+
+    Fault to prove it: leave `zigbeePermitError` alone in
+    `noteZigbeeWindowGone()`, or clear it there whatever it says."""
+    values = _app_state(
+        _BINDINGS_JS
+        + _PAIRING_PAGE_JS
+        + _BRIDGE_JS
+        + """
+        let refuse = null;
+        state.request = async (method, path, payload) => {
+          if (path === '/api/zigbee/permit' && refuse === payload.duration) {
+            const error = new Error('refused ' + payload.duration); error.status = 502; throw error;
+          }
+          return bridgeRequest(method, path, payload);
+        };
+        (async () => {
+          await state.startZigbeeSearch();
+          refuse = 0;
+          await state.stopZigbeeSearch();
+          const stopRefused = state.zigbeePermitError;
+          bridge.until = null;                           // closed after all
+          await state.loadZigbeePairing();
+          const stopAfterList = state.zigbeePermitError;
+          refuse = 254;
+          await state.startZigbeeSearch();
+          const startRefused = state.zigbeePermitError;
+          await state.loadZigbeePairing();
+          console.log(JSON.stringify({ stopRefused, stopAfterList, startRefused,
+            startAfterList: state.zigbeePermitError }));
+        })();
+        """
+    )
+    assert values == {
+        "stopRefused": "refused 0",
+        "stopAfterList": None,
+        "startRefused": "refused 254",
+        "startAfterList": "refused 254",
+    }
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_add_marks_the_row_as_added_here_before_its_request_answers():
+    """`Object.assign(row, updated)` queues a render the moment the PATCH
+    answers. With "added here" set only after it, that render put the row
+    into the folded "already added" group and the next one back into the
+    open group: the row was built twice, and the focus left the field Enter
+    was pressed in. Marked before the request, the row never leaves the open
+    group; a refused Add takes the mark back.
+
+    The REAL `adoptZigbeeDevice()` with its PATCH held open.
+
+    Fault to prove it: set `zigbeeAddedHere[ieee]` after the PATCH instead."""
+    values = _app_state(
+        _BINDINGS_JS
+        + _PAIRING_PAGE_JS
+        + f"const body = {json.dumps(_PAIRING_BODY)};"
+        + f"const ieee = {json.dumps(_UNNAMED)};"
+        + """
+        let answer; let refuse = false;
+        state.request = async (method, path, payload) => {
+          if (method === 'PATCH') {
+            await new Promise((resolve) => { answer = resolve; });
+            if (refuse) { const error = new Error('not ready'); error.status = 409; throw error; }
+            return { ...body.rows[1], device_id: 9, name: payload.name };
+          }
+          if (path === '/api/zigbee/pairing') return JSON.parse(JSON.stringify(body));
+          return [];
+        };
+        const openRows = () => (state.zigbeeRowGroups().find((group) => group.key === 'open')?.rows ?? [])
+          .map((row) => row.ieee);
+        (async () => {
+          await state.loadZigbeePairing();
+          const adding = state.adoptZigbeeDevice(ieee);
+          await settle();
+          const whileAsking = state.zigbeeAddedHere[ieee] === true;
+          answer(); await adding;
+          const added = { mark: state.zigbeeAddedHere[ieee] === true, open: openRows().includes(ieee) };
+          await state.loadZigbeePairing();
+          state.zigbeeAddedHere = {};
+          state.zigbeePairing.rows[1].device_id = null;
+          refuse = true;
+          const refusing = state.adoptZigbeeDevice(ieee);
+          await settle();
+          answer(); await refusing;
+          console.log(JSON.stringify({ whileAsking, added, refusedMark: ieee in state.zigbeeAddedHere }));
+        })();
+        """
+    )
+    assert values == {
+        "whileAsking": True,
+        "added": {"mark": True, "open": True},
+        "refusedMark": False,
+    }
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+async def test_the_enter_that_confirms_an_input_method_does_not_add(api):
+    """Typing a name through an input method (Japanese, Chinese), the Enter
+    that confirms a candidate is a keydown too - and Alpine's `.enter` does
+    not tell it apart, so it added the half-typed name. The handler ignores
+    a composing Enter (`isComposing`, and the `keyCode` 229 Safari sends for
+    it) and does not prevent its default; a plain Enter still adds.
+
+    The SERVED `@keydown.enter` of the name field, run as Alpine runs it.
+
+    Fault to prove it: drop the composition guard from the handler."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+    field = _pairing_element(page, "textarea", x_model="zigbeeRowDrafts[row.ieee].name")
+    handler = field["@keydown.enter"]
+    values = _app_state(
+        _BINDINGS_JS
+        + _PAIRING_PAGE_JS
+        + f"const body = {json.dumps(_PAIRING_BODY)};"
+        + f"const handler = {json.dumps(handler)};"
+        + f"const ieee = {json.dumps(_UNNAMED)};"
+        + """
+        const patches = [];
+        state.request = async (method, path, payload) => {
+          if (method === 'PATCH') { patches.push(payload); return { ...body.rows[1], device_id: 9, name: payload.name }; }
+          if (path === '/api/zigbee/pairing') return JSON.parse(JSON.stringify(body));
+          return [];
+        };
+        const press = async (event) => {
+          let prevented = false;
+          const $event = { ...event, preventDefault() { prevented = true; } };
+          exec(handler, { row: state.zigbeeRow(ieee), $event, $el: { blur() {} } });
+          await settle(); await settle();
+          return { patches: patches.length, prevented };
+        };
+        (async () => {
+          await state.loadZigbeePairing();
+          const composing = await press({ isComposing: true, keyCode: 229 });
+          const safari = await press({ isComposing: false, keyCode: 229 });
+          const plain = await press({ isComposing: false, keyCode: 13 });
+          console.log(JSON.stringify({ composing, safari, plain }));
+        })();
+        """
+    )
+    assert values["composing"] == {"patches": 0, "prevented": False}
+    assert values["safari"] == {"patches": 0, "prevented": False}
+    assert values["plain"] == {"patches": 1, "prevented": True}
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+async def test_the_open_row_group_has_an_accessible_name(api):
+    """The open group is a `<details>` held open with its summary hidden, so
+    in the accessibility tree it was an unnamed group beside the "already
+    added" one, which its summary names. It is named by `aria-label`.
+
+    The served `:aria-label`, evaluated with the real table for both groups.
+
+    Fault to prove it: drop the `:aria-label` from the group."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+    details = [
+        attributes
+        for tag, attributes, _ in _served_elements(page)
+        if tag == "details" and "zigbee-row-group" in attributes.get("class", "").split()
+    ]
+    assert len(details) == 1
+    label = details[0].get(":aria-label", "null")
+    values = _app_state(
+        _BINDINGS_JS
+        + f"const label = {json.dumps(label)};"
+        + "console.log(JSON.stringify({ open: run(label, { group: { key: 'open' } }),"
+        "  added: run(label, { group: { key: 'added' } }) }));",
+        translations=_web_strings(),
+    )
+    strings = _web_strings()
+    assert values["open"] == strings["web.zigbee.open_group_label"]
+    assert values["added"] is None
+    from loxmatter import i18n
+
+    assert i18n._STRINGS["web.zigbee.open_group_label"]["de"]
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_the_zigbee_tab_selects_itself_once_per_open_window():
+    """Entering Devices while a window is open selected the Zigbee tab EVERY
+    time - over a user who had picked the Matter tab by hand during that
+    window, and over a Matter commissioning under way. Now once per window.
+
+    Through the REAL tab clicks and view changes:
+
+    - A window is open: entering Devices selects Zigbee. The user clicks
+      Matter, goes to Export and comes back: still Matter.
+    - That window ends (a list shows none) and a new one opens: entering
+      Devices selects Zigbee again.
+    - A Matter commissioning is on screen (`commissionStep` set) while a
+      window opens: entering Devices leaves the Matter tab.
+
+    Fault to prove it: drop the `zigbeeTabChosen` check from
+    `peekZigbeePairing()`, do not clear it in `noteZigbeeWindowGone()`, or
+    drop the `commissionStep` check."""
+    values = _app_state(
+        _BINDINGS_JS
+        + _PAIRING_PAGE_JS
+        + _BRIDGE_JS
+        + """
+        (async () => {
+          const out = {};
+          state.view = 'export'; state.commissionTab = 'matter';
+          openFor(254);
+          await state.selectView('devices');
+          out.first = state.commissionTabShown();
+          await state.selectCommissionTab('matter');
+          await state.selectView('export');
+          await state.selectView('devices');
+          out.afterChoosingMatter = state.commissionTabShown();
+
+          bridge.until = null;
+          await state.selectView('export');
+          await state.selectView('devices');                   // sees no window
+          bridge.shift += 20000; openFor(254);
+          await state.selectView('export');
+          await state.selectView('devices');
+          out.nextWindow = state.commissionTabShown();
+
+          bridge.until = null;
+          state.commissionTab = 'matter';
+          await state.selectView('export');
+          await state.selectView('devices');                   // sees no window
+          state.commissionStep = 0;
+          bridge.shift += 20000; openFor(254);
+          await state.selectView('export');
+          await state.selectView('devices');
+          out.duringMatterCommissioning = state.commissionTabShown();
+          console.log(JSON.stringify(out));
+        })();
+        """
+    )
+    assert values == {
+        "first": "zigbee",
+        "afterChoosingMatter": "matter",
+        "nextWindow": "zigbee",
+        "duringMatterCommissioning": "matter",
+    }
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_a_row_added_here_stays_open_across_polls():
+    """A row added in this page stays among the open rows until the page is
+    loaded again, so its "in the device list" line is read rather than folded
+    away by the next poll - which reports the row as adopted from then on.
+
+    The REAL Add, then three REAL polls answering with the adopted row.
+
+    Fault to prove it: clear `zigbeeAddedHere` on every list load."""
+    values = _app_state(
+        _BINDINGS_JS
+        + _PAIRING_PAGE_JS
+        + f"const body = {json.dumps(_PAIRING_BODY)};"
+        + f"const ieee = {json.dumps(_UNNAMED)};"
+        + """
+        let adopted = false;
+        state.request = async (method, path, payload) => {
+          if (method === 'PATCH') { adopted = true; return { ...body.rows[1], device_id: 9, name: payload.name }; }
+          if (path === '/api/zigbee/pairing') {
+            const rows = JSON.parse(JSON.stringify(body.rows));
+            if (adopted) Object.assign(rows[1], { device_id: 9, name: 'Aqara Motion sensor P1' });
+            return { permit_until: null, rows };
+          }
+          return [];
+        };
+        const groupOf = () => state.zigbeeRowGroups().find((group) => group.rows.some((row) => row.ieee === ieee)).key;
+        (async () => {
+          await state.loadZigbeePairing();
+          await state.adoptZigbeeDevice(ieee);
+          const polls = [];
+          for (let i = 0; i < 3; i += 1) { await state.loadZigbeePairing(); polls.push(groupOf()); }
+          console.log(JSON.stringify({ polls }));
+        })();
+        """
+    )
+    assert values["polls"] == ["open", "open", "open"]
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+async def test_the_folded_group_stays_open_across_polls(api):
+    """The poll re-renders the groups every two seconds, and a `<details>`
+    the user opened snapped shut under them. The served `@toggle` writes the
+    state into `zigbeeAddedExpanded`, and the served `:open` reads it back.
+
+    Toggling the added group open, a REAL poll, and `:open` through
+    `boundTrue`; toggling the OPEN group changes nothing.
+
+    Fault to prove it: drop the assignment from `@toggle`, or bind `:open`
+    to `group.key === 'open'` alone."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+    details = next(
+        attributes
+        for tag, attributes, _ in _served_elements(page)
+        if tag == "details" and "zigbee-row-group" in attributes.get("class", "").split()
+    )
+    values = _app_state(
+        _BINDINGS_JS
+        + _PAIRING_PAGE_JS
+        + f"const body = {json.dumps(_PAIRING_BODY)};"
+        + f"const toggle = {json.dumps(details['@toggle'])};"
+        + f"const openExpr = {json.dumps(details[':open'])};"
+        + """
+        state.request = async () => JSON.parse(JSON.stringify(body));
+        const group = (key) => state.zigbeeRowGroups().find((candidate) => candidate.key === key);
+        (async () => {
+          await state.loadZigbeePairing();
+          const closedAtFirst = boundTrue(openExpr, { group: group('added') });
+          exec(toggle, { group: group('open'), $el: { open: false } });
+          const openGroupToggle = state.zigbeeAddedExpanded;
+          exec(toggle, { group: group('added'), $el: { open: true } });
+          await state.loadZigbeePairing();
+          await state.loadZigbeePairing();
+          const afterPolls = boundTrue(openExpr, { group: group('added') });
+          console.log(JSON.stringify({ closedAtFirst, openGroupToggle, afterPolls,
+            openGroup: boundTrue(openExpr, { group: group('open') }) }));
+        })();
+        """
+    )
+    assert values == {
+        "closedAtFirst": False,
+        "openGroupToggle": False,
+        "afterPolls": True,
+        "openGroup": True,
+    }
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_no_pairing_list_is_asked_for_without_a_stick():
+    """On an installation with no Zigbee stick - the normal case - entering
+    Devices must not ask for the pairing list: the route answers 503 there,
+    and a 503 banner nobody can act on, or a poll of it, is noise.
+
+    The REAL `selectView('devices')` with the radio answering no stick.
+
+    Fault to prove it: drop the `zigbeeTabVisible()` check before
+    `peekZigbeePairing()` in `selectView()`."""
+    values = _app_state(
+        _BINDINGS_JS
+        + _PAIRING_PAGE_JS
+        + """
+        const calls = [];
+        state.zigbee = null;
+        state.request = async (method, path) => {
+          calls.push(path);
+          if (path === '/api/zigbee/radio') return { ...radioBody, configured_path: null };
+          const error = new Error('no stick'); error.status = 503; throw error;
+        };
+        (async () => {
+          await state.selectView('devices');
+          console.log(JSON.stringify({ calls, timer: state.zigbeePairingTimer }));
+        })();
+        """
+    )
+    assert "/api/zigbee/radio" in values["calls"]
+    assert "/api/zigbee/pairing" not in values["calls"]
+    assert values["timer"] is None
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_removing_a_row_forgets_that_it_was_added_here():
+    """A row removed from the tab takes its "added here" mark with it at
+    once, not only at the next poll: a device paired again under the same
+    IEEE before that poll would otherwise sit among the open rows as if it
+    had just been added.
+
+    The REAL Add then Remove, looked at before any list is loaded again.
+
+    Fault to prove it: drop `delete this.zigbeeAddedHere[ieee]` from
+    `removeZigbeeDevice()`."""
+    values = _app_state(
+        _BINDINGS_JS
+        + _PAIRING_PAGE_JS
+        + f"const body = {json.dumps(_PAIRING_BODY)};"
+        + f"const ieee = {json.dumps(_UNNAMED)};"
+        + """
+        state.request = async (method, path, payload) => {
+          if (method === 'PATCH') return { ...body.rows[1], device_id: 9, name: payload.name };
+          if (method === 'DELETE') return null;
+          if (path === '/api/zigbee/pairing') return JSON.parse(JSON.stringify(body));
+          return [];
+        };
+        (async () => {
+          await state.loadZigbeePairing();
+          await state.adoptZigbeeDevice(ieee);
+          const marked = state.zigbeeAddedHere[ieee] === true;
+          state.loadZigbeePairing = async () => {};
+          await state.removeZigbeeDevice(ieee);
+          console.log(JSON.stringify({ marked, after: ieee in state.zigbeeAddedHere }));
+        })();
+        """
+    )
+    assert values == {"marked": True, "after": False}
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_clicking_the_zigbee_tab_again_reloads_nothing():
+    """A click on the tab already selected is not an arrival: it must not
+    send a list request of its own (and reset the poll's rhythm) every time
+    a user taps the tab they are on.
+
+    The REAL `selectCommissionTab('zigbee')`, twice.
+
+    Fault to prove it: drop the `leaving !== "zigbee"` condition from
+    `selectCommissionTab()`."""
+    values = _app_state(
+        _BINDINGS_JS
+        + _PAIRING_PAGE_JS
+        + _BRIDGE_JS
+        + """
+        (async () => {
+          state.commissionTab = 'matter';
+          await state.selectCommissionTab('zigbee');
+          const first = bridge.gets;
+          await state.selectCommissionTab('zigbee');
+          console.log(JSON.stringify({ first, second: bridge.gets - first }));
+        })();
+        """
+    )
+    assert values == {"first": 1, "second": 0}
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_adding_a_row_keeps_its_place_among_the_open_rows():
+    """Rows not added yet are listed before added ones. The moment Add
+    answered, the row counted as added and sorted behind the other new rows
+    - Alpine moved its element, and a moved element loses the focus: in the
+    browser, Enter in the name field left the user on the page's body. A row
+    added in this page keeps its place.
+
+    The REAL Add on the newest of two new rows, and the open group's order
+    before and after.
+
+    Fault to prove it: sort a row added here with the added rows in
+    `zigbeeRows()`."""
+    newer = {
+        **_PAIRING_BODY["rows"][1],
+        "ieee": "00:15:8d:00:07:77:88:99",
+        "changed_at": "2026-09-12T20:05:00+00:00",
+        "suggested_name": "Aqara Door sensor",
+    }
+    values = _app_state(
+        _BINDINGS_JS
+        + _PAIRING_PAGE_JS
+        + f"const body = {json.dumps(_PAIRING_BODY)};"
+        + f"body.rows.push({json.dumps(newer)});"
+        + f"const ieee = {json.dumps(newer['ieee'])};"
+        + """
+        state.request = async (method, path, payload) => {
+          if (method === 'PATCH') return { ...body.rows[2], device_id: 11, name: payload.name };
+          if (path === '/api/zigbee/pairing') return JSON.parse(JSON.stringify(body));
+          return [];
+        };
+        const openOrder = () => state.zigbeeRowGroups().find((group) => group.key === 'open').rows
+          .map((row) => row.ieee);
+        (async () => {
+          await state.loadZigbeePairing();
+          const before = openOrder();
+          await state.adoptZigbeeDevice(ieee);
+          console.log(JSON.stringify({ before, after: openOrder() }));
+        })();
+        """
+    )
+    assert values["before"][0] == "00:15:8d:00:07:77:88:99"
+    assert values["after"] == values["before"]
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+async def test_a_device_without_its_radio_offers_to_be_removed_from_loxmatter_only(api):
+    """No Zigbee stick any more, and "Remove" on a Zigbee tile answered 503
+    forever. The 503 now carries `"offer": "forget_only"`, and the tile the
+    user removed from shows the second step: the server's reason, the
+    honest copy, **Remove from loxmatter only** and **Keep it**.
+
+    Measured through the served markup and the REAL `removeDevice()`, with
+    the bindings evaluated the way Alpine does (`boundTrue` for
+    `:disabled`): the offer shows on that tile and no other; its buttons are
+    enabled, and disabled while the forget request is on its way; the
+    button's handler sends `?forget_only=true` and the tile goes. A 503
+    without the offer stays the plain removal error. And `requestJson`
+    carries the offer from a real response body.
+
+    Fault to prove it: bind a button's `:disabled` to `deviceForgetOffer.busy`
+    (undefined through a dot, which Alpine binds as a set attribute), key the
+    offer on any tile, or drop `error.offer` from `requestJson`."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+    offers = [
+        (attributes, ancestors)
+        for tag, attributes, ancestors in _served_elements(page)
+        if tag == "div" and "device-forget-offer" in attributes.get("class", "").split()
+    ]
+    assert len(offers) == 1, offers
+    offer = offers[0][0]
+    buttons = [
+        attributes
+        for tag, attributes, ancestors in _served_elements(page)
+        if tag == "button"
+        and any("device-forget-offer" in a.get("class", "").split() for _, a in ancestors)
+    ]
+    assert len(buttons) == 2, buttons
+    text = next(
+        attributes
+        for tag, attributes, ancestors in _served_elements(page)
+        if tag == "p"
+        and any("device-forget-offer" in a.get("class", "").split() for _, a in ancestors)
+    )
+    strings = _web_strings()
+    values = _app_state(
+        _BINDINGS_JS
+        + "globalThis.window = { location: { hash: '' }, history: { replaceState() {} }, confirm: () => true };"
+        + f"const offer = {json.dumps(offer)}; const buttons = {json.dumps(buttons)};"
+        + f"const text = {json.dumps(text)};"
+        + """
+        const plug = { id: 7, label: 'Hall plug', room: null };
+        const lamp = { id: 8, label: 'Desk lamp', room: null };
+        state.devices = [plug, lamp];
+        const deletes = []; let release = null; let offered = true;
+        const realRequest = state.request;
+        state.request = async (method, path) => {
+          if (method === 'DELETE') {
+            deletes.push(path);
+            if (!path.includes('forget_only')) {
+              const error = new Error('Zigbee is not set up in this installation');
+              error.status = 503; error.offer = offered ? 'forget_only' : null;
+              throw error;
+            }
+            await new Promise((resolve) => { release = resolve; });
+            return null;
+          }
+          return [];
+        };
+        const disabled = (device) => buttons.map((b) => boundTrue(b[':disabled'], { device }));
+        (async () => {
+          const out = {};
+          await state.removeDevice(plug);
+          out.shown = [run(offer['x-show'], { device: plug }), run(offer['x-show'], { device: lamp })];
+          out.text = run(text['x-text'], { device: plug });
+          out.idle = disabled(plug);
+          const forget = buttons.find((b) => b['@click'].startsWith('forgetDeviceLocally'));
+          const pending = exec(forget['@click'], { device: plug });
+          await new Promise((resolve) => setImmediate(resolve));
+          out.busy = disabled(plug);
+          release();
+          await pending;
+          await new Promise((resolve) => setImmediate(resolve));
+          out.deletes = deletes.splice(0);
+          out.after = { devices: state.devices.map((d) => d.id), shown: run(offer['x-show'], { device: plug }) };
+          offered = false;
+          await state.removeDevice(lamp);
+          out.plain = { shown: run(offer['x-show'], { device: lamp }), error: state.deviceActionError };
+
+          globalThis.fetch = async () => ({ ok: false, status: 503,
+            json: async () => ({ detail: 'Zigbee is not set up in this installation', offer: 'forget_only' }) });
+          try { await realRequest.call(state, 'DELETE', '/api/devices/7'); } catch (error) {
+            out.fromBody = { status: error.status, offer: error.offer, message: error.message };
+          }
+          console.log(JSON.stringify(out));
+        })();
+        """,
+        translations=strings,
+    )
+    assert values["shown"] == [True, False]
+    assert "Zigbee is not set up in this installation" in values["text"]
+    assert "Hall plug" in values["text"]
+    assert "factory-reset" in values["text"].lower()
+    assert values["idle"] == [False, False]
+    assert values["busy"] == [True, True]
+    assert values["deletes"] == ["/api/devices/7", "/api/devices/7?forget_only=true"]
+    assert values["after"] == {"devices": [8], "shown": False}
+    assert values["plain"]["shown"] is False
+    assert "Zigbee is not set up" in values["plain"]["error"]
+    assert values["fromBody"] == {
+        "status": 503,
+        "offer": "forget_only",
+        "message": "Zigbee is not set up in this installation",
+    }
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+async def test_keeping_the_device_returns_focus_to_the_tile_menu(api):
+    """Verification finding N-2 (2026-09-13): "Keep it" hides the
+    forget-only box by clearing `deviceForgetOffer`, which `x-show` turns
+    into `display: none` - but focus itself does not move. A keyboard user
+    who pressed Enter on that button was left focused on markup that had
+    just vanished, the same dead end `index.html` already documents for
+    the new-room field (Finding 2, re-review 2026-09-05).
+
+    Through the REAL `@click` handler of the SERVED "Keep it" button, with
+    fake `$el`/`$nextTick` standing in for the DOM this suite has no
+    engine for: `$el.closest('.card')` is the tile, `querySelector('summary')`
+    its kebab menu button - the same pair the fix's comment names.
+
+    Fault to prove it: drop the `$nextTick(() => ...)` call from the
+    button's `@click` (the offer still closes, but `focusCalls` stays
+    empty)."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+    buttons = [
+        attributes
+        for tag, attributes, ancestors in _served_elements(page)
+        if tag == "button"
+        and any("device-forget-offer" in a.get("class", "").split() for _, a in ancestors)
+    ]
+    keep = next(b for b in buttons if b["x-text"] == "t('web.devices.forget_only_keep')")
+    values = _app_state(
+        _BINDINGS_JS
+        + f"const keep = {json.dumps(keep)};"
+        + """
+        state.deviceForgetOffer = { deviceId: 7, technology: 'zigbee', reason: 'x' };
+        const focusCalls = [];
+        const summary = { focus: () => focusCalls.push('summary') };
+        const card = { querySelector: (selector) => (selector === 'summary' ? summary : null) };
+        const el = { closest: (selector) => (selector === '.card' ? card : null) };
+        exec(keep['@click'], { device: { id: 7 }, $el: el, $nextTick: (cb) => cb() });
+        console.log(JSON.stringify({ offer: state.deviceForgetOffer, focusCalls }));
+        """
+    )
+    assert values["offer"] is None
+    assert values["focusCalls"] == ["summary"]
