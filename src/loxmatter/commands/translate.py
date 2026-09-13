@@ -136,6 +136,18 @@ def parse_number(value: str) -> float:
     return _as_number(value)
 
 
+def parse_kelvin(value: str) -> float:
+    """A colour temperature in Kelvin, for the device path and the group
+    adapter alike. 0 K and below do not exist: without this check
+    `kelvin_to_mireds` raised a plain `ValueError` and the routes answered
+    500 instead of 400, and in a group a tunable-white member failed while a
+    colour-only member clamped the same value and sent it."""
+    kelvin = _as_number(value)
+    if kelvin <= 0:
+        raise UnsupportedValueError(i18n.t("api.errors.kelvin_not_positive", value=value))
+    return kelvin
+
+
 def level_from_percent(percent: float) -> int:
     """A brightness percentage as a LevelControl level, the rule `_level`
     applies to a value string."""
@@ -178,7 +190,7 @@ def _payload_level(value: str) -> _Built:
 
 
 def _payload_color_temperature(value: str) -> _Built:
-    return _Built(colour_temperature_payload(_as_number(value)))
+    return _Built(colour_temperature_payload(parse_kelvin(value)))
 
 
 # Channel abbreviation from `LoxoneColourError.channel` (see `commands/color.py`)

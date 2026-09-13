@@ -394,3 +394,15 @@ async def test_commands_without_a_range_carry_none(api_lamp):
     for command in response.json()["commands"]:
         if command["slug"] != "colortemp":
             assert command["range"] is None
+
+
+async def test_a_colour_temperature_of_zero_is_a_400_on_both_paths(api_lamp):
+    """0 K does not exist. Until 13 September 2026 `kelvin_to_mireds` raised a
+    plain `ValueError` here and both routes answered 500."""
+    client, _store, device_id, _runtime = api_lamp
+    key = f"d{device_id}_1_colortemp"
+    loxone = await client.get(f"/cmd/{key}/0")
+    assert loxone.status_code == 400
+    assert loxone.json()["detail"] == "colour temperature '0' must be above 0 Kelvin"
+    webui = await client.post(f"/api/commands/{key}", json={"value": "0"})
+    assert webui.status_code == 400

@@ -199,3 +199,17 @@ def test_a_member_with_the_light_on_two_endpoints_gets_calls_on_both_in_order():
 def test_an_invalid_colour_value_raises_before_any_call_is_built():
     with pytest.raises(UnsupportedValueError):
         adapt_group_command(COLOUR_HS, WW, "banana")
+
+
+@pytest.mark.parametrize("value", ["0", "-5"])
+@pytest.mark.parametrize(
+    "member",
+    [CWS, WS, WW, ONOFF, XY_ONLY, HS_ONLY],
+    ids=["CWS", "WS", "WW dim only", "ONOFF", "XY_ONLY", "HS_ONLY"],
+)
+def test_a_colour_temperature_of_zero_or_below_raises_for_every_member(member, value):
+    """0 K does not exist. Before, a tunable-white member raised a plain
+    `ValueError` midway while a colour-only member clamped and sent - which
+    one happened depended on the group's members."""
+    with pytest.raises(UnsupportedValueError):
+        adapt_group_command(COLOUR_TEMPERATURE, member, value)

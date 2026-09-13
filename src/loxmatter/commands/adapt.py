@@ -44,6 +44,7 @@ from loxmatter.commands.translate import (
     decode_loxone_colour,
     hue_saturation_payload,
     level_from_percent,
+    parse_kelvin,
     parse_number,
     to_device_calls,
     xy_payload,
@@ -162,7 +163,9 @@ def adapt_group_command(pair: Pair, rows: Sequence[StoredCommand], value: str) -
     `to_device_calls` documents. Raises `UnsupportedValueError` for a value
     that cannot mean anything, before any call is built."""
     decoded = decode_loxone_colour(value) if pair in (COLOUR_HS, COLOUR_XY) else None
-    if pair in (LEVEL, LEVEL_ONOFF, COLOUR_TEMPERATURE):
+    if pair == COLOUR_TEMPERATURE:
+        parse_kelvin(value)
+    if pair in (LEVEL, LEVEL_ONOFF):
         parse_number(value)
     calls: list[DeviceCall] = []
     for endpoint in sorted({row.endpoint for row in rows}):

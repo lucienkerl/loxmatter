@@ -353,6 +353,9 @@ api.errors.unknown_command:
 api.errors.value_not_a_number:
   en: "value {value!r} is not a number"
   de: "Wert {value!r} ist keine Zahl"
+api.errors.kelvin_not_positive:
+  en: "colour temperature {value!r} must be above 0 Kelvin"
+  de: "Farbtemperatur {value!r} muss über 0 Kelvin liegen"
 api.errors.command_unsupported:
   en: "Cluster {cluster_id} command {command_id} is not supported"
   de: "Cluster {cluster_id} Kommando {command_id} wird nicht unterstuetzt"
