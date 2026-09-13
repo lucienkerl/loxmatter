@@ -677,22 +677,29 @@ def test_a_zigbee_lamp_that_takes_colour_only_as_xy_gets_exactly_one_picker():
       MoveToColor, ZHA's own and only colour command. Design 5.6 and the
       change notes promised this; the first gate gave it nothing.
     - 0x18, XY|CT without HS - the white-spectrum shape, and also the Candeo
-      RGBCCT controller's: no colour control, the recorded cost.
+      RGBCCT controller's. The bits cannot tell the two apart, and the
+      device type the Zigbee edge writes does: on the Extended Color Light
+      this helper declares (ZLL 0x0210) it is one colour control,
+      `color_xy`; on a Color Temperature Light (ZLL 0x0220) none; and with a
+      device type the table does not know, the bits decide, which is none.
     - 0x1F, every colour bit: ONE colour control, not two twins. Both 6 and
       7 are exported for Loxone, and `duplicate_control_command` keeps only
       `color` for the modal - the fix for an earlier bug on this branch.
 
     Fault to prove it: require `XY | HS` for (768, 7) alone again (the first
-    list comes out empty), drop the CT exclusion (the second grows
-    `color_xy`), or empty `_INTERCHANGEABLE_CONTROL_COMMANDS` (the third
+    list comes out empty), drop the CT exclusion (the untyped 0x18 lamp
+    grows `color_xy`), drop the Extended Color Light rule (the typed 0x18
+    lamp loses it), or empty `_INTERCHANGEABLE_CONTROL_COMMANDS` (the last
     has two)."""
+    from dataclasses import replace
+
     from loxmatter.export.commands import extract_commands
     from loxmatter.profiles.table import command_control, duplicate_control_command
 
-    def pickers(value: int) -> tuple[list[str], list[str]]:
-        snapshot = build_snapshot(
-            _lamp({(0x0300, 0x400A): value, (0x0300, 0x0003): 24939, (0x0300, 0x0004): 24701})
-        )
+    def pickers(value: int, device_type: int = 0x0210) -> tuple[list[str], list[str]]:
+        lamp = _lamp({(0x0300, 0x400A): value, (0x0300, 0x0003): 24939, (0x0300, 0x0004): 24701})
+        endpoint = replace(lamp.endpoints[0], device_type=device_type)
+        snapshot = build_snapshot(replace(lamp, endpoints=(endpoint,)))
         commands = [
             command
             for command in extract_commands(snapshot)
@@ -707,5 +714,7 @@ def test_a_zigbee_lamp_that_takes_colour_only_as_xy_gets_exactly_one_picker():
         return [command.slug for command in commands], drawn
 
     assert pickers(0x08) == (["color_xy"], ["color_xy"])
-    assert pickers(0x18) == ([], [])
+    assert pickers(0x18) == (["color_xy"], ["color_xy"])
+    assert pickers(0x18, device_type=0x0220) == ([], [])
+    assert pickers(0x18, device_type=0x7FFF) == ([], [])
     assert pickers(0x1F) == (["color", "color_xy"], ["color"])

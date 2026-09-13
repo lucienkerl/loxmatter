@@ -102,6 +102,7 @@ _MATTER_DEVICE_TYPE_BY_PROFILE: dict[tuple[int, int], int] = {
     (0x0104, 0x0000): 0x0103,  # On/Off Switch -> OnOffLightSwitch
     (0x0104, 0x0002): 0x010A,  # On/Off Output -> OnOffPlugInUnit
     (0x0104, 0x0009): 0x010A,  # Mains Power Outlet -> OnOffPlugInUnit
+    (0x0104, 0x0051): 0x010A,  # Smart Plug -> OnOffPlugInUnit
     (0x0104, 0x0100): 0x0100,  # On/Off Light -> OnOffLight
     (0x0104, 0x0101): 0x0101,  # Dimmable Light -> DimmableLight
     (0x0104, 0x0102): 0x010D,  # Color Dimmable Light -> ExtendedColorLight
@@ -110,6 +111,14 @@ _MATTER_DEVICE_TYPE_BY_PROFILE: dict[tuple[int, int], int] = {
     (0x0104, 0x0105): 0x0105,  # Color Dimmer Switch -> ColorDimmerSwitch
     (0x0104, 0x0106): 0x0106,  # Light Sensor -> LightSensor
     (0x0104, 0x0107): 0x0107,  # Occupancy Sensor -> OccupancySensor
+    # The Zigbee 3.0 ids for the same lamps and plugs, numbered as Matter
+    # numbers them. Without these four a device declaring them landed in
+    # category OTHER and could not join a group of Matter lamps or plugs;
+    # 0x010D is also what tells an RGBCCT lamp from a tunable-white one in
+    # `profiles/capabilities.py`.
+    (0x0104, 0x010A): 0x010A,  # On/Off Plug-in Unit -> OnOffPlugInUnit
+    (0x0104, 0x010C): 0x010C,  # Color Temperature Light -> ColorTemperatureLight
+    (0x0104, 0x010D): 0x010D,  # Extended Color Light -> ExtendedColorLight
     (0x0104, 0x0302): 0x0302,  # Temperature Sensor -> TemperatureSensor
     # ZLL (Zigbee Light Link), profile 0xC05E. Its own device-ID numbering,
     # unrelated to ZHA's - the row below is the whole reason this map is

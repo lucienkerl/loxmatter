@@ -306,3 +306,79 @@ def test_every_source_declaring_zero_is_still_a_denial():
         }
     )
     assert _colour_command_ids(snapshot) == {10}
+
+
+# --- The device type settles what the bits cannot ----------------------------
+#
+# FeatureMap 24 = XY|CT is both the white-spectrum KAJPLATS (device type 268,
+# Color Temperature Light) and an RGBCCT lamp such as Candeo's controller
+# (`CandeoRGBCCTColorCluster`: XY_attributes + Color_temperature). Only the
+# device type on the same endpoint tells them apart, and Matter and Zigbee
+# share the numbers (the Zigbee edge writes them into `<ep>/29/0`).
+
+
+def _typed_colour_snapshot(features: int, *device_types: int) -> NodeSnapshot:
+    return _colour_snapshot(
+        {
+            f"1/{_COLOUR_CLUSTER}/{FEATURE_MAP_ID}": features,
+            "1/29/0": [{"0": device_type, "1": 1} for device_type in device_types],
+        }
+    )
+
+
+def test_an_extended_colour_light_declaring_xy_and_ct_gets_its_colour_control():
+    """An RGBCCT lamp declares XY|CT without HS, bit for bit the tunable-white
+    lamp, and was denied colour with it. Declared as an Extended Color Light
+    (269), it is a colour lamp, and XY is how it takes colour: command 7
+    clears the gate, command 6 still needs the hue/saturation bit it does
+    not declare - so the lamp gets exactly one colour control.
+
+    Fault to prove it: drop the device-type rule from
+    `command_needs_missing_feature` (the lamp keeps only command 10)."""
+    assert _colour_command_ids(_typed_colour_snapshot(24, 269)) == {7, 10}
+
+
+def test_a_colour_temperature_light_gets_no_colour_control_whatever_its_bits_say():
+    """The white-spectrum KAJPLATS as it really reports itself (268, XY|CT)
+    stays without colour, and so does a lamp declaring itself a Color
+    Temperature Light while its bits claim hue and saturation: a device type
+    is the maker's statement of what the lamp is, and a wrongly released
+    colour picker misbehaves on hardware where a wrongly locked one costs one
+    option.
+
+    Fault to prove it: let the bits alone decide for a 268 endpoint (the
+    second case gains commands 6 and 7)."""
+    assert _colour_command_ids(_typed_colour_snapshot(24, 268)) == {10}
+    assert _colour_command_ids(_typed_colour_snapshot(9, 268)) == {10}
+
+
+def test_a_full_colour_lamp_and_a_lamp_without_a_device_type_are_unchanged():
+    """The checked-in CWS lamp (269, 31) keeps both colour commands, the
+    web UI showing one picker for them, and a snapshot that declares no
+    device type is judged by its bits exactly as before.
+
+    Fault to prove it: require the device type for command 7 (the untyped
+    XY-only lamp loses its control), deny 269 lamps command 6, or let a 268
+    beside a 269 on one endpoint deny colour."""
+    assert _colour_command_ids(_typed_colour_snapshot(31, 269)) == {6, 7, 10}
+    # An endpoint listing both lamp types is judged as the colour lamp.
+    assert _colour_command_ids(_typed_colour_snapshot(9, 268, 269)) == {6, 7, 10}
+    assert _colour_command_ids(_colour_snapshot({f"1/{_COLOUR_CLUSTER}/{FEATURE_MAP_ID}": 8})) == {
+        7,
+        10,
+    }
+    assert _colour_command_ids(_colour_snapshot({f"1/{_COLOUR_CLUSTER}/{FEATURE_MAP_ID}": 24})) == {
+        10
+    }
+
+
+def test_the_checked_in_matter_lamps_keep_their_colour_commands():
+    """The two real KAJPLATS fixtures, loaded rather than written out: the
+    white-spectrum lamp (268) has no colour command and the colour lamp
+    (269) has both.
+
+    Fault to prove it: grant command 7 on the XY bit alone."""
+    white = {c.command_id for c in extract_commands(load("ikea_kajplats_ws_lamp.json"))}
+    colour = {c.command_id for c in extract_commands(load("ikea_kajplats_cws_lamp.json"))}
+    assert not {6, 7} & white
+    assert {6, 7} <= colour

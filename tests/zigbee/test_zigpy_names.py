@@ -1063,3 +1063,41 @@ def test_the_coordinator_description_is_read_from_names_zigpy_really_fills() -> 
     reader = inspect.getsource(source_module.ZigbeeSource._note_coordinator)
     for name in ('"manufacturer"', '"model"', '"version"', '"node_info"', '"state"'):
         assert name in reader
+
+
+@pytest.mark.parametrize(
+    ("zha_name", "matter_name"),
+    [
+        ("COLOR_TEMPERATURE_LIGHT", "ColorTemperatureLight"),
+        ("EXTENDED_COLOR_LIGHT", "ExtendedColorLight"),
+        ("ON_OFF_PLUG_IN_UNIT", "OnOffPlugInUnit"),
+        ("SMART_PLUG", "OnOffPlugInUnit"),
+    ],
+)
+def test_the_common_zigbee_3_lamps_and_plugs_get_a_matter_device_type(
+    zha_name: str, matter_name: str
+) -> None:
+    """The Home Automation profile's own ids for a colour-temperature
+    lamp, an extended-colour lamp, a plug-in unit and a smart plug had no
+    row, so such a device carried no `<ep>/29/0`: `category_for` filed it
+    under OTHER, it got no lamp or plug icon, and `set_group_members`
+    refused it beside a Matter lamp of the same kind. They are the four
+    most common of their kind in the installed zha-quirks signatures
+    (smart plug 94, plug-in unit 68, colour temperature 9, extended colour
+    4), and the extended-colour type is also what tells an RGBCCT lamp from
+    a tunable-white one in `profiles/capabilities.py`.
+
+    Both numbers are read from the installed libraries, not from this
+    file: the Zigbee id from `zigpy.profiles.zha.DeviceType`, the Matter id
+    from `matter_server`'s own device-type classes.
+
+    Fault to prove it: drop any of the four rows from
+    `_MATTER_DEVICE_TYPE_BY_PROFILE`, or map the smart plug to a light."""
+    from matter_server.client.models import device_types as matter_types
+    from zigpy.profiles import zha
+
+    from loxmatter.zigbee.translate import matter_device_type
+
+    zigbee_id = int(getattr(zha.DeviceType, zha_name))
+    matter_id = getattr(matter_types, matter_name).device_type
+    assert matter_device_type(zha.PROFILE_ID, zigbee_id) == matter_id

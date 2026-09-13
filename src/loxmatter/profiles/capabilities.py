@@ -66,14 +66,24 @@ both worlds.
   "start value unknown" note, the same one every control shows for a value
   it cannot read. That costs the marker, not the colour.
 
-  **The case this still leaves out:** a colour lamp declaring XY|CT without
-  HS is bit-for-bit the white-spectrum lamp, and is denied with it -
-  `zhaquirks.candeo.CandeoRGBCCTColorCluster` (XY_attributes +
-  Color_temperature) is a real one. The bits cannot separate the two; only
-  the device type could (Extended Color Light 269 against Color
-  Temperature Light 268). The project's standing asymmetry decides the tie
-  (see `api/control.py`, `_WRITABLE_ATTRIBUTES`): a wrongly locked control
-  costs one missing option, a wrongly released one misbehaves on hardware.
+**The device type settles what the bits cannot.** A colour lamp declaring
+XY|CT without HS is bit-for-bit the white-spectrum lamp -
+`zhaquirks.candeo.CandeoRGBCCTColorCluster` (XY_attributes +
+Color_temperature) is a real one - and the bits alone denied it with the
+KAJPLATS. The endpoint's device type separates them, and it sits in the
+same snapshot (`<ep>/29/0`, written natively by Matter and by the Zigbee
+edge from `zigbee/translate.py`'s table, with the same numbers):
+
+- **Extended Color Light (269)** is a colour lamp, so for (768, 7) the XY
+  bit is enough, CT or not. It gains command 7 and nothing else - command
+  6 still needs HS - so such a lamp gets exactly one colour control.
+- **Color Temperature Light (268)** is a white lamp, and gets neither
+  colour command whatever its bits claim. The project's standing asymmetry
+  decides that direction (see `api/control.py`, `_WRITABLE_ATTRIBUTES`): a
+  wrongly locked control costs one missing option, a wrongly released one
+  misbehaves on hardware. An endpoint that lists 269 as well is judged as
+  269.
+- **No device type** leaves the bits to decide, exactly as before.
 
 **A device that declares nothing is denied.** Neither attribute present means
 the snapshot makes no claim, and a gate that reads silence as consent is not
@@ -89,6 +99,7 @@ from __future__ import annotations
 
 from loxmatter.matter.models import NodeSnapshot
 from loxmatter.matter.paths import FEATURE_MAP_ID
+from loxmatter.profiles.relevance import device_types_by_endpoint
 
 COLOR_CONTROL_CLUSTER = 768
 
@@ -128,6 +139,22 @@ COMMAND_FEATURE_RULES: dict[tuple[int, int], tuple[tuple[int, int], ...]] = {
         # white-spectrum lamp.
         (COLOUR_FEATURE_XY, COLOUR_FEATURE_COLOR_TEMPERATURE),
     ),
+}
+
+
+# The two Matter device types that say which kind of colour lamp an endpoint
+# is, numbered as in `matter_server.client.models.device_types`
+# (ColorTemperatureLight, ExtendedColorLight). See the module docstring.
+COLOR_TEMPERATURE_LIGHT = 0x010C
+EXTENDED_COLOR_LIGHT = 0x010D
+
+# Commands a Color Temperature Light is denied whatever its bits say, and the
+# bits an Extended Color Light needs for a command instead of its rules.
+_WHITE_LAMP_DENIED: frozenset[tuple[int, int]] = frozenset(
+    {(COLOR_CONTROL_CLUSTER, 6), (COLOR_CONTROL_CLUSTER, 7)}
+)
+_COLOUR_LAMP_RULES: dict[tuple[int, int], int] = {
+    (COLOR_CONTROL_CLUSTER, 7): COLOUR_FEATURE_XY,
 }
 
 
@@ -197,6 +224,13 @@ def command_needs_missing_feature(
         return False
     features = declared_features(snapshot, endpoint, cluster_id)
     if features is None:
+        return True
+    device_types = device_types_by_endpoint(snapshot).get(endpoint, frozenset())
+    if EXTENDED_COLOR_LIGHT in device_types:
+        required = _COLOUR_LAMP_RULES.get((cluster_id, command_id))
+        if required is not None and (features & required) == required:
+            return False
+    elif COLOR_TEMPERATURE_LIGHT in device_types and (cluster_id, command_id) in _WHITE_LAMP_DENIED:
         return True
     return not any(
         (features & required) == required and not features & excluded
