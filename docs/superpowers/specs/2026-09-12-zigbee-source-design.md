@@ -1101,3 +1101,114 @@ All of these are 2b:
    the same stick (G13). Section 4.6 surfaces that text; whether the second
    instance should instead run read-only against the same zigpy database is
    not decided.
+
+## 13. Corrections After Implementation
+
+Added 13 September 2026, when the implementation plan
+(`docs/superpowers/plans/2026-09-12-zigbee-source.md`) had been carried out
+on branch `claude/radios-in-web-ui`. Sections 1 to 12 above stay the record
+of what was designed; this section lists where the build departed from
+them. **Nothing in the build has been exercised against Zigbee hardware**
+(section 10.3 still holds; see the first-run checklist's section 15).
+
+### 13.1 The plan's five corrections, found before Task 1
+
+1. **Section 1 is stale.** `api/radios.py`, the radios router, the radios
+   card and the `/dev:/host/dev:ro` mount all shipped with 2a-1, so open
+   point 1 of section 12 answered itself: neither landed first nor carried.
+2. **Section 8.1's bind target is `/host/dev`, not `/host-dev`.** The
+   repository already used `/host/dev` in Compose, the sidecar and a passing
+   test; only the two `device_cgroup_rules` were missing.
+3. **Section 3.2's "third half" of the sidecar request was wrong.** The
+   sidecar applies a radio change by recreating a container, and zigpy runs
+   inside the bridge, so a Zigbee half would have recreated `loxmatter`
+   itself. The Zigbee stick is a bridge-owned setting in loxmatter's own
+   `setting` table, applied in process by reconnecting the source, with its
+   own Apply on the card (`3ab60ef`, `d5c44ff`).
+4. **Section 4.7's line numbers had moved.** The seams are cited by name;
+   the predicted 500 on removing a Zigbee device was real and was fixed
+   (`92f332d`, `8f425e7`).
+5. **Section 5.5's `1280` entry is correct but sits on the cluster-40 trap**
+   in `clusters.yaml`: an `attributes:` section filters every attribute of
+   the cluster through `names_element`. That is wanted here, and is recorded
+   so nobody tidies it into a bare `rank`.
+
+### 13.2 Edits already made to the body during implementation
+
+Each was made in place, with a note in the text where it matters, and is
+listed here so the body is not mistaken for the untouched design.
+
+- **Section 4.1: three library names corrected** (`e1153cf`).
+  `device_resolver` is `zhaquirks.ZHA_DEVICE_REGISTRY.resolve` (the name
+  written first is the legacy registry and would have loaded every device
+  without its quirk), `ControllerError` is `ControllerException`, and
+  `NetworkSettingsInconsistent` takes three arguments. The same commit adds
+  the `device_reinterviewed` facts and that `disconnect()` also wakes
+  `wait_for_link_loss()`.
+- **Section 5.6: the stale-row caveat** (`c08d6bd`, `1b3874a`). A database
+  written between two commits of 12 September 2026 keeps a `color_xy` row on
+  a white-spectrum lamp until the device is commissioned again.
+- **Section 10.2: what a cancelled `BridgeMatterClient.send` leaves behind
+  upstream** (`8f425e7`), a hardware question added once every source call
+  became bounded.
+- **Sections 3.1 and 3.4: the pairing tab as built** (`b3462d9`). The
+  button labels, the `m:ss` countdown, the explicit Add button, who closes a
+  join window, a reload that shows an open window, the folded list of rows
+  already added, and the keys those needed.
+
+### 13.3 Other departures recorded in the progress ledger
+
+- **The Thread lock-out is gated on Thread actually running**
+  (`thread_enabled` or `otbr_running`), not on the stored Thread device
+  (`3ab60ef`). Turning Thread off leaves `RADIO_DEVICE` naming the stick, so
+  the stored-device rule would have stranded a user freeing a dual-capable
+  stick for Zigbee.
+- **The reverse lock-out exists too** (`40eff78`). `POST /api/radios`
+  refuses the stick the Zigbee setting names as the Thread stick, compared by
+  resolved `major:minor`.
+- **"Add" is a button, not adopt-on-blur, and only the page that opened a
+  join window closes it on leaving** (`3b6cd2c`, `ce24a8a`; recorded in 3.1
+  by `b3462d9`).
+- **No connect on the startup path** (`3675716`, `9b90c83`). `supervise()`
+  performs the first connect in the background; a second, startup-path
+  connect would have raced it on one serial port.
+- **`--zigbee-device` seeds the stored setting and never overrides it**
+  (`4caa260`). The flag can therefore no longer rescue a wrong stored
+  setting; see the follow-ups below.
+- **The colour command `(768, 7)` is gated on declared features**
+  (`e8040f4`, `c08d6bd`). It needs both XY and hue/saturation, because the
+  picker reads its position back from hue and saturation; a lamp declaring
+  XY alone gets no colour control. Where a lamp has both commands, the web
+  UI's picker sends `(768, 6)`; the Loxone export offers both.
+- **Two sentinel rules differ from section 10.1's table.** The temperature
+  sentinel is `-0x8000`, because the attribute is `int16s` (`b927723`), and
+  a `Single` measurement's invalid value is NaN, caught by its own check
+  rather than a table row (`9b90c83`).
+- **`device_init_failure` arrives on the application's listeners**, not
+  the device's (`b5876dc`).
+- **zigpy's database is not where section 8.5 puts it.** `cli._run` builds
+  it at `<--matter-data-dir>/zigbee.sqlite` (`31f1312`), and
+  `deploy/testhost/docker-compose.yml` mounts that directory into the bridge
+  read-only (`./data:/matter-data:ro`). Read from the code and the compose
+  file, not run: as deployed, zigpy cannot create its database. This has to
+  be fixed before the first hardware session.
+- **Section 10.3 is out of date on one point.** A second stick, the ITEAD
+  SONOFF Zigbee 3.0 USB Dongle Plus V2, has been on the test Pi since
+  12 September 2026, beside the MG24 that runs Thread. The loxmatter Zigbee
+  code has never opened it.
+
+### 13.4 Still not built
+
+Section 11's list stands unchanged, and open points 6 (every binding and
+the IAS `cie_addr` point at the current coordinator's IEEE) and 7 (two
+loxmatter instances on one Pi) of section 12 are carried into 2b. Found
+during implementation and left for later:
+
+- A `loxmatter zigbee clear` command. Now that `--zigbee-device` only seeds,
+  a wrong stored setting behind an unreachable web UI has no console way out.
+- The pytest collision between `tests/api` and `tests/projectsync`: both
+  have a `conftest.py`, and the test tree has no `__init__.py`, so the two
+  directories cannot be collected in one run.
+- Comments in `zigbee/source.py` and `zigbee/runtime.py` that still name
+  plan task numbers ("Task 8", "Task 10", "Task 11"), which mean nothing
+  outside the plan.
