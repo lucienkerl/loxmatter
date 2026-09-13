@@ -491,6 +491,12 @@ button:disabled {
   background: var(--bg);
 }
 
+/* The forget-only offer on a device tile: its sentence starts at the box's
+ * own padding, not a paragraph margin below it. */
+.device-forget-offer > p {
+  margin-top: 0;
+}
+
 /* The Zigbee row of the radios card (design 2026-09-12, section 3.2). A
  * rule above it, because it is a different kind of row from the two above
  * it - its own Apply, applied at once, nothing restarted - and it should
