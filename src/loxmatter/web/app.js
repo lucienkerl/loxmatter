@@ -747,7 +747,7 @@ function app() {
     controlsBySubject: {},
     commandValueDrafts: {},
     commandBusyKey: null,
-    // Draft storage for the sliders in the control modal (task 7): filled
+    // Draft storage for the sliders in the control modal: filled
     // once on open from `readStartValues`, see there.
     controlDrafts: {},
     // The control modal's active tab. Set on open from the device's
@@ -998,7 +998,7 @@ function app() {
 
     // --- Settings ---------------------------------------------------
     // `bridgeSettings` is the state last loaded from the server (also read
-    // by task 7 and task 9); `settingsDraft` are the three input fields
+    // elsewhere in this file); `settingsDraft` are the three input fields
     // on this tab, adopted only after "Save".
     bridgeSettings: { bridge_ip: null, udp_port: 7000, listen_port: 8080, saved_at: null },
     settingsDraft: { bridge_ip: "", udp_port: 7000, listen_port: 8080 },
@@ -4555,7 +4555,7 @@ function app() {
     },
 
     // ---------------------------------------------------------------------
-    // Control modal (task 7): sliders instead of bare number fields for
+    // Control modal: sliders instead of bare number fields for
     // value-carrying commands. Structure, opening, closing, and backdrop
     // click follow the signal modal above exactly - see its comments
     // for the rationale.

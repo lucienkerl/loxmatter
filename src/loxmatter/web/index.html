@@ -1368,8 +1368,8 @@
                         x-text="command.slug"
                       ></button>
                     </template>
-                    <!-- Value-carrying commands move into the control modal
-                         (task 7): for those, the tile now shows only this
+                    <!-- Value-carrying commands move into the control modal:
+                         for those, the tile now shows only this
                          one button, instead of rendering a bare
                          number field per command. -->
                     <button
@@ -3187,7 +3187,7 @@
                             x-text="t('web.signals.resend_checkbox')"
                           ></span>
                         </label>
-                        <!-- Since task 8, the last cell carries only the
+                        <!-- The last cell now carries only the
                              kebab menu, nothing else: the warning pill
                              with `signal.reason` used to sit here in the
                              28px column and wrapped there as soon as the
@@ -3259,7 +3259,7 @@
     </dialog>
 
     <!--
-      Control modal (task 7): sliders instead of bare number fields for
+      Control modal: sliders instead of bare number fields for
       value-carrying commands. Structure, opening, closing, and
       backdrop click follow the signal modal above exactly - see its
       comments for the full reasoning: `@close` remains the

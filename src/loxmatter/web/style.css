@@ -2705,7 +2705,7 @@ footer.hint-block {
   border-radius: 8px;
 }
 
-/* Control modal (task 7): one row per slider, label above the
+/* Control modal: one row per slider, label above the
  * slider instead of next to it - on narrow windows the slider would
  * otherwise stay too short to aim at. Uses the same `.signals-modal`
  * framing as the signal modal, see there. */
@@ -2817,7 +2817,7 @@ footer.hint-block {
    was a `flex-wrap` container with no column dimensions, and with
    `multipress_ongoing` the second label alone slipped to the next line.
 
-   Finding (task 13): the previous 150px of the key column was NOT
+   Finding: the previous 150px of the key column was NOT
    measured, only estimated - the comment claimed otherwise anyway.
    `.key` carries neither `white-space` nor `overflow`, so the pill
    overflowed within its own cell without shifting the grid itself
@@ -2964,7 +2964,7 @@ footer.hint-block {
 /* Indented to the name column (58px checkbox + 0.5rem gap), so the
    disclosure visibly belongs to ITS row and not to the table.
 
-   Since task 8, the warning pill with `signal.reason` also lives here:
+   The warning pill with `signal.reason` now lives here as well:
    in the 28px kebab column of the grid (`.signal-grid`), a longer text
    (e.g. "Text - a virtual UDP input only knows numbers and digital
    values" from `_UNEXPORTABLE_REASONS`, `api/devices.py`) wrapped for

@@ -17,23 +17,15 @@ test.english_only:
   en: "English only"
 
 # web.test.smoke: a template deliberately named test-only (analogous to
-# test.* above), so the WebUI translation pipeline (task 8) can check
-# itself against GET /api/i18n without depending on the real web.* table
-# (task 9, ~150 keys) that has not been written yet.
+# test.* above), so the WebUI translation pipeline can check itself against
+# GET /api/i18n without depending on the real web.* table.
 #
-# DELIBERATELY WITHOUT {placeholder} (a deviation from the implementation
-# plan's original design, which had "{value}" here - see the task 8
-# report): `api/language.py:_web_strings()` calls `i18n.t(key)` for every
-# web.* key WITHOUT values. `i18n.t()` interpolates server-side via
-# `str.format(**values)` - a key with a placeholder throws `KeyError`
-# there, and that takes down the ENTIRE `GET /api/i18n` response (a single
-# dict-comprehension call), not just the one key. With "{value}" this
-# already breaks FOUR long-merged tests in tests/api/test_language.py
-# (test_get_i18n_works_without_a_session, among others) - not a
-# hypothetical future problem but an immediate regression. The actual bug
-# lives in api/language.py/i18n/__init__.py (both outside this task's file
-# scope) and must be fixed before or during task 9, once real web.* keys
-# with placeholders are added there - see the task 8 report.
+# DELIBERATELY WITHOUT {placeholder}: when this key was added,
+# `api/language.py:_web_strings()` still called `i18n.t(key)` without
+# values, and a placeholder raised `KeyError` there and took down the
+# ENTIRE `GET /api/i18n` response, not just the one key - which broke four
+# tests in tests/api/test_language.py at once. `_web_strings()` has since
+# switched to `i18n.raw_template()`, and the browser fills placeholders in.
 web.test.smoke:
   en: "smoke test"
   de: "Rauchtest"
@@ -681,7 +673,7 @@ api.auth.fail_wrong_password:
   de: "Falsches Passwort."
 
 # api.diagnostics — system-check lines (api/diagnostics.py) and the two
-# 503 errors of the fabric backup (task 5, phase i18n).
+# 503 errors of the fabric backup.
 api.diagnostics.check_failed:
   en: "This check itself failed ({exc}) — that is a bug in the check, not necessarily in the checked system. The full traceback is in the server log."
   de: "Diese Pruefung selbst ist fehlgeschlagen ({exc}) - das ist ein Fehler in der Pruefung, nicht zwangslaeufig im gepruerften System. Der volle Traceback steht im Server-Log."
@@ -888,7 +880,7 @@ api.radios.fail_unwritable:
 # --- projectsync — ProjectFormatError/AmbiguousMiniserverError messages.
 # `api.project_sync` catches these and passes `str(exc)` straight through
 # as the HTTPException detail, which the WebUI displays - so these must run
-# through i18n.t() like every other user-facing string (task 7). ---
+# through i18n.t() like every other user-facing string. ---
 projectsync.no_ip_known:
   # Falls back into `_describe`'s parenthesized IP for a `LoxLIVE` block
   # that carries no `IntAddr` at all.
@@ -1539,7 +1531,7 @@ web.devices.menu_signals:
   en: "Edit signals…"
   de: "Signale bearbeiten…"
 
-# --- control modal (task 7): sliders instead of bare number fields for
+# --- control modal: sliders instead of bare number fields for
 # value-carrying commands. `control_brightness` deliberately does NOT
 # exist: a device can have several percent commands (e.g. `level` and
 # `level_onoff`) whose sliders could otherwise not be told apart -
