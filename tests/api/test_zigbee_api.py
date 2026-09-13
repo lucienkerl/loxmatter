@@ -2189,7 +2189,9 @@ async def test_a_stop_the_radio_does_not_acknowledge_says_it_could_not_close(pai
 
     assert refused.status_code == 502, refused.text
     detail = refused.json()["detail"]
-    assert detail.startswith("The network could not be closed for new devices"), detail
+    # It names the Zigbee network: shown on leaving, it can appear in
+    # Settings, where "the network" could be the bridge's own.
+    assert detail.startswith("The Zigbee network could not be closed for new devices"), detail
     assert "could not be opened" not in detail
 
 

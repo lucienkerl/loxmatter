@@ -571,9 +571,11 @@ api.zigbee.close_failed:
   # radio did not acknowledge closing. Its own sentence, because "could not
   # be opened" is false for a request that asked to close - and this is
   # the one worth reading, since the coordinator may still be letting
-  # devices in. {exc} goes last, for `permit_failed`'s reason above.
-  en: "The network could not be closed for new devices, so it may still be open. Reason: {exc}"
-  de: "Das Netz konnte nicht für neue Geräte geschlossen werden und ist womöglich noch offen. Grund: {exc}"
+  # devices in. {exc} goes last, for `permit_failed`'s reason above. It names
+  # the Zigbee network: shown on leaving, it can appear in Settings, where
+  # "the network" could as well be the bridge's own.
+  en: "The Zigbee network could not be closed for new devices, so it may still be open. Reason: {exc}"
+  de: "Das Zigbee-Netz konnte nicht für neue Geräte geschlossen werden und ist womöglich noch offen. Grund: {exc}"
 api.zigbee.radio_changing:
   # The 503 of the pairing routes while a radio change is in flight - the
   # old source released, the new one not built yet. NOT the "no stick is set
@@ -1422,14 +1424,15 @@ web.zigbee.searching_empty:
 # ZHA does not have, and neither may read as a failure: a stuck row is
 # usually a battery device that fell asleep, and it is still waiting.
 # The interviewing sentence names no device: the row's title above it already
-# does. While manufacturer and model are not known, the row says
-# `state_joined` instead.
+# does - so it cannot lean on a pronoun for it either (the German one had
+# nothing to refer to). While manufacturer and model are not known, the row
+# says `state_joined` instead.
 web.zigbee.state_joined:
   en: "Found a device - reading its details"
   de: "Gerät gefunden – seine Angaben werden gelesen"
 web.zigbee.state_interviewing:
-  en: "Reading its details …"
-  de: "Seine Angaben werden gelesen …"
+  en: "Reading the device's details …"
+  de: "Geräteangaben werden gelesen …"
 web.zigbee.state_configuring:
   en: "Setting it up"
   de: "Wird eingerichtet"
@@ -1479,9 +1482,11 @@ web.zigbee.name_label:
 web.zigbee.adopt:
   en: "Add"
   de: "Hinzufügen"
+# The name saves when its field is left, the room as soon as one is chosen
+# in the select - one sentence for both would be false for one of them.
 web.zigbee.adopted_hint:
-  en: "In the device list. Name and room are saved when you leave the field."
-  de: "In der Geräteliste. Name und Raum werden gespeichert, sobald Sie das Feld verlassen."
+  en: "In the device list. The name is saved when you leave its field, the room as soon as you choose it."
+  de: "In der Geräteliste. Der Name wird gespeichert, sobald Sie das Feld verlassen, der Raum, sobald Sie ihn auswählen."
 web.zigbee.saved:
   en: "Saved."
   de: "Gespeichert."
