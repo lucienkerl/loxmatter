@@ -206,6 +206,66 @@ def test_a_member_with_the_light_on_two_endpoints_gets_calls_on_both_in_order():
     assert [(c.endpoint, c.command_id) for c in calls] == [(1, 4), (2, 4)]
 
 
+# A dimmable light on endpoint 1 and an on/off relay on endpoint 2 of the
+# same device, and a device with two on/off-only channels: constructed.
+DIMMER_AND_RELAY = rows("41", OFF, ON, TOGGLE, LEVEL, LEVEL_ONOFF, COLOUR_HS, endpoint=1) + rows(
+    "41", OFF, ON, TOGGLE, endpoint=2
+)
+TWO_RELAYS = rows("42", OFF, ON, TOGGLE, endpoint=1) + rows("42", OFF, ON, TOGGLE, endpoint=2)
+
+
+@pytest.mark.parametrize(
+    ("pair", "value", "expected"),
+    [
+        (LEVEL_ONOFF, "0", [(1, 8, 4)]),
+        (LEVEL_ONOFF, "40", [(1, 8, 4)]),
+        (LEVEL, "40", [(1, 8, 0)]),
+        (COLOUR_HS, BLUE_60, [(1, 768, 6), (1, 8, 4)]),
+        (COLOUR_HS, "0", [(1, 8, 4)]),
+    ],
+    ids=["level_onoff 0", "level_onoff 40", "level 40", "colour", "colour at 0"],
+)
+def test_brightness_does_not_switch_a_second_on_off_channel_of_a_dimmable_member(
+    pair, value, expected
+):
+    """Before this, `level_onoff` 0 on this device sent `off` to endpoint 2
+    and a colour sent `on` to it: a brightness change switched a relay the
+    group never meant. A member that dims somewhere takes brightness only
+    where it dims.
+
+    Fault to prove it: give every on/off endpoint the fallback regardless of
+    the member's other endpoints - endpoint 2 gets (6, 0) or (6, 1)."""
+    calls = adapt_group_command(pair, DIMMER_AND_RELAY, value)
+    assert [(c.endpoint, c.cluster_id, c.command_id) for c in calls] == expected
+
+
+def test_explicit_on_off_still_reaches_every_channel_of_a_dimmable_member():
+    for pair, command in ((ON, 1), (OFF, 0), (TOGGLE, 2)):
+        calls = adapt_group_command(pair, DIMMER_AND_RELAY, "1")
+        assert [(c.endpoint, c.cluster_id, c.command_id) for c in calls] == [
+            (1, 6, command),
+            (2, 6, command),
+        ]
+
+
+@pytest.mark.parametrize(
+    ("pair", "value", "command"),
+    [(LEVEL_ONOFF, "0", 0), (LEVEL_ONOFF, "40", 1), (COLOUR_HS, BLUE_60, 1)],
+    ids=["level_onoff 0", "level_onoff 40", "colour"],
+)
+def test_an_on_off_only_member_follows_brightness_on_every_channel(pair, value, command):
+    """With no level anywhere on the member, on/off is all it can take from a
+    brightness, on each endpoint.
+
+    Fault to prove it: withhold the fallback from a member with more than
+    one endpoint - endpoint 2, or both, get nothing."""
+    calls = adapt_group_command(pair, TWO_RELAYS, value)
+    assert [(c.endpoint, c.cluster_id, c.command_id) for c in calls] == [
+        (1, 6, command),
+        (2, 6, command),
+    ]
+
+
 def test_an_invalid_colour_value_raises_before_any_call_is_built():
     with pytest.raises(UnsupportedValueError):
         adapt_group_command(COLOUR_HS, WW, "banana")

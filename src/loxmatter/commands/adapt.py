@@ -79,11 +79,14 @@ def _call(sample: StoredCommand, pair: Pair, payload: dict[str, object]) -> Devi
 
 
 def _brightness(
-    here: dict[Pair, StoredCommand], sample: StoredCommand, percent: float
+    here: dict[Pair, StoredCommand], sample: StoredCommand, percent: float, member_dims: bool
 ) -> list[DeviceCall]:
     """Brightness the way this endpoint can take it: (8, 4) switches off at
     0 and on above it, so it is preferred; `on`/`off` for a light that
-    cannot dim.
+    cannot dim - but only when no endpoint of the member dims
+    (`member_dims`). A dimmable light with an on/off relay beside it takes a
+    brightness on the light; switching the relay with it would change a
+    channel the group command never named.
 
     (8, 0) only when it is all there is, and then with the switching (8, 4)
     would have done: MoveToLevel(0) leaves a lamp on, and MoveToLevel above
@@ -100,7 +103,7 @@ def _brightness(
             return [_call(sample, LEVEL, level_payload(0))]
         switch_on = [_call(sample, ON, {})] if ON in here else []
         return switch_on + [_call(sample, LEVEL, level_payload(level))]
-    if ON in here and OFF in here:
+    if ON in here and OFF in here and not member_dims:
         return [_call(sample, ON if level > 0 else OFF, {})]
     return []
 
@@ -147,13 +150,14 @@ def _endpoint_calls(
     value: str,
     decoded: LoxoneColour | None,
     number: float | None,
+    member_dims: bool,
 ) -> list[DeviceCall]:
     sample = next(iter(here.values()))
     if decoded is not None:
         if level_from_percent(decoded.brightness_percent) == 0:
-            return _brightness(here, sample, 0)
+            return _brightness(here, sample, 0, member_dims)
         return _colour(here, sample, pair, decoded) + _brightness(
-            here, sample, decoded.brightness_percent
+            here, sample, decoded.brightness_percent, member_dims
         )
     if pair in here:
         return to_device_calls(here[pair], value)
@@ -162,7 +166,7 @@ def _endpoint_calls(
         return _colour_point(here, sample, number)
     if pair in (LEVEL, LEVEL_ONOFF):
         assert number is not None
-        return _brightness(here, sample, number)
+        return _brightness(here, sample, number, member_dims)
     return []
 
 
@@ -172,18 +176,22 @@ def adapt_group_command(pair: Pair, rows: Sequence[StoredCommand], value: str) -
     `rows` are the member's stored LIGHT commands on every endpoint
     (`Store.group_targets`). Endpoints are handled in ascending order and
     each gets its own calls, colour before brightness - the order
-    `to_device_calls` documents. Raises `UnsupportedValueError` for a value
-    that cannot mean anything, before any call is built: the value is parsed
-    here, once, so a member that would take nothing from it still rejects
-    it."""
+    `to_device_calls` documents. An endpoint without a level command takes
+    a brightness as on/off only when no endpoint of the member has one;
+    explicit `on`/`off`/`toggle` reach every endpoint that carries them.
+
+    Raises `UnsupportedValueError` for a value that cannot mean anything,
+    before any call is built: the value is parsed here, once, so a member
+    that would take nothing from it still rejects it."""
     decoded = decode_loxone_colour(value) if pair in (COLOUR_HS, COLOUR_XY) else None
     number: float | None = None
     if pair == COLOUR_TEMPERATURE:
         number = parse_kelvin(value)
     elif pair in (LEVEL, LEVEL_ONOFF):
         number = parse_number(value)
+    member_dims = any((row.cluster_id, row.command_id) in (LEVEL, LEVEL_ONOFF) for row in rows)
     calls: list[DeviceCall] = []
     for endpoint in sorted({row.endpoint for row in rows}):
         here = {(row.cluster_id, row.command_id): row for row in rows if row.endpoint == endpoint}
-        calls.extend(_endpoint_calls(pair, here, value, decoded, number))
+        calls.extend(_endpoint_calls(pair, here, value, decoded, number, member_dims))
     return calls

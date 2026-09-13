@@ -131,6 +131,12 @@ Rules that apply across the table:
   failure report and does not turn the response into an error.
 - **A member that carries the pair on several endpoints** receives its calls
   on each of them, in endpoint order - unchanged from the groups design.
+- **On/off stands in for brightness only on a member that cannot dim
+  anywhere.** An endpoint without (8, 0) or (8, 4) takes a brightness or
+  colour value as on/off only when no endpoint of the same member carries
+  either, so a dimmable light does not switch the on/off relay beside it;
+  explicit `on` / `off` / `toggle` still reach every endpoint that carries
+  them.
 - **An invalid value** (a malformed Lumitech number, an out-of-range colour
   channel) is still rejected with 400 **before anything is sent**, because
   it is decoded once for the whole group.
