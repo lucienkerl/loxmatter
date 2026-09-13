@@ -424,6 +424,34 @@ async def test_one_device_that_cannot_be_told_does_not_silence_the_rest(build_so
     )
 
 
+async def test_a_sender_that_fails_every_device_logs_one_traceback(build_source, caplog) -> None:
+    """`ZigbeeSource.disconnect()` now marks every device offline, and the
+    bridge's shutdown closes the UDP sender before it disconnects the
+    sources - so on every stop, every device's report fails the same way.
+    A traceback apiece put one per device into the container log for a
+    shutdown that went exactly as planned.
+
+    The first failure keeps its traceback, so a real cause is still
+    explained; the rest are one line each, and every device is still tried.
+
+    Fault to prove it: log every failure with `logger.exception` again."""
+    lamps = [colour_lamp(ieee=f"00:12:4b:00:00:00:00:2{n}") for n in range(3)]
+    source, _app = build_source(*lamps)
+    await source.connect()
+    handler = RecordingHandler(failing_device_ids=frozenset({1, 2, 3}))
+    await source.subscribe(_resolver({lamp.ieee: n + 1 for n, lamp in enumerate(lamps)}), handler)
+    checker = source._availability_checker
+    assert checker is not None
+    caplog.set_level("INFO", logger="loxmatter.zigbee.availability")
+
+    await checker.mark_all_offline()
+
+    failures = [r for r in caplog.records if "could not mark Zigbee device" in r.getMessage()]
+    assert len(failures) == 3
+    assert [bool(r.exc_info) for r in failures] == [True, False, False]
+    await source.disconnect()
+
+
 async def test_a_device_the_handler_could_not_be_told_about_is_told_again(build_source) -> None:
     """`_report`'s whole guarantee, and until now nothing measured it:
     `self._reported[address] = online` sits AFTER `await set_online(...)`,

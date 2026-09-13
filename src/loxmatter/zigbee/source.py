@@ -946,6 +946,24 @@ class ZigbeeSource:
                 await dispatch_task
             except asyncio.CancelledError:
                 pass
+        # Every device goes offline with the radio that was reaching it -
+        # the same promise `_handle_connection_lost` keeps for a link that
+        # dies by itself, and it matters more here, because this is the
+        # radio change, "No Zigbee stick" and the bridge's shutdown: without
+        # it every tile kept "online" and its last value, and Loxone kept
+        # `d<id>_online` true, until a restart. The catalogue is the one
+        # taken from the application above, which this object no longer
+        # holds. Guarded the way `ZigbeeRuntime._release` guards this whole
+        # method: a report that cannot be sent - a UDP sender already
+        # closed on shutdown - must not keep the stick from being released.
+        checker = self._availability_checker
+        if checker is not None and app is not None:
+            try:
+                await checker.mark_all_offline(list(app.devices.values()))
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("marking the Zigbee devices offline on disconnect failed")
         # The availability checker goes down with the rest of the wiring,
         # for the same reason bellows' serial thread does: it is a task that
         # outlives nothing here, and a `disconnect()` that left it running

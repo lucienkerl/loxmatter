@@ -92,7 +92,7 @@ import asyncio
 import contextlib
 import logging
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterable
 from typing import TYPE_CHECKING, Any, Final
 
 from loxmatter.sources import RuntimeEventHandler
@@ -280,7 +280,7 @@ class AvailabilityChecker:
         with contextlib.suppress(asyncio.CancelledError):
             await task
 
-    async def mark_all_offline(self) -> None:
+    async def mark_all_offline(self, devices: Iterable[Any] | None = None) -> None:
         """THE feature this module exists for: pushes every known device
         offline at once, in response to the coordinator going away.
 
@@ -303,9 +303,19 @@ class AvailabilityChecker:
         `RuntimeEventHandler.set_online` really does raise: `UdpSender.send`
         raises `RuntimeError("the UDP sender is closed")` once its socket is
         gone. `_dispatch_loop` already takes this stance per item for
-        ordinary updates; this path has more at stake, not less."""
+        ordinary updates; this path has more at stake, not less.
+
+        **`devices`, for a catalogue the source no longer holds.**
+        `ZigbeeSource.disconnect()` lets go of its application before it
+        awaits anything, so by the time this runs `_devices()` answers `[]`;
+        it hands over the list it took from that application instead.
+
+        One traceback per call, not one per device: the likeliest failure is
+        a closed UDP sender on shutdown, where every device fails the same
+        way, and a traceback apiece would bury the shutdown in the log."""
         self._missed_checkins.clear()
-        for device in self._devices_to_check():
+        explained = False
+        for device in self._devices_to_check(devices):
             device_id = self._resolve_device_id(str(device.ieee))
             if device_id is None:
                 continue
@@ -313,8 +323,14 @@ class AvailabilityChecker:
                 await self._report(str(device.ieee), device_id, False)
             except asyncio.CancelledError:
                 raise
-            except Exception:
-                logger.exception("could not mark Zigbee device %s offline", device.ieee)
+            except Exception as exc:
+                if explained:
+                    logger.warning(
+                        "could not mark Zigbee device %s offline either: %s", device.ieee, exc
+                    )
+                else:
+                    explained = True
+                    logger.exception("could not mark Zigbee device %s offline", device.ieee)
 
     # --------------------------------------------------------------- sweep --
 
@@ -323,7 +339,7 @@ class AvailabilityChecker:
             await self._sleep(CHECK_INTERVAL_SECONDS)
             await self._sweep()
 
-    def _devices_to_check(self) -> list[Any]:
+    def _devices_to_check(self, devices: Iterable[Any] | None = None) -> list[Any]:
         """The catalogue minus the radio itself.
 
         ZHA's `DeviceAvailabilityChecker` filters `if not dev.is_coordinator`
@@ -333,7 +349,8 @@ class AvailabilityChecker:
         `mark_all_offline` cannot drift apart: a coordinator the sweep
         refuses to bring back online must not be one `mark_all_offline` is
         willing to take down, or it would be stuck offline for good."""
-        return [device for device in self._source._devices() if not _is_coordinator(device)]
+        candidates = self._source._devices() if devices is None else list(devices)
+        return [device for device in candidates if not _is_coordinator(device)]
 
     async def _report(self, address: str, device_id: int, online: bool) -> None:
         """Tells the handler, but only when the answer has changed.

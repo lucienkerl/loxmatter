@@ -2058,6 +2058,49 @@ async def test_a_reconnect_stops_the_previous_sweep_before_starting_a_new_one(bu
     await harness.source.disconnect()
 
 
+async def test_every_known_device_is_reported_offline_when_the_source_disconnects(build) -> None:
+    """`disconnect()` is how a radio is given up on purpose - a change to a
+    different stick, "No Zigbee stick" on the card, and the bridge's own
+    shutdown. It stopped the availability sweep and never said what that
+    meant for the devices: every Zigbee tile kept "online" and its last
+    value, `d<id>_online` stayed true in Loxone and was re-sent by every
+    resync, and a motion sensor whose radio was gone read "no motion,
+    online" until the bridge restarted. Only a LOST link marked them.
+
+    Every device the store knows is reported `False`, once; a device the
+    store does not know is not reported at all; and one handler failure
+    neither stops the others nor stops the disconnect.
+
+    Fault to prove it: drop the marking from `disconnect()` (`online` stays
+    empty), or run it after the application is released (no devices left to
+    mark)."""
+    lamp, sensor = colour_lamp(), contact_sensor()
+    stranger = colour_lamp("00:12:4b:00:99:99:99:99")
+    ids = {LAMP_IEEE: 7, SENSOR_IEEE: 8}
+    harness = build(FakeApplication(devices=[lamp, sensor, stranger]))
+    await harness.source.connect()
+    await harness.source.subscribe(ids.get, harness.handler)
+    await _settle(harness.source)
+    harness.handler.fail_next = 1
+
+    await harness.source.disconnect()
+
+    # The lamp comes first in zigpy's catalogue and its report raised; the
+    # sensor after it was still told.
+    assert harness.handler.online == [(8, False)]
+    assert not harness.source.connected
+    assert harness.app.shutdown_calls == [True]
+
+    healthy = build(FakeApplication(devices=[colour_lamp(), contact_sensor()]))
+    await healthy.source.connect()
+    await healthy.source.subscribe(ids.get, healthy.handler)
+    await _settle(healthy.source)
+
+    await healthy.source.disconnect()
+
+    assert sorted(healthy.handler.online) == [(7, False), (8, False)]
+
+
 async def test_the_availability_sweep_stops_on_disconnect(build) -> None:
     """A checker whose sweep task keeps running after `disconnect()` reads
     `_devices()` against an application that no longer exists (harmless - it
