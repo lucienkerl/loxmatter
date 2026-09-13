@@ -185,6 +185,31 @@ nav.tabs button.active {
   font-weight: 600;
 }
 
+/* On a phone the four view names did not fit in German: "Einstellungen"
+ * ended at 385 px in a 375 px viewport and pushed the whole page sideways.
+ * Below 400 px the bar's side padding and each tab's padding shrink, which
+ * fits all four in both languages; `overflow-x: auto` is the backstop for a
+ * narrower screen or a longer translation, so the bar scrolls on its own
+ * instead of the page. */
+nav.tabs {
+  overflow-x: auto;
+}
+
+@media (max-width: 400px) {
+  nav.tabs {
+    gap: 0;
+    padding-left: 0.5rem;
+    padding-right: 0.5rem;
+  }
+
+  nav.tabs a,
+  nav.tabs button {
+    padding-left: 0.6rem;
+    padding-right: 0.6rem;
+    white-space: nowrap;
+  }
+}
+
 main {
   padding: 1.25rem;
   max-width: 960px;
