@@ -24,6 +24,7 @@ from pathlib import Path
 
 import pytest
 
+from loxmatter.export.commands import DeviceCommand
 from loxmatter.matter.models import NodeSnapshot
 from loxmatter.model.store import (
     CategoryMismatchError,
@@ -31,6 +32,7 @@ from loxmatter.model.store import (
     UnknownCommandError,
     UnknownGroupError,
 )
+from loxmatter.profiles.light_commands import LIGHT_COMMAND_PAIRS
 
 FIXTURES = Path(__file__).parents[1] / "fixtures" / "nodes"
 
@@ -380,7 +382,7 @@ def _slugs(store, group_id):
 
 @pytest.fixture
 def lamps_with_commands(store, lamps):
-    """Registers the command rows the intersection is computed from."""
+    """Registers the command rows the group's command list is computed from."""
     from loxmatter.export.commands import extract_commands
 
     for device_id, name in zip(
@@ -391,12 +393,52 @@ def lamps_with_commands(store, lamps):
     return lamps
 
 
-def test_the_group_offers_only_what_every_member_accepts(store, lamps_with_commands):
+def test_a_light_group_offers_every_light_command_any_member_has(store, lamps_with_commands):
+    """Design 2026-09-13, 3.1: the CWS lamp carries colour, the WS lamp does
+    not - the group of both still offers colour, and the WS lamp takes the
+    brightness out of it (commands/adapt.py).
+
+    Fault to prove it: take the intersection for light pairs again - `color`
+    disappears from `both`."""
     colour_only = store.create_group("Colour", [lamps_with_commands[0]])
     both = store.create_group("Both", lamps_with_commands)
     assert "color" in _slugs(store, colour_only.id)
-    assert "color" not in _slugs(store, both.id)
-    assert {"on", "off", "toggle"} <= set(_slugs(store, both.id))
+    assert {"color", "color_xy", "colortemp", "level_onoff", "on", "off", "toggle"} <= set(
+        _slugs(store, both.id)
+    )
+
+
+def _identify(store, device_id):
+    """Gives a device an Identify (3, 0) row - a pair outside
+    `LIGHT_COMMAND_PAIRS`. Neither lamp fixture carries a non-light command,
+    so the cases that must still take the intersection build one here, with
+    the same `DeviceCommand` `extract_commands` produces."""
+    store.register_commands(
+        device_id,
+        [DeviceCommand(endpoint=1, cluster_id=3, command_id=0, slug="identify", takes_value=True)],
+    )
+
+
+def test_a_non_light_command_is_still_offered_only_when_every_member_has_it(
+    store, lamps_with_commands
+):
+    """Identify (3, 0), or any pair outside `LIGHT_COMMAND_PAIRS`, keeps the
+    10 September intersection.
+
+    Neither lamp fixture carries a non-light command, so the case is built:
+    Identify on the CWS lamp alone is offered by a group of the CWS lamp and
+    not by the group of both; once the WS lamp carries it too, the group of
+    both offers it.
+
+    Fault to prove it: take the union for every pair - this fails."""
+    cws, ws = lamps_with_commands
+    one = store.create_group("One", [cws])
+    both = store.create_group("Both", lamps_with_commands)
+    _identify(store, cws)
+    assert "identify" in _slugs(store, one.id)
+    assert "identify" not in _slugs(store, both.id)
+    _identify(store, ws)
+    assert "identify" in _slugs(store, both.id)
 
 
 def _rowid_for(store, key):
@@ -428,10 +470,19 @@ def test_a_surviving_command_keeps_its_key(store, lamps_with_commands):
     assert _rowid_for(store, after["on"]) == before_rowid
 
 
-def test_a_command_that_leaves_the_intersection_stops_resolving(store, lamps_with_commands):
+def test_adding_a_member_without_colour_keeps_the_colour_key(store, lamps_with_commands):
     group = store.create_group("Colour", [lamps_with_commands[0]])
     key = next(c.key for c in store.group_commands(group.id) if c.slug == "color")
+    rowid = _rowid_for(store, key)
     store.set_group_members(group.id, lamps_with_commands)
+    assert store.resolve_group_command(key).slug == "color"
+    assert _rowid_for(store, key) == rowid
+
+
+def test_a_light_command_leaves_only_when_no_member_has_it(store, lamps_with_commands):
+    group = store.create_group("Both", lamps_with_commands)
+    key = next(c.key for c in store.group_commands(group.id) if c.slug == "color")
+    store.set_group_members(group.id, [lamps_with_commands[1]])
     with pytest.raises(UnknownCommandError):
         store.resolve_group_command(key)
 
@@ -443,11 +494,14 @@ def test_the_group_survives_losing_every_member(store, lamps_with_commands):
     assert store.group_commands(group.id) == []
 
 
-def test_forgetting_a_member_recomputes_the_intersection(store, lamps_with_commands):
+def test_forgetting_a_member_recomputes_the_group_s_commands(store, lamps_with_commands):
+    """Forgetting the only member that carries colour drops `color` - under
+    design 2026-09-13, 3.1 a light command leaves only when no member has
+    it, so it is the colour lamp that has to go, not the white one."""
     group = store.create_group("Both", lamps_with_commands)
-    assert "color" not in _slugs(store, group.id)
-    store.forget_device(lamps_with_commands[1])
     assert "color" in _slugs(store, group.id)
+    store.forget_device(lamps_with_commands[0])
+    assert "color" not in _slugs(store, group.id)
 
 
 def test_a_startup_backfill_that_reaches_every_member_extends_the_group(store, lamps):
@@ -533,12 +587,13 @@ def test_an_offline_member_changes_nothing(store, lamps_with_commands):
 _LONG_AGO = "2000-01-01T00:00:00.000000+00:00"
 
 
-def test_forgetting_a_member_that_shrinks_the_intersection_advances_updated_at(
+def test_forgetting_a_member_that_shrinks_the_command_list_advances_updated_at(
     store, lamps_with_commands
 ):
     """Regression for the design 4.3 gap: `forget_device` recomputes the
-    intersection via `register_group_commands`, and a command that drops
-    out of it (here: `color`, once the colour-only lamp is removed) makes
+    command list via `register_group_commands`, and a command that drops
+    out of it (here: `color`, once the only colour lamp is removed - design
+    2026-09-13, 3.1: a light command drops out only when no member has it) makes
     the group's exported command set stale - the export tab must be able
     to see that, exactly as for a device (section 4.3). Before this fix,
     `register_group_commands` never touched `device_group.updated_at` at
@@ -557,7 +612,7 @@ def test_forgetting_a_member_that_shrinks_the_intersection_advances_updated_at(
     store._db.execute("UPDATE device_group SET updated_at = ? WHERE id = ?", (_LONG_AGO, group.id))
     store._db.commit()
 
-    store.forget_device(lamps_with_commands[1])
+    store.forget_device(lamps_with_commands[0])
 
     assert store.group(group.id).updated_at != _LONG_AGO
 
@@ -634,11 +689,14 @@ def test_register_group_commands_rolls_back_a_write_time_failure_and_leaves_the_
     `create_group`/`set_group_members`, reproduced here in the sibling
     method the brief warns carries the identical shape.
 
-    Setup: a group of the single colour-capable member already has several
-    committed `group_command` rows (including `color`). Widening
-    membership to both lamps would shrink the intersection - some rows
-    DELETEd, the survivors UPDATEd - but the second write into
-    `group_command` is forced to fail. Without `self._db.rollback()` in the
+    Setup: a group of both lamps already has several committed
+    `group_command` rows (including `color` and `color_xy`). Narrowing
+    membership to the white lamp alone would shrink the command list - the
+    two colour rows DELETEd, the survivors UPDATEd - but the second write
+    into `group_command` is forced to fail. (Until design 2026-09-13 this
+    widened a colour-only group to both lamps; under the light union that
+    widening changes no row, so the first write would be an UPDATE writing
+    the values already there and the rollback would be unmeasured.) Without `self._db.rollback()` in the
     `except` clause, the first (successful) write would sit in the
     connection's open implicit transaction rather than being undone,
     waiting for a later unrelated `commit()` to flush a half-recomputed,
@@ -646,14 +704,14 @@ def test_register_group_commands_rolls_back_a_write_time_failure_and_leaves_the_
     membership tests above: an unrelated committing write, then a REOPENED
     `Store` on the same file.
     """
-    group = store.create_group("Colour", [lamps_with_commands[0]])
+    group = store.create_group("Both", lamps_with_commands)
     before = {(c.slug, c.key) for c in store.group_commands(group.id)}
-    assert before  # the colour-only member has commands to lose
+    assert {"color", "color_xy"} <= {slug for slug, _ in before}  # rows to lose
 
     monkeypatch.setattr(store, "_db", _FailSecondGroupCommandWrite(store._db))
 
     with pytest.raises(sqlite3.IntegrityError):
-        store.set_group_members(group.id, lamps_with_commands)
+        store.set_group_members(group.id, [lamps_with_commands[1]])
 
     # Read through the still-proxied connection first - a plain SELECT
     # never matches `_WRITE_PREFIXES`, so this is unaffected by the forced
@@ -746,23 +804,51 @@ def test_delete_group_rolls_back_a_write_time_failure_and_leaves_the_group_intac
 
 
 def test_targets_carry_one_entry_per_member_with_that_member_s_own_rows(store, lamps_with_commands):
+    """A non-light command (Identify): each member gets only its rows of
+    that exact pair. Light commands hand every light row to the adapter
+    instead - `test_light_targets_carry_every_light_row_of_every_member`."""
+    for device_id in lamps_with_commands:
+        _identify(store, device_id)
     group = store.create_group("Both", lamps_with_commands)
-    on = next(c for c in store.group_commands(group.id) if c.slug == "on")
-    targets = store.group_targets(on)
+    identify = next(c for c in store.group_commands(group.id) if c.slug == "identify")
+    targets = store.group_targets(identify)
     assert [t.device_id for t in targets] == lamps_with_commands
     assert all(t.device_label for t in targets)
     for target in targets:
         assert target.commands
         for command in target.commands:
-            assert (command.cluster_id, command.command_id) == (on.cluster_id, on.command_id)
+            assert command.device_id == target.device_id
+            assert (command.cluster_id, command.command_id) == (
+                identify.cluster_id,
+                identify.command_id,
+            )
+
+
+def test_light_targets_carry_every_light_row_of_every_member(store, lamps_with_commands):
+    group = store.create_group("Both", lamps_with_commands)
+    colour = next(c for c in store.group_commands(group.id) if c.slug == "color")
+    targets = store.group_targets(colour)
+    assert [t.device_id for t in targets] == list(lamps_with_commands)
+    ws_pairs = {(c.cluster_id, c.command_id) for c in targets[1].commands}
+    assert (8, 4) in ws_pairs and (768, 6) not in ws_pairs
+    assert all(
+        (c.cluster_id, c.command_id) in LIGHT_COMMAND_PAIRS for t in targets for c in t.commands
+    )
 
 
 def test_a_member_carrying_the_pair_on_two_endpoints_gets_both(store, lamps_with_commands):
     """A two-channel device has one command row per endpoint; the group
     has one command. The only reading that does not surprise is "the
-    whole member" (design 4.3)."""
+    whole member" (design 4.3).
+
+    Measured on Identify, a non-light pair, whose targets are that exact
+    pair's rows: a light command hands the adapter every light row instead
+    (design 2026-09-13, 4), and the adapter's own tests cover its
+    endpoints."""
+    for device_id in lamps_with_commands:
+        _identify(store, device_id)
     group = store.create_group("Both", lamps_with_commands)
-    on = next(c for c in store.group_commands(group.id) if c.slug == "on")
+    identify = next(c for c in store.group_commands(group.id) if c.slug == "identify")
     store._db.execute(
         "INSERT INTO command"
         " (device_id, node_id, endpoint, cluster_id, command_id, key, slug, takes_value)"
@@ -771,15 +857,15 @@ def test_a_member_carrying_the_pair_on_two_endpoints_gets_both(store, lamps_with
             lamps_with_commands[0],
             int(store.device(lamps_with_commands[0]).address),
             99,
-            on.cluster_id,
-            on.command_id,
-            f"d{lamps_with_commands[0]}_99_on",
-            "on",
-            0,
+            identify.cluster_id,
+            identify.command_id,
+            f"d{lamps_with_commands[0]}_99_identify",
+            "identify",
+            1,
         ),
     )
     store._db.commit()
-    targets = store.group_targets(on)
+    targets = store.group_targets(identify)
     first = next(t for t in targets if t.device_id == lamps_with_commands[0])
     second = next(t for t in targets if t.device_id == lamps_with_commands[1])
 

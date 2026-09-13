@@ -263,9 +263,9 @@ async def mixed_technology_api(
     suite.
 
     The Zigbee member is the Matter fixture re-stamped rather than a
-    hand-built snapshot - it has to carry the same device types and the
-    same commands as the other member, or the group's category check
-    refuses it and its command never lands in the intersection.
+    hand-built snapshot - it has to carry a light's device types and real
+    light commands, or the group's category check refuses it and it has no
+    `on` row for the group command to reach.
     """
     store = Store(tmp_path / "t.sqlite")
     member_ids = []
@@ -399,3 +399,149 @@ async def test_a_mix_of_unreachable_and_unconfigured_members_stays_a_502(
     detail = response.json()["detail"]
     assert members[0].label in detail
     assert members[1].label in detail
+
+
+async def test_one_colour_value_gives_colour_to_the_colour_lamp_and_brightness_to_the_white_one(
+    api, invocations
+):
+    """Design 2026-09-13, 3.2, end to end through `/cmd`: blue at 60 % turns
+    the CWS lamp blue at 60 % and sets only the brightness of the WS lamp.
+
+    Fault to prove it: route light commands through `to_device_calls` again
+    in `plan_group_calls` - every light row `group_targets` hands over is
+    then translated on its own, so both lamps receive a call for every light
+    command they carry - off, on and toggle first."""
+    client, store, group_id = api
+    cws, ws = store.group_members(group_id)
+    key = next(c.key for c in store.group_commands(group_id) if c.slug == "color")
+    response = await client.get(f"/cmd/{key}/60000000")
+    assert response.status_code == 200
+    by_address: dict[str, list[tuple[int, int]]] = {}
+    for call in invocations:
+        by_address.setdefault(call.address, []).append((call.cluster_id, call.command_id))
+    assert by_address[cws.address] == [(768, 6), (8, 4)]
+    assert by_address[ws.address] == [(8, 4)]
+
+
+async def test_a_lumitech_white_gives_both_lamps_their_white_temperature(api, invocations):
+    client, store, group_id = api
+    key = next(c.key for c in store.group_commands(group_id) if c.slug == "color")
+    response = await client.get(f"/cmd/{key}/200302700")
+    assert response.status_code == 200
+    per_address: dict[str, list[tuple[int, int]]] = {}
+    for call in invocations:
+        per_address.setdefault(call.address, []).append((call.cluster_id, call.command_id))
+    assert all(calls == [(768, 10), (8, 4)] for calls in per_address.values())
+    assert len(per_address) == 2
+
+
+@pytest.fixture
+async def dim_only_api(
+    tmp_path, invocations, failing_nodes, unconfigured_nodes, fake_runtime, fake_client
+) -> AsyncIterator[tuple[httpx.AsyncClient, Store, int]]:
+    """The CWS lamp plus a dim-only lamp, so a `colortemp` value gives the
+    second member an empty plan (design 2026-09-13, 3.2).
+
+    The dim-only lamp is the WS fixture with its `colortemp` row held back:
+    what is left is (6, 0), (6, 1), (6, 2), (8, 0), (8, 4) on endpoint 1, the
+    pair set the spec records as captured from the TRADFRI bulb E27 WW, for
+    which no fixture exists."""
+    store = Store(tmp_path / "t.sqlite")
+    member_ids = []
+    for name in ("ikea_kajplats_cws_lamp.json", "ikea_kajplats_ws_lamp.json"):
+        snapshot = load_snapshot(name)
+        device_id = store.register_device(snapshot)
+        store.register_signals(device_id, snapshot)
+        commands = extract_commands(snapshot)
+        if name == "ikea_kajplats_ws_lamp.json":
+            commands = [c for c in commands if c.slug != "colortemp"]
+        store.register_commands(device_id, commands)
+        member_ids.append(device_id)
+    group = store.create_group("Living room", member_ids)
+
+    async def invoke(call: DeviceCall) -> None:
+        if call.address in unconfigured_nodes:
+            raise SourceNotConfiguredError(call.technology)
+        if call.address in failing_nodes:
+            raise RuntimeError("no route to host")
+        invocations.append(call)
+
+    app = build_app(store, invoke, fake_runtime(store), client=fake_client)
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        await authenticate(store, client)
+        yield client, store, group.id
+    store.close()
+
+
+async def _send(client: httpx.AsyncClient, route: str, key: str, value: str) -> httpx.Response:
+    if route == "loxone":
+        return await client.get(f"/cmd/{key}/{value}")
+    return await client.post(f"/api/commands/{key}", json={"value": value})
+
+
+@pytest.mark.parametrize("route", ["loxone", "webui"])
+async def test_a_member_given_nothing_is_a_plain_success(dim_only_api, invocations, route):
+    """`colortemp` reaches the CWS lamp and gives the dim-only lamp nothing.
+    That member neither failed nor was left unconfigured, so the response
+    is 200 - the adapter's empty plan must not surface as an error."""
+    client, store, group_id = dim_only_api
+    cws, dim_only = store.group_members(group_id)
+    assert (768, 10) not in {(c.cluster_id, c.command_id) for c in store.commands(dim_only.id)}
+    key = next(c.key for c in store.group_commands(group_id) if c.slug == "colortemp")
+
+    response = await _send(client, route, key, "2700")
+
+    assert response.status_code == 200
+    assert [call.address for call in invocations] == [cws.address]
+
+
+@pytest.mark.parametrize("route", ["loxone", "webui"])
+async def test_a_group_whose_only_asked_member_has_no_source_is_a_503(
+    dim_only_api, invocations, unconfigured_nodes, route
+):
+    """The CWS lamp has no source, and the dim-only lamp was given nothing
+    to do. Nothing was sent to anyone, and the one member that would have
+    received something was never asked - that is the 503 "not set up"
+    case, counted over the members given something to do. Counting the
+    empty plan as well made this a 502 "reached 1 of 2 members; no answer
+    from" the CWS lamp: a member reached that was never sent anything, and
+    "no answer" from one that was never asked.
+
+    Fault to prove it: compare `len(outcome.unconfigured)` with `len(plans)`
+    again in `loxone/server.py` and in `api/control.py`."""
+    client, store, group_id = dim_only_api
+    cws, _dim_only = store.group_members(group_id)
+    unconfigured_nodes.add(cws.address)
+    key = next(c.key for c in store.group_commands(group_id) if c.slug == "colortemp")
+
+    response = await _send(client, route, key, "2700")
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == i18n.t(
+        "api.errors.group_source_not_configured_one", technology="Matter"
+    )
+    assert invocations == []
+
+
+@pytest.mark.parametrize("route", ["loxone", "webui"])
+async def test_the_502_counts_only_the_members_given_something_to_do(
+    dim_only_api, failing_nodes, route
+):
+    """The CWS lamp does not answer, and the dim-only lamp was given
+    nothing. "reached 1 of 2 members" would count the dim-only lamp as
+    reached although nothing was sent to it; the honest count is 0 of 1.
+
+    Fault to prove it: count `len(plans)` again for `total` and `reached`
+    in `loxone/server.py` and in `api/control.py`."""
+    client, store, group_id = dim_only_api
+    cws, _dim_only = store.group_members(group_id)
+    failing_nodes.add(cws.address)
+    key = next(c.key for c in store.group_commands(group_id) if c.slug == "colortemp")
+
+    response = await _send(client, route, key, "2700")
+
+    assert response.status_code == 502
+    assert response.json()["detail"] == i18n.t(
+        "api.errors.group_partially_unreachable", reached=0, total=1, devices=cws.label
+    )

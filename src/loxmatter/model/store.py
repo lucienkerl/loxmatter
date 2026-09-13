@@ -65,6 +65,7 @@ from loxmatter.model.update_settings_store import UpdateSettingsStore
 from loxmatter.model.zigbee_pending_store import ZigbeePendingStore
 from loxmatter.model.zigbee_settings_store import ZigbeeSettingsStore
 from loxmatter.profiles.categories import category_for
+from loxmatter.profiles.light_commands import LIGHT_COMMAND_PAIRS
 from loxmatter.profiles.relevance import (
     ROOT_NODE_DEVICE_TYPE,
     UTILITY_ENDPOINT_KEEP_CLUSTERS,
@@ -1345,7 +1346,7 @@ class Store:
 
         Removing a device is a membership change like any other group
         member removal (design 4.3): every group the device belonged to
-        recomputes its command intersection. The affected group ids are
+        recomputes its command list. The affected group ids are
         captured BEFORE the `DELETE FROM device_group_member` below - once
         that row is gone, there is no way left to ask which groups this
         device used to belong to. This does not delete a thereby-emptied
@@ -1648,8 +1649,8 @@ class Store:
     def set_group_members(self, group_id: int, member_ids: Sequence[int]) -> None:
         """Replaces the whole membership in one transaction.
 
-        The complete list rather than add/remove: the command
-        intersection is recomputed after every change anyway, and two
+        The complete list rather than add/remove: the group's command
+        list is recomputed after every change anyway, and two
         single removals would recompute it twice and pass through an
         intermediate state nobody asked for - including keys that
         briefly vanish and come back (design 5).
@@ -1686,7 +1687,7 @@ class Store:
             self._db.rollback()
             raise
         self._db.commit()
-        # The intersection depends on WHO the members are, so a membership
+        # The command list depends on WHO the members are, so a membership
         # change must recompute it (design 4.3) - same call as at the end
         # of `create_group`.
         self.register_group_commands(group_id)
@@ -1724,16 +1725,25 @@ class Store:
         command - a frozen list would be the opposite of that and would
         let a group claim a capability no member has left (design 4.3).
 
-        A command that survives keeps its key. One that drops out of the
-        intersection loses its row and its key answers 404 from then on -
-        deliberately, because that 404 stands in the log and points at the
-        one line in the Loxone project that needs attention, whereas a
-        silently vanished key leaves an output nobody can trace.
+        **Which commands a group offers (design 2026-09-13, 3.1).** A light
+        command - a pair in `LIGHT_COMMAND_PAIRS` - is offered when ANY
+        member carries it; `commands/adapt.py` gives each member the part of
+        the value it can carry, so a dim-only lamp added to a colour group
+        no longer removes the group's colour output. Every other pair is
+        offered only when EVERY member carries it, the 10 September
+        intersection: there is no meaningful adaptation for those.
 
-        The intersection runs over `(cluster_id, command_id)` pairs, NOT
-        over endpoints: a member that carries the pair on several
-        endpoints still counts as one member that accepts it (see
-        `group_targets`, which then sends to all of them).
+        A command that survives keeps its key. One that drops out - a light
+        command when no member carries it any more, any other command when
+        not every member does - loses its row and its key answers 404 from
+        then on - deliberately, because that 404 stands in the log and
+        points at the one line in the Loxone project that needs attention,
+        whereas a silently vanished key leaves an output nobody can trace.
+
+        Both rules run over `(cluster_id, command_id)` pairs, NOT over
+        endpoints: a member that carries the pair on several endpoints
+        still counts as one member that accepts it (see `group_targets`,
+        which then sends to all of them).
 
         **Rollback guard (a review finding, reapplied here).** The
         DELETE and INSERT/UPDATE loops below run inside the same
@@ -1749,7 +1759,7 @@ class Store:
 
         **`updated_at`, but only when something moved (design 4.3, review
         gap).** This method runs on every membership change, including
-        ones that leave the intersection exactly as it was -
+        ones that leave the command list exactly as it was -
         `set_group_members` re-submitting the member list it already has,
         say, recomputes nothing. If this stamped `device_group.updated_at`
         unconditionally, every group would read "changed since the last
@@ -1762,7 +1772,7 @@ class Store:
         but only counts toward `changed` when the values it writes differ
         from what was already there. The stamp only fires when the flag is
         set - in particular, when `forget_device` shrinks a group's
-        intersection by dropping a member, so the group correctly stops
+        command list by dropping a member, so the group correctly stops
         looking unchanged even though nothing about the group's own row
         (label, room, membership list) was touched here.
         """
@@ -1777,6 +1787,13 @@ class Store:
             for other in by_member[1:]:
                 common &= set(other)
             shared = {pair: by_member[0][pair] for pair in common}
+            # Light commands: offered when ANY member carries them (design
+            # 2026-09-13, 3.1); `commands/adapt.py` gives each member the part
+            # it can carry. Every other pair keeps the intersection above.
+            for member in by_member:
+                for pair, sample in member.items():
+                    if pair in LIGHT_COMMAND_PAIRS and pair not in shared:
+                        shared[pair] = sample
 
         keep = set(shared)
         changed = False
@@ -1838,20 +1855,29 @@ class Store:
     def group_targets(self, command: StoredGroupCommand) -> list[GroupTarget]:
         """The per-member command rows for one group command.
 
-        A member may carry the pair on several endpoints; all of them are
-        returned, ordered by endpoint, and all of them get the command
-        (design 4.3). Members without a matching row are skipped rather
-        than returned empty - by construction of the intersection there
-        should be none, and an empty target would only make the
-        dispatcher guard against a case the store already rules out.
+        - **A light command** (a pair in `LIGHT_COMMAND_PAIRS`, design
+          2026-09-13, 4): a member's rows are ALL of its light rows, on
+          every endpoint, ordered by endpoint - `commands/adapt.py` picks
+          from them what the member can carry of the value.
+        - **Any other command:** a member's rows are the rows of that exact
+          pair. A member may carry it on several endpoints; all of them are
+          returned, ordered by endpoint, and all of them get the command
+          (design 4.3).
+
+        A member with no such rows is skipped rather than returned empty.
         """
+        light = (command.cluster_id, command.command_id) in LIGHT_COMMAND_PAIRS
         targets: list[GroupTarget] = []
         for device in self.group_members(command.group_id):
             rows = tuple(
                 stored
                 for stored in self.commands(device.id)
-                if stored.cluster_id == command.cluster_id
-                and stored.command_id == command.command_id
+                if (
+                    (stored.cluster_id, stored.command_id) in LIGHT_COMMAND_PAIRS
+                    if light
+                    else stored.cluster_id == command.cluster_id
+                    and stored.command_id == command.command_id
+                )
             )
             if not rows:
                 continue
@@ -2395,7 +2421,7 @@ class Store:
         too. Neither ever touched a group, so a command that a
         `clusters.yaml` fix newly gave to every member of an existing
         group reached each member's own tile immediately and the group's
-        intersection not at all - until someone happened to re-save its
+        command list not at all - until someone happened to re-save its
         member list. That is exactly the staleness the re-adoption above
         exists to prevent, just never wired to the trigger that fires in
         production. The query is the same shape as `forget_device`'s

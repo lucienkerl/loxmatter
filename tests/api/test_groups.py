@@ -92,12 +92,16 @@ async def test_label_and_room_can_be_patched(api):
 
 
 async def test_replacing_the_members_recomputes_the_commands(api):
+    """Replacing the colour lamp and the white lamp with the white lamp alone
+    drops `color`: since design 2026-09-13, 3.1 a light command leaves the
+    group only when no member carries it (it used to be the widening to both
+    lamps that dropped it, under the intersection)."""
     client, _store, lamps, _plug = api
-    group_id = (
-        await client.post("/api/groups", json={"label": "A", "member_ids": [lamps[0]]})
-    ).json()["id"]
+    group_id = (await client.post("/api/groups", json={"label": "A", "member_ids": lamps})).json()[
+        "id"
+    ]
     before = (await client.get(f"/api/groups/{group_id}/controls")).json()
-    response = await client.put(f"/api/groups/{group_id}/members", json={"member_ids": lamps})
+    response = await client.put(f"/api/groups/{group_id}/members", json={"member_ids": [lamps[1]]})
     assert response.status_code == 200
     after = (await client.get(f"/api/groups/{group_id}/controls")).json()
     slugs_before = {c["slug"] for c in before["commands"]}

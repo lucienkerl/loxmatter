@@ -41,8 +41,10 @@ from collections import Counter
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 
+from loxmatter.commands.adapt import adapt_group_command
 from loxmatter.commands.translate import to_device_calls
-from loxmatter.model.store import GroupTarget
+from loxmatter.model.store import GroupTarget, StoredGroupCommand
+from loxmatter.profiles.light_commands import LIGHT_COMMAND_PAIRS
 from loxmatter.sources import DeviceCall, SourceNotConfiguredError
 
 __all__ = ["GroupOutcome", "MemberPlan", "dispatch_group", "plan_group_calls"]
@@ -63,19 +65,31 @@ class MemberPlan:
     calls: tuple[DeviceCall, ...]
 
 
-def plan_group_calls(targets: Sequence[GroupTarget], value: str) -> list[MemberPlan]:
-    """Translates the group's value once per member command.
+def plan_group_calls(
+    command: StoredGroupCommand, targets: Sequence[GroupTarget], value: str
+) -> list[MemberPlan]:
+    """Translates the group's value once per member.
 
-    Raises `UnsupportedValueError` before anything is sent - all members
-    share the same (cluster, command) pair, so the translation either
-    works for all of them or for none, and finding out halfway through a
-    fan-out would leave a partial state for a value that was never valid.
+    A light command (design 2026-09-13) goes through
+    `commands.adapt.adapt_group_command`, which gives each member the part of
+    the value it can carry - possibly nothing, which is not a failure: such a
+    member gets an empty plan and `dispatch_group` sends it nothing. Any
+    other command is translated per stored row, as before.
+
+    Raises `UnsupportedValueError` before anything is sent: the value is
+    decoded for the first member, and an invalid value fails there -
+    finding out halfway through a fan-out would leave a partial state for a
+    value that was never valid.
     """
+    pair = (command.cluster_id, command.command_id)
     plans: list[MemberPlan] = []
     for target in targets:
         calls: list[DeviceCall] = []
-        for stored in target.commands:
-            calls.extend(to_device_calls(stored, value))
+        if pair in LIGHT_COMMAND_PAIRS:
+            calls.extend(adapt_group_command(pair, target.commands, value))
+        else:
+            for stored in target.commands:
+                calls.extend(to_device_calls(stored, value))
         plans.append(
             MemberPlan(
                 device_id=target.device_id,

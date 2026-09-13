@@ -147,7 +147,7 @@ def test_a_group_id_does_not_collide_with_a_device_id(sample_project, group_stor
     assert device_container is not group_container
 
 
-def test_a_command_entering_the_intersection_is_a_new_signal_in_the_group_container(
+def test_a_command_entering_the_group_is_a_new_signal_in_the_group_container(
     sample_project, group_store
 ):
     """Task 9 review: `_new_signal_edit`'s container prefix now comes from
@@ -158,21 +158,21 @@ def test_a_command_entering_the_intersection_is_a_new_signal_in_the_group_contai
     None`, surfacing as a 500. No existing test drove a group through
     `NEW_SIGNAL` at all, so nothing caught it.
 
-    `register_group_commands` intersects over the members, so *adding* a
-    member only narrows the command set further - the only way to make a
-    command *enter* the intersection is to *remove* a member (or use one
-    whose clusters differ from the start). The two checked-in lamps
-    differ in exactly this way: `ikea_kajplats_cws_lamp.json` (colour)
-    supports `color`, `ikea_kajplats_ws_lamp.json` (white spectrum) does
-    not, so the group over both never offers `color` (see
-    `tests/model/test_store_groups.py`,
-    `test_the_group_offers_only_what_every_member_accepts`). Removing the
-    white-spectrum member is therefore the widening step this test needs.
+    Since design 2026-09-13, 3.1, `register_group_commands` offers a light
+    command when ANY member carries it, so a light command enters the group
+    when a member carrying it is *added*. The two checked-in lamps differ in
+    exactly this way: `ikea_kajplats_cws_lamp.json` (colour) supports
+    `color`, `ikea_kajplats_ws_lamp.json` (white spectrum) does not. The
+    group starts as the white-spectrum lamp alone, which offers no `color`,
+    and adding the colour lamp is the widening step this test needs. (Until
+    that design the rule was the intersection, and the widening step was
+    removing the white-spectrum member instead.)
     """
     from loxmatter.projectsync.patch import apply_plan
 
     store, group = group_store
     colour_lamp, white_spectrum_lamp = store.devices()
+    store.set_group_members(group.id, [white_spectrum_lamp.id])
 
     # Step 1: patch once so the group's own container exists at all -
     # otherwise every group command would be NEW_DEVICE, not NEW_SIGNAL,
@@ -188,7 +188,7 @@ def test_a_command_entering_the_intersection_is_a_new_signal_in_the_group_contai
     )
     assert not any(
         e.owner_kind == "group" and e.key == f"g{group.id}_color" for e in first_plan.entries
-    ), "the two-member group must not already offer color"
+    ), "the white-spectrum group must not already offer color"
     first_patched = apply_plan(
         index,
         first_plan,
@@ -209,9 +209,8 @@ def test_a_command_entering_the_intersection_is_a_new_signal_in_the_group_contai
     )
     container_u_before = group_container_before.attrs["U"]
 
-    # Step 2: narrow the membership to just the colour lamp - `color`
-    # enters the intersection.
-    store.set_group_members(group.id, [colour_lamp.id])
+    # Step 2: add the colour lamp - `color` enters the group.
+    store.set_group_members(group.id, [white_spectrum_lamp.id, colour_lamp.id])
     assert "color" in {c.slug for c in store.group_commands(group.id)}
 
     # Step 3: re-plan against the patched text. The container from step 1
