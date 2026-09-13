@@ -129,12 +129,15 @@ people who don't know the code.
   matter-server may still deliver the command a little later, after Loxone
   has been told it failed.
 - **A dragged slider no longer queues up commands.** Loxone sends a new
-  brightness about once a second while a slider moves, without waiting for
-  the lamp. Each lamp now gets one command at a time, and of the values that
-  arrive while it is busy only the newest waits; the ones in between are
-  skipped. The lamp still ends on the value the slider stopped at. This
-  takes load off the Thread radio, which could previously give up under
-  such a burst. On, off and toggle are never skipped.
+  value about once a second while a slider moves — a colour, for example —
+  without waiting for the lamp. Each lamp now gets one command at a time,
+  and of the values that arrive while it is busy only the newest waits; the
+  ones in between are skipped. The lamp still ends on the value the slider
+  stopped at. This takes load off the Thread border router software, which
+  could previously be overwhelmed by such a burst and give up. Clicks in the
+  web interface wait in the same queue as Loxone's commands. On, off and
+  toggle are never skipped, and a command still waiting after 10 seconds
+  behind a lamp that does not answer gives up like any other.
 - **Removing a device waits longer, and a second removal no longer fails.**
   Removal now waits up to two minutes for matter-server to reach the
   device, instead of giving up after 10 seconds while matter-server was

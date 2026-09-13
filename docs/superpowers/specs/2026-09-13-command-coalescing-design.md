@@ -60,6 +60,21 @@ behind the slider.
    supersedes nothing. A Loxone colour value (colour + brightness) covers
    both slots and therefore replaces a waiting colour-only, brightness-only
    or colour + brightness request on the same endpoint.
+
+   **Slot strength.** (8, 4) MoveToLevelWithOnOff also switches the lamp:
+   on above the minimum level, off at it. (8, 0) MoveToLevel only sets the
+   level. A new request covers a waiting one only if, for each of the
+   waiting request's slots, it has a call in that slot at least as strong.
+   So (8, 4) supersedes a waiting (8, 0), but a waiting (8, 4) is not
+   superseded by an (8, 0): a waiting "level 0 with on/off" is an "off",
+   and a plain level in its place would leave the lamp on (review finding
+   M-b).
+
+   **Not past a switch.** Supersession only looks at the waiting requests
+   after the last waiting request that has an unslotted call. A new value
+   cannot remove one that waits in front of a toggle, on or off: what the
+   toggle does depends on the state the value before it left (review
+   finding M-c).
 4. **What is running finishes.** A request that has started is never
    interrupted, and its calls keep their order: colour first, then brightness.
 5. **Waiting requests run in arrival order.** Supersession removes requests
@@ -71,6 +86,11 @@ behind the slider.
      is on its way.
 7. **Errors stay with their request.** A request whose call raises reports
    that error to its own caller only. The next waiting request still runs.
+   That includes a `CancelledError` that comes out of a call while the
+   worker itself is not being cancelled: matter-server's client cancels
+   every pending call when its websocket closes. That request fails with
+   `DeviceUnreachableError` (502), and the ones behind it still run. Only a
+   worker whose own task is cancelling cancels the waiting requests.
 
 ## 3. Where It Lives
 
@@ -91,10 +111,17 @@ behind the slider.
   member's plan goes through it instead of the sequential `invoke` loop.
   Both group routes pass `gate.run`. A member whose plan was superseded is
   neither failed nor unconfigured.
-- **The bound stays per call** (`bounded_source_call`, 10 s; removal 120 s).
-  Time spent waiting in the queue is not bounded separately. A queue holds
-  at most one waiting request per slot combination plus any
-  non-supersedable ones, and those run one after another, each bounded.
+- **The bound stays per call** (`bounded_source_call`, 10 s; removal 120 s),
+  **and waiting has a bound of its own.** A request that is still waiting
+  for its turn after `SOURCE_CALL_TIMEOUT_SECONDS` leaves the queue unsent
+  and raises `DeviceUnreachableError` ("the device did not answer within
+  10 s"), the 502 a silent device gets anywhere else. Without it, requests
+  behind a dead device waited without limit, on, off and toggle piled up
+  because nothing supersedes them, and "a Loxone command gives up after 10
+  seconds" was no longer true (review finding I2). A request that has
+  already started is waited for to the end, because each of its calls is
+  bounded. Whether it has started is read from the queue, not from the
+  timer, so the timeout and the worker cannot both act on one request.
 
 ## 4. Testing
 
@@ -112,6 +139,14 @@ releases them:
 - a waiting request mixing a slot call with an on/off call is never
   superseded;
 - a raising call reaches its own caller, and the next request still runs;
+- a call whose own future is cancelled fails only its request, with a 502,
+  and the request behind it still runs;
+- a request waiting past the wait bound is refused and never sent, while a
+  request that started before the bound passed is not failed by it;
+- an (8, 0) does not supersede a waiting (8, 4), and a new value does not
+  supersede one waiting in front of a toggle;
+- a worker cancelled before its first step does not strand its device, and
+  cancelling a worker cancels the requests waiting for it;
 - the per-device entry is gone once the queue drains;
 - a caller cancelled while waiting does not stop the worker from running
   the requests behind it.
