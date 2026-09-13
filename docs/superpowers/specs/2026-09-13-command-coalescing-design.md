@@ -113,9 +113,15 @@ behind the slider.
   neither failed nor unconfigured.
 - **The bound stays per call** (`bounded_source_call`, 10 s; removal 120 s),
   **and waiting has a bound of its own.** A request that is still waiting
-  for its turn after `SOURCE_CALL_TIMEOUT_SECONDS` leaves the queue unsent
-  and raises `DeviceUnreachableError` ("the device did not answer within
-  10 s"), the 502 a silent device gets anywhere else. Without it, requests
+  for its turn when its device has finished no call for
+  `SOURCE_CALL_TIMEOUT_SECONDS` leaves the queue unsent and raises
+  `DeviceUnreachableError` ("the device did not answer within 10 s"), the
+  502 a silent device gets anywhere else. The clock starts when the request
+  joins the queue and starts over each time a call for its device returns;
+  a call that raises does not count. A colour value is two calls, each
+  allowed 10 s, so on a congested mesh the request can take 12 s. An "off"
+  behind it that counted from its own arrival would fail at 10 s while the
+  lamp was still answering (pre-release review). Without the bound, requests
   behind a dead device waited without limit, on, off and toggle piled up
   because nothing supersedes them, and "a Loxone command gives up after 10
   seconds" was no longer true (review finding I2). A request that has
@@ -143,8 +149,16 @@ releases them:
   and the request behind it still runs;
 - a request waiting past the wait bound is refused and never sent, while a
   request that started before the bound passed is not failed by it;
-- an (8, 0) does not supersede a waiting (8, 4), and a new value does not
-  supersede one waiting in front of a toggle;
+- a request behind a two-call request whose calls each take 60 % of the
+  bound is not failed, and a device that stops finishing calls still fails
+  its waiters one bound after its last call returned;
+- a waiter that times out while the request before it runs leaves the
+  device's entry in place, so a newer request queues instead of running
+  next to the old one; a waiter that times out with nothing left to run
+  removes the entry;
+- an (8, 0) does not supersede a waiting (8, 4) at level 0 or at any other
+  level, and a new value does not supersede one waiting in front of a
+  toggle, counted from the last waiting toggle;
 - a worker cancelled before its first step does not strand its device, and
   cancelling a worker cancels the requests waiting for it;
 - the per-device entry is gone once the queue drains;

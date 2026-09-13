@@ -458,3 +458,199 @@ async def test_a_failure_nobody_waits_for_is_not_logged_as_unretrieved():
     finally:
         loop.set_exception_handler(previous)
     assert [c["message"] for c in reported] == []
+
+
+class TimedDevices:
+    """An invoker whose calls take `seconds` each, except the calls listed in
+    `hanging`, which never return. Records how many calls overlapped per
+    address."""
+
+    def __init__(self, seconds: float) -> None:
+        self.seconds = seconds
+        self.hanging: set[tuple[str, int, int]] = set()
+        self.ran: list[DeviceCall] = []
+        self.active: dict[str, int] = {}
+        self.max_active: dict[str, int] = {}
+
+    async def __call__(self, device_call: DeviceCall) -> None:
+        address = device_call.address
+        self.active[address] = self.active.get(address, 0) + 1
+        self.max_active[address] = max(self.max_active.get(address, 0), self.active[address])
+        try:
+            if (address, device_call.cluster_id, device_call.command_id) in self.hanging:
+                await asyncio.Event().wait()
+            await asyncio.sleep(self.seconds)
+            self.ran.append(device_call)
+        finally:
+            self.active[address] -= 1
+
+
+async def test_a_slow_device_that_still_answers_does_not_fail_the_request_behind_it():
+    """A Loxone colour value is two calls. On a congested mesh each may take
+    most of the bound, and the request as a whole longer than the bound. An
+    "off" waiting behind it is not failed while the device keeps finishing
+    calls: the waiting clock starts over with each one.
+
+    Fault to prove it: never set `lane.progress_at` - the "off" raises
+    `DeviceUnreachableError` at the bound, while the lamp is answering."""
+    bound = 0.4
+    devices = TimedDevices(seconds=0.6 * bound)
+    gate = CommandGate(devices, wait_timeout=bound)
+    colour = asyncio.ensure_future(gate.run(colour_and_level("lamp", 40)))
+    await _let_run()
+    off = asyncio.ensure_future(gate.run([call("lamp", 6, 0)]))
+    assert await asyncio.wait_for(asyncio.gather(colour, off), timeout=3) == [True, True]
+    assert [(c.cluster_id, c.command_id) for c in devices.ran] == [(768, 6), (8, 4), (6, 0)]
+    assert devices.max_active == {"lamp": 1}
+
+
+async def test_a_device_that_stops_making_progress_still_fails_its_waiters():
+    """The other half: once the device stops finishing calls, a waiting
+    request fails one bound after the last call that returned - not at the
+    bound counted from its arrival, and not never.
+
+    Faults to prove it, one at a time: never fail a waiting request (always
+    `continue`) - the waiting request is still pending after three seconds;
+    never set `lane.progress_at` - it fails before the bound after the first
+    call has passed."""
+    bound = 0.4
+    devices = TimedDevices(seconds=0.6 * bound)
+    devices.hanging.add(("lamp", 8, 4))
+    gate = CommandGate(devices, wait_timeout=bound)
+    loop = asyncio.get_running_loop()
+    stuck = asyncio.ensure_future(gate.run(colour_and_level("lamp", 40)))
+    await _let_run()
+    started = loop.time()
+    waiting = asyncio.ensure_future(gate.run([call("lamp", 6, 0)]))
+    with pytest.raises(DeviceUnreachableError):
+        await asyncio.wait_for(waiting, timeout=3)
+    # The colour call returned at 0.24 s, so the bound runs out at 0.64 s.
+    assert loop.time() - started >= 0.6
+    assert [(c.cluster_id, c.command_id) for c in devices.ran] == [(768, 6)]
+    worker = gate._lanes[("matter", "lamp")].worker
+    assert worker is not None
+    worker.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(stuck, timeout=1)
+
+
+async def test_a_lane_whose_worker_still_runs_is_kept_when_a_waiter_times_out():
+    """A request that times out leaves an empty queue behind while the
+    request before it is still running. The lane must stay: a new request
+    has to queue behind the running one, not start a second worker next to
+    it.
+
+    Fault to prove it: delete the lane on timeout whenever `waiting` is
+    empty, without asking whether the worker runs - the new request runs
+    alongside the old one and `max_active["lamp"]` becomes 2."""
+    devices = SlowDevices()
+    gate = CommandGate(devices, wait_timeout=0.05)
+    running = asyncio.ensure_future(gate.run([call("lamp", 6, 1)]))
+    await _let_run()
+    waiting = asyncio.ensure_future(gate.run([call("lamp", 6, 0)]))
+    with pytest.raises(DeviceUnreachableError):
+        await asyncio.wait_for(waiting, timeout=1)
+    newer = asyncio.ensure_future(gate.run([call("lamp", 6, 2)]))
+    await _let_run()
+    assert devices.max_active == {"lamp": 1}
+    devices.release.set()
+    assert await asyncio.wait_for(asyncio.gather(running, newer), timeout=1) == [True, True]
+    assert devices.max_active == {"lamp": 1}
+    assert [(c.cluster_id, c.command_id) for c in devices.ran] == [(6, 1), (6, 2)]
+    await _let_run()
+    assert gate._lanes == {}
+
+
+async def test_the_timeout_path_drops_a_lane_with_nothing_left_to_run():
+    """When the request that times out was the last one and no worker runs,
+    the timeout itself removes the device's entry - no worker's `finally`
+    is left to do it. That happens behind a worker cancelled before its
+    first step.
+
+    Fault to prove it: remove the `del self._lanes[key]` after a timeout -
+    `_lanes` keeps the key."""
+    devices = SlowDevices()
+    gate = CommandGate(devices, wait_timeout=0.05)
+    orphan = asyncio.ensure_future(gate.run([call("lamp", 6, 1)]))
+    await asyncio.sleep(0)  # `run` has created the worker; it has not run
+    worker = gate._lanes[("matter", "lamp")].worker
+    assert worker is not None
+    worker.cancel()
+    with pytest.raises(DeviceUnreachableError):
+        await asyncio.wait_for(orphan, timeout=1)
+    assert gate._lanes == {}
+    assert devices.ran == []
+
+
+async def test_without_a_wait_timeout_the_source_call_bound_is_read_when_a_request_waits(
+    monkeypatch,
+):
+    """`CommandGate(invoke)` reads `SOURCE_CALL_TIMEOUT_SECONDS` when a
+    request waits, not when the gate is built: `build_app` builds it once at
+    startup, and a test that shortens the constant must shorten the wait.
+
+    Fault to prove it: resolve the constant in `__init__` - the request
+    waits the full 10 s and `wait_for` gives up after one."""
+    devices = SlowDevices()
+    gate = CommandGate(devices)
+    monkeypatch.setattr("loxmatter.sources.SOURCE_CALL_TIMEOUT_SECONDS", 0.05)
+    busy = asyncio.ensure_future(gate.run([call("lamp", 6, 1)]))
+    await _let_run()
+    waiting = asyncio.ensure_future(gate.run([call("lamp", 6, 0)]))
+    with pytest.raises(DeviceUnreachableError) as caught:
+        await asyncio.wait_for(waiting, timeout=1)
+    assert str(caught.value) == i18n.t("api.errors.device_timed_out", seconds=0.05)
+    devices.release.set()
+    assert await asyncio.wait_for(busy, timeout=1) is True
+
+
+async def test_a_plain_level_does_not_supersede_a_waiting_level_with_on_off_at_any_level():
+    """(8, 4) switches the lamp at every level, not only at 0: a waiting
+    "level 60 with on/off" also switches a lamp that is off on. A newer
+    plain level 30 in its place would leave that lamp off.
+
+    Fault to prove it: give (8, 4) its strength only at level 0 - the level
+    60 is superseded and never sent."""
+    devices = SlowDevices()
+    gate = CommandGate(devices)
+    busy = asyncio.ensure_future(gate.run(level("lamp", 1)))
+    await _let_run()
+    on_at_60 = asyncio.ensure_future(gate.run(level("lamp", 60)))
+    await _let_run()
+    plain = asyncio.ensure_future(gate.run(level_only("lamp", 30)))
+    await _let_run()
+    devices.release.set()
+    assert await asyncio.gather(busy, on_at_60, plain) == [True, True, True]
+    assert [(c.command_id, c.payload["level"]) for c in devices.ran] == [(4, 1), (4, 60), (0, 30)]
+
+
+async def test_supersession_starts_after_the_last_waiting_toggle_not_the_first():
+    """Waiting: level 10, toggle, level 20, toggle. A newer level 30 comes
+    after the second toggle, so it replaces nothing: level 20 waits in
+    front of that toggle, and removing it changes what the toggle does.
+
+    Fault to prove it: stop at the first unslotted request (`break` after
+    `start = index + 1`) - level 20 is superseded."""
+    devices = SlowDevices()
+    gate = CommandGate(devices)
+    busy = asyncio.ensure_future(gate.run(level("lamp", 1)))
+    await _let_run()
+    queued = [
+        asyncio.ensure_future(gate.run(level("lamp", 10))),
+        asyncio.ensure_future(gate.run([call("lamp", 6, 2)])),
+        asyncio.ensure_future(gate.run(level("lamp", 20))),
+        asyncio.ensure_future(gate.run([call("lamp", 6, 2)])),
+    ]
+    await _let_run()
+    newest = asyncio.ensure_future(gate.run(level("lamp", 30)))
+    await _let_run()
+    devices.release.set()
+    assert await asyncio.gather(busy, *queued, newest) == [True] * 6
+    assert [(c.cluster_id, c.payload.get("level")) for c in devices.ran] == [
+        (8, 1),
+        (8, 10),
+        (6, None),
+        (8, 20),
+        (6, None),
+        (8, 30),
+    ]

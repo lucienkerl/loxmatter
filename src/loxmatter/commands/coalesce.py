@@ -119,12 +119,16 @@ class _Request:
     calls: tuple[DeviceCall, ...]
     slots: dict[Slot, int] | None
     outcome: asyncio.Future[bool]
+    # Event loop time at which the request joined its queue.
+    queued_at: float = 0.0
 
 
 @dataclass(eq=False)
 class _Lane:
     waiting: list[_Request] = field(default_factory=list)
     worker: asyncio.Future[None] | None = None
+    # Event loop time at which a call for this device last returned.
+    progress_at: float = 0.0
 
 
 class CommandGate:
@@ -134,9 +138,10 @@ class CommandGate:
     routes, so a Loxone value and a web UI click for the same lamp share one
     queue.
 
-    `wait_timeout` bounds how long a request may wait for its turn. `None`
-    reads `sources.SOURCE_CALL_TIMEOUT_SECONDS` at call time, the bound of
-    one call, so a test that shortens that constant shortens both."""
+    `wait_timeout` bounds how long a request may wait while its device makes
+    no progress. `None` reads `sources.SOURCE_CALL_TIMEOUT_SECONDS` each
+    time a request waits, not once here: it is the bound of one call, so a
+    test that shortens that constant shortens both."""
 
     def __init__(self, invoke: Invoker, *, wait_timeout: float | None = None) -> None:
         self._invoke = invoke
@@ -148,13 +153,17 @@ class CommandGate:
         or waiting for it. Returns `False` when a newer request replaced
         these calls before they started, and raises what a call raised.
 
-        A request that is still waiting after the wait bound is taken out of
-        the queue and raises `DeviceUnreachableError`, the 502 a silent
-        device gets anywhere else: a device that has not finished the
-        request before it is almost certainly not going to answer this one,
-        and a Miniserver waits on the answer. A request that has started is
-        waited for to the end, because each of its calls has a bound of its
-        own.
+        A request that is still waiting when its device has not finished a
+        call for the wait bound is taken out of the queue and raises
+        `DeviceUnreachableError`, the 502 a silent device gets anywhere else:
+        a device that has stopped answering is almost certainly not going to
+        answer this one, and a Miniserver waits on the answer. The clock
+        starts when the request joins the queue and starts over each time a
+        call for the device returns, so a slow device that still answers -
+        a colour value's two calls on a congested mesh - does not fail the
+        requests behind it. A call that raises is not progress: it is how a
+        silent device's call ends. A request that has started is waited for
+        to the end, because each of its calls has a bound of its own.
 
         A caller that is cancelled while waiting does not take its request
         out of the queue: the value was sent to the bridge, and a Miniserver
@@ -168,6 +177,7 @@ class CommandGate:
             calls=tuple(calls),
             slots=_slots(calls),
             outcome=asyncio.get_running_loop().create_future(),
+            queued_at=asyncio.get_running_loop().time(),
         )
         request.outcome.add_done_callback(_consume)
         lane = self._lanes.setdefault(key, _Lane())
@@ -187,9 +197,13 @@ class CommandGate:
             if self._wait_timeout is None
             else self._wait_timeout
         )
-        try:
-            return await asyncio.wait_for(asyncio.shield(request.outcome), seconds)
-        except TimeoutError:
+        loop = asyncio.get_running_loop()
+        remaining = seconds
+        while True:
+            try:
+                return await asyncio.wait_for(asyncio.shield(request.outcome), remaining)
+            except TimeoutError:
+                pass
             # Decided from state, not from the timer: between the timer
             # firing and this line the worker may have run. Nothing below
             # awaits before the request is out of `waiting`, so the worker
@@ -201,6 +215,12 @@ class CommandGate:
             if request not in lane.waiting:
                 # Started: its calls are bounded one by one.
                 return await asyncio.shield(request.outcome)
+            idle = loop.time() - max(request.queued_at, lane.progress_at)
+            if idle < seconds:
+                # The device finished a call while this request waited: the
+                # clock starts over from that call.
+                remaining = seconds - idle
+                continue
             lane.waiting.remove(request)
             error = DeviceUnreachableError(i18n.t("api.errors.device_timed_out", seconds=seconds))
             request.outcome.set_exception(error)
@@ -210,7 +230,7 @@ class CommandGate:
                 and self._lanes.get(key) is lane
             ):
                 del self._lanes[key]
-            raise error from None
+            raise error
 
     async def _drain(self, key: tuple[str, str], lane: _Lane) -> None:
         """Runs one device's queue until it is empty.
@@ -224,6 +244,7 @@ class CommandGate:
                 try:
                     for device_call in request.calls:
                         await self._invoke(device_call)
+                        lane.progress_at = asyncio.get_running_loop().time()
                 except asyncio.CancelledError:
                     if _worker_cancelled():
                         request.outcome.cancel()

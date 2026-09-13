@@ -136,8 +136,9 @@ people who don't know the code.
   stopped at. This takes load off the Thread border router software, which
   could previously be overwhelmed by such a burst and give up. Clicks in the
   web interface wait in the same queue as Loxone's commands. On, off and
-  toggle are never skipped, and a command still waiting after 10 seconds
-  behind a lamp that does not answer gives up like any other.
+  toggle are never skipped. A command waiting behind a lamp that has not
+  answered anything for 10 seconds gives up like any other; a lamp that is
+  slow but still answering does not make the commands behind it fail.
 - **Removing a device waits longer, and a second removal no longer fails.**
   Removal now waits up to two minutes for matter-server to reach the
   device, instead of giving up after 10 seconds while matter-server was
