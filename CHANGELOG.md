@@ -8,6 +8,25 @@ people who don't know the code.
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-09-14
+
+### Before you update
+
+- **The database schema rises from 7 to 11.** The update backs the database
+  up before it starts, as every update does, and nothing needs doing by
+  hand. Going back to a 0.3 version afterwards is not tested: a 0.3 bridge
+  does not know groups, Zigbee devices or the settings this release stores.
+  If you ever need to go back, restore the backup the update made rather
+  than running the old version on the new database.
+- **Refresh the updater service once after this update.** It carries the new
+  Radios card job and cannot replace itself. On the host, in the stack
+  directory:
+  `docker compose pull loxmatter-updater && docker compose up -d --no-deps loxmatter-updater`.
+  System → Version shows the same command while the updater is behind.
+- **If you run the Thread watchdog from cron,** it can now run every minute:
+  `* * * * * /home/pi/matter-loxone/scripts/otbr-watchdog.sh >> /home/pi/otbr-watchdog.log 2>&1`
+  (see "Thread watchdog" below).
+
 ### Added
 
 - **Groups.** Several devices of the same kind — usually lamps — can now be
@@ -172,6 +191,28 @@ people who don't know the code.
 - If you script against the API with a token: `GET /api/devices` no longer
   returns `node_id`. Each device now reports `technology`, `address` and
   `transport` instead, to make room for device types beyond Matter.
+- **Thread watchdog: every minute, and never on top of itself.** The
+  watchdog script restarts the Thread border router when its network
+  interface is gone. It now takes a lock, so a run that is still waiting for
+  Thread to come back is never interrupted by the next one; it leaves a
+  border router alone for 90 seconds after it started, so it does not cut
+  short a start that is still attaching; and every Docker call it makes has
+  a time limit, so a hanging call is logged instead of blocking every later
+  run. That makes a check every minute safe, which keeps an outage to about
+  a minute instead of up to five.
+- **The Radios card waits longer for Thread, and keeps the evidence.** After
+  switching the Thread stick or turning Thread on, the updater service now
+  gives the border router 150 seconds to attach, and restarts it only after
+  60 seconds without a network - it used to restart it after 30, in the
+  middle of a normal start, and then give up. If Thread still does not come
+  back and the previous setting is restored, the border router's log is
+  saved to the update directory first instead of being deleted with the
+  container. While the card changes Thread, the watchdog does not step in.
+- **The Thread border router image can be chosen in `.env`.** Setting
+  `OTBR_IMAGE` runs another image, for example one built with OpenThread's
+  RCP recovery (`-DOT_RCP_RESTORATION_MAX_COUNT=2`), which the official image
+  does not include: without it, a single message lost between the host and
+  a USB Thread stick ends the border router. Left empty, nothing changes.
 - **Project file sync creates new devices without asking.** A device the
   uploaded project does not know yet now always gets its own virtual input
   and output in the patched file. This used to be an experimental checkbox;
