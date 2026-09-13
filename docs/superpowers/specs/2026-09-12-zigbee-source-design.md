@@ -123,21 +123,41 @@ running are unaffected — the permit gates only new joins.
 
 **Only the page that opened a window closes it on leaving.** A window a
 phone opened, which a laptop merely sees through its poll, is not the
-laptop's to close when its user clicks Export. The page remembers that it
-opened the window (Start or Keep open succeeded there) and forgets it when a
-Stop succeeds or a list shows no window; a Start still under way when the
-tab is left counts as opened there, and is closed the moment its answer
-lands off screen. The claim is kept in the browser tab's `sessionStorage`,
-so it survives a reload and is shared with no other tab. A Stop refused on
-leaving (`api.zigbee.close_failed`) is shown in a banner above the main
-navigation, where the user now is, with its own Stop button — not inside the
-pane they left.
+laptop's to close when its user clicks Export. The page remembers the **end
+time** of the window it opened (the `permit_until` of a Start or Keep open
+that succeeded there; list and permit answers spell the same window the same
+way) and closes on leaving only while the window on screen still has that
+end time. The claim goes when a Stop succeeds and when a list shows no
+window or a different end time — so a window the phone opened after
+stopping the laptop's, or after the laptop's ran out unseen, is not the
+laptop's. A Keep open moves the claim to its new end time. A list asked
+while a permit request was on its way is dropped when it lands after that
+request's answer. A Start still under way when the tab is left counts as
+opened there, and is closed the moment its answer lands off screen.
+
+The claim is kept in the browser tab's `sessionStorage`, so it survives a
+reload and is shared with no other tab — but it is taken back only from a
+page that handed it over on `pagehide`, which a reload passes through and a
+duplicated tab (which copies `sessionStorage`) does not. A Start still on
+its way is stored as pending with its send time; after a reload, a window
+ending where that Start would have ended it (send time plus 254 s, a few
+seconds early to half a minute late) is claimed, and the marker is dropped
+once no Start can still be on its way.
+
+A Stop refused on leaving (`api.zigbee.close_failed`) is shown in a banner
+above the main navigation, where the user now is, with its own Stop button —
+not inside the pane they left. It moves into the pane as soon as the pane is
+on screen again, by the tab or by the view, and a refused Stop's message
+goes as soon as a list shows no window.
 
 **A reload shows an open window.** A reload is not leaving for good, and it
 sends no Stop: that would also close a window another tab or a phone is
 watching. Entering the Devices view reads the pairing list once whichever
 tab is selected, and an open window selects the Zigbee tab so its countdown
-is on screen.
+is on screen — **once per open window**: a user who picked a tab by hand
+while the window was open keeps that choice on every return until a list
+shows no window, and a Matter commissioning on screen is never switched
+away from.
 
 **One row per device, keyed by IEEE.** The states, and the event that
 produces each (R1 §3):
@@ -145,7 +165,7 @@ produces each (R1 §3):
 | State | Trigger | What the row says |
 |---|---|---|
 | joined | `device_joined` | Found a device — reading its details |
-| interviewing | interview in progress | Reading its details … (the row's title already names `<manufacturer> <model>`; while neither is known, it says what joined says) |
+| interviewing | interview in progress | Reading the device's details … (the row's title already names `<manufacturer> <model>`; while neither is known, it says what joined says) |
 | configuring | `device_initialized`, our configure-on-join running | Setting it up |
 | ready | configure-on-join finished | Ready to use, green — or, on a row not added to the device list yet, "Ready - add it to your devices" (a green "Ready to use" there read as finished, and the device never reached Loxone) |
 | interview failed | `device_init_failure` | Could not read this device, with **Retry** and **Remove** |
@@ -170,7 +190,9 @@ an **Add** button, and the first `PATCH` is sent by it, not by a blur. That
 — which is a step worth a deliberate press; and the prefilled name is often
 exactly right, so a user who keeps it has no field to leave and no blur
 would ever fire. Once the device is added, name and room save on their own:
-the name on blur (and Enter), the room when the select changes. The name
+the name on blur (and Enter, but not the Enter that confirms an input
+method's candidate), the room when the select changes, and the row's line
+says so for each. The name
 field grows to show a long prefilled name in full rather than cutting it
 off, and stays a single line.
 
@@ -243,7 +265,8 @@ namespace follows the file's existing convention.
 | `web.zigbee.state_joined`, `_interviewing`, `_configuring`, `_ready`, `_failed`, `_stuck`, `_waiting_wake` | The seven row states of 3.1 |
 | `web.zigbee.state_ready_to_add` | A ready row not added to the device list yet |
 | `web.zigbee.name_label`, `web.zigbee.adopt` | The name field and the Add button |
-| `web.zigbee.adopted_hint`, `web.zigbee.saved` | Where an added device went; a save on blur |
+| `web.zigbee.adopted_hint`, `web.zigbee.saved` | Where an added device went, and when name (blur) and room (change) save; a save that happened |
+| `web.zigbee.open_group_label` | The accessible name of the open group of rows, whose summary is hidden |
 | `web.zigbee.added_group_one`, `web.zigbee.added_group_many` | The title of the folded rows already added (two keys: `i18n.t` knows no plural forms) |
 | `web.zigbee.retry`, `web.zigbee.remove` | Row actions |
 | `web.zigbee.quirk_applied`, `web.zigbee.quirk_none` | The hint |
