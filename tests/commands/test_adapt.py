@@ -213,3 +213,21 @@ def test_a_colour_temperature_of_zero_or_below_raises_for_every_member(member, v
     one happened depended on the group's members."""
     with pytest.raises(UnsupportedValueError):
         adapt_group_command(COLOUR_TEMPERATURE, member, value)
+
+
+# A colour lamp carrying both colour commands but no colour temperature:
+# constructed.
+BOTH_COLOURS = rows("33", OFF, ON, LEVEL_ONOFF, COLOUR_HS, COLOUR_XY)
+
+
+@pytest.mark.parametrize(
+    ("pair", "value"),
+    [(COLOUR_HS, WHITE_2700_30), (COLOUR_XY, WHITE_2700_30), (COLOUR_TEMPERATURE, "2700")],
+    ids=["color", "color_xy", "colortemp"],
+)
+def test_a_white_as_a_colour_point_is_xy_whichever_colour_command_the_group_names(pair, value):
+    """Design 3.3: XY lamps get XY, HS-only lamps get HS. Before, a member
+    with both got HS for a Lumitech white on `color` but XY for the same
+    white on `colortemp`."""
+    got = shape(adapt_group_command(pair, BOTH_COLOURS, value))
+    assert got[0][:2] == (768, 7)

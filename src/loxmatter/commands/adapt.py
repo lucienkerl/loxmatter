@@ -99,13 +99,16 @@ def _colour_order(named: Pair) -> tuple[Pair, Pair]:
 
 
 def _colour_point(
-    here: dict[Pair, StoredCommand], sample: StoredCommand, named: Pair, kelvin: float
+    here: dict[Pair, StoredCommand], sample: StoredCommand, kelvin: float
 ) -> list[DeviceCall]:
     """A white temperature: the temperature command if carried, else the
-    white reproduced as a colour point (design 3.3)."""
+    white reproduced as a colour point (design 3.3) - XY when the member
+    carries it, HS only when it does not, whichever colour command the group
+    command names. The white is the same white on `color`, `color_xy` and
+    `colortemp`."""
     if COLOUR_TEMPERATURE in here:
         return [_call(sample, COLOUR_TEMPERATURE, colour_temperature_payload(kelvin))]
-    for pair in _colour_order(named):
+    for pair in (COLOUR_XY, COLOUR_HS):
         if pair in here and pair == COLOUR_XY:
             return [_call(sample, COLOUR_XY, xy_payload(*kelvin_to_cie_xy(kelvin)))]
         if pair in here and pair == COLOUR_HS:
@@ -119,7 +122,7 @@ def _colour(
     here: dict[Pair, StoredCommand], sample: StoredCommand, named: Pair, colour: LoxoneColour
 ) -> list[DeviceCall]:
     if colour.kelvin is not None:
-        return _colour_point(here, sample, named, colour.kelvin)
+        return _colour_point(here, sample, colour.kelvin)
     assert colour.rgb is not None
     for pair in _colour_order(named):
         if pair in here and pair == COLOUR_XY:
@@ -146,7 +149,7 @@ def _endpoint_calls(
     if pair == COLOUR_TEMPERATURE:
         if COLOUR_TEMPERATURE in here:
             return to_device_calls(here[COLOUR_TEMPERATURE], value)
-        return _colour_point(here, sample, COLOUR_XY, parse_number(value))
+        return _colour_point(here, sample, parse_number(value))
     if pair in here:
         return to_device_calls(here[pair], value)
     if pair in (LEVEL, LEVEL_ONOFF):
