@@ -3352,11 +3352,57 @@ p.zigbee-countdown {
 
 .zigbee-rows {
   list-style: none;
-  margin: 1rem 0 0;
+  margin: 0;
   padding: 0;
   display: flex;
   flex-direction: column;
   gap: 0.6rem;
+}
+
+/* The two row groups: the open one looks like no group at all (its summary
+ * is hidden and it is always open), the "already added" one is a disclosure
+ * in the commissioning card's own style. */
+.zigbee-row-group {
+  margin-top: 1rem;
+}
+
+.zigbee-row-group > summary {
+  list-style: none;
+  cursor: pointer;
+  color: var(--text-muted);
+  font-size: 0.88rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  border-bottom: 1px dotted var(--border);
+  padding-bottom: 1px;
+}
+
+.zigbee-row-group > summary::-webkit-details-marker {
+  display: none;
+}
+
+.zigbee-row-group > summary::before {
+  content: "";
+  width: 0.42rem;
+  height: 0.42rem;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(45deg) translateY(-1px);
+  transition: transform 0.15s ease;
+}
+
+.zigbee-row-group[open] > summary::before {
+  transform: rotate(-135deg) translateY(-1px);
+}
+
+.zigbee-row-group > summary:hover,
+.zigbee-row-group[open] > summary {
+  color: var(--text);
+}
+
+.zigbee-row-group-added[open] > .zigbee-rows {
+  margin-top: 0.6rem;
 }
 
 .zigbee-row {
@@ -3399,6 +3445,12 @@ p.zigbee-countdown {
   border-color: var(--warn);
   background: var(--warn);
 }
+/* Ready but not added yet: the device works, so the dot is green - but the
+ * sentence is what is left to do, and a green sentence read as finished. */
+.zigbee-row.tone-add .zigbee-row-dot {
+  border-color: var(--ok);
+  background: var(--ok);
+}
 
 .zigbee-row-text {
   display: flex;
@@ -3422,6 +3474,10 @@ p.zigbee-countdown {
 }
 .zigbee-row.tone-warn .zigbee-row-state {
   color: var(--warn);
+}
+.zigbee-row.tone-add .zigbee-row-state {
+  color: var(--text);
+  font-weight: 600;
 }
 
 /* The IEEE tells two identical bulbs apart; it is not what the row is
@@ -3468,6 +3524,49 @@ p.zigbee-countdown {
 .zigbee-row-fields input[type="text"] {
   min-width: 0;
 }
+
+/* The name field grows with its text instead of cutting it off: the
+ * textarea and an invisible copy of its value (`data-value`, bound in
+ * index.html) share one grid cell, so the cell - and with it the textarea -
+ * is as tall as the wrapped copy. Plain CSS, so it works in every browser
+ * without `field-sizing: content`, and it follows a resize or a rotated
+ * phone without a script. Both halves need the same font, padding and
+ * border, or the copy wraps at a different place than the text. */
+.zigbee-name-grow {
+  display: grid;
+}
+
+.zigbee-name-grow::after {
+  content: attr(data-value) " ";
+  white-space: pre-wrap;
+  visibility: hidden;
+}
+
+.zigbee-name-grow > textarea,
+.zigbee-name-grow::after {
+  grid-area: 1 / 1 / 2 / 2;
+  box-sizing: border-box;
+  min-width: 0;
+  margin: 0;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--text);
+  padding: 0.35rem 0.5rem;
+  font: inherit;
+  font-size: 0.9rem;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.zigbee-name-grow > textarea {
+  resize: none;
+  overflow: hidden;
+}
+
+.zigbee-name-grow > textarea:disabled {
+  opacity: 0.6;
+}
 .zigbee-row-fields select {
   max-width: 100%;
 }
@@ -3486,4 +3585,19 @@ p.zigbee-countdown {
 
 .zigbee-row-error {
   margin: 0.6rem 0 0;
+}
+
+/* A Stop on leaving that the radio refused, above the main navigation. The
+ * sentence takes the line, the Stop button follows it and wraps below on a
+ * phone. */
+.zigbee-leave-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 1rem;
+  margin: 0.75rem 1.25rem;
+}
+
+.zigbee-leave-banner > span {
+  flex: 1 1 16rem;
 }

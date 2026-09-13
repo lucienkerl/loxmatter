@@ -553,15 +553,19 @@ api.zigbee.radio_changing:
   # The 503 of the pairing routes while a radio change is in flight - the
   # old source released, the new one not built yet. NOT the "no stick is set
   # up" sentence: the user has just picked a stick, and the pairing tab is
-  # only on screen because one is set up.
-  en: "The Zigbee radio is being changed. Wait a moment, then reload the page."
-  de: "Das Zigbee-Funkmodul wird gerade gewechselt. Warten Sie einen Moment und laden Sie die Seite dann neu."
+  # only on screen because one is set up. No "reload the page": the tab
+  # shows every 503 of these routes in the list's own banner and keeps
+  # asking, and the first answer after the swap clears it.
+  en: "The Zigbee radio is being changed. Wait a moment - this list updates by itself."
+  de: "Das Zigbee-Funkmodul wird gerade gewechselt. Warten Sie einen Moment – diese Liste aktualisiert sich von selbst."
 api.zigbee.unknown_device:
   # A row that is no longer there: the device was removed from another tab,
-  # or the radio was swapped and took every row with it. Reloading is the
-  # whole fix, and saying so beats a bare "not found".
-  en: "This device is no longer in the pairing list. Reload the page to see what the bridge currently knows."
-  de: "Dieses Gerät steht nicht mehr in der Kopplungsliste. Laden Sie die Seite neu, um zu sehen, was die Brücke gerade kennt."
+  # or the radio was swapped and took every row with it. Shown on that row,
+  # which the tab's next poll takes off the list together with this
+  # message - so waiting is the whole fix, and saying so beats a bare "not
+  # found".
+  en: "This device is no longer in the pairing list. Wait a moment - this list updates by itself."
+  de: "Dieses Gerät steht nicht mehr in der Kopplungsliste. Warten Sie einen Moment – diese Liste aktualisiert sich von selbst."
 api.zigbee.not_ready_yet:
   # A save arriving for a row that has since gone back to interviewing.
   # Registering it then would store whatever half an interview produced -
@@ -1371,37 +1375,49 @@ web.zigbee.reset_hint_battery:
 web.zigbee.start:
   en: "Search for devices"
   de: "Nach Geräten suchen"
+# "Stop searching", not "Stop": beside "Keep open longer" a bare "Beenden"
+# could as well end the whole tab.
 web.zigbee.stop:
-  en: "Stop"
-  de: "Beenden"
+  en: "Stop searching"
+  de: "Suche beenden"
 # Re-sends the maximum, so the window runs a full 254 s from the press.
 web.zigbee.extend:
   en: "Keep open longer"
   de: "Länger offen lassen"
-# Counted down in the browser to the server's own end timestamp.
+# Counted down in the browser to the server's own end timestamp. {time} is
+# `m:ss` ("4:12"), which says at a glance whether there is time to walk to
+# the lamp; "252 s" had to be divided first.
 web.zigbee.countdown:
-  en: "Open for new devices: {seconds} s"
-  de: "Offen für neue Geräte: {seconds} s"
+  en: "Open for new devices: {time} left"
+  de: "Offen für neue Geräte: noch {time}"
 web.zigbee.searching_empty:
   en: "No device has joined yet. Reset it now - it appears here within a few seconds."
   de: "Noch ist kein Gerät beigetreten. Setzen Sie es jetzt zurück – es erscheint hier nach wenigen Sekunden."
 # The seven row states of design 3.1. `stuck` and `waiting_wake` are the two
 # ZHA does not have, and neither may read as a failure: a stuck row is
 # usually a battery device that fell asleep, and it is still waiting.
-# `{device}` is "<manufacturer> <model>"; while neither is known the row
-# says `state_joined` instead.
+# The interviewing sentence names no device: the row's title above it already
+# does. While manufacturer and model are not known, the row says
+# `state_joined` instead.
 web.zigbee.state_joined:
   en: "Found a device - reading its details"
   de: "Gerät gefunden – seine Angaben werden gelesen"
 web.zigbee.state_interviewing:
-  en: "Found {device} - reading its details"
-  de: "{device} gefunden – seine Angaben werden gelesen"
+  en: "Reading its details …"
+  de: "Seine Angaben werden gelesen …"
 web.zigbee.state_configuring:
   en: "Setting it up"
   de: "Wird eingerichtet"
 web.zigbee.state_ready:
   en: "Ready to use"
   de: "Einsatzbereit"
+# A ready row NOT added yet. "Ready to use" in green read as finished there,
+# and a user who left at that point never pressed Add, so the device never
+# reached the device list or Loxone. It says what is left to do, and the
+# button beside it ("Add") needs no longer label because of it.
+web.zigbee.state_ready_to_add:
+  en: "Ready - add it to your devices"
+  de: "Bereit – jetzt hinzufügen"
 web.zigbee.state_failed:
   en: "Could not read this device"
   de: "Dieses Gerät konnte nicht gelesen werden"
@@ -1432,15 +1448,27 @@ web.zigbee.name_label:
 # The step that makes the device one of the bridge's own: device list,
 # export, Loxone. A button and not a blur, because the prefilled name is
 # often exactly right and a user who agrees with it has no field to leave.
+# Short, because the row's own sentence (`state_ready_to_add`) already says
+# where it adds the device to - and the longer German label wrapped onto two
+# lines beside the Remove button at 375 px.
 web.zigbee.adopt:
-  en: "Add to devices"
-  de: "Zu den Geräten hinzufügen"
+  en: "Add"
+  de: "Hinzufügen"
 web.zigbee.adopted_hint:
   en: "In the device list. Name and room are saved when you leave the field."
   de: "In der Geräteliste. Name und Raum werden gespeichert, sobald Sie das Feld verlassen."
 web.zigbee.saved:
   en: "Saved."
   de: "Gespeichert."
+# The title of the collapsed group of rows already in the device list. Two
+# keys rather than one with a plural rule: i18n.t knows no plural forms (the
+# pattern of `web.devices.code_detect_remaining_*`).
+web.zigbee.added_group_one:
+  en: "1 device already added"
+  de: "1 Gerät bereits hinzugefügt"
+web.zigbee.added_group_many:
+  en: "{count} devices already added"
+  de: "{count} Geräte bereits hinzugefügt"
 # The honest removal copy of design 3.1: `remove()` forgets the device
 # whether or not the leave request is ever delivered, and nothing stops the
 # device rejoining.
