@@ -853,6 +853,38 @@ def test_switching_the_thread_stick_writes_the_by_id_path_and_recreates_otbr(rad
     assert "ot-ctl state" in calls
 
 
+def test_a_radios_job_keeps_the_opt_in_otbr_radio_url_extra(radios):
+    """`&uart-exclusive` on otbr's radio URL is opt-in, through
+    `OTBR_RADIO_URL_EXTRA` in `.env` (see
+    `test_otbr_takes_the_exclusive_lock_only_when_the_installation_asks_for_it`
+    in `tests/test_compose_profiles.py`). This script rewrites `.env` on
+    every Thread change, and the design only works if that rewrite neither
+    drops the line nor writes a second one - on a switch that succeeds and
+    on one that is rolled back alike.
+
+    A guard on this script's existing behaviour, not a test of new code:
+    `env_set` replaces one named key and appends a missing one, and the
+    rollback copies the whole backup back. The script itself is not to be
+    modified, so no fault is injected into it."""
+    line = "OTBR_RADIO_URL_EXTRA=&uart-exclusive\n"
+    original = radios.env_file.read_text() + line
+    radios.env_file.write_text(original)
+    _request(radios)
+    _, _, state = radios()
+    assert state["phase"] == "done"
+    assert radios.env_file.read_text().count("OTBR_RADIO_URL_EXTRA") == 1
+    assert line in radios.env_file.read_text()
+
+    radios.env_file.write_text(original)
+    (radios.update_dir / "radios-state.json").unlink()
+    (radios.fake / "thread_mode").write_text("never")
+    _request(radios, id="job-2")
+    _, _, state = radios()
+    assert (state["phase"], state["rolled_back"]) == ("failed", True)
+    assert radios.env_file.read_text().count("OTBR_RADIO_URL_EXTRA") == 1
+    assert line in radios.env_file.read_text()
+
+
 def test_enabling_thread_adds_a_missing_baud_rate_and_keeps_an_existing_one(radios):
     (radios.fake / "otbr_state").unlink()
     radios.env_file.write_text("RADIO_DEVICE=\nBACKBONE_IF=wlan0\nBLUETOOTH_ADAPTER=0\n")

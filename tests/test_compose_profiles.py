@@ -175,25 +175,48 @@ def test_only_the_bridge_may_open_serial_devices():
         assert has_rules == (name == "loxmatter"), name
 
 
-def test_otbr_asks_the_kernel_to_keep_its_stick_to_itself():
-    """OpenThread takes flock + TIOCEXCL only when the radio URL carries
-    `uart-exclusive` (research A.3); the compose file passed no lock at all.
+def _radio_url(environment: dict[str, str]) -> str:
+    """otbr's `RADIO_URL` as Compose interpolates it from `environment`,
+    for the three variables it names and the `${NAME:-}` form it uses."""
+    url = str(_stack()["services"]["otbr"]["environment"]["RADIO_URL"])
+    for name in ("RADIO_DEVICE", "RADIO_BAUDRATE", "OTBR_RADIO_URL_EXTRA"):
+        value = environment.get(name, "")
+        url = url.replace(f"${{{name}:-}}", value).replace(f"${{{name}}}", value)
+    assert "${" not in url, url
+    return url
 
-    This is a SECOND layer, not the guarantee: TIOCEXCL is bypassed by a
-    holder of CAP_SYS_ADMIN, which privileged otbr has. The real guarantee
-    is that loxmatter never offers or accepts the Thread stick (section 3.2,
-    Task 11).
+
+def test_otbr_takes_the_exclusive_lock_only_when_the_installation_asks_for_it():
+    """OpenThread takes flock + TIOCEXCL on its stick when the radio URL
+    carries `&uart-exclusive` (research A.3), and whether the otbr image on
+    the test Pi accepts that parameter has never been measured (design open
+    point 5). Written into the compose file, it would have reached every
+    Thread installation the next time otbr is recreated - a Thread change
+    on the radios card does exactly that - and an image that refused it
+    would have left Thread down, with the radios job's rollback recreating
+    otbr from the same file.
+
+    So it is opt-in: `OTBR_RADIO_URL_EXTRA` in `.env`, empty by default.
+    Unset, the URL is byte for byte the one every installation already
+    runs; set to `&uart-exclusive`, it carries the lock. `radios-once.sh`
+    rewrites `.env` one named key at a time and restores it from a whole-file
+    backup, so the line survives a radios job - see
+    `test_a_radios_job_keeps_the_opt_in_otbr_radio_url_extra` in
+    `tests/test_updater_radios_script.py`.
 
     `RADIO_URL` is an ENVIRONMENT variable of the otbr service, not part of
     its `command:` - the image's "test" entrypoint reads it from the
     environment, and `command:` carries only `--backbone-interface
-    ${BACKBONE_IF}`. Asserting against `command` would pass for the wrong
-    reason today (the parameter is absent from it either way) and would keep
-    passing after somebody deleted the lock.
+    ${BACKBONE_IF}`.
 
-    Fault to prove it: drop the parameter from RADIO_URL."""
-    otbr = _stack()["services"]["otbr"]
-    assert "uart-exclusive" in str(otbr["environment"]["RADIO_URL"])
+    Fault to prove it: write `&uart-exclusive` into RADIO_URL again (the
+    default URL carries it), or drop `${OTBR_RADIO_URL_EXTRA:-}` (the opt-in
+    does nothing)."""
+    base = {"RADIO_DEVICE": "/dev/ttyUSB0", "RADIO_BAUDRATE": "460800"}
+    assert _radio_url(base) == "spinel+hdlc+uart:///dev/ttyUSB0?uart-baudrate=460800"
+    assert _radio_url({**base, "OTBR_RADIO_URL_EXTRA": "&uart-exclusive"}) == (
+        "spinel+hdlc+uart:///dev/ttyUSB0?uart-baudrate=460800&uart-exclusive"
+    )
 
 
 # --- Where zigpy's database lands ----------------------------------------------
