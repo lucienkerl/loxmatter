@@ -67,6 +67,16 @@ A group's command list is computed from its members as follows:
   for those, and "one member understood it" would be a claim about the
   group nobody could rely on.
 
+The "at least one member" rule is checked by command **pair**, not by group
+category: `on`/`off`/`toggle` are light commands in the table above the same
+as `color` or `level`, so a socket or switch group whose members differ also
+gets the union for those three - a plug that carries `toggle` puts it in the
+group's list even if another plug does not. That member then simply does
+nothing for a `toggle` it does not have, the same as any member skipped for
+a pair it lacks. This is harmless and intended, not an oversight: on/off/
+toggle only ever ask a member to do something it either can or safely
+ignores.
+
 | Pair | Slug | Light command |
 |---|---|---|
 | (6, 0) | `off` | yes |
@@ -126,6 +136,11 @@ Rules that apply across the table:
 - **Brightness goes via `MoveToLevelWithOnOff` (8, 4)** when the member
   carries it, and via `MoveToLevel` (8, 0) only when that is all it has -
   the same preference as the device path, because Loxone means off with 0.
+- **A member with only `MoveToLevel` (8, 0)** also gets the matching
+  switch command where it carries one: `off` at brightness 0, and `on`
+  first before a level above 0. `MoveToLevel(0)` alone leaves such a lamp
+  lit, and `MoveToLevel` above 0 alone does not turn a lamp that is off
+  back on - so the switch command does the part `MoveToLevel` cannot.
 - **A member that receives nothing is not a failure.** `colortemp` sent to
   a dim-only lamp produces no call for it; it does not appear in the
   failure report and does not turn the response into an error.
@@ -174,7 +189,12 @@ The function lives in `commands/color.py` next to `rgb_to_cie_xy` and
   The decoding of a Loxone colour value into "colour or white, plus
   brightness" is factored out of `_payload_hue_saturation` /
   `_payload_color_xy` so the adapter and the device path share one decoder.
-  **The single-device path's behaviour does not change.**
+  **The single-device path's behaviour does not otherwise change** - with
+  one sanctioned exception: a colour temperature of 0 K or below now
+  answers 400 with a translated message on the device path too, the same
+  as on the group path, instead of the 500 an unguarded
+  `kelvin_to_mireds` used to raise. `colortemp` sent to a single device is
+  the one place this design touches behaviour outside groups.
 - **`commands/fanout.py`**: `plan_group_calls` asks the adapter per member
   instead of translating the member's own row of the same pair. The
   concurrency and ordering rules in that module stay as they are.
@@ -185,6 +205,12 @@ The function lives in `commands/color.py` next to `rgb_to_cie_xy` and
   - `group_targets` returns **every** member with its light-relevant stored
     commands, not only members carrying the exact pair. The docstring's
     "by construction there should be none" no longer holds and goes.
+- **`loxone/server.py` / `api/control.py`**: both routes count only the
+  members whose plan actually carries a call, never `len(plans)` - a
+  member an adapted light command gives nothing (Section 3.2) was not
+  asked anything, so it counts toward neither the all-unconfigured 503 nor
+  the 502's "reached N of M". This applies on both routes identically, the
+  same equivalence the groups design already required of them.
 - **No schema change and no migration.** `group_command` rows keep their
   shape. The union is written on the next recompute, and
   `register_commands`' existing trigger already recomputes every group at
@@ -243,9 +269,11 @@ The function lives in `commands/color.py` next to `rgb_to_cie_xy` and
 - **Fan-out integration:** a Lumitech value through `/cmd/g{id}_color/{v}`
   on the three-lamp group produces white temperature on the CWS lamps and
   brightness on the WW lamp, in one fan-out, with per-member ordering intact.
-- **The device path is unchanged:** the existing `to_device_calls` tests
-  pass untouched. One added test pins that a single device's colour value
-  still yields exactly the calls it did before the decoder was factored out.
+- **The device path is otherwise unchanged:** the existing `to_device_calls`
+  tests pass untouched. One added test pins that a single device's colour
+  value still yields exactly the calls it did before the decoder was
+  factored out. The one exception, pinned on both paths: a colour
+  temperature of 0 K or below is a 400 now, not the pre-existing 500.
 - **Fault injection** for every protective test, as on the branches before
   it.
 - **Hardware:** on the maintainer's Pi, "Lampengruppe 1" with both CWS lamps

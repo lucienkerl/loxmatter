@@ -1669,8 +1669,8 @@ web.groups.needs_member:
 # member understands, and a user mixing a colour lamp with a white one
 # should not have to find that out from Loxone.
 web.groups.light_members_hint:
-  en: "Each lamp takes over what it supports: colour lamps the colour, the others brightness and on/off."
-  de: "Jede Lampe übernimmt, was sie kann: Farblampen die Farbe, die anderen Helligkeit und An/Aus."
+  en: "Each lamp takes over what it supports: colour lamps the colour, white lamps the white temperature, all of them brightness and on/off."
+  de: "Jede Lampe übernimmt, was sie kann: Farblampen die Farbe, Lampen mit einstellbarem Weiß die Farbtemperatur, alle Helligkeit und An/Aus."
 web.groups.other_category:
   # The German mirrors `api.errors.group_category_mismatch`'s fix (final
   # fix pass, review finding Minor #3(b)) for the identical reason: the

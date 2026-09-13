@@ -77,9 +77,12 @@ def plan_group_calls(
     other command is translated per stored row, as before.
 
     Raises `UnsupportedValueError` before anything is sent: the value is
-    decoded for the first member, and an invalid value fails there -
-    finding out halfway through a fan-out would leave a partial state for a
-    value that was never valid.
+    decoded again for every member - `adapt_group_command` parses it fresh
+    each time it is called - and an invalid value fails at the first member
+    in `targets`. That still happens before any calls are dispatched,
+    because this whole loop runs to completion before `dispatch_group` is
+    ever awaited, so a value that was never valid still cannot leave a
+    fan-out half done.
     """
     pair = (command.cluster_id, command.command_id)
     plans: list[MemberPlan] = []

@@ -212,10 +212,12 @@ def rgb_to_hue_saturation(r: int, g: int, b: int) -> tuple[int, int]:
     return round(h * 254), round(s * 254)
 
 
-# sRGB (IEC 61966-2-1) to CIE 1931 xy, D65. The matrix is the standard's
-# own linear-RGB-to-XYZ matrix; the gamma expansion above it is the
-# standard's EOTF, not the 2.2 approximation - the difference is visible in
-# mixed colours, which is exactly what a lamp shows.
+# sRGB (IEC 61966-2-1) to CIE 1931 xy, D65. The matrix is Bruce
+# Lindbloom's seven-decimal linear-RGB-to-XYZ matrix, the same source as
+# `_XYZ_TO_SRGB` below - not the rounded four-decimal matrix IEC 61966-2-1
+# itself prints. The gamma expansion above it is the standard's own EOTF,
+# not the 2.2 approximation - the difference is visible in mixed colours,
+# which is exactly what a lamp shows.
 #
 # This module's standing rule applies: WHOEVER TOUCHES THIS MEASURES AGAIN.
 # The test checks the three primaries and the white point against published
