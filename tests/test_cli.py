@@ -729,6 +729,57 @@ def test_run_installs_the_log_buffer_before_the_password_warning_in_german(monke
     assert any("noch kein Passwort vergeben" in message for message in messages)
 
 
+def test_run_writes_the_bridges_own_log_to_stderr_for_the_container_log(monkeypatch, tmp_path):
+    """`docker logs` reads the process's stderr, and nothing of the
+    bridge's own reached it: the ring the System tab shows was the only
+    handler on the `loxmatter` logger, which also keeps Python's last-resort
+    output away. A Zigbee stick that would not open, the firmware line the
+    hardware checklist asks for and the password warning below were all
+    invisible there, and the ring forgets after 500 lines.
+
+    Exactly one stream handler, from `run` alone: the password warning,
+    logged before `_run` even starts, has to arrive on stderr once, in
+    uvicorn's `LEVEL:` shape with the logger's name.
+
+    Fault to prove it: drop `_install_stderr_log()` from `run` (nothing on
+    stderr), or call it twice (the line arrives twice)."""
+    _install_run_spies(monkeypatch, connect_error=CannotConnect("boom"))
+    monkeypatch.setattr(cli.uvicorn, "Server", _SpyUvicornServer)
+
+    result = CliRunner().invoke(
+        app, ["run", "--miniserver", "127.0.0.1", "--store-path", str(tmp_path / "run.sqlite")]
+    )
+
+    lines = [
+        line
+        for line in result.stderr.splitlines()
+        if "No password has been set for this bridge yet" in line
+    ]
+    assert len(lines) == 1, result.stderr
+    assert lines[0].startswith("WARNING:")
+    assert "loxmatter.cli:" in lines[0]
+
+
+def test_subcommands_other_than_run_print_no_log_lines(monkeypatch, tmp_path):
+    """The stream handler belongs to the server. A subcommand a person
+    types - here `set-language` - must not start echoing log lines into
+    that person's terminal, and must not leave a handler on the process-wide
+    logger behind it.
+
+    Fault to prove it: install the stream handler at import time or in the
+    Typer callback instead of in `run`."""
+    store_path = tmp_path / "t.sqlite"
+    Store(store_path).close()
+    logger = logging.getLogger("loxmatter")
+    before = list(logger.handlers)
+
+    result = CliRunner().invoke(app, ["set-language", "de", "--store-path", str(store_path)])
+
+    assert result.exit_code == 0, result.output
+    assert logger.handlers == before
+    assert not any(isinstance(h, logging.StreamHandler) for h in logger.handlers)
+
+
 def test_run_installs_the_log_buffer_exactly_once_and_passes_it_to__run(monkeypatch, tmp_path):
     """`run()` has called `install_log_buffer()` at exactly one place -
     as its very first instruction - since the fix for Task 7, Fix 1. A

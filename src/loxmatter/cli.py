@@ -24,6 +24,7 @@ import json
 import logging
 import os
 import sqlite3
+import sys
 from collections.abc import Mapping
 from datetime import datetime
 from pathlib import Path
@@ -519,6 +520,33 @@ def _warn_if_no_password(store: Store) -> None:
     logger.warning(i18n.t("cli.run.warn_no_password"))
 
 
+def _install_stderr_log() -> logging.Handler:
+    """Sends the bridge's own log lines to stderr, where `docker logs` reads.
+
+    `install_log_buffer()` gives the `loxmatter` logger exactly one
+    handler, the ring the System tab shows - and one handler is enough to
+    keep Python's last-resort output away. Nothing the bridge logged, from
+    the password warning to a Zigbee stick that would not open, reached the
+    container log; only uvicorn's own lines did, because uvicorn configures
+    its loggers itself. The ring holds 500 lines and forgets the rest, so a
+    warm-up line logged before a burst of retries was gone by the time
+    anybody looked.
+
+    Installed by `run()` alone and next to the ring, so no other subcommand
+    - `export`, `set-password`, `fake-miniserver` - starts printing log
+    lines into a user's terminal. The format is uvicorn's own default
+    (`%(levelprefix)s %(message)s`, through its formatter, coloured only on
+    a terminal) plus the logger name, so a bridge line reads like the
+    uvicorn line beside it and can still be grepped by module."""
+    from uvicorn.logging import DefaultFormatter
+
+    handler = logging.StreamHandler(sys.stderr)
+    handler.setLevel(logging.INFO)
+    handler.setFormatter(DefaultFormatter("%(levelprefix)s %(name)s: %(message)s"))
+    logging.getLogger("loxmatter").addHandler(handler)
+    return handler
+
+
 @app.command(help=i18n.t("cli.run.help"))
 def run(
     url: str = typer.Option("ws://localhost:5580/ws", help=i18n.t("cli.common.help_matter_url")),
@@ -551,6 +579,7 @@ def run(
     ),
 ) -> None:
     log_handler = install_log_buffer()
+    _install_stderr_log()
     resolved_store_path = _resolve_store_path(store_path)
     # Printed the same way as in `export` (review fix M10, 2026-09-02):
     # the most likely misconfiguration is an `export` database and a
