@@ -967,3 +967,63 @@ def test_the_static_reads_and_the_identify_blink_name_real_attributes() -> None:
     identify = Identify.server_commands[IDENTIFY_COMMAND]
     assert identify.name == "identify"
     assert [field.name for field in identify.schema.fields] == ["identify_time"]
+
+
+def test_the_xy_only_colour_controller_zha_quirks_ships_declares_xy_alone() -> None:
+    """The colour gate's XY-only rule (`profiles/capabilities.py`) was
+    written for a device that exists, and this pins that it does, in the
+    installed library: zha-quirks' Candeo C-ZB-LC20 RGB controller replaces
+    its Color cluster with one whose ColorCapabilities constant is
+    `XY_attributes` (0x08) and nothing else, and its RGBCCT sibling's is
+    `XY_attributes + Color_temperature` (0x18) - the white-spectrum lamp's
+    bits. `test_zigbee_translate.py` and `tests/export/test_commands.py`
+    use those two numbers; if an upgrade changes either, this fails before
+    those tests go on asserting about a device that no longer looks like
+    that. The bit values themselves are checked against zigpy's own enum
+    for the same reason.
+
+    It also runs the RGB controller's real constant through the bridge's
+    own translation, so the claim "an XY-only Zigbee lamp gets a colour
+    control" rests on the library's number, not only on one written in a
+    test.
+
+    Fault to prove it: require `XY | HS` for (768, 7) alone again in
+    `profiles/capabilities.py` (the controller loses `color_xy`)."""
+    from zhaquirks.candeo import CandeoRGBCCTColorCluster, CandeoRGBColorCluster
+    from zigpy.zcl.clusters.lighting import Color
+
+    from loxmatter.export.commands import extract_commands
+    from loxmatter.zigbee.translate import DeviceFacts, EndpointFacts, build_snapshot
+
+    capabilities = Color.AttributeDefs.color_capabilities.id
+    assert capabilities == 0x400A
+    assert int(Color.ColorCapabilities.Hue_and_saturation) == 0x01
+    assert int(Color.ColorCapabilities.XY_attributes) == 0x08
+    assert int(Color.ColorCapabilities.Color_temperature) == 0x10
+    rgb = int(CandeoRGBColorCluster._CONSTANT_ATTRIBUTES[capabilities])
+    rgbcct = int(CandeoRGBCCTColorCluster._CONSTANT_ATTRIBUTES[capabilities])
+    assert (rgb, rgbcct) == (0x08, 0x18)
+
+    facts = DeviceFacts(
+        ieee="00:12:4b:00:1c:a1:b2:c3",
+        manufacturer="Candeo",
+        model="C-ZB-LC20-RGB",
+        is_mains_powered=True,
+        available=True,
+        quirk_applied=True,
+        endpoints=(
+            EndpointFacts(
+                endpoint=11,
+                profile_id=0x0104,
+                device_type=0x0102,
+                in_cluster_ids=frozenset({0x0006, 0x0008, 0x0300}),
+                attributes={(0x0006, 0x0000): True, (0x0300, capabilities): rgb},
+            ),
+        ),
+    )
+    colour = {
+        command.slug
+        for command in extract_commands(build_snapshot(facts))
+        if command.cluster_id == 768
+    }
+    assert colour == {"color_xy"}

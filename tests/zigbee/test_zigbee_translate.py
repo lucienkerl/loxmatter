@@ -669,28 +669,25 @@ def test_a_translated_lamp_decomposes_like_a_matter_lamp():
 
 def test_a_zigbee_lamp_that_takes_colour_only_as_xy_gets_exactly_one_picker():
     """End to end from a Zigbee endpoint to the controls the UI draws, for
-    the three shapes that matter, with ColorCapabilities taken from device
-    definitions zha-quirks ships rather than written here:
+    the three shapes that matter:
 
-    - XY alone (Candeo C-ZB-LC20 RGB): one colour control, `color_xy`, which
-      sends MoveToColor - ZHA's own and only colour command. Design 5.6 and
-      the change notes promised this; the first gate gave it nothing.
-    - XY|CT without HS (the white-spectrum shape): no colour control.
-    - Every colour bit (0x1F): ONE colour control, not two twins - both 6 and
+    - 0x08, XY alone - the Candeo C-ZB-LC20 RGB controller's
+      ColorCapabilities in zha-quirks (pinned against the installed library
+      in `test_zigpy_names.py`): one colour control, `color_xy`, which sends
+      MoveToColor, ZHA's own and only colour command. Design 5.6 and the
+      change notes promised this; the first gate gave it nothing.
+    - 0x18, XY|CT without HS - the white-spectrum shape, and also the Candeo
+      RGBCCT controller's: no colour control, the recorded cost.
+    - 0x1F, every colour bit: ONE colour control, not two twins. Both 6 and
       7 are exported for Loxone, and `duplicate_control_command` keeps only
-      `color` for the modal, the fix for an earlier bug on this branch.
+      `color` for the modal - the fix for an earlier bug on this branch.
 
     Fault to prove it: require `XY | HS` for (768, 7) alone again (the first
     list comes out empty), drop the CT exclusion (the second grows
     `color_xy`), or empty `_INTERCHANGEABLE_CONTROL_COMMANDS` (the third
     has two)."""
-    from zhaquirks.candeo import CandeoRGBCCTColorCluster, CandeoRGBColorCluster
-    from zigpy.zcl.clusters.lighting import Color
-
     from loxmatter.export.commands import extract_commands
     from loxmatter.profiles.table import command_control, duplicate_control_command
-
-    capabilities = Color.AttributeDefs.color_capabilities.id
 
     def pickers(value: int) -> tuple[list[str], list[str]]:
         snapshot = build_snapshot(
@@ -709,8 +706,6 @@ def test_a_zigbee_lamp_that_takes_colour_only_as_xy_gets_exactly_one_picker():
         ]
         return [command.slug for command in commands], drawn
 
-    rgb = int(CandeoRGBColorCluster._CONSTANT_ATTRIBUTES[capabilities])
-    rgbcct = int(CandeoRGBCCTColorCluster._CONSTANT_ATTRIBUTES[capabilities])
-    assert pickers(rgb) == (["color_xy"], ["color_xy"])
-    assert pickers(rgbcct) == ([], [])
+    assert pickers(0x08) == (["color_xy"], ["color_xy"])
+    assert pickers(0x18) == ([], [])
     assert pickers(0x1F) == (["color", "color_xy"], ["color"])

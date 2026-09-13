@@ -184,34 +184,6 @@ def test_a_lamp_declaring_xy_alone_takes_colour_as_xy():
     assert _colour_command_ids(snapshot) == {7, 10}
 
 
-def test_a_real_quirk_that_pins_colour_capabilities_to_xy_gets_the_xy_command():
-    """The same case from a device definition that ships, not a number
-    written here: zha-quirks' Candeo C-ZB-LC20 RGB controller replaces its
-    Color cluster with one whose ColorCapabilities constant is
-    `XY_attributes` alone. Its RGBCCT sibling adds `Color_temperature` and
-    is, by the bits, indistinguishable from the white-spectrum lamp - it
-    stays denied with it, the cost `profiles/capabilities.py` records.
-
-    Fault to prove it: require `XY | HS` for (768, 7) alone again (the RGB
-    controller loses command 7), or drop the CT exclusion (the RGBCCT one
-    gains it)."""
-    from zhaquirks.candeo import CandeoRGBCCTColorCluster, CandeoRGBColorCluster
-    from zigpy.zcl.clusters.lighting import Color
-
-    capabilities = Color.AttributeDefs.color_capabilities.id
-
-    def gated(quirk: type) -> set[int]:
-        value = int(quirk._CONSTANT_ATTRIBUTES[capabilities])
-        return _colour_command_ids(
-            _colour_snapshot({f"1/{_COLOUR_CLUSTER}/{COLOR_CAPABILITIES_ID}": value})
-        )
-
-    assert int(CandeoRGBColorCluster._CONSTANT_ATTRIBUTES[capabilities]) == 0x08
-    assert gated(CandeoRGBColorCluster) == {7, 10}
-    assert int(CandeoRGBCCTColorCluster._CONSTANT_ATTRIBUTES[capabilities]) == 0x18
-    assert gated(CandeoRGBCCTColorCluster) == {10}
-
-
 def test_colour_capabilities_answers_when_there_is_no_feature_map():
     """ColorCapabilities (0x400A) carries the same bits and is what a Zigbee
     lamp brings - a ZCL cluster has no FeatureMap at all. Without this second
