@@ -1098,7 +1098,9 @@ async def test_ota_is_off_and_the_database_is_next_to_the_store(build, tmp_path:
     assert config["device"] == {
         "path": "/dev/serial/by-id/usb-SONOFF_Zigbee_3.0_USB_Dongle_Plus_V2-if00",
         "baudrate": 115200,
-        "flow_control": "software",
+        # The table's "software", as zigpy's libraries read it - see
+        # `test_zigpy_names.py` for what the real libraries do with it.
+        "flow_control": None,
     }
 
 
