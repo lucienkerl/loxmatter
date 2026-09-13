@@ -54,3 +54,27 @@ def test_the_catalog_is_read_once():
     first = element_name(SignalRef(0, 47, 12, SignalKind.ATTRIBUTE))
     second = element_name(SignalRef(0, 47, 12, SignalKind.ATTRIBUTE))
     assert first == second == "BatPercentRemaining"
+
+
+def test_a_standard_cluster_gets_its_specification_name():
+    """Cluster 47 is PowerSource in the standard - the same dependency
+    `element_name` already reads from (see the test above), just indexed
+    by cluster id alone instead of (cluster_id, element_id, kind)."""
+    from loxmatter.profiles.catalog import cluster_name
+
+    assert cluster_name(47) == "Power Source"
+
+
+def test_an_unknown_cluster_id_has_no_name():
+    from loxmatter.profiles.catalog import cluster_name
+
+    assert cluster_name(4711) is None
+
+
+def test_a_multi_word_cluster_name_gets_a_space_before_every_interior_capital():
+    """The chip SDK's cluster class names are PascalCase
+    (`BasicInformation`); nothing in this codebase names clusters for a
+    human otherwise (Expert Settings design, 2026-09-13)."""
+    from loxmatter.profiles.catalog import cluster_name
+
+    assert cluster_name(40) == "Basic Information"

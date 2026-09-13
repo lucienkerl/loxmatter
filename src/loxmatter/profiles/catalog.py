@@ -46,6 +46,7 @@ from __future__ import annotations
 
 import functools
 import inspect
+import re
 
 from loxmatter.matter.models import SignalKind, SignalRef
 
@@ -100,6 +101,55 @@ def _catalog() -> dict[_CatalogKey, str]:
         # catch here.
         return {}
     return mapping
+
+
+@functools.cache
+def _cluster_catalog() -> dict[int, str]:
+    """Builds the mapping cluster_id -> display name once, the same way
+    and for the same reason as `_catalog()` above: read once behind
+    `functools.cache`, never rebuilt on every call to `cluster_name`.
+
+    Same fallback contract as `_catalog()`: an unavailable or
+    unexpectedly-shaped chip SDK yields an empty mapping, never an
+    exception - `cluster_name` then returns `None` for everything, and
+    the caller falls back to a generic label (Expert Settings design,
+    2026-09-13, section 5.1)."""
+    try:
+        import chip.clusters.Objects as chip_objects
+    except ImportError:
+        return {}
+
+    mapping: dict[int, str] = {}
+    try:
+        clusters = [
+            cls
+            for _, cls in inspect.getmembers(chip_objects, inspect.isclass)
+            if hasattr(cls, "id") and hasattr(cls, "Attributes")
+        ]
+        for cluster in clusters:
+            cluster_id = cluster.id
+            if not isinstance(cluster_id, int):
+                continue
+            mapping[cluster_id] = _display_name(cluster.__name__)
+    except Exception:  # noqa: BLE001 — the catalog is not an operational resource
+        # (see `_catalog()`'s docstring above): any unexpected shape of a future SDK
+        # release stays without consequence instead of stopping the tool.
+        return {}
+    return mapping
+
+
+def _display_name(class_name: str) -> str:
+    """`BasicInformation` -> `Basic Information`: a space before every
+    interior capital letter."""
+    return re.sub(r"(?<!^)(?=[A-Z])", " ", class_name)
+
+
+def cluster_name(cluster_id: int) -> str | None:
+    """Human-readable name of a cluster per the chip SDK catalog.
+
+    `None` on the same conditions as `element_name` above - the caller
+    falls back to a generic "Cluster {id}" label."""
+    return _cluster_catalog().get(cluster_id)
 
 
 def element_name(ref: SignalRef) -> str | None:
