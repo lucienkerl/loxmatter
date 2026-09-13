@@ -346,7 +346,7 @@
       <a href="#/settings" :class="{ active: view === 'settings' }" :aria-current="view === 'settings' ? 'page' : null" x-text="t('web.nav.settings')"></a>
     </nav>
 
-    <main>
+    <main :class="{ 'main-wide': view === 'devices' }">
       <!-- ================================================================
            View 1: Devices
            ================================================================ -->
@@ -800,6 +800,8 @@
 
         <p x-show="devicesError" x-cloak class="banner danger" x-text="devicesError"></p>
         <p x-show="deviceActionError" x-cloak class="banner danger" x-text="deviceActionError"></p>
+        <p x-show="groupsError" x-cloak class="banner danger" x-text="groupsError"></p>
+        <p x-show="groupActionError" x-cloak class="banner danger" x-text="groupActionError"></p>
 
         <!-- Group-aware (fix 2026-09-11): a group survives to zero
              members, so removing the last device used to leave group
@@ -900,45 +902,62 @@
                 class="room-chip"
                 :class="{ active: roomFilter === null }"
                 @click="roomFilter = null"
-                x-text="t('web.devices.room_all') + ' ' + (devices.length + groups.length)"
-              ></button>
+              >
+                <span x-text="t('web.devices.room_all')"></span>
+                <span x-text="devices.length + groups.length"></span>
+              </button>
+              <!-- Rename is per-row and hover-revealed now (device dashboard
+                   sidebar design, 2026-09-13, section 3), not a separate
+                   always-visible button below the list - there is no room
+                   for a second always-visible icon per row in a 13rem
+                   column. It only ever applies to the ACTIVE room (never
+                   "All" or "No room" - see the falsy-`roomFilter` comment
+                   this replaces, restated below), same as before: only the
+                   affordance moved, not the rule for when it's available.
+                   `.room-chip-row:hover`/`:focus-within` in style.css
+                   reveals the icon - it stays in the DOM either way, so a
+                   keyboard user tabbing to it still finds it, just not
+                   sighted until they do. -->
               <template x-for="chip in roomChips()" :key="chip.key">
-                <button
-                  class="room-chip"
-                  :class="{ active: roomFilter === chip.key }"
-                  @click="roomFilter = chip.key"
-                  x-text="chip.label + ' ' + chip.count"
-                ></button>
+                <span class="room-chip-row">
+                  <button
+                    class="room-chip"
+                    :class="{ active: roomFilter === chip.key }"
+                    @click="roomFilter = chip.key"
+                    x-show="renamingRoom !== chip.key"
+                    :title="chip.label"
+                  >
+                    <span x-text="chip.label"></span>
+                    <span x-text="chip.count"></span>
+                  </button>
+                  <input
+                    x-show="renamingRoom === chip.key"
+                    x-cloak
+                    type="text"
+                    class="room-rename-input"
+                    x-model="renameDraft"
+                    @keydown.enter="commitRenameRoom()"
+                    @keydown.escape="cancelRenameRoom()"
+                    @blur="commitRenameRoom()"
+                  />
+                  <!-- `chip.key` is truthy for every entry `roomChips()`
+                       produces here except "No room" (key `""`) - falsy,
+                       so this stays hidden for it without a separate
+                       check, the same way the button it replaces used to
+                       rely on `roomFilter` being falsy for both "All"
+                       (`null`) and "No room" (`""`). -->
+                  <button
+                    class="room-rename"
+                    x-show="chip.key && roomFilter === chip.key && renamingRoom !== chip.key"
+                    @click="beginRenameRoom(chip.key)"
+                    :title="t('web.devices.room_rename')"
+                  ><svg class="icon"><use href="#i-rename"></use></svg></button>
+                </span>
               </template>
-              <!-- `x-show="roomFilter"` is exactly right here and not
-                   sloppiness: both cases where there is nothing to rename are
-                   falsy - `null` ("All") and `""` ("No
-                   room"). "No room" is not a room but the set of
-                   devices with no assignment; a name that could be changed
-                   is precisely what they are missing. -->
-              <button
-                class="room-rename"
-                x-show="roomFilter && renamingRoom !== roomFilter"
-                @click="beginRenameRoom(roomFilter)"
-                :title="t('web.devices.room_rename')"
-              ><svg class="icon"><use href="#i-rename"></use></svg></button>
-              <input
-                x-show="roomFilter && renamingRoom === roomFilter"
-                x-cloak
-                type="text"
-                class="room-rename-input"
-                x-model="renameDraft"
-                @keydown.enter="commitRenameRoom()"
-                @keydown.escape="cancelRenameRoom()"
-                @blur="commitRenameRoom()"
-              />
             </span>
           </template>
         </div>
         <div class="dashboard-main">
-
-        <p x-show="groupsError" x-cloak class="banner danger" x-text="groupsError"></p>
-        <p x-show="groupActionError" x-cloak class="banner danger" x-text="groupActionError"></p>
 
         <!-- The "nothing matches" note asks about BOTH halves of the grid:
              with only `visibleDevices()` in the condition it would claim
@@ -1729,7 +1748,9 @@
           </div>
         </template>
         </div>
+        <!-- /.dashboard-main -->
         </div>
+        <!-- /.dashboard-shell -->
       </section>
 
       <!-- ================================================================

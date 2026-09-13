@@ -6085,6 +6085,32 @@ async def test_the_dashboard_shell_puts_the_room_bar_beside_the_grid(api):
     assert room_bar_pos < main_pos < grid_pos
 
 
+async def test_the_dashboard_shell_and_room_bar_are_a_real_flex_layout(api):
+    """A prior review found the sidebar's own tests only pinned DOM order,
+    not the CSS that actually makes it a sidebar - reverting
+    `.dashboard-shell` to `display: block` or `.room-bar` to a horizontal
+    row would have left the suite green. This pins the two properties
+    that matter."""
+    client, _, _ = api
+    css = (await client.get("/static/style.css")).text
+    shell = css.split(".dashboard-shell {", 1)[1].split("}", 1)[0]
+    assert "display: flex" in shell
+    room_bar = css.split(".room-bar {", 1)[1].split("}", 1)[0]
+    assert "flex-direction: column" in room_bar
+
+
+async def test_the_search_fields_height_cannot_silently_regress(api):
+    """A prior review found `.search-field`'s old `flex: 1 1 12rem`
+    (written for the horizontal room bar) sized the field's HEIGHT once
+    the room bar became a vertical column, rendering it about 200px
+    tall. Pins the fix so a future edit reintroducing a flex-basis here
+    fails a test instead of shipping silently."""
+    client, _, _ = api
+    css = (await client.get("/static/style.css")).text
+    field = css.split(".search-field {", 1)[1].split("}", 1)[0]
+    assert "flex: none" in field
+
+
 # ---------------------------------------------------------------------------
 # Task 5: The battery row of the tile. Counterweight to the cluster
 # ranking (task 4): at rank 90, the battery level would come after all

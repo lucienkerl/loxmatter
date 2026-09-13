@@ -216,6 +216,19 @@ main {
   margin: 0 auto;
 }
 
+/* The devices view gets more width than every other view: the room
+ * sidebar (device dashboard sidebar design, 2026-09-13) plus a card
+ * grid need real horizontal room to deliver more grid columns on a
+ * wide monitor, which is the whole point of narrowing the grid's
+ * minimum card width in the first place - at the base 960px cap the
+ * sidebar's own width canceled that out exactly (measured: still 3
+ * columns, just narrower cards). 1440px matches the width this
+ * feature's own design mockups were built at. Other views keep the
+ * narrower 960px, which suits their form/text layouts better. */
+main.main-wide {
+  max-width: 1440px;
+}
+
 .card {
   background: var(--surface);
   border: 1px solid var(--border);
@@ -1979,6 +1992,51 @@ footer.hint-block {
   font-weight: 600;
 }
 
+.room-chip:hover:not(.active) {
+  background: var(--bg);
+}
+
+/* Rename is per-row and hover-revealed now (device dashboard sidebar
+ * design, 2026-09-13, section 3): `.room-chip-row` wraps a chip button,
+ * its rename input and its rename icon so the icon can be positioned and
+ * revealed relative to the row, without changing `.room-chip`'s own
+ * layout rules above (still shared with the "All" chip, which has no
+ * row wrapper and no rename icon at all). */
+.room-chip-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%;
+}
+
+.room-chip-row .room-chip {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.room-chip-row .room-rename-input {
+  flex: 1 1 auto;
+}
+
+.room-chip-row .room-rename {
+  flex: none;
+  opacity: 0;
+}
+
+/* Hover only where there is a pointer (same convention as
+ * `.group-candidate:hover` below): on a touch screen `:hover` sticks
+ * to the last tapped row and would leave the icon looking permanently
+ * "hinted" after a tap, with no hover to ever clear it. */
+@media (hover: hover) {
+  .room-chip-row:hover .room-rename {
+    opacity: 1;
+  }
+}
+
+.room-chip-row:focus-within .room-rename {
+  opacity: 1;
+}
+
 .room-rename {
   font-size: 0.75rem;
 }
@@ -3359,6 +3417,33 @@ footer.hint-block {
   .group-dialog-foot .primary {
     flex: 1 1 100%;
     min-height: 44px;
+  }
+}
+
+/* Below 640px the sidebar layout no longer fits: a fixed 13rem column
+ * plus the grid's own minimum card width overflows a phone viewport
+ * (measured at 390px: cards ran 58px off the right edge, the sidebar
+ * ate over half the screen). Collapse back to a normal top-of-page
+ * block, the room bar as a horizontal, wrapping row above the grid -
+ * the same breakpoint this file already uses elsewhere (see the other
+ * `@media (max-width: 640px)` blocks above). */
+@media (max-width: 640px) {
+  .dashboard-shell {
+    display: block;
+  }
+
+  .room-bar {
+    width: auto;
+    position: static;
+    flex-direction: row;
+    flex-wrap: wrap;
+    margin-bottom: 0.8rem;
+  }
+
+  .room-chips {
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 0.3rem;
   }
 }
 
