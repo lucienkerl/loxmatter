@@ -26,7 +26,7 @@ import pytest
 from conftest import authenticate, load_snapshot
 
 from loxmatter import i18n
-from loxmatter.export.commands import extract_commands
+from loxmatter.export.commands import DeviceCommand, extract_commands
 from loxmatter.loxone.server import build_app
 from loxmatter.model.store import Store
 from loxmatter.sources import DeviceCall, SourceNotConfiguredError
@@ -263,9 +263,9 @@ async def mixed_technology_api(
     suite.
 
     The Zigbee member is the Matter fixture re-stamped rather than a
-    hand-built snapshot - it has to carry the same device types and the
-    same commands as the other member, or the group's category check
-    refuses it and its command never lands in the intersection.
+    hand-built snapshot - it has to carry a light's device types and real
+    light commands, or the group's category check refuses it and it has no
+    `on` row for the group command to reach.
     """
     store = Store(tmp_path / "t.sqlite")
     member_ids = []
@@ -399,3 +399,399 @@ async def test_a_mix_of_unreachable_and_unconfigured_members_stays_a_502(
     detail = response.json()["detail"]
     assert members[0].label in detail
     assert members[1].label in detail
+
+
+async def test_one_colour_value_gives_colour_to_the_colour_lamp_and_brightness_to_the_white_one(
+    api, invocations
+):
+    """Design 2026-09-13, 3.2, end to end through `/cmd`: blue at 60 % turns
+    the CWS lamp blue at 60 % and sets only the brightness of the WS lamp.
+
+    Fault to prove it: route light commands through `to_device_calls` again
+    in `plan_group_calls` - every light row `group_targets` hands over is
+    then translated on its own, so both lamps receive a call for every light
+    command they carry - off, on and toggle first."""
+    client, store, group_id = api
+    cws, ws = store.group_members(group_id)
+    key = next(c.key for c in store.group_commands(group_id) if c.slug == "color")
+    response = await client.get(f"/cmd/{key}/60000000")
+    assert response.status_code == 200
+    by_address: dict[str, list[tuple[int, int]]] = {}
+    for call in invocations:
+        by_address.setdefault(call.address, []).append((call.cluster_id, call.command_id))
+    assert by_address[cws.address] == [(768, 6), (8, 4)]
+    assert by_address[ws.address] == [(8, 4)]
+
+
+async def test_a_lumitech_white_gives_both_lamps_their_white_temperature(api, invocations):
+    client, store, group_id = api
+    key = next(c.key for c in store.group_commands(group_id) if c.slug == "color")
+    response = await client.get(f"/cmd/{key}/200302700")
+    assert response.status_code == 200
+    per_address: dict[str, list[tuple[int, int]]] = {}
+    for call in invocations:
+        per_address.setdefault(call.address, []).append((call.cluster_id, call.command_id))
+    assert all(calls == [(768, 10), (8, 4)] for calls in per_address.values())
+    assert len(per_address) == 2
+
+
+@pytest.fixture
+async def dim_only_api(
+    tmp_path, invocations, failing_nodes, unconfigured_nodes, fake_runtime, fake_client
+) -> AsyncIterator[tuple[httpx.AsyncClient, Store, int]]:
+    """The CWS lamp plus a dim-only lamp, so a `colortemp` value gives the
+    second member an empty plan (design 2026-09-13, 3.2).
+
+    The dim-only lamp is the WS fixture with its `colortemp` row held back:
+    what is left is (6, 0), (6, 1), (6, 2), (8, 0), (8, 4) on endpoint 1, the
+    pair set the spec records as captured from the TRADFRI bulb E27 WW, for
+    which no fixture exists."""
+    store = Store(tmp_path / "t.sqlite")
+    member_ids = []
+    for name in ("ikea_kajplats_cws_lamp.json", "ikea_kajplats_ws_lamp.json"):
+        snapshot = load_snapshot(name)
+        device_id = store.register_device(snapshot)
+        store.register_signals(device_id, snapshot)
+        commands = extract_commands(snapshot)
+        if name == "ikea_kajplats_ws_lamp.json":
+            commands = [c for c in commands if c.slug != "colortemp"]
+        store.register_commands(device_id, commands)
+        member_ids.append(device_id)
+    group = store.create_group("Living room", member_ids)
+
+    async def invoke(call: DeviceCall) -> None:
+        if call.address in unconfigured_nodes:
+            raise SourceNotConfiguredError(call.technology)
+        if call.address in failing_nodes:
+            raise RuntimeError("no route to host")
+        invocations.append(call)
+
+    app = build_app(store, invoke, fake_runtime(store), client=fake_client)
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        await authenticate(store, client)
+        yield client, store, group.id
+    store.close()
+
+
+async def _send(client: httpx.AsyncClient, route: str, key: str, value: str) -> httpx.Response:
+    if route == "loxone":
+        return await client.get(f"/cmd/{key}/{value}")
+    return await client.post(f"/api/commands/{key}", json={"value": value})
+
+
+@pytest.mark.parametrize("route", ["loxone", "webui"])
+async def test_a_member_given_nothing_is_a_plain_success(dim_only_api, invocations, route):
+    """`colortemp` reaches the CWS lamp and gives the dim-only lamp nothing.
+    That member neither failed nor was left unconfigured, so the response
+    is 200 - the adapter's empty plan must not surface as an error."""
+    client, store, group_id = dim_only_api
+    cws, dim_only = store.group_members(group_id)
+    assert (768, 10) not in {(c.cluster_id, c.command_id) for c in store.commands(dim_only.id)}
+    key = next(c.key for c in store.group_commands(group_id) if c.slug == "colortemp")
+
+    response = await _send(client, route, key, "2700")
+
+    assert response.status_code == 200
+    assert [call.address for call in invocations] == [cws.address]
+
+
+@pytest.mark.parametrize("route", ["loxone", "webui"])
+async def test_a_group_whose_only_asked_member_has_no_source_is_a_503(
+    dim_only_api, invocations, unconfigured_nodes, route
+):
+    """The CWS lamp has no source, and the dim-only lamp was given nothing
+    to do. Nothing was sent to anyone, and the one member that would have
+    received something was never asked - that is the 503 "not set up"
+    case, counted over the members given something to do. Counting the
+    empty plan as well made this a 502 "reached 1 of 2 members; no answer
+    from" the CWS lamp: a member reached that was never sent anything, and
+    "no answer" from one that was never asked.
+
+    Fault to prove it: compare `len(outcome.unconfigured)` with `len(plans)`
+    again in `loxone/server.py` and in `api/control.py`."""
+    client, store, group_id = dim_only_api
+    cws, _dim_only = store.group_members(group_id)
+    unconfigured_nodes.add(cws.address)
+    key = next(c.key for c in store.group_commands(group_id) if c.slug == "colortemp")
+
+    response = await _send(client, route, key, "2700")
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == i18n.t(
+        "api.errors.group_source_not_configured_one", technology="Matter"
+    )
+    assert invocations == []
+
+
+@pytest.mark.parametrize("route", ["loxone", "webui"])
+async def test_the_502_counts_only_the_members_given_something_to_do(
+    dim_only_api, failing_nodes, route
+):
+    """The CWS lamp does not answer, and the dim-only lamp was given
+    nothing. "reached 1 of 2 members" would count the dim-only lamp as
+    reached although nothing was sent to it; the honest count is 0 of 1.
+
+    Fault to prove it: count `len(plans)` again for `total` and `reached`
+    in `loxone/server.py` and in `api/control.py`."""
+    client, store, group_id = dim_only_api
+    cws, _dim_only = store.group_members(group_id)
+    failing_nodes.add(cws.address)
+    key = next(c.key for c in store.group_commands(group_id) if c.slug == "colortemp")
+
+    response = await _send(client, route, key, "2700")
+
+    assert response.status_code == 502
+    assert response.json()["detail"] == i18n.t(
+        "api.errors.group_partially_unreachable", reached=0, total=1, devices=cws.label
+    )
+
+
+@pytest.mark.parametrize("route", ["loxone", "webui"])
+async def test_the_502_counts_members_not_calls(api, invocations, failing_nodes, route):
+    """Blue at 60 % gives the CWS lamp two calls (colour, brightness) and the
+    WS lamp one. The CWS lamp does not answer: one of two MEMBERS was
+    reached, whatever the number of calls.
+
+    Fault to prove it: count `asked` as the sum of the plans' calls in
+    `loxone/server.py` or `api/control.py` - the detail then reads "reached
+    2 of 3". In every earlier 502 test each member asked got exactly one
+    call, and there the two counts agree."""
+    client, store, group_id = api
+    cws, ws = store.group_members(group_id)
+    failing_nodes.add(cws.address)
+    key = next(c.key for c in store.group_commands(group_id) if c.slug == "color")
+
+    response = await _send(client, route, key, "60000000")
+
+    assert response.status_code == 502
+    assert response.json()["detail"] == i18n.t(
+        "api.errors.group_partially_unreachable", reached=1, total=2, devices=cws.label
+    )
+    assert [(call.address, call.cluster_id, call.command_id) for call in invocations] == [
+        (ws.address, 8, 4)
+    ]
+
+
+@pytest.mark.parametrize("route", ["loxone", "webui"])
+async def test_a_stale_group_command_row_that_gives_every_member_nothing_is_a_plain_success(
+    dim_only_api, invocations, route
+):
+    """A group of the dim-only lamp alone never offers `colortemp`: no
+    member carries it. The row is inserted directly, as a stale row would
+    stand after a member's commands changed underneath it. Every member's
+    plan is then empty - nobody failed, nobody was unconfigured - and the
+    answer is 200 with nothing sent.
+
+    Fault to prove it: drop the `outcome.unconfigured and` guard from the
+    503 condition in `loxone/server.py` or `api/control.py` - zero
+    unconfigured then equals zero asked, the 503 branch reads the first
+    technology of an empty list, and the request dies with an `IndexError`."""
+    client, store, group_id = dim_only_api
+    _cws, dim_only = store.group_members(group_id)
+    group = store.create_group("Dim only", [dim_only.id])
+    assert "colortemp" not in {c.slug for c in store.group_commands(group.id)}
+    key = f"g{group.id}_colortemp"
+    store._db.execute(
+        "INSERT INTO group_command (group_id, cluster_id, command_id, key, slug, takes_value)"
+        " VALUES (?, 768, 10, ?, 'colortemp', 1)",
+        (group.id, key),
+    )
+    store._db.commit()
+
+    response = await _send(client, route, key, "2700")
+
+    assert response.status_code == 200
+    assert invocations == []
+
+
+@pytest.mark.parametrize("route", ["loxone", "webui"])
+async def test_a_non_light_group_command_is_still_translated_per_row(api, invocations, route):
+    """Identify (3, 0), carried by both lamps, is offered by the group -
+    the intersection rule for pairs outside `LIGHT_COMMAND_PAIRS`. It has no
+    payload builder, so `to_device_calls` answers 400 "not supported" and
+    nothing is sent; it must not become a quiet 200.
+
+    Faults to prove it: in `plan_group_calls`, drop the non-light branch -
+    no calls, 200. Or treat every pair as a light command in both
+    `plan_group_calls` and `Store.group_targets` - the members' light rows
+    carry no (3, 0), the adapter builds nothing, 200. (Routing only
+    `plan_group_calls` through the adapter is not caught, and cannot be:
+    for a non-light pair the rows `group_targets` hands over all carry that
+    pair, and the adapter passes such a row to `to_device_calls` itself.)"""
+    client, store, group_id = api
+    for member in store.group_members(group_id):
+        store.register_commands(
+            member.id,
+            [
+                DeviceCommand(
+                    endpoint=1, cluster_id=3, command_id=0, slug="identify", takes_value=True
+                )
+            ],
+        )
+    key = next(c.key for c in store.group_commands(group_id) if c.slug == "identify")
+
+    response = await _send(client, route, key, "5")
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == i18n.t(
+        "api.errors.command_unsupported", cluster_id=3, command_id=0
+    )
+    assert invocations == []
+
+
+@pytest.mark.parametrize("route", ["loxone", "webui"])
+async def test_a_lumitech_white_dims_the_dim_only_member_and_whitens_the_colour_lamp(
+    dim_only_api, invocations, route
+):
+    """2700 K at 30 % on `color`: the CWS lamp gets its white temperature and
+    then brightness, the dim-only lamp only the brightness - level 76, the
+    same level as the CWS lamp's.
+
+    Fault to prove it: give a member without any colour command nothing
+    for a white in `commands/adapt.py` - the dim-only lamp stays at its old
+    brightness."""
+    client, store, group_id = dim_only_api
+    cws, dim_only = store.group_members(group_id)
+    key = next(c.key for c in store.group_commands(group_id) if c.slug == "color")
+
+    response = await _send(client, route, key, "200302700")
+
+    assert response.status_code == 200
+    per_address: dict[str, list[tuple[int, int, dict[str, object]]]] = {}
+    for call in invocations:
+        per_address.setdefault(call.address, []).append(
+            (call.cluster_id, call.command_id, dict(call.payload))
+        )
+    assert [(cluster, command) for cluster, command, _ in per_address[cws.address]] == [
+        (768, 10),
+        (8, 4),
+    ]
+    assert per_address[cws.address][1][2]["level"] == 76
+    assert per_address[dim_only.address] == [(8, 4, {"level": 76, "transitionTime": 0})]
+
+
+@pytest.fixture
+async def three_lamp_api(
+    tmp_path, invocations, failing_nodes, unconfigured_nodes, fake_runtime, fake_client
+) -> AsyncIterator[tuple[httpx.AsyncClient, Store, int]]:
+    """The maintainer's real "Lampengruppe 1" (Minor M9): two Matter KAJPLATS
+    CWS colour lamps plus the TRADFRI WW dim-only lamp. This is the group the
+    final whole-branch review traced by hand through a throwaway probe; no
+    route test in this suite used all three shapes together until now.
+
+    Both CWS lamps come from the same checked-in fixture. `register_device`
+    folds a second registration into the first when `_device_identity`
+    matches - which it does on `unique_id`, a fixed attribute the raw
+    fixture carries - so the second lamp is re-stamped with its own address
+    (Matter's address is the node id as text) and its own unique id, the
+    same technique `mixed_technology_api` above uses to re-stamp a
+    technology and address.
+
+    The WW lamp is the WS fixture with its `colortemp` row held back, the
+    same dim-only construction `dim_only_api` uses: what is left is
+    (6, 0), (6, 1), (6, 2), (8, 0), (8, 4) on endpoint 1, the TRADFRI bulb
+    E27 WW's captured shape."""
+    store = Store(tmp_path / "t.sqlite")
+    member_ids: list[int] = []
+
+    first_cws = load_snapshot("ikea_kajplats_cws_lamp.json")
+    device_id = store.register_device(first_cws)
+    store.register_signals(device_id, first_cws)
+    store.register_commands(device_id, extract_commands(first_cws))
+    member_ids.append(device_id)
+
+    second_cws = replace(first_cws, address="22", unique_id=f"{first_cws.unique_id}-2")
+    device_id = store.register_device(second_cws)
+    store.register_signals(device_id, second_cws)
+    store.register_commands(device_id, extract_commands(second_cws))
+    member_ids.append(device_id)
+
+    ws_snapshot = load_snapshot("ikea_kajplats_ws_lamp.json")
+    device_id = store.register_device(ws_snapshot)
+    store.register_signals(device_id, ws_snapshot)
+    dim_only_commands = [c for c in extract_commands(ws_snapshot) if c.slug != "colortemp"]
+    store.register_commands(device_id, dim_only_commands)
+    member_ids.append(device_id)
+
+    group = store.create_group("Lampengruppe 1", member_ids)
+
+    async def invoke(call: DeviceCall) -> None:
+        if call.address in unconfigured_nodes:
+            raise SourceNotConfiguredError(call.technology)
+        if call.address in failing_nodes:
+            raise RuntimeError("no route to host")
+        invocations.append(call)
+
+    app = build_app(store, invoke, fake_runtime(store), client=fake_client)
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        await authenticate(store, client)
+        yield client, store, group.id
+    store.close()
+
+
+@pytest.mark.parametrize("route", ["loxone", "webui"])
+async def test_the_three_lamp_group_gives_each_cws_lamp_colour_and_the_ww_lamp_only_brightness(
+    three_lamp_api, invocations, route
+):
+    """Minor M9, end to end on the maintainer's own three-lamp group: blue at
+    60 % gives each CWS lamp its named colour then brightness, and gives the
+    dim-only WW lamp only the brightness - both at level 152 (60 %). This
+    mirrors the final review's traced table exactly (final-review.md, the
+    maintainer's case).
+
+    Fault to prove it: give a member without any colour command nothing at
+    all for a colour value in `commands/adapt.py` - the WW lamp then gets no
+    brightness call either, so its assertion below fails."""
+    client, store, group_id = three_lamp_api
+    cws_one, cws_two, ww = store.group_members(group_id)
+    key = next(c.key for c in store.group_commands(group_id) if c.slug == "color")
+
+    response = await _send(client, route, key, "60000000")
+
+    assert response.status_code == 200
+    per_address: dict[str, list[tuple[int, int, dict[str, object]]]] = {}
+    for call in invocations:
+        per_address.setdefault(call.address, []).append(
+            (call.cluster_id, call.command_id, dict(call.payload))
+        )
+    for cws in (cws_one, cws_two):
+        assert [(cluster, command) for cluster, command, _ in per_address[cws.address]] == [
+            (768, 6),
+            (8, 4),
+        ]
+        assert per_address[cws.address][1][2]["level"] == 152
+    assert per_address[ww.address] == [(8, 4, {"level": 152, "transitionTime": 0})]
+
+
+@pytest.mark.parametrize("route", ["loxone", "webui"])
+async def test_the_three_lamp_group_gives_each_cws_lamp_white_and_the_ww_lamp_only_brightness(
+    three_lamp_api, invocations, route
+):
+    """The same group with a Lumitech white (2700 K at 30 %): each CWS lamp
+    takes its white temperature, not a colour point - it carries (768, 10) -
+    then brightness, and the WW lamp again gets only the brightness, both at
+    level 76 (30 %).
+
+    Fault to prove it: same as above - a colour-less member given nothing at
+    all for a colour value loses its brightness call too."""
+    client, store, group_id = three_lamp_api
+    cws_one, cws_two, ww = store.group_members(group_id)
+    key = next(c.key for c in store.group_commands(group_id) if c.slug == "color")
+
+    response = await _send(client, route, key, "200302700")
+
+    assert response.status_code == 200
+    per_address: dict[str, list[tuple[int, int, dict[str, object]]]] = {}
+    for call in invocations:
+        per_address.setdefault(call.address, []).append(
+            (call.cluster_id, call.command_id, dict(call.payload))
+        )
+    for cws in (cws_one, cws_two):
+        assert [(cluster, command) for cluster, command, _ in per_address[cws.address]] == [
+            (768, 10),
+            (8, 4),
+        ]
+        assert per_address[cws.address][1][2]["level"] == 76
+    assert per_address[ww.address] == [(8, 4, {"level": 76, "transitionTime": 0})]

@@ -700,12 +700,18 @@ def build_app(
 
         targets = store.group_targets(group_command)
         try:
-            plans = plan_group_calls(targets, value)
+            plans = plan_group_calls(group_command, targets, value)
         except UnsupportedValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
         outcome = await dispatch_group(plans, invoke)
-        if outcome.unconfigured and len(outcome.unconfigured) == len(plans):
+        # Counted over the members given something to do: a light command
+        # can leave a member with an empty plan (design 2026-09-13, 3.2), and
+        # that member was neither reached nor missed. Counting it would turn
+        # "the only member asked has no source" into a 502 that calls the
+        # untouched member reached and the unasked one silent.
+        asked = sum(1 for plan in plans if plan.calls)
+        if outcome.unconfigured and len(outcome.unconfigured) == asked:
             # 503 only when the WHOLE group was never ASKED - the same
             # branch, and the same reasoning, as in
             # `api/control.py::_execute_group_command`: any member that DID
@@ -738,16 +744,16 @@ def build_app(
             logger.warning(
                 "group command %r reached %d of %d members; no answer from: %s",
                 key,
-                len(plans) - len(outcome.failed),
-                len(plans),
+                asked - len(outcome.failed),
+                asked,
                 ", ".join(outcome.failed),
             )
             raise HTTPException(
                 status_code=502,
                 detail=i18n.t(
                     "api.errors.group_partially_unreachable",
-                    reached=len(plans) - len(outcome.failed),
-                    total=len(plans),
+                    reached=asked - len(outcome.failed),
+                    total=asked,
                     devices=", ".join(outcome.failed),
                 ),
             )

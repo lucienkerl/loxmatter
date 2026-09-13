@@ -1081,9 +1081,9 @@
                 <!-- The same two hints as on the device tile, for the same
                      reason (Spec 8.1): "not loaded yet or the fetch failed"
                      must not look like "loaded, and genuinely empty". An
-                     emptied group really does have no commands left - its
-                     intersection over no members is empty (design 4.3) -
-                     and then the second hint is the true statement. -->
+                     emptied group really does have no commands left - a
+                     command list computed over no members is empty (design
+                     4.3) - and then the second hint is the true statement. -->
                 <span
                   class="hint"
                   x-show="!controlsLoaded(groupSubject(deviceGroup))"
@@ -3714,6 +3714,11 @@
               class="hint"
               x-show="groupDraftCategory() === null"
               x-text="t('web.groups.needs_member')"
+            ></span>
+            <span
+              class="hint"
+              x-show="groupDraftCategory() === 'light'"
+              x-text="t('web.groups.light_members_hint')"
             ></span>
             <template x-if="groupDraftCategory() !== null">
               <span class="group-kind-pill">

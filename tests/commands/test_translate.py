@@ -489,3 +489,86 @@ def test_a_call_carries_the_commands_technology_and_address():
     )
     (call,) = to_device_calls(command, "1")
     assert (call.technology, call.address) == ("zigbee", "00:12:4b:00:1c:a1:b2:c3")
+
+
+@pytest.mark.parametrize(
+    ("cluster_id", "command_id", "value", "expected"),
+    [
+        (
+            768,
+            6,
+            "36060036",
+            [
+                (
+                    768,
+                    6,
+                    {
+                        "hue": 85,
+                        "saturation": 101,
+                        "transitionTime": 0,
+                        "optionsMask": 1,
+                        "optionsOverride": 1,
+                    },
+                ),
+                (8, 4, {"level": 152, "transitionTime": 0}),
+            ],
+        ),
+        (
+            768,
+            7,
+            "36060036",
+            [
+                (
+                    768,
+                    7,
+                    {
+                        "colorX": 20131,
+                        "colorY": 29317,
+                        "transitionTime": 0,
+                        "optionsMask": 1,
+                        "optionsOverride": 1,
+                    },
+                ),
+                (8, 4, {"level": 152, "transitionTime": 0}),
+            ],
+        ),
+        (
+            768,
+            6,
+            "200302700",
+            [
+                (768, 10, {"colorTemperatureMireds": 370, "optionsMask": 1, "optionsOverride": 1}),
+                (8, 4, {"level": 76, "transitionTime": 0}),
+            ],
+        ),
+        (
+            768,
+            7,
+            "200302700",
+            [
+                (768, 10, {"colorTemperatureMireds": 370, "optionsMask": 1, "optionsOverride": 1}),
+                (8, 4, {"level": 76, "transitionTime": 0}),
+            ],
+        ),
+        (768, 6, "0", [(8, 4, {"level": 0, "transitionTime": 0})]),
+        (768, 7, "0", [(8, 4, {"level": 0, "transitionTime": 0})]),
+    ],
+)
+def test_a_single_device_s_colour_calls_are_unchanged_by_the_shared_decoder(
+    cluster_id, command_id, value, expected
+):
+    """Pins what the device path sent BEFORE the decoder was factored out
+    (design 2026-09-13), so the refactor for groups cannot move it. Every
+    literal is the output of the unmodified code, recorded on 13 September
+    2026 - not a hand computation."""
+    calls = to_device_calls(cmd(cluster_id, command_id, takes_value=True), value)
+    assert [(c.cluster_id, c.command_id, c.payload) for c in calls] == expected
+
+
+@pytest.mark.parametrize("command_id", [6, 7])
+def test_a_malformed_lumitech_value_keeps_its_message_on_both_colour_commands(command_id):
+    """20|270|2700 - brightness 270 %. Pins the translated message both
+    colour builders raised before the shared decoder took the check over."""
+    with pytest.raises(UnsupportedValueError) as info:
+        to_device_calls(cmd(768, command_id, takes_value=True), "202702700")
+    assert str(info.value) == i18n.t("api.errors.lumitech_malformed", value="202702700")

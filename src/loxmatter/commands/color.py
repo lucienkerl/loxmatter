@@ -212,10 +212,12 @@ def rgb_to_hue_saturation(r: int, g: int, b: int) -> tuple[int, int]:
     return round(h * 254), round(s * 254)
 
 
-# sRGB (IEC 61966-2-1) to CIE 1931 xy, D65. The matrix is the standard's
-# own linear-RGB-to-XYZ matrix; the gamma expansion above it is the
-# standard's EOTF, not the 2.2 approximation - the difference is visible in
-# mixed colours, which is exactly what a lamp shows.
+# sRGB (IEC 61966-2-1) to CIE 1931 xy, D65. The matrix is Bruce
+# Lindbloom's seven-decimal linear-RGB-to-XYZ matrix, the same source as
+# `_XYZ_TO_SRGB` below - not the rounded four-decimal matrix IEC 61966-2-1
+# itself prints. The gamma expansion above it is the standard's own EOTF,
+# not the 2.2 approximation - the difference is visible in mixed colours,
+# which is exactly what a lamp shows.
 #
 # This module's standing rule applies: WHOEVER TOUCHES THIS MEASURES AGAIN.
 # The test checks the three primaries and the white point against published
@@ -285,6 +287,78 @@ def rgb_to_cie_xy(r: int, g: int, b: int) -> tuple[int, int]:
         _to_cie_component(x_value / total),
         _to_cie_component(y_value / total),
     )
+
+
+# The Planckian locus - the colours of an ideal black body, which is what a
+# "2700 K" white means - as Kim, Kim, Lee, Kim & Kim (2002), "Design of
+# advanced color temperature control system for HDTV applications",
+# Journal of the Korean Physical Society 41(6), approximate it: cubic
+# polynomials in 1/T for x, and in x for y, valid from 1667 K to 25000 K.
+# Used for a colour lamp that has no ColorTemperature command but is sent a
+# white (design 2026-09-13, section 3.3).
+_PLANCKIAN_MIN_KELVIN = 1667.0
+_PLANCKIAN_MAX_KELVIN = 25000.0
+
+# XYZ -> linear sRGB, D65: the exact inverse of `_SRGB_TO_XYZ` above at the
+# seven decimals Bruce Lindbloom publishes both matrices with (their product
+# is the identity to within 2e-7). It is not the rounded four-decimal matrix
+# printed in IEC 61966-2-1.
+_XYZ_TO_SRGB = (
+    (3.2404542, -1.5371385, -0.4985314),
+    (-0.9692660, 1.8760108, 0.0415560),
+    (0.0556434, -0.2040259, 1.0572252),
+)
+
+
+def planckian_xy(kelvin: float) -> tuple[float, float]:
+    """CIE 1931 (x, y) of a black body at `kelvin`, clamped to the range the
+    approximation holds for."""
+    t = min(_PLANCKIAN_MAX_KELVIN, max(_PLANCKIAN_MIN_KELVIN, kelvin))
+    t2 = t * t
+    t3 = t2 * t
+    if t <= 4000:
+        x = -0.2661239e9 / t3 - 0.2343589e6 / t2 + 0.8776956e3 / t + 0.179910
+    else:
+        x = -3.0258469e9 / t3 + 2.1070379e6 / t2 + 0.2226347e3 / t + 0.240390
+    x2 = x * x
+    x3 = x2 * x
+    if t <= 2222:
+        y = -1.1063814 * x3 - 1.34811020 * x2 + 2.18555832 * x - 0.20219683
+    elif t <= 4000:
+        y = -0.9549476 * x3 - 1.37418593 * x2 + 2.09137015 * x - 0.16748867
+    else:
+        y = 3.0817580 * x3 - 5.87338670 * x2 + 3.75112997 * x - 0.37001483
+    return x, y
+
+
+def kelvin_to_cie_xy(kelvin: float) -> tuple[int, int]:
+    """A white temperature as ZCL CurrentX/CurrentY, for a lamp that takes
+    MoveToColor but not MoveToColorTemperature."""
+    x, y = planckian_xy(kelvin)
+    return _to_cie_component(x), _to_cie_component(y)
+
+
+def _compress_gamma(linear: float) -> float:
+    if linear <= 0.0031308:
+        return 12.92 * linear
+    return 1.055 * math.pow(linear, 1 / 2.4) - 0.055
+
+
+def kelvin_to_hue_saturation(kelvin: float) -> tuple[int, int]:
+    """A white temperature as Matter hue/saturation, for a lamp that only
+    takes MoveToHueAndSaturation.
+
+    xy -> XYZ at Y = 1 -> linear sRGB, negatives clipped (the locus leaves
+    the sRGB gamut at its warm end), normalised to the brightest channel so
+    only the chromaticity is kept - brightness travels separately, through
+    LevelControl - then gamma-encoded and handed to `rgb_to_hue_saturation`.
+    """
+    x, y = planckian_xy(kelvin)
+    xyz = (x / y, 1.0, (1.0 - x - y) / y)
+    linear = [max(0.0, row[0] * xyz[0] + row[1] * xyz[1] + row[2] * xyz[2]) for row in _XYZ_TO_SRGB]
+    peak = max(linear)
+    red, green, blue = (round(255 * _compress_gamma(channel / peak)) for channel in linear)
+    return rgb_to_hue_saturation(red, green, blue)
 
 
 # Lumitech: identifier, brightness, Kelvin in one number - `AA BBB CCCC`.

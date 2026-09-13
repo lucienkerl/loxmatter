@@ -1167,10 +1167,42 @@ class ZigbeeSource:
     # ----------------------------------------------------------- catalogue --
 
     def _devices(self) -> list[Any]:
+        """Every device on the network, WITHOUT the coordinator.
+
+        zigpy keeps the radio this bridge talks through in `app.devices`
+        like any other node, and bellows announces it with
+        `device_initialized` on startup. Left in, it became a "ready" pairing
+        row, then a device in the list ("Silicon Labs EZSP" on the
+        maintainer's Pi, 13 September 2026), then a configure-on-join target
+        reading its own Basic cluster until it timed out - and removing that
+        tile would have asked zigpy to send the coordinator a leave request
+        addressed to itself. Snapshots, listeners, command targets, removal
+        and configure-on-join all read this, so this is where it is left
+        out."""
         app = self._app
         if app is None:
             return []
-        return list(app.devices.values())
+        return [device for device in app.devices.values() if not self._is_coordinator(device)]
+
+    def _is_coordinator(self, device: Any) -> bool:
+        """Whether `device` is the stick itself.
+
+        The IEEE of `app.state.node_info` says so for certain; the node
+        descriptor's logical type says so as well once it has been read
+        (`NodeDescriptor.is_coordinator` is `None` before that - zigpy
+        2.2.0). Either one is enough, because a coordinator that is not this
+        bridge's own cannot be a member of this network.
+
+        The application is read from the DEVICE first: bellows announces the
+        coordinator from inside `startup()`, before `connect()` has stored
+        the application in `self._app`."""
+        node_desc = getattr(device, "node_desc", None)
+        if node_desc is not None and node_desc.is_coordinator:
+            return True
+        app = getattr(device, "application", None) or self._app
+        node_info = getattr(getattr(app, "state", None), "node_info", None)
+        own_ieee = getattr(node_info, "ieee", None)
+        return own_ieee is not None and str(device.ieee) == str(own_ieee)
 
     def _device_or_none(self, address: str) -> Any | None:
         """The zigpy device whose IEEE reads as `address`.
@@ -1781,6 +1813,10 @@ class ZigbeeSource:
         return datetime.now(UTC) < self._permit_until + timedelta(seconds=PERMIT_JOIN_GRACE_SECONDS)
 
     def _handle_device_event(self, device: Any, state: PairingState) -> None:
+        # zigpy delivers these per device, so `_devices()`'s filter does not
+        # reach them: bellows announces the coordinator itself on startup.
+        if self._is_coordinator(device):
+            return
         address = str(device.ieee)
         existing = self._pairing.get(address)
         row = PairingRow(

@@ -1,5 +1,13 @@
 # Device Groups: One Loxone Output for Many Devices
 
+> **Amended 13 September 2026:** for light commands, invariant 2 and
+> Section 4.3 ("the command list is the intersection") are replaced by
+> `2026-09-13-group-capability-fanout-design.md`, Section 3. Section 5's
+> Kelvin range and Section 8.1's membership-change note are affected the
+> same way: for light commands, removing a member can now shrink the
+> command list instead of only ever widening it, and adding one can grow
+> it. The text below is the original design and is not rewritten.
+
 Design, 10 September 2026. Lets several devices of the same category be
 addressed as one — a single virtual output in Loxone Config, a single
 `/cmd` call, one fan-out inside the bridge.

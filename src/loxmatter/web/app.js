@@ -1710,10 +1710,12 @@ function app() {
     },
 
     /** Reloaded after every membership change, not only on startup: the
-     * command list of a group is the INTERSECTION of its members'
-     * commands and is recomputed server-side on every change (design
-     * 4.3), so a tile that kept the old list would offer a command the
-     * group no longer has - and that key now answers 404. */
+     * command list of a group is computed from its members' commands -
+     * a light command when ANY member carries it, every other command
+     * only when ALL members do (design 2026-09-13, 3.1) - and recomputed
+     * server-side on every change, so a tile that kept the old list would
+     * offer a command the group no longer has - and that key now answers
+     * 404. */
     async loadGroupControls(group) {
       try {
         this.controlsBySubject[this.groupSubject(group)] = await this.request(
@@ -2664,7 +2666,7 @@ function app() {
     /** Create, or replace the member list of an existing group.
      *
      * The member list goes out as a WHOLE (`PUT`), not as add/remove per
-     * device: the command intersection is recomputed after every change
+     * device: the command list is recomputed after every change
      * anyway, and two single removals would pass through an intermediate
      * state nobody asked for, including keys that briefly vanish and come
      * back (design 5).
@@ -2685,7 +2687,7 @@ function app() {
           });
         }
         await this.loadGroups();
-        // The intersection has changed - see `loadGroupControls`. Reloaded
+        // The command list has changed - see `loadGroupControls`. Reloaded
         // for ALL groups, not only this one: a device that just joined here
         // may have been removed from another group's list in the same
         // breath, and on creation there is no new id at hand anyway.
@@ -2837,10 +2839,11 @@ function app() {
     async removeDevice(device) {
       // Removing a device is a membership change in every group it
       // belongs to (design 4.3, `register_group_commands`): if it was the
-      // only member carrying a command, that command drops out of the
-      // group's intersection and the matching "g{n}_…" key answers 404
-      // from then on - a second orphan the confirmation above did not use
-      // to mention at all, on top of the device's own "d{id}_" keys. Named
+      // last member carrying a light command, that command drops out of
+      // the group's command list and the matching "g{n}_…" key answers 404
+      // from then on (design 2026-09-13, 3.1; removing one of several
+      // members never takes a non-light command away) - a second orphan
+      // the confirmation above did not use to mention at all, on top of the device's own "d{id}_" keys. Named
       // here, not silently discovered later in Loxone Config. Appended
       // rather than folded into `web.devices.remove_confirm` itself: a
       // device in no group at all (the common case) must see exactly the
@@ -2935,7 +2938,7 @@ function app() {
         this.reconcileRoomFilter();
         // Removing a device is a membership change like any other (design
         // 4.3): the server drops its rows from every group it belonged to
-        // and recomputes those groups' command intersections. Without this
+        // and recomputes those groups' command lists. Without this
         // reload, such a group's tile would keep showing the old member
         // count and offer commands whose keys now answer 404.
         await this.loadGroups();

@@ -22,7 +22,12 @@ from __future__ import annotations
 import pytest
 
 from loxmatter import i18n
-from loxmatter.commands.translate import UnsupportedValueError, _as_number, to_device_calls
+from loxmatter.commands.translate import (
+    UnsupportedValueError,
+    _as_number,
+    parse_kelvin,
+    to_device_calls,
+)
 from loxmatter.model.store import StoredCommand
 
 
@@ -35,6 +40,26 @@ def test_as_number_error_is_german_when_set():
     i18n.set_language("de")
     with pytest.raises(UnsupportedValueError, match="Wert 'abc' ist keine Zahl"):
         _as_number("abc")
+
+
+@pytest.mark.parametrize("value", ["0", "-5"])
+def test_kelvin_not_positive_error_is_english_by_default(value):
+    with pytest.raises(
+        UnsupportedValueError, match=f"colour temperature '{value}' must be above 0 Kelvin"
+    ):
+        parse_kelvin(value)
+
+
+@pytest.mark.parametrize("value", ["0", "-5"])
+def test_kelvin_not_positive_error_is_german_when_set(value):
+    i18n.set_language("de")
+    with pytest.raises(UnsupportedValueError, match=f"Farbtemperatur '{value}' muss über 0 Kelvin"):
+        parse_kelvin(value)
+
+
+def test_parse_kelvin_still_reports_a_non_number_as_a_non_number():
+    with pytest.raises(UnsupportedValueError, match="value 'abc' is not a number"):
+        parse_kelvin("abc")
 
 
 def test_unsupported_command_error_is_english_by_default():
