@@ -25,10 +25,10 @@ guards against.
 `sleep` is faked too: the script waits up to 60 s for the network to come
 back, and a test has no reason to.
 
-`docker inspect` answers with a start time long past unless a test says
-otherwise, so the grace period for a freshly started container stays out
-of the way of every test that is not about it. `OTBR_WATCHDOG_LOCK` gives
-each run a lock file of its own.
+`docker inspect` answers with a pid and `ps` with an age of a day unless a
+test says otherwise, so the grace period for a freshly started container
+stays out of the way of every test that is not about it. `OTBR_WATCHDOG_LOCK`
+gives each run a lock file of its own.
 
 `IF_INET6` points the interface check at a fixture instead of
 `/proc/net/if_inet6`, the same seam `install.sh` uses for `RFKILL_DIR`.
@@ -44,7 +44,7 @@ import fcntl
 import os
 import shutil
 import subprocess
-from datetime import UTC, datetime, timedelta
+import time
 from pathlib import Path
 
 import pytest
@@ -58,16 +58,30 @@ WATCHDOG = REPO_ROOT / "scripts" / "otbr-watchdog.sh"
 _LOOPBACK = "00000000000000000000000000000001 01 80 10 80       lo\n"
 _THREAD = "fd7df0629267d2e000000000000ffc11 05 40 00 80    wpan0\n"
 
+# `DOCKER_HANG` names a subcommand that never answers: the stub replaces
+# itself with a long real sleep (by absolute path - `sleep` on PATH is the
+# instant stub), which is what `timeout` then has to end.
 _DOCKER_STUB = """#!/bin/sh
 printf '%s\\n' "$*" >> "$DOCKER_CALLS"
+if [ "$1" = "${DOCKER_HANG:-}" ]; then
+  exec "$REAL_SLEEP" 60
+fi
 case "$1" in
   ps)      printf 'otbr\\n' ;;
-  inspect) printf '%s\\n' "${DOCKER_STARTED_AT:-2020-01-01T00:00:00.000000000Z}" ;;
+  inspect) printf '%s\\n' "${DOCKER_PID-4242}"; exit "${DOCKER_INSPECT_STATUS:-0}" ;;
   exec)    exit "${DOCKER_EXEC_STATUS:-0}" ;;
   compose) exit "${DOCKER_RESTART_STATUS:-0}" ;;
   logs)    printf 'a line from the otbr log\\n' ;;
 esac
 exit 0
+"""
+
+# `ps -o etimes= -p PID`: the age of the container's main process in
+# seconds, right-aligned the way procps prints it.
+_PS_STUB = """#!/bin/sh
+printf 'ps %s\\n' "$*" >> "$DOCKER_CALLS"
+printf '%8s\\n' "${PS_ETIMES-86400}"
+exit "${PS_STATUS:-0}"
 """
 
 _SLEEP_STUB = "#!/bin/sh\nexit 0\n"
@@ -80,18 +94,12 @@ exit "${FLOCK_STATUS:-0}"
 """
 
 
-def _docker_time(seconds_ago: int) -> str:
-    """A start time the way `docker inspect` prints it, with nanoseconds."""
-    started = datetime.now(UTC) - timedelta(seconds=seconds_ago)
-    return started.strftime("%Y-%m-%dT%H:%M:%S.123456789Z")
-
-
 @pytest.fixture
 def watchdog(tmp_path):
     """Runs the watchdog with a recording `docker` and an instant `sleep`."""
     bindir = tmp_path / "bin"
     bindir.mkdir()
-    for name, body in (("docker", _DOCKER_STUB), ("sleep", _SLEEP_STUB)):
+    for name, body in (("docker", _DOCKER_STUB), ("ps", _PS_STUB), ("sleep", _SLEEP_STUB)):
         path = bindir / name
         path.write_text(body, encoding="utf-8")
         path.chmod(0o755)
@@ -114,6 +122,7 @@ def watchdog(tmp_path):
             ["bash", str(WATCHDOG)],
             capture_output=True,
             text=True,
+            timeout=45,
             # The failure paths are what several of these tests assert on,
             # so a non-zero status is a result here, not an error.
             check=False,
@@ -123,6 +132,7 @@ def watchdog(tmp_path):
                 "DOCKER_CALLS": str(calls),
                 "IF_INET6": str(if_inet6),
                 "OTBR_WATCHDOG_LOCK": str(lock),
+                "REAL_SLEEP": shutil.which("sleep") or "/bin/sleep",
                 **env,
             },
         )
@@ -216,14 +226,127 @@ def test_a_container_started_less_than_90_seconds_ago_is_left_alone(watchdog):
     would make it start over.
 
     Fault to prove it: remove the grace check - the run restarts `otbr`."""
-    proc, calls = watchdog(thread_up=False, DOCKER_STARTED_AT=_docker_time(10))
+    proc, calls = watchdog(thread_up=False, PS_ETIMES="10")
     assert proc.returncode == 0
     assert proc.stdout == ""
+    assert "ps -o etimes= -p 4242" in calls
     assert not any("compose restart" in call for call in calls), calls
     assert not any(call.startswith("exec") for call in calls), calls
 
 
 def test_a_container_started_longer_ago_is_restarted(watchdog):
-    proc, calls = watchdog(thread_up=False, DOCKER_STARTED_AT=_docker_time(120))
+    proc, calls = watchdog(thread_up=False, PS_ETIMES="120")
     assert any("compose restart" in call for call in calls), calls
     assert "restarting otbr" in proc.stdout
+    assert "no grace period" not in proc.stdout
+
+
+def test_the_grace_period_does_not_read_the_wall_clock(watchdog, tmp_path):
+    """A Pi has no real-time clock, and NTP may step it by days after boot.
+    The container's age comes from the kernel, so a `date` that is years off
+    changes nothing: a 10 s old container is still left alone.
+
+    Fault to prove it: compare docker's StartedAt with `date +%s` again - a
+    clock years ahead makes the young container look old, and it is
+    restarted."""
+    date = tmp_path / "bin" / "date"
+    date.write_text(
+        '#!/bin/sh\ncase "$*" in *%s*) echo 4102444800 ;; *) echo 2100-01-01 ;; esac\n',
+        encoding="utf-8",
+    )
+    date.chmod(0o755)
+    proc, calls = watchdog(thread_up=False, PS_ETIMES="10")
+    assert proc.returncode == 0, proc.stdout
+    assert not any("compose restart" in call for call in calls), calls
+
+
+@pytest.mark.parametrize(
+    ("overrides", "why"),
+    [
+        ({"DOCKER_PID": "garbage"}, "a pid that is not a number"),
+        ({"DOCKER_PID": ""}, "no pid at all"),
+        ({"DOCKER_PID": "0"}, "a stopped container's pid"),
+        ({"DOCKER_INSPECT_STATUS": "1", "DOCKER_PID": ""}, "docker inspect failing"),
+        ({"PS_ETIMES": "", "PS_STATUS": "1"}, "no such process"),
+        ({"PS_ETIMES": ""}, "ps printing nothing"),
+        ({"PS_ETIMES": "garbage"}, "an age that is not a number"),
+        ({"PS_ETIMES": "-5"}, "a negative age"),
+        ({"PS_ETIMES": "18446744073709551615"}, "an age that wraps to -1 in bash"),
+        ({"PS_ETIMES": "99999999999"}, "an age too long to be young"),
+        ({"PS_ETIMES": "010"}, "an age with a leading zero"),
+    ],
+)
+def test_an_age_that_cannot_be_read_skips_the_grace_period_not_the_restart(
+    watchdog, overrides, why
+):
+    """Whatever goes wrong reading the container's age, the restart still
+    happens: a watchdog that stays quiet because of a format would be the
+    outage of 3 September again.
+
+    Faults to prove it, one at a time: remove the `case` guard on the age -
+    bash arithmetic reads an empty value or a name as 0, and a negative or
+    wrapped one as small, so the run exits as if the container had just
+    started; remove the `|| true` after `docker inspect` or after `ps` -
+    `set -e` ends the run on the failing call before it restarts
+    anything."""
+    proc, calls = watchdog(thread_up=False, **overrides)
+    assert any("compose restart" in call for call in calls), (why, proc.stdout, proc.stderr)
+    assert "no grace period" in proc.stdout, (why, proc.stdout)
+    assert "restarting otbr" in proc.stdout, (why, proc.stdout)
+
+
+_needs_timeout = pytest.mark.skipif(
+    shutil.which("timeout") is None, reason="GNU coreutils `timeout` is not installed"
+)
+
+
+@_needs_timeout
+@pytest.mark.parametrize(
+    ("hang", "message", "restarted"),
+    [
+        ("ps", "docker ps failed (no answer within 1 s)", False),
+        ("inspect", "no grace period", True),
+        ("exec", "Could not clear the stale pid file (no answer within 1 s)", True),
+        ("compose", "Restarting otbr failed (no answer within 1 s)", True),
+    ],
+)
+def test_a_docker_call_that_hangs_is_ended_and_logged(watchdog, hang, message, restarted):
+    """A docker daemon that stops answering must not keep the run alive for
+    good: it holds the lock, and every later run would exit quietly on it.
+    Each call ends at its limit, and the run says so in the log.
+
+    Fault to prove it: drop `timeout` from `bounded` - the run waits for the
+    hanging call and the test's own time limit ends it."""
+    started = time.monotonic()
+    proc, calls = watchdog(
+        thread_up=False,
+        DOCKER_HANG=hang,
+        OTBR_WATCHDOG_DOCKER_TIMEOUT="1",
+        OTBR_WATCHDOG_RESTART_TIMEOUT="1",
+    )
+    assert time.monotonic() - started < 15
+    assert message in proc.stdout, proc.stdout
+    # Every case ends as a failure: the hung call itself, or the Thread
+    # interface that does not come back in this fixture.
+    assert proc.returncode == 1
+    assert any("compose restart" in call for call in calls) is restarted, calls
+
+
+def test_the_restart_has_a_longer_limit_than_a_query(watchdog, tmp_path):
+    """A restart stops and starts the container; 120 s, not the 30 s of a
+    query. The limits are what `timeout` is called with."""
+    log = tmp_path / "timeout-calls.txt"
+    fake = tmp_path / "bin" / "timeout"
+    fake.write_text(
+        f'#!/bin/sh\nprintf "%s\\n" "$*" >> "{log}"\nshift 3\nexec "$@"\n',
+        encoding="utf-8",
+    )
+    fake.chmod(0o755)
+    watchdog(thread_up=False)
+    limits = log.read_text(encoding="utf-8").splitlines()
+    assert "-k 10 30 docker ps -a --format {{.Names}}" in limits, limits
+    assert "-k 10 30 docker inspect -f {{.State.Pid}} otbr" in limits, limits
+    assert "-k 10 30 ps -o etimes= -p 4242" in limits, limits
+    assert "-k 10 30 docker exec otbr rm -f /run/otbr-agent.pid" in limits, limits
+    assert "-k 10 120 docker compose restart otbr" in limits, limits
+    assert "-k 10 30 docker logs --tail 20 otbr" in limits, limits

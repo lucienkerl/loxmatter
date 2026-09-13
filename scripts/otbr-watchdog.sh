@@ -49,6 +49,11 @@
 #   normal attach takes 22-35 s on the Pi, and an agent restarted in the
 #   middle of one starts over.
 #
+# Every docker call has a time limit. A docker daemon that hangs would
+# otherwise keep this run - and its lock - alive for good, and every later
+# run would exit quietly on the lock: the watchdog would stop without a
+# single line in its log.
+#
 # A stuck module therefore gets one restart attempt, and its log lines,
 # about every two minutes until someone looks - and finds what happened in
 # the log.
@@ -68,6 +73,33 @@ STAMP="$(date '+%Y-%m-%d %H:%M:%S')"
 # Overridable so the tests can give each run a lock of its own.
 LOCK_FILE="${OTBR_WATCHDOG_LOCK:-${BASH_SOURCE[0]}}"
 GRACE_SECONDS=90
+# Limits for one docker call, overridable so the tests need not wait them
+# out. A restart stops and starts the container, which takes longer than a
+# query.
+DOCKER_TIMEOUT="${OTBR_WATCHDOG_DOCKER_TIMEOUT:-30}"
+RESTART_TIMEOUT="${OTBR_WATCHDOG_RESTART_TIMEOUT:-120}"
+
+# `bounded SECONDS COMMAND...` runs COMMAND with a time limit: SIGTERM when
+# it runs out, SIGKILL ten seconds later if that did not end it. `timeout`
+# is GNU coreutils, which Raspberry Pi OS always has. Where it is missing (a
+# developer's Mac without coreutils) the call runs unbounded, as it did
+# before there was a limit.
+if command -v timeout >/dev/null 2>&1; then
+  bounded() { timeout -k 10 "$@"; }
+else
+  bounded() {
+    shift
+    "$@"
+  }
+fi
+
+# " (no answer within N s)" when a bounded call's status says `timeout`
+# stopped it - 124 after SIGTERM, 137 after SIGKILL - and nothing otherwise.
+timed_out() {
+  if [ "$1" -eq 124 ] || [ "$1" -eq 137 ]; then
+    printf ' (no answer within %s s)' "$2"
+  fi
+}
 
 # One run at a time. `flock` is util-linux, present on Raspberry Pi OS; where
 # it is missing (a developer's Mac running the tests) the run goes ahead
@@ -95,8 +127,11 @@ fi
 # would never be reached. So check separately: if the docker query itself
 # fails, that's a real error and must be logged; only a successful query
 # that doesn't list otbr may exit quietly.
-if ! CONTAINERS=$(docker ps -a --format '{{.Names}}' 2>&1); then
-  printf '%s  docker ps failed - cannot check the otbr container:\n' "$STAMP"
+STATUS=0
+CONTAINERS=$(bounded "$DOCKER_TIMEOUT" docker ps -a --format '{{.Names}}' 2>&1) || STATUS=$?
+if [ "$STATUS" -ne 0 ]; then
+  printf '%s  docker ps failed%s - cannot check the otbr container:\n' \
+    "$STAMP" "$(timed_out "$STATUS" "$DOCKER_TIMEOUT")"
   printf '%s\n' "$CONTAINERS" | sed 's/^/    /'
   exit 1
 fi
@@ -114,30 +149,41 @@ if thread_is_up; then
   exit 0
 fi
 
-# Seconds since the epoch for docker's `2026-09-13T19:30:01.123456789Z`, in
-# UTC. The fraction and the zone letter are cut off and the `T` becomes a
-# space, because that is the one form both GNU date (Raspberry Pi OS) and
-# busybox date accept after `-d`. The BSD form after it is for macOS, where
-# the tests run. Prints nothing when neither can read it.
-epoch_of() {
-  local stamp="${1%%.*}"
-  stamp="${stamp%Z}"
-  stamp="${stamp/T/ }"
-  date -u -d "$stamp" '+%s' 2>/dev/null \
-    || date -u -j -f '%Y-%m-%d %H:%M:%S' "$stamp" '+%s' 2>/dev/null \
-    || true
-}
-
 # A container that has only just started is still attaching: leave it be.
-# When the start time cannot be read, the check is skipped rather than the
-# restart - a watchdog that stays quiet because of a date format would be
-# the outage of 3 September again.
-if STARTED_AT=$(docker inspect -f '{{.State.StartedAt}}' "$SERVICE" 2>/dev/null); then
-  STARTED="$(epoch_of "$STARTED_AT")"
-  if [ -n "$STARTED" ] && [ $(($(date -u '+%s') - STARTED)) -lt "$GRACE_SECONDS" ]; then
-    exit 0
-  fi
-fi
+#
+# Its age is the age of the container's main process, as the kernel counts
+# it - not the difference between docker's StartedAt and this machine's
+# clock. A Pi has no real-time clock: at boot its clock is wherever it was
+# at shutdown until NTP steps it, possibly by days, and a clock stepped
+# backwards made a container started long ago look as if it had not started
+# yet. `ps -o etimes` counts from a monotonic clock and is immune to both.
+#
+# Anything that cannot be read - no pid, a stopped container's pid 0, no
+# such process, an answer that is not a plain number of seconds - skips the
+# grace period, never the restart: a watchdog that stays quiet because of a
+# format would be the outage of 3 September again. That is also why the
+# number is checked before the arithmetic below: bash reads an empty or
+# non-numeric value there as 0, and a negative or overlong one as a small
+# number, all of which would mean "just started".
+AGE=""
+PID="$(bounded "$DOCKER_TIMEOUT" docker inspect -f '{{.State.Pid}}' "$SERVICE" 2>/dev/null || true)"
+case "$PID" in
+  '' | *[!0-9]* | 0*) ;;
+  *) AGE="$(bounded "$DOCKER_TIMEOUT" ps -o etimes= -p "$PID" 2>/dev/null || true)" ;;
+esac
+AGE="${AGE//[[:space:]]/}"
+case "$AGE" in
+  # Empty, not digits only, a leading zero, or ten digits and more.
+  '' | *[!0-9]* | 0?* | ??????????*)
+    printf '%s  Could not read how long %s has been running - no grace period\n' \
+      "$STAMP" "$SERVICE"
+    ;;
+  *)
+    if ((AGE < GRACE_SECONDS)); then
+      exit 0
+    fi
+    ;;
+esac
 
 printf '%s  No Thread interface - restarting %s\n' "$STAMP" "$SERVICE"
 
@@ -164,12 +210,17 @@ printf '%s  No Thread interface - restarting %s\n' "$STAMP" "$SERVICE"
 # A failure here is deliberately not fatal. The container may be stopped
 # outright - exactly a case this watchdog exists to recover from - and
 # the restart below is what recovers it.
-if ! docker exec "$SERVICE" rm -f /run/otbr-agent.pid >/dev/null 2>&1; then
-  printf '%s  Could not clear the stale pid file - restarting anyway\n' "$STAMP"
+STATUS=0
+bounded "$DOCKER_TIMEOUT" docker exec "$SERVICE" rm -f /run/otbr-agent.pid >/dev/null 2>&1 || STATUS=$?
+if [ "$STATUS" -ne 0 ]; then
+  printf '%s  Could not clear the stale pid file%s - restarting anyway\n' \
+    "$STAMP" "$(timed_out "$STATUS" "$DOCKER_TIMEOUT")"
 fi
 
-if ! (cd "$STACK" && docker compose restart "$SERVICE" >/dev/null 2>&1); then
-  printf '%s  Restarting %s failed\n' "$STAMP" "$SERVICE"
+STATUS=0
+(cd "$STACK" && bounded "$RESTART_TIMEOUT" docker compose restart "$SERVICE" >/dev/null 2>&1) || STATUS=$?
+if [ "$STATUS" -ne 0 ]; then
+  printf '%s  Restarting %s failed%s\n' "$STAMP" "$SERVICE" "$(timed_out "$STATUS" "$RESTART_TIMEOUT")"
   exit 1
 fi
 
@@ -187,5 +238,5 @@ done
 printf '%s  Still no Thread interface after 60 s. Is the radio module stuck?\n' \
   "$(date '+%Y-%m-%d %H:%M:%S')"
 printf '%s  Last lines from the OTBR log:\n' "$(date '+%Y-%m-%d %H:%M:%S')"
-docker logs --tail 20 "$SERVICE" 2>&1 | sed 's/^/    /' || true
+bounded "$DOCKER_TIMEOUT" docker logs --tail 20 "$SERVICE" 2>&1 | sed 's/^/    /' || true
 exit 1

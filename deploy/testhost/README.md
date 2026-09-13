@@ -358,11 +358,17 @@ next run gets another chance. Measured on 11 September 2026, when the
 watchdog still ran every five minutes: it cost five minutes of outage on top
 of the one the radio module had already caused.
 
-**It leaves a freshly started container alone.** When the `otbr` container started
-less than 90 seconds ago (`docker inspect -f '{{.State.StartedAt}}' otbr`), a run
-exits without doing anything. That covers boot, an update, and the watchdog's own
-restart: a normal attach takes 22 to 35 seconds on the Pi, and an agent restarted in
-the middle of one starts over.
+**It leaves a freshly started container alone.** When the `otbr` container's main
+process has been running for less than 90 seconds (`ps -o etimes= -p` with the pid from
+`docker inspect -f '{{.State.Pid}}' otbr`), a run exits without doing anything. That
+covers boot, an update, and the watchdog's own restart: a normal attach takes 22 to 35
+seconds on the Pi, and an agent restarted in the middle of one starts over. The age
+comes from the kernel, not from the Pi's clock, which has no battery and may be stepped
+by NTP after boot. An age that cannot be read skips the grace period, never the restart.
+
+**Every docker call has a time limit:** 30 seconds, and 120 seconds for the restart. A
+docker daemon that hangs ends the run with a line in the log instead of holding the
+lock for good, which would make every later run exit without a word.
 
 **It deliberately does not restart in a loop.** A run restarts at most once, waits up
 to 60 seconds and ends; it never retries on its own, because if the radio module itself
