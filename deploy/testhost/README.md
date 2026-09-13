@@ -335,14 +335,15 @@ it aborted:
 Set up with `crontab -e` and this line:
 
 ```
-*/5 * * * * /home/pi/matter-loxone/scripts/otbr-watchdog.sh >> /home/pi/otbr-watchdog.log 2>&1
+* * * * * /home/pi/matter-loxone/scripts/otbr-watchdog.sh >> /home/pi/otbr-watchdog.log 2>&1
 ```
 
 The script checks whether a Thread interface (`wpan*`) with a
 mesh address exists — the same check the "System" view also shows.
 If it's missing, it restarts the `otbr` service and waits up to 60
 seconds for the network. As long as everything is running it writes nothing; the log file
-therefore contains exactly the incidents.
+therefore contains exactly the incidents. A check every minute keeps an outage to
+about a minute (this line used to run it every five minutes).
 
 **Before the restart it clears `/run/otbr-agent.pid` inside the
 container.** That file sits in the writable layer and survives a
@@ -350,15 +351,18 @@ restart, while the container's PID namespace starts over at 1 — so it
 names a pid the new container has already handed to another process, and
 `/etc/init.d/otbr-agent`'s start guard refuses with *"thread border agent
 already started; not starting"*. The container then comes up with no
-Thread daemon, `docker ps` still reports `Up`, and only the next run of
-the watchdog five minutes later gets another chance. Measured on
-11 September 2026, where it cost five minutes of outage on top of the one
-the radio module had already caused.
+Thread daemon, `docker ps` still reports `Up`, and only the watchdog's
+next run gets another chance. Measured on 11 September 2026, when the
+watchdog still ran every five minutes: it cost five minutes of outage on top
+of the one the radio module had already caused.
 
-**It deliberately does not restart in a loop.** If the radio module itself is stuck,
-restarting every minute wouldn't help and would just flood the log. At that point
-someone has to look — and finds what happened in the log, including the last lines from the
-OTBR log.
+**It deliberately does not restart in a loop.** A run restarts at most once, waits up
+to 60 seconds and ends; it never retries on its own, because if the radio module itself
+is stuck, retrying wouldn't help. Cron does start the next run a minute later, though:
+a stuck module therefore gets one restart and one failure entry, with the last lines
+from the OTBR log, every minute until someone looks. A run that is still waiting when
+the next one starts is not detected, and the next one restarts again. Whoever looks
+finds what happened in the log.
 
 It's also worth adding an alert in Loxone: `d<n>_online` goes to 0 during such an
 outage, and that value is already available in the Miniserver anyway.
