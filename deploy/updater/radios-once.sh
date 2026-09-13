@@ -39,13 +39,30 @@ BLUETOOTH_TIMEOUT="${LOXMATTER_RADIOS_BLUETOOTH_TIMEOUT:-60}"
 # agent the same 90 s a fresh one had before. Neither changes how long the
 # job stays silent: the loop refreshes its heartbeat on every poll. They do
 # change how long a pass can run, and a pass must end inside entrypoint.sh's
-# WORKER_TIMEOUT_SECONDS (600 s): a request changing both radios whose
-# verifications fail forward and again in the rollback now counts up to
-# 2 x (60 + 150) = 420 s of polling, before the time each poll's own
-# `docker exec` and the recreates take.
+# RADIOS_WORKER_TIMEOUT_SECONDS (900 s): a request changing both radios
+# whose verifications fail forward and again in the rollback counts up to
+# 2 x (60 + 150) = 420 s, plus up to LOCK_WAIT for the watchdog's lock and
+# the recreates.
+#
+# Both timeouts are seconds of the wall clock, read from `date +%s`, not a
+# count of polls: a probe that takes its full PROBE_TIMEOUT, or a restart
+# of otbr, counts against them like the sleep between two polls does.
 THREAD_TIMEOUT="${LOXMATTER_RADIOS_THREAD_TIMEOUT:-150}"
 THREAD_FIX_AFTER="${LOXMATTER_RADIOS_THREAD_FIX_AFTER:-60}"
 POLL_SECONDS="${LOXMATTER_RADIOS_POLL_SECONDS:-5}"
+# The limit of one probe: `ot-ctl state` inside otbr, or the matter-server
+# check. An agent that no longer answers made `docker exec ... ot-ctl`
+# wait without end, and with it the whole pass.
+PROBE_TIMEOUT="${LOXMATTER_RADIOS_PROBE_TIMEOUT:-10}"
+# The otbr watchdog's lock (scripts/otbr-watchdog.sh locks its own file).
+# The repository is mounted at /repo, so this is the same file, and the
+# same lock, as the host's cron job takes. Held from a Thread apply through
+# its verification and any rollback, so the watchdog cannot restart otbr in
+# the middle of a radios job.
+WATCHDOG_LOCK="${LOXMATTER_WATCHDOG_LOCK:-/repo/scripts/otbr-watchdog.sh}"
+# How long a job waits for a watchdog run that holds the lock. One run
+# restarts otbr and waits up to 60 s for the network.
+LOCK_WAIT="${LOXMATTER_RADIOS_LOCK_WAIT:-90}"
 
 REQUEST="$UPDATE_DIR/radios-request.json"
 STATE="$UPDATE_DIR/radios-state.json"
@@ -256,7 +273,7 @@ load_previous_state() {
   # is working on it" - nothing is running that could be. It can only mean
   # the pass that wrote it was killed before it reached a terminal phase:
   # `docker stop` (entrypoint.sh forwards the SIGTERM), the host powering
-  # off, entrypoint.sh's own 600-second worker timeout, or an OOM kill.
+  # off, entrypoint.sh's own 900-second radios worker timeout, or an OOM kill.
   #
   # Without this, such a state was PERMANENT and it stranded the user, for
   # exactly the reason the phase is still there to begin with: this pass
@@ -676,12 +693,13 @@ if [ "$BLUETOOTH_CHANGE" = true ]; then env_set_or_fail BLUETOOTH_ADAPTER "$WANT
 # next one cannot run until it ends, up to $BLUETOOTH_TIMEOUT seconds
 # later.
 verify_bluetooth() {
-  waited=0
-  while [ "$waited" -lt "$BLUETOOTH_TIMEOUT" ]; do
+  started="$(date +%s)"
+  while [ $(($(date +%s) - started)) -lt "$BLUETOOTH_TIMEOUT" ]; do
     refresh_heartbeat
-    if curl -s -o /dev/null --max-time 3 "$MATTER_SERVER_URL"; then return 0; fi
+    if timeout "$PROBE_TIMEOUT" curl -s -o /dev/null --max-time 3 "$MATTER_SERVER_URL"; then
+      return 0
+    fi
     sleep "$POLL_SECONDS"
-    waited=$((waited + POLL_SECONDS))
   done
   return 1
 }
@@ -699,26 +717,73 @@ apply_thread() {
 # Applied at most once per verification.
 verify_thread() {
   if [ "$1" = down ]; then
-    [ -z "$(docker ps -a --filter 'name=^otbr$' --format '{{.Names}}' 2>/dev/null)" ]
+    # A `docker ps` that fails or runs out of time is not "otbr is gone".
+    names="$(timeout "$PROBE_TIMEOUT" docker ps -a --filter 'name=^otbr$' --format '{{.Names}}' 2>/dev/null)" \
+      || return 1
+    [ -z "$names" ]
     return
   fi
-  waited=0
+  started="$(date +%s)"
   fixed=0
-  while [ "$waited" -lt "$THREAD_TIMEOUT" ]; do
+  while :; do
+    elapsed=$(($(date +%s) - started))
+    [ "$elapsed" -lt "$THREAD_TIMEOUT" ] || return 1
     refresh_heartbeat
-    case "$(docker exec otbr ot-ctl state 2>/dev/null | tr -d '\r' | head -n 1)" in
+    case "$(timeout "$PROBE_TIMEOUT" docker exec otbr ot-ctl state 2>/dev/null | tr -d '\r' | head -n 1)" in
       leader|router|child) return 0 ;;
     esac
-    if [ "$fixed" -eq 0 ] && [ "$waited" -ge "$THREAD_FIX_AFTER" ]; then
+    if [ "$fixed" -eq 0 ] && [ "$elapsed" -ge "$THREAD_FIX_AFTER" ]; then
       fixed=1
-      log "no Thread state after ${waited}s - clearing the stale pid file and restarting otbr"
-      docker exec otbr rm -f /run/otbr-agent.pid >/dev/null 2>&1 || true
+      log "no Thread state after ${elapsed}s - clearing the stale pid file and restarting otbr"
+      timeout "$PROBE_TIMEOUT" docker exec otbr rm -f /run/otbr-agent.pid >/dev/null 2>&1 || true
       compose restart otbr || true
     fi
     sleep "$POLL_SECONDS"
-    waited=$((waited + POLL_SECONDS))
   done
-  return 1
+}
+
+# Takes the otbr watchdog's lock on file descriptor 9, which stays open -
+# and the lock held - until this pass exits. Once per pass: the forward
+# pass and the rollback both call it, and a second call does nothing.
+#
+# The watchdog itself only ever tries the lock and exits when it is taken,
+# so this cannot deadlock with it. A watchdog run that holds the lock is
+# waited for, up to LOCK_WAIT, with the heartbeat kept moving; after that,
+# or when the lock cannot be taken at all, the job goes ahead without it -
+# a Thread change the user asked for is not given up over a lock - and the
+# log says which of these happened.
+#
+# The file is checked before `exec 9<`: a redirection that fails on `exec`
+# ends a POSIX shell outright.
+WATCHDOG_LOCK_TRIED=false
+take_watchdog_lock() {
+  [ "$WATCHDOG_LOCK_TRIED" = false ] || return 0
+  WATCHDOG_LOCK_TRIED=true
+  if ! command -v flock >/dev/null 2>&1; then
+    log "radios request $JOB_ID: no flock - changing Thread without the otbr watchdog's lock"
+    return 0
+  fi
+  if [ ! -f "$WATCHDOG_LOCK" ] || [ ! -r "$WATCHDOG_LOCK" ]; then
+    log "radios request $JOB_ID: cannot open $WATCHDOG_LOCK - changing Thread without the otbr watchdog's lock"
+    return 0
+  fi
+  exec 9<"$WATCHDOG_LOCK"
+  if flock -n 9; then
+    log "radios request $JOB_ID: holding the otbr watchdog's lock"
+    return 0
+  fi
+  log "radios request $JOB_ID: the otbr watchdog is running - waiting up to ${LOCK_WAIT}s for its lock"
+  lock_started="$(date +%s)"
+  while [ $(($(date +%s) - lock_started)) -lt "$LOCK_WAIT" ]; do
+    refresh_heartbeat
+    sleep "$POLL_SECONDS"
+    if flock -n 9; then
+      log "radios request $JOB_ID: holding the otbr watchdog's lock after $(($(date +%s) - lock_started))s"
+      return 0
+    fi
+  done
+  log "radios request $JOB_ID: the otbr watchdog still held its lock after ${LOCK_WAIT}s - changing Thread without it"
+  return 0
 }
 
 ROLLING=false
@@ -748,6 +813,7 @@ apply_and_verify() {
   fi
   if [ "$THREAD_ACTION" != none ]; then
     step apply_thread
+    take_watchdog_lock
     apply_thread "$THREAD_ACTION" || { FAILED_STEP=apply_thread; return 1; }
     step verify_thread
     verify_thread "$THREAD_ACTION" || { FAILED_STEP=verify_thread; return 1; }
@@ -788,6 +854,7 @@ rollback_and_verify() {
   fi
   if [ "$THREAD_ACTION" != none ]; then
     step apply_thread
+    take_watchdog_lock
     if apply_thread "$THREAD_ACTION"; then
       step verify_thread
       verify_thread "$THREAD_ACTION" || ok=false

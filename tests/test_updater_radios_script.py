@@ -60,21 +60,40 @@ SYSTEM_TOOLS = (
     "ls",
 )
 
-DOCKER_STUB = r"""#!/bin/sh
+# The script's clock, `date +%s`, is the number in $FAKE/epoch: the `date`
+# stub below reads it, the `sleep` stub adds its argument to it, and a probe
+# stub adds $FAKE/probe_seconds (or $FAKE/curl_seconds) to say how long the
+# probe took. Read with the shell's own `read`, not `cat`, so these reads do
+# not show up among the `cat` calls some tests count.
+ADVANCE = r"""
+advance() {
+  [ -f "$1" ] || return 0
+  read -r by < "$1"; read -r at < "$FAKE/epoch"
+  echo $((at + by)) > "$FAKE/epoch"
+}
+"""
+
+DOCKER_STUB = (
+    r"""#!/bin/sh
 printf 'docker %s\n' "$*" >> "$STUB_LOG"
+"""
+    + ADVANCE
+    + r"""
 case "$1" in
   ps)
     [ -f "$FAKE/otbr_state" ] && cat "$FAKE/otbr_state"
-    exit 0 ;;
+    exit "$(cat "$FAKE/ps_status" 2>/dev/null || echo 0)" ;;
   exec)
     case "$*" in
       *"ot-ctl state"*)
+        advance "$FAKE/probe_seconds"
         mode="$(cat "$FAKE/thread_mode" 2>/dev/null || echo leader)"
         ups="$(cat "$FAKE/otbr_ups" 2>/dev/null || echo 0)"
         case "$mode" in
           leader) echo leader ;;
           needs_fix) if [ -f "$FAKE/pid_cleared" ]; then echo leader; else echo detached; fi ;;
           second_up) if [ "$ups" -ge 2 ]; then echo leader; else echo detached; fi ;;
+          hang) exec /bin/sleep 60 ;;
           *) echo detached ;;
         esac ;;
       *"rm -f /run/otbr-agent.pid"*) : > "$FAKE/pid_cleared" ;;
@@ -95,11 +114,53 @@ case "$1" in
 esac
 exit 0
 """
+)
 
-CURL_STUB = r"""#!/bin/sh
+CURL_STUB = (
+    r"""#!/bin/sh
 printf 'curl %s\n' "$*" >> "$STUB_LOG"
-[ "$(cat "$FAKE/matter_up" 2>/dev/null || echo yes)" = yes ] && exit 0
+"""
+    + ADVANCE
+    + r"""
+advance "$FAKE/curl_seconds"
+up="$(cat "$FAKE/matter_up" 2>/dev/null || echo yes)"
+[ "$up" = hang ] && exec /bin/sleep 60
+[ "$up" = yes ] && exit 0
 exit 7
+"""
+)
+
+START_EPOCH = 1_757_620_800
+
+DATE_STUB_TEMPLATE = """#!/bin/sh
+case "$*" in
+  *%s*) read -r at < "$FAKE/epoch"; echo "$at" ;;
+  *) exec {real_date} "$@" ;;
+esac
+"""
+
+SLEEP_STUB = (
+    r"""#!/bin/sh
+printf '%s\n' "$1" > "$FAKE/slept"
+"""
+    + ADVANCE
+    + r"""
+advance "$FAKE/slept"
+exit 0
+"""
+)
+
+# Stands in for `flock -n 9`: free unless $FAKE/flock_busy says how many
+# more tries find it taken, or "forever".
+FLOCK_STUB = r"""#!/bin/sh
+printf 'flock %s\n' "$*" >> "$STUB_LOG"
+busy="$(cat "$FAKE/flock_busy" 2>/dev/null || echo 0)"
+[ "$busy" = forever ] && exit 1
+if [ "$busy" -gt 0 ]; then
+  echo $((busy - 1)) > "$FAKE/flock_busy"
+  exit 1
+fi
+exit 0
 """
 
 # Logs every invocation (so a test can count how many times $REQUEST is
@@ -154,12 +215,23 @@ def radios(tmp_path):
     sys_bluetooth = tmp_path / "sysfs" / "class" / "bluetooth"
     (sys_bluetooth / "hci0").mkdir(parents=True)
     (fake / "otbr_state").write_text("running\n", encoding="utf-8")
+    (fake / "epoch").write_text(f"{START_EPOCH}\n", encoding="utf-8")
+    watchdog_lock = tmp_path / "repo" / "scripts" / "otbr-watchdog.sh"
+    watchdog_lock.parent.mkdir(parents=True)
+    watchdog_lock.write_text("#!/bin/bash\n", encoding="utf-8")
 
-    for name, body in (("docker", DOCKER_STUB), ("curl", CURL_STUB)):
+    real_date = subprocess.run(
+        ["which", "date"], capture_output=True, text=True, check=False
+    ).stdout.strip()
+    for name, body in (
+        ("docker", DOCKER_STUB),
+        ("curl", CURL_STUB),
+        ("sleep", SLEEP_STUB),
+        ("flock", FLOCK_STUB),
+        ("date", DATE_STUB_TEMPLATE.format(real_date=real_date)),
+    ):
         (bindir / name).write_text(body, encoding="utf-8")
         (bindir / name).chmod(0o755)
-    (bindir / "sleep").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-    (bindir / "sleep").chmod(0o755)
     real_cat = subprocess.run(
         ["which", "cat"], capture_output=True, text=True, check=False
     ).stdout.strip()
@@ -191,6 +263,7 @@ def radios(tmp_path):
             "LOXMATTER_RADIOS_THREAD_TIMEOUT": "4",
             "LOXMATTER_RADIOS_THREAD_FIX_AFTER": "2",
             "LOXMATTER_RADIOS_POLL_SECONDS": "1",
+            "LOXMATTER_WATCHDOG_LOCK": str(watchdog_lock),
             **extra_env,
         }
         result = subprocess.run(
@@ -203,7 +276,7 @@ def radios(tmp_path):
 
     run.env_file, run.update_dir, run.fake = env_file, update_dir, fake
     run.host_dev, run.sys_bluetooth, run.log = host_dev, sys_bluetooth, log
-    run.bindir, run.real_cat = bindir, real_cat
+    run.bindir, run.real_cat, run.watchdog_lock = bindir, real_cat, watchdog_lock
     return run
 
 
@@ -225,6 +298,9 @@ def _request(radios, **overrides):
 # formats the script asks `date` for: the ISO stamp of `now()` and the
 # compact stamp in the `.env` backup filename.
 CLOCK_DATE_STUB = r"""#!/bin/sh
+case "$*" in
+  *%s*) read -r at < "$FAKE/epoch"; echo "$at"; exit 0 ;;
+esac
 n=$(cat "$FAKE/clock" 2>/dev/null || echo 0)
 n=$((n + 1))
 echo "$n" > "$FAKE/clock"
@@ -246,6 +322,8 @@ printf '%s %s %s\n' \
   "$(jq -r '.seen_at' "$RADIOS_STATE" 2>/dev/null)" \
   "$(jq -r '.updater_seen_at' "$UPDATE_STATE_FILE" 2>/dev/null)" \
   >> "$HEARTBEAT_LOG"
+read -r at < "$FAKE/epoch"
+echo $((at + $1)) > "$FAKE/epoch"
 exit 0
 """
 
@@ -1592,3 +1670,216 @@ def test_a_job_that_succeeds_saves_no_otbr_log(radios):
     assert state["phase"] == "done"
     assert "docker logs" not in calls
     assert list(radios.update_dir.glob("radios-otbr-*.log")) == []
+
+
+# ---------------------------------------------------------------------------
+# Pre-release hardening (2026-09-13): bounded probes, wall-clock deadlines,
+# and the otbr watchdog's lock around a Thread change.
+# ---------------------------------------------------------------------------
+
+
+def _log_text(radios) -> str:
+    path = radios.update_dir / "radios-log.txt"
+    return path.read_text(encoding="utf-8") if path.exists() else ""
+
+
+def test_a_thread_probe_that_hangs_is_ended_at_its_limit(radios):
+    """An agent that no longer answers made `docker exec otbr ot-ctl state`
+    wait without end, and the whole pass with it. Each probe now ends after
+    PROBE_TIMEOUT, and the verification fails and rolls back as for any
+    agent without a Thread state.
+
+    Fault to prove it: remove `timeout` from the probe - the first probe
+    waits for the stub's 60 s and the test's own 30 s limit ends the run."""
+    (radios.fake / "thread_mode").write_text("hang")
+    _request(radios, bluetooth=None)
+    result, calls, state = radios(
+        timeout=30,
+        LOXMATTER_RADIOS_PROBE_TIMEOUT="1",
+        LOXMATTER_RADIOS_THREAD_TIMEOUT="2",
+        LOXMATTER_RADIOS_THREAD_FIX_AFTER="1",
+    )
+    assert result.returncode == 0, result.stderr
+    assert (state["phase"], state["error"], state["rolled_back"]) == (
+        "failed",
+        "verify_thread_failed",
+        True,
+    )
+    assert calls.count("ot-ctl state") == 4
+
+
+def test_a_matter_server_check_that_hangs_is_ended_at_its_limit(radios):
+    """Fault to prove it: remove `timeout` from the matter-server check - the
+    stub's curl waits 60 s and the test's own 30 s limit ends the run."""
+    (radios.sys_bluetooth / "hci1").mkdir()
+    (radios.fake / "matter_up").write_text("hang")
+    _request(radios, thread=None, bluetooth={"adapter": 1})
+    result, calls, state = radios(
+        timeout=30,
+        LOXMATTER_RADIOS_PROBE_TIMEOUT="1",
+        LOXMATTER_RADIOS_BLUETOOTH_TIMEOUT="2",
+    )
+    assert result.returncode == 0, result.stderr
+    assert (state["phase"], state["error"]) == ("failed", "verify_bluetooth_failed")
+    assert calls.count("curl ") == 4
+
+
+def test_the_thread_verification_counts_wall_clock_seconds_not_polls(radios):
+    """ "150 s" means 150 s. A probe that takes 50 s of it leaves room for
+    three polls, at 0, 55 and 110 s, not for the thirty a count of
+    `sleep 5` would allow - which on a congested Pi stretched the step, and
+    the pass, far past what the card and the worker limit assume. The fix
+    is applied at the first poll 60 s or more in.
+
+    Fault to prove it: count `waited=$((waited + POLL_SECONDS))` again - the
+    verification polls thirty times."""
+    (radios.fake / "thread_mode").write_text("never")
+    (radios.fake / "probe_seconds").write_text("50")
+    _request(radios, bluetooth=None)
+    _, calls, state = radios(
+        LOXMATTER_RADIOS_THREAD_TIMEOUT="",
+        LOXMATTER_RADIOS_THREAD_FIX_AFTER="",
+        LOXMATTER_RADIOS_POLL_SECONDS="",
+    )
+    assert (state["phase"], state["error"]) == ("failed", "verify_thread_failed")
+    forward = _lines_between(calls, "--force-recreate otbr", "--force-recreate otbr")
+    assert len([line for line in forward if "ot-ctl state" in line]) == 3
+    assert re.findall(r"no Thread state after (\d+)s", _log_text(radios)) == ["110", "110"]
+
+
+def test_the_bluetooth_verification_counts_wall_clock_seconds_not_polls(radios):
+    """Fault to prove it: count polls instead of reading `date +%s` - the
+    verification polls twelve times instead of three."""
+    (radios.sys_bluetooth / "hci1").mkdir()
+    (radios.fake / "matter_up").write_text("no")
+    (radios.fake / "curl_seconds").write_text("20")
+    _request(radios, thread=None, bluetooth={"adapter": 1})
+    _, calls, state = radios(
+        LOXMATTER_RADIOS_BLUETOOTH_TIMEOUT="",
+        LOXMATTER_RADIOS_POLL_SECONDS="",
+    )
+    assert (state["phase"], state["error"]) == ("failed", "verify_bluetooth_failed")
+    forward = _lines_between(calls, "--force-recreate matter-server", "--force-recreate")
+    assert len([line for line in forward if line.startswith("curl ")]) == 3
+
+
+def test_a_thread_change_holds_the_watchdog_lock_before_it_touches_otbr(radios):
+    """The cron watchdog restarts otbr when it sees no Thread interface -
+    which is exactly what a stick switch looks like for a minute. The job
+    takes the watchdog's own lock first, so the watchdog's next run exits
+    instead of restarting the agent under the job.
+
+    Fault to prove it: remove `take_watchdog_lock` from `apply_and_verify` -
+    no `flock` call precedes the recreate."""
+    _request(radios, bluetooth=None)
+    _, calls, state = radios()
+    assert state["phase"] == "done"
+    lines = calls.splitlines()
+    locking = [i for i, line in enumerate(lines) if line == "flock -n 9"]
+    recreate = next(i for i, line in enumerate(lines) if "--force-recreate otbr" in line)
+    assert locking and locking[0] < recreate, calls
+    assert len(locking) == 1
+    assert "holding the otbr watchdog's lock" in _log_text(radios)
+
+
+def test_a_bluetooth_only_change_leaves_the_watchdog_lock_alone(radios):
+    """Fault to prove it: take the lock in the Bluetooth branch as well - a
+    `flock` call appears."""
+    (radios.sys_bluetooth / "hci1").mkdir()
+    _request(radios, thread=None, bluetooth={"adapter": 1})
+    _, calls, state = radios()
+    assert state["phase"] == "done"
+    assert "flock" not in calls
+
+
+def test_a_rollback_that_recreates_otbr_holds_the_watchdog_lock(radios):
+    """A request changing both radios whose Bluetooth verification fails
+    never reaches the forward Thread step, but its rollback recreates otbr.
+    The rollback takes the lock too.
+
+    Fault to prove it: remove `take_watchdog_lock` from
+    `rollback_and_verify` - no `flock` call precedes the rollback's
+    recreate."""
+    (radios.sys_bluetooth / "hci1").mkdir()
+    (radios.fake / "matter_up").write_text("no")
+    _request(radios, bluetooth={"adapter": 1})
+    _, calls, state = radios()
+    assert (state["error"], state["rolled_back"]) == ("verify_bluetooth_failed", True)
+    lines = calls.splitlines()
+    recreates = [i for i, line in enumerate(lines) if "--force-recreate otbr" in line]
+    assert len(recreates) == 1, calls
+    locking = [i for i, line in enumerate(lines) if line == "flock -n 9"]
+    assert locking and locking[0] < recreates[0], calls
+
+
+def test_a_busy_watchdog_lock_is_waited_for_with_the_heartbeat_moving(radios):
+    """A watchdog run holding the lock may be in the middle of its own
+    restart. The job waits for it, keeps its heartbeat moving so the card
+    does not call it abandoned, and goes ahead once the lock is free.
+
+    Faults to prove it, one at a time: go ahead at once without waiting -
+    only one `flock` call precedes the recreate; remove `refresh_heartbeat`
+    from the wait - the samples taken while waiting repeat one timestamp."""
+    run, log = _heartbeat_run(radios)
+    (radios.fake / "flock_busy").write_text("3")
+    _request(radios, bluetooth=None)
+    result, calls, state = run()
+    assert result.returncode == 0, result.stderr
+    assert state["phase"] == "done"
+    lines = calls.splitlines()
+    recreate = next(i for i, line in enumerate(lines) if "--force-recreate otbr" in line)
+    assert [line for line in lines[:recreate] if line.startswith("flock")] == ["flock -n 9"] * 4
+    text = _log_text(radios)
+    assert "the otbr watchdog is running - waiting up to 90s for its lock" in text
+    assert "holding the otbr watchdog's lock after 3s" in text
+    samples = _samples(log, "apply_thread")
+    assert len(samples) == 3, samples
+    assert _strictly_advancing([seen for seen, _ in samples]), samples
+    assert _strictly_advancing([updater for _, updater in samples]), samples
+
+
+def test_a_watchdog_lock_that_stays_busy_is_given_up_after_90_s(radios):
+    """A Thread change the user asked for is not abandoned over a lock: after
+    90 s the job goes ahead without it, and says so.
+
+    Fault to prove it: wait for the lock without a bound - the run never
+    ends and the test's own time limit stops it."""
+    (radios.fake / "flock_busy").write_text("forever")
+    _request(radios, bluetooth=None)
+    result, calls, state = radios(timeout=60, LOXMATTER_RADIOS_POLL_SECONDS="5")
+    assert result.returncode == 0, result.stderr
+    assert state["phase"] == "done"
+    assert calls.count("flock -n 9") == 19
+    assert "still held its lock after 90s - changing Thread without it" in _log_text(radios)
+
+
+@pytest.mark.parametrize("missing", ["flock", "lock file"])
+def test_a_thread_change_goes_ahead_when_the_lock_cannot_be_taken(radios, missing):
+    """No `flock` in the image, or no watchdog script at the lock path: the
+    job changes Thread anyway and logs that it did so without the lock.
+
+    Fault to prove it: open the lock file without checking it first - the
+    failing `exec 9<` ends the pass, which is left in `apply_thread`."""
+    if missing == "flock":
+        (radios.bindir / "flock").unlink()
+    else:
+        radios.watchdog_lock.unlink()
+    _request(radios, bluetooth=None)
+    result, _, state = radios()
+    assert result.returncode == 0, result.stderr
+    assert state["phase"] == "done"
+    assert "without the otbr watchdog's lock" in _log_text(radios)
+
+
+def test_a_docker_ps_that_fails_does_not_verify_thread_as_removed(radios):
+    """Removing otbr is verified by `docker ps` no longer listing it. A
+    `docker ps` that fails, or runs out of time, lists nothing either - and
+    is not proof that otbr is gone.
+
+    Fault to prove it: drop `|| return 1` after the bounded `docker ps` -
+    the job reports `done` although nothing was verified."""
+    radios.env_file.write_text(radios.env_file.read_text() + "COMPOSE_PROFILES=thread\n")
+    (radios.fake / "ps_status").write_text("1")
+    _request(radios, thread={"enabled": False, "device": None}, bluetooth=None)
+    _, _, state = radios()
+    assert (state["phase"], state["error"]) == ("failed", "verify_thread_failed")
