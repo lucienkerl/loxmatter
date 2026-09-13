@@ -81,6 +81,7 @@ from collections.abc import Awaitable, Callable
 from typing import Protocol
 
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import JSONResponse
 
 from loxmatter import i18n
 from loxmatter.api.models import (
@@ -109,6 +110,7 @@ from loxmatter.sources import (
     SourceNotConfiguredError,
     Sources,
     bounded_source_removal,
+    technology_display_name,
 )
 
 logger = logging.getLogger(__name__)
@@ -621,8 +623,26 @@ def build_device_router(
             )
         return _device_out(store.device(device_id), store, runtime)
 
-    @router.delete("/devices/{device_id}", status_code=204)
-    async def remove_device(device_id: int) -> None:
+    @router.delete("/devices/{device_id}", status_code=204, response_model=None)
+    async def remove_device(device_id: int, forget_only: bool = False) -> JSONResponse | None:
+        """Removes a device through its source, then forgets it (see the
+        module docstring for the order).
+
+        **A device whose technology has no configured source can still be
+        forgotten.** Matter-server is mandatory, but "no Zigbee stick" is a
+        legitimate, permanent state - a user who tried Zigbee and gave the
+        stick up - and a 503 for every Zigbee tile, forever, left tiles
+        nothing could delete. That 503 therefore carries `"offer":
+        "forget_only"`, which the device list recognises and answers with a
+        second, explicit choice; `?forget_only=true` then forgets the device
+        in the store exactly as a removal does - device list, export, group
+        memberships, pending Zigbee configuration - without contacting any
+        radio. The device itself is not told, and the page says so.
+
+        **Refused while the technology's source IS configured** (409): then
+        the source is the way to remove the device, and for Matter - whose
+        source is always there - forgetting a device the fabric still holds
+        is exactly the silent leftover the removal order exists to prevent."""
         device = _require_device(device_id)
         if sources is None:
             # `build_app` derives `sources` from `client`, so this is the
@@ -635,7 +655,26 @@ def build_device_router(
         try:
             source = sources.get(device.technology)
         except SourceNotConfiguredError as exc:
-            raise HTTPException(status_code=503, detail=str(exc)) from exc
+            if forget_only:
+                logger.info(
+                    "forgetting device %s (%s) without its radio: %s is not set up",
+                    device.id,
+                    device.address,
+                    technology_display_name(device.technology),
+                )
+                store.forget_device(device.id)
+                return None
+            return JSONResponse(
+                status_code=503, content={"detail": str(exc), "offer": "forget_only"}
+            )
+        if forget_only:
+            raise HTTPException(
+                status_code=409,
+                detail=i18n.t(
+                    "api.devices.forget_only_refused",
+                    technology=technology_display_name(device.technology),
+                ),
+            )
         try:
             # Order: see module docstring - the fabric first, then the store.
             #
@@ -664,5 +703,6 @@ def build_device_router(
             # source, and should look like one.
             raise HTTPException(status_code=502, detail=str(exc)) from exc
         store.forget_device(device.id)
+        return None
 
     return router

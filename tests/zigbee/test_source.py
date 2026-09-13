@@ -1821,6 +1821,32 @@ async def test_removal_treats_device_removed_as_the_truth(build) -> None:
     assert harness.source.pairing_rows() == []
 
 
+async def test_removing_a_device_zigpy_does_not_know_is_already_done(build) -> None:
+    """A stored Zigbee device whose radio came back with a new or reset
+    database, or another coordinator: zigpy has never heard of it, and the
+    removal answered "unknown Zigbee device" - a 502, forever, for a tile
+    nothing could delete. zigpy's own `ControllerApplication.remove()`
+    returns at once for an unknown IEEE; the source says the same.
+
+    With the link down it still fails: nothing can be said then about what
+    the database knows.
+
+    Fault to prove it: look the device up with `_require_device` again."""
+    harness = build(FakeApplication(devices=[colour_lamp()]))
+    await harness.source.connect()
+    stranger = "00:12:4b:00:00:00:99:99"
+
+    await asyncio.wait_for(harness.source.remove(stranger), 1)
+
+    assert harness.app.removed == [], "zigpy was asked about a device it does not have"
+    assert [row.ieee for row in harness.source.pairing_rows()] != [stranger]
+
+    harness.app.fire_connection_lost()
+    await _settle(harness.source)
+    with pytest.raises(DeviceUnreachableError):
+        await harness.source.remove(stranger)
+
+
 # ------------------------------------------------------------------ pairing --
 
 

@@ -1694,6 +1694,22 @@
                     <a href="#/settings" x-text="t('web.settings.miniserver_link')"></a>
                     <span x-text="t('web.devices.export_hint_suffix')"></span>
                   </p>
+                  <!-- The removal's second step, for a device whose
+                       technology has no configured source (the 503 carrying
+                       "offer": "forget_only"). On the tile the user removed
+                       it from, not in a second modal: the first question was
+                       the tile menu's own confirmation, and this is its
+                       honest answer - the device itself cannot be told. -->
+                  <div class="dialog-inline device-forget-offer" role="alert"
+                       x-show="deviceForgetOfferFor(device)" x-cloak>
+                    <p x-text="deviceForgetOfferText()"></p>
+                    <div class="row">
+                      <button type="button" class="danger" @click="forgetDeviceLocally(device)"
+                              :disabled="deviceForgetBusy" x-text="t('web.devices.forget_only')"></button>
+                      <button type="button" @click="deviceForgetOffer = null"
+                              :disabled="deviceForgetBusy" x-text="t('web.devices.forget_only_keep')"></button>
+                    </div>
+                  </div>
                 </div>
               </template>
             </div>

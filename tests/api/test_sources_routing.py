@@ -21,6 +21,7 @@ sections 6.2 and 6.3)."""
 from __future__ import annotations
 
 import asyncio
+from typing import Any
 
 import httpx2 as httpx
 import pytest
@@ -29,6 +30,7 @@ from conftest import authenticate, load_snapshot
 from loxmatter import i18n
 from loxmatter.export.commands import extract_commands
 from loxmatter.loxone.server import build_app
+from loxmatter.matter.models import NodeSnapshot
 from loxmatter.model.store import Store
 from loxmatter.sources import DeviceCall, DeviceUnreachableError, Sources
 
@@ -54,6 +56,8 @@ class _FakeZigbeeSource:
         # Seconds a removal takes before it answers - a device that is slow
         # to be reached, rather than one that never answers.
         self.remove_delay = 0.0
+        self.store: Store | None = None
+        self.fake_client_removed: Any = None
 
     async def remove(self, address: str) -> None:
         if self.remove_hangs:
@@ -90,6 +94,10 @@ async def zigbee_plug(tmp_path, fake_runtime, fake_client):
         store.register_commands(device_id, extract_commands(snapshot))
         _as_zigbee(store, device_id)
         zigbee = _FakeZigbeeSource()
+        # Handed back on the fake, so a test can read what a removal left in
+        # the store without the fixture's return shape changing for the rest.
+        zigbee.store = store
+        zigbee.fake_client_removed = lambda: list(fake_client.removed)
         sources = Sources([fake_client, zigbee] if with_zigbee else [fake_client])
         app = build_app(
             store, sources.send, fake_runtime(store), client=fake_client, sources=sources
@@ -131,6 +139,108 @@ async def test_removal_without_the_devices_source_is_503(zigbee_plug):
     # `technology_display_name` now (boundary design open point 13), not
     # the raw stored value.
     assert "Zigbee" in response.json()["detail"]
+    # And it says what can still be done, in a form the page can recognise
+    # without reading the sentence (see the forget-only tests below).
+    assert response.json()["offer"] == "forget_only"
+
+
+ZIGBEE_ADDRESS = "00:12:4b:00:1c:a1:b2:c3"
+
+
+def _what_is_left(store: Store, device_id: int, group_id: int) -> dict[str, object]:
+    """Everything a removal is meant to take away, read straight from the
+    store: the device list, the device's group membership rows, the group's
+    recomputed commands, the device's unfinished Zigbee configuration, and
+    whether its address still resolves for incoming values."""
+    memberships = store._db.execute(
+        "SELECT COUNT(*) FROM device_group_member WHERE device_id = ?", (device_id,)
+    ).fetchone()[0]
+    return {
+        "listed": device_id in [device.id for device in store.devices()],
+        "memberships": memberships,
+        "group_commands": [command.slug for command in store.group_commands(group_id)],
+        "pending": store.zigbee_pending.pending_for(ZIGBEE_ADDRESS),
+        "resolves": store.device_id_for("zigbee", ZIGBEE_ADDRESS),
+    }
+
+
+async def test_a_zigbee_device_without_its_radio_can_be_forgotten_like_a_removal(zigbee_plug):
+    """No Zigbee stick any more - the user tried Zigbee and gave it up - and
+    every Zigbee tile answered 503 to its removal, forever.
+
+    `?forget_only=true`, the second step the 503 offers, forgets the device
+    without any radio, and leaves exactly what a normal removal through the
+    source leaves: measured side by side on two installations holding the
+    same plug in a group, with a pending configuration row. The value route
+    then answers for the plug's key exactly as it does after a removal.
+
+    Fault to prove it: in the forget-only branch, deactivate the device row
+    alone instead of calling `store.forget_device` (the membership, the
+    group's commands and the pending row stay)."""
+    left = {}
+    for with_zigbee in (True, False):
+        client, device_id, on_key, zigbee = await zigbee_plug(with_zigbee=with_zigbee)
+        store = zigbee.store
+        group = store.create_group("Plugs", [device_id])
+        store.zigbee_pending.mark_pending(ZIGBEE_ADDRESS, 1, 6)
+        before = _what_is_left(store, device_id, group.id)
+        query = "" if with_zigbee else "?forget_only=true"
+
+        response = await client.delete(f"/api/devices/{device_id}{query}")
+
+        assert response.status_code == 204, response.text
+        command = await client.post(f"/api/commands/{on_key}", json={"value": "1"})
+        left[with_zigbee] = {
+            "state": _what_is_left(store, device_id, group.id),
+            "command_status": command.status_code,
+        }
+        assert zigbee.removed == ([ZIGBEE_ADDRESS] if with_zigbee else [])
+    assert before["listed"] is True and before["memberships"] == 1 and before["pending"]
+    assert left[False] == left[True]
+    assert left[False]["state"] == {
+        "listed": False,
+        "memberships": 0,
+        "group_commands": [],
+        "pending": [],
+        "resolves": None,
+    }
+
+
+async def test_forgetting_is_refused_while_the_devices_source_is_configured(zigbee_plug, tmp_path):
+    """Forget-only exists for a technology with no source. With one, the
+    source is how a device is removed - and for Matter, whose matter-server
+    is always configured, forgetting a device the fabric still holds is the
+    silent leftover `api/devices.py`'s removal order exists to prevent.
+
+    Both technologies answer 409, nothing is removed anywhere, and the
+    device stays listed.
+
+    Fault to prove it: accept `forget_only` whether or not the source is
+    configured."""
+    client, zigbee_device, _, zigbee = await zigbee_plug(with_zigbee=True)
+    store = zigbee.store
+    snapshot = load_snapshot("ikea_grillplats_plug.json")
+    matter_snapshot = NodeSnapshot(
+        technology="matter",
+        address="77",
+        vendor_name=snapshot.vendor_name,
+        product_name=snapshot.product_name,
+        unique_id="matter-plug-77",
+        attributes=snapshot.attributes,
+    )
+    matter_device = store.register_device(matter_snapshot)
+
+    responses = [
+        await client.delete(f"/api/devices/{device_id}?forget_only=true")
+        for device_id in (matter_device, zigbee_device)
+    ]
+
+    assert [response.status_code for response in responses] == [409, 409]
+    assert "Matter" in responses[0].json()["detail"]
+    assert zigbee.removed == []
+    assert zigbee.fake_client_removed() == []
+    listed = [device.id for device in store.devices()]
+    assert matter_device in listed and zigbee_device in listed
 
 
 async def test_cmd_without_the_devices_source_is_503(zigbee_plug):

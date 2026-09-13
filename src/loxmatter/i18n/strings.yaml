@@ -639,6 +639,12 @@ api.control.fail_not_wired:
 api.devices.fail_no_matter_client:
   en: "No matter-server client configured — the bridge is running without a Matter connection"
   de: "Matter-Client nicht verfuegbar - die Bruecke laeuft ohne Verbindung zu matter-server"
+# `DELETE /api/devices/{id}?forget_only=true` for a device whose technology
+# HAS a configured source: that source is how the device is removed. Shown
+# when a stick was set up again while the forget-only offer was on screen.
+api.devices.forget_only_refused:
+  en: "{technology} is set up in this installation, so the device is removed through it. Remove it again."
+  de: "{technology} ist in dieser Installation eingerichtet, daher wird das Gerät darüber entfernt. Entfernen Sie es erneut."
 api.devices.manual_dataset_origin:
   # Appears as {url} in `otbr.validated_dataset`'s messages when the
   # dataset did not come from the Border Router but from the form. Ends up
@@ -1278,6 +1284,21 @@ web.devices.remove_confirm_groups_note:
     It also belongs to: {groups}. If it was the only member carrying a command, that command drops out of the group's intersection, and the group's virtual output for it answers 404 in Loxone from then on.
   de: |
     Es gehört außerdem zu: {groups}. War es das einzige Mitglied mit einem bestimmten Kommando, fällt dieses aus der Schnittmenge der Gruppe, und der für dieses Kommando zuständige virtuelle Ausgang der Gruppe antwortet in Loxone von da an mit 404.
+# The second step of removing a device whose technology has no configured
+# source - the 503 of `DELETE /api/devices/{id}` carrying "offer":
+# "forget_only" - shown on the device's tile with the two buttons below.
+# `{reason}` is the server's own sentence ("Zigbee is not set up in this
+# installation"), `{label}` the device's name. Honest about what is left
+# undone: the device was never asked to leave its network.
+web.devices.forget_only_offer:
+  en: "{reason}, so \"{label}\" could not be asked to leave its network. You can remove it from loxmatter only: it leaves the device list and the export, and the bridge stops sending its values to Loxone - but the device itself is not told. Factory-reset it before pairing it anywhere else."
+  de: "{reason}, daher konnte \"{label}\" nicht gebeten werden, sein Netz zu verlassen. Sie können es nur aus loxmatter entfernen: Es verschwindet aus der Geräteliste und dem Export, und die Brücke sendet seine Werte nicht mehr an Loxone – das Gerät selbst erfährt davon aber nichts. Setzen Sie es auf Werkseinstellungen zurück, bevor Sie es anderswo koppeln."
+web.devices.forget_only:
+  en: "Remove from loxmatter only"
+  de: "Nur aus loxmatter entfernen"
+web.devices.forget_only_keep:
+  en: "Keep it"
+  de: "Behalten"
 web.devices.commission_code_required:
   en: "Please enter a pairing code first."
   de: "Bitte zuerst einen Pairing-Code eingeben."

@@ -262,15 +262,22 @@ class UnauthorizedError extends Error {
  * error with no response from the server at all).
  */
 async function readErrorDetail(response) {
+  return (await readError(response)).message;
+}
+
+/** `readErrorDetail`, plus the machine-readable `offer` an error body may
+ * carry next to its `detail` - `"forget_only"` on the 503 of removing a
+ * device whose technology has no configured source. */
+async function readError(response) {
   try {
     const body = await response.json();
     if (body && typeof body.detail === "string") {
-      return body.detail;
+      return { message: body.detail, offer: typeof body.offer === "string" ? body.offer : null };
     }
   } catch {
     // Response was not JSON - the generic text below is then enough.
   }
-  return t("web.errors.http_status", { status: response.status });
+  return { message: t("web.errors.http_status", { status: response.status }), offer: null };
 }
 
 /**
@@ -316,12 +323,14 @@ async function requestJson(method, path, body) {
     throw new UnauthorizedError();
   }
   if (!response.ok) {
-    const error = new Error(await readErrorDetail(response));
+    const { message, offer } = await readError(response);
+    const error = new Error(message);
     // `status` is attached here, not just the text: `submitPassword`
     // below needs to be able to tell a 409 on `/auth/setup` apart from
     // any other failure, and the message text for that is not a reliable
     // anchor (it could change independently of the status code).
     error.status = response.status;
+    error.offer = offer;
     throw error;
   }
   if (response.status === 204) {
@@ -758,6 +767,12 @@ function app() {
     nowTick: Date.now(),
     labelDrafts: {},
     deviceActionError: null,
+    // A removal the server could not route to a radio - the device's
+    // technology has no configured source - and offered to forget locally
+    // instead: `{ id, label, reason }`, shown on that device's tile
+    // (`deviceForgetOfferFor()`), or null.
+    deviceForgetOffer: null,
+    deviceForgetBusy: false,
 
     // --- Groups (design 2026-09-10, section 6) -----------------------------
     //
@@ -2835,8 +2850,55 @@ function app() {
         return;
       }
       this.deviceActionError = null;
+      this.deviceForgetOffer = null;
       try {
         await this.request("DELETE", `/api/devices/${device.id}`);
+      } catch (error) {
+        if (error.status === 503 && error.offer === "forget_only") {
+          this.deviceForgetOffer = { id: device.id, label: device.label, reason: error.message };
+        } else {
+          this.deviceActionError = t("web.devices.remove_error", { message: error.message });
+        }
+        return;
+      }
+      await this.afterDeviceRemoved(device);
+    },
+
+    /** The second step of a removal the server offered to do without the
+     * device's radio (`deviceForgetOffer`): the device leaves the store, the
+     * export and Loxone's values, and is never told. The copy beside the
+     * button says so. */
+    async forgetDeviceLocally(device) {
+      if (this.deviceForgetBusy) return;
+      this.deviceForgetBusy = true;
+      this.deviceActionError = null;
+      try {
+        await this.request("DELETE", `/api/devices/${device.id}?forget_only=true`);
+      } catch (error) {
+        this.deviceForgetOffer = null;
+        this.deviceActionError = t("web.devices.remove_error", { message: error.message });
+        return;
+      } finally {
+        this.deviceForgetBusy = false;
+      }
+      this.deviceForgetOffer = null;
+      await this.afterDeviceRemoved(device);
+    },
+
+    /** Whether the forget-only offer belongs to this tile. */
+    deviceForgetOfferFor(device) {
+      return this.deviceForgetOffer !== null && this.deviceForgetOffer.id === device?.id;
+    },
+
+    deviceForgetOfferText() {
+      const offer = this.deviceForgetOffer;
+      return offer === null ? "" : t("web.devices.forget_only_offer", { reason: offer.reason, label: offer.label });
+    },
+
+    /** What the page does once a device is gone from the bridge, however it
+     * was removed. */
+    async afterDeviceRemoved(device) {
+      try {
         this.devices = this.devices.filter((d) => d.id !== device.id);
         delete this.controlsBySubject[device.id];
         delete this.signalsByDevice[device.id];

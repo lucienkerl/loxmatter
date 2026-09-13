@@ -1620,11 +1620,22 @@ class ZigbeeSource:
         waits for a confirmation here: a sleeping battery device never sends
         one, and holding the DELETE open for it would be the same bug
         `bounded_source_call` exists to prevent. The removal copy in the web
-        UI says exactly this."""
-        device = self._require_device(address)
+        UI says exactly this.
+
+        **An address zigpy does not know is already removed**, which is
+        zigpy's own answer: `ControllerApplication.remove()` returns at once
+        for an unknown IEEE (zigpy 2.2.0). A stored device whose radio came
+        back with a new or reset database, or another coordinator, is not in
+        the network any more, and answering "unknown Zigbee device" left its
+        tile undeletable for good. The link still has to be up: with the
+        stick away, nothing can be said about what zigpy knows."""
         app = self._require_app()
-        with _as_device_error():
-            await app.remove(device.ieee)
+        device = self._device_or_none(address)
+        if device is not None:
+            with _as_device_error():
+                await app.remove(device.ieee)
+        else:
+            logger.info("Zigbee device %s is not in the network any more - removing it", address)
         self._forget(address)
 
     def _forget(self, address: str) -> None:

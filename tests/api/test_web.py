@@ -14697,3 +14697,115 @@ def test_adding_a_row_keeps_its_place_among_the_open_rows():
     )
     assert values["before"][0] == "00:15:8d:00:07:77:88:99"
     assert values["after"] == values["before"]
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+async def test_a_device_without_its_radio_offers_to_be_removed_from_loxmatter_only(api):
+    """No Zigbee stick any more, and "Remove" on a Zigbee tile answered 503
+    forever. The 503 now carries `"offer": "forget_only"`, and the tile the
+    user removed from shows the second step: the server's reason, the
+    honest copy, **Remove from loxmatter only** and **Keep it**.
+
+    Measured through the served markup and the REAL `removeDevice()`, with
+    the bindings evaluated the way Alpine does (`boundTrue` for
+    `:disabled`): the offer shows on that tile and no other; its buttons are
+    enabled, and disabled while the forget request is on its way; the
+    button's handler sends `?forget_only=true` and the tile goes. A 503
+    without the offer stays the plain removal error. And `requestJson`
+    carries the offer from a real response body.
+
+    Fault to prove it: bind a button's `:disabled` to `deviceForgetOffer.busy`
+    (undefined through a dot, which Alpine binds as a set attribute), key the
+    offer on any tile, or drop `error.offer` from `requestJson`."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+    offers = [
+        (attributes, ancestors)
+        for tag, attributes, ancestors in _served_elements(page)
+        if tag == "div" and "device-forget-offer" in attributes.get("class", "").split()
+    ]
+    assert len(offers) == 1, offers
+    offer = offers[0][0]
+    buttons = [
+        attributes
+        for tag, attributes, ancestors in _served_elements(page)
+        if tag == "button"
+        and any("device-forget-offer" in a.get("class", "").split() for _, a in ancestors)
+    ]
+    assert len(buttons) == 2, buttons
+    text = next(
+        attributes
+        for tag, attributes, ancestors in _served_elements(page)
+        if tag == "p"
+        and any("device-forget-offer" in a.get("class", "").split() for _, a in ancestors)
+    )
+    strings = _web_strings()
+    values = _app_state(
+        _BINDINGS_JS
+        + "globalThis.window = { location: { hash: '' }, history: { replaceState() {} }, confirm: () => true };"
+        + f"const offer = {json.dumps(offer)}; const buttons = {json.dumps(buttons)};"
+        + f"const text = {json.dumps(text)};"
+        + """
+        const plug = { id: 7, label: 'Hall plug', room: null };
+        const lamp = { id: 8, label: 'Desk lamp', room: null };
+        state.devices = [plug, lamp];
+        const deletes = []; let release = null; let offered = true;
+        const realRequest = state.request;
+        state.request = async (method, path) => {
+          if (method === 'DELETE') {
+            deletes.push(path);
+            if (!path.includes('forget_only')) {
+              const error = new Error('Zigbee is not set up in this installation');
+              error.status = 503; error.offer = offered ? 'forget_only' : null;
+              throw error;
+            }
+            await new Promise((resolve) => { release = resolve; });
+            return null;
+          }
+          return [];
+        };
+        const disabled = (device) => buttons.map((b) => boundTrue(b[':disabled'], { device }));
+        (async () => {
+          const out = {};
+          await state.removeDevice(plug);
+          out.shown = [run(offer['x-show'], { device: plug }), run(offer['x-show'], { device: lamp })];
+          out.text = run(text['x-text'], { device: plug });
+          out.idle = disabled(plug);
+          const forget = buttons.find((b) => b['@click'].startsWith('forgetDeviceLocally'));
+          const pending = exec(forget['@click'], { device: plug });
+          await new Promise((resolve) => setImmediate(resolve));
+          out.busy = disabled(plug);
+          release();
+          await pending;
+          await new Promise((resolve) => setImmediate(resolve));
+          out.deletes = deletes.splice(0);
+          out.after = { devices: state.devices.map((d) => d.id), shown: run(offer['x-show'], { device: plug }) };
+          offered = false;
+          await state.removeDevice(lamp);
+          out.plain = { shown: run(offer['x-show'], { device: lamp }), error: state.deviceActionError };
+
+          globalThis.fetch = async () => ({ ok: false, status: 503,
+            json: async () => ({ detail: 'Zigbee is not set up in this installation', offer: 'forget_only' }) });
+          try { await realRequest.call(state, 'DELETE', '/api/devices/7'); } catch (error) {
+            out.fromBody = { status: error.status, offer: error.offer, message: error.message };
+          }
+          console.log(JSON.stringify(out));
+        })();
+        """,
+        translations=strings,
+    )
+    assert values["shown"] == [True, False]
+    assert "Zigbee is not set up in this installation" in values["text"]
+    assert "Hall plug" in values["text"]
+    assert "factory-reset" in values["text"].lower()
+    assert values["idle"] == [False, False]
+    assert values["busy"] == [True, True]
+    assert values["deletes"] == ["/api/devices/7", "/api/devices/7?forget_only=true"]
+    assert values["after"] == {"devices": [8], "shown": False}
+    assert values["plain"]["shown"] is False
+    assert "Zigbee is not set up" in values["plain"]["error"]
+    assert values["fromBody"] == {
+        "status": 503,
+        "offer": "forget_only",
+        "message": "Zigbee is not set up in this installation",
+    }
