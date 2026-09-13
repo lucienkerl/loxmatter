@@ -1535,6 +1535,41 @@ async def test_every_open_of_the_built_zigbee_source_asks_the_thread_lock_out(
     assert guard(ZIGBEE_PATH).key == "api.errors.zigbee_open_thread_unknown"
 
 
+async def test_zigpy_opens_the_stick_under_the_host_dev_mount_the_run_binds(monkeypatch, tmp_path):
+    """The stored stick is a HOST path, `/dev/serial/by-id/...`, and the
+    bridge's container has no such directory: its own `/dev` is Docker's
+    private tmpfs, and the host's `/dev` is mounted at `/host/dev` only.
+    zigpy was handed the host path unchanged, so on the shipped container
+    every open failed with `FileNotFoundError` - "the Zigbee stick is no
+    longer there" - while the card, which resolves through the mount,
+    reported the stick present.
+
+    What zigpy opens is the node under the `radios_host_dev` the production
+    `_run` binds; what the source keeps as its own path - for the Thread
+    guard, the log line and the API - is still the host path.
+
+    Fault to prove it: drop `host_dev=` from `_run`'s `build_source`
+    binding, or put `self._path` back into `_config()`."""
+    _install_run_spies(monkeypatch)
+    host_dev, sys_root = _host_with_the_zbt2(tmp_path)
+    store = Store(tmp_path / "t.sqlite")
+
+    captured = await _run_once(
+        monkeypatch,
+        store,
+        zigbee_device=ZBT2_PATH,
+        radios_host_dev=host_dev,
+        radios_sys_root=sys_root,
+    )
+
+    zigbee = captured["sources"].get("zigbee")
+    opened = zigbee._config()["device"]["path"]
+    assert opened.startswith(f"{host_dev}/")
+    assert opened == f"{host_dev}/serial/by-id/{ZBT2_NAME}"
+    assert Path(opened).exists()
+    assert zigbee._path == ZBT2_PATH
+
+
 @pytest.mark.parametrize("matter_data_dir", [None, "matter-data"])
 async def test_the_zigbee_database_follows_the_store_and_never_the_matter_data_dir(
     monkeypatch, tmp_path, matter_data_dir

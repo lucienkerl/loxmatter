@@ -120,6 +120,30 @@ def test_only_the_bridge_and_the_updater_see_the_host_dev_tree_read_only() -> No
             assert mounts == [], name
 
 
+def test_the_bridge_looks_for_the_hosts_dev_where_compose_mounts_it() -> None:
+    """The bridge resolves and opens every stick under the directory it is
+    told the host's `/dev` sits at - `radios_host_dev`, whose default lives
+    in `cli._run` and again in `build_app`. Nothing passes it on the command
+    line, so the default IS the production value, and it has to be the
+    target compose binds `/dev` to. A mount moved to `/host-dev` (the
+    spelling the design first used) would leave the card listing no stick
+    and zigpy opening nothing, with every test still green.
+
+    Fault to prove it: change the bind to `/dev:/host-dev:ro`, or the
+    default of `radios_host_dev` in `cli._run`."""
+    import inspect
+
+    from loxmatter import cli
+    from loxmatter.loxone import server
+
+    volumes = [str(v) for v in _stack()["services"]["loxmatter"]["volumes"]]
+    targets = [v.split(":")[1] for v in volumes if v.split(":")[0] == "/dev"]
+    assert len(targets) == 1
+    for function in (cli._run, server.build_app):
+        default = inspect.signature(function).parameters["radios_host_dev"].default
+        assert PurePosixPath(default.as_posix()) == PurePosixPath(targets[0]), function
+
+
 def test_the_bridge_may_open_serial_devices_without_naming_one():
     """Design 2026-09-12 section 8.1. A `devices:` entry cannot be used
     here: it fails the WHOLE stack at `docker compose up` when the node is

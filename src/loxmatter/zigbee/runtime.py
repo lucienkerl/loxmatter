@@ -100,6 +100,7 @@ async def build_zigbee_source(
     on_connection_change: Callable[[bool], Awaitable[None]] | None,
     store: Store,
     open_guard: OpenGuard | None = None,
+    host_dev: Path | None = None,
 ) -> ZigbeeSource | None:
     """The one place a `ZigbeeSource` is built - at startup and on every
     radio change alike, now that `ZigbeeRuntime` owns both. Two call sites
@@ -157,6 +158,7 @@ async def build_zigbee_source(
         thread_channel=channel,
         store=store,
         open_guard=open_guard,
+        host_dev=host_dev,
     )
 
 

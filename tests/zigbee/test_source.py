@@ -341,6 +341,44 @@ async def test_a_stick_the_open_guard_refuses_is_never_touched(build) -> None:
     await harness.source.disconnect()
 
 
+def test_zigpy_opens_the_node_under_the_mount_and_falls_back_to_the_given_path(
+    tmp_path: Path,
+) -> None:
+    """Three installations, one rule.
+
+    - In the container the stick is opened under the host-dev mount, and
+      the source still calls it by its host path.
+    - Outside the container (`--zigbee-device /dev/ttyUSB0` on bare metal)
+      there is nothing under the mount, and the given path is what exists.
+    - A stick plugged in after the source was built appears under the
+      mount later, so the choice is made per open and not once.
+
+    Fault to prove it: always map (the bare-metal half opens a path that
+    does not exist), never map (the container half fails), or decide once
+    in `__init__` (the hotplug half keeps the host path)."""
+    host_dev = tmp_path / "host-dev"
+    by_id = "/dev/serial/by-id/usb-Itead_Sonoff_Zigbee_3.0_USB_Dongle_Plus_V2-if00-port0"
+
+    def source(path: str) -> ZigbeeSource:
+        return ZigbeeSource(
+            path=path,
+            fingerprint=FINGERPRINT,
+            database=tmp_path / "zigbee.sqlite",
+            host_dev=host_dev,
+        )
+
+    bare_metal = source("/dev/ttyUSB0")
+    assert bare_metal._config()["device"]["path"] == "/dev/ttyUSB0"
+
+    hotplugged = source(by_id)
+    assert hotplugged._config()["device"]["path"] == by_id
+    (host_dev / "serial" / "by-id").mkdir(parents=True)
+    (host_dev / "ttyUSB1").write_text("", encoding="utf-8")
+    (host_dev / "serial" / "by-id" / Path(by_id).name).symlink_to(Path("../..") / "ttyUSB1")
+    assert hotplugged._config()["device"]["path"] == f"{host_dev}/serial/by-id/{Path(by_id).name}"
+    assert hotplugged._path == by_id
+
+
 async def test_each_successful_connect_logs_the_firmware_once_at_info(build, caplog) -> None:
     """The hardware checklist asks for the coordinator's firmware, and
     bellows logs its stack version only at DEBUG while the bridge logs at

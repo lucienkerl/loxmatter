@@ -75,6 +75,7 @@ import asyncio
 import contextlib
 import errno
 import logging
+import os
 from collections.abc import Awaitable, Callable, Iterator
 from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime, timedelta
@@ -85,6 +86,7 @@ from typing import Any, Final, Literal
 from loxmatter import i18n
 from loxmatter.matter.models import NodeSnapshot, Technology
 from loxmatter.radios.fingerprints import Fingerprint
+from loxmatter.radios.inventory import under_host_dev
 from loxmatter.sources import DeviceCall, DeviceUnreachableError, RuntimeEventHandler
 from loxmatter.timestamps import now_iso
 from loxmatter.zigbee.availability import AvailabilityChecker, is_available
@@ -548,8 +550,16 @@ class ZigbeeSource:
         thread_channel: int | None = None,
         store: Any | None = None,
         open_guard: OpenGuard | None = None,
+        host_dev: Path | None = None,
     ) -> None:
+        # The stick as the HOST names it - what the Thread guard compares,
+        # what the log line prints and what the API reports. Never what zigpy
+        # opens: see `_open_path`.
         self._path = path
+        # Where the host's `/dev` is mounted inside this container, or `None`
+        # where nothing is mounted (tests about other things, and a bridge
+        # started by hand outside the container).
+        self._host_dev = host_dev
         # `None` only where nothing is guarding - tests about other things.
         # Production passes `thread_lockout.open_refusal` through
         # `build_zigbee_source`, so the stored stick is checked against the
@@ -708,6 +718,31 @@ class ZigbeeSource:
             state=state, attempts=attempts, error=error, changed_at=now_iso()
         )
 
+    def _open_path(self) -> str:
+        """The name zigpy opens the stick by.
+
+        The stored path is the HOST's `/dev/serial/by-id/...`, and the
+        bridge's container has no such directory: its own `/dev` is
+        Docker's private tmpfs, and the host's `/dev` is mounted at
+        `host_dev`. Handed the host path, zigpy failed every open with
+        `FileNotFoundError`, which the card reported as a stick that is no
+        longer there while listing it as present. So the node under the
+        mount is opened - rewritten by `radios.inventory.under_host_dev`,
+        the same function the Thread guard resolves through.
+
+        **The given path is kept when the mapped node does not exist.** A
+        bridge run outside the container has no mount, and
+        `--zigbee-device /dev/ttyUSB0` there names a node that is really at
+        `/dev/ttyUSB0`. A stick that is missing under the mount and at its
+        own path fails either way, with the same "stick missing" sentence.
+
+        Decided on every open rather than once, because a stick plugged in
+        after the source was built appears under the mount later."""
+        if self._host_dev is None:
+            return self._path
+        mapped = under_host_dev(self._path, self._host_dev)
+        return mapped if mapped != self._path and os.path.exists(mapped) else self._path
+
     def _config(self) -> dict[str, Any]:
         """The zigpy configuration, every non-default value with its reason.
 
@@ -718,7 +753,7 @@ class ZigbeeSource:
         return {
             "_radio_type": self._fingerprint.radio_type,
             CONF_DEVICE: {
-                CONF_DEVICE_PATH: self._path,
+                CONF_DEVICE_PATH: self._open_path(),
                 CONF_DEVICE_BAUDRATE: self._fingerprint.baudrate,
                 # "hardware" or "software", straight from the fingerprint
                 # table: zigpy maps them to rtscts and xonxoff respectively

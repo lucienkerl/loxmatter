@@ -716,6 +716,10 @@ async def _run(
         database=zigbee_database_beside(store.path),
         on_connection_change=runtime.set_zigbee_connected,
         store=store,
+        # The stored stick is a host path; zigpy opens it under this mount,
+        # the same tree the guard below resolves through. See
+        # `ZigbeeSource._open_path`.
+        host_dev=radios_host_dev,
         # Every open of the stored stick asks the Thread report first - the
         # same trees the radios routes scan, so the two cannot disagree
         # about which stick Thread is on. See `radios/thread_lockout.py`.

@@ -157,6 +157,24 @@ def scan_bluetooth(sys_root: Path) -> list[BluetoothAdapter]:
     return sorted(adapters, key=lambda adapter: adapter.index)
 
 
+def under_host_dev(path: str, host_dev: Path) -> str:
+    """The name a host-visible `/dev/...` path has inside the container.
+
+    The ONE place the prefix is rewritten. The bridge's container has the
+    host's `/dev` bind-mounted at `host_dev` and its own `/dev` is Docker's
+    private tmpfs, which carries no `serial/by-id` - so every path the card
+    lists, the settings store keeps and the logs name is a HOST path, and
+    anything that stats or opens one has to go through here first. The
+    rewrite is the one `deploy/updater/radios-once.sh` already performs
+    (`"$HOST_DEV${WANT_DEVICE#/dev}"`).
+
+    A path outside `/dev` comes back unchanged: there is nothing mounted to
+    rewrite it onto."""
+    if path == "/dev" or path.startswith("/dev/"):
+        return str(host_dev) + path[len("/dev") :]
+    return path
+
+
 def device_identity(
     path: str,
     host_dev: Path,
@@ -167,10 +185,8 @@ def device_identity(
 
     `path` is always a path as the HOST sees it - `/dev/ttyUSB0` from the
     installer's `.env`, or a `/dev/serial/by-id/...` entry from this card.
-    The bridge's own container sees neither: it has the host's `/dev`
-    bind-mounted at `host_dev`, so the prefix is rewritten exactly the way
-    `deploy/updater/radios-once.sh` already does it
-    (`"$HOST_DEV${WANT_DEVICE#/dev}"`).
+    The bridge's own container sees neither, so the path is resolved under
+    `host_dev` through `under_host_dev`.
 
     `stat` follows symlinks, which is the point: a by-id entry is a symlink
     to the `ttyUSB*` node, so both names of one stick resolve to the same
@@ -188,9 +204,8 @@ def device_identity(
     alternative is to compare path strings, which is the very bug this
     function exists to prevent.
     """
-    mapped = str(host_dev) + path[len("/dev") :] if path.startswith("/dev") else path
     try:
-        info = stat(mapped)
+        info = stat(under_host_dev(path, host_dev))
     except OSError:
         return None
     if not S_ISCHR(info.st_mode):
