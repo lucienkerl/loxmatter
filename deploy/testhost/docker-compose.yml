@@ -43,7 +43,10 @@ name: loxmatter-testhost
 
 services:
   otbr:
-    image: openthread/otbr:latest
+    # OTBR_IMAGE in .env picks another image, e.g. one built locally with
+    # OpenThread's RCP restoration; unset or empty is the official image.
+    # See .env.example.
+    image: ${OTBR_IMAGE:-openthread/otbr:latest}
     container_name: otbr
     # Only with the "thread" profile active (2026-09-05). This service
     # passes through a real device via `devices:` below - if the radio

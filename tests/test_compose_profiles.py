@@ -41,6 +41,14 @@ def test_only_otbr_needs_the_radio_module() -> None:
         assert "devices" not in service, name
 
 
+def test_the_otbr_image_can_be_chosen_from_the_env_file() -> None:
+    # An image built with OpenThread's RCP restoration, which the official
+    # one lacks, has to be selectable without editing this file - an edit
+    # here would be overwritten by the next update. Unset or empty keeps
+    # the official image.
+    assert _stack()["services"]["otbr"]["image"] == "${OTBR_IMAGE:-openthread/otbr:latest}"
+
+
 def test_the_bridge_runs_from_a_published_image() -> None:
     # Before 0.2.0, Compose built the image on the Pi - five to ten
     # minutes, with PyPI and memory as sources of failure in the middle of an update.
