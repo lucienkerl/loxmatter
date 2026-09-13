@@ -52,6 +52,10 @@ def _device(device_id: int, label: str) -> StoredDevice:
         room=None,
         device_types=None,
         network_features=None,
+        vendor_name=None,
+        product_name=None,
+        firmware=None,
+        serial_number=None,
     )
 
 

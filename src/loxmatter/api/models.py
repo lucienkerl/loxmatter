@@ -117,6 +117,26 @@ class DeviceOut(BaseModel):
     category_rank: int
 
 
+class EndpointClustersOut(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    endpoint: int
+    clusters: list[str]
+
+
+class DeviceExpertOut(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    technology: str
+    transport: str | None
+    address: str
+    vendor: str | None
+    model: str | None
+    firmware: str | None
+    serial: str | None
+    endpoints: list[EndpointClustersOut]
+
+
 class SignalPatch(BaseModel):
     """What can be changed on a signal at all.
 

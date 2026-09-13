@@ -86,8 +86,10 @@ from fastapi.responses import JSONResponse
 from loxmatter import i18n
 from loxmatter.api.models import (
     CommissionRequest,
+    DeviceExpertOut,
     DeviceOut,
     DevicePatch,
+    EndpointClustersOut,
     RoomRename,
     SignalOut,
     SignalPatch,
@@ -101,6 +103,7 @@ from loxmatter.matter.otbr import (
     validated_dataset,
 )
 from loxmatter.model.store import Store, StoredDevice, StoredSignal, UnknownDeviceError
+from loxmatter.profiles.catalog import cluster_name
 from loxmatter.profiles.categories import CATEGORY_RANK, category_for
 from loxmatter.profiles.endpoints import endpoint_labels
 from loxmatter.profiles.table import Exportability, is_exportable
@@ -261,6 +264,22 @@ def _device_out(device: StoredDevice, store: Store, runtime: RuntimeValues) -> D
     )
 
 
+def _endpoints_summary(signals: list[StoredSignal]) -> list[EndpointClustersOut]:
+    """One entry per endpoint, naming the clusters present on it -
+    every signal's cluster, not just functional ones, since this is a
+    structural inventory of the device, not a preview of what it does."""
+    by_endpoint: dict[int, set[int]] = {}
+    for signal in signals:
+        by_endpoint.setdefault(signal.ref.endpoint, set()).add(signal.ref.cluster_id)
+    return [
+        EndpointClustersOut(
+            endpoint=endpoint,
+            clusters=[cluster_name(cid) or f"Cluster {cid}" for cid in sorted(cluster_ids)],
+        )
+        for endpoint, cluster_ids in sorted(by_endpoint.items())
+    ]
+
+
 def _commissioning_detail(exc: CommissioningError, missing_dataset_reason: str | None) -> str:
     """The message that reaches the UI.
 
@@ -323,6 +342,21 @@ def build_device_router(
         # `_signal_out`.
         labels = endpoint_labels(device.device_types)
         return [_signal_out(signal, values, labels) for signal in store.signals(device_id)]
+
+    @router.get("/devices/{device_id}/expert")
+    async def get_expert(device_id: int) -> DeviceExpertOut:
+        device = _require_device(device_id)
+        signals = store.signals(device_id)
+        return DeviceExpertOut(
+            technology=device.technology,
+            transport=transport_for(device.technology, device.network_features),
+            address=device.address,
+            vendor=device.vendor_name,
+            model=device.product_name,
+            firmware=device.firmware,
+            serial=device.serial_number,
+            endpoints=_endpoints_summary(signals),
+        )
 
     @router.patch("/devices/{device_id}")
     async def patch_device(device_id: int, patch: DevicePatch) -> DeviceOut:

@@ -141,7 +141,18 @@ DEFAULT_LISTEN_PORT = 8080
 # fresh database via `_SCHEMA`, so the migration is only needed for existing
 # ones. A NEW TABLE is the safest shape the rollback promise above allows:
 # version-9 code never names it, so it cannot trip over it.
-_SCHEMA_VERSION = 10
+# Version 11 (Expert Settings design, 2026-09-13, Task 2 correction) adds
+# `device.vendor_name`, `device.product_name`, `device.firmware` and
+# `device.serial_number`, see `_migrate_to_v11` - four columns in one step,
+# like `_migrate_to_v7`'s `room`/`device_types`, all belonging to the same
+# effort. No backfill: an already-registered device gets `NULL` for all
+# four forever, the same choice already made for `room` - these are
+# captured once at registration time from the commissioning snapshot, not
+# re-derived from a live value on every request (the original approach,
+# reading them from `runtime.last_values_for()`, cannot work: text values
+# never survive into a Loxone-mapped signal value in the first place, see
+# the plan's "Task 2 Correction" section).
+_SCHEMA_VERSION = 11
 
 
 def schema_version() -> int:
@@ -170,7 +181,11 @@ CREATE TABLE IF NOT EXISTS device (
     updated_at       TEXT,
     room             TEXT,
     device_types     TEXT,
-    network_features INTEGER
+    network_features INTEGER,
+    vendor_name      TEXT,
+    product_name     TEXT,
+    firmware         TEXT,
+    serial_number    TEXT
 );
 CREATE TABLE IF NOT EXISTS signal (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -785,6 +800,23 @@ def _migrate_to_v10(db: sqlite3.Connection) -> None:
     )
 
 
+def _migrate_to_v11(db: sqlite3.Connection) -> None:
+    """Adds device.vendor_name/product_name/firmware/serial_number
+    (Expert Settings design, 2026-09-13, Task 2 correction).
+
+    Four columns in one step, like _migrate_to_v7's room/device_types -
+    all belong to the same effort. No backfill: an already-registered
+    device gets NULL for all four forever, the same choice already made
+    for room - these are captured once at registration time, not
+    re-derived from a live value on every request (see the plan's "Task
+    2 Correction" section for why the live-value approach doesn't
+    work)."""
+    _add_column_if_missing(db, "device", "vendor_name", "TEXT")
+    _add_column_if_missing(db, "device", "product_name", "TEXT")
+    _add_column_if_missing(db, "device", "firmware", "TEXT")
+    _add_column_if_missing(db, "device", "serial_number", "TEXT")
+
+
 # Migrations in order, applied from whichever version is stored - to extend
 # for a later schema change: simply append, with the next version number as
 # the key.
@@ -799,6 +831,7 @@ _MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     8: _migrate_to_v8,
     9: _migrate_to_v9,
     10: _migrate_to_v10,
+    11: _migrate_to_v11,
 }
 
 
@@ -1056,6 +1089,26 @@ def _normalized_room(room: str | None) -> str | None:
     return room.strip() or None
 
 
+def _blank_to_none(value: str) -> str | None:
+    """A string with its surrounding whitespace trimmed, or `None` if
+    nothing is left - the same "trim then empty becomes None" rule
+    `_normalized_room` already applies to rooms, for vendor/product names
+    captured once at registration (Expert Settings design, 2026-09-13)."""
+    trimmed = value.strip()
+    return trimmed or None
+
+
+def _text_attribute(snapshot: NodeSnapshot, path: str) -> str | None:
+    """A Basic Information attribute's value from the snapshot, if it is
+    actually a non-blank string - `None` otherwise (not reported, or not
+    a string at all). Matter fills this in when the device reports the
+    attribute; Zigbee's `build_snapshot` never writes a firmware or
+    serial path at all (Expert Settings design, 2026-09-13, Task 2
+    correction), so this is always `None` for a Zigbee device."""
+    value = snapshot.attributes.get(path)
+    return _blank_to_none(value) if isinstance(value, str) else None
+
+
 @dataclass(frozen=True)
 class StoredDevice:
     """A row from `device` (Spec 5) - for the device API.
@@ -1100,6 +1153,16 @@ class StoredDevice:
     # a device that reports none or has not been backfilled yet. Stored raw
     # for the reason `device_types` is - see `profiles/transport.py`.
     network_features: int | None
+    # Vendor, model, firmware version, and serial number, captured once at
+    # registration time from the commissioning snapshot's Basic
+    # Information data - never re-derived afterward (Expert Settings
+    # design, 2026-09-13, Task 2 correction). `None` means "not reported
+    # by the device" - always true of firmware/serial_number for a Zigbee
+    # device today, since nothing in zigbee/translate.py captures either.
+    vendor_name: str | None
+    product_name: str | None
+    firmware: str | None
+    serial_number: str | None
 
 
 @dataclass(frozen=True)
@@ -1314,8 +1377,9 @@ class Store:
         cur = self._db.execute(
             "INSERT INTO device"
             " (unique_id, node_id, technology, address, label, udp_port, updated_at, room,"
-            " device_types, network_features)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            " device_types, network_features, vendor_name, product_name, firmware,"
+            " serial_number)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 identity,
                 self._legacy_node_id_for(technology, address),
@@ -1327,6 +1391,10 @@ class Store:
                 _normalized_room(room),
                 _encode_device_types(device_types_by_endpoint(snapshot)),
                 network_features_of(snapshot),
+                _blank_to_none(snapshot.vendor_name),
+                _blank_to_none(snapshot.product_name),
+                _text_attribute(snapshot, "0/40/10"),
+                _text_attribute(snapshot, "0/40/15"),
             ),
         )
         self._db.commit()
@@ -1425,6 +1493,10 @@ class Store:
             network_features=(
                 None if row["network_features"] is None else int(row["network_features"])
             ),
+            vendor_name=row["vendor_name"],
+            product_name=row["product_name"],
+            firmware=row["firmware"],
+            serial_number=row["serial_number"],
         )
 
     def devices(self) -> list[StoredDevice]:

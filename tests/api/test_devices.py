@@ -23,6 +23,9 @@ from loxmatter.loxone.server import build_app
 from loxmatter.matter.client import CommissioningError, MatterUnavailableError
 from loxmatter.matter.otbr import ThreadDatasetUnavailableError
 from loxmatter.model.store import Store
+from loxmatter.zigbee.translate import DeviceFacts, EndpointFacts, build_snapshot
+
+_ZLL_PROFILE = 0xC05E
 
 
 @pytest.fixture
@@ -73,6 +76,117 @@ async def button_api(tmp_path, no_invoke, fake_runtime, fake_client, fake_otbr):
         await authenticate(store, c)
         yield c, store, device_id
     store.close()
+
+
+@pytest.fixture
+async def zigbee_api(tmp_path, no_invoke, fake_runtime, fake_client, fake_otbr):
+    """A Zigbee device, built the same way as
+    `tests/zigbee/test_zigbee_translate.py`'s `_lamp()` helper: there is
+    no Zigbee stick on the test Pi (design 2026-09-12, section 10.3), so
+    every Zigbee-side test in this repo builds `DeviceFacts` by hand
+    rather than loading a recorded snapshot."""
+    store = Store(tmp_path / "t.sqlite")
+    facts = DeviceFacts(
+        ieee="00:12:4b:00:1c:a1:b2:c3",
+        manufacturer="IKEA of Sweden",
+        model="TRADFRI bulb",
+        is_mains_powered=True,
+        available=True,
+        quirk_applied=False,
+        endpoints=(
+            EndpointFacts(
+                endpoint=1,
+                profile_id=_ZLL_PROFILE,
+                device_type=0x0210,
+                in_cluster_ids=frozenset({0x0006, 0x0008}),
+                attributes={(0x0006, 0x0000): True, (0x0008, 0x0000): 254},
+            ),
+        ),
+    )
+    snapshot = build_snapshot(facts)
+    device_id = store.register_device(snapshot)
+    store.register_signals(device_id, snapshot)
+    store.register_commands(device_id, extract_commands(snapshot))
+    app = build_app(
+        store, no_invoke, fake_runtime(store), client=fake_client, thread_dataset_source=fake_otbr
+    )
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
+        await authenticate(store, c)
+        yield c, store, device_id
+    store.close()
+
+
+async def test_expert_reads_vendor_model_and_firmware_from_basic_information(api):
+    """`tests/fixtures/nodes/ikea_grillplats_plug.json` carries
+    0/40/1="IKEA of Sweden", 0/40/3="GRILLPLATS Plug", 0/40/10="1.4.6",
+    and no 0/40/15 at all - a real device, both the normal case and the
+    "device never reported this" case in one fixture."""
+    client, _, device_id, _ = api
+
+    response = await client.get(f"/api/devices/{device_id}/expert")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["technology"] == "matter"
+    assert data["address"] == "3"
+    assert data["vendor"] == "IKEA of Sweden"
+    assert data["model"] == "GRILLPLATS Plug"
+    assert data["firmware"] == "1.4.6"
+    assert data["serial"] is None
+
+
+async def test_expert_endpoints_list_matter_clusters_by_endpoint(api):
+    """Endpoint 0 of the plug fixture carries clusters
+    {29, 31, 40, 42, 48, 49, 51, 53, 60, 62, 63} (11 total), endpoint 1
+    {3, 4, 6, 29} (4 total), endpoint 2 {29, 144, 145} (3 total) - counts
+    read off `store.signals()`, not the raw device JSON: endpoint 2 also
+    carries cluster 156 (Power Topology) in the fixture, but every one of
+    its attributes is global/metadata, so `extract_signals` never turns
+    it into a stored signal, and `_endpoints_summary` never sees it. Only
+    the cluster ids this plan independently verified against the
+    installed chip SDK are asserted by name; the rest are covered by the
+    count."""
+    client, _, device_id, _ = api
+
+    response = await client.get(f"/api/devices/{device_id}/expert")
+
+    by_endpoint = {e["endpoint"]: e["clusters"] for e in response.json()["endpoints"]}
+    assert "Basic Information" in by_endpoint[0]
+    assert "Descriptor" in by_endpoint[0]
+    assert len(by_endpoint[0]) == 11
+    assert "On Off" in by_endpoint[1]
+    assert len(by_endpoint[1]) == 4
+    assert "Electrical Power Measurement" in by_endpoint[2]
+    assert "Electrical Energy Measurement" in by_endpoint[2]
+    assert len(by_endpoint[2]) == 3
+
+
+async def test_expert_labels_a_zigbee_devices_address_as_its_ieee_address(zigbee_api):
+    """Zigbee's `address` is already `facts.ieee` (`zigbee/translate.py`)
+    and its manufacturer/model are written to the same cluster-40 paths
+    Matter uses (`_VENDOR_NAME_PATH`/`_PRODUCT_NAME_PATH`,
+    `zigbee/translate.py:431-436`) - no separate code path needed for
+    either. Firmware and serial are always null for Zigbee: nothing in
+    `zigbee/translate.py` ever writes a SoftwareVersionString (0/40/10)
+    or SerialNumber (0/40/15) signal."""
+    client, _, device_id = zigbee_api
+
+    response = await client.get(f"/api/devices/{device_id}/expert")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["technology"] == "zigbee"
+    assert data["address"] == "00:12:4b:00:1c:a1:b2:c3"
+    assert data["vendor"] == "IKEA of Sweden"
+    assert data["model"] == "TRADFRI bulb"
+    assert data["firmware"] is None
+    assert data["serial"] is None
+
+
+async def test_expert_yields_404_for_an_unknown_device(api):
+    client, _, _, _ = api
+    assert (await client.get("/api/devices/999/expert")).status_code == 404
 
 
 async def test_a_signal_carries_its_endpoint_cluster_and_endpoint_label(button_api):
