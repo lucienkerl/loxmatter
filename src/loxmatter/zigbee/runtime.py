@@ -50,7 +50,7 @@ import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 from pathlib import Path
-from typing import cast
+from typing import Final, cast
 
 from loxmatter.loxone.runtime import Runtime
 from loxmatter.matter.otbr import current_thread_channel
@@ -67,6 +67,25 @@ logger = logging.getLogger(__name__)
 # What `build_source` looks like once `cli._run` has bound everything that
 # never changes between a startup build and an apply-time rebuild.
 SourceBuilder = Callable[[ZigbeeRadioSettings], Awaitable["ZigbeeSource | None"]]
+
+ZIGBEE_DATABASE_NAME: Final = "zigbee.sqlite"
+
+
+def zigbee_database_beside(store_path: Path) -> Path:
+    """Where zigpy keeps its network database: in the directory of
+    loxmatter's own store, whichever way that path was given
+    (`--store-path`, `LOXMATTER_STORE`, or the `~/.loxmatter/` default).
+
+    Design section 8.5 put it "next to the store in the same volume", and
+    the store's directory is the one place the bridge is already known to
+    write to - `cli.run` creates it before the store is opened. The first
+    build derived it from `--matter-data-dir` instead, which the shipped
+    compose file mounts read-only (it is matter-server's directory, lent to
+    the fabric-backup route), so zigpy could not have created the file on
+    the very first Apply. `tests/test_compose_profiles.py` holds every
+    shipped compose file to this rule.
+    """
+    return store_path.parent / ZIGBEE_DATABASE_NAME
 
 
 async def build_zigbee_source(

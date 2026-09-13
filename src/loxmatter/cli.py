@@ -64,7 +64,7 @@ from loxmatter.profiles.table import is_exportable
 from loxmatter.radios.inventory import scan_serial
 from loxmatter.sources import Sources
 from loxmatter.sources.supervisor import attach, supervise
-from loxmatter.zigbee.runtime import ZigbeeRuntime, build_zigbee_source
+from loxmatter.zigbee.runtime import ZigbeeRuntime, build_zigbee_source, zigbee_database_beside
 
 logger = logging.getLogger(__name__)
 
@@ -706,15 +706,13 @@ async def _run(
     # still connects, still joins devices, and still shows them in the
     # catalogue.
     #
-    # `matter_data_dir or Path("/data/matter")`: `matter_data_dir` is
-    # itself optional, for the unrelated fabric-backup route, and can be
-    # `None` on an installation that never set it - so a Zigbee stick and
-    # no `--matter-data-dir` must not crash a running bridge with a
-    # `TypeError` on `None / "zigbee.sqlite"`, neither at startup nor on a
-    # radio change made hours later.
+    # `database` sits beside the store, never under `matter_data_dir`: that
+    # directory is matter-server's own, lent to the fabric-backup route and
+    # mounted read-only by the shipped compose file - see
+    # `zigbee_database_beside`.
     build_source = functools.partial(
         build_zigbee_source,
-        database=(matter_data_dir or Path("/data/matter")) / "zigbee.sqlite",
+        database=zigbee_database_beside(store.path),
         on_connection_change=runtime.set_zigbee_connected,
         store=store,
     )

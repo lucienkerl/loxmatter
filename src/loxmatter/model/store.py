@@ -1176,6 +1176,10 @@ class CategoryMismatchError(ValueError):
 
 class Store:
     def __init__(self, path: Path | str) -> None:
+        # Kept so that files which belong next to this database can be
+        # placed there without every caller passing the path separately -
+        # zigpy's `zigbee.sqlite` is one (`zigbee.runtime.zigbee_database_beside`).
+        self.path = Path(path)
         self._db = sqlite3.connect(str(path))
         self._db.row_factory = sqlite3.Row
         self._db.executescript(_SCHEMA)

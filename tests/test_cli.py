@@ -1470,7 +1470,9 @@ async def test_a_freshly_built_zigbee_source_has_the_store_so_configure_on_join_
     assert isinstance(zigbee, ZigbeeSource)
     assert zigbee._store is store
     assert zigbee._path == ZIGBEE_PATH
-    assert zigbee._database == tmp_path / "matter" / "zigbee.sqlite"
+    # Beside the store (`tmp_path / "t.sqlite"`), not under the matter data
+    # directory passed above - see the test directly below.
+    assert zigbee._database == tmp_path / "zigbee.sqlite"
     # The radio's own signal, wired to the runtime rather than to the
     # watchdog. Identity alone only proves the two attributes point at the
     # same function - calling it is what proves the pipe actually carries a
@@ -1484,24 +1486,42 @@ async def test_a_freshly_built_zigbee_source_has_the_store_so_configure_on_join_
     assert runtimes[0].zigbee_sent[-1] is True
 
 
-async def test_a_zigbee_stick_without_a_matter_data_dir_does_not_crash_startup(
-    monkeypatch, tmp_path
+@pytest.mark.parametrize("matter_data_dir", [None, "matter-data"])
+async def test_the_zigbee_database_follows_the_store_and_never_the_matter_data_dir(
+    monkeypatch, tmp_path, matter_data_dir
 ):
-    """`matter_data_dir` is `Path | None` - it exists for the unrelated
-    fabric-backup route and is absent on an installation that never set it.
-    `None / "zigbee.sqlite"` is a `TypeError`, raised before uvicorn ever
-    starts, so a user who configured a Zigbee stick and no `--matter-data-dir`
-    would get a bridge that does not come up at all.
+    """zigpy's database belongs in the store's own directory (design 8.5),
+    because that is the directory the bridge writes to. `--matter-data-dir`
+    is matter-server's directory, lent to the fabric-backup route, and the
+    shipped compose file mounts it READ-ONLY - the first build put
+    `zigbee.sqlite` there, and the first Zigbee Apply on the Pi would have
+    failed to create it.
 
-    Fault to prove it: drop the `or Path("/data/matter")` fallback."""
+    The store sits in a directory of its own here, apart from both
+    `tmp_path` and the matter data directory, so an answer derived from
+    either of those cannot pass by coincidence. With no matter data
+    directory at all the answer is the same, and startup does not crash on
+    `None / "zigbee.sqlite"`.
+
+    Fault to prove it: build `database` from `matter_data_dir` again (the
+    string case fails), or from a fixed path (both fail)."""
     _install_run_spies(monkeypatch)
     monkeypatch.setattr(cli.uvicorn, "Server", _SpyUvicornServer)
     captured = _capture_build_app(monkeypatch)
-    store = Store(tmp_path / "t.sqlite")
+    (tmp_path / "store").mkdir()
+    store = Store(tmp_path / "store" / "loxmatter.sqlite")
 
-    await cli._run(store, "ws://test/ws", "127.0.0.1", 7000, 8080, zigbee_device=ZIGBEE_PATH)
+    await cli._run(
+        store,
+        "ws://test/ws",
+        "127.0.0.1",
+        7000,
+        8080,
+        None if matter_data_dir is None else tmp_path / matter_data_dir,
+        zigbee_device=ZIGBEE_PATH,
+    )
 
-    assert captured["sources"].get("zigbee")._database == Path("/data/matter/zigbee.sqlite")
+    assert captured["sources"].get("zigbee")._database == tmp_path / "store" / "zigbee.sqlite"
 
 
 async def test_the_radio_state_is_seeded_before_the_first_resend(monkeypatch, tmp_path):
