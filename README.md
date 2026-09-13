@@ -41,7 +41,8 @@ section,
 ### 📟 Commission devices from the browser
 Add a Matter device over Bluetooth with its setup code. Thread devices reach the
 bridge through the border router in the same stack; Wi-Fi and Ethernet devices go
-straight over IP.
+straight over IP. With a second USB stick as a Zigbee coordinator, Zigbee devices
+pair from a tab of their own beside Matter's.
 
 </td>
 <td width="50%" valign="top">
@@ -137,6 +138,7 @@ CLI too.
 flowchart TB
     thread["🌡️ Thread device<br/>sensor, button …"]
     ip["💡 Wi-Fi or Ethernet device<br/>lamp, plug, appliance …"]
+    zigbee["📶 Zigbee device<br/>optional: lamp, sensor …"]
 
     subgraph Host["One host — e.g. a Raspberry Pi"]
         otbr["🔀 otbr<br/>Thread border router"]
@@ -150,6 +152,7 @@ flowchart TB
     thread -- Thread --> otbr
     otbr --> ms
     ip -- "IP network" --> ms
+    zigbee -- "Zigbee · its own USB stick" --> lm
     ms -- "values · subscription" --> lm
     lm -- commands --> ms
     lm -- "values · UDP" --> mini
@@ -161,7 +164,7 @@ flowchart TB
     classDef bridge fill:#a15a2c,stroke:#7d4522,color:#fdf3e0
     classDef endpoint fill:#e2915c,stroke:#a15a2c,color:#2a1a10
 
-    class thread,ip device
+    class thread,ip,zigbee device
     class otbr,ms svc
     class lm bridge
     class mini,browser endpoint
@@ -171,8 +174,12 @@ flowchart TB
 
 `matter-server` holds the Matter fabric and delivers values by subscription. loxmatter
 turns those values into datagrams for the Miniserver, and the commands coming back
-from Loxone over HTTP into Matter commands. The browser hangs off the bridge for setup
-and diagnostics only — the runtime path between devices and Miniserver does not use it.
+from Loxone over HTTP into Matter commands. Zigbee is the exception to that path:
+loxmatter drives a Zigbee stick itself, with zigpy running inside the bridge, and
+translates its devices into the same shape as Matter's, so signals, export and
+commands work the same for both. Matter stays required either way. The browser hangs
+off the bridge for setup and diagnostics only — the runtime path between devices and
+Miniserver does not use it.
 
 ## 🚀 Quickstart
 
@@ -215,6 +222,12 @@ pick — no `.env` edit needed. Switching only the Bluetooth adapter leaves
 the Thread border router running the whole time; switching only the
 Thread stick, or turning Thread off, leaves Bluetooth alone. If the new
 setting does not come up healthy, the previous one comes back on its own.
+The same card has a Zigbee row. A Zigbee stick is applied inside the bridge
+itself, so choosing one restarts neither matter-server nor the Thread border
+router, and the stick Thread is running on cannot be chosen for Zigbee. A
+Zigbee stick that does not answer is not rolled back: the row shows why,
+and the bridge keeps retrying until you pick another. The installer does
+not detect Zigbee sticks; pick yours on the card.
 
 Two Raspberry-Pi-specific steps — unblocking Bluetooth and restarting the Thread
 agent — the installer reports but deliberately does not perform. Those, and the
@@ -275,6 +288,32 @@ text from a request as a command. If you would rather not have it on
 your host, delete the service from the compose file — the bridge notices
 it is gone and points you back to the console path above.
 
+**What the bridge itself may open, for Zigbee.** The updater does not
+apply a Zigbee stick — the bridge opens it directly — and so the bridge
+is allowed to open USB serial devices without being told which one in
+advance: the compose file gives it the device rules `c 188:* rmw`
+(ttyUSB) and `c 166:* rmw` (ttyACM), plus a read-only view of the host's
+`/dev` to list the sticks by name. Both are worth understanding. That
+listing shows your hardware inventory, including the serial numbers in
+the names under `/dev/serial/by-id`. And the rule reaches **every**
+USB-serial adapter on the host, the Thread stick included: code running
+inside the bridge could talk to any of them, and could garble the radio
+your Thread border router depends on. The web UI and the API refuse to
+use the Thread stick for Zigbee, but that is a check in the bridge's own
+code, not a boundary. The rule does **not** reach block devices,
+`/dev/mem` or i2c; those stay refused even though the read-only `/dev`
+shows them. You can narrow the rule to the device numbers you actually
+see — `c 188:0 rmw` allows only what is `/dev/ttyUSB0` right now — at
+the cost that the stick stops working after it is plugged into another
+port and gets another number.
+
+The Zigbee network key sits in clear text in zigpy's own database
+(`zigbee.sqlite`), where zigpy keeps it; loxmatter never writes it to its
+log. There is deliberately no download for a Zigbee network backup yet,
+because that backup carries the key, and the updater's pre-update backup
+covers the bridge's own database (`loxmatter.sqlite`) only, not
+`zigbee.sqlite`.
+
 **It does not keep itself up to date.** It comes with the stack, the same
 way `matter-server` and the Thread border router do, and it installs
 updates *for the bridge* — it does not install them for itself. A
@@ -295,6 +334,10 @@ cd ~/loxmatter/deploy/testhost && docker compose pull loxmatter-updater && docke
 
 **Built:** commissioning, signal extraction, the template export, the runtime path in
 both directions, the web interface and its access control.
+
+**Built, not yet run on hardware: Zigbee.** Pairing, the Zigbee row on the radios card,
+configure-on-join and the runtime path are tested against simulated radios only; no
+Zigbee stick has been driven by this code yet.
 
 **Validated** against two real IKEA devices on a running `matter-server`:
 commissioning, signal extraction, the runtime path in both directions, and the web
@@ -322,7 +365,8 @@ can claim the bridge. Set it within minutes of the first start, not days.
 
 Python 3.12+ with FastAPI and uvicorn for the HTTP service, Typer for the CLI,
 [`matter-python-client`](https://github.com/matter-js/matterjs-server/tree/main/python_client)
-for the Matter side, SQLite for stored devices and settings. The web interface is plain
+for the Matter side, zigpy with its radio libraries and zha-quirks for the Zigbee side,
+SQLite for stored devices and settings. The web interface is plain
 HTML, CSS and Alpine.js — no build step, nothing fetched from a CDN at runtime.
 
 ## Contributing
