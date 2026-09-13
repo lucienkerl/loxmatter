@@ -2649,7 +2649,7 @@ async def test_the_generic_network_errors_call_the_global_t_from_a_free_function
     script = (await client.get("/static/app.js")).text
     assert "Die Brücke ist nicht erreichbar" not in script
     assert script.count('t("web.errors.bridge_unreachable")') == 3
-    assert 'return t("web.errors.http_status", { status: response.status });' in script
+    assert 't("web.errors.http_status", { status: response.status })' in script
     assert "`HTTP ${response.status}`" not in script
 
 
@@ -3590,12 +3590,19 @@ async def test_remove_device_reconciles_the_room_filter(api):
     Without a browser engine there is no way to check either `roomFilter`
     or the rendered markup after a click (see the other tests in this
     file that admit the same limitation). Proven instead is that the
-    delivered method body of `removeDevice` itself calls
-    `reconcileRoomFilter()` after removing from `this.devices`."""
+    delivered method body that follows every removal - `removeDevice` and
+    the forget-only `forgetDeviceLocally` both end in `afterDeviceRemoved` -
+    calls `reconcileRoomFilter()` after removing from `this.devices`."""
     client, _, _ = api
     script = (await client.get("/static/app.js")).text
 
-    remove_start = script.index("async removeDevice(device) {")
+    for caller in ("async removeDevice(device) {", "async forgetDeviceLocally(device) {"):
+        start = script.index(caller)
+        assert (
+            "await this.afterDeviceRemoved(device);"
+            in script[start : script.index("\n    },", start)]
+        )
+    remove_start = script.index("async afterDeviceRemoved(device) {")
     remove_end = script.index("\n    },", remove_start)
     remove_body = script[remove_start:remove_end]
 
@@ -5690,7 +5697,7 @@ async def test_removing_a_device_closes_a_signals_modal_that_shows_it(api):
     with no discernible reason."""
     client, _, _ = api
     script = (await client.get("/static/app.js")).text
-    start = script.index("async removeDevice(device) {")
+    start = script.index("async afterDeviceRemoved(device) {")
     end = script.index("\n    },", start)
     body = script[start:end]
     assert "if (this.signalsModalDevice === device.id) {" in body
