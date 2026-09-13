@@ -440,9 +440,19 @@ api.errors.device_timed_out:
   # The bound of `bounded_source_call` or `bounded_source_removal`
   # (boundary design open point 11) - a source was asked and stayed silent
   # past `SOURCE_CALL_TIMEOUT_SECONDS` or `SOURCE_REMOVAL_TIMEOUT_SECONDS`.
+  # Also the bound on a command's wait in `commands/coalesce.py`, behind a
+  # device that is still busy with an earlier one.
   # `:g` because those bounds are floats: "within 10 s", not "within 10.0 s".
   en: "the device did not answer within {seconds:g} s"
   de: "das Gerät hat innerhalb von {seconds:g} s nicht geantwortet"
+api.errors.device_call_cut_off:
+  # `commands/coalesce.py`: a call into a source ended in `CancelledError`
+  # although nobody cancelled the bridge's own task - matter-server's client
+  # cancels every call still waiting for an answer when its websocket
+  # closes. The device was asked and the answer will never come, so this is
+  # a 502 like `api.errors.device_timed_out`, not a crash.
+  en: "the connection closed before the device answered"
+  de: "die Verbindung wurde geschlossen, bevor das Gerät geantwortet hat"
 # The all-unconfigured case of a group fan-out (boundary design open point
 # 12): EVERY member was never asked, because the technology's source is not
 # running right now - 503, not 502, the same distinction
@@ -2536,8 +2546,8 @@ web.radios.step_apply_thread:
   en: "Restart the Thread border router"
   de: "Thread-Border-Router neu starten"
 web.radios.step_verify_thread:
-  en: "Check the Thread network (up to 90 s)"
-  de: "Thread-Netz prüfen (bis 90 s)"
+  en: "Check the Thread network (up to 150 s)"
+  de: "Thread-Netz prüfen (bis 150 s)"
 web.radios.step_unknown:
   en: "Unknown step ({step})"
   de: "Unbekannter Schritt ({step})"
@@ -2629,8 +2639,8 @@ web.radios.reason.apply_thread_failed:
   en: "the Thread border router could not be restarted"
   de: "der Thread-Border-Router ließ sich nicht neu starten"
 web.radios.reason.verify_thread_failed:
-  en: "no Thread network within 90 s"
-  de: "kein Thread-Netz innerhalb von 90 s"
+  en: "no Thread network within 150 s"
+  de: "kein Thread-Netz innerhalb von 150 s"
 web.radios.reason.unknown:
   en: "an unknown reason"
   de: "ein unbekannter Grund"

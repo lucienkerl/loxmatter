@@ -78,6 +78,15 @@ WORKER_TIMEOUT_SECONDS="${WORKER_TIMEOUT_SECONDS:-600}"
 # keeps working.
 RADIOS_WORKER="${RADIOS_WORKER:-/opt/loxmatter/radios-once.sh}"
 
+# The radios job's own limit, longer than the update's. A request changing
+# both radios whose verifications fail polls up to 2 x (60 + 150) = 420 s,
+# forward and again in the rollback, and may first wait up to 90 s for a
+# run of the otbr watchdog to release its lock. Each poll's probe has up to
+# 10 s of its own, and the four container recreates come on top. At 600 s a
+# kill could land in the middle of the rollback - the one step that must
+# not be cut off, because it is what puts the previous radio back.
+RADIOS_WORKER_TIMEOUT_SECONDS="${RADIOS_WORKER_TIMEOUT_SECONDS:-900}"
+
 # This container's own image, by digest - resolved exactly ONCE, here,
 # before the poll loop below ever starts $WORKER for the first time, and
 # exported so every pass reads it as a plain environment variable
@@ -165,13 +174,13 @@ STACK_HOST_PATH="$(docker inspect loxmatter-updater \
     ')"
 export LOXMATTER_STACK_HOST_PATH="$STACK_HOST_PATH"
 
-# Runs one worker under the shared timeout and signal-forwarding machinery,
-# and waits for it to actually finish. Shared by both calls in the loop
-# below so update-once.sh and radios-once.sh get identical treatment: same
-# timeout, same forwarding of an already-pending termination, same
-# reporting of a timeout kill.
+# Runs one worker, `$1`, under a limit of `$2` seconds and the shared
+# signal-forwarding machinery, and waits for it to actually finish. Shared
+# by both calls in the loop below so update-once.sh and radios-once.sh get
+# identical treatment apart from their limits: same forwarding of an
+# already-pending termination, same reporting of a timeout kill.
 run_worker() {
-  timeout "$WORKER_TIMEOUT_SECONDS" "$1" &
+  timeout "$2" "$1" &
   child_pid=$!
 
   # The two lines above are not one atomic step. `child_pid` was reset to
@@ -213,12 +222,12 @@ run_worker() {
     # status the worker itself could produce - report the wait limit
     # having fired, since it means a run is stuck on the same host for
     # longer than any legitimate operation should take.
-    echo "entrypoint: ${1##*/} exceeded ${WORKER_TIMEOUT_SECONDS}s and was killed" >&2
+    echo "entrypoint: ${1##*/} exceeded ${2}s and was killed" >&2
   fi
 }
 
 while [ "$terminated" -eq 0 ]; do
-  run_worker "$WORKER"
+  run_worker "$WORKER" "$WORKER_TIMEOUT_SECONDS"
   [ "$terminated" -eq 1 ] && break
 
   # The radios job (design "Radios in the Web UI", 2026-09-11, section
@@ -229,7 +238,7 @@ while [ "$terminated" -eq 0 ]; do
   # behind it is exactly the same as no script at all, and this must stay
   # silent for a test or a trimmed image that carries neither.
   if [ -x "$RADIOS_WORKER" ]; then
-    run_worker "$RADIOS_WORKER"
+    run_worker "$RADIOS_WORKER" "$RADIOS_WORKER_TIMEOUT_SECONDS"
     [ "$terminated" -eq 1 ] && break
   fi
 

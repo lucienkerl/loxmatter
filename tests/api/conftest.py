@@ -119,6 +119,48 @@ async def authenticate(store: Store, client: httpx.AsyncClient) -> None:
     assert response.status_code == 200, "Login in the test fixture failed"
 
 
+class SlowDevices:
+    """An invoker whose calls block until the test sets `release`, and which
+    counts how many calls run at once per address - the measure
+    `tests/commands/test_coalesce.py` uses for "no two requests overlap on a
+    device", here behind the real routes (design 2026-09-13, command
+    coalescing)."""
+
+    def __init__(self) -> None:
+        self.ran: list[DeviceCall] = []
+        self.active: dict[str, int] = {}
+        self.max_active: dict[str, int] = {}
+        self.release = asyncio.Event()
+
+    async def __call__(self, call: DeviceCall) -> None:
+        address = call.address
+        self.active[address] = self.active.get(address, 0) + 1
+        self.max_active[address] = max(self.max_active.get(address, 0), self.active[address])
+        try:
+            await self.release.wait()
+            self.ran.append(call)
+        finally:
+            self.active[address] -= 1
+
+
+async def settle_until(condition: Any, what: str, turns: int = 1000) -> None:
+    """Hands the event loop over until `condition()` holds, then a few turns
+    more so that whatever the condition's step scheduled has started.
+
+    Counted in loop turns, never in seconds: a request travels through the
+    ASGI transport and the middlewares in some number of turns, and a test
+    that waited a wall-clock interval instead would pass or fail with the
+    machine's load."""
+    for _ in range(turns):
+        if condition():
+            break
+        await asyncio.sleep(0)
+    else:
+        raise AssertionError(f"never happened: {what}")
+    for _ in range(10):
+        await asyncio.sleep(0)
+
+
 @pytest.fixture
 def no_invoke():
     """An invoker that satisfies `build_app` but is never actually needed -

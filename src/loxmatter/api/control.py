@@ -149,6 +149,7 @@ from fastapi import APIRouter, HTTPException
 
 from loxmatter import i18n
 from loxmatter.api.models import CommandOut, ControlRange, ControlsOut, ValueIn
+from loxmatter.commands.coalesce import CommandGate
 from loxmatter.commands.fanout import dispatch_group, plan_group_calls
 from loxmatter.commands.translate import UnsupportedValueError, to_device_calls
 from loxmatter.model.store import Store, UnknownCommandError, UnknownDeviceError
@@ -198,8 +199,16 @@ _ATTR_CT_PHYS_MIN_MIREDS = 16395
 _ATTR_CT_PHYS_MAX_MIREDS = 16396
 
 
-def build_control_router(store: Store, invoke: Invoker, values: ValueReader) -> APIRouter:
+def build_control_router(
+    store: Store, invoke: Invoker, values: ValueReader, *, gate: CommandGate | None = None
+) -> APIRouter:
+    """`gate` is the application's one `CommandGate`, which `build_app`
+    shares with `/cmd/{key}/{value}` so both routes queue on the same
+    device (design 2026-09-13, command coalescing). A caller without one
+    gets a gate of its own, which serialises this router's commands
+    only."""
     router = APIRouter(prefix="/api")
+    gate = gate or CommandGate(invoke)
 
     def _require_device(device_id: int) -> None:
         try:
@@ -362,8 +371,11 @@ def build_control_router(store: Store, invoke: Invoker, values: ValueReader) -> 
             # (see `to_device_calls`). The first failure stops and is
             # reported; a partial state is possible
             # and justified there.
-            for call in calls:
-                await invoke(call)
+            #
+            # Through the gate, as at `/cmd` in loxone/server.py and for the
+            # same reasons: it re-raises what a call raised, a superseded
+            # request is a 200, and a cancelled one propagates unchanged.
+            await gate.run(calls)
         except SourceNotConfiguredError as exc:
             # Nothing was asked of the device, so this is not 502.
             raise HTTPException(status_code=503, detail=str(exc)) from exc
@@ -400,7 +412,9 @@ def build_control_router(store: Store, invoke: Invoker, values: ValueReader) -> 
         except UnsupportedValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-        outcome = await dispatch_group(plans, invoke)
+        # Through the gate, as in loxone/server.py: a member whose value a
+        # newer one replaced counts as reached.
+        outcome = await dispatch_group(plans, invoke, run=gate.run)
         # Counted over the members given something to do: a light command
         # can leave a member with an empty plan (design 2026-09-13, 3.2), and
         # that member was neither reached nor missed. Counting it would turn

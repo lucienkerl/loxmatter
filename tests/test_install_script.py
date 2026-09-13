@@ -1014,6 +1014,20 @@ def test_the_watchdog_log_sits_next_to_the_checkout_not_in_home(installer, tmp_p
     assert f"{result.home}/otbr-watchdog.log" not in result.output
 
 
+def test_the_watchdog_runs_every_minute(installer):
+    """The script locks itself and waits out a freshly started container,
+    so cron can start it every minute with no `flock` of its own. The line
+    used to say every five minutes, which cost that long in outage.
+
+    Fault to prove it: print `*/5` again - the line is not found."""
+    result = installer(env={"LOXMATTER_MODE": "thread", "RADIO_DEVICE": "/dev/ttyUSB0"})
+    checkout = result.home / "loxmatter"
+    assert (
+        f"    * * * * * {checkout}/scripts/otbr-watchdog.sh >> {checkout.parent}/otbr-watchdog.log 2>&1"
+        in result.output
+    )
+
+
 def test_the_report_points_to_findings_without_repeating_them(installer):
     # check_containers already reports the missing service directly in
     # run_checks, right where it's noticed. report() must not print this

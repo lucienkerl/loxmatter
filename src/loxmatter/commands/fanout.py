@@ -103,7 +103,11 @@ def plan_group_calls(
     return plans
 
 
-async def _run_member(plan: MemberPlan, invoke: Callable[[DeviceCall], Awaitable[None]]) -> None:
+Invoker = Callable[[DeviceCall], Awaitable[None]]
+Runner = Callable[[Sequence[DeviceCall]], Awaitable[bool]]
+
+
+async def _run_member(plan: MemberPlan, invoke: Invoker | None, run: Runner | None) -> None:
     """One member's calls, strictly in order.
 
     Sequential within the member and NOT gathered: the colour path sends
@@ -113,7 +117,16 @@ async def _run_member(plan: MemberPlan, invoke: Callable[[DeviceCall], Awaitable
     at full brightness instead of green when the colour command arrived
     too late). Flattening every member's calls into one gather would
     destroy exactly that.
+
+    With `run` the whole plan goes to it as one request, which keeps that
+    order too: `CommandGate.run` never splits a request. Its `False` - a
+    newer value for this member replaced the plan before it started - is
+    returned from here like a success, so the member counts as reached.
     """
+    if run is not None:
+        await run(plan.calls)
+        return
+    assert invoke is not None, "dispatch_group needs `invoke` when no `run` is given"
     for call in plan.calls:
         await invoke(call)
 
@@ -163,10 +176,18 @@ class GroupOutcome:
 
 
 async def dispatch_group(
-    plans: Sequence[MemberPlan], invoke: Callable[[DeviceCall], Awaitable[None]]
+    plans: Sequence[MemberPlan], invoke: Invoker | None, *, run: Runner | None = None
 ) -> GroupOutcome:
     """Runs every member concurrently and returns which labels failed, and
     why.
+
+    **`run` (design 2026-09-13, command coalescing).** Both group routes
+    pass `CommandGate.run`, so each member's plan waits for whatever is
+    still running on that device, and a newer value replaces one still
+    waiting. A member whose plan was replaced that way returns normally: it
+    is neither failed nor unconfigured, because the newer value is on its
+    way to it. Without `run`, each member's calls go straight to `invoke`,
+    one after another, and `invoke` may be `None` only when `run` is given.
 
     `return_exceptions=True` rather than letting the first failure
     propagate: a group of six with two dead lamps must switch the other
@@ -203,7 +224,7 @@ async def dispatch_group(
     classifying, so it lines up with `unconfigured` index for index.
     """
     results = await asyncio.gather(
-        *(_run_member(plan, invoke) for plan in plans), return_exceptions=True
+        *(_run_member(plan, invoke, run) for plan in plans), return_exceptions=True
     )
     # BaseException, not Exception: cancelling the task that awaits this
     # function still propagates CancelledError out, because CPython's

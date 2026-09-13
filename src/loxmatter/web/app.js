@@ -5092,8 +5092,8 @@ function app() {
      * the stored value is `/dev/ttyUSB0` while this card and the API speak
      * in mapped by-id paths, so the old both-halves body made the sidecar
      * read every Bluetooth-only change as a stick SWITCH - `otbr`
-     * force-recreated and up to 90 s of `verify_thread`, one to two
-     * minutes of Thread downtime that no confirmation text ever announced.
+     * force-recreated and up to 150 s of `verify_thread`, minutes
+     * of Thread downtime that no confirmation text ever announced.
      * Sending `null` for the row the user did not touch is what stops
      * that, and it is also what lets a Bluetooth change go through at all
      * while the configured stick is unplugged: a half nobody is changing
