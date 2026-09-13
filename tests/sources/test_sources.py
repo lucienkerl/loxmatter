@@ -172,3 +172,26 @@ def test_the_bound_is_the_one_the_module_publishes():
     """Read from the module, not retyped: a test with its own copy of 10.0
     would keep passing after somebody changed the real bound."""
     assert SOURCE_CALL_TIMEOUT_SECONDS == 10.0
+
+
+async def test_a_removal_is_bounded_by_its_own_longer_bound(monkeypatch):
+    """A removal waits for matter-server to reach the device and ask it to
+    leave the fabric, which for an offline Thread device takes longer than
+    a command may. It gets `SOURCE_REMOVAL_TIMEOUT_SECONDS`, read at call
+    time like the command bound, and it is still a bound: a removal that
+    never answers ends as `DeviceUnreachableError` naming its own seconds.
+
+    Fault to prove it: make `bounded_source_removal` read the command bound
+    (the slow removal below times out), or drop its `wait_for` (the hanging
+    one never ends)."""
+    from loxmatter import sources as sources_module
+
+    assert sources_module.SOURCE_REMOVAL_TIMEOUT_SECONDS == 120.0
+    monkeypatch.setattr("loxmatter.sources.SOURCE_CALL_TIMEOUT_SECONDS", 0.01)
+    monkeypatch.setattr("loxmatter.sources.SOURCE_REMOVAL_TIMEOUT_SECONDS", 0.2)
+
+    await sources_module.bounded_source_removal(asyncio.sleep(0.05))
+
+    with pytest.raises(DeviceUnreachableError) as caught:
+        await asyncio.wait_for(sources_module.bounded_source_removal(asyncio.sleep(3600)), 5)
+    assert "0.2" in str(caught.value)

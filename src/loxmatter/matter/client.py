@@ -499,8 +499,26 @@ class BridgeMatterClient:
         )
 
     async def remove(self, address: str) -> None:
-        """Removes a device from the fabric."""
-        await self._require_upstream().remove_node(int(address))
+        """Removes a device from the fabric.
+
+        **A node matter-server does not know is removed already, and that
+        is a success.** matter-server drops the node from its own storage
+        BEFORE it asks the device to leave the fabric, and answers only once
+        it has asked. A removal cut off in between - the route's bound, a
+        closed browser tab - leaves the node gone there and the device still
+        stored here, and every retry then raised `NodeNotExists`: an
+        unhandled 500, and a device that could never be removed from the
+        bridge again. "Already gone" is exactly what the user asked for.
+
+        Every other refusal still reaches the caller: a node that exists but
+        cannot be removed is not one to forget."""
+        # Lazily imported like the other `matter_server` imports here.
+        from matter_server.common.errors import NodeNotExists
+
+        try:
+            await self._require_upstream().remove_node(int(address))
+        except NodeNotExists:
+            logger.info("Node %s was no longer known to matter-server; removed already", address)
 
     @property
     def thread_dataset_set(self) -> bool:

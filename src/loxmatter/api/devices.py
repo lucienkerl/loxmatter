@@ -108,7 +108,7 @@ from loxmatter.sources import (
     DeviceUnreachableError,
     SourceNotConfiguredError,
     Sources,
-    bounded_source_call,
+    bounded_source_removal,
 )
 
 logger = logging.getLogger(__name__)
@@ -640,13 +640,14 @@ def build_device_router(
             # Order: see module docstring - the fabric first, then the store.
             #
             # Bounded like every other call into a source (boundary design
-            # open point 11): a zigpy `remove()` on a sleeping end device
-            # waits per attempt and retries, so an unbounded await here held
-            # this DELETE open with no upper limit. `bounded_source_call`
-            # turns the bound's expiry into `DeviceUnreachableError`, which
-            # is caught right below - one bound, one vocabulary, both shared
-            # with `Sources.send`.
-            await bounded_source_call(source.remove(device.address))
+            # open point 11), but by the removal's own, longer bound and not
+            # by a command's 10 s: matter-server forgets the node and then
+            # asks the device to leave the fabric, which for an offline
+            # Thread device takes longer than that - cut off early, the
+            # device stayed listed here while matter-server had dropped it.
+            # See `SOURCE_REMOVAL_TIMEOUT_SECONDS`. The expiry arrives as
+            # `DeviceUnreachableError`, caught right below.
+            await bounded_source_removal(source.remove(device.address))
         except (MatterUnavailableError, DeviceUnreachableError) as exc:
             # One vocabulary across sources (boundary design open point 11).
             # `MatterUnavailableError` stays in the tuple rather than being

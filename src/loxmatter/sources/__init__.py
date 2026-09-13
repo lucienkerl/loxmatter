@@ -35,6 +35,7 @@ from loxmatter.matter.models import NodeSnapshot, Technology
 
 __all__ = [
     "SOURCE_CALL_TIMEOUT_SECONDS",
+    "SOURCE_REMOVAL_TIMEOUT_SECONDS",
     "DeviceCall",
     "DeviceSource",
     "DeviceUnreachableError",
@@ -43,6 +44,7 @@ __all__ = [
     "Sources",
     "Technology",
     "bounded_source_call",
+    "bounded_source_removal",
     "technology_display_name",
 ]
 
@@ -119,6 +121,18 @@ class DeviceSource(Protocol):
 
 SOURCE_CALL_TIMEOUT_SECONDS = 10.0
 
+# How long a removal may take. Longer than a command, and deliberately so:
+# matter-server forgets a node and THEN asks the device to leave the fabric,
+# answering only once it has - for an offline or sleeping Thread device that
+# means establishing a session first, which routinely takes longer than the
+# command bound. Cut off at 10 s, the removal left the device forgotten by
+# matter-server and still listed by the bridge. Not unbounded either: a
+# person is waiting on a spinner, and a matter-server that stops answering
+# on a websocket that stays open would hold that request forever. Two
+# minutes is past what reaching a device is worth waiting for, and short
+# enough that the spinner ends with an answer. See `bounded_source_removal`.
+SOURCE_REMOVAL_TIMEOUT_SECONDS = 120.0
+
 
 class DeviceUnreachableError(RuntimeError):
     """A source asked a device and got nothing back.
@@ -173,12 +187,11 @@ async def bounded_source_call(call: Coroutine[Any, Any, None]) -> None:
 
     The one place the bound lives, because there is more than one way into
     a source and a human or a Miniserver waits on all of them: `Sources.send`
-    (a command) and `api/devices.py`'s removal route (`source.remove`). The
-    removal route was unbounded until this function existed, which mattered
-    most exactly where the bound matters most - zigpy retries a request twice
+    (a command) and the Zigbee pairing routes. zigpy retries a request twice
     and waits 5 s per attempt for a mains device and 28 s for an end device
-    or one without a node descriptor (research E.6), so removing a sleeping
-    button held the DELETE open for over a minute.
+    or one without a node descriptor (research E.6), so an unbounded call to
+    a sleeping button held its request open for over a minute. The removal
+    of a stored device has a bound of its own, `bounded_source_removal`.
 
     The bound is read from the module here, at call time, rather than bound
     as a default argument, so a test can shorten it with
@@ -191,11 +204,23 @@ async def bounded_source_call(call: Coroutine[Any, Any, None]) -> None:
     answering, and `str(TimeoutError())` is the empty string - a 502 whose
     detail is blank tells the person reading it nothing at all.
     """
+    await _bounded(call, SOURCE_CALL_TIMEOUT_SECONDS)
+
+
+async def bounded_source_removal(call: Coroutine[Any, Any, None]) -> None:
+    """`bounded_source_call` for `api/devices.py`'s removal route, with
+    `SOURCE_REMOVAL_TIMEOUT_SECONDS` in place of the command bound - see
+    that constant for why a removal waits longer. Read at call time for the
+    same reason, and reported the same way."""
+    await _bounded(call, SOURCE_REMOVAL_TIMEOUT_SECONDS)
+
+
+async def _bounded(call: Coroutine[Any, Any, None], seconds: float) -> None:
     try:
-        await asyncio.wait_for(call, SOURCE_CALL_TIMEOUT_SECONDS)
+        await asyncio.wait_for(call, seconds)
     except TimeoutError as exc:
         raise DeviceUnreachableError(
-            i18n.t("api.errors.device_timed_out", seconds=SOURCE_CALL_TIMEOUT_SECONDS)
+            i18n.t("api.errors.device_timed_out", seconds=seconds)
         ) from exc
 
 

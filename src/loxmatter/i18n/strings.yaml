@@ -422,9 +422,10 @@ api.errors.group_partially_unreachable:
   en: "reached {reached} of {total} members; no answer from: {devices}"
   de: "{reached} von {total} Mitgliedern erreicht, keine Antwort von: {devices}"
 api.errors.device_timed_out:
-  # `bounded_source_call`'s bound (boundary design open point 11) - a
-  # source was asked and stayed silent past `SOURCE_CALL_TIMEOUT_SECONDS`.
-  # `:g` because that bound is a float: "within 10 s", not "within 10.0 s".
+  # The bound of `bounded_source_call` or `bounded_source_removal`
+  # (boundary design open point 11) - a source was asked and stayed silent
+  # past `SOURCE_CALL_TIMEOUT_SECONDS` or `SOURCE_REMOVAL_TIMEOUT_SECONDS`.
+  # `:g` because those bounds are floats: "within 10 s", not "within 10.0 s".
   en: "the device did not answer within {seconds:g} s"
   de: "das Geraet hat innerhalb von {seconds:g} s nicht geantwortet"
 # The all-unconfigured case of a group fan-out (boundary design open point

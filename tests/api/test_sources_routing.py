@@ -51,10 +51,15 @@ class _FakeZigbeeSource:
         # `remove` waits forever, and only the route's own bound can end
         # the request.
         self.remove_hangs = False
+        # Seconds a removal takes before it answers - a device that is slow
+        # to be reached, rather than one that never answers.
+        self.remove_delay = 0.0
 
     async def remove(self, address: str) -> None:
         if self.remove_hangs:
             await asyncio.sleep(3600)
+        if self.remove_delay:
+            await asyncio.sleep(self.remove_delay)
         if self.fail_remove_with is not None:
             raise self.fail_remove_with
         self.removed.append(address)
@@ -176,7 +181,7 @@ async def test_a_removal_that_never_answers_is_cut_off(zigbee_plug, monkeypatch)
     Fault to prove it: await `source.remove(device.address)` directly again -
     the request then never returns and the outer `wait_for` below fires
     instead, failing the test with `TimeoutError`."""
-    monkeypatch.setattr("loxmatter.sources.SOURCE_CALL_TIMEOUT_SECONDS", 0.05)
+    monkeypatch.setattr("loxmatter.sources.SOURCE_REMOVAL_TIMEOUT_SECONDS", 0.05)
     client, device_id, _, zigbee = await zigbee_plug(with_zigbee=True)
     zigbee.remove_hangs = True
 
@@ -185,6 +190,29 @@ async def test_a_removal_that_never_answers_is_cut_off(zigbee_plug, monkeypatch)
     assert response.status_code == 502
     assert response.json()["detail"] == i18n.t("api.errors.device_timed_out", seconds=0.05)
     assert "0.05 s" in response.json()["detail"]
+
+
+async def test_a_removal_is_not_held_to_the_bound_of_a_command(zigbee_plug, monkeypatch):
+    """Removal was bounded with the 10 s a Loxone command gets, and for a
+    Matter device that is a regression: matter-server forgets the node first
+    and then asks the device to leave the fabric, which for an offline or
+    sleeping Thread device means establishing a session that routinely takes
+    longer than that. The bridge answered 502 and kept the device while
+    matter-server had already dropped it.
+
+    A removal has its own, longer bound. Here a removal that takes longer
+    than the command bound, and far less than its own, succeeds.
+
+    Fault to prove it: bound the removal with `SOURCE_CALL_TIMEOUT_SECONDS`
+    again (the answer is 502 and the device stays)."""
+    monkeypatch.setattr("loxmatter.sources.SOURCE_CALL_TIMEOUT_SECONDS", 0.05)
+    client, device_id, _, zigbee = await zigbee_plug(with_zigbee=True)
+    zigbee.remove_delay = 0.3
+
+    response = await asyncio.wait_for(client.delete(f"/api/devices/{device_id}"), timeout=5)
+
+    assert response.status_code == 204
+    assert zigbee.removed == ["00:12:4b:00:1c:a1:b2:c3"]
 
 
 async def test_cmd_reaches_the_zigbee_source(zigbee_plug):

@@ -50,6 +50,8 @@ class FakeUpstream:
         # connection is established. `None` as long as no test says
         # otherwise, exactly as before the first `connect()`.
         self.server_info: object | None = None
+        # What `remove_node` raises instead of removing, if anything.
+        self.fail_remove_with: BaseException | None = None
 
     async def connect(self) -> None: ...
     async def disconnect(self) -> None: ...
@@ -69,6 +71,8 @@ class FakeUpstream:
         return node
 
     async def remove_node(self, node_id: int) -> None:
+        if self.fail_remove_with is not None:
+            raise self.fail_remove_with
         self.removed.append(node_id)
 
     async def set_thread_operational_dataset(self, dataset: str) -> None:
@@ -194,6 +198,32 @@ async def test_remove_reaches_upstream(client):
     await bridge.connect()
     await bridge.remove("7")
     assert upstream.removed == [7]
+    await bridge.disconnect()
+
+
+async def test_removing_a_node_matter_server_no_longer_knows_succeeds(client):
+    """matter-server drops a node from its own storage BEFORE it asks the
+    device to leave the fabric, and only answers once the device has been
+    asked. A removal that was cut off while an offline Thread device was
+    being asked left the node forgotten there and still listed here - and
+    every retry raised `NodeNotExists`, an unhandled 500, so the device could
+    never be removed from the bridge again. "Already gone" is what the user
+    asked for, so it is a success.
+
+    Only that error: any other refusal still reaches the caller.
+
+    Fault to prove it: let `NodeNotExists` propagate from `remove`, or
+    swallow every `MatterError` there."""
+    from matter_server.common.errors import NodeNotExists, NodeNotReady
+
+    bridge, upstream = client
+    await bridge.connect()
+    upstream.fail_remove_with = NodeNotExists("Node 7 does not exist or has not been interviewed.")
+    await bridge.remove("7")
+
+    upstream.fail_remove_with = NodeNotReady("Node 7 is not ready")
+    with pytest.raises(NodeNotReady):
+        await bridge.remove("7")
     await bridge.disconnect()
 
 
