@@ -1586,6 +1586,43 @@ async def test_every_open_of_the_built_zigbee_source_asks_the_thread_lock_out(
     assert guard(ZIGBEE_PATH).key == "api.errors.zigbee_open_thread_unknown"
 
 
+async def test_a_border_router_that_never_answers_does_not_hold_matter_or_the_web_ui(
+    monkeypatch, tmp_path
+):
+    """On an installation with a Zigbee stick, building the source used to
+    await `current_thread_channel()` - up to its 5 s timeout, for a border
+    router still starting after a reboot - before matter-server was
+    connected and before uvicorn served a single request. The channel is
+    now read on the source's first connect, in the supervisor's background
+    task, so a border router that does not answer at all holds neither.
+
+    Fault to prove it: await `current_thread_channel()` in
+    `build_zigbee_source` again (`_run` never reaches uvicorn and the outer
+    `wait_for` fires)."""
+    _, runtimes, _clients, _supervisor = _install_run_spies(monkeypatch)
+    served: list[bool] = []
+
+    class _RecordingServer(_SpyUvicornServer):
+        async def serve(self) -> None:
+            served.append(True)
+
+    async def silent_border_router(*args: Any, **kwargs: Any) -> int | None:
+        await asyncio.Event().wait()
+        return None
+
+    monkeypatch.setattr(zigbee_runtime_module, "current_thread_channel", silent_border_router)
+    monkeypatch.setattr(cli.uvicorn, "Server", _RecordingServer)
+    store = Store(tmp_path / "t.sqlite")
+
+    await asyncio.wait_for(
+        cli._run(store, "ws://test/ws", "127.0.0.1", 7000, 8080, zigbee_device=ZIGBEE_PATH),
+        timeout=5,
+    )
+
+    assert runtimes[0].started is True
+    assert served == [True]
+
+
 async def test_zigpy_opens_the_stick_under_the_host_dev_mount_the_run_binds(monkeypatch, tmp_path):
     """The stored stick is a HOST path, `/dev/serial/by-id/...`, and the
     bridge's container has no such directory: its own `/dev` is Docker's

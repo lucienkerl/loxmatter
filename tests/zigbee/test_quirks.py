@@ -189,3 +189,39 @@ async def test_a_twice_cancelled_warm_up_still_waits_for_setup_to_finish(monkeyp
 
     assert calls == [1]
     assert quirks_loaded() is True
+
+
+async def test_a_cancelled_warm_up_that_finishes_still_logs_its_duration(monkeypatch, caplog):
+    """A radio change during the very first warm-up cancels the caller
+    while `zhaquirks.setup()` runs on in its thread. The registry is loaded
+    all the same and the duration was measured and stored - but only the
+    uncancelled path logged it, and the next caller returns the stored
+    figure without a word. The hardware checklist reads that line for the
+    Pi's real warm-up time, and an apply at the wrong moment hid it.
+
+    Exactly one line: the caller that returns the stored figure adds none.
+
+    Fault to prove it: store `_duration_seconds` in the cancelled branch
+    without logging (no line), or log in the early return as well (two)."""
+    monkeypatch.setattr(quirks_module, "_lock", asyncio.Lock())
+    inside = threading.Event()
+    release = threading.Event()
+
+    def setup() -> None:
+        inside.set()
+        release.wait(5)
+
+    caplog.set_level("INFO", logger="loxmatter.zigbee.quirks")
+    first = asyncio.ensure_future(ensure_quirks_loaded(setup=setup))
+    while not inside.is_set():
+        await asyncio.sleep(0.01)
+    first.cancel()
+    await asyncio.sleep(0.05)
+    release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await first
+    await ensure_quirks_loaded(setup=setup)
+
+    lines = [r for r in caplog.records if "quirks registry loaded in" in r.getMessage()]
+    assert len(lines) == 1
+    assert lines[0].levelname == "INFO"

@@ -271,14 +271,10 @@ def channels_excluding(thread_channel: int | None) -> list[int]:
     Zigbee from forming - and so does a Thread channel that is not one of
     the four candidates anyway.
 
-    **Outstanding debt for Tasks 10 and 11.** Nothing in the tree passes a
-    channel yet: `ZigbeeSource(thread_channel=...)` defaults to `None`, and
-    only the tests give it a value, so in production this exclusion is inert
-    and a network may still form on OTBR's channel. What is missing is not
-    this function but its input - `matter/otbr.py` fetches the active
-    dataset as a hex TLV blob and nothing parses the channel out of it. The
-    caller that already knows about OTBR is the one to close this; it must
-    not become an HTTP call inside `connect()`."""
+    The input comes from `matter/otbr.py`'s `current_thread_channel`, which
+    reads the channel out of the border router's active dataset. The source
+    asks it once, on its first connect (`ZigbeeSource._learn_thread_channel`),
+    before any application exists and so before anything can form."""
     if thread_channel is None:
         return list(ZIGBEE_CHANNELS)
     return [channel for channel in ZIGBEE_CHANNELS if channel != thread_channel]
@@ -359,6 +355,27 @@ class CoordinatorInfo:
 def _node_info_text(node_info: Any, name: str) -> str | None:
     value = getattr(node_info, name, None)
     return value if isinstance(value, str) and value else None
+
+
+def _network_text(network_info: Any, name: str) -> str:
+    """One field of `zigpy.state.NetworkInfo` for the connect line. The PAN
+    ID is shown the way zigpy's own `PanId` prints (`0x1A62`); a field a
+    library leaves unset reads "unknown"."""
+    value = getattr(network_info, name, None)
+    if value is None:
+        return "unknown"
+    if name == "pan_id" and isinstance(value, int):
+        return f"0x{int(value):04X}"
+    return str(value)
+
+
+def _network_backup_known(app: Any) -> bool | None:
+    """Whether zigpy's database already holds a network backup, or `None`
+    for an application that offers no backup manager."""
+    most_recent = getattr(getattr(app, "backups", None), "most_recent_backup", None)
+    if most_recent is None:
+        return None
+    return most_recent() is not None
 
 
 PairingState = Literal["joined", "interviewing", "ready", "failed"]
@@ -551,6 +568,7 @@ class ZigbeeSource:
         store: Any | None = None,
         open_guard: OpenGuard | None = None,
         host_dev: Path | None = None,
+        thread_channel_lookup: Callable[[], Awaitable[int | None]] | None = None,
     ) -> None:
         # The stick as the HOST names it - what the Thread guard compares,
         # what the log line prints and what the API reports. Never what zigpy
@@ -571,6 +589,11 @@ class ZigbeeSource:
         self._application_factory = application_factory
         self._on_connection_change = on_connection_change
         self._thread_channel = thread_channel
+        # Asks the border router for the channel to keep a new network off,
+        # once per source, on the first connect - see `_learn_thread_channel`.
+        # `None` once it has answered, and in tests that pass the channel
+        # itself.
+        self._thread_channel_lookup = thread_channel_lookup
         # loxmatter's own store, for configure-on-join's pending table
         # (`zigbee/configure.py`). Optional, and `None` in every test that
         # is not about configuration: without it a joining device is
@@ -674,26 +697,51 @@ class ZigbeeSource:
         or `None` before there was one."""
         return self._coordinator
 
-    def _note_coordinator(self, app: Any) -> None:
+    def _note_coordinator(self, app: Any, *, network_was_known: bool | None) -> None:
         """Records and logs, once per successful connect, what the radio
         reported about itself - the firmware version above all, which the
         hardware checklist asks for and which bellows would otherwise log
-        only at DEBUG."""
-        node_info = getattr(getattr(app, "state", None), "node_info", None)
+        only at DEBUG.
+
+        **And which network it is running.** zigpy adopts a network a stick
+        already carries - its channel and key, past the Thread-channel
+        exclusion - and says whether it formed or adopted only at INFO on
+        its own logger, which the bridge does not show. The line therefore
+        carries the channel and PAN IDs from `app.state.network_info`, and
+        whether zigpy's database held a network backup before the port was
+        opened (`network_was_known`, read by `connect()`): a network known
+        from the database was restored or validated against it, one that was
+        not is new to this bridge - formed during this connect or adopted
+        from the stick, which zigpy's public state does not tell apart.
+        Never the network key."""
+        state = getattr(app, "state", None)
+        node_info = getattr(state, "node_info", None)
+        network_info = getattr(state, "network_info", None)
         self._coordinator = CoordinatorInfo(
             radio_type=self._fingerprint.radio_type,
             manufacturer=_node_info_text(node_info, "manufacturer"),
             model=_node_info_text(node_info, "model"),
             firmware=_node_info_text(node_info, "version"),
         )
+        if network_was_known is None:
+            known = "whether this bridge's database knew it is unknown"
+        elif network_was_known:
+            known = "already in this bridge's database"
+        else:
+            known = "not in this bridge's database before (formed now, or adopted from the stick)"
         logger.info(
             "Zigbee coordinator connected on %s: radio type %s, firmware %s, "
-            "manufacturer %s, model %s",
+            "manufacturer %s, model %s; network on channel %s, PAN ID %s, "
+            "extended PAN ID %s, %s",
             self._path,
             self._coordinator.radio_type,
             self._coordinator.firmware or "unknown",
             self._coordinator.manufacturer or "unknown",
             self._coordinator.model or "unknown",
+            _network_text(network_info, "channel"),
+            _network_text(network_info, "pan_id"),
+            _network_text(network_info, "extended_pan_id"),
+            known,
         )
 
     def pairing_rows(self) -> list[PairingRow]:
@@ -877,13 +925,19 @@ class ZigbeeSource:
                 await _shutdown_even_if_cancelled(app)
             # Before the quirks warm-up and before the port: a stick that
             # must not be opened costs neither, and is never touched.
-            refusal = None if self._open_guard is None else self._open_guard(self._path)
-            if refusal is not None:
-                raise _OpenRefusedError(refusal)
+            self._refuse_if_guarded()
+            await self._learn_thread_channel()
             await ensure_quirks_loaded()
             self._set_progress("opening_radio", error=self._retry_error())
             app = await self._new_application_even_if_cancelled()
             try:
+                # AGAIN, immediately before the port opens. The answer above
+                # was given before a warm-up of 9-15 s on a Pi 4 and before
+                # the application was built, and Thread can move onto this
+                # stick in that time. The application built for nothing is
+                # shut down unstarted by the `except` below.
+                self._refuse_if_guarded()
+                network_was_known = _network_backup_known(app)
                 await app.startup(auto_form=True)
             except BaseException:
                 # Never keep an object whose startup() failed - see
@@ -909,9 +963,55 @@ class ZigbeeSource:
         # silent while looking perfectly healthy (R1 section 6).
         self._register_cluster_listeners()
         self._set_progress("connected", attempts=0)
-        self._note_coordinator(app)
+        self._note_coordinator(app, network_was_known=network_was_known)
         if self._on_connection_change is not None:
             await self._on_connection_change(True)
+
+    def _refuse_if_guarded(self) -> None:
+        refusal = None if self._open_guard is None else self._open_guard(self._path)
+        if refusal is not None:
+            raise _OpenRefusedError(refusal)
+
+    async def _learn_thread_channel(self) -> None:
+        """Asks the border router, once, which channel a new network must
+        stay off.
+
+        **Here, and not where the source is built.** The build runs at
+        bridge startup, ahead of matter-server's connection and the web UI,
+        and `current_thread_channel()` may spend its whole 5 s timeout on a
+        border router that is still starting; this runs inside `connect()`,
+        whose one caller is the supervisor's background task. It runs before
+        any application exists, so nothing can form on a channel that is
+        not known yet.
+
+        **Once per source, not once per attempt**, which is what the build
+        used to buy: the supervisor retries every 60 s for as long as a
+        stick fails, and a border router that answered once is not asked
+        again. `None` - no border router, or no channel in its dataset - is
+        an answer like any other: the network may use every channel.
+
+        An exception is not an answer. `current_thread_channel` already
+        turns every way the border router can be missing into `None`, so
+        anything it raises is a defect - it must not keep Zigbee from
+        connecting, and must not be remembered: this attempt goes ahead on
+        every channel, as with no border router, and the next one asks
+        again."""
+        lookup = self._thread_channel_lookup
+        if lookup is None:
+            return
+        try:
+            channel = await lookup()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.warning(
+                "could not read the Thread channel from the border router; this attempt "
+                "may form a Zigbee network on any channel, and the next one asks again",
+                exc_info=True,
+            )
+            return
+        self._thread_channel = channel
+        self._thread_channel_lookup = None
 
     async def disconnect(self) -> None:
         """Shuts the application down - always.
@@ -1449,7 +1549,10 @@ class ZigbeeSource:
         device = self._device_or_none(address)
         if device is None:
             raise DeviceUnreachableError(
-                i18n.t("api.errors.device_unreachable", exc=f"unknown Zigbee device {address}")
+                i18n.t(
+                    "api.errors.device_unreachable",
+                    exc=i18n.t("api.errors.zigbee_unknown_device", address=address),
+                )
             )
         return device
 
@@ -1471,9 +1574,12 @@ class ZigbeeSource:
             raise DeviceUnreachableError(
                 i18n.t(
                     "api.errors.device_unreachable",
-                    exc=(
-                        f"endpoint {call.endpoint} of {call.address} has no command "
-                        f"{call.command_id} on cluster {call.cluster_id}"
+                    exc=i18n.t(
+                        "api.errors.zigbee_no_such_command",
+                        endpoint=call.endpoint,
+                        address=call.address,
+                        command_id=call.command_id,
+                        cluster_id=call.cluster_id,
                     ),
                 )
             )
@@ -1488,7 +1594,11 @@ class ZigbeeSource:
             raise DeviceUnreachableError(
                 i18n.t(
                     "api.errors.device_unreachable",
-                    exc=f"the device answered command {call.command_id} with status {int(status)}",
+                    exc=i18n.t(
+                        "api.errors.zigbee_command_refused",
+                        command_id=call.command_id,
+                        status=int(status),
+                    ),
                 )
             )
 

@@ -108,20 +108,15 @@ async def build_zigbee_source(
     `sources/supervisor.py`'s own docstring warns about for `attach()`, so
     there is only one left.
 
-    Fetches the Thread channel to avoid HERE, once per build, rather than
-    inside `ZigbeeSource.connect()`. `channels_excluding`'s own docstring
-    names this call as its outstanding debt and says where it belongs: the
-    caller that already knows about OTBR, which must not become an HTTP
-    call inside `connect()` - that method runs on every one of the
-    supervisor's 1 s -> 60 s retries, not once. Building a new
-    `ZigbeeSource` happens far less often - once at startup, once per radio
-    change - so paying for the fetch here is the same trade the quirks
-    warm-up already makes.
-
-    (The warm-up is named in prose only, and deliberately not by its
-    function name. The test in `tests/zigbee/test_source.py` that keeps it
-    off every request path greps the source tree for that name, and it
-    cannot tell a mention from a call.)
+    **Hands the source the Thread-channel lookup, and does not call it.**
+    This build runs at bridge startup ahead of matter-server's connection
+    and uvicorn, and `current_thread_channel()` may spend its whole 5 s
+    timeout on a border router that is still starting - on an installation
+    with a Zigbee stick that held Matter and the web UI up. The source asks
+    on its first connect instead, in the supervisor's background task, once
+    per source and before anything can form (`_learn_thread_channel`). The
+    lookup reads `current_thread_channel` from this module when it runs, so
+    a test replacing it here reaches it.
 
     **`store` is carried across from the earlier startup-only builder, not
     a new parameter.** `_build_zigbee_source(store)`'s own name said as
@@ -149,16 +144,19 @@ async def build_zigbee_source(
         baudrate=settings.baudrate,
         flow_control=cast("FlowControl", settings.flow_control),
     )
-    channel = await current_thread_channel()
+
+    async def thread_channel() -> int | None:
+        return await current_thread_channel()
+
     return ZigbeeSource(
         path=settings.path,
         fingerprint=fingerprint,
         database=database,
         on_connection_change=on_connection_change,
-        thread_channel=channel,
         store=store,
         open_guard=open_guard,
         host_dev=host_dev,
+        thread_channel_lookup=thread_channel,
     )
 
 
@@ -250,12 +248,11 @@ class ZigbeeRuntime:
         that is very much running as the one state that means "nothing is
         configured here". In production that window is
         `ZigbeeSource.disconnect()` (a bellows `app.shutdown(db=True)` on a
-        Pi) plus `current_thread_channel()`'s up-to-5 s HTTP timeout, and
-        the card's polling rule keys off this very field: it would have read
+        Pi), and the card's polling rule keys off this very field: it would have read
         `idle` in the 202 and again in its first `GET`, decided nothing was
         happening, and never started polling. That is the "a running job the
-        user cannot tell from a dead one" failure the plan names as a Global
-        Constraint, so the window gets a state of its own.
+        user cannot tell from a dead one" failure, so the window gets a
+        state of its own.
 
         The marker is set SYNCHRONOUSLY in `apply()`, not inside the
         background task: `asyncio.ensure_future` does not run a single line

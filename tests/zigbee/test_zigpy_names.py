@@ -1101,3 +1101,36 @@ def test_the_common_zigbee_3_lamps_and_plugs_get_a_matter_device_type(
     zigbee_id = int(getattr(zha.DeviceType, zha_name))
     matter_id = getattr(matter_types, matter_name).device_type
     assert matter_device_type(zha.PROFILE_ID, zigbee_id) == matter_id
+
+
+def test_the_network_the_connect_line_describes_is_read_from_names_zigpy_really_has() -> None:
+    """The connect line names the network's channel and PAN IDs, read from
+    `app.state.network_info`, and whether zigpy's database held a network
+    backup before `startup()`, read through `app.backups.most_recent_backup()`.
+    `FakeNetworkInfo` and `FakeBackups` spell those names the same way, which
+    proves nothing about zigpy; this does. A renamed field would read
+    "unknown" on the Pi and be the one thing the hardware checklist asks
+    for in that line.
+
+    Fault to prove it: read `network_info.logical_channel` in
+    `_note_coordinator` (and in the fake) - the source check fails."""
+    import dataclasses
+
+    import zigpy.application
+    import zigpy.backups
+    import zigpy.state
+    from fakes import FakeNetworkInfo
+
+    fields = {field.name for field in dataclasses.fields(zigpy.state.NetworkInfo)}
+    assert {"channel", "pan_id", "extended_pan_id"} <= fields
+    assert {field.name for field in dataclasses.fields(FakeNetworkInfo)} <= fields
+    assert "network_info" in {field.name for field in dataclasses.fields(zigpy.state.State)}
+    assert "self.backups: zigpy.backups.BackupManager" in inspect.getsource(
+        zigpy.application.ControllerApplication.__init__
+    )
+    assert callable(zigpy.backups.BackupManager.most_recent_backup)
+
+    reader = inspect.getsource(source_module.ZigbeeSource._note_coordinator)
+    for name in ('"network_info"', '"channel"', '"pan_id"', '"extended_pan_id"'):
+        assert name in reader
+    assert '"most_recent_backup"' in inspect.getsource(source_module._network_backup_known)

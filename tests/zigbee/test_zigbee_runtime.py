@@ -495,36 +495,49 @@ async def test_build_zigbee_source_passes_the_store_through_for_configure_on_joi
     assert source._fingerprint.baudrate == 115200
 
 
-async def test_build_zigbee_source_excludes_the_thread_channel_it_read(store, monkeypatch):
-    """The second half of the Thread collision, and the reason
-    `channels_excluding` shipped inert: `ZigbeeSource` has excluded OTBR's
-    channel since Task 7, but nothing ever read that channel out of OTBR's
-    dataset, so in production the exclusion did nothing at all.
+async def test_build_zigbee_source_leaves_the_thread_channel_to_the_first_connect(
+    store, monkeypatch
+):
+    """The border router's channel is what a new Zigbee network must stay
+    off, and nothing read it at all until the build fetched it. But the
+    build runs at bridge startup, ahead of matter-server's connection and
+    uvicorn, and `current_thread_channel()` may spend its whole 5 s timeout
+    on a border router that is still starting: on an installation with a
+    stick, Matter and the web UI waited for it.
 
-    The fetch belongs HERE, once per build, and never inside `connect()` -
-    that method runs on every one of the supervisor's 1 s -> 60 s retries.
+    So the build asks nothing - a border router that never answers does not
+    hold it up - and the source it returns reads the channel through
+    `current_thread_channel` on its first connect, once.
 
-    Fault to prove it: leave `thread_channel` at its default. The network
-    then forms happily on the border router's own channel, with no error
-    and no sign anywhere that anything collided."""
+    Fault to prove it: await `current_thread_channel()` in the build again
+    (the build hangs), or hand the source no lookup (the channel is never
+    excluded)."""
     calls: list[int] = []
+    answer = asyncio.Event()
 
     async def border_router_on_15() -> int | None:
         calls.append(1)
+        await answer.wait()
         return 15
 
     monkeypatch.setattr(
         runtime_module, "current_thread_channel", lambda *a, **k: border_router_on_15()
     )
 
-    source = await build_zigbee_source(
-        _settings(), database=Path("/tmp/z.sqlite"), on_connection_change=None, store=store
+    source = await asyncio.wait_for(
+        build_zigbee_source(
+            _settings(), database=Path("/tmp/z.sqlite"), on_connection_change=None, store=store
+        ),
+        timeout=1,
     )
 
     assert source is not None
-    assert source._thread_channel == 15
+    assert calls == []
+    answer.set()
+    await source._learn_thread_channel()
+    await source._learn_thread_channel()
     assert 15 not in source._config()["network"]["channels"]
-    assert len(calls) == 1, "once per build, not once per connect attempt"
+    assert len(calls) == 1, "once per source, not once per connect attempt"
 
 
 async def test_an_old_source_whose_disconnect_raises_still_ends_with_a_working_new_one(store):

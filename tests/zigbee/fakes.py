@@ -758,10 +758,33 @@ class FakeNodeInfo:
 
 
 @dataclass
+class FakeNetworkInfo:
+    """`zigpy.state.NetworkInfo`, as far as the connect line reads it. The
+    field names are checked against the real dataclass in
+    `test_zigpy_names.py`. Deliberately no key: nothing here may read one."""
+
+    channel: int = 15
+    pan_id: int = 0x1A62
+    extended_pan_id: str = "dd:dd:dd:dd:dd:dd:dd:dd"
+
+
+@dataclass
 class FakeApplicationState:
-    """`zigpy.state.State`. Only `node_info` is read here."""
+    """`zigpy.state.State`. `node_info` and `network_info` are read here."""
 
     node_info: FakeNodeInfo = field(default_factory=FakeNodeInfo)
+    network_info: FakeNetworkInfo = field(default_factory=FakeNetworkInfo)
+
+
+@dataclass
+class FakeBackups:
+    """`zigpy.backups.BackupManager`: the network backups zigpy's database
+    holds, newest last."""
+
+    backups: list[Any] = field(default_factory=list)
+
+    def most_recent_backup(self) -> Any | None:
+        return self.backups[-1] if self.backups else None
 
 
 class FakeApplication:
@@ -782,6 +805,9 @@ class FakeApplication:
         # `app.state.node_info.ieee` - the coordinator's own address, which
         # is what an IAS sensor has to be told to send its alarms to.
         self.state = FakeApplicationState()
+        # zigpy's network backups, read before `startup()` to tell a network
+        # this database already knew from one it did not.
+        self.backups = FakeBackups()
         # Every priority the application was asked to hold, in order, and
         # whether it is holding one right now. `PacketPriority.HIGH` is 1.
         self.priorities: list[int] = []

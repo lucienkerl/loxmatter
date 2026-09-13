@@ -82,7 +82,6 @@ async def ensure_quirks_loaded(*, setup: Callable[[], None] = _default_setup) ->
     racing on startup would both see `None` and both start a 15-second
     import storm on a Pi.
     """
-    global _duration_seconds
     if _duration_seconds is not None:
         return _duration_seconds
     async with _lock:
@@ -113,8 +112,19 @@ async def ensure_quirks_loaded(*, setup: Callable[[], None] = _default_setup) ->
             with contextlib.suppress(Exception):
                 await running
             if running.done() and not running.cancelled() and running.exception() is None:
-                _duration_seconds = time.monotonic() - started
+                # Logged here too: the registry IS loaded, and this is the
+                # only measurement of it this process will make. An apply
+                # during the very first warm-up cancels exactly this await,
+                # and the next caller returns the stored figure silently -
+                # the line the hardware checklist reads would never appear.
+                _record(started)
             raise
-        _duration_seconds = time.monotonic() - started
-        logger.info("zigbee quirks registry loaded in %.1f s", _duration_seconds)
-        return _duration_seconds
+        return _record(started)
+
+
+def _record(started: float) -> float:
+    """Stores and logs the warm-up's duration, once per process."""
+    global _duration_seconds
+    _duration_seconds = time.monotonic() - started
+    logger.info("zigbee quirks registry loaded in %.1f s", _duration_seconds)
+    return _duration_seconds

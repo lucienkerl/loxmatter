@@ -154,6 +154,28 @@ def test_the_call_bound_reads_as_a_whole_number_of_seconds(language):
     assert "10.0" not in message
 
 
+@pytest.mark.parametrize(
+    ("key", "values"),
+    [
+        ("api.errors.device_timed_out", {"seconds": 10.0}),
+        ("api.errors.zigbee_unknown_device", {"address": "00:12:4b:00:1c:a1:b2:c3"}),
+        ("api.errors.zigbee_command_refused", {"command_id": 1, "status": 134}),
+    ],
+)
+def test_the_new_device_error_strings_use_the_umlaut_not_its_transliteration(key, values):
+    """These German values were written after the project's German prose
+    moved to real umlauts, and one of them still spelled "Geraet". The
+    older transliterated strings are a separate piece of work; these must
+    not add to them.
+
+    Fault to prove it: write "Geraet" into the `de` value of
+    `api.errors.device_timed_out` again."""
+    i18n.set_language("de")
+    message = i18n.t(key, **values)
+    assert "Gerät" in message
+    assert "Geraet" not in message
+
+
 def test_no_value_is_wrapped_in_typographic_quotes():
     """No entry in strings.yaml may be wrapped as a whole in typographic
     quotation marks - neither „...“ (German)

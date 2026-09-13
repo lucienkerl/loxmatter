@@ -151,6 +151,7 @@ def build(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         thread_channel: int | None = None,
         store: Any = None,
         open_guard: Any = None,
+        thread_channel_lookup: Any = None,
     ) -> Harness:
         order: list[str] = []
         prepared = list(applications) or [FakeApplication()]
@@ -177,6 +178,7 @@ def build(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
             thread_channel=thread_channel,
             store=store,
             open_guard=open_guard,
+            thread_channel_lookup=thread_channel_lookup,
         )
         return Harness(source, factory, prepared, order)
 
@@ -315,6 +317,7 @@ async def test_a_stick_the_open_guard_refuses_is_never_touched(build) -> None:
     answers: list[i18n.Message | None] = [
         i18n.Message.of("api.errors.zigbee_open_is_thread_stick"),
         None,
+        None,
     ]
     asked: list[str] = []
 
@@ -337,7 +340,175 @@ async def test_a_stick_the_open_guard_refuses_is_never_touched(build) -> None:
 
     await harness.source.connect()
     assert harness.source.connected
+    # Asked twice on the attempt that opened: before the warm-up, and again
+    # right before the port - see the test below.
+    assert len(asked) == 3
+    await harness.source.disconnect()
+
+
+async def test_the_open_guard_is_asked_again_right_before_the_port_is_opened(
+    build, monkeypatch
+) -> None:
+    """The guard used to be answered once, before a warm-up that takes
+    9-15 s on a Pi 4 and before the application is built - and the answer
+    was then assumed for the moment the port opened. Thread moved onto the
+    stored stick in between (a hand edit of `.env`, the one path the
+    product does not close) would have had zigpy open the border router's
+    radio anyway.
+
+    So it is asked again immediately before `startup()`. A refusal there
+    shuts the application that was just built down unstarted, and fails
+    the attempt with the guard's sentence like any other refusal.
+
+    Fault to prove it: drop the second ask (the application is started on
+    the Thread stick), or skip the shutdown of the unstarted application
+    (`shutdown_calls` stays empty)."""
+    thread_moved = [False]
+    asked: list[str] = []
+
+    def guard(path: str) -> i18n.Message | None:
+        asked.append(path)
+        return (
+            i18n.Message.of("api.errors.zigbee_open_is_thread_stick") if thread_moved[0] else None
+        )
+
+    application = FakeApplication()
+    harness = build(application, open_guard=guard)
+
+    async def warm_up_while_thread_moves() -> float:
+        thread_moved[0] = True
+        return 0.0
+
+    monkeypatch.setattr(source_module, "ensure_quirks_loaded", warm_up_while_thread_moves)
+
+    with pytest.raises(ZigbeeUnavailableError) as caught:
+        await harness.source.connect()
+
+    assert str(caught.value) == i18n.t("api.errors.zigbee_open_is_thread_stick")
     assert len(asked) == 2
+    assert application.startup_calls == []
+    assert application.shutdown_calls == [True]
+    assert not harness.source.connected
+    progress = harness.source.progress()
+    assert (progress.state, progress.attempts) == ("failed", 1)
+
+
+async def test_the_thread_channel_is_read_once_per_source_before_anything_forms(build) -> None:
+    """The border router's channel is what a new Zigbee network must stay
+    off, and it used to be fetched while the source was BUILT - at bridge
+    startup, ahead of matter-server's connection and the web UI, with a 5 s
+    timeout an OTBR slow to start could spend in full.
+
+    It is read on the first connect instead, which runs in the supervisor's
+    background task: after the open guard, before the warm-up and before
+    any application exists, so no network can form before the channel is
+    known. It is read once per source, not once per retry, and an answer of
+    "no border router" is an answer.
+
+    Fault to prove it: read it after the application is built (the
+    candidate list still carries 15), or on every connect (two reads)."""
+    reads: list[str] = []
+
+    async def lookup() -> int | None:
+        reads.append(harness.source.progress().state)
+        harness.order.append("thread_channel")
+        return 15
+
+    harness = build(FakeApplication(), FakeApplication(), thread_channel_lookup=lookup)
+
+    await harness.source.connect()
+    await harness.source.connect()
+
+    assert harness.order[:3] == [
+        "thread_channel",
+        "quirks:loading_quirks",
+        "application:opening_radio",
+    ]
+    assert reads == ["loading_quirks"]
+    assert [config["network"]["channels"] for config in harness.factory.configs] == [
+        [11, 20, 25],
+        [11, 20, 25],
+    ]
+    await harness.source.disconnect()
+
+
+async def test_a_thread_channel_read_that_fails_forms_on_every_channel_and_asks_again(
+    build, caplog
+) -> None:
+    """`current_thread_channel` answers `None` for every way OTBR can be
+    missing; anything it raises beyond that is a defect, and must neither
+    stop Zigbee from connecting nor be remembered as an answer. The attempt
+    goes ahead on the full list - what a missing border router already gets
+    - with a warning, and the next connect asks again.
+
+    Fault to prove it: let the exception fail the attempt (the first
+    connect raises), or remember the failure (the second connect does not
+    ask)."""
+    answers: list[Any] = [RuntimeError("dataset parser broke"), 20]
+
+    async def lookup() -> int | None:
+        answer = answers.pop(0)
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+
+    harness = build(FakeApplication(), FakeApplication(), thread_channel_lookup=lookup)
+    caplog.set_level("INFO", logger="loxmatter.zigbee.source")
+
+    await harness.source.connect()
+    await harness.source.connect()
+
+    assert [config["network"]["channels"] for config in harness.factory.configs] == [
+        [11, 15, 20, 25],
+        [11, 15, 25],
+    ]
+    assert any(
+        r.levelname == "WARNING" and "Thread channel" in r.getMessage() for r in caplog.records
+    )
+    await harness.source.disconnect()
+
+
+async def test_the_connect_line_names_the_channel_and_whether_the_database_knew_the_network(
+    build, caplog
+) -> None:
+    """A stick that already carries a network is adopted with its own
+    channel and key, and zigpy says so only at INFO on its own logger,
+    which the bridge does not show. The hardware checklist has to record
+    which channel the network ended up on and whether it was one this
+    bridge's database already knew, so the connect line carries both: the
+    channel and PAN IDs from `app.state.network_info`, and whether zigpy's
+    database held a network backup BEFORE the port was opened. Never the
+    network key.
+
+    Fault to prove it: read the backups after `startup()` (a network formed
+    during it would read as known), or drop the channel from the line."""
+    known = FakeApplication()
+    known.backups.backups.append(object())
+    known.state.network_info.channel = 25
+    fresh = FakeApplication()
+    harness = build(known, fresh)
+    caplog.set_level("INFO", logger="loxmatter.zigbee.source")
+
+    original_startup = fresh.startup
+
+    async def startup_that_forms(*, auto_form: bool = False) -> None:
+        await original_startup(auto_form=auto_form)
+        fresh.backups.backups.append(object())
+
+    fresh.startup = startup_that_forms  # type: ignore[method-assign]
+
+    await harness.source.connect()
+    await harness.source.connect()
+
+    lines = [
+        r.getMessage() for r in caplog.records if "Zigbee coordinator connected" in r.getMessage()
+    ]
+    assert "channel 25" in lines[0]
+    assert "PAN ID 0x1A62" in lines[0]
+    assert "already in this bridge's database" in lines[0]
+    assert "channel 15" in lines[1]
+    assert "not in this bridge's database" in lines[1]
+    assert all("key" not in line.lower() for line in lines)
     await harness.source.disconnect()
 
 
@@ -1534,6 +1705,66 @@ async def test_every_zigpy_failure_leaves_as_device_unreachable(build, raised, s
     if raised is not None:
         with pytest.raises(DeviceUnreachableError):
             await harness.source.remove(LAMP_IEEE)
+
+
+async def test_the_reason_a_command_failed_is_in_the_language_of_the_sentence_around_it(
+    build,
+) -> None:
+    """`api.errors.device_unreachable` wraps a reason, and three of the
+    reasons this source gives were English literals - so a German user read
+    "Geraet nicht erreichbar: unknown Zigbee device ...". Each reason is a
+    string of its own now, resolved when the command fails.
+
+    Fault to prove it: put back any of the three English literals."""
+    lamp = colour_lamp()
+    lamp.endpoints[1].in_clusters[0x0006].command_status = 0x86
+    harness = build(FakeApplication(devices=[lamp]))
+    await harness.source.connect()
+    i18n.set_language("de")
+
+    def call(address: str, *, cluster_id: int = 6, command_id: int = 1) -> DeviceCall:
+        return DeviceCall(
+            technology="zigbee",
+            address=address,
+            endpoint=1,
+            cluster_id=cluster_id,
+            command_id=command_id,
+        )
+
+    reasons = []
+    for failing in (
+        call("00:00:00:00:00:00:00:01"),
+        call(LAMP_IEEE, cluster_id=0x0102),
+        call(LAMP_IEEE),
+    ):
+        with pytest.raises(DeviceUnreachableError) as caught:
+            await harness.source.send(failing)
+        reasons.append(str(caught.value))
+
+    assert reasons == [
+        i18n.t(
+            "api.errors.device_unreachable",
+            exc=i18n.t("api.errors.zigbee_unknown_device", address="00:00:00:00:00:00:00:01"),
+        ),
+        i18n.t(
+            "api.errors.device_unreachable",
+            exc=i18n.t(
+                "api.errors.zigbee_no_such_command",
+                endpoint=1,
+                address=LAMP_IEEE,
+                command_id=1,
+                cluster_id=0x0102,
+            ),
+        ),
+        i18n.t(
+            "api.errors.device_unreachable",
+            exc=i18n.t("api.errors.zigbee_command_refused", command_id=1, status=0x86),
+        ),
+    ]
+    for english in ("unknown Zigbee device", "has no command", "answered command"):
+        assert all(english not in reason for reason in reasons)
+    i18n.set_language("en")
+    await harness.source.disconnect()
 
 
 async def test_a_command_for_a_radio_that_is_down_says_so(build) -> None:

@@ -411,6 +411,18 @@ api.errors.commissioning_failed:
 api.errors.device_unreachable:
   en: "device unreachable: {exc}"
   de: "Geraet nicht erreichbar: {exc}"
+# The reasons `zigbee/source.py` puts into `api.errors.device_unreachable`.
+# Each is its own string, so the reason is in the language of the sentence
+# around it.
+api.errors.zigbee_unknown_device:
+  en: "unknown Zigbee device {address}"
+  de: "unbekanntes Zigbee-Gerät {address}"
+api.errors.zigbee_no_such_command:
+  en: "endpoint {endpoint} of {address} has no command {command_id} on cluster {cluster_id}"
+  de: "Endpunkt {endpoint} von {address} hat keinen Befehl {command_id} im Cluster {cluster_id}"
+api.errors.zigbee_command_refused:
+  en: "the device answered command {command_id} with status {status}"
+  de: "das Gerät hat Befehl {command_id} mit Status {status} beantwortet"
 api.errors.source_not_configured:
   # A stored device belongs to a technology no running source serves -
   # possible once a second source exists and its radio is removed from
@@ -427,7 +439,7 @@ api.errors.device_timed_out:
   # past `SOURCE_CALL_TIMEOUT_SECONDS` or `SOURCE_REMOVAL_TIMEOUT_SECONDS`.
   # `:g` because those bounds are floats: "within 10 s", not "within 10.0 s".
   en: "the device did not answer within {seconds:g} s"
-  de: "das Geraet hat innerhalb von {seconds:g} s nicht geantwortet"
+  de: "das Gerät hat innerhalb von {seconds:g} s nicht geantwortet"
 # The all-unconfigured case of a group fan-out (boundary design open point
 # 12): EVERY member was never asked, because the technology's source is not
 # running right now - 503, not 502, the same distinction
