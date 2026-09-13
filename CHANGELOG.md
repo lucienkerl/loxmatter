@@ -76,6 +76,14 @@ people who don't know the code.
   can update a lamp's firmware from the internet on its own schedule;
   loxmatter switches that off, so nothing on your Zigbee network changes
   without you.
+- **Removing a Zigbee device works without its stick.** A device the
+  Zigbee stick no longer knows — after a fresh network, or another stick —
+  is simply removed. With no Zigbee stick set up at all, the device's tile
+  says the device cannot be asked to leave its network and offers **Remove
+  from loxmatter only**: the device leaves the device list and the export,
+  and the bridge stops sending its values to Loxone, but the device itself
+  is not told — factory-reset it before pairing it anywhere else. Matter
+  devices are still always removed through matter-server first.
 - **Colour in XY form.** Colour lamps get a second colour output in the
   export, `color_xy`, which sends the colour as XY coordinates, the colour
   command Matter makes mandatory for full-colour lamps. Matter and Zigbee

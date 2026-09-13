@@ -126,23 +126,26 @@ phone opened, which a laptop merely sees through its poll, is not the
 laptop's to close when its user clicks Export. The page remembers the **end
 time** of the window it opened (the `permit_until` of a Start or Keep open
 that succeeded there; list and permit answers spell the same window the same
-way) and closes on leaving only while the window on screen still has that
-end time. The claim goes when a Stop succeeds and when a list shows no
-window or a different end time — so a window the phone opened after
-stopping the laptop's, or after the laptop's ran out unseen, is not the
-laptop's. A Keep open moves the claim to its new end time. A list asked
-while a permit request was on its way is dropped when it lands after that
-request's answer. A Start still under way when the tab is left counts as
-opened there, and is closed the moment its answer lands off screen.
+way), and the Stop it sends on leaving carries it:
+`POST /api/zigbee/permit {duration: 0, only_if_until: <iso>}`. **The server
+decides**: under the source's permit lock it closes the window only while
+the open window still ends at that second, and otherwise closes nothing and
+answers 200 with the window that is open. So a window the phone opened after
+stopping the laptop's, or after the laptop's ran out unseen, stays open,
+whenever the laptop last polled. A Keep open moves the page's end time to
+its new one; a Stop, and a list that shows no window, drop it. The Stop
+button itself stays unconditional. A Start still under way when the tab is
+left has no end time yet, and is closed - conditionally, with the end time
+it answered - the moment its answer lands off screen. Leaving never waits
+for that Stop: the view changes at once, and a refusal arrives in the banner
+below when the radio answers.
 
-The claim is kept in the browser tab's `sessionStorage`, so it survives a
-reload and is shared with no other tab — but it is taken back only from a
-page that handed it over on `pagehide`, which a reload passes through and a
-duplicated tab (which copies `sessionStorage`) does not. A Start still on
-its way is stored as pending with its send time; after a reload, a window
-ending where that Start would have ended it (send time plus 254 s, a few
-seconds early to half a minute late) is claimed, and the marker is dropped
-once no Start can still be on its way.
+The end time is kept in the browser tab's `sessionStorage`, so a reloaded
+page still closes the window it opened when it is left. A duplicated tab
+copies it; left, that copy closes the same window, which is still the one
+this tab's user opened. A reload during the Start request itself (at most
+10 s) loses the end time: the reloaded page shows the window and its Stop
+button, and the window ends by itself.
 
 A Stop refused on leaving (`api.zigbee.close_failed`) is shown in a banner
 above the main navigation, where the user now is, with its own Stop button —
@@ -271,6 +274,8 @@ namespace follows the file's existing convention.
 | `web.zigbee.retry`, `web.zigbee.remove` | Row actions |
 | `web.zigbee.quirk_applied`, `web.zigbee.quirk_none` | The hint |
 | `web.zigbee.remove_confirm`, `web.zigbee.remove_confirm_adopted` | The honest removal copy of 3.1, and what it adds for a device already in the device list |
+| `web.devices.forget_only_offer`, `web.devices.forget_only`, `web.devices.forget_only_keep` | Removing a device whose technology has no configured source, from its tile (13.7) |
+| `api.devices.forget_only_refused` | `forget_only` refused while the technology's source is configured |
 | `web.radios.zigbee_label`, `web.radios.zigbee_none` | The radios row |
 | `web.radios.zigbee_is_thread_stick` | Why the Thread stick is not offered |
 | `web.radios.fingerprint_unknown`, `web.radios.advanced` | Unknown stick and its disclosure |
@@ -1352,10 +1357,10 @@ checklist's section 15 was rewritten where these changed what it expects.
    them such devices landed in category OTHER and could not join a group.
    `profiles/capabilities.py` now reads the endpoint's device type: an
    Extended Color Light declaring XY is granted `(768, 7)` whatever CT says,
-   so an RGBCCT lamp that declares itself one gets one colour control; a
-   Color Temperature Light gets no colour command whatever its bits say;
+   so an RGBCCT lamp that declares itself one gets one colour control;
    without a device type the bits decide as before, for Matter and Zigbee
-   alike.
+   alike. (As first built, a Color Temperature Light was also denied colour
+   whatever its bits said; 13.7 takes that back.)
 6. **Section 4.5 held only for a lost link.** A radio change, "No Zigbee
    stick" and shutdown go through `disconnect()`, which left every device
    online with its last value. It now reports every device offline.
@@ -1374,3 +1379,47 @@ checklist's section 15 was rewritten where these changed what it expects.
    zigpy's database already knew it, and a configuration pass ends with an
    INFO line naming what it configured.
 
+### 13.7 The last fixes before merge
+
+Added 13 September 2026. Still **nothing here has been exercised against
+Zigbee hardware**.
+
+1. **The claim on a join window moved to the server** (3.1). Three review
+   rounds built "close only the window this page opened" in the browser: an
+   end-time claim compared against the last poll, a pending-Start marker
+   with a 5 s early / 30 s late clock tolerance, an in-flight counter, a
+   `pagehide` handover for Chrome's Duplicate Tab, and the logic settling
+   all of it on every list - about 160 lines of `app.js` - and a two-second
+   race remained, because the page compared against a list up to one poll
+   old. Only the source holds the current end time, under the lock every
+   permit call already takes, so the comparison is made there:
+   `ZigbeeSource.close_window_ending`, reached through `only_if_until` on
+   the permit route. The page keeps only the end time of its own last Start
+   or Keep open. What that costs: a reload during the Start request loses
+   the end time, and a duplicated tab can close the window its original
+   opened - the same window, never another one. The Stop on leaving is no
+   longer awaited by the view change.
+2. **A Zigbee device stays removable without its radio.** With no Zigbee
+   source configured, `DELETE /api/devices/{id}` answered 503 for every
+   Zigbee tile, forever; with a source whose database no longer knew the
+   device, 502, forever. `ZigbeeSource.remove` now treats an address zigpy
+   does not know as already removed, which is zigpy's own semantics
+   (`ControllerApplication.remove` returns for an unknown IEEE, zigpy
+   2.2.0). For a technology with no configured source, the 503 carries
+   `"offer": "forget_only"`, and the device list offers **Remove from
+   loxmatter only**, which sends `DELETE ...?forget_only=true`: the device
+   leaves the store, the export and Loxone exactly as a removal does, and
+   the copy says the device itself was not told and must be factory-reset
+   before it can be paired elsewhere. Refused with 409 while the
+   technology's source is configured - for Matter that is always, so the
+   fabric-first order of `api/devices.py` stays the only way to remove a
+   Matter device.
+3. **A Color Temperature Light takes colour when its bits say so.** 13.6
+   point 5 made the device type deny colour on 268 whatever the bits
+   declared, and so removed the picker from a lamp whose ColorCapabilities
+   claim hue and saturation. The device type now only adds: 269 grants
+   `(768, 7)` on XY alone; 268 changes nothing, and the white-spectrum lamp
+   (XY|CT, no HS) still gets no colour command from the bits.
+4. **Removing a row never added to the device list clears its pending
+   configuration** as well, and a shutdown whose UDP sender is already
+   closed marks nothing offline without a traceback.
