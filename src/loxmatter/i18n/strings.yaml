@@ -1280,16 +1280,16 @@ web.devices.remove_confirm:
 # device's group labels, computed client-side from `member_ids` before
 # the dialog opens. Names the SAME failure `web.groups.delete_confirm`
 # already names for a deleted group's own "g{id}_" keys - here the group
-# survives, but can lose a light command this device was the last member
-# to carry (design 2026-09-13, 3.1, `register_group_commands`) without a
-# word about it otherwise. Removing one
-# of several members can only add a non-light command to the group, never
-# take one away.
+# survives, but loses every command only this device made available: a
+# light command it was the last member to carry (design 2026-09-13, 3.1,
+# `register_group_commands`), or - when it was the group's only member -
+# every command the group had. Removing one of several members can only add
+# a non-light command to the group, never take one away.
 web.devices.remove_confirm_groups_note:
   en: |
-    It also belongs to: {groups}. If it was the last member there with a light function such as colour or white temperature, that output of the group answers 404 in Loxone from then on.
+    It also belongs to: {groups}. Any function of a group that only this device provided - colour, say, or everything when it is the group's only member - disappears, and the group's virtual output for it answers 404 in Loxone from then on.
   de: |
-    Es gehört außerdem zu: {groups}. War es dort das letzte Mitglied mit einer Lichtfunktion wie Farbe oder Weißton, antwortet der zugehörige virtuelle Ausgang der Gruppe in Loxone von da an mit 404.
+    Es gehört außerdem zu: {groups}. Jede Funktion einer Gruppe, die nur dieses Gerät bereitstellte – etwa Farbe, oder alles, wenn es das einzige Mitglied ist –, fällt weg, und der zugehörige virtuelle Ausgang der Gruppe antwortet in Loxone von da an mit 404.
 # The second step of removing a device whose technology has no configured
 # source - the 503 of `DELETE /api/devices/{id}` carrying "offer":
 # "forget_only" - shown on the device's tile with the two buttons below.
