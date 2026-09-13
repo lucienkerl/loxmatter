@@ -433,7 +433,7 @@ _IAS_ALARM_MASK = 0b11
 
 # ColorCapabilities/FeatureMap bits this module reads directly (design 5.4).
 # These serve `accepted_commands`' OWN synthesis rule, which is simpler than
-# (and separate from) `profiles.capabilities.COMMAND_REQUIRED_FEATURES`: the
+# (and separate from) `profiles.capabilities.COMMAND_FEATURE_RULES`: the
 # downstream gate in `export.commands` still applies on top of whatever is
 # written here, exactly as it does for a Matter device.
 _COLOUR_CAPABILITY_HUE_SATURATION = 0x01

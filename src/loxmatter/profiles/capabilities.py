@@ -41,31 +41,39 @@ FeatureMap at all). Both are read, in that order, so the same rule serves
 both worlds.
 
 - (768, 6) MoveToHueAndSaturation sends `hue`/`saturation` and needs HS.
-- (768, 7) MoveToColor sends `colorX`/`colorY` and needs XY - **and HS as
-  well.** That second half goes beyond what the payload strictly requires
-  and is the deliberate part of this table, so here is the reasoning in
-  full:
+- (768, 7) MoveToColor sends `colorX`/`colorY` and needs XY - **plus one
+  of two things that tell a colour lamp from a white one**: the HS bit, or
+  the absence of the CT bit.
 
   XY on its own does not mean "can show a colour". A tunable-white lamp
   declares it because xy is also how a controller hands it a *white point*;
-  the KAJPLATS WS above declares exactly XY|CT and is not a colour lamp. The
-  control this project builds on top of the command is not an xy field, it
-  is a full-gamut colour picker (`control: hue_sat` in `clusters.yaml`,
-  the colour area in `web/index.html`), and that picker reads the lamp's
-  position back from CurrentHue (768/0) and CurrentSaturation (768/1) -
-  attributes a lamp without the HS feature does not have. On the KAJPLATS WS
-  the picker therefore cannot even show where the light is, and
-  `readStartValues`' `colormode` never becomes 0, so the modal never opens on
-  the colour tab. A control whose read-back is structurally absent is not a
-  control.
+  the KAJPLATS WS above declares exactly XY|CT and is not a colour lamp.
+  The control this project builds on top of the command is a full-gamut
+  colour picker (`control: hue_sat` in `clusters.yaml`), so offering it to
+  that lamp draws colours its two white channels cannot show.
 
-  The cost is a colour lamp that declares XY but no HS: it loses the picker.
-  No such device exists in this repository, on the shelf, or in the fixture
-  set, while the lamp harmed by the other choice does - and the project's
-  standing asymmetry (see `api/control.py`, `_WRITABLE_ATTRIBUTES`) is that a
-  wrongly locked control costs one missing option while a wrongly released
-  one misbehaves on real hardware. When such a lamp turns up, this table is
-  the one line to change.
+  A lamp that declares XY and NOT CT, however, is not a white-spectrum
+  lamp - a lamp that tunes white declares CT - so XY is how it takes
+  colour, and the only way. zha-quirks ships exactly such a device:
+  `zhaquirks.candeo.CandeoRGBColorCluster` pins ColorCapabilities to
+  `XY_attributes` alone for the Candeo C-ZB-LC20 RGB controllers. The first
+  version of this table asked for XY|HS and gave that controller no colour
+  control at all, while the design and the change notes promised colour on
+  lamps that only accept XY (corrected 13 September 2026).
+
+  What such a lamp does not have is CurrentHue/CurrentSaturation, which is
+  where the picker reads its start position from; the modal then shows its
+  "start value unknown" note, the same one every control shows for a value
+  it cannot read. That costs the marker, not the colour.
+
+  **The case this still leaves out:** a colour lamp declaring XY|CT without
+  HS is bit-for-bit the white-spectrum lamp, and is denied with it -
+  `zhaquirks.candeo.CandeoRGBCCTColorCluster` (XY_attributes +
+  Color_temperature) is a real one. The bits cannot separate the two; only
+  the device type could (Extended Color Light 269 against Color
+  Temperature Light 268). The project's standing asymmetry decides the tie
+  (see `api/control.py`, `_WRITABLE_ATTRIBUTES`): a wrongly locked control
+  costs one missing option, a wrongly released one misbehaves on hardware.
 
 **A device that declares nothing is denied.** Neither attribute present means
 the snapshot makes no claim, and a gate that reads silence as consent is not
@@ -107,11 +115,19 @@ _FEATURE_SOURCES: dict[int, tuple[int, ...]] = {
     COLOR_CONTROL_CLUSTER: (FEATURE_MAP_ID, COLOR_CAPABILITIES_ID),
 }
 
-# (cluster ID, command ID) -> the feature bits that must ALL be declared.
-# See the module docstring for why (768, 7) asks for HS on top of XY.
-COMMAND_REQUIRED_FEATURES: dict[tuple[int, int], int] = {
-    (COLOR_CONTROL_CLUSTER, 6): COLOUR_FEATURE_HUE_SATURATION,
-    (COLOR_CONTROL_CLUSTER, 7): COLOUR_FEATURE_XY | COLOUR_FEATURE_HUE_SATURATION,
+# (cluster ID, command ID) -> the rules that permit it, as
+# `(required, excluded)` bit pairs. A command is permitted when ANY one rule
+# holds: every `required` bit declared and no `excluded` bit declared. See
+# the module docstring for the two rules of (768, 7).
+COMMAND_FEATURE_RULES: dict[tuple[int, int], tuple[tuple[int, int], ...]] = {
+    (COLOR_CONTROL_CLUSTER, 6): ((COLOUR_FEATURE_HUE_SATURATION, 0),),
+    (COLOR_CONTROL_CLUSTER, 7): (
+        # A colour lamp that also takes hue/saturation, white channels or not.
+        (COLOUR_FEATURE_XY | COLOUR_FEATURE_HUE_SATURATION, 0),
+        # A colour lamp whose only colour command is xy: no CT, so not a
+        # white-spectrum lamp.
+        (COLOUR_FEATURE_XY, COLOUR_FEATURE_COLOR_TEMPERATURE),
+    ),
 }
 
 
@@ -168,18 +184,21 @@ def command_needs_missing_feature(
 ) -> bool:
     """Whether this command asks for a feature the endpoint does not declare.
 
-    False for every command with no entry in `COMMAND_REQUIRED_FEATURES` -
-    the gate is an exception list, not a second permission list on top of
+    False for every command with no entry in `COMMAND_FEATURE_RULES` - the
+    gate is an exception list, not a second permission list on top of
     `clusters.yaml`.
 
-    True when the required bits are missing AND when no source attribute is
-    present at all. Silence is not consent: a snapshot that says nothing about
-    ColorControl's abilities cannot be the reason a colour picker appears.
+    True when no rule holds AND when no source attribute is present at all.
+    Silence is not consent: a snapshot that says nothing about ColorControl's
+    abilities cannot be the reason a colour picker appears.
     """
-    required = COMMAND_REQUIRED_FEATURES.get((cluster_id, command_id))
-    if required is None:
+    rules = COMMAND_FEATURE_RULES.get((cluster_id, command_id))
+    if rules is None:
         return False
     features = declared_features(snapshot, endpoint, cluster_id)
     if features is None:
         return True
-    return (features & required) != required
+    return not any(
+        (features & required) == required and not features & excluded
+        for required, excluded in rules
+    )

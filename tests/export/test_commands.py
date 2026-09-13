@@ -161,14 +161,55 @@ def test_a_white_only_lamp_is_denied_both_colour_commands():
 
     Command 6 fails on the missing hue/saturation bit. Command 7 is the
     deliberate part: its payload needs only XY, which this lamp declares, but
-    the control built on top of it is a full-gamut colour picker that reads
-    its position back from CurrentHue/CurrentSaturation - attributes a lamp
-    without the HS feature does not have. See `profiles/capabilities.py`.
+    XY beside CT and without HS is what a lamp that tunes white declares,
+    and the control built on command 7 is a full-gamut colour picker. See
+    `profiles/capabilities.py`.
 
     The colour temperature is untouched: it has no entry in the gate at all.
     """
     snapshot = _colour_snapshot({f"1/{_COLOUR_CLUSTER}/{FEATURE_MAP_ID}": 24})
     assert _colour_command_ids(snapshot) == {10}
+
+
+def test_a_lamp_declaring_xy_alone_takes_colour_as_xy():
+    """FeatureMap 8 = XY, no HS, no CT: a colour lamp whose one colour
+    command is MoveToColor. It is not a white-spectrum lamp - that one
+    declares CT - so command 7 clears the gate and command 6 does not.
+
+    The first version of the gate required HS for command 7 too, and gave
+    this lamp no colour control at all.
+
+    Fault to prove it: require `XY | HS` for (768, 7) alone again."""
+    snapshot = _colour_snapshot({f"1/{_COLOUR_CLUSTER}/{FEATURE_MAP_ID}": 8})
+    assert _colour_command_ids(snapshot) == {7, 10}
+
+
+def test_a_real_quirk_that_pins_colour_capabilities_to_xy_gets_the_xy_command():
+    """The same case from a device definition that ships, not a number
+    written here: zha-quirks' Candeo C-ZB-LC20 RGB controller replaces its
+    Color cluster with one whose ColorCapabilities constant is
+    `XY_attributes` alone. Its RGBCCT sibling adds `Color_temperature` and
+    is, by the bits, indistinguishable from the white-spectrum lamp - it
+    stays denied with it, the cost `profiles/capabilities.py` records.
+
+    Fault to prove it: require `XY | HS` for (768, 7) alone again (the RGB
+    controller loses command 7), or drop the CT exclusion (the RGBCCT one
+    gains it)."""
+    from zhaquirks.candeo import CandeoRGBCCTColorCluster, CandeoRGBColorCluster
+    from zigpy.zcl.clusters.lighting import Color
+
+    capabilities = Color.AttributeDefs.color_capabilities.id
+
+    def gated(quirk: type) -> set[int]:
+        value = int(quirk._CONSTANT_ATTRIBUTES[capabilities])
+        return _colour_command_ids(
+            _colour_snapshot({f"1/{_COLOUR_CLUSTER}/{COLOR_CAPABILITIES_ID}": value})
+        )
+
+    assert int(CandeoRGBColorCluster._CONSTANT_ATTRIBUTES[capabilities]) == 0x08
+    assert gated(CandeoRGBColorCluster) == {7, 10}
+    assert int(CandeoRGBCCTColorCluster._CONSTANT_ATTRIBUTES[capabilities]) == 0x18
+    assert gated(CandeoRGBCCTColorCluster) == {10}
 
 
 def test_colour_capabilities_answers_when_there_is_no_feature_map():
@@ -195,7 +236,9 @@ def test_raw_mode_does_not_lift_the_capability_gate():
 
 
 # The two cases below exist because the five above could not tell the gate's
-# two rules apart. The reviewer of 12 September 2026 mutated
+# two rules apart. (Written when (768, 7) had one rule, `XY | HS`; it now
+# also permits `XY` without `CT`, and the XY-only cases above pin that
+# second rule. Both mutations below still fail one of these two cases.) The reviewer of 12 September 2026 mutated
 # `profiles/capabilities.py` twice and the whole suite stayed green:
 # `COLOUR_FEATURE_XY = 0x08` changed to `0x10` (the XY constant made to point
 # at the colour-temperature bit), and `(768, 7)`'s requirement reduced from

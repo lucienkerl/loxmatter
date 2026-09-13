@@ -665,3 +665,52 @@ def test_a_translated_lamp_decomposes_like_a_matter_lamp():
     assert {"1/6/0", "1/8/0", "1/768/7"} <= paths
     slugs = {command.slug for command in extract_commands(snapshot)}
     assert {"on", "off", "toggle", "level_onoff", "colortemp", "color", "color_xy"} <= slugs
+
+
+def test_a_zigbee_lamp_that_takes_colour_only_as_xy_gets_exactly_one_picker():
+    """End to end from a Zigbee endpoint to the controls the UI draws, for
+    the three shapes that matter, with ColorCapabilities taken from device
+    definitions zha-quirks ships rather than written here:
+
+    - XY alone (Candeo C-ZB-LC20 RGB): one colour control, `color_xy`, which
+      sends MoveToColor - ZHA's own and only colour command. Design 5.6 and
+      the change notes promised this; the first gate gave it nothing.
+    - XY|CT without HS (the white-spectrum shape): no colour control.
+    - Every colour bit (0x1F): ONE colour control, not two twins - both 6 and
+      7 are exported for Loxone, and `duplicate_control_command` keeps only
+      `color` for the modal, the fix for an earlier bug on this branch.
+
+    Fault to prove it: require `XY | HS` for (768, 7) alone again (the first
+    list comes out empty), drop the CT exclusion (the second grows
+    `color_xy`), or empty `_INTERCHANGEABLE_CONTROL_COMMANDS` (the third
+    has two)."""
+    from zhaquirks.candeo import CandeoRGBCCTColorCluster, CandeoRGBColorCluster
+    from zigpy.zcl.clusters.lighting import Color
+
+    from loxmatter.export.commands import extract_commands
+    from loxmatter.profiles.table import command_control, duplicate_control_command
+
+    capabilities = Color.AttributeDefs.color_capabilities.id
+
+    def pickers(value: int) -> tuple[list[str], list[str]]:
+        snapshot = build_snapshot(
+            _lamp({(0x0300, 0x400A): value, (0x0300, 0x0003): 24939, (0x0300, 0x0004): 24701})
+        )
+        commands = [
+            command
+            for command in extract_commands(snapshot)
+            if command_control(command.cluster_id, command.command_id) == "hue_sat"
+        ]
+        present = {(command.cluster_id, command.command_id) for command in commands}
+        drawn = [
+            command.slug
+            for command in commands
+            if not duplicate_control_command(command.cluster_id, command.command_id, present)
+        ]
+        return [command.slug for command in commands], drawn
+
+    rgb = int(CandeoRGBColorCluster._CONSTANT_ATTRIBUTES[capabilities])
+    rgbcct = int(CandeoRGBCCTColorCluster._CONSTANT_ATTRIBUTES[capabilities])
+    assert pickers(rgb) == (["color_xy"], ["color_xy"])
+    assert pickers(rgbcct) == ([], [])
+    assert pickers(0x1F) == (["color", "color_xy"], ["color"])

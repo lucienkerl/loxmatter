@@ -123,7 +123,8 @@ def test_both_lamps_report_their_physical_colour_temperature_limits():
 def test_the_ws_lamp_is_given_no_colour_control():
     """Proves the distinction from spec 6.3: the white-spectrum lamp gets no
     colour tab - not because the code knows its model, but because its
-    ColorControl declares no hue/saturation.
+    ColorControl declares colour temperature beside XY and no hue/saturation,
+    which is what a lamp that tunes white declares.
 
     Its AcceptedCommandList carries MoveToColor (7) and its FeatureMap
     declares XY (24 = XY|CT), so from 2026-09-12 until the capability gate
@@ -151,3 +152,35 @@ def test_the_cws_lamp_advertises_the_full_colour_feature_set():
     """FeatureMap 31 = HS|EHUE|ColorLoop|XY|CT - the basis for
     exactly this lamp getting both tabs and the WS lamp not."""
     assert load("ikea_kajplats_cws_lamp.json").attributes["1/768/65532"] == 31
+
+
+def test_the_same_lamp_declaring_xy_without_colour_temperature_gets_the_xy_picker():
+    """The WS lamp's own snapshot with its declaration changed to XY alone
+    (FeatureMap and ColorCapabilities 8): what a Matter lamp that takes
+    colour only as xy looks like. Such a lamp is not a white-spectrum lamp -
+    one that tunes white declares CT - so MoveToColor is its colour command,
+    and it gets exactly one colour control, `color_xy`.
+
+    Until 13 September 2026 (768, 7) required hue/saturation as well, and
+    this lamp got no colour control at all, while the design and the change
+    notes promised colour on lamps that only accept XY.
+
+    Fault to prove it: require HS for (768, 7) again (the list comes out
+    empty), or drop the CT exclusion from its XY-only rule (the unmodified
+    WS lamp in the test above grows a picker)."""
+    snapshot = load("ikea_kajplats_ws_lamp.json")
+    attributes = {**snapshot.attributes, "1/768/65532": 8, "1/768/16394": 8}
+    xy_only = NodeSnapshot(
+        technology="matter",
+        address=snapshot.address,
+        vendor_name=snapshot.vendor_name,
+        product_name=snapshot.product_name,
+        unique_id=snapshot.unique_id,
+        attributes=attributes,
+    )
+    hue_sat = [
+        command.slug
+        for command in extract_commands(xy_only)
+        if command_control(command.cluster_id, command.command_id) == "hue_sat"
+    ]
+    assert hue_sat == ["color_xy"]

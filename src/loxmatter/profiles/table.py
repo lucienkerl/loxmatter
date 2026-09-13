@@ -460,14 +460,15 @@ def command_control(cluster_id: int, command_id: int) -> str:
 #   sets ColorMode to 1, and the next opening of the modal would land on
 #   the white tab of a lamp showing a colour.
 # - Command 6 is safe to prefer wherever it appears at all:
-#   `profiles.capabilities` already withholds both colour commands from a
-#   cluster that does not declare the hue/saturation feature, and a
-#   cluster that DOES declare it must accept MoveToHueAndSaturation
-#   (mandatory in both Matter and ZCL once the feature bit is set).
+#   `profiles.capabilities` withholds it from a cluster that does not
+#   declare the hue/saturation feature, and a cluster that DOES declare it
+#   must accept MoveToHueAndSaturation (mandatory in both Matter and ZCL
+#   once the feature bit is set).
 #
 # The Zigbee case that motivated naming command 7 is untouched: a lamp
-# that accepts only MoveToColor has no 6 to prefer, so 7 is the one
-# command present and becomes the picker. Nothing here changes the EXPORT
+# that declares XY and neither HS nor CT gets command 7 and no command 6
+# from `profiles.capabilities`, so 7 is the one command present and
+# becomes the picker. Nothing here changes the EXPORT
 # either - `export.commands.extract_commands` does not consult this, so
 # Loxone keeps its own output for every command the device accepts.
 _INTERCHANGEABLE_CONTROL_COMMANDS: tuple[tuple[tuple[int, int], ...], ...] = (((768, 6), (768, 7)),)
