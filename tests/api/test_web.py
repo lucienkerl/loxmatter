@@ -11093,8 +11093,9 @@ async def test_without_a_thread_report_the_card_says_why_and_offers_no_stick(api
     that sentence and must not offer Apply for any stick - while still
     letting the user turn Zigbee off.
 
-    Runs the SERVED `x-show`/`x-text` of the reason line and the SERVED
-    `:disabled` of the Apply button, through `boundTrue`, against that body.
+    Runs the SERVED `x-show`/`x-text` of the reason line (plain truthiness:
+    `x-show` is not a boolean attribute) and the SERVED `:disabled` of the
+    Apply button (through `boundTrue`, which is), against that body.
 
     Fault to prove it: remove the reason line from the Zigbee row (the
     extraction fails), or drop the `selected?.disabled` check from
@@ -11111,14 +11112,14 @@ async def test_without_a_thread_report_the_card_says_why_and_offers_no_stick(api
             "state.zigbee.thread_refusal = 'Thread unknown';"
             f"state.zigbee.configured_path = {json.dumps(UNKNOWN_STICK)};"
             "const out = {};"
-            f"out.shown = boundTrue({json.dumps(reason['x-show'])});"
+            f"out.shown = Boolean(run({json.dumps(reason['x-show'])}));"
             f"out.text = run({json.dumps(reason['x-text'])});"
             f"state.zigbeeDraft.path = {json.dumps(ITEAD)};"
             f"out.itead = boundTrue({json.dumps(apply_button[':disabled'])});"
             "state.zigbeeDraft.path = '';"
             f"out.none = boundTrue({json.dumps(apply_button[':disabled'])});"
             "state.zigbee.thread_status = 'known'; state.zigbee.thread_refusal = null;"
-            f"out.shown_when_known = boundTrue({json.dumps(reason['x-show'])});"
+            f"out.shown_when_known = Boolean(run({json.dumps(reason['x-show'])}));"
             "console.log(JSON.stringify(out));"
         )
     )
@@ -11128,6 +11129,48 @@ async def test_without_a_thread_report_the_card_says_why_and_offers_no_stick(api
         "itead": True,
         "none": False,
         "shown_when_known": False,
+    }
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+async def test_the_zigbee_row_shows_the_firmware_the_stick_reported(api):
+    """The firmware line under the Zigbee row, through its SERVED bindings:
+    shown with the version `GET /api/zigbee/radio` reported in
+    `coordinator.firmware`, and hidden - without an error - while there is
+    no coordinator yet, which is what the route answers before the first
+    successful connect and what every older body shape lacks entirely.
+    `x-show` is evaluated for plain truthiness, as Alpine does - it is not a
+    boolean attribute, so `boundTrue`'s coercion does not apply.
+
+    Fault to prove it: bind `x-text` to `coordinator.radio_type`, or drop
+    the `?.` so a `null` coordinator throws."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+    line = next(
+        attributes
+        for tag, attributes, _ancestors in _served_elements(page)
+        if tag == "p" and "web.radios.zigbee_firmware" in attributes.get("x-text", "")
+    )
+    values = _app_state(
+        _BINDINGS_JS
+        + _zigbee_state(
+            "const out = {};"
+            f"out.hidden = Boolean(run({json.dumps(line['x-show'])}));"
+            "state.zigbee.coordinator = null;"
+            f"out.hidden_null = Boolean(run({json.dumps(line['x-show'])}));"
+            "state.zigbee.coordinator = { radio_type: 'ezsp', manufacturer: 'ITEAD',"
+            "  model: 'Dongle-E', firmware: '7.4.4.0 build 0' };"
+            f"out.shown = Boolean(run({json.dumps(line['x-show'])}));"
+            f"out.text = run({json.dumps(line['x-text'])});"
+            "console.log(JSON.stringify(out));"
+        ),
+        translations={"web.radios.zigbee_firmware": "Firmware: {firmware}"},
+    )
+    assert values == {
+        "hidden": False,
+        "hidden_null": False,
+        "shown": True,
+        "text": "Firmware: 7.4.4.0 build 0",
     }
 
 

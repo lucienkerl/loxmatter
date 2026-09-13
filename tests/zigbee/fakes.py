@@ -745,10 +745,16 @@ class FakeDevice:
 
 @dataclass
 class FakeNodeInfo:
-    """`zigpy.state.NodeInfo`, as far as this bridge reads it."""
+    """`zigpy.state.NodeInfo`, as far as this bridge reads it. Every field
+    name here is checked against the real dataclass in
+    `test_zigpy_names.py`; the three text values are what bellows fills in
+    from an EFR32 stick with EmberZNet firmware."""
 
     ieee: str = "00:12:4b:00:ff:ee:dd:cc"
     nwk: int = 0x0000
+    manufacturer: str | None = "ITEAD"
+    model: str | None = "SONOFF Zigbee 3.0 USB Dongle Plus V2"
+    version: str | None = "7.4.4.0 build 0"
 
 
 @dataclass

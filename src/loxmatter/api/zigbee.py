@@ -287,6 +287,7 @@ def build_zigbee_router(
                 }
             )
         _resolved, present = match_current_device(stored.path, serial)
+        coordinator = zigbee_runtime.coordinator()
         return {
             "serial": sticks,
             # `known`, `unknown` (no current sidecar report) or `changing`
@@ -320,6 +321,10 @@ def build_zigbee_router(
             # the card polls this for as long as the supervisor retries, and
             # a language switch must reach it on the next poll.
             "progress": zigbee_runtime.progress().as_json(),
+            # Radio type, manufacturer, model and firmware as the stick
+            # reported them on its last successful connect (`null` before
+            # one) - the firmware is otherwise only in bellows' DEBUG log.
+            "coordinator": None if coordinator is None else coordinator.as_json(),
         }
 
     @router.put("/zigbee/radio", status_code=202)

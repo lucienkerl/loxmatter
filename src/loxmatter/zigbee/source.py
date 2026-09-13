@@ -76,7 +76,7 @@ import contextlib
 import errno
 import logging
 from collections.abc import Awaitable, Callable, Iterator
-from dataclasses import dataclass, replace
+from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import ModuleType
@@ -106,6 +106,7 @@ __all__ = [
     "ApplicationFactory",
     "ConnectionProgress",
     "ConnectionState",
+    "CoordinatorInfo",
     "PairingRow",
     "PairingState",
     "ZigbeeSource",
@@ -331,6 +332,33 @@ class ConnectionProgress:
         }
 
 
+@dataclass(frozen=True)
+class CoordinatorInfo:
+    """What the stick said about itself on the last successful connect.
+
+    Read from `app.state.node_info` after `startup()`, which each radio
+    library fills while loading the network: bellows puts the EmberZNet
+    stack version into `version` ("7.4.4.0 build 0", with the build string
+    where the firmware offers one) and the manufacturing tokens into
+    `manufacturer` and `model`. bellows logs the stack version itself only
+    at DEBUG, and the bridge logs at INFO, so without this nobody could
+    read the firmware off a running bridge. Any field a library leaves
+    unset is `None`, never a guess."""
+
+    radio_type: str
+    manufacturer: str | None
+    model: str | None
+    firmware: str | None
+
+    def as_json(self) -> dict[str, object]:
+        return asdict(self)
+
+
+def _node_info_text(node_info: Any, name: str) -> str | None:
+    value = getattr(node_info, name, None)
+    return value if isinstance(value, str) and value else None
+
+
 PairingState = Literal["joined", "interviewing", "ready", "failed"]
 
 
@@ -543,6 +571,7 @@ class ZigbeeSource:
         self._polling = PollingSchedule()
 
         self._app: Any | None = None
+        self._coordinator: CoordinatorInfo | None = None
         self._connected = False
         self._link_lost = asyncio.Event()
         self._progress = ConnectionProgress(
@@ -629,6 +658,33 @@ class ZigbeeSource:
 
     def progress(self) -> ConnectionProgress:
         return self._progress
+
+    def coordinator(self) -> CoordinatorInfo | None:
+        """The stick's own description from the last successful connect,
+        or `None` before there was one."""
+        return self._coordinator
+
+    def _note_coordinator(self, app: Any) -> None:
+        """Records and logs, once per successful connect, what the radio
+        reported about itself - the firmware version above all, which the
+        hardware checklist asks for and which bellows would otherwise log
+        only at DEBUG."""
+        node_info = getattr(getattr(app, "state", None), "node_info", None)
+        self._coordinator = CoordinatorInfo(
+            radio_type=self._fingerprint.radio_type,
+            manufacturer=_node_info_text(node_info, "manufacturer"),
+            model=_node_info_text(node_info, "model"),
+            firmware=_node_info_text(node_info, "version"),
+        )
+        logger.info(
+            "Zigbee coordinator connected on %s: radio type %s, firmware %s, "
+            "manufacturer %s, model %s",
+            self._path,
+            self._coordinator.radio_type,
+            self._coordinator.firmware or "unknown",
+            self._coordinator.manufacturer or "unknown",
+            self._coordinator.model or "unknown",
+        )
 
     def pairing_rows(self) -> list[PairingRow]:
         """The pairing tab's rows, oldest first."""
@@ -818,6 +874,7 @@ class ZigbeeSource:
         # silent while looking perfectly healthy (R1 section 6).
         self._register_cluster_listeners()
         self._set_progress("connected", attempts=0)
+        self._note_coordinator(app)
         if self._on_connection_change is not None:
             await self._on_connection_change(True)
 

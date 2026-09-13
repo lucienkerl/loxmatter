@@ -162,9 +162,13 @@ class _FakeRadio:
         self.disconnects = 0
         self.connected_event = asyncio.Event()
         self._progress = _progress("idle")
+        self.coordinator_info: Any = None
 
     def progress(self) -> Any:
         return self._progress
+
+    def coordinator(self) -> Any:
+        return self.coordinator_info
 
     def set_progress(self, state: str, **fields: Any) -> None:
         self._progress = _progress(state, **fields)
@@ -961,6 +965,37 @@ async def test_nothing_configured_is_not_an_error(api):
     assert body["configured_path"] is None
     assert body["configured_device_present"] is False
     assert body["progress"]["state"] == "idle"
+
+
+async def test_the_coordinator_firmware_is_reported_once_the_stick_has_said_it(api):
+    """`coordinator` carries what the current stick reported about itself on
+    its last successful connect - the firmware above all, which bellows
+    logs only at DEBUG. `null` while there is no source, and read from the
+    CURRENT source on every answer, so a radio change cannot leave the old
+    stick's firmware on the card.
+
+    Fault to prove it: leave `coordinator` out of the answer, or capture it
+    once instead of asking `zigbee_runtime.coordinator()` per request."""
+    from loxmatter.zigbee.source import CoordinatorInfo
+
+    client, _update_dir, harness = api
+    assert (await client.get("/api/zigbee/radio")).json()["coordinator"] is None
+
+    assert (await client.put("/api/zigbee/radio", json={"path": ITEAD_PATH})).status_code == 202
+    await harness.holder.wait_for_apply()
+    harness.built[-1].coordinator_info = CoordinatorInfo(
+        radio_type="ezsp", manufacturer="ITEAD", model="Dongle-E", firmware="7.4.4.0 build 0"
+    )
+    assert (await client.get("/api/zigbee/radio")).json()["coordinator"] == {
+        "radio_type": "ezsp",
+        "manufacturer": "ITEAD",
+        "model": "Dongle-E",
+        "firmware": "7.4.4.0 build 0",
+    }
+
+    assert (await client.put("/api/zigbee/radio", json={"path": None})).status_code == 202
+    await harness.holder.wait_for_apply()
+    assert (await client.get("/api/zigbee/radio")).json()["coordinator"] is None
 
 
 async def test_the_stored_radio_parameters_are_reported_back(api):

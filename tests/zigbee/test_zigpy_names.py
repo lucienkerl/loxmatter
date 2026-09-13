@@ -1027,3 +1027,39 @@ def test_the_xy_only_colour_controller_zha_quirks_ships_declares_xy_alone() -> N
         if command.cluster_id == 768
     }
     assert colour == {"color_xy"}
+
+
+def test_the_coordinator_description_is_read_from_names_zigpy_really_fills() -> None:
+    """`ZigbeeSource._note_coordinator` reads `app.state.node_info` and
+    its `manufacturer`, `model` and `version` - the INFO log line with the
+    firmware, and `coordinator` in `GET /api/zigbee/radio`, hang off those
+    names. `FakeNodeInfo` spells them the same way, which proves nothing
+    about zigpy; this does. bellows is checked to put its board info into
+    exactly those three fields, `version` being the EmberZNet stack version
+    it otherwise logs only at DEBUG.
+
+    Fault to prove it: rename `version` to `firmware_version` in
+    `_note_coordinator` (and in the fake) - the source check fails."""
+    import dataclasses
+
+    import bellows.zigbee.application
+    import zigpy.application
+    import zigpy.state
+    from fakes import FakeNodeInfo
+
+    fields = {field.name for field in dataclasses.fields(zigpy.state.NodeInfo)}
+    assert {"manufacturer", "model", "version"} <= fields
+    assert {field.name for field in dataclasses.fields(FakeNodeInfo)} <= fields
+    assert "node_info" in {field.name for field in dataclasses.fields(zigpy.state.State)}
+    assert "self.state: zigpy.state.State = zigpy.state.State()" in inspect.getsource(
+        zigpy.application.ControllerApplication.__init__
+    )
+
+    loader = inspect.getsource(bellows.zigbee.application.ControllerApplication.load_network_info)
+    assert "manufacturer=brd_manuf" in loader
+    assert "model=brd_name" in loader
+    assert "version=version" in loader
+
+    reader = inspect.getsource(source_module.ZigbeeSource._note_coordinator)
+    for name in ('"manufacturer"', '"model"', '"version"', '"node_info"', '"state"'):
+        assert name in reader

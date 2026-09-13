@@ -2341,6 +2341,14 @@ web.radios.zigbee_option_unrecognised:
   # sentence is `web.radios.fingerprint_unknown` below the select.
   en: "not recognised"
   de: "nicht erkannt"
+web.radios.zigbee_firmware:
+  # The line under the Zigbee row once the stick has connected: the firmware
+  # the coordinator reported (`coordinator.firmware` from
+  # `GET /api/zigbee/radio`), the one thing about a stick that decides
+  # whether it works as a coordinator at all. {firmware} is the radio
+  # library's own text, e.g. "7.4.4.0 build 0".
+  en: "Firmware: {firmware}"
+  de: "Firmware: {firmware}"
 web.radios.zigbee_hint:
   # The Thread and Bluetooth rows above warn about restarts and a sidecar
   # job; this row does the opposite, and has to say so rather than leave

@@ -341,6 +341,68 @@ async def test_a_stick_the_open_guard_refuses_is_never_touched(build) -> None:
     await harness.source.disconnect()
 
 
+async def test_each_successful_connect_logs_the_firmware_once_at_info(build, caplog) -> None:
+    """The hardware checklist asks for the coordinator's firmware, and
+    bellows logs its stack version only at DEBUG while the bridge logs at
+    INFO - so it was nowhere a user could read it. After `startup()` the
+    source reads `app.state.node_info` (the attribute zigpy's radio
+    libraries fill; pinned in `test_zigpy_names.py`) and logs the radio
+    type and firmware at INFO, once per successful connect, and keeps them
+    for `GET /api/zigbee/radio`.
+
+    Fault to prove it: log at DEBUG (the INFO line is missing), read a
+    different attribute than `version` (the firmware reads "unknown"), or
+    call `_note_coordinator` from both `connect()` and `subscribe()` (two
+    lines per connect)."""
+    first, second = FakeApplication(), FakeApplication()
+    second.state.node_info.version = "7.5.0.0 build 12"
+    harness = build(first, second)
+    caplog.set_level("INFO", logger="loxmatter.zigbee.source")
+
+    assert harness.source.coordinator() is None
+    await harness.source.connect()
+    lines = [r for r in caplog.records if "Zigbee coordinator connected" in r.getMessage()]
+    assert [r.levelname for r in lines] == ["INFO"]
+    assert "7.4.4.0 build 0" in lines[0].getMessage()
+    assert "ezsp" in lines[0].getMessage()
+    assert harness.source.coordinator().as_json() == {
+        "radio_type": "ezsp",
+        "manufacturer": "ITEAD",
+        "model": "SONOFF Zigbee 3.0 USB Dongle Plus V2",
+        "firmware": "7.4.4.0 build 0",
+    }
+
+    await harness.source.connect()
+    lines = [r for r in caplog.records if "Zigbee coordinator connected" in r.getMessage()]
+    assert len(lines) == 2
+    assert "7.5.0.0 build 12" in lines[1].getMessage()
+    assert harness.source.coordinator().firmware == "7.5.0.0 build 12"
+    await harness.source.disconnect()
+
+
+async def test_a_radio_that_reports_no_firmware_says_unknown_and_invents_none(
+    build, caplog
+) -> None:
+    """A library that leaves `version` unset - or an empty string - is
+    reported as unknown, never as a made-up value.
+
+    Fault to prove it: fall back to the fingerprint's name or the library
+    version for `firmware`."""
+    application = FakeApplication()
+    application.state.node_info.version = ""
+    application.state.node_info.model = None
+    harness = build(application)
+    caplog.set_level("INFO", logger="loxmatter.zigbee.source")
+
+    await harness.source.connect()
+
+    assert harness.source.coordinator().firmware is None
+    assert harness.source.coordinator().model is None
+    line = next(r for r in caplog.records if "Zigbee coordinator connected" in r.getMessage())
+    assert "firmware unknown" in line.getMessage()
+    await harness.source.disconnect()
+
+
 def test_the_four_startup_messages_are_four_different_sentences() -> None:
     """The point of the table above is that each cause names a different
     next step. Four keys that happen to carry the same text would pass every

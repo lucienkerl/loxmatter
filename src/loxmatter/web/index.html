@@ -2792,6 +2792,10 @@
                 x-text="zigbeeProgressText(zigbee.progress, zigbee.configured_device_present)"
               ></p>
               <p class="visually-hidden" role="status" x-text="zigbeeAnnouncement"></p>
+              <!-- The firmware the stick reported on its last successful
+                   connect - otherwise only in bellows' DEBUG log. -->
+              <p class="hint" x-show="zigbee.coordinator?.firmware" x-cloak
+                 x-text="t('web.radios.zigbee_firmware', { firmware: zigbee.coordinator?.firmware })"></p>
               <p class="hint" x-show="zigbeeSelectedOption()?.unrecognised" x-cloak
                  x-text="t('web.radios.fingerprint_unknown')"></p>
               <details

@@ -60,7 +60,12 @@ from loxmatter.radios.fingerprints import Fingerprint, FlowControl, RadioType
 from loxmatter.sources import Sources
 from loxmatter.sources.supervisor import supervise
 from loxmatter.timestamps import now_iso
-from loxmatter.zigbee.source import ConnectionProgress, OpenGuard, ZigbeeSource
+from loxmatter.zigbee.source import (
+    ConnectionProgress,
+    CoordinatorInfo,
+    OpenGuard,
+    ZigbeeSource,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -259,6 +264,11 @@ class ZigbeeRuntime:
         if self._applying is not None:
             return self._applying
         return self._idle_progress if self._source is None else self._source.progress()
+
+    def coordinator(self) -> CoordinatorInfo | None:
+        """What the current stick reported about itself on its last
+        successful connect - its firmware above all - or `None`."""
+        return None if self._source is None else self._source.coordinator()
 
     def apply(self, settings: ZigbeeRadioSettings) -> None:
         """Schedules the change. Returns IMMEDIATELY - see the module
