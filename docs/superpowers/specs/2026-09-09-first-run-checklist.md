@@ -301,8 +301,11 @@ as root and writes to that volume the way it already writes the store.
   `cd ~/loxmatter && ./scripts/update.sh --build`. The script recreates only
   the `loxmatter` service (`--no-deps`), so it picks up the new
   `device_cgroup_rules` without recreating otbr. Do **not** run a bare
-  `docker compose up -d`: the otbr environment changed (`&uart-exclusive`)
-  and that would recreate the border router now, before 15.3.
+  `docker compose up -d`: otbr's `RADIO_URL` is now written with
+  `${OTBR_RADIO_URL_EXTRA:-}` at its end, and although that resolves to the
+  URL otbr already runs while the variable is unset, nobody has watched
+  Compose decide that on the Pi - a bare `up` could recreate the border
+  router now, before 15.3.
 - **Expect:** the bridge healthy, otbr's `RunningFor` unchanged, no Zigbee
   stick configured, and no `/data/zigbee.sqlite` yet
   (`docker exec loxmatter ls /data`).
@@ -364,31 +367,66 @@ serial port: listing sticks reads `/sys` and the by-id names only.
    screenshot of the card, and how long after `docker start` the status
    read `known` again.
 
-### 15.4 otbr with `&uart-exclusive`, and the recreate timing
+### 15.4 otbr with `&uart-exclusive`, opted into, and the recreate timing
 
-**Interrupts Thread devices — agree a time first.** This recreates the
-border router.
+`&uart-exclusive` asks OpenThread to take `flock` + `TIOCEXCL` on its stick.
+It is **opt-in**: the compose file appends `OTBR_RADIO_URL_EXTRA` from `.env`
+to the radio URL, and the variable is unset on every installation. Whether
+the installed otbr image accepts the parameter is what this step measures
+(design open point 5); only when it does is the opt-in worth recommending.
+This is also the one step that measures how long an otbr recreate takes on
+this SD card.
+
+> **Warning: this step interrupts Thread.** It recreates the border router,
+> and every Thread device goes quiet until the network is `leader` again. If
+> the image refuses the parameter, Thread stays down until the rollback below
+> has recreated otbr a second time. Agree a time first, keep this terminal
+> open until Thread is back, and read the rollback lines before you start.
 
 - **Do:**
 
   ```bash
   cd ~/loxmatter/deploy/testhost
+  cp .env .env.before-uart-exclusive
+  grep -q '^OTBR_RADIO_URL_EXTRA=' .env || echo 'OTBR_RADIO_URL_EXTRA=&uart-exclusive' >> .env
+  grep '^OTBR_RADIO_URL_EXTRA=' .env
   date +%s; time docker compose up -d --force-recreate --no-deps otbr; date +%s
-  while ! docker exec otbr ot-ctl state 2>/dev/null | grep -q leader; do sleep 1; done; date +%s
+  timeout 180 sh -c 'until docker exec otbr ot-ctl state 2>/dev/null | grep -q leader; do sleep 1; done'; date +%s
+  docker exec otbr ot-ctl state
   docker inspect otbr --format '{{range .Config.Env}}{{println .}}{{end}}' | grep RADIO_URL
+  docker exec otbr sh -c 'for p in /proc/[0-9]*/cmdline; do tr "\0" " " < "$p"; echo; done' | grep '[o]tbr-agent'
   ```
 
-- **Expect:** otbr starts, `RADIO_URL` ends in `&uart-exclusive`, the state
-  reaches `leader`, and Thread devices deliver values again, read through the
-  running bridge. If otbr refuses to start with the parameter, remove it from
-  the compose file, recreate again, and record that the installed image does
-  not accept it (design open point 5).
-- **Record:** whether the image starts with the parameter or refuses it.
-  Whether it actually takes the lock is not tested here: that would mean
-  opening the Thread stick from a second process, which is what this section
-  exists to avoid. Also record the wall-clock seconds of the `compose up`
-  itself and until `leader`. The second figure is the heartbeat measurement
-  the radios sidecar is waiting for: its job refreshes the heartbeat only before and after each compose
+  If the state is not `leader` within 180 s, apply the pid-file fix the
+  radios job uses for this image, once, and wait again:
+  `docker exec otbr rm -f /run/otbr-agent.pid && docker restart otbr`.
+
+- **Expect:** `OTBR_RADIO_URL_EXTRA=&uart-exclusive` printed once;
+  `RADIO_URL` ending in `?uart-baudrate=460800&uart-exclusive`; an
+  `otbr-agent` command line carrying the same URL; the state reaching
+  `leader`; Thread devices delivering values again, read through the running
+  bridge.
+- **Rollback, if otbr does not start, the agent is not running, or the state
+  does not reach `leader`:**
+
+  ```bash
+  cd ~/loxmatter/deploy/testhost
+  cp .env.before-uart-exclusive .env
+  docker compose up -d --force-recreate --no-deps otbr
+  timeout 180 sh -c 'until docker exec otbr ot-ctl state 2>/dev/null | grep -q leader; do sleep 1; done'
+  docker exec otbr ot-ctl state
+  ```
+
+  with the same pid-file fix if it hangs. Record that the installed image
+  does not accept the parameter, and leave `OTBR_RADIO_URL_EXTRA` unset.
+- **Record:** whether the image starts with the parameter or refuses it (the
+  otbr log, `docker logs otbr --tail 50`, if it refuses); the agent's command
+  line; whether the rollback was needed. Whether the lock is actually taken
+  is not tested here: that would mean opening the Thread stick from a second
+  process, which is what this section exists to avoid. Also record the
+  wall-clock seconds of the `compose up` itself and until `leader`. The
+  second figure is the heartbeat measurement the radios sidecar is waiting
+  for: its job refreshes the heartbeat only before and after each compose
   call, and the card treats about 50 s of silence (30 s
   `_MAX_SILENT_SECONDS` plus 20 s `RADIOS_STALL_GRACE_MS`) as an abandoned
   job. A recreate on this SD card that comes close to 50 s means that window
@@ -399,9 +437,19 @@ border router.
 This is the first step that opens a serial port, and it opens the ITEAD
 stick only. Never point it at `ttyUSB0`.
 
+The bridge's container has no `/dev/serial/by-id` of its own: its `/dev` is
+Docker's private one, and the host's `/dev` is mounted read-only at
+`/host/dev`. The card lists and stores the host's path, and the bridge opens
+the same name under `/host/dev` (`ZigbeeSource._open_path`). Whether a
+character device can be opened for reading and writing through that
+read-only bind is **not established by anything in this repository** - it is
+what this step shows, on this kernel and this Docker.
+
 - **Do:**
 
   ```bash
+  docker exec loxmatter ls /dev/serial/by-id
+  docker exec loxmatter grep ' /host/dev ' /proc/mounts
   ITEAD=/host/dev/serial/by-id/usb-Itead_Sonoff_Zigbee_3.0_USB_Dongle_Plus_V2_e8bf16ad5953ef11844a28e0174bec31-if00-port0
   docker exec loxmatter python -c "import os; fd = os.open('$ITEAD', os.O_RDWR | os.O_NOCTTY | os.O_NONBLOCK); os.close(fd); print('opened')"
   docker exec loxmatter python -c "import os; os.open('/host/dev/mmcblk0', os.O_RDONLY)"
@@ -409,25 +457,39 @@ stick only. Never point it at `ttyUSB0`.
 
   (`mmcblk0` is the SD card; use `sda` if the Pi boots from USB.)
 
-- **Expect:** `opened` for the stick; `PermissionError` for the SD card,
-  because the cgroup rule does not reach block devices (the README states
-  this to users).
-- **Record:** both outputs. `PermissionError` on the stick means the cgroup
-  rule did not reach the container; go back to 15.2.
+- **Expect:** `ls: cannot access '/dev/serial/by-id': No such file or
+  directory` - the host path does not exist inside the container, which is
+  why the bridge must not open it; `opened` for the stick through
+  `/host/dev`; `PermissionError` for the SD card, because the cgroup rule
+  does not reach block devices (the README states this to users).
+- **Record:** all four outputs, the mount options from `/proc/mounts`
+  (`ro`, and whether `nodev` is among them) included. If the stick does not
+  print `opened`, record the exact error: `PermissionError` means the cgroup
+  rule did not reach the container (go back to 15.2); `OSError: [Errno 30]
+  Read-only file system` or a `PermissionError` with `nodev` in the mount
+  options means the read-only bind itself refuses the open, and 15.7 cannot
+  succeed until the mount changes - stop there and record it.
 
 ### 15.6 The stick's firmware
 
 The ITEAD stick must run EZSP coordinator (NCP) firmware. bellows reports
 the stack version only at DEBUG level, so the bridge reads it back itself:
-after every successful connect it logs one INFO line, `Zigbee coordinator
-connected on <path>: radio type ezsp, firmware <version>, manufacturer …,
-model …`, reports the same in `coordinator` from `GET /api/zigbee/radio`,
-and shows "Firmware: <version>" under the Zigbee row.
+after every successful connect it logs one INFO line, reports the same in
+`coordinator` from `GET /api/zigbee/radio`, and shows "Firmware: <version>"
+under the Zigbee row. The line reaches `docker logs loxmatter` (the bridge
+writes its own log to stderr) and reads
+
+```text
+INFO:     loxmatter.zigbee.source: Zigbee coordinator connected on /dev/serial/by-id/usb-Itead_…-if00-port0: radio type ezsp, firmware <version>, manufacturer …, model …; network on channel <n>, PAN ID 0x…, extended PAN ID …, <whether the database knew it>
+```
+
+If `docker logs` does not show it, read the System tab's live log instead.
+That log keeps the last 500 lines only, so read it soon after the connect.
 
 - **Do:** nothing yet; do not flash anything as part of this session. If
   you know the version from the vendor's release or a flashing tool, note
   it now, so 15.7 can compare.
-- **Expect:** 15.7 connects and the log line names an EZSP NCP build. A
+- **Expect:** 15.7 connects and the connect line names an EZSP NCP build. A
   stick on the wrong firmware fails 15.7 with "This stick does not answer
   as a Zigbee coordinator …" instead, and there is no such line.
 - **Record:** the version you already knew, or "unknown"; 15.7 records what
@@ -437,22 +499,47 @@ and shows "Firmware: <version>" under the Zigbee row.
 
 Thread stays up throughout this step; if it does not, that is the finding.
 
-- **Do:** note otbr's and matter-server's `RunningFor`. In Settings → Radios,
-  pick the ITEAD stick in the Zigbee row and press its Apply. Watch the row
-  while it works, then read `docker logs loxmatter`.
+- **Do:** note otbr's and matter-server's `RunningFor`, the Thread channel
+  (`docker exec otbr ot-ctl channel`), and whether the ITEAD stick has ever
+  carried a Zigbee network before (a stick fresh from the box has not). In
+  Settings → Radios, pick the ITEAD stick in the Zigbee row and press its
+  Apply. Watch the row while it works, then run
+
+  ```bash
+  docker logs loxmatter 2>&1 | grep -E 'source zigbee|zigbee quirks registry loaded in|Zigbee coordinator connected on'
+  docker exec loxmatter ls -l /data
+  ```
+
 - **Expect:** the row steps through "Applying the change", "Preparing device
   support - this can take a few seconds", "Opening the stick", "Connected",
   then shows "Firmware: …". No other container restarts; Thread and Matter
-  devices keep delivering values the whole time. The log carries
-  `zigbee quirks registry loaded in N s` and one
-  `Zigbee coordinator connected on …` line, and `/data/zigbee.sqlite` now
-  exists (`docker exec loxmatter ls -l /data`). In the Thread row's select
-  the ITEAD stick is now marked "in use for Zigbee".
-- **Record:** the `N` from that log line, against the design's extrapolated
-  9–15 s for a Pi 4 (`zhaquirks.setup()`, design section 8.4); the whole
-  `Zigbee coordinator connected` line (the firmware for 15.6); the time from
-  Apply to "Connected"; `RunningFor` of otbr and matter-server before and
-  after; the failure text and attempt count if it does not connect.
+  devices keep delivering values the whole time. The log carries, in this
+  order and without a WARNING or a traceback between them:
+
+  ```text
+  INFO:     loxmatter.sources.supervisor: source zigbee is not connected yet - connecting it
+  INFO:     loxmatter.zigbee.quirks: zigbee quirks registry loaded in N s
+  INFO:     loxmatter.zigbee.source: Zigbee coordinator connected on /dev/serial/by-id/usb-Itead_…: radio type ezsp, firmware …, manufacturer …, model …; network on channel C, PAN ID 0x…, extended PAN ID …, not in this bridge's database before (formed now, or adopted from the stick)
+  INFO:     loxmatter.sources.supervisor: connection of source zigbee restored (0 commands backfilled)
+  ```
+
+  `C` is one of 11, 15, 20 and 25 and is not the Thread channel. In the
+  Thread row's select the ITEAD stick is now marked "in use for Zigbee".
+  `/data/zigbee.sqlite` exists, but that alone proves nothing: zigpy creates
+  the database before it opens the port, so it also appears when the connect
+  fails. If `docker logs` shows none of these lines, read the System tab's
+  live log; it keeps 500 lines, so do it right after the connect.
+- **Record:** the `N` from the warm-up line, against the design's
+  extrapolated 9–15 s for a Pi 4 (`zhaquirks.setup()`, design section 8.4);
+  the whole `Zigbee coordinator connected` line (the firmware for 15.6); the
+  network's channel and the Thread channel; whether the network was formed
+  or adopted. zigpy does not tell the bridge which: read it from the stick's
+  history - a stick that never carried a network forms one - and treat a
+  channel equal to the Thread channel as adopted, because a network formed
+  here leaves that channel out. Also the time from Apply to "Connected";
+  `RunningFor` of otbr and matter-server before and after; the failure text,
+  attempt count and the first `rebuild of source zigbee failed` line with
+  its traceback if it does not connect.
 
 Then the stored stick after a restart with a stale report - the case of a
 Pi rebooting and the bridge coming up before the updater service. **Restarts
@@ -464,7 +551,9 @@ the bridge; Matter values pause for its restart, Thread is not touched.**
 - **Expect:** the ITEAD stick connects again without the updater service
   running: the report on disk is stale but still names the MG24 as Thread's
   and not the ITEAD stick. The log carries a fresh `Zigbee coordinator
-  connected` line.
+  connected` line, on the same channel and PAN ID as before, ending in
+  `already in this bridge's database`. System tab's live log if `docker logs`
+  shows nothing.
 - **Record:** whether and how fast it connected, and the row's text while it
   did.
 
@@ -508,22 +597,38 @@ first.**
   none) and whether its Control dialog shows one colour area, none, or two:
   a tunable-white lamp must show none, a colour lamp exactly one, and a
   lamp that takes colour only as XY one whose marker is missing, with the
-  "Start value unknown" note.
+  "Start value unknown" note. A lamp that declares XY and a colour
+  temperature but no hue and saturation (an RGBCCT controller) shows one
+  colour area only if it declares itself an Extended Color Light. For every
+  device, also record the category its tile shows (a lamp or plug must not
+  read "Other") and whether it can be put into a group with a Matter lamp or
+  plug of the same kind.
 
 ### 15.9 Reporting arrives at the configured intervals
 
 - **Do:** with the System tab's UDP capture open, switch the lamp from Loxone
   or the web UI, and change it by hand (wall switch or remote) if possible.
-  Leave it untouched for 20 minutes. Warm the sensor in your hand.
-  `docker logs loxmatter 2>&1 | grep -E 'refused reporting|deferred until'`.
+  Leave it untouched for 20 minutes. Warm the sensor in your hand. Then
+
+  ```bash
+  docker logs loxmatter 2>&1 | grep -E 'configuration of .* finished|refused reporting|deferred until'
+  ```
+
 - **Expect:** on/off and level changes within a second or two; temperature
   and humidity changes within about 30 s of crossing 0.5 °C or 1 % (design
-  section 6.2: min 30 s, max 900 s). No "refused reporting … polling it
-  instead" line; if there is one, that cluster is polled every 2700–4500 s
-  instead.
-- **Record:** the delay per signal, every `refused reporting` or `deferred`
-  line, and whether the lamp or sensor went offline in the UI during the
-  quiet 20 minutes (it must not).
+  section 6.2: min 30 s, max 900 s). For each device paired in 15.8, one
+  `INFO:     loxmatter.zigbee.configure: configuration of <ieee> finished:
+  clusters configured [...], deferred [...]` line whose configured list
+  names its clusters. No "refused reporting … polling it instead" line; if
+  there is one, that cluster is polled every 2700–4500 s instead.
+  **An empty result is not a pass.** Without the `finished` line nothing
+  shows that reporting was configured at all - the log may simply not be
+  reaching `docker logs`. Read the System tab's live log for the same three
+  phrases then (it keeps 500 lines; pairing may already have scrolled out),
+  and record the step as not proven if the `finished` line is in neither.
+- **Record:** the delay per signal, every `configuration of … finished`,
+  `refused reporting` and `deferred` line, and whether the lamp or sensor went
+  offline in the UI during the quiet 20 minutes (it must not).
 
 ### 15.10 IAS enrolment, end to end
 
@@ -583,9 +688,11 @@ are already commissioned.
   apply.
 - **Expect:** the row reads "No Zigbee stick" and the Zigbee tab is no
   longer offered in the Devices view; Thread and Matter devices are
-  unaffected and no container restarts.
-- **Record:** `RunningFor` of every container before and after, and what the
-  Zigbee devices' tiles show.
+  unaffected and no container restarts. Every Zigbee device's tile shows it
+  offline, and the UDP capture shows `d<id>_online` 0 for each of them, at
+  the moment of the apply rather than after the next restart.
+- **Record:** `RunningFor` of every container before and after, what the
+  Zigbee devices' tiles show, and their `d<id>_online` values.
 
 ### What this section does not cover
 
@@ -601,7 +708,6 @@ instance on this Pi should do with the same stick (point 7).
 
 Found while building it, not yet done: a `loxmatter zigbee clear` command
 (`--zigbee-device` only seeds the stored setting now, so a wrong setting
-behind an unreachable web UI has no console way out); the pytest collision
-between `tests/api` and `tests/projectsync`, which both carry a
-`conftest.py`; and comments in `zigbee/source.py` and `zigbee/runtime.py`
-that still name plan task numbers.
+behind an unreachable web UI has no console way out); and the pytest
+collision between `tests/api` and `tests/projectsync`, which both carry a
+`conftest.py`.

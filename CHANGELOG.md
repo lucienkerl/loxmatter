@@ -86,8 +86,19 @@ people who don't know the code.
   output, and the picker in the browser uses it; the picker cannot show
   where such a lamp currently is, and says so. Tunable-white lamps still get
   no colour control. A colour lamp that reports XY and a colour temperature
-  but not hue and saturation looks exactly like a tunable-white one, and
-  gets none either.
+  but not hue and saturation looks exactly like a tunable-white one by those
+  reports alone; it gets its colour control when it says it is a colour lamp
+  (an "extended colour light"), and none otherwise. A lamp that says it is a
+  tunable-white lamp gets no colour control, whatever else it reports.
+- **Your existing colour lamps show one change in the export.** The bridge
+  records the new `color_xy` output for colour lamps you commissioned before
+  this release, the next time it starts. The export view then marks those
+  lamps as changed once, until you export them again; nothing in Loxone
+  changes unless you do.
+- **Zigbee lamps and plugs are recognised as lamps and plugs.** The common
+  Zigbee 3.0 colour, tunable-white and plug devices get the lamp or plug
+  icon and category, and can join a group with Matter lamps or plugs of the
+  same kind.
 - **Thread or IP at a glance.** Every device tile now carries a small badge on
   its icon showing whether the device talks to the bridge over Thread or over
   your IP network (Wi-Fi or Ethernet). Hover it for the name. A device that
@@ -95,6 +106,35 @@ people who don't know the code.
 
 ### Changed
 
+- **The bridge's own log is in the container log.** `docker logs loxmatter`
+  used to show only the web server's lines; the bridge's own — a warning, a
+  device that would not answer, a radio that would not open — were only in
+  the System tab, which keeps the last 500. They now appear in both. A
+  connection that keeps failing the same way is explained once and then
+  counted, instead of repeating the whole explanation every minute.
+- **A Loxone command gives up after 10 seconds.** A command to a device that
+  does not answer used to wait for as long as matter-server did; the bridge
+  now answers Loxone with an error after 10 seconds. On a slow Thread device
+  matter-server may still deliver the command a little later, after Loxone
+  has been told it failed.
+- **Removing a device that is offline works, and removing it twice does
+  too.** Removal waits up to two minutes for matter-server to reach the
+  device, instead of failing after 10 seconds while matter-server went on
+  removing it. A device matter-server has already forgotten is removed from
+  the bridge instead of failing with an error.
+- **Some Matter sensor readings are no longer suggested for export.** For
+  contact and water-leak sensors, occupancy sensors and light sensors, the
+  bridge now names the one reading that matters — open or closed, occupied,
+  the light level — and suggests only that one. Their other readings, such
+  as a light sensor's minimum and maximum, move to the "Expert" section of
+  "Edit signals…". What you have already exported is not touched; only
+  devices you commission from now on start with the shorter list.
+- **Thread's exclusive stick lock is available, and off.** OpenThread can
+  lock its USB stick so no other program opens it by accident. It is not yet
+  known whether the border router image on every installation accepts that
+  setting, and one that does not would keep Thread down, so it is off unless
+  `.env` sets `OTBR_RADIO_URL_EXTRA=&uart-exclusive`. Nothing changes for an
+  installation that does not.
 - If you script against the API with a token: `GET /api/devices` no longer
   returns `node_id`. Each device now reports `technology`, `address` and
   `transport` instead, to make room for device types beyond Matter.

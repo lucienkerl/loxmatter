@@ -16,7 +16,8 @@
 """Which radio a USB stick carries, decided from the inventory alone.
 
 **Fingerprint, never probe on our own initiative** (design 2026-09-12
-section 7, research A.2/A.4). The reasons are measured, not cautious:
+section 7, research A.2/A.4). The reasons come from other projects' source
+and reports, not from a measurement made here:
 
 - Home Assistant's full auto-probe chain costs about 34 s on a stick that
   answers nothing, which is also what a wrong-type stick looks like.

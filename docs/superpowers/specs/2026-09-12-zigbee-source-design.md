@@ -1232,9 +1232,6 @@ during implementation and left for later:
 - The pytest collision between `tests/api` and `tests/projectsync`: both
   have a `conftest.py`, and the test tree has no `__init__.py`, so the two
   directories cannot be collected in one run.
-- Comments in `zigbee/source.py` and `zigbee/runtime.py` that still name
-  plan task numbers ("Task 8", "Task 10", "Task 11"), which mean nothing
-  outside the plan.
 
 ### 13.5 Hardening after the documentation pass
 
@@ -1308,3 +1305,72 @@ defects. Still **nothing here has been exercised against Zigbee hardware**.
    card. The names are pinned in `tests/zigbee/test_zigpy_names.py`.
 5. **The Dockerfile no longer calls the 9-15 s warm-up measured**
    (`7293cc0`); it is 8.4's extrapolation from an M1 Pro.
+
+### 13.6 Corrections after the final review
+
+Added 13 September 2026, after a review of the whole branch. Still
+**nothing here has been exercised against Zigbee hardware**; the first-run
+checklist's section 15 was rewritten where these changed what it expects.
+
+1. **Section 8.1's host-dev mapping had not been built.** 8.1 says
+   "loxmatter maps the `/host-dev` prefix itself", and 13.1 renamed the
+   mount to `/host/dev` - but zigpy was handed the stored host path
+   `/dev/serial/by-id/...` unchanged, which does not exist inside the
+   bridge's container (its `/dev` is Docker's private one), so every open
+   would have failed as "stick missing" while the card listed the stick.
+   The mapping now lives in one function, `radios.inventory.under_host_dev`,
+   used by the Thread guard's `device_identity` and by
+   `ZigbeeSource._open_path`. The source keeps the host path for the guard,
+   the log and the API, opens the node under `host_dev` (bound by `cli._run`
+   from `radios_host_dev`), and falls back to the given path when nothing
+   exists under the mount, so a bridge run outside the container keeps
+   working. Whether a character device opens read-write through the
+   read-only bind is not established here; checklist step 15.5 measures it.
+2. **Section 8.4's size figure contradicts itself.** "+33 MB gzipped-layer
+   14.6 → 27.3 MB" cannot be one quantity: a layer going from 14.6 to
+   27.3 MB compressed grows by about 13 MB, not 33. The change notes read
+   the two as different figures - about 33 MB of installed packages, about
+   13 MB of compressed download - and research F.3 is not in this
+   repository to settle which was measured how. The body is left as written.
+3. **Section 8.2's `&uart-exclusive` is opt-in, not appended.** Written into
+   the compose file, it would have reached every Thread installation at the
+   next otbr recreate, unverified against the installed image (open point
+   5). `RADIO_URL` now ends in `${OTBR_RADIO_URL_EXTRA:-}`, unset by default;
+   checklist step 15.4 sets it to `&uart-exclusive` on the test Pi, with a
+   rollback.
+4. **Section 8.5's Thread channel is read on the first connect, not at
+   build.** Fetching it while the source was built held matter-server's
+   connection and uvicorn for up to 5 s behind a slow border router. The
+   source now asks once, in the supervisor's task, after the open guard and
+   before any application exists, so nothing forms before the channel is
+   known. The open guard is also asked a second time immediately before
+   `startup()`.
+5. **Section 5.3's table gained the Zigbee 3.0 lamp and plug types**, and
+   13.5 point 3's remaining case is settled by them. Home Automation
+   `0x010C`, `0x010D`, `0x010A` and `0x0051` map to Matter's Color
+   Temperature Light, Extended Color Light and On/Off Plug-in Unit; without
+   them such devices landed in category OTHER and could not join a group.
+   `profiles/capabilities.py` now reads the endpoint's device type: an
+   Extended Color Light declaring XY is granted `(768, 7)` whatever CT says,
+   so an RGBCCT lamp that declares itself one gets one colour control; a
+   Color Temperature Light gets no colour command whatever its bits say;
+   without a device type the bits decide as before, for Matter and Zigbee
+   alike.
+6. **Section 4.5 held only for a lost link.** A radio change, "No Zigbee
+   stick" and shutdown go through `disconnect()`, which left every device
+   online with its last value. It now reports every device offline.
+7. **Section 4.7's bound does not apply to removal.** Removing a Matter
+   device waits for matter-server to reach the device and ask it to leave
+   the fabric, which for an offline Thread device routinely exceeds 10 s, and
+   a retry then met `NodeNotExists`. Removal has its own bound,
+   `SOURCE_REMOVAL_TIMEOUT_SECONDS` (120 s), and `BridgeMatterClient.remove`
+   treats `NodeNotExists` as success.
+8. **Section 8.4's "log the measured duration" reaches the container log
+   now.** No `loxmatter.*` line reached `docker logs`: the System tab's ring
+   was the only handler. `run()` adds a stderr handler, the supervisor no
+   longer reports a first connect as a lost connection or repeats a
+   traceback on every retry, a cancelled warm-up that finished still logs
+   its duration, the connect line names the network's channel and whether
+   zigpy's database already knew it, and a configuration pass ends with an
+   INFO line naming what it configured.
+
