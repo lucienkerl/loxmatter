@@ -2011,12 +2011,12 @@ footer.hint-block {
   border: 1px solid var(--border);
   border-radius: 5px;
   padding: 0.15rem 0.4rem;
-  /* Grows into the free rest of the row, capped at 22rem. Whoever
-   * lifts the cap gets a search field spanning four
-   * tiles on a wide window - worse than the lone box it is
-   * meant to get rid of. */
-  flex: 1 1 12rem;
-  max-width: 22rem;
+  /* No grow/shrink: `.room-bar` is a vertical column now (device
+   * dashboard sidebar design, 2026-09-13), so a flex-basis here would
+   * size the field's HEIGHT, not its width the way it used to in the
+   * old horizontal row - `.room-bar`'s own `align-items: stretch`
+   * already gives the field its full sidebar width. */
+  flex: none;
 }
 
 /* The ring belongs on the group, not on its centre: on `input:focus`

@@ -825,55 +825,6 @@
              together - see `.dashboard-shell` below. -->
         <div class="dashboard-shell" x-show="devices.length > 0 || groups.length > 0" x-cloak>
         <div class="room-bar">
-          <template x-if="hasAnyRoom()">
-            <span class="room-chips">
-              <!-- Groups count towards "All" just as they do towards every
-                   other chip (`roomChips()`): both kinds of tile sit in the
-                   grid below, and a number that disagreed with what appears
-                   under it would be worse than no number. -->
-              <button
-                class="room-chip"
-                :class="{ active: roomFilter === null }"
-                @click="roomFilter = null"
-                x-text="t('web.devices.room_all') + ' ' + (devices.length + groups.length)"
-              ></button>
-              <template x-for="chip in roomChips()" :key="chip.key">
-                <button
-                  class="room-chip"
-                  :class="{ active: roomFilter === chip.key }"
-                  @click="roomFilter = chip.key"
-                  x-text="chip.label + ' ' + chip.count"
-                ></button>
-              </template>
-              <!-- `x-show="roomFilter"` is exactly right here and not
-                   sloppiness: both cases where there is nothing to rename are
-                   falsy - `null` ("All") and `""` ("No
-                   room"). "No room" is not a room but the set of
-                   devices with no assignment; a name that could be changed
-                   is precisely what they are missing. -->
-              <button
-                class="room-rename"
-                x-show="roomFilter && renamingRoom !== roomFilter"
-                @click="beginRenameRoom(roomFilter)"
-                :title="t('web.devices.room_rename')"
-              ><svg class="icon"><use href="#i-rename"></use></svg></button>
-              <input
-                x-show="roomFilter && renamingRoom === roomFilter"
-                x-cloak
-                type="text"
-                class="room-rename-input"
-                x-model="renameDraft"
-                @keydown.enter="commitRenameRoom()"
-                @keydown.escape="cancelRenameRoom()"
-                @blur="commitRenameRoom()"
-              />
-            </span>
-          </template>
-          <!-- The horizontal spacer that used to push the search field to
-               the right of the chip row is gone (device dashboard sidebar
-               design, 2026-09-13): the sidebar is a vertical column now,
-               the search field always sits at a fixed position above the
-               room list, and there is nothing left to push past. -->
           <!-- The border sits on the container, not on the field: the magnifying glass,
                the counter and the cross sit WITHIN the border, and the focus ring
                hangs on the whole group via :focus-within instead of on the
@@ -934,6 +885,55 @@
             :disabled="devices.length === 0"
             x-text="t('web.groups.new')"
           ></button>
+          <!-- The horizontal spacer that used to push the search field to
+               the right of the chip row is gone (device dashboard sidebar
+               design, 2026-09-13): the sidebar is a vertical column now,
+               the search field always sits at a fixed position above the
+               room list, and there is nothing left to push past. -->
+          <template x-if="hasAnyRoom()">
+            <span class="room-chips">
+              <!-- Groups count towards "All" just as they do towards every
+                   other chip (`roomChips()`): both kinds of tile sit in the
+                   grid below, and a number that disagreed with what appears
+                   under it would be worse than no number. -->
+              <button
+                class="room-chip"
+                :class="{ active: roomFilter === null }"
+                @click="roomFilter = null"
+                x-text="t('web.devices.room_all') + ' ' + (devices.length + groups.length)"
+              ></button>
+              <template x-for="chip in roomChips()" :key="chip.key">
+                <button
+                  class="room-chip"
+                  :class="{ active: roomFilter === chip.key }"
+                  @click="roomFilter = chip.key"
+                  x-text="chip.label + ' ' + chip.count"
+                ></button>
+              </template>
+              <!-- `x-show="roomFilter"` is exactly right here and not
+                   sloppiness: both cases where there is nothing to rename are
+                   falsy - `null` ("All") and `""` ("No
+                   room"). "No room" is not a room but the set of
+                   devices with no assignment; a name that could be changed
+                   is precisely what they are missing. -->
+              <button
+                class="room-rename"
+                x-show="roomFilter && renamingRoom !== roomFilter"
+                @click="beginRenameRoom(roomFilter)"
+                :title="t('web.devices.room_rename')"
+              ><svg class="icon"><use href="#i-rename"></use></svg></button>
+              <input
+                x-show="roomFilter && renamingRoom === roomFilter"
+                x-cloak
+                type="text"
+                class="room-rename-input"
+                x-model="renameDraft"
+                @keydown.enter="commitRenameRoom()"
+                @keydown.escape="cancelRenameRoom()"
+                @blur="commitRenameRoom()"
+              />
+            </span>
+          </template>
         </div>
         <div class="dashboard-main">
 
