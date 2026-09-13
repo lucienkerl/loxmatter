@@ -49,6 +49,7 @@ from fakes import (
     FakeDevice,
     FakeEndpoint,
     FakeNodeDescriptor,
+    FakeNodeInfo,
     NetworkSettingsInconsistent,
     ZigbeeException,
     colour_lamp,
@@ -2561,3 +2562,117 @@ async def test_a_device_with_pending_configuration_is_watched_again_after_a_rest
         await harness.source.disconnect()
     finally:
         store.close()
+
+
+# ------------------------------------------------------- the coordinator --
+
+
+def _the_stick(*, descriptor_read: bool = True) -> FakeDevice:
+    """The coordinator as zigpy keeps it in `app.devices`: the IEEE of
+    `app.state.node_info`, network address 0x0000 and a node descriptor of
+    logical type Coordinator. That is what the maintainer's Pi held on
+    13 September 2026 for `08:b9:5f:ff:fe:eb:7e:0a` - `devices_v15` nwk 0,
+    `node_descriptors_v15` logical_type 0 - after bellows announced it with
+    `device_initialized` on startup and it turned up as "Silicon Labs EZSP" in
+    the pairing tab, and from there in the device list.
+
+    `descriptor_read=False` is a coordinator whose descriptor has not been
+    read: `is_coordinator` then answers `None`, and only the IEEE says what
+    it is."""
+    stick = FakeDevice(
+        FakeNodeInfo().ieee,
+        manufacturer="Silicon Labs",
+        model="EZSP",
+        node_desc=FakeNodeDescriptor(
+            is_mains_powered=True, is_coordinator=True if descriptor_read else None
+        ),
+    )
+    stick.nwk = 0x0000
+    return stick
+
+
+@pytest.mark.parametrize("descriptor_read", [True, False], ids=["descriptor", "ieee only"])
+async def test_the_coordinator_never_becomes_a_pairing_row(build, descriptor_read) -> None:
+    """The radio this bridge talks through is not a device anybody pairs.
+
+    Fault to prove it: remove the coordinator check from
+    `_handle_device_event` - the stick gets a "ready" row with an Add
+    button, which is what put it into the maintainer's device list."""
+    stick = _the_stick(descriptor_read=descriptor_read)
+    lamp = colour_lamp()
+    harness = build(FakeApplication(devices=[stick, lamp]))
+    await harness.source.connect()
+    await harness.source.subscribe(_lamp_resolver(), harness.handler)
+
+    harness.app.fire_device_joined(stick)
+    harness.app.fire_device_initialized(stick)
+    harness.app.fire_device_initialized(lamp)
+    await _settle(harness.source)
+
+    assert [row.ieee for row in harness.source.pairing_rows()] == [LAMP_IEEE]
+
+
+@pytest.mark.parametrize("descriptor_read", [True, False], ids=["descriptor", "ieee only"])
+async def test_the_coordinator_is_not_in_the_device_catalogue(build, descriptor_read) -> None:
+    """Snapshots, listeners, command targets and configure-on-join all go
+    through `_devices()`; zigpy keeps the stick in `app.devices`, so that is
+    where it has to be left out. Configure-on-join reading the stick's own
+    Basic cluster and timing out was the second symptom on the Pi.
+
+    Fault to prove it: return `list(app.devices.values())` from `_devices()`
+    again - the stick's snapshot appears and a command to it is sent."""
+    stick = _the_stick(descriptor_read=descriptor_read)
+    lamp = colour_lamp()
+    harness = build(FakeApplication(devices=[stick, lamp]))
+    await harness.source.connect()
+    await harness.source.subscribe(_lamp_resolver(), harness.handler)
+    await _settle(harness.source)
+
+    assert [snapshot.address for snapshot in await harness.source.snapshots()] == [LAMP_IEEE]
+    with pytest.raises(DeviceUnreachableError):
+        await harness.source.send(
+            DeviceCall(
+                technology="zigbee",
+                address=stick.ieee,
+                endpoint=1,
+                cluster_id=6,
+                command_id=1,
+                payload={},
+            )
+        )
+
+
+async def test_removing_the_coordinators_address_never_asks_zigpy_to_remove_it(build) -> None:
+    """A stored tile for the stick - the maintainer's "Silicon Labs EZSP" -
+    must be removable without zigpy sending the coordinator a leave request
+    addressed to itself.
+
+    Fault to prove it: take the coordinator back into `_devices()` -
+    `app.removed` then holds the stick's IEEE."""
+    stick = _the_stick()
+    harness = build(FakeApplication(devices=[stick, colour_lamp()]))
+    await harness.source.connect()
+    await harness.source.subscribe(_lamp_resolver(), harness.handler)
+
+    await asyncio.wait_for(harness.source.remove(stick.ieee), 1)
+
+    assert harness.app.removed == []
+
+
+async def test_the_coordinator_is_recognised_while_the_application_is_still_starting(build) -> None:
+    """bellows announces the coordinator from inside `startup()`, before
+    `connect()` stores the application - and a stick whose descriptor has
+    not been read carries nothing else that says what it is.
+
+    Fault to prove it: read the application only from `self._app` in
+    `_is_coordinator` - the stick gets a pairing row."""
+    stick = _the_stick(descriptor_read=False)
+    harness = build(FakeApplication(devices=[stick]))
+    await harness.source.connect()
+    await harness.source.subscribe(_lamp_resolver(), harness.handler)
+    harness.source._app = None
+
+    harness.app.fire_device_initialized(stick)
+    await _settle(harness.source)
+
+    assert harness.source.pairing_rows() == []
