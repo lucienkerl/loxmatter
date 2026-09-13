@@ -1490,6 +1490,12 @@ web.zigbee.adopted_hint:
 web.zigbee.saved:
   en: "Saved."
   de: "Gespeichert."
+# The accessible name of the group of rows still to be dealt with. Its
+# summary is hidden (the group is always open), so without this it read as
+# an unnamed group beside the "already added" one.
+web.zigbee.open_group_label:
+  en: "New devices"
+  de: "Neue Geräte"
 # The title of the collapsed group of rows already in the device list. Two
 # keys rather than one with a plural rule: i18n.t knows no plural forms (the
 # pattern of `web.devices.code_detect_remaining_*`).

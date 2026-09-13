@@ -12833,7 +12833,7 @@ def test_leaving_while_start_is_under_way_closes_the_window_it_opens():
         _BINDINGS_JS + _PAIRING_PAGE_JS + "const runCase = async (leave) => {"
         "  const permits = []; let answer;"
         "  state.commissionTab = 'zigbee'; state.view = 'devices';"
-        "  state.zigbeePermitUntil = null; state.setZigbeeOpenedHere(false);"
+        "  state.zigbeePermitUntil = null; state.setZigbeeOpenedUntil(null);"
         "  state.request = async (method, path, payload) => {"
         "    if (path === '/api/zigbee/permit') {"
         "      permits.push(payload);"
@@ -12849,7 +12849,7 @@ def test_leaving_while_start_is_under_way_closes_the_window_it_opens():
         "  await leave();"
         "  answer();"
         "  await start;"
-        "  return { permits, open: state.zigbeeWindowOpen(), openedHere: state.zigbeeOpenedHere };"
+        "  return { permits, open: state.zigbeeWindowOpen(), claim: state.zigbeeOpenedUntil };"
         "};"
         "(async () => {"
         "  const matter = await runCase(() => state.selectCommissionTab('matter'));"
@@ -12865,7 +12865,7 @@ def test_leaving_while_start_is_under_way_closes_the_window_it_opens():
     for case in ("matter", "exportView"):
         assert values[case]["permits"] == opened_then_closed, (case, values[case])
         assert values[case]["open"] is False, case
-        assert values[case]["openedHere"] is False, case
+        assert values[case]["claim"] is None, case
     assert values["cameBack"]["permits"] == [{"duration": PERMIT_MAX_SECONDS}]
     assert values["cameBack"]["open"] is True
 
@@ -12886,9 +12886,9 @@ def test_only_a_window_opened_here_is_closed_on_leaving():
       then opened again by the phone: the page's claim ended with its
       window, so leaving sends nothing either.
 
-    Fault to prove it: drop the `zigbeeOpenedHere` check from
+    Fault to prove it: drop the `zigbeeHoldsWindow()` check from
     `closeZigbeeWindow()` (the second run sends Stops), or do not clear the
-    flag on a GET without a window (the third one does)."""
+    claim on a GET without a window (the third one does)."""
     values = _app_state(
         _BINDINGS_JS + _PAIRING_PAGE_JS + "const permits = [];"
         "let pairing = { permit_until: null, rows: [] };"
@@ -12944,12 +12944,14 @@ def test_a_reload_lands_on_an_open_windows_countdown_and_closes_nothing():
 
     The tab and "this page opened the window" survive the reload in
     `sessionStorage` (per browser tab, shared with no other tab or phone):
-    a window opened here, then reloaded, is still this page's to close.
+    a window opened here, then reloaded, is still this page's to close. The
+    claim crosses only a reload, which hands it over on `pagehide`; that
+    listener sends nothing (`test_a_reload_restores_the_claim_through_init`
+    fires it).
 
     Fault to prove it: drop the tab switch from `peekZigbeePairing()`, or
-    the `rememberCommission()` call from `setZigbeeOpenedHere()`."""
+    the `rememberCommission()` call from `setZigbeeOpenedUntil()`."""
     source = (WEB_DIR / "app.js").read_text(encoding="utf-8")
-    assert "pagehide" not in source
     assert "keepalive" not in source
     values = _app_state(
         _BINDINGS_JS + _PAIRING_PAGE_JS + "const stored = {};"
@@ -12978,9 +12980,12 @@ def test_a_reload_lands_on_an_open_windows_countdown_and_closes_nothing():
         "  const closed = state.commissionTabShown();"
         "  await state.selectCommissionTab('zigbee');"
         "  await state.startZigbeeSearch();"
-        "  state.commissionTab = 'matter'; state.zigbeeOpenedHere = false;"
+        "  const claimed = state.zigbeeOpenedUntil;"
+        "  state.rememberCommission({ handedOver: true });"
+        "  state.commissionTab = 'matter'; state.zigbeeOpenedUntil = null;"
         "  state.restoreCommission();"
-        "  const reloaded = { tab: state.commissionTab, openedHere: state.zigbeeOpenedHere };"
+        "  const reloaded = { tab: state.commissionTab,"
+        "    openedHere: claimed !== null && state.zigbeeOpenedUntil === claimed };"
         "  console.log(JSON.stringify({ fresh, open, closed, reloaded }));"
         "})();"
     )
@@ -13281,19 +13286,20 @@ async def test_add_sends_the_typed_name_once_however_often_enter_is_pressed(api)
         "  return [];"
         "};"
         "const $el = { blur() {} };"
+        "const $event = { isComposing: false, keyCode: 13, preventDefault() {} };"
         "(async () => {"
         "  await state.loadZigbeePairing();"
         f"  const row = () => state.zigbeeRow({json.dumps(_UNNAMED)});"
         f"  exec({json.dumps(name['x-model'])} + ' = __value', {{ row: row(), __value: 'Hall motion' }});"
         f"  exec({json.dumps(name['@input'])}, {{ row: row() }});"
-        f"  exec({json.dumps(name['@keydown.enter.prevent'])}, {{ row: row(), $el }});"
-        f"  exec({json.dumps(name['@keydown.enter.prevent'])}, {{ row: row(), $el }});"
+        f"  exec({json.dumps(name['@keydown.enter'])}, {{ row: row(), $el, $event }});"
+        f"  exec({json.dumps(name['@keydown.enter'])}, {{ row: row(), $el, $event }});"
         f"  exec({json.dumps(add['@click'])}, {{ row: row() }});"
         "  const whileBusy = patches.slice();"
         "  answer(); await settle(); await settle();"
         "  state.zigbeePairing.rows[1].device_id = null;"
         "  state.zigbeePairingUnavailable = true;"
-        f"  exec({json.dumps(name['@keydown.enter.prevent'])}, {{ row: row(), $el }});"
+        f"  exec({json.dumps(name['@keydown.enter'])}, {{ row: row(), $el, $event }});"
         "  const duringSwap = patches.length - whileBusy.length;"
         "  console.log(JSON.stringify({ whileBusy, duringSwap }));"
         "})();"
@@ -13725,12 +13731,11 @@ async def test_the_name_field_shows_a_long_name_and_stays_one_line(api):
     Enter, and the `@input` run on a pasted two-line name.
 
     Fault to prove it: drop the line-break replacement from
-    `zigbeeRowEdited()`, or the `.prevent` from the Enter handler."""
+    `zigbeeRowEdited()`, or the `preventDefault()` from the Enter handler."""
     client, _, _ = api
     page = (await client.get("/")).text
     field = _pairing_element(page, "textarea", x_model="zigbeeRowDrafts[row.ieee].name")
     assert field.get("rows") == "1"
-    assert "@keydown.enter.prevent" in field
     wrappers = [
         (attributes, ancestors)
         for tag, attributes, ancestors in _served_elements(page)
@@ -13746,7 +13751,884 @@ async def test_the_name_field_shows_a_long_name_and_stays_one_line(api):
         f"  const row = state.zigbeeRow({json.dumps(_UNNAMED)});"
         f"  exec({json.dumps(field['x-model'])} + ' = __value', {{ row, __value: 'Hall\\r\\n motion' }});"
         f"  exec({json.dumps(field['@input'])}, {{ row }});"
-        f"  console.log(JSON.stringify({{ name: state.zigbeeRowDrafts[{json.dumps(_UNNAMED)}].name }}));"
+        "  let prevented = false;"
+        "  const $event = { isComposing: false, keyCode: 13, preventDefault() { prevented = true; } };"
+        f"  exec({json.dumps(field['@keydown.enter'])}, {{ row, $event, $el: {{ blur() {{}} }} }});"
+        "  await settle();"
+        f"  console.log(JSON.stringify({{ name: state.zigbeeRowDrafts[{json.dumps(_UNNAMED)}].name, prevented }}));"
         "})();"
     )
     assert values["name"] == "Hall motion"
+    # Enter does not break the line: the handler prevents the key's default.
+    assert values["prevented"] is True
+
+
+# ---------------------------------------------------------------------------
+# The Zigbee tab, second review: whose window a page closes, what crosses a
+# reload, when the tab selects itself, and the rules the first round left
+# unmeasured.
+# ---------------------------------------------------------------------------
+
+# A bridge that keeps one join window, the way `ZigbeeSource` does: a permit
+# writes its end time to the second, a list answers with the end time as it
+# was when the list was ASKED (an answer can be overtaken on its way), and a
+# window whose end has passed is no window. `bridge.shift` moves the clock a
+# window is opened on, so two windows opened in one test run end at different
+# seconds. `holdPermit`/`holdGet` keep a request on its way until released.
+_BRIDGE_JS = """
+const iso = (ms) => new Date(Math.floor(ms / 1000) * 1000).toISOString();
+const bridge = { until: null, shift: 0, permits: [], gets: 0,
+  holdPermit: false, releasePermit: null, holdGet: false, releaseGet: null };
+const openFor = (seconds) => {
+  bridge.until = seconds > 0 ? iso(Date.now() + bridge.shift + seconds * 1000) : null;
+  return bridge.until;
+};
+const openNow = () => (bridge.until !== null && Date.parse(bridge.until) > Date.now() ? bridge.until : null);
+const bridgeRequest = async (method, path, payload) => {
+  if (path === '/api/zigbee/permit') {
+    bridge.permits.push(payload.duration);
+    if (bridge.holdPermit && payload.duration > 0) {
+      await new Promise((resolve) => { bridge.releasePermit = resolve; });
+    }
+    return { permit_until: openFor(payload.duration) };
+  }
+  if (path === '/api/zigbee/pairing') {
+    bridge.gets += 1;
+    const seen = openNow();
+    if (bridge.holdGet) await new Promise((resolve) => { bridge.releaseGet = resolve; });
+    return { permit_until: seen, rows: [] };
+  }
+  if (path === '/api/zigbee/radio') return radioBody;
+  return [];
+};
+state.request = bridgeRequest;
+"""
+
+# Page loads in one browser tab, through the REAL `init()`: each `bootPage`
+# builds a fresh `app()` from app.js over the `sessionStorage` it is given,
+# logs in on the Devices view and records the window listeners `init()`
+# attaches, so a test can fire `pagehide` the way a reload does.
+_BROWSER_TAB_JS = """
+const storageOver = (backing) => ({
+  getItem: (key) => (key in backing ? backing[key] : null),
+  setItem: (key, value) => { backing[key] = String(value); },
+});
+const bootPage = async (backing) => {
+  const handlers = {};
+  const win = { location: { hash: '#/devices' }, history: { replaceState() {} }, confirm: () => true,
+    sessionStorage: storageOver(backing), setInterval: () => 1,
+    addEventListener: (type, listener) => { (handlers[type] ??= []).push(listener); } };
+  globalThis.window = win;
+  const page = new Function(src + ';globalThis.t = t; return app();')();
+  page.request = bridgeRequest;
+  page.loadI18n = async () => {};
+  page.loadAuthInfo = async () => { page.authenticated = true; };
+  page.startApp = async () => { await page.selectView(page.view); };
+  await page.init();
+  return {
+    page,
+    use() { globalThis.window = win; return page; },
+    fire(type, event = {}) { globalThis.window = win; (handlers[type] ?? []).forEach((listener) => listener(event)); },
+  };
+};
+"""
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_a_window_replaced_elsewhere_is_not_closed_on_leaving():
+    """The claim on a window was a flag, so it survived its window. Two
+    runs the reviewer reproduced, through the REAL Start, polls and view
+    change:
+
+    - The laptop opens a window; between two of its polls the phone stops it
+      and opens its own. The laptop's next list shows the phone's window -
+      and the laptop, leaving, closed it.
+    - The laptop's window runs out without a poll seeing it, and the phone
+      opens a new one. Same result.
+
+    The claim is the end time now: a list showing another end time ends it.
+    And a window only ever seen through a list is not closed either.
+
+    Fault to prove it: keep the claim when a list shows a different end time
+    (`settleZigbeeClaim()`) and close on any claim (`zigbeeHoldsWindow()`)."""
+    values = _app_state(
+        _BINDINGS_JS
+        + _PAIRING_PAGE_JS
+        + _BRIDGE_JS
+        + """
+        (async () => {
+          const out = {};
+          // Replaced between two polls.
+          await state.startZigbeeSearch();
+          await state.loadZigbeePairing();
+          const laptopWindow = state.zigbeeOpenedUntil;
+          bridge.shift += 20000; openFor(254);                  // the phone
+          await state.loadZigbeePairing();
+          out.replaced = { claimWasSet: laptopWindow !== null, claim: state.zigbeeOpenedUntil };
+          bridge.permits.length = 0;
+          await state.selectView('export');
+          out.replaced.permits = bridge.permits.splice(0);
+
+          // Ran out unseen, then opened again on the phone.
+          await state.selectView('devices');
+          state.commissionTab = 'zigbee';
+          bridge.shift = -260000;
+          await state.startZigbeeSearch();                     // ends 6 s ago
+          const expiredClaim = state.zigbeeOpenedUntil;
+          bridge.shift = 0; openFor(254);                      // the phone
+          await state.loadZigbeePairing();
+          out.expired = { claimWasSet: expiredClaim !== null, claim: state.zigbeeOpenedUntil };
+          bridge.permits.length = 0;
+          await state.selectView('export');
+          out.expired.permits = bridge.permits.splice(0);
+
+          // Seen only.
+          await state.selectView('devices');
+          state.commissionTab = 'zigbee';
+          bridge.shift = 40000; openFor(254);
+          await state.loadZigbeePairing();
+          await state.selectView('export');
+          out.seenOnly = { permits: bridge.permits.splice(0), claim: state.zigbeeOpenedUntil };
+          console.log(JSON.stringify(out));
+        })();
+        """
+    )
+    for case in ("replaced", "expired"):
+        assert values[case] == {"claimWasSet": True, "claim": None, "permits": []}, (case, values)
+    assert values["seenOnly"] == {"permits": [], "claim": None}
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_keep_open_moves_the_claim_to_the_new_end_time():
+    """ "Keep open longer" gives the window a new end time. A claim that stayed
+    on the old one would be ended by the very next poll, and leaving would
+    then leave a network the user opened here open for four minutes.
+
+    Through the REAL Start, poll, Keep open, poll and view change.
+
+    Fault to prove it: keep the Start's end time as the claim when Keep open
+    answers."""
+    values = _app_state(
+        _BINDINGS_JS
+        + _PAIRING_PAGE_JS
+        + _BRIDGE_JS
+        + """
+        (async () => {
+          await state.startZigbeeSearch();
+          await state.loadZigbeePairing();
+          const first = state.zigbeeOpenedUntil;
+          bridge.shift += 30000;
+          await state.extendZigbeeSearch();
+          await state.loadZigbeePairing();
+          const moved = state.zigbeeOpenedUntil !== first && state.zigbeeOpenedUntil === bridge.until;
+          bridge.permits.length = 0;
+          await state.selectView('export');
+          console.log(JSON.stringify({ moved, permits: bridge.permits }));
+        })();
+        """
+    )
+    assert values == {"moved": True, "permits": [0]}
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_a_duplicated_tab_does_not_inherit_the_claim():
+    """Chrome's "Duplicate Tab" copies `sessionStorage`, and with it the claim:
+    the copy, left, closed the window the original was still counting down.
+    A reload passes through `pagehide` and hands the claim over; a copy never
+    did, so it takes none.
+
+    Two page loads through the REAL `init()`: the original opens a window, a
+    copy is made of its storage, and the copy is left first - nothing is
+    sent. The original, left afterwards, still closes its window.
+
+    Fault to prove it: take the stored claim in `restoreCommission()` without
+    `handedOver`."""
+    values = _app_state(
+        _BINDINGS_JS
+        + _PAIRING_PAGE_JS
+        + _BRIDGE_JS
+        + _BROWSER_TAB_JS
+        + """
+        (async () => {
+          const originalStorage = {};
+          const original = await bootPage(originalStorage);
+          original.use();
+          await original.page.selectCommissionTab('zigbee');
+          await original.page.startZigbeeSearch();
+          const copy = await bootPage({ ...originalStorage });
+          const copyOnZigbee = copy.page.commissionTabShown();
+          bridge.permits.length = 0;
+          await copy.use().selectView('export');
+          const fromCopy = bridge.permits.splice(0);
+          await original.use().selectView('export');
+          console.log(JSON.stringify({ copyOnZigbee, fromCopy, fromOriginal: bridge.permits }));
+        })();
+        """
+    )
+    # The copy still shows the window - it just is not the copy's to close.
+    assert values["copyOnZigbee"] == "zigbee"
+    assert values["fromCopy"] == []
+    assert values["fromOriginal"] == [0]
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_a_reload_restores_the_claim_through_init():
+    """The tab and the claim survive a reload only because `init()` reads
+    them back - a helper that restored them correctly but was never called
+    kept every other test green.
+
+    A page load through the REAL `init()` opens a window, `pagehide` fires
+    (and sends nothing), and the next page load over the same storage lands
+    on the Zigbee tab and closes the window when it is left.
+
+    Fault to prove it: drop `this.restoreCommission()` from `init()`."""
+    values = _app_state(
+        _BINDINGS_JS
+        + _PAIRING_PAGE_JS
+        + _BRIDGE_JS
+        + _BROWSER_TAB_JS
+        + """
+        (async () => {
+          const storage = {};
+          const before = await bootPage(storage);
+          await before.page.selectCommissionTab('zigbee');
+          await before.page.startZigbeeSearch();
+          bridge.permits.length = 0;
+          const getsBefore = bridge.gets;
+          before.fire('pagehide');
+          const sentOnPagehide = { permits: bridge.permits.length, gets: bridge.gets - getsBefore };
+          const after = await bootPage(storage);
+          const landed = after.page.commissionTabShown();
+          await after.use().selectView('export');
+          console.log(JSON.stringify({ sentOnPagehide, landed, permits: bridge.permits }));
+        })();
+        """
+    )
+    assert values["sentOnPagehide"] == {"permits": 0, "gets": 0}
+    assert values["landed"] == "zigbee"
+    assert values["permits"] == [0]
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_a_reload_while_start_is_on_its_way_still_claims_its_window():
+    """Start pressed, and the page reloaded before its answer came back. The
+    answer is lost with the page, the radio opens the network anyway - and
+    nothing claimed it, so leaving the reloaded page left it open.
+
+    Before the POST a pending marker is stored with its send time. The page
+    after the reload takes a window ending where that Start would have ended
+    it as its own; a window ending anywhere else is someone else's, and a
+    marker too old to be on its way any more is dropped.
+
+    Two page loads through the REAL `init()`, with the POST held open across
+    `pagehide`.
+
+    Fault to prove it: ignore the pending marker in `settleZigbeeClaim()`, or
+    never drop an implausible one."""
+    values = _app_state(
+        _BINDINGS_JS
+        + _PAIRING_PAGE_JS
+        + _BRIDGE_JS
+        + _BROWSER_TAB_JS
+        + """
+        (async () => {
+          const out = {};
+          const storage = {};
+          const before = await bootPage(storage);
+          await before.page.selectCommissionTab('zigbee');
+          bridge.holdPermit = true;
+          before.page.startZigbeeSearch();          // never answers this page
+          await settle();
+          before.fire('pagehide');
+          // The radio opens it anyway; the answer never reaches a page, the
+          // old page being gone.
+          openFor(254);
+          bridge.holdPermit = false;
+          bridge.permits.length = 0;
+          const after = await bootPage(storage);
+          out.claimed = after.page.zigbeeOpenedUntil === bridge.until;
+          await after.use().selectView('export');
+          out.permits = bridge.permits.splice(0);
+
+          // A marker from long ago, and a window someone else opened now.
+          const stale = {};
+          stale['loxmatter.commission'] = JSON.stringify({ tab: 'zigbee', tabChosen: false,
+            openedUntil: null, pendingSince: Date.now() - 120000, handedOver: true });
+          openFor(254);
+          const late = await bootPage(stale);
+          out.lateClaim = late.page.zigbeeOpenedUntil;
+          out.lateMarker = JSON.parse(stale['loxmatter.commission']).pendingSince;
+          await late.use().selectView('export');
+          out.latePermits = bridge.permits.splice(0);
+          console.log(JSON.stringify(out));
+        })();
+        """
+    )
+    assert values["claimed"] is True
+    assert values["permits"] == [0]
+    assert values["lateClaim"] is None
+    assert values["lateMarker"] is None
+    assert values["latePermits"] == []
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_a_list_asked_during_start_does_not_wipe_its_window():
+    """The sequence was bumped only before the POST. A poll sent WHILE Start
+    was on its way was asked before the radio had the window, and landing
+    after Start's answer it wrote "no window" over it: the countdown fell to
+    0, the claim was dropped, and leaving left the network open.
+
+    The REAL Start with its POST held, a REAL list load sent during it and
+    answered after it.
+
+    Fault to prove it: drop the second sequence bump from
+    `sendZigbeePermit()`."""
+    values = _app_state(
+        _BINDINGS_JS
+        + _PAIRING_PAGE_JS
+        + _BRIDGE_JS
+        + """
+        (async () => {
+          bridge.holdPermit = true;
+          const start = state.startZigbeeSearch();
+          await settle();
+          bridge.holdGet = true;
+          const poll = state.loadZigbeePairing();
+          await settle();
+          bridge.releasePermit();
+          await start;
+          bridge.releaseGet();
+          await poll;
+          const after = { counting: state.zigbeeCountdown() > 0, claimed: state.zigbeeOpenedUntil === bridge.until };
+          bridge.holdPermit = false; bridge.holdGet = false;
+          bridge.permits.length = 0;
+          await state.selectView('export');
+          console.log(JSON.stringify({ ...after, permits: bridge.permits }));
+        })();
+        """
+    )
+    assert values == {"counting": True, "claimed": True, "permits": [0]}
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+async def test_coming_back_to_devices_moves_the_leave_error_into_the_pane(api):
+    """A Stop refused on leaving shows in a banner above the navigation. Only
+    a tab click moved it into the pane: coming back through the Devices view
+    left the banner up there while the pane's own error line, under the
+    user's eyes, stayed empty.
+
+    The served banner's `x-show` and the pane's error line, after leaving to
+    Export with a refused Stop and coming back through the REAL
+    `selectView('devices')`.
+
+    Fault to prove it: drop the `noteZigbeePaneShown()` call at the top of
+    `peekZigbeePairing()`."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+    banner = next(
+        attributes
+        for tag, attributes, _ in _served_elements(page)
+        if tag == "div" and "zigbee-leave-banner" in attributes.get("class", "").split()
+    )
+    pane_error = _pairing_element(page, "p", x_text="zigbeePermitError")
+    values = _app_state(
+        _BINDINGS_JS
+        + _PAIRING_PAGE_JS
+        + _BRIDGE_JS
+        + f"const bannerShown = () => Boolean(run({json.dumps(banner['x-show'])}));"
+        + f"const paneError = () => run({json.dumps(pane_error['x-show'])}) ? run({json.dumps(pane_error['x-text'])}) : null;"
+        + """
+        state.request = async (method, path, payload) => {
+          if (path === '/api/zigbee/permit' && payload.duration === 0) {
+            const error = new Error('could not be closed'); error.status = 502; throw error;
+          }
+          return bridgeRequest(method, path, payload);
+        };
+        (async () => {
+          await state.startZigbeeSearch();
+          await state.selectView('export');
+          const away = { banner: bannerShown(), pane: paneError() };
+          await state.selectView('devices');
+          const back = { banner: bannerShown(), pane: paneError(), tab: state.commissionTabShown() };
+          console.log(JSON.stringify({ away, back }));
+        })();
+        """
+    )
+    assert values["away"] == {"banner": True, "pane": None}
+    assert values["back"] == {"banner": False, "pane": "could not be closed", "tab": "zigbee"}
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_a_refused_stop_goes_when_the_window_does_and_a_refused_start_stays():
+    """A refused Stop says the network "may still be open". Once a list shows
+    no window that is false, and the sentence stayed - no poll cleared the
+    pane's error line. A refused Start is different: its reason is still why
+    nothing is open, and wiping it two seconds later hid it.
+
+    The REAL Stop and Start refused by the bridge, then a REAL list with no
+    window.
+
+    Fault to prove it: leave `zigbeePermitError` alone in
+    `noteZigbeeWindowGone()`, or clear it there whatever it says."""
+    values = _app_state(
+        _BINDINGS_JS
+        + _PAIRING_PAGE_JS
+        + _BRIDGE_JS
+        + """
+        let refuse = null;
+        state.request = async (method, path, payload) => {
+          if (path === '/api/zigbee/permit' && refuse === payload.duration) {
+            const error = new Error('refused ' + payload.duration); error.status = 502; throw error;
+          }
+          return bridgeRequest(method, path, payload);
+        };
+        (async () => {
+          await state.startZigbeeSearch();
+          refuse = 0;
+          await state.stopZigbeeSearch();
+          const stopRefused = state.zigbeePermitError;
+          bridge.until = null;                           // closed after all
+          await state.loadZigbeePairing();
+          const stopAfterList = state.zigbeePermitError;
+          refuse = 254;
+          await state.startZigbeeSearch();
+          const startRefused = state.zigbeePermitError;
+          await state.loadZigbeePairing();
+          console.log(JSON.stringify({ stopRefused, stopAfterList, startRefused,
+            startAfterList: state.zigbeePermitError }));
+        })();
+        """
+    )
+    assert values == {
+        "stopRefused": "refused 0",
+        "stopAfterList": None,
+        "startRefused": "refused 254",
+        "startAfterList": "refused 254",
+    }
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_add_marks_the_row_as_added_here_before_its_request_answers():
+    """`Object.assign(row, updated)` queues a render the moment the PATCH
+    answers. With "added here" set only after it, that render put the row
+    into the folded "already added" group and the next one back into the
+    open group: the row was built twice, and the focus left the field Enter
+    was pressed in. Marked before the request, the row never leaves the open
+    group; a refused Add takes the mark back.
+
+    The REAL `adoptZigbeeDevice()` with its PATCH held open.
+
+    Fault to prove it: set `zigbeeAddedHere[ieee]` after the PATCH instead."""
+    values = _app_state(
+        _BINDINGS_JS
+        + _PAIRING_PAGE_JS
+        + f"const body = {json.dumps(_PAIRING_BODY)};"
+        + f"const ieee = {json.dumps(_UNNAMED)};"
+        + """
+        let answer; let refuse = false;
+        state.request = async (method, path, payload) => {
+          if (method === 'PATCH') {
+            await new Promise((resolve) => { answer = resolve; });
+            if (refuse) { const error = new Error('not ready'); error.status = 409; throw error; }
+            return { ...body.rows[1], device_id: 9, name: payload.name };
+          }
+          if (path === '/api/zigbee/pairing') return JSON.parse(JSON.stringify(body));
+          return [];
+        };
+        const openRows = () => (state.zigbeeRowGroups().find((group) => group.key === 'open')?.rows ?? [])
+          .map((row) => row.ieee);
+        (async () => {
+          await state.loadZigbeePairing();
+          const adding = state.adoptZigbeeDevice(ieee);
+          await settle();
+          const whileAsking = state.zigbeeAddedHere[ieee] === true;
+          answer(); await adding;
+          const added = { mark: state.zigbeeAddedHere[ieee] === true, open: openRows().includes(ieee) };
+          await state.loadZigbeePairing();
+          state.zigbeeAddedHere = {};
+          state.zigbeePairing.rows[1].device_id = null;
+          refuse = true;
+          const refusing = state.adoptZigbeeDevice(ieee);
+          await settle();
+          answer(); await refusing;
+          console.log(JSON.stringify({ whileAsking, added, refusedMark: ieee in state.zigbeeAddedHere }));
+        })();
+        """
+    )
+    assert values == {
+        "whileAsking": True,
+        "added": {"mark": True, "open": True},
+        "refusedMark": False,
+    }
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+async def test_the_enter_that_confirms_an_input_method_does_not_add(api):
+    """Typing a name through an input method (Japanese, Chinese), the Enter
+    that confirms a candidate is a keydown too - and Alpine's `.enter` does
+    not tell it apart, so it added the half-typed name. The handler ignores
+    a composing Enter (`isComposing`, and the `keyCode` 229 Safari sends for
+    it) and does not prevent its default; a plain Enter still adds.
+
+    The SERVED `@keydown.enter` of the name field, run as Alpine runs it.
+
+    Fault to prove it: drop the composition guard from the handler."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+    field = _pairing_element(page, "textarea", x_model="zigbeeRowDrafts[row.ieee].name")
+    handler = field["@keydown.enter"]
+    values = _app_state(
+        _BINDINGS_JS
+        + _PAIRING_PAGE_JS
+        + f"const body = {json.dumps(_PAIRING_BODY)};"
+        + f"const handler = {json.dumps(handler)};"
+        + f"const ieee = {json.dumps(_UNNAMED)};"
+        + """
+        const patches = [];
+        state.request = async (method, path, payload) => {
+          if (method === 'PATCH') { patches.push(payload); return { ...body.rows[1], device_id: 9, name: payload.name }; }
+          if (path === '/api/zigbee/pairing') return JSON.parse(JSON.stringify(body));
+          return [];
+        };
+        const press = async (event) => {
+          let prevented = false;
+          const $event = { ...event, preventDefault() { prevented = true; } };
+          exec(handler, { row: state.zigbeeRow(ieee), $event, $el: { blur() {} } });
+          await settle(); await settle();
+          return { patches: patches.length, prevented };
+        };
+        (async () => {
+          await state.loadZigbeePairing();
+          const composing = await press({ isComposing: true, keyCode: 229 });
+          const safari = await press({ isComposing: false, keyCode: 229 });
+          const plain = await press({ isComposing: false, keyCode: 13 });
+          console.log(JSON.stringify({ composing, safari, plain }));
+        })();
+        """
+    )
+    assert values["composing"] == {"patches": 0, "prevented": False}
+    assert values["safari"] == {"patches": 0, "prevented": False}
+    assert values["plain"] == {"patches": 1, "prevented": True}
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+async def test_the_open_row_group_has_an_accessible_name(api):
+    """The open group is a `<details>` held open with its summary hidden, so
+    in the accessibility tree it was an unnamed group beside the "already
+    added" one, which its summary names. It is named by `aria-label`.
+
+    The served `:aria-label`, evaluated with the real table for both groups.
+
+    Fault to prove it: drop the `:aria-label` from the group."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+    details = [
+        attributes
+        for tag, attributes, _ in _served_elements(page)
+        if tag == "details" and "zigbee-row-group" in attributes.get("class", "").split()
+    ]
+    assert len(details) == 1
+    label = details[0].get(":aria-label", "null")
+    values = _app_state(
+        _BINDINGS_JS
+        + f"const label = {json.dumps(label)};"
+        + "console.log(JSON.stringify({ open: run(label, { group: { key: 'open' } }),"
+        "  added: run(label, { group: { key: 'added' } }) }));",
+        translations=_web_strings(),
+    )
+    strings = _web_strings()
+    assert values["open"] == strings["web.zigbee.open_group_label"]
+    assert values["added"] is None
+    from loxmatter import i18n
+
+    assert i18n._STRINGS["web.zigbee.open_group_label"]["de"]
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_the_zigbee_tab_selects_itself_once_per_open_window():
+    """Entering Devices while a window is open selected the Zigbee tab EVERY
+    time - over a user who had picked the Matter tab by hand during that
+    window, and over a Matter commissioning under way. Now once per window.
+
+    Through the REAL tab clicks and view changes:
+
+    - A window is open: entering Devices selects Zigbee. The user clicks
+      Matter, goes to Export and comes back: still Matter.
+    - That window ends (a list shows none) and a new one opens: entering
+      Devices selects Zigbee again.
+    - A Matter commissioning is on screen (`commissionStep` set) while a
+      window opens: entering Devices leaves the Matter tab.
+
+    Fault to prove it: drop the `zigbeeTabChosen` check from
+    `peekZigbeePairing()`, do not clear it in `noteZigbeeWindowGone()`, or
+    drop the `commissionStep` check."""
+    values = _app_state(
+        _BINDINGS_JS
+        + _PAIRING_PAGE_JS
+        + _BRIDGE_JS
+        + """
+        (async () => {
+          const out = {};
+          state.view = 'export'; state.commissionTab = 'matter';
+          openFor(254);
+          await state.selectView('devices');
+          out.first = state.commissionTabShown();
+          await state.selectCommissionTab('matter');
+          await state.selectView('export');
+          await state.selectView('devices');
+          out.afterChoosingMatter = state.commissionTabShown();
+
+          bridge.until = null;
+          await state.selectView('export');
+          await state.selectView('devices');                   // sees no window
+          bridge.shift += 20000; openFor(254);
+          await state.selectView('export');
+          await state.selectView('devices');
+          out.nextWindow = state.commissionTabShown();
+
+          bridge.until = null;
+          state.commissionTab = 'matter';
+          await state.selectView('export');
+          await state.selectView('devices');                   // sees no window
+          state.commissionStep = 0;
+          bridge.shift += 20000; openFor(254);
+          await state.selectView('export');
+          await state.selectView('devices');
+          out.duringMatterCommissioning = state.commissionTabShown();
+          console.log(JSON.stringify(out));
+        })();
+        """
+    )
+    assert values == {
+        "first": "zigbee",
+        "afterChoosingMatter": "matter",
+        "nextWindow": "zigbee",
+        "duringMatterCommissioning": "matter",
+    }
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_a_row_added_here_stays_open_across_polls():
+    """A row added in this page stays among the open rows until the page is
+    loaded again, so its "in the device list" line is read rather than folded
+    away by the next poll - which reports the row as adopted from then on.
+
+    The REAL Add, then three REAL polls answering with the adopted row.
+
+    Fault to prove it: clear `zigbeeAddedHere` on every list load."""
+    values = _app_state(
+        _BINDINGS_JS
+        + _PAIRING_PAGE_JS
+        + f"const body = {json.dumps(_PAIRING_BODY)};"
+        + f"const ieee = {json.dumps(_UNNAMED)};"
+        + """
+        let adopted = false;
+        state.request = async (method, path, payload) => {
+          if (method === 'PATCH') { adopted = true; return { ...body.rows[1], device_id: 9, name: payload.name }; }
+          if (path === '/api/zigbee/pairing') {
+            const rows = JSON.parse(JSON.stringify(body.rows));
+            if (adopted) Object.assign(rows[1], { device_id: 9, name: 'Aqara Motion sensor P1' });
+            return { permit_until: null, rows };
+          }
+          return [];
+        };
+        const groupOf = () => state.zigbeeRowGroups().find((group) => group.rows.some((row) => row.ieee === ieee)).key;
+        (async () => {
+          await state.loadZigbeePairing();
+          await state.adoptZigbeeDevice(ieee);
+          const polls = [];
+          for (let i = 0; i < 3; i += 1) { await state.loadZigbeePairing(); polls.push(groupOf()); }
+          console.log(JSON.stringify({ polls }));
+        })();
+        """
+    )
+    assert values["polls"] == ["open", "open", "open"]
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+async def test_the_folded_group_stays_open_across_polls(api):
+    """The poll re-renders the groups every two seconds, and a `<details>`
+    the user opened snapped shut under them. The served `@toggle` writes the
+    state into `zigbeeAddedExpanded`, and the served `:open` reads it back.
+
+    Toggling the added group open, a REAL poll, and `:open` through
+    `boundTrue`; toggling the OPEN group changes nothing.
+
+    Fault to prove it: drop the assignment from `@toggle`, or bind `:open`
+    to `group.key === 'open'` alone."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+    details = next(
+        attributes
+        for tag, attributes, _ in _served_elements(page)
+        if tag == "details" and "zigbee-row-group" in attributes.get("class", "").split()
+    )
+    values = _app_state(
+        _BINDINGS_JS
+        + _PAIRING_PAGE_JS
+        + f"const body = {json.dumps(_PAIRING_BODY)};"
+        + f"const toggle = {json.dumps(details['@toggle'])};"
+        + f"const openExpr = {json.dumps(details[':open'])};"
+        + """
+        state.request = async () => JSON.parse(JSON.stringify(body));
+        const group = (key) => state.zigbeeRowGroups().find((candidate) => candidate.key === key);
+        (async () => {
+          await state.loadZigbeePairing();
+          const closedAtFirst = boundTrue(openExpr, { group: group('added') });
+          exec(toggle, { group: group('open'), $el: { open: false } });
+          const openGroupToggle = state.zigbeeAddedExpanded;
+          exec(toggle, { group: group('added'), $el: { open: true } });
+          await state.loadZigbeePairing();
+          await state.loadZigbeePairing();
+          const afterPolls = boundTrue(openExpr, { group: group('added') });
+          console.log(JSON.stringify({ closedAtFirst, openGroupToggle, afterPolls,
+            openGroup: boundTrue(openExpr, { group: group('open') }) }));
+        })();
+        """
+    )
+    assert values == {
+        "closedAtFirst": False,
+        "openGroupToggle": False,
+        "afterPolls": True,
+        "openGroup": True,
+    }
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_no_pairing_list_is_asked_for_without_a_stick():
+    """On an installation with no Zigbee stick - the normal case - entering
+    Devices must not ask for the pairing list: the route answers 503 there,
+    and a 503 banner nobody can act on, or a poll of it, is noise.
+
+    The REAL `selectView('devices')` with the radio answering no stick.
+
+    Fault to prove it: drop the `zigbeeTabVisible()` check before
+    `peekZigbeePairing()` in `selectView()`."""
+    values = _app_state(
+        _BINDINGS_JS
+        + _PAIRING_PAGE_JS
+        + """
+        const calls = [];
+        state.zigbee = null;
+        state.request = async (method, path) => {
+          calls.push(path);
+          if (path === '/api/zigbee/radio') return { ...radioBody, configured_path: null };
+          const error = new Error('no stick'); error.status = 503; throw error;
+        };
+        (async () => {
+          await state.selectView('devices');
+          console.log(JSON.stringify({ calls, timer: state.zigbeePairingTimer }));
+        })();
+        """
+    )
+    assert "/api/zigbee/radio" in values["calls"]
+    assert "/api/zigbee/pairing" not in values["calls"]
+    assert values["timer"] is None
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_removing_a_row_forgets_that_it_was_added_here():
+    """A row removed from the tab takes its "added here" mark with it at
+    once, not only at the next poll: a device paired again under the same
+    IEEE before that poll would otherwise sit among the open rows as if it
+    had just been added.
+
+    The REAL Add then Remove, looked at before any list is loaded again.
+
+    Fault to prove it: drop `delete this.zigbeeAddedHere[ieee]` from
+    `removeZigbeeDevice()`."""
+    values = _app_state(
+        _BINDINGS_JS
+        + _PAIRING_PAGE_JS
+        + f"const body = {json.dumps(_PAIRING_BODY)};"
+        + f"const ieee = {json.dumps(_UNNAMED)};"
+        + """
+        state.request = async (method, path, payload) => {
+          if (method === 'PATCH') return { ...body.rows[1], device_id: 9, name: payload.name };
+          if (method === 'DELETE') return null;
+          if (path === '/api/zigbee/pairing') return JSON.parse(JSON.stringify(body));
+          return [];
+        };
+        (async () => {
+          await state.loadZigbeePairing();
+          await state.adoptZigbeeDevice(ieee);
+          const marked = state.zigbeeAddedHere[ieee] === true;
+          state.loadZigbeePairing = async () => {};
+          await state.removeZigbeeDevice(ieee);
+          console.log(JSON.stringify({ marked, after: ieee in state.zigbeeAddedHere }));
+        })();
+        """
+    )
+    assert values == {"marked": True, "after": False}
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_clicking_the_zigbee_tab_again_reloads_nothing():
+    """A click on the tab already selected is not an arrival: it must not
+    send a list request of its own (and reset the poll's rhythm) every time
+    a user taps the tab they are on.
+
+    The REAL `selectCommissionTab('zigbee')`, twice.
+
+    Fault to prove it: drop the `leaving !== "zigbee"` condition from
+    `selectCommissionTab()`."""
+    values = _app_state(
+        _BINDINGS_JS
+        + _PAIRING_PAGE_JS
+        + _BRIDGE_JS
+        + """
+        (async () => {
+          state.commissionTab = 'matter';
+          await state.selectCommissionTab('zigbee');
+          const first = bridge.gets;
+          await state.selectCommissionTab('zigbee');
+          console.log(JSON.stringify({ first, second: bridge.gets - first }));
+        })();
+        """
+    )
+    assert values == {"first": 1, "second": 0}
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_adding_a_row_keeps_its_place_among_the_open_rows():
+    """Rows not added yet are listed before added ones. The moment Add
+    answered, the row counted as added and sorted behind the other new rows
+    - Alpine moved its element, and a moved element loses the focus: in the
+    browser, Enter in the name field left the user on the page's body. A row
+    added in this page keeps its place.
+
+    The REAL Add on the newest of two new rows, and the open group's order
+    before and after.
+
+    Fault to prove it: sort a row added here with the added rows in
+    `zigbeeRows()`."""
+    newer = {
+        **_PAIRING_BODY["rows"][1],
+        "ieee": "00:15:8d:00:07:77:88:99",
+        "changed_at": "2026-09-12T20:05:00+00:00",
+        "suggested_name": "Aqara Door sensor",
+    }
+    values = _app_state(
+        _BINDINGS_JS
+        + _PAIRING_PAGE_JS
+        + f"const body = {json.dumps(_PAIRING_BODY)};"
+        + f"body.rows.push({json.dumps(newer)});"
+        + f"const ieee = {json.dumps(newer['ieee'])};"
+        + """
+        state.request = async (method, path, payload) => {
+          if (method === 'PATCH') return { ...body.rows[2], device_id: 11, name: payload.name };
+          if (path === '/api/zigbee/pairing') return JSON.parse(JSON.stringify(body));
+          return [];
+        };
+        const openOrder = () => state.zigbeeRowGroups().find((group) => group.key === 'open').rows
+          .map((row) => row.ieee);
+        (async () => {
+          await state.loadZigbeePairing();
+          const before = openOrder();
+          await state.adoptZigbeeDevice(ieee);
+          console.log(JSON.stringify({ before, after: openOrder() }));
+        })();
+        """
+    )
+    assert values["before"][0] == "00:15:8d:00:07:77:88:99"
+    assert values["after"] == values["before"]

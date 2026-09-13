@@ -182,6 +182,18 @@ const ZIGBEE_PERMIT_MAX_SECONDS = 254;
 const ZIGBEE_PAIRING_FAST_POLL_MS = 2000;
 const ZIGBEE_PAIRING_SLOW_POLL_MS = 10000;
 
+// A page reloaded while its Start was still on the way never sees that
+// Start's answer. It takes the window a later list shows as its own when the
+// window ends where that Start would have ended it: sent at `pendingSince`,
+// open for `ZIGBEE_PERMIT_MAX_SECONDS`. The server takes its end time AFTER
+// the radio answered (bounded at 10 s, `SOURCE_CALL_TIMEOUT_SECONDS`, plus a
+// request possibly queued behind another on the source's lock) and writes it
+// to the second, and the two clocks are not the same clock - hence a window
+// a little early and a good deal later. Past the late edge the Start cannot
+// still be on its way, and the marker is dropped.
+const ZIGBEE_PENDING_START_EARLY_MS = 5000;
+const ZIGBEE_PENDING_START_LATE_MS = 30000;
+
 // The seven row states of design 3.1, as `GET /api/zigbee/pairing` spells
 // them in `state`. Four are stored on the source's row; `configuring` and
 // `waiting_wake` are overlaid by the route, and `stuck` is an age.
@@ -606,30 +618,52 @@ function writeHash(view) {
 
 // Where the commissioning card's tab choice survives a reload: this browser
 // tab's `sessionStorage`, which a reload keeps and which no other tab, and
-// no phone, shares. It holds the tab last selected and whether THIS tab
-// opened the join window now counting down - so a reload lands on the same
-// tab, and a window opened here is still closed when the user leaves it for
-// good, while a window another tab or a phone opened is still left alone.
+// no phone, shares. It holds:
+//
+// - `tab`, the tab last selected, so a reload lands on the same tab;
+// - `tabChosen`, whether the user picked a tab by hand while the current
+//   window was open (`peekZigbeePairing()` then leaves their choice alone);
+// - `openedUntil`, the END TIME of the join window this page opened, so a
+//   window opened here is still closed when the user leaves it for good;
+// - `pendingSince`, when a Start or Keep open that has not answered yet was
+//   sent, so a reload in the middle of one still claims the window it opens;
+// - `handedOver`, written only as the page goes away (`pagehide`).
+//
+// The claim is an end time, not a flag: a window is "this page's" only while
+// the window on screen is the one this page opened. A phone that stops it
+// and opens its own between two polls, or a window that ran out unseen and
+// was opened again elsewhere, has a different end time, so the laptop's
+// claim does not transfer to it.
+//
+// `handedOver` is what tells a reload from a copy. Chrome's "Duplicate Tab"
+// copies `sessionStorage` too, and a copy that inherited the claim closed the
+// original's window when the copy was left. A reload passes through
+// `pagehide` first and a duplicate does not, so only a page that finds
+// `handedOver` takes the claim - and consumes it at once.
 const COMMISSION_MEMORY_KEY = "loxmatter.commission";
 
-/** The remembered `{ tab, openedHere }`, or the defaults. Every failure is
- * the defaults: storage can be switched off, full, or - in a test outside a
+/** The remembered commission state, or the defaults. Every failure is the
+ * defaults: storage can be switched off, full, or - in a test outside a
  * browser - not there at all, and none of that is worth an error. */
 function recallCommission() {
+  const defaults = { tab: "matter", tabChosen: false, openedUntil: null, pendingSince: null, handedOver: false };
   try {
     const stored = JSON.parse(window.sessionStorage.getItem(COMMISSION_MEMORY_KEY) ?? "null");
     return {
       tab: stored?.tab === "zigbee" ? "zigbee" : "matter",
-      openedHere: stored?.openedHere === true,
+      tabChosen: stored?.tabChosen === true,
+      openedUntil: typeof stored?.openedUntil === "string" ? stored.openedUntil : null,
+      pendingSince: Number.isFinite(stored?.pendingSince) ? stored.pendingSince : null,
+      handedOver: stored?.handedOver === true,
     };
   } catch {
-    return { tab: "matter", openedHere: false };
+    return defaults;
   }
 }
 
-function rememberCommission(tab, openedHere) {
+function storeCommission(memory) {
   try {
-    window.sessionStorage.setItem(COMMISSION_MEMORY_KEY, JSON.stringify({ tab, openedHere }));
+    window.sessionStorage.setItem(COMMISSION_MEMORY_KEY, JSON.stringify(memory));
   } catch {
     // Not remembered: a reload then opens on the Matter tab and the next
     // pairing GET still shows an open window (`peekZigbeePairing()`).
@@ -859,12 +893,31 @@ function app() {
     zigbeePermitBusy: false,
     // A failed Start, Keep open or Stop, in a field no poll clears.
     zigbeePermitError: null,
-    // Whether THIS page opened the window now counting down (Start or Keep
-    // open succeeded here). Only such a window is closed when the user
-    // leaves the tab or the view: a window a phone opened, which this page
-    // merely sees through its poll, belongs to whoever is holding the phone.
-    // Cleared by a Stop and by a GET that shows no window.
-    zigbeeOpenedHere: false,
+    // The end time of the window THIS page opened (Start or Keep open
+    // succeeded here), exactly as the server spelled it, or null. Only that
+    // window is closed when the user leaves the tab or the view, and only
+    // while it is the window on screen (`zigbeeHoldsWindow()`): a window a
+    // phone opened, which this page merely sees through its poll, belongs to
+    // whoever is holding the phone. Cleared by a Stop, and by a GET that
+    // shows no window or a window with a different end time.
+    zigbeeOpenedUntil: null,
+    // When a Start or Keep open that has not answered yet was sent (a
+    // `Date.now()`), kept in `sessionStorage` so a reload in the middle of it
+    // still claims the window it opens (`ZIGBEE_PENDING_START_EARLY_MS`).
+    zigbeePendingSince: null,
+    // How many permit requests this page has on the way. A list that lands
+    // while one is may show its window before its answer does; the pending
+    // marker is only for a page that lost the answer to a reload.
+    zigbeePermitInFlight: 0,
+    // Whether the user picked a commissioning tab by hand while a window was
+    // open. Entering Devices selects the Zigbee tab once per open window
+    // (`peekZigbeePairing()`), never against a choice made during it; a GET
+    // that shows no window ends the choice with the window it was made in.
+    zigbeeTabChosen: false,
+    // Whether `zigbeePermitError` is a refused Stop ("may still be open"),
+    // which stops being true the moment a list shows no window - unlike a
+    // refused Start, whose reason is still the reason nothing is open.
+    zigbeePermitErrorIsStop: false,
     // A Stop sent on leaving that the radio refused. Shown in a banner above
     // the main navigation - where the user now IS - rather than inside the
     // pane they just left, because it is the one message saying the network
@@ -1250,7 +1303,19 @@ function app() {
       // the page counts down to the server's own end time, so a reloaded
       // page shows the truth, and a Stop on unload would also close a window
       // another tab or a phone is watching (design 3.1).
+      //
+      // `pagehide` sends nothing. It only marks the stored claim as handed
+      // over, which is how the next page load tells a reload (which passes
+      // through it) from a duplicated tab (which does not). A page brought
+      // back from the back-forward cache never ran `init()` again and takes
+      // the mark back, so a copy made of it later inherits no claim.
       this.restoreCommission();
+      window.addEventListener("pagehide", () => {
+        this.rememberCommission({ handedOver: true });
+      });
+      window.addEventListener("pageshow", (event) => {
+        if (event.persisted) this.rememberCommission();
+      });
       await Promise.all([this.loadI18n(), this.loadAuthInfo()]);
       if (this.authenticated) {
         await this.startApp();
@@ -3477,23 +3542,23 @@ function app() {
 
     /** The tab strip's click. Opening the Zigbee tab reads the list and does
      * nothing else - the join window opens on Start, never on arrival.
-     * Leaving it for the Matter tab closes an open window. */
+     * Leaving it for the Matter tab closes an open window this page opened.
+     *
+     * A click while a window is open is the user's choice for that window,
+     * which entering Devices again must not overrule (`peekZigbeePairing()`).
+     * A click while none is open chooses nothing about a window someone
+     * opens later. Clicking the tab already selected reloads nothing. */
     async selectCommissionTab(tab) {
       const leaving = this.commissionTab;
       this.commissionTab = tab;
-      rememberCommission(this.commissionTab, this.zigbeeOpenedHere);
+      if (this.zigbeeWindowOpen()) this.zigbeeTabChosen = true;
+      this.rememberCommission();
       if (leaving === "zigbee" && tab !== "zigbee") {
         this.stopZigbeePairingTimer();
         await this.closeZigbeeWindow();
       }
       if (tab === "zigbee" && leaving !== "zigbee") {
-        // Back on the tab a refused Stop was sent from: the message moves
-        // from the page's banner into the pane, beside the Stop button it
-        // is about.
-        if (this.zigbeeLeaveCloseError) {
-          this.zigbeePermitError = this.zigbeeLeaveCloseError;
-          this.zigbeeLeaveCloseError = null;
-        }
+        this.noteZigbeePaneShown();
         await this.loadZigbeePairing();
       }
     },
@@ -3502,21 +3567,62 @@ function app() {
      * list whichever tab is selected. A window that is open - opened before
      * a reload, or by another tab or a phone - selects the Zigbee tab, so
      * its countdown is on screen rather than behind the Matter tab: an open
-     * network is worth seeing. Selecting it closes nothing. */
+     * network is worth seeing. Selecting it closes nothing.
+     *
+     * Once per open window, not on every entry: a user who picked the Matter
+     * tab by hand while the window was open meant it, and is not moved back
+     * each time they return from another view. And never while a Matter
+     * commissioning is on screen (`commissionStep` set, running or showing
+     * its result): switching away would hide it. */
     async peekZigbeePairing() {
+      if (this.zigbeePaneShown()) this.noteZigbeePaneShown();
       await this.loadZigbeePairing();
       if (this.view !== "devices" || this.commissionTabShown() === "zigbee") return;
-      if (!this.zigbeeWindowOpen()) return;
+      if (!this.zigbeeWindowOpen() || this.zigbeeTabChosen || this.commissionStep !== null) return;
       this.commissionTab = "zigbee";
-      rememberCommission(this.commissionTab, this.zigbeeOpenedHere);
+      this.rememberCommission();
+      this.noteZigbeePaneShown();
       this.scheduleZigbeePairingLoad(this.zigbeePairingPollInterval());
     },
 
-    /** The tab and "opened here" a reload kept (`recallCommission()`). */
+    /** The Zigbee pane has just come on screen, by a click or by entering
+     * Devices on it. A Stop refused on leaving moves from the page's banner
+     * into the pane, beside the Stop button it is about - otherwise the
+     * banner sat above the navigation while the pane's own error line, under
+     * the user's eyes, was empty. */
+    noteZigbeePaneShown() {
+      if (!this.zigbeeLeaveCloseError) return;
+      this.zigbeePermitError = this.zigbeeLeaveCloseError;
+      this.zigbeePermitErrorIsStop = true;
+      this.zigbeeLeaveCloseError = null;
+    },
+
+    /** What a reload kept (`recallCommission()`). The claim on a window, and
+     * a Start still on its way, are taken only when the last page handed
+     * them over on `pagehide` - a duplicated tab carries a copy of the
+     * storage but never passed through that. The mark is consumed here, so
+     * a tab duplicated from this page later inherits no claim either. */
     restoreCommission() {
-      const commission = recallCommission();
-      this.commissionTab = commission.tab;
-      this.zigbeeOpenedHere = commission.openedHere;
+      const memory = recallCommission();
+      this.commissionTab = memory.tab;
+      this.zigbeeTabChosen = memory.tabChosen;
+      if (memory.handedOver) {
+        this.zigbeeOpenedUntil = memory.openedUntil;
+        this.zigbeePendingSince = memory.pendingSince;
+      }
+      this.rememberCommission();
+    },
+
+    /** Writes the commission state to `sessionStorage`; `handedOver` only as
+     * the page goes away. */
+    rememberCommission({ handedOver = false } = {}) {
+      storeCommission({
+        tab: this.commissionTab,
+        tabChosen: this.zigbeeTabChosen,
+        openedUntil: this.zigbeeOpenedUntil,
+        pendingSince: this.zigbeePendingSince,
+        handedOver,
+      });
     },
 
     /** Whether the Zigbee pane is the one on screen, logged in or not. */
@@ -3524,9 +3630,42 @@ function app() {
       return this.view === "devices" && this.commissionTabShown() === "zigbee";
     },
 
-    setZigbeeOpenedHere(value) {
-      this.zigbeeOpenedHere = value;
-      rememberCommission(this.commissionTab, value);
+    setZigbeeOpenedUntil(until) {
+      this.zigbeeOpenedUntil = until;
+      this.rememberCommission();
+    },
+
+    /** Whether the window on screen is the one this page opened: this page
+     * holds a claim, and the window's end time is the claim's. */
+    zigbeeHoldsWindow() {
+      return this.zigbeeOpenedUntil !== null && this.zigbeeOpenedUntil === this.zigbeePermitUntil;
+    },
+
+    /** Brings the claim in line with the end time a list has just shown.
+     *
+     * A Start this page lost to a reload (`zigbeePendingSince`, restored)
+     * claims the window when it ends where that Start would have ended it,
+     * and is forgotten once it cannot still be on its way. Then a claim on
+     * any other end time goes: the window this page opened has closed, run
+     * out or been replaced, and the one showing now belongs to someone else. */
+    settleZigbeeClaim() {
+      const before = [this.zigbeeOpenedUntil, this.zigbeePendingSince];
+      if (this.zigbeePendingSince !== null && this.zigbeePermitInFlight === 0) {
+        const expected = this.zigbeePendingSince + ZIGBEE_PERMIT_MAX_SECONDS * 1000;
+        const end = this.zigbeePermitUntil === null ? Number.NaN : Date.parse(this.zigbeePermitUntil);
+        if (end >= expected - ZIGBEE_PENDING_START_EARLY_MS && end <= expected + ZIGBEE_PENDING_START_LATE_MS) {
+          this.zigbeeOpenedUntil = this.zigbeePermitUntil;
+          this.zigbeePendingSince = null;
+        } else if (Date.now() > this.zigbeePendingSince + ZIGBEE_PENDING_START_LATE_MS) {
+          this.zigbeePendingSince = null;
+        }
+      }
+      if (this.zigbeeOpenedUntil !== null && this.zigbeeOpenedUntil !== this.zigbeePermitUntil) {
+        this.zigbeeOpenedUntil = null;
+      }
+      if (before[0] !== this.zigbeeOpenedUntil || before[1] !== this.zigbeePendingSince) {
+        this.rememberCommission();
+      }
     },
 
     /** Whether the pairing list is on screen right now - the only time it
@@ -3566,14 +3705,25 @@ function app() {
       this.syncZigbeeDrafts(body?.rows ?? []);
       this.zigbeePairing = body;
       this.zigbeePermitUntil = body?.permit_until ?? null;
-      if (this.zigbeePermitUntil === null) {
-        // No window open - closed by a Stop elsewhere, run out, or gone
-        // with the radio. Nothing is left for this page to close, and a
-        // window someone opens later is not this page's.
-        if (this.zigbeeOpenedHere) this.setZigbeeOpenedHere(false);
-        this.zigbeeLeaveCloseError = null;
-      }
+      this.settleZigbeeClaim();
+      if (this.zigbeePermitUntil === null) this.noteZigbeeWindowGone();
       this.scheduleZigbeePairingLoad(this.zigbeePairingPollInterval());
+    },
+
+    /** No window open - closed by a Stop elsewhere, run out, or gone with the
+     * radio. What was only true while one was open goes with it: a refused
+     * Stop's "may still be open", in the banner and in the pane, and the
+     * user's tab choice for that window. */
+    noteZigbeeWindowGone() {
+      this.zigbeeLeaveCloseError = null;
+      if (this.zigbeePermitErrorIsStop) {
+        this.zigbeePermitError = null;
+        this.zigbeePermitErrorIsStop = false;
+      }
+      if (this.zigbeeTabChosen) {
+        this.zigbeeTabChosen = false;
+        this.rememberCommission();
+      }
     },
 
     /** A 503 from any pairing route: there is no source right now - a radio
@@ -3584,8 +3734,8 @@ function app() {
      * rather than in a field no poll clears. */
     noteZigbeeSourceGone() {
       this.zigbeePermitUntil = null;
-      if (this.zigbeeOpenedHere) this.setZigbeeOpenedHere(false);
-      this.zigbeeLeaveCloseError = null;
+      this.settleZigbeeClaim();
+      this.noteZigbeeWindowGone();
     },
 
     /** A pairing route's failure on a button: a 503 goes to the list's banner
@@ -3687,26 +3837,53 @@ function app() {
      * nothing. The check is made AFTER the await, on what is on screen at
      * the moment the answer arrives, so no earlier look can be out of date
      * by the time it is acted on; a user who left and came back while it
-     * was under way keeps the window they are looking at. */
+     * was under way keeps the window they are looking at.
+     *
+     * The sequence is bumped a second time once the answer is in: a GET
+     * sent WHILE the request was under way was asked before the radio had
+     * the new window, and landing after the answer it put the old end time
+     * back - a Start whose countdown fell to 0 and whose claim was dropped,
+     * so leaving afterwards left the network open.
+     *
+     * A Start or Keep open is marked as pending in `sessionStorage` until it
+     * answers, so a reload in between still claims the window it opens
+     * (`settleZigbeeClaim()`). */
     async sendZigbeePermit(duration, { leaving = false } = {}) {
       this.zigbeePairingSequence += 1;
       this.zigbeePermitBusy = true;
-      if (!leaving) this.zigbeePermitError = null;
+      this.zigbeePermitInFlight += 1;
+      if (!leaving) {
+        this.zigbeePermitError = null;
+        this.zigbeePermitErrorIsStop = false;
+      }
+      if (duration > 0) {
+        this.zigbeePendingSince = Date.now();
+        this.rememberCommission();
+      }
       let body;
       try {
         body = await this.request("POST", "/api/zigbee/permit", { duration });
       } catch (error) {
         this.zigbeePermitBusy = false;
+        this.zigbeePermitInFlight -= 1;
+        this.dropZigbeePendingStart(duration);
         if (!this.noteZigbeeUnavailable(error)) {
-          if (leaving) this.zigbeeLeaveCloseError = error.message;
-          else this.zigbeePermitError = error.message;
+          if (leaving) {
+            this.zigbeeLeaveCloseError = error.message;
+          } else {
+            this.zigbeePermitError = error.message;
+            this.zigbeePermitErrorIsStop = duration === 0;
+          }
         }
         this.scheduleZigbeePairingLoad(ZIGBEE_PAIRING_FAST_POLL_MS);
         return;
       }
+      this.zigbeePairingSequence += 1;
       this.zigbeePermitBusy = false;
+      this.zigbeePermitInFlight -= 1;
       this.zigbeePermitUntil = body?.permit_until ?? null;
-      this.setZigbeeOpenedHere(duration > 0);
+      this.zigbeePendingSince = duration > 0 ? null : this.zigbeePendingSince;
+      this.setZigbeeOpenedUntil(duration > 0 ? this.zigbeePermitUntil : null);
       if (duration === 0) this.zigbeeLeaveCloseError = null;
       if (duration > 0 && !this.zigbeePaneShown()) {
         await this.sendZigbeePermit(0, { leaving: true });
@@ -3715,20 +3892,31 @@ function app() {
       this.scheduleZigbeePairingLoad(ZIGBEE_PAIRING_FAST_POLL_MS);
     },
 
+    /** A failed Start or Keep open is not on its way any more. */
+    dropZigbeePendingStart(duration) {
+      if (duration > 0 && this.zigbeePendingSince !== null) {
+        this.zigbeePendingSince = null;
+        this.rememberCommission();
+      }
+    },
+
     /** Leaving the tab for good closes the window - but only one THIS page
      * opened, and only while it is open.
      *
      * Opened here: a laptop whose poll merely sees the window a phone
      * opened must not close it under the phone because the laptop's user
-     * clicked Export. A Start still under way counts as opened here, and
-     * `sendZigbeePermit()` closes it when its answer lands off screen.
+     * clicked Export - and that includes a window the phone opened after
+     * stopping the laptop's, between two polls, which the end time tells
+     * apart (`zigbeeHoldsWindow()`). A Start still under way counts as
+     * opened here, and `sendZigbeePermit()` closes it when its answer lands
+     * off screen.
      *
      * Open: `permit_until` is null after a Stop, after the window ran out
      * and after the radio went away, and a Stop sent then would reach a
      * bridge that may have no source at all and come back as a 503 banner
      * for having done nothing wrong. */
     async closeZigbeeWindow() {
-      if (!this.zigbeeOpenedHere || !this.zigbeeWindowOpen()) return;
+      if (!this.zigbeeHoldsWindow() || !this.zigbeeWindowOpen()) return;
       await this.sendZigbeePermit(0, { leaving: true });
     },
 
@@ -3749,10 +3937,15 @@ function app() {
     /** The rows in display order: devices not adopted yet first - the ones
      * the user is here for - newest first, then the ones already in the
      * device list. The route lists every device the radio has seen since
-     * it came up, adopted ones included. */
+     * it came up, adopted ones included.
+     *
+     * A row added in this page keeps its place among the rows not added
+     * yet. Sorted behind them the moment Add answered, Alpine moved its
+     * element in the DOM - and a moved element loses the focus, so Enter in
+     * the name field dropped the user at the top of the page. */
     zigbeeRows() {
       const rows = [...(this.zigbeePairing?.rows ?? [])];
-      const adopted = (row) => (row.device_id === null || row.device_id === undefined ? 0 : 1);
+      const adopted = (row) => (this.zigbeeRowAdopted(row) && !this.zigbeeAddedHere[row.ieee] ? 1 : 0);
       return rows.sort(
         (a, b) => adopted(a) - adopted(b) || String(b.changed_at).localeCompare(String(a.changed_at)),
       );
@@ -3965,15 +4158,39 @@ function app() {
       const room = this.resolveRoomChoice(draft.room, draft.newRoom);
       const patch = { name };
       if (room) patch.room = room;
-      const updated = await this.patchZigbeeRow(ieee, patch);
-      if (!updated) return;
+      // Marked BEFORE the request: the answer lands in the row with
+      // `Object.assign`, which queues a render at once. Marked after it, that
+      // render put the now-adopted row into the folded "already added" group
+      // and the next one back into the open group - two rebuilds of the row,
+      // and the focus lost from the field Enter was pressed in.
       this.zigbeeAddedHere[ieee] = true;
+      const trigger = typeof document === "undefined" ? null : document.activeElement;
+      const updated = await this.patchZigbeeRow(ieee, patch);
+      if (!updated) {
+        delete this.zigbeeAddedHere[ieee];
+        return;
+      }
       await this.refreshAdoptedZigbeeDevice(updated.device_id);
       this.settleZigbeeDraft(ieee, updated, { name, room });
       // Not "Saved.": right after adding, the row's line says where the
       // device went and that later edits save on their own - the one moment
       // that sentence is news.
       delete this.zigbeeRowSaved[ieee];
+      this.keepZigbeeFocusAfterAdd(trigger);
+    },
+
+    /** Add pressed on the button: the button is gone once the row is added,
+     * and the focus went with it, to the top of the page - a keyboard user
+     * started over from the first link. It moves to the line that says
+     * where the device went, which a screen reader then reads. Enter in the
+     * name field keeps its focus, since that field stays. */
+    keepZigbeeFocusAfterAdd(trigger) {
+      const row = trigger?.closest?.(".zigbee-row");
+      if (!row || typeof this.$nextTick !== "function") return;
+      this.$nextTick(() => {
+        if (trigger.isConnected && trigger.offsetParent !== null) return;
+        row.querySelector(".zigbee-row-added-hint")?.focus();
+      });
     },
 
     /** The name field's blur, on a device already adopted. Sent only when

@@ -3612,6 +3612,18 @@ p.zigbee-countdown {
   margin: 0.6rem 0 0;
 }
 
+/* Where the focus lands after Add pressed on the button (the button is gone
+ * then). Only a keyboard user sees the ring, and it keeps off the letters. */
+.zigbee-row-added-hint:focus {
+  outline: none;
+}
+
+.zigbee-row-added-hint:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: 4px;
+}
+
 /* A Stop on leaving that the radio refused, above the main navigation. The
  * sentence takes the line, the Stop button follows it and wraps below on a
  * phone. */

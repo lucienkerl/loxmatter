@@ -671,7 +671,9 @@
               template for both, so the two cannot drift apart: the open
               group is a `<details>` held open with its summary hidden.
               `zigbeeAddedExpanded` carries the collapsed group's state across
-              the poll, which re-renders the group every two seconds.
+              the poll, which re-renders the group every two seconds. The open
+              group's summary is hidden, so it takes its name from
+              `aria-label` instead of reading as an unnamed group.
             -->
             <div class="zigbee-row-groups" x-show="zigbeeRows().length > 0" x-cloak>
               <template x-for="group in zigbeeRowGroups()" :key="group.key">
@@ -679,6 +681,7 @@
                   class="zigbee-row-group"
                   :class="'zigbee-row-group-' + group.key"
                   :open="group.key === 'open' || zigbeeAddedExpanded"
+                  :aria-label="group.key === 'open' ? t('web.zigbee.open_group_label') : null"
                   @toggle="if (group.key === 'added') zigbeeAddedExpanded = $el.open"
                 >
                   <summary x-show="group.key === 'added'" x-text="zigbeeAddedSummary(group.rows.length)"></summary>
@@ -717,7 +720,10 @@
                                  the name before keeping it. The wrapper grows with
                                  the text (style.css, `.zigbee-name-grow`); Enter
                                  still submits, and a line break never gets in
-                                 (`zigbeeRowEdited()`). -->
+                                 (`zigbeeRowEdited()`). Not `.enter.prevent`:
+                                 the Enter that confirms an input method's
+                                 candidate (Japanese, Chinese) is a keydown too,
+                                 and it added a half-typed name. -->
                             <span class="zigbee-name-grow" :data-value="zigbeeRowDrafts[row.ieee].name">
                               <textarea
                                 rows="1"
@@ -725,7 +731,7 @@
                                 x-model="zigbeeRowDrafts[row.ieee].name"
                                 @input="zigbeeRowEdited(row.ieee, 'name')"
                                 @blur="saveZigbeeName(row.ieee)"
-                                @keydown.enter.prevent="zigbeeRowAdopted(row) ? $el.blur() : adoptZigbeeDevice(row.ieee)"
+                                @keydown.enter="if (!$event.isComposing && $event.keyCode !== 229) { $event.preventDefault(); zigbeeRowAdopted(row) ? $el.blur() : adoptZigbeeDevice(row.ieee) }"
                                 :disabled="zigbeePairingUnavailable"
                               ></textarea>
                             </span>
@@ -757,7 +763,7 @@
                             :aria-label="t('web.devices.room_new_placeholder')"
                           />
                         </div>
-                        <p class="hint" x-show="zigbeeRowNameable(row) && zigbeeRowAdopted(row)" x-cloak
+                        <p class="hint zigbee-row-added-hint" tabindex="-1" x-show="zigbeeRowNameable(row) && zigbeeRowAdopted(row)" x-cloak
                            x-text="zigbeeRowWasSaved(row) ? t('web.zigbee.saved') : t('web.zigbee.adopted_hint')"></p>
                         <div class="row zigbee-row-actions">
                           <button
