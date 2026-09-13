@@ -192,7 +192,99 @@ EOF
 
 ---
 
-## Task 2: `GET /api/devices/{id}/expert`
+## Task 2 Correction (found during implementation, 13 September 2026)
+
+Task 2 as originally written below assumed `runtime.last_values_for(device_id)`
+would carry the actual string value of a Basic Information attribute
+(`"IKEA of Sweden"` for VendorName, etc.), because the *signal* for it
+already exists in the store. That assumption was wrong, and an implementer
+caught it rather than guessing around it: `to_loxone_value`
+(`src/loxmatter/loxone/values.py:39-48`) deliberately returns `None` for
+every text value ("Spec 6.6: lists, structs, text and null never become a
+datagram") — confirmed by `tests/loxone/test_values.py::test_unmappable_values_yield_none`,
+which asserts exactly `to_loxone_value(attr(40, 1), "IKEA of Sweden") is None`.
+`Runtime._cache_attribute` never stores a value `to_loxone_value` rejected.
+So `_basic_info_value` as originally specified always returns `None` — for
+every device, Matter or Zigbee — no matter how it matches signals.
+
+**Decided fix (with the maintainer): persist vendor/model/firmware/serial
+on the `device` row at registration time**, the same way `device_types`
+already is (`_migrate_to_v7`, `store.py`) — computed once when a device is
+first registered, not re-derived from live signal values on every request.
+Tradeoff accepted knowingly: these four fields freeze at first
+commissioning and do not pick up a later firmware update without
+recommissioning the device, exactly like `device_types` and `room` already
+don't re-derive on their own.
+
+A second, independent fact surfaced during the same investigation: Zigbee
+devices will **always** have `firmware`/`serial` as `null`, not because of
+the bug above, but because `zigbee/translate.py`'s `build_snapshot` never
+reads a firmware or serial ZCL attribute into the snapshot at all —
+unlike `vendor_name`/`product_name`, which Zigbee maps explicitly onto
+Matter's Basic Information paths (`translate.py:431-436`), there is no
+equivalent mapping for SoftwareVersionString/SerialNumber. This is not a
+bug to fix here — capturing that would be new Zigbee integration work,
+the same category of out-of-scope work as signal strength (section 7) —
+it is simply the honest, expected shape of the data: `null` for "this
+technology doesn't expose it," rendered the same blank way as any other
+unreported field (section 5.1).
+
+**Revised Task 2** (supersedes the file/route shape below where they
+conflict — the endpoint's JSON contract, `_endpoints_summary`, and the
+Zigbee/Matter test fixtures are UNCHANGED; only how vendor/model/firmware/
+serial are SOURCED changes):
+
+- New migration `_migrate_to_v11` (bump `_SCHEMA_VERSION` to 11) adding
+  four nullable `TEXT` columns to `device`: `vendor_name`, `product_name`,
+  `firmware`, `serial_number` — via `_add_column_if_missing`, and to
+  `_SCHEMA`'s `CREATE TABLE IF NOT EXISTS device (...)` for a fresh
+  database, exactly mirroring `_migrate_to_v7`'s pattern for `room`/
+  `device_types`. No backfill: an already-registered device gets `NULL`
+  for all four forever, the same choice already made for `room`.
+- `StoredDevice` gains the same four fields (`str | None` each), appended
+  after `network_features` — every existing `StoredDevice(...)`
+  construction site must be updated: `store.py`'s own `_as_device`, plus
+  the two test-only literal constructions in `tests/projectsync/test_diff.py:44`
+  and `tests/projectsync/test_patch.py:25` (both can pass `None` for all
+  four — they're testing unrelated project-sync behavior).
+- `register_device()` computes and inserts all four at the same INSERT
+  that already writes `device_types`/`network_features`:
+  `vendor_name`/`product_name` from `snapshot.vendor_name`/
+  `snapshot.product_name` (already reliably populated, empty string
+  normalized to `None`, the same "trim then empty-becomes-None" idea
+  `_normalized_room` already applies to rooms); `firmware`/`serial_number`
+  from `snapshot.attributes.get("0/40/10")` / `.get("0/40/15")`
+  (`SoftwareVersionString`/`SerialNumber` on Basic Information), each kept
+  only if it's actually a non-blank string, `None` otherwise — reliable
+  for Matter when the device reports them, always absent for Zigbee per
+  the note above.
+- `_as_device()` reads the four new columns straight off the row (plain
+  `TEXT`, no JSON codec needed — unlike `device_types`, these are already
+  strings).
+- `get_expert()`'s vendor/model/firmware/serial now come directly from
+  `device.vendor_name`/`.product_name`/`.firmware`/`.serial_number` (the
+  `StoredDevice` already loaded via `_require_device(device_id)`), **not**
+  from signals or `runtime.last_values_for()` at all. Delete
+  `_basic_info_value` and its four cluster/attribute-id constants — they
+  no longer serve a purpose. `_endpoints_summary` is unaffected and stays
+  exactly as originally specified below.
+- Test fixes: `test_expert_endpoints_list_matter_clusters_by_endpoint`'s
+  claim that endpoint 2 of `ikea_grillplats_plug.json` carries 4 clusters
+  (`{29, 144, 145, 156}`) is wrong — cluster 156 (Power Topology) has only
+  global/metadata attributes in that fixture, which `extract_signals`
+  never turns into a stored signal, so `_endpoints_summary` (which reads
+  `store.signals()`, not the raw device JSON) never sees it. Correct the
+  test to `len(by_endpoint[2]) == 3` and drop the `156`/Power-Topology
+  claim from its docstring. The other four tests need no assertion
+  changes — once `register_device` persists these fields, the existing
+  `api`/`zigbee_api` fixtures produce the values those tests already
+  expected (including `firmware is None`/`serial is None` for the Zigbee
+  case, now correct for the reason explained above rather than by
+  accident).
+
+---
+
+## Task 2 (original — see correction above for the ACTUAL fix)
 
 **Files:**
 - Modify: `src/loxmatter/api/models.py` (add `EndpointClustersOut`, `DeviceExpertOut`, after `DeviceOut`)
