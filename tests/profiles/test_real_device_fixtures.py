@@ -165,16 +165,11 @@ def test_the_same_lamp_declaring_xy_without_colour_temperature_gets_the_xy_picke
     this lamp got no colour control at all, while the design and the change
     notes promised colour on lamps that only accept XY.
 
-    The endpoint's device type is taken out of the edited snapshot, because
-    the lamp still declares itself a Color Temperature Light (268), and a
-    lamp that says so gets no colour control whatever its bits claim (see
-    `profiles/capabilities.py`). What is measured here is the bits alone.
+    The endpoint's device type is taken out of the edited snapshot, so what
+    is measured here is the bits alone, with no device type to add colour.
 
     Fault to prove it: require HS for (768, 7) again (the list comes out
-    empty). Dropping the CT exclusion from the XY-only rule no longer shows
-    on the unmodified WS lamp above, whose device type denies it colour on
-    its own; `test_a_white_only_lamp_is_denied_both_colour_commands` in
-    `tests/export/test_commands.py` catches that fault on an untyped lamp."""
+    empty)."""
     snapshot = load("ikea_kajplats_ws_lamp.json")
     attributes = {
         **{path: value for path, value in snapshot.attributes.items() if path != "1/29/0"},

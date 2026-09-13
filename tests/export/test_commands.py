@@ -338,18 +338,43 @@ def test_an_extended_colour_light_declaring_xy_and_ct_gets_its_colour_control():
     assert _colour_command_ids(_typed_colour_snapshot(24, 269)) == {7, 10}
 
 
-def test_a_colour_temperature_light_gets_no_colour_control_whatever_its_bits_say():
-    """The white-spectrum KAJPLATS as it really reports itself (268, XY|CT)
-    stays without colour, and so does a lamp declaring itself a Color
-    Temperature Light while its bits claim hue and saturation: a device type
-    is the maker's statement of what the lamp is, and a wrongly released
-    colour picker misbehaves on hardware where a wrongly locked one costs one
-    option.
+def _drawn_pickers(snapshot: NodeSnapshot) -> list[str]:
+    """The colour pickers the device modal draws: the `hue_sat` controls
+    left once `duplicate_control_command` has hidden a twin."""
+    commands = [
+        command
+        for command in extract_commands(snapshot)
+        if table.command_control(command.cluster_id, command.command_id) == "hue_sat"
+    ]
+    present = {(command.cluster_id, command.command_id) for command in commands}
+    return [
+        command.slug
+        for command in commands
+        if not table.duplicate_control_command(command.cluster_id, command.command_id, present)
+    ]
 
-    Fault to prove it: let the bits alone decide for a 268 endpoint (the
-    second case gains commands 6 and 7)."""
+
+def test_a_colour_temperature_light_takes_colour_when_its_bits_declare_it():
+    """The device type may ADD colour, never take it away. For one build a
+    Color Temperature Light (268) was denied both colour commands whatever
+    its bits said, so a lamp that declares itself 268 while its
+    ColorCapabilities claim hue and saturation lost its colour picker.
+
+    Three Matter lamps, and what the modal draws for each:
+
+    - the white-spectrum KAJPLATS as it really reports itself (268, XY|CT):
+      no colour command, no picker - its bits grant none;
+    - a 268 lamp declaring HS as well (HS|XY|CT, and HS|XY): both colour
+      commands, ONE picker;
+    - a full-colour lamp (269, every bit): both commands, ONE picker.
+
+    Fault to prove it: deny (768, 6) and (768, 7) on a 268 endpoint again."""
     assert _colour_command_ids(_typed_colour_snapshot(24, 268)) == {10}
-    assert _colour_command_ids(_typed_colour_snapshot(9, 268)) == {10}
+    assert _drawn_pickers(_typed_colour_snapshot(24, 268)) == []
+    for bits in (25, 9):
+        assert _colour_command_ids(_typed_colour_snapshot(bits, 268)) == {6, 7, 10}, bits
+        assert _drawn_pickers(_typed_colour_snapshot(bits, 268)) == ["color"], bits
+    assert _drawn_pickers(_typed_colour_snapshot(31, 269)) == ["color"]
 
 
 def test_a_full_colour_lamp_and_a_lamp_without_a_device_type_are_unchanged():
@@ -358,8 +383,7 @@ def test_a_full_colour_lamp_and_a_lamp_without_a_device_type_are_unchanged():
     device type is judged by its bits exactly as before.
 
     Fault to prove it: require the device type for command 7 (the untyped
-    XY-only lamp loses its control), deny 269 lamps command 6, or let a 268
-    beside a 269 on one endpoint deny colour."""
+    XY-only lamp loses its control), or deny 269 lamps command 6."""
     assert _colour_command_ids(_typed_colour_snapshot(31, 269)) == {6, 7, 10}
     # An endpoint listing both lamp types is judged as the colour lamp.
     assert _colour_command_ids(_typed_colour_snapshot(9, 268, 269)) == {6, 7, 10}

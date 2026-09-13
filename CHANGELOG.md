@@ -88,8 +88,9 @@ people who don't know the code.
   no colour control. A colour lamp that reports XY and a colour temperature
   but not hue and saturation looks exactly like a tunable-white one by those
   reports alone; it gets its colour control when it says it is a colour lamp
-  (an "extended colour light"), and none otherwise. A lamp that says it is a
-  tunable-white lamp gets no colour control, whatever else it reports.
+  (an "extended colour light"), and none otherwise. A lamp that reports hue
+  and saturation gets its colour control whatever kind of lamp it says it
+  is.
 - **Your existing colour lamps show one change in the export.** The bridge
   records the new `color_xy` output for colour lamps you commissioned before
   this release, the next time it starts. The export view then marks those

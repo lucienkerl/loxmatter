@@ -77,13 +77,13 @@ edge from `zigbee/translate.py`'s table, with the same numbers):
 - **Extended Color Light (269)** is a colour lamp, so for (768, 7) the XY
   bit is enough, CT or not. It gains command 7 and nothing else - command
   6 still needs HS - so such a lamp gets exactly one colour control.
-- **Color Temperature Light (268)** is a white lamp, and gets neither
-  colour command whatever its bits claim. The project's standing asymmetry
-  decides that direction (see `api/control.py`, `_WRITABLE_ATTRIBUTES`): a
-  wrongly locked control costs one missing option, a wrongly released one
-  misbehaves on hardware. An endpoint that lists 269 as well is judged as
-  269.
-- **No device type** leaves the bits to decide, exactly as before.
+- **Any other device type, or none,** leaves the bits to decide, exactly as
+  before. The device type only ever ADDS colour, never takes it away: a
+  Color Temperature Light (268) whose ColorCapabilities declare
+  hue/saturation takes colour through them, and the white-spectrum lamp -
+  268, XY|CT, no HS - still gets no colour command, because its bits grant
+  none. (For one build on 13 September 2026, 268 denied colour whatever
+  the bits said, which took the picker from such a lamp.)
 
 **A device that declares nothing is denied.** Neither attribute present means
 the snapshot makes no claim, and a gate that reads silence as consent is not
@@ -142,17 +142,13 @@ COMMAND_FEATURE_RULES: dict[tuple[int, int], tuple[tuple[int, int], ...]] = {
 }
 
 
-# The two Matter device types that say which kind of colour lamp an endpoint
-# is, numbered as in `matter_server.client.models.device_types`
-# (ColorTemperatureLight, ExtendedColorLight). See the module docstring.
-COLOR_TEMPERATURE_LIGHT = 0x010C
+# The Matter device type that says an endpoint is a colour lamp, numbered as
+# in `matter_server.client.models.device_types` (ExtendedColorLight). See the
+# module docstring.
 EXTENDED_COLOR_LIGHT = 0x010D
 
-# Commands a Color Temperature Light is denied whatever its bits say, and the
-# bits an Extended Color Light needs for a command instead of its rules.
-_WHITE_LAMP_DENIED: frozenset[tuple[int, int]] = frozenset(
-    {(COLOR_CONTROL_CLUSTER, 6), (COLOR_CONTROL_CLUSTER, 7)}
-)
+# The bits an Extended Color Light needs for a command, as an alternative to
+# its rules - never instead of them.
 _COLOUR_LAMP_RULES: dict[tuple[int, int], int] = {
     (COLOR_CONTROL_CLUSTER, 7): COLOUR_FEATURE_XY,
 }
@@ -230,8 +226,6 @@ def command_needs_missing_feature(
         required = _COLOUR_LAMP_RULES.get((cluster_id, command_id))
         if required is not None and (features & required) == required:
             return False
-    elif COLOR_TEMPERATURE_LIGHT in device_types and (cluster_id, command_id) in _WHITE_LAMP_DENIED:
-        return True
     return not any(
         (features & required) == required and not features & excluded
         for required, excluded in rules

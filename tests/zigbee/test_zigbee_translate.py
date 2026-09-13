@@ -682,6 +682,9 @@ def test_a_zigbee_lamp_that_takes_colour_only_as_xy_gets_exactly_one_picker():
       this helper declares (ZLL 0x0210) it is one colour control,
       `color_xy`; on a Color Temperature Light (ZLL 0x0220) none; and with a
       device type the table does not know, the bits decide, which is none.
+    - 0x19, HS|XY|CT on a Color Temperature Light: the bits declare colour,
+      and the device type does not take it away - ONE colour control. For
+      one build a 268 lamp lost its picker whatever its bits said.
     - 0x1F, every colour bit: ONE colour control, not two twins. Both 6 and
       7 are exported for Loxone, and `duplicate_control_command` keeps only
       `color` for the modal - the fix for an earlier bug on this branch.
@@ -689,8 +692,9 @@ def test_a_zigbee_lamp_that_takes_colour_only_as_xy_gets_exactly_one_picker():
     Fault to prove it: require `XY | HS` for (768, 7) alone again (the first
     list comes out empty), drop the CT exclusion (the untyped 0x18 lamp
     grows `color_xy`), drop the Extended Color Light rule (the typed 0x18
-    lamp loses it), or empty `_INTERCHANGEABLE_CONTROL_COMMANDS` (the last
-    has two)."""
+    lamp loses it), deny colour on a Color Temperature Light again (the 0x19
+    lamp loses its picker), or empty `_INTERCHANGEABLE_CONTROL_COMMANDS` (the
+    full-colour lamp has two)."""
     from dataclasses import replace
 
     from loxmatter.export.commands import extract_commands
@@ -717,4 +721,5 @@ def test_a_zigbee_lamp_that_takes_colour_only_as_xy_gets_exactly_one_picker():
     assert pickers(0x18) == (["color_xy"], ["color_xy"])
     assert pickers(0x18, device_type=0x0220) == ([], [])
     assert pickers(0x18, device_type=0x7FFF) == ([], [])
+    assert pickers(0x19, device_type=0x0220) == (["color", "color_xy"], ["color"])
     assert pickers(0x1F) == (["color", "color_xy"], ["color"])
