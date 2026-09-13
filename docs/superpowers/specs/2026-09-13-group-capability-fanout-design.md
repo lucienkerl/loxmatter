@@ -58,9 +58,9 @@ can.**
 A group's command list is computed from its members as follows:
 
 - **Light commands** - the pairs in the table below - are offered when **at
-  least one** member carries the pair, *or* when any member carries a
-  command the pair can be adapted to (Section 3.2). In practice: a light
-  group offers every light command that any member has.
+  least one** member carries the pair. A pair no member carries is not
+  offered, even if it could be adapted to what members do carry: a group of
+  dim-only lamps gets no colour output.
 - **Every other pair** (Identify, a vendor command, anything outside the
   table) is still offered only when **all** members carry it - the
   10 September intersection, unchanged. There is no meaningful adaptation
@@ -103,13 +103,18 @@ set of light pairs among its stored commands:
 
 | Loxone sends | colour lamp (XY or HS) | tunable-white lamp | dim-only lamp | on/off-only light |
 |---|---|---|---|---|
-| **colour** value (RGB + brightness) on `color` / `color_xy` | colour (XY preferred, else HS) + brightness | brightness | brightness | on; off at brightness 0 |
-| **white** value (Lumitech: Kelvin + brightness) on `color` / `color_xy` | white temperature if it has **white**, else the Kelvin as a colour point (XY preferred, else HS); + brightness | white temperature + brightness | brightness | on; off at brightness 0 |
+| **colour** value (RGB + brightness) on `color` / `color_xy` | colour + brightness | brightness | brightness | on; off at brightness 0 |
+| **white** value (Lumitech: Kelvin + brightness) on `color` / `color_xy` | white temperature if it has **white**, else the Kelvin as a colour point; + brightness | white temperature + brightness | brightness | on; off at brightness 0 |
 | `level` / `level_onoff` | same command | same command | same command | on; off at 0 |
 | `colortemp` (Kelvin) | white temperature if it has **white**, else colour point | white temperature | nothing | nothing |
 | `on` / `off` / `toggle` | same command | same command | same command | same command |
 
 Rules that apply across the table:
+
+- **Which colour command a colour lamp gets:** the one the group command
+  names when the member carries it - HS for `color`, XY for `color_xy` -
+  and the other one only when it does not. A group of lamps that all carry
+  both therefore sends exactly what it sent before this design.
 
 - **Order within a member stays colour first, brightness second**, with
   `ExecuteIfOff` on the colour payload - the ordering recorded in
@@ -182,10 +187,10 @@ The function lives in `commands/color.py` next to `rgb_to_cie_xy` and
 
 ## 5. What the User Sees
 
-- **Group dialog and tile:** today's copy says a group offers only what all
-  members understand. It is replaced, in `en` and `de`, with: a light group
-  offers what any member can do, and each lamp takes over what it supports -
-  colour lamps the colour, the others brightness and on/off.
+- **Group dialog:** nothing in the web UI states the intersection today. A
+  hint is added under the members heading, shown while the group's category
+  is light, in `en` and `de`: each lamp takes over what it supports - colour
+  lamps the colour, the others brightness and on/off.
 - **`web.devices.remove_confirm_groups_note`:** its sentence about a command
   dropping out of the "intersection" is reworded: a light command now drops
   out only when no remaining member can use it; other commands as before.
@@ -207,9 +212,10 @@ The function lives in `commands/color.py` next to `rgb_to_cie_xy` and
   - colour XY+HS+white: the stored commands of the checked-in Matter
     fixture `ikea_kajplats_cws_lamp.json`;
   - tunable white: `ikea_kajplats_ws_lamp.json`;
-  - dim-only: the Zigbee TRADFRI bulb E27 WW. There is no fixture for it
-    yet; its stored command rows are read from the maintainer's Pi
-    (read-only) and checked in as a fixture;
+  - dim-only: the Zigbee TRADFRI bulb E27 WW. There is no fixture for it;
+    its stored command rows, read from the maintainer's Pi on 13 September
+    2026 (endpoint 1: (6, 0), (6, 1), (6, 2), (8, 0), (8, 4)), are written
+    out in the test and named as captured;
   - on/off-only: no such light exists in the setup. Its pair set
     {(6, 0), (6, 1), (6, 2)} is written out in the test and named as
     constructed.
