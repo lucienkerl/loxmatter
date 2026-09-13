@@ -470,6 +470,16 @@ async def configure_device(
 
     if deferred:
         watch_for_wakeups(device, store=store, now=now, polling=polling)
+    # The one positive line a configuration pass leaves. The lines beside it
+    # report only what went wrong - a refused reporting, a deferred cluster -
+    # so without this their absence could not be told from a pass that
+    # never ran, and the hardware checklist needs to tell them apart.
+    logger.info(
+        "configuration of %s finished: clusters configured [%s], deferred [%s]",
+        address,
+        ", ".join(f"{cluster_id:#06x}" for cluster_id in configured),
+        ", ".join(f"{cluster_id:#06x}" for cluster_id in deferred),
+    )
     return ConfigureOutcome(
         configured=tuple(configured), deferred=tuple(deferred), quirk_applied=quirk_applied
     )

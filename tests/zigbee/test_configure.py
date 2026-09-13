@@ -505,6 +505,32 @@ async def test_a_sleeping_device_defers_instead_of_failing_the_whole_pass(store)
     assert IAS_ZONE in outcome.configured
 
 
+async def test_a_finished_configuration_pass_says_so_at_info(store, caplog) -> None:
+    """Every other line a configuration pass logs reports something that
+    went wrong - reporting refused, a cluster deferred - so a quiet log
+    reads the same for a pass that configured everything and for one that
+    never ran. The hardware checklist greps the container log for those
+    lines; this is the positive line its empty result is checked against,
+    naming what was configured and what was deferred.
+
+    Fault to prove it: drop the summary line, or log it before the clusters
+    are configured (its lists come out empty)."""
+    device = sensor()
+    on_a_network(device)
+    cluster_of(device, POWER_CONFIGURATION).bind_error = DeliveryError("no response")
+    caplog.set_level("INFO", logger="loxmatter.zigbee.configure")
+
+    await configure_device(device, store=store)
+
+    lines = [
+        r.getMessage() for r in caplog.records if r.getMessage().startswith("configuration of ")
+    ]
+    assert len(lines) == 1
+    assert f"configuration of {device.ieee} finished" in lines[0]
+    assert f"{IAS_ZONE:#06x}" in lines[0].split("deferred")[0]
+    assert f"deferred [{POWER_CONFIGURATION:#06x}]" in lines[0]
+
+
 async def test_a_deferred_cluster_is_retried_when_the_device_is_next_heard_from(store) -> None:
     """Right after a device transmits it polls its parent, so a queued
     request has its best chance THEN. Every incoming packet fires
