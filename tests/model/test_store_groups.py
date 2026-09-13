@@ -24,7 +24,7 @@ from pathlib import Path
 
 import pytest
 
-from loxmatter.export.commands import DeviceCommand
+from loxmatter.export.commands import DeviceCommand, extract_commands
 from loxmatter.matter.models import NodeSnapshot
 from loxmatter.model.store import (
     CategoryMismatchError,
@@ -470,13 +470,65 @@ def test_a_surviving_command_keeps_its_key(store, lamps_with_commands):
     assert _rowid_for(store, after["on"]) == before_rowid
 
 
-def test_adding_a_member_without_colour_keeps_the_colour_key(store, lamps_with_commands):
-    group = store.create_group("Colour", [lamps_with_commands[0]])
-    key = next(c.key for c in store.group_commands(group.id) if c.slug == "color")
-    rowid = _rowid_for(store, key)
-    store.set_group_members(group.id, lamps_with_commands)
-    assert store.resolve_group_command(key).slug == "color"
-    assert _rowid_for(store, key) == rowid
+def test_adding_a_member_without_colour_keeps_the_colour_key(store, lamps):
+    """Design 2026-09-13, 6: a colour group plus a dim-only member keeps
+    `color`, `color_xy` and `colortemp`, each the same row.
+
+    The dim-only member has the TRADFRI bulb E27 WW's pair set (OFF, ON,
+    TOGGLE, LEVEL, LEVEL_ONOFF). No fixture has that shape, so its commands
+    are registered explicitly: the WS lamp's rows without `colortemp`.
+    Against the WS lamp, which carries `colortemp` itself, the intersection
+    would keep that key too, and only `color` was checked.
+
+    Fault to prove it: leave `color_xy` and `colortemp` out of the union in
+    `register_group_commands` - the earlier version of this test, which
+    checked only `color` against the WS lamp, still passed."""
+    cws, dim_only = lamps
+    store.register_commands(cws, extract_commands(load("ikea_kajplats_cws_lamp.json")))
+    store.register_commands(
+        dim_only,
+        [c for c in extract_commands(load("ikea_kajplats_ws_lamp.json")) if c.slug != "colortemp"],
+    )
+    assert {(c.cluster_id, c.command_id) for c in store.commands(dim_only)} == {
+        (6, 0),
+        (6, 1),
+        (6, 2),
+        (8, 0),
+        (8, 4),
+    }
+    group = store.create_group("Colour", [cws])
+    colour_slugs = ("color", "color_xy", "colortemp")
+    before = {c.slug: c.key for c in store.group_commands(group.id) if c.slug in colour_slugs}
+    assert set(before) == set(colour_slugs)
+    rowids = {slug: _rowid_for(store, key) for slug, key in before.items()}
+
+    store.set_group_members(group.id, lamps)
+
+    for slug, key in before.items():
+        assert store.resolve_group_command(key).slug == slug
+        assert _rowid_for(store, key) == rowids[slug]
+
+
+def test_the_union_covers_every_member_not_only_the_first(store):
+    """The WS lamp is registered first, so it is the group's lowest-id
+    member, and it has no colour. The group of both still offers `color`,
+    which only the CWS lamp carries.
+
+    Fault to prove it: build the light union over the first member only -
+    every fixture before this one registered the CWS lamp first, so that
+    passed."""
+    ids = []
+    for name in ("ikea_kajplats_ws_lamp.json", "ikea_kajplats_cws_lamp.json"):
+        snapshot = load(name)
+        device_id = store.register_device(snapshot)
+        store.register_signals(device_id, snapshot)
+        store.register_commands(device_id, extract_commands(snapshot))
+        ids.append(device_id)
+    ws, cws = ids
+    assert ws < cws
+    group = store.create_group("Both", ids)
+    assert store.group_members(group.id)[0].id == ws
+    assert {"color", "color_xy", "colortemp"} <= set(_slugs(store, group.id))
 
 
 def test_a_light_command_leaves_only_when_no_member_has_it(store, lamps_with_commands):

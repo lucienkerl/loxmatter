@@ -26,7 +26,7 @@ import pytest
 from conftest import authenticate, load_snapshot
 
 from loxmatter import i18n
-from loxmatter.export.commands import extract_commands
+from loxmatter.export.commands import DeviceCommand, extract_commands
 from loxmatter.loxone.server import build_app
 from loxmatter.model.store import Store
 from loxmatter.sources import DeviceCall, SourceNotConfiguredError
@@ -545,3 +545,127 @@ async def test_the_502_counts_only_the_members_given_something_to_do(
     assert response.json()["detail"] == i18n.t(
         "api.errors.group_partially_unreachable", reached=0, total=1, devices=cws.label
     )
+
+
+@pytest.mark.parametrize("route", ["loxone", "webui"])
+async def test_the_502_counts_members_not_calls(api, invocations, failing_nodes, route):
+    """Blue at 60 % gives the CWS lamp two calls (colour, brightness) and the
+    WS lamp one. The CWS lamp does not answer: one of two MEMBERS was
+    reached, whatever the number of calls.
+
+    Fault to prove it: count `asked` as the sum of the plans' calls in
+    `loxone/server.py` or `api/control.py` - the detail then reads "reached
+    2 of 3". In every earlier 502 test each member asked got exactly one
+    call, and there the two counts agree."""
+    client, store, group_id = api
+    cws, ws = store.group_members(group_id)
+    failing_nodes.add(cws.address)
+    key = next(c.key for c in store.group_commands(group_id) if c.slug == "color")
+
+    response = await _send(client, route, key, "60000000")
+
+    assert response.status_code == 502
+    assert response.json()["detail"] == i18n.t(
+        "api.errors.group_partially_unreachable", reached=1, total=2, devices=cws.label
+    )
+    assert [(call.address, call.cluster_id, call.command_id) for call in invocations] == [
+        (ws.address, 8, 4)
+    ]
+
+
+@pytest.mark.parametrize("route", ["loxone", "webui"])
+async def test_a_stale_group_command_row_that_gives_every_member_nothing_is_a_plain_success(
+    dim_only_api, invocations, route
+):
+    """A group of the dim-only lamp alone never offers `colortemp`: no
+    member carries it. The row is inserted directly, as a stale row would
+    stand after a member's commands changed underneath it. Every member's
+    plan is then empty - nobody failed, nobody was unconfigured - and the
+    answer is 200 with nothing sent.
+
+    Fault to prove it: drop the `outcome.unconfigured and` guard from the
+    503 condition in `loxone/server.py` or `api/control.py` - zero
+    unconfigured then equals zero asked, the 503 branch reads the first
+    technology of an empty list, and the request dies with an `IndexError`."""
+    client, store, group_id = dim_only_api
+    _cws, dim_only = store.group_members(group_id)
+    group = store.create_group("Dim only", [dim_only.id])
+    assert "colortemp" not in {c.slug for c in store.group_commands(group.id)}
+    key = f"g{group.id}_colortemp"
+    store._db.execute(
+        "INSERT INTO group_command (group_id, cluster_id, command_id, key, slug, takes_value)"
+        " VALUES (?, 768, 10, ?, 'colortemp', 1)",
+        (group.id, key),
+    )
+    store._db.commit()
+
+    response = await _send(client, route, key, "2700")
+
+    assert response.status_code == 200
+    assert invocations == []
+
+
+@pytest.mark.parametrize("route", ["loxone", "webui"])
+async def test_a_non_light_group_command_is_still_translated_per_row(api, invocations, route):
+    """Identify (3, 0), carried by both lamps, is offered by the group -
+    the intersection rule for pairs outside `LIGHT_COMMAND_PAIRS`. It has no
+    payload builder, so `to_device_calls` answers 400 "not supported" and
+    nothing is sent; it must not become a quiet 200.
+
+    Faults to prove it: in `plan_group_calls`, drop the non-light branch -
+    no calls, 200. Or treat every pair as a light command in both
+    `plan_group_calls` and `Store.group_targets` - the members' light rows
+    carry no (3, 0), the adapter builds nothing, 200. (Routing only
+    `plan_group_calls` through the adapter is not caught, and cannot be:
+    for a non-light pair the rows `group_targets` hands over all carry that
+    pair, and the adapter passes such a row to `to_device_calls` itself.)"""
+    client, store, group_id = api
+    for member in store.group_members(group_id):
+        store.register_commands(
+            member.id,
+            [
+                DeviceCommand(
+                    endpoint=1, cluster_id=3, command_id=0, slug="identify", takes_value=True
+                )
+            ],
+        )
+    key = next(c.key for c in store.group_commands(group_id) if c.slug == "identify")
+
+    response = await _send(client, route, key, "5")
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == i18n.t(
+        "api.errors.command_unsupported", cluster_id=3, command_id=0
+    )
+    assert invocations == []
+
+
+@pytest.mark.parametrize("route", ["loxone", "webui"])
+async def test_a_lumitech_white_dims_the_dim_only_member_and_whitens_the_colour_lamp(
+    dim_only_api, invocations, route
+):
+    """2700 K at 30 % on `color`: the CWS lamp gets its white temperature and
+    then brightness, the dim-only lamp only the brightness - level 76, the
+    same level as the CWS lamp's.
+
+    Fault to prove it: give a member without any colour command nothing
+    for a white in `commands/adapt.py` - the dim-only lamp stays at its old
+    brightness."""
+    client, store, group_id = dim_only_api
+    cws, dim_only = store.group_members(group_id)
+    key = next(c.key for c in store.group_commands(group_id) if c.slug == "color")
+
+    response = await _send(client, route, key, "200302700")
+
+    assert response.status_code == 200
+    per_address: dict[str, list[tuple[int, int, dict[str, object]]]] = {}
+    for call in invocations:
+        per_address.setdefault(call.address, []).append(
+            (call.cluster_id, call.command_id, dict(call.payload))
+        )
+    assert [(cluster, command) for cluster, command, _ in per_address[cws.address]] == [
+        (768, 10),
+        (8, 4),
+    ]
+    assert per_address[cws.address][1][2]["level"] == 76
+    assert per_address[dim_only.address] == [(8, 4, {"level": 76, "transitionTime": 0})]
