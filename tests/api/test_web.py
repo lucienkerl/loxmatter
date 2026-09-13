@@ -4510,7 +4510,7 @@ async def test_the_device_grid_is_multi_column(api):
     client, _, _ = api
     css = (await client.get("/static/style.css")).text
     assert "auto-fill" in css
-    assert "minmax(260px" in css
+    assert "minmax(200px" in css
 
 
 async def test_device_tiles_in_the_same_row_stretch_to_equal_height(api):

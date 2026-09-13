@@ -1869,7 +1869,7 @@ footer.hint-block {
  * of the tallest tile in its row. */
 .device-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
   gap: 0.6rem;
   align-items: stretch;
 }
