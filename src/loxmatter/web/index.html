@@ -813,13 +813,18 @@
           x-text="t('web.devices.empty')"
         ></p>
 
-        <!-- Room bar (design 6.3): does not show at all as long as not a
-             single device carries a room - with three devices and no
-             room it would be a line of noise above a list that fits in
-             one glance anyway. The search field stays reachable in that case
+        <!-- Room bar (design 6.3), now the sidebar column of
+             `.dashboard-shell` (device dashboard sidebar design,
+             2026-09-13): does not show at all as long as not a single
+             device carries a room - with three devices and no room it
+             would be a line of noise beside a list that fits in one
+             glance anyway. The search field stays reachable in that case
              regardless, because it also searches by name and category
-             without any rooms. -->
-        <div class="room-bar" x-show="devices.length > 0 || groups.length > 0" x-cloak>
+             without any rooms. The visibility check that used to sit on
+             this bar alone now covers the whole shell, sidebar and grid
+             together - see `.dashboard-shell` below. -->
+        <div class="dashboard-shell" x-show="devices.length > 0 || groups.length > 0" x-cloak>
+        <div class="room-bar">
           <template x-if="hasAnyRoom()">
             <span class="room-chips">
               <!-- Groups count towards "All" just as they do towards every
@@ -864,13 +869,11 @@
               />
             </span>
           </template>
-          <!-- The spacer only exists together with the chips: it
-               pushes the search field past them to the right. Without
-               rooms there is nothing to push past - the field should
-               then move to the left edge instead of standing alone on the right
-               in an empty row. Hence its own `x-if` rather than an element
-               that is always there. -->
-          <template x-if="hasAnyRoom()"><span class="room-spacer"></span></template>
+          <!-- The horizontal spacer that used to push the search field to
+               the right of the chip row is gone (device dashboard sidebar
+               design, 2026-09-13): the sidebar is a vertical column now,
+               the search field always sits at a fixed position above the
+               room list, and there is nothing left to push past. -->
           <!-- The border sits on the container, not on the field: the magnifying glass,
                the counter and the cross sit WITHIN the border, and the focus ring
                hangs on the whole group via :focus-within instead of on the
@@ -932,6 +935,7 @@
             x-text="t('web.groups.new')"
           ></button>
         </div>
+        <div class="dashboard-main">
 
         <p x-show="groupsError" x-cloak class="banner danger" x-text="groupsError"></p>
         <p x-show="groupActionError" x-cloak class="banner danger" x-text="groupActionError"></p>
@@ -1724,6 +1728,8 @@
             </div>
           </div>
         </template>
+        </div>
+        </div>
       </section>
 
       <!-- ================================================================

@@ -1917,43 +1917,66 @@ footer.hint-block {
   margin-top: auto;
 }
 
+/* Two-column shell: the room bar (now a sidebar) on the left, the group
+ * grid and room-grouped device grid on the right. `align-items: flex-start`
+ * so the sidebar does not stretch to the grid's full height artificially -
+ * it only needs `position: sticky` (below) to stay in view while the grid
+ * scrolls. */
+.dashboard-shell {
+  display: flex;
+  align-items: flex-start;
+  gap: 1.25rem;
+}
+
+.dashboard-main {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* The room bar is a fixed-width vertical column now, not a horizontal
+ * row (device dashboard sidebar design, 2026-09-13) - search field on
+ * top, room list below it, both stacked. `position: sticky` keeps room
+ * navigation reachable while scrolling a long device grid; `top` clears
+ * the sticky app header (`header.app-header`, `z-index: 10`,
+ * `style.css:106-117`). */
 .room-bar {
   display: flex;
-  align-items: center;
-  gap: 0.4rem;
-  flex-wrap: wrap;
-  margin-bottom: 0.8rem;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.6rem;
+  flex: none;
+  width: 13rem;
+  position: sticky;
+  top: 4.5rem;
 }
 
 .room-chips {
   display: flex;
-  gap: 0.3rem;
-  flex-wrap: wrap;
-  align-items: center;
-}
-
-/* Soaks up the remaining free space of the row and thereby pushes the search
- * field past the chips to the right. Exists as its own class rather than as
- * a `style` attribute in the markup, because the element now sits under an
- * `x-if` - the reasoning belongs in the markup there, the measurement in the
- * stylesheet. */
-.room-spacer {
-  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 1px;
 }
 
 .room-chip {
-  border: 1px solid var(--border);
-  background: var(--surface);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  width: 100%;
+  border: none;
+  border-left: 3px solid transparent;
+  background: none;
   color: var(--text-muted);
-  border-radius: 999px;
-  padding: 0.15rem 0.7rem;
-  font-size: 0.8rem;
+  border-radius: 6px;
+  padding: 0.4rem 0.6rem;
+  font-size: 0.85rem;
+  text-align: left;
 }
 
 .room-chip.active {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: var(--accent-contrast);
+  background: var(--type-bg);
+  border-left-color: var(--accent);
+  color: var(--accent);
+  font-weight: 600;
 }
 
 .room-rename {

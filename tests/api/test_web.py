@@ -6055,26 +6055,34 @@ async def test_the_counter_and_the_cross_appear_only_with_a_query(api):
     assert 'aria-live="polite"' in field
 
 
-async def test_the_search_field_moves_left_when_there_are_no_rooms(api):
-    """The spacer that pushes the field to the right exists only together
-    with the chips it would need to push past.
-
-    With no rooms, the chip bar hides itself (`x-if="hasAnyRoom()"`). If
-    the spacer then remained in the markup - as it used to - a single box
-    would be left standing on the right in an otherwise empty row. With
-    its own `x-if`, it disappears along with the chips, and the field
-    moves to the left edge, onto a sightline with the tile grid below it.
-
-    Two `x-if="hasAnyRoom()"` in the bar are therefore correct and not an
-    oversight: one for the chips, one for the spacer."""
+async def test_the_room_bar_has_no_horizontal_spacer_trick_any_more(api):
+    """The room bar is now the sidebar column of `.dashboard-shell`
+    (device dashboard sidebar design, 2026-09-13): the search field
+    always sits at a fixed position at the top of a vertical column,
+    whether or not any device carries a room, so the horizontal spacer
+    that used to push it to the right of a chip row - and the CSS rule
+    that gave the spacer its `flex: 1 1 auto` - are both gone."""
     client, _, _ = api
-    page = _without_comments((await client.get("/")).text)
-    bar = page.split('<div class="room-bar"', 1)[1].split('<div class="search-field">', 1)[0]
-    assert 'style="flex: 1 1 auto"' not in bar
-    assert bar.count('x-if="hasAnyRoom()"') == 2
-    assert '<span class="room-spacer"></span>' in bar
+    page = (await client.get("/")).text
+    assert '<span class="room-spacer">' not in page
+    assert 'class="search-field"' in page
     css = (await client.get("/static/style.css")).text
-    assert "flex: 1 1 auto" in css.split(".room-spacer {", 1)[1].split("}", 1)[0]
+    assert ".room-spacer {" not in css
+
+
+async def test_the_dashboard_shell_puts_the_room_bar_beside_the_grid(api):
+    """`.dashboard-shell` is the new two-column flex container: the room
+    bar (now a sidebar) and the room-grouped device grid are its two
+    children, in that order, so the sidebar renders to the left of the
+    grid it filters."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+    assert 'class="dashboard-shell"' in page
+    shell_start = page.index('class="dashboard-shell"')
+    room_bar_pos = page.index('class="room-bar"', shell_start)
+    main_pos = page.index('class="dashboard-main"', shell_start)
+    grid_pos = page.index("deviceGroups()", shell_start)
+    assert room_bar_pos < main_pos < grid_pos
 
 
 # ---------------------------------------------------------------------------
