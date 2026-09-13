@@ -54,12 +54,13 @@ vid_pid column narrows a candidate set; the by-id name decides. The
 rule's guard, and `test_the_two_sticks_on_the_maintainers_pi_are_told_apart_by_name_alone`
 is its measured witness.
 
-Flow control comes from this table too, not from a probe: bellows maps
-`None` to XON/XOFF and anything else to RTS/CTS, and ASH escapes 0x11/0x13,
-so software flow control is safe (research A.4 item 5). Z2M's own column
-spells the software case "none"; it is spelled `"software"` here because
-that is what bellows actually does with it, and a third state bellows has no
-concept of would be an invention.
+Flow control comes from this table too, not from a probe. `"hardware"` means
+RTS/CTS; `"software"` means "no RTS/CTS" and is Z2M's "none". It is NOT the
+value zigpy's libraries want: bellows opens RTS/CTS for anything but `None`,
+so the string `"software"` handed to it straight would be hardware flow
+control. `zigbee.source.zigpy_flow_control` translates it at the one place
+the zigpy configuration is built - measured on a real ZBDongle-E V2, which
+only answered once it did.
 
 An explicit, user-initiated "Test this stick" probe is deliberately NOT
 here - it is 2b, and when it lands it must never run against the Thread

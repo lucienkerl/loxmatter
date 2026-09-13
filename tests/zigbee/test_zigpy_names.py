@@ -178,7 +178,10 @@ def test_the_configuration_keys_are_zigpys_own_and_the_config_validates() -> Non
 
     channels = validated[zigpy.config.CONF_NWK][zigpy.config.CONF_NWK_CHANNELS]
     assert channels == zigpy.types.Channels.from_channel_list([11, 20, 25])
-    assert validated[zigpy.config.CONF_DEVICE][zigpy.config.CONF_DEVICE_FLOW_CONTROL] == "software"
+    # `None`, not the table's "software": zigpy's schema accepts both, and
+    # only `None` opens an EZSP stick with XON/XOFF (see
+    # `test_the_table_flow_control_opens_the_port_the_way_the_stick_needs`).
+    assert validated[zigpy.config.CONF_DEVICE][zigpy.config.CONF_DEVICE_FLOW_CONTROL] is None
 
 
 def test_the_application_calls_the_source_makes_have_the_arguments_it_passes() -> None:
@@ -1134,3 +1137,81 @@ def test_the_network_the_connect_line_describes_is_read_from_names_zigpy_really_
     for name in ('"network_info"', '"channel"', '"pan_id"', '"extended_pan_id"'):
         assert name in reader
     assert '"most_recent_backup"' in inspect.getsource(source_module._network_backup_known)
+
+
+class _OpenedWith(Exception):
+    """Raised by the patched serial layer to stop an open once its
+    arguments are known - nothing past that point is under test."""
+
+    def __init__(self, xonxoff: object, rtscts: object) -> None:
+        super().__init__(xonxoff, rtscts)
+        self.xonxoff = xonxoff
+        self.rtscts = rtscts
+
+
+@pytest.mark.parametrize(
+    ("radio_type", "table_value", "xonxoff", "rtscts"),
+    [
+        # EZSP: bellows opens XON/XOFF for `None` and RTS/CTS for anything
+        # else. Measured on the maintainer's ZBDongle-E V2: RTS/CTS never
+        # answers the reset, XON/XOFF does.
+        ("ezsp", "software", True, False),
+        ("ezsp", "hardware", False, True),
+        # ZNP and deCONZ frames are not escaped, so no terminal XON/XOFF.
+        ("znp", "software", False, False),
+        ("znp", "hardware", False, True),
+        ("deconz", "software", False, False),
+    ],
+)
+async def test_the_table_flow_control_opens_the_port_the_way_the_stick_needs(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+    radio_type: str,
+    table_value: str,
+    xonxoff: bool,
+    rtscts: bool,
+) -> None:
+    """The source's device config, handed to the REAL connect function of
+    each radio library, with only the lowest serial call replaced.
+
+    The fingerprint table said `"software"` and the source passed it on
+    unchanged, which every fake accepted. bellows reads only `flow_control
+    is None`, so the string opened the ZBDongle-E V2 with RTS/CTS and the
+    stick never answered - found on the Pi, not by any test, because no test
+    had ever let a radio library see the value.
+
+    Fault to prove it: pass `self._fingerprint.flow_control` straight into
+    `CONF_DEVICE_FLOW_CONTROL` again - the EZSP and ZNP software cases fail."""
+    import zigpy.serial
+
+    async def opened(*_args: object, xonxoff: object, rtscts: object, **_kwargs: object):
+        raise _OpenedWith(xonxoff, rtscts)
+
+    monkeypatch.setattr(zigpy.serial, "serialx_create_serial_connection", opened)
+
+    source = source_module.ZigbeeSource(
+        path="/dev/ttyUSB1",
+        fingerprint=Fingerprint(
+            name="probe", radio_type=radio_type, baudrate=115200, flow_control=table_value
+        ),
+        database=tmp_path / "zigbee.sqlite",
+    )
+    device = source._config()["device"]
+
+    if radio_type == "ezsp":
+        import bellows.uart
+
+        with pytest.raises(_OpenedWith) as opened_with:
+            await bellows.uart._connect(device, api=None)
+    elif radio_type == "znp":
+        import zigpy_znp.uart
+
+        with pytest.raises(_OpenedWith) as opened_with:
+            await zigpy_znp.uart.connect(device, api=None)
+    else:
+        import zigpy_deconz.uart
+
+        with pytest.raises(_OpenedWith) as opened_with:
+            await zigpy_deconz.uart.connect(device, api=None)
+
+    assert (opened_with.value.xonxoff, opened_with.value.rtscts) == (xonxoff, rtscts)

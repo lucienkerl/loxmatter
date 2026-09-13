@@ -442,6 +442,30 @@ class PairingRow:
 ApplicationFactory = Callable[[dict[str, Any]], Awaitable[Any]]
 
 
+def zigpy_flow_control(flow_control: str) -> str | None:
+    """The fingerprint table's flow control, spelled the way zigpy's radio
+    libraries read it.
+
+    The table says `"hardware"` for RTS/CTS and `"software"` for "no RTS/CTS".
+    Passing `"software"` through unchanged is wrong for every radio library
+    this bridge loads, measured on the maintainer's SONOFF ZBDongle-E V2 on
+    13 September 2026 (EZSP v14 answered at 115200 with `None` and timed out
+    with both strings):
+
+    - `bellows.uart._connect` asks only `flow_control is None`: `None` opens
+      the port with XON/XOFF, which ASH escapes for, and ANY other value -
+      the string `"software"` included - opens it with RTS/CTS. A stick
+      without those lines wired never answers the reset.
+    - `zigpy_znp` and `zigpy_deconz` hand the value to
+      `zigpy.serial.create_serial_connection`, where `"software"` turns on
+      terminal XON/XOFF. Their binary frames are not escaped, so the tty
+      would swallow every 0x11 and 0x13 byte; `None` is zigpy's own default
+      for them.
+
+    So `"software"` becomes `None` for all three, and `"hardware"` stays."""
+    return "hardware" if flow_control == "hardware" else None
+
+
 def _radio_module(radio_type: str) -> ModuleType:
     """The radio library for a fingerprinted stick, imported on demand.
 
@@ -818,11 +842,7 @@ class ZigbeeSource:
             CONF_DEVICE: {
                 CONF_DEVICE_PATH: self._open_path(),
                 CONF_DEVICE_BAUDRATE: self._fingerprint.baudrate,
-                # "hardware" or "software", straight from the fingerprint
-                # table: zigpy maps them to rtscts and xonxoff respectively
-                # (`zigpy.serial`), and probing for it is exactly what the
-                # table exists to avoid.
-                CONF_DEVICE_FLOW_CONTROL: self._fingerprint.flow_control,
+                CONF_DEVICE_FLOW_CONTROL: zigpy_flow_control(self._fingerprint.flow_control),
             },
             # Next to the store in the same volume (design 8.5).
             CONF_DATABASE: str(self._database),
