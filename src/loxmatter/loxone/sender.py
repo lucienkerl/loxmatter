@@ -78,6 +78,7 @@ from collections.abc import Callable
 from loxmatter import i18n
 from loxmatter.api.diagnostics import DatagramLogEntry, RingBuffer
 from loxmatter.loxone.values import datagram
+from loxmatter.sources import ReportingClosedError
 from loxmatter.timestamps import now_iso
 
 RATE_LIMIT_PER_SECOND = 50.0
@@ -147,7 +148,7 @@ class UdpSender:
     async def send(self, key: str, value: float | bool, *, force: bool = False) -> bool:
         """Sends when the value has changed or force is set."""
         if self._socket is None:
-            raise RuntimeError(i18n.t("api.server.udp_sender_closed"))
+            raise ReportingClosedError(i18n.t("api.server.udp_sender_closed"))
 
         packet = datagram(key, value)
         text = packet.decode()
@@ -156,7 +157,7 @@ class UdpSender:
 
         async with self._lock:
             if self._socket is None:
-                raise RuntimeError(i18n.t("api.server.udp_sender_closed"))
+                raise ReportingClosedError(i18n.t("api.server.udp_sender_closed"))
             loop = asyncio.get_running_loop()
             wait_time = self._next_send_time - loop.time()
             if wait_time > 0:

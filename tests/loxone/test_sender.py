@@ -21,6 +21,7 @@ import pytest
 
 from loxmatter.api.diagnostics import DatagramLogEntry
 from loxmatter.loxone.sender import UdpSender
+from loxmatter.sources import ReportingClosedError
 
 
 @pytest.fixture
@@ -118,10 +119,16 @@ async def test_rate_limit_staggers_a_burst(receiver):
 
 
 async def test_send_after_close_raises():
+    """A `RuntimeError`, as it always was, and specifically
+    `ReportingClosedError`: the one failure a source disconnected on
+    shutdown expects, and keeps out of the log as a traceback.
+
+    Fault to prove it: raise a plain `RuntimeError` again."""
     sender = UdpSender("127.0.0.1", 7000)
     await sender.close()
-    with pytest.raises(RuntimeError, match="closed"):
+    with pytest.raises(ReportingClosedError, match="closed"):
         await sender.send("d1_1_temp", 21.5)
+    assert issubclass(ReportingClosedError, RuntimeError)
 
 
 async def test_the_closed_message_follows_the_selected_language():

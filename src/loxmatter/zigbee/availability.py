@@ -95,7 +95,7 @@ import time
 from collections.abc import Awaitable, Callable, Iterable
 from typing import TYPE_CHECKING, Any, Final
 
-from loxmatter.sources import RuntimeEventHandler
+from loxmatter.sources import ReportingClosedError, RuntimeEventHandler
 
 if TYPE_CHECKING:
     from loxmatter.zigbee.source import ZigbeeSource
@@ -310,9 +310,14 @@ class AvailabilityChecker:
         awaits anything, so by the time this runs `_devices()` answers `[]`;
         it hands over the list it took from that application instead.
 
-        One traceback per call, not one per device: the likeliest failure is
-        a closed UDP sender on shutdown, where every device fails the same
-        way, and a traceback apiece would bury the shutdown in the log."""
+        **A closed sender ends the sweep quietly.** On every stop of the
+        bridge the UDP sender is closed before the sources are disconnected,
+        and `ZigbeeSource.disconnect()` marks every device offline: each
+        report then fails the same, expected way (`ReportingClosedError`),
+        with nothing left to deliver them to. One DEBUG line says so, and no
+        further device is tried. Any other failure is still explained with
+        one traceback per call, not one per device, so a real cause stays
+        visible without burying the log."""
         self._missed_checkins.clear()
         explained = False
         for device in self._devices_to_check(devices):
@@ -323,6 +328,9 @@ class AvailabilityChecker:
                 await self._report(str(device.ieee), device_id, False)
             except asyncio.CancelledError:
                 raise
+            except ReportingClosedError:
+                logger.debug("the Loxone sender is closed; Zigbee devices were not marked offline")
+                return
             except Exception as exc:
                 if explained:
                     logger.warning(

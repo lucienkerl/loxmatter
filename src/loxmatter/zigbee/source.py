@@ -87,7 +87,12 @@ from loxmatter import i18n
 from loxmatter.matter.models import NodeSnapshot, Technology
 from loxmatter.radios.fingerprints import Fingerprint
 from loxmatter.radios.inventory import under_host_dev
-from loxmatter.sources import DeviceCall, DeviceUnreachableError, RuntimeEventHandler
+from loxmatter.sources import (
+    DeviceCall,
+    DeviceUnreachableError,
+    ReportingClosedError,
+    RuntimeEventHandler,
+)
 from loxmatter.timestamps import now_iso
 from loxmatter.zigbee.availability import AvailabilityChecker, is_available
 from loxmatter.zigbee.configure import (
@@ -1088,7 +1093,11 @@ class ZigbeeSource:
         finally:
             self._set_progress("idle", attempts=0)
             if self._on_connection_change is not None:
-                await self._on_connection_change(False)
+                # Shutdown closes the sender first, and nothing is left to
+                # tell (`mark_all_offline` above says so once, at DEBUG).
+                # Anything else still travels.
+                with contextlib.suppress(ReportingClosedError):
+                    await self._on_connection_change(False)
 
     async def wait_for_link_loss(self) -> None:
         """Returns as soon as the link is gone - or at once when it never

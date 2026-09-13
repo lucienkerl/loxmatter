@@ -39,6 +39,7 @@ __all__ = [
     "DeviceCall",
     "DeviceSource",
     "DeviceUnreachableError",
+    "ReportingClosedError",
     "RuntimeEventHandler",
     "SourceNotConfiguredError",
     "Sources",
@@ -152,6 +153,17 @@ class DeviceUnreachableError(RuntimeError):
     is the difference between 502 and 503: this means the device was ASKED
     and stayed silent, that one means nothing was asked at all.
     """
+
+
+class ReportingClosedError(RuntimeError):
+    """What a source reports into can no longer send: the bridge's UDP
+    sender has been closed, which happens once, at shutdown.
+
+    A `RuntimeError`, as the sender always raised, so every existing guard
+    still catches it. Its own type so that the one EXPECTED occurrence - a
+    source disconnected on shutdown, after the sender, marking its devices
+    offline - can be told from a real failure without reading the message,
+    and kept out of the log as a traceback."""
 
 
 def technology_display_name(technology: str) -> str:

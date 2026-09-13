@@ -32,6 +32,7 @@ keeps the fake honest against the installed library.
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 from pathlib import Path
 from typing import Any
@@ -50,6 +51,7 @@ from fakes import (
 
 from loxmatter.matter.models import NodeSnapshot
 from loxmatter.radios.fingerprints import Fingerprint
+from loxmatter.sources import ReportingClosedError
 from loxmatter.zigbee import source as source_module
 from loxmatter.zigbee.availability import (
     BATTERY_THRESHOLD_SECONDS,
@@ -87,6 +89,10 @@ class RecordingHandler:
     def __init__(self, *, failing_device_ids: frozenset[int] = frozenset()) -> None:
         self.online: list[tuple[int, bool]] = []
         self.failing_device_ids: set[int] = set(failing_device_ids)
+        # The sender closed on shutdown: every report raises what
+        # `UdpSender.send` raises then.
+        self.closed = False
+        self.attempts = 0
 
     async def on_attribute(self, device_id: int, path: str, raw: object) -> None:
         raise AssertionError("AvailabilityChecker must never call on_attribute")
@@ -95,6 +101,9 @@ class RecordingHandler:
         raise AssertionError("AvailabilityChecker must never call on_event")
 
     async def set_online(self, device_id: int, online: bool) -> None:
+        self.attempts += 1
+        if self.closed:
+            raise ReportingClosedError("the UDP sender is closed")
         if device_id in self.failing_device_ids:
             raise RuntimeError("the UDP sender is closed")
         self.online.append((device_id, online))
@@ -425,14 +434,13 @@ async def test_one_device_that_cannot_be_told_does_not_silence_the_rest(build_so
 
 
 async def test_a_sender_that_fails_every_device_logs_one_traceback(build_source, caplog) -> None:
-    """`ZigbeeSource.disconnect()` now marks every device offline, and the
-    bridge's shutdown closes the UDP sender before it disconnects the
-    sources - so on every stop, every device's report fails the same way.
-    A traceback apiece put one per device into the container log for a
-    shutdown that went exactly as planned.
+    """A handler that fails every device for a reason nobody expected. A
+    traceback apiece put one per device into the container log.
 
     The first failure keeps its traceback, so a real cause is still
     explained; the rest are one line each, and every device is still tried.
+    (The closed sender of a shutdown is not such a failure: see the next
+    test.)
 
     Fault to prove it: log every failure with `logger.exception` again."""
     lamps = [colour_lamp(ieee=f"00:12:4b:00:00:00:00:2{n}") for n in range(3)]
@@ -450,6 +458,64 @@ async def test_a_sender_that_fails_every_device_logs_one_traceback(build_source,
     assert len(failures) == 3
     assert [bool(r.exc_info) for r in failures] == [True, False, False]
     await source.disconnect()
+
+
+async def test_a_shutdown_whose_sender_is_already_closed_stays_quiet(
+    tmp_path, monkeypatch, caplog
+) -> None:
+    """The bridge's shutdown closes the UDP sender before it disconnects the
+    sources, and `disconnect()` marks every device offline and reports the
+    radio disconnected - so every `docker stop` put a traceback, a line per
+    further device, and a traceback for `zigbee_connected` into the
+    container log, for a shutdown that went exactly as planned.
+
+    Through the REAL `disconnect()`: at most one DEBUG line, no traceback,
+    nothing at WARNING or above, no exception out of `disconnect()`, and no
+    device tried after the first has shown the sender is closed.
+
+    Fault to prove it: drop the `ReportingClosedError` branch from
+    `mark_all_offline` (one traceback and a line per further device), or
+    the suppression around `on_connection_change` in `disconnect()`."""
+    lamps = [colour_lamp(ieee=f"00:12:4b:00:00:00:00:3{n}") for n in range(3)]
+
+    async def fake_ensure_quirks_loaded() -> None:
+        return None
+
+    monkeypatch.setattr(source_module, "ensure_quirks_loaded", fake_ensure_quirks_loaded)
+    handler = RecordingHandler()
+
+    async def report_connection(connected: bool) -> None:
+        if handler.closed:
+            raise ReportingClosedError("the UDP sender is closed")
+
+    source = ZigbeeSource(
+        path="/dev/serial/by-id/usb-fake-availability",
+        fingerprint=FINGERPRINT,
+        database=tmp_path / "zigbee.sqlite",
+        application_factory=FakeApplicationFactory(
+            applications=[FakeApplication(devices=list(lamps))]
+        ),
+        on_connection_change=report_connection,
+    )
+    await source.connect()
+    await source.subscribe(_resolver({lamp.ieee: n + 1 for n, lamp in enumerate(lamps)}), handler)
+    handler.closed = True
+    handler.attempts = 0
+    caplog.set_level("DEBUG", logger="loxmatter")
+
+    await source.disconnect()
+
+    about_it = [
+        record
+        for record in caplog.records
+        if record.name.startswith("loxmatter.zigbee")
+        and ("offline" in record.getMessage() or "closed" in record.getMessage())
+    ]
+    assert len(about_it) <= 1, [record.getMessage() for record in about_it]
+    assert all(record.levelname in ("DEBUG", "INFO") for record in about_it)
+    assert not [record for record in caplog.records if record.exc_info]
+    assert not [record for record in caplog.records if record.levelno >= logging.WARNING]
+    assert handler.attempts == 1
 
 
 async def test_a_device_the_handler_could_not_be_told_about_is_told_again(build_source) -> None:
