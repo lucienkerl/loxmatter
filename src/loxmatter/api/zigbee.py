@@ -611,10 +611,16 @@ def build_zigbee_router(
             raise HTTPException(status_code=502, detail=str(exc)) from exc
         device_id = store.device_id_for("zigbee", ieee)
         if device_id is not None:
-            # Only if it was ever adopted. A device removed straight off the
-            # pairing tab never became one of the bridge's own, and there is
-            # nothing in the store to forget.
+            # Only if it was ever adopted: `forget_device` also drops the
+            # device's unfinished configuration.
             store.forget_device(device_id)
+        else:
+            # A device removed straight off the pairing tab never became one
+            # of the bridge's own, so nothing in the store names it - except
+            # a cluster configure-on-join still owes it. Left behind, that
+            # row waited for a device that is gone, and a re-pairing would
+            # inherit work for bindings it no longer has.
+            store.zigbee_pending.forget(ieee)
 
     @router.patch("/zigbee/pairing/{ieee}")
     async def name_pairing(ieee: str, patch: ZigbeePairingPatch) -> dict[str, object]:

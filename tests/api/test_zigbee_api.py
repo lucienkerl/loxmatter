@@ -1841,6 +1841,27 @@ async def test_removal_forgets_the_device_even_when_the_leave_is_never_delivered
     assert all(device.id != device_id for device in harness.store.devices())
 
 
+async def test_removing_a_row_never_added_clears_its_unfinished_configuration(pairing):
+    """A device that joined and was configured in part, then removed off the
+    pairing tab before anyone pressed Add: no store row names it, and its
+    `zigbee_pending_config` rows stayed behind - waiting for a device that
+    is gone, and handed to the next pairing of the same IEEE.
+
+    Fault to prove it: forget the pending rows only for an adopted device."""
+    client, harness = pairing
+    harness.app.device_initialized(_lamp())
+    harness.store.zigbee_pending.mark_pending(LAMP_IEEE, 1, ON_OFF_CLUSTER)
+    other = "00:12:4b:00:00:00:00:42"
+    harness.store.zigbee_pending.mark_pending(other, 1, ON_OFF_CLUSTER)
+
+    response = await client.delete(f"/api/zigbee/pairing/{LAMP_IEEE}")
+
+    assert response.status_code == 204, response.text
+    assert harness.store.device_id_for("zigbee", LAMP_IEEE) is None
+    assert harness.store.zigbee_pending.pending_for(LAMP_IEEE) == []
+    assert harness.store.zigbee_pending.pending_for(other) == [(1, ON_OFF_CLUSTER)]
+
+
 async def test_a_ready_row_shows_configuring_while_configure_on_join_is_still_running(pairing):
     """Design 3.1's table: "configuring - `device_initialized`, our
     configure-on-join running - Setting it up". The row has been set to
