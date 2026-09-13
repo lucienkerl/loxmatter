@@ -33,10 +33,11 @@ the brightness call that switches it on (`commands/translate.py`,
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 
-from loxmatter.sources import DeviceCall
+from loxmatter import i18n, sources
+from loxmatter.sources import DeviceCall, DeviceUnreachableError
 
 __all__ = ["CommandGate", "slot_of"]
 
@@ -46,6 +47,9 @@ Slot = tuple[int, str]
 _CLUSTER_LEVEL = 8
 _CLUSTER_COLOUR = 768
 _LEVEL_COMMANDS = frozenset({0, 4})
+# MoveToLevelWithOnOff. Unlike MoveToLevel (8, 0) it also switches the lamp:
+# on for a level above the minimum, off at it. See `_strength_of`.
+_LEVEL_WITH_ON_OFF = 4
 # MoveToHueAndSaturation, MoveToColor and MoveToColorTemperature: colour and
 # white are the same output of a lamp, so a newer one of either replaces an
 # older one of either.
@@ -64,27 +68,56 @@ def slot_of(call: DeviceCall) -> Slot | None:
     return None
 
 
-def _slots(calls: Sequence[DeviceCall]) -> frozenset[Slot] | None:
-    slots: set[Slot] = set()
+def _strength_of(call: DeviceCall) -> int:
+    """How much of its slot a call sets. A newer call replaces an older one
+    only if it is at least as strong.
+
+    (8, 4) sets the level AND switches the lamp, (8, 0) only sets the level.
+    A waiting "level 0 with on/off" - an "off" - replaced by a plain level
+    would be lost: the lamp would stay on. The other way round nothing is
+    lost."""
+    if call.cluster_id == _CLUSTER_LEVEL and call.command_id == _LEVEL_WITH_ON_OFF:
+        return 1
+    return 0
+
+
+def _slots(calls: Sequence[DeviceCall]) -> dict[Slot, int] | None:
+    """Each slot a request sets, with the strongest call that sets it, or
+    `None` when a call has no slot."""
+    slots: dict[Slot, int] = {}
     for device_call in calls:
         slot = slot_of(device_call)
         if slot is None:
             return None
-        slots.add(slot)
-    return frozenset(slots)
+        slots[slot] = max(slots.get(slot, 0), _strength_of(device_call))
+    return slots
+
+
+def _covers(newer: Mapping[Slot, int], older: Mapping[Slot, int]) -> bool:
+    return all(slot in newer and newer[slot] >= strength for slot, strength in older.items())
 
 
 def _consume(future: asyncio.Future[bool]) -> None:
     """Marks an outcome as seen, so a request whose caller went away does not
-    log "exception was never retrieved" when its call fails."""
+    log "exception was never retrieved" when its call fails.
+
+    `asyncio.shield` does not do it for us: once the caller's side is
+    cancelled, it removes its callback from the outcome."""
     if not future.cancelled():
         future.exception()
+
+
+def _worker_cancelled() -> bool:
+    """Whether the running task itself is being cancelled, as opposed to a
+    `CancelledError` that only came out of a call it awaited."""
+    task = asyncio.current_task()
+    return task is not None and task.cancelling() > 0
 
 
 @dataclass(eq=False)
 class _Request:
     calls: tuple[DeviceCall, ...]
-    slots: frozenset[Slot] | None
+    slots: dict[Slot, int] | None
     outcome: asyncio.Future[bool]
 
 
@@ -99,16 +132,29 @@ class CommandGate:
 
     One per application: `build_app` creates it and hands it to both command
     routes, so a Loxone value and a web UI click for the same lamp share one
-    queue."""
+    queue.
 
-    def __init__(self, invoke: Invoker) -> None:
+    `wait_timeout` bounds how long a request may wait for its turn. `None`
+    reads `sources.SOURCE_CALL_TIMEOUT_SECONDS` at call time, the bound of
+    one call, so a test that shortens that constant shortens both."""
+
+    def __init__(self, invoke: Invoker, *, wait_timeout: float | None = None) -> None:
         self._invoke = invoke
+        self._wait_timeout = wait_timeout
         self._lanes: dict[tuple[str, str], _Lane] = {}
 
     async def run(self, calls: Sequence[DeviceCall]) -> bool:
         """Runs `calls` on their device after every request already running
         or waiting for it. Returns `False` when a newer request replaced
         these calls before they started, and raises what a call raised.
+
+        A request that is still waiting after the wait bound is taken out of
+        the queue and raises `DeviceUnreachableError`, the 502 a silent
+        device gets anywhere else: a device that has not finished the
+        request before it is almost certainly not going to answer this one,
+        and a Miniserver waits on the answer. A request that has started is
+        waited for to the end, because each of its calls has a bound of its
+        own.
 
         A caller that is cancelled while waiting does not take its request
         out of the queue: the value was sent to the bridge, and a Miniserver
@@ -126,14 +172,45 @@ class CommandGate:
         request.outcome.add_done_callback(_consume)
         lane = self._lanes.setdefault(key, _Lane())
         if request.slots is not None:
-            for waiting in list(lane.waiting):
-                if waiting.slots is not None and waiting.slots <= request.slots:
-                    lane.waiting.remove(waiting)
-                    waiting.outcome.set_result(False)
+            _supersede(lane, request.slots)
         lane.waiting.append(request)
-        if lane.worker is None:
+        # `done()` as well as `None`: a worker cancelled before its first
+        # step never reaches its `finally`, and would otherwise stay in the
+        # lane and strand every request for the device.
+        if lane.worker is None or lane.worker.done():
             lane.worker = asyncio.ensure_future(self._drain(key, lane))
-        return await asyncio.shield(request.outcome)
+        return await self._outcome(key, lane, request)
+
+    async def _outcome(self, key: tuple[str, str], lane: _Lane, request: _Request) -> bool:
+        seconds = (
+            sources.SOURCE_CALL_TIMEOUT_SECONDS
+            if self._wait_timeout is None
+            else self._wait_timeout
+        )
+        try:
+            return await asyncio.wait_for(asyncio.shield(request.outcome), seconds)
+        except TimeoutError:
+            # Decided from state, not from the timer: between the timer
+            # firing and this line the worker may have run. Nothing below
+            # awaits before the request is out of `waiting`, so the worker
+            # cannot pop it after this check has seen it there.
+            if request.outcome.done():
+                # Finished after all - or a call itself raised TimeoutError,
+                # which `result()` hands on unchanged.
+                return request.outcome.result()
+            if request not in lane.waiting:
+                # Started: its calls are bounded one by one.
+                return await asyncio.shield(request.outcome)
+            lane.waiting.remove(request)
+            error = DeviceUnreachableError(i18n.t("api.errors.device_timed_out", seconds=seconds))
+            request.outcome.set_exception(error)
+            if (
+                not lane.waiting
+                and (lane.worker is None or lane.worker.done())
+                and self._lanes.get(key) is lane
+            ):
+                del self._lanes[key]
+            raise error from None
 
     async def _drain(self, key: tuple[str, str], lane: _Lane) -> None:
         """Runs one device's queue until it is empty.
@@ -148,8 +225,16 @@ class CommandGate:
                     for device_call in request.calls:
                         await self._invoke(device_call)
                 except asyncio.CancelledError:
-                    request.outcome.cancel()
-                    raise
+                    if _worker_cancelled():
+                        request.outcome.cancel()
+                        raise
+                    # Not this task: the call's own future was cancelled.
+                    # matter-server's client does that to every call still
+                    # waiting when its websocket closes. That request
+                    # failed; the ones behind it did not.
+                    request.outcome.set_exception(
+                        DeviceUnreachableError(i18n.t("api.errors.device_call_cut_off"))
+                    )
                 except BaseException as exc:  # noqa: BLE001 - re-raised in the caller's `run`
                     request.outcome.set_exception(exc)
                 else:
@@ -163,3 +248,22 @@ class CommandGate:
             lane.worker = None
             if not lane.waiting and self._lanes.get(key) is lane:
                 del self._lanes[key]
+
+
+def _supersede(lane: _Lane, slots: Mapping[Slot, int]) -> None:
+    """Replaces every waiting request whose slots `slots` covers.
+
+    Only among the requests after the last waiting one that cannot be
+    replaced: a new value must not jump past a toggle, on or off that was
+    sent after the value it would replace. What a toggle does depends on
+    the state the value before it left, so the device sees the two in the
+    order they were sent, and only values that would have run one straight
+    after the other collapse into the newest."""
+    start = 0
+    for index, waiting in enumerate(lane.waiting):
+        if waiting.slots is None:
+            start = index + 1
+    for waiting in lane.waiting[start:]:
+        if waiting.slots is not None and _covers(slots, waiting.slots):
+            lane.waiting.remove(waiting)
+            waiting.outcome.set_result(False)

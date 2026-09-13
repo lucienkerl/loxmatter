@@ -672,7 +672,9 @@ def build_app(
             #
             # Through the gate, which runs them after whatever this device
             # is still busy with and re-raises what a call raised, so the
-            # two clauses below see the same exceptions as before. Its
+            # two clauses below see the same exceptions as before - plus
+            # `DeviceUnreachableError` for a request that waited longer
+            # than a call may take, or whose call its source cut off. Its
             # `False` - a newer value replaced these calls before they
             # started - is a 200 like any other: the Miniserver's newest
             # value is the one on its way. A cancelled request (the client

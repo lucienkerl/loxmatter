@@ -238,6 +238,54 @@ async def test_a_loxone_value_and_a_web_ui_click_share_one_queue(
         store.close()
 
 
+@pytest.mark.parametrize("route", ["loxone", "webui"])
+async def test_a_superseded_value_is_answered_200(tmp_path, fake_runtime, fake_client, route):
+    """Design 2026-09-13 (command coalescing), rule 6: a value replaced by a
+    newer one before it was sent answers as if it had succeeded - the newer
+    value is on its way. Three brightness values for one lamp: the first
+    runs, the second waits and is replaced by the third, and the second
+    answers 200 while the lamp is still busy with the first.
+
+    Fault to prove it: in the device route, treat `gate.run`'s `False` as a
+    failure (`if not await gate.run(calls): raise RuntimeError(...)`) -
+    the second answers 502."""
+    store = Store(tmp_path / "t.sqlite")
+    snapshot = load_snapshot("ikea_kajplats_ws_lamp.json")
+    device_id = store.register_device(snapshot)
+    store.register_signals(device_id, snapshot)
+    store.register_commands(device_id, extract_commands(snapshot))
+    address = store.device(device_id).address
+    key = next(c.key for c in store.commands(device_id) if c.slug == "level_onoff")
+
+    lamp = SlowDevices()
+    try:
+        app = build_app(store, lamp, fake_runtime(store), client=fake_client)
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            await authenticate(store, client)
+
+            async def send(value: str) -> httpx.Response:
+                if route == "loxone":
+                    return await client.get(f"/cmd/{key}/{value}")
+                return await client.post(f"/api/commands/{key}", json={"value": value})
+
+            first = asyncio.ensure_future(send("10"))
+            await settle_until(lambda: lamp.active.get(address) == 1, "the first value is running")
+            second = asyncio.ensure_future(send("20"))
+            third = asyncio.ensure_future(send("30"))
+            await settle_until(second.done, "the second value was replaced")
+            assert not first.done()
+            assert second.result().status_code == 200
+
+            lamp.release.set()
+            responses = await asyncio.gather(first, third)
+
+        assert [response.status_code for response in responses] == [200, 200]
+        assert [call.payload["level"] for call in lamp.ran] == [25, 76]
+    finally:
+        store.close()
+
+
 async def test_unknown_command_yields_404(api):
     client, _, _ = api
     response = await client.post("/api/commands/d1_1_gibtsnicht", json={"value": "1"})
