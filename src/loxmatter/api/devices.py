@@ -655,6 +655,26 @@ def build_device_router(
         try:
             source = sources.get(device.technology)
         except SourceNotConfiguredError as exc:
+            # The registry raises this the same way for two different
+            # situations, and only one of them may offer "forget only":
+            #
+            # - No stick is stored at all - the user tried Zigbee and gave
+            #   the stick up. That is permanent, and the forget-only offer
+            #   below is the only way such a tile is ever removable.
+            # - A stick IS stored, but `sources.get()` still raises: a
+            #   radio change is in flight (`ZigbeeRuntime._release` clears
+            #   the registry before `disconnect()` returns) or the stick
+            #   failed to open. That is transient - the same "there is no
+            #   Zigbee radio right now" the pairing routes already answer
+            #   with `api.zigbee.radio_changing` - and forgetting the
+            #   device here would remove it from loxmatter while it is
+            #   still joined to the network the swap is about to reopen.
+            #   Read the STORED setting, not the registry that is empty in
+            #   both cases, exactly as `GET /api/zigbee/radio` does.
+            if exc.technology == "zigbee" and store.zigbee_settings.get().path is not None:
+                raise HTTPException(
+                    status_code=503, detail=i18n.t("api.zigbee.radio_changing")
+                ) from exc
             if forget_only:
                 logger.info(
                     "forgetting device %s (%s) without its radio: %s is not set up",

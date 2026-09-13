@@ -1291,8 +1291,11 @@ web.devices.remove_confirm_groups_note:
 # installation"), `{label}` the device's name. Honest about what is left
 # undone: the device was never asked to leave its network.
 web.devices.forget_only_offer:
-  en: "{reason}, so \"{label}\" could not be asked to leave its network. You can remove it from loxmatter only: it leaves the device list and the export, and the bridge stops sending its values to Loxone - but the device itself is not told. Factory-reset it before pairing it anywhere else."
-  de: "{reason}, daher konnte \"{label}\" nicht gebeten werden, sein Netz zu verlassen. Sie können es nur aus loxmatter entfernen: Es verschwindet aus der Geräteliste und dem Export, und die Brücke sendet seine Werte nicht mehr an Loxone – das Gerät selbst erfährt davon aber nichts. Setzen Sie es auf Werkseinstellungen zurück, bevor Sie es anderswo koppeln."
+  # Quoted per the file's convention (see e.g. `api.devices.unknown_room`
+  # above): “curly” in `en`, „low-high“ in `de` - straight quotes here were
+  # a Minor finding of the 2026-09-13 verification (N-4).
+  en: "{reason}, so “{label}” could not be asked to leave its network. You can remove it from loxmatter only: it leaves the device list and the export, and the bridge stops sending its values to Loxone - but the device itself is not told. Factory-reset it before pairing it anywhere else."
+  de: "{reason}, daher konnte „{label}“ nicht gebeten werden, sein Netz zu verlassen. Sie können es nur aus loxmatter entfernen: Es verschwindet aus der Geräteliste und dem Export, und die Brücke sendet seine Werte nicht mehr an Loxone – das Gerät selbst erfährt davon aber nichts. Setzen Sie es auf Werkseinstellungen zurück, bevor Sie es anderswo koppeln."
 web.devices.forget_only:
   en: "Remove from loxmatter only"
   de: "Nur aus loxmatter entfernen"

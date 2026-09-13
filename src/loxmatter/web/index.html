@@ -1706,7 +1706,16 @@
                     <div class="row">
                       <button type="button" class="danger" @click="forgetDeviceLocally(device)"
                               :disabled="deviceForgetBusy" x-text="t('web.devices.forget_only')"></button>
-                      <button type="button" @click="deviceForgetOffer = null"
+                      <!-- N-2 (verification 2026-09-13): `x-show` hides this
+                           box with `display: none` the instant
+                           `deviceForgetOffer` is cleared, but focus itself
+                           does not move - a keyboard user who pressed Enter
+                           here is left focused on a now-invisible button.
+                           Send focus back to the tile's own menu button
+                           (`.card` is the tile's wrapping element,
+                           `deviceCardClass` above), in `$nextTick` so the
+                           box has actually left the layout first. -->
+                      <button type="button" @click="deviceForgetOffer = null; $nextTick(() => $el.closest('.card')?.querySelector('summary')?.focus())"
                               :disabled="deviceForgetBusy" x-text="t('web.devices.forget_only_keep')"></button>
                     </div>
                   </div>
