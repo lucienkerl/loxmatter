@@ -669,3 +669,129 @@ async def test_a_lumitech_white_dims_the_dim_only_member_and_whitens_the_colour_
     ]
     assert per_address[cws.address][1][2]["level"] == 76
     assert per_address[dim_only.address] == [(8, 4, {"level": 76, "transitionTime": 0})]
+
+
+@pytest.fixture
+async def three_lamp_api(
+    tmp_path, invocations, failing_nodes, unconfigured_nodes, fake_runtime, fake_client
+) -> AsyncIterator[tuple[httpx.AsyncClient, Store, int]]:
+    """The maintainer's real "Lampengruppe 1" (Minor M9): two Matter KAJPLATS
+    CWS colour lamps plus the TRADFRI WW dim-only lamp. This is the group the
+    final whole-branch review traced by hand through a throwaway probe; no
+    route test in this suite used all three shapes together until now.
+
+    Both CWS lamps come from the same checked-in fixture. `register_device`
+    folds a second registration into the first when `_device_identity`
+    matches - which it does on `unique_id`, a fixed attribute the raw
+    fixture carries - so the second lamp is re-stamped with its own address
+    (Matter's address is the node id as text) and its own unique id, the
+    same technique `mixed_technology_api` above uses to re-stamp a
+    technology and address.
+
+    The WW lamp is the WS fixture with its `colortemp` row held back, the
+    same dim-only construction `dim_only_api` uses: what is left is
+    (6, 0), (6, 1), (6, 2), (8, 0), (8, 4) on endpoint 1, the TRADFRI bulb
+    E27 WW's captured shape."""
+    store = Store(tmp_path / "t.sqlite")
+    member_ids: list[int] = []
+
+    first_cws = load_snapshot("ikea_kajplats_cws_lamp.json")
+    device_id = store.register_device(first_cws)
+    store.register_signals(device_id, first_cws)
+    store.register_commands(device_id, extract_commands(first_cws))
+    member_ids.append(device_id)
+
+    second_cws = replace(first_cws, address="22", unique_id=f"{first_cws.unique_id}-2")
+    device_id = store.register_device(second_cws)
+    store.register_signals(device_id, second_cws)
+    store.register_commands(device_id, extract_commands(second_cws))
+    member_ids.append(device_id)
+
+    ws_snapshot = load_snapshot("ikea_kajplats_ws_lamp.json")
+    device_id = store.register_device(ws_snapshot)
+    store.register_signals(device_id, ws_snapshot)
+    dim_only_commands = [c for c in extract_commands(ws_snapshot) if c.slug != "colortemp"]
+    store.register_commands(device_id, dim_only_commands)
+    member_ids.append(device_id)
+
+    group = store.create_group("Lampengruppe 1", member_ids)
+
+    async def invoke(call: DeviceCall) -> None:
+        if call.address in unconfigured_nodes:
+            raise SourceNotConfiguredError(call.technology)
+        if call.address in failing_nodes:
+            raise RuntimeError("no route to host")
+        invocations.append(call)
+
+    app = build_app(store, invoke, fake_runtime(store), client=fake_client)
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        await authenticate(store, client)
+        yield client, store, group.id
+    store.close()
+
+
+@pytest.mark.parametrize("route", ["loxone", "webui"])
+async def test_the_three_lamp_group_gives_each_cws_lamp_colour_and_the_ww_lamp_only_brightness(
+    three_lamp_api, invocations, route
+):
+    """Minor M9, end to end on the maintainer's own three-lamp group: blue at
+    60 % gives each CWS lamp its named colour then brightness, and gives the
+    dim-only WW lamp only the brightness - both at level 152 (60 %). This
+    mirrors the final review's traced table exactly (final-review.md, the
+    maintainer's case).
+
+    Fault to prove it: give a member without any colour command nothing at
+    all for a colour value in `commands/adapt.py` - the WW lamp then gets no
+    brightness call either, so its assertion below fails."""
+    client, store, group_id = three_lamp_api
+    cws_one, cws_two, ww = store.group_members(group_id)
+    key = next(c.key for c in store.group_commands(group_id) if c.slug == "color")
+
+    response = await _send(client, route, key, "60000000")
+
+    assert response.status_code == 200
+    per_address: dict[str, list[tuple[int, int, dict[str, object]]]] = {}
+    for call in invocations:
+        per_address.setdefault(call.address, []).append(
+            (call.cluster_id, call.command_id, dict(call.payload))
+        )
+    for cws in (cws_one, cws_two):
+        assert [(cluster, command) for cluster, command, _ in per_address[cws.address]] == [
+            (768, 6),
+            (8, 4),
+        ]
+        assert per_address[cws.address][1][2]["level"] == 152
+    assert per_address[ww.address] == [(8, 4, {"level": 152, "transitionTime": 0})]
+
+
+@pytest.mark.parametrize("route", ["loxone", "webui"])
+async def test_the_three_lamp_group_gives_each_cws_lamp_white_and_the_ww_lamp_only_brightness(
+    three_lamp_api, invocations, route
+):
+    """The same group with a Lumitech white (2700 K at 30 %): each CWS lamp
+    takes its white temperature, not a colour point - it carries (768, 10) -
+    then brightness, and the WW lamp again gets only the brightness, both at
+    level 76 (30 %).
+
+    Fault to prove it: same as above - a colour-less member given nothing at
+    all for a colour value loses its brightness call too."""
+    client, store, group_id = three_lamp_api
+    cws_one, cws_two, ww = store.group_members(group_id)
+    key = next(c.key for c in store.group_commands(group_id) if c.slug == "color")
+
+    response = await _send(client, route, key, "200302700")
+
+    assert response.status_code == 200
+    per_address: dict[str, list[tuple[int, int, dict[str, object]]]] = {}
+    for call in invocations:
+        per_address.setdefault(call.address, []).append(
+            (call.cluster_id, call.command_id, dict(call.payload))
+        )
+    for cws in (cws_one, cws_two):
+        assert [(cluster, command) for cluster, command, _ in per_address[cws.address]] == [
+            (768, 10),
+            (8, 4),
+        ]
+        assert per_address[cws.address][1][2]["level"] == 76
+    assert per_address[ww.address] == [(8, 4, {"level": 76, "transitionTime": 0})]

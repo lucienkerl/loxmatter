@@ -82,27 +82,35 @@ def build_groups_router(store: Store, values: ValueReader) -> APIRouter:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     def _kelvin_range(group_id: int) -> ControlRange | None:
-        """The members' color-temperature ranges, intersected.
+        """The color-temperature ranges of the members that report one,
+        intersected.
+
+        A member that reports no color-temperature limits at all is
+        skipped, not treated as an empty range: it does not narrow the
+        intersection, so a dim-only or colour-only member sitting beside a
+        tunable-white lamp cannot collapse the white slider by simply
+        having nothing to say about it. `None` comes back only when no
+        member reports limits, or when the members that do report them
+        disagree so completely that their ranges do not overlap at all.
 
         Maximum of the minima, minimum of the maxima: a slider offering a
         span that half the group silently clamps is the same silent
         failure the lamp-controls design removed for a single device.
 
-        An empty intersection (two members whose ranges do not overlap at
-        all, or a member that has not reported its limits yet) yields
-        `None`; the caller then falls back to a plain number field
-        instead of a slider spanning a range no value satisfies. The
-        command itself stays in the group and stays exported - `/cmd`
-        with an explicit value still reaches every member that accepts it.
+        Either way `None` means the same thing to the caller: fall back to
+        a plain number field instead of a slider spanning a range no value
+        satisfies. The command itself stays in the group and stays
+        exported - `/cmd` with an explicit value still reaches every member
+        that accepts it.
 
         **Difference from the device path (`api/control.py`,
         `_kelvin_range`): no endpoint filter.** The device version
         restricts to `signal.ref.endpoint == endpoint` because it is
         answering for one specific command on one specific endpoint. A
         group command carries no endpoint at all (design 4.1) - a group
-        command is one `(cluster_id, command_id)` pair shared across
-        members, dispatched per member without regard to which endpoint
-        carries it (see `Store.group_targets`). So this function looks at
+        command is one `(cluster_id, command_id)` pair, dispatched to each
+        member without regard to which endpoint carries it (see
+        `Store.group_targets`). So this function looks at
         every ColorControl signal of the member, on any endpoint. For a
         member that happens to carry ColorControl on more than one
         endpoint, `keys` below is keyed by `element_id`, so the second
