@@ -37,10 +37,15 @@ container, via `DOCKER_OTCTL_STATE_AFTER_RESTART` - every test that
 doesn't set it keeps answering with `DOCKER_OTCTL_STATE` throughout, exactly
 as before there was a restart to distinguish.
 
-Container age comes from `docker top otbr -o etimes`, not from `ps`:
-`DOCKER_TOP_ETIMES` (default a day, "86400") is the line - or lines,
-separated by a real newline, to test "the largest one decides" - the fake
-prints after the `ETIMES` header `docker top` really prints.
+Container age comes from `docker top otbr -o pid,etimes`, not from `ps`:
+a real daemon refuses a bare `-o etimes` ("Couldn't find PID field in ps
+output", exit 1 - the daemon needs the PID column itself to map host
+processes back to the container), which the fake reproduces. With
+`pid,etimes` it prints a `PID                 ELAPSED` header the way
+`docker top` really does, then one `PID ELAPSED` row per process from
+`DOCKER_TOP_ETIMES` (default `"4242 86400"`) - several rows, separated by
+a real newline, test "the largest ELAPSED decides" and "a PID is never
+mistaken for an age".
 
 `DOCKER_HANG`, when set, makes the fake `docker` replace itself with a
 long real sleep (by absolute path - `sleep` on PATH is the instant stub)
@@ -64,13 +69,14 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parent.parent
 WATCHDOG = REPO_ROOT / "scripts" / "otbr-watchdog.sh"
 
-# `docker exec otbr ot-ctl state`, `docker top otbr -o etimes`,
+# `docker exec otbr ot-ctl state`, `docker top otbr -o pid,etimes`,
 # `docker restart -t 10 otbr`: the fake mirrors the real CLI's shape for
 # each, including the `\r`-terminated, `Done`-suffixed answer a Thread CLI
-# gives and the `ETIMES` header `docker top` prints before its data lines.
-# A call recorded before it is checked against `DOCKER_HANG`, so a hung
-# call still shows up in `calls` - callers assert restart was ATTEMPTED,
-# even where it then timed out.
+# gives, the `PID ELAPSED` header `docker top` prints before its data
+# lines, and a bare `-o etimes` (no `pid` column) failing outright the way
+# a real daemon does. A call recorded before it is checked against
+# `DOCKER_HANG`, so a hung call still shows up in `calls` - callers assert
+# restart was ATTEMPTED, even where it then timed out.
 _DOCKER_STUB = """#!/bin/sh
 printf '%s\\n' "$*" >> "$DOCKER_CALLS"
 if [ -n "${DOCKER_HANG:-}" ]; then
@@ -83,11 +89,19 @@ case "$1" in
     printf 'otbr\\n'
     ;;
   top)
-    if [ "${DOCKER_TOP_STATUS:-0}" = "0" ]; then
-      printf 'ETIMES\\n'
-      printf '%s\\n' "${DOCKER_TOP_ETIMES-86400}"
-    fi
-    exit "${DOCKER_TOP_STATUS:-0}"
+    case "$4" in
+      etimes)
+        printf "Error response from daemon: Couldn't find PID field in ps output\\n" >&2
+        exit 1
+        ;;
+      pid,etimes)
+        if [ "${DOCKER_TOP_STATUS:-0}" = "0" ]; then
+          printf 'PID                 ELAPSED\\n'
+          printf '%s\\n' "${DOCKER_TOP_ETIMES-4242 86400}"
+        fi
+        exit "${DOCKER_TOP_STATUS:-0}"
+        ;;
+    esac
     ;;
   exec)
     if [ "${DOCKER_EXEC_STATUS:-0}" = "0" ]; then
@@ -286,31 +300,44 @@ def test_a_container_started_less_than_90_seconds_ago_is_left_alone(watchdog):
     would make it start over.
 
     Fault to prove it: remove the grace check - the run restarts `otbr`."""
-    proc, calls = watchdog(thread_up=False, DOCKER_TOP_ETIMES="10")
+    proc, calls = watchdog(thread_up=False, DOCKER_TOP_ETIMES="4242 10")
     assert proc.returncode == 0
     assert proc.stdout == ""
-    assert "top otbr -o etimes" in calls
+    assert "top otbr -o pid,etimes" in calls
     assert not any(call.startswith("restart") for call in calls), calls
     assert not any("rm" in call and "otbr-agent.pid" in call for call in calls), calls
 
 
 def test_a_container_started_longer_ago_is_restarted(watchdog):
-    proc, calls = watchdog(thread_up=False, DOCKER_TOP_ETIMES="120")
+    proc, calls = watchdog(thread_up=False, DOCKER_TOP_ETIMES="4242 120")
     assert any(call.startswith("restart") for call in calls), calls
     assert "restarting otbr" in proc.stdout
     assert "no grace period" not in proc.stdout
 
 
-def test_the_largest_etimes_line_decides(watchdog):
+def test_the_largest_elapsed_value_decides(watchdog):
     """A container can have more than one process (an entrypoint plus the
-    agent); the OLDEST one - the largest etimes - is the container's age.
+    agent); the OLDEST one - the largest ELAPSED - is the container's age.
 
     Fault to prove it: take the smallest line instead - a container with
     one young process and one old one is then treated as young, and left
     alone although it has really been up for two minutes."""
-    proc, calls = watchdog(thread_up=False, DOCKER_TOP_ETIMES="10\n120")
+    proc, calls = watchdog(thread_up=False, DOCKER_TOP_ETIMES="1 10\n2 120")
     assert any(call.startswith("restart") for call in calls), calls
     assert "restarting otbr" in proc.stdout
+
+
+def test_a_large_pid_is_not_mistaken_for_an_old_container(watchdog):
+    """`docker top -o pid,etimes` prints the PID first and ELAPSED second;
+    a PID can easily exceed the grace period in seconds while its process
+    just started. Real measurement on the Pi: PID 80195, ELAPSED 2.
+
+    Fault to prove it: read the first column (PID) instead of the second
+    (ELAPSED) - a PID of 4242 looks like a container that has been up for
+    over an hour, and the run restarts an agent that only just started."""
+    proc, calls = watchdog(thread_up=False, DOCKER_TOP_ETIMES="4242 30")
+    assert proc.returncode == 0
+    assert not any(call.startswith("restart") for call in calls), calls
 
 
 def test_the_grace_period_does_not_read_the_wall_clock(watchdog, tmp_path):
@@ -328,7 +355,7 @@ def test_the_grace_period_does_not_read_the_wall_clock(watchdog, tmp_path):
         encoding="utf-8",
     )
     date.chmod(0o755)
-    proc, calls = watchdog(thread_up=False, DOCKER_TOP_ETIMES="10")
+    proc, calls = watchdog(thread_up=False, DOCKER_TOP_ETIMES="4242 10")
     assert proc.returncode == 0, proc.stdout
     assert not any(call.startswith("restart") for call in calls), calls
 
@@ -336,13 +363,13 @@ def test_the_grace_period_does_not_read_the_wall_clock(watchdog, tmp_path):
 @pytest.mark.parametrize(
     ("overrides", "why"),
     [
-        ({"DOCKER_TOP_ETIMES": "garbage"}, "an age that is not a number"),
+        ({"DOCKER_TOP_ETIMES": "4242 garbage"}, "an age that is not a number"),
         ({"DOCKER_TOP_ETIMES": ""}, "docker top printing nothing"),
         ({"DOCKER_TOP_STATUS": "1"}, "docker top itself failing"),
-        ({"DOCKER_TOP_ETIMES": "-5"}, "a negative age"),
-        ({"DOCKER_TOP_ETIMES": "18446744073709551615"}, "an age that wraps to -1 in bash"),
-        ({"DOCKER_TOP_ETIMES": "99999999999"}, "an age too long to be young"),
-        ({"DOCKER_TOP_ETIMES": "010"}, "an age with a leading zero"),
+        ({"DOCKER_TOP_ETIMES": "4242 -5"}, "a negative age"),
+        ({"DOCKER_TOP_ETIMES": "4242 18446744073709551615"}, "an age that wraps to -1 in bash"),
+        ({"DOCKER_TOP_ETIMES": "4242 99999999999"}, "an age too long to be young"),
+        ({"DOCKER_TOP_ETIMES": "4242 010"}, "an age with a leading zero"),
     ],
 )
 def test_an_age_that_cannot_be_read_skips_the_grace_period_not_the_restart(
@@ -414,7 +441,7 @@ def test_the_restart_has_a_longer_limit_than_a_query(watchdog, tmp_path):
     limits = log.read_text(encoding="utf-8").splitlines()
     assert "-k 10 30 docker ps -a --format {{.Names}}" in limits, limits
     assert "-k 10 30 docker exec otbr ot-ctl state" in limits, limits
-    assert "-k 10 30 docker top otbr -o etimes" in limits, limits
+    assert "-k 10 30 docker top otbr -o pid,etimes" in limits, limits
     assert "-k 10 30 docker exec otbr rm -f /run/otbr-agent.pid" in limits, limits
     assert "-k 10 120 docker restart -t 10 otbr" in limits, limits
     assert "-k 10 30 docker logs --tail 20 otbr" in limits, limits

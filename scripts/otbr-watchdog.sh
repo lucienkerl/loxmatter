@@ -179,36 +179,43 @@ fi
 # clock. A Pi has no real-time clock: at boot its clock is wherever it was
 # at shutdown until NTP steps it, possibly by days, and a clock stepped
 # backwards made a container started long ago look as if it had not started
-# yet. `docker top -o etimes` asks the daemon to run `ps` on the HOST, on
-# the container's processes - unlike a plain `ps` inside this script, that
-# works from a container that does not share the host's PID namespace, and
-# it still counts from a monotonic clock, immune to both problems above.
-# The container can have more than one process (an entrypoint plus the
-# agent); the largest etimes - the oldest process - is the container's age.
+# yet. `docker top -o pid,etimes` asks the daemon to run `ps` on the HOST,
+# on the container's processes - unlike a plain `ps` inside this script,
+# that works from a container that does not share the host's PID
+# namespace, and it still counts from a monotonic clock, immune to both
+# problems above. The `pid` column is not optional: measured against a
+# real daemon, `docker top CONTAINER -o etimes` on its own fails outright
+# ("Couldn't find PID field in ps output") - the daemon needs a PID column
+# itself to map host processes back to the container - so `etimes` alone
+# would make the age unreadable on every run, never just leave a young
+# container alone. Only the second (`ELAPSED`) column is ever read as an
+# age; the first is a PID and must never be mistaken for one. The
+# container can have more than one process (an entrypoint plus the agent);
+# the largest ELAPSED - the oldest process - is the container's age.
 #
-# Anything that cannot be read - the query itself failing, no numeric lines
-# at all - skips the grace period, never the restart: a watchdog that stays
-# quiet because of a format would be the outage of 3 September again. Each
-# line is checked before it is used in arithmetic below: bash reads an
-# empty or non-numeric value there as 0, and a leading zero as octal (which
-# can error out outright on an 8 or 9), so a malformed line is dropped
-# rather than compared.
+# Anything that cannot be read - the query itself failing, no numeric
+# ELAPSED values at all - skips the grace period, never the restart: a
+# watchdog that stays quiet because of a format would be the outage of 3
+# September again. Each value is checked before it is used in arithmetic
+# below: bash reads an empty or non-numeric value there as 0, and a
+# leading zero as octal (which can error out outright on an 8 or 9), so a
+# malformed value is dropped rather than compared.
 AGE=""
 STATUS=0
-TOP_OUTPUT="$(bounded "$DOCKER_TIMEOUT" docker top "$SERVICE" -o etimes 2>/dev/null)" || STATUS=$?
+TOP_OUTPUT="$(bounded "$DOCKER_TIMEOUT" docker top "$SERVICE" -o pid,etimes 2>/dev/null)" || STATUS=$?
 if [ "$STATUS" -eq 0 ]; then
-  while IFS= read -r LINE; do
-    VALUE="${LINE//[[:space:]]/}"
+  # NR>1 skips the `PID ELAPSED` header; $2 is ELAPSED, never $1 (PID).
+  ELAPSED_COLUMN="$(printf '%s\n' "$TOP_OUTPUT" | awk 'NR>1 {print $2}')" || true
+  while IFS= read -r VALUE; do
     case "$VALUE" in
-      # Empty, not digits only, a leading zero, or ten digits and more -
-      # also how the `ETIMES` header line itself is skipped.
+      # Empty, not digits only, a leading zero, or ten digits and more.
       '' | *[!0-9]* | 0?* | ??????????*) continue ;;
     esac
     if [ -z "$AGE" ] || ((VALUE > AGE)); then
       AGE="$VALUE"
     fi
   done <<EOF
-$TOP_OUTPUT
+$ELAPSED_COLUMN
 EOF
 fi
 case "$AGE" in
