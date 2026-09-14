@@ -1379,7 +1379,7 @@ web.devices.room_new_placeholder:
   de: "Raumname"
 web.devices.room_bar_empty_hint:
   en: "No devices have a room yet. Assign one from a device's menu."
-  de: "Noch keinem Gerät ist ein Raum zugewiesen. Weise einen über das Menü eines Geräts zu."
+  de: "Noch keinem Gerät ist ein Raum zugewiesen. Weisen Sie einen über das Menü eines Geräts zu."
 web.devices.room_rename:
   en: "Rename room"
   de: "Raum umbenennen"
