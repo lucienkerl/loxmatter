@@ -15313,28 +15313,67 @@ def test_the_five_thread_off_after_rollback_strings_exist_in_both_languages():
         assert entry["en"] != entry["de"]
 
 
-async def test_the_retry_button_calls_retry_and_gates_on_thread_left_off(api):
+async def test_the_retry_button_calls_retry_and_gates_on_can_retry(api):
     """The retry button's markup (design section 5): `@click` calls the
-    real handler, and `x-show` carries every guard the ordinary Apply
-    button next to it already has (`radios.sidecar === 'ready'`,
-    `!radiosJobRunning()`, `!radiosBusy`), plus `radiosThreadLeftOff()`
-    itself - without the running guard a poll that starts a NEW job right
-    after a Try again click would leave a stale retry button sitting on
-    screen next to the running step list.
+    real handler and `x-show` is `radiosCanRetry()`, whose guards the node
+    test below pins.
 
-    Fault to prove it: drop `!radiosJobRunning()` from the button's
-    `x-show` in index.html."""
+    Fault to prove it: bind `x-show` to `radiosThreadLeftOff()` instead."""
     client, _, _ = api
     markup = _without_comments((await client.get("/")).text)
-    x_show = _x_show_expr(markup, "web.radios.retry")
-    for needle in (
-        "radiosThreadLeftOff()",
-        "radios.sidecar === 'ready'",
-        "!radiosJobRunning()",
-        "!radiosBusy",
-    ):
-        assert needle in x_show, x_show
+    assert _x_show_expr(markup, "web.radios.retry") == "radiosCanRetry()"
     assert _attr_before_t_key(markup, "@click", "web.radios.retry") == "retryRadios()"
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_radios_can_retry_only_when_a_retry_can_go_through():
+    """`radiosCanRetry()`: offered for the failed job that left Thread off,
+    and withdrawn by each guard alone - a running job, a busy card, a
+    sidecar that is not ready, a request still waiting to be collected (or
+    never collected), and a requested stick that is no longer detected.
+    Without the running guard a stale button sits next to the step list of
+    a new job; without the pending guards a second click only ends in
+    "busy"; without the device guard the button offers a retry that can
+    only be refused as an unknown device.
+
+    Fault to prove it: drop any one guard from `radiosCanRetry()`."""
+    values = _radios_values(
+        f"""
+        const base = () => {{
+          state.radios.job = {json.dumps(_thread_off_failing_job())};
+          state.radios.current.thread_enabled = false;
+          state.radios.current.thread_device = null;
+          state.radios.current.otbr_running = false;
+          state.radios.sidecar = 'ready';
+          state.radios.serial = {json.dumps(RADIOS_READY["serial"])};
+          state.radiosBusy = false;
+          state.radiosPendingJobId = null;
+          state.radiosPendingMissed = false;
+          state.radiosJobAbandoned = false;
+        }};
+        const out = {{}};
+        base(); out.base = state.radiosCanRetry();
+        base(); state.radios.job.phase = 'verify_thread'; out.running = state.radiosCanRetry();
+        base(); state.radiosBusy = true; out.busy = state.radiosCanRetry();
+        base(); state.radios.sidecar = 'outdated'; out.outdated = state.radiosCanRetry();
+        base(); state.radiosPendingJobId = 'j2'; out.pending = state.radiosCanRetry();
+        base(); state.radiosPendingMissed = true; out.neverCollected = state.radiosCanRetry();
+        base(); state.radios.serial = state.radios.serial.filter((r) => r.path !== '/dev/serial/by-id/usb-A');
+        out.stickGone = state.radiosCanRetry();
+        base(); state.radios.job.requested = null; out.noRequest = state.radiosCanRetry();
+        console.log(JSON.stringify(out));
+        """
+    )
+    assert values == {
+        "base": True,
+        "running": False,
+        "busy": False,
+        "outdated": False,
+        "pending": False,
+        "neverCollected": False,
+        "stickGone": False,
+        "noRequest": False,
+    }
 
 
 async def test_the_thread_status_line_wraps_in_x_if_and_binds_warn(api):

@@ -5375,6 +5375,30 @@ function app() {
       this.radiosConfirming = true;
     },
 
+    /** Whether the Try again button is offered. `radiosThreadLeftOff()`
+     * (which already requires that no job is running) plus the guards the
+     * Apply button has (sidecar ready, not busy), and three more that only
+     * matter here:
+     * - a request already sent but not yet picked up (`radiosPendingJobId`,
+     *   or one that was never collected): the failed job stays in the
+     *   report until the sidecar's next pass, and a second click would
+     *   only end in "busy";
+     * - the stick the failed request named is no longer detected: retrying
+     *   it can only be refused as an unknown device, so the button would
+     *   offer a way back that does not exist. The sentence above it still
+     *   says to pick a different stick. */
+    radiosCanRetry() {
+      const device = this.radios?.job?.requested?.thread?.device;
+      return (
+        this.radiosThreadLeftOff() &&
+        this.radios.sidecar === "ready" &&
+        !this.radiosBusy &&
+        this.radiosPendingJobId === null &&
+        !this.radiosNeverCollected() &&
+        (this.radios.serial ?? []).some((radio) => radio.path === device)
+      );
+    },
+
     /** The Try again button's handler, shown only under
      * `radiosThreadLeftOff()` (design "The radios card says when a
      * rollback left Thread off", 2026-09-14, section 5). Re-seeds the

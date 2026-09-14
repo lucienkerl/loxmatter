@@ -2803,12 +2803,10 @@
                        rolled-back (Thread off) state. `retryRadios()`
                        re-seeds the draft from the failed request itself
                        (design section 5) and opens the ordinary
-                       confirmation - same guards as the Apply button
-                       (`radios.sidecar === 'ready'`, no job running, not
-                       already busy). -->
+                       confirmation. `radiosCanRetry()` holds the guards. -->
                   <button
                     class="primary"
-                    x-show="radiosThreadLeftOff() && radios.sidecar === 'ready' && !radiosJobRunning() && !radiosBusy"
+                    x-show="radiosCanRetry()"
                     x-cloak
                     @click="retryRadios()"
                     x-text="t('web.radios.retry')"
