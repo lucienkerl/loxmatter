@@ -462,7 +462,10 @@ fi
 
 apply_thread() {
   if [ "$1" = up ]; then
-    compose up -d --no-deps --force-recreate otbr
+    # --quiet-pull: an image this host does not have yet is pulled here, and
+    # its progress lines would fill radios-log.txt, which keeps only its
+    # last 2000 lines - measured on the Pi, one pull wrote about 700.
+    compose up --quiet-pull -d --no-deps --force-recreate otbr
   else
     compose rm -s -f otbr
   fi
@@ -748,16 +751,18 @@ otbr_upkeep() {
       fi
     fi
     log "radios upkeep: otbr runs $actual_image, Compose asks for $desired_image - pulling it first"
+    # `--quiet`: errors still reach the log, the progress lines do not - one
+    # pull on the Pi wrote about 700 of them into a log that keeps 2000.
     # In the background, with the heartbeat kept moving while it runs: a
     # pull may take minutes, and a radios state whose seen_at stops for
     # longer than `_MAX_SILENT_SECONDS` reads to the card as a sidecar that
     # is gone (see refresh_heartbeat). `wait` returns the pull's own exit
     # status - timeout's 124 included - and is tested in an `if`, so a
     # failing pull is reported instead of ending the pass under `set -e`.
-    log "\$ docker compose -f $STACK/docker-compose.yml --project-directory $STACK_HOST_PATH --env-file $ENV_FILE --profile thread pull otbr"
+    log "\$ docker compose -f $STACK/docker-compose.yml --project-directory $STACK_HOST_PATH --env-file $ENV_FILE --profile thread pull --quiet otbr"
     refresh_heartbeat
     timeout "$PULL_TIMEOUT" docker compose -f "$STACK/docker-compose.yml" --project-directory "$STACK_HOST_PATH" \
-      --env-file "$ENV_FILE" --profile thread pull otbr >> "$LOG" 2>&1 &
+      --env-file "$ENV_FILE" --profile thread pull --quiet otbr >> "$LOG" 2>&1 &
     pull_pid=$!
     while kill -0 "$pull_pid" 2>/dev/null; do
       refresh_heartbeat

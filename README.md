@@ -206,8 +206,8 @@ sh install.sh
 The script installs `git`, `curl`, `openssl` and Docker if they are missing, which
 needs `sudo`. It says so before it does, but it does not ask. Add `--dry-run` — as
 `… | sh -s -- --dry-run` — to see every step without changing anything. Running it
-again is safe: it keeps your configuration, re-checks the stack, and offers to pull
-in new commits.
+again is safe: it keeps your configuration and re-checks the stack. Updates are not
+its job — they come from the web interface, see [Updating](#updating).
 
 **No Thread radio? That is fine.** With no USB radio the installer sets up
 WiFi/Ethernet-only mode: the Thread border router is left out, and the bridge talks
@@ -245,38 +245,28 @@ uv run loxmatter inspect --fixture tests/fixtures/nodes/example_light.json
 
 ## Updating
 
-```bash
-cd ~/loxmatter && git pull && ./scripts/update.sh
-```
-
-The script backs up the signal database first, pulls the published image,
-restarts only the bridge — matter-server and the Thread border router are
-left alone — and waits until the bridge reports healthy again. This should
-be quick on a Raspberry Pi, since pulling a finished image replaces the
-five-to-ten-minute local build — but no timing has been measured yet.
-
-`--build` builds from source instead of pulling, for development or for a
-host that cannot reach `ghcr.io`.
-
-The System tab shows which version is running.
-
-Since 0.3.0 you can do this from the browser instead: **System → Version**
-shows what is running, tells you when a newer version is available, and
-installs it at the press of a button. A backup is taken first; if the new
-version does not come up healthy, it rolls itself back and the previous
-version keeps running. The bridge itself is unreachable for about a
-minute while this happens — the page says so plainly and reconnects on
-its own once the new version answers.
+Update from the browser: **System → Version** shows what is running, tells
+you when a newer version is available, and installs it at the press of a
+button. A backup is taken first; if the new version does not come up healthy,
+it rolls itself back and the previous version keeps running. The bridge itself
+is unreachable for about a minute while this happens — the page says so
+plainly and reconnects on its own once the new version answers. When a release
+also changes the updater service, the same page shows the one command to run
+on the host to refresh it.
 
 This needs the `loxmatter-updater` service from the compose file. An
 installation that predates 0.3.0 does not have it yet; bring it in once
-from the console, the same way as any other update:
+from the console:
 
 ```bash
 cd ~/loxmatter && git pull && ./scripts/update.sh
 ```
 
-That service is worth understanding before you rely on it: it holds the
+That script backs up the signal database, pulls the published image, restarts
+only the bridge and waits until it reports healthy. `--build` builds from
+source instead, for development or for a host that cannot reach `ghcr.io`.
+
+The `loxmatter-updater` service is worth understanding before you rely on it: it holds the
 Docker socket, and is therefore root-equivalent on the host — the same
 level of trust `docker compose` itself already runs at. It has no ports
 and no host network; it talks to the bridge only through files in a

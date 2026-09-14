@@ -47,7 +47,6 @@ DETECTED_RADIO=""
 DOCKER_INSTALL_URL="https://get.docker.com"
 DOCKER_SUDO=0
 TEMP_FILE=""
-CHECKOUT_EXISTED=0
 STACK_DIR=""
 ENV_FILE=""
 ENV_IS_NEW=0
@@ -209,7 +208,7 @@ check_privileges() {
   if [ "$(id -u)" -eq 0 ]; then
     SUDO=""
     warn "Running as root. The checkout and ~/loxmatter-backups will belong to"
-    warn "root, and scripts/update.sh will need root from then on."
+    warn "root."
   elif have sudo; then
     SUDO="sudo"
   else
@@ -482,14 +481,14 @@ then run this again."
 # ----------------------------------------------------------- phase three --
 
 # Either takes an existing checkout as-is, or clones a fresh one. Never pulls
-# or otherwise touches an existing checkout: an update goes through
-# scripts/update.sh and only after the human agrees, so this step cannot be
-# the thing that quietly rewrites a checkout the human is relying on.
+# or otherwise touches an existing checkout: an update goes through the web
+# interface (System -> Version), which backs up first and rolls back on
+# failure, so this step cannot be the thing that quietly rewrites a checkout
+# the human is relying on.
 ensure_checkout() {
   step "getting the repository"
   STACK_DIR="$TARGET_DIR/deploy/testhost"
   if [ -d "$TARGET_DIR" ]; then
-    CHECKOUT_EXISTED=1
     say "Using the existing checkout"
     note "$TARGET_DIR"
     if [ ! -f "$TARGET_DIR/Dockerfile" ] || [ ! -f "$STACK_DIR/docker-compose.yml" ]; then
@@ -958,66 +957,20 @@ report() {
     printf '\n  Running WiFi and Ethernet only. To add Thread later: plug the radio in,\n'
     printf '  then open Settings -> Radios in the web interface and switch Thread on.\n'
   fi
-  printf '\n  To update later: %s/scripts/update.sh\n' "$TARGET_DIR"
+  # Updates go through the web interface only: the bridge backs up its
+  # database first and the updater service rolls back a version that does
+  # not come up healthy - a console path would skip both and ask a person to
+  # run commands the web interface already runs for them.
+  printf '\n  Updates: open System -> Version in the web interface.\n'
   if [ "$DOCKER_SUDO" -eq 1 ]; then
     printf '\n'
     warn "Docker was installed during this run. Log out and back in once, so"
-    warn "that 'docker' works without sudo - scripts/update.sh needs that."
+    warn "that 'docker' works without sudo."
   fi
   if [ -n "$FINDINGS" ]; then
     printf '\n'
     note "Some things above still need you - see \"Findings\" for the commands."
   fi
-}
-
-# Only offered, never done on the way past: scripts/update.sh backs up the
-# signal database first, and those keys are the wiring in the Loxone
-# configuration. An installer that updated in passing would skip that backup.
-offer_update() {
-  if [ "$CHECKOUT_EXISTED" -eq 0 ] || [ "$DRY_RUN" -eq 1 ]; then
-    return 0
-  fi
-  step "checking for updates"
-  # A tarball unpacked instead of cloned has no .git at all - ensure_checkout
-  # only looks for a Dockerfile and the compose file, so it accepts that too.
-  # `git fetch` would fail on it exactly like a network problem does, and
-  # blaming GitHub for something a network has nothing to do with is worse
-  # than saying nothing.
-  if ! git -C "$TARGET_DIR" rev-parse --git-dir >/dev/null 2>&1; then
-    note "$TARGET_DIR is not a git repository; skipping the update check."
-    return 0
-  fi
-  if ! git -C "$TARGET_DIR" fetch --quiet origin main 2>/dev/null; then
-    note "Could not reach GitHub; skipping the update check."
-    return 0
-  fi
-  behind="$(git -C "$TARGET_DIR" rev-list --count HEAD..FETCH_HEAD 2>/dev/null || echo 0)"
-  # A non-numeric value would make `[ -le ]` error rather than return false,
-  # and an errored test inside `if` reads as false - the run would then
-  # announce an update using whatever rev-list printed.
-  case "$behind" in
-    ""|*[!0-9]*) behind=0 ;;
-  esac
-  if [ "$behind" -le 0 ]; then
-    return 0
-  fi
-  say "$behind new commits are available"
-  if [ "$DOCKER_SUDO" -eq 1 ]; then
-    # Docker was installed in this very run, so the docker group is not in
-    # effect yet - and scripts/update.sh calls docker without sudo. Offering
-    # something that cannot work is worse than not offering it.
-    note "Log out and back in first, then run: $TARGET_DIR/scripts/update.sh"
-    return 0
-  fi
-  if [ "$HAVE_TTY" -eq 0 ]; then
-    note "Apply them with: $TARGET_DIR/scripts/update.sh"
-    return 0
-  fi
-  update_answer="$(ask "Update now? It backs up the signal database first [y/N]" "N")"
-  case "$update_answer" in
-    y|Y|yes|Yes) "$TARGET_DIR/scripts/update.sh" ;;
-    *) note "Left as it is. Run $TARGET_DIR/scripts/update.sh when you want it." ;;
-  esac
 }
 
 # ------------------------------------------------------------------ main --
@@ -1041,7 +994,6 @@ main() {
   install_packages
   install_docker
   ensure_checkout
-  offer_update
   configure
   start_stack
   run_checks
