@@ -5264,8 +5264,8 @@ function app() {
      * `job.healthy !== false`: an unhealthy rollback keeps its OWN,
      * stronger text (`result_failed_unhealthy`) rather than this one.
      * `job.requested` is the bridge's own copy of what the failed request
-     * actually asked for (`read_last_request()` in radios/sidecar.py) - absent for a job started before that copy existed, in
-     * which case this reads `undefined?.thread?.enabled` as not `true`
+     * actually asked for (`read_last_request()` in radios/sidecar.py) -
+     * absent for a job started before that copy existed, in which case this reads `undefined?.thread?.enabled` as not `true`
      * and falls through to the old text, same as `null`. */
     radiosThreadLeftOff() {
       const job = this.radios?.job;
