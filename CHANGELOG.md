@@ -8,6 +8,37 @@ people who don't know the code.
 
 ## [Unreleased]
 
+### Before you update
+
+- **System → Version asks once more to refresh the updater service — run the
+  command it shows.** Right after that, the Thread border router is brought
+  up to date on its own, and Thread devices go quiet for about a minute
+  while it restarts. If you added a `crontab` line for the Thread watchdog
+  when you set up 0.4.0, it is no longer needed; leaving it in place does no
+  harm.
+
+### Added
+
+- **The Thread border router recovers on its own when it loses contact with
+  the radio stick.** loxmatter now builds and ships its own border router
+  image, built with OpenThread's RCP restoration turned on: on a lost
+  connection to the USB stick, the agent tries to reconnect, up to twice,
+  before it gives up — instead of exiting on the first dropped radio frame,
+  which used to take the whole Thread network down with it. New
+  installations get this image from the start; existing ones get it through
+  the ordinary update.
+- **A watchdog for the Thread border router is built in — nothing to set up
+  by hand.** The updater service now checks the border router every minute
+  on its own and restarts it if it hangs, the same recovery that used to
+  need a `crontab` line added on the host.
+- **The Thread border router keeps itself up to date.** When its image, USB
+  device or radio settings fall behind what the bridge's configuration asks
+  for — after a release moves to a newer border router image, for instance —
+  the updater brings it up to date by itself: pulls the new image, recreates
+  the container, and checks that Thread comes back up, rolling back to the
+  previous image if it does not. The Radios card shows this while it
+  happens.
+
 ### Changed
 
 - **The Radios card says when Thread is off.** Whenever the updater service
@@ -18,6 +49,10 @@ people who don't know the code.
   Thread is off, and Thread devices stay unreachable. Before, it only said
   "previous setting restored". A **Try again** button sends the same
   request again after the usual confirmation.
+- **The installer no longer asks you to add a `crontab` line, or to edit
+  `.env` to add Thread later.** Both now happen on their own — see "Added",
+  above, for the watchdog and the upkeep, and turn Thread on from Settings →
+  Radios in the web UI whenever you plug a radio module in.
 
 ### Fixed
 

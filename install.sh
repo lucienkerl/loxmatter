@@ -889,17 +889,11 @@ check_thread() {
     note "Thread interface is up"
     return 0
   fi
-  add_finding "No Thread interface (wpan*) yet. On a Raspberry Pi kernel the OTBR
-image's start-stop-daemon never finishes and otbr-agent is never exec'd, so
-this has to be re-applied after every 'docker compose up':
-  docker exec otbr sh -c 'rm -f /var/run/otbr-agent.pid /var/run/otbr-web.pid'
-  docker exec -d otbr /usr/sbin/otbr-agent -I wpan0 -B $(env_file_value BACKBONE_IF) -d7 \\
-    --rest-listen-address 127.0.0.1 \\
-    'spinel+hdlc+uart://$(env_file_value RADIO_DEVICE)?uart-baudrate=$(env_file_value RADIO_BAUDRATE)'
-  docker exec otbr ot-ctl ifconfig up
-  docker exec otbr ot-ctl thread start
-The state goes from 'detached' to 'leader' after about 15 seconds. See
-deploy/testhost/README.md, 'start-stop-daemon hangs on the Pi kernel'."
+  # Not a finding: nothing here needs a human. The updater service runs
+  # scripts/otbr-watchdog.sh every minute; it clears a stale pid and
+  # restarts the border router itself if the agent never came up or later
+  # hangs, which used to be exactly what the printed workaround did by hand.
+  note "No Thread interface (wpan*) yet. This can take a few minutes; the updater service's watchdog restarts the border router on its own if it hangs."
 }
 
 run_checks() {
@@ -942,17 +936,16 @@ report() {
   printf '  Open it and set a password. Until you do, no /api route answers -\n'
   printf '  there is no open state.\n'
   if [ "$MODE" = "thread" ]; then
-    printf "\n  Keep an eye on the Thread radio - add this to 'crontab -e':\n"
-    # Beside the checkout, not $HOME - --dir can put TARGET_DIR anywhere, and
-    # a log path that silently assumed $HOME would stop matching the checkout
-    # it is named after. Every minute and without `flock`: the script locks
-    # itself and leaves an otbr container that started under 90 s ago alone.
-    printf '    * * * * * %s/scripts/otbr-watchdog.sh >> %s/otbr-watchdog.log 2>&1\n' \
-      "$TARGET_DIR" "${TARGET_DIR%/*}"
+    # No crontab line to add any more: the updater service runs the same
+    # watchdog every minute on its own (deploy/updater/watchdog-once.sh), and
+    # also keeps the border router on the image, device and radio URL the
+    # Compose file asks for - see the Radios card in Settings.
+    printf '\n  The updater service watches the Thread border router: its watchdog\n'
+    printf '  runs every minute, and it keeps the border router on the image and\n'
+    printf '  device this host is configured for. Nothing to set up by hand.\n'
   else
     printf '\n  Running WiFi and Ethernet only. To add Thread later: plug the radio in,\n'
-    printf '  set COMPOSE_PROFILES=thread and RADIO_DEVICE in\n'
-    printf "  %s/.env, then 'docker compose up -d' there.\n" "$STACK_DIR"
+    printf '  then open Settings -> Radios in the web interface and switch Thread on.\n'
   fi
   printf '\n  To update later: %s/scripts/update.sh\n' "$TARGET_DIR"
   if [ "$DOCKER_SUDO" -eq 1 ]; then

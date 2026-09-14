@@ -316,7 +316,7 @@ the unblock survives reboots. This step therefore belongs only in
 first-time setup, not before every `docker compose up -d`; whether it's needed is shown by
 `rfkill list bluetooth` (see step 2 above).
 
-## Setting up the OTBR watchdog
+## The OTBR watchdog
 
 The OTBR agent aborts if the radio module stops responding — an
 RCP timeout, usually a USB dropout or power supply issue. The **container** keeps running
@@ -334,7 +334,18 @@ it aborted:
 [C] Platform------: HandleRcpTimeout() at radio_spinel.cpp:2054: RadioSpinelNoResponse
 ```
 
-Set up with `crontab -e` and this line:
+**Since 0.4.1 this needs no setup.** The `loxmatter-updater` service runs
+`scripts/otbr-watchdog.sh` itself every minute
+(`deploy/updater/watchdog-once.sh`, called from `entrypoint.sh`) - nothing to
+add to `crontab`, on a fresh installation or an existing one that has done
+the one updater refresh System → Version asks for. Its output lands in
+`otbr-watchdog.log` inside the updater's own data volume (`$LOXMATTER_UPDATE_DIR`,
+`/data/update` in the container), trimmed to its newest 2000 lines.
+
+**A `crontab -e` line from 0.4.0 or earlier does no harm and can stay** — it
+takes the same lock as the updater's own run (`flock`, see below), so
+whichever of the two gets there first simply runs and the other exits
+quietly. Remove it whenever convenient; nothing depends on it any more:
 
 ```
 * * * * * /home/pi/matter-loxone/scripts/otbr-watchdog.sh >> /home/pi/otbr-watchdog.log 2>&1
@@ -345,8 +356,8 @@ mesh address exists — the same check the "System" view also shows.
 If it's missing, it restarts the `otbr` service and waits up to 60
 seconds for the network. As long as everything is running it writes nothing; the log file
 therefore contains exactly the incidents. A check every minute keeps an outage to
-about a minute (this line used to run it every five minutes). The line needs no
-`flock`: the script takes a lock on itself, so a run that is still waiting for the
+about a minute. The lock needs no extra `flock` from whoever calls the script:
+the script takes a lock on itself, so a run that is still waiting for the
 network makes the next one exit quietly.
 
 **Before the restart it clears `/run/otbr-agent.pid` inside the
@@ -361,12 +372,15 @@ watchdog still ran every five minutes: it cost five minutes of outage on top
 of the one the radio module had already caused.
 
 **It leaves a freshly started container alone.** When the `otbr` container's main
-process has been running for less than 90 seconds (`ps -o etimes= -p` with the pid from
-`docker inspect -f '{{.State.Pid}}' otbr`), a run exits without doing anything. That
+process has been running for less than 90 seconds (`docker top otbr -o pid,etimes`,
+the largest age of the processes it lists), a run exits without doing anything. That
 covers boot, an update, and the watchdog's own restart: a normal attach takes 22 to 35
 seconds on the Pi, and an agent restarted in the middle of one starts over. The age
 comes from the kernel, not from the Pi's clock, which has no battery and may be stepped
 by NTP after boot. An age that cannot be read skips the grace period, never the restart.
+Reading it through `docker top` rather than `ps` directly on the host is also what lets
+this run from inside the updater container, which has no view of the host's own
+process table.
 
 **Every docker call has a time limit:** 30 seconds, and 120 seconds for the restart. A
 docker daemon that hangs ends the run with a line in the log instead of holding the
@@ -374,8 +388,8 @@ lock for good, which would make every later run exit without a word.
 
 **It deliberately does not restart in a loop.** A run restarts at most once, waits up
 to 60 seconds and ends; it never retries on its own, because if the radio module itself
-is stuck, retrying wouldn't help. Cron starts the next run a minute later, but the lock
-and the grace period hold it back while a restart is still in progress: a stuck module
+is stuck, retrying wouldn't help. The next pass, a minute later, is held back by the
+lock and the grace period while a restart is still in progress: a stuck module
 gets one restart and one failure entry, with the last lines from the OTBR log, about
 every two minutes until someone looks. Whoever looks finds what happened in the log.
 

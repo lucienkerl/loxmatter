@@ -212,8 +212,8 @@ in new commits.
 **No Thread radio? That is fine.** With no USB radio the installer sets up
 WiFi/Ethernet-only mode: the Thread border router is left out, and the bridge talks
 to WiFi and Ethernet Matter devices over your existing network. Plug a radio in
-later, set `COMPOSE_PROFILES=thread` and `RADIO_DEVICE` in
-`deploy/testhost/.env`, and restart the stack.
+later and switch Thread on from Settings → Radios in the web UI — no `.env`
+edit needed.
 
 **Changing sticks or adapters later stays out of the console too.**
 Settings → Radios in the web UI lists the USB sticks and Bluetooth
