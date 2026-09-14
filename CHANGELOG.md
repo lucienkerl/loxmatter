@@ -6,7 +6,7 @@ has a section here, and the UI shows its text as
 change notes before someone installs an update — it will be read by
 people who don't know the code.
 
-## [Unreleased]
+## [0.4.1] — 2026-09-14
 
 ### Before you update
 
@@ -63,8 +63,12 @@ people who don't know the code.
   devices under that path. The stick is now always handed to it under one
   fixed name inside the container, whichever name `.env` uses. Nothing
   changes for an installation that uses `/dev/ttyUSB0`; the new mapping
-  takes effect the next time the border router is recreated, for example by
-  a Thread change on the Radios card.
+  takes effect when the border router is brought up to date right after the
+  updater refresh (see "Before you update").
+- **An empty room sidebar explains itself.** With no device in a room yet,
+  the sidebar used to be blank space that looked broken; it now says how to
+  give a device a room. Device cards are a little wider again, and the page
+  keeps a small margin at the window's edges.
 
 ## [0.4.0] — 2026-09-14
 
