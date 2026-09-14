@@ -106,7 +106,7 @@ so that it runs the same from the host's cron and from the updater container:
   answers `leader`, `router` or `child`. This replaces the scope-00 `wpan*` line
   in `/proc/net/if_inet6`, which a container outside the host network namespace
   cannot see, and which is the same test `radios-once.sh` already uses.
-- **Container age:** `docker top otbr -o etimes`, taking the largest number.
+- **Container age:** `docker top otbr -o pid,etimes`, taking the largest value of the ELAPSED column (the daemon refuses a column list without PID — measured).
   The Docker daemon runs `ps` on the host, so this works from inside a
   container, and it counts from boot rather than reading the wall clock (a Pi
   has no real-time clock). An unreadable age skips the grace period, as today.
