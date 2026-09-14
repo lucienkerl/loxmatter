@@ -229,9 +229,10 @@ Zigbee stick that does not answer is not rolled back: the row shows why,
 and the bridge keeps retrying until you pick another. The installer does
 not detect Zigbee sticks; pick yours on the card.
 
-Two Raspberry-Pi-specific steps — unblocking Bluetooth and restarting the Thread
-agent — the installer reports but deliberately does not perform. Those, and the
-full manual path, are in [docs/SETUP.md](docs/SETUP.md).
+One Raspberry-Pi-specific step — unblocking Bluetooth — the installer reports but
+deliberately does not perform, because it needs root. That, and the full manual
+path, are in [docs/SETUP.md](docs/SETUP.md). A Thread border router that hangs
+after starting needs nothing from you: the updater service's watchdog restarts it.
 
 ### Try it without any hardware
 

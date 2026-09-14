@@ -712,6 +712,17 @@ configure() {
     ensure_env_value RADIO_BAUDRATE "Thread radio baud rate" "460800" 1
     ensure_env_value BACKBONE_IF "Network interface for the border router" \
       "$(detect_backbone_if)" 1
+  elif [ "$ENV_IS_NEW" -eq 1 ]; then
+    # Without Thread nothing reads BACKBONE_IF yet, but switching Thread on
+    # later happens on the Radios card, which never asks for it: left at
+    # .env.example's wlan0, an Ethernet-only host would get a border router
+    # on the wrong interface. The detected one is written without a
+    # question, and only into a fresh .env.
+    detected_backbone="$(detect_backbone_if)"
+    if [ -n "$detected_backbone" ]; then
+      env_set BACKBONE_IF "$detected_backbone"
+      note "BACKBONE_IF=$detected_backbone (for Thread, should you switch it on later)"
+    fi
   fi
   ensure_env_value BLUETOOTH_ADAPTER "Bluetooth adapter id for BLE commissioning" \
     "$(detect_bt_adapter)" 0

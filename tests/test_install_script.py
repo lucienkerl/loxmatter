@@ -1048,3 +1048,15 @@ def test_with_no_findings_there_is_no_reference_to_findings(installer):
     assert result.returncode == 0
     assert "Findings" not in result.output
     assert "Some things above still need you" not in result.output
+
+
+def test_a_wifi_run_writes_the_detected_backbone_for_a_later_thread_switch(installer):
+    """Thread is switched on later from the Radios card, which never asks
+    for BACKBONE_IF. Left at .env.example's wlan0, an Ethernet-only host
+    would get a border router on the wrong interface.
+
+    Fault to prove it: drop the WiFi-mode branch that writes BACKBONE_IF."""
+    result = installer()
+    assert result.returncode == 0
+    assert _env(result)["COMPOSE_PROFILES"] == ""
+    assert _env(result)["BACKBONE_IF"] == "eth0"
