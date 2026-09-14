@@ -8,6 +8,19 @@ people who don't know the code.
 
 ## [Unreleased]
 
+### Changed
+
+- **Updates come only from the web interface.** Running the installer again
+  no longer checks GitHub for new commits or offers to run an update script;
+  its summary points to System → Version instead, which backs up first and
+  rolls back a version that does not come up healthy.
+
+### Fixed
+
+- **The updater's radio log keeps its history.** Pulling a new Thread border
+  router image wrote hundreds of progress lines into the log shown for radio
+  changes, pushing older entries out. The pull now only logs its errors.
+
 ## [0.4.1] — 2026-09-14
 
 ### Before you update

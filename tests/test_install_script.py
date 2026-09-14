@@ -503,37 +503,21 @@ def test_a_foreign_directory_is_refused(installer, tmp_path):
     assert "does not look like a loxmatter checkout" in result.output
 
 
-def test_a_second_run_offers_the_update_without_doing_it(installer):
-    # update.sh backs up the signal database beforehand. An install script
-    # that updates on the side would bypass this backup - so it is only
-    # offered.
+def test_a_second_run_offers_no_console_update(installer):
+    """Updates go through the web interface only: it backs up the database
+    and rolls back a version that does not come up healthy. A rerun of the
+    installer on a checkout that is behind neither fetches, nor offers
+    scripts/update.sh, nor runs it - it points at System -> Version.
+
+    Fault to prove it: call the removed update offer again."""
     first = installer()
     assert first.returncode == 0
     second = installer(env={"FAKE_BEHIND": "3"})
     assert second.returncode == 0
-    assert "3 new commits" in second.output
-    assert "Apply them with" in second.output
-
-
-def test_update_offer_comes_before_restart(installer):
-    # main previously started first - with the OLD checkout - and offered the
-    # update only after that. A rerun is the documented
-    # update path, thus the common case: the old
-    # version must not be restarted before the update is offered.
-    first = installer()
-    assert first.returncode == 0
-    second = installer(env={"FAKE_BEHIND": "3"})
-    assert second.returncode == 0
-    fetch_index = next(i for i, c in enumerate(second.calls) if "fetch --quiet origin main" in c)
-    up_index = next(i for i, c in enumerate(second.calls) if "compose up -d" in c)
-    assert fetch_index < up_index
-
-
-def test_the_first_run_does_not_check_for_updates(installer):
-    # Freshly cloned - there's nothing to update.
-    result = installer(env={"FAKE_BEHIND": "3"})
-    assert result.returncode == 0
-    assert "new commits" not in result.output
+    assert "update.sh" not in second.output
+    assert "new commits" not in second.output
+    assert not any(" fetch " in f" {call} " for call in second.calls), second.calls
+    assert "System -> Version" in second.output
 
 
 def test_a_dry_run_changes_nothing(installer):
@@ -640,18 +624,6 @@ def test_sigint_cleans_up_the_temporary_file(installer):
     assert list(installer.tmpdir.iterdir()) == []
 
 
-def test_no_update_offer_when_docker_was_just_installed(installer):
-    # update.sh calls docker without sudo. If Docker was just installed
-    # in this run, group membership only takes effect after logging back
-    # in - the offer couldn't work at all.
-    first = installer()
-    assert first.returncode == 0
-    second = installer(omit=("docker",), env={"FAKE_BEHIND": "3"})
-    assert second.returncode == 0
-    assert "Log out and back in first" in second.output
-    assert "Apply them with" not in second.output
-
-
 def test_a_checkout_without_a_compose_file_is_refused(installer, tmp_path):
     # Old clone from before deploy/testhost/: Dockerfile present, stack
     # missing. Without this case, the suite only tests the Dockerfile half
@@ -663,37 +635,6 @@ def test_a_checkout_without_a_compose_file_is_refused(installer, tmp_path):
     assert result.returncode == 2
     assert "does not look like a loxmatter checkout" in result.output
     assert not result.called("git clone")
-
-
-def test_a_nonsensical_commit_count_reports_no_update(installer):
-    # rev-list normally returns a number. If it returns something else,
-    # that must not turn into an update offer with a garbage value.
-    first = installer()
-    assert first.returncode == 0
-    second = installer(env={"FAKE_BEHIND": "not-a-number"})
-    assert second.returncode == 0
-    assert "new commits" not in second.output
-
-
-def test_not_a_git_repository_gets_its_own_message_instead_of_blaming_the_network(installer):
-    # ensure_checkout only checks for Dockerfile and docker-compose.yml - a
-    # checkout unpacked from a tarball passes that but has no .git.
-    # `git fetch` fails on that just as it would on a network problem, and
-    # "Could not reach GitHub" would be the wrong explanation for it.
-    not_a_repo_git = _GIT.replace(
-        'case "${1-}" in\n  clone)',
-        'case "${1-}" in\n  rev-parse) exit 1 ;;\n  clone)',
-    )
-    first = installer()
-    assert first.returncode == 0
-    second = installer(stubs={"git": not_a_repo_git}, env={"FAKE_BEHIND": "3"})
-    assert second.returncode == 0
-    assert "is not a git repository" in second.output
-    assert "Could not reach GitHub" not in second.output
-    assert "new commits" not in second.output
-
-
-# -------------------------------------------------------------- phase four --
 
 
 def _env(result):
