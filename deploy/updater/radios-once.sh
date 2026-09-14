@@ -30,9 +30,39 @@ HOST_DEV="${LOXMATTER_HOST_DEV:-/host/dev}"
 SYS_BLUETOOTH="${LOXMATTER_SYS_BLUETOOTH:-/sys/class/bluetooth}"
 MATTER_SERVER_URL="${LOXMATTER_MATTER_SERVER_URL:-http://host.docker.internal:5580/}"
 BLUETOOTH_TIMEOUT="${LOXMATTER_RADIOS_BLUETOOTH_TIMEOUT:-60}"
-THREAD_TIMEOUT="${LOXMATTER_RADIOS_THREAD_TIMEOUT:-90}"
-THREAD_FIX_AFTER="${LOXMATTER_RADIOS_THREAD_FIX_AFTER:-30}"
+# How long `verify_thread` waits for a Thread state, and after how long it
+# applies the watchdog's fix once. A normal attach took 22-35 s on the Pi.
+# With the fix at 30 s, on 13 September 2026 three Thread enable requests
+# had otbr restarted in the middle of an attach that was about to succeed,
+# and the restarted agent did not come back within the 60 s the window
+# had left. 60 s lets a slow attach finish; 150 s gives a restarted
+# agent the same 90 s a fresh one had before. Neither changes how long the
+# job stays silent: the loop refreshes its heartbeat on every poll. They do
+# change how long a pass can run, and a pass must end inside entrypoint.sh's
+# RADIOS_WORKER_TIMEOUT_SECONDS (900 s): a request changing both radios
+# whose verifications fail forward and again in the rollback counts up to
+# 2 x (60 + 150) = 420 s, plus up to LOCK_WAIT for the watchdog's lock and
+# the recreates.
+#
+# Both timeouts are seconds of the wall clock, read from `date +%s`, not a
+# count of polls: a probe that takes its full PROBE_TIMEOUT, or a restart
+# of otbr, counts against them like the sleep between two polls does.
+THREAD_TIMEOUT="${LOXMATTER_RADIOS_THREAD_TIMEOUT:-150}"
+THREAD_FIX_AFTER="${LOXMATTER_RADIOS_THREAD_FIX_AFTER:-60}"
 POLL_SECONDS="${LOXMATTER_RADIOS_POLL_SECONDS:-5}"
+# The limit of one probe: `ot-ctl state` inside otbr, or the matter-server
+# check. An agent that no longer answers made `docker exec ... ot-ctl`
+# wait without end, and with it the whole pass.
+PROBE_TIMEOUT="${LOXMATTER_RADIOS_PROBE_TIMEOUT:-10}"
+# The otbr watchdog's lock (scripts/otbr-watchdog.sh locks its own file).
+# The repository is mounted at /repo, so this is the same file, and the
+# same lock, as the host's cron job takes. Held from a Thread apply through
+# its verification and any rollback, so the watchdog cannot restart otbr in
+# the middle of a radios job.
+WATCHDOG_LOCK="${LOXMATTER_WATCHDOG_LOCK:-/repo/scripts/otbr-watchdog.sh}"
+# How long a job waits for a watchdog run that holds the lock. One run
+# restarts otbr and waits up to 60 s for the network.
+LOCK_WAIT="${LOXMATTER_RADIOS_LOCK_WAIT:-90}"
 
 REQUEST="$UPDATE_DIR/radios-request.json"
 STATE="$UPDATE_DIR/radios-state.json"
@@ -243,7 +273,7 @@ load_previous_state() {
   # is working on it" - nothing is running that could be. It can only mean
   # the pass that wrote it was killed before it reached a terminal phase:
   # `docker stop` (entrypoint.sh forwards the SIGTERM), the host powering
-  # off, entrypoint.sh's own 600-second worker timeout, or an OOM kill.
+  # off, entrypoint.sh's own 900-second radios worker timeout, or an OOM kill.
   #
   # Without this, such a state was PERMANENT and it stranded the user, for
   # exactly the reason the phase is still there to begin with: this pass
@@ -367,7 +397,7 @@ touch_seen_at() {
 #     stops moving.
 #   * `seen_at` in radios-state.json is written by `write_state`, which
 #     runs once per STEP - and a single step here is `verify_bluetooth`
-#     (up to 60 s) or `verify_thread` (up to 90 s). During a rollback
+#     (up to 60 s) or `verify_thread` (up to 150 s). During a rollback
 #     nothing was written at all, `step()` being a no-op while $ROLLING.
 #
 # `_MAX_SILENT_SECONDS` is 30 (src/loxmatter/update.py), so about half a
@@ -663,12 +693,13 @@ if [ "$BLUETOOTH_CHANGE" = true ]; then env_set_or_fail BLUETOOTH_ADAPTER "$WANT
 # next one cannot run until it ends, up to $BLUETOOTH_TIMEOUT seconds
 # later.
 verify_bluetooth() {
-  waited=0
-  while [ "$waited" -lt "$BLUETOOTH_TIMEOUT" ]; do
+  started="$(date +%s)"
+  while [ $(($(date +%s) - started)) -lt "$BLUETOOTH_TIMEOUT" ]; do
     refresh_heartbeat
-    if curl -s -o /dev/null --max-time 3 "$MATTER_SERVER_URL"; then return 0; fi
+    if timeout "$PROBE_TIMEOUT" curl -s -o /dev/null --max-time 3 "$MATTER_SERVER_URL"; then
+      return 0
+    fi
     sleep "$POLL_SECONDS"
-    waited=$((waited + POLL_SECONDS))
   done
   return 1
 }
@@ -686,26 +717,73 @@ apply_thread() {
 # Applied at most once per verification.
 verify_thread() {
   if [ "$1" = down ]; then
-    [ -z "$(docker ps -a --filter 'name=^otbr$' --format '{{.Names}}' 2>/dev/null)" ]
+    # A `docker ps` that fails or runs out of time is not "otbr is gone".
+    names="$(timeout "$PROBE_TIMEOUT" docker ps -a --filter 'name=^otbr$' --format '{{.Names}}' 2>/dev/null)" \
+      || return 1
+    [ -z "$names" ]
     return
   fi
-  waited=0
+  started="$(date +%s)"
   fixed=0
-  while [ "$waited" -lt "$THREAD_TIMEOUT" ]; do
+  while :; do
+    elapsed=$(($(date +%s) - started))
+    [ "$elapsed" -lt "$THREAD_TIMEOUT" ] || return 1
     refresh_heartbeat
-    case "$(docker exec otbr ot-ctl state 2>/dev/null | tr -d '\r' | head -n 1)" in
+    case "$(timeout "$PROBE_TIMEOUT" docker exec otbr ot-ctl state 2>/dev/null | tr -d '\r' | head -n 1)" in
       leader|router|child) return 0 ;;
     esac
-    if [ "$fixed" -eq 0 ] && [ "$waited" -ge "$THREAD_FIX_AFTER" ]; then
+    if [ "$fixed" -eq 0 ] && [ "$elapsed" -ge "$THREAD_FIX_AFTER" ]; then
       fixed=1
-      log "no Thread state after ${waited}s - clearing the stale pid file and restarting otbr"
-      docker exec otbr rm -f /run/otbr-agent.pid >/dev/null 2>&1 || true
+      log "no Thread state after ${elapsed}s - clearing the stale pid file and restarting otbr"
+      timeout "$PROBE_TIMEOUT" docker exec otbr rm -f /run/otbr-agent.pid >/dev/null 2>&1 || true
       compose restart otbr || true
     fi
     sleep "$POLL_SECONDS"
-    waited=$((waited + POLL_SECONDS))
   done
-  return 1
+}
+
+# Takes the otbr watchdog's lock on file descriptor 9, which stays open -
+# and the lock held - until this pass exits. Once per pass: the forward
+# pass and the rollback both call it, and a second call does nothing.
+#
+# The watchdog itself only ever tries the lock and exits when it is taken,
+# so this cannot deadlock with it. A watchdog run that holds the lock is
+# waited for, up to LOCK_WAIT, with the heartbeat kept moving; after that,
+# or when the lock cannot be taken at all, the job goes ahead without it -
+# a Thread change the user asked for is not given up over a lock - and the
+# log says which of these happened.
+#
+# The file is checked before `exec 9<`: a redirection that fails on `exec`
+# ends a POSIX shell outright.
+WATCHDOG_LOCK_TRIED=false
+take_watchdog_lock() {
+  [ "$WATCHDOG_LOCK_TRIED" = false ] || return 0
+  WATCHDOG_LOCK_TRIED=true
+  if ! command -v flock >/dev/null 2>&1; then
+    log "radios request $JOB_ID: no flock - changing Thread without the otbr watchdog's lock"
+    return 0
+  fi
+  if [ ! -f "$WATCHDOG_LOCK" ] || [ ! -r "$WATCHDOG_LOCK" ]; then
+    log "radios request $JOB_ID: cannot open $WATCHDOG_LOCK - changing Thread without the otbr watchdog's lock"
+    return 0
+  fi
+  exec 9<"$WATCHDOG_LOCK"
+  if flock -n 9; then
+    log "radios request $JOB_ID: holding the otbr watchdog's lock"
+    return 0
+  fi
+  log "radios request $JOB_ID: the otbr watchdog is running - waiting up to ${LOCK_WAIT}s for its lock"
+  lock_started="$(date +%s)"
+  while [ $(($(date +%s) - lock_started)) -lt "$LOCK_WAIT" ]; do
+    refresh_heartbeat
+    sleep "$POLL_SECONDS"
+    if flock -n 9; then
+      log "radios request $JOB_ID: holding the otbr watchdog's lock after $(($(date +%s) - lock_started))s"
+      return 0
+    fi
+  done
+  log "radios request $JOB_ID: the otbr watchdog still held its lock after ${LOCK_WAIT}s - changing Thread without it"
+  return 0
 }
 
 ROLLING=false
@@ -719,8 +797,8 @@ step() {
     # (that is what this guard has always been for), but it must not keep
     # the sidecar SILENT - and silent is exactly what it was: the one
     # stretch of this script that wrote nothing whatsoever, while
-    # recreating containers and verifying them for up to another two and a
-    # half minutes. A timestamp-only heartbeat says "still here, still
+    # recreating containers and verifying them for up to another three and
+    # a half minutes. A timestamp-only heartbeat says "still here, still
     # working" without touching the phase. See refresh_heartbeat.
     refresh_heartbeat
   fi
@@ -735,6 +813,7 @@ apply_and_verify() {
   fi
   if [ "$THREAD_ACTION" != none ]; then
     step apply_thread
+    take_watchdog_lock
     apply_thread "$THREAD_ACTION" || { FAILED_STEP=apply_thread; return 1; }
     step verify_thread
     verify_thread "$THREAD_ACTION" || { FAILED_STEP=verify_thread; return 1; }
@@ -775,6 +854,7 @@ rollback_and_verify() {
   fi
   if [ "$THREAD_ACTION" != none ]; then
     step apply_thread
+    take_watchdog_lock
     if apply_thread "$THREAD_ACTION"; then
       step verify_thread
       verify_thread "$THREAD_ACTION" || ok=false
@@ -806,6 +886,26 @@ if ! cat "$BACKUP" > "$(env_target)"; then
   exit 0
 fi
 ROLLING=true
+# The rollback recreates or removes otbr, and with the container goes the
+# only record of why the agent did not form the network: rsyslog inside the
+# image is not reliable (it had not run for two days on 13 September 2026),
+# so `docker logs` is all there is. Saved beside the job's own log, one file
+# per request id - which the request check above limits to
+# [A-Za-z0-9._-] - and only the newest 5 kept.
+if [ "$ROLLBACK_THREAD" != none ] \
+  && [ -n "$(docker ps -a --filter 'name=^otbr$' --format '{{.Names}}' 2>/dev/null)" ]; then
+  OTBR_LOG="radios-otbr-$JOB_ID.log"
+  refresh_heartbeat
+  if docker logs --timestamps --tail 400 otbr > "$UPDATE_DIR/$OTBR_LOG" 2>&1; then
+    log "radios request $JOB_ID: saved the last 400 lines of the otbr log to $OTBR_LOG"
+  else
+    log "radios request $JOB_ID: could not save the otbr log (see $OTBR_LOG)"
+  fi
+  refresh_heartbeat
+  # shellcheck disable=SC2012  # names this script wrote itself, from a
+  # checked id - the same reasoning as the .env backup prune above.
+  ls -1t "$UPDATE_DIR"/radios-otbr-*.log 2>/dev/null | tail -n +6 | while read -r old; do rm -f "$old"; done
+fi
 THREAD_ACTION="$ROLLBACK_THREAD"
 if rollback_and_verify; then HEALTHY=true; else HEALTHY=false; fi
 write_state failed "$ERROR_KEY"

@@ -515,3 +515,62 @@ def test_a_missing_radios_worker_is_skipped_quietly(tmp_path: Path) -> None:
 
     assert result.returncode == 0, result.stderr
     assert "absent.sh" not in result.stderr
+
+
+def test_the_radios_worker_has_its_own_900_s_limit_and_the_update_keeps_600(
+    tmp_path: Path,
+) -> None:
+    """A radios request changing both radios whose verifications fail can
+    poll for 420 s, wait 90 s for the otbr watchdog's lock and recreate four
+    containers. At the update's 600 s a kill could land in its rollback.
+
+    Fault to prove it: run the radios worker under `WORKER_TIMEOUT_SECONDS`
+    again - `timeout` is called with 600 for both."""
+    log = tmp_path / "timeout-calls.log"
+    _fake_timeout_logging_to(log, tmp_path)
+    update = _script(tmp_path, "update.sh", "exit 0")
+    radios = _script(tmp_path, "radios.sh", "exit 0")
+
+    result = _run(tmp_path, update, path_prefix=tmp_path, RADIOS_WORKER=str(radios))
+
+    assert result.returncode == 0, result.stderr
+    assert log.read_text(encoding="utf-8").splitlines() == [f"600 {update}", f"900 {radios}"]
+
+
+def test_the_radios_worker_limit_is_configurable_on_its_own(tmp_path: Path) -> None:
+    log = tmp_path / "timeout-calls.log"
+    _fake_timeout_logging_to(log, tmp_path)
+    update = _script(tmp_path, "update.sh", "exit 0")
+    radios = _script(tmp_path, "radios.sh", "exit 0")
+
+    result = _run(
+        tmp_path,
+        update,
+        path_prefix=tmp_path,
+        RADIOS_WORKER=str(radios),
+        WORKER_TIMEOUT_SECONDS="45",
+        RADIOS_WORKER_TIMEOUT_SECONDS="75",
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert log.read_text(encoding="utf-8").splitlines() == [f"45 {update}", f"75 {radios}"]
+
+
+def test_a_timed_out_radios_worker_reports_its_own_limit(tmp_path: Path) -> None:
+    """With the real `timeout`: the radios worker is killed at its own
+    limit, and the message names that limit, not the update's."""
+    update = _script(tmp_path, "update.sh", "exit 0")
+    radios = _script(tmp_path, "radios.sh", "sleep 30")
+
+    started = time.monotonic()
+    result = _run(
+        tmp_path,
+        update,
+        RADIOS_WORKER=str(radios),
+        WORKER_TIMEOUT_SECONDS="5",
+        RADIOS_WORKER_TIMEOUT_SECONDS="1",
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert time.monotonic() - started < 10
+    assert "radios.sh exceeded 1s and was killed" in result.stderr, result.stderr

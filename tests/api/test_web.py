@@ -499,8 +499,14 @@ async def test_the_system_view_shows_the_running_version(api):
     script = (await client.get("/static/app.js")).text
     assert 'versionInfo = await this.request("GET", "/api/version")' in script
     assert "t('web.system.version_running', { version: versionInfo.version })" in page
-    assert "t('web.system.version_commit', { commit: versionInfo.commit })" in page
-    assert "t('web.system.version_built_at', { built_at: versionInfo.built_at })" in page
+    # Commit and build time go through the page's own formatters: a 40-hex
+    # dev-channel SHA shortened to 7, an ISO time in the viewer's locale
+    # (`test_the_version_formatters_shorten_and_localise` checks what they do).
+    assert "t('web.system.version_commit', { commit: formatCommit(versionInfo.commit) })" in page
+    assert (
+        "t('web.system.version_built_at', { built_at: formatTimestamp(versionInfo.built_at) })"
+        in page
+    )
 
 
 async def test_the_system_view_shows_when_the_updater_sidecar_is_behind(api):
@@ -550,11 +556,14 @@ async def test_the_update_card_offers_its_four_states_and_the_confirmation(api):
     )
     assert "t('web.system.update_available', { version: updateAvailable.target })" in page
     assert "t('web.system.update_behind', { behind: updateAvailable.behind })" in page
-    assert "t('web.system.update_up_to_date', { checked_at: updateAvailable.checked_at })" in page
+    assert (
+        "t('web.system.update_up_to_date', { checked_at: formatTimestamp(updateAvailable.checked_at) })"
+        in page
+    )
 
     # State 2 (confirmation).
     assert 'x-if="updateConfirming"' in page
-    assert "t('web.system.update_confirm_title', { version: updateAvailable.target })" in page
+    assert "t('web.system.update_confirm_title', { version: updateTargetLabel() })" in page
     assert "t('web.system.update_confirm_downtime')" in page
     assert '@click="applyUpdate()"' in page
     assert '@click="updateConfirming = false"' in page
@@ -15025,3 +15034,40 @@ async def test_the_light_members_hint_shows_only_for_a_light_group(api):
         "console.log(JSON.stringify(out));"
     )
     assert values == {"light": True, "socket": False, "null": False}
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+async def test_the_version_formatters_shorten_and_localise(api):
+    """The version tile and the update card show a commit through
+    `formatCommit` and a time through `formatTimestamp`. Asserting only that
+    the markup calls them would stay green for a formatter that returned its
+    input unchanged - so run the real ones.
+
+    Fault to prove it: `formatCommit` returns `commit` unshortened,
+    `formatTimestamp` returns its input, or `updateTargetLabel` shortens on
+    every channel - the matching assertion fails."""
+    values = _app_state(
+        setup="console.log(JSON.stringify({"
+        "  sha: state.formatCommit('0123456789abcdef0123456789abcdef01234567'),"
+        "  short: state.formatCommit('0123456'),"
+        "  none: state.formatCommit(null),"
+        "  time: state.formatTimestamp('2026-09-13T09:05:04Z'),"
+        "  never: state.formatTimestamp(null),"
+        "  dev: (state.updateStatus = { channel: 'dev' },"
+        "        state.updateAvailable = { target: '0123456789abcdef0123456789abcdef01234567' },"
+        "        state.updateTargetLabel()),"
+        "  stable: (state.updateStatus = { channel: 'stable' },"
+        "           state.updateAvailable = { target: '0.10.0-rc.1' },"
+        "           state.updateTargetLabel()),"
+        "}));"
+    )
+    assert values["sha"] == "0123456"
+    assert values["short"] == "0123456"
+    assert values["none"] is None
+    assert values["time"] != "2026-09-13T09:05:04Z"
+    assert "2026" in values["time"]
+    assert values["never"] == "web.format.never"
+    # The confirm dialog shortens only a dev-channel commit; a stable version
+    # tag must reach it unchanged.
+    assert values["dev"] == "0123456"
+    assert values["stable"] == "0.10.0-rc.1"

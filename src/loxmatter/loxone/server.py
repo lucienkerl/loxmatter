@@ -153,6 +153,7 @@ from loxmatter.api.update import build_update_router
 from loxmatter.api.version import build_version_router
 from loxmatter.api.zigbee import build_zigbee_router
 from loxmatter.auth.sessions import SESSION_COOKIE, session_is_valid
+from loxmatter.commands.coalesce import CommandGate
 from loxmatter.commands.fanout import dispatch_group, plan_group_calls
 from loxmatter.commands.translate import UnsupportedValueError, to_device_calls
 from loxmatter.diagnostics.logbuffer import LogBufferHandler
@@ -422,6 +423,10 @@ def build_app(
     app = FastAPI(title="loxmatter", docs_url=None, redoc_url=None)
     command_log: RingBuffer[CommandLogEntry] = RingBuffer(maxlen=COMMAND_LOG_SIZE)
     api_guard = [Depends(build_api_guard(api_token, store))]
+    # One per application, shared by every command route below: one request
+    # per device at a time, and only the newest brightness or colour value
+    # waits (design 2026-09-13, command coalescing).
+    gate = CommandGate(invoke)
 
     def _append_command_log(*, method: str, path: str, status: int) -> None:
         """Appends an entry - wrapped in its own try/except, a failure
@@ -561,7 +566,13 @@ def build_app(
     # The same `invoke` as below at `/cmd/{key}/{value}` - see the
     # api/control.py module docstring: one translation, two callers, or
     # they drift (spec 4.2, test_the_same_translation_as_the_loxone_endpoint).
-    app.include_router(build_control_router(store, invoke, runtime), dependencies=api_guard)
+    # And the same gate (design 2026-09-13, command coalescing): a Loxone
+    # value and a web UI click for the same lamp wait in one queue, not in
+    # two that overlap on the device
+    # (test_a_loxone_value_and_a_web_ui_click_share_one_queue).
+    app.include_router(
+        build_control_router(store, invoke, runtime, gate=gate), dependencies=api_guard
+    )
     # Same guard as every other `/api` router. `runtime` satisfies
     # `ValueReader` here for the same reason it does in the control
     # router - the group controls route reads last values, nothing more.
@@ -658,8 +669,18 @@ def build_app(
             # (see `to_device_calls`). The first failure stops and is
             # reported; a partial state is possible
             # and justified there.
-            for call in calls:
-                await invoke(call)
+            #
+            # Through the gate, which runs them after whatever this device
+            # is still busy with and re-raises what a call raised, so the
+            # two clauses below see the same exceptions as before - plus
+            # `DeviceUnreachableError` for a request that waited longer
+            # than a call may take, or whose call its source cut off. Its
+            # `False` - a newer value replaced these calls before they
+            # started - is a 200 like any other: the Miniserver's newest
+            # value is the one on its way. A cancelled request (the client
+            # went away) raises `CancelledError`, which is no `Exception`
+            # and so leaves this route unchanged, as it always did.
+            await gate.run(calls)
         except SourceNotConfiguredError as exc:
             # Nothing was asked of the device, so this is not 502.
             raise HTTPException(status_code=503, detail=str(exc)) from exc
@@ -704,7 +725,10 @@ def build_app(
         except UnsupportedValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-        outcome = await dispatch_group(plans, invoke)
+        # `run=gate.run`: each member waits for its own device, and a member
+        # whose value a newer one replaced counts as reached (design
+        # 2026-09-13, command coalescing, rule 6).
+        outcome = await dispatch_group(plans, invoke, run=gate.run)
         # Counted over the members given something to do: a light command
         # can leave a member with an empty plan (design 2026-09-13, 3.2), and
         # that member was neither reached nor missed. Counting it would turn

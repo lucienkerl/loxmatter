@@ -18,12 +18,13 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 from dataclasses import replace
 
 import httpx2 as httpx
 import pytest
-from conftest import authenticate, load_snapshot
+from conftest import SlowDevices, authenticate, load_snapshot, settle_until
 
 from loxmatter import i18n
 from loxmatter.export.commands import DeviceCommand, extract_commands
@@ -795,3 +796,95 @@ async def test_the_three_lamp_group_gives_each_cws_lamp_white_and_the_ww_lamp_on
         ]
         assert per_address[cws.address][1][2]["level"] == 76
     assert per_address[ww.address] == [(8, 4, {"level": 76, "transitionTime": 0})]
+
+
+@pytest.fixture
+async def slow_api(
+    tmp_path, fake_runtime, fake_client, monkeypatch
+) -> AsyncIterator[tuple[httpx.AsyncClient, Store, int, SlowDevices, list[int]]]:
+    """The two-lamp group of `api`, behind lamps that answer only when the
+    test lets them (design 2026-09-13, command coalescing).
+
+    `admitted` counts the group requests that reached `store.group_targets`.
+    From that line to the fan-out nothing is awaited, so a request counted
+    there has left the transport and the middlewares and is on its way to
+    the lamps - the test waits for that instead of for a length of time."""
+    store = Store(tmp_path / "t.sqlite")
+    member_ids = []
+    for name in ("ikea_kajplats_cws_lamp.json", "ikea_kajplats_ws_lamp.json"):
+        snapshot = load_snapshot(name)
+        device_id = store.register_device(snapshot)
+        store.register_signals(device_id, snapshot)
+        store.register_commands(device_id, extract_commands(snapshot))
+        member_ids.append(device_id)
+    group = store.create_group("Living room", member_ids)
+
+    admitted = [0]
+    group_targets = store.group_targets
+
+    def counting_group_targets(command):
+        admitted[0] += 1
+        return group_targets(command)
+
+    monkeypatch.setattr(store, "group_targets", counting_group_targets)
+
+    lamps = SlowDevices()
+    app = build_app(store, lamps, fake_runtime(store), client=fake_client)
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        await authenticate(store, client)
+        yield client, store, group.id, lamps, admitted
+    store.close()
+
+
+@pytest.mark.parametrize("route", ["loxone", "webui"])
+async def test_a_dragged_slider_reaches_each_lamp_one_value_at_a_time(slow_api, route):
+    """Five brightness values for a group, each sent while the lamps are
+    still busy with the first - the burst a dragged Loxone slider produces,
+    which on 13 September 2026 overlapped on the same Thread lamps until the
+    OpenThread agent gave up.
+
+    Each request has reached the route before the next is sent, and the
+    first is still waiting for the lamps when the fifth arrives - asserted
+    below, because that is what makes this a burst: `httpx.ASGITransport`
+    holds no lock, so the requests really run side by side in this event
+    loop. Each lamp then runs one call at a time, ends on the newest value,
+    and skips at least one of the values that were only waiting.
+
+    Fault to prove it: call `dispatch_group(plans, invoke)` without `run`
+    in `_group_command` (loxone/server.py) or `_execute_group_command`
+    (api/control.py) - the lamps then run five calls at once and receive
+    all five values."""
+    client, store, group_id, lamps, admitted = slow_api
+    addresses = {member.address for member in store.group_members(group_id)}
+    key = next(c.key for c in store.group_commands(group_id) if c.slug == "level_onoff")
+
+    requests: list[asyncio.Future[httpx.Response]] = []
+    for value in ("10", "20", "30", "40", "50"):
+        requests.append(asyncio.ensure_future(_send(client, route, key, value)))
+        await settle_until(
+            lambda: admitted[0] == len(requests), f"request {len(requests)} reached the route"
+        )
+
+    # The ones in between may already have answered: a superseded request
+    # answers as soon as a newer value replaces it.
+    assert not requests[0].done()
+    assert {address: lamps.active.get(address, 0) > 0 for address in addresses} == {
+        address: True for address in addresses
+    }
+
+    lamps.release.set()
+    responses = await asyncio.gather(*requests)
+
+    assert [response.status_code for response in responses] == [200] * 5
+    assert {address: lamps.max_active[address] for address in addresses} == {
+        address: 1 for address in addresses
+    }
+    for address in addresses:
+        levels = [
+            call.payload["level"]
+            for call in lamps.ran
+            if call.address == address and call.cluster_id == 8
+        ]
+        assert levels[-1] == 127  # 50 %
+        assert len(levels) < 5

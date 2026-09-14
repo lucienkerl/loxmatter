@@ -18,11 +18,12 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 
 import httpx2 as httpx
 import pytest
-from conftest import authenticate, load_snapshot
+from conftest import SlowDevices, authenticate, load_snapshot, settle_until
 
 from loxmatter.export.commands import extract_commands
 from loxmatter.loxone.server import build_app
@@ -177,6 +178,112 @@ async def test_the_same_translation_as_the_loxone_endpoint(api, invocations):
     await client.get(f"/cmd/{key}/1")
     assert len(invocations) == 2
     assert invocations[0] == invocations[1]
+
+
+async def test_a_loxone_value_and_a_web_ui_click_share_one_queue(
+    tmp_path, fake_runtime, fake_client, monkeypatch
+):
+    """Design 2026-09-13 (command coalescing): `build_app` builds one
+    `CommandGate` and hands it to both command routes, so a `/cmd` value
+    and a click in the web UI for the same device wait for each other.
+
+    `admitted` counts the requests that reached `store.resolve_command`;
+    from there to the gate both routes await nothing, so a counted request
+    is already queued. The click arrives while the Loxone value is still
+    running on the plug, and neither has answered - the two really are in
+    flight together, not one after the other.
+
+    Fault to prove it: let `build_app` call `build_control_router` without
+    `gate=gate` - each route then queues on a gate of its own, and the two
+    calls run on the plug at once."""
+    store = Store(tmp_path / "t.sqlite")
+    snapshot = load_snapshot("ikea_grillplats_plug.json")
+    device_id = store.register_device(snapshot)
+    store.register_signals(device_id, snapshot)
+    store.register_commands(device_id, extract_commands(snapshot))
+    address = store.device(device_id).address
+
+    admitted = [0]
+    resolve_command = store.resolve_command
+
+    def counting_resolve_command(key):
+        admitted[0] += 1
+        return resolve_command(key)
+
+    monkeypatch.setattr(store, "resolve_command", counting_resolve_command)
+
+    plug = SlowDevices()
+    try:
+        app = build_app(store, plug, fake_runtime(store), client=fake_client)
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            await authenticate(store, client)
+            key = f"d{device_id}_1_on"
+
+            loxone = asyncio.ensure_future(client.get(f"/cmd/{key}/1"))
+            await settle_until(lambda: admitted[0] == 1, "the Loxone value reached the route")
+            assert plug.active == {address: 1}
+            web_ui = asyncio.ensure_future(client.post(f"/api/commands/{key}", json={"value": "1"}))
+            await settle_until(lambda: admitted[0] == 2, "the web UI click reached the route")
+            assert not loxone.done()
+            assert not web_ui.done()
+
+            plug.release.set()
+            responses = await asyncio.gather(loxone, web_ui)
+
+        assert [response.status_code for response in responses] == [200, 200]
+        assert plug.max_active == {address: 1}
+        assert len(plug.ran) == 2
+    finally:
+        store.close()
+
+
+@pytest.mark.parametrize("route", ["loxone", "webui"])
+async def test_a_superseded_value_is_answered_200(tmp_path, fake_runtime, fake_client, route):
+    """Design 2026-09-13 (command coalescing), rule 6: a value replaced by a
+    newer one before it was sent answers as if it had succeeded - the newer
+    value is on its way. Three brightness values for one lamp: the first
+    runs, the second waits and is replaced by the third, and the second
+    answers 200 while the lamp is still busy with the first.
+
+    Fault to prove it: in the device route, treat `gate.run`'s `False` as a
+    failure (`if not await gate.run(calls): raise RuntimeError(...)`) -
+    the second answers 502."""
+    store = Store(tmp_path / "t.sqlite")
+    snapshot = load_snapshot("ikea_kajplats_ws_lamp.json")
+    device_id = store.register_device(snapshot)
+    store.register_signals(device_id, snapshot)
+    store.register_commands(device_id, extract_commands(snapshot))
+    address = store.device(device_id).address
+    key = next(c.key for c in store.commands(device_id) if c.slug == "level_onoff")
+
+    lamp = SlowDevices()
+    try:
+        app = build_app(store, lamp, fake_runtime(store), client=fake_client)
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            await authenticate(store, client)
+
+            async def send(value: str) -> httpx.Response:
+                if route == "loxone":
+                    return await client.get(f"/cmd/{key}/{value}")
+                return await client.post(f"/api/commands/{key}", json={"value": value})
+
+            first = asyncio.ensure_future(send("10"))
+            await settle_until(lambda: lamp.active.get(address) == 1, "the first value is running")
+            second = asyncio.ensure_future(send("20"))
+            third = asyncio.ensure_future(send("30"))
+            await settle_until(second.done, "the second value was replaced")
+            assert not first.done()
+            assert second.result().status_code == 200
+
+            lamp.release.set()
+            responses = await asyncio.gather(first, third)
+
+        assert [response.status_code for response in responses] == [200, 200]
+        assert [call.payload["level"] for call in lamp.ran] == [25, 76]
+    finally:
+        store.close()
 
 
 async def test_unknown_command_yields_404(api):
