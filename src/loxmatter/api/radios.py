@@ -46,6 +46,7 @@ from loxmatter.radios.sidecar import (
     BluetoothRequest,
     RadiosBusyError,
     ThreadRequest,
+    read_last_request,
     read_radios_state,
     request_radios,
     sidecar_status,
@@ -126,6 +127,20 @@ def build_radios_router(
             }
         job: dict[str, object] | None = None
         if radios_state is not None and radios_state.id is not None:
+            # `requested` names what the bridge itself asked for, read back
+            # from its own copy of the request (design section 3). It is
+            # `None` whenever that copy is missing, unreadable, or - the
+            # ordinary case once a second job has run - names an earlier
+            # job than this one; the card then falls back to its own text.
+            last_request = read_last_request(update_dir)
+            requested: dict[str, object] | None = None
+            if last_request is not None and last_request.id == radios_state.id:
+                requested = {
+                    "thread": None if last_request.thread is None else asdict(last_request.thread),
+                    "bluetooth": (
+                        None if last_request.bluetooth is None else asdict(last_request.bluetooth)
+                    ),
+                }
             job = {
                 "id": radios_state.id,
                 "phase": radios_state.phase,
@@ -133,6 +148,7 @@ def build_radios_router(
                 "error": radios_state.error,
                 "rolled_back": radios_state.rolled_back,
                 "healthy": radios_state.healthy,
+                "requested": requested,
             }
         return {
             "sidecar": status,

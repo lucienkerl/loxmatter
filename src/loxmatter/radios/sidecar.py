@@ -37,6 +37,8 @@ from loxmatter import update
 
 TERMINAL_PHASES: Final = frozenset({"idle", "done", "failed", "rejected", "unchanged"})
 
+LAST_REQUEST_FILE: Final = "radios-last-request.json"
+
 SidecarStatus = Literal["ready", "missing", "outdated", "unmounted"]
 
 
@@ -67,6 +69,16 @@ class BluetoothRequest:
     """The Bluetooth counterpart of `ThreadRequest`."""
 
     adapter: int
+
+
+@dataclass(frozen=True)
+class RadiosRequestRecord:
+    """What `request_radios` last asked for, read back from its own copy of
+    the request file - see `read_last_request`."""
+
+    id: str
+    thread: ThreadRequest | None
+    bluetooth: BluetoothRequest | None
 
 
 @dataclass(frozen=True)
@@ -126,6 +138,48 @@ def read_radios_state(update_dir: Path) -> RadiosState | None:
         capable=raw.get("capable") is True,
         capable_reason=_opt_str(raw.get("capable_reason")),
         seen_at=_opt_str(raw.get("seen_at")),
+    )
+
+
+def _thread_request(raw: object) -> ThreadRequest | None:
+    if not isinstance(raw, dict):
+        return None
+    enabled, device = raw.get("enabled"), raw.get("device")
+    if not isinstance(enabled, bool):
+        return None
+    if device is not None and not isinstance(device, str):
+        return None
+    return ThreadRequest(enabled=enabled, device=device)
+
+
+def _bluetooth_request(raw: object) -> BluetoothRequest | None:
+    if not isinstance(raw, dict):
+        return None
+    adapter = raw.get("adapter")
+    if isinstance(adapter, bool) or not isinstance(adapter, int):
+        return None
+    return BluetoothRequest(adapter=adapter)
+
+
+def read_last_request(update_dir: Path) -> RadiosRequestRecord | None:
+    """Reads back `request_radios`'s own copy of the request it sent -
+    never the sidecar's `radios-request.json`, which the sidecar consumes
+    and which `_pending` alone keys on. Parses as defensively as
+    `read_radios_state`: a malformed half reads as `None` for that half,
+    not as a reason to discard the whole record."""
+    try:
+        raw = json.loads((update_dir / LAST_REQUEST_FILE).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(raw, dict):
+        return None
+    request_id = raw.get("id")
+    if not isinstance(request_id, str) or not request_id:
+        return None
+    return RadiosRequestRecord(
+        id=request_id,
+        thread=_thread_request(raw.get("thread")),
+        bluetooth=_bluetooth_request(raw.get("bluetooth")),
     )
 
 
@@ -218,4 +272,13 @@ def request_radios(
     temp = update_dir / "radios-request.json.tmp"
     temp.write_text(json.dumps(body), encoding="utf-8")
     os.replace(temp, update_dir / "radios-request.json")
+    try:
+        last_temp = update_dir / (LAST_REQUEST_FILE + ".tmp")
+        last_temp.write_text(json.dumps(body), encoding="utf-8")
+        os.replace(last_temp, update_dir / LAST_REQUEST_FILE)
+    except OSError:
+        # The request is already on its way to the sidecar; this copy only
+        # improves a later message (design section 3), so a failure to
+        # write it must not fail the request itself.
+        pass
     return job_id
