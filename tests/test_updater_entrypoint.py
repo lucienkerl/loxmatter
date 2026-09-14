@@ -574,3 +574,203 @@ def test_a_timed_out_radios_worker_reports_its_own_limit(tmp_path: Path) -> None
     assert result.returncode == 0, result.stderr
     assert time.monotonic() - started < 10
     assert "radios.sh exceeded 1s and was killed" in result.stderr, result.stderr
+
+
+# ---------------------------------------------------------------------------
+# The watchdog job (design "Thread setup without handwork", 2026-09-14,
+# section 4.3): keeps otbr's own restart-on-death check running every
+# WATCHDOG_INTERVAL_SECONDS, without a crontab line on the host.
+# ---------------------------------------------------------------------------
+
+
+def _fake_sleep_terminating_after(tmp_path: Path, calls: int) -> Path:
+    """A stand-in for the loop's own pacing `sleep 2` (the last statement
+    of each pass) that, after being invoked `calls` times, sends its OWN
+    parent - entrypoint.sh itself - a SIGTERM and exits, instead of
+    actually sleeping.
+
+    This is what bounds a multi-pass test to an exact number of passes
+    without an infinite loop or an external kill sent at some polled,
+    approximate moment: entrypoint.sh already has a trap that turns a
+    received SIGTERM into `terminated=1` and a clean exit (see
+    test_sigterm_is_forwarded_to_the_running_worker above) - reusing that
+    exact, already-tested path is smaller than adding a bounded-pass-count
+    option to production code just to make two or three passes observable
+    from a test."""
+    counter = tmp_path / "sleep-calls"
+    counter.write_text("", encoding="utf-8")
+    return _script(
+        tmp_path,
+        "sleep",
+        f'printf "x" >> "{counter}"\n'
+        f'count=$(wc -c < "{counter}")\n'
+        f'[ "$count" -ge {calls} ] && kill -TERM "$PPID"\n'
+        "exit 0\n",
+    )
+
+
+def _run_until_self_terminated(
+    tmp_path: Path, worker: Path, path_prefix: Path, **env_overrides: str
+) -> subprocess.CompletedProcess[str]:
+    """Like `_run`, but without LOOP_ONCE - the loop is expected to end on
+    its own, via the fake `sleep` on PATH (see
+    `_fake_sleep_terminating_after`)."""
+    env = {**os.environ, "WORKER": str(worker), **env_overrides}
+    env.pop("LOOP_ONCE", None)
+    env["PATH"] = f"{path_prefix}:{env['PATH']}"
+    return subprocess.run(
+        ["sh", str(SCRIPT)],
+        cwd=str(tmp_path),
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=20,
+        check=False,
+    )
+
+
+def test_the_watchdog_worker_runs_after_the_radios_worker_in_one_pass(tmp_path: Path) -> None:
+    """Fault to prove it: remove the watchdog worker call from the loop."""
+    order = tmp_path / "order.log"
+    update = _script(tmp_path, "update.sh", f'echo update >> "{order}"')
+    radios = _script(tmp_path, "radios.sh", f'echo radios >> "{order}"')
+    watchdog = _script(tmp_path, "watchdog.sh", f'echo watchdog >> "{order}"')
+
+    result = _run(
+        tmp_path,
+        update,
+        RADIOS_WORKER=str(radios),
+        WATCHDOG_WORKER=str(watchdog),
+        WORKER_TIMEOUT_SECONDS="5",
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert order.read_text().split() == ["update", "radios", "watchdog"]
+
+
+def test_the_first_pass_runs_the_watchdog(tmp_path: Path) -> None:
+    """No prior start recorded - `watchdog_last_start` is empty - so the
+    very first pass runs it, same as the update and radios workers."""
+    update = _script(tmp_path, "update.sh", "exit 0")
+    watchdog = _script(tmp_path, "watchdog.sh", "exit 0")
+
+    result = _run(tmp_path, update, WATCHDOG_WORKER=str(watchdog), WORKER_TIMEOUT_SECONDS="5")
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_a_failing_watchdog_worker_does_not_end_the_loop(tmp_path: Path) -> None:
+    update = _script(tmp_path, "update.sh", "exit 0")
+    watchdog = _script(tmp_path, "watchdog.sh", "exit 3")
+
+    result = _run(tmp_path, update, WATCHDOG_WORKER=str(watchdog), WORKER_TIMEOUT_SECONDS="5")
+
+    assert result.returncode == 0, result.stderr
+    assert "exceeded" not in result.stderr, result.stderr
+
+
+def test_a_missing_watchdog_worker_is_skipped_quietly(tmp_path: Path) -> None:
+    update = _script(tmp_path, "update.sh", "exit 0")
+
+    result = _run(
+        tmp_path,
+        update,
+        WATCHDOG_WORKER=str(tmp_path / "absent.sh"),
+        WORKER_TIMEOUT_SECONDS="5",
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "absent.sh" not in result.stderr
+
+
+def test_the_watchdog_worker_runs_under_its_own_300_s_limit(tmp_path: Path) -> None:
+    log = tmp_path / "timeout-calls.log"
+    _fake_timeout_logging_to(log, tmp_path)
+    update = _script(tmp_path, "update.sh", "exit 0")
+    watchdog = _script(tmp_path, "watchdog.sh", "exit 0")
+
+    result = _run(tmp_path, update, path_prefix=tmp_path, WATCHDOG_WORKER=str(watchdog))
+
+    assert result.returncode == 0, result.stderr
+    calls = log.read_text(encoding="utf-8").splitlines()
+    assert calls[-1] == f"300 {watchdog}", calls
+
+
+def test_the_watchdog_worker_limit_is_configurable_on_its_own(tmp_path: Path) -> None:
+    log = tmp_path / "timeout-calls.log"
+    _fake_timeout_logging_to(log, tmp_path)
+    update = _script(tmp_path, "update.sh", "exit 0")
+    watchdog = _script(tmp_path, "watchdog.sh", "exit 0")
+
+    result = _run(
+        tmp_path,
+        update,
+        path_prefix=tmp_path,
+        WATCHDOG_WORKER=str(watchdog),
+        WATCHDOG_WORKER_TIMEOUT_SECONDS="20",
+    )
+
+    assert result.returncode == 0, result.stderr
+    calls = log.read_text(encoding="utf-8").splitlines()
+    assert calls[-1] == f"20 {watchdog}", calls
+
+
+def test_a_timed_out_watchdog_worker_reports_its_own_limit(tmp_path: Path) -> None:
+    """With the real `timeout`: the watchdog worker is killed at its own
+    limit, and the message names that limit, not the update's."""
+    update = _script(tmp_path, "update.sh", "exit 0")
+    watchdog = _script(tmp_path, "watchdog.sh", "sleep 30")
+
+    started = time.monotonic()
+    result = _run(
+        tmp_path,
+        update,
+        WATCHDOG_WORKER=str(watchdog),
+        WORKER_TIMEOUT_SECONDS="5",
+        WATCHDOG_WORKER_TIMEOUT_SECONDS="1",
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert time.monotonic() - started < 10
+    assert "watchdog.sh exceeded 1s and was killed" in result.stderr, result.stderr
+
+
+def test_the_watchdog_does_not_run_again_before_its_interval(tmp_path: Path) -> None:
+    """Two passes close together in real time, well inside the default 60s
+    WATCHDOG_INTERVAL_SECONDS: the first runs the watchdog, the second does
+    not, because not enough wall-clock time has passed since the first
+    start. Fault to prove it: drop the interval check entirely."""
+    order = tmp_path / "order.log"
+    update = _script(tmp_path, "update.sh", "exit 0")
+    watchdog = _script(tmp_path, "watchdog.sh", f'echo watchdog >> "{order}"')
+    _fake_sleep_terminating_after(tmp_path, calls=2)
+
+    result = _run_until_self_terminated(
+        tmp_path,
+        update,
+        path_prefix=tmp_path,
+        WATCHDOG_WORKER=str(watchdog),
+        WORKER_TIMEOUT_SECONDS="5",
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert order.read_text().split() == ["watchdog"]
+
+
+def test_the_watchdog_runs_every_pass_when_the_interval_is_zero(tmp_path: Path) -> None:
+    order = tmp_path / "order.log"
+    update = _script(tmp_path, "update.sh", "exit 0")
+    watchdog = _script(tmp_path, "watchdog.sh", f'echo watchdog >> "{order}"')
+    _fake_sleep_terminating_after(tmp_path, calls=2)
+
+    result = _run_until_self_terminated(
+        tmp_path,
+        update,
+        path_prefix=tmp_path,
+        WATCHDOG_WORKER=str(watchdog),
+        WORKER_TIMEOUT_SECONDS="5",
+        WATCHDOG_INTERVAL_SECONDS="0",
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert order.read_text().split() == ["watchdog", "watchdog"]
