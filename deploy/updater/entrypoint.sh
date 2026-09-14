@@ -269,7 +269,11 @@ while [ "$terminated" -eq 0 ]; do
   # right after one.
   if [ -x "$WATCHDOG_WORKER" ]; then
     watchdog_now="$(date +%s)"
+    # A negative difference is a clock that stepped backwards (a Pi has no
+    # real-time clock and NTP may correct it later): it counts as due, or
+    # the watchdog would stay silent for as long as the step was large.
     if [ -z "$watchdog_last_start" ] \
+      || [ "$((watchdog_now - watchdog_last_start))" -lt 0 ] \
       || [ "$((watchdog_now - watchdog_last_start))" -ge "$WATCHDOG_INTERVAL_SECONDS" ]; then
       watchdog_last_start="$watchdog_now"
       run_worker "$WATCHDOG_WORKER" "$WATCHDOG_WORKER_TIMEOUT_SECONDS"

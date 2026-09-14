@@ -774,3 +774,36 @@ def test_the_watchdog_runs_every_pass_when_the_interval_is_zero(tmp_path: Path) 
 
     assert result.returncode == 0, result.stderr
     assert order.read_text().split() == ["watchdog", "watchdog"]
+
+
+def test_a_clock_that_steps_backwards_does_not_silence_the_watchdog(tmp_path: Path) -> None:
+    """A Pi has no real-time clock; NTP can step it backwards after the
+    first watchdog start. The second pass reads an epoch a day earlier than
+    the first: a plain "at least the interval since the last start" test
+    would stay false until the clock caught up again.
+
+    Fault to prove it: drop the negative-difference branch in entrypoint.sh."""
+    order = tmp_path / "order.log"
+    update = _script(tmp_path, "update.sh", "exit 0")
+    watchdog = _script(tmp_path, "watchdog.sh", f'echo watchdog >> "{order}"')
+    _fake_sleep_terminating_after(tmp_path, calls=2)
+    counter = tmp_path / "date-calls"
+    fake_date = tmp_path / "date"
+    fake_date.write_text(
+        "#!/bin/sh\n"
+        f'n=$(cat "{counter}" 2>/dev/null || echo 0); echo $((n + 1)) > "{counter}"\n'
+        'if [ "$n" -eq 0 ]; then echo 1757900000; else echo 1757813600; fi\n',
+        encoding="utf-8",
+    )
+    fake_date.chmod(0o755)
+
+    result = _run_until_self_terminated(
+        tmp_path,
+        update,
+        path_prefix=tmp_path,
+        WATCHDOG_WORKER=str(watchdog),
+        WORKER_TIMEOUT_SECONDS="5",
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert order.read_text().split() == ["watchdog", "watchdog"]
