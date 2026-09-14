@@ -2483,7 +2483,7 @@ def test_upkeep_pulls_under_a_600_s_limit(radios):
     bounded = [
         line
         for line in calls.splitlines()
-        if line.startswith("timeout 600 docker compose") and line.endswith(" pull otbr")
+        if line.startswith("timeout 600 docker compose") and line.endswith(" pull --quiet otbr")
     ]
     assert len(bounded) == 1, calls
 
@@ -2510,3 +2510,20 @@ def test_upkeep_uses_an_image_already_on_the_host_without_pulling(radios, pull_s
     assert (state["phase"], state["healthy"]) == ("done", True)
     assert len(_compose(calls, "up", "otbr")) == 1
     assert not (radios.update_dir / "otbr-upkeep-pull-failed-at").exists()
+
+
+def test_upkeep_pulls_and_recreates_without_progress_output(radios):
+    """A pull's progress lines went into radios-log.txt, about 700 for one
+    border router image on the Pi, in a log that keeps its last 2000 lines.
+    Both places that can pull otbr ask Compose to stay quiet.
+
+    Fault to prove it: drop `--quiet` from the upkeep pull, or `--quiet-pull`
+    from apply_thread."""
+    _upkeep(radios)
+    (radios.fake / "compose_image").write_text(NEW_IMAGE)
+    _, calls, _ = radios()
+    pulls = [line for line in calls.splitlines() if " pull " in line and "otbr" in line]
+    assert pulls and all("pull --quiet otbr" in line for line in pulls), calls
+    _, calls, _ = radios()
+    ups = [line for line in calls.splitlines() if "--force-recreate otbr" in line]
+    assert ups and all(" up --quiet-pull " in line for line in ups), calls
