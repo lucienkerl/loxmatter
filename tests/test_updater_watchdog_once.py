@@ -143,3 +143,21 @@ def test_a_short_log_is_left_alone(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stderr
     lines = (update_dir / "otbr-watchdog.log").read_text(encoding="utf-8").splitlines()
     assert lines == ["hello"]
+
+
+def test_the_watchdog_replaces_the_worker_so_the_timeout_reaches_it(tmp_path: Path) -> None:
+    """entrypoint.sh's `timeout` signals only its direct child. If the
+    worker ran bash as a child, a watchdog run longer than the worker's
+    limit would survive the kill and keep the lock; `exec` makes bash the
+    process the timeout signals.
+
+    Fault to prove it: drop the `exec` in watchdog-once.sh."""
+    update_dir = tmp_path / "update"
+    update_dir.mkdir()
+    script = _watchdog_script(tmp_path, "watchdog.sh", 'ps -o args= -p "$PPID"')
+
+    result = _run(tmp_path, script, update_dir)
+
+    assert result.returncode == 0, result.stderr
+    parent = (update_dir / "otbr-watchdog.log").read_text(encoding="utf-8")
+    assert "watchdog-once" not in parent, parent

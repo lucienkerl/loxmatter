@@ -42,15 +42,20 @@ LOG="$UPDATE_DIR/otbr-watchdog.log"
 [ -f "$SCRIPT" ] || exit 0
 grep -q '^# loxmatter-watchdog: container-ready' "$SCRIPT" || exit 0
 
-bash "$SCRIPT" >>"$LOG" 2>&1
+mkdir -p "$UPDATE_DIR" 2>/dev/null || true
 
 # Keep the log from growing without bound, newest lines kept. A failure
-# here - disk full, an unwritable directory - must never fail this
-# worker: the watchdog having run is what matters, not whether its log
-# got trimmed on this particular pass.
+# here - disk full, an unwritable directory - must never stop the watchdog
+# from running: it having run is what matters, not whether its log got
+# trimmed on this particular pass.
 trimmed="$UPDATE_DIR/otbr-watchdog.log.trimmed"
-if tail -n 2000 "$LOG" >"$trimmed" 2>/dev/null; then
+if [ -f "$LOG" ] && tail -n 2000 "$LOG" >"$trimmed" 2>/dev/null; then
   mv "$trimmed" "$LOG" 2>/dev/null || true
 fi
 
-exit 0
+# Trimmed BEFORE the run, so the run can be the last thing and replace this
+# shell: entrypoint.sh's `timeout` signals only its direct child, and a
+# worst-case watchdog run (every docker call at its limit, twelve waits for
+# the network) is longer than the worker's limit. Run as a grandchild, bash
+# would outlive the kill, keep the lock and go on restarting otbr unseen.
+exec bash "$SCRIPT" >>"$LOG" 2>&1
