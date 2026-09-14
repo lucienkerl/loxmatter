@@ -1,0 +1,203 @@
+name: OTBR image
+
+# Builds the pinned OpenThread border router image (spec
+# docs/superpowers/specs/2026-09-14-thread-setup-without-handwork-design.md,
+# section 3): the same ot-br-posix commit and OTBR_OPTIONS that have been
+# running on the test Pi since 14 September, with RCP restoration compiled
+# in - the official openthread/otbr:latest image lacks it, and a single lost
+# Spinel frame ends otbr-agent. deploy/otbr/source.env is this workflow's one
+# source of truth for the commit, the build option and the resulting tag;
+# ci.yml's release gate reads the same file's tag.
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - deploy/otbr/**
+      - .github/workflows/otbr-image.yml
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  IMAGE: ghcr.io/lucienkerl/loxmatter-otbr
+
+jobs:
+  # Tags are immutable (spec 3.2): if this tag already exists, the build
+  # below would either fail on push or silently do nothing useful. Checking
+  # first lets a rerun of this workflow (or a push that only touches an
+  # unrelated file under deploy/otbr/) end successfully without building.
+  check:
+    runs-on: ubuntu-24.04
+    outputs:
+      tag: ${{ steps.source.outputs.tag }}
+      exists: ${{ steps.check.outputs.exists }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: source
+        run: |
+          set -eu
+          . deploy/otbr/source.env
+          echo "commit=$OT_BR_POSIX_COMMIT" >> "$GITHUB_OUTPUT"
+          echo "options=$OTBR_OPTIONS" >> "$GITHUB_OUTPUT"
+          echo "tag=$OTBR_IMAGE_TAG" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: check
+        env:
+          TAG: ${{ steps.source.outputs.tag }}
+        run: |
+          set -eu
+          if docker buildx imagetools inspect "$IMAGE:$TAG" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  # One native job per architecture (spec 3.2: no cross-compilation, no
+  # QEMU emulation for this one - ot-br-posix's own build is slow enough
+  # natively).
+  build:
+    needs: check
+    if: needs.check.outputs.exists != 'true'
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            platform: linux/amd64
+            arch: amd64
+          - os: ubuntu-24.04-arm
+            platform: linux/arm64
+            arch: arm64
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - id: source
+        run: |
+          set -eu
+          . deploy/otbr/source.env
+          echo "commit=$OT_BR_POSIX_COMMIT" >> "$GITHUB_OUTPUT"
+          echo "options=$OTBR_OPTIONS" >> "$GITHUB_OUTPUT"
+      # The build context: ot-br-posix's own Dockerfile (etc/docker/test/Dockerfile)
+      # expects its repository, submodules included, as the build context -
+      # this is not something loxmatter's own tree can stand in for.
+      - name: Check out ot-br-posix at the pinned commit
+        env:
+          COMMIT: ${{ steps.source.outputs.commit }}
+        run: |
+          set -eu
+          git clone https://github.com/openthread/ot-br-posix.git ot-br-posix
+          cd ot-br-posix
+          git checkout "$COMMIT"
+          git submodule update --init --recursive
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      # Loaded locally first so the RCP-restoration check below can run
+      # against it before anything is pushed - an image failing that check
+      # must never reach the registry under this tag.
+      - name: Build for verification
+        working-directory: ot-br-posix
+        env:
+          OPTIONS: ${{ steps.source.outputs.options }}
+          COMMIT: ${{ steps.source.outputs.commit }}
+        run: |
+          set -eu
+          docker buildx build \
+            --platform "${{ matrix.platform }}" \
+            -f etc/docker/test/Dockerfile \
+            --build-arg BASE_IMAGE=ubuntu:bionic \
+            --build-arg OTBR_OPTIONS="$OPTIONS" \
+            --label org.opencontainers.image.source=https://github.com/openthread/ot-br-posix \
+            --label org.opencontainers.image.revision="$COMMIT" \
+            --label org.opencontainers.image.description="ot-br-posix built with OpenThread RCP restoration ($OPTIONS)" \
+            -t otbr-verify:local \
+            --load \
+            .
+      # "Trying to recover" is logged only from the RCP-restoration retry
+      # path (research behind spec 3); its presence in the built binary is
+      # the proof that OTBR_OPTIONS above actually took effect, not just
+      # that the build succeeded.
+      - name: Verify RCP restoration is compiled in
+        run: |
+          set -eu
+          count="$(docker run --rm --entrypoint grep otbr-verify:local -c "Trying to recover" /usr/sbin/otbr-agent)"
+          [ "$count" -ge 1 ]
+      # Same Dockerfile, same build args as the verification build above:
+      # this re-run is a cache hit on every layer, it only re-executes the
+      # export. Cannot be combined with the --load build above into one
+      # invocation - buildx cannot both load an image locally and push by
+      # digest in the same --output.
+      - name: Build and push by digest
+        id: push
+        working-directory: ot-br-posix
+        env:
+          OPTIONS: ${{ steps.source.outputs.options }}
+          COMMIT: ${{ steps.source.outputs.commit }}
+        run: |
+          set -eu
+          docker buildx build \
+            --platform "${{ matrix.platform }}" \
+            -f etc/docker/test/Dockerfile \
+            --build-arg BASE_IMAGE=ubuntu:bionic \
+            --build-arg OTBR_OPTIONS="$OPTIONS" \
+            --label org.opencontainers.image.source=https://github.com/openthread/ot-br-posix \
+            --label org.opencontainers.image.revision="$COMMIT" \
+            --label org.opencontainers.image.description="ot-br-posix built with OpenThread RCP restoration ($OPTIONS)" \
+            --metadata-file /tmp/metadata.json \
+            --output type=image,name=$IMAGE,push-by-digest=true,name-canonical=true,push=true \
+            .
+          digest="$(jq -r '."containerimage.digest"' /tmp/metadata.json)"
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+      - name: Save the digest for the merge job
+        run: |
+          set -eu
+          mkdir -p /tmp/digests
+          echo "${{ steps.push.outputs.digest }}" > "/tmp/digests/${{ matrix.arch }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: digest-${{ matrix.arch }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  # Joins the two per-architecture digests into the one multi-arch tag that
+  # deploy/testhost/docker-compose.yml names.
+  merge:
+    needs: [check, build]
+    if: needs.check.outputs.exists != 'true'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: digest-*
+          path: /tmp/digests
+          merge-multiple: true
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Create the multi-arch tag
+        env:
+          TAG: ${{ needs.check.outputs.tag }}
+        run: |
+          set -eu
+          docker buildx imagetools create -t "$IMAGE:$TAG" \
+            "$IMAGE@$(cat /tmp/digests/amd64)" \
+            "$IMAGE@$(cat /tmp/digests/arm64)"
