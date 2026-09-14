@@ -512,33 +512,35 @@ verify_thread() {
 # The file is checked before `exec 9<`: a redirection that fails on `exec`
 # ends a POSIX shell outright.
 WATCHDOG_LOCK_TRIED=false
+# Who the lock's log lines speak for: a card request, or the otbr upkeep.
+LOG_SUBJECT="radios request"
 take_watchdog_lock() {
   [ "$WATCHDOG_LOCK_TRIED" = false ] || return 0
   WATCHDOG_LOCK_TRIED=true
   if ! command -v flock >/dev/null 2>&1; then
-    log "radios request $JOB_ID: no flock - changing Thread without the otbr watchdog's lock"
+    log "$LOG_SUBJECT $JOB_ID: no flock - changing Thread without the otbr watchdog's lock"
     return 0
   fi
   if [ ! -f "$WATCHDOG_LOCK" ] || [ ! -r "$WATCHDOG_LOCK" ]; then
-    log "radios request $JOB_ID: cannot open $WATCHDOG_LOCK - changing Thread without the otbr watchdog's lock"
+    log "$LOG_SUBJECT $JOB_ID: cannot open $WATCHDOG_LOCK - changing Thread without the otbr watchdog's lock"
     return 0
   fi
   exec 9<"$WATCHDOG_LOCK"
   if flock -n 9; then
-    log "radios request $JOB_ID: holding the otbr watchdog's lock"
+    log "$LOG_SUBJECT $JOB_ID: holding the otbr watchdog's lock"
     return 0
   fi
-  log "radios request $JOB_ID: the otbr watchdog is running - waiting up to ${LOCK_WAIT}s for its lock"
+  log "$LOG_SUBJECT $JOB_ID: the otbr watchdog is running - waiting up to ${LOCK_WAIT}s for its lock"
   lock_started="$(date +%s)"
   while [ $(($(date +%s) - lock_started)) -lt "$LOCK_WAIT" ]; do
     refresh_heartbeat
     sleep "$POLL_SECONDS"
     if flock -n 9; then
-      log "radios request $JOB_ID: holding the otbr watchdog's lock after $(($(date +%s) - lock_started))s"
+      log "$LOG_SUBJECT $JOB_ID: holding the otbr watchdog's lock after $(($(date +%s) - lock_started))s"
       return 0
     fi
   done
-  log "radios request $JOB_ID: the otbr watchdog still held its lock after ${LOCK_WAIT}s - changing Thread without it"
+  log "$LOG_SUBJECT $JOB_ID: the otbr watchdog still held its lock after ${LOCK_WAIT}s - changing Thread without it"
   return 0
 }
 
@@ -712,15 +714,30 @@ otbr_upkeep() {
 
   # Pull first, while the old container keeps running: a recreate that has
   # to download its image leaves Thread down for as long as the download
-  # takes, and one that cannot download it leaves Thread down for good. A
-  # failed pull (offline, a private package) is no attempt - nothing was
+  # takes, and one that cannot download it leaves Thread down for good.
+  #
+  # An image already on the host is used as it is, without a pull. That is
+  # also the only way a local-only OTBR_IMAGE (.env.example documents the
+  # override) can ever be applied: Compose 2.27 `pull` on a tag no registry
+  # has exits 18, "pull access denied", measured 14 September 2026.
+  #
+  # A pull and the job never share a pass. A pass must end inside
+  # entrypoint.sh's 900 s for the radios worker, and the two together do
+  # not: the pull up to PULL_TIMEOUT (600 s), the watchdog's lock up to
+  # LOCK_WAIT, then apply and verify, forward and again in the rollback, up
+  # to 2 x THREAD_TIMEOUT and the recreates. A pass killed in its rollback
+  # would leave otbr on the failing image with the target marked tried. So
+  # a successful pull ends the pass, and the next one, two seconds later,
+  # finds the image on the host and runs the job with the whole budget.
+  #
+  # A failed pull (offline, a private package) is no attempt - nothing was
   # changed - and is tried again after PULL_RETRY, not every pass. The wait
   # belongs to the target whose pull failed ("<epoch> <target>" in the
   # file): a different target - a release that fixes a broken tag - is
-  # pulled at once. Bounded well under entrypoint.sh's 900 s for the radios
-  # worker: a pull killed from outside would record no failure and start
-  # again on the next pass.
-  if [ "$image_changed" = true ]; then
+  # pulled at once. The pull is bounded well under the 900 s: a pull killed
+  # from outside would record no failure and start again on the next pass.
+  if [ "$image_changed" = true ] \
+    && ! timeout "$PROBE_TIMEOUT" docker image inspect "$desired_image" >/dev/null 2>&1; then
     if [ -f "$UPKEEP_PULL_FAILED" ]; then
       failed_at="$(sed -n '1s/ .*//p' "$UPKEEP_PULL_FAILED")"
       failed_target="$(sed -n '1s/^[^ ]* //p' "$UPKEEP_PULL_FAILED")"
@@ -749,6 +766,8 @@ otbr_upkeep() {
     if wait "$pull_pid"; then
       rm -f "$UPKEEP_PULL_FAILED"
       refresh_heartbeat
+      log "radios upkeep: pulled $desired_image - otbr is recreated from it on the next pass"
+      return 0
     else
       printf '%s %s\n' "$(date +%s)" "$target" > "$UPKEEP_PULL_FAILED"
       refresh_heartbeat
@@ -768,6 +787,7 @@ otbr_upkeep() {
   printf '%s\n' "$target" > "$UPKEEP_TRIED"
   log "radios upkeep $JOB_ID: otbr runs $actual, Compose asks for $desired - recreating otbr"
   write_state apply_thread ""
+  LOG_SUBJECT="radios upkeep"
   take_watchdog_lock
   # FAILED_STEP and ERROR_KEY, the names the request path below uses too.
   FAILED_STEP=""
