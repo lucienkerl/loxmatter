@@ -38,6 +38,7 @@ from loxmatter.profiles.relevance import (
 from loxmatter.zigbee.translate import (
     _SENTINELS,
     BLOCKED_CLUSTER_IDS,
+    TRADFRI_MOTION_SENSOR_MODEL,
     DeviceFacts,
     EndpointFacts,
     accepted_commands,
@@ -107,6 +108,31 @@ def _ias(*, zone_type: int, zone_status: int) -> DeviceFacts:
 def _state_of(*, zone_type: int, zone_status: int) -> object:
     """The BooleanState value the IAS edge produces for a given reading."""
     return build_snapshot(_ias(zone_type=zone_type, zone_status=zone_status)).attributes["1/69/0"]
+
+
+def _onoff_sensor(*, value: bool | None) -> DeviceFacts:
+    """The classic IKEA TRADFRI motion sensor (E1525, E1745): no IAS Zone
+    cluster and no OccupancySensing cluster at all - `OnOff` is its OUTPUT
+    cluster, never its input one, so it carries no `in_cluster_ids` here.
+    `value=None` is a sensor that has never sent a command yet."""
+    attributes: dict[tuple[int, int], object] = {} if value is None else {(0x0006, 0x0000): value}
+    return DeviceFacts(
+        ieee="d0:cf:5e:ff:fe:71:a3:19",
+        manufacturer="IKEA of Sweden",
+        model=TRADFRI_MOTION_SENSOR_MODEL,
+        is_mains_powered=False,
+        available=True,
+        quirk_applied=True,
+        endpoints=(
+            EndpointFacts(
+                endpoint=1,
+                profile_id=ZHA_PROFILE,
+                device_type=0x0850,
+                in_cluster_ids=frozenset(),
+                attributes=attributes,
+            ),
+        ),
+    )
 
 
 # --------------------------------------------------------------- snapshot --
@@ -519,6 +545,63 @@ def test_an_unmapped_ias_zone_type_passes_the_raw_bitmap_through():
     snapshot = build_snapshot(_ias(zone_type=0x002D, zone_status=0b01))
     assert snapshot.attributes["1/1280/2"] == 0b01
     assert "1/69/0" not in snapshot.attributes
+
+
+# --------------------------------- the classic TRADFRI motion sensor (OnOff) --
+
+
+def test_the_classic_tradfri_motion_sensor_reports_through_its_onoff_cluster():
+    """This device has no IAS Zone cluster and no OccupancySensing cluster -
+    it is the OnOff cluster's CLIENT, and sends `on`/`off` the way it would
+    to a bound lamp (`zhaquirks/ikea/motion.py`, `motionzha.py`).
+    `configure.py` writes what it sends into that cluster's own attribute
+    cache at `(6, 0)`; this is the only place the value exists to be read
+    from.
+
+    Fault to prove it: read `(6, 0)` as an ordinary OnOff light instead."""
+    assert build_snapshot(_onoff_sensor(value=True)).attributes["1/1030/0"] == 1
+    assert build_snapshot(_onoff_sensor(value=False)).attributes["1/1030/0"] == 0
+
+
+def test_the_classic_tradfri_motion_sensor_is_typed_as_an_occupancy_sensor():
+    """Its ZCL device type says only `ON_OFF_SENSOR` (0x0850), which is also
+    what an IKEA remote or switch declares - the model string, not the
+    device type, is what tells this one apart (design 11's remotes-and-
+    buttons non-goal is why device type alone must never make this call).
+
+    Fault to prove it: type it from `(profile_id, device_type)` instead."""
+    snapshot = build_snapshot(_onoff_sensor(value=True))
+    assert snapshot.attributes["1/29/0"] == [{"0": 0x0107, "1": 1}]  # OccupancySensor
+
+
+def test_the_classic_tradfri_motion_sensors_raw_onoff_attribute_is_not_also_exported():
+    """The same physical fact must not land in Loxone twice under two
+    names - one a plausible-looking "turn the motion sensor on" light
+    control, which this device cannot honour at all.
+
+    Fault to prove it: leave the generic passthrough's `(6, 0)` row in."""
+    snapshot = build_snapshot(_onoff_sensor(value=True))
+    assert "1/6/0" not in snapshot.attributes
+
+
+def test_a_tradfri_motion_sensor_that_has_never_reported_writes_no_path():
+    """The one rule `build_snapshot` never breaks: a signal with no value
+    yet is left out entirely, not written as `None` or a guessed default.
+
+    Fault to prove it: default to `False` when the attribute is absent."""
+    snapshot = build_snapshot(_onoff_sensor(value=None))
+    assert "1/1030/0" not in snapshot.attributes
+
+
+def test_a_regular_onoff_light_is_not_mistaken_for_the_tradfri_motion_sensor():
+    """The model string is IKEA's TRADFRI motion sensor's alone - a lamp
+    with an ordinary in-cluster OnOff must keep reading as a light.
+
+    Fault to prove it: key the whole rule off the OnOff cluster's presence
+    rather than off the model string."""
+    snapshot = build_snapshot(_lamp())
+    assert snapshot.attributes["1/6/0"] is True
+    assert "1/1030/0" not in snapshot.attributes
 
 
 # -------------------------------------------------- accepted command lists --

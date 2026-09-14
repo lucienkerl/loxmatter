@@ -73,6 +73,7 @@ from loxmatter.zigbee.source import ZigbeeSource
 
 LAMP = "00:12:4b:00:1c:a1:b2:c3"
 SENSOR = "00:15:8d:00:02:aa:bb:cc"
+TRADFRI_MOTION_SENSOR = "d0:cf:5e:ff:fe:71:a3:19"
 
 ON_OFF = 0x0006
 LEVEL = 0x0008
@@ -205,6 +206,31 @@ def sensor(
     )
 
 
+def tradfri_motion_sensor(ieee: str = TRADFRI_MOTION_SENSOR, **kwargs: Any) -> FakeDevice:
+    """The classic IKEA TRADFRI motion sensor (E1525, E1745): no IAS Zone
+    cluster and no OccupancySensing cluster at all - `OnOff` is its OUTPUT
+    cluster, and reporting motion means sending `on`/`off`/`onWithTimedOff`
+    the way it would to a bound lamp (`zhaquirks/ikea/motion.py`,
+    `motionzha.py`). Its ZCL device type, `ON_OFF_SENSOR` (0x0850), is also
+    what an ordinary IKEA remote or switch declares - the model string is
+    what this whole feature is keyed on instead."""
+    return FakeDevice(
+        ieee,
+        manufacturer="IKEA of Sweden",
+        model="TRADFRI motion sensor",
+        node_desc=FakeNodeDescriptor(is_mains_powered=False),
+        endpoints=[
+            FakeEndpoint(
+                1,
+                profile_id=0x0104,
+                device_type=0x0850,
+                out_clusters=[FakeCluster(ON_OFF, declared=[0x0000], commands=ON_OFF_COMMANDS)],
+            )
+        ],
+        **kwargs,
+    )
+
+
 def on_a_network(device: FakeDevice) -> FakeApplication:
     """Gives a device the application it needs: the coordinator's IEEE for
     the CIE write, and `request_priority` for the whole pass."""
@@ -220,6 +246,10 @@ def store(tmp_path: Path):
 
 def cluster_of(device: FakeDevice, cluster_id: int, endpoint_id: int = 1) -> FakeCluster:
     return device.endpoints[endpoint_id].in_clusters[cluster_id]
+
+
+def out_cluster_of(device: FakeDevice, cluster_id: int, endpoint_id: int = 1) -> FakeCluster:
+    return device.endpoints[endpoint_id].out_clusters[cluster_id]
 
 
 async def settle() -> None:
@@ -403,6 +433,89 @@ async def test_an_enroll_request_from_the_device_is_answered(store) -> None:
     answers = [payload for command_id, payload in ias.sent if command_id == 0]
     assert len(answers) == before + 1, "the enrolment request went unanswered"
     assert answers[-1] == {"enroll_response_code": 0, "zone_id": 0, "tsn": 42}
+
+
+# ---------------------------------- the classic TRADFRI motion sensor (OnOff) --
+
+
+async def test_the_classic_tradfri_motion_sensors_onoff_cluster_is_bound(store) -> None:
+    """WITHOUT THIS THE SENSOR NEVER REPORTS ANYTHING: it has no IAS Zone
+    cluster to enrol and no OccupancySensing cluster to configure - binding
+    its OUTPUT OnOff cluster is the whole of what tells it to send its
+    `on`/`off` commands to the coordinator instead of nowhere at all.
+
+    Fault to prove it: only ever bind `in_clusters`."""
+    device = tradfri_motion_sensor()
+    on_a_network(device)
+
+    await configure_device(device, store=store)
+
+    assert out_cluster_of(device, ON_OFF).binds == 1
+
+
+async def test_an_onoff_command_from_the_tradfri_motion_sensor_updates_the_cache(store) -> None:
+    """This is HOW motion arrives: an unsolicited client command on the
+    OUTPUT cluster, never an attribute report - the same shape as an IAS
+    alarm, on a different cluster.
+
+    Fault to prove it: only listen for reports."""
+    device = tradfri_motion_sensor()
+    on_a_network(device)
+    await configure_device(device, store=store)
+
+    on_off = out_cluster_of(device, ON_OFF)
+    heard: list[Any] = []
+    on_off.on_event("attribute_updated", heard.append)
+
+    on_off.receive_command(1, ())  # `on`
+    assert on_off.get(0x0000) is True
+    assert heard, "nothing downstream was told the sensor fired"
+
+    on_off.receive_command(0, ())  # `off`
+    assert on_off.get(0x0000) is False
+
+
+async def test_on_with_timed_off_counts_as_motion_too(store) -> None:
+    """The command IKEA's own firmware sends for a detection with a
+    built-in auto-off, 0x42, must set the same value plain `on` does.
+
+    Fault to prove it: handle only commands 0 and 1."""
+    device = tradfri_motion_sensor()
+    on_a_network(device)
+    await configure_device(device, store=store)
+
+    out_cluster_of(device, ON_OFF).receive_command(0x42, ())
+
+    assert out_cluster_of(device, ON_OFF).get(0x0000) is True
+
+
+async def test_a_lamp_is_never_mistaken_for_the_tradfri_motion_sensor(store) -> None:
+    """The model string is IKEA's TRADFRI motion sensor's alone - binding
+    every device's output clusters by pattern rather than by model would
+    reach into remotes and switches this bridge does not support at all
+    (design 11).
+
+    Fault to prove it: bind whichever cluster sits at `endpoint.out_clusters`
+    regardless of model."""
+    device = lamp()
+    on_a_network(device)
+
+    await configure_device(device, store=store)
+
+    assert device.endpoints[1].out_clusters == {}
+
+
+async def test_a_bind_failure_on_the_onoff_sensor_cluster_is_swallowed(store) -> None:
+    """A device that cannot be reached at join must not take the rest of
+    the configuration pass down with it; it gets another chance at the next
+    full rejoin.
+
+    Fault to prove it: let the bind's exception propagate."""
+    device = tradfri_motion_sensor()
+    on_a_network(device)
+    out_cluster_of(device, ON_OFF).bind_error = DeliveryError("no ack")
+
+    await configure_device(device, store=store)  # must not raise
 
 
 async def test_current_values_are_read_uncached_at_the_end(store) -> None:

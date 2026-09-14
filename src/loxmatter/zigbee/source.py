@@ -102,7 +102,13 @@ from loxmatter.zigbee.configure import (
     watch_for_wakeups,
 )
 from loxmatter.zigbee.quirks import ensure_quirks_loaded
-from loxmatter.zigbee.translate import DeviceFacts, EndpointFacts, build_snapshot, rename_payload
+from loxmatter.zigbee.translate import (
+    TRADFRI_MOTION_SENSOR_MODEL,
+    DeviceFacts,
+    EndpointFacts,
+    build_snapshot,
+    rename_payload,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -214,6 +220,11 @@ ATTRIBUTE_EVENTS: Final[tuple[str, ...]] = (
 # colour controls depend on - see `_read_colour_capabilities`.
 _COLOR_CONTROL_CLUSTER: Final = 0x0300
 _COLOR_CAPABILITIES_ATTRIBUTE: Final = 0x400A
+
+# The classic TRADFRI motion sensor's OnOff cluster - its OUTPUT cluster,
+# never its input one. See `_endpoint_facts` and `_listen_to_device`.
+_TRADFRI_ONOFF_CLUSTER: Final = 0x0006
+_TRADFRI_ONOFF_ATTRIBUTE: Final = 0x0000
 
 # A ZCL status of 0 is SUCCESS; everything else is a device that was reached
 # and refused.
@@ -1312,6 +1323,23 @@ class ZigbeeSource:
                     continue
                 if value is not None:
                     attributes[(cluster_id, attribute_id)] = value
+        # The classic TRADFRI motion sensor (E1525, E1745) has no IAS Zone
+        # cluster and no OccupancySensing cluster at all - its OnOff cluster
+        # is its OUTPUT cluster, and `configure.py` is what turns the
+        # `on`/`off` commands it sends into that cluster's own attribute
+        # cache. Gated on the MODEL, never merged for every device's
+        # `out_clusters` in general: that would also pick up an ordinary
+        # remote's or switch's button presses, which this bridge does not
+        # support (design 11).
+        if getattr(getattr(endpoint, "device", None), "model", None) == TRADFRI_MOTION_SENSOR_MODEL:
+            onoff = endpoint.out_clusters.get(_TRADFRI_ONOFF_CLUSTER)
+            if onoff is not None:
+                try:
+                    value = onoff.get(_TRADFRI_ONOFF_ATTRIBUTE)
+                except KeyError:
+                    value = None
+                if value is not None:
+                    attributes[(_TRADFRI_ONOFF_CLUSTER, _TRADFRI_ONOFF_ATTRIBUTE)] = value
         return EndpointFacts(
             endpoint=endpoint.endpoint_id,
             # Both are `None` until the endpoint has been interviewed. 0
@@ -1532,16 +1560,35 @@ class ZigbeeSource:
         self._release_device_listeners(address)
         self._listening[address] = device
         unsubscribers = self._unsubscribers.setdefault(address, [])
-        for endpoint in device.non_zdo_endpoints:
-            for cluster in endpoint.in_clusters.values():
-                for event_name in ATTRIBUTE_EVENTS:
-                    # The default argument binds this device's address per
-                    # loop iteration instead of reading the name from the
-                    # enclosing scope too late.
-                    def on_attribute_event(_event: Any, address: str = address) -> None:
-                        queue.put_nowait(address)
+        clusters = [
+            cluster
+            for endpoint in device.non_zdo_endpoints
+            for cluster in endpoint.in_clusters.values()
+        ]
+        if getattr(device, "model", None) == TRADFRI_MOTION_SENSOR_MODEL:
+            # The classic TRADFRI motion sensor's OnOff cluster is its
+            # OUTPUT cluster: `configure.py`'s listener turns its `on`/`off`
+            # commands into an `attribute_updated` event on THAT cluster
+            # object, and without a subscription here that event wakes
+            # nothing downstream at all. Gated on the model, for the same
+            # reason `_endpoint_facts` is: an ordinary remote's or switch's
+            # output OnOff cluster is explicitly not this bridge's job
+            # (design 11).
+            clusters += [
+                cluster
+                for endpoint in device.non_zdo_endpoints
+                for cluster in endpoint.out_clusters.values()
+                if cluster.cluster_id == _TRADFRI_ONOFF_CLUSTER
+            ]
+        for cluster in clusters:
+            for event_name in ATTRIBUTE_EVENTS:
+                # The default argument binds this device's address per
+                # loop iteration instead of reading the name from the
+                # enclosing scope too late.
+                def on_attribute_event(_event: Any, address: str = address) -> None:
+                    queue.put_nowait(address)
 
-                    unsubscribers.append(cluster.on_event(event_name, on_attribute_event))
+                unsubscribers.append(cluster.on_event(event_name, on_attribute_event))
 
     async def _dispatch_loop(self, queue: asyncio.Queue[str]) -> None:
         while True:
