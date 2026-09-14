@@ -4510,7 +4510,7 @@ async def test_the_device_grid_is_multi_column(api):
     client, _, _ = api
     css = (await client.get("/static/style.css")).text
     assert "auto-fill" in css
-    assert "minmax(260px" in css
+    assert "minmax(300px" in css
 
 
 async def test_device_tiles_in_the_same_row_stretch_to_equal_height(api):
@@ -6055,6 +6055,19 @@ async def test_the_counter_and_the_cross_appear_only_with_a_query(api):
     assert 'x-ref="deviceSearchInput"' in field
     assert "$refs.deviceSearchInput.focus()" in field
     assert 'aria-live="polite"' in field
+
+
+async def test_the_sidebar_explains_itself_when_no_device_has_a_room(api):
+    """Without a single room assigned, the sidebar below the search bar
+    would otherwise be empty space - reported directly from real use as
+    looking broken rather than intentional. A hint explains why and what
+    to do about it instead. The standard fixture device carries no room,
+    so this is the default state, not a contrived one."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+    room_bar = page.split('class="room-bar"', 1)[1].split("</div>", 1)[0]
+    assert "web.devices.room_bar_empty_hint" in room_bar
+    assert 'x-show="!hasAnyRoom()"' in room_bar
 
 
 async def test_the_room_bar_has_no_horizontal_spacer_trick_any_more(api):

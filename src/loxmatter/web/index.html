@@ -957,6 +957,17 @@
               </template>
             </span>
           </template>
+          <!-- Without a single room assigned anywhere, the sidebar below
+             the search bar would otherwise just be empty space - a hint
+             explaining why, and what to do about it, reads better than a
+             gap (reported directly from real use: an empty sidebar column
+             looked broken, not intentional). -->
+          <p
+            class="hint room-bar-hint"
+            x-show="!hasAnyRoom()"
+            x-cloak
+            x-text="t('web.devices.room_bar_empty_hint')"
+          ></p>
         </div>
         <div class="dashboard-main">
 

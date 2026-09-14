@@ -211,7 +211,7 @@ nav.tabs {
 }
 
 main {
-  padding: 1.25rem;
+  padding: 1.5rem 2rem;
   max-width: 960px;
   margin: 0 auto;
 }
@@ -1883,7 +1883,7 @@ footer.hint-block {
  * of the tallest tile in its row. */
 .device-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
   gap: 0.6rem;
   align-items: stretch;
 }
