@@ -63,13 +63,11 @@ A new `radiosThreadLeftOff()` in `app.js` is true when all hold:
 
 `radiosResultKey()` then returns `web.radios.result_failed_thread_off`:
 
-- en: "Thread could not be switched on ({reason}). The previous setting is back,
-  and in it Thread is off: your Thread devices stay unreachable until Thread is
-  running. Try again, or pick a different stick."
-- de: "Thread ließ sich nicht einschalten ({reason}). Die vorherige Einstellung
-  ist wieder aktiv, und darin ist Thread aus: Ihre Thread-Geräte bleiben
-  unerreichbar, bis Thread läuft. Versuchen Sie es erneut oder wählen Sie einen
-  anderen Stick."
+```yaml
+web.radios.result_failed_thread_off:
+  en: "Thread could not be switched on ({reason}). The previous setting is back, and in it Thread is off: your Thread devices stay unreachable until Thread is running. Try again, or pick a different stick."
+  de: "Thread ließ sich nicht einschalten ({reason}). Die vorherige Einstellung ist wieder aktiv, und darin ist Thread aus: Ihre Thread-Geräte bleiben unerreichbar, bis Thread läuft. Versuchen Sie es erneut oder wählen Sie einen anderen Stick."
+```
 
 It renders in the existing `banner danger` result paragraph.
 
@@ -98,13 +96,17 @@ router is being recreated on purpose):
 | true | true | `web.radios.thread_status_running` | `hint` |
 | true | false | `web.radios.thread_status_not_running` | `banner warn` |
 
-- off — en "Thread is off." / de "Thread ist aus."
-- running — en "Thread is on; the border router is running." / de "Thread ist
-  an; der Border Router läuft."
-- not running — en "Thread is switched on, but the border router is not
-  running. Thread devices are unreachable until it runs again." / de "Thread
-  ist eingeschaltet, aber der Border Router läuft nicht. Thread-Geräte sind
-  unerreichbar, bis er wieder läuft."
+```yaml
+web.radios.thread_status_off:
+  en: "Thread is off."
+  de: "Thread ist aus."
+web.radios.thread_status_running:
+  en: "Thread is on; the border router is running."
+  de: "Thread ist an; der Border Router läuft."
+web.radios.thread_status_not_running:
+  en: "Thread is switched on, but the border router is not running. Thread devices are unreachable until it runs again."
+  de: "Thread ist eingeschaltet, aber der Border Router läuft nicht. Thread-Geräte sind unerreichbar, bis er wieder läuft."
+```
 
 `otbr_running` is the container state the sidecar reports on every pass, not a
 Thread network check; the texts say "border router is running" and no more.
