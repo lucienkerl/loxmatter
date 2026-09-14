@@ -8,6 +8,18 @@ people who don't know the code.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Choosing the Thread stick by its stable name works.** The Radios card
+  offers USB sticks by the name that survives a reboot
+  (`/dev/serial/by-id/...`), but the Thread border router could not open a
+  stick given that way and never started: its container does not get
+  devices under that path. The stick is now always handed to it under one
+  fixed name inside the container, whichever name `.env` uses. Nothing
+  changes for an installation that uses `/dev/ttyUSB0`; the new mapping
+  takes effect the next time the border router is recreated, for example by
+  a Thread change on the Radios card.
+
 ## [0.4.0] — 2026-09-14
 
 ### Before you update

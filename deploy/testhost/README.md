@@ -117,7 +117,9 @@ created, and `RADIO_DEVICE`, `RADIO_BAUDRATE` and `BACKBONE_IF` stay
 ineffective.
 
 **Why this was necessary:** `otbr` passes through a real device via `devices: -
-${RADIO_DEVICE}:${RADIO_DEVICE}`. If no radio module is plugged in,
+${RADIO_DEVICE}:/dev/ttyThread` - the stick named in `.env`, under one fixed
+path inside the container, because the privileged `otbr` container does not
+get devices under `/dev/serial/by-id/` (measured on 14 September 2026). If no radio module is plugged in,
 `docker compose up` fails with "error gathering device information" — and
 that's for the *entire* stack, including the two services that never
 needed the module.

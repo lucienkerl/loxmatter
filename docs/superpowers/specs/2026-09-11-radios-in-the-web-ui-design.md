@@ -434,3 +434,23 @@ after a real failure is covered only by the automatic tests.
    (`/dev` mounted read-write plus `device_cgroup_rules` for the tty
    majors), which widens what a compromised bridge can reach; the Zigbee row
    joins this card and the Thread stick must be excluded from it.
+
+## Correction, 14 September 2026: a by-id path in the privileged otbr container
+
+The measurement in section 2 ("`docker run --device <by-id path>:<by-id path>`
+works") was taken with an unprivileged container. `otbr` runs with
+`privileged: true`, and there it does not hold. Measured on the test Pi on
+14 September 2026:
+
+- `--privileged --device <by-id>:<by-id>` leaves the path missing inside the
+  container. otbr-agent then stops at
+  `Init() at hdlc_interface.cpp:154: No such file or directory`.
+- `--privileged --device <by-id>:/dev/ttyThread` gives `/dev/ttyThread` with the
+  stick's own `188,0`.
+- `--device <by-id>:<by-id>` without `--privileged` works, as section 2 recorded.
+
+A Thread change on the Radios card writes a by-id `RADIO_DEVICE`, so every such
+change left the border router unable to start. The compose file now always
+passes the stick in as `${RADIO_DEVICE}:/dev/ttyThread`, and `RADIO_URL` names
+`/dev/ttyThread`. `tests/test_compose_profiles.py` pins both. A bare
+`/dev/ttyUSB0` in `.env` keeps working unchanged.
