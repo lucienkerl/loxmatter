@@ -87,6 +87,20 @@ RADIOS_WORKER="${RADIOS_WORKER:-/opt/loxmatter/radios-once.sh}"
 # not be cut off, because it is what puts the previous radio back.
 RADIOS_WORKER_TIMEOUT_SECONDS="${RADIOS_WORKER_TIMEOUT_SECONDS:-900}"
 
+# The watchdog job (design "Thread setup without handwork", 2026-09-14,
+# section 4.3) replaces the crontab line 0.4.0 needed: this loop runs it
+# every WATCHDOG_INTERVAL_SECONDS itself, through the same /repo bind
+# mount cron would have used. A healthy check takes about a second, so its
+# own timeout is short next to the other two workers'.
+WATCHDOG_WORKER="${WATCHDOG_WORKER:-/opt/loxmatter/watchdog-once.sh}"
+WATCHDOG_INTERVAL_SECONDS="${WATCHDOG_INTERVAL_SECONDS:-60}"
+WATCHDOG_WORKER_TIMEOUT_SECONDS="${WATCHDOG_WORKER_TIMEOUT_SECONDS:-300}"
+
+# Empty, not zero: a pass ID compared against an empty string always runs,
+# without needing a sentinel epoch that could collide with a real one.
+# Set the first time the watchdog actually starts, below.
+watchdog_last_start=""
+
 # This container's own image, by digest - resolved exactly ONCE, here,
 # before the poll loop below ever starts $WORKER for the first time, and
 # exported so every pass reads it as a plain environment variable
@@ -240,6 +254,31 @@ while [ "$terminated" -eq 0 ]; do
   if [ -x "$RADIOS_WORKER" ]; then
     run_worker "$RADIOS_WORKER" "$RADIOS_WORKER_TIMEOUT_SECONDS"
     [ "$terminated" -eq 1 ] && break
+  fi
+
+  # The watchdog job runs sequentially too, after the other two, rather
+  # than backgrounded on its own timer: a `docker restart otbr` racing a
+  # `docker compose up -d --force-recreate` of the bridge or a radio
+  # change is exactly the interference the radios job's own sequencing
+  # above already avoids, and a healthy check is quick, so folding it into
+  # the same pass costs the loop almost nothing. `date +%s` rather than a
+  # pass counter, because the loop's own pacing (the plain `sleep 2`
+  # below) is not the only thing that can make a pass take a while - a
+  # slow update or radios worker ahead of it must count against the
+  # interval too, or the watchdog could fire far more often than intended
+  # right after one.
+  if [ -x "$WATCHDOG_WORKER" ]; then
+    watchdog_now="$(date +%s)"
+    # A negative difference is a clock that stepped backwards (a Pi has no
+    # real-time clock and NTP may correct it later): it counts as due, or
+    # the watchdog would stay silent for as long as the step was large.
+    if [ -z "$watchdog_last_start" ] \
+      || [ "$((watchdog_now - watchdog_last_start))" -lt 0 ] \
+      || [ "$((watchdog_now - watchdog_last_start))" -ge "$WATCHDOG_INTERVAL_SECONDS" ]; then
+      watchdog_last_start="$watchdog_now"
+      run_worker "$WATCHDOG_WORKER" "$WATCHDOG_WORKER_TIMEOUT_SECONDS"
+      [ "$terminated" -eq 1 ] && break
+    fi
   fi
 
   # LOOP_ONCE lets a test run exactly one pass and return, instead of

@@ -42,11 +42,13 @@ def test_only_otbr_needs_the_radio_module() -> None:
 
 
 def test_the_otbr_image_can_be_chosen_from_the_env_file() -> None:
-    # An image built with OpenThread's RCP restoration, which the official
-    # one lacks, has to be selectable without editing this file - an edit
+    # OTBR_IMAGE has to be selectable without editing this file - an edit
     # here would be overwritten by the next update. Unset or empty keeps
-    # the official image.
-    assert _stack()["services"]["otbr"]["image"] == "${OTBR_IMAGE:-openthread/otbr:latest}"
+    # the pinned default (tests/test_otbr_image.py checks that default
+    # against deploy/otbr/source.env, which is what actually builds it).
+    image = _stack()["services"]["otbr"]["image"]
+    assert image.startswith("${OTBR_IMAGE:-ghcr.io/lucienkerl/loxmatter-otbr:")
+    assert image.endswith("}")
 
 
 def test_the_bridge_runs_from_a_published_image() -> None:

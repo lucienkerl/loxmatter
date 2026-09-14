@@ -63,6 +63,10 @@ WATCHDOG_LOCK="${LOXMATTER_WATCHDOG_LOCK:-/repo/scripts/otbr-watchdog.sh}"
 # How long a job waits for a watchdog run that holds the lock. One run
 # restarts otbr and waits up to 60 s for the network.
 LOCK_WAIT="${LOXMATTER_RADIOS_LOCK_WAIT:-90}"
+# The otbr upkeep's pull: its limit, well under the radios worker's 900 s,
+# and how long a failed pull waits before it is tried again.
+PULL_TIMEOUT="${LOXMATTER_RADIOS_PULL_TIMEOUT:-600}"
+PULL_RETRY="${LOXMATTER_RADIOS_PULL_RETRY:-1800}"
 
 REQUEST="$UPDATE_DIR/radios-request.json"
 STATE="$UPDATE_DIR/radios-state.json"
@@ -454,9 +458,379 @@ if [ -n "$INTERRUPTED_PHASE" ]; then
   log "radios request ${JOB_ID:-?}: the previous pass died in phase $INTERRUPTED_PHASE - recorded as failed (interrupted)"
 fi
 
+# ----------------------------------------------------------------- thread --
+
+apply_thread() {
+  if [ "$1" = up ]; then
+    compose up -d --no-deps --force-recreate otbr
+  else
+    compose rm -s -f otbr
+  fi
+}
+
+# The watchdog's known fix (scripts/otbr-watchdog.sh): on the Pi kernel
+# start-stop-daemon can leave a stale pid file and otbr-agent never runs.
+# Applied at most once per verification.
+verify_thread() {
+  if [ "$1" = down ]; then
+    # A `docker ps` that fails or runs out of time is not "otbr is gone".
+    names="$(timeout "$PROBE_TIMEOUT" docker ps -a --filter 'name=^otbr$' --format '{{.Names}}' 2>/dev/null)" \
+      || return 1
+    [ -z "$names" ]
+    return
+  fi
+  started="$(date +%s)"
+  fixed=0
+  while :; do
+    elapsed=$(($(date +%s) - started))
+    [ "$elapsed" -lt "$THREAD_TIMEOUT" ] || return 1
+    refresh_heartbeat
+    case "$(timeout "$PROBE_TIMEOUT" docker exec otbr ot-ctl state 2>/dev/null | tr -d '\r' | head -n 1)" in
+      leader|router|child) return 0 ;;
+    esac
+    if [ "$fixed" -eq 0 ] && [ "$elapsed" -ge "$THREAD_FIX_AFTER" ]; then
+      fixed=1
+      log "no Thread state after ${elapsed}s - clearing the stale pid file and restarting otbr"
+      timeout "$PROBE_TIMEOUT" docker exec otbr rm -f /run/otbr-agent.pid >/dev/null 2>&1 || true
+      compose restart otbr || true
+    fi
+    sleep "$POLL_SECONDS"
+  done
+}
+
+# Takes the otbr watchdog's lock on file descriptor 9, which stays open -
+# and the lock held - until this pass exits. Once per pass: the forward
+# pass and the rollback both call it, and a second call does nothing.
+#
+# The watchdog itself only ever tries the lock and exits when it is taken,
+# so this cannot deadlock with it. A watchdog run that holds the lock is
+# waited for, up to LOCK_WAIT, with the heartbeat kept moving; after that,
+# or when the lock cannot be taken at all, the job goes ahead without it -
+# a Thread change the user asked for is not given up over a lock - and the
+# log says which of these happened.
+#
+# The file is checked before `exec 9<`: a redirection that fails on `exec`
+# ends a POSIX shell outright.
+WATCHDOG_LOCK_TRIED=false
+# Who the lock's log lines speak for: a card request, or the otbr upkeep.
+LOG_SUBJECT="radios request"
+take_watchdog_lock() {
+  [ "$WATCHDOG_LOCK_TRIED" = false ] || return 0
+  WATCHDOG_LOCK_TRIED=true
+  if ! command -v flock >/dev/null 2>&1; then
+    log "$LOG_SUBJECT $JOB_ID: no flock - changing Thread without the otbr watchdog's lock"
+    return 0
+  fi
+  if [ ! -f "$WATCHDOG_LOCK" ] || [ ! -r "$WATCHDOG_LOCK" ]; then
+    log "$LOG_SUBJECT $JOB_ID: cannot open $WATCHDOG_LOCK - changing Thread without the otbr watchdog's lock"
+    return 0
+  fi
+  exec 9<"$WATCHDOG_LOCK"
+  if flock -n 9; then
+    log "$LOG_SUBJECT $JOB_ID: holding the otbr watchdog's lock"
+    return 0
+  fi
+  log "$LOG_SUBJECT $JOB_ID: the otbr watchdog is running - waiting up to ${LOCK_WAIT}s for its lock"
+  lock_started="$(date +%s)"
+  while [ $(($(date +%s) - lock_started)) -lt "$LOCK_WAIT" ]; do
+    refresh_heartbeat
+    sleep "$POLL_SECONDS"
+    if flock -n 9; then
+      log "$LOG_SUBJECT $JOB_ID: holding the otbr watchdog's lock after $(($(date +%s) - lock_started))s"
+      return 0
+    fi
+  done
+  log "$LOG_SUBJECT $JOB_ID: the otbr watchdog still held its lock after ${LOCK_WAIT}s - changing Thread without it"
+  return 0
+}
+
+# The rollback recreates or removes otbr, and with the container goes the
+# only record of why the agent did not form the network: rsyslog inside the
+# image is not reliable (it had not run for two days on 13 September 2026),
+# so `docker logs` is all there is. Saved beside the job's own log, one file
+# per job id - a request id, which the request check below limits to
+# [A-Za-z0-9._-], or an upkeep id this script stamps itself from the same
+# characters - and only the newest 5 kept. $1 is the kind of job, for the
+# log line: `request` or `upkeep`.
+save_otbr_log() {
+  [ -n "$(docker ps -a --filter 'name=^otbr$' --format '{{.Names}}' 2>/dev/null)" ] || return 0
+  OTBR_LOG="radios-otbr-$JOB_ID.log"
+  refresh_heartbeat
+  if docker logs --timestamps --tail 400 otbr > "$UPDATE_DIR/$OTBR_LOG" 2>&1; then
+    log "radios $1 $JOB_ID: saved the last 400 lines of the otbr log to $OTBR_LOG"
+  else
+    log "radios $1 $JOB_ID: could not save the otbr log (see $OTBR_LOG)"
+  fi
+  refresh_heartbeat
+  # shellcheck disable=SC2012  # names this script wrote itself, from a
+  # checked id - the same reasoning as the .env backup prune below.
+  ls -1t "$UPDATE_DIR"/radios-otbr-*.log 2>/dev/null | tail -n +6 | while read -r old; do rm -f "$old"; done
+}
+
+# The phases in which update-once.sh is working on the stack. Neither a
+# radios request nor the upkeep below touches a container while one of them
+# is in state.json. Sets UPDATE_PHASE for the caller's log line.
+update_running() {
+  UPDATE_PHASE="$(jq -r '.phase // "idle"' "$UPDATE_STATE" 2>/dev/null || echo idle)"
+  case "$UPDATE_PHASE" in
+    queued|backup|pull|build|recreate|health|rollback) return 0 ;;
+  esac
+  return 1
+}
+
+# ------------------------------------------------------------ otbr upkeep --
+
+# otbr follows its Compose configuration (design "Thread setup without
+# handwork", 2026-09-14, section 5). An update brings a new docker-compose.yml
+# and .env - a new border router image, a changed device mapping - but
+# update-once.sh recreates only the bridge, and otbr sits behind a profile
+# nobody else recreates. Without this, every installation kept the otbr it
+# was set up with until someone ran `docker compose up` on the host.
+#
+# Runs on a pass with no request to handle, never beside one: a request
+# recreates otbr itself, and the next pass then compares against that.
+UPKEEP_CHECKED="$UPDATE_DIR/otbr-upkeep-checked"
+UPKEEP_TRIED="$UPDATE_DIR/otbr-upkeep-tried"
+UPKEEP_PULL_FAILED="$UPDATE_DIR/otbr-upkeep-pull-failed-at"
+
+# What Compose would create, reduced to the three fields that decide
+# whether the running container is still the one asked for. A device entry
+# is a string in Compose 2.27 (the updater image's) - "source:target", maybe
+# with ":permissions" - and an object in later versions; both reduce to
+# "source:target", the form `docker inspect` can be compared with.
+# shellcheck disable=SC2016  # a jq program, expanded by jq
+UPKEEP_DESIRED='
+  .services.otbr as $s
+  | if ($s | type) != "object" then error("no otbr service") else . end
+  | {image: ($s.image // ""),
+     devices: (($s.devices // [])
+               | map(if type == "string"
+                     then (split(":") | if length == 1 then .[0] + ":" + .[0] else .[0] + ":" + .[1] end)
+                     else "\(.source):\(.target // .source)" end)
+               | sort),
+     radio_url: (($s.environment // {})
+                 | if type == "array"
+                   then (map(select(startswith("RADIO_URL="))) | (last // "") | ltrimstr("RADIO_URL="))
+                   else (.RADIO_URL // "") end)}'
+
+# The same three fields of the running container. `.Config.Image` is the
+# reference the container was created from, as written, and device paths
+# are kept as given - symlinks unresolved - so they compare with Compose's
+# own strings.
+# shellcheck disable=SC2016  # a jq program, expanded by jq
+UPKEEP_ACTUAL='
+  .[0]
+  | {image: (.Config.Image // ""),
+     devices: ((.HostConfig.Devices // []) | map("\(.PathOnHost):\(.PathInContainer)") | sort),
+     radio_url: ((.Config.Env // []) | map(select(startswith("RADIO_URL="))) | (last // "") | ltrimstr("RADIO_URL="))}'
+
+# The checksum and size `cksum` prints for its input, as one word.
+checksum() {
+  cksum | awk '{ print $1 "-" $2 }'
+}
+
+upkeep_compose() {
+  docker compose -f "$STACK/docker-compose.yml" --project-directory "$STACK_HOST_PATH" \
+    --env-file "$ENV_FILE" --profile thread "$@"
+}
+
+otbr_upkeep() {
+  [ "$CAPABLE" = true ] || return 0
+  if update_running; then return 0; fi
+  [ -f "$ENV_FILE" ] && [ -f "$STACK/docker-compose.yml" ] || return 0
+  env_value COMPOSE_PROFILES | tr ',' '\n' | grep -qx thread || return 0
+  # `--type container`: an image called otbr must not answer for a missing
+  # container.
+  inspected="$(timeout "$PROBE_TIMEOUT" docker inspect --type container otbr 2>/dev/null)" || return 0
+  container_id="$(printf '%s' "$inspected" | jq -r '.[0].Id // empty' 2>/dev/null)" || return 0
+  [ -n "$container_id" ] || return 0
+  actual="$(printf '%s' "$inspected" | jq -c "$UPKEEP_ACTUAL" 2>/dev/null)" || return 0
+  previous_image="$(printf '%s' "$inspected" | jq -r '.[0].Image // empty' 2>/dev/null)" || return 0
+
+  # Field by field, not Compose's `com.docker.compose.config-hash` label:
+  # its algorithm differs between Compose versions, and the host that
+  # created the container does not run the updater image's Compose - a
+  # hash comparison would find drift on every installation after the first
+  # Compose upgrade on either side.
+  #
+  # `compose config` costs a Compose run, and this function runs every two
+  # seconds. Its result depends only on docker-compose.yml, .env and - for
+  # the comparison - the container, so it is kept with a key made of those
+  # three and computed again only when one of them changes. The cache
+  # decides nothing on its own: the comparison below runs on every pass, and
+  # the tried and pull-failed files decide whether to act.
+  #
+  # The file holds the key on its first line and, on its second, the
+  # desired configuration - or `failed` when `compose config` could not
+  # produce one. A failure is cached like a result: the same files give
+  # the same failure, and running Compose every two seconds to see it
+  # again would cost the Pi a steady share of a core. Changing one of the
+  # three inputs tries again.
+  key="$(checksum < "$STACK/docker-compose.yml") $(checksum < "$ENV_FILE") $container_id"
+  fresh=false
+  desired=""
+  if [ -f "$UPKEEP_CHECKED" ] && [ "$(sed -n 1p "$UPKEEP_CHECKED")" = "$key" ]; then
+    desired="$(sed -n 2p "$UPKEEP_CHECKED")"
+    [ "$desired" != failed ] || return 0
+  fi
+  if [ -z "$desired" ]; then
+    if ! config="$(upkeep_compose config --format json 2>/dev/null)" \
+      || ! desired="$(printf '%s' "$config" | jq -c "$UPKEEP_DESIRED" 2>/dev/null)" \
+      || [ -z "$desired" ]; then
+      desired=failed
+    fi
+    fresh=true
+    printf '%s\n%s\n' "$key" "$desired" > "$UPKEEP_CHECKED.tmp"
+    mv "$UPKEEP_CHECKED.tmp" "$UPKEEP_CHECKED"
+    if [ "$desired" = failed ]; then
+      log "radios upkeep: could not read otbr's Compose configuration - otbr is left as it is"
+      return 0
+    fi
+  fi
+
+  # The decisions not to act are logged only on a pass that computed the
+  # comparison anew, so an otbr that stays as it is writes one line, not
+  # one every two seconds.
+  if [ "$desired" = "$actual" ]; then
+    [ "$fresh" = false ] || log "radios upkeep: otbr matches its Compose configuration"
+    return 0
+  fi
+
+  # One attempt per target. A target that fails - an image that does not
+  # start, a stick that does not attach - would otherwise be recreated,
+  # verified for minutes and rolled back every pass, forever. The next
+  # target (a new release, a Thread change on the card) has a different
+  # checksum and is attempted.
+  target="$(printf '%s' "$desired" | checksum)"
+  if [ -f "$UPKEEP_TRIED" ] && [ "$(sed -n 1p "$UPKEEP_TRIED")" = "$target" ]; then
+    [ "$fresh" = false ] || log "radios upkeep: otbr differs from its Compose configuration ($desired), which was already attempted - not again"
+    return 0
+  fi
+
+  desired_image="$(printf '%s' "$desired" | jq -r '.image')"
+  actual_image="$(printf '%s' "$actual" | jq -r '.image')"
+  image_changed=false
+  [ "$desired_image" = "$actual_image" ] || image_changed=true
+
+  # Pull first, while the old container keeps running: a recreate that has
+  # to download its image leaves Thread down for as long as the download
+  # takes, and one that cannot download it leaves Thread down for good.
+  #
+  # An image already on the host is used as it is, without a pull. That is
+  # also the only way a local-only OTBR_IMAGE (.env.example documents the
+  # override) can ever be applied: Compose 2.27 `pull` on a tag no registry
+  # has exits 18, "pull access denied", measured 14 September 2026.
+  #
+  # A pull and the job never share a pass. A pass must end inside
+  # entrypoint.sh's 900 s for the radios worker, and the two together do
+  # not: the pull up to PULL_TIMEOUT (600 s), the watchdog's lock up to
+  # LOCK_WAIT, then apply and verify, forward and again in the rollback, up
+  # to 2 x THREAD_TIMEOUT and the recreates. A pass killed in its rollback
+  # would leave otbr on the failing image with the target marked tried. So
+  # a successful pull ends the pass, and the next one, two seconds later,
+  # finds the image on the host and runs the job with the whole budget.
+  #
+  # A failed pull (offline, a private package) is no attempt - nothing was
+  # changed - and is tried again after PULL_RETRY, not every pass. The wait
+  # belongs to the target whose pull failed ("<epoch> <target>" in the
+  # file): a different target - a release that fixes a broken tag - is
+  # pulled at once. The pull is bounded well under the 900 s: a pull killed
+  # from outside would record no failure and start again on the next pass.
+  if [ "$image_changed" = true ] \
+    && ! timeout "$PROBE_TIMEOUT" docker image inspect "$desired_image" >/dev/null 2>&1; then
+    if [ -f "$UPKEEP_PULL_FAILED" ]; then
+      failed_at="$(sed -n '1s/ .*//p' "$UPKEEP_PULL_FAILED")"
+      failed_target="$(sed -n '1s/^[^ ]* //p' "$UPKEEP_PULL_FAILED")"
+      case "$failed_at" in ''|*[!0-9]*) failed_at=0 ;; esac
+      if [ "$failed_target" = "$target" ] && [ $(($(date +%s) - failed_at)) -lt "$PULL_RETRY" ]; then
+        [ "$fresh" = false ] || log "radios upkeep: pulling $desired_image failed recently - trying again ${PULL_RETRY}s after that"
+        return 0
+      fi
+    fi
+    log "radios upkeep: otbr runs $actual_image, Compose asks for $desired_image - pulling it first"
+    # In the background, with the heartbeat kept moving while it runs: a
+    # pull may take minutes, and a radios state whose seen_at stops for
+    # longer than `_MAX_SILENT_SECONDS` reads to the card as a sidecar that
+    # is gone (see refresh_heartbeat). `wait` returns the pull's own exit
+    # status - timeout's 124 included - and is tested in an `if`, so a
+    # failing pull is reported instead of ending the pass under `set -e`.
+    log "\$ docker compose -f $STACK/docker-compose.yml --project-directory $STACK_HOST_PATH --env-file $ENV_FILE --profile thread pull otbr"
+    refresh_heartbeat
+    timeout "$PULL_TIMEOUT" docker compose -f "$STACK/docker-compose.yml" --project-directory "$STACK_HOST_PATH" \
+      --env-file "$ENV_FILE" --profile thread pull otbr >> "$LOG" 2>&1 &
+    pull_pid=$!
+    while kill -0 "$pull_pid" 2>/dev/null; do
+      refresh_heartbeat
+      sleep "$POLL_SECONDS"
+    done
+    if wait "$pull_pid"; then
+      rm -f "$UPKEEP_PULL_FAILED"
+      refresh_heartbeat
+      log "radios upkeep: pulled $desired_image - otbr is recreated from it on the next pass"
+      return 0
+    else
+      printf '%s %s\n' "$(date +%s)" "$target" > "$UPKEEP_PULL_FAILED"
+      refresh_heartbeat
+      log "radios upkeep: could not pull $desired_image - otbr keeps running $actual_image, trying again in ${PULL_RETRY}s"
+      return 0
+    fi
+  fi
+
+  JOB_ID="otbr-upkeep-$(date -u +%Y%m%d%H%M%S)"
+  JOB_STEPS='["apply_thread","verify_thread"]'
+  JOB_ERROR=""
+  ROLLED=false
+  HEALTHY=null
+  # Written before the apply: a pass killed in the middle of this job is
+  # healed into failed/interrupted by the next pass, and must not be
+  # started again by it.
+  printf '%s\n' "$target" > "$UPKEEP_TRIED"
+  log "radios upkeep $JOB_ID: otbr runs $actual, Compose asks for $desired - recreating otbr"
+  write_state apply_thread ""
+  LOG_SUBJECT="radios upkeep"
+  take_watchdog_lock
+  # FAILED_STEP and ERROR_KEY, the names the request path below uses too.
+  FAILED_STEP=""
+  if apply_thread up; then
+    write_state verify_thread ""
+    verify_thread up || FAILED_STEP=verify_thread
+  else
+    FAILED_STEP=apply_thread
+  fi
+  if [ -z "$FAILED_STEP" ]; then
+    HEALTHY=true
+    write_state done ""
+    log "radios upkeep $JOB_ID: otbr follows its Compose configuration"
+    return 0
+  fi
+
+  ERROR_KEY="${FAILED_STEP}_failed"
+  log "radios upkeep $JOB_ID: $FAILED_STEP failed"
+  write_state rollback "$ERROR_KEY"
+  save_otbr_log upkeep
+  # Only an image has something to go back to: the previous image is still
+  # on the host under its ID, and OTBR_IMAGE in the environment outranks
+  # .env in Compose's interpolation. A changed device mapping or radio URL
+  # came from .env or docker-compose.yml, which nothing here rewrites, so a
+  # recreate would build the same container again.
+  if [ "$image_changed" = true ] && [ -n "$previous_image" ]; then
+    log "radios upkeep $JOB_ID: recreating otbr from the image it ran before, $previous_image"
+    OTBR_IMAGE="$previous_image"
+    export OTBR_IMAGE
+    if apply_thread up && verify_thread up; then HEALTHY=true; else HEALTHY=false; fi
+    unset OTBR_IMAGE
+  else
+    log "radios upkeep $JOB_ID: the image did not change - no previous otbr to go back to"
+    HEALTHY=false
+  fi
+  ROLLED=true
+  write_state failed "$ERROR_KEY"
+  log "radios upkeep $JOB_ID rolled back, healthy after rollback: $HEALTHY"
+}
+
 # ---------------------------------------------------------------- request --
 
-[ -e "$REQUEST" ] || exit 0
+[ -e "$REQUEST" ] || { otbr_upkeep; exit 0; }
 
 # A FIFO (or anything else non-regular) left at this path must never be
 # opened: with no writer, `cat` (or any reader) on a FIFO blocks forever,
@@ -501,16 +875,19 @@ esac
 if [ "${#MARKER}" -gt 128 ]; then
   MARKER="invalid-$(printf '%s' "$REQUEST_BODY" | cksum | cut -d ' ' -f 1)"
 fi
+# A handled request stays on disk - the bridge replaces it with the next
+# one, nothing removes it - so after the first change made on the card
+# this is the ordinary pass, and it keeps otbr up to date just like a pass
+# without a request file.
 if [ "$MARKER" = "$JOB_ID" ] || [ -e "$HANDLED_DIR/$MARKER" ]; then
+  otbr_upkeep
   exit 0
 fi
 
-UPDATE_PHASE="$(jq -r '.phase // "idle"' "$UPDATE_STATE" 2>/dev/null || echo idle)"
-case "$UPDATE_PHASE" in
-  queued|backup|pull|build|recreate|health|rollback)
-    log "radios request $MARKER waits: an update is in phase $UPDATE_PHASE"
-    exit 0 ;;
-esac
+if update_running; then
+  log "radios request $MARKER waits: an update is in phase $UPDATE_PHASE"
+  exit 0
+fi
 
 JOB_ID="$MARKER"
 JOB_STEPS='["validate"]'
@@ -687,7 +1064,7 @@ elif [ "$THREAD_ACTION" = down ]; then
 fi
 if [ "$BLUETOOTH_CHANGE" = true ]; then env_set_or_fail BLUETOOTH_ADAPTER "$WANT_BLUETOOTH"; fi
 
-# The heartbeat inside this loop (and `verify_thread`'s below) is what
+# The heartbeat inside this loop (and `verify_thread`'s above) is what
 # keeps a waiting job distinguishable from a dead sidecar - see
 # refresh_heartbeat. One `write_state` ran when this step began and the
 # next one cannot run until it ends, up to $BLUETOOTH_TIMEOUT seconds
@@ -702,88 +1079,6 @@ verify_bluetooth() {
     sleep "$POLL_SECONDS"
   done
   return 1
-}
-
-apply_thread() {
-  if [ "$1" = up ]; then
-    compose up -d --no-deps --force-recreate otbr
-  else
-    compose rm -s -f otbr
-  fi
-}
-
-# The watchdog's known fix (scripts/otbr-watchdog.sh): on the Pi kernel
-# start-stop-daemon can leave a stale pid file and otbr-agent never runs.
-# Applied at most once per verification.
-verify_thread() {
-  if [ "$1" = down ]; then
-    # A `docker ps` that fails or runs out of time is not "otbr is gone".
-    names="$(timeout "$PROBE_TIMEOUT" docker ps -a --filter 'name=^otbr$' --format '{{.Names}}' 2>/dev/null)" \
-      || return 1
-    [ -z "$names" ]
-    return
-  fi
-  started="$(date +%s)"
-  fixed=0
-  while :; do
-    elapsed=$(($(date +%s) - started))
-    [ "$elapsed" -lt "$THREAD_TIMEOUT" ] || return 1
-    refresh_heartbeat
-    case "$(timeout "$PROBE_TIMEOUT" docker exec otbr ot-ctl state 2>/dev/null | tr -d '\r' | head -n 1)" in
-      leader|router|child) return 0 ;;
-    esac
-    if [ "$fixed" -eq 0 ] && [ "$elapsed" -ge "$THREAD_FIX_AFTER" ]; then
-      fixed=1
-      log "no Thread state after ${elapsed}s - clearing the stale pid file and restarting otbr"
-      timeout "$PROBE_TIMEOUT" docker exec otbr rm -f /run/otbr-agent.pid >/dev/null 2>&1 || true
-      compose restart otbr || true
-    fi
-    sleep "$POLL_SECONDS"
-  done
-}
-
-# Takes the otbr watchdog's lock on file descriptor 9, which stays open -
-# and the lock held - until this pass exits. Once per pass: the forward
-# pass and the rollback both call it, and a second call does nothing.
-#
-# The watchdog itself only ever tries the lock and exits when it is taken,
-# so this cannot deadlock with it. A watchdog run that holds the lock is
-# waited for, up to LOCK_WAIT, with the heartbeat kept moving; after that,
-# or when the lock cannot be taken at all, the job goes ahead without it -
-# a Thread change the user asked for is not given up over a lock - and the
-# log says which of these happened.
-#
-# The file is checked before `exec 9<`: a redirection that fails on `exec`
-# ends a POSIX shell outright.
-WATCHDOG_LOCK_TRIED=false
-take_watchdog_lock() {
-  [ "$WATCHDOG_LOCK_TRIED" = false ] || return 0
-  WATCHDOG_LOCK_TRIED=true
-  if ! command -v flock >/dev/null 2>&1; then
-    log "radios request $JOB_ID: no flock - changing Thread without the otbr watchdog's lock"
-    return 0
-  fi
-  if [ ! -f "$WATCHDOG_LOCK" ] || [ ! -r "$WATCHDOG_LOCK" ]; then
-    log "radios request $JOB_ID: cannot open $WATCHDOG_LOCK - changing Thread without the otbr watchdog's lock"
-    return 0
-  fi
-  exec 9<"$WATCHDOG_LOCK"
-  if flock -n 9; then
-    log "radios request $JOB_ID: holding the otbr watchdog's lock"
-    return 0
-  fi
-  log "radios request $JOB_ID: the otbr watchdog is running - waiting up to ${LOCK_WAIT}s for its lock"
-  lock_started="$(date +%s)"
-  while [ $(($(date +%s) - lock_started)) -lt "$LOCK_WAIT" ]; do
-    refresh_heartbeat
-    sleep "$POLL_SECONDS"
-    if flock -n 9; then
-      log "radios request $JOB_ID: holding the otbr watchdog's lock after $(($(date +%s) - lock_started))s"
-      return 0
-    fi
-  done
-  log "radios request $JOB_ID: the otbr watchdog still held its lock after ${LOCK_WAIT}s - changing Thread without it"
-  return 0
 }
 
 ROLLING=false
@@ -886,25 +1181,8 @@ if ! cat "$BACKUP" > "$(env_target)"; then
   exit 0
 fi
 ROLLING=true
-# The rollback recreates or removes otbr, and with the container goes the
-# only record of why the agent did not form the network: rsyslog inside the
-# image is not reliable (it had not run for two days on 13 September 2026),
-# so `docker logs` is all there is. Saved beside the job's own log, one file
-# per request id - which the request check above limits to
-# [A-Za-z0-9._-] - and only the newest 5 kept.
-if [ "$ROLLBACK_THREAD" != none ] \
-  && [ -n "$(docker ps -a --filter 'name=^otbr$' --format '{{.Names}}' 2>/dev/null)" ]; then
-  OTBR_LOG="radios-otbr-$JOB_ID.log"
-  refresh_heartbeat
-  if docker logs --timestamps --tail 400 otbr > "$UPDATE_DIR/$OTBR_LOG" 2>&1; then
-    log "radios request $JOB_ID: saved the last 400 lines of the otbr log to $OTBR_LOG"
-  else
-    log "radios request $JOB_ID: could not save the otbr log (see $OTBR_LOG)"
-  fi
-  refresh_heartbeat
-  # shellcheck disable=SC2012  # names this script wrote itself, from a
-  # checked id - the same reasoning as the .env backup prune above.
-  ls -1t "$UPDATE_DIR"/radios-otbr-*.log 2>/dev/null | tail -n +6 | while read -r old; do rm -f "$old"; done
+if [ "$ROLLBACK_THREAD" != none ]; then
+  save_otbr_log request
 fi
 THREAD_ACTION="$ROLLBACK_THREAD"
 if rollback_and_verify; then HEALTHY=true; else HEALTHY=false; fi

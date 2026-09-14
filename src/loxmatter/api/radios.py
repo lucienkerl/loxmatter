@@ -52,6 +52,12 @@ from loxmatter.radios.sidecar import (
     sidecar_status,
 )
 
+# The id prefix `deploy/updater/radios-once.sh` writes for the automatic
+# job it starts on its own after an update brings a newer otbr image
+# (`JOB_ID="otbr-upkeep-$(date -u +%Y%m%d%H%M%S)"`) - the only signal
+# `get_radios()` has to tell that job apart from one the user asked for.
+_UPKEEP_JOB_ID_PREFIX = "otbr-upkeep-"
+
 
 class ThreadIn(BaseModel):
     enabled: bool
@@ -149,6 +155,16 @@ def build_radios_router(
                 "rolled_back": radios_state.rolled_back,
                 "healthy": radios_state.healthy,
                 "requested": requested,
+                # Lets the card explain an upkeep job as something that
+                # happened on its own rather than something the user asked
+                # for - it carries no `requested` (see `radiosThreadLeftOff`
+                # in app.js) and would otherwise read as an unprompted
+                # change nobody remembers making.
+                "kind": (
+                    "otbr_upkeep"
+                    if radios_state.id.startswith(_UPKEEP_JOB_ID_PREFIX)
+                    else "request"
+                ),
             }
         return {
             "sidecar": status,

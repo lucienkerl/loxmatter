@@ -54,3 +54,16 @@ here.
    UI shows it, but a deployment would go nowhere.
 7. Create a GitHub release whose text is the changelog section. The
    UI reads exactly this text.
+
+### Moving to a newer OpenThread border router
+
+To pick up a newer `ot-br-posix` commit, change `OT_BR_POSIX_COMMIT` and
+`OTBR_IMAGE_TAG` in `deploy/otbr/source.env` together with the Compose
+default image (`deploy/testhost/docker-compose.yml`), and merge to `main` so
+`.github/workflows/otbr-image.yml` builds and pushes the new tag — the first
+time, set the new GHCR package to public, the same as for any other image
+here. Then release as above: `ci.yml` refuses to tag a release whose Compose
+default image does not exist in the registry, so the build has to land
+first. Every installation picks the new image up through the ordinary
+update and the automatic upkeep described in the changelog — nothing else
+to do per host.

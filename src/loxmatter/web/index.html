@@ -2791,6 +2791,16 @@
                        system working, not a verdict. -->
                   <p class="banner warn" x-show="radiosRollingBack()" x-cloak
                      x-text="t('web.radios.rolling_back')"></p>
+                  <!-- `radios-once.sh` starts this job on its own after an
+                       update brings a newer otbr image (design section 6) -
+                       nobody touched a select for it, so without this the
+                       card would show the ordinary step list applying
+                       itself and leave the user wondering what they did.
+                       `radiosUpkeepRunning()` is already false while
+                       rolling back - the banner above covers that phase
+                       for an upkeep job too, so the two never show at once. -->
+                  <p class="banner warn" x-show="radiosUpkeepRunning()" x-cloak
+                     x-text="t('web.radios.upkeep_running')"></p>
                   <p
                     x-show="radiosResultKey()"
                     x-cloak

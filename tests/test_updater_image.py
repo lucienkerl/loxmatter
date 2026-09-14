@@ -48,8 +48,20 @@ DOCKERFILE = ROOT / "deploy" / "updater" / "Dockerfile"
 
 # What the script from task 2/3/4 invokes and what Alpine does NOT bring
 # along by itself. `sh`, `mv`, `printf` are deliberately absent here - those
-# are busybox built-ins and cannot be missing.
-REQUIRED_PACKAGES = ("docker-cli", "docker-cli-compose", "git", "curl", "jq", "coreutils", "tar")
+# are busybox built-ins and cannot be missing. `bash` is what
+# watchdog-once.sh runs scripts/otbr-watchdog.sh with (design "Thread
+# setup without handwork", 2026-09-14, section 4.4) - busybox's `ash`
+# cannot run that script, which relies on real bash features.
+REQUIRED_PACKAGES = (
+    "docker-cli",
+    "docker-cli-compose",
+    "git",
+    "curl",
+    "jq",
+    "coreutils",
+    "tar",
+    "bash",
+)
 
 
 def _apk_add_packages(source: str) -> set[str]:
@@ -101,3 +113,12 @@ def test_the_image_ships_the_radios_job() -> None:
     chmod = next(line for line in source.splitlines() if "chmod +x" in line)
     assert "radios-once.sh" in copy.split()
     assert "/opt/loxmatter/radios-once.sh" in chmod.split()
+
+
+def test_the_image_ships_the_watchdog_job() -> None:
+    """Fault to prove it: remove watchdog-once.sh from the COPY line."""
+    source = DOCKERFILE.read_text(encoding="utf-8")
+    copy = next(line for line in source.splitlines() if line.startswith("COPY "))
+    chmod = next(line for line in source.splitlines() if "chmod +x" in line)
+    assert "watchdog-once.sh" in copy.split()
+    assert "/opt/loxmatter/watchdog-once.sh" in chmod.split()

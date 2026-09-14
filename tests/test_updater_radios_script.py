@@ -73,10 +73,25 @@ advance() {
 }
 """
 
+# The otbr container and its Compose configuration agree unless a test
+# writes one of the $FAKE files `inspect` and `compose config` read below -
+# no drift is the default, so a pass without a request changes nothing.
+OTBR_IMAGE_REF = "ghcr.io/lucienkerl/loxmatter-otbr:2ba12d24-rcp2"
+OTBR_IMAGE_ID = "sha256:2ba12d24aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+OTBR_DEFAULTS = (
+    f"DEFAULT_IMAGE='{OTBR_IMAGE_REF}'\n"
+    f"DEFAULT_IMAGE_ID='{OTBR_IMAGE_ID}'\n"
+    "DEFAULT_RADIO_URL='spinel+hdlc+uart:///dev/ttyThread?uart-baudrate=460800'\n"
+    "DEFAULT_COMPOSE_DEVICES='[\"/dev/ttyUSB0:/dev/ttyThread\"]'\n"
+    'DEFAULT_INSPECT_DEVICES=\'[{"PathOnHost": "/dev/ttyUSB0", '
+    '"PathInContainer": "/dev/ttyThread", "CgroupPermissions": "rwm"}]\'\n'
+)
+
 DOCKER_STUB = (
     r"""#!/bin/sh
 printf 'docker %s\n' "$*" >> "$STUB_LOG"
 """
+    + OTBR_DEFAULTS
     + ADVANCE
     + r"""
 case "$1" in
@@ -99,10 +114,69 @@ case "$1" in
       *"rm -f /run/otbr-agent.pid"*) : > "$FAKE/pid_cleared" ;;
     esac
     exit 0 ;;
+  image)
+    # `docker image inspect <ref>`: an image is on the host when it is
+    # listed in $FAKE/local_images - which a successful pull adds to.
+    grep -qxF "$3" "$FAKE/local_images" 2>/dev/null
+    exit ;;
+  inspect)
+    # The shape `docker inspect` has, measured 14 September 2026. The
+    # container Id changes with every recreate, as a real one does.
+    if [ ! -f "$FAKE/otbr_state" ]; then
+      echo '[]'; echo 'Error: No such object: otbr' >&2; exit 1
+    fi
+    printf '[{"Id": "otbr-%s", "Image": "%s", "Config": {"Image": "%s", "Env": ["PATH=/usr/sbin:/usr/bin", "RADIO_URL=%s"]}, "HostConfig": {"Devices": %s}}]\n' \
+      "$(cat "$FAKE/otbr_ups" 2>/dev/null || echo 0)" \
+      "$(cat "$FAKE/actual_image_id" 2>/dev/null || echo "$DEFAULT_IMAGE_ID")" \
+      "$(cat "$FAKE/actual_image" 2>/dev/null || echo "$DEFAULT_IMAGE")" \
+      "$(cat "$FAKE/actual_radio_url" 2>/dev/null || echo "$DEFAULT_RADIO_URL")" \
+      "$(cat "$FAKE/actual_devices" 2>/dev/null || echo "$DEFAULT_INSPECT_DEVICES")"
+    exit 0 ;;
   compose)
     case "$*" in *"$(cat "$FAKE/compose_fail" 2>/dev/null || echo __never__)"*) exit 1 ;; esac
     case "$*" in
+      *" config "*)
+        printf '{"name": "testhost", "services": {"otbr": {"image": "%s", "devices": %s, "environment": {"RADIO_URL": "%s"}}}}\n' \
+          "$(cat "$FAKE/compose_image" 2>/dev/null || echo "$DEFAULT_IMAGE")" \
+          "$(cat "$FAKE/compose_devices" 2>/dev/null || echo "$DEFAULT_COMPOSE_DEVICES")" \
+          "$(cat "$FAKE/compose_radio_url" 2>/dev/null || echo "$DEFAULT_RADIO_URL")" ;;
+      *" pull "*otbr*)
+        # A pull that lasts $FAKE/pull_seconds of the script's clock: it
+        # ends once the script's own sleeps have moved the epoch that far.
+        # The real sleep only paces this loop, bounded so a script that
+        # never sleeps cannot hang the test.
+        if [ -f "$FAKE/pull_seconds" ]; then
+          read -r by < "$FAKE/pull_seconds"
+          from=""
+          while [ -z "$from" ]; do read -r from < "$FAKE/epoch" || from=""; done
+          # A read may meet the file between the script's truncation and its
+          # write; an empty value just means "look again".
+          tries=0
+          while [ "$tries" -lt 750 ]; do
+            read -r at < "$FAKE/epoch" || at=""
+            case "$at" in ''|*[!0-9]*) ;; *) [ "$at" -lt $((from + by)) ] || break ;; esac
+            tries=$((tries + 1)); /bin/sleep 0.02
+          done
+        fi
+        status="$(cat "$FAKE/pull_status" 2>/dev/null || echo 0)"
+        if [ "$status" -eq 0 ]; then
+          printf '%s\n' "$(cat "$FAKE/compose_image" 2>/dev/null || echo "$DEFAULT_IMAGE")" >> "$FAKE/local_images"
+        fi
+        exit "$status" ;;
       *" up "*otbr*)
+        # A pass killed in the middle of its recreate: the parent is the
+        # script's own shell, which runs this command directly.
+        if [ -f "$FAKE/kill_on_up" ]; then
+          rm -f "$FAKE/kill_on_up"; kill -KILL "$PPID"; exit 1
+        fi
+        # A recreate runs the image Compose resolves: OTBR_IMAGE from the
+        # environment first, then the configured one.
+        printf 'env OTBR_IMAGE=%s\n' "${OTBR_IMAGE:-}" >> "$STUB_LOG"
+        if [ -n "${OTBR_IMAGE:-}" ]; then
+          printf '%s\n' "$OTBR_IMAGE" > "$FAKE/actual_image"
+        elif [ -f "$FAKE/compose_image" ]; then
+          cat "$FAKE/compose_image" > "$FAKE/actual_image"
+        fi
         echo running > "$FAKE/otbr_state"
         echo $(( $(cat "$FAKE/otbr_ups" 2>/dev/null || echo 0) + 1 )) > "$FAKE/otbr_ups" ;;
       *" rm "*otbr*) rm -f "$FAKE/otbr_state" ;;
@@ -1883,3 +1957,556 @@ def test_a_docker_ps_that_fails_does_not_verify_thread_as_removed(radios):
     _request(radios, thread={"enabled": False, "device": None}, bluetooth=None)
     _, _, state = radios()
     assert (state["phase"], state["error"]) == ("failed", "verify_thread_failed")
+
+
+# ---------------------------------------------------------------------------
+# otbr follows its Compose configuration (design "Thread setup without
+# handwork", 2026-09-14, section 5): a pass without a request to handle
+# brings the otbr container up to date when Compose asks for another one.
+# ---------------------------------------------------------------------------
+
+NEW_IMAGE = "ghcr.io/lucienkerl/loxmatter-otbr:3cd45e67-rcp2"
+
+
+def _upkeep(radios) -> None:
+    """Thread on by profile, as the installer and the card leave it, and a
+    finished earlier job in the state file. The Compose file's content is
+    never read by the stub, only its checksum by the script."""
+    (radios.env_file.parent / "docker-compose.yml").write_text("services: {}\n", encoding="utf-8")
+    radios.env_file.write_text(radios.env_file.read_text() + "COMPOSE_PROFILES=thread\n")
+    (radios.update_dir / "radios-state.json").write_text(
+        json.dumps({"id": "job-0", "phase": "done", "steps": [], "healthy": True}),
+        encoding="utf-8",
+    )
+
+
+def _upkeep_calls(calls: str) -> list[str]:
+    """The stub-log lines that belong to the upkeep and never to the per-pass
+    report: the inspection, the configuration, the pull and the recreate."""
+    return [
+        line
+        for line in calls.splitlines()
+        if line.startswith("docker inspect")
+        or _compose(line, "config")
+        or _compose(line, "pull")
+        or _compose(line, "up")
+    ]
+
+
+def _index(calls: str, *words: str) -> list[int]:
+    return [
+        i
+        for i, line in enumerate(calls.splitlines())
+        if line.startswith("docker compose") and all(word in line.split() for word in words)
+    ]
+
+
+def _advance(radios, seconds: int) -> None:
+    epoch = int((radios.fake / "epoch").read_text(encoding="utf-8"))
+    (radios.fake / "epoch").write_text(f"{epoch + seconds}\n", encoding="utf-8")
+
+
+def _pulled(radios, image: str = NEW_IMAGE) -> None:
+    """Runs the pass that pulls a missing image. It ends after the pull,
+    before any job and without using up the attempt, and leaves the image
+    on the host for the next pass. Clears the stub log afterwards."""
+    state_file = radios.update_dir / "radios-state.json"
+    before = json.loads(state_file.read_text(encoding="utf-8"))["id"]
+    tried = radios.update_dir / "otbr-upkeep-tried"
+    tried_before = tried.read_text(encoding="utf-8") if tried.exists() else None
+    result, calls, state = radios()
+    assert result.returncode == 0, result.stderr
+    assert len(_compose(calls, "pull", "otbr")) == 1
+    assert _compose(calls, "up") == []
+    assert state["id"] == before
+    assert (tried.read_text(encoding="utf-8") if tried.exists() else None) == tried_before
+    assert f"pulled {image} - otbr is recreated from it on the next pass" in _log_text(radios)
+    radios.log.unlink()
+
+
+def test_upkeep_without_drift_starts_no_job(radios):
+    """Fault to prove it: make the comparison always find drift - a job
+    starts and otbr is recreated."""
+    _upkeep(radios)
+    result, calls, state = radios()
+    assert result.returncode == 0, result.stderr
+    assert (state["id"], state["phase"]) == ("job-0", "done")
+    assert len(_compose(calls, "config")) == 1
+    assert _compose(calls, "pull") == [] and _compose(calls, "up") == []
+    assert not (radios.update_dir / "otbr-upkeep-tried").exists()
+    assert "otbr matches its Compose configuration" in _log_text(radios)
+
+
+def test_upkeep_pulls_a_missing_image_in_one_pass_and_recreates_otbr_in_the_next(radios):
+    """A pass must end inside entrypoint.sh's 900 s, and a pull of up to
+    600 s followed by a job whose verification and rollback take minutes
+    does not.
+
+    Fault to prove it: go on to the job in the pass whose pull succeeded -
+    the first pass recreates otbr."""
+    _upkeep(radios)
+    (radios.fake / "compose_image").write_text(NEW_IMAGE)
+    result, calls, state = radios()
+    assert result.returncode == 0, result.stderr
+    assert state["id"] == "job-0"
+    pulls = _index(calls, "pull", "otbr")
+    assert len(pulls) == 1
+    assert "--profile" in calls.splitlines()[pulls[0]].split()
+    assert _compose(calls, "up") == []
+    assert not (radios.update_dir / "otbr-upkeep-tried").exists()
+    assert f"pulled {NEW_IMAGE} - otbr is recreated from it on the next pass" in _log_text(radios)
+
+    radios.log.unlink()
+    result, calls, state = radios()
+    assert result.returncode == 0, result.stderr
+    assert f"docker image inspect {NEW_IMAGE}" in calls.splitlines()
+    assert _compose(calls, "pull") == []
+    assert state["id"].startswith("otbr-upkeep-")
+    assert re.fullmatch(r"otbr-upkeep-\d{14}", state["id"])
+    assert state["steps"] == ["apply_thread", "verify_thread"]
+    assert (state["phase"], state["error"]) == ("done", None)
+    assert (state["healthy"], state["rolled_back"]) == (True, False)
+    assert len(_index(calls, "up", "otbr")) == 1
+    assert "env OTBR_IMAGE=" in calls.splitlines()
+    assert "ot-ctl state" in calls
+    log = _log_text(radios)
+    assert f"radios upkeep {state['id']}: " in log
+    assert NEW_IMAGE in log
+
+    # The recreated container is what Compose asked for: the next pass finds
+    # nothing to do.
+    radios.log.unlink()
+    _, calls, second = radios()
+    assert second["id"] == state["id"]
+    assert _compose(calls, "pull") == [] and _compose(calls, "up") == []
+
+
+def test_upkeep_recreates_otbr_for_a_changed_device_without_pulling(radios):
+    """The fixed `/dev/ttyThread` mapping reaching an installation whose
+    otbr still maps the stick elsewhere."""
+    _upkeep(radios)
+    (radios.fake / "actual_devices").write_text(
+        '[{"PathOnHost": "/dev/ttyUSB0", "PathInContainer": "/dev/ttyUSB0", '
+        '"CgroupPermissions": "rwm"}]'
+    )
+    _, calls, state = radios()
+    assert state["id"].startswith("otbr-upkeep-")
+    assert (state["phase"], state["healthy"]) == ("done", True)
+    assert _compose(calls, "pull") == []
+    assert len(_compose(calls, "up", "otbr")) == 1
+
+
+def test_upkeep_recreates_otbr_for_a_changed_radio_url_without_pulling(radios):
+    _upkeep(radios)
+    (radios.fake / "actual_radio_url").write_text(
+        "spinel+hdlc+uart:///dev/ttyUSB0?uart-baudrate=115200"
+    )
+    _, calls, state = radios()
+    assert (state["phase"], state["healthy"]) == ("done", True)
+    assert state["id"].startswith("otbr-upkeep-")
+    assert _compose(calls, "pull") == []
+    assert len(_compose(calls, "up", "otbr")) == 1
+
+
+@pytest.mark.parametrize(
+    "compose_devices",
+    [
+        # Compose 2.27, the updater image's, with the optional permissions.
+        '["/dev/ttyUSB1:/dev/ttyACM9:rwm", "/dev/ttyUSB0:/dev/ttyThread"]',
+        # Later Compose versions print objects.
+        (
+            '[{"source": "/dev/ttyUSB1", "target": "/dev/ttyACM9", "permissions": "rwm"},'
+            ' {"source": "/dev/ttyUSB0", "target": "/dev/ttyThread", "permissions": "rwm"}]'
+        ),
+    ],
+    ids=["strings", "objects"],
+)
+def test_upkeep_reads_both_compose_device_forms_as_the_same_mapping(radios, compose_devices):
+    """Fault to prove it: compare the devices as Compose prints them - the
+    object form, or the string with its permissions, counts as drift."""
+    _upkeep(radios)
+    (radios.fake / "compose_devices").write_text(compose_devices)
+    (radios.fake / "actual_devices").write_text(
+        '[{"PathOnHost": "/dev/ttyUSB0", "PathInContainer": "/dev/ttyThread", "CgroupPermissions": "rwm"},'
+        ' {"PathOnHost": "/dev/ttyUSB1", "PathInContainer": "/dev/ttyACM9", "CgroupPermissions": "rwm"}]'
+    )
+    _, calls, state = radios()
+    assert state["id"] == "job-0"
+    assert _compose(calls, "up") == []
+    assert "otbr matches its Compose configuration" in _log_text(radios)
+
+
+def test_upkeep_after_a_failed_pull_uses_no_attempt_and_waits_1800_s(radios):
+    """Faults to prove it, one at a time: drop the wait - the second pass
+    pulls again; write the tried file before the pull - the pass after the
+    wait starts no job."""
+    _upkeep(radios)
+    (radios.fake / "compose_image").write_text(NEW_IMAGE)
+    (radios.fake / "pull_status").write_text("1")
+    _, calls, state = radios()
+    assert state["id"] == "job-0"
+    assert len(_compose(calls, "pull", "otbr")) == 1
+    assert _compose(calls, "up") == []
+    assert not (radios.update_dir / "otbr-upkeep-tried").exists()
+    failed_at = (radios.update_dir / "otbr-upkeep-pull-failed-at").read_text(encoding="utf-8")
+    epoch, target = failed_at.split()
+    assert epoch == (radios.fake / "epoch").read_text(encoding="utf-8").strip()
+    assert re.fullmatch(r"\d+-\d+", target)
+    assert f"could not pull {NEW_IMAGE}" in _log_text(radios)
+
+    _advance(radios, 1799)
+    radios.log.unlink()
+    _, calls, state = radios()
+    assert state["id"] == "job-0"
+    assert _compose(calls, "pull") == [] and _compose(calls, "up") == []
+
+    _advance(radios, 1)
+    (radios.fake / "pull_status").write_text("0")
+    radios.log.unlink()
+    _pulled(radios)
+    assert not (radios.update_dir / "otbr-upkeep-pull-failed-at").exists()
+    _, calls, state = radios()
+    assert state["id"].startswith("otbr-upkeep-")
+    assert (state["phase"], state["healthy"]) == ("done", True)
+
+
+def test_upkeep_does_not_attempt_the_same_target_twice(radios):
+    """Fault to prove it: drop the tried-file check - the second pass
+    recreates otbr again."""
+    _upkeep(radios)
+    (radios.fake / "compose_image").write_text(NEW_IMAGE)
+    (radios.fake / "thread_mode").write_text("never")
+    _pulled(radios)
+    _, calls, first = radios()
+    assert (first["phase"], first["rolled_back"]) == ("failed", True)
+    assert len(_compose(calls, "up", "otbr")) == 2
+
+    for _ in range(2):
+        radios.log.unlink()
+        _, calls, state = radios()
+        assert state["id"] == first["id"]
+        assert _compose(calls, "pull") == [] and _compose(calls, "up") == []
+    assert _log_text(radios).count("which was already attempted") == 1
+
+    # The next target - a new release in .env - is attempted.
+    newer = "ghcr.io/lucienkerl/loxmatter-otbr:4de56f78-rcp2"
+    radios.env_file.write_text(radios.env_file.read_text() + f"OTBR_IMAGE={newer}\n")
+    (radios.fake / "compose_image").write_text(newer)
+    (radios.fake / "thread_mode").write_text("leader")
+    radios.log.unlink()
+    _pulled(radios, newer)
+    _, calls, state = radios()
+    # The job ids are stamped to the second by the real clock and may be
+    # equal here; the finished job itself is the new one.
+    assert state["id"].startswith("otbr-upkeep-")
+    assert (state["phase"], state["error"], state["healthy"]) == ("done", None, True)
+    assert len(_compose(calls, "up", "otbr")) == 1
+
+
+def test_upkeep_killed_in_the_middle_of_its_job_is_not_started_again(radios):
+    """The next pass heals the dead job into failed/interrupted; it must not
+    recreate otbr again behind the user's back, towards the same target that
+    may be what ended the pass.
+
+    Fault to prove it: write the tried file after the job instead of before
+    the apply - the second pass recreates otbr."""
+    _upkeep(radios)
+    (radios.fake / "compose_image").write_text(NEW_IMAGE)
+    _pulled(radios)
+    (radios.fake / "kill_on_up").write_text("")
+    result, calls, state = radios()
+    assert result.returncode != 0
+    assert (state["phase"], state["id"][:12]) == ("apply_thread", "otbr-upkeep-")
+    assert len(_compose(calls, "up", "otbr")) == 1
+
+    radios.log.unlink()
+    _, calls, healed = radios()
+    assert (healed["id"], healed["phase"], healed["error"]) == (
+        state["id"],
+        "failed",
+        "interrupted",
+    )
+    assert _compose(calls, "up") == [] and _compose(calls, "pull") == []
+
+
+@pytest.mark.parametrize(("mode", "healthy"), [("never", False), ("second_up", True)])
+def test_upkeep_rolls_a_failing_image_back_to_the_previous_image_id(radios, mode, healthy):
+    """The previous image is still on the host under its ID, and OTBR_IMAGE
+    in the environment outranks `.env` in Compose's interpolation.
+
+    Fault to prove it: recreate without exporting OTBR_IMAGE - the second
+    recreate carries no image and would build the failing container again."""
+    _upkeep(radios)
+    (radios.fake / "compose_image").write_text(NEW_IMAGE)
+    (radios.fake / "thread_mode").write_text(mode)
+    _pulled(radios)
+    result, calls, state = radios()
+    assert result.returncode == 0, result.stderr
+    assert (state["phase"], state["error"]) == ("failed", "verify_thread_failed")
+    assert (state["rolled_back"], state["healthy"]) == (True, healthy)
+    lines = calls.splitlines()
+    ups = _index(calls, "up", "otbr")
+    assert len(ups) == 2
+    recorded = [line for line in lines if line.startswith("env OTBR_IMAGE=")]
+    assert recorded == ["env OTBR_IMAGE=", f"env OTBR_IMAGE={OTBR_IMAGE_ID}"]
+    saving = next(
+        i for i, line in enumerate(lines) if "docker logs --timestamps --tail 400 otbr" in line
+    )
+    assert ups[0] < saving < ups[1]
+    assert (radios.update_dir / f"radios-otbr-{state['id']}.log").is_file()
+    assert (
+        f"radios upkeep {state['id']} rolled back, healthy after rollback: {str(healthy).lower()}"
+        in _log_text(radios)
+    )
+
+
+def test_upkeep_with_only_a_changed_device_has_nothing_to_roll_back_to(radios):
+    _upkeep(radios)
+    (radios.fake / "actual_devices").write_text(
+        '[{"PathOnHost": "/dev/ttyUSB0", "PathInContainer": "/dev/ttyUSB0", '
+        '"CgroupPermissions": "rwm"}]'
+    )
+    (radios.fake / "thread_mode").write_text("second_up")
+    _, calls, state = radios()
+    assert (state["phase"], state["error"]) == ("failed", "verify_thread_failed")
+    assert (state["rolled_back"], state["healthy"]) == (True, False)
+    assert len(_compose(calls, "up", "otbr")) == 1
+    assert "OTBR_IMAGE=sha256" not in calls
+
+
+@pytest.mark.parametrize("guard", ["update", "profile", "container", "capable", "request"])
+def test_upkeep_is_skipped_when_it_must_not_touch_otbr(radios, guard):
+    """Fault to prove it (update): drop the running-update guard - the pass
+    pulls and recreates otbr in the middle of an update."""
+    _upkeep(radios)
+    (radios.fake / "compose_image").write_text(NEW_IMAGE)
+    extra = {}
+    if guard == "update":
+        (radios.update_dir / "state.json").write_text(json.dumps({"phase": "pull"}))
+    elif guard == "profile":
+        radios.env_file.write_text(
+            radios.env_file.read_text().replace("COMPOSE_PROFILES=thread", "COMPOSE_PROFILES=foo")
+        )
+    elif guard == "container":
+        (radios.fake / "otbr_state").unlink()
+    elif guard == "capable":
+        extra["LOXMATTER_STACK_HOST_PATH"] = ""
+    else:
+        _request(radios, bluetooth=None)
+    result, calls, state = radios(**extra)
+    assert result.returncode == 0, result.stderr
+    assert _compose(calls, "config") == [] and _compose(calls, "pull") == []
+    assert not state["id"].startswith("otbr-upkeep-")
+    assert not (radios.update_dir / "otbr-upkeep-tried").exists()
+    if guard == "request":
+        assert (state["id"], state["phase"]) == ("job-1", "done")
+    else:
+        assert state["id"] == "job-0"
+        assert _compose(calls, "up") == []
+    if guard in ("update", "profile", "capable"):
+        assert "docker inspect" not in calls
+
+
+def test_upkeep_runs_beside_a_request_that_was_already_handled(radios):
+    """A handled request stays on disk until the next one replaces it, so
+    after the first change on the card nearly every pass has a request file.
+
+    Fault to prove it: exit at the handled marker without the upkeep - the
+    image drift is never acted on."""
+    _upkeep(radios)
+    _request(radios, bluetooth=None)
+    _, _, state = radios()
+    assert (state["id"], state["phase"]) == ("job-1", "done")
+    (radios.fake / "compose_image").write_text(NEW_IMAGE)
+    radios.env_file.write_text(radios.env_file.read_text() + f"OTBR_IMAGE={NEW_IMAGE}\n")
+    radios.log.unlink()
+    _pulled(radios)
+    _, calls, state = radios()
+    assert state["id"].startswith("otbr-upkeep-")
+    assert state["phase"] == "done"
+    assert len(_compose(calls, "up", "otbr")) == 1
+
+
+def test_upkeep_reads_the_compose_configuration_again_only_when_its_inputs_change(radios):
+    """Fault to prove it: ignore the stored key - every pass runs
+    `compose config`."""
+    _upkeep(radios)
+    radios()
+    assert _log_text(radios).count("otbr matches its Compose configuration") == 1
+
+    radios.log.unlink()
+    _, calls, _ = radios()
+    assert _compose(calls, "config") == []
+    assert _log_text(radios).count("otbr matches its Compose configuration") == 1
+
+    radios.env_file.write_text(radios.env_file.read_text() + "# edited\n")
+    radios.log.unlink()
+    _, calls, _ = radios()
+    assert len(_compose(calls, "config")) == 1
+
+    radios.log.unlink()
+    _, calls, _ = radios()
+    assert _compose(calls, "config") == []
+    (radios.fake / "otbr_ups").write_text("7")
+    radios.log.unlink()
+    _, calls, _ = radios()
+    assert len(_compose(calls, "config")) == 1
+
+
+def test_upkeep_that_cannot_read_the_configuration_asks_compose_once_per_input(radios):
+    """The same files give the same failure: asking Compose again every two
+    seconds would only cost the Pi a steady share of a core.
+
+    Fault to prove it: do not cache the failure - every pass runs
+    `compose config` again."""
+    _upkeep(radios)
+    (radios.fake / "compose_fail").write_text(" config ")
+    for _ in range(3):
+        _, calls, state = radios()
+        assert state["id"] == "job-0"
+    assert len(_compose(calls, "config")) == 1
+    assert _compose(calls, "up") == []
+    assert _log_text(radios).count("could not read otbr's Compose configuration") == 1
+
+    radios.env_file.write_text(radios.env_file.read_text() + "# edited\n")
+    radios()
+    _, calls, _ = radios()
+    assert len(_compose(calls, "config")) == 2
+    assert _log_text(radios).count("could not read otbr's Compose configuration") == 2
+
+
+def test_upkeep_waits_only_for_the_target_whose_pull_failed(radios):
+    """A release that replaces a broken image tag must not wait out the
+    half hour its predecessor's failure started.
+
+    Fault to prove it: wait after any failed pull, whatever its target - the
+    pass with the new image pulls nothing."""
+    _upkeep(radios)
+    (radios.fake / "compose_image").write_text(NEW_IMAGE)
+    (radios.fake / "pull_status").write_text("1")
+    _, calls, state = radios()
+    assert len(_compose(calls, "pull", "otbr")) == 1 and state["id"] == "job-0"
+
+    _advance(radios, 10)
+    radios.log.unlink()
+    _, calls, _ = radios()
+    assert _compose(calls, "pull") == []
+
+    newer = "ghcr.io/lucienkerl/loxmatter-otbr:4de56f78-rcp2"
+    radios.env_file.write_text(radios.env_file.read_text() + f"OTBR_IMAGE={newer}\n")
+    (radios.fake / "compose_image").write_text(newer)
+    (radios.fake / "pull_status").write_text("0")
+    radios.log.unlink()
+    _pulled(radios, newer)
+    _, calls, state = radios()
+    assert state["id"].startswith("otbr-upkeep-")
+    assert (state["phase"], state["healthy"]) == ("done", True)
+
+
+def test_upkeep_keeps_the_heartbeat_moving_through_a_long_pull(radios):
+    """A pull may take minutes, and a radios state whose seen_at stops for
+    longer than `_MAX_SILENT_SECONDS` (30 s) reads to the card as a sidecar
+    that is gone.
+
+    Fault to prove it: remove the loop that waits for the background pull -
+    no heartbeat sample is taken while it runs."""
+    run, log = _heartbeat_run(radios, LOXMATTER_RADIOS_POLL_SECONDS="5")
+    _upkeep(radios)
+    (radios.fake / "compose_image").write_text(NEW_IMAGE)
+    (radios.fake / "pull_seconds").write_text("120")
+    result, calls, state = run()
+    assert result.returncode == 0, result.stderr
+    assert state["id"] == "job-0"
+    assert len(_compose(calls, "pull", "otbr")) == 1
+    assert _compose(calls, "up") == []
+    # The seeded state's phase, which the pull does not change.
+    samples = _samples(log, "done")
+    assert len(samples) >= 20, samples
+    assert _strictly_advancing([seen for seen, _ in samples]), samples
+    assert _strictly_advancing([updater for _, updater in samples]), samples
+    assert int((radios.fake / "epoch").read_text()) >= START_EPOCH + 120
+
+
+def test_upkeep_reports_a_pull_that_fails_after_running_in_the_background(radios):
+    """The pull's exit status has to survive being a background job under
+    `set -e`: a failure is recorded, not taken for success or for the end of
+    the pass.
+
+    Faults to prove it, one at a time: ignore the status `wait` returns -
+    the failed pull starts a job; call `wait` as a plain statement - the
+    pass ends there with no failure recorded."""
+    _upkeep(radios)
+    (radios.fake / "compose_image").write_text(NEW_IMAGE)
+    (radios.fake / "pull_status").write_text("1")
+    (radios.fake / "pull_seconds").write_text("3")
+    result, calls, state = radios()
+    assert result.returncode == 0, result.stderr
+    assert state["id"] == "job-0"
+    assert _compose(calls, "up") == []
+    assert (radios.update_dir / "otbr-upkeep-pull-failed-at").is_file()
+    assert f"could not pull {NEW_IMAGE}" in _log_text(radios)
+
+
+def test_upkeep_holds_the_watchdog_lock_before_it_recreates_otbr(radios):
+    """Faults to prove it, one at a time: remove `take_watchdog_lock` from
+    the upkeep - no `flock` call precedes the recreate; do not set
+    LOG_SUBJECT in the upkeep - the lock's log line speaks for a request."""
+    _upkeep(radios)
+    (radios.fake / "compose_image").write_text(NEW_IMAGE)
+    _pulled(radios)
+    _, calls, state = radios()
+    assert state["phase"] == "done"
+    lines = calls.splitlines()
+    locking = [i for i, line in enumerate(lines) if line == "flock -n 9"]
+    assert locking and locking[0] < _index(calls, "up", "otbr")[0], calls
+    assert f"radios upkeep {state['id']}: holding the otbr watchdog's lock" in _log_text(radios)
+    assert "radios request otbr-upkeep-" not in _log_text(radios)
+
+
+def test_upkeep_pulls_under_a_600_s_limit(radios):
+    """A pull killed by entrypoint.sh's 900 s would record no failure and
+    start again on the next pass.
+
+    Fault to prove it: pull without `timeout` - no bounded pull is logged."""
+    real_timeout = subprocess.run(
+        ["which", "timeout"], capture_output=True, text=True, check=False
+    ).stdout.strip()
+    (radios.bindir / "timeout").write_text(
+        f'#!/bin/sh\nprintf \'timeout %s\\n\' "$*" >> "$STUB_LOG"\nexec {real_timeout} "$@"\n',
+        encoding="utf-8",
+    )
+    (radios.bindir / "timeout").chmod(0o755)
+    _upkeep(radios)
+    (radios.fake / "compose_image").write_text(NEW_IMAGE)
+    _, calls, state = radios(LOXMATTER_RADIOS_PULL_TIMEOUT="")
+    assert state["id"] == "job-0"
+    bounded = [
+        line
+        for line in calls.splitlines()
+        if line.startswith("timeout 600 docker compose") and line.endswith(" pull otbr")
+    ]
+    assert len(bounded) == 1, calls
+
+
+@pytest.mark.parametrize("pull_status", ["0", "18"], ids=["pullable", "local-only"])
+def test_upkeep_uses_an_image_already_on_the_host_without_pulling(radios, pull_status):
+    """An image the host already has is used as it is, in the same pass. For
+    a local-only OTBR_IMAGE that is the only way it is ever applied: Compose
+    2.27 `pull` on a tag no registry has exits 18, "pull access denied".
+
+    Fault to prove it: skip the check for a local image - the pass pulls,
+    and the local-only image never gets past its failing pull."""
+    _upkeep(radios)
+    local = "loxmatter-otbr:built-here"
+    radios.env_file.write_text(radios.env_file.read_text() + f"OTBR_IMAGE={local}\n")
+    (radios.fake / "compose_image").write_text(local)
+    (radios.fake / "local_images").write_text(f"{local}\n")
+    (radios.fake / "pull_status").write_text(pull_status)
+    result, calls, state = radios()
+    assert result.returncode == 0, result.stderr
+    assert f"docker image inspect {local}" in calls.splitlines()
+    assert _compose(calls, "pull") == []
+    assert state["id"].startswith("otbr-upkeep-")
+    assert (state["phase"], state["healthy"]) == ("done", True)
+    assert len(_compose(calls, "up", "otbr")) == 1
+    assert not (radios.update_dir / "otbr-upkeep-pull-failed-at").exists()

@@ -21,13 +21,60 @@ jobs:
       - run: uv run python scripts/check_language.py
       - run: uv run pytest -v
 
+  # Release gate (design "Thread setup that needs no handwork",
+  # 2026-09-14, section 3.3): a version tag must never point
+  # deploy/testhost/docker-compose.yml at an otbr image nobody built - that
+  # image is built by its own workflow (otbr-image.yml), on its own
+  # schedule, not by this one. `needs: test` before this job is unnecessary
+  # (it does nothing on a plain push to main, and the image jobs below
+  # already depend on `test` themselves) but the check itself must run
+  # before ANY image is pushed under a tag - see `image` and
+  # `updater-image`'s own `needs`/`if` below, which is how they wait on it
+  # without being skipped when it doesn't apply.
+  otbr-image-check:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      # Deliberately without a registry login: a Pi pulls the border router
+      # image anonymously, so the gate asks the registry the same way. A
+      # logged-in check would pass for a package that is still private -
+      # and every fresh Thread installation would then fail to start.
+      - name: The otbr image compose defaults to must already exist, publicly
+        run: |
+          set -eu
+          # Read straight out of the compose file rather than
+          # deploy/otbr/source.env, deliberately: this checks what a
+          # release actually deploys, which is only correct if the two
+          # agree - a test already pins that agreement
+          # (tests/test_otbr_image.py) but this step must survive the
+          # rare case where they drift anyway. Kept as shell, not Python -
+          # a release must not depend on `uv sync` having already run.
+          image="$(sed -n -E 's/.*image: \$\{OTBR_IMAGE:-([^}]+)\}.*/\1/p' deploy/testhost/docker-compose.yml)"
+          [ -n "$image" ] || { echo "No otbr image default found in deploy/testhost/docker-compose.yml"; exit 1; }
+          docker buildx imagetools inspect "$image" >/dev/null
+
   # Builds and publishes the image (draft "Deploy updates via the UI",
   # 2026-09-08, section 5). `needs: test` is
   # not cosmetic: an image that failed the test suite must not
   # be put under a tag that someone can deploy.
   image:
-    needs: test
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+    needs: [test, otbr-image-check]
+    # otbr-image-check only runs on a tag push (see its own `if:` above);
+    # on a plain push to main it is skipped. An `if` without a status
+    # function gets an implicit `success()`, which is false as soon as any
+    # `needs` job was skipped - this job would then be skipped on main too,
+    # and the :dev image the test Pi updates from would silently stop being
+    # built. `!cancelled()` replaces that implicit check, so `test` has to be
+    # required explicitly.
+    if: >-
+      !cancelled() && needs.test.result == 'success' &&
+      github.event_name == 'push' &&
+      (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) &&
+      (needs.otbr-image-check.result == 'success' || needs.otbr-image-check.result == 'skipped')
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -98,8 +145,12 @@ jobs:
   # the process that is running it. It changes rarely - hence no :dev tag,
   # only on releases.
   updater-image:
-    needs: test
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: [test, otbr-image-check]
+    # otbr-image-check runs under the same tag condition this job has, so
+    # here it must simply have succeeded.
+    if: >-
+      github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') &&
+      needs.otbr-image-check.result == 'success'
     runs-on: ubuntu-latest
     permissions:
       contents: read

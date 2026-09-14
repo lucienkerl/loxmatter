@@ -16,13 +16,27 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 
+# loxmatter-watchdog: container-ready
+#
 # Brings the OTBR agent back if it has died.
 #
-# Meant for a cron entry, see deploy/testhost/README.md:
+# Runs every minute from the updater service, inside its container - see
+# deploy/updater/watchdog-once.sh. It can equally well run from a host
+# cron entry:
 #
 #   * * * * * /home/pi/matter-loxone/scripts/otbr-watchdog.sh >> /home/pi/otbr-watchdog.log 2>&1
 #
-# No `flock` in the cron line: the script takes its own lock, below.
+# No `flock` in the cron line: the script takes its own lock, below. Both
+# ways of running it reach this same file - the updater through its
+# `../..:/repo` bind mount, cron directly - and so share that lock: a
+# crontab line left over from an older install does no harm, it just finds
+# the lock taken.
+#
+# Everything the script does is through `docker`, never by reading the
+# host's own state (an interface, a process list): that is what lets it
+# run from inside a container that is not in the host's network or PID
+# namespace but does have the Docker socket, exactly like a host cron job
+# would.
 #
 # WHY this is needed: the OTBR agent aborts if the radio module stops
 # responding (RCP timeout - a USB dropout, power supply, the module
@@ -32,8 +46,9 @@
 # an outage went unnoticed for six and a half hours; no device was
 # reachable during that time.
 #
-# The check is the same one the "System" view shows: does a Thread
-# interface (wpan*) with a mesh address exist? It disappears along with
+# The check is the same one the "System" view shows: is the Thread
+# network's role `leader`, `router` or `child`, as `ot-ctl state` reports
+# from inside the container? It falls back to a non-member role along with
 # the agent.
 #
 # Deliberately NO restart loop inside a run: one restart, up to 60 s of
@@ -60,12 +75,6 @@
 set -euo pipefail
 
 SERVICE="otbr"
-# Overridable for the same reason `install.sh` makes RFKILL_DIR
-# overridable: otherwise the check can only be exercised on a host that
-# happens to have - or happens to lack - a Thread interface, and the
-# tests for it would assert nothing on the very Pi this runs on.
-IF_INET6="${IF_INET6:-/proc/net/if_inet6}"
-STACK="$(cd "$(dirname "${BASH_SOURCE[0]}")/../deploy/testhost" && pwd)"
 STAMP="$(date '+%Y-%m-%d %H:%M:%S')"
 # The lock is this script file itself, opened for reading: it always exists
 # and is readable by whoever runs the script, so no lock file is left in
@@ -139,10 +148,24 @@ if ! printf '%s\n' "$CONTAINERS" | grep -qx "$SERVICE"; then
   exit 0
 fi
 
+# `docker exec ... ot-ctl state` answers `leader`, `router` or `child` while
+# the agent is a member of the Thread network - anything else (`detached`,
+# `disabled`, an empty answer, or the `exec` itself failing because the
+# agent or the container is gone) means down. The device may print a
+# trailing `\r` (it is a serial-style CLI under the hood) and a `Done` line
+# after the answer; `tr -d '\r'` and `head -n 1` take just the first line.
+#
+# `case "$(... | ...)" in` does not let a failing command in the pipeline
+# raise `set -e`/`pipefail` out of this function - the failure is confined
+# to the command substitution supplying the `case` word - and the trailing
+# `return 1` turns "no match" (including an empty answer) into "down" too,
+# so every failure mode of the query reads as "down", never as a script
+# abort.
 thread_is_up() {
-  # Scope 00 means routed (ULA included); wpan* is OTBR's Thread
-  # interface.
-  awk '$4 == "00" && $6 ~ /^wpan/ { found = 1 } END { exit !found }' "$IF_INET6"
+  case "$(bounded "$DOCKER_TIMEOUT" docker exec "$SERVICE" ot-ctl state 2>/dev/null | tr -d '\r' | head -n 1)" in
+    leader | router | child) return 0 ;;
+  esac
+  return 1
 }
 
 if thread_is_up; then
@@ -156,25 +179,47 @@ fi
 # clock. A Pi has no real-time clock: at boot its clock is wherever it was
 # at shutdown until NTP steps it, possibly by days, and a clock stepped
 # backwards made a container started long ago look as if it had not started
-# yet. `ps -o etimes` counts from a monotonic clock and is immune to both.
+# yet. `docker top -o pid,etimes` asks the daemon to run `ps` on the HOST,
+# on the container's processes - unlike a plain `ps` inside this script,
+# that works from a container that does not share the host's PID
+# namespace, and it still counts from a monotonic clock, immune to both
+# problems above. The `pid` column is not optional: measured against a
+# real daemon, `docker top CONTAINER -o etimes` on its own fails outright
+# ("Couldn't find PID field in ps output") - the daemon needs a PID column
+# itself to map host processes back to the container - so `etimes` alone
+# would make the age unreadable on every run, never just leave a young
+# container alone. Only the second (`ELAPSED`) column is ever read as an
+# age; the first is a PID and must never be mistaken for one. The
+# container can have more than one process (an entrypoint plus the agent);
+# the largest ELAPSED - the oldest process - is the container's age.
 #
-# Anything that cannot be read - no pid, a stopped container's pid 0, no
-# such process, an answer that is not a plain number of seconds - skips the
-# grace period, never the restart: a watchdog that stays quiet because of a
-# format would be the outage of 3 September again. That is also why the
-# number is checked before the arithmetic below: bash reads an empty or
-# non-numeric value there as 0, and a negative or overlong one as a small
-# number, all of which would mean "just started".
+# Anything that cannot be read - the query itself failing, no numeric
+# ELAPSED values at all - skips the grace period, never the restart: a
+# watchdog that stays quiet because of a format would be the outage of 3
+# September again. Each value is checked before it is used in arithmetic
+# below: bash reads an empty or non-numeric value there as 0, and a
+# leading zero as octal (which can error out outright on an 8 or 9), so a
+# malformed value is dropped rather than compared.
 AGE=""
-PID="$(bounded "$DOCKER_TIMEOUT" docker inspect -f '{{.State.Pid}}' "$SERVICE" 2>/dev/null || true)"
-case "$PID" in
-  '' | *[!0-9]* | 0*) ;;
-  *) AGE="$(bounded "$DOCKER_TIMEOUT" ps -o etimes= -p "$PID" 2>/dev/null || true)" ;;
-esac
-AGE="${AGE//[[:space:]]/}"
+STATUS=0
+TOP_OUTPUT="$(bounded "$DOCKER_TIMEOUT" docker top "$SERVICE" -o pid,etimes 2>/dev/null)" || STATUS=$?
+if [ "$STATUS" -eq 0 ]; then
+  # NR>1 skips the `PID ELAPSED` header; $2 is ELAPSED, never $1 (PID).
+  ELAPSED_COLUMN="$(printf '%s\n' "$TOP_OUTPUT" | awk 'NR>1 {print $2}')" || true
+  while IFS= read -r VALUE; do
+    case "$VALUE" in
+      # Empty, not digits only, a leading zero, or ten digits and more.
+      '' | *[!0-9]* | 0?* | ??????????*) continue ;;
+    esac
+    if [ -z "$AGE" ] || ((VALUE > AGE)); then
+      AGE="$VALUE"
+    fi
+  done <<EOF
+$ELAPSED_COLUMN
+EOF
+fi
 case "$AGE" in
-  # Empty, not digits only, a leading zero, or ten digits and more.
-  '' | *[!0-9]* | 0?* | ??????????*)
+  '')
     printf '%s  Could not read how long %s has been running - no grace period\n' \
       "$STAMP" "$SERVICE"
     ;;
@@ -217,8 +262,13 @@ if [ "$STATUS" -ne 0 ]; then
     "$STAMP" "$(timed_out "$STATUS" "$DOCKER_TIMEOUT")"
 fi
 
+# `docker restart`, not `docker compose restart`: the latter needs the
+# stack's `.env` and project directory, which this script no longer reads -
+# a container run by the updater has neither nearby, only the Docker
+# socket. `-t 10` is Docker's own stop grace period before it sends
+# SIGKILL, independent of `RESTART_TIMEOUT`, which bounds the whole call.
 STATUS=0
-(cd "$STACK" && bounded "$RESTART_TIMEOUT" docker compose restart "$SERVICE" >/dev/null 2>&1) || STATUS=$?
+bounded "$RESTART_TIMEOUT" docker restart -t 10 "$SERVICE" >/dev/null 2>&1 || STATUS=$?
 if [ "$STATUS" -ne 0 ]; then
   printf '%s  Restarting %s failed%s\n' "$STAMP" "$SERVICE" "$(timed_out "$STATUS" "$RESTART_TIMEOUT")"
   exit 1

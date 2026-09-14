@@ -5252,6 +5252,20 @@ function app() {
       return this.radios?.job?.phase === "rollback";
     },
 
+    /** Whether the running job is one `radios-once.sh` started on its own
+     * after an update brought a newer otbr image (`job.kind`, set in
+     * `api/radios.py` from the id prefix) - so the banner can say the
+     * border router is being brought up to date, rather than the card
+     * silently doing something the user never asked for and never chose.
+     * `!radiosRollingBack()`: the rollback phase already has its own
+     * banner above, which covers an upkeep job's rollback too - no need
+     * to show both at once. */
+    radiosUpkeepRunning() {
+      return (
+        this.radios?.job?.kind === "otbr_upkeep" && this.radiosJobRunning() && !this.radiosRollingBack()
+      );
+    },
+
     /** Whether the job that just failed wanted Thread ON and the rollback
      * it triggered left Thread OFF - the 13 September incident (design
      * "The radios card says when a rollback left Thread off", 2026-09-14).
@@ -5283,6 +5297,26 @@ function app() {
     radiosResultKey() {
       const job = this.radios?.job;
       if (!job || this.radiosJobRunning()) return null;
+      // An upkeep job carries no `requested` (it was never a card
+      // request), so `radiosThreadLeftOff()` is always false for it and
+      // the ordinary texts below would tell the user nothing happened
+      // that they did not ask for - which is exactly backwards. Its own
+      // three texts (design section 6) say what actually happened instead;
+      // `interrupted` and an unhealthy rollback keep the existing wording,
+      // since those two are about the sidecar/hardware state, not about
+      // who asked for the change.
+      if (job.kind === "otbr_upkeep") {
+        if (job.phase === "failed" && job.error === "interrupted") {
+          return "web.radios.result_interrupted";
+        }
+        if (job.phase === "failed") {
+          return job.healthy === false
+            ? "web.radios.result_failed_unhealthy"
+            : "web.radios.result_upkeep_failed_restored";
+        }
+        if (job.phase === "done") return "web.radios.result_upkeep_done";
+        return null;
+      }
       if (job.phase === "done") return "web.radios.result_done";
       if (job.phase === "unchanged") return "web.radios.result_unchanged";
       if (job.phase === "rejected") return "web.radios.result_rejected";

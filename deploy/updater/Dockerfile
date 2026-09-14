@@ -21,6 +21,11 @@ FROM alpine:3.20
 # coreutils for `sort -V`: the "forward only" check (spec section
 # 10, rule 3) compares semantic versions, and busybox's sort cannot
 # do that reliably.
+#
+# bash for watchdog-once.sh, which runs scripts/otbr-watchdog.sh - that
+# script needs a real bash (BASH_SOURCE, its own arrays), not the
+# busybox `ash` this base image otherwise gets by as `/bin/sh` (design
+# "Thread setup without handwork", 2026-09-14, section 4.4).
 RUN apk add --no-cache \
       docker-cli \
       docker-cli-compose \
@@ -28,10 +33,11 @@ RUN apk add --no-cache \
       curl \
       jq \
       coreutils \
-      tar
+      tar \
+      bash
 
-COPY entrypoint.sh update-once.sh radios-once.sh /opt/loxmatter/
-RUN chmod +x /opt/loxmatter/entrypoint.sh /opt/loxmatter/update-once.sh /opt/loxmatter/radios-once.sh
+COPY entrypoint.sh update-once.sh radios-once.sh watchdog-once.sh /opt/loxmatter/
+RUN chmod +x /opt/loxmatter/entrypoint.sh /opt/loxmatter/update-once.sh /opt/loxmatter/radios-once.sh /opt/loxmatter/watchdog-once.sh
 
 # Build identity, mirroring the bridge's own Dockerfile (see its
 # LOXMATTER_VERSION ARG/ENV pair and the comment there) - until now this

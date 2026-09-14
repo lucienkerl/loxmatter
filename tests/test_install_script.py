@@ -945,11 +945,16 @@ def test_a_missing_service_becomes_a_finding(installer):
     assert "not running" in result.output
 
 
-def test_a_thread_run_without_wpan_reports_the_workaround(installer):
+def test_a_thread_run_without_wpan_notes_it_instead_of_a_manual_workaround(installer):
+    # check_thread used to print `docker exec otbr ...` commands to bring
+    # otbr-agent up by hand and turn them into a finding. The updater
+    # service's watchdog now does the same recovery on its own every
+    # minute, so this is a note, not something the reader has to act on.
     result = installer(env={"LOXMATTER_MODE": "thread", "RADIO_DEVICE": "/dev/ttyUSB0"})
     assert result.returncode == 0
-    assert "start-stop-daemon" in result.output
-    assert "otbr-agent" in result.output
+    assert "docker exec otbr" not in result.output
+    assert "Findings" not in result.output
+    assert "watchdog" in result.output
 
 
 def test_a_wifi_run_does_not_mention_thread_as_a_problem_at_all(installer):
@@ -987,45 +992,27 @@ def test_the_report_names_the_web_interface_and_the_password(installer):
     assert "set a password" in result.output
 
 
-def test_the_thread_report_suggests_the_watchdog(installer):
+def test_the_thread_report_names_the_updater_watchdog_not_a_crontab_line(installer):
+    # Nothing to set up by hand any more: the updater service runs the
+    # watchdog itself every minute (deploy/updater/watchdog-once.sh).
+    # Fault to prove it: print the old cron line again - these fail.
     result = installer(env={"LOXMATTER_MODE": "thread", "RADIO_DEVICE": "/dev/ttyUSB0"})
-    assert "otbr-watchdog.sh" in result.output
-    assert str(result.home / "loxmatter") in result.output
+    assert result.returncode == 0
+    assert "crontab" not in result.output
+    assert "otbr-watchdog.sh" not in result.output
+    assert "updater service" in result.output
 
 
-def test_the_wifi_report_suggests_no_watchdog(installer):
+def test_the_wifi_report_points_to_the_radios_card(installer):
+    # Adding Thread later used to mean editing COMPOSE_PROFILES and
+    # RADIO_DEVICE in .env by hand; that now happens on the Radios card.
+    # (configure_mode's own "COMPOSE_PROFILES= (...)" note, printed earlier
+    # while writing the configuration, is unrelated and stays.)
     result = installer()
     assert "otbr-watchdog.sh" not in result.output
-    assert "COMPOSE_PROFILES=thread" in result.output  # that's how you upgrade later
-
-
-def test_the_watchdog_log_sits_next_to_the_checkout_not_in_home(installer, tmp_path):
-    # The cron line used to always write the log to $HOME, even when
-    # --dir puts the checkout somewhere else entirely - then its own
-    # line no longer matched itself.
-    checkout = tmp_path / "elsewhere" / "loxmatter"
-    result = installer(
-        "--dir",
-        str(checkout),
-        env={"LOXMATTER_MODE": "thread", "RADIO_DEVICE": "/dev/ttyUSB0"},
-    )
-    assert result.returncode == 0
-    assert f"{checkout.parent}/otbr-watchdog.log" in result.output
-    assert f"{result.home}/otbr-watchdog.log" not in result.output
-
-
-def test_the_watchdog_runs_every_minute(installer):
-    """The script locks itself and waits out a freshly started container,
-    so cron can start it every minute with no `flock` of its own. The line
-    used to say every five minutes, which cost that long in outage.
-
-    Fault to prove it: print `*/5` again - the line is not found."""
-    result = installer(env={"LOXMATTER_MODE": "thread", "RADIO_DEVICE": "/dev/ttyUSB0"})
-    checkout = result.home / "loxmatter"
-    assert (
-        f"    * * * * * {checkout}/scripts/otbr-watchdog.sh >> {checkout.parent}/otbr-watchdog.log 2>&1"
-        in result.output
-    )
+    assert "set COMPOSE_PROFILES" not in result.output
+    assert "RADIO_DEVICE in" not in result.output
+    assert "Settings -> Radios" in result.output
 
 
 def test_the_report_points_to_findings_without_repeating_them(installer):
@@ -1061,3 +1048,15 @@ def test_with_no_findings_there_is_no_reference_to_findings(installer):
     assert result.returncode == 0
     assert "Findings" not in result.output
     assert "Some things above still need you" not in result.output
+
+
+def test_a_wifi_run_writes_the_detected_backbone_for_a_later_thread_switch(installer):
+    """Thread is switched on later from the Radios card, which never asks
+    for BACKBONE_IF. Left at .env.example's wlan0, an Ethernet-only host
+    would get a border router on the wrong interface.
+
+    Fault to prove it: drop the WiFi-mode branch that writes BACKBONE_IF."""
+    result = installer()
+    assert result.returncode == 0
+    assert _env(result)["COMPOSE_PROFILES"] == ""
+    assert _env(result)["BACKBONE_IF"] == "eth0"

@@ -3,7 +3,10 @@
 # Runs on a Raspberry Pi (see README.md for the migration from the test VM,
 # which had no Bluetooth adapter, and all deviations from the original
 # design):
-#   - openthread/otbr:latest       -> Digest sha256:ebebd9f6..., Entrypoint
+#   - ghcr.io/lucienkerl/loxmatter-otbr (deploy/otbr/source.env) -> built
+#     from ot-br-posix's etc/docker/test/Dockerfile like the official
+#     openthread/otbr:latest it replaces (that one measured at Digest
+#     sha256:ebebd9f6...), Entrypoint
 #     /app/etc/docker/test/docker_entrypoint.sh (the "test" variant of the
 #     image, not the newer s6-overlay/"border-router" variant). This
 #     variant reads RADIO_URL as an environment variable and accepts
@@ -43,10 +46,15 @@ name: loxmatter-testhost
 
 services:
   otbr:
-    # OTBR_IMAGE in .env picks another image, e.g. one built locally with
-    # OpenThread's RCP restoration; unset or empty is the official image.
-    # See .env.example.
-    image: ${OTBR_IMAGE:-openthread/otbr:latest}
+    # The default is loxmatter's own pinned build (deploy/otbr/source.env,
+    # .github/workflows/otbr-image.yml), not the official
+    # openthread/otbr:latest - that image lacks OpenThread's RCP
+    # restoration, and without it a single lost Spinel frame between
+    # otbr-agent and the radio stick ends the agent instead of recovering
+    # (research behind the design this default replaced). OTBR_IMAGE in
+    # .env remains an expert override, e.g. to point at a locally built
+    # image while testing a different ot-br-posix commit. See .env.example.
+    image: ${OTBR_IMAGE:-ghcr.io/lucienkerl/loxmatter-otbr:2ba12d24-rcp2}
     container_name: otbr
     # Only with the "thread" profile active (2026-09-05). This service
     # passes through a real device via `devices:` below - if the radio

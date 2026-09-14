@@ -2563,6 +2563,20 @@ web.radios.job_not_collected:
 web.radios.rolling_back:
   en: "That did not work. The previous setting is being restored - this can take up to two and a half minutes. Please leave the Pi switched on."
   de: "Das hat nicht funktioniert. Die vorherige Einstellung wird gerade wiederhergestellt – das kann bis zu zweieinhalb Minuten dauern. Bitte lassen Sie den Pi eingeschaltet."
+# `radios-once.sh` starts an "upkeep" job on its own after an update
+# brings a newer otbr image (design section 6, id prefix
+# `otbr-upkeep-`) - nobody asked for it through the card, so it needs its
+# own banner and its own two result texts rather than the ordinary
+# request wording, which would read as something the user did.
+web.radios.upkeep_running:
+  en: "The Thread border router is being brought up to date after the update. Thread devices are unreachable for about a minute."
+  de: "Der Thread-Border-Router wird nach dem Update auf den neuen Stand gebracht. Thread-Geräte sind etwa eine Minute lang nicht erreichbar."
+web.radios.result_upkeep_done:
+  en: "The Thread border router was brought up to date."
+  de: "Der Thread-Border-Router wurde auf den neuen Stand gebracht."
+web.radios.result_upkeep_failed_restored:
+  en: "Bringing the Thread border router up to date failed ({reason}). It runs with its previous version again."
+  de: "Der Thread-Border-Router ließ sich nicht auf den neuen Stand bringen ({reason}). Er läuft wieder mit seiner vorherigen Version."
 web.radios.result_done:
   en: "Applied."
   de: "Übernommen."

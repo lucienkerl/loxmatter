@@ -182,7 +182,19 @@ async def test_the_latest_job_is_reported(api):
         "rolled_back": True,
         "healthy": True,
         "requested": None,
+        "kind": "request",
     }
+
+
+async def test_an_upkeep_job_id_is_reported_by_its_kind(api):
+    """`radios-once.sh` starts these on its own, with no request behind
+    them - `otbr-upkeep-<yyyymmddHHMMSS>` (design section 6), never one a
+    card `POST` produced. Fault to prove it: always report `"request"`."""
+    client, update_dir = api
+    _update_heartbeat(update_dir)
+    _radios_heartbeat(update_dir, id="otbr-upkeep-20260914120000", phase="apply_thread")
+    job = (await client.get("/api/radios")).json()["job"]
+    assert job["kind"] == "otbr_upkeep"
 
 
 def _last_request(update_dir: Path, **fields: Any) -> None:

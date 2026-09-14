@@ -212,8 +212,8 @@ in new commits.
 **No Thread radio? That is fine.** With no USB radio the installer sets up
 WiFi/Ethernet-only mode: the Thread border router is left out, and the bridge talks
 to WiFi and Ethernet Matter devices over your existing network. Plug a radio in
-later, set `COMPOSE_PROFILES=thread` and `RADIO_DEVICE` in
-`deploy/testhost/.env`, and restart the stack.
+later and switch Thread on from Settings → Radios in the web UI — no `.env`
+edit needed.
 
 **Changing sticks or adapters later stays out of the console too.**
 Settings → Radios in the web UI lists the USB sticks and Bluetooth
@@ -229,9 +229,10 @@ Zigbee stick that does not answer is not rolled back: the row shows why,
 and the bridge keeps retrying until you pick another. The installer does
 not detect Zigbee sticks; pick yours on the card.
 
-Two Raspberry-Pi-specific steps — unblocking Bluetooth and restarting the Thread
-agent — the installer reports but deliberately does not perform. Those, and the
-full manual path, are in [docs/SETUP.md](docs/SETUP.md).
+One Raspberry-Pi-specific step — unblocking Bluetooth — the installer reports but
+deliberately does not perform, because it needs root. That, and the full manual
+path, are in [docs/SETUP.md](docs/SETUP.md). A Thread border router that hangs
+after starting needs nothing from you: the updater service's watchdog restarts it.
 
 ### Try it without any hardware
 
