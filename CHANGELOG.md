@@ -8,6 +8,17 @@ people who don't know the code.
 
 ## [Unreleased]
 
+### Changed
+
+- **The Radios card says when Thread is off.** Whenever the updater service
+  reports the current state, a line under the Thread choice tells you
+  whether Thread is off, running, or switched on while its border router is
+  not running. If switching Thread on fails and the card restores the
+  previous setting, in which Thread was off, it now says exactly that:
+  Thread is off, and Thread devices stay unreachable. Before, it only said
+  "previous setting restored". A **Try again** button sends the same
+  request again after the usual confirmation.
+
 ### Fixed
 
 - **Choosing the Thread stick by its stable name works.** The Radios card

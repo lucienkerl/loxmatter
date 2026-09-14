@@ -2581,6 +2581,31 @@ web.radios.result_failed_unhealthy:
 web.radios.result_interrupted:
   en: "Interrupted. The updater service stopped while this change was being applied, so it was neither finished nor undone. Check the settings below and apply them again if they are not what you want."
   de: "Abgebrochen. Der Updater-Dienst wurde beendet, während diese Änderung übernommen wurde – sie wurde daher weder fertig übernommen noch rückgängig gemacht. Prüfen Sie die Einstellungen unten und übernehmen Sie sie erneut, falls sie nicht passen."
+# The 13 September incident (design "The radios card says when a rollback
+# left Thread off", 2026-09-14): a failed request that wanted Thread on
+# rolled back to a previous setting that itself had Thread off, and
+# `result_failed_restored` above reads as harmless for exactly that case -
+# it does not say Thread is now off, and the Thread select had resynced to
+# "No Thread stick (Thread off)", so the draft matched the current state
+# and the Apply button disappeared. `radiosThreadLeftOff()` in app.js
+# detects this and picks the sentence below instead; `web.radios.retry`
+# is its button, and the `thread_status_*` keys are the state line that
+# now always tells the truth about Thread, job or no job.
+web.radios.result_failed_thread_off:
+  en: "Thread could not be switched on ({reason}). The previous setting is back, and in it Thread is off: your Thread devices stay unreachable until Thread is running. Try again, or pick a different stick."
+  de: "Thread ließ sich nicht einschalten ({reason}). Die vorherige Einstellung ist wieder aktiv, und darin ist Thread aus: Ihre Thread-Geräte bleiben unerreichbar, bis Thread läuft. Versuchen Sie es erneut oder wählen Sie einen anderen Stick."
+web.radios.retry:
+  en: "Try again"
+  de: "Erneut versuchen"
+web.radios.thread_status_off:
+  en: "Thread is off."
+  de: "Thread ist aus."
+web.radios.thread_status_running:
+  en: "Thread is on; the border router is running."
+  de: "Thread ist an; der Border Router läuft."
+web.radios.thread_status_not_running:
+  en: "Thread is switched on, but the border router is not running. Thread devices are unreachable until it runs again."
+  de: "Thread ist eingeschaltet, aber der Border Router läuft nicht. Thread-Geräte sind unerreichbar, bis er wieder läuft."
 web.radios.sidecar_busy_update:
   en: "A software update is running. Radios cannot be changed until it has finished; this card comes back on its own."
   de: "Es läuft gerade ein Software-Update. Funkgeräte lassen sich erst ändern, wenn es fertig ist; diese Karte kommt von selbst zurück."

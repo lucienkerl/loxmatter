@@ -27,7 +27,9 @@ from loxmatter.radios.sidecar import (
     BluetoothRequest,
     RadioConfig,
     RadiosBusyError,
+    RadiosRequestRecord,
     ThreadRequest,
+    read_last_request,
     read_radios_state,
     request_radios,
     sidecar_status,
@@ -188,3 +190,92 @@ def test_no_request_while_the_previous_one_was_not_picked_up(tmp_path):
     (tmp_path / "radios-handled").mkdir()
     (tmp_path / "radios-handled" / first).touch()
     _request(tmp_path)
+
+
+def test_the_request_keeps_a_copy_for_later(tmp_path):
+    """design section 3: the copy is the same body as the request the
+    sidecar reads, so a later `read_last_request` can report exactly what
+    was asked for."""
+    _update_state(tmp_path)
+    _radios_state(tmp_path)
+    _request(tmp_path)
+    request = json.loads((tmp_path / "radios-request.json").read_text(encoding="utf-8"))
+    copy = json.loads((tmp_path / "radios-last-request.json").read_text(encoding="utf-8"))
+    assert copy == request
+
+
+def test_the_copy_round_trips_through_read_last_request(tmp_path):
+    _update_state(tmp_path)
+    _radios_state(tmp_path)
+    job_id = request_radios(
+        tmp_path, thread=ThreadRequest(True, "/dev/serial/by-id/x"), bluetooth=None
+    )
+    record = read_last_request(tmp_path)
+    assert record == RadiosRequestRecord(
+        id=job_id, thread=ThreadRequest(True, "/dev/serial/by-id/x"), bluetooth=None
+    )
+
+
+@pytest.mark.parametrize("content", ["", "not json", "[]"])
+def test_an_unreadable_last_request_reads_as_none(tmp_path, content):
+    (tmp_path / "radios-last-request.json").write_text(content, encoding="utf-8")
+    assert read_last_request(tmp_path) is None
+
+
+def test_a_missing_last_request_reads_as_none(tmp_path):
+    assert read_last_request(tmp_path) is None
+
+
+def test_an_object_without_a_string_id_reads_as_none(tmp_path):
+    (tmp_path / "radios-last-request.json").write_text(
+        json.dumps({"thread": None, "bluetooth": None}), encoding="utf-8"
+    )
+    assert read_last_request(tmp_path) is None
+
+
+def test_a_malformed_half_reads_as_none_while_the_rest_survives(tmp_path):
+    """Fault to prove it: accept a non-bool `enabled` or a bool `adapter`
+    instead of rejecting the half."""
+    (tmp_path / "radios-last-request.json").write_text(
+        json.dumps(
+            {
+                "id": "j1",
+                "thread": {"enabled": "yes", "device": "/dev/serial/by-id/x"},
+                "bluetooth": {"adapter": 0},
+            }
+        ),
+        encoding="utf-8",
+    )
+    record = read_last_request(tmp_path)
+    assert record == RadiosRequestRecord(id="j1", thread=None, bluetooth=BluetoothRequest(0))
+
+    (tmp_path / "radios-last-request.json").write_text(
+        json.dumps(
+            {
+                "id": "j1",
+                "thread": {"enabled": True, "device": "/dev/serial/by-id/x"},
+                "bluetooth": {"adapter": True},
+            }
+        ),
+        encoding="utf-8",
+    )
+    record = read_last_request(tmp_path)
+    assert record == RadiosRequestRecord(
+        id="j1", thread=ThreadRequest(True, "/dev/serial/by-id/x"), bluetooth=None
+    )
+
+
+def test_a_failing_copy_write_does_not_fail_the_request(tmp_path, monkeypatch):
+    """Only the copy's write must fail here, not the request's - so the
+    fault is a directory sitting where `radios-last-request.json.tmp`
+    would be written, not a monkeypatched `write_text` that would also
+    catch the primary file.
+
+    Fault to prove it: let an `OSError` from the copy propagate out of
+    `request_radios` instead of being swallowed."""
+    _update_state(tmp_path)
+    _radios_state(tmp_path)
+    (tmp_path / "radios-last-request.json.tmp").mkdir()
+    job_id = _request(tmp_path)
+    assert job_id
+    assert (tmp_path / "radios-request.json").exists()

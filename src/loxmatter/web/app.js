@@ -5044,6 +5044,27 @@ function app() {
       return t(key, { name: option.label });
     },
 
+    /** The Thread state line under the select, shown regardless of
+     * whether a job ever ran - the 13 September incident (design "The
+     * radios card says when a rollback left Thread off", 2026-09-14) left
+     * Thread off for about ten hours with nothing on the card saying so,
+     * because the only place Thread's state showed up at all was inside a
+     * job's own result text. `null` while a job is running: the border
+     * router is being recreated on purpose then, and a state line reacting
+     * to that churn would only be noise mid-flight - `radiosRollingBack()`
+     * and the step list already say what is happening. `otbr_running` is
+     * the sidecar's own container check (`read_current()` in
+     * deploy/updater/radios-once.sh), not a Thread network probe, so `warn` here means
+     * "the container is not up", nothing stronger. */
+    radiosThreadStatus() {
+      const current = this.radios?.current;
+      if (!current || this.radiosJobRunning()) return null;
+      if (!current.thread_enabled) return { key: "web.radios.thread_status_off", warn: false };
+      return current.otbr_running
+        ? { key: "web.radios.thread_status_running", warn: false }
+        : { key: "web.radios.thread_status_not_running", warn: true };
+    },
+
     radiosBluetoothOptions() {
       // Same reasoning as `radiosThreadOptions()` above.
       if (this.radios && this.radios.current === null) {
@@ -5231,6 +5252,34 @@ function app() {
       return this.radios?.job?.phase === "rollback";
     },
 
+    /** Whether the job that just failed wanted Thread ON and the rollback
+     * it triggered left Thread OFF - the 13 September incident (design
+     * "The radios card says when a rollback left Thread off", 2026-09-14).
+     * `result_failed_restored` below used to be the only text for this
+     * case, and it reads as harmless ("previous setting restored") for
+     * exactly the state where it is least true: Thread devices are now
+     * unreachable, and the select had already resynced itself to "No
+     * Thread stick (Thread off)" so the draft matched the current state
+     * and the Apply button vanished, leaving no visible way back in.
+     * `job.healthy !== false`: an unhealthy rollback keeps its OWN,
+     * stronger text (`result_failed_unhealthy`) rather than this one.
+     * `job.requested` is the bridge's own copy of what the failed request
+     * actually asked for (`read_last_request()` in radios/sidecar.py) -
+     * absent for a job started before that copy existed, in which case this reads `undefined?.thread?.enabled` as not `true`
+     * and falls through to the old text, same as `null`. */
+    radiosThreadLeftOff() {
+      const job = this.radios?.job;
+      return (
+        Boolean(job) &&
+        !this.radiosJobRunning() &&
+        job.phase === "failed" &&
+        job.error !== "interrupted" &&
+        job.healthy !== false &&
+        job.requested?.thread?.enabled === true &&
+        this.radios?.current?.thread_enabled === false
+      );
+    },
+
     radiosResultKey() {
       const job = this.radios?.job;
       if (!job || this.radiosJobRunning()) return null;
@@ -5248,6 +5297,7 @@ function app() {
         // honest report is that the change was neither finished nor
         // undone, and that the settings shown below are worth a look.
         if (job.error === "interrupted") return "web.radios.result_interrupted";
+        if (this.radiosThreadLeftOff()) return "web.radios.result_failed_thread_off";
         return job.healthy === false ? "web.radios.result_failed_unhealthy" : "web.radios.result_failed_restored";
       }
       return null;
@@ -5323,6 +5373,59 @@ function app() {
     askApplyRadios() {
       if (!this.radiosChanged()) return;
       this.radiosConfirming = true;
+    },
+
+    /** Whether the Try again button is offered. `radiosThreadLeftOff()`
+     * (which already requires that no job is running) plus the guards the
+     * Apply button has (sidecar ready, not busy), and three more that only
+     * matter here:
+     * - a request already sent but not yet picked up (`radiosPendingJobId`,
+     *   or one that was never collected): the failed job stays in the
+     *   report until the sidecar's next pass, and a second click would
+     *   only end in "busy";
+     * - the stick the failed request named is no longer detected: retrying
+     *   it can only be refused as an unknown device, so the button would
+     *   offer a way back that does not exist. The sentence above it still
+     *   says to pick a different stick. */
+    radiosCanRetry() {
+      const device = this.radios?.job?.requested?.thread?.device;
+      return (
+        this.radiosThreadLeftOff() &&
+        this.radios.sidecar === "ready" &&
+        !this.radiosBusy &&
+        this.radiosPendingJobId === null &&
+        !this.radiosNeverCollected() &&
+        (this.radios.serial ?? []).some((radio) => radio.path === device)
+      );
+    },
+
+    /** The Try again button's handler, shown only under
+     * `radiosThreadLeftOff()` (design "The radios card says when a
+     * rollback left Thread off", 2026-09-14, section 5). Re-seeds the
+     * draft from `job.requested` - what the failed request actually
+     * asked for, the bridge's own copy, not today's (already rolled-back)
+     * `radios.current` - and reopens the ordinary confirmation dialog
+     * rather than reapplying on its own, so the user still sees the
+     * "Thread on" warning and a stick that has since disappeared is still
+     * refused by `POST /api/radios`, same as any other Apply.
+     *
+     * The Bluetooth half only moves if the failed request touched it too:
+     * `job.requested.bluetooth` is `null` for a Thread-only request (the
+     * request body already sends `null` for a half nobody is changing -
+     * see `radiosRequestBody()`), and re-seeding the draft's adapter from
+     * a `null` half would turn a plain retry into an unrelated Bluetooth
+     * change nobody asked for. */
+    retryRadios() {
+      if (!this.radiosThreadLeftOff()) return;
+      const requested = this.radios.job.requested;
+      this.radiosDraft = {
+        threadDevice: requested.thread.device ?? "",
+        bluetoothAdapter: requested.bluetooth
+          ? requested.bluetooth.adapter
+          : this.radiosDraft.bluetoothAdapter,
+      };
+      this.radiosDirty = true;
+      this.askApplyRadios();
     },
 
     cancelApplyRadios() {

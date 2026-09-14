@@ -181,7 +181,69 @@ async def test_the_latest_job_is_reported(api):
         "error": "verify_thread_failed",
         "rolled_back": True,
         "healthy": True,
+        "requested": None,
     }
+
+
+def _last_request(update_dir: Path, **fields: Any) -> None:
+    body = {
+        "id": "job-1",
+        "thread": {"enabled": True, "device": f"/dev/serial/by-id/{SONOFF}"},
+        "bluetooth": None,
+        "requested_at": _now(),
+    }
+    body.update(fields)
+    (update_dir / "radios-last-request.json").write_text(json.dumps(body), encoding="utf-8")
+
+
+async def test_the_job_reports_what_was_requested_when_ids_match(api):
+    client, update_dir = api
+    _update_heartbeat(update_dir)
+    _radios_heartbeat(update_dir, id="job-1", phase="failed")
+    _last_request(update_dir)
+    job = (await client.get("/api/radios")).json()["job"]
+    assert job["requested"] == {
+        "thread": {"enabled": True, "device": f"/dev/serial/by-id/{SONOFF}"},
+        "bluetooth": None,
+    }
+
+
+async def test_a_stale_last_request_is_not_reported(api):
+    """The copy names an earlier job, not this one - a record from a
+    version of the bridge that wrote no copy, or a job that has since
+    moved on, must not be attributed to the current job."""
+    client, update_dir = api
+    _update_heartbeat(update_dir)
+    _radios_heartbeat(update_dir, id="job-1", phase="failed")
+    _last_request(update_dir, id="job-0")
+    job = (await client.get("/api/radios")).json()["job"]
+    assert job["requested"] is None
+
+
+async def test_no_last_request_file_means_no_requested(api):
+    client, update_dir = api
+    _update_heartbeat(update_dir)
+    _radios_heartbeat(update_dir, id="job-1", phase="failed")
+    job = (await client.get("/api/radios")).json()["job"]
+    assert job["requested"] is None
+
+
+async def test_a_posted_request_is_reported_back_once_the_job_appears(api):
+    """The full round trip: POST writes the copy, and once a radios state
+    with that id shows up (the sidecar having picked it up), GET reports
+    the halves that were actually posted - not a fabrication, the record
+    `request_radios` itself wrote."""
+    client, update_dir = api
+    _update_heartbeat(update_dir)
+    _radios_heartbeat(update_dir)
+    response = await client.post(
+        "/api/radios",
+        json={"thread": None, "bluetooth": {"adapter": 0}},
+    )
+    job_id = response.json()["id"]
+    _radios_heartbeat(update_dir, id=job_id, phase="failed")
+    job = (await client.get("/api/radios")).json()["job"]
+    assert job["requested"] == {"thread": None, "bluetooth": {"adapter": 0}}
 
 
 async def test_a_running_update_is_reported_alongside_the_stale_sidecar(api):
