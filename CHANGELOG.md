@@ -6,6 +6,8 @@ has a section here, and the UI shows its text as
 change notes before someone installs an update — it will be read by
 people who don't know the code.
 
+## [Unreleased]
+
 ## [0.4.1] — 2026-09-14
 
 ### Before you update
