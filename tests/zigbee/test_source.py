@@ -54,6 +54,7 @@ from fakes import (
     ZigbeeException,
     colour_lamp,
     contact_sensor,
+    tradfri_motion_sensor,
 )
 
 from loxmatter import i18n
@@ -1253,6 +1254,25 @@ async def test_a_snapshot_carries_the_matter_paths_the_rest_of_the_bridge_reads(
     assert snapshot.attributes["1/29/0"] == [{"0": 0x0015, "1": 1}]
 
 
+async def test_a_snapshot_carries_the_tradfri_motion_sensors_occupancy_signal(build) -> None:
+    """The classic TRADFRI motion sensor has no IAS Zone cluster and no
+    OccupancySensing cluster at all - `configure.py` writes what it sends
+    into its OWN OUTPUT OnOff cluster's attribute cache, and `_endpoint_facts`
+    has to read that cache too, or the value never reaches a snapshot.
+
+    Fault to prove it: build `EndpointFacts.attributes` from `in_clusters`
+    alone."""
+    sensor = tradfri_motion_sensor()
+    sensor.endpoints[1].out_clusters[0x0006].update_attribute(0x0000, True)
+    harness = build(FakeApplication(devices=[sensor]))
+    await harness.source.connect()
+
+    snapshot = (await harness.source.snapshots())[0]
+
+    assert snapshot.attributes["1/1030/0"] == 1
+    assert snapshot.attributes["1/29/0"] == [{"0": 0x0107, "1": 1}]  # OccupancySensor
+
+
 # -------------------------------------------------------------------- events --
 
 
@@ -1297,6 +1317,33 @@ async def test_cluster_events_are_queued_not_awaited_in_the_callback(build) -> N
 
     # The contact opened, and BooleanState is inverted against IAS.
     assert harness.handler.attributes == [(9, "1/69/0", False)]
+
+
+async def test_a_tradfri_motion_sensors_first_onoff_command_wakes_the_dispatch_loop(
+    build,
+) -> None:
+    """The classic TRADFRI motion sensor's OnOff cluster is its OUTPUT
+    cluster - `_listen_to_device` must register the same live subscription
+    on it that an ordinary input cluster gets, or a command that arrives
+    after `subscribe()` has already run wakes nothing downstream at all.
+
+    The occupancy path is absent at join (nothing has been sent yet), so
+    its first value arrives as a fresh snapshot rather than a bare
+    attribute - the same rule `test_a_path_seen_for_the_first_time_arrives_
+    as_a_snapshot` measures for an ordinary input cluster.
+
+    Fault to prove it: only register listeners on `in_clusters`."""
+    sensor = tradfri_motion_sensor()
+    harness = build(FakeApplication(devices=[sensor]))
+    await harness.source.connect()
+    await harness.source.subscribe(lambda _address: 9, harness.handler)
+    await _settle(harness.source)
+
+    sensor.endpoints[1].out_clusters[0x0006].update_attribute(0x0000, True)
+    await _settle(harness.source)
+
+    assert [device_id for device_id, _ in harness.handler.snapshots] == [9]
+    assert harness.handler.snapshots[-1][1].attributes["1/1030/0"] == 1
 
 
 async def test_one_failing_update_does_not_end_delivery(build) -> None:

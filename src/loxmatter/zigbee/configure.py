@@ -76,6 +76,8 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any, Final
 
+from loxmatter.zigbee.translate import TRADFRI_MOTION_SENSOR_MODEL
+
 logger = logging.getLogger(__name__)
 
 __all__ = [
@@ -100,6 +102,15 @@ IDENTIFY_CLUSTER: Final = 0x0003
 POLL_CONTROL_CLUSTER: Final = 0x0020
 COLOR_CLUSTER: Final = 0x0300
 IAS_ZONE_CLUSTER: Final = 0x0500
+ONOFF_CLUSTER: Final = 0x0006
+
+# The classic IKEA TRADFRI motion sensor's (E1525, E1745) OnOff commands -
+# its OUTPUT cluster, not its input one, and the only place it says
+# anything at all (see `_bind_onoff_sensor`, below).
+ONOFF_ATTRIBUTE: Final = 0x0000  # `OnOff.OnOff` - identical to Matter's own numbering
+ONOFF_OFF_COMMAND: Final = 0x00
+ONOFF_ON_COMMAND: Final = 0x01
+ONOFF_ON_WITH_TIMED_OFF_COMMAND: Final = 0x42
 
 # IasZone's attributes (`zigpy.zcl.clusters.security.IasZone`).
 IAS_ZONE_TYPE_ATTRIBUTE: Final = 0x0001
@@ -141,6 +152,7 @@ POLL_INTERVAL_SECONDS: Final[tuple[float, float]] = (2700.0, 4500.0)
 # second configuration pass does not stack a second listener on it.
 _WATCHER_ATTRIBUTE: Final = "_loxmatter_wakeup_watcher"
 _IAS_LISTENER_ATTRIBUTE: Final = "_loxmatter_ias_listener"
+_ONOFF_SENSOR_LISTENER_ATTRIBUTE: Final = "_loxmatter_onoff_sensor_listener"
 
 
 # ZHA's reporting values, which are the only field-proven set (design
@@ -420,6 +432,7 @@ async def configure_device(
     # that refuses everything else, so the handler goes on before the first
     # packet leaves. Installing it costs nothing on the air.
     _install_ias_handlers(device)
+    _install_onoff_sensor_handlers(device)
 
     if getattr(device, "skip_configuration", False):
         # 79 shipped quirks set this, and they set it because binding or
@@ -464,6 +477,8 @@ async def configure_device(
                 device, endpoint, cluster, IAS_ZONE_CLUSTER, store=store, now=now, polling=polling
             )
             (configured if done else deferred).append(IAS_ZONE_CLUSTER)
+
+        await _bind_onoff_sensor(device)
 
         await read_current_values(device)
         await _identify_blink(device)
@@ -806,6 +821,78 @@ def _install_ias_handlers(device: Any) -> None:
         listener = _IasZoneListener(cluster)
         setattr(cluster, _IAS_LISTENER_ATTRIBUTE, listener)
         cluster.add_listener(listener)
+
+
+# ------------------------------------------- the classic TRADFRI motion sensor --
+
+
+class _OnOffSensorListener:
+    """The permanent handler for the classic TRADFRI motion sensor's OnOff
+    commands.
+
+    This device's OnOff cluster is its OUTPUT cluster: it holds no `on_off`
+    attribute of its own to report, it SENDS these commands to whatever is
+    bound to it, exactly as it would to a lamp. `update_attribute` on the
+    very cluster the commands arrive on is what makes the value readable at
+    all afterwards - `translate.py`'s `_apply_onoff_sensor` is the only
+    thing that reads it back out, as occupancy rather than as a light's
+    on/off state."""
+
+    def __init__(self, cluster: Any) -> None:
+        self._cluster = cluster
+
+    def cluster_command(self, tsn: int, command_id: int, args: Any) -> None:
+        if command_id in (ONOFF_ON_COMMAND, ONOFF_ON_WITH_TIMED_OFF_COMMAND):
+            self._cluster.update_attribute(ONOFF_ATTRIBUTE, True)
+        elif command_id == ONOFF_OFF_COMMAND:
+            self._cluster.update_attribute(ONOFF_ATTRIBUTE, False)
+
+
+def _install_onoff_sensor_handlers(device: Any) -> None:
+    """One listener on the classic TRADFRI motion sensor's OUTPUT OnOff
+    cluster, once - the same guard `_install_ias_handlers` uses and for the
+    same reason.
+
+    Gated on the MODEL, never on the mere presence of an output OnOff
+    cluster: that shape is also what an ordinary IKEA remote or switch
+    declares, and those are explicitly not this bridge's job (design 11)."""
+    if getattr(device, "model", None) != TRADFRI_MOTION_SENSOR_MODEL:
+        return
+    for endpoint in device.non_zdo_endpoints:
+        cluster = endpoint.out_clusters.get(ONOFF_CLUSTER)
+        if cluster is None or getattr(cluster, _ONOFF_SENSOR_LISTENER_ATTRIBUTE, None) is not None:
+            continue
+        listener = _OnOffSensorListener(cluster)
+        setattr(cluster, _ONOFF_SENSOR_LISTENER_ATTRIBUTE, listener)
+        cluster.add_listener(listener)
+
+
+async def _bind_onoff_sensor(device: Any) -> None:
+    """Tells the sensor to send its OnOff commands to the coordinator - the
+    whole of what makes it report anything, since it is never enrolled the
+    way an IAS Zone sensor is and has no reporting configuration to ask for
+    at all.
+
+    Swallowed per endpoint like `_read_static_facts`, deliberately without
+    the pending table's retry: a device this bridge cannot reach during the
+    brief join window it is fast-polling for tries again at its next full
+    rejoin, the same simplification `_read_static_facts` documents for the
+    facts it reads."""
+    if getattr(device, "model", None) != TRADFRI_MOTION_SENSOR_MODEL:
+        return
+    for endpoint in device.non_zdo_endpoints:
+        cluster = endpoint.out_clusters.get(ONOFF_CLUSTER)
+        if cluster is None:
+            continue
+        try:
+            await cluster.bind()
+        except Exception as exc:  # noqa: BLE001 — see _read_static_facts
+            logger.info(
+                "could not bind the OnOff cluster of %s endpoint %s: %s",
+                device.ieee,
+                endpoint.endpoint_id,
+                _describe(exc),
+            )
 
 
 # ------------------------------------------------------- sleepy end devices --

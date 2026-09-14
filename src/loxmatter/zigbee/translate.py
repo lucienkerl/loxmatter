@@ -171,6 +171,21 @@ _IAS_STATE_TARGETS: dict[int, tuple[int, int, bool]] = {
     0x000D: (1030, 0, False),  # Motion sensor -> OccupancySensing, not inverted
 }
 
+# The classic IKEA TRADFRI motion sensor (E1525, E1745) has no IAS Zone
+# cluster and no OccupancySensing cluster at all: it is the OnOff cluster's
+# CLIENT, and reports motion the way it would to a bound lamp, by sending
+# `on`/`onWithTimedOff`/`off` to whatever is bound to it (design 11's
+# "remotes and buttons" non-goal is about discrete, stateless button
+# presses - this is a persistent occupancy STATE, the same shape as IAS
+# Zone's motion, so it belongs here rather than there).
+#
+# zha-quirks assigns every hardware revision this SAME model string
+# (`zhaquirks/ikea/motion.py`, `motionzha.py`), which is why this rule is
+# keyed by model and never by `(profile_id, device_type)`: the ZCL device
+# type it declares, `ON_OFF_SENSOR` (0x0850), is also what an ordinary IKEA
+# remote or switch declares, and those must stay unaffected.
+TRADFRI_MOTION_SENSOR_MODEL = "TRADFRI motion sensor"
+
 
 def _all_mapped_matter_types() -> frozenset[int]:
     """Every Matter device type number this module can produce.
@@ -554,12 +569,17 @@ def rename_payload(
 # ------------------------------------------------------------------ IAS zone --
 
 
-def _endpoint_matter_device_type(endpoint: EndpointFacts) -> int | None:
+def _endpoint_matter_device_type(endpoint: EndpointFacts, model: str) -> int | None:
     """The device type this endpoint's `<ep>/29/0` should carry.
 
     An IAS Zone endpoint is typed by its `zone_type`, never by the
     endpoint's own (profile, device type) pair, which says only "IAS Zone"
-    (design 5.3)."""
+    (design 5.3). The classic TRADFRI motion sensor is typed by its MODEL,
+    for the same reason and then some: its own (profile, device type) pair
+    says only `ON_OFF_SENSOR`, which an ordinary remote or switch declares
+    too."""
+    if model == TRADFRI_MOTION_SENSOR_MODEL:
+        return 0x0107  # OccupancySensor
     if _CLUSTER_IAS_ZONE in endpoint.in_cluster_ids:
         zone_type = _as_plain_int(
             endpoint.attributes.get((_CLUSTER_IAS_ZONE, _ATTRIBUTE_ZONE_TYPE))
@@ -603,6 +623,24 @@ def _apply_ias_zone(endpoint: EndpointFacts, attributes: dict[str, object]) -> N
     attributes[f"{endpoint.endpoint}/{cluster_id}/{attribute_id}"] = value
 
 
+def _apply_onoff_sensor(endpoint: EndpointFacts, model: str, attributes: dict[str, object]) -> None:
+    """Writes the classic TRADFRI motion sensor's OnOff signal as occupancy.
+
+    `configure.py` is what turns the sensor's `on`/`off` commands into this
+    endpoint's OWN OnOff attribute cache, at `(6, 0)` - the only place the
+    value exists to be read from, since this device holds no OccupancySensing
+    cluster at all. Reading it directly as `bool` rather than through
+    `_as_plain_int`: that helper deliberately excludes `bool` (a `bool` is an
+    `int` subclass and would otherwise be mistaken for a bitmap), and here
+    the value genuinely IS the on/off state, not a bitmap to mask."""
+    if model != TRADFRI_MOTION_SENSOR_MODEL:
+        return
+    value = endpoint.attributes.get((_CLUSTER_ONOFF, 0))
+    if not isinstance(value, bool):
+        return
+    attributes[f"{endpoint.endpoint}/{_CLUSTER_OCCUPANCY_SENSING}/0"] = int(value)
+
+
 # --------------------------------------------------------------- the snapshot --
 
 
@@ -620,10 +658,12 @@ def _root_endpoint_device_types(facts: DeviceFacts) -> list[dict[str, int]]:
     return types
 
 
-def _apply_endpoint(endpoint: EndpointFacts, attributes: dict[str, object]) -> None:
-    device_type = _endpoint_matter_device_type(endpoint)
+def _apply_endpoint(endpoint: EndpointFacts, model: str, attributes: dict[str, object]) -> None:
+    device_type = _endpoint_matter_device_type(endpoint, model)
     if device_type is not None:
         attributes[_device_type_list_path(endpoint.endpoint)] = [{"0": device_type, "1": 1}]
+
+    is_tradfri_motion_sensor = model == TRADFRI_MOTION_SENSOR_MODEL
 
     for (cluster_id, attribute_id), value in endpoint.attributes.items():
         if (
@@ -635,6 +675,9 @@ def _apply_endpoint(endpoint: EndpointFacts, attributes: dict[str, object]) -> N
 
         if cluster_id == _CLUSTER_IAS_ZONE:
             continue  # handled once per endpoint by `_apply_ias_zone` below
+
+        if is_tradfri_motion_sensor and (cluster_id, attribute_id) == (_CLUSTER_ONOFF, 0):
+            continue  # handled once per endpoint by `_apply_onoff_sensor` below
 
         if cluster_id == _CLUSTER_POWER_CONFIGURATION:
             if attribute_id == _ATTRIBUTE_BATTERY_PERCENTAGE:
@@ -650,6 +693,7 @@ def _apply_endpoint(endpoint: EndpointFacts, attributes: dict[str, object]) -> N
         attributes[f"{endpoint.endpoint}/{cluster_id}/{attribute_id}"] = value
 
     _apply_ias_zone(endpoint, attributes)
+    _apply_onoff_sensor(endpoint, model, attributes)
 
     for cluster_id, command_ids in accepted_commands(endpoint).items():
         attributes[f"{endpoint.endpoint}/{cluster_id}/{ACCEPTED_COMMAND_LIST_ID}"] = command_ids
@@ -681,7 +725,7 @@ def build_snapshot(facts: DeviceFacts) -> NodeSnapshot:
     }
 
     for endpoint in facts.endpoints:
-        _apply_endpoint(endpoint, attributes)
+        _apply_endpoint(endpoint, facts.model, attributes)
 
     return NodeSnapshot(
         technology="zigbee",

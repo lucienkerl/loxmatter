@@ -543,6 +543,7 @@ class FakeEndpoint:
         profile_id: int | None,
         device_type: int | None,
         in_clusters: Iterable[FakeCluster] = (),
+        out_clusters: Iterable[FakeCluster] = (),
     ) -> None:
         self.endpoint_id = endpoint_id
         self.profile_id = profile_id
@@ -550,14 +551,20 @@ class FakeEndpoint:
         self.in_clusters: dict[int, FakeCluster] = {
             cluster.cluster_id: cluster for cluster in in_clusters
         }
-        self.out_clusters: dict[int, FakeCluster] = {}
+        # A device's CLIENT-side clusters - the classic TRADFRI motion
+        # sensor's whole reason for being unable to report anything without
+        # `configure.py`'s dedicated handling: it sends `OnOff` commands
+        # from here, not attribute reports from `in_clusters`.
+        self.out_clusters: dict[int, FakeCluster] = {
+            cluster.cluster_id: cluster for cluster in out_clusters
+        }
         self.device_ieee = ""
         # Set by `FakeDevice.__init__`. `Cluster.endpoint.device` is the
         # path zigpy itself uses (`Cluster.bind` reaches the ZDO through
         # it), and it is what lets a cluster write into the device's
         # ordered journal.
         self.device: FakeDevice | None = None
-        for cluster in self.in_clusters.values():
+        for cluster in (*self.in_clusters.values(), *self.out_clusters.values()):
             cluster.endpoint = self
 
 
@@ -736,7 +743,9 @@ class FakeDevice:
 
     def clusters(self) -> list[FakeCluster]:
         return [
-            cluster for endpoint in self._endpoints for cluster in endpoint.in_clusters.values()
+            cluster
+            for endpoint in self._endpoints
+            for cluster in (*endpoint.in_clusters.values(), *endpoint.out_clusters.values())
         ]
 
 
@@ -1047,6 +1056,28 @@ def contact_sensor(ieee: str = "00:15:8d:00:02:aa:bb:cc") -> FakeDevice:
                     ),
                     FakeCluster(0x0001, declared=[0x0020, 0x0021], cached={0x0021: 150}),
                 ],
+            )
+        ],
+    )
+
+
+def tradfri_motion_sensor(ieee: str = "d0:cf:5e:ff:fe:71:a3:19") -> FakeDevice:
+    """The classic IKEA TRADFRI motion sensor (E1525, E1745): no IAS Zone
+    cluster and no OccupancySensing cluster at all - `OnOff` is its OUTPUT
+    cluster, and reporting motion means sending `on`/`off` commands the way
+    it would to a bound lamp (`zhaquirks/ikea/motion.py`, `motionzha.py`)."""
+    return FakeDevice(
+        ieee,
+        manufacturer="IKEA of Sweden",
+        model="TRADFRI motion sensor",
+        node_desc=FakeNodeDescriptor(is_mains_powered=False),
+        endpoints=[
+            FakeEndpoint(
+                1,
+                profile_id=0x0104,
+                device_type=0x0850,
+                in_clusters=[FakeCluster(0x0001, declared=[0x0020, 0x0021], cached={0x0021: 150})],
+                out_clusters=[FakeCluster(0x0006, declared=[0x0000], commands=ON_OFF_COMMANDS)],
             )
         ],
     )
