@@ -15401,3 +15401,142 @@ async def test_the_thread_status_line_wraps_in_x_if_and_binds_warn(api):
     assert "'banner warn'" in class_expr
     assert "'hint radios-row-hint'" in class_expr
     assert text_expr == "t(radiosThreadStatus().key)"
+
+
+# ---------------------------------------------------------------------------
+# The bridge and the card explain an "upkeep" job (design section 6):
+# `radios-once.sh` starts one on its own, with no request behind it, after
+# an update brings a newer otbr image. `job.kind` (`api/radios.py`) is how
+# the card tells such a job apart from one a `POST` produced.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_radios_result_key_for_an_upkeep_job():
+    """`radiosResultKey()` branches on `job.kind === 'otbr_upkeep'` before
+    the request logic (design section 6): its own texts for `done` and an
+    ordinary `failed`, and the existing `interrupted`/unhealthy texts for
+    those two cases - an upkeep job carries no `requested`, so
+    `radiosThreadLeftOff()` can never steer it towards the request-only
+    `result_failed_thread_off` text the way it can for a request job.
+    Fault to prove it: return `web.radios.result_failed_restored` (the
+    request wording) for the ordinary failed case instead."""
+    values = _radios_values(
+        """
+        const base = () => {
+          state.radios.job = {
+            id: 'otbr-upkeep-20260914120000', kind: 'otbr_upkeep', phase: 'done',
+            steps: ['apply_thread', 'verify_thread'], error: null, rolled_back: false,
+            healthy: null, requested: null,
+          };
+        };
+        const out = {};
+        base(); out.done = state.radiosResultKey();
+        base();
+        state.radios.job.phase = 'failed';
+        state.radios.job.error = 'verify_thread_failed';
+        state.radios.job.rolled_back = true;
+        state.radios.job.healthy = true;
+        out.failed = state.radiosResultKey();
+        base();
+        state.radios.job.phase = 'failed';
+        state.radios.job.error = 'verify_thread_failed';
+        state.radios.job.rolled_back = true;
+        state.radios.job.healthy = false;
+        out.unhealthy = state.radiosResultKey();
+        base();
+        state.radios.job.phase = 'failed';
+        state.radios.job.error = 'interrupted';
+        out.interrupted = state.radiosResultKey();
+        console.log(JSON.stringify(out));
+        """
+    )
+    assert values == {
+        "done": "web.radios.result_upkeep_done",
+        "failed": "web.radios.result_upkeep_failed_restored",
+        "unhealthy": "web.radios.result_failed_unhealthy",
+        "interrupted": "web.radios.result_interrupted",
+    }
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_radios_result_key_for_a_request_job_is_unaffected_by_kind():
+    """A request job (`job.kind === 'request'`, the ordinary case from
+    `api/radios.py`) must keep its own existing keys - `radiosResultKey()`
+    only takes the upkeep branch for `kind === 'otbr_upkeep'`. Fault to
+    prove it: branch on `job.kind !== 'request'` instead, which would
+    misroute a future job kind nobody has named yet into the upkeep texts."""
+    values = _radios_values(
+        """
+        state.radios.job = {
+          id: 'job-1', kind: 'request', phase: 'done', steps: [], error: null,
+          rolled_back: false, healthy: null, requested: null,
+        };
+        console.log(JSON.stringify(state.radiosResultKey()));
+        """
+    )
+    assert values == "web.radios.result_done"
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_radios_upkeep_running_tracks_kind_phase_and_rollback():
+    """`radiosUpkeepRunning()` (design section 6): true only while an
+    upkeep job is actually running; false the moment it rolls back (the
+    existing `rolling_back` banner already covers that phase for an
+    upkeep job too, so the two must never show at once); false for a
+    running request job; false once an upkeep job reaches a terminal
+    phase. Fault to prove it: drop the `!radiosRollingBack()` guard."""
+    values = _radios_values(
+        """
+        const base = (kind, phase) => {
+          state.radios.job = {
+            id: 'j', kind, phase, steps: ['apply_thread', 'verify_thread'],
+            error: null, rolled_back: false, healthy: null, requested: null,
+          };
+        };
+        const out = {};
+        base('otbr_upkeep', 'apply_thread'); out.running = state.radiosUpkeepRunning();
+        base('otbr_upkeep', 'rollback'); out.rollingBack = state.radiosUpkeepRunning();
+        base('request', 'apply_thread'); out.requestRunning = state.radiosUpkeepRunning();
+        base('otbr_upkeep', 'done'); out.terminal = state.radiosUpkeepRunning();
+        console.log(JSON.stringify(out));
+        """
+    )
+    assert values == {
+        "running": True,
+        "rollingBack": False,
+        "requestRunning": False,
+        "terminal": False,
+    }
+
+
+async def test_the_radios_upkeep_banner_shows_only_while_an_upkeep_job_runs(api):
+    """The banner's `x-show` is `radiosUpkeepRunning()` itself, pulled
+    straight out of the SERVED markup - the same "extract the real
+    expression, don't retype it" technique `_x_show_expr` uses throughout
+    this file - so a future edit to index.html that changes or drops the
+    condition breaks this extraction rather than silently testing a stale
+    copy."""
+    client, _, _ = api
+    page = _without_comments((await client.get("/")).text)
+    assert _x_show_expr(page, "web.radios.upkeep_running") == "radiosUpkeepRunning()"
+
+
+def test_the_radios_upkeep_texts_exist_in_both_languages():
+    """The three strings design section 6 introduces - `upkeep_running`,
+    `result_upkeep_done`, `result_upkeep_failed_restored` - each need an
+    `en` and a `de` value (CLAUDE.md: user-facing text goes through i18n
+    in both languages). `test_the_radios_texts_exist_in_both_languages`
+    above already checks every `web.radios.*` key this way; this names
+    the three new ones explicitly so a rename that drops one is caught
+    here even if the prefix scan above were ever narrowed. Fault to prove
+    it: delete one `de:` line under one of the three keys."""
+    from loxmatter import i18n
+
+    for key in (
+        "web.radios.upkeep_running",
+        "web.radios.result_upkeep_done",
+        "web.radios.result_upkeep_failed_restored",
+    ):
+        entry = i18n._STRINGS[key]
+        assert entry.get("en") and entry.get("de"), key
