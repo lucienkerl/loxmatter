@@ -657,28 +657,33 @@ otbr_upkeep() {
   # three and computed again only when one of them changes. The cache
   # decides nothing on its own: the comparison below runs on every pass, and
   # the tried and pull-failed files decide whether to act.
+  #
+  # The file holds the key on its first line and, on its second, the
+  # desired configuration - or `failed` when `compose config` could not
+  # produce one. A failure is cached like a result: the same files give
+  # the same failure, and running Compose every two seconds to see it
+  # again would cost the Pi a steady share of a core. Changing one of the
+  # three inputs tries again.
   key="$(checksum < "$STACK/docker-compose.yml") $(checksum < "$ENV_FILE") $container_id"
   fresh=false
   desired=""
   if [ -f "$UPKEEP_CHECKED" ] && [ "$(sed -n 1p "$UPKEEP_CHECKED")" = "$key" ]; then
     desired="$(sed -n 2p "$UPKEEP_CHECKED")"
+    [ "$desired" != failed ] || return 0
   fi
   if [ -z "$desired" ]; then
     if ! config="$(upkeep_compose config --format json 2>/dev/null)" \
       || ! desired="$(printf '%s' "$config" | jq -c "$UPKEEP_DESIRED" 2>/dev/null)" \
       || [ -z "$desired" ]; then
-      # Not cached, so it is tried again on the next pass - but said only
-      # once for the same inputs, or the 2000-line log would hold nothing
-      # else within the hour.
-      if [ "$(sed -n 1p "$UPKEEP_CHECKED" 2>/dev/null)" != "failed $key" ]; then
-        printf 'failed %s\n' "$key" > "$UPKEEP_CHECKED"
-        log "radios upkeep: could not read otbr's Compose configuration - otbr is left as it is"
-      fi
-      return 0
+      desired=failed
     fi
     fresh=true
     printf '%s\n%s\n' "$key" "$desired" > "$UPKEEP_CHECKED.tmp"
     mv "$UPKEEP_CHECKED.tmp" "$UPKEEP_CHECKED"
+    if [ "$desired" = failed ]; then
+      log "radios upkeep: could not read otbr's Compose configuration - otbr is left as it is"
+      return 0
+    fi
   fi
 
   # The decisions not to act are logged only on a pass that computed the
@@ -709,27 +714,43 @@ otbr_upkeep() {
   # to download its image leaves Thread down for as long as the download
   # takes, and one that cannot download it leaves Thread down for good. A
   # failed pull (offline, a private package) is no attempt - nothing was
-  # changed - and is tried again after PULL_RETRY, not every pass. Bounded
-  # well under entrypoint.sh's 900 s for the radios worker: a pull killed
-  # from outside would record no failure and start again on the next pass.
+  # changed - and is tried again after PULL_RETRY, not every pass. The wait
+  # belongs to the target whose pull failed ("<epoch> <target>" in the
+  # file): a different target - a release that fixes a broken tag - is
+  # pulled at once. Bounded well under entrypoint.sh's 900 s for the radios
+  # worker: a pull killed from outside would record no failure and start
+  # again on the next pass.
   if [ "$image_changed" = true ]; then
     if [ -f "$UPKEEP_PULL_FAILED" ]; then
-      failed_at="$(sed -n 1p "$UPKEEP_PULL_FAILED")"
+      failed_at="$(sed -n '1s/ .*//p' "$UPKEEP_PULL_FAILED")"
+      failed_target="$(sed -n '1s/^[^ ]* //p' "$UPKEEP_PULL_FAILED")"
       case "$failed_at" in ''|*[!0-9]*) failed_at=0 ;; esac
-      if [ $(($(date +%s) - failed_at)) -lt "$PULL_RETRY" ]; then
+      if [ "$failed_target" = "$target" ] && [ $(($(date +%s) - failed_at)) -lt "$PULL_RETRY" ]; then
         [ "$fresh" = false ] || log "radios upkeep: pulling $desired_image failed recently - trying again ${PULL_RETRY}s after that"
         return 0
       fi
     fi
     log "radios upkeep: otbr runs $actual_image, Compose asks for $desired_image - pulling it first"
-    log "\$ timeout $PULL_TIMEOUT docker compose -f $STACK/docker-compose.yml --project-directory $STACK_HOST_PATH --env-file $ENV_FILE --profile thread pull otbr"
+    # In the background, with the heartbeat kept moving while it runs: a
+    # pull may take minutes, and a radios state whose seen_at stops for
+    # longer than `_MAX_SILENT_SECONDS` reads to the card as a sidecar that
+    # is gone (see refresh_heartbeat). `wait` returns the pull's own exit
+    # status - timeout's 124 included - and is tested in an `if`, so a
+    # failing pull is reported instead of ending the pass under `set -e`.
+    log "\$ docker compose -f $STACK/docker-compose.yml --project-directory $STACK_HOST_PATH --env-file $ENV_FILE --profile thread pull otbr"
     refresh_heartbeat
-    if timeout "$PULL_TIMEOUT" docker compose -f "$STACK/docker-compose.yml" --project-directory "$STACK_HOST_PATH" \
-      --env-file "$ENV_FILE" --profile thread pull otbr >> "$LOG" 2>&1; then
+    timeout "$PULL_TIMEOUT" docker compose -f "$STACK/docker-compose.yml" --project-directory "$STACK_HOST_PATH" \
+      --env-file "$ENV_FILE" --profile thread pull otbr >> "$LOG" 2>&1 &
+    pull_pid=$!
+    while kill -0 "$pull_pid" 2>/dev/null; do
+      refresh_heartbeat
+      sleep "$POLL_SECONDS"
+    done
+    if wait "$pull_pid"; then
       rm -f "$UPKEEP_PULL_FAILED"
       refresh_heartbeat
     else
-      date +%s > "$UPKEEP_PULL_FAILED"
+      printf '%s %s\n' "$(date +%s)" "$target" > "$UPKEEP_PULL_FAILED"
       refresh_heartbeat
       log "radios upkeep: could not pull $desired_image - otbr keeps running $actual_image, trying again in ${PULL_RETRY}s"
       return 0

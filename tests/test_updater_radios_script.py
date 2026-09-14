@@ -136,6 +136,23 @@ case "$1" in
           "$(cat "$FAKE/compose_devices" 2>/dev/null || echo "$DEFAULT_COMPOSE_DEVICES")" \
           "$(cat "$FAKE/compose_radio_url" 2>/dev/null || echo "$DEFAULT_RADIO_URL")" ;;
       *" pull "*otbr*)
+        # A pull that lasts $FAKE/pull_seconds of the script's clock: it
+        # ends once the script's own sleeps have moved the epoch that far.
+        # The real sleep only paces this loop, bounded so a script that
+        # never sleeps cannot hang the test.
+        if [ -f "$FAKE/pull_seconds" ]; then
+          read -r by < "$FAKE/pull_seconds"
+          from=""
+          while [ -z "$from" ]; do read -r from < "$FAKE/epoch" || from=""; done
+          # A read may meet the file between the script's truncation and its
+          # write; an empty value just means "look again".
+          tries=0
+          while [ "$tries" -lt 750 ]; do
+            read -r at < "$FAKE/epoch" || at=""
+            case "$at" in ''|*[!0-9]*) ;; *) [ "$at" -lt $((from + by)) ] || break ;; esac
+            tries=$((tries + 1)); /bin/sleep 0.02
+          done
+        fi
         exit "$(cat "$FAKE/pull_status" 2>/dev/null || echo 0)" ;;
       *" up "*otbr*)
         # A pass killed in the middle of its recreate: the parent is the
@@ -2089,7 +2106,9 @@ def test_upkeep_after_a_failed_pull_uses_no_attempt_and_waits_1800_s(radios):
     assert _compose(calls, "up") == []
     assert not (radios.update_dir / "otbr-upkeep-tried").exists()
     failed_at = (radios.update_dir / "otbr-upkeep-pull-failed-at").read_text(encoding="utf-8")
-    assert failed_at.strip() == str(START_EPOCH)
+    epoch, target = failed_at.split()
+    assert epoch == (radios.fake / "epoch").read_text(encoding="utf-8").strip()
+    assert re.fullmatch(r"\d+-\d+", target)
     assert f"could not pull {NEW_IMAGE}" in _log_text(radios)
 
     _advance(radios, 1799)
@@ -2284,14 +2303,97 @@ def test_upkeep_reads_the_compose_configuration_again_only_when_its_inputs_chang
     assert len(_compose(calls, "config")) == 1
 
 
-def test_upkeep_that_cannot_read_the_configuration_says_so_once(radios):
+def test_upkeep_that_cannot_read_the_configuration_asks_compose_once_per_input(radios):
+    """The same files give the same failure: asking Compose again every two
+    seconds would only cost the Pi a steady share of a core.
+
+    Fault to prove it: do not cache the failure - every pass runs
+    `compose config` again."""
     _upkeep(radios)
     (radios.fake / "compose_fail").write_text(" config ")
     for _ in range(3):
         _, calls, state = radios()
         assert state["id"] == "job-0"
+    assert len(_compose(calls, "config")) == 1
     assert _compose(calls, "up") == []
     assert _log_text(radios).count("could not read otbr's Compose configuration") == 1
+
+    radios.env_file.write_text(radios.env_file.read_text() + "# edited\n")
+    radios()
+    _, calls, _ = radios()
+    assert len(_compose(calls, "config")) == 2
+    assert _log_text(radios).count("could not read otbr's Compose configuration") == 2
+
+
+def test_upkeep_waits_only_for_the_target_whose_pull_failed(radios):
+    """A release that replaces a broken image tag must not wait out the
+    half hour its predecessor's failure started.
+
+    Fault to prove it: wait after any failed pull, whatever its target - the
+    pass with the new image pulls nothing."""
+    _upkeep(radios)
+    (radios.fake / "compose_image").write_text(NEW_IMAGE)
+    (radios.fake / "pull_status").write_text("1")
+    _, calls, state = radios()
+    assert len(_compose(calls, "pull", "otbr")) == 1 and state["id"] == "job-0"
+
+    _advance(radios, 10)
+    radios.log.unlink()
+    _, calls, _ = radios()
+    assert _compose(calls, "pull") == []
+
+    newer = "ghcr.io/lucienkerl/loxmatter-otbr:4de56f78-rcp2"
+    radios.env_file.write_text(radios.env_file.read_text() + f"OTBR_IMAGE={newer}\n")
+    (radios.fake / "compose_image").write_text(newer)
+    (radios.fake / "pull_status").write_text("0")
+    radios.log.unlink()
+    _, calls, state = radios()
+    assert len(_compose(calls, "pull", "otbr")) == 1
+    assert state["id"].startswith("otbr-upkeep-")
+    assert (state["phase"], state["healthy"]) == ("done", True)
+
+
+def test_upkeep_keeps_the_heartbeat_moving_through_a_long_pull(radios):
+    """A pull may take minutes, and a radios state whose seen_at stops for
+    longer than `_MAX_SILENT_SECONDS` (30 s) reads to the card as a sidecar
+    that is gone.
+
+    Fault to prove it: remove the loop that waits for the background pull -
+    no heartbeat sample is taken while it runs."""
+    run, log = _heartbeat_run(radios, LOXMATTER_RADIOS_POLL_SECONDS="5")
+    _upkeep(radios)
+    (radios.fake / "compose_image").write_text(NEW_IMAGE)
+    (radios.fake / "pull_seconds").write_text("120")
+    result, calls, state = run()
+    assert result.returncode == 0, result.stderr
+    assert (state["phase"], state["healthy"]) == ("done", True)
+    assert len(_compose(calls, "pull", "otbr")) == 1
+    # The seeded state's phase, which the pull does not change.
+    samples = _samples(log, "done")
+    assert len(samples) >= 20, samples
+    assert _strictly_advancing([seen for seen, _ in samples]), samples
+    assert _strictly_advancing([updater for _, updater in samples]), samples
+    assert int((radios.fake / "epoch").read_text()) >= START_EPOCH + 120
+
+
+def test_upkeep_reports_a_pull_that_fails_after_running_in_the_background(radios):
+    """The pull's exit status has to survive being a background job under
+    `set -e`: a failure is recorded, not taken for success or for the end of
+    the pass.
+
+    Faults to prove it, one at a time: ignore the status `wait` returns -
+    the failed pull starts a job; call `wait` as a plain statement - the
+    pass ends there with no failure recorded."""
+    _upkeep(radios)
+    (radios.fake / "compose_image").write_text(NEW_IMAGE)
+    (radios.fake / "pull_status").write_text("1")
+    (radios.fake / "pull_seconds").write_text("3")
+    result, calls, state = radios()
+    assert result.returncode == 0, result.stderr
+    assert state["id"] == "job-0"
+    assert _compose(calls, "up") == []
+    assert (radios.update_dir / "otbr-upkeep-pull-failed-at").is_file()
+    assert f"could not pull {NEW_IMAGE}" in _log_text(radios)
 
 
 def test_upkeep_holds_the_watchdog_lock_before_it_recreates_otbr(radios):
