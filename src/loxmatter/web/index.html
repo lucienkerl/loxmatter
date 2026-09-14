@@ -2689,6 +2689,21 @@
                   </select>
                 </label>
               </div>
+              <!-- The Thread state line, shown regardless of whether a job
+                   ever ran (design "The radios card says when a rollback
+                   left Thread off", 2026-09-14, section 6) - on the 13
+                   September incident nothing on the card said Thread was
+                   off outside a job's own result text, and that text is
+                   gone the moment the page is reloaded. `x-if`, not
+                   `x-show`: `radiosThreadStatus()` returns `null` while a
+                   job is running or with no report yet, and evaluating
+                   `.key`/`.warn` on `null` would throw. -->
+              <template x-if="radiosThreadStatus()">
+                <p
+                  :class="radiosThreadStatus().warn ? 'banner warn' : 'hint radios-row-hint'"
+                  x-text="t(radiosThreadStatus().key)"
+                ></p>
+              </template>
               <!-- Which stick Zigbee holds and how to free it. Directly under
                    the Thread select it is about, not under the Bluetooth one
                    beside it - which is why Thread and Bluetooth are two rows
@@ -2782,6 +2797,22 @@
                     :class="radios.job.phase === 'done' || radios.job.phase === 'unchanged' ? 'hint' : 'banner danger'"
                     x-text="radiosResultKey() && t(radiosResultKey(), { reason: radiosReason() })"
                   ></p>
+                  <!-- The 13 September incident again: the card gave no way
+                       back in short of re-opening every select by hand,
+                       because the draft had already resynced to match the
+                       rolled-back (Thread off) state. `retryRadios()`
+                       re-seeds the draft from the failed request itself
+                       (design section 5) and opens the ordinary
+                       confirmation - same guards as the Apply button
+                       (`radios.sidecar === 'ready'`, no job running, not
+                       already busy). -->
+                  <button
+                    class="primary"
+                    x-show="radiosThreadLeftOff() && radios.sidecar === 'ready' && !radiosJobRunning() && !radiosBusy"
+                    x-cloak
+                    @click="retryRadios()"
+                    x-text="t('web.radios.retry')"
+                  ></button>
                 </div>
               </template>
               <!-- Review-Fix Critical #2a: the sidecar died mid-job -

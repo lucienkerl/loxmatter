@@ -15071,3 +15071,294 @@ async def test_the_version_formatters_shorten_and_localise(api):
     # tag must reach it unchanged.
     assert values["dev"] == "0123456"
     assert values["stable"] == "0.10.0-rc.1"
+
+
+# ---------------------------------------------------------------------------
+# The radios card names Thread off after a rollback (design "The radios card
+# says when a rollback left Thread off", 2026-09-14): on 13 September three
+# requests to switch Thread on failed, rolled back to a `.env` where Thread
+# was already off, and the card said only "Failed ({reason}), previous
+# setting restored" - which read as harmless - while the Thread select had
+# already resynced to "No Thread stick (Thread off)" and the Apply button
+# vanished with it. Thread stayed down for about ten hours before anyone
+# noticed. `job.requested` (Task 1, commit a1f596b) is the bridge's own copy
+# of what the failed request actually asked for; `radiosThreadLeftOff()`,
+# `retryRadios()` and `radiosThreadStatus()` below are what a user looking
+# only at the card now needs to notice, undo, and check again.
+# ---------------------------------------------------------------------------
+
+
+def _thread_off_failing_job(bluetooth: dict | None = None) -> dict:
+    """The base failing job design section 4 describes: wanted Thread on,
+    rolled back healthy, and the rollback itself left Thread off. Shared by
+    every test below so each one only states the ONE field it moves away
+    from this shape."""
+    return {
+        "id": "j",
+        "phase": "failed",
+        "steps": ["validate", "backup", "write", "apply_thread", "verify_thread"],
+        "error": "verify_thread_failed",
+        "rolled_back": True,
+        "healthy": True,
+        "requested": {
+            "thread": {"enabled": True, "device": "/dev/serial/by-id/usb-A"},
+            "bluetooth": bluetooth,
+        },
+    }
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_radios_thread_left_off_names_the_failed_job_that_left_thread_off():
+    """`radiosThreadLeftOff()`/`radiosResultKey()` (design section 4): the
+    new sentence fires only for a job that (1) wanted Thread on, (2) is a
+    genuine terminal failure (not `interrupted` - that case has its own,
+    unrelated text), (3) rolled back healthy (an unhealthy rollback keeps
+    ITS OWN stronger text), and (4) left `radios.current` with Thread off.
+    Each condition is flipped once from the base failing job, alone, to
+    prove it actually gates the result rather than merely coinciding with
+    it in the base case.
+
+    Fault to prove it: drop any one of the four `&&`-ed conditions from
+    `radiosThreadLeftOff()` in app.js."""
+    values = _radios_values(
+        f"""
+        state.radios.job = {json.dumps(_thread_off_failing_job())};
+        state.radios.current.thread_enabled = false;
+        state.radios.current.thread_device = null;
+        state.radios.current.otbr_running = false;
+        const out = {{ base: [state.radiosThreadLeftOff(), state.radiosResultKey()] }};
+
+        state.radios.job.healthy = false;
+        out.unhealthy = [state.radiosThreadLeftOff(), state.radiosResultKey()];
+        state.radios.job.healthy = true;
+
+        state.radios.job.error = 'interrupted';
+        out.interrupted = [state.radiosThreadLeftOff(), state.radiosResultKey()];
+        state.radios.job.error = 'verify_thread_failed';
+
+        state.radios.job.requested = null;
+        out.noRequest = [state.radiosThreadLeftOff(), state.radiosResultKey()];
+        state.radios.job.requested = {json.dumps(_thread_off_failing_job()["requested"])};
+
+        state.radios.job.requested.thread.enabled = false;
+        out.requestedOff = [state.radiosThreadLeftOff(), state.radiosResultKey()];
+        state.radios.job.requested.thread.enabled = true;
+
+        state.radios.current.thread_enabled = true;
+        out.currentOn = [state.radiosThreadLeftOff(), state.radiosResultKey()];
+        state.radios.current.thread_enabled = false;
+
+        state.radios.job.phase = 'done';
+        out.done = [state.radiosThreadLeftOff(), state.radiosResultKey()];
+
+        console.log(JSON.stringify(out));
+        """
+    )
+    assert values["base"] == [True, "web.radios.result_failed_thread_off"]
+    assert values["unhealthy"] == [False, "web.radios.result_failed_unhealthy"]
+    assert values["interrupted"] == [False, "web.radios.result_interrupted"]
+    assert values["noRequest"] == [False, "web.radios.result_failed_restored"]
+    assert values["requestedOff"] == [False, "web.radios.result_failed_restored"]
+    assert values["currentOn"] == [False, "web.radios.result_failed_restored"]
+    assert values["done"] == [False, "web.radios.result_done"]
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_retry_radios_reseeds_the_draft_from_the_failed_request_and_reopens_the_confirmation():
+    """`retryRadios()` (design section 5): fills the draft from
+    `job.requested` - what the failed request actually asked for - not
+    from today's already-rolled-back `radios.current`, then reopens the
+    ordinary confirmation dialog (`askApplyRadios()`) rather than
+    reapplying on its own, so the "Thread on" warning still shows and a
+    stick that has since disappeared is still refused by
+    `POST /api/radios`, the same as any other Apply.
+
+    A `bluetooth: null` half (the failed request never touched Bluetooth -
+    see `radiosRequestBody()`'s own reasoning for why an untouched half is
+    sent as `null`) must leave the draft's adapter exactly as it was:
+    re-seeding it from a null half would turn a plain retry into an
+    unrelated Bluetooth change nobody asked for.
+
+    Fault to prove it: (a) drop the `if (!this.radiosThreadLeftOff())
+    return;` guard, so this fires for any failed job; (b) always read
+    `requested.bluetooth.adapter` unconditionally - the `bluetooth: null`
+    case then throws instead of leaving the draft alone."""
+    values = _radios_values(
+        f"""
+        state.radios.current.thread_enabled = false;
+        state.radios.current.thread_device = null;
+
+        state.radios.job = {json.dumps(_thread_off_failing_job({"adapter": 1}))};
+        state.radiosDraft = {{ threadDevice: '', bluetoothAdapter: 0 }};
+        state.retryRadios();
+        const out = {{
+          withBluetooth: {{
+            draft: state.radiosDraft, dirty: state.radiosDirty, confirming: state.radiosConfirming,
+          }},
+        }};
+
+        state.radiosConfirming = false;
+        state.radiosDirty = false;
+        state.radios.job = {json.dumps(_thread_off_failing_job(None))};
+        state.radiosDraft = {{ threadDevice: '', bluetoothAdapter: 3 }};
+        state.retryRadios();
+        out.withoutBluetooth = {{
+          draft: state.radiosDraft, dirty: state.radiosDirty, confirming: state.radiosConfirming,
+        }};
+
+        console.log(JSON.stringify(out));
+        """
+    )
+    assert values["withBluetooth"] == {
+        "draft": {"threadDevice": "/dev/serial/by-id/usb-A", "bluetoothAdapter": 1},
+        "dirty": True,
+        "confirming": True,
+    }
+    assert values["withoutBluetooth"] == {
+        "draft": {"threadDevice": "/dev/serial/by-id/usb-A", "bluetoothAdapter": 3},
+        "dirty": True,
+        "confirming": True,
+    }
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_retry_radios_is_a_noop_off_the_thread_left_off_condition():
+    """The early-return half of `retryRadios()`: pressing it (or a stray
+    call) when `radiosThreadLeftOff()` is not true must change nothing -
+    the button is hidden for that case in index.html, but the handler
+    itself is the actual guarantee. Fault to prove it: drop the guard
+    clause entirely."""
+    values = _radios_values(
+        """
+        const before = JSON.parse(JSON.stringify(state.radiosDraft));
+        state.radios.job = { id: 'j', phase: 'done', steps: [], error: null,
+                              rolled_back: false, healthy: true, requested: null };
+        state.retryRadios();
+        console.log(JSON.stringify({
+          draft: state.radiosDraft, dirty: state.radiosDirty, confirming: state.radiosConfirming,
+          unchanged: JSON.stringify(state.radiosDraft) === JSON.stringify(before),
+        }));
+        """
+    )
+    assert values["unchanged"] is True
+    assert values["dirty"] is False
+    assert values["confirming"] is False
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_radios_thread_status_follows_the_current_report_and_hides_during_a_job():
+    """`radiosThreadStatus()` (design section 6): the line that now always
+    states the Thread state, job or no job - the same 13 September gap
+    `radiosThreadLeftOff()` targets, but for the ordinary case where
+    nothing has failed and there is simply no result text on screen to
+    say it. `null` with no report yet; `null` while a job is running,
+    because the border router is being recreated on purpose then and
+    `radiosRollingBack()`/the step list already say so. `otbr_running` is
+    the sidecar's own container check, not a Thread network probe - see
+    the function's own comment in app.js for why `not_running` only means
+    "the container is not up".
+
+    Fault to prove it: swap `warn: true`/`warn: false` between the
+    running and not-running rows."""
+    values = _radios_values(
+        """
+        state.radios.current = null;
+        const out = { noReport: state.radiosThreadStatus() };
+
+        state.radios.current = { thread_enabled: false, otbr_running: false };
+        out.off = state.radiosThreadStatus();
+
+        state.radios.current = { thread_enabled: true, otbr_running: true };
+        out.runningOk = state.radiosThreadStatus();
+
+        state.radios.current = { thread_enabled: true, otbr_running: false };
+        out.notRunning = state.radiosThreadStatus();
+
+        state.radios.job = { id: 'j', phase: 'apply_thread',
+                              steps: ['validate','backup','write','apply_thread','verify_thread'],
+                              error: null, rolled_back: false, healthy: null };
+        out.duringJob = state.radiosThreadStatus();
+
+        console.log(JSON.stringify(out));
+        """
+    )
+    assert values["noReport"] is None
+    assert values["off"] == {"key": "web.radios.thread_status_off", "warn": False}
+    assert values["runningOk"] == {"key": "web.radios.thread_status_running", "warn": False}
+    assert values["notRunning"] == {"key": "web.radios.thread_status_not_running", "warn": True}
+    assert values["duringJob"] is None
+
+
+def test_the_five_thread_off_after_rollback_strings_exist_in_both_languages():
+    """The five keys this feature adds, named explicitly rather than only
+    swept up by the generic `web.radios.` prefix scan above them
+    (`test_the_radios_texts_exist_in_both_languages`) - so a typo'd key
+    that the generic scan would still pass (it exists, just under the
+    wrong name) fails here by naming the exact key nothing else checks
+    for. Fault to prove it: delete one `de:` line under one of these five
+    keys in strings.yaml."""
+    from loxmatter import i18n
+
+    keys = i18n.strings_with_prefix("web.radios.")
+    for key in (
+        "web.radios.result_failed_thread_off",
+        "web.radios.retry",
+        "web.radios.thread_status_off",
+        "web.radios.thread_status_running",
+        "web.radios.thread_status_not_running",
+    ):
+        assert key in keys, key
+        entry = i18n._STRINGS[key]
+        assert entry.get("en") and entry.get("de"), key
+        assert entry["en"] != entry["de"]
+
+
+async def test_the_retry_button_calls_retry_and_gates_on_thread_left_off(api):
+    """The retry button's markup (design section 5): `@click` calls the
+    real handler, and `x-show` carries every guard the ordinary Apply
+    button next to it already has (`radios.sidecar === 'ready'`,
+    `!radiosJobRunning()`, `!radiosBusy`), plus `radiosThreadLeftOff()`
+    itself - without the running guard a poll that starts a NEW job right
+    after a Try again click would leave a stale retry button sitting on
+    screen next to the running step list.
+
+    Fault to prove it: drop `!radiosJobRunning()` from the button's
+    `x-show` in index.html."""
+    client, _, _ = api
+    markup = _without_comments((await client.get("/")).text)
+    x_show = _x_show_expr(markup, "web.radios.retry")
+    for needle in (
+        "radiosThreadLeftOff()",
+        "radios.sidecar === 'ready'",
+        "!radiosJobRunning()",
+        "!radiosBusy",
+    ):
+        assert needle in x_show, x_show
+    assert _attr_before_t_key(markup, "@click", "web.radios.retry") == "retryRadios()"
+
+
+async def test_the_thread_status_line_wraps_in_x_if_and_binds_warn(api):
+    """The Thread state line (design section 6) is wrapped in
+    `<template x-if="radiosThreadStatus()">` rather than an `x-show` on the
+    `<p>` itself: `radiosThreadStatus()` returns `null` or an object, and
+    an `x-show` would still evaluate the `<p>`'s own `:class`/`x-text`
+    bindings - `.warn`/`.key` on `null` - even while hidden. Its `:class`
+    is the same `banner warn` vs `hint radios-row-hint` split the rest of
+    this card already uses for a warning line (the rfkill row above it).
+
+    Fault to prove it: use `x-show="radiosThreadStatus()"` on the `<p>`
+    directly instead of the `x-if` template, or swap the ternary's two
+    branches."""
+    client, _, _ = api
+    markup = _without_comments((await client.get("/")).text)
+    at = markup.index("radiosThreadStatus()")
+    template_tag = markup[markup.rindex("<template", 0, at) : markup.index(">", at) + 1]
+    assert template_tag == '<template x-if="radiosThreadStatus()">'
+    block = markup[at : markup.index("</template>", at)]
+    match = re.search(r':class="([^"]*)"[^>]*x-text="([^"]*)"', block, flags=re.DOTALL)
+    assert match, block
+    class_expr, text_expr = match.group(1), match.group(2)
+    assert "radiosThreadStatus().warn" in class_expr
+    assert "'banner warn'" in class_expr
+    assert "'hint radios-row-hint'" in class_expr
+    assert text_expr == "t(radiosThreadStatus().key)"
