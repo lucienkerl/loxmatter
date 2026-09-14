@@ -5053,8 +5053,8 @@ function app() {
      * router is being recreated on purpose then, and a state line reacting
      * to that churn would only be noise mid-flight - `radiosRollingBack()`
      * and the step list already say what is happening. `otbr_running` is
-     * the sidecar's own container check (see its call site in
-     * radios/sidecar.py), not a Thread network probe, so `warn` here means
+     * the sidecar's own container check (`read_current()` in
+     * deploy/updater/radios-once.sh), not a Thread network probe, so `warn` here means
      * "the container is not up", nothing stronger. */
     radiosThreadStatus() {
       const current = this.radios?.current;
@@ -5263,8 +5263,8 @@ function app() {
      * and the Apply button vanished, leaving no visible way back in.
      * `job.healthy !== false`: an unhealthy rollback keeps its OWN,
      * stronger text (`result_failed_unhealthy`) rather than this one.
-     * `job.requested` is Task 1's copy of what the failed request actually
-     * asked for - absent for a job started before that copy existed, in
+     * `job.requested` is the bridge's own copy of what the failed request
+     * actually asked for (`read_last_request()` in radios/sidecar.py) - absent for a job started before that copy existed, in
      * which case this reads `undefined?.thread?.enabled` as not `true`
      * and falls through to the old text, same as `null`. */
     radiosThreadLeftOff() {
@@ -5379,7 +5379,7 @@ function app() {
      * `radiosThreadLeftOff()` (design "The radios card says when a
      * rollback left Thread off", 2026-09-14, section 5). Re-seeds the
      * draft from `job.requested` - what the failed request actually
-     * asked for, Task 1's copy, not today's (already rolled-back)
+     * asked for, the bridge's own copy, not today's (already rolled-back)
      * `radios.current` - and reopens the ordinary confirmation dialog
      * rather than reapplying on its own, so the user still sees the
      * "Thread on" warning and a stick that has since disappeared is still
