@@ -262,3 +262,18 @@ def test_the_release_gate_runs_before_any_image_is_pushed() -> None:
         needs = [needs] if isinstance(needs, str) else needs
         assert gate_names.intersection(needs), name
         assert "needs." in str(job.get("if", "")), name
+
+
+def test_the_main_image_job_still_runs_when_the_tag_gate_is_skipped() -> None:
+    """On a push to main `otbr-image-check` is skipped. An `if:` without a
+    status function gets an implicit `success()`, which is false once any
+    `needs` job was skipped - the `image` job would be skipped on main as
+    well, and the :dev image the test Pi updates from would stop being
+    built without any red run to show it. `!cancelled()` replaces the
+    implicit check, and `test` then has to be required by name.
+
+    Fault to prove it: drop `!cancelled() &&` from the `image` job's `if:`."""
+    image = _ci_workflow()["jobs"]["image"]
+    condition = str(image.get("if", ""))
+    assert "!cancelled()" in condition or "always()" in condition, condition
+    assert "needs.test.result == 'success'" in condition, condition

@@ -66,11 +66,14 @@ jobs:
   image:
     needs: [test, otbr-image-check]
     # otbr-image-check only runs on a tag push (see its own `if:` above);
-    # on a plain push to main it is skipped, and a skipped job is neither
-    # success() nor failure() - accepting "skipped" here as well as
-    # "success" is what lets this job still run on main instead of being
-    # skipped right along with it.
+    # on a plain push to main it is skipped. An `if` without a status
+    # function gets an implicit `success()`, which is false as soon as any
+    # `needs` job was skipped - this job would then be skipped on main too,
+    # and the :dev image the test Pi updates from would silently stop being
+    # built. `!cancelled()` replaces that implicit check, so `test` has to be
+    # required explicitly.
     if: >-
+      !cancelled() && needs.test.result == 'success' &&
       github.event_name == 'push' &&
       (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) &&
       (needs.otbr-image-check.result == 'success' || needs.otbr-image-check.result == 'skipped')
@@ -145,15 +148,11 @@ jobs:
   # only on releases.
   updater-image:
     needs: [test, otbr-image-check]
-    # otbr-image-check runs under the same tag condition this job already
-    # has, so it is never actually skipped here the way it can be for
-    # `image` above - the "skipped" branch is kept anyway, for the same
-    # reason: a skipped `needs` job is neither success() nor failure(),
-    # and this job's default `if` would otherwise be skipped right along
-    # with it.
+    # otbr-image-check runs under the same tag condition this job has, so
+    # here it must simply have succeeded.
     if: >-
       github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') &&
-      (needs.otbr-image-check.result == 'success' || needs.otbr-image-check.result == 'skipped')
+      needs.otbr-image-check.result == 'success'
     runs-on: ubuntu-latest
     permissions:
       contents: read
