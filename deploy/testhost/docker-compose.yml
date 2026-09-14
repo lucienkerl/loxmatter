@@ -3,7 +3,10 @@
 # Runs on a Raspberry Pi (see README.md for the migration from the test VM,
 # which had no Bluetooth adapter, and all deviations from the original
 # design):
-#   - openthread/otbr:latest       -> Digest sha256:ebebd9f6..., Entrypoint
+#   - ghcr.io/lucienkerl/loxmatter-otbr (deploy/otbr/source.env) -> built
+#     from ot-br-posix's etc/docker/test/Dockerfile like the official
+#     openthread/otbr:latest it replaces (that one measured at Digest
+#     sha256:ebebd9f6...), Entrypoint
 #     /app/etc/docker/test/docker_entrypoint.sh (the "test" variant of the
 #     image, not the newer s6-overlay/"border-router" variant). This
 #     variant reads RADIO_URL as an environment variable and accepts

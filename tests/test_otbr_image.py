@@ -261,7 +261,11 @@ def test_the_release_gate_runs_before_any_image_is_pushed() -> None:
         needs = job.get("needs", [])
         needs = [needs] if isinstance(needs, str) else needs
         assert gate_names.intersection(needs), name
-        assert "needs." in str(job.get("if", "")), name
+        # The gate's own result must be read: `needs.test.result` alone
+        # also contains "needs.", and with `!cancelled()` in the condition
+        # nothing else would stop a failed gate from letting the push run.
+        condition = str(job.get("if", ""))
+        assert any(f"needs.{gate}.result" in condition for gate in gate_names), name
 
 
 def test_the_main_image_job_still_runs_when_the_tag_gate_is_skipped() -> None:
