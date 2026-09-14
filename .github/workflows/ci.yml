@@ -36,16 +36,14 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      packages: read
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - name: The otbr image compose defaults to must already exist
+      # Deliberately without a registry login: a Pi pulls the border router
+      # image anonymously, so the gate asks the registry the same way. A
+      # logged-in check would pass for a package that is still private -
+      # and every fresh Thread installation would then fail to start.
+      - name: The otbr image compose defaults to must already exist, publicly
         run: |
           set -eu
           # Read straight out of the compose file rather than

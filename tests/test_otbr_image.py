@@ -281,3 +281,15 @@ def test_the_main_image_job_still_runs_when_the_tag_gate_is_skipped() -> None:
     condition = str(image.get("if", ""))
     assert "!cancelled()" in condition or "always()" in condition, condition
     assert "needs.test.result == 'success'" in condition, condition
+
+
+def test_the_release_gate_checks_the_image_the_way_a_pi_pulls_it() -> None:
+    """A Pi pulls the otbr image anonymously. A gate that logs in first
+    would pass for a package still private, and every fresh Thread
+    installation of that release would fail to start.
+
+    Fault to prove it: add a docker/login-action step to otbr-image-check."""
+    job = _ci_workflow()["jobs"]["otbr-image-check"]
+    uses = [str(step.get("uses", "")) for step in job.get("steps", [])]
+    assert not any(u.startswith("docker/login-action") for u in uses), uses
+    assert "imagetools inspect" in _step_run_text(job)

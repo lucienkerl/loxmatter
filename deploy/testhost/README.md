@@ -128,9 +128,10 @@ needed the module.
 commissioned over Bluetooth; `BLUETOOTH_ADAPTER` and the rfkill section further
 down apply unchanged.
 
-**Retrofitting:** plug in the radio module, set `COMPOSE_PROFILES=thread`
-in the `.env` and point `RADIO_DEVICE` at the right path, then `docker compose up -d`.
-The `start-stop-daemon` workaround further down is needed again from that point on.
+**Retrofitting:** plug in the radio module and switch Thread on in Settings →
+Radios. The card writes `COMPOSE_PROFILES` and `RADIO_DEVICE`, starts the border
+router and checks that the Thread network forms; the updater service's watchdog
+looks after it from then on.
 
 ## Updating
 

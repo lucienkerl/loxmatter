@@ -25,9 +25,12 @@ three are exercised end to end here rather than mocked.
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
+import signal
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
@@ -145,19 +148,62 @@ def test_a_short_log_is_left_alone(tmp_path: Path) -> None:
     assert lines == ["hello"]
 
 
-def test_the_watchdog_replaces_the_worker_so_the_timeout_reaches_it(tmp_path: Path) -> None:
-    """entrypoint.sh's `timeout` signals only its direct child. If the
-    worker ran bash as a child, a watchdog run longer than the worker's
-    limit would survive the kill and keep the lock; `exec` makes bash the
-    process the timeout signals.
+def test_a_term_to_the_worker_ends_the_watchdog_run(tmp_path: Path) -> None:
+    """entrypoint.sh's `timeout` signals only its direct child, the worker.
+    A watchdog run left behind would keep the lock and go on restarting
+    otbr unseen, so the worker forwards the signal.
 
-    Fault to prove it: drop the `exec` in watchdog-once.sh."""
+    Fault to prove it: drop the `trap` in watchdog-once.sh."""
     update_dir = tmp_path / "update"
     update_dir.mkdir()
-    script = _watchdog_script(tmp_path, "watchdog.sh", 'ps -o args= -p "$PPID"')
+    alive = tmp_path / "alive"
+    script = _watchdog_script(
+        tmp_path, "watchdog.sh", f'for i in $(seq 1 100); do date +%s > "{alive}"; sleep 0.1; done'
+    )
+    env = {
+        **os.environ,
+        "LOXMATTER_WATCHDOG_SCRIPT": str(script),
+        "LOXMATTER_UPDATE_DIR": str(update_dir),
+        "LOXMATTER_WATCHDOG_POLL_SECONDS": "0.2",
+    }
+    worker = subprocess.Popen(["sh", str(SCRIPT)], env=env, cwd=str(tmp_path))
+    try:
+        for _ in range(50):
+            if alive.exists():
+                break
+            time.sleep(0.1)
+        assert alive.exists()
+        worker.send_signal(signal.SIGTERM)
+        worker.wait(timeout=10)
+        time.sleep(0.5)
+        stamp = alive.stat().st_mtime
+        time.sleep(0.6)
+        assert alive.stat().st_mtime == stamp, "the watchdog run outlived the worker"
+    finally:
+        worker.kill()
 
-    result = _run(tmp_path, script, update_dir)
+
+def test_the_heartbeats_stay_fresh_while_the_watchdog_runs(tmp_path: Path) -> None:
+    """The bridge calls the updater outdated after 30 s without a heartbeat,
+    and a restart run lasts longer than that. Both timestamps advance during
+    the run, and nothing else in either file changes.
+
+    Fault to prove it: drop the touch_seen_at calls from the wait loop."""
+    update_dir = tmp_path / "update"
+    update_dir.mkdir()
+    old = "2020-01-01T00:00:00Z"
+    state = update_dir / "state.json"
+    radios = update_dir / "radios-state.json"
+    state.write_text(json.dumps({"phase": "idle", "updater_seen_at": old, "to": "x"}))
+    radios.write_text(json.dumps({"phase": "done", "seen_at": old, "id": "job-1"}))
+    script = _watchdog_script(tmp_path, "watchdog.sh", "sleep 1")
+
+    result = _run(tmp_path, script, update_dir, LOXMATTER_WATCHDOG_POLL_SECONDS="0.2")
 
     assert result.returncode == 0, result.stderr
-    parent = (update_dir / "otbr-watchdog.log").read_text(encoding="utf-8")
-    assert "watchdog-once" not in parent, parent
+    after_state = json.loads(state.read_text())
+    after_radios = json.loads(radios.read_text())
+    assert after_state["updater_seen_at"] != old
+    assert after_radios["seen_at"] != old
+    assert after_state["to"] == "x" and after_state["phase"] == "idle"
+    assert after_radios["id"] == "job-1" and after_radios["phase"] == "done"

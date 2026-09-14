@@ -53,9 +53,46 @@ if [ -f "$LOG" ] && tail -n 2000 "$LOG" >"$trimmed" 2>/dev/null; then
   mv "$trimmed" "$LOG" 2>/dev/null || true
 fi
 
-# Trimmed BEFORE the run, so the run can be the last thing and replace this
-# shell: entrypoint.sh's `timeout` signals only its direct child, and a
-# worst-case watchdog run (every docker call at its limit, twelve waits for
-# the network) is longer than the worker's limit. Run as a grandchild, bash
-# would outlive the kill, keep the lock and go on restarting otbr unseen.
-exec bash "$SCRIPT" >>"$LOG" 2>&1
+# Both heartbeats the web UI reads stay fresh while the watchdog runs. The
+# three workers share one loop, so nothing else writes them meanwhile, and
+# a restart run (docker restart, then up to a minute of waiting for the
+# network) is longer than the 30 s the bridge allows before it calls the
+# updater outdated or missing - the Radios card and System would then tell
+# the user to run console commands, in the middle of the very outage they
+# came to look at. Only the timestamp field is rewritten, the same way
+# radios-once.sh's refresh_heartbeat does, so no job record is disturbed.
+touch_seen_at() {
+  [ -f "$1" ] || return 0
+  refreshed="$(jq --arg seen "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    "if type == \"object\" and has(\"phase\") then $2 = \$seen else empty end" \
+    "$1" 2>/dev/null || true)"
+  [ -n "$refreshed" ] || return 0
+  if printf '%s\n' "$refreshed" > "$1.watchdog-tmp" 2>/dev/null; then
+    mv "$1.watchdog-tmp" "$1" 2>/dev/null || rm -f "$1.watchdog-tmp" 2>/dev/null
+  else
+    rm -f "$1.watchdog-tmp" 2>/dev/null
+  fi
+  return 0
+}
+
+RUN_TIMEOUT="${LOXMATTER_WATCHDOG_RUN_TIMEOUT:-280}"
+POLL_SECONDS="${LOXMATTER_WATCHDOG_POLL_SECONDS:-1}"
+
+# Its own limit, under entrypoint.sh's 300 s for this worker, and a TERM
+# forwarded to it: entrypoint.sh's `timeout` signals only this shell, and a
+# worst-case watchdog run is longer than the worker's limit. Left running
+# as an orphan, bash would keep the lock and go on restarting otbr unseen.
+if command -v timeout >/dev/null 2>&1; then
+  timeout -k 10 "$RUN_TIMEOUT" bash "$SCRIPT" >>"$LOG" 2>&1 &
+else
+  bash "$SCRIPT" >>"$LOG" 2>&1 &
+fi
+run_pid=$!
+trap 'kill -TERM "$run_pid" 2>/dev/null' TERM INT
+while kill -0 "$run_pid" 2>/dev/null; do
+  touch_seen_at "$UPDATE_DIR/state.json" .updater_seen_at
+  touch_seen_at "$UPDATE_DIR/radios-state.json" .seen_at
+  sleep "$POLL_SECONDS"
+done
+wait "$run_pid" 2>/dev/null || true
+exit 0
