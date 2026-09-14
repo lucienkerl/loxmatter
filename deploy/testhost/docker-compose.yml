@@ -59,8 +59,19 @@ services:
     network_mode: host
     privileged: true
     restart: unless-stopped
+    # The stick is passed in under ONE FIXED path, whatever RADIO_DEVICE names
+    # on the host. Measured on the test Pi on 14 September 2026: this
+    # container is privileged, and in a privileged container Docker does not
+    # create a device whose target lies under /dev/serial/by-id/ - the path
+    # the Radios card offers, because it survives a reboot that swaps
+    # ttyUSB0 and ttyUSB1. `--device <by-id>:<same by-id>` left the path
+    # missing and otbr-agent stopped at `Init() at hdlc_interface.cpp:154: No
+    # such file or directory`; `--device <by-id>:/dev/ttyThread` gave
+    # /dev/ttyThread with the stick's own 188:0. Docker resolves the
+    # host-side symlink itself, so a by-id RADIO_DEVICE and a bare
+    # /dev/ttyUSB0 both work.
     devices:
-      - ${RADIO_DEVICE}:${RADIO_DEVICE}
+      - ${RADIO_DEVICE}:/dev/ttyThread
     environment:
       # OTBR_RADIO_URL_EXTRA is appended to the radio URL as it stands, and
       # is empty unless .env sets it. Its one intended value is
@@ -78,7 +89,7 @@ services:
       # rollback recreates otbr from this same file. First-run checklist
       # step 15.4 turns it on for one installation and watches Thread come
       # back. The radios job rewrites .env key by key, so the line survives it.
-      RADIO_URL: spinel+hdlc+uart://${RADIO_DEVICE}?uart-baudrate=${RADIO_BAUDRATE}${OTBR_RADIO_URL_EXTRA:-}
+      RADIO_URL: spinel+hdlc+uart:///dev/ttyThread?uart-baudrate=${RADIO_BAUDRATE}${OTBR_RADIO_URL_EXTRA:-}
       # Neither the original test VM nor this Pi has the legacy iptables
       # tables (mangle/nat/filter) loaded, and the image has no modprobe to
       # load them - NAT64/NAT44 and the legacy firewall rules (both need

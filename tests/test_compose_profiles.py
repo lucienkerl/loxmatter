@@ -1,6 +1,6 @@
 """The compose file must stay usable without a Thread radio module.
 
-`otbr` passes through a device with `devices: - ${RADIO_DEVICE}:${RADIO_DEVICE}`.
+`otbr` passes through a device with `devices: - ${RADIO_DEVICE}:/dev/ttyThread`.
 If it's missing, `docker compose up` fails ("error gathering device
 information") - even for someone who only wants to connect WiFi Matter
 devices. These tests pin down that `otbr` therefore sits behind a
@@ -221,10 +221,30 @@ def test_otbr_takes_the_exclusive_lock_only_when_the_installation_asks_for_it():
     default URL carries it), or drop `${OTBR_RADIO_URL_EXTRA:-}` (the opt-in
     does nothing)."""
     base = {"RADIO_DEVICE": "/dev/ttyUSB0", "RADIO_BAUDRATE": "460800"}
-    assert _radio_url(base) == "spinel+hdlc+uart:///dev/ttyUSB0?uart-baudrate=460800"
+    assert _radio_url(base) == "spinel+hdlc+uart:///dev/ttyThread?uart-baudrate=460800"
     assert _radio_url({**base, "OTBR_RADIO_URL_EXTRA": "&uart-exclusive"}) == (
-        "spinel+hdlc+uart:///dev/ttyUSB0?uart-baudrate=460800&uart-exclusive"
+        "spinel+hdlc+uart:///dev/ttyThread?uart-baudrate=460800&uart-exclusive"
     )
+
+
+def test_otbr_opens_the_stick_through_one_fixed_container_path():
+    """The Radios card offers Thread sticks by their /dev/serial/by-id/ name,
+    and otbr is privileged. In a privileged container Docker does not create
+    a device under that nested path: measured on the test Pi on 14 September
+    2026, `--device <by-id>:<by-id>` left otbr-agent at `Init() at
+    hdlc_interface.cpp:154: No such file or directory`, while
+    `--device <by-id>:/dev/ttyThread` produced the stick's own 188:0. So the
+    stick goes in under one fixed path and the radio URL names that path,
+    never RADIO_DEVICE itself - a by-id RADIO_DEVICE and a bare /dev/ttyUSB0
+    then both work.
+
+    Fault to prove it: map `${RADIO_DEVICE}:${RADIO_DEVICE}` again, or let
+    RADIO_URL name `${RADIO_DEVICE}`."""
+    otbr = _stack()["services"]["otbr"]
+    assert otbr["devices"] == ["${RADIO_DEVICE}:/dev/ttyThread"]
+    by_id = "/dev/serial/by-id/usb-SONOFF_SONOFF_Dongle_Plus_MG24_e26a7d9118f9ef118f7767135c2a50c9-if00-port0"
+    url = _radio_url({"RADIO_DEVICE": by_id, "RADIO_BAUDRATE": "460800"})
+    assert url == "spinel+hdlc+uart:///dev/ttyThread?uart-baudrate=460800"
 
 
 # --- Where zigpy's database lands ----------------------------------------------
