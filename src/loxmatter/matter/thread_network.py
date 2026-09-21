@@ -53,6 +53,7 @@ from loxmatter.matter.otbr import (
     thread_channel_from_dataset,
     thread_network_name_from_dataset,
 )
+from loxmatter.profiles.transport import network_features_of, transport_for
 
 logger = logging.getLogger(__name__)
 
@@ -93,13 +94,21 @@ class ThreadMatterClient(Protocol):
 
 
 def is_thread_node(snapshot: NodeSnapshot) -> bool:
-    """A node that reaches this bridge over Thread: its endpoint 0 serves
-    Thread Network Diagnostics. Read from the root Descriptor's server list,
-    or - for a snapshot without it - from any attribute of that cluster."""
+    """A node that reaches this bridge over Thread.
+
+    Two independent classifiers, because the Thread Network Diagnostics
+    cluster (0x0035) is optional and some Thread devices never expose it:
+    endpoint 0 serving that cluster (read from the root Descriptor's server
+    list, or - for a snapshot without it - from any attribute of that
+    cluster), OR `profiles/transport.py`'s hardware-verified classifier,
+    which reads the mandatory Network Commissioning FeatureMap. Either one
+    saying "thread" is enough."""
     server_list = snapshot.attributes.get(_ROOT_SERVER_LIST)
     if isinstance(server_list, list) and THREAD_DIAGNOSTICS_CLUSTER in server_list:
         return True
-    return any(key.startswith(_THREAD_DIAGNOSTICS_PREFIX) for key in snapshot.attributes)
+    if any(key.startswith(_THREAD_DIAGNOSTICS_PREFIX) for key in snapshot.attributes):
+        return True
+    return transport_for("matter", network_features_of(snapshot)) == "thread"
 
 
 def _formed(dataset: str) -> ThreadNetworkStatus:

@@ -155,6 +155,10 @@ def _node(address: str, attributes: dict[str, Any]) -> NodeSnapshot:
 # The IKEA switch commissioned on pi3-andi: its root server list includes 53.
 THREAD_NODE = _node("3", {"0/29/1": [29, 31, 40, 42, 47, 48, 49, 51, 53, 60]})
 WIFI_NODE = _node("4", {"0/29/1": [29, 31, 40, 48, 49, 51, 54, 60]})
+# A device without the optional Thread Network Diagnostics cluster (0x0035):
+# only the mandatory Network Commissioning FeatureMap says Thread (bit 0x2).
+FEATURE_MAP_THREAD_NODE = _node("7", {"0/49/65532": 0x2})
+FEATURE_MAP_WIFI_NODE = _node("8", {"0/49/65532": 0x1})
 
 
 def _keeper(otbr: FakeOtbr, matter: FakeMatter) -> ThreadNetworkKeeper:
@@ -166,6 +170,14 @@ def test_a_node_is_a_thread_node_by_its_server_list_or_its_attributes() -> None:
     assert is_thread_node(_node("5", {"0/53/0": 24}))
     assert not is_thread_node(WIFI_NODE)
     assert not is_thread_node(_node("6", {}))
+
+
+def test_a_node_is_also_a_thread_node_by_its_network_commissioning_feature_map() -> None:
+    """The Thread Network Diagnostics cluster (0x0035) is optional; the
+    Network Commissioning FeatureMap is mandatory (`profiles/transport.py`,
+    hardware-verified). Either classifier saying "thread" is enough."""
+    assert is_thread_node(FEATURE_MAP_THREAD_NODE)
+    assert not is_thread_node(FEATURE_MAP_WIFI_NODE)
 
 
 async def test_a_fresh_border_router_gets_a_network_that_matter_server_learns() -> None:
@@ -208,6 +220,17 @@ async def test_thread_devices_without_a_network_block_forming() -> None:
     """The guard, spec 4.2 step 3 / 4.3. Fault to prove it: drop the
     `is_thread_node` count from `run_pass`."""
     otbr, matter = FakeOtbr(), FakeMatter(nodes=[THREAD_NODE, WIFI_NODE])
+    keeper = _keeper(otbr, matter)
+
+    assert await keeper.run_pass() is False
+
+    assert otbr.puts == []
+    assert matter.datasets_set == []
+    assert keeper.status == ThreadNetworkStatus(state="missing", thread_devices=1)
+
+
+async def test_a_thread_device_known_only_by_its_feature_map_blocks_forming() -> None:
+    otbr, matter = FakeOtbr(), FakeMatter(nodes=[FEATURE_MAP_THREAD_NODE])
     keeper = _keeper(otbr, matter)
 
     assert await keeper.run_pass() is False

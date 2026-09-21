@@ -38,7 +38,11 @@ different branch that another session is working in.
 - The bridge never forms a network without having asked matter-server first;
   any matter-server error in that decision ends the pass without writing.
 - "Thread device" = a node whose attribute `0/29/1` (Descriptor ServerList on
-  endpoint 0) contains `53`, or which has any attribute under `0/53/`.
+  endpoint 0) contains `53`, or which has any attribute under `0/53/`, or for
+  which `profiles/transport.py`'s `transport_for("matter",
+  network_features_of(snapshot))` returns `"thread"` (the Network
+  Commissioning FeatureMap at `0/49/65532` is mandatory; the Thread Network
+  Diagnostics cluster above is not).
 - The keeper's pass interval is 60 s.
 - `GET /api/radios` field `thread_network.state` is one of `unknown`,
   `formed`, `forming`, `missing`.

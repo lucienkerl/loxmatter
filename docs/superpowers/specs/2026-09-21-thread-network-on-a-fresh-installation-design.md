@@ -113,8 +113,11 @@ this loop repairs (section 4.3).
    device, the bridge forms nothing (section 4.3). A node is a Thread device
    when its endpoint 0 serves the Thread Network Diagnostics cluster (`0x0035`)
    — the commissioned IKEA switch on `pi3-andi` lists 53 in its root
-   `serverList`. Wi-Fi and Ethernet nodes do not block: a user who ran without
-   Thread and adds a stick later gets a network.
+   `serverList` — OR when `profiles/transport.py`'s hardware-verified
+   classifier reads a Thread bit from the mandatory Network Commissioning
+   FeatureMap (`0/49/65532`): that cluster is optional, and not every Thread
+   device exposes it. Wi-Fi and Ethernet nodes do not block: a user who ran
+   without Thread and adds a stick later gets a network.
 
    Thread credentials that matter-server holds *without* any Thread node do not
    block either. They strand nothing and are replaced in step 5. `pi3-andi`
