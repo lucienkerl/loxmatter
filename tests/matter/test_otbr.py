@@ -38,9 +38,14 @@ from loxmatter import i18n
 from loxmatter.matter.otbr import (
     DEFAULT_OTBR_URL,
     ThreadDatasetUnavailableError,
+    border_router_role,
+    create_network_if_absent,
     current_thread_channel,
+    enable_thread,
     fetch_active_dataset,
+    read_active_dataset,
     thread_channel_from_dataset,
+    thread_network_name_from_dataset,
 )
 
 # A recorded but unusable dataset: the same shape as a real one (hex TLV),
@@ -66,22 +71,36 @@ class FakeResponse:
 
 
 class FakeSession:
-    """Stands in for `aiohttp.ClientSession` - only `get()` and `close()`,
-    which is all `fetch_active_dataset` needs (same pattern as `FakeSession`
-    in `test_client_commissioning.py`)."""
+    """Stands in for `aiohttp.ClientSession` - `get()`, `put()` and `close()`.
+
+    `status`/`body` answer every request unless `routes` names the method and
+    path, in which case that `(status, body)` answers instead."""
 
     def __init__(self, status: int = 200, body: str = FAKE_DATASET) -> None:
         self.status = status
         self.body = body
+        self.routes: dict[tuple[str, str], tuple[int, str]] = {}
         self.requests: list[tuple[str, dict[str, str]]] = []
+        self.puts: list[tuple[str, dict[str, str], str]] = []
         self.closed = False
         self.raise_on_get: Exception | None = None
+
+    def _answer(self, method: str, url: str) -> FakeResponse:
+        path = "/" + url.split("://", 1)[-1].split("/", 1)[-1]
+        status, body = self.routes.get((method, path), (self.status, self.body))
+        return FakeResponse(status, body)
 
     def get(self, url: str, headers: dict[str, str] | None = None) -> Any:
         self.requests.append((url, headers or {}))
         if self.raise_on_get is not None:
             raise self.raise_on_get
-        return FakeResponse(self.status, self.body)
+        return self._answer("GET", url)
+
+    def put(self, url: str, data: str = "", headers: dict[str, str] | None = None) -> Any:
+        self.puts.append((url, headers or {}, data))
+        if self.raise_on_get is not None:
+            raise self.raise_on_get
+        return self._answer("PUT", url)
 
     async def close(self) -> None:
         self.closed = True
@@ -298,3 +317,88 @@ async def test_a_padded_response_still_yields_its_channel():
     session = FakeSession(status=200, body=DATASET_ON_CHANNEL_15 + "\n")
     assert await current_thread_channel(session_factory=lambda: session) == 15
     assert thread_channel_from_dataset(DATASET_ON_CHANNEL_15 + "\n") == 15
+
+
+# --- Reading, creating and enabling a network through the REST API --------
+
+# Channel 24, network name "OpenThread-07f0" - shaped like the dataset formed
+# on pi3-andi on 21 September, with every key-bearing TLV left out.
+NAMED_DATASET = "0003000018" + "030f" + "4f70656e5468726561642d30376630"
+
+
+async def test_read_active_dataset_answers_none_while_no_network_exists() -> None:
+    """ot-br-posix answers `GetDataset` with 204 No Content when no active
+    dataset exists (`rest_web_server.cpp` at the pinned commit)."""
+    session = FakeSession(status=204, body="")
+    assert await read_active_dataset(session_factory=lambda: session) is None
+    assert session.closed
+
+
+async def test_read_active_dataset_returns_the_dataset() -> None:
+    session = FakeSession()
+    assert await read_active_dataset(session_factory=lambda: session) == FAKE_DATASET
+
+
+@pytest.mark.parametrize("status", [409, 500])
+async def test_read_active_dataset_raises_on_any_other_answer(status: int) -> None:
+    session = FakeSession(status=status, body="")
+    with pytest.raises(ThreadDatasetUnavailableError):
+        await read_active_dataset(session_factory=lambda: session)
+
+
+async def test_read_active_dataset_raises_when_unreachable() -> None:
+    session = FakeSession()
+    session.raise_on_get = OSError("connection refused")
+    with pytest.raises(ThreadDatasetUnavailableError):
+        await read_active_dataset(session_factory=lambda: session)
+
+
+async def test_border_router_role_reads_the_json_string() -> None:
+    session = FakeSession(body='"disabled"')
+    assert await border_router_role(session_factory=lambda: session) == "disabled"
+    url, headers = session.requests[0]
+    assert url.endswith("/node/state")
+    assert headers["Accept"] == "application/json"
+
+
+@pytest.mark.parametrize(("status", "outcome"), [(201, "created"), (412, "exists"), (409, "busy")])
+async def test_create_network_if_absent_maps_the_three_answers(status: int, outcome: str) -> None:
+    session = FakeSession(status=status, body="")
+    assert await create_network_if_absent(session_factory=lambda: session) == outcome
+    url, headers, data = session.puts[0]
+    assert url.endswith("/node/dataset/active")
+    # The atomic "only if none exists" - without it a second writer could
+    # replace a network that devices already joined.
+    assert headers["If-None-Match"] == "*"
+    assert headers["Content-Type"] == "application/json"
+    assert data == "{}"
+
+
+async def test_create_network_if_absent_raises_on_anything_else() -> None:
+    session = FakeSession(status=500, body="")
+    with pytest.raises(ThreadDatasetUnavailableError):
+        await create_network_if_absent(session_factory=lambda: session)
+
+
+async def test_enable_thread_puts_enable() -> None:
+    session = FakeSession(status=200, body="")
+    await enable_thread(session_factory=lambda: session)
+    url, _headers, data = session.puts[0]
+    assert url.endswith("/node/state")
+    assert data == '"enable"'
+
+
+async def test_enable_thread_raises_on_a_refusal() -> None:
+    session = FakeSession(status=409, body="")
+    with pytest.raises(ThreadDatasetUnavailableError):
+        await enable_thread(session_factory=lambda: session)
+
+
+def test_the_network_name_is_read_from_its_tlv() -> None:
+    assert thread_network_name_from_dataset(NAMED_DATASET) == "OpenThread-07f0"
+    assert thread_channel_from_dataset(NAMED_DATASET) == 24
+
+
+@pytest.mark.parametrize("dataset", ["", "zz", "000300001803", "0f10" + "41" * 3])
+def test_a_missing_or_broken_name_tlv_reads_as_none(dataset: str) -> None:
+    assert thread_network_name_from_dataset(dataset) is None
