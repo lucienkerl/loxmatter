@@ -43,7 +43,6 @@ SUDO=""
 MISSING_PACKAGES=""
 NEED_DOCKER=0
 MODE=""
-DETECTED_RADIO=""
 DOCKER_INSTALL_URL="https://get.docker.com"
 DOCKER_SUDO=0
 TEMP_FILE=""
@@ -60,6 +59,15 @@ RFKILL_DIR="${RFKILL_DIR:-/sys/class/rfkill}"
 # Where questions are read from. LOXMATTER_TTY exists for the tests only:
 # they point it at a file of answers, one per line. Not in --help on purpose.
 TTY_PATH="${LOXMATTER_TTY:-/dev/tty}"
+# Overridable for the same reason as RFKILL_DIR: the tests point these at
+# fabricated directories instead of the host's real /dev and /sys.
+SERIAL_BY_ID_DIR="${SERIAL_BY_ID_DIR:-/dev/serial/by-id}"
+SERIAL_DEV_DIR="${SERIAL_DEV_DIR:-/dev}"
+SERIAL_CANDIDATES=""
+CHOICE=""
+# What phase one decided, for phase four to write. Empty means "nothing to
+# write": either an existing .env keeps its value, or the mode does not use it.
+CHOSEN_RADIO=""
 
 # ---------------------------------------------------------------- output --
 
@@ -222,6 +230,39 @@ ask() {
   printf '%s' "$ask_answer"
 }
 
+# Asks for a number from a menu the caller has already printed, repeats on
+# anything else, and leaves the number in CHOICE. Called directly, never in
+# $(...) - a subshell would take CHOICE with it. $4 is 1 when 0 is a valid
+# answer. At most two digits: a menu never has a hundred lines, and a longer
+# number would reach `[ -le ]` as something the shell cannot compare.
+choose() {
+  choose_prompt="$1"
+  choose_default="$2"
+  choose_max="$3"
+  choose_zero="$4"
+  if [ "$HAVE_TTY" -eq 0 ] || [ "$DRY_RUN" -eq 1 ]; then
+    note "Taking $choose_default - nothing is asked without a terminal or in a dry run."
+  fi
+  while :; do
+    CHOICE="$(ask "$choose_prompt" "$choose_default")" ||
+      die "The terminal closed before this was answered: $choose_prompt"
+    case "$CHOICE" in
+      [0-9]|[0-9][0-9])
+        if [ "$CHOICE" -le "$choose_max" ]; then
+          if [ "$CHOICE" -ge 1 ] || [ "$choose_zero" -eq 1 ]; then
+            return 0
+          fi
+        fi
+        ;;
+    esac
+    warn "Please answer with one of the numbers shown."
+  done
+}
+
+count_lines() { printf '%s' "$1" | grep -c . || true; }
+
+nth_line() { printf '%s' "$1" | sed -n "${2}p"; }
+
 check_privileges() {
   step "checking privileges"
   if [ "$(id -u)" -eq 0 ]; then
@@ -280,36 +321,133 @@ Install them with your package manager, then run this again."
   note "Will install: $wanted"
 }
 
-detect_radio_device() {
-  for candidate in /dev/ttyUSB* /dev/ttyACM*; do
+# Sets SERIAL_CANDIDATES to the USB serial devices a Thread stick could be,
+# one path per line. /dev/serial/by-id comes first: its names say what the
+# stick is, and they survive a reboot that swaps ttyUSB0 and ttyUSB1 - the
+# same reason the Radios card offers them. `-e` follows the link, so a
+# by-id link left behind by a pulled stick is skipped.
+list_serial_candidates() {
+  SERIAL_CANDIDATES=""
+  for candidate in "$SERIAL_BY_ID_DIR"/*; do
     if [ -e "$candidate" ]; then
-      printf '%s' "$candidate"
-      return 0
+      SERIAL_CANDIDATES="$SERIAL_CANDIDATES$candidate
+"
+    fi
+  done
+  if [ -n "$SERIAL_CANDIDATES" ]; then
+    return 0
+  fi
+  for candidate in "$SERIAL_DEV_DIR"/ttyUSB* "$SERIAL_DEV_DIR"/ttyACM*; do
+    if [ -e "$candidate" ]; then
+      SERIAL_CANDIDATES="$SERIAL_CANDIDATES$candidate
+"
     fi
   done
 }
 
+serial_label() {
+  case "$1" in
+    "$SERIAL_BY_ID_DIR"/*) printf '%s' "${1##*/}" ;;
+    *) printf '%s' "$1" ;;
+  esac
+}
+
+# No "Thread" or "Zigbee" label next to a stick: the firmware cannot be seen
+# from the name. The maintainer's own Thread stick is a SONOFF Dongle Plus
+# MG24 - a name radios/fingerprints.py knows as a Zigbee coordinator.
+# $1 is 1 when "None" is offered; without it the default is the first stick.
+show_thread_menu() {
+  say "Thread stick"
+  note "Thread devices need a USB stick running OpenThread RCP firmware."
+  note "A Zigbee stick does not belong here - set that up on the Radios card"
+  note "of the web interface after the installation."
+  printf '\n'
+  tm_count=0
+  while IFS= read -r tm_path; do
+    if [ -z "$tm_path" ]; then
+      continue
+    fi
+    tm_count=$((tm_count + 1))
+    note "  $tm_count) $(serial_label "$tm_path")"
+  done <<EOF
+$SERIAL_CANDIDATES
+EOF
+  tm_default=1
+  if [ "$1" -eq 1 ]; then
+    note "  0) None - WiFi and Ethernet only (Thread can be switched on later"
+    note "     on the Radios card)"
+    # Two sticks cannot be told apart by name, so the default never picks
+    # one of them silently.
+    if [ "$tm_count" -ne 1 ]; then
+      tm_default=0
+    fi
+  fi
+  printf '\n'
+  choose "Which one is the Thread stick?" "$tm_default" "$tm_count" "$1"
+}
+
 decide_mode() {
-  step "deciding the operating mode"
-  DETECTED_RADIO="$(detect_radio_device)"
+  step "choosing the Thread stick"
   if [ -n "${LOXMATTER_MODE:-}" ]; then
     MODE="$LOXMATTER_MODE"
-  else
-    if [ -n "$DETECTED_RADIO" ]; then
-      note "Found a possible Thread radio at $DETECTED_RADIO."
-      mode_default="thread"
+    case "$MODE" in
+      thread|wifi) : ;;
+      *) die "Operating mode must be 'thread' or 'wifi' (got: $MODE)" ;;
+    esac
+  elif [ -f "$TARGET_DIR/deploy/testhost/.env" ]; then
+    # A second run keeps what is configured. configure_mode reads the mode
+    # from COMPOSE_PROFILES, or from a running otbr container when that line
+    # is missing, and would overrule an answer given here anyway.
+    if [ -n "$(env_file_value COMPOSE_PROFILES)" ]; then
+      MODE="thread"
     else
-      note "No Thread radio found at /dev/ttyUSB* or /dev/ttyACM*."
-      mode_default="wifi"
+      MODE="wifi"
     fi
-    MODE="$(ask "Operating mode - 'thread' for Thread and WiFi, 'wifi' for WiFi and Ethernet only" "$mode_default")" ||
-      die "The terminal closed before the operating mode was given."
+    note "Thread: kept from $TARGET_DIR/deploy/testhost/.env."
+    note "Change the Thread stick on the Radios card of the web interface."
+    note "Operating mode: $MODE"
+    return 0
+  elif [ -n "${RADIO_DEVICE:-}" ]; then
+    MODE="thread"
+  else
+    list_serial_candidates
+    if [ -z "$SERIAL_CANDIDATES" ]; then
+      note "No USB stick found - installing for WiFi and Ethernet only."
+      note "Thread can be switched on later on the Radios card."
+      MODE="wifi"
+    else
+      show_thread_menu 1
+      if [ "$CHOICE" -eq 0 ]; then
+        MODE="wifi"
+      else
+        MODE="thread"
+        CHOSEN_RADIO="$(nth_line "$SERIAL_CANDIDATES" "$CHOICE")"
+      fi
+    fi
   fi
-  case "$MODE" in
-    thread|wifi) : ;;
-    *) die "Operating mode must be 'thread' or 'wifi' (got: $MODE)" ;;
-  esac
+  if [ "$MODE" = "thread" ] && [ -z "$CHOSEN_RADIO" ]; then
+    if [ -n "${RADIO_DEVICE:-}" ]; then
+      CHOSEN_RADIO="$RADIO_DEVICE"
+    elif [ -z "$(env_file_value RADIO_DEVICE)" ]; then
+      list_serial_candidates
+      if [ -z "$SERIAL_CANDIDATES" ]; then
+        die "Thread mode was requested, but no USB stick was found under
+$SERIAL_BY_ID_DIR, $SERIAL_DEV_DIR/ttyUSB* or $SERIAL_DEV_DIR/ttyACM*.
+Plug the stick in, pass RADIO_DEVICE=/dev/serial/by-id/..., or use
+LOXMATTER_MODE=wifi."
+      fi
+      show_thread_menu 0
+      CHOSEN_RADIO="$(nth_line "$SERIAL_CANDIDATES" "$CHOICE")"
+    fi
+  fi
   note "Operating mode: $MODE"
+}
+
+# Every question, asked before anything is installed: answering once and
+# walking away beats being called back to the keyboard minutes later, after
+# the package and Docker installation.
+ask_questions() {
+  decide_mode
 }
 
 # Strict IPv4 check. Octets are shape-checked with `case` BEFORE any numeric
@@ -371,13 +509,6 @@ Pass it in instead:
   # clone would be exactly the "aborted halfway" this phase exists to prevent.
   if [ -n "${MINISERVER_IP:-}" ] && ! valid_ipv4 "$MINISERVER_IP"; then
     die "MINISERVER_IP is not a valid IPv4 address: '$MINISERVER_IP'"
-  fi
-  if [ "$MODE" = "thread" ] && [ -z "${RADIO_DEVICE:-}" ] &&
-     [ -z "$(env_file_value RADIO_DEVICE)" ] && [ -z "$DETECTED_RADIO" ] &&
-     [ "$HAVE_TTY" -eq 0 ]; then
-    die "Thread mode was requested, but no radio was found at /dev/ttyUSB* or
-/dev/ttyACM* and there is no terminal to ask on. Either plug the radio in,
-pass RADIO_DEVICE=/dev/ttyUSB0, or use LOXMATTER_MODE=wifi."
   fi
 }
 
@@ -639,6 +770,28 @@ ensure_env_value() {
   note "$value_key=$value_new"
 }
 
+# Writes what phase one decided. A second run keeps whatever the existing
+# .env already holds, like ensure_env_value always did. With $3 = 1 an empty
+# value stops the run instead of writing a line otbr cannot start with.
+write_env_value() {
+  wv_key="$1"
+  wv_value="$2"
+  wv_required="$3"
+  if [ "$ENV_IS_NEW" -eq 0 ]; then
+    wv_kept="$(env_file_value "$wv_key")"
+    if [ -n "$wv_kept" ]; then
+      note "$wv_key=$wv_kept (kept)"
+      return 0
+    fi
+  fi
+  if [ -z "$wv_value" ] && [ "$wv_required" -eq 1 ]; then
+    die "$wv_key needs a value and none could be obtained. Pass $wv_key=... to
+this script.$(config_written_note)"
+  fi
+  env_set "$wv_key" "$wv_value"
+  note "$wv_key=$wv_value"
+}
+
 ask_miniserver() {
   if [ "$ENV_IS_NEW" -eq 0 ]; then
     ms_kept="$(env_file_value MINISERVER_IP)"
@@ -703,7 +856,10 @@ configure_mode() {
       MODE="wifi"
     fi
     note "COMPOSE_PROFILES kept, mode: $MODE"
-    if [ "$MODE" != "$cm_requested_mode" ]; then
+    # Only LOXMATTER_MODE is a request. A mode decide_mode read out of this
+    # same .env, or a provisional wifi for an old .env without the line, is
+    # not something the user asked for and must not be "overruled" loudly.
+    if [ -n "${LOXMATTER_MODE:-}" ] && [ "$MODE" != "$cm_requested_mode" ]; then
       warn "The existing $ENV_FILE wins over the requested '$cm_requested_mode' mode: mode is '$MODE'. Edit COMPOSE_PROFILES in $ENV_FILE to change it."
     fi
     return 0
@@ -712,7 +868,7 @@ configure_mode() {
     env_set COMPOSE_PROFILES thread
     MODE="thread"
     note "COMPOSE_PROFILES=thread (this installation already runs otbr)"
-    if [ "$MODE" != "$cm_requested_mode" ]; then
+    if [ -n "${LOXMATTER_MODE:-}" ] && [ "$MODE" != "$cm_requested_mode" ]; then
       warn "The existing $ENV_FILE wins over the requested '$cm_requested_mode' mode: mode is '$MODE'. Edit COMPOSE_PROFILES in $ENV_FILE to change it."
     fi
     return 0
@@ -741,8 +897,12 @@ configure() {
   fi
   configure_mode
   if [ "$MODE" = "thread" ]; then
-    ensure_env_value RADIO_DEVICE "Thread radio device" "$DETECTED_RADIO" 1
-    ensure_env_value RADIO_BAUDRATE "Thread radio baud rate" "460800" 1
+    write_env_value RADIO_DEVICE "$CHOSEN_RADIO" 1
+    write_env_value RADIO_BAUDRATE "${RADIO_BAUDRATE:-460800}" 1
+    if [ "$ENV_IS_NEW" -eq 1 ] && [ -z "${RADIO_BAUDRATE:-}" ]; then
+      note "  (what the bundled border router image expects; set RADIO_BAUDRATE"
+      note "  before running this script to use a different one)"
+    fi
     ensure_env_value BACKBONE_IF "Network interface for the border router" \
       "$(detect_backbone_if)" 1
   elif [ "$ENV_IS_NEW" -eq 1 ]; then
@@ -1023,8 +1183,8 @@ main() {
   check_privileges
   collect_missing
   check_can_install
-  decide_mode
   check_config_source
+  ask_questions
   install_packages
   install_docker
   ensure_checkout

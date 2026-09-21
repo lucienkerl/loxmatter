@@ -285,6 +285,13 @@ def installer(tmp_path):
             # rfkill. Tests for check_rfkill point this at a
             # prepared directory instead.
             "RFKILL_DIR": str(tmp_path / "no-rfkill-here"),
+            # The installer lists USB sticks and Bluetooth adapters from
+            # these. Pointing them nowhere by default keeps every test
+            # independent of what the machine running pytest has plugged
+            # in; tests about the menus build a directory and override them.
+            "SERIAL_BY_ID_DIR": str(tmp_path / "no-by-id-here"),
+            "SERIAL_DEV_DIR": str(tmp_path / "no-dev-here"),
+            "BT_SYS_DIR": str(tmp_path / "no-bluetooth-here"),
         }
         # Every run has no controlling terminal (start_new_session=True), so
         # every question takes the non-interactive branch - except when a
@@ -408,7 +415,7 @@ def test_without_a_radio_module_it_falls_back_to_wifi(installer):
 def test_thread_without_a_device_and_without_a_terminal_aborts(installer):
     result = installer(env={"LOXMATTER_MODE": "thread"})
     assert result.returncode == 2
-    assert "no radio" in result.output
+    assert "no USB stick" in result.output
 
 
 def test_thread_with_a_device_from_the_environment(installer):
@@ -1043,6 +1050,27 @@ def test_a_wifi_run_writes_the_detected_backbone_for_a_later_thread_switch(insta
     assert _env(result)["BACKBONE_IF"] == "eth0"
 
 
+STICK_A = "usb-ITead_Sonoff_Zigbee_3.0_USB_Dongle_Plus_V2_1a2b3c-if00-port0"
+STICK_B = "usb-SONOFF_SONOFF_Dongle_Plus_MG24_d86e1106-if00-port0"
+
+# Keeps the backbone and Bluetooth questions out of a test about the Thread
+# stick. Both are skipped when their environment variable is set.
+_ONLY_THE_STICK = {"BACKBONE_IF": "eth0", "BLUETOOTH_ADAPTER": "0"}
+
+
+def _serial(tmp_path, *names):
+    """Fabricates /dev with one ttyUSB node per name and a serial/by-id link
+    to each, and returns the env that points the installer at it."""
+    dev = tmp_path / "hw" / "dev"
+    by_id = dev / "serial" / "by-id"
+    by_id.mkdir(parents=True)
+    for index, name in enumerate(names):
+        node = dev / f"ttyUSB{index}"
+        node.write_text("")
+        (by_id / name).symlink_to(node)
+    return {"SERIAL_BY_ID_DIR": str(by_id), "SERIAL_DEV_DIR": str(dev)}
+
+
 # ------------------------------------------------------------ questions --
 
 
@@ -1070,14 +1098,144 @@ def test_running_out_of_answers_aborts_instead_of_looping(installer):
     assert "terminal closed" in result.output
 
 
-def test_a_closed_terminal_at_the_mode_question_aborts_cleanly(installer):
+def test_two_sticks_are_offered_by_their_by_id_names(installer, tmp_path):
+    hw = _serial(tmp_path, STICK_A, STICK_B)
+    result = installer(env={**hw, **_ONLY_THE_STICK}, answers=["2"])
+    assert result.returncode == 0
+    assert f"1) {STICK_A}" in result.output
+    assert f"2) {STICK_B}" in result.output
+    assert "A Zigbee stick does not belong here" in result.output
+    values = _env(result)
+    assert values["COMPOSE_PROFILES"] == "thread"
+    assert values["RADIO_DEVICE"] == f"{hw['SERIAL_BY_ID_DIR']}/{STICK_B}"
+
+
+def test_with_two_sticks_the_default_is_none(installer, tmp_path):
+    # Two candidates and no way to tell them apart by name: the default
+    # must never be a silent pick of one of them.
+    hw = _serial(tmp_path, STICK_A, STICK_B)
+    result = installer(env={**hw, **_ONLY_THE_STICK}, answers=[""])
+    assert result.returncode == 0
+    assert "Which one is the Thread stick? [0]" in result.output
+    assert "Operating mode: wifi" in result.output
+    assert _env(result)["COMPOSE_PROFILES"] == ""
+
+
+def test_with_one_stick_the_default_is_that_stick(installer, tmp_path):
+    hw = _serial(tmp_path, STICK_B)
+    result = installer(env={**hw, **_ONLY_THE_STICK}, answers=[""])
+    assert result.returncode == 0
+    assert "Which one is the Thread stick? [1]" in result.output
+    assert _env(result)["RADIO_DEVICE"] == f"{hw['SERIAL_BY_ID_DIR']}/{STICK_B}"
+
+
+def test_without_by_id_the_tty_nodes_are_offered(installer, tmp_path):
+    dev = tmp_path / "hw" / "dev"
+    dev.mkdir(parents=True)
+    (dev / "ttyUSB0").write_text("")
+    env = {
+        "SERIAL_BY_ID_DIR": str(dev / "serial" / "by-id"),
+        "SERIAL_DEV_DIR": str(dev),
+        **_ONLY_THE_STICK,
+    }
+    result = installer(env=env, answers=["1"])
+    assert result.returncode == 0
+    assert f"1) {dev}/ttyUSB0" in result.output
+    assert _env(result)["RADIO_DEVICE"] == f"{dev}/ttyUSB0"
+
+
+def test_a_dangling_by_id_link_is_not_offered(installer, tmp_path):
+    # A stick pulled after boot can leave its by-id link behind for a moment.
+    hw = _serial(tmp_path, STICK_B)
+    (Path(hw["SERIAL_BY_ID_DIR"]) / "usb-Gone_Stick-if00-port0").symlink_to(
+        tmp_path / "hw" / "dev" / "ttyUSB9"
+    )
+    result = installer(env={**hw, **_ONLY_THE_STICK}, answers=[""])
+    assert result.returncode == 0
+    assert "usb-Gone_Stick" not in result.output
+    assert "Which one is the Thread stick? [1]" in result.output
+
+
+def test_an_invalid_answer_is_asked_again(installer, tmp_path):
+    hw = _serial(tmp_path, STICK_A, STICK_B)
+    result = installer(env={**hw, **_ONLY_THE_STICK}, answers=["7", "1"])
+    assert result.returncode == 0
+    assert "one of the numbers shown" in result.output
+    assert _env(result)["RADIO_DEVICE"] == f"{hw['SERIAL_BY_ID_DIR']}/{STICK_A}"
+
+
+def test_the_baud_rate_is_not_asked(installer, tmp_path):
+    # answers=["1"] and nothing more: a baud rate question would hit the
+    # end of the answers and abort the run.
+    hw = _serial(tmp_path, STICK_B)
+    result = installer(env={**hw, **_ONLY_THE_STICK}, answers=["1"])
+    assert result.returncode == 0
+    assert _env(result)["RADIO_BAUDRATE"] == "460800"
+
+
+def test_the_baud_rate_from_the_environment_wins(installer, tmp_path):
+    hw = _serial(tmp_path, STICK_B)
+    env = {**hw, **_ONLY_THE_STICK, "RADIO_BAUDRATE": "115200"}
+    result = installer(env=env, answers=["1"])
+    assert result.returncode == 0
+    assert _env(result)["RADIO_BAUDRATE"] == "115200"
+
+
+def test_without_a_terminal_a_single_stick_is_taken(installer, tmp_path):
+    hw = _serial(tmp_path, STICK_B)
+    result = installer(env={**hw, **_ONLY_THE_STICK})
+    assert result.returncode == 0
+    assert "Taking 1" in result.output
+    assert _env(result)["RADIO_DEVICE"] == f"{hw['SERIAL_BY_ID_DIR']}/{STICK_B}"
+
+
+def test_without_a_terminal_two_sticks_mean_wifi(installer, tmp_path):
+    hw = _serial(tmp_path, STICK_A, STICK_B)
+    result = installer(env={**hw, **_ONLY_THE_STICK})
+    assert result.returncode == 0
+    assert _env(result)["COMPOSE_PROFILES"] == ""
+
+
+def test_a_radio_device_from_the_environment_means_thread(installer, tmp_path):
+    hw = _serial(tmp_path, STICK_A, STICK_B)
+    env = {**hw, **_ONLY_THE_STICK, "RADIO_DEVICE": "/dev/ttyUSB3"}
+    result = installer(env=env, answers=[])
+    assert result.returncode == 0
+    assert "Which one is the Thread stick" not in result.output
+    values = _env(result)
+    assert values["COMPOSE_PROFILES"] == "thread"
+    assert values["RADIO_DEVICE"] == "/dev/ttyUSB3"
+
+
+def test_thread_mode_from_the_environment_offers_no_none(installer, tmp_path):
+    hw = _serial(tmp_path, STICK_A, STICK_B)
+    env = {**hw, **_ONLY_THE_STICK, "LOXMATTER_MODE": "thread"}
+    result = installer(env=env, answers=["0", "2"])
+    assert result.returncode == 0
+    assert "None - WiFi and Ethernet only" not in result.output
+    assert _env(result)["RADIO_DEVICE"] == f"{hw['SERIAL_BY_ID_DIR']}/{STICK_B}"
+
+
+def test_a_second_run_does_not_show_the_thread_menu(installer, tmp_path):
+    # configure_mode lets the existing .env win anyway; asking first and
+    # overruling the answer with a warning asked a question for nothing.
+    hw = {**_serial(tmp_path, STICK_A, STICK_B), **_ONLY_THE_STICK}
+    first = installer(env=hw, answers=["2"])
+    assert first.returncode == 0
+    second = installer(env=hw, answers=[])
+    assert second.returncode == 0
+    assert "Which one is the Thread stick" not in second.output
+    assert "kept from" in second.output
+    assert "wins over the requested" not in second.output
+    assert _env(second)["RADIO_DEVICE"] == _env(first)["RADIO_DEVICE"]
+
+
+def test_a_closed_terminal_at_the_thread_menu_aborts_cleanly(installer, tmp_path):
     # decide_mode() asks before ensure_env_value() or ask_miniserver() ever
     # run, and its own ask() call didn't handle a return of 1: under
     # `set -eu` a closed terminal there exited unexplained instead of
     # through die().
-    result = installer(
-        env={"BLUETOOTH_ADAPTER": "0"},
-        answers=[],
-    )
+    hw = _serial(tmp_path, STICK_A, STICK_B)
+    result = installer(env={**hw, **_ONLY_THE_STICK}, answers=[])
     assert result.returncode == 2
     assert "terminal closed" in result.output
