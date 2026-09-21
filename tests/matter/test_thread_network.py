@@ -206,14 +206,32 @@ async def test_an_existing_network_is_handed_to_matter_server_without_writing() 
     assert keeper.status.state == "formed"
 
 
-async def test_nothing_is_written_when_both_sides_already_know_the_network() -> None:
+async def test_a_stale_hand_over_is_forced_on_the_first_pass_of_a_bridge_start() -> None:
+    """Finding 3: matter-server can report `thread_credentials_set: true`
+    for an OLD dataset it kept in its data directory across a bridge
+    restart after a failed hand-over. The first pass this keeper's
+    lifetime sees an active dataset in the border router hands it over
+    regardless of what matter-server reports - the OTBR side needs no PUT,
+    the network already exists there."""
     otbr = FakeOtbr(dataset=DATASET, role="leader")
     matter = FakeMatter(credentials_set=True)
 
     assert await _keeper(otbr, matter).run_pass() is True
 
     assert otbr.puts == []
-    assert matter.datasets_set == []
+    assert matter.datasets_set == [DATASET]
+
+
+async def test_the_forced_hand_over_happens_only_once_per_bridge_start() -> None:
+    otbr = FakeOtbr(dataset=DATASET, role="leader")
+    matter = FakeMatter(credentials_set=True)
+    keeper = _keeper(otbr, matter)
+
+    assert await keeper.run_pass() is True
+    assert await keeper.run_pass() is True
+
+    assert otbr.puts == []
+    assert matter.datasets_set == [DATASET]
 
 
 async def test_thread_devices_without_a_network_block_forming() -> None:

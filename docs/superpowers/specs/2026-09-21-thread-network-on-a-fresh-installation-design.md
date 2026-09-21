@@ -102,9 +102,12 @@ this loop repairs (section 4.3).
    `http://127.0.0.1:8081`, the same base URL `matter/otbr.py` already uses).
    - Unreachable, or any answer other than 200/204: nothing to do in this
      pass. Thread may be off or `otbr` may be starting.
-   - 200: a network exists. If matter-server reports
-     `thread_credentials_set: false`, the bridge passes the dataset through
-     `validated_dataset` and calls `set_thread_dataset`. The loop is done.
+   - 200: a network exists. Once per bridge start the bridge hands it to
+     matter-server, whatever matter-server reports - an older installation's
+     credentials there would otherwise survive (they are kept in its data
+     directory); afterwards only while matter-server reports none. Either
+     way the dataset passes through `validated_dataset` before
+     `set_thread_dataset`. The loop is done.
    - 204: continue.
 2. `GET /node/state`. Anything other than `"disabled"` means the agent is
    busy (attaching, or already part of a network whose dataset read raced):

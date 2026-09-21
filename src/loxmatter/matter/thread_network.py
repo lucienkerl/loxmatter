@@ -138,11 +138,17 @@ class ThreadNetworkKeeper:
         self._interval = interval
         self._sleep = sleep
         self._status = ThreadNetworkStatus()
-        # Set the moment `create_network_if_absent` reports "created", so a
-        # later pass keeps forcing the hand-over - even past matter-server's
-        # stale `thread_dataset_set` - until one actually succeeds. Cleared
-        # only there, never by a failed attempt.
-        self._handover_owed = False
+        # True until a hand-over actually succeeds, so the first pass that
+        # sees an active dataset forces it over regardless of what
+        # matter-server reports: a bridge restart after a failed hand-over
+        # leaves matter-server holding an older installation's credentials
+        # under `thread_dataset_set: true`, which this keeper never sent
+        # and must not trust. `run_pass` also sets this the moment
+        # `create_network_if_absent` reports "created", so a later pass
+        # keeps forcing the hand-over - even past that same stale flag -
+        # until one actually succeeds. Cleared only by a successful
+        # `set_thread_dataset`, never by a failed attempt.
+        self._handover_owed = True
 
     @property
     def status(self) -> ThreadNetworkStatus:
