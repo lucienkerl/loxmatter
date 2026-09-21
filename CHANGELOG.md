@@ -8,6 +8,19 @@ people who don't know the code.
 
 ## [Unreleased]
 
+### Fixed
+
+- A fresh installation forms its own Thread network. Before, nothing created
+  one, and the border router watchdog restarted a healthy but unconfigured
+  border router every 90 seconds.
+- Switching Thread on through the radios card no longer rolls back on a
+  border router that has no network yet.
+
+### Added
+
+- The radios card shows the Thread network's name and channel, and warns
+  when Thread devices exist but their network is gone.
+
 ## [0.4.2] — 2026-09-21
 
 ### Changed

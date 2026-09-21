@@ -532,6 +532,27 @@ Retrieve again with: `ssh pi@10.0.1.56 docker exec otbr ot-ctl dataset active -x
 This dataset is needed for Task 7 (commissioning the IKEA devices) — this time
 actually over BLE, not just over the Thread network.
 
+## Restoring a lost Thread network
+
+Since 0.4.3 the bridge forms a Thread network by itself when the border router
+has none - but not when matter-server still knows Thread devices, because a
+new network would cut them off. The radios card then says so. To bring the old
+network back, put its dataset into the border router while Thread is stopped:
+
+```
+docker exec otbr ot-ctl thread stop
+docker exec otbr ot-ctl ifconfig down
+docker exec otbr ot-ctl dataset set active <hex>
+docker exec otbr ot-ctl ifconfig up
+docker exec otbr ot-ctl thread start
+```
+
+`<hex>` is the value `ot-ctl dataset active -x` printed while the network was
+still there, or the `threadDataset` entry in matter-server's data directory
+inside a fabric backup. It is a credential: do not paste it into an issue or a
+chat. Within a minute of the network coming back the radios card shows its
+name and channel again.
+
 ## Known limitations (deliberate, for a test environment)
 
 - No legacy firewall on `wpan0` (see history, VM deviation 2) — not a
