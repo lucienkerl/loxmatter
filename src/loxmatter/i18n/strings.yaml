@@ -643,6 +643,9 @@ api.errors.thread_dataset_unreachable:
 api.errors.thread_dataset_http_status:
   en: "{url} answered with HTTP {status} instead of a Thread dataset — that is what OTBR replies for as long as no active network exists."
   de: "{url} hat mit HTTP {status} geantwortet statt mit einem Thread-Datensatz – OTBR antwortet so, solange kein aktives Netz existiert."
+api.errors.otbr_http_status:
+  en: "The Thread border router at {url} answered with HTTP {status}."
+  de: "Der Thread-Border-Router unter {url} antwortete mit HTTP {status}."
 api.control.fail_not_writable:
   en: "The writability of attribute {signal_key!r} cannot be confirmed, so it is not on the allow-list of writable attributes. If it really is writable, it can be added there."
   de: "Die Beschreibbarkeit von Attribut {signal_key!r} laesst sich nicht bestaetigen, es steht deshalb nicht auf der Erlaubnisliste beschreibbarer Attribute. Ist es tatsaechlich beschreibbar, kann es dort ergaenzt werden."

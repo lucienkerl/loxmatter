@@ -83,7 +83,7 @@ class FakeSession:
         self.requests: list[tuple[str, dict[str, str]]] = []
         self.puts: list[tuple[str, dict[str, str], str]] = []
         self.closed = False
-        self.raise_on_get: Exception | None = None
+        self.raise_on_request: Exception | None = None
 
     def _answer(self, method: str, url: str) -> FakeResponse:
         path = "/" + url.split("://", 1)[-1].split("/", 1)[-1]
@@ -92,14 +92,14 @@ class FakeSession:
 
     def get(self, url: str, headers: dict[str, str] | None = None) -> Any:
         self.requests.append((url, headers or {}))
-        if self.raise_on_get is not None:
-            raise self.raise_on_get
+        if self.raise_on_request is not None:
+            raise self.raise_on_request
         return self._answer("GET", url)
 
     def put(self, url: str, data: str = "", headers: dict[str, str] | None = None) -> Any:
         self.puts.append((url, headers or {}, data))
-        if self.raise_on_get is not None:
-            raise self.raise_on_get
+        if self.raise_on_request is not None:
+            raise self.raise_on_request
         return self._answer("PUT", url)
 
     async def close(self) -> None:
@@ -124,7 +124,7 @@ async def test_reads_the_active_dataset_from_the_border_router() -> None:
 
 async def test_closes_the_session_even_when_the_request_fails() -> None:
     session = FakeSession()
-    session.raise_on_get = OSError("Netz weg")
+    session.raise_on_request = OSError("Netz weg")
 
     with pytest.raises(ThreadDatasetUnavailableError):
         await fetch_active_dataset(session_factory=lambda: session)
@@ -278,7 +278,7 @@ async def test_current_thread_channel_answers_none_when_the_border_router_is_abs
     catching it. Building a `ZigbeeSource` then fails on every installation
     without a Thread border router configured - most of them."""
     session = FakeSession()
-    session.raise_on_get = OSError("Connection refused")
+    session.raise_on_request = OSError("Connection refused")
     assert await current_thread_channel(session_factory=lambda: session) is None
 
 
@@ -341,14 +341,21 @@ async def test_read_active_dataset_returns_the_dataset() -> None:
 
 @pytest.mark.parametrize("status", [409, 500])
 async def test_read_active_dataset_raises_on_any_other_answer(status: int) -> None:
+    """Still the dataset-reading message, not the generic OTBR one: a
+    non-200/204 answer to `GET /node/dataset/active` really is what OTBR
+    replies for as long as no active dataset exists."""
     session = FakeSession(status=status, body="")
-    with pytest.raises(ThreadDatasetUnavailableError):
+    url = f"{DEFAULT_OTBR_URL}/node/dataset/active"
+    with pytest.raises(ThreadDatasetUnavailableError) as excinfo:
         await read_active_dataset(session_factory=lambda: session)
+    assert str(excinfo.value) == i18n.t(
+        "api.errors.thread_dataset_http_status", url=url, status=status
+    )
 
 
 async def test_read_active_dataset_raises_when_unreachable() -> None:
     session = FakeSession()
-    session.raise_on_get = OSError("connection refused")
+    session.raise_on_request = OSError("connection refused")
     with pytest.raises(ThreadDatasetUnavailableError):
         await read_active_dataset(session_factory=lambda: session)
 
@@ -375,9 +382,15 @@ async def test_create_network_if_absent_maps_the_three_answers(status: int, outc
 
 
 async def test_create_network_if_absent_raises_on_anything_else() -> None:
+    """500 here names the border router, not "no active dataset" - unlike
+    `fetch_active_dataset`/`read_active_dataset`, a write that fails with
+    an unrecognised status has nothing to do with the dataset being
+    absent."""
     session = FakeSession(status=500, body="")
-    with pytest.raises(ThreadDatasetUnavailableError):
+    url = f"{DEFAULT_OTBR_URL}/node/dataset/active"
+    with pytest.raises(ThreadDatasetUnavailableError) as excinfo:
         await create_network_if_absent(session_factory=lambda: session)
+    assert str(excinfo.value) == i18n.t("api.errors.otbr_http_status", url=url, status=500)
 
 
 async def test_enable_thread_puts_enable() -> None:
@@ -389,9 +402,15 @@ async def test_enable_thread_puts_enable() -> None:
 
 
 async def test_enable_thread_raises_on_a_refusal() -> None:
+    """A 409 here means the agent is no longer `disabled` - nothing to do
+    with a missing dataset, so the message must not claim one (the fault
+    this test guards: `_unexpected` defaulting to the dataset key for
+    every caller, not just the two that read one)."""
     session = FakeSession(status=409, body="")
-    with pytest.raises(ThreadDatasetUnavailableError):
+    url = f"{DEFAULT_OTBR_URL}/node/state"
+    with pytest.raises(ThreadDatasetUnavailableError) as excinfo:
         await enable_thread(session_factory=lambda: session)
+    assert str(excinfo.value) == i18n.t("api.errors.otbr_http_status", url=url, status=409)
 
 
 def test_the_network_name_is_read_from_its_tlv() -> None:

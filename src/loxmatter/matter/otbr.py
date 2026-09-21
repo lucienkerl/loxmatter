@@ -279,10 +279,19 @@ def _url(base_url: str | None, path: str) -> str:
     return (base_url or _base_url()).rstrip("/") + path
 
 
-def _unexpected(url: str, status: int) -> ThreadDatasetUnavailableError:
-    return ThreadDatasetUnavailableError(
-        i18n.t("api.errors.thread_dataset_http_status", url=url, status=status)
-    )
+def _unexpected(
+    url: str, status: int, *, key: str = "api.errors.thread_dataset_http_status"
+) -> ThreadDatasetUnavailableError:
+    """An HTTP status from the border router that the caller did not expect.
+
+    Defaults to the dataset-reading message (`fetch_active_dataset`,
+    `read_active_dataset`): "instead of a Thread dataset" is right there,
+    since a non-200/204 status there really is what OTBR replies for as
+    long as no active network exists. `border_router_role`,
+    `create_network_if_absent` and `enable_thread` pass
+    `api.errors.otbr_http_status` instead - a 409 on `enable_thread` means
+    the agent is busy, nothing about a missing dataset."""
+    return ThreadDatasetUnavailableError(i18n.t(key, url=url, status=status))
 
 
 async def fetch_active_dataset(
@@ -332,13 +341,13 @@ async def border_router_role(
     url = _url(base_url, _NODE_STATE_PATH)
     status, body = await _request("GET", url, {"Accept": "application/json"}, None, session_factory)
     if status != 200:
-        raise _unexpected(url, status)
+        raise _unexpected(url, status, key="api.errors.otbr_http_status")
     try:
         role = json.loads(body)
     except ValueError:
-        raise _unexpected(url, status) from None
+        raise _unexpected(url, status, key="api.errors.otbr_http_status") from None
     if not isinstance(role, str):
-        raise _unexpected(url, status)
+        raise _unexpected(url, status, key="api.errors.otbr_http_status")
     return role
 
 
@@ -363,7 +372,7 @@ async def create_network_if_absent(
         return "exists"
     if status == 409:
         return "busy"
-    raise _unexpected(url, status)
+    raise _unexpected(url, status, key="api.errors.otbr_http_status")
 
 
 async def enable_thread(
@@ -375,7 +384,7 @@ async def enable_thread(
     url = _url(base_url, _NODE_STATE_PATH)
     status, _ = await _request("PUT", url, dict(_JSON), '"enable"', session_factory)
     if status != 200:
-        raise _unexpected(url, status)
+        raise _unexpected(url, status, key="api.errors.otbr_http_status")
 
 
 def thread_network_name_from_dataset(dataset: str) -> str | None:
