@@ -1356,6 +1356,35 @@ def test_thread_mode_from_the_environment_offers_no_none(installer, tmp_path):
     assert _env(result)["RADIO_DEVICE"] == f"{hw['SERIAL_BY_ID_DIR']}/{STICK_B}"
 
 
+def test_thread_mode_without_a_terminal_warns_about_the_guessed_stick(installer, tmp_path):
+    # Thread was requested, so "None" is no option, and aborting would be a
+    # new stop on the non-interactive path. Stick 1 is taken - by-id names
+    # sort alphabetically, and on the maintainer's test Pi that is the
+    # Zigbee stick. The guess has to be said out loud, with the way out.
+    hw = _serial(tmp_path, STICK_A, STICK_B)
+    result = installer(env={**hw, **_ONLY_THE_STICK, "LOXMATTER_MODE": "thread"})
+    assert result.returncode == 0
+    assert _env(result)["RADIO_DEVICE"] == f"{hw['SERIAL_BY_ID_DIR']}/{STICK_A}"
+    assert f"{STICK_A} was taken as the Thread stick without asking" in result.output
+    assert "RADIO_DEVICE=" in result.output
+
+
+def test_a_chosen_stick_is_not_warned_about(installer, tmp_path):
+    hw = _serial(tmp_path, STICK_A, STICK_B)
+    env = {**hw, **_ONLY_THE_STICK, "LOXMATTER_MODE": "thread"}
+    result = installer(env=env, answers=["1"])
+    assert result.returncode == 0
+    assert "without asking" not in result.output
+
+
+def test_a_single_stick_in_thread_mode_is_not_warned_about(installer, tmp_path):
+    # One candidate is no guess between two.
+    hw = _serial(tmp_path, STICK_B)
+    result = installer(env={**hw, **_ONLY_THE_STICK, "LOXMATTER_MODE": "thread"})
+    assert result.returncode == 0
+    assert "without asking" not in result.output
+
+
 def test_a_second_run_does_not_show_the_thread_menu(installer, tmp_path):
     # configure_mode lets the existing .env win anyway; asking first and
     # overruling the answer with a warning asked a question for nothing.

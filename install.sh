@@ -447,6 +447,19 @@ LOXMATTER_MODE=wifi."
       fi
       show_thread_menu 0
       CHOSEN_RADIO="$(nth_line "$SERIAL_CANDIDATES" "$CHOICE")"
+      # Thread was requested, so "None" is no option here, and stopping would
+      # be a new abort on the non-interactive path. Taking stick 1 is a guess
+      # between names that cannot tell a Thread stick from a Zigbee stick -
+      # on the maintainer's test Pi, alphabetical order puts the Zigbee
+      # dongle first. Say so, and name the way out.
+      if { [ "$HAVE_TTY" -eq 0 ] || [ "$DRY_RUN" -eq 1 ]; } &&
+         [ "$(count_lines "$SERIAL_CANDIDATES")" -gt 1 ]; then
+        warn "$(serial_label "$CHOSEN_RADIO") was taken as the Thread stick without asking."
+        warn "Several sticks were found, and their names cannot tell a Thread stick"
+        warn "from a Zigbee stick. If this is the wrong one, run the installer again"
+        warn "with RADIO_DEVICE=/dev/serial/by-id/<the Thread stick>, or change it"
+        warn "later on the Radios card of the web interface."
+      fi
     fi
   fi
   note "Operating mode: $MODE"
