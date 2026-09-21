@@ -761,6 +761,7 @@ def test_something_else_answering_is_not_taken_for_a_miniserver(installer):
     assert result.returncode == 0
     assert "but it is not a Miniserver" in result.output
     assert "Findings" in result.output
+    assert _env(result)["MINISERVER_IP"] == "10.0.1.99"
 
 
 def test_the_miniserver_question_says_where_to_find_the_address(installer):
@@ -807,6 +808,7 @@ def test_a_dry_run_does_not_contact_the_miniserver(installer):
 def test_a_second_run_does_not_check_the_miniserver_again(installer):
     first = installer()
     assert first.returncode == 0
+    assert any("jdev/cfg/api" in call for call in first.calls)
     second = installer()
     assert second.returncode == 0
     assert not any("jdev/cfg/api" in call for call in second.calls)
@@ -817,6 +819,7 @@ def test_without_curl_the_miniserver_is_not_checked(installer):
     result = installer(omit=("curl",))
     assert result.returncode == 0
     assert "10.0.1.99 is not checked" in result.output
+    assert "Findings" not in result.output
 
 
 def test_a_token_is_generated(installer):
@@ -1127,9 +1130,13 @@ def test_a_dry_run_report_does_not_invent_an_address(installer):
     assert result.returncode == 0
     assert "Web interface" not in result.output
     # "would check http://.../jdev/cfg/api" is a real address, not an
-    # invented one - only the "Web interface: http://..." line built from
-    # an unread PORT would be fabricated.
-    assert "Web interface: http://" not in result.output
+    # invented one - only a "Web interface: http://..." line built from
+    # an unread PORT would be fabricated. Remove the legitimate line
+    # before checking that no other http:// address slipped in.
+    output_without_the_check = result.output.replace(
+        "would check http://10.0.1.99/jdev/cfg/api", ""
+    )
+    assert "http://" not in output_without_the_check
     assert not result.called("git clone")
     assert not result.called("docker compose up")
 

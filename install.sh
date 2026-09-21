@@ -833,7 +833,7 @@ check_miniserver() {
   if [ "$cm_status" -ne 0 ]; then
     case "$cm_status" in
       28) cm_reason="timeout" ;;
-      7) cm_reason="connection refused" ;;
+      7) cm_reason="could not connect" ;;
       22) cm_reason="HTTP error" ;;
       *) cm_reason="curl exit status $cm_status" ;;
     esac
