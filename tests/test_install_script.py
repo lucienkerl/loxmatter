@@ -737,6 +737,9 @@ def test_an_empty_urandom_fallback_aborts_loudly(installer):
     result = installer(stubs={"openssl": "exit 1\n", "od": "exit 1\n"})
     assert result.returncode == 2
     assert "Could not generate LOXMATTER_API_TOKEN" in result.output
+    # COMPOSE_PROFILES and the rest are already in .env at that point; the
+    # abort has to say so rather than look like a clean stop.
+    assert "partially written" in result.output
 
 
 def test_a_second_run_leaves_the_env_untouched(installer):
@@ -799,25 +802,18 @@ def test_an_env_without_a_trailing_newline_stays_intact(installer):
     assert "COMPOSE_PROFILES" in values
 
 
-def test_an_abort_in_configure_names_the_touched_env(installer):
-    # COMPOSE_PROFILES, RADIO_DEVICE, and RADIO_BAUDRATE already sit in the
-    # .env when BACKBONE_IF gets no value (no default-route entry,
-    # no terminal) and the run aborts. The abort must say so, otherwise
-    # it looks like a clean abort before any change.
+def test_an_undetectable_backbone_without_a_terminal_aborts_before_cloning(installer):
+    # This used to abort inside configure, with COMPOSE_PROFILES and the
+    # radio already written to .env. Asked in phase one, it now stops
+    # before a single file exists.
     result = installer(
         env={"LOXMATTER_MODE": "thread", "RADIO_DEVICE": "/dev/ttyUSB0"},
         stubs={"ip": "echo\n"},
     )
     assert result.returncode == 2
     assert "BACKBONE_IF" in result.output
-    assert str(result.env_file) in result.output
-    assert "partially written" in result.output
-    values = dict(
-        line.split("=", 1)
-        for line in result.env_file.read_text().splitlines()
-        if "=" in line and not line.startswith("#")
-    )
-    assert values["COMPOSE_PROFILES"] == "thread"
+    assert not result.called("git clone")
+    assert not result.env_file.exists()
 
 
 def test_a_conflicting_mode_is_reported_loudly(installer):
@@ -1231,11 +1227,31 @@ def test_a_second_run_does_not_show_the_thread_menu(installer, tmp_path):
 
 
 def test_a_closed_terminal_at_the_thread_menu_aborts_cleanly(installer, tmp_path):
-    # decide_mode() asks before ensure_env_value() or ask_miniserver() ever
-    # run, and its own ask() call didn't handle a return of 1: under
-    # `set -eu` a closed terminal there exited unexplained instead of
-    # through die().
+    # The Thread stick menu is the first question ask_questions asks. An
+    # empty terminal there has to abort through die() with exit code 2,
+    # not with a bare `set -e` exit.
     hw = _serial(tmp_path, STICK_A, STICK_B)
     result = installer(env={**hw, **_ONLY_THE_STICK}, answers=[])
     assert result.returncode == 2
     assert "terminal closed" in result.output
+
+
+def test_a_detected_backbone_is_not_asked(installer, tmp_path):
+    # answers=["1"] only: a backbone question would hit the end of the
+    # answers and abort.
+    hw = _serial(tmp_path, STICK_B)
+    result = installer(env={**hw, "BLUETOOTH_ADAPTER": "0"}, answers=["1"])
+    assert result.returncode == 0
+    assert "Border router network interface: eth0" in result.output
+    assert _env(result)["BACKBONE_IF"] == "eth0"
+
+
+def test_an_undetectable_backbone_is_asked_until_answered(installer, tmp_path):
+    hw = _serial(tmp_path, STICK_B)
+    result = installer(
+        env={**hw, "BLUETOOTH_ADAPTER": "0"},
+        stubs={"ip": "echo\n"},
+        answers=["1", "", "eth1"],
+    )
+    assert result.returncode == 0
+    assert _env(result)["BACKBONE_IF"] == "eth1"

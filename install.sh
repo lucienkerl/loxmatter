@@ -68,6 +68,7 @@ CHOICE=""
 # What phase one decided, for phase four to write. Empty means "nothing to
 # write": either an existing .env keeps its value, or the mode does not use it.
 CHOSEN_RADIO=""
+CHOSEN_BACKBONE=""
 
 # ---------------------------------------------------------------- output --
 
@@ -443,11 +444,48 @@ LOXMATTER_MODE=wifi."
   note "Operating mode: $MODE"
 }
 
+decide_backbone() {
+  if [ "$MODE" != "thread" ]; then
+    return 0
+  fi
+  step "choosing the border router's network interface"
+  if [ -n "$(env_file_value BACKBONE_IF)" ]; then
+    return 0
+  fi
+  if [ -n "${BACKBONE_IF:-}" ]; then
+    CHOSEN_BACKBONE="$BACKBONE_IF"
+    return 0
+  fi
+  CHOSEN_BACKBONE="$(detect_backbone_if)"
+  if [ -n "$CHOSEN_BACKBONE" ]; then
+    note "Border router network interface: $CHOSEN_BACKBONE (from the default route)."
+    note "The Thread border router reaches the rest of your network over it."
+    return 0
+  fi
+  if [ "$DRY_RUN" -eq 1 ]; then
+    note "would ask for the border router's network interface"
+    return 0
+  fi
+  if [ "$HAVE_TTY" -eq 0 ]; then
+    die "BACKBONE_IF: there is no default route to read the border router's
+network interface from, and no terminal to ask on. Pass it in instead:
+  curl -fsSL $RAW_URL | BACKBONE_IF=eth0 sh"
+  fi
+  say "Border router network interface"
+  note "No default route was found, so the interface the Thread border router"
+  note "should use could not be read. Usually eth0 (cable) or wlan0 (WiFi)."
+  while [ -z "$CHOSEN_BACKBONE" ]; do
+    CHOSEN_BACKBONE="$(ask "Network interface" "")" ||
+      die "The terminal closed before the network interface was given."
+  done
+}
+
 # Every question, asked before anything is installed: answering once and
 # walking away beats being called back to the keyboard minutes later, after
 # the package and Docker installation.
 ask_questions() {
   decide_mode
+  decide_backbone
 }
 
 # Strict IPv4 check. Octets are shape-checked with `case` BEFORE any numeric
@@ -903,8 +941,7 @@ configure() {
       note "  (what the bundled border router image expects; set RADIO_BAUDRATE"
       note "  before running this script to use a different one)"
     fi
-    ensure_env_value BACKBONE_IF "Network interface for the border router" \
-      "$(detect_backbone_if)" 1
+    write_env_value BACKBONE_IF "$CHOSEN_BACKBONE" 1
   elif [ "$ENV_IS_NEW" -eq 1 ]; then
     # Without Thread nothing reads BACKBONE_IF yet, but switching Thread on
     # later happens on the Radios card, which never asks for it: left at
@@ -927,10 +964,10 @@ configure() {
     # its own exit status - tr on an empty stdin still succeeds, and this
     # would otherwise write an empty token while printing "generated" below.
     if [ "${#token_value}" -ne 64 ]; then
-      die "Could not generate LOXMATTER_API_TOKEN: expected 64 hex characters, got ${#token_value}."
+      die "Could not generate LOXMATTER_API_TOKEN: expected 64 hex characters, got ${#token_value}.$(config_written_note)"
     fi
     case "$token_value" in
-      *[!0-9a-f]*) die "Could not generate LOXMATTER_API_TOKEN: got non-hex output." ;;
+      *[!0-9a-f]*) die "Could not generate LOXMATTER_API_TOKEN: got non-hex output.$(config_written_note)" ;;
     esac
     env_set LOXMATTER_API_TOKEN "$token_value"
     note "LOXMATTER_API_TOKEN generated"
