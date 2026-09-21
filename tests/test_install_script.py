@@ -1068,3 +1068,16 @@ def test_running_out_of_answers_aborts_instead_of_looping(installer):
     )
     assert result.returncode == 2
     assert "terminal closed" in result.output
+
+
+def test_a_closed_terminal_at_the_mode_question_aborts_cleanly(installer):
+    # decide_mode() asks before ensure_env_value() or ask_miniserver() ever
+    # run, and its own ask() call didn't handle a return of 1: under
+    # `set -eu` a closed terminal there exited unexplained instead of
+    # through die().
+    result = installer(
+        env={"BLUETOOTH_ADAPTER": "0"},
+        answers=[],
+    )
+    assert result.returncode == 2
+    assert "terminal closed" in result.output

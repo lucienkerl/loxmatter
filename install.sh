@@ -302,7 +302,8 @@ decide_mode() {
       note "No Thread radio found at /dev/ttyUSB* or /dev/ttyACM*."
       mode_default="wifi"
     fi
-    MODE="$(ask "Operating mode - 'thread' for Thread and WiFi, 'wifi' for WiFi and Ethernet only" "$mode_default")"
+    MODE="$(ask "Operating mode - 'thread' for Thread and WiFi, 'wifi' for WiFi and Ethernet only" "$mode_default")" ||
+      die "The terminal closed before the operating mode was given."
   fi
   case "$MODE" in
     thread|wifi) : ;;
