@@ -17,7 +17,10 @@
 - A Loxone Miniserver on the same network as the machine running loxmatter
 - A host where the service runs permanently — e.g. a Raspberry Pi 4 on the
   same network as the Miniserver and the devices (this project's test
-  environment runs this way, see [`deploy/testhost/`](../deploy/testhost/))
+  environment runs this way, see [`deploy/testhost/`](../deploy/testhost/)).
+  On a Raspberry Pi, a **Pi 4 with 4 GB RAM** or better is recommended; a
+  Pi 3 is not enough — its built-in Bluetooth drops out during BLE
+  commissioning, and it is short on power and memory for the whole stack
 - Only for **Thread** devices: a USB radio module as a Thread radio adapter
   (e.g. a SONOFF Dongle Plus MG24) on the host — the Docker stack brings its
   own OpenThread Border Router for this

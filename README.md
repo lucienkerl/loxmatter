@@ -186,6 +186,11 @@ Miniserver does not use it.
 One command on the machine that will run the bridge — a Raspberry Pi or any
 Debian-based Linux host:
 
+> **Which Raspberry Pi?** A **Raspberry Pi 4 with 4 GB RAM** or better is
+> recommended. A Raspberry Pi 3 is not enough: its built-in Bluetooth chip
+> drops out while commissioning a device over BLE, and the board is short on
+> power and memory for the whole stack.
+
 ```bash
 curl -fsSL https://raw.githubusercontent.com/lucienkerl/loxmatter/main/install.sh | sh
 ```
