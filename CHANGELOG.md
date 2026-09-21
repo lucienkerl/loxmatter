@@ -8,6 +8,8 @@ people who don't know the code.
 
 ## [Unreleased]
 
+## [0.4.2] — 2026-09-21
+
 ### Changed
 
 - **Updates come only from the web interface.** Running the installer again
@@ -17,6 +19,14 @@ people who don't know the code.
 
 ### Fixed
 
+- **The classic IKEA TRADFRI motion sensor (E1525, E1745) now reports
+  motion.** This model has no motion-sensing cluster at all — it signals
+  motion the same way a remote control signals a button press, by sending
+  commands rather than reporting a value — and the bridge did not yet
+  listen for that. It now binds to the sensor and turns those commands into
+  an ordinary occupancy signal. The newer VALLHORN motion sensor, and every
+  other brand's motion sensor built on the standard IAS Zone cluster, was
+  never affected by this.
 - **The updater's radio log keeps its history.** Pulling a new Thread border
   router image wrote hundreds of progress lines into the log shown for radio
   changes, pushing older entries out. The pull now only logs its errors.
@@ -79,14 +89,6 @@ people who don't know the code.
 
 ### Fixed
 
-- **The classic IKEA TRADFRI motion sensor (E1525, E1745) now reports
-  motion.** This model has no motion-sensing cluster at all — it signals
-  motion the same way a remote control signals a button press, by sending
-  commands rather than reporting a value — and the bridge did not yet
-  listen for that. It now binds to the sensor and turns those commands into
-  an ordinary occupancy signal. The newer VALLHORN motion sensor, and every
-  other brand's motion sensor built on the standard IAS Zone cluster, was
-  never affected by this.
 - **Choosing the Thread stick by its stable name works.** The Radios card
   offers USB sticks by the name that survives a reboot
   (`/dev/serial/by-id/...`), but the Thread border router could not open a
