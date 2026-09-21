@@ -207,7 +207,7 @@ async def test_an_existing_network_is_handed_to_matter_server_without_writing() 
 
 
 async def test_a_stale_hand_over_is_forced_on_the_first_pass_of_a_bridge_start() -> None:
-    """Finding 3: matter-server can report `thread_credentials_set: true`
+    """matter-server can report `thread_credentials_set: true`
     for an OLD dataset it kept in its data directory across a bridge
     restart after a failed hand-over. The first pass this keeper's
     lifetime sees an active dataset in the border router hands it over
@@ -323,7 +323,7 @@ async def test_an_unreachable_matter_server_means_no_network_is_formed() -> None
 
 
 async def test_a_hand_over_owed_after_forming_survives_a_failed_attempt() -> None:
-    """Finding 1: matter-server's stale credentials from an earlier install
+    """matter-server's stale credentials from an earlier install
     must not stop the retry once a network has actually been formed - only
     a *successful* hand-over of the new dataset may end the owed state."""
     otbr = FakeOtbr()
@@ -345,7 +345,7 @@ async def test_a_hand_over_owed_after_forming_survives_a_failed_attempt() -> Non
 async def test_a_hand_over_failure_other_than_unavailable_is_not_fatal(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """Finding 2: `set_thread_dataset` can raise more than
+    """`set_thread_dataset` can raise more than
     `MatterUnavailableError` (a closed connection, a failed command); none
     of it may kill `run()`."""
     otbr, matter = FakeOtbr(dataset=DATASET, role="leader"), FakeMatter()
@@ -366,7 +366,7 @@ async def test_a_hand_over_failure_other_than_unavailable_is_not_fatal(
 
 
 async def test_an_enable_failure_is_left_to_the_watchdog() -> None:
-    """Finding 3, spec section 3: an agent with a dataset that stays
+    """Spec section 3: an agent with a dataset that stays
     `disabled` is a fault for scripts/otbr-watchdog.sh to restart, not this
     loop to repair - otbr-agent re-attaches to the saved dataset on its
     own restart. Once the agent is enabled, the dataset it already created
@@ -389,7 +389,7 @@ async def test_an_enable_failure_is_left_to_the_watchdog() -> None:
 async def test_an_unexpected_create_status_is_logged_and_not_fatal(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """Finding 4: a 500 (or any status besides 201/412/409) from the create
+    """a 500 (or any status besides 201/412/409) from the create
     PUT is not silently dropped, and does not stop the loop."""
     otbr, matter = FakeOtbr(), FakeMatter()
     otbr.create_status = 500
@@ -401,7 +401,7 @@ async def test_an_unexpected_create_status_is_logged_and_not_fatal(
     assert "Could not form a Thread network" in caplog.text
     assert DATASET not in caplog.text
     assert matter.datasets_set == []
-    # Finding 2: "forming" must not linger once the attempt has failed -
+    # "forming" must not linger once the attempt has failed -
     # otherwise the radios card would say "Creating the Thread network..."
     # forever, even though nothing is in progress any more.
     assert keeper.status == ThreadNetworkStatus()

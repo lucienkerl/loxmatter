@@ -118,8 +118,8 @@ this loop repairs (section 4.3).
    — the commissioned IKEA switch on `pi3-andi` lists 53 in its root
    `serverList` — OR when `profiles/transport.py`'s hardware-verified
    classifier reads a Thread bit from the mandatory Network Commissioning
-   FeatureMap (`0/49/65532`): that cluster is optional, and not every Thread
-   device exposes it. Wi-Fi and Ethernet nodes do not block: a user who ran
+   FeatureMap (`0/49/65532`). The OR matters because Thread Network
+   Diagnostics is optional, and not every Thread device serves it. Wi-Fi and Ethernet nodes do not block: a user who ran
    without Thread and adds a stick later gets a network.
 
    Thread credentials that matter-server holds *without* any Thread node do not
