@@ -20,6 +20,14 @@ people who don't know the code.
 - **The updater's radio log keeps its history.** Pulling a new Thread border
   router image wrote hundreds of progress lines into the log shown for radio
   changes, pushing older entries out. The pull now only logs its errors.
+- **A device that gains new functions while the bridge is running — typically
+  after a firmware update — now offers its new controls straight away.** Its
+  new values used to appear, but a button such as on/off only showed up after
+  the bridge had been restarted. Seen with a Tasmota plug updated from 13.3
+  to 15.6.
+- **Such a device is now also named and sorted by its new layout.** A device
+  that renumbered its parts in an update used to keep its old arrangement
+  for good.
 
 ## [0.4.1] — 2026-09-14
 

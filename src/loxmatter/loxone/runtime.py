@@ -46,6 +46,7 @@ import logging
 from collections.abc import Callable, Sequence
 from typing import Protocol
 
+from loxmatter.export.commands import extract_commands
 from loxmatter.loxone.values import to_loxone_value
 from loxmatter.matter.models import NodeSnapshot, SignalKind
 from loxmatter.model.store import Store, StoredSignal
@@ -323,7 +324,7 @@ class Runtime:
         """Catches up a device whose attribute paths have changed - called
         from `BridgeMatterClient.follow`.
 
-        Three steps. Only one order is binding: `invalidate_index` MUST
+        Four steps. Only one order is binding: `invalidate_index` MUST
         run before seeding (step 3). Whether `register_signals` comes
         before or after `invalidate_index` has no consequence - both just
         need to be finished before seeding makes its first `_signal_for`
@@ -346,6 +347,17 @@ class Runtime:
            `seed_from_snapshot` - and for the same reason: a plug with no
            load never reports a changing voltage, so its value would
            otherwise never arise.
+        4. `register_commands` and `Store.refresh_device_types` catch up
+           what a changed device declares besides its signals. Observed on
+           2026-09-11: a Tasmota plug updated from 13.3.0 to 15.6.0 began
+           reporting AcceptedCommandList and renumbered its endpoints. The
+           new signals arrived here, but the plug stayed without on/off and
+           kept its old device types until the bridge restarted, because
+           only `supervisor.attach` caught those up. This step comes after
+           seeding on purpose: `register_commands` refuses a key collision
+           with an exception, and that must not cost the new signals their
+           values. Zigbee devices take the same path - their snapshots
+           carry synthesized descriptors and commands like any Matter node.
 
         Sends nothing itself, exactly like `seed_from_snapshot` (see
         there). An additional reason here: a freshly created signal does
@@ -358,6 +370,8 @@ class Runtime:
         self._cache_online(device_id, snapshot.available)
         for path, raw in snapshot.attributes.items():
             self._cache_attribute(device_id, path, raw)
+        self._store.register_commands(device_id, extract_commands(snapshot))
+        self._store.refresh_device_types(device_id, snapshot)
 
     async def on_event(self, device_id: int, path: str) -> None:
         self._mark_heard(device_id)

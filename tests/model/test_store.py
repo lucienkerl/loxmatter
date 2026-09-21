@@ -777,9 +777,10 @@ def test_register_device_stores_the_matter_device_types(tmp_path):
         store.close()
 
 
-def test_backfill_fills_only_rows_that_have_none(tmp_path):
+def test_backfill_fills_a_row_that_has_none_and_then_leaves_it_alone(tmp_path):
     """An existing row gets its types on the next bridge startup - one
-    already filled in is not rewritten on every startup."""
+    already filled in with the same types is not rewritten on every
+    startup."""
     store = Store(tmp_path / "t.sqlite")
     try:
         snapshot = load("ikea_grillplats_plug.json")
@@ -829,6 +830,49 @@ def test_backfill_does_not_touch_updated_at(tmp_path):
 
         store.backfill_device_types([snapshot])
         assert store.device(device_id).updated_at == before
+    finally:
+        store.close()
+
+
+def test_backfill_rewrites_device_types_that_no_longer_match(tmp_path):
+    """Closes open point 2 of the tile-grid design with an observation from
+    2026-09-11: a Tasmota plug moved its relay from endpoint 1 to 3 in a
+    firmware update. A row that is filled but stale is as wrong as an
+    empty one - it names and sorts the tile after endpoints that are gone."""
+    store = Store(tmp_path / "t.sqlite")
+    try:
+        snapshot = load("ikea_grillplats_plug.json")
+        device_id = store.register_device(snapshot)
+        store._db.execute(
+            "UPDATE device SET device_types = ? WHERE id = ?", ('{"65280": [14]}', device_id)
+        )
+        store._db.commit()
+
+        assert store.backfill_device_types([snapshot]) == 1
+        assert store.device(device_id).device_types == device_types_by_endpoint(snapshot)
+        assert store.backfill_device_types([snapshot]) == 0
+    finally:
+        store.close()
+
+
+def test_backfill_keeps_device_types_when_the_snapshot_reports_none(tmp_path):
+    """A snapshot without a single descriptor - cut short, or from a node
+    whose interview has not finished - says nothing about the layout. It
+    must not wipe what the store already knows."""
+    store = Store(tmp_path / "t.sqlite")
+    try:
+        snapshot = load("ikea_grillplats_plug.json")
+        device_id = store.register_device(snapshot)
+        known = store.device(device_id).device_types
+        without_descriptor = replace(
+            snapshot,
+            attributes={
+                path: value for path, value in snapshot.attributes.items() if "/29/" not in path
+            },
+        )
+
+        assert store.backfill_device_types([without_descriptor]) == 0
+        assert store.device(device_id).device_types == known
     finally:
         store.close()
 
