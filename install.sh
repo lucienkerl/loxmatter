@@ -69,6 +69,12 @@ CHOICE=""
 # write": either an existing .env keeps its value, or the mode does not use it.
 CHOSEN_RADIO=""
 CHOSEN_BACKBONE=""
+# Overridable so tests can point this at a fabricated directory instead of
+# the real /sys/class/bluetooth, which does not exist off Linux.
+BT_SYS_DIR="${BT_SYS_DIR:-/sys/class/bluetooth}"
+BT_ADAPTERS=""
+CHOSEN_BT=""
+TAB="$(printf '\t')"
 
 # ---------------------------------------------------------------- output --
 
@@ -486,6 +492,7 @@ network interface from, and no terminal to ask on. Pass it in instead:
 ask_questions() {
   decide_mode
   decide_backbone
+  decide_bluetooth
 }
 
 # Strict IPv4 check. Octets are shape-checked with `case` BEFORE any numeric
@@ -780,34 +787,6 @@ config_written_note() {
   fi
 }
 
-ensure_env_value() {
-  value_key="$1"
-  value_prompt="$2"
-  value_default="$3"
-  value_required="$4"
-  if [ "$ENV_IS_NEW" -eq 0 ]; then
-    value_kept="$(env_file_value "$value_key")"
-    if [ -n "$value_kept" ]; then
-      note "$value_key=$value_kept (kept)"
-      return 0
-    fi
-  fi
-  # An environment variable of the same name skips the question entirely.
-  value_override=""
-  eval "value_override=\${$value_key:-}"
-  if [ -n "$value_override" ]; then
-    value_new="$value_override"
-  else
-    value_new="$(ask "$value_prompt" "$value_default")" ||
-      die "The terminal closed before $value_key was given.$(config_written_note)"
-  fi
-  if [ -z "$value_new" ] && [ "$value_required" -eq 1 ]; then
-    die "$value_key needs a value and none could be obtained.$(config_written_note)"
-  fi
-  env_set "$value_key" "$value_new"
-  note "$value_key=$value_new"
-}
-
 # Writes what phase one decided. A second run keeps whatever the existing
 # .env already holds, like ensure_env_value always did. With $3 = 1 an empty
 # value stops the run instead of writing a line otbr cannot start with.
@@ -855,14 +834,92 @@ detect_backbone_if() {
     awk '{ for (i = 1; i < NF; i++) if ($i == "dev") { print $(i + 1); exit } }'
 }
 
-detect_bt_adapter() {
-  for candidate in /sys/class/bluetooth/hci*; do
-    if [ -e "$candidate" ]; then
-      printf '%s' "${candidate##*/hci}"
+# The product string of the USB device a sysfs path belongs to. An adapter's
+# device link points at a USB interface; the product file sits on the device
+# above it. Walked up a few levels, like radios/inventory.py's _usb_device.
+usb_product() {
+  up_dir="$1"
+  up_steps=0
+  while [ "$up_steps" -le 4 ] && [ -n "$up_dir" ]; do
+    if [ -r "$up_dir/product" ]; then
+      cat "$up_dir/product"
       return 0
     fi
+    up_dir="${up_dir%/*}"
+    up_steps=$((up_steps + 1))
   done
-  printf '0'
+}
+
+# Sets BT_ADAPTERS to one line per adapter: its hci index, a tab, a label.
+# Classified like radios/inventory.py's scan_bluetooth: a USB adapter's
+# device link resolves below a usb bus, a built-in one below a serial port.
+# Only the part after the last /devices/ is looked at, so a directory above
+# sysfs whose name contains "usb" or "serial" cannot mislabel one.
+# `pwd -P` resolves the link: readlink -f is not POSIX.
+list_bt_adapters() {
+  BT_ADAPTERS=""
+  for bt_entry in "$BT_SYS_DIR"/hci*; do
+    bt_index="${bt_entry##*/hci}"
+    case "$bt_index" in
+      ''|*[!0-9]*) continue ;;
+    esac
+    bt_target="$(cd "$bt_entry/device" 2>/dev/null && pwd -P)" || bt_target=""
+    case "${bt_target##*/devices/}" in
+      usb*|*/usb*)
+        bt_product="$(usb_product "$bt_target")"
+        bt_label="USB: ${bt_product:-unknown adapter}"
+        ;;
+      *serial*) bt_label="built in (UART)" ;;
+      *) bt_label="other" ;;
+    esac
+    BT_ADAPTERS="$BT_ADAPTERS$bt_index$TAB$bt_label
+"
+  done
+}
+
+decide_bluetooth() {
+  step "choosing the Bluetooth adapter"
+  if [ -n "${BLUETOOTH_ADAPTER:-}" ]; then
+    CHOSEN_BT="$BLUETOOTH_ADAPTER"
+    return 0
+  fi
+  if [ -n "$(env_file_value BLUETOOTH_ADAPTER)" ]; then
+    return 0
+  fi
+  list_bt_adapters
+  bt_count="$(count_lines "$BT_ADAPTERS")"
+  if [ "$bt_count" -eq 0 ]; then
+    warn "No Bluetooth adapter found. New Matter devices can then only be"
+    warn "commissioned if they are already on your network (for example"
+    warn "through the manufacturer's app). An adapter can be chosen later on"
+    warn "the Radios card of the web interface."
+    CHOSEN_BT=0
+    return 0
+  fi
+  if [ "$bt_count" -eq 1 ]; then
+    bt_line="$(nth_line "$BT_ADAPTERS" 1)"
+    CHOSEN_BT="${bt_line%%"$TAB"*}"
+    note "Bluetooth: hci$CHOSEN_BT - ${bt_line#*"$TAB"}, used to commission Matter devices."
+    return 0
+  fi
+  say "Bluetooth adapter"
+  note "Most Matter devices are commissioned over Bluetooth. The built-in"
+  note "adapter is usually enough; a USB adapter reaches further."
+  printf '\n'
+  bt_position=0
+  while IFS="$TAB" read -r bt_index bt_label; do
+    if [ -z "$bt_index" ]; then
+      continue
+    fi
+    bt_position=$((bt_position + 1))
+    note "  $bt_position) hci$bt_index - $bt_label"
+  done <<EOF
+$BT_ADAPTERS
+EOF
+  printf '\n'
+  choose "Which adapter should be used?" 1 "$bt_count" 0
+  bt_line="$(nth_line "$BT_ADAPTERS" "$CHOICE")"
+  CHOSEN_BT="${bt_line%%"$TAB"*}"
 }
 
 # The .env.example explains why the token has to be plain [0-9a-f]: it travels
@@ -954,8 +1011,7 @@ configure() {
       note "BACKBONE_IF=$detected_backbone (for Thread, should you switch it on later)"
     fi
   fi
-  ensure_env_value BLUETOOTH_ADAPTER "Bluetooth adapter id for BLE commissioning" \
-    "$(detect_bt_adapter)" 0
+  write_env_value BLUETOOTH_ADAPTER "$CHOSEN_BT" 0
   ask_miniserver
   if [ "$ENV_IS_NEW" -eq 1 ] || [ -z "$(env_file_value LOXMATTER_API_TOKEN)" ]; then
     token_value="${LOXMATTER_API_TOKEN:-$(gen_token)}"

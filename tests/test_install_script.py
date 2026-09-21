@@ -1067,6 +1067,32 @@ def _serial(tmp_path, *names):
     return {"SERIAL_BY_ID_DIR": str(by_id), "SERIAL_DEV_DIR": str(dev)}
 
 
+def _bluetooth(tmp_path, *adapters):
+    """Fabricates /sys/class/bluetooth. Each adapter is (index, product):
+    product None is a built-in UART adapter, a string a USB adapter of that
+    name. The device links resolve below a directory called devices/, as in
+    sysfs; the installer only looks at the path after it, so the pytest
+    directory above - whose name may contain anything - cannot mislabel one.
+    Measured on a Pi 3B: hci0 -> .../3f201000.serial/.../serial0/serial0-0."""
+    sys_root = tmp_path / "hw" / "sys"
+    klass = sys_root / "class" / "bluetooth"
+    klass.mkdir(parents=True)
+    soc = sys_root / "devices" / "platform" / "soc"
+    for index, product in adapters:
+        if product is None:
+            device = soc / "3f201000.serial" / "serial0" / f"serial0-{index}"
+            device.mkdir(parents=True)
+        else:
+            usb_device = soc / "3f980000.usb" / "usb1" / f"1-1.{index}"
+            device = usb_device / f"1-1.{index}:1.0"
+            device.mkdir(parents=True)
+            (usb_device / "product").write_text(f"{product}\n")
+        entry = klass / f"hci{index}"
+        entry.mkdir()
+        (entry / "device").symlink_to(device)
+    return {"BT_SYS_DIR": str(klass)}
+
+
 # ------------------------------------------------------------ questions --
 
 
@@ -1255,3 +1281,48 @@ def test_an_undetectable_backbone_is_asked_until_answered(installer, tmp_path):
     )
     assert result.returncode == 0
     assert _env(result)["BACKBONE_IF"] == "eth1"
+
+
+def test_a_single_adapter_is_used_without_a_question(installer, tmp_path):
+    result = installer(env=_bluetooth(tmp_path, (0, None)), answers=[])
+    assert result.returncode == 0
+    assert "Bluetooth: hci0 - built in (UART)" in result.output
+    assert _env(result)["BLUETOOTH_ADAPTER"] == "0"
+
+
+def test_two_adapters_are_offered_by_name(installer, tmp_path):
+    hw = _bluetooth(tmp_path, (0, None), (1, "TP-Link UB500 Adapter"))
+    result = installer(env=hw, answers=["2"])
+    assert result.returncode == 0
+    assert "1) hci0 - built in (UART)" in result.output
+    assert "2) hci1 - USB: TP-Link UB500 Adapter" in result.output
+    assert _env(result)["BLUETOOTH_ADAPTER"] == "1"
+
+
+def test_the_adapter_index_is_written_not_the_menu_position(installer, tmp_path):
+    hw = _bluetooth(tmp_path, (0, None), (3, "TP-Link UB500 Adapter"))
+    result = installer(env=hw, answers=["2"])
+    assert result.returncode == 0
+    assert _env(result)["BLUETOOTH_ADAPTER"] == "3"
+
+
+def test_no_adapter_is_a_warning_not_a_question(installer):
+    result = installer(answers=[])
+    assert result.returncode == 0
+    assert "No Bluetooth adapter found" in result.output
+    assert _env(result)["BLUETOOTH_ADAPTER"] == "0"
+
+
+def test_without_a_terminal_the_first_adapter_is_taken(installer, tmp_path):
+    hw = _bluetooth(tmp_path, (0, None), (1, "TP-Link UB500 Adapter"))
+    result = installer(env=hw)
+    assert result.returncode == 0
+    assert _env(result)["BLUETOOTH_ADAPTER"] == "0"
+
+
+def test_the_adapter_from_the_environment_skips_the_menu(installer, tmp_path):
+    hw = _bluetooth(tmp_path, (0, None), (1, "TP-Link UB500 Adapter"))
+    result = installer(env={**hw, "BLUETOOTH_ADAPTER": "5"}, answers=[])
+    assert result.returncode == 0
+    assert "Which adapter" not in result.output
+    assert _env(result)["BLUETOOTH_ADAPTER"] == "5"
