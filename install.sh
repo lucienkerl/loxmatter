@@ -134,7 +134,7 @@ Options:
 
 These environment variables skip the matching question:
   LOXMATTER_DIR       where to clone
-  LOXMATTER_MODE      thread | wifi (skips the Thread stick menu)
+  LOXMATTER_MODE      thread | wifi (wifi skips the Thread stick menu)
   MINISERVER_IP       address of the Loxone Miniserver
   RADIO_DEVICE        Thread stick, e.g. /dev/serial/by-id/usb-... (means thread mode)
   RADIO_BAUDRATE      Thread stick baud rate; 460800 when unset, never asked
@@ -493,6 +493,8 @@ network interface from, and no terminal to ask on. Pass it in instead:
 # out - it appears only without a default route, and whether it is needed
 # depends on the Thread answer that has not been given yet.
 thread_menu_expected() {
+  # An existing .env means no menu at all here, mirroring decide_mode's own
+  # second-run branch, which returns before any menu whenever the .env exists.
   if [ -f "$TARGET_DIR/deploy/testhost/.env" ] || [ -n "${RADIO_DEVICE:-}" ]; then
     return 1
   fi
@@ -516,6 +518,17 @@ miniserver_question_expected() {
   [ -z "${MINISERVER_IP:-}" ] && [ -z "$(env_file_value MINISERVER_IP)" ]
 }
 
+# Appends $1 as the next announced question, without eval: aq_count picks
+# which of the three fixed slots it lands in.
+aq_add() {
+  aq_count=$((aq_count + 1))
+  case "$aq_count" in
+    1) aq_1=$1 ;;
+    2) aq_2=$1 ;;
+    *) aq_3=$1 ;;
+  esac
+}
+
 # Says up front what is coming, so the user knows how long to stay at the
 # keyboard before the installation runs on its own.
 announce_questions() {
@@ -527,16 +540,13 @@ announce_questions() {
   aq_2=""
   aq_3=""
   if thread_menu_expected; then
-    aq_count=$((aq_count + 1))
-    eval "aq_$aq_count=\"the Thread stick\""
+    aq_add "the Thread stick"
   fi
   if bluetooth_menu_expected; then
-    aq_count=$((aq_count + 1))
-    eval "aq_$aq_count=\"the Bluetooth adapter\""
+    aq_add "the Bluetooth adapter"
   fi
   if miniserver_question_expected; then
-    aq_count=$((aq_count + 1))
-    eval "aq_$aq_count=\"the address of your Loxone Miniserver\""
+    aq_add "the address of your Loxone Miniserver"
   fi
   case "$aq_count" in
     0) return 0 ;;
