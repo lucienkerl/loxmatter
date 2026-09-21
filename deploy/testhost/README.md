@@ -548,8 +548,8 @@ docker exec otbr ot-ctl thread start
 ```
 
 `<hex>` is the value `ot-ctl dataset active -x` printed while the network was
-still there, or the `threadDataset` entry in matter-server's data directory
-inside a fabric backup. It is a credential: do not paste it into an issue or a
+still there, or the `threadDataset` key that matter-server keeps in the files
+under `config/` in its data directory, also inside a fabric backup. It is a credential: do not paste it into an issue or a
 chat. Within a minute of the network coming back the radios card shows its
 name and channel again.
 
