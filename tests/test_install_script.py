@@ -475,6 +475,36 @@ def test_an_existing_docker_is_not_reinstalled(installer):
     assert not result.called("sudo docker")
 
 
+# `compose up` fails - on a real host for example because the SD card ran
+# out of space while extracting an image.
+_DOCKER_UP_FAILS = _DOCKER.replace(
+    "exit 0\n",
+    'if [ "${1-}" = "compose" ] && [ "${2-}" = "up" ]; then exit 1; fi\nexit 0\n',
+)
+
+
+def test_after_installing_docker_the_log_hint_uses_sudo(installer):
+    # This session is not in the 'docker' group yet: the plain command
+    # would answer "permission denied" on docker.sock.
+    result = installer(omit=("docker",), stubs={"docker": _DOCKER_UP_FAILS})
+    assert result.returncode == 2
+    assert "Could not start the stack" in result.output
+    assert "&& sudo docker compose logs" in result.output
+
+
+def test_with_an_existing_docker_the_log_hint_has_no_sudo(installer):
+    result = installer(stubs={"docker": _DOCKER_UP_FAILS})
+    assert result.returncode == 2
+    assert "&& docker compose logs" in result.output
+    assert "sudo docker compose logs" not in result.output
+
+
+def test_after_installing_docker_findings_use_sudo(installer):
+    result = installer(omit=("docker",), env={"FAKE_SERVICES": "loxmatter"})
+    assert result.returncode == 0
+    assert "&& sudo docker compose logs matter-server" in result.output
+
+
 # ------------------------------------------------------------- phase three --
 
 

@@ -76,8 +76,8 @@ die() {
 
 state_summary() {
   if [ "$STACK_STARTED" -eq 1 ]; then
-    printf 'The stack in %s was started; run docker compose ps there to see it.\n' \
-      "$TARGET_DIR/deploy/testhost"
+    printf 'The stack in %s was started; run %s compose ps there to see it.\n' \
+      "$TARGET_DIR/deploy/testhost" "$(docker_cmd)"
   elif [ -d "$TARGET_DIR" ]; then
     printf 'The checkout at %s exists; nothing was started.\n' "$TARGET_DIR"
   else
@@ -405,6 +405,18 @@ dk() {
     sudo docker "$@"
   else
     docker "$@"
+  fi
+}
+
+# The docker command to print in a hint for the person running this. After
+# Docker was installed in this run, their shell is not in the 'docker' group
+# until they log in again - plain `docker` would answer "permission denied"
+# on the very command the hint suggests.
+docker_cmd() {
+  if [ "$DOCKER_SUDO" -eq 1 ]; then
+    printf 'sudo docker'
+  else
+    printf 'docker'
   fi
 }
 
@@ -780,7 +792,7 @@ start_stack() {
   ( cd "$STACK_DIR" && dk compose up -d ) ||
     die "Could not start the stack in $STACK_DIR. The checkout and .env are in place; fix the
 cause and run this again. The logs are in:
-  cd $STACK_DIR && docker compose logs"
+  cd $STACK_DIR && $(docker_cmd) compose logs"
   STACK_STARTED=1
 }
 
@@ -843,7 +855,7 @@ check_health() {
     HEALTHY=0
     add_finding "$health_url does not answer, so the bridge is not healthy yet.
 Look at:
-  cd $STACK_DIR && docker compose logs loxmatter"
+  cd $STACK_DIR && $(docker_cmd) compose logs loxmatter"
     return 0
   fi
   note "$health_url answers"
@@ -859,7 +871,7 @@ check_containers() {
   for service in $expected; do
     if ! printf '%s\n' "$running" | grep -qx "$service"; then
       add_finding "Service '$service' is not running. Look at:
-  cd $STACK_DIR && docker compose logs $service"
+  cd $STACK_DIR && $(docker_cmd) compose logs $service"
     fi
   done
 }
