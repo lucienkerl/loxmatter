@@ -24,6 +24,17 @@ disk - the service's data directory (`vendor_info`/`last_node_id`/`nodes`)
 holds no dataset. Every restart of matter-server therefore erases it,
 without anything reporting so.
 
+**Correction (21 September 2026):** that was true of python-matter-server
+8.1.2, the version this history paragraph describes; this bridge now runs
+its successor, matterjs-server, which persists `threadDataset` under
+`config/` in its own data directory - measured on `pi3-andi`. History is
+not rewritten here (the incident below happened exactly as described,
+against the old server), but `matter/thread_network.py`'s
+`ThreadNetworkKeeper` hands the dataset over on every bridge start
+regardless of what matter-server reports it already has, because a
+persisted entry from an older installation is now the failure mode to
+guard against, not a memory that a restart conveniently erased.
+
 This became visible on 2026-09-04: matter-server had been restarted the
 previous day at 12:55, and since then every commissioning of a Thread
 device had failed. The service's log stated the cause in plain text -
