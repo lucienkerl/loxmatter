@@ -18,8 +18,9 @@ people who don't know the code.
 
 ### Added
 
-- The radios card shows the Thread network's name and channel, and warns
-  when Thread devices exist but their network is gone.
+- The radios card shows the Thread network's name and channel, and, after a
+  start, warns when Thread devices exist but the border router has no
+  network.
 
 ## [0.4.2] — 2026-09-21
 
