@@ -222,7 +222,9 @@ class ThreadNetworkKeeper:
             # directly and can raise anything (a closed connection, a
             # failed command) - none of it may kill `run()`, the next pass
             # tries again. `asyncio.CancelledError` is re-raised above.
-            logger.warning("Could not hand the Thread network to matter-server: %s", exc)
+            logger.warning(
+                "Could not hand the Thread network to matter-server: %s", type(exc).__name__
+            )
             return False
         self._handover_owed = False
         return True

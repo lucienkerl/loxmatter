@@ -308,7 +308,7 @@ async def test_a_hand_over_failure_other_than_unavailable_is_not_fatal(
     `MatterUnavailableError` (a closed connection, a failed command); none
     of it may kill `run()`."""
     otbr, matter = FakeOtbr(dataset=DATASET, role="leader"), FakeMatter()
-    matter.hand_over_error = RuntimeError("boom")
+    matter.hand_over_error = RuntimeError(f"rejected {DATASET}")
     keeper = _keeper(otbr, matter)
 
     with caplog.at_level(logging.WARNING):
@@ -316,6 +316,7 @@ async def test_a_hand_over_failure_other_than_unavailable_is_not_fatal(
 
     assert matter.datasets_set == []
     assert "Could not hand the Thread network to matter-server" in caplog.text
+    assert DATASET not in caplog.text
 
     matter.hand_over_error = None
     assert await keeper.run_pass() is True
@@ -357,6 +358,7 @@ async def test_an_unexpected_create_status_is_logged_and_not_fatal(
         assert await keeper.run_pass() is False
 
     assert "Could not form a Thread network" in caplog.text
+    assert DATASET not in caplog.text
     assert matter.datasets_set == []
 
 
