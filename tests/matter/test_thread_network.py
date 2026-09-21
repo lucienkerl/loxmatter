@@ -401,6 +401,10 @@ async def test_an_unexpected_create_status_is_logged_and_not_fatal(
     assert "Could not form a Thread network" in caplog.text
     assert DATASET not in caplog.text
     assert matter.datasets_set == []
+    # Finding 2: "forming" must not linger once the attempt has failed -
+    # otherwise the radios card would say "Creating the Thread network..."
+    # forever, even though nothing is in progress any more.
+    assert keeper.status == ThreadNetworkStatus()
 
 
 async def test_run_repeats_until_a_pass_is_done() -> None:

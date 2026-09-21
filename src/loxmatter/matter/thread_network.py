@@ -209,6 +209,11 @@ class ThreadNetworkKeeper:
             # otbr-agent re-attaches to the saved dataset on its own restart,
             # and a later pass here hands that dataset over once it does.
             logger.warning("Could not form a Thread network: %s", exc)
+            # "forming" must not linger past this pass - a 412/409 outcome
+            # (handled above, no exception) may stay `forming` because the
+            # next pass resolves it by reading the network in step 1, but a
+            # genuine failure here has nothing in progress any more.
+            self._status = ThreadNetworkStatus()
             return False
         if dataset is None:
             return False
