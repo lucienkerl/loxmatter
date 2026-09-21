@@ -23,6 +23,7 @@ to either, because "nothing was written" is the claim of half of them."""
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Self
 
 import pytest
@@ -61,7 +62,8 @@ class FakeOtbr:
         self.dataset = dataset
         self.role = role
         self.created_dataset = DATASET
-        self.create_status: int | None = None  # override the PUT's answer
+        self.create_status: int | None = None  # override the create PUT's answer
+        self.enable_status: int | None = None  # override the enable PUT's answer
         self.unreachable = False
         self.puts: list[tuple[str, dict[str, str], str]] = []
 
@@ -94,6 +96,8 @@ class FakeOtbr:
             self.dataset = self.created_dataset
             return _Response(201, "")
         if path == "/node/state":
+            if self.enable_status is not None:
+                return _Response(self.enable_status, "")
             self.role = "leader"
             return _Response(200, "")
         return _Response(404, "")
@@ -114,6 +118,10 @@ class FakeMatter:
         self.credentials_set = credentials_set
         self.unavailable = unavailable
         self.datasets_set: list[str] = []
+        # A hand-over failure distinct from `unavailable`, which also blocks
+        # `snapshots()`: this raises only from `set_thread_dataset`, so a
+        # test can let the node guard pass and still fail the hand-over.
+        self.hand_over_error: BaseException | None = None
 
     @property
     def thread_dataset_set(self) -> bool:
@@ -122,6 +130,8 @@ class FakeMatter:
     async def set_thread_dataset(self, dataset: str) -> None:
         if self.unavailable:
             raise MatterUnavailableError("down")
+        if self.hand_over_error is not None:
+            raise self.hand_over_error
         self.datasets_set.append(dataset)
         self.credentials_set = True
 
@@ -229,8 +239,8 @@ async def test_a_blocked_keeper_turns_formed_once_the_dataset_is_restored() -> N
     assert otbr.puts == []
 
 
-@pytest.mark.parametrize(("status", "role"), [(412, "disabled"), (409, "detached")])
-async def test_losing_the_race_is_not_an_error(status: int, role: str) -> None:
+@pytest.mark.parametrize("status", [412, 409])
+async def test_losing_the_race_is_not_an_error(status: int) -> None:
     otbr, matter = FakeOtbr(), FakeMatter()
     otbr.create_status = status
     keeper = _keeper(otbr, matter)
@@ -269,6 +279,85 @@ async def test_an_unreachable_matter_server_means_no_network_is_formed() -> None
     assert await _keeper(otbr, matter).run_pass() is False
 
     assert otbr.puts == []
+
+
+async def test_a_hand_over_owed_after_forming_survives_a_failed_attempt() -> None:
+    """Finding 1: matter-server's stale credentials from an earlier install
+    must not stop the retry once a network has actually been formed - only
+    a *successful* hand-over of the new dataset may end the owed state."""
+    otbr = FakeOtbr()
+    matter = FakeMatter(credentials_set=True)
+    matter.hand_over_error = MatterUnavailableError("down")
+    keeper = _keeper(otbr, matter)
+
+    assert await keeper.run_pass() is False
+
+    assert matter.datasets_set == []
+    assert otbr.dataset == DATASET  # the network was formed regardless
+
+    matter.hand_over_error = None
+    assert await keeper.run_pass() is True
+
+    assert matter.datasets_set == [DATASET]
+
+
+async def test_a_hand_over_failure_other_than_unavailable_is_not_fatal(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Finding 2: `set_thread_dataset` can raise more than
+    `MatterUnavailableError` (a closed connection, a failed command); none
+    of it may kill `run()`."""
+    otbr, matter = FakeOtbr(dataset=DATASET, role="leader"), FakeMatter()
+    matter.hand_over_error = RuntimeError("boom")
+    keeper = _keeper(otbr, matter)
+
+    with caplog.at_level(logging.WARNING):
+        assert await keeper.run_pass() is False
+
+    assert matter.datasets_set == []
+    assert "Could not hand the Thread network to matter-server" in caplog.text
+
+    matter.hand_over_error = None
+    assert await keeper.run_pass() is True
+
+    assert matter.datasets_set == [DATASET]
+
+
+async def test_an_enable_failure_is_left_to_the_watchdog() -> None:
+    """Finding 3, spec section 3: an agent with a dataset that stays
+    `disabled` is a fault for scripts/otbr-watchdog.sh to restart, not this
+    loop to repair - otbr-agent re-attaches to the saved dataset on its
+    own restart. Once the agent is enabled, the dataset it already created
+    is handed over without forming another one."""
+    otbr, matter = FakeOtbr(), FakeMatter()
+    otbr.enable_status = 409
+    keeper = _keeper(otbr, matter)
+
+    assert await keeper.run_pass() is False
+
+    assert matter.datasets_set == []
+
+    otbr.enable_status = None
+    assert await keeper.run_pass() is True
+
+    assert [put[0] for put in otbr.puts] == ["/node/dataset/active", "/node/state"]
+    assert matter.datasets_set == [DATASET]
+
+
+async def test_an_unexpected_create_status_is_logged_and_not_fatal(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Finding 4: a 500 (or any status besides 201/412/409) from the create
+    PUT is not silently dropped, and does not stop the loop."""
+    otbr, matter = FakeOtbr(), FakeMatter()
+    otbr.create_status = 500
+    keeper = _keeper(otbr, matter)
+
+    with caplog.at_level(logging.WARNING):
+        assert await keeper.run_pass() is False
+
+    assert "Could not form a Thread network" in caplog.text
+    assert matter.datasets_set == []
 
 
 async def test_run_repeats_until_a_pass_is_done() -> None:

@@ -129,6 +129,11 @@ class ThreadNetworkKeeper:
         self._interval = interval
         self._sleep = sleep
         self._status = ThreadNetworkStatus()
+        # Set the moment `create_network_if_absent` reports "created", so a
+        # later pass keeps forcing the hand-over - even past matter-server's
+        # stale `thread_dataset_set` - until one actually succeeds. Cleared
+        # only there, never by a failed attempt.
+        self._handover_owed = False
 
     @property
     def status(self) -> ThreadNetworkStatus:
@@ -154,7 +159,7 @@ class ThreadNetworkKeeper:
 
         if dataset is not None:
             self._status = _formed(dataset)
-            return await self._hand_over(dataset)
+            return await self._hand_over(dataset, force=self._handover_owed)
 
         try:
             role = await border_router_role(**self._otbr)
@@ -179,9 +184,15 @@ class ThreadNetworkKeeper:
                 # Someone else was faster (412) or the agent left `disabled`
                 # (409). The next pass reads whatever network exists now.
                 return False
+            self._handover_owed = True
             await enable_thread(**self._otbr)
             dataset = await read_active_dataset(**self._otbr)
         except ThreadDatasetUnavailableError as exc:
+            # Includes an `enable_thread` failure: an agent with a dataset
+            # that stays `disabled` is a fault for scripts/otbr-watchdog.sh
+            # to restart, not this loop to repair (design section 3) -
+            # otbr-agent re-attaches to the saved dataset on its own restart,
+            # and a later pass here hands that dataset over once it does.
             logger.warning("Could not form a Thread network: %s", exc)
             return False
         if dataset is None:
@@ -195,11 +206,23 @@ class ThreadNetworkKeeper:
 
     async def _hand_over(self, dataset: str, *, force: bool = False) -> bool:
         """Give matter-server the dataset unless it confirms it has one.
-        `force` after forming: whatever it held before is not this network."""
+        `force` after forming, and while a hand-over from an earlier forming
+        pass is still owed: whatever matter-server held before is not this
+        network."""
         if not force and self._client.thread_dataset_set:
             return True
         try:
             await self._client.set_thread_dataset(dataset)
         except MatterUnavailableError:
             return False
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            # `BridgeMatterClient.set_thread_dataset` calls upstream
+            # directly and can raise anything (a closed connection, a
+            # failed command) - none of it may kill `run()`, the next pass
+            # tries again. `asyncio.CancelledError` is re-raised above.
+            logger.warning("Could not hand the Thread network to matter-server: %s", exc)
+            return False
+        self._handover_owed = False
         return True
