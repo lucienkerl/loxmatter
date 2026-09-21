@@ -239,7 +239,7 @@ def installer(tmp_path):
         if real is not None:
             (sysdir / tool).symlink_to(real)
 
-    def build_env(env, omit, stubs):
+    def build_env(env, omit, stubs, answers):
         active = dict(DEFAULT_STUBS)
         active.update(stubs or {})
         for name in omit:
@@ -286,11 +286,21 @@ def installer(tmp_path):
             # prepared directory instead.
             "RFKILL_DIR": str(tmp_path / "no-rfkill-here"),
         }
+        # Every run has no controlling terminal (start_new_session=True), so
+        # every question takes the non-interactive branch - except when a
+        # test hands in answers. LOXMATTER_TTY points the installer at a
+        # file instead of /dev/tty; one answer per line, an empty string
+        # takes the default. An empty list is a terminal that answers
+        # nothing, so any question at all aborts the run.
+        if answers is not None:
+            answer_file = tmp_path / "answers"
+            answer_file.write_text("".join(f"{answer}\n" for answer in answers))
+            full_env["LOXMATTER_TTY"] = str(answer_file)
         full_env.update(env or {})
         return full_env
 
-    def run(*args, env=None, omit=(), stubs=None):
-        full_env = build_env(env, omit, stubs)
+    def run(*args, env=None, omit=(), stubs=None, answers=None):
+        full_env = build_env(env, omit, stubs, answers)
         proc = subprocess.run(
             ["/bin/sh", str(INSTALLER), *args],
             env=full_env,
@@ -308,7 +318,7 @@ def installer(tmp_path):
     # structure as `run`, just with Popen instead of subprocess.run, so `run`
     # itself stays unchanged.
     def start(*args, env=None, omit=(), stubs=None):
-        full_env = build_env(env, omit, stubs)
+        full_env = build_env(env, omit, stubs, None)
         return subprocess.Popen(
             ["/bin/sh", str(INSTALLER), *args],
             env=full_env,
@@ -1031,3 +1041,30 @@ def test_a_wifi_run_writes_the_detected_backbone_for_a_later_thread_switch(insta
     assert result.returncode == 0
     assert _env(result)["COMPOSE_PROFILES"] == ""
     assert _env(result)["BACKBONE_IF"] == "eth0"
+
+
+# ------------------------------------------------------------ questions --
+
+
+def test_answers_are_read_one_after_another(installer):
+    # ask() runs inside $(...). Reopening the terminal on every call would
+    # read the first line of an answers file again and again; one
+    # descriptor opened once is what makes the second answer arrive.
+    result = installer(
+        env={"LOXMATTER_MODE": "wifi", "BLUETOOTH_ADAPTER": "0", "MINISERVER_IP": ""},
+        answers=["not-an-ip", "10.0.1.42"],
+    )
+    assert result.returncode == 0
+    assert _env(result)["MINISERVER_IP"] == "10.0.1.42"
+
+
+def test_running_out_of_answers_aborts_instead_of_looping(installer):
+    # A question that rejects its own default (the Miniserver address has
+    # none) used to spin forever on a closed terminal: read failed, the
+    # empty default came back, was rejected, and was asked again.
+    result = installer(
+        env={"LOXMATTER_MODE": "wifi", "BLUETOOTH_ADAPTER": "0", "MINISERVER_IP": ""},
+        answers=["not-an-ip"],
+    )
+    assert result.returncode == 2
+    assert "terminal closed" in result.output

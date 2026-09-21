@@ -57,6 +57,9 @@ HEALTHY=1
 # Overridable so tests can point this at a fabricated directory instead of
 # the real /sys, which does not exist off Linux and is not writable anyway.
 RFKILL_DIR="${RFKILL_DIR:-/sys/class/rfkill}"
+# Where questions are read from. LOXMATTER_TTY exists for the tests only:
+# they point it at a file of answers, one per line. Not in --help on purpose.
+TTY_PATH="${LOXMATTER_TTY:-/dev/tty}"
 
 # ---------------------------------------------------------------- output --
 
@@ -172,16 +175,32 @@ have() { command -v "$1" >/dev/null 2>&1; }
 # portable way to find out whether there is one at all - `test -r /dev/tty`
 # can succeed on a device node that then refuses to open.
 check_tty() {
-  if ( exec </dev/tty ) 2>/dev/null; then
+  if ( exec <"$TTY_PATH" ) 2>/dev/null; then
     HAVE_TTY=1
+    # Opened once and kept open: ask() runs inside $(...), and a subshell
+    # shares this descriptor's offset with its parent - so a file of answers
+    # is read line after line, instead of its first line on every question.
+    exec 3<"$TTY_PATH"
   else
     HAVE_TTY=0
     note "No terminal available; every value has to come from the environment."
   fi
 }
 
+# Prompts go to the terminal the answers come from - except in the tests,
+# where that is a file of answers that must not be written to.
+tty_prompt() {
+  if [ -n "${LOXMATTER_TTY:-}" ]; then
+    printf '%s' "$1" >&2
+  else
+    printf '%s' "$1" >/dev/tty
+  fi
+}
+
 # Asks on the terminal and echoes the answer. Without a terminal, or in a dry
-# run, it echoes the default and asks nothing.
+# run, it echoes the default and asks nothing. Returns 1 when the terminal
+# gives no more input: echoing the default there would let a caller that
+# rejects the default ask again forever.
 ask() {
   ask_prompt="$1"
   ask_default="$2"
@@ -190,12 +209,12 @@ ask() {
     return 0
   fi
   if [ -n "$ask_default" ]; then
-    printf '%s [%s]: ' "$ask_prompt" "$ask_default" >/dev/tty
+    tty_prompt "$ask_prompt [$ask_default]: "
   else
-    printf '%s: ' "$ask_prompt" >/dev/tty
+    tty_prompt "$ask_prompt: "
   fi
-  if ! read -r ask_answer </dev/tty; then
-    ask_answer=""
+  if ! read -r ask_answer <&3; then
+    return 1
   fi
   if [ -z "$ask_answer" ]; then
     ask_answer="$ask_default"
@@ -609,7 +628,8 @@ ensure_env_value() {
   if [ -n "$value_override" ]; then
     value_new="$value_override"
   else
-    value_new="$(ask "$value_prompt" "$value_default")"
+    value_new="$(ask "$value_prompt" "$value_default")" ||
+      die "The terminal closed before $value_key was given.$(config_written_note)"
   fi
   if [ -z "$value_new" ] && [ "$value_required" -eq 1 ]; then
     die "$value_key needs a value and none could be obtained.$(config_written_note)"
@@ -631,7 +651,8 @@ ask_miniserver() {
     if [ "$HAVE_TTY" -eq 0 ]; then
       die "MINISERVER_IP is not a valid IPv4 address: '$ms_value'.$(config_written_note)"
     fi
-    ms_value="$(ask "IPv4 address of the Loxone Miniserver" "")"
+    ms_value="$(ask "IPv4 address of the Loxone Miniserver" "")" ||
+      die "The terminal closed before the Miniserver's address was given.$(config_written_note)"
   done
   env_set MINISERVER_IP "$ms_value"
   note "MINISERVER_IP=$ms_value"
