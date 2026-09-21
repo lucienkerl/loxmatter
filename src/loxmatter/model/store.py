@@ -2014,8 +2014,10 @@ class Store:
         because nothing points to it.
 
         Signals never had this hole: `Runtime.on_node_snapshot` calls
-        `register_signals` on every refreshed snapshot. This method
-        closes the same gap for commands.
+        `register_signals` on every refreshed snapshot, and since
+        2026-09-21 `register_commands` as well. This method covers what the
+        running bridge cannot see - a device that changed while the bridge
+        was down, and a `clusters.yaml` that changed with an update.
 
         **Writes on every startup, not only when something is missing.**
         `register_commands` re-adopts `slug` and `takes_value` for
@@ -2050,49 +2052,72 @@ class Store:
         return gained
 
     def backfill_device_types(self, snapshots: Sequence[NodeSnapshot]) -> int:
-        """Backfills `device.device_types` for devices that do not yet have
-        any, and returns how many that was.
+        """Brings `device.device_types` in line with the current snapshots,
+        and returns how many rows that changed.
 
-        Called when the bridge starts, right next to
-        `runtime.seed_from_snapshot(await client.snapshots())` (`cli.py`) -
-        the snapshots of all reachable nodes are already fetched there, a
-        second fetch would be pure waste.
+        Called by `supervisor.attach`, right next to
+        `runtime.seed_from_snapshot(await client.snapshots())` - the
+        snapshots of all reachable nodes are already fetched there, a second
+        fetch would be pure waste.
 
-        **Only `device_types IS NULL`.** A device already backfilled is not
-        rewritten on every start, and a device that happens to be offline
-        and therefore missing from `snapshots()` does not lose its types -
-        this only ever fills, never clears.
+        Covers a row never filled (`NULL`, see `_migrate_to_v7`) as well as a
+        row that went stale while the bridge was not running; what happens
+        to each row is `refresh_device_types`'s rule. A device already up to
+        date is not rewritten, and a device that happens to be offline and
+        therefore missing from `snapshots()` does not lose its types - this
+        never clears."""
+        by_identity = {self._identity_of(snapshot): snapshot for snapshot in snapshots}
+        rows = self._db.execute(
+            "SELECT id, technology, address FROM device WHERE active = 1"
+        ).fetchall()
+        changed = 0
+        for row in rows:
+            snapshot = by_identity.get((str(row["technology"]), str(row["address"])))
+            if snapshot is not None and self.refresh_device_types(int(row["id"]), snapshot):
+                changed += 1
+        return changed
 
-        Whether a device whose types change on a repeated interview (e.g.
-        after a firmware update) should get an update is deliberately left
-        open (design, open point 2): the case has never been observed and
-        gets no mechanism on suspicion.
+    def refresh_device_types(self, device_id: int, snapshot: NodeSnapshot) -> bool:
+        """Writes the device types `snapshot` declares if they differ from
+        the stored ones, and returns whether it wrote.
+
+        The one place a row's types change after `register_device`:
+        `backfill_device_types` calls it when the bridge attaches, and
+        `Runtime.on_node_snapshot` when a device reports new paths while
+        the bridge is running.
+
+        **Stale is as wrong as empty.** Until 2026-09-21 only `NULL` rows
+        were filled, because a device changing its types on a repeated
+        interview had never been observed (tile-grid design, open point 2).
+        Then a Tasmota plug updated from 13.3.0 to 15.6.0 moved its
+        aggregator from endpoint 65280 to 1 and its relay from endpoint 1
+        to 3, and its row went on naming endpoints that no longer existed.
+
+        **Never clears.** A snapshot that declares no device types at all -
+        no descriptor, say from an interview cut short - says nothing about
+        the layout, so nothing is written.
 
         Does not touch `updated_at` - the same rationale as for `set_room`:
         the device types end up in no export template."""
-        by_identity = {self._identity_of(snapshot): snapshot for snapshot in snapshots}
-        rows = self._db.execute(
-            "SELECT id, technology, address FROM device WHERE device_types IS NULL AND active = 1"
-        ).fetchall()
-        filled = 0
-        for row in rows:
-            snapshot = by_identity.get((str(row["technology"]), str(row["address"])))
-            if snapshot is None:
-                continue
-            self._db.execute(
-                "UPDATE device SET device_types = ? WHERE id = ?",
-                (_encode_device_types(device_types_by_endpoint(snapshot)), int(row["id"])),
-            )
-            filled += 1
+        types = device_types_by_endpoint(snapshot)
+        if not types:
+            return False
+        encoded = _encode_device_types(types)
+        row = self._db.execute(
+            "SELECT device_types FROM device WHERE id = ?", (device_id,)
+        ).fetchone()
+        if row is None or row["device_types"] == encoded:
+            return False
+        self._db.execute("UPDATE device SET device_types = ? WHERE id = ?", (encoded, device_id))
         self._db.commit()
-        return filled
+        return True
 
     def backfill_network_features(self, snapshots: Sequence[NodeSnapshot]) -> int:
         """Backfills `device.network_features` for devices that do not yet
         have it, and returns how many that was.
 
-        The same rules as `backfill_device_types`, for the same reasons:
-        only `NULL` is filled, a set value is never overwritten, a device
+        The rules `backfill_device_types` followed until 2026-09-21, for
+        the same reasons: only `NULL` is filled, a set value is never overwritten, a device
         missing from `snapshots` (offline) is left alone, and `updated_at`
         is not touched - the value ends up in no export template. A
         snapshot that reports no FeatureMap leaves the row at `NULL`, so
@@ -2123,7 +2148,7 @@ class Store:
         for devices missing any of the four, and returns how many rows
         that touched.
 
-        Same rules as backfill_device_types/backfill_network_features:
+        Same rules as backfill_network_features:
         only fills a column that is still NULL, never overwrites an
         already-known value, a device missing from `snapshots` (offline)
         is left alone, and `updated_at` is not touched - none of these

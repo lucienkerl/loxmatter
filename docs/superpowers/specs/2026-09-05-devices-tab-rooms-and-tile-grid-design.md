@@ -436,11 +436,16 @@ states), `web.devices.category.*` (the eight category names from 5.1), and
 1. The complete table of Matter type ID → category (5.1) belongs in the
    implementation plan and must be confirmed per entry against
    `matter_server.client.models.device_types`.
-2. Whether a device whose types change on re-interview (e.g. after
-   a firmware update) should get its `device_types` updated
-   is deliberately left open: `backfill_device_types` only writes
-   `NULL` rows. This case has never been observed so far and gets
-   no mechanism on spec.
+2. **Closed on 2026-09-21.** Whether a device whose types change on
+   re-interview (e.g. after a firmware update) should get its
+   `device_types` updated was left open until the case was observed —
+   `backfill_device_types` only wrote `NULL` rows. Then it was, on
+   2026-09-11: a Tasmota plug updated from 13.3.0 to 15.6.0 moved its
+   aggregator from endpoint 65280 to 1 and its relay from endpoint 1 to 3.
+   `Store.refresh_device_types` now rewrites a row whose types differ from
+   the current snapshot, both when the bridge attaches and when
+   `Runtime.on_node_snapshot` sees new paths. A snapshot that declares no
+   device types never clears a row.
 3. Search only reaches into what `GET /api/devices` delivers — name,
    category, room. Whether it should later also search signal titles is
    its own question; it would need the signals of all devices in the frontend and

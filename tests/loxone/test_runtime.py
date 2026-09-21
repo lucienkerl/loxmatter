@@ -17,6 +17,7 @@
 import asyncio
 import json
 from collections.abc import Callable, Iterator
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -26,6 +27,7 @@ from loxmatter.loxone.runtime import HEARTBEAT_KEY, ZIGBEE_CONNECTED_KEY, Runtim
 from loxmatter.matter.discovery import extract_signals
 from loxmatter.matter.models import NodeSnapshot, SignalKind, SignalRef
 from loxmatter.model.store import Store
+from loxmatter.profiles.relevance import device_types_by_endpoint
 
 FIXTURES = Path(__file__).parents[1] / "fixtures" / "nodes"
 
@@ -661,6 +663,59 @@ async def test_on_node_snapshot_seeds_an_unavailable_node_as_offline(environment
     await runtime.on_node_snapshot(device_id, NodeSnapshot.from_raw(raw["node_id"], raw))
 
     assert runtime._last_values[f"d{device_id}_online"] is False
+
+
+async def test_on_node_snapshot_registers_commands_the_device_gained(tmp_path):
+    """Observed on 2026-09-11 with a Tasmota plug: firmware 13.3.0 reports
+    no AcceptedCommandList at all, so the plug was learned without a single
+    command. After the update to 15.6.0 the list arrived with new paths -
+    `on_node_snapshot` took over the new signals, but the plug stayed
+    without on/off until the bridge restarted, because commands were only
+    ever caught up at startup (`Store.backfill_commands`)."""
+    store = Store(tmp_path / "t.sqlite")
+    try:
+        updated = _plug_snapshot()
+        before_update = replace(
+            updated,
+            attributes={
+                path: value
+                for path, value in updated.attributes.items()
+                if not path.endswith("/65529")
+            },
+        )
+        device_id = store.register_device(before_update)
+        store.register_signals(device_id, before_update)
+        store.register_commands(device_id, extract_commands(before_update))
+        assert not store.commands(device_id)
+        runtime = Runtime(store, FakeSender())
+
+        await runtime.on_node_snapshot(device_id, updated)
+
+        assert {command.slug for command in store.commands(device_id)} >= {"on", "off", "toggle"}
+    finally:
+        store.close()
+
+
+async def test_on_node_snapshot_rewrites_device_types_that_changed(tmp_path):
+    """The same Tasmota update moved the aggregator from endpoint 65280 to 1
+    and the relay from endpoint 1 to 3. The stored device types kept the
+    old layout, so the tile was named and sorted after endpoints that no
+    longer existed."""
+    store = Store(tmp_path / "t.sqlite")
+    try:
+        snapshot = _plug_snapshot()
+        device_id = store.register_device(snapshot)
+        store._db.execute(
+            "UPDATE device SET device_types = ? WHERE id = ?", ('{"65280": [14]}', device_id)
+        )
+        store._db.commit()
+        runtime = Runtime(store, FakeSender())
+
+        await runtime.on_node_snapshot(device_id, snapshot)
+
+        assert store.device(device_id).device_types == device_types_by_endpoint(snapshot)
+    finally:
+        store.close()
 
 
 async def test_on_node_snapshot_invalidates_before_seeding_a_stale_cache(environment, monkeypatch):
