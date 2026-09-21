@@ -30,6 +30,7 @@ pytest happens to run in a terminal or in CI.
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -41,6 +42,10 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 INSTALLER = REPO_ROOT / "install.sh"
+
+# Captured from a real Miniserver (Task 1 of the plan for design
+# 2026-09-21-installer-guided-questions), never written by hand.
+MINISERVER_API_FIXTURE = REPO_ROOT / "tests" / "fixtures" / "miniserver" / "jdev_cfg_api.json"
 
 # Real tools the script is allowed to use. Everything else comes from
 # a stub or counts as not installed.
@@ -143,7 +148,9 @@ exit 0
 # The script now downloads get.docker.com via `-o <file>` instead of
 # piping it - the stub therefore has to evaluate `-o` itself and write the
 # body there instead of just printing it. Without `-o` (e.g. during the
-# health check), the output goes to stdout as before.
+# health check), the output goes to stdout as before. The Miniserver check
+# reaches /jdev/cfg/api; addresses listed in FAKE_MS_DEAD time out instead of
+# answering, and MINISERVER_API_BODY is what the others answer with.
 _CURL = """out=""
 url=""
 prev=""
@@ -167,6 +174,14 @@ case "$url" in
     body="cp '$STUB_TEMPLATES/docker' '$STUB_BIN/docker' && chmod 755 '$STUB_BIN/docker'"
     ;;
   *health*) body='{"status":"ok"}' ;;
+  *jdev/cfg/api*)
+    for dead in ${FAKE_MS_DEAD-}; do
+      case "$url" in
+        "http://$dead/"*) exit 28 ;;
+      esac
+    done
+    body="$MINISERVER_API_BODY"
+    ;;
 esac
 if [ -n "$out" ]; then
   printf '%s\\n' "$body" > "$out"
@@ -279,6 +294,9 @@ def installer(tmp_path):
             # Without a terminal, the address must come from the environment.
             # Tests that check exactly this abort set it to "".
             "MINISERVER_IP": "10.0.1.99",
+            # What a Miniserver answers on /jdev/cfg/api. A test replaces it
+            # to have something that is not a Miniserver answer instead.
+            "MINISERVER_API_BODY": MINISERVER_API_FIXTURE.read_text(),
             # /sys/class/rfkill doesn't exist on macOS and is nowhere
             # writable. This path doesn't exist by default -
             # check_rfkill then finds nothing, just like on a host without
@@ -647,10 +665,14 @@ def test_sigint_cleans_up_the_temporary_file(installer):
     # a signal to it alone would only be noticed by a shell waiting on its
     # foreground child once that child ends), and afterward nothing must
     # be left in the temporary directory.
-    proc = installer.start(omit=("docker",), stubs={"curl": "sleep 30\n"})
+    # The Miniserver check calls curl first, in phase one; only the Docker
+    # download may hang, or the signal would land before any temporary
+    # file exists and the test would prove nothing.
+    hanging_download = 'case "$*" in *get.docker.com*) sleep 30 ;; esac\nexit 0\n'
+    proc = installer.start(omit=("docker",), stubs={"curl": hanging_download})
     deadline = time.time() + 10
     while True:
-        if installer.log.exists() and "curl" in installer.log.read_text():
+        if installer.log.exists() and "get.docker.com" in installer.log.read_text():
             break
         if time.time() > deadline:
             proc.kill()
@@ -710,6 +732,91 @@ def test_a_thread_run_sets_the_profile_device_and_interface(installer):
 def test_the_miniserver_ip_comes_from_the_environment(installer):
     result = installer(env={"MINISERVER_IP": "10.0.1.77"})
     assert _env(result)["MINISERVER_IP"] == "10.0.1.77"
+
+
+def _fixture_serial():
+    body = MINISERVER_API_FIXTURE.read_text()
+    return re.search(r"'snr': *'([^']*)'", body).group(1)
+
+
+def test_a_miniserver_that_answers_is_named(installer):
+    result = installer()
+    assert result.returncode == 0
+    assert f"Miniserver found at 10.0.1.99 (serial {_fixture_serial()}" in result.output
+    assert "Findings" not in result.output
+
+
+def test_an_unreachable_miniserver_without_a_terminal_becomes_a_finding(installer):
+    # It may simply be switched off during the installation - that must
+    # not stop the run.
+    result = installer(env={"FAKE_MS_DEAD": "10.0.1.99"})
+    assert result.returncode == 0
+    assert "No Miniserver answers at 10.0.1.99 (timeout)" in result.output
+    assert "Findings" in result.output
+    assert _env(result)["MINISERVER_IP"] == "10.0.1.99"
+
+
+def test_something_else_answering_is_not_taken_for_a_miniserver(installer):
+    result = installer(env={"MINISERVER_API_BODY": "<html>router login</html>"})
+    assert result.returncode == 0
+    assert "but it is not a Miniserver" in result.output
+    assert "Findings" in result.output
+
+
+def test_the_miniserver_question_says_where_to_find_the_address(installer):
+    result = installer(env={"MINISERVER_IP": ""}, answers=["10.0.1.43"])
+    assert result.returncode == 0
+    assert "Loxone Config" in result.output
+    assert _env(result)["MINISERVER_IP"] == "10.0.1.43"
+
+
+def test_an_unreachable_miniserver_can_be_used_anyway(installer):
+    result = installer(
+        env={"MINISERVER_IP": "", "FAKE_MS_DEAD": "10.0.1.42"},
+        answers=["10.0.1.42", "2"],
+    )
+    assert result.returncode == 0
+    assert _env(result)["MINISERVER_IP"] == "10.0.1.42"
+    assert "Findings" in result.output
+
+
+def test_a_different_address_can_be_entered_after_a_failed_check(installer):
+    result = installer(
+        env={"MINISERVER_IP": "", "FAKE_MS_DEAD": "10.0.1.42"},
+        answers=["10.0.1.42", "1", "10.0.1.43"],
+    )
+    assert result.returncode == 0
+    assert _env(result)["MINISERVER_IP"] == "10.0.1.43"
+    assert "Findings" not in result.output
+
+
+def test_a_malformed_address_is_asked_again(installer):
+    result = installer(env={"MINISERVER_IP": ""}, answers=["10.0.1", "10.0.1.43"])
+    assert result.returncode == 0
+    assert "is not an IPv4 address like" in result.output
+    assert _env(result)["MINISERVER_IP"] == "10.0.1.43"
+
+
+def test_a_dry_run_does_not_contact_the_miniserver(installer):
+    result = installer("--dry-run")
+    assert result.returncode == 0
+    assert "would check http://10.0.1.99/jdev/cfg/api" in result.output
+    assert not any("jdev/cfg/api" in call for call in result.calls)
+
+
+def test_a_second_run_does_not_check_the_miniserver_again(installer):
+    first = installer()
+    assert first.returncode == 0
+    second = installer()
+    assert second.returncode == 0
+    assert not any("jdev/cfg/api" in call for call in second.calls)
+
+
+def test_without_curl_the_miniserver_is_not_checked(installer):
+    # curl is installed in phase two, after the questions.
+    result = installer(omit=("curl",))
+    assert result.returncode == 0
+    assert "10.0.1.99 is not checked" in result.output
 
 
 def test_a_token_is_generated(installer):
@@ -1019,7 +1126,10 @@ def test_a_dry_run_report_does_not_invent_an_address(installer):
     result = installer("--dry-run")
     assert result.returncode == 0
     assert "Web interface" not in result.output
-    assert "http://" not in result.output
+    # "would check http://.../jdev/cfg/api" is a real address, not an
+    # invented one - only the "Web interface: http://..." line built from
+    # an unread PORT would be fabricated.
+    assert "Web interface: http://" not in result.output
     assert not result.called("git clone")
     assert not result.called("docker compose up")
 

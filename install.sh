@@ -74,6 +74,8 @@ CHOSEN_BACKBONE=""
 BT_SYS_DIR="${BT_SYS_DIR:-/sys/class/bluetooth}"
 BT_ADAPTERS=""
 CHOSEN_BT=""
+CHOSEN_MS=""
+MS_PROBLEM=""
 TAB="$(printf '\t')"
 
 # ---------------------------------------------------------------- output --
@@ -493,6 +495,7 @@ ask_questions() {
   decide_mode
   decide_backbone
   decide_bluetooth
+  decide_miniserver
 }
 
 # Strict IPv4 check. Octets are shape-checked with `case` BEFORE any numeric
@@ -788,8 +791,8 @@ config_written_note() {
 }
 
 # Writes what phase one decided. A second run keeps whatever the existing
-# .env already holds, like ensure_env_value always did. With $3 = 1 an empty
-# value stops the run instead of writing a line otbr cannot start with.
+# .env already holds. With $3 = 1 an empty value stops the run instead of
+# writing a line otbr cannot start with.
 write_env_value() {
   wv_key="$1"
   wv_value="$2"
@@ -809,24 +812,95 @@ this script.$(config_written_note)"
   note "$wv_key=$wv_value"
 }
 
-ask_miniserver() {
-  if [ "$ENV_IS_NEW" -eq 0 ]; then
-    ms_kept="$(env_file_value MINISERVER_IP)"
-    if [ -n "$ms_kept" ]; then
-      note "MINISERVER_IP=$ms_kept (kept)"
+# Asks the address for /jdev/cfg/api, which a Miniserver answers without
+# signing in, with its serial number and firmware version. Returns 1 when no
+# Miniserver answered and leaves the reason in MS_PROBLEM. The shape parsed
+# here is the one captured in tests/fixtures/miniserver/jdev_cfg_api.json.
+check_miniserver() {
+  cm_ip="$1"
+  MS_PROBLEM=""
+  if [ "$DRY_RUN" -eq 1 ]; then
+    note "would check http://$cm_ip/jdev/cfg/api"
+    return 0
+  fi
+  if ! have curl; then
+    note "curl is not installed yet, so $cm_ip is not checked."
+    return 0
+  fi
+  note "Checking $cm_ip ..."
+  cm_status=0
+  cm_body="$(curl -fsS -m 3 "http://$cm_ip/jdev/cfg/api" 2>/dev/null)" || cm_status=$?
+  if [ "$cm_status" -ne 0 ]; then
+    case "$cm_status" in
+      28) cm_reason="timeout" ;;
+      7) cm_reason="connection refused" ;;
+      22) cm_reason="HTTP error" ;;
+      *) cm_reason="curl exit status $cm_status" ;;
+    esac
+    MS_PROBLEM="No Miniserver answers at $cm_ip ($cm_reason)."
+    warn "$MS_PROBLEM"
+    return 1
+  fi
+  cm_snr="$(printf '%s\n' "$cm_body" | sed -n "s/.*'snr': *'\([^']*\)'.*/\1/p" | head -n 1)"
+  cm_version="$(printf '%s\n' "$cm_body" | sed -n "s/.*'version': *'\([^']*\)'.*/\1/p" | head -n 1)"
+  if [ -z "$cm_snr" ] && [ -z "$cm_version" ]; then
+    MS_PROBLEM="Something answers at $cm_ip, but it is not a Miniserver."
+    warn "$MS_PROBLEM"
+    return 1
+  fi
+  note "Miniserver found at $cm_ip (serial ${cm_snr:-unknown}, firmware ${cm_version:-unknown})."
+}
+
+add_miniserver_finding() {
+  add_finding "The Miniserver address $1 was written although no Miniserver answered
+there. $MS_PROBLEM
+Once the Miniserver is reachable, check the address in the web interface under
+Settings -> Miniserver connection."
+}
+
+decide_miniserver() {
+  step "asking for the Miniserver"
+  # A second run keeps the address and does not check it again.
+  if [ -n "$(env_file_value MINISERVER_IP)" ]; then
+    return 0
+  fi
+  if [ -n "${MINISERVER_IP:-}" ]; then
+    # check_config_source has already refused a malformed one.
+    CHOSEN_MS="$MINISERVER_IP"
+    if ! check_miniserver "$CHOSEN_MS"; then
+      add_miniserver_finding "$CHOSEN_MS"
+    fi
+    return 0
+  fi
+  if [ "$DRY_RUN" -eq 1 ]; then
+    note "would ask for the Miniserver's address and check it"
+    return 0
+  fi
+  # check_config_source has already stopped a run with neither an address
+  # nor a terminal, so from here on there is one to ask on.
+  say "Loxone Miniserver"
+  note "loxmatter signs in to the Miniserver and creates the devices there."
+  note "You find its address in Loxone Config under the Miniserver's"
+  note "properties, or in the Loxone app under Settings -> Miniserver."
+  printf '\n'
+  while :; do
+    CHOSEN_MS="$(ask "IPv4 address of the Miniserver" "")" ||
+      die "The terminal closed before the Miniserver's address was given."
+    if ! valid_ipv4 "$CHOSEN_MS"; then
+      warn "'$CHOSEN_MS' is not an IPv4 address like 192.168.1.10."
+      continue
+    fi
+    if check_miniserver "$CHOSEN_MS"; then
       return 0
     fi
-  fi
-  ms_value="${MINISERVER_IP:-}"
-  while [ -z "$ms_value" ] || ! valid_ipv4 "$ms_value"; do
-    if [ "$HAVE_TTY" -eq 0 ]; then
-      die "MINISERVER_IP is not a valid IPv4 address: '$ms_value'.$(config_written_note)"
+    note "  1) Enter a different address"
+    note "  2) Use it anyway - the Miniserver is not reachable right now"
+    choose "Choice" 1 2 0
+    if [ "$CHOICE" -eq 2 ]; then
+      add_miniserver_finding "$CHOSEN_MS"
+      return 0
     fi
-    ms_value="$(ask "IPv4 address of the Loxone Miniserver" "")" ||
-      die "The terminal closed before the Miniserver's address was given.$(config_written_note)"
   done
-  env_set MINISERVER_IP "$ms_value"
-  note "MINISERVER_IP=$ms_value"
 }
 
 detect_backbone_if() {
@@ -1012,7 +1086,7 @@ configure() {
     fi
   fi
   write_env_value BLUETOOTH_ADAPTER "$CHOSEN_BT" 0
-  ask_miniserver
+  write_env_value MINISERVER_IP "$CHOSEN_MS" 1
   if [ "$ENV_IS_NEW" -eq 1 ] || [ -z "$(env_file_value LOXMATTER_API_TOKEN)" ]; then
     token_value="${LOXMATTER_API_TOKEN:-$(gen_token)}"
     # gen_token's /dev/urandom fallback runs through a pipe with no pipefail,
