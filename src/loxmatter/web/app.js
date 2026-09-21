@@ -5065,6 +5065,31 @@ function app() {
         : { key: "web.radios.thread_status_not_running", warn: true };
     },
 
+    /** The bridge's own view of the Thread network (design 2026-09-21,
+     * section 5) - below the Thread state line, only while Thread is on and
+     * no job is running. `unknown` shows nothing: it is also what a bridge
+     * without a border router reports, once a minute, forever. A bridge from
+     * before this field reports no `thread_network` at all. */
+    radiosThreadNetworkLine() {
+      const current = this.radios?.current;
+      const network = this.radios?.thread_network;
+      if (!current || !current.thread_enabled || !network || this.radiosJobRunning()) return null;
+      if (network.state === "formed") {
+        return {
+          key: "web.radios.thread_network_formed",
+          params: { name: network.name ?? "-", channel: network.channel ?? "-" },
+          warn: false,
+        };
+      }
+      if (network.state === "forming") {
+        return { key: "web.radios.thread_network_forming", params: {}, warn: false };
+      }
+      if (network.state === "missing") {
+        return { key: "web.radios.thread_network_missing", params: { count: network.thread_devices }, warn: true };
+      }
+      return null;
+    },
+
     radiosBluetoothOptions() {
       // Same reasoning as `radiosThreadOptions()` above.
       if (this.radios && this.radios.current === null) {
