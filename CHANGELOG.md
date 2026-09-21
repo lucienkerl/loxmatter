@@ -8,6 +8,26 @@ people who don't know the code.
 
 ## [Unreleased]
 
+### Changed
+
+- **The installer asks clearer questions, and all of them up front.** It lists
+  the USB sticks it finds by name and asks which one is the Thread stick — or
+  none, which is also the default when there are two it cannot tell apart. It
+  names the Bluetooth adapters instead of asking for an id, no longer asks for
+  a baud rate, and says where to find the Miniserver's address. Every question
+  comes before the first package is installed, so you can walk away after
+  answering.
+- **The installer checks the Miniserver address.** It asks the Miniserver for
+  its serial number right away. If nothing answers, you can enter another
+  address or keep this one; the summary at the end then reminds you to check it.
+
+### Fixed
+
+- **The installer's hints work right after it installed Docker.** Until you
+  log out and back in, your shell is not in the `docker` group; the commands
+  the installer suggests for looking at the logs now say `sudo docker` in
+  that case, instead of failing with "permission denied".
+
 ## [0.4.2] — 2026-09-21
 
 ### Changed

@@ -134,12 +134,12 @@ Options:
 
 These environment variables skip the matching question:
   LOXMATTER_DIR       where to clone
-  LOXMATTER_MODE      thread | wifi
+  LOXMATTER_MODE      thread | wifi (skips the Thread stick menu)
   MINISERVER_IP       address of the Loxone Miniserver
-  RADIO_DEVICE        Thread radio, e.g. /dev/ttyUSB0 (thread mode only)
-  RADIO_BAUDRATE      Thread radio baud rate (thread mode only)
+  RADIO_DEVICE        Thread stick, e.g. /dev/serial/by-id/usb-... (means thread mode)
+  RADIO_BAUDRATE      Thread stick baud rate; 460800 when unset, never asked
   BACKBONE_IF         network interface for the border router (thread mode only)
-  BLUETOOTH_ADAPTER   Bluetooth adapter id, e.g. 0
+  BLUETOOTH_ADAPTER   Bluetooth adapter, e.g. 0 for hci0
   LOXMATTER_API_TOKEN token for scripts and curl; generated when unset
 EOF
 }
@@ -488,10 +488,71 @@ network interface from, and no terminal to ask on. Pass it in instead:
   done
 }
 
+# Each predicate mirrors the early returns of its decide_* function: true
+# when that function will show its question. The backbone question is left
+# out - it appears only without a default route, and whether it is needed
+# depends on the Thread answer that has not been given yet.
+thread_menu_expected() {
+  if [ -f "$TARGET_DIR/deploy/testhost/.env" ] || [ -n "${RADIO_DEVICE:-}" ]; then
+    return 1
+  fi
+  case "${LOXMATTER_MODE:-}" in
+    ""|thread) : ;;
+    *) return 1 ;;
+  esac
+  list_serial_candidates
+  [ -n "$SERIAL_CANDIDATES" ]
+}
+
+bluetooth_menu_expected() {
+  if [ -n "${BLUETOOTH_ADAPTER:-}" ] || [ -n "$(env_file_value BLUETOOTH_ADAPTER)" ]; then
+    return 1
+  fi
+  list_bt_adapters
+  [ "$(count_lines "$BT_ADAPTERS")" -gt 1 ]
+}
+
+miniserver_question_expected() {
+  [ -z "${MINISERVER_IP:-}" ] && [ -z "$(env_file_value MINISERVER_IP)" ]
+}
+
+# Says up front what is coming, so the user knows how long to stay at the
+# keyboard before the installation runs on its own.
+announce_questions() {
+  if [ "$HAVE_TTY" -eq 0 ] || [ "$DRY_RUN" -eq 1 ]; then
+    return 0
+  fi
+  aq_count=0
+  aq_1=""
+  aq_2=""
+  aq_3=""
+  if thread_menu_expected; then
+    aq_count=$((aq_count + 1))
+    eval "aq_$aq_count=\"the Thread stick\""
+  fi
+  if bluetooth_menu_expected; then
+    aq_count=$((aq_count + 1))
+    eval "aq_$aq_count=\"the Bluetooth adapter\""
+  fi
+  if miniserver_question_expected; then
+    aq_count=$((aq_count + 1))
+    eval "aq_$aq_count=\"the address of your Loxone Miniserver\""
+  fi
+  case "$aq_count" in
+    0) return 0 ;;
+    1) aq_text="One question follows: $aq_1." ;;
+    2) aq_text="Two questions follow: $aq_1 and $aq_2." ;;
+    *) aq_text="Three questions follow: $aq_1, $aq_2, and $aq_3." ;;
+  esac
+  say "Questions"
+  note "$aq_text"
+}
+
 # Every question, asked before anything is installed: answering once and
 # walking away beats being called back to the keyboard minutes later, after
 # the package and Docker installation.
 ask_questions() {
+  announce_questions
   decide_mode
   decide_backbone
   decide_bluetooth

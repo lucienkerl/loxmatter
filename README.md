@@ -190,10 +190,12 @@ Debian-based Linux host:
 curl -fsSL https://raw.githubusercontent.com/lucienkerl/loxmatter/main/install.sh | sh
 ```
 
-It asks for your Miniserver's IP address, detects the rest — network interface,
-Thread radio, Bluetooth adapter — and starts the containers. When it finishes it
-prints the address of the web interface. **Open it and set a password**: until you
-do, no `/api` route answers.
+It asks up to three things before it installs anything: which USB stick is your
+Thread stick (or none), which Bluetooth adapter to use when there is more than
+one, and your Miniserver's IP address, which it checks right away. After that you
+can walk away — it installs what is missing and starts the containers. When it
+finishes it prints the address of the web interface. **Open it and set a
+password**: until you do, no `/api` route answers.
 
 **Prefer to read it before running it?** Same script, three lines:
 
@@ -209,7 +211,8 @@ needs `sudo`. It says so before it does, but it does not ask. Add `--dry-run` �
 again is safe: it keeps your configuration and re-checks the stack. Updates are not
 its job — they come from the web interface, see [Updating](#updating).
 
-**No Thread radio? That is fine.** With no USB radio the installer sets up
+**No Thread radio? That is fine.** With no USB radio — or when you answer
+"None" because the stick you have is a Zigbee stick — the installer sets up
 WiFi/Ethernet-only mode: the Thread border router is left out, and the bridge talks
 to WiFi and Ethernet Matter devices over your existing network. Plug a radio in
 later and switch Thread on from Settings → Radios in the web UI — no `.env`

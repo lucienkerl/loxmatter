@@ -364,6 +364,7 @@ def test_help_exits_successfully(installer):
     result = installer("--help")
     assert result.returncode == 0
     assert "--dry-run" in result.output
+    assert "/dev/serial/by-id" in result.output
 
 
 def test_an_unknown_argument_aborts(installer):
@@ -1443,3 +1444,50 @@ def test_the_adapter_from_the_environment_skips_the_menu(installer, tmp_path):
     assert result.returncode == 0
     assert "Which adapter" not in result.output
     assert _env(result)["BLUETOOTH_ADAPTER"] == "5"
+
+
+def test_the_questions_are_announced(installer, tmp_path):
+    env = {
+        **_serial(tmp_path, STICK_A, STICK_B),
+        **_bluetooth(tmp_path, (0, None), (1, "TP-Link UB500 Adapter")),
+        "MINISERVER_IP": "",
+    }
+    result = installer(env=env, answers=["0", "1", "10.0.1.43"])
+    assert result.returncode == 0
+    assert (
+        "Three questions follow: the Thread stick, the Bluetooth adapter, "
+        "and the address of your Loxone Miniserver." in result.output
+    )
+
+
+def test_a_single_question_is_announced_as_one(installer):
+    result = installer(env={"MINISERVER_IP": ""}, answers=["10.0.1.43"])
+    assert result.returncode == 0
+    assert "One question follows: the address of your Loxone Miniserver." in result.output
+
+
+def test_without_a_terminal_nothing_is_announced(installer):
+    result = installer()
+    assert result.returncode == 0
+    assert "question follows" not in result.output
+    assert "questions follow" not in result.output
+
+
+def test_every_question_comes_before_anything_is_installed(installer, tmp_path):
+    # The Miniserver check is the last question's last step, and it is the
+    # one that leaves a trace in the stub log. It has to come before the
+    # first package and before Docker - otherwise the user is called back
+    # to the keyboard minutes into the installation.
+    env = {
+        **_serial(tmp_path, STICK_A, STICK_B),
+        **_bluetooth(tmp_path, (0, None), (1, "TP-Link UB500 Adapter")),
+        "MINISERVER_IP": "",
+    }
+    result = installer(env=env, omit=("git", "docker"), answers=["2", "2", "10.0.1.43"])
+    assert result.returncode == 0
+    calls = result.calls
+    check = next(i for i, call in enumerate(calls) if "jdev/cfg/api" in call)
+    apt = next(i for i, call in enumerate(calls) if call.startswith("apt-get install"))
+    docker = next(i for i, call in enumerate(calls) if "get.docker.com" in call)
+    assert check < apt
+    assert check < docker
