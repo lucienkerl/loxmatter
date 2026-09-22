@@ -162,6 +162,7 @@ from loxmatter.matter.client import BridgeMatterClient
 from loxmatter.matter.commissioning_progress import CommissioningTracker
 from loxmatter.matter.thread_network import ThreadNetworkKeeper
 from loxmatter.model.store import Store
+from loxmatter.radios.bluetooth_health import KernelLog
 from loxmatter.sources import (
     DeviceCall,
     SourceNotConfiguredError,
@@ -423,6 +424,12 @@ def build_app(
     # `client` above). A caller that needs to reach the SAME tracker a test
     # asserts against (e.g. across a restart simulation) passes one in.
     commissioning_tracker: CommissioningTracker | None = None,
+    # The kernel log the `bluetooth` diagnostics check reads (design
+    # 2026-09-22, section 7.1) - `None` on a host whose kernel log this
+    # bridge cannot read, the same optional-seam pattern as `client` and
+    # `sender` above; `_check_bluetooth` then reports "not available"
+    # rather than a fault.
+    kernel_log: KernelLog | None = None,
 ) -> FastAPI:
     # Callers that predate the device source boundary pass only `client`;
     # for them the registry is the Matter client alone, which is exactly
@@ -600,6 +607,7 @@ def build_app(
             sender,
             matter_data_dir,
             runtime,
+            kernel_log,
         ),
         dependencies=api_guard,
     )

@@ -55,11 +55,12 @@ from conftest import authenticate, load_snapshot
 
 from loxmatter import i18n
 from loxmatter.api import diagnostics
-from loxmatter.api.diagnostics import RingBuffer, _check_thread_credentials
+from loxmatter.api.diagnostics import RingBuffer, _check_bluetooth, _check_thread_credentials
 from loxmatter.export.commands import extract_commands
 from loxmatter.loxone.sender import UdpSender
 from loxmatter.loxone.server import build_app
 from loxmatter.model.store import Store
+from loxmatter.radios.bluetooth_health import KernelLog
 
 
 class _ClientWithThreadDataset:
@@ -806,3 +807,54 @@ async def test_resync_fails_in_german(no_invoke, fake_runtime, fake_client, tmp_
     assert response.status_code == 502
     assert "fehlgeschlagen" in response.json()["detail"]
     assert "Socket is closed" in response.json()["detail"]
+
+
+# ---------------------------------------------------------------------------
+# The bluetooth check - Bluetooth and power faults of the last hour, counted
+# from the kernel log (Task 6, design 2026-09-22, section 7.1). "Not
+# available" is green: a host whose kernel log this bridge may not read is
+# not broken. Raw kernel lines never appear in the check text - only counted
+# categories (radios/bluetooth_health.py).
+# ---------------------------------------------------------------------------
+
+
+def _kernel(tmp_path, lines, uptime="100.0 0"):
+    log = tmp_path / "kmsg"
+    log.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    up = tmp_path / "uptime"
+    up.write_text(uptime, encoding="utf-8")
+    return KernelLog(log, up)
+
+
+def test_bluetooth_without_findings_is_ok(tmp_path):
+    ok, text = _check_bluetooth(_kernel(tmp_path, []))
+    assert ok is True
+    assert text == i18n.t("api.diagnostics.bluetooth_ok")
+
+
+def test_bluetooth_findings_of_the_last_hour_are_a_warning(tmp_path):
+    ok, text = _check_bluetooth(
+        _kernel(
+            tmp_path,
+            [
+                "3,1,90000000,-;Bluetooth: hci0: Frame reassembly failed (-84)",
+                "2,2,95000000,-;hwmon hwmon1: Undervoltage detected!",
+            ],
+        )
+    )
+    assert ok is False
+    assert i18n.t("api.diagnostics.bluetooth_category_transport", count=1) in text
+    assert i18n.t("api.diagnostics.bluetooth_category_power", count=1) in text
+
+
+def test_bluetooth_is_not_available_without_the_kernel_log(tmp_path):
+    ok, text = _check_bluetooth(KernelLog(tmp_path / "missing", tmp_path / "missing"))
+    assert ok is True
+    assert text == i18n.t("api.diagnostics.bluetooth_not_available")
+    assert _check_bluetooth(None) == (True, i18n.t("api.diagnostics.bluetooth_not_available"))
+
+
+async def test_the_system_check_carries_the_bluetooth_line(api):
+    client, _, _ = api
+    checks = (await client.get("/api/diagnostics/system")).json()
+    assert "bluetooth" in {c["name"] for c in checks}
