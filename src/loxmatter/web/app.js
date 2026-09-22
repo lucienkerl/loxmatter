@@ -211,6 +211,18 @@ const NEW_ROOM_CHOICE = "__new__";
 // route whose answer barely changes between polls.
 const COMMISSION_POLL_MS = 2000;
 const COMMISSION_PHASES = ["searching", "found", "connected", "joined", "done"];
+// Final review item 7: `commission_with_code` can await for up to 180 s
+// (design 5.1) before the route's own try/except/finally ends the attempt -
+// but if the route's TASK is cancelled before that (server shutdown, client
+// disconnect), the attempt never reaches `done`/`failed` on its own at all.
+// A reload that then restores THAT into the dialog would trap the operator:
+// the reset button in index.html only appears at
+// `commissionStep === 2 || commissionFailed`, neither of which a
+// perpetually-running restore ever reaches. `restoreCommissionIfRunning`
+// ignores an attempt whose `started_at` is older than this - the route's own
+// ceiling plus a margin for clock skew and the poll interval itself, so an
+// ordinary attempt still well within its 180 s is never mistaken for one.
+const COMMISSION_RESTORE_MAX_AGE_MS = 240000;
 
 // --- Live diagnostics (Spec 10.5) -------------------------------------------
 //
@@ -3897,6 +3909,16 @@ function app() {
       }
       const attempt = status?.attempt;
       if (!attempt || attempt.phase === "done" || attempt.phase === "failed") return;
+      // A zombie attempt (final review item 7, see COMMISSION_RESTORE_MAX_
+      // AGE_MS above): ignored exactly as if there were no attempt to
+      // restore at all, leaving the bare form on screen. `Date.parse` on a
+      // value that is not a real timestamp yields `NaN`, and every
+      // comparison against `NaN` is false - such a value is therefore never
+      // treated as stale here.
+      const startedAtMs = Date.parse(attempt.started_at);
+      if (!Number.isNaN(startedAtMs) && Date.now() - startedAtMs > COMMISSION_RESTORE_MAX_AGE_MS) {
+        return;
+      }
       this.commissionBridgeStartedAt = status.bridge_started_at ?? null;
       this.commissionStatus = status;
       this.commissionStep = 0;
@@ -3916,14 +3938,18 @@ function app() {
      * the status route rather than the POST the old page had open").
      *
      * The reason keys mirror the ones the live `POST`'s 422 `detail`
-     * already carries (`_reason_detail` in `api/devices.py`) - see the
+     * already carries (`_reason_detail` in `api/devices.py`, which resolves
+     * these same `web.devices.commission_reason_*` keys directly - see the
      * comment on `web.devices.commission_reason_not_found` in strings.yaml
-     * for why this page cannot simply reuse the `api.devices.*` originals
-     * themselves. `reason` values other than the two named here (a Thread
-     * cause, a dead matter-server, a restart, an unclassified failure) fall
-     * back to `web.devices.commission_failed` with no further detail text -
-     * this page never saw matter-server's own exception text, only the
-     * category the tracker classified it into. */
+     * for why there is only one copy of that wording, not two).
+     * `no_thread_network` gets its own sentence naming the missing Thread
+     * network; `matter_server_unreachable` and `other` share a generic,
+     * reason-less one (final review item 3) - this page never saw
+     * matter-server's own exception text, only the category the tracker
+     * classified it into, so there is no `{message}` to show. Before this
+     * fix, every reason but `not_found`/`connection_lost` fell back to
+     * `web.devices.commission_failed` with an EMPTY `{message}`, rendering
+     * the dangling "Commissioning failed: " with nothing after it. */
     finishRestoredCommission(status) {
       this.stopCommissionPolling();
       const attempt = status?.attempt;
@@ -3941,10 +3967,10 @@ function app() {
             : "web.devices.commission_reason_not_found_any"
           : reason === "connection_lost"
             ? "web.devices.commission_reason_connection_lost"
-            : null;
-      this.commissionMessage = key
-        ? t(key, { discriminator: attempt?.discriminator?.value })
-        : t("web.devices.commission_failed", { message: "" });
+            : reason === "no_thread_network"
+              ? "web.devices.commission_reason_no_thread_network"
+              : "web.devices.commission_reason_unspecified";
+      this.commissionMessage = t(key, { discriminator: attempt?.discriminator?.value });
       this.commissionMessageIsError = true;
       this.commissionFailed = true;
     },

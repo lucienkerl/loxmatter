@@ -665,7 +665,7 @@ async def test_a_not_found_failure_names_the_discriminator_and_is_kept(api):
     )
     assert response.status_code == 422
     assert response.json()["detail"] == i18n.t(
-        "api.devices.commission_reason_not_found", discriminator=9
+        "web.devices.commission_reason_not_found", discriminator=9
     )
     attempt = (await client.get("/api/devices/commission/status")).json()["attempt"]
     assert (attempt["phase"], attempt["reason"]) == ("failed", "not_found")
@@ -679,7 +679,7 @@ async def test_a_connection_loss_is_named(api):
     )
     response = await client.post("/api/devices/commission", json={"code": "34970112332"})
     assert response.status_code == 422
-    assert response.json()["detail"] == i18n.t("api.devices.commission_reason_connection_lost")
+    assert response.json()["detail"] == i18n.t("web.devices.commission_reason_connection_lost")
     attempt = (await client.get("/api/devices/commission/status")).json()["attempt"]
     assert attempt["reason"] == "connection_lost"
 

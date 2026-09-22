@@ -26,6 +26,7 @@ import pytest
 
 from loxmatter.radios import bluetooth_health
 from loxmatter.radios.bluetooth_health import (
+    _MAX_CONSECUTIVE_BROKEN_PIPES,
     KernelFinding,
     KernelLog,
     classify_kmsg_record,
@@ -158,7 +159,7 @@ async def test_findings_async_reuses_the_same_cache_and_runs_off_the_loop(
 
     findings = await log.findings_async()
     assert findings is not None
-    assert reader_thread_ids == [reader_thread_ids[0]]
+    assert len(reader_thread_ids) == 1
     assert reader_thread_ids[0] != threading.get_ident()
 
     clock.now = 0.5
@@ -215,15 +216,27 @@ def test_a_pathological_run_of_broken_pipes_does_not_spin_forever(
 ) -> None:
     """Final review item 6: `BrokenPipeError` makes `_records` `continue` -
     a ring buffer overwritten faster than this generator can keep up with
-    must not spin on that forever. `os.read` is patched to always raise it;
-    without the bound, `list(_records(...))` here would hang the test
-    (and, on the Pi, the event loop) rather than returning."""
+    must not spin on that forever. `os.read` is patched to always raise it.
+
+    Asserting only that `list(_records(...))` returns proves nothing about
+    WHY it returned - a regressed bound that let the loop run far longer
+    (thousands of reads instead of `_MAX_CONSECUTIVE_BROKEN_PIPES`) would
+    still eventually finish and pass a test that only checks the result,
+    while hanging the real event loop on the Pi in practice. Counting the
+    `os.read` calls and comparing them against the bound constant itself
+    makes a regression in the bound fail this test instead of just running
+    slower."""
     path = tmp_path / "fake-char-device"
     path.write_text("", encoding="utf-8")
     monkeypatch.setattr(bluetooth_health.stat, "S_ISCHR", lambda mode: True)
 
+    read_calls = 0
+
     def always_broken_pipe(fd: int, size: int) -> bytes:
+        nonlocal read_calls
+        read_calls += 1
         raise BrokenPipeError
 
     monkeypatch.setattr(bluetooth_health.os, "read", always_broken_pipe)
     assert list(bluetooth_health._records(path)) == []
+    assert read_calls == _MAX_CONSECUTIVE_BROKEN_PIPES

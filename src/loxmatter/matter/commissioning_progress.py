@@ -192,15 +192,34 @@ class CommissioningTracker:
         )
         return token
 
-    def node_added(self, node_id: int) -> None:
+    def node_added(self, node_id: int, *, token: int | None = None) -> None:
         # `node_id` is deliberately unused - the tracker only needs to know
         # that a node joined during this attempt, not which one.
+        #
+        # Final review item 1: this was the one mutator `finish()`/`sample()`
+        # already learned to scope by token (item 2) but this one had not -
+        # with two POSTs in flight, a node joining during attempt A used to
+        # advance attempt B to `joined` if B was the current attempt by the
+        # time matter-server's `NODE_ADDED` reached this listener. The route
+        # now registers a closure bound to the token it owns instead of
+        # `progress.node_added` itself; the same token-mismatch guard as
+        # `finish()`/`sample()` applies here too.
+        if self._attempt is None or (token is not None and token != self._attempt.token):
+            return
         self._advance("joined")
 
     async def finish(self, reason: Reason | None, *, token: int | None = None) -> None:
         if self._attempt is None or (token is not None and token != self._attempt.token):
             return
-        self._attempt.reason = reason
+        # Final review item: a second `finish()` reaching an attempt that
+        # already ended (reachable when the route's follow-up work raises
+        # AFTER a successful `finish(None)` already ran, see `commission_
+        # device`'s outer try/except) must not overwrite the reason it
+        # already ended with - `_advance` below is already a no-op once
+        # `done`/`failed`, but writing `reason` unconditionally first would
+        # still have clobbered it before that no-op ever ran.
+        if self._attempt.phase not in ("done", "failed"):
+            self._attempt.reason = reason
         self._advance("failed" if reason is not None else "done", force=True)
 
     async def sample(self, *, token: int | None = None) -> None:

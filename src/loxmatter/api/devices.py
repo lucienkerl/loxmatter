@@ -314,13 +314,22 @@ def _reason_detail(
     """The `detail` matter-server's own text becomes once the tracker has
     classified why an attempt failed (design 2026-09-22, section 7.2) - the
     reason itself travels separately, in the status route's `attempt.reason`
-    (section 7.2, amended)."""
+    (section 7.2, amended).
+
+    Resolves the `web.devices.commission_reason_*` keys directly (final
+    review item 4) rather than a separate `api.devices.*` copy of the same
+    three sentences: server code can resolve any key regardless of
+    namespace, `GET /api/i18n` only ever ships the `web.*` slice to the
+    browser (`api/language.py:_web_strings()`), and a restored attempt
+    (`finishRestoredCommission` in app.js) needs these exact sentences too -
+    keeping two verbatim copies in sync by hand is exactly the drift this
+    removes."""
     if reason == "not_found":
         if discriminator is None:
-            return i18n.t("api.devices.commission_reason_not_found_any")
-        return i18n.t("api.devices.commission_reason_not_found", discriminator=discriminator.value)
+            return i18n.t("web.devices.commission_reason_not_found_any")
+        return i18n.t("web.devices.commission_reason_not_found", discriminator=discriminator.value)
     if reason == "connection_lost":
-        return i18n.t("api.devices.commission_reason_connection_lost")
+        return i18n.t("web.devices.commission_reason_connection_lost")
     return str(exc)
 
 
@@ -560,7 +569,15 @@ def build_device_router(
         # a call that lands after a newer attempt has started is a no-op
         # instead of corrupting it.
         token = progress.start(discriminator)
-        unsubscribe = active_client.add_node_added_listener(progress.node_added)
+        # A closure bound to THIS attempt's token (final review item 1),
+        # not `progress.node_added` itself: matter-server's `NODE_ADDED`
+        # listeners stay registered for as long as this route's own task
+        # does, so with two POSTs in flight, device A's `NODE_ADDED` must
+        # not advance attempt B just because B has since become the
+        # tracker's current attempt.
+        unsubscribe = active_client.add_node_added_listener(
+            lambda node_id: progress.node_added(node_id, token=token)
+        )
 
         async def sample_while_waiting() -> None:
             # The tracker never samples itself (Task 3): this route owns the

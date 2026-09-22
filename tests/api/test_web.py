@@ -32,6 +32,7 @@ import json
 import re
 import shutil
 import subprocess
+from datetime import UTC, datetime, timedelta
 from html.parser import HTMLParser
 from pathlib import Path
 from xml.etree import ElementTree
@@ -3537,6 +3538,80 @@ def test_a_reload_does_not_arm_a_second_poller_over_an_own_attempt():
 
 
 @pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_a_stale_restored_attempt_is_ignored_not_shown_forever():
+    """Final review item 7: if the route's task is cancelled (server
+    shutdown, client disconnect) before the attempt reaches `done`/`failed`,
+    it never becomes terminal on its own - `phase` stays wherever it was
+    forever. Restoring THAT into the dialog after a reload would trap the
+    operator: the reset button in index.html only appears at
+    `commissionStep === 2 || commissionFailed`, neither of which a
+    perpetually-running restore ever reaches. `restoreCommissionIfRunning`
+    therefore ignores an attempt whose `started_at` is older than the
+    route's own ~180 s ceiling (design 5.1) plus a margin
+    (`COMMISSION_RESTORE_MAX_AGE_MS`) - leaving the bare form on screen,
+    exactly as if there were no attempt to restore at all."""
+    assert _js_constant("COMMISSION_RESTORE_MAX_AGE_MS") >= 180_000
+
+    stale_started_at = (datetime.now(UTC) - timedelta(seconds=400)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    values = _app_state(
+        _DEVICES_VIEW_SETUP_JS
+        + f"""
+        const events = [];
+        global.setInterval = (fn, ms) => {{ events.push("start"); return 1; }};
+        global.clearInterval = () => {{}};
+        globalThis.fetch = async () => ({{
+          ok: true, status: 200,
+          json: async () => ({{
+            bridge_started_at: "t0",
+            attempt: {{ started_at: {json.dumps(stale_started_at)}, discriminator: null,
+                       phase: "searching", reason: null, nearby: [], bluetooth: {{ available: false }} }},
+          }}),
+        }});
+        (async () => {{
+          await state.selectView("devices");
+          console.log(JSON.stringify({{ step: state.commissionStep, starts: events.length }}));
+        }})();
+        """
+    )
+    assert values == {"step": None, "starts": 0}
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_a_fresh_running_attempt_still_restores_despite_the_ceiling():
+    """The counterpart of the staleness test above: an attempt that started
+    a few seconds ago must restore exactly as before - the ceiling only
+    rejects an attempt old enough to be a zombie, not an ordinary running
+    one."""
+    fresh_started_at = (datetime.now(UTC) - timedelta(seconds=5)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    values = _app_state(
+        _DEVICES_VIEW_SETUP_JS
+        + f"""
+        const events = [];
+        let nextId = 1;
+        global.setInterval = (fn, ms) => {{ const id = nextId++; events.push(["start", id]); return id; }};
+        global.clearInterval = (id) => {{ events.push(["stop", id]); }};
+        globalThis.fetch = async () => ({{
+          ok: true, status: 200,
+          json: async () => ({{
+            bridge_started_at: "t0",
+            attempt: {{ started_at: {json.dumps(fresh_started_at)}, discriminator: null,
+                       phase: "searching", reason: null, nearby: [], bluetooth: {{ available: false }} }},
+          }}),
+        }});
+        (async () => {{
+          await state.selectView("devices");
+          console.log(JSON.stringify({{
+            step: state.commissionStep,
+            starts: events.filter((e) => e[0] === "start").length,
+          }}));
+        }})();
+        """
+    )
+    assert values["step"] == 0
+    assert values["starts"] == 1
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
 def test_a_restored_attempt_that_fails_shows_the_reason_and_stops_polling():
     """Design 5.3: "the result then arrives through the status route rather
     than the POST the old page had open." A background poll (started by the
@@ -3584,6 +3659,47 @@ def test_a_restored_attempt_that_fails_shows_the_reason_and_stops_polling():
     assert values["isError"] is True
     assert values["failed"] is True
     assert values["timerCleared"] is True
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+@pytest.mark.parametrize(
+    ("reason", "key"),
+    [
+        ("no_thread_network", "web.devices.commission_reason_no_thread_network"),
+        ("matter_server_unreachable", "web.devices.commission_reason_unspecified"),
+        ("other", "web.devices.commission_reason_unspecified"),
+    ],
+)
+def test_a_restored_failure_without_a_live_message_names_a_reason_not_a_blank(
+    reason: str, key: str
+):
+    """Final review item 3: a restored attempt (`finishRestoredCommission`)
+    never saw matter-server's own exception text - only the tracker's
+    classification - so before this fix, every reason but `not_found`/
+    `connection_lost` fell back to `t("web.devices.commission_failed",
+    { message: "" })`, rendering the dangling "Commissioning failed: " with
+    nothing after it. Each of these three reasons must now show a sentence
+    that actually says something, not an empty placeholder."""
+    from loxmatter import i18n
+
+    values = _app_state(
+        f"""
+        state.finishRestoredCommission({{
+          attempt: {{ phase: "failed", reason: {json.dumps(reason)}, discriminator: null,
+                     nearby: [], bluetooth: {{ available: false }} }},
+        }});
+        console.log(JSON.stringify({{
+          message: state.commissionMessage,
+          isError: state.commissionMessageIsError,
+          failed: state.commissionFailed,
+        }}));
+        """,
+        translations=_web_strings(),
+    )
+    assert values["message"] == i18n.t(key)
+    assert not values["message"].rstrip().endswith(":")
+    assert values["isError"] is True
+    assert values["failed"] is True
 
 
 async def test_the_commissioning_flow_shows_five_phases_nearby_devices_and_warnings(api):

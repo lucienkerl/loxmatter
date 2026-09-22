@@ -298,6 +298,25 @@ async def test_without_sources_bluetooth_is_not_available() -> None:
     assert tracker.status()["attempt"]["bluetooth"]["available"] is False  # type: ignore[index]
 
 
+async def test_node_added_bound_to_a_stale_token_does_not_advance_a_newer_attempt() -> None:
+    """Final review item 1: `node_added()` used to be the one mutator left
+    unscoped by the token, even though `finish()`/`sample()` both learned
+    the token guard in item 2. With two POSTs in flight, the route's
+    `add_node_added_listener` callback is bound to the token it owns - a
+    node joining during attempt A must not advance attempt B just because
+    B happens to be the current attempt when A's listener fires."""
+    tracker, _, _, _ = _tracker()
+    token_a = tracker.start(Discriminator(9, "short"))
+    token_b = tracker.start(Discriminator(4, "short"))
+    assert token_a != token_b
+
+    tracker.node_added(3, token=token_a)
+    assert tracker.phase == "searching"
+
+    tracker.node_added(3, token=token_b)
+    assert tracker.phase == "joined"
+
+
 async def test_a_stale_finish_does_not_touch_a_newer_attempt() -> None:
     """Two POSTs in flight (final review, item 2): B's start() replaces the
     attempt A was tracking; A's finish() must not reach into B's still-live
@@ -363,6 +382,26 @@ async def test_finish_ends_the_attempt_as_failed_with_its_reason(reason: str) ->
     attempt = tracker.status()["attempt"]
     assert attempt["phase"] == "failed"  # type: ignore[index]
     assert attempt["reason"] == reason  # type: ignore[index]
+
+
+async def test_a_second_finish_after_the_attempt_is_already_terminal_keeps_the_first_reason() -> (
+    None
+):
+    """A second `finish("other")` reaching a `done` attempt - reachable
+    when the route's follow-up work (`register_signals`, `follow`, ...)
+    raises after `finish(None)` already ran - must not overwrite the
+    reason the attempt already ended with."""
+    tracker, _, _, _ = _tracker()
+    tracker.start(Discriminator(9, "short"))
+    await tracker.finish(None)
+    attempt = tracker.status()["attempt"]
+    assert attempt["phase"] == "done"  # type: ignore[index]
+    assert attempt["reason"] is None  # type: ignore[index]
+
+    await tracker.finish("other")
+    attempt = tracker.status()["attempt"]
+    assert attempt["phase"] == "done"  # type: ignore[index]
+    assert attempt["reason"] is None  # type: ignore[index]
 
 
 async def test_sample_leaves_a_finished_attempt_alone() -> None:

@@ -679,20 +679,6 @@ api.devices.commissioning_thread_cause:
   # lines above).
   en: "{detail} Likely cause: matter-server holds no Thread credentials, and this bridge could not obtain any either ({reason}). A Thread device cannot be commissioned without them — a Wi-Fi device can, in which case the cause lies elsewhere. Remedy: make the Border Router reachable, or enter the Thread dataset by hand in the field below."
   de: "{detail} Mögliche Ursache: matter-server hat keine Thread-Zugangsdaten, und diese Brücke konnte auch keine holen ({reason}). Ein Thread-Gerät lässt sich ohne sie nicht einlernen – ein WiFi-Gerät dagegen schon, dann liegt es woanders. Abhilfe: den Border Router erreichbar machen, oder den Thread-Datensatz von Hand in das Feld darunter eintragen."
-# The `not_found`/`connection_lost` failure reasons `CommissioningTracker`
-# classifies (design 2026-09-22, section 7.2) - `commission_reason_not_found`
-# when the browser sent a decoded discriminator along with the pairing code,
-# `commission_reason_not_found_any` when it could not decode one at all
-# (section 5.2: a code the browser could not decode sends no discriminator).
-api.devices.commission_reason_not_found:
-  en: "No device with discriminator {discriminator} is in range, or it is not ready for pairing. Check the code, put the device into pairing mode, and keep it close to the bridge."
-  de: "Kein Gerät mit der Kennung {discriminator} ist in Reichweite, oder es ist nicht zum Einlernen bereit. Prüfen Sie den Code, versetzen Sie das Gerät in den Pairing-Modus und halten Sie es nahe an die Bridge."
-api.devices.commission_reason_not_found_any:
-  en: "No device with this code is in range, or it is not ready for pairing. Check the code, put the device into pairing mode, and keep it close to the bridge."
-  de: "Kein Gerät mit diesem Code ist in Reichweite, oder es ist nicht zum Einlernen bereit. Prüfen Sie den Code, versetzen Sie das Gerät in den Pairing-Modus und halten Sie es nahe an die Bridge."
-api.devices.commission_reason_connection_lost:
-  en: "The device was found, but the Bluetooth connection to it broke off."
-  de: "Das Gerät wurde gefunden, aber die Bluetooth-Verbindung zu ihm ist abgebrochen."
 api.devices.room_name_required:
   en: "A room name is required."
   de: "Ein Raumname ist erforderlich."
@@ -1414,19 +1400,25 @@ web.devices.commission_success:
 web.devices.commission_failed:
   en: "Commissioning failed: {message}"
   de: "Einlernen fehlgeschlagen: {message}"
-# The three lines below mirror api.devices.commission_reason_not_found /
-# _not_found_any / _connection_lost (further up in this file) word for word.
-# A RESTORED attempt (design 2026-09-22, section 5.3: a page reloaded while
-# one runs, which then learns of the result only from the status route, not
-# from a POST it never sent) has nothing but `attempt.reason` to go on and
-# must show the same text a live POST's 422 would have shown - but
-# GET /api/i18n only ever sends the browser the `web.*` namespace
-# (`api/language.py:_web_strings()`, proven by
-# `test_get_i18n_only_returns_the_web_namespace` in test_language.py), so
-# the `api.devices.*` originals themselves are never reachable from
-# `app.js`'s `t()`. Keep both copies in sync by hand if the wording changes -
-# there is no third place to share them from without exposing a whole new
-# slice of the api.* namespace to the browser for three lines.
+# The `not_found`/`connection_lost` failure reasons `CommissioningTracker`
+# classifies (design 2026-09-22, section 7.2) - `commission_reason_not_found`
+# when the browser sent a decoded discriminator along with the pairing code,
+# `commission_reason_not_found_any` when it could not decode one at all
+# (section 5.2: a code the browser could not decode sends no discriminator).
+#
+# The SINGLE source of truth for this wording (final review item 4): these
+# used to be duplicated verbatim under `api.devices.*`, because a live 422's
+# `detail` (`_reason_detail` in `api/devices.py`) and a RESTORED attempt
+# (design 2026-09-22, section 5.3 - a page reloaded while one runs, which
+# then learns of the result only from the status route, not from a POST it
+# never sent) need the same sentence from two different places. Only the
+# `web.*` namespace reaches the browser at all (`GET /api/i18n`,
+# `api/language.py:_web_strings()`, proven by
+# `test_get_i18n_only_returns_the_web_namespace` in test_language.py), so the
+# restored-attempt side could only ever read a key from here - but server
+# code can resolve ANY key regardless of namespace, so `_reason_detail`
+# reads these same `web.*` keys too instead of keeping a second copy in
+# sync by hand.
 web.devices.commission_reason_not_found:
   en: "No device with discriminator {discriminator} is in range, or it is not ready for pairing. Check the code, put the device into pairing mode, and keep it close to the bridge."
   de: "Kein Gerät mit der Kennung {discriminator} ist in Reichweite, oder es ist nicht zum Einlernen bereit. Prüfen Sie den Code, versetzen Sie das Gerät in den Pairing-Modus und halten Sie es nahe an die Bridge."
@@ -1436,6 +1428,29 @@ web.devices.commission_reason_not_found_any:
 web.devices.commission_reason_connection_lost:
   en: "The device was found, but the Bluetooth connection to it broke off."
   de: "Das Gerät wurde gefunden, aber die Bluetooth-Verbindung zu ihm ist abgebrochen."
+# The remaining two failure reasons a RESTORED attempt can carry
+# (`finishRestoredCommission` in app.js) - `no_thread_network` and
+# `matter_server_unreachable`/`other` alike - never had a reason-specific
+# string at all (final review item 3): the page fell back to
+# `web.devices.commission_failed` with an EMPTY `{message}`, rendering the
+# dangling "Commissioning failed: " with nothing after it, because a
+# restored attempt only ever learns the tracker's classification, never
+# matter-server's own exception text (unlike the live POST's 422, which
+# still shows `str(exc)` verbatim for `other` - see `_reason_detail`).
+web.devices.commission_reason_no_thread_network:
+  # Names the missing Thread network specifically, rather than the generic
+  # sentence below, because the remedy differs: enter the dataset by hand,
+  # or make the Border Router reachable. Mirrors the live POST's cause
+  # (`api.devices.commissioning_thread_cause`) without matter-server's own
+  # exception text, which a restored attempt never saw.
+  en: "The device needs a Thread network, but this bridge could not obtain one — the Border Router may be unreachable. Make it reachable, or enter the Thread dataset by hand below, then try again."
+  de: "Das Gerät benötigt ein Thread-Netz, aber diese Brücke konnte keines erhalten — möglicherweise ist der Border Router nicht erreichbar. Machen Sie ihn erreichbar, oder tragen Sie den Thread-Datensatz weiter unten von Hand ein, und versuchen Sie es erneut."
+web.devices.commission_reason_unspecified:
+  # `matter_server_unreachable` and `other` share this one: a restored
+  # attempt has no further detail to add for either (see above), and a
+  # sentence that names nothing beats the dangling colon this replaces.
+  en: "Commissioning failed."
+  de: "Einlernen fehlgeschlagen."
 # The success banner for a RESTORED attempt (design 5.3) - the same news as
 # web.devices.commission_success, minus the device label: the status route
 # reports a finished attempt's phase and reason, never which device it was
