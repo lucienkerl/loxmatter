@@ -14,6 +14,8 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+import asyncio
+
 import httpx2 as httpx
 import pytest
 from conftest import authenticate, load_snapshot
@@ -22,6 +24,7 @@ from loxmatter import i18n
 from loxmatter.export.commands import extract_commands
 from loxmatter.loxone.server import build_app
 from loxmatter.matter.client import CommissioningError, MatterUnavailableError
+from loxmatter.matter.commissioning_progress import CommissioningTracker
 from loxmatter.matter.otbr import ThreadDatasetUnavailableError
 from loxmatter.model.store import Store
 from loxmatter.zigbee.translate import DeviceFacts, EndpointFacts, build_snapshot
@@ -564,6 +567,79 @@ async def test_matter_server_unreachable_during_commissioning_yields_502(api):
     assert response.status_code == 502
 
 
+async def test_an_unexpected_failure_still_ends_the_attempt_as_failed(api):
+    """Review fix: an exception that is neither `CommissioningError` nor
+    `MatterUnavailableError` used to leave the tracker's attempt stuck at
+    `searching` forever - nothing ever called `progress.finish` for it. The
+    route re-raises the exception unchanged rather than turning it into an
+    `HTTPException` - `httpx2.ASGITransport`'s default (`raise_app_exceptions
+    =True`) then re-raises it here exactly as it always has; this test
+    proves only that the tracker is no longer left dangling, not that this
+    response behaviour changes."""
+    client, _, _, fake_client = api
+    fake_client.fail_commission_with = RuntimeError("boom")
+
+    with pytest.raises(RuntimeError, match="boom"):
+        await client.post("/api/devices/commission", json={"code": "MT:ABC123"})
+
+    attempt = (await client.get("/api/devices/commission/status")).json()["attempt"]
+    assert attempt["phase"] == "failed"
+
+
+async def test_a_failing_sampler_does_not_break_a_successful_commissioning(
+    tmp_path, no_invoke, fake_runtime, fake_client, fake_otbr, monkeypatch
+):
+    """Review fix: the sampling task used to let an exception from
+    `progress.sample()` (a BlueZ read over D-Bus, so genuinely flaky) end
+    its own loop, and the route's old `finally` -
+    `with contextlib.suppress(asyncio.CancelledError): await sampler` - let
+    that exception through unchanged, because it isn't a `CancelledError`.
+    A device that commissioned successfully would then answer with a
+    server error instead of 201. `progress.sample()`'s caller now catches
+    and logs instead of letting the loop die.
+
+    `commission_with_code` here yields control back to the event loop a
+    few times before returning, so the sampler task - created just before
+    it - actually gets to run (and fail) before the route reaches its
+    `finally` and cancels it: a freshly created task that is cancelled
+    before its very first scheduled step never enters its body at all, and
+    without the yields this test would pass even on the old, broken code."""
+    store = Store(tmp_path / "t.sqlite")
+    tracker = CommissioningTracker()
+
+    async def _broken_sample() -> None:
+        raise RuntimeError("BlueZ is gone")
+
+    monkeypatch.setattr(tracker, "sample", _broken_sample)
+
+    original_commission = fake_client.commission_with_code
+
+    async def commission_after_yielding(code: str):
+        for _ in range(5):
+            await asyncio.sleep(0)
+        return await original_commission(code)
+
+    monkeypatch.setattr(fake_client, "commission_with_code", commission_after_yielding)
+
+    app = build_app(
+        store,
+        no_invoke,
+        fake_runtime(store),
+        client=fake_client,
+        thread_dataset_source=fake_otbr,
+        commissioning_tracker=tracker,
+    )
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        await authenticate(store, client)
+        response = await client.post("/api/devices/commission", json={"code": "MT:ABC123"})
+
+    assert response.status_code == 201
+    new_device_id = response.json()["id"]
+    assert store.device(new_device_id).id == new_device_id
+    store.close()
+
+
 # ---------------------------------------------------------------------------
 # The route drives CommissioningTracker; GET /api/devices/commission/status
 # (design 2026-09-22, sections 5.2 and 7.2).
@@ -602,7 +678,10 @@ async def test_a_connection_loss_is_named(api):
         "(1 of 1 started attempt(s) failed, 1 discovered)"
     )
     response = await client.post("/api/devices/commission", json={"code": "34970112332"})
+    assert response.status_code == 422
     assert response.json()["detail"] == i18n.t("api.devices.commission_reason_connection_lost")
+    attempt = (await client.get("/api/devices/commission/status")).json()["attempt"]
+    assert attempt["reason"] == "connection_lost"
 
 
 async def test_another_failure_keeps_matter_servers_text(api):
@@ -614,36 +693,80 @@ async def test_another_failure_keeps_matter_servers_text(api):
     assert attempt["reason"] == "other"
 
 
-async def test_a_success_ends_the_attempt_as_done_and_node_added_marks_joined(api, monkeypatch):
+async def test_a_success_ends_the_attempt_as_done_and_node_added_marks_joined(
+    tmp_path, no_invoke, fake_runtime, fake_client, fake_otbr, monkeypatch
+):
     """`commission_with_code` on the real client only returns after
     matter-server has already announced `NODE_ADDED` for the new node (the
     race recorded in `api/devices.py`'s module docstring) - `FakeMatterClient`
     itself never fires that listener, so this test wraps it to do exactly
     that before returning the snapshot, the way a successful commissioning
-    does."""
-    client, _, _, fake_client = api
-    original_commission = fake_client.commission_with_code
+    does.
 
-    async def commission_then_announce(code: str):
-        snapshot = await original_commission(code)
-        fake_client.emit_node_added(100)
-        return snapshot
+    Review fix: the previous version of this test only asserted the FINAL
+    `phase == "done"` via the status route - but `finish(None)` forces
+    `done` regardless of what happened before it (`_advance(..., force=True)`
+    in `commissioning_progress.py`), so deleting the `emit_node_added(...)`
+    call below left this test green. A dedicated `CommissioningTracker`,
+    passed explicitly via `build_app(..., commissioning_tracker=tracker)` -
+    a seam that was untested anywhere before this - lets the test read
+    `tracker.phase` from INSIDE the request, before the route ever calls
+    `finish`, and prove the listener actually drove the advance to
+    `joined`."""
+    store = Store(tmp_path / "t.sqlite")
+    snapshot = load_snapshot("ikea_grillplats_plug.json")
+    device_id = store.register_device(snapshot)
+    store.register_signals(device_id, snapshot)
+    store.register_commands(device_id, extract_commands(snapshot))
+    fake_client.store = store
+    tracker = CommissioningTracker()
+    app = build_app(
+        store,
+        no_invoke,
+        fake_runtime(store),
+        client=fake_client,
+        thread_dataset_source=fake_otbr,
+        commissioning_tracker=tracker,
+    )
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        await authenticate(store, client)
 
-    monkeypatch.setattr(fake_client, "commission_with_code", commission_then_announce)
+        original_commission = fake_client.commission_with_code
 
-    response = await client.post("/api/devices/commission", json={"code": "34970112332"})
-    assert response.status_code == 201
-    attempt = (await client.get("/api/devices/commission/status")).json()["attempt"]
-    assert attempt["phase"] == "done"
+        async def commission_then_announce(code: str):
+            snapshot = await original_commission(code)
+            fake_client.emit_node_added(100)
+            assert tracker.phase == "joined"
+            return snapshot
+
+        monkeypatch.setattr(fake_client, "commission_with_code", commission_then_announce)
+
+        response = await client.post("/api/devices/commission", json={"code": "34970112332"})
+        assert response.status_code == 201
+        attempt = (await client.get("/api/devices/commission/status")).json()["attempt"]
+        assert attempt["phase"] == "done"
+    store.close()
 
 
 async def test_a_short_discriminator_above_15_is_refused(api):
-    client, *_ = api
+    """422 alone doesn't tell a request-validation failure (never reaches
+    the Matter stack) apart from a commissioning failure the stack itself
+    rejected - both this route and `commission_with_code` answer 422.
+    `detail[0]["loc"]` is FastAPI's own shape for a request validation
+    error and only appears for that case (a commissioning failure's
+    `detail` is a plain string, see `_reason_detail`); `fake_client.commissioned`
+    staying empty proves the fake client's `commission_with_code` was never
+    called at all."""
+    client, _, _, fake_client = api
     response = await client.post(
         "/api/devices/commission",
         json={"code": "34970112332", "discriminator": {"value": 16, "kind": "short"}},
     )
     assert response.status_code == 422
+    detail = response.json()["detail"]
+    assert any("discriminator" in entry["loc"] for entry in detail)
+    assert fake_client.commissioned == []
 
 
 async def test_the_status_route_is_guarded(unauthenticated_api):

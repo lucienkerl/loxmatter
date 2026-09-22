@@ -77,7 +77,6 @@ remains to be done on the live service.
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import logging
 from collections.abc import Awaitable, Callable
 from typing import Protocol
@@ -563,11 +562,20 @@ def build_device_router(
             # the phases to a browser polling, and a failure whose `found` or
             # `connected` phase nobody observed would be classified `other`
             # instead of `connection_lost`.
+            #
+            # Non-raising at the source (review fix): `sample()` reads BlueZ
+            # over D-Bus, and a single flaky call there must not end this
+            # task - only `cancel()` below may. A `sample()` that raised
+            # would otherwise propagate out of this loop into the `finally`
+            # below, right into the exact re-raise this fix removes there.
             while True:
-                await progress.sample()
+                try:
+                    await progress.sample()
+                except Exception:
+                    logger.exception("Sampling the commissioning attempt failed")
                 await asyncio.sleep(progress.sample_interval)
 
-        sampler = asyncio.ensure_future(sample_while_waiting())
+        sampler = asyncio.create_task(sample_while_waiting())
         try:
             snapshot = await active_client.commission_with_code(request.code)
         except CommissioningError as exc:
@@ -586,10 +594,29 @@ def build_device_router(
         except MatterUnavailableError as exc:
             await progress.finish("matter_server_unreachable")
             raise HTTPException(status_code=502, detail=str(exc)) from exc
+        except Exception:
+            # Any other failure (a bug, a matter-server response none of the
+            # cases above anticipated) must still end the attempt - without
+            # this, `phase` stays "searching" forever and the status route
+            # never reports the failure, even though the request itself
+            # does. Unlike the two branches above, this one does not build
+            # an HTTPException: the exception here is unrecognised, so its
+            # HTTP handling (whatever that is today) must stay unchanged -
+            # only the tracker gets closed out.
+            await progress.finish("other")
+            raise
         finally:
             sampler.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await sampler
+            # `gather(..., return_exceptions=True)` rather than
+            # `suppress(CancelledError): await sampler` (review fix): a
+            # sampler that already died on its own (see the comment in
+            # `sample_while_waiting` above - now unreachable, but this stays
+            # defensive) must not re-raise here, or the route would answer
+            # 500 for a device that is actually commissioned. `suppress`
+            # would also swallow a cancellation aimed at the REQUEST itself
+            # (e.g. the client disconnecting), not only the one `cancel()`
+            # just issued for the sampler.
+            await asyncio.gather(sampler, return_exceptions=True)
             unsubscribe()
 
         # The same sequence as in the CLI export (cli.py): register_device
