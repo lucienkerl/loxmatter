@@ -643,6 +643,9 @@ api.errors.thread_dataset_unreachable:
 api.errors.thread_dataset_http_status:
   en: "{url} answered with HTTP {status} instead of a Thread dataset — that is what OTBR replies for as long as no active network exists."
   de: "{url} hat mit HTTP {status} geantwortet statt mit einem Thread-Datensatz – OTBR antwortet so, solange kein aktives Netz existiert."
+api.errors.otbr_http_status:
+  en: "The Thread border router at {url} answered with HTTP {status}."
+  de: "Der Thread-Border-Router unter {url} antwortete mit HTTP {status}."
 api.control.fail_not_writable:
   en: "The writability of attribute {signal_key!r} cannot be confirmed, so it is not on the allow-list of writable attributes. If it really is writable, it can be added there."
   de: "Die Beschreibbarkeit von Attribut {signal_key!r} laesst sich nicht bestaetigen, es steht deshalb nicht auf der Erlaubnisliste beschreibbarer Attribute. Ist es tatsaechlich beschreibbar, kann es dort ergaenzt werden."
@@ -2620,6 +2623,15 @@ web.radios.thread_status_running:
 web.radios.thread_status_not_running:
   en: "Thread is switched on, but the border router is not running. Thread devices are unreachable until it runs again."
   de: "Thread ist eingeschaltet, aber der Border Router läuft nicht. Thread-Geräte sind unerreichbar, bis er wieder läuft."
+web.radios.thread_network_formed:
+  en: "Thread network {name}, channel {channel}."
+  de: "Thread-Netz {name}, Kanal {channel}."
+web.radios.thread_network_forming:
+  en: "Creating the Thread network…"
+  de: "Das Thread-Netz wird angelegt…"
+web.radios.thread_network_missing:
+  en: "The border router has no Thread network, but {count} Thread devices were commissioned into one. The bridge does not create a new network, because it would cut those devices off. Restore the network from a fabric backup (see “Restoring a lost Thread network” in deploy/testhost/README.md)."
+  de: "Der Border Router hat kein Thread-Netz, aber {count} Thread-Geräte wurden in eines eingelernt. Die Bridge legt kein neues Netz an, weil es diese Geräte abhängen würde. Stellen Sie das Netz aus einem Fabric-Backup wieder her (siehe „Restoring a lost Thread network“ in deploy/testhost/README.md)."
 web.radios.sidecar_busy_update:
   en: "A software update is running. Radios cannot be changed until it has finished; this card comes back on its own."
   de: "Es läuft gerade ein Software-Update. Funkgeräte lassen sich erst ändern, wenn es fertig ist; diese Karte kommt von selbst zurück."

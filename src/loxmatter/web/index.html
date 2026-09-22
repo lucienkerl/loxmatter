@@ -2704,6 +2704,15 @@
                   x-text="t(radiosThreadStatus().key)"
                 ></p>
               </template>
+              <!-- The Thread network the bridge formed or found (design
+                   2026-09-21, section 5). `x-if` for the same reason as the
+                   state line above: the helper returns `null`. -->
+              <template x-if="radiosThreadNetworkLine()">
+                <p
+                  :class="radiosThreadNetworkLine().warn ? 'banner warn' : 'hint radios-row-hint'"
+                  x-text="t(radiosThreadNetworkLine().key, radiosThreadNetworkLine().params)"
+                ></p>
+              </template>
               <!-- Which stick Zigbee holds and how to free it. Directly under
                    the Thread select it is about, not under the Bluetooth one
                    beside it - which is why Thread and Bluetooth are two rows

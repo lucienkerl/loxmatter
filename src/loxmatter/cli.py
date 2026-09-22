@@ -58,6 +58,7 @@ from loxmatter.matter.discovery import (
     find_unreported_attributes,
 )
 from loxmatter.matter.models import NodeSnapshot, SignalKind
+from loxmatter.matter.thread_network import ThreadNetworkKeeper
 from loxmatter.model.locale_store import LocaleStore
 from loxmatter.model.store import Store
 from loxmatter.model.zigbee_settings_store import settings_for_path
@@ -807,6 +808,7 @@ async def _run(
     invoke = sources.send
 
     supervisor_tasks: list[asyncio.Task[None]] = []
+    thread_network_task: asyncio.Task[None] | None = None
     try:
         try:
             await client.connect()
@@ -847,6 +849,12 @@ async def _run(
         ]
         zigbee_runtime.supervise_current()
 
+        # Design 2026-09-21: forms the Thread network on a fresh installation.
+        # Every installation runs it; without a border router each pass is one
+        # refused connection to 127.0.0.1:8081 a minute, and nothing else.
+        thread_network = ThreadNetworkKeeper(client)
+        thread_network_task = asyncio.ensure_future(thread_network.run())
+
         # `log_handler` arrives already finished (see the docstring above,
         # "Log ring" section) - `install_log_buffer()` itself lives only in
         # `run()`, BEFORE this entire setup.
@@ -865,6 +873,7 @@ async def _run(
                 zigbee_runtime=zigbee_runtime,
                 radios_host_dev=radios_host_dev,
                 radios_sys_root=radios_sys_root,
+                thread_network=thread_network,
             ),
             host=host,
             port=listen,
@@ -883,6 +892,18 @@ async def _run(
             raise
         except Exception:
             logger.exception("The Zigbee runtime could not be stopped cleanly on shutdown")
+        if thread_network_task is not None:
+            thread_network_task.cancel()
+            try:
+                await thread_network_task
+            except asyncio.CancelledError:
+                # Same distinction as the supervisor loop below: our own
+                # cancel() is expected; a cancellation of `_run` itself must
+                # keep travelling.
+                if not thread_network_task.cancelled():
+                    raise
+            except Exception:
+                logger.exception("The Thread network keeper ended with an error")
         for supervisor_task in supervisor_tasks:
             supervisor_task.cancel()
             try:

@@ -172,6 +172,25 @@ if thread_is_up; then
   exit 0
 fi
 
+# Running but not configured (design 2026-09-21, section 3): the agent
+# answers, reports `disabled`, and holds no active dataset. That is a border
+# router nobody has given a network yet - the bridge forms one - and a
+# restart cannot change it. Measured on 21 September on a fresh Pi, where
+# restarting every 90 s cut the stick off mid-boot (`spinel_driver.cpp:87:
+# Failure`) and left stale pid files behind. Nothing is logged: the log holds
+# incidents, and this is not one. The dataset itself is never printed; only
+# the one error line is matched.
+not_configured() {
+  [ "$(bounded "$DOCKER_TIMEOUT" docker exec "$SERVICE" ot-ctl state 2>/dev/null | tr -d '\r' | head -n 1)" = "disabled" ] \
+    || return 1
+  bounded "$DOCKER_TIMEOUT" docker exec "$SERVICE" ot-ctl dataset active 2>/dev/null \
+    | tr -d '\r' | grep -qx 'Error 23: NotFound'
+}
+
+if not_configured; then
+  exit 0
+fi
+
 # A container that has only just started is still attaching: leave it be.
 #
 # Its age is the age of the container's main process, as the kernel counts

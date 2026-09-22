@@ -100,6 +100,9 @@ case "$1" in
     exit "$(cat "$FAKE/ps_status" 2>/dev/null || echo 0)" ;;
   exec)
     case "$*" in
+      *"ot-ctl dataset active"*)
+        mode="$(cat "$FAKE/thread_mode" 2>/dev/null || echo leader)"
+        if [ "$mode" = unconfigured ]; then echo 'Error 23: NotFound'; else printf 'Active Timestamp: 1\nDone\n'; fi ;;
       *"ot-ctl state"*)
         advance "$FAKE/probe_seconds"
         mode="$(cat "$FAKE/thread_mode" 2>/dev/null || echo leader)"
@@ -109,6 +112,8 @@ case "$1" in
           needs_fix) if [ -f "$FAKE/pid_cleared" ]; then echo leader; else echo detached; fi ;;
           second_up) if [ "$ups" -ge 2 ]; then echo leader; else echo detached; fi ;;
           hang) exec /bin/sleep 60 ;;
+          unconfigured) echo disabled ;;
+          disabled_with_dataset) echo disabled ;;
           *) echo detached ;;
         esac ;;
       *"rm -f /run/otbr-agent.pid"*) : > "$FAKE/pid_cleared" ;;
@@ -2527,3 +2532,29 @@ def test_upkeep_pulls_and_recreates_without_progress_output(radios):
     _, calls, _ = radios()
     ups = [line for line in calls.splitlines() if "--force-recreate otbr" in line]
     assert ups and all(" up --quiet-pull " in line for line in ups), calls
+
+
+def test_enabling_thread_on_a_border_router_without_a_network_succeeds(radios):
+    """Spec 2026-09-21, section 3.2: on a fresh installation the agent comes up
+    `disabled` with no dataset, and only the bridge forms the network. The
+    verification used to wait 150 s for `leader` and roll Thread back off.
+
+    Fault to prove it: remove the `disabled)` branch from `verify_thread`."""
+    (radios.fake / "otbr_state").unlink()
+    (radios.fake / "thread_mode").write_text("unconfigured")
+    _request(radios)
+    _, calls, state = radios()
+    assert (state["phase"], state["error"]) == ("done", None)
+    assert calls.count("rm -f /run/otbr-agent.pid") == 0
+    assert "ot-ctl dataset active" in calls
+
+
+def test_a_disabled_agent_with_a_dataset_still_fails_the_verification(radios):
+    """`disabled` alone is not enough; a dataset that never attaches is the
+    fault the verification exists for. The fake's `never` mode answers
+    `detached`, so this uses a mode that answers `disabled` with a dataset:
+    `unconfigured` for the state, but a present dataset."""
+    (radios.fake / "thread_mode").write_text("disabled_with_dataset")
+    _request(radios)
+    _, _, state = radios()
+    assert (state["phase"], state["error"]) == ("failed", "verify_thread_failed")

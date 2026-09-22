@@ -159,6 +159,7 @@ from loxmatter.commands.translate import UnsupportedValueError, to_device_calls
 from loxmatter.diagnostics.logbuffer import LogBufferHandler
 from loxmatter.loxone.sender import UdpSender
 from loxmatter.matter.client import BridgeMatterClient
+from loxmatter.matter.thread_network import ThreadNetworkKeeper
 from loxmatter.model.store import Store
 from loxmatter.sources import (
     DeviceCall,
@@ -414,6 +415,7 @@ def build_app(
     # source without a restart - a router that had captured the object
     # would go on answering for the stick the user just stopped using.
     zigbee_runtime: ZigbeeRuntime | None = None,
+    thread_network: ThreadNetworkKeeper | None = None,
 ) -> FastAPI:
     # Callers that predate the device source boundary pass only `client`;
     # for them the registry is the Matter client alone, which is exactly
@@ -539,7 +541,11 @@ def build_app(
     app.include_router(build_update_router(store, update_dir), dependencies=api_guard)
     app.include_router(
         build_radios_router(
-            update_dir, host_dev=radios_host_dev, sys_root=radios_sys_root, store=store
+            update_dir,
+            host_dev=radios_host_dev,
+            sys_root=radios_sys_root,
+            store=store,
+            thread_network=thread_network,
         ),
         dependencies=api_guard,
     )

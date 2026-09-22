@@ -35,7 +35,10 @@ the fixture always points at, but that starts out missing) lets a test
 give the fake a DIFFERENT answer after the watchdog has restarted the
 container, via `DOCKER_OTCTL_STATE_AFTER_RESTART` - every test that
 doesn't set it keeps answering with `DOCKER_OTCTL_STATE` throughout, exactly
-as before there was a restart to distinguish.
+as before there was a restart to distinguish. `DOCKER_OTCTL_DATASET=missing`
+makes `ot-ctl dataset active` answer `Error 23: NotFound`, the measured answer
+of a border router that has never formed a network; unset, it answers with a
+dataset.
 
 Container age comes from `docker top otbr -o pid,etimes`, not from `ps`:
 a real daemon refuses a bare `-o etimes` ("Couldn't find PID field in ps
@@ -107,11 +110,22 @@ case "$1" in
     if [ "${DOCKER_EXEC_STATUS:-0}" = "0" ]; then
       case "$3" in
         ot-ctl)
-          if [ -e "${DOCKER_RESTARTED_MARKER:-/nonexistent}" ]; then
-            printf '%s\\r\\nDone\\r\\n' "${DOCKER_OTCTL_STATE_AFTER_RESTART:-${DOCKER_OTCTL_STATE-leader}}"
-          else
-            printf '%s\\r\\nDone\\r\\n' "${DOCKER_OTCTL_STATE-leader}"
-          fi
+          case "$4" in
+            dataset)
+              if [ "${DOCKER_OTCTL_DATASET:-present}" = "missing" ]; then
+                printf 'Error 23: NotFound\\r\\n'
+              else
+                printf 'Active Timestamp: 1\\r\\nDone\\r\\n'
+              fi
+              ;;
+            *)
+              if [ -e "${DOCKER_RESTARTED_MARKER:-/nonexistent}" ]; then
+                printf '%s\\r\\nDone\\r\\n' "${DOCKER_OTCTL_STATE_AFTER_RESTART:-${DOCKER_OTCTL_STATE-leader}}"
+              else
+                printf '%s\\r\\nDone\\r\\n' "${DOCKER_OTCTL_STATE-leader}"
+              fi
+              ;;
+          esac
           ;;
       esac
     fi
@@ -463,3 +477,33 @@ def test_the_script_no_longer_reads_a_host_network_file():
 def test_the_container_ready_marker_exists_exactly_once():
     text = WATCHDOG.read_text(encoding="utf-8")
     assert text.count("# loxmatter-watchdog: container-ready") == 1
+
+
+def test_a_border_router_without_a_network_is_not_restarted(watchdog):
+    """Spec 2026-09-21, section 3.1. Measured on pi3-andi on 21 September:
+    `disabled` plus `Error 23: NotFound` is a healthy agent that nobody has
+    given a network yet, and restarting it every 90 s only produced the
+    symptoms of a broken stick. Silent, because the log holds incidents only.
+
+    Fault to prove it: delete the `not_configured` check from the script."""
+    proc, calls = watchdog(
+        thread_up=False, DOCKER_OTCTL_STATE="disabled", DOCKER_OTCTL_DATASET="missing"
+    )
+    assert proc.returncode == 0
+    assert not any(call.startswith("restart") for call in calls)
+    assert "exec otbr ot-ctl dataset active" in calls
+    assert proc.stdout == ""
+
+
+def test_a_disabled_agent_with_a_dataset_is_still_restarted(watchdog):
+    """A dataset that exists but did not attach is a fault; the auto-attach on
+    restart is what fixes it. Fault to prove it: make `not_configured` look
+    at the state alone."""
+    _proc, calls = watchdog(thread_up=False, DOCKER_OTCTL_STATE="disabled")
+    assert any(call.startswith("restart") for call in calls)
+
+
+def test_an_agent_that_does_not_answer_is_still_restarted(watchdog):
+    """`ot-ctl` failing outright is not "not configured"."""
+    _proc, calls = watchdog(thread_up=False, DOCKER_EXEC_STATUS="1", DOCKER_OTCTL_DATASET="missing")
+    assert any(call.startswith("restart") for call in calls)

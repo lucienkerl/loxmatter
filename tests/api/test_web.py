@@ -15289,6 +15289,89 @@ def test_radios_thread_status_follows_the_current_report_and_hides_during_a_job(
     assert values["duringJob"] is None
 
 
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_radios_thread_network_line_follows_the_keeper_state():
+    """Design 2026-09-21, section 5. Hidden while Thread is off, during a job,
+    and for `unknown`; `missing` is the one warning.
+
+    Fault to prove it: return the `formed` line for `missing`."""
+    values = _radios_values(
+        """
+        const out = {};
+        state.radios.current = { thread_enabled: true, otbr_running: true };
+        state.radios.thread_network = { state: 'unknown', name: null, channel: null, thread_devices: 0 };
+        out.unknown = state.radiosThreadNetworkLine();
+
+        state.radios.thread_network = { state: 'formed', name: 'OpenThread-07f0', channel: 24, thread_devices: 0 };
+        out.formed = state.radiosThreadNetworkLine();
+
+        state.radios.thread_network = { state: 'forming', name: null, channel: null, thread_devices: 0 };
+        out.forming = state.radiosThreadNetworkLine();
+
+        state.radios.thread_network = { state: 'missing', name: null, channel: null, thread_devices: 2 };
+        out.missing = state.radiosThreadNetworkLine();
+
+        state.radios.current = { thread_enabled: false, otbr_running: false };
+        out.threadOff = state.radiosThreadNetworkLine();
+
+        state.radios.current = { thread_enabled: true, otbr_running: true };
+        delete state.radios.thread_network;
+        out.olderBridge = state.radiosThreadNetworkLine();
+
+        state.radios.thread_network = { state: 'formed', name: 'x', channel: 11, thread_devices: 0 };
+        state.radios.job = { id: 'j', phase: 'apply_thread',
+                              steps: ['validate','backup','write','apply_thread','verify_thread'],
+                              error: null, rolled_back: false, healthy: null };
+        out.duringJob = state.radiosThreadNetworkLine();
+
+        console.log(JSON.stringify(out));
+        """
+    )
+    assert values["unknown"] is None
+    assert values["formed"] == {
+        "key": "web.radios.thread_network_formed",
+        "params": {"name": "OpenThread-07f0", "channel": 24},
+        "warn": False,
+    }
+    assert values["forming"] == {
+        "key": "web.radios.thread_network_forming",
+        "params": {},
+        "warn": False,
+    }
+    assert values["missing"] == {
+        "key": "web.radios.thread_network_missing",
+        "params": {"count": 2},
+        "warn": True,
+    }
+    assert values["threadOff"] is None
+    assert values["olderBridge"] is None
+    assert values["duringJob"] is None
+
+
+def test_the_three_thread_network_strings_exist_in_both_languages():
+    """Named explicitly, like the thread-off-after-rollback keys above, so a
+    typo'd key fails here. Fault to prove it: delete one `de:` line."""
+    from loxmatter import i18n
+
+    keys = i18n.strings_with_prefix("web.radios.")
+    for key in (
+        "web.radios.thread_network_formed",
+        "web.radios.thread_network_forming",
+        "web.radios.thread_network_missing",
+    ):
+        assert key in keys, key
+        entry = i18n._STRINGS[key]
+        assert entry.get("en") and entry.get("de"), key
+        assert entry["en"] != entry["de"]
+
+
+async def test_the_card_renders_the_thread_network_line(api):
+    client, _, _ = api
+    markup = _without_comments((await client.get("/")).text)
+    assert 'x-if="radiosThreadNetworkLine()"' in markup
+    assert "t(radiosThreadNetworkLine().key, radiosThreadNetworkLine().params)" in markup
+
+
 def test_the_five_thread_off_after_rollback_strings_exist_in_both_languages():
     """The five keys this feature adds, named explicitly rather than only
     swept up by the generic `web.radios.` prefix scan above them

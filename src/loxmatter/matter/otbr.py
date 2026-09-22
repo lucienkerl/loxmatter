@@ -24,6 +24,17 @@ disk - the service's data directory (`vendor_info`/`last_node_id`/`nodes`)
 holds no dataset. Every restart of matter-server therefore erases it,
 without anything reporting so.
 
+**Correction (21 September 2026):** that was true of python-matter-server
+8.1.2, the version this history paragraph describes; this bridge now runs
+its successor, matterjs-server, which persists `threadDataset` under
+`config/` in its own data directory - measured on `pi3-andi`. History is
+not rewritten here (the incident below happened exactly as described,
+against the old server), but `matter/thread_network.py`'s
+`ThreadNetworkKeeper` hands the dataset over on every bridge start
+regardless of what matter-server reports it already has, because a
+persisted entry from an older installation is now the failure mode to
+guard against, not a memory that a restart conveniently erased.
+
 This became visible on 2026-09-04: matter-server had been restarted the
 previous day at 12:55, and since then every commissioning of a Thread
 device had failed. The service's log stated the cause in plain text -
@@ -58,9 +69,10 @@ loxmatter container (status 200, 222 hex characters), not assumed.
 
 from __future__ import annotations
 
+import json
 import os
 from collections.abc import Callable
-from typing import Any, Final
+from typing import Any, Final, Literal
 
 from loxmatter import i18n
 
@@ -72,8 +84,13 @@ DEFAULT_OTBR_URL: Final = "http://127.0.0.1:8081"
 
 _OTBR_URL_ENV: Final = "LOXMATTER_OTBR_URL"
 
-# The path is part of OTBR's REST API, not chosen by us.
+# The paths are part of OTBR's REST API, not chosen by us.
 _ACTIVE_DATASET_PATH: Final = "/node/dataset/active"
+_NODE_STATE_PATH: Final = "/node/state"
+_JSON: Final = {"Accept": "application/json", "Content-Type": "application/json"}
+_NETWORK_NAME_TLV_TYPE: Final = 0x03
+
+NetworkCreation = Literal["created", "exists", "busy"]
 
 # Without this header OTBR answers with a JSON structure (channel, PAN ID,
 # key as separate fields); `set_thread_operational_dataset` only accepts
@@ -237,6 +254,57 @@ async def current_thread_channel(
     return thread_channel_from_dataset(dataset)
 
 
+async def _request(
+    method: str,
+    url: str,
+    headers: dict[str, str],
+    data: str | None,
+    session_factory: Callable[[], Any] | None,
+) -> tuple[int, str]:
+    """One HTTP exchange with the border router, as `(status, body)`.
+
+    An unreachable border router raises `ThreadDatasetUnavailableError` with
+    the address and the exception, never with a body - the body of a dataset
+    answer is a credential (see `fetch_active_dataset`)."""
+    session = (session_factory or _default_session_factory)()
+    try:
+        try:
+            if method == "GET":
+                call = session.get(url, headers=headers)
+            else:
+                call = session.put(url, data=data or "", headers=headers)
+            async with call as response:
+                return response.status, await response.text()
+        except Exception as exc:
+            # `Exception` and not just `aiohttp.ClientError`: this module
+            # deliberately does not import aiohttp itself (see
+            # `_default_session_factory`).
+            raise ThreadDatasetUnavailableError(
+                i18n.t("api.errors.thread_dataset_unreachable", url=url, exc=exc)
+            ) from exc
+    finally:
+        await session.close()
+
+
+def _url(base_url: str | None, path: str) -> str:
+    return (base_url or _base_url()).rstrip("/") + path
+
+
+def _unexpected(
+    url: str, status: int, *, key: str = "api.errors.thread_dataset_http_status"
+) -> ThreadDatasetUnavailableError:
+    """An HTTP status from the border router that the caller did not expect.
+
+    Defaults to the dataset-reading message (`fetch_active_dataset`,
+    `read_active_dataset`): "instead of a Thread dataset" is right there,
+    since a non-200/204 status there really is what OTBR replies for as
+    long as no active network exists. `border_router_role`,
+    `create_network_if_absent` and `enable_thread` pass
+    `api.errors.otbr_http_status` instead - a 409 on `enable_thread` means
+    the agent is busy, nothing about a missing dataset."""
+    return ThreadDatasetUnavailableError(i18n.t(key, url=url, status=status))
+
+
 async def fetch_active_dataset(
     base_url: str | None = None,
     *,
@@ -249,27 +317,111 @@ async def fetch_active_dataset(
     `deploy/testhost/README.md`); this module's exceptions therefore name
     only address, status and length.
     """
-    url = (base_url or _base_url()).rstrip("/") + _ACTIVE_DATASET_PATH
-    session = (session_factory or _default_session_factory)()
-    try:
-        try:
-            async with session.get(url, headers=dict(_PLAIN_TEXT)) as response:
-                status = response.status
-                body = await response.text()
-        except Exception as exc:
-            # `Exception` and not just `aiohttp.ClientError`: this module
-            # deliberately does not import aiohttp itself (see
-            # `_default_session_factory`), and an unreachable border
-            # router is, for the caller, the same case as one that
-            # responds without a network - a reason, not a crash.
-            raise ThreadDatasetUnavailableError(
-                i18n.t("api.errors.thread_dataset_unreachable", url=url, exc=exc)
-            ) from exc
-    finally:
-        await session.close()
-
+    url = _url(base_url, _ACTIVE_DATASET_PATH)
+    status, body = await _request("GET", url, dict(_PLAIN_TEXT), None, session_factory)
     if status != 200:
-        raise ThreadDatasetUnavailableError(
-            i18n.t("api.errors.thread_dataset_http_status", url=url, status=status)
-        )
+        raise _unexpected(url, status)
     return validated_dataset(body, url)
+
+
+async def read_active_dataset(
+    base_url: str | None = None,
+    *,
+    session_factory: Callable[[], Any] | None = None,
+) -> str | None:
+    """The active dataset, or `None` when the border router holds none.
+
+    Unlike `fetch_active_dataset`, "no network" is an answer here, not an
+    error: ot-br-posix replies 204 No Content to `GET /node/dataset/active`
+    while no active dataset exists (design 2026-09-21, section 3)."""
+    url = _url(base_url, _ACTIVE_DATASET_PATH)
+    status, body = await _request("GET", url, dict(_PLAIN_TEXT), None, session_factory)
+    if status == 204:
+        return None
+    if status != 200:
+        raise _unexpected(url, status)
+    return validated_dataset(body, url)
+
+
+async def border_router_role(
+    base_url: str | None = None,
+    *,
+    session_factory: Callable[[], Any] | None = None,
+) -> str:
+    """The Thread role, e.g. `"disabled"`, `"detached"`, `"leader"`."""
+    url = _url(base_url, _NODE_STATE_PATH)
+    status, body = await _request("GET", url, {"Accept": "application/json"}, None, session_factory)
+    if status != 200:
+        raise _unexpected(url, status, key="api.errors.otbr_http_status")
+    try:
+        role = json.loads(body)
+    except ValueError:
+        raise _unexpected(url, status, key="api.errors.otbr_http_status") from None
+    if not isinstance(role, str):
+        raise _unexpected(url, status, key="api.errors.otbr_http_status")
+    return role
+
+
+async def create_network_if_absent(
+    base_url: str | None = None,
+    *,
+    session_factory: Callable[[], Any] | None = None,
+) -> NetworkCreation:
+    """Form a new Thread network with random values - only if none exists.
+
+    `If-None-Match: *` makes ot-br-posix check "no active dataset" and write
+    the new one in the same main-loop task, so a network that appeared a
+    moment ago is never replaced. The empty JSON object leaves every field to
+    `otDatasetCreateNewNetwork`. 412: a dataset exists now. 409: the agent is
+    no longer `disabled`."""
+    url = _url(base_url, _ACTIVE_DATASET_PATH)
+    headers = {**_JSON, "If-None-Match": "*"}
+    status, _ = await _request("PUT", url, headers, "{}", session_factory)
+    if status == 201:
+        return "created"
+    if status == 412:
+        return "exists"
+    if status == 409:
+        return "busy"
+    raise _unexpected(url, status, key="api.errors.otbr_http_status")
+
+
+async def enable_thread(
+    base_url: str | None = None,
+    *,
+    session_factory: Callable[[], Any] | None = None,
+) -> None:
+    """`ifconfig up` plus `thread start`, through the REST API."""
+    url = _url(base_url, _NODE_STATE_PATH)
+    status, _ = await _request("PUT", url, dict(_JSON), '"enable"', session_factory)
+    if status != 200:
+        raise _unexpected(url, status, key="api.errors.otbr_http_status")
+
+
+def thread_network_name_from_dataset(dataset: str) -> str | None:
+    """The Network Name TLV (type 3, UTF-8, at most 16 bytes), or `None`.
+
+    Same tolerance as `thread_channel_from_dataset`: anything it cannot make
+    sense of reads as "no name", never as an error. The name is not a secret;
+    the rest of the dataset is, and is never returned or logged."""
+    try:
+        raw = bytes.fromhex(dataset)
+    except ValueError:
+        return None
+    index = 0
+    while index + 2 <= len(raw):
+        tlv_type = raw[index]
+        length = raw[index + 1]
+        value_start = index + 2
+        value_end = value_start + length
+        if value_end > len(raw):
+            return None
+        if tlv_type == _NETWORK_NAME_TLV_TYPE:
+            if not 0 < length <= 16:
+                return None
+            try:
+                return raw[value_start:value_end].decode("utf-8")
+            except UnicodeDecodeError:
+                return None
+        index = value_end
+    return None

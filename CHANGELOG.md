@@ -27,6 +27,17 @@ people who don't know the code.
   log out and back in, your shell is not in the `docker` group; the commands
   the installer suggests for looking at the logs now say `sudo docker` in
   that case, instead of failing with "permission denied".
+- **A fresh installation forms its own Thread network.** Before, nothing
+  created one, and the border router watchdog restarted a healthy but
+  unconfigured border router every 90 seconds.
+- **Switching Thread on in the radios card no longer rolls back** on a border
+  router that has no network yet.
+
+### Added
+
+- **The radios card shows the Thread network's name and channel.** After a
+  start it warns when Thread devices exist but the border router has no
+  network, instead of quietly creating a new one that would cut them off.
 
 ## [0.4.2] — 2026-09-21
 

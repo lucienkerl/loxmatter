@@ -35,6 +35,7 @@ from pydantic import BaseModel
 
 from loxmatter import i18n
 from loxmatter import update as update_files
+from loxmatter.matter.thread_network import ThreadNetworkKeeper, ThreadNetworkStatus
 from loxmatter.model.store import Store
 from loxmatter.radios.inventory import (
     is_same_device,
@@ -91,6 +92,7 @@ def build_radios_router(
     sys_root: Path,
     store: Store | None = None,
     clock: Callable[[], datetime] = _utc_now,
+    thread_network: ThreadNetworkKeeper | None = None,
 ) -> APIRouter:
     router = APIRouter(prefix="/api")
 
@@ -199,6 +201,12 @@ def build_radios_router(
             "bluetooth": [asdict(adapter) for adapter in bluetooth],
             "current": current,
             "job": job,
+            # Design 2026-09-21, section 5: the bridge's own view of the Thread
+            # network, next to the sidecar's view of the container. Read
+            # fresh on every call - the keeper updates it once a minute.
+            "thread_network": (
+                thread_network.status if thread_network is not None else ThreadNetworkStatus()
+            ).as_json(),
         }
 
     @router.post("/radios", status_code=202)

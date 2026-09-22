@@ -31,6 +31,7 @@ import pytest
 from conftest import authenticate
 
 from loxmatter.loxone.server import build_app
+from loxmatter.matter.thread_network import ThreadNetworkStatus
 from loxmatter.model.store import Store
 
 SONOFF = "usb-SONOFF_SONOFF_Dongle_Plus_MG24_e26a7d9118f9ef118f7767135c2a50c9-if00-port0"
@@ -111,6 +112,63 @@ async def api(tmp_path, no_invoke, fake_runtime) -> AsyncIterator[tuple[httpx.As
         await authenticate(store, client)
         yield client, update_dir
     store.close()
+
+
+class _StatusOnly:
+    """Stands in for `ThreadNetworkKeeper` - the router reads `status` only."""
+
+    def __init__(self, status: ThreadNetworkStatus) -> None:
+        self.status = status
+
+
+@pytest.fixture
+async def api_with_network(tmp_path, no_invoke, fake_runtime):
+    update_dir = tmp_path / "update"
+    update_dir.mkdir()
+    host_dev, sys_root = _host(tmp_path)
+    store = Store(tmp_path / "t.sqlite")
+    keeper = _StatusOnly(ThreadNetworkStatus())
+    app = build_app(
+        store,
+        no_invoke,
+        fake_runtime(store),
+        update_dir=update_dir,
+        radios_host_dev=host_dev,
+        radios_sys_root=sys_root,
+        thread_network=keeper,  # type: ignore[arg-type]
+    )
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        await authenticate(store, client)
+        yield client, keeper
+    store.close()
+
+
+async def test_without_a_keeper_the_thread_network_reads_unknown(api):
+    client, _ = api
+    body = (await client.get("/api/radios")).json()
+    assert body["thread_network"] == {
+        "state": "unknown",
+        "name": None,
+        "channel": None,
+        "thread_devices": 0,
+    }
+
+
+@pytest.mark.parametrize(
+    "status",
+    [
+        ThreadNetworkStatus(state="formed", name="OpenThread-07f0", channel=24),
+        ThreadNetworkStatus(state="forming"),
+        ThreadNetworkStatus(state="missing", thread_devices=2),
+    ],
+)
+async def test_the_keepers_status_is_reported_as_it_is_now(api_with_network, status):
+    client, keeper = api_with_network
+    keeper.status = status
+    body = (await client.get("/api/radios")).json()
+    assert body["thread_network"] == status.as_json()
 
 
 async def test_without_a_sidecar_the_card_is_read_only_with_detection(api):

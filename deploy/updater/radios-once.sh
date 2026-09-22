@@ -490,6 +490,17 @@ verify_thread() {
     refresh_heartbeat
     case "$(timeout "$PROBE_TIMEOUT" docker exec otbr ot-ctl state 2>/dev/null | tr -d '\r' | head -n 1)" in
       leader|router|child) return 0 ;;
+      disabled)
+        # Running but not configured (design 2026-09-21, section 3): a
+        # healthy agent that holds no network yet. The bridge forms it; a
+        # restart or a rollback cannot. Only the error line is matched -
+        # the dataset is a credential and is never printed here.
+        if timeout "$PROBE_TIMEOUT" docker exec otbr ot-ctl dataset active 2>/dev/null \
+          | tr -d '\r' | grep -qx 'Error 23: NotFound'; then
+          log "otbr is running with no Thread network yet - the bridge forms it"
+          return 0
+        fi
+        ;;
     esac
     if [ "$fixed" -eq 0 ] && [ "$elapsed" -ge "$THREAD_FIX_AFTER" ]; then
       fixed=1

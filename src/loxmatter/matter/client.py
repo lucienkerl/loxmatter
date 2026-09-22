@@ -560,6 +560,15 @@ class BridgeMatterClient:
         every restart of the service deletes them again, and this bridge
         must hand them over again afterward.
 
+        **Correction (21 September 2026):** that was true of
+        python-matter-server 8.1.2, which this account describes and which
+        this bridge no longer runs. matterjs-server, its successor, persists
+        `threadDataset` under `config/` in its own data directory - measured
+        on `pi3-andi`. `ThreadNetworkKeeper` (`matter/thread_network.py`)
+        therefore hands the dataset over once on every bridge start,
+        whatever `thread_dataset_set` reports: persisted credentials can be
+        an older installation's, and a stale entry needs a fresh hand-over.
+
         **Update (8 September 2026): the payload changes here.**
         This is the only call in this module where that is true - and
         the first version of the migration design had missed exactly that
