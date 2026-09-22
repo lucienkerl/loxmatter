@@ -144,11 +144,18 @@ async def test_phases_never_move_backwards() -> None:
 
 
 async def test_an_ip_attempt_goes_from_searching_to_joined() -> None:
+    """An IP-commissioned device (no discriminator) skips BLE phases and goes
+    straight from searching to joined when node_added fires. Verify that
+    sample() discovers it: the nearby list contains the advertised device with
+    matches=False because the attempt has no discriminator to match against."""
     tracker, bluez, _, _ = _tracker()
     tracker.start(None)
     bluez.snapshots = [BluezSnapshot([_advert(1059)], SCANNING)]
     await tracker.sample()
     assert tracker.phase == "searching"
+    nearby = tracker.status()["attempt"]["nearby"]  # type: ignore[index]
+    assert len(nearby) == 1
+    assert nearby[0]["matches"] is False
     tracker.node_added(4)
     assert tracker.phase == "joined"
 
