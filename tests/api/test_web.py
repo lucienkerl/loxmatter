@@ -3101,32 +3101,99 @@ async def test_the_commissioning_message_banner_survived_the_redesign(api):
     assert form_start < flow_start < banner_start
 
 
-async def test_the_commissioning_flow_shows_the_two_phases_it_actually_knows(api):
-    """Design "the process becomes visible": during a run, a progress
-    display replaces the form. Commissioning takes twenty to sixty
-    seconds and used to be a button turning grey - indistinguishable from
-    a hung page.
+def _commission_values(setup: str) -> dict:
+    return _app_state(setup)
 
-    TWO steps, not three: this UI cannot honestly tell apart more
-    sections than that. It knows the POST to /api/devices/commission and
-    the subsequent reload of signals and commands - nobody reports it an
-    intermediate state from the Matter stack ("device found"). A third
-    point would look nicer and would be a guess; this test keeps the
-    display pinned to what is actually known."""
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_the_phase_list_follows_the_status_route():
+    """Design 2026-09-22, section 5.3. Fault to prove it: mark the current
+    phase `done` instead of `running`."""
+    values = _commission_values(
+        """
+        state.commissionStep = 0;
+        state.commissionStatus = { attempt: { phase: "connected", reason: null, nearby: [], bluetooth: { available: false } } };
+        const out = Object.fromEntries(["searching","found","connected","joined","done"].map((p) => [p, state.commissionPhaseClass(p)]));
+        state.commissionFailed = true;
+        state.commissionStatus = { attempt: { phase: "failed", reason: "not_found", nearby: [], bluetooth: { available: false } } };
+        out.failedSearching = state.commissionPhaseClass("searching");
+        console.log(JSON.stringify(out));
+        """
+    )
+    assert values["searching"] == "done"
+    assert values["found"] == "done"
+    assert values["connected"] == "running"
+    assert values["joined"] == ""
+    assert values["done"] == ""
+    assert values["failedSearching"] == "failed"
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_the_nearby_list_marks_the_device_the_code_names():
+    values = _commission_values(
+        """
+        state.commissionStatus = { attempt: { phase: "searching", nearby: [
+          { address: "FB", name: "LED Light0x07C2", rssi: -60, discriminator: 1059, vendor_id: 4476, product_id: 36865, connected: false, matches: false },
+          { address: "E0", name: null, rssi: -70, discriminator: 261, vendor_id: 4476, product_id: 36871, connected: false, matches: true } ],
+          bluetooth: { available: true } } };
+        console.log(JSON.stringify(state.commissionNearby()));
+        """
+    )
+    assert [entry["address"] for entry in values] == ["E0", "FB"]
+    assert values[0]["matches"] is True
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_bluetooth_warnings_follow_the_attempts_findings():
+    values = _commission_values(
+        """
+        const bt = (b) => { state.commissionStatus = { attempt: { phase: "searching", nearby: [], bluetooth: b } }; return state.commissionBluetoothWarnings(); };
+        console.log(JSON.stringify({
+          none: bt({ available: true, during_attempt: { transport: 0, stuck: 0, power: 0 }, stuck_now: false }),
+          transport: bt({ available: true, during_attempt: { transport: 3, stuck: 0, power: 0 }, stuck_now: false }),
+          stuckNow: bt({ available: true, during_attempt: { transport: 0, stuck: 0, power: 0 }, stuck_now: true }),
+          power: bt({ available: true, during_attempt: { transport: 0, stuck: 0, power: 1 }, stuck_now: false }),
+          unavailable: bt({ available: false }),
+        }));
+        """
+    )
+    assert values["none"] == []
+    assert values["transport"] == ["web.devices.commission_bt_transport"]
+    assert values["stuckNow"] == ["web.devices.commission_bt_stuck"]
+    assert values["power"] == ["web.devices.commission_bt_power"]
+    assert values["unavailable"] == []
+
+
+async def test_the_commissioning_flow_shows_five_phases_nearby_devices_and_warnings(api):
+    """Design 2026-09-22, section 5.3: the old two-step list only ever knew
+    the POST to /api/devices/commission and the signals/commands reload
+    that followed it - nothing the Matter stack itself reported. The
+    bridge now derives five phases from BlueZ and NODE_ADDED and polls
+    them from /api/devices/commission/status (Tasks 5, 8), so the dialog
+    can show where an attempt actually is, which devices are advertising
+    nearby, and Bluetooth faults it can name - instead of a button turning
+    grey for twenty to sixty seconds."""
     client, _, _ = api
     markup = _without_comments((await client.get("/")).text)
 
     flow_start = markup.index('<div x-show="commissionStep !== null"')
     flow = markup[flow_start : markup.index('x-show="commissionMessage"', flow_start)]
 
-    assert flow.count('<li class="commission-step"') == 2
-    assert ':class="commissionStepClass(0)"' in flow
-    assert ':class="commissionStepClass(1)"' in flow
-    assert ':class="commissionStepClass(2)"' not in flow
-    assert "x-text=\"t('web.devices.commission_step_joining')\"" in flow
-    assert "x-text=\"t('web.devices.commission_step_loading')\"" in flow
+    assert flow.count('<li class="commission-step"') == 1
+    assert ':class="commissionPhaseClass(phase)"' in flow
+    assert "x-for=\"phase in ['searching', 'found', 'connected', 'joined', 'done']\"" in flow
+    # A single dynamic `t(...)` call, not five separate ones: the `<li>`
+    # sits inside the `x-for` above, so it is one element serving all five
+    # phases. The concatenated prefix is what actually reaches `t()`; the
+    # five keys it builds are checked against the real translation table
+    # below, since the markup itself never spells them out whole.
+    assert "x-text=\"t('web.devices.commission_phase_' + phase)\"" in flow
+    for phase in ["searching", "found", "connected", "joined", "done"]:
+        assert _web_strings()[f"web.devices.commission_phase_{phase}"]
+    assert 'x-for="entry in commissionNearby()"' in flow
+    assert 'x-for="key in commissionBluetoothWarnings()"' in flow
 
-    # The code of the running attempt sits above the steps - after a
+    # The code of the running attempt sits above the phases - after a
     # success the input field is cleared, otherwise the display would sit
     # there without the code it was about.
     assert 'x-text="commissionRunCode"' in flow
@@ -3143,12 +3210,15 @@ async def test_the_commissioning_flow_shows_the_two_phases_it_actually_knows(api
 async def test_commission_device_drives_the_flow_and_stops_where_it_failed(api):
     """The step display hangs off `commissionDevice` itself, not off a
     timer: step 0 from the POST, step 1 from the reload, step 2 at the
-    end.
+    end. `commissionStep` still only gates whether the progress block is
+    visible at all (design 2026-09-22, section 5.3) - the phases it shows
+    now come from polling `/api/devices/commission/status`, started
+    before the POST and stopped in `finally`.
 
     On failure, the counter is explicitly NOT reset - it keeps pointing
-    at the step it got stuck on, and `commissionStepClass` colours
-    exactly that one red. A reset here would take away the display's only
-    piece of information: how far it got."""
+    at the step it got stuck on, and `commissionPhaseClass` colours
+    exactly the reached phase red. A reset here would take away the
+    display's only piece of information: how far it got."""
     client, _, _ = api
     script = (await client.get("/static/app.js")).text
     commission_start = script.index("async commissionDevice() {")
@@ -3158,6 +3228,11 @@ async def test_commission_device_drives_the_flow_and_stops_where_it_failed(api):
     assert "this.commissionStep = 0;" in body
     assert "this.commissionFailed = false;" in body
     assert "this.commissionRunCode = formatPairingCode(this.commissionCode.trim());" in body
+    # Polling starts before the POST and stops once the attempt settles,
+    # win or lose - a poll firing after `commissionDevice` has already
+    # returned would race a later attempt's own polling.
+    assert "this.startCommissionPolling();" in body
+    assert "this.stopCommissionPolling();" in body
     # Step 1 comes BEFORE the reload, step 2 after it.
     load = body.index(
         "await Promise.all([this.loadControls(device.id), this.loadSignals(device.id)]);"
@@ -3167,30 +3242,39 @@ async def test_commission_device_drives_the_flow_and_stops_where_it_failed(api):
     # The error branch marks it, but does not reset it.
     assert "this.commissionFailed = true;" in body
     assert "this.commissionStep = null;" not in body
+    # A restarted bridge gets its own message, distinct from a plain
+    # failure (design 2026-09-22, section 5.3): commissioning the device
+    # itself may have gone through even though the request never got an
+    # answer.
+    assert "web.devices.commission_bridge_restarted" in body
 
 
-async def test_the_step_class_is_derived_and_reset_returns_to_the_form(api):
-    """`commissionStepClass` is a pure expression on
-    `commissionStep`/`commissionFailed`, no third state variable with
-    class names in it: two fields telling the same story drift apart
-    sooner or later - and the display is the place where nobody would
-    notice, because it does show something.
+async def test_the_phase_class_is_derived_and_reset_returns_to_the_form(api):
+    """`commissionPhaseClass` replaced `commissionStepClass` (design
+    2026-09-22, section 5.3): the phase it colours now comes from
+    `commissionStatus`, the last answer of `GET
+    /api/devices/commission/status`, not from a step counter the frontend
+    incremented itself - see
+    `test_the_phase_list_follows_the_status_route` for the behaviour.
 
-    `resetCommission` clears both plus the message (it belongs to the run
-    being left) and resets focus back into the code field - only on the
-    next tick, because `x-show` still holds the form at `display: none`
-    until then and a `focus()` on it would silently do nothing."""
+    `resetCommission` still clears `commissionStep`/`commissionFailed`
+    plus the message (it belongs to the run being left) and resets focus
+    back into the code field - only on the next tick, because `x-show`
+    still holds the form at `display: none` until then and a `focus()` on
+    it would silently do nothing. None of that changed with this task."""
     client, _, _ = api
     script = (await client.get("/static/app.js")).text
 
-    step_class = script[
-        script.index("commissionStepClass(index) {") : script.index(
-            "\n    },", script.index("commissionStepClass(index) {")
+    assert "commissionStepClass(index) {" not in script
+    phase_class = script[
+        script.index("commissionPhaseClass(phase) {") : script.index(
+            "\n    },", script.index("commissionPhaseClass(phase) {")
         )
     ]
-    assert 'return "failed";' in step_class
-    assert 'return "done";' in step_class
-    assert 'return index === this.commissionStep ? "running" : "";' in step_class
+    assert "this.commissionStatus?.attempt" in phase_class
+    assert 'return "done";' in phase_class
+    assert '"failed"' in phase_class
+    assert '"running"' in phase_class
 
     reset = script[
         script.index("resetCommission() {") : script.index(

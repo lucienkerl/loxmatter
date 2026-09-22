@@ -1063,6 +1063,13 @@ button:disabled {
   padding: 0;
 }
 
+/* The nearby device the entered code names (design 2026-09-22, section
+ * 5.3) - weight is enough to pick it out of the list without a second
+ * colour next to the phase display's own. */
+.commission-nearby li.match {
+  font-weight: 600;
+}
+
 .commission-step {
   position: relative;
   padding: 0 0 0.9rem 1.9rem;

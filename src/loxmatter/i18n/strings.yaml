@@ -1178,24 +1178,58 @@ web.devices.code_help_summary:
 web.devices.thread_summary:
   en: "Different Thread network"
   de: "Anderes Thread-Netz"
-# The two steps of the progress display. There are exactly two because the
-# interface can distinguish exactly two phases of commissioning: the POST
-# to /api/devices/commission and the subsequent loading of signals and
-# commands. A third item ("device found") could be displayed nicely, but
-# would be a guess - the Matter stack reports no intermediate state to
-# this bridge as long as there is no dedicated channel for it.
-web.devices.commission_step_joining:
-  en: "Commissioning the device into the fabric"
-  de: "Gerät wird ins Fabric aufgenommen"
-web.devices.commission_step_loading:
-  en: "Loading signals and commands"
-  de: "Signale und Befehle werden geladen"
 web.devices.commission_again:
   en: "Commission another device"
   de: "Noch ein Gerät einlernen"
 web.devices.commission_retry:
   en: "Try again"
   de: "Erneut versuchen"
+# The five phases of the progress display (design 2026-09-22, section 5.3).
+# The bridge derives them itself from BlueZ and NODE_ADDED and answers them
+# from GET /api/devices/commission/status - unlike the two-step list this
+# replaced, none of these is a guess about what the Matter stack is doing.
+web.devices.commission_looking_for:
+  en: "Looking for the device with discriminator {discriminator}…"
+  de: "Suche nach dem Gerät mit der Kennung {discriminator}…"
+web.devices.commission_phase_searching:
+  en: "Searching for the device"
+  de: "Gerät wird gesucht"
+web.devices.commission_phase_found:
+  en: "Device found"
+  de: "Gerät gefunden"
+web.devices.commission_phase_connected:
+  en: "Connected — setting the device up"
+  de: "Verbunden – Gerät wird eingerichtet"
+web.devices.commission_phase_joined:
+  en: "Device joined — loading signals and commands"
+  de: "Gerät beigetreten – Signale und Befehle werden geladen"
+web.devices.commission_phase_done:
+  en: "Done"
+  de: "Fertig"
+web.devices.commission_hint_searching:
+  en: "Searching over Bluetooth usually takes seconds, at most 3 minutes."
+  de: "Die Suche über Bluetooth dauert meist Sekunden, höchstens 3 Minuten."
+web.devices.commission_hint_setup:
+  en: "Setting a device up over Bluetooth usually takes 1–2 minutes."
+  de: "Die Einrichtung über Bluetooth dauert meist 1–2 Minuten."
+web.devices.commission_nearby_heading:
+  en: "Matter devices advertising nearby:"
+  de: "Matter-Geräte in der Nähe:"
+web.devices.commission_nearby_entry:
+  en: "{name} — discriminator {discriminator}, signal {rssi} dBm"
+  de: "{name} – Kennung {discriminator}, Signal {rssi} dBm"
+web.devices.commission_bt_transport:
+  en: "The Bluetooth chip reports transmission errors. A USB Bluetooth adapter usually fixes this; select it on the radios card."
+  de: "Der Bluetooth-Chip meldet Übertragungsfehler. Ein USB-Bluetooth-Adapter behebt das meist; wählen Sie ihn auf der Funkkarte aus."
+web.devices.commission_bt_stuck:
+  en: "The Bluetooth adapter stopped scanning. Restarting the bridge host usually clears it; a USB Bluetooth adapter avoids it."
+  de: "Der Bluetooth-Adapter sucht nicht mehr. Ein Neustart des Bridge-Rechners behebt das meist; ein USB-Bluetooth-Adapter vermeidet es."
+web.devices.commission_bt_power:
+  en: "The Raspberry Pi reports undervoltage. Use the official power supply for this Raspberry Pi model."
+  de: "Der Raspberry Pi meldet Unterspannung. Verwenden Sie das offizielle Netzteil für dieses Raspberry-Pi-Modell."
+web.devices.commission_bridge_restarted:
+  en: "The bridge restarted during commissioning. Check whether the device appears in the list; otherwise try again."
+  de: "Die Bridge wurde während des Einlernens neu gestartet. Prüfen Sie, ob das Gerät in der Liste erscheint; sonst versuchen Sie es erneut."
 web.devices.commission_hint:
   en: "If the device is already paired with Apple, Google, or a DIRIGERA, the printed code no longer works here — generate an additional multi-admin code there and enter that instead."
   de: "Hängt das Gerät schon in Apple, Google oder einer DIRIGERA, funktioniert der aufgedruckte Code hier nicht mehr – dort einen zusätzlichen Multi-Admin-Code erzeugen und stattdessen diesen eingeben."
