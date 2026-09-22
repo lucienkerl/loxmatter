@@ -76,6 +76,8 @@ remains to be done on the live service.
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import logging
 from collections.abc import Awaitable, Callable
 from typing import Protocol
@@ -97,6 +99,12 @@ from loxmatter.api.models import (
 from loxmatter.export.commands import extract_commands
 from loxmatter.export.signals import to_inputs
 from loxmatter.matter.client import BridgeMatterClient, CommissioningError, MatterUnavailableError
+from loxmatter.matter.commissioning_progress import (
+    CommissioningTracker,
+    Discriminator,
+    Reason,
+    classify_failure,
+)
 from loxmatter.matter.otbr import (
     ThreadDatasetUnavailableError,
     fetch_active_dataset,
@@ -301,15 +309,33 @@ def _commissioning_detail(exc: CommissioningError, missing_dataset_reason: str |
     )
 
 
+def _reason_detail(
+    reason: Reason, exc: CommissioningError, discriminator: Discriminator | None
+) -> str:
+    """The `detail` matter-server's own text becomes once the tracker has
+    classified why an attempt failed (design 2026-09-22, section 7.2) - the
+    reason itself travels separately, in the status route's `attempt.reason`
+    (section 7.2, amended)."""
+    if reason == "not_found":
+        if discriminator is None:
+            return i18n.t("api.devices.commission_reason_not_found_any")
+        return i18n.t("api.devices.commission_reason_not_found", discriminator=discriminator.value)
+    if reason == "connection_lost":
+        return i18n.t("api.devices.commission_reason_connection_lost")
+    return str(exc)
+
+
 def build_device_router(
     store: Store,
     client: BridgeMatterClient | None,
     runtime: RuntimeValues,
     thread_dataset_source: ThreadDatasetSource | None = None,
     sources: Sources | None = None,
+    tracker: CommissioningTracker | None = None,
 ) -> APIRouter:
     router = APIRouter(prefix="/api")
     fetch_dataset = thread_dataset_source or fetch_active_dataset
+    progress = tracker or CommissioningTracker()
 
     def _require_device(device_id: int) -> StoredDevice:
         try:
@@ -447,6 +473,14 @@ def build_device_router(
         labels = endpoint_labels(device.device_types)
         return _signal_out(updated, values, labels)
 
+    @router.get("/devices/commission/status")
+    async def commission_status() -> dict[str, object]:
+        """Design 2026-09-22, section 5.2. The dialog polls it every 2 s.
+
+        Read-only: the POST route drives the sampling (see there), so a page
+        that is not open costs nothing and changes nothing."""
+        return progress.status()
+
     @router.post("/devices/commission", status_code=201)
     async def commission_device(request: CommissionRequest) -> DeviceOut:
         active_client = _require_client()
@@ -514,6 +548,26 @@ def build_device_router(
                 except MatterUnavailableError as exc:
                     raise HTTPException(status_code=502, detail=str(exc)) from exc
 
+        discriminator = (
+            Discriminator(request.discriminator.value, request.discriminator.kind)
+            if request.discriminator is not None
+            else None
+        )
+        progress.start(discriminator)
+        unsubscribe = active_client.add_node_added_listener(progress.node_added)
+
+        async def sample_while_waiting() -> None:
+            # The tracker never samples itself (Task 3): this route owns the
+            # cadence, because it is the only one that runs for as long as the
+            # attempt does. Driving it from the status route instead would tie
+            # the phases to a browser polling, and a failure whose `found` or
+            # `connected` phase nobody observed would be classified `other`
+            # instead of `connection_lost`.
+            while True:
+                await progress.sample()
+                await asyncio.sleep(progress.sample_interval)
+
+        sampler = asyncio.ensure_future(sample_while_waiting())
         try:
             snapshot = await active_client.commission_with_code(request.code)
         except CommissioningError as exc:
@@ -521,11 +575,22 @@ def build_device_router(
             # rejected commissioning (wrong code, already in another
             # ecosystem, timeout during the interview) - see
             # CommissioningError.
-            raise HTTPException(
-                status_code=422, detail=_commissioning_detail(exc, missing_dataset_reason)
-            ) from exc
+            if missing_dataset_reason is not None:
+                await progress.finish("no_thread_network")
+                detail = _commissioning_detail(exc, missing_dataset_reason)
+            else:
+                reason = classify_failure(str(exc), progress.phase or "searching")
+                await progress.finish(reason)
+                detail = _reason_detail(reason, exc, discriminator)
+            raise HTTPException(status_code=422, detail=detail) from exc
         except MatterUnavailableError as exc:
+            await progress.finish("matter_server_unreachable")
             raise HTTPException(status_code=502, detail=str(exc)) from exc
+        finally:
+            sampler.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await sampler
+            unsubscribe()
 
         # The same sequence as in the CLI export (cli.py): register_device
         # before register_signals before register_commands, because both
@@ -655,6 +720,7 @@ def build_device_router(
                 "until the next notification from matter-server",
                 device_id,
             )
+        await progress.finish(None)
         return _device_out(store.device(device_id), store, runtime)
 
     @router.delete("/devices/{device_id}", status_code=204, response_model=None)

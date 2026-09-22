@@ -258,9 +258,10 @@ attempt reached and matter-server's text:
 | `bridge_restarted` | decided in the browser: the `POST` failed, and the status route's `bridge_started_at` is newer than when the attempt began | "The bridge restarted during commissioning. Check whether the device appears in the list; otherwise try again." |
 | `other` | anything else | "Commissioning failed: {matter-server's text}" as today |
 
-The `POST` keeps its status codes; its `detail` becomes the text of the reason
-through `i18n.t(...)`, and the reason key is added to the response body so the
-dialog can show the nearby list or the Bluetooth warning next to it.
+The `POST` keeps its status codes and its string `detail`, now the text of the
+reason through `i18n.t(...)`. The reason itself is read from the status route
+(`attempt.reason`), which the dialog reads after a failure anyway; `readError`
+in `web/app.js` stays as it is.
 
 All texts live in `src/loxmatter/i18n/strings.yaml` with `en` and `de`.
 

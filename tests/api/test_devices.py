@@ -18,6 +18,7 @@ import httpx2 as httpx
 import pytest
 from conftest import authenticate, load_snapshot
 
+from loxmatter import i18n
 from loxmatter.export.commands import extract_commands
 from loxmatter.loxone.server import build_app
 from loxmatter.matter.client import CommissioningError, MatterUnavailableError
@@ -48,6 +49,31 @@ async def api(tmp_path, no_invoke, fake_runtime, fake_client, fake_otbr):
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
         await authenticate(store, c)
         yield c, store, device_id, fake_client
+    store.close()
+
+
+@pytest.fixture
+async def unauthenticated_api(tmp_path, no_invoke, fake_runtime, fake_client, fake_otbr):
+    """Like `api` above, but the client never logs in - the same pattern as
+    `unauthenticated_api` in `test_version_api.py`/`test_language.py`, for
+    the guard test of the new status route."""
+    store = Store(tmp_path / "t.sqlite")
+    snapshot = load_snapshot("ikea_grillplats_plug.json")
+    device_id = store.register_device(snapshot)
+    store.register_signals(device_id, snapshot)
+    store.register_commands(device_id, extract_commands(snapshot))
+    fake_client.store = store
+
+    app = build_app(
+        store,
+        no_invoke,
+        fake_runtime(store),
+        client=fake_client,
+        thread_dataset_source=fake_otbr,
+    )
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
+        yield c
     store.close()
 
 
@@ -536,6 +562,92 @@ async def test_matter_server_unreachable_during_commissioning_yields_502(api):
     fake_client.fail_commission_with = MatterUnavailableError("matter-server unreachable")
     response = await client.post("/api/devices/commission", json={"code": "MT:ABC123"})
     assert response.status_code == 502
+
+
+# ---------------------------------------------------------------------------
+# The route drives CommissioningTracker; GET /api/devices/commission/status
+# (design 2026-09-22, sections 5.2 and 7.2).
+# ---------------------------------------------------------------------------
+
+
+async def test_the_status_route_before_any_attempt(api):
+    client, *_ = api
+    body = (await client.get("/api/devices/commission/status")).json()
+    assert body["attempt"] is None
+    assert body["bridge_started_at"].endswith("Z")
+
+
+async def test_a_not_found_failure_names_the_discriminator_and_is_kept(api):
+    client, _, _, fake_client = api
+    fake_client.fail_commission_with = CommissioningError(
+        "Commissioning failed: Commission failed: discovery of node with discriminator 9 "
+        "failed: No commissionable device was discovered"
+    )
+    response = await client.post(
+        "/api/devices/commission",
+        json={"code": "34970112332", "discriminator": {"value": 9, "kind": "short"}},
+    )
+    assert response.status_code == 422
+    assert response.json()["detail"] == i18n.t(
+        "api.devices.commission_reason_not_found", discriminator=9
+    )
+    attempt = (await client.get("/api/devices/commission/status")).json()["attempt"]
+    assert (attempt["phase"], attempt["reason"]) == ("failed", "not_found")
+
+
+async def test_a_connection_loss_is_named(api):
+    client, _, _, fake_client = api
+    fake_client.fail_commission_with = CommissioningError(
+        "Commissioning failed: Commission failed: No device could be commissioned "
+        "(1 of 1 started attempt(s) failed, 1 discovered)"
+    )
+    response = await client.post("/api/devices/commission", json={"code": "34970112332"})
+    assert response.json()["detail"] == i18n.t("api.devices.commission_reason_connection_lost")
+
+
+async def test_another_failure_keeps_matter_servers_text(api):
+    client, _, _, fake_client = api
+    fake_client.fail_commission_with = CommissioningError("Commissioning failed: boom")
+    response = await client.post("/api/devices/commission", json={"code": "34970112332"})
+    assert response.json()["detail"] == "Commissioning failed: boom"
+    attempt = (await client.get("/api/devices/commission/status")).json()["attempt"]
+    assert attempt["reason"] == "other"
+
+
+async def test_a_success_ends_the_attempt_as_done_and_node_added_marks_joined(api, monkeypatch):
+    """`commission_with_code` on the real client only returns after
+    matter-server has already announced `NODE_ADDED` for the new node (the
+    race recorded in `api/devices.py`'s module docstring) - `FakeMatterClient`
+    itself never fires that listener, so this test wraps it to do exactly
+    that before returning the snapshot, the way a successful commissioning
+    does."""
+    client, _, _, fake_client = api
+    original_commission = fake_client.commission_with_code
+
+    async def commission_then_announce(code: str):
+        snapshot = await original_commission(code)
+        fake_client.emit_node_added(100)
+        return snapshot
+
+    monkeypatch.setattr(fake_client, "commission_with_code", commission_then_announce)
+
+    response = await client.post("/api/devices/commission", json={"code": "34970112332"})
+    assert response.status_code == 201
+    attempt = (await client.get("/api/devices/commission/status")).json()["attempt"]
+    assert attempt["phase"] == "done"
+
+
+async def test_a_short_discriminator_above_15_is_refused(api):
+    client, *_ = api
+    response = await client.post(
+        "/api/devices/commission",
+        json={"code": "34970112332", "discriminator": {"value": 16, "kind": "short"}},
+    )
+    assert response.status_code == 422
+
+
+async def test_the_status_route_is_guarded(unauthenticated_api):
+    assert (await unauthenticated_api.get("/api/devices/commission/status")).status_code == 401
 
 
 async def test_removing_a_device_forgets_it_and_frees_the_fabric(api):
