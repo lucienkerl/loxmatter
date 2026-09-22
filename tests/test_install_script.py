@@ -30,6 +30,7 @@ pytest happens to run in a terminal or in CI.
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -41,6 +42,10 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 INSTALLER = REPO_ROOT / "install.sh"
+
+# Captured from a real Miniserver (Task 1 of the plan for design
+# 2026-09-21-installer-guided-questions), never written by hand.
+MINISERVER_API_FIXTURE = REPO_ROOT / "tests" / "fixtures" / "miniserver" / "jdev_cfg_api.json"
 
 # Real tools the script is allowed to use. Everything else comes from
 # a stub or counts as not installed.
@@ -143,7 +148,9 @@ exit 0
 # The script now downloads get.docker.com via `-o <file>` instead of
 # piping it - the stub therefore has to evaluate `-o` itself and write the
 # body there instead of just printing it. Without `-o` (e.g. during the
-# health check), the output goes to stdout as before.
+# health check), the output goes to stdout as before. The Miniserver check
+# reaches /jdev/cfg/api; addresses listed in FAKE_MS_DEAD time out instead of
+# answering, and MINISERVER_API_BODY is what the others answer with.
 _CURL = """out=""
 url=""
 prev=""
@@ -167,6 +174,14 @@ case "$url" in
     body="cp '$STUB_TEMPLATES/docker' '$STUB_BIN/docker' && chmod 755 '$STUB_BIN/docker'"
     ;;
   *health*) body='{"status":"ok"}' ;;
+  *jdev/cfg/api*)
+    for dead in ${FAKE_MS_DEAD-}; do
+      case "$url" in
+        "http://$dead/"*) exit 28 ;;
+      esac
+    done
+    body="$MINISERVER_API_BODY"
+    ;;
 esac
 if [ -n "$out" ]; then
   printf '%s\\n' "$body" > "$out"
@@ -239,7 +254,7 @@ def installer(tmp_path):
         if real is not None:
             (sysdir / tool).symlink_to(real)
 
-    def build_env(env, omit, stubs):
+    def build_env(env, omit, stubs, answers):
         active = dict(DEFAULT_STUBS)
         active.update(stubs or {})
         for name in omit:
@@ -279,18 +294,38 @@ def installer(tmp_path):
             # Without a terminal, the address must come from the environment.
             # Tests that check exactly this abort set it to "".
             "MINISERVER_IP": "10.0.1.99",
+            # What a Miniserver answers on /jdev/cfg/api. A test replaces it
+            # to have something that is not a Miniserver answer instead.
+            "MINISERVER_API_BODY": MINISERVER_API_FIXTURE.read_text(),
             # /sys/class/rfkill doesn't exist on macOS and is nowhere
             # writable. This path doesn't exist by default -
             # check_rfkill then finds nothing, just like on a host without
             # rfkill. Tests for check_rfkill point this at a
             # prepared directory instead.
             "RFKILL_DIR": str(tmp_path / "no-rfkill-here"),
+            # The installer lists USB sticks and Bluetooth adapters from
+            # these. Pointing them nowhere by default keeps every test
+            # independent of what the machine running pytest has plugged
+            # in; tests about the menus build a directory and override them.
+            "SERIAL_BY_ID_DIR": str(tmp_path / "no-by-id-here"),
+            "SERIAL_DEV_DIR": str(tmp_path / "no-dev-here"),
+            "BT_SYS_DIR": str(tmp_path / "no-bluetooth-here"),
         }
+        # Every run has no controlling terminal (start_new_session=True), so
+        # every question takes the non-interactive branch - except when a
+        # test hands in answers. LOXMATTER_TTY points the installer at a
+        # file instead of /dev/tty; one answer per line, an empty string
+        # takes the default. An empty list is a terminal that answers
+        # nothing, so any question at all aborts the run.
+        if answers is not None:
+            answer_file = tmp_path / "answers"
+            answer_file.write_text("".join(f"{answer}\n" for answer in answers))
+            full_env["LOXMATTER_TTY"] = str(answer_file)
         full_env.update(env or {})
         return full_env
 
-    def run(*args, env=None, omit=(), stubs=None):
-        full_env = build_env(env, omit, stubs)
+    def run(*args, env=None, omit=(), stubs=None, answers=None):
+        full_env = build_env(env, omit, stubs, answers)
         proc = subprocess.run(
             ["/bin/sh", str(INSTALLER), *args],
             env=full_env,
@@ -308,7 +343,7 @@ def installer(tmp_path):
     # structure as `run`, just with Popen instead of subprocess.run, so `run`
     # itself stays unchanged.
     def start(*args, env=None, omit=(), stubs=None):
-        full_env = build_env(env, omit, stubs)
+        full_env = build_env(env, omit, stubs, None)
         return subprocess.Popen(
             ["/bin/sh", str(INSTALLER), *args],
             env=full_env,
@@ -329,6 +364,7 @@ def test_help_exits_successfully(installer):
     result = installer("--help")
     assert result.returncode == 0
     assert "--dry-run" in result.output
+    assert "/dev/serial/by-id" in result.output
 
 
 def test_an_unknown_argument_aborts(installer):
@@ -398,7 +434,7 @@ def test_without_a_radio_module_it_falls_back_to_wifi(installer):
 def test_thread_without_a_device_and_without_a_terminal_aborts(installer):
     result = installer(env={"LOXMATTER_MODE": "thread"})
     assert result.returncode == 2
-    assert "no radio" in result.output
+    assert "no USB stick" in result.output
 
 
 def test_thread_with_a_device_from_the_environment(installer):
@@ -473,6 +509,36 @@ def test_an_existing_docker_is_not_reinstalled(installer):
     assert result.returncode == 0
     assert not any("get.docker.com" in call for call in result.calls)
     assert not result.called("sudo docker")
+
+
+# `compose up` fails - on a real host for example because the SD card ran
+# out of space while extracting an image.
+_DOCKER_UP_FAILS = _DOCKER.replace(
+    "exit 0\n",
+    'if [ "${1-}" = "compose" ] && [ "${2-}" = "up" ]; then exit 1; fi\nexit 0\n',
+)
+
+
+def test_after_installing_docker_the_log_hint_uses_sudo(installer):
+    # This session is not in the 'docker' group yet: the plain command
+    # would answer "permission denied" on docker.sock.
+    result = installer(omit=("docker",), stubs={"docker": _DOCKER_UP_FAILS})
+    assert result.returncode == 2
+    assert "Could not start the stack" in result.output
+    assert "&& sudo docker compose logs" in result.output
+
+
+def test_with_an_existing_docker_the_log_hint_has_no_sudo(installer):
+    result = installer(stubs={"docker": _DOCKER_UP_FAILS})
+    assert result.returncode == 2
+    assert "&& docker compose logs" in result.output
+    assert "sudo docker compose logs" not in result.output
+
+
+def test_after_installing_docker_findings_use_sudo(installer):
+    result = installer(omit=("docker",), env={"FAKE_SERVICES": "loxmatter"})
+    assert result.returncode == 0
+    assert "&& sudo docker compose logs matter-server" in result.output
 
 
 # ------------------------------------------------------------- phase three --
@@ -600,10 +666,14 @@ def test_sigint_cleans_up_the_temporary_file(installer):
     # a signal to it alone would only be noticed by a shell waiting on its
     # foreground child once that child ends), and afterward nothing must
     # be left in the temporary directory.
-    proc = installer.start(omit=("docker",), stubs={"curl": "sleep 30\n"})
+    # The Miniserver check calls curl first, in phase one; only the Docker
+    # download may hang, or the signal would land before any temporary
+    # file exists and the test would prove nothing.
+    hanging_download = 'case "$*" in *get.docker.com*) sleep 30 ;; esac\nexit 0\n'
+    proc = installer.start(omit=("docker",), stubs={"curl": hanging_download})
     deadline = time.time() + 10
     while True:
-        if installer.log.exists() and "curl" in installer.log.read_text():
+        if installer.log.exists() and "get.docker.com" in installer.log.read_text():
             break
         if time.time() > deadline:
             proc.kill()
@@ -665,6 +735,94 @@ def test_the_miniserver_ip_comes_from_the_environment(installer):
     assert _env(result)["MINISERVER_IP"] == "10.0.1.77"
 
 
+def _fixture_serial():
+    body = MINISERVER_API_FIXTURE.read_text()
+    return re.search(r"'snr': *'([^']*)'", body).group(1)
+
+
+def test_a_miniserver_that_answers_is_named(installer):
+    result = installer()
+    assert result.returncode == 0
+    assert f"Miniserver found at 10.0.1.99 (serial {_fixture_serial()}" in result.output
+    assert "Findings" not in result.output
+
+
+def test_an_unreachable_miniserver_without_a_terminal_becomes_a_finding(installer):
+    # It may simply be switched off during the installation - that must
+    # not stop the run.
+    result = installer(env={"FAKE_MS_DEAD": "10.0.1.99"})
+    assert result.returncode == 0
+    assert "No Miniserver answers at 10.0.1.99 (timeout)" in result.output
+    assert "Findings" in result.output
+    assert _env(result)["MINISERVER_IP"] == "10.0.1.99"
+
+
+def test_something_else_answering_is_not_taken_for_a_miniserver(installer):
+    result = installer(env={"MINISERVER_API_BODY": "<html>router login</html>"})
+    assert result.returncode == 0
+    assert "but it is not a Miniserver" in result.output
+    assert "Findings" in result.output
+    assert _env(result)["MINISERVER_IP"] == "10.0.1.99"
+
+
+def test_the_miniserver_question_says_where_to_find_the_address(installer):
+    result = installer(env={"MINISERVER_IP": ""}, answers=["10.0.1.43"])
+    assert result.returncode == 0
+    assert "Loxone Config" in result.output
+    assert _env(result)["MINISERVER_IP"] == "10.0.1.43"
+
+
+def test_an_unreachable_miniserver_can_be_used_anyway(installer):
+    result = installer(
+        env={"MINISERVER_IP": "", "FAKE_MS_DEAD": "10.0.1.42"},
+        answers=["10.0.1.42", "2"],
+    )
+    assert result.returncode == 0
+    assert _env(result)["MINISERVER_IP"] == "10.0.1.42"
+    assert "Findings" in result.output
+
+
+def test_a_different_address_can_be_entered_after_a_failed_check(installer):
+    result = installer(
+        env={"MINISERVER_IP": "", "FAKE_MS_DEAD": "10.0.1.42"},
+        answers=["10.0.1.42", "1", "10.0.1.43"],
+    )
+    assert result.returncode == 0
+    assert _env(result)["MINISERVER_IP"] == "10.0.1.43"
+    assert "Findings" not in result.output
+
+
+def test_a_malformed_address_is_asked_again(installer):
+    result = installer(env={"MINISERVER_IP": ""}, answers=["10.0.1", "10.0.1.43"])
+    assert result.returncode == 0
+    assert "is not an IPv4 address like" in result.output
+    assert _env(result)["MINISERVER_IP"] == "10.0.1.43"
+
+
+def test_a_dry_run_does_not_contact_the_miniserver(installer):
+    result = installer("--dry-run")
+    assert result.returncode == 0
+    assert "would check http://10.0.1.99/jdev/cfg/api" in result.output
+    assert not any("jdev/cfg/api" in call for call in result.calls)
+
+
+def test_a_second_run_does_not_check_the_miniserver_again(installer):
+    first = installer()
+    assert first.returncode == 0
+    assert any("jdev/cfg/api" in call for call in first.calls)
+    second = installer()
+    assert second.returncode == 0
+    assert not any("jdev/cfg/api" in call for call in second.calls)
+
+
+def test_without_curl_the_miniserver_is_not_checked(installer):
+    # curl is installed in phase two, after the questions.
+    result = installer(omit=("curl",))
+    assert result.returncode == 0
+    assert "10.0.1.99 is not checked" in result.output
+    assert "Findings" not in result.output
+
+
 def test_a_token_is_generated(installer):
     result = installer()
     token = _env(result)["LOXMATTER_API_TOKEN"]
@@ -690,6 +848,9 @@ def test_an_empty_urandom_fallback_aborts_loudly(installer):
     result = installer(stubs={"openssl": "exit 1\n", "od": "exit 1\n"})
     assert result.returncode == 2
     assert "Could not generate LOXMATTER_API_TOKEN" in result.output
+    # COMPOSE_PROFILES and the rest are already in .env at that point; the
+    # abort has to say so rather than look like a clean stop.
+    assert "partially written" in result.output
 
 
 def test_a_second_run_leaves_the_env_untouched(installer):
@@ -752,25 +913,18 @@ def test_an_env_without_a_trailing_newline_stays_intact(installer):
     assert "COMPOSE_PROFILES" in values
 
 
-def test_an_abort_in_configure_names_the_touched_env(installer):
-    # COMPOSE_PROFILES, RADIO_DEVICE, and RADIO_BAUDRATE already sit in the
-    # .env when BACKBONE_IF gets no value (no default-route entry,
-    # no terminal) and the run aborts. The abort must say so, otherwise
-    # it looks like a clean abort before any change.
+def test_an_undetectable_backbone_without_a_terminal_aborts_before_cloning(installer):
+    # This used to abort inside configure, with COMPOSE_PROFILES and the
+    # radio already written to .env. Asked in phase one, it now stops
+    # before a single file exists.
     result = installer(
         env={"LOXMATTER_MODE": "thread", "RADIO_DEVICE": "/dev/ttyUSB0"},
         stubs={"ip": "echo\n"},
     )
     assert result.returncode == 2
     assert "BACKBONE_IF" in result.output
-    assert str(result.env_file) in result.output
-    assert "partially written" in result.output
-    values = dict(
-        line.split("=", 1)
-        for line in result.env_file.read_text().splitlines()
-        if "=" in line and not line.startswith("#")
-    )
-    assert values["COMPOSE_PROFILES"] == "thread"
+    assert not result.called("git clone")
+    assert not result.env_file.exists()
 
 
 def test_a_conflicting_mode_is_reported_loudly(installer):
@@ -976,7 +1130,14 @@ def test_a_dry_run_report_does_not_invent_an_address(installer):
     result = installer("--dry-run")
     assert result.returncode == 0
     assert "Web interface" not in result.output
-    assert "http://" not in result.output
+    # "would check http://.../jdev/cfg/api" is a real address, not an
+    # invented one - only a "Web interface: http://..." line built from
+    # an unread PORT would be fabricated. Remove the legitimate line
+    # before checking that no other http:// address slipped in.
+    output_without_the_check = result.output.replace(
+        "would check http://10.0.1.99/jdev/cfg/api", ""
+    )
+    assert "http://" not in output_without_the_check
     assert not result.called("git clone")
     assert not result.called("docker compose up")
 
@@ -1001,3 +1162,361 @@ def test_a_wifi_run_writes_the_detected_backbone_for_a_later_thread_switch(insta
     assert result.returncode == 0
     assert _env(result)["COMPOSE_PROFILES"] == ""
     assert _env(result)["BACKBONE_IF"] == "eth0"
+
+
+STICK_A = "usb-ITead_Sonoff_Zigbee_3.0_USB_Dongle_Plus_V2_1a2b3c-if00-port0"
+STICK_B = "usb-SONOFF_SONOFF_Dongle_Plus_MG24_d86e1106-if00-port0"
+
+# Keeps the backbone and Bluetooth questions out of a test about the Thread
+# stick. Both are skipped when their environment variable is set.
+_ONLY_THE_STICK = {"BACKBONE_IF": "eth0", "BLUETOOTH_ADAPTER": "0"}
+
+
+def _serial(tmp_path, *names):
+    """Fabricates /dev with one ttyUSB node per name and a serial/by-id link
+    to each, and returns the env that points the installer at it."""
+    dev = tmp_path / "hw" / "dev"
+    by_id = dev / "serial" / "by-id"
+    by_id.mkdir(parents=True)
+    for index, name in enumerate(names):
+        node = dev / f"ttyUSB{index}"
+        node.write_text("")
+        (by_id / name).symlink_to(node)
+    return {"SERIAL_BY_ID_DIR": str(by_id), "SERIAL_DEV_DIR": str(dev)}
+
+
+def _bluetooth(tmp_path, *adapters):
+    """Fabricates /sys/class/bluetooth. Each adapter is (index, product):
+    product None is a built-in UART adapter, a string a USB adapter of that
+    name. The device links resolve below a directory called devices/, as in
+    sysfs; the installer only looks at the path after it, so the pytest
+    directory above - whose name may contain anything - cannot mislabel one.
+    Measured on a Pi 3B: hci0 -> .../3f201000.serial/.../serial0/serial0-0."""
+    sys_root = tmp_path / "hw" / "sys"
+    klass = sys_root / "class" / "bluetooth"
+    klass.mkdir(parents=True)
+    soc = sys_root / "devices" / "platform" / "soc"
+    for index, product in adapters:
+        if product is None:
+            device = soc / "3f201000.serial" / "serial0" / f"serial0-{index}"
+            device.mkdir(parents=True)
+        else:
+            usb_device = soc / "3f980000.usb" / "usb1" / f"1-1.{index}"
+            device = usb_device / f"1-1.{index}:1.0"
+            device.mkdir(parents=True)
+            (usb_device / "product").write_text(f"{product}\n")
+        entry = klass / f"hci{index}"
+        entry.mkdir()
+        (entry / "device").symlink_to(device)
+    return {"BT_SYS_DIR": str(klass)}
+
+
+# ------------------------------------------------------------ questions --
+
+
+def test_answers_are_read_one_after_another(installer):
+    # ask() runs inside $(...). Reopening the terminal on every call would
+    # read the first line of an answers file again and again; one
+    # descriptor opened once is what makes the second answer arrive.
+    result = installer(
+        env={"LOXMATTER_MODE": "wifi", "BLUETOOTH_ADAPTER": "0", "MINISERVER_IP": ""},
+        answers=["not-an-ip", "10.0.1.42"],
+    )
+    assert result.returncode == 0
+    assert _env(result)["MINISERVER_IP"] == "10.0.1.42"
+
+
+def test_running_out_of_answers_aborts_instead_of_looping(installer):
+    # A question that rejects its own default (the Miniserver address has
+    # none) used to spin forever on a closed terminal: read failed, the
+    # empty default came back, was rejected, and was asked again.
+    result = installer(
+        env={"LOXMATTER_MODE": "wifi", "BLUETOOTH_ADAPTER": "0", "MINISERVER_IP": ""},
+        answers=["not-an-ip"],
+    )
+    assert result.returncode == 2
+    assert "terminal closed" in result.output
+
+
+def test_two_sticks_are_offered_by_their_by_id_names(installer, tmp_path):
+    hw = _serial(tmp_path, STICK_A, STICK_B)
+    result = installer(env={**hw, **_ONLY_THE_STICK}, answers=["2"])
+    assert result.returncode == 0
+    assert f"1) {STICK_A}" in result.output
+    assert f"2) {STICK_B}" in result.output
+    assert "A Zigbee stick does not belong here" in result.output
+    values = _env(result)
+    assert values["COMPOSE_PROFILES"] == "thread"
+    assert values["RADIO_DEVICE"] == f"{hw['SERIAL_BY_ID_DIR']}/{STICK_B}"
+
+
+def test_with_two_sticks_the_default_is_none(installer, tmp_path):
+    # Two candidates and no way to tell them apart by name: the default
+    # must never be a silent pick of one of them.
+    hw = _serial(tmp_path, STICK_A, STICK_B)
+    result = installer(env={**hw, **_ONLY_THE_STICK}, answers=[""])
+    assert result.returncode == 0
+    assert "Which one is the Thread stick? [0]" in result.output
+    assert "Operating mode: wifi" in result.output
+    assert _env(result)["COMPOSE_PROFILES"] == ""
+
+
+def test_with_one_stick_the_default_is_that_stick(installer, tmp_path):
+    hw = _serial(tmp_path, STICK_B)
+    result = installer(env={**hw, **_ONLY_THE_STICK}, answers=[""])
+    assert result.returncode == 0
+    assert "Which one is the Thread stick? [1]" in result.output
+    assert _env(result)["RADIO_DEVICE"] == f"{hw['SERIAL_BY_ID_DIR']}/{STICK_B}"
+
+
+def test_without_by_id_the_tty_nodes_are_offered(installer, tmp_path):
+    dev = tmp_path / "hw" / "dev"
+    dev.mkdir(parents=True)
+    (dev / "ttyUSB0").write_text("")
+    env = {
+        "SERIAL_BY_ID_DIR": str(dev / "serial" / "by-id"),
+        "SERIAL_DEV_DIR": str(dev),
+        **_ONLY_THE_STICK,
+    }
+    result = installer(env=env, answers=["1"])
+    assert result.returncode == 0
+    assert f"1) {dev}/ttyUSB0" in result.output
+    assert _env(result)["RADIO_DEVICE"] == f"{dev}/ttyUSB0"
+
+
+def test_a_dangling_by_id_link_is_not_offered(installer, tmp_path):
+    # A stick pulled after boot can leave its by-id link behind for a moment.
+    hw = _serial(tmp_path, STICK_B)
+    (Path(hw["SERIAL_BY_ID_DIR"]) / "usb-Gone_Stick-if00-port0").symlink_to(
+        tmp_path / "hw" / "dev" / "ttyUSB9"
+    )
+    result = installer(env={**hw, **_ONLY_THE_STICK}, answers=[""])
+    assert result.returncode == 0
+    assert "usb-Gone_Stick" not in result.output
+    assert "Which one is the Thread stick? [1]" in result.output
+
+
+def test_an_invalid_answer_is_asked_again(installer, tmp_path):
+    hw = _serial(tmp_path, STICK_A, STICK_B)
+    result = installer(env={**hw, **_ONLY_THE_STICK}, answers=["7", "1"])
+    assert result.returncode == 0
+    assert "one of the numbers shown" in result.output
+    assert _env(result)["RADIO_DEVICE"] == f"{hw['SERIAL_BY_ID_DIR']}/{STICK_A}"
+
+
+def test_the_baud_rate_is_not_asked(installer, tmp_path):
+    # answers=["1"] and nothing more: a baud rate question would hit the
+    # end of the answers and abort the run.
+    hw = _serial(tmp_path, STICK_B)
+    result = installer(env={**hw, **_ONLY_THE_STICK}, answers=["1"])
+    assert result.returncode == 0
+    assert _env(result)["RADIO_BAUDRATE"] == "460800"
+
+
+def test_the_baud_rate_from_the_environment_wins(installer, tmp_path):
+    hw = _serial(tmp_path, STICK_B)
+    env = {**hw, **_ONLY_THE_STICK, "RADIO_BAUDRATE": "115200"}
+    result = installer(env=env, answers=["1"])
+    assert result.returncode == 0
+    assert _env(result)["RADIO_BAUDRATE"] == "115200"
+
+
+def test_without_a_terminal_a_single_stick_is_taken(installer, tmp_path):
+    hw = _serial(tmp_path, STICK_B)
+    result = installer(env={**hw, **_ONLY_THE_STICK})
+    assert result.returncode == 0
+    assert "Taking 1" in result.output
+    assert _env(result)["RADIO_DEVICE"] == f"{hw['SERIAL_BY_ID_DIR']}/{STICK_B}"
+
+
+def test_without_a_terminal_two_sticks_mean_wifi(installer, tmp_path):
+    hw = _serial(tmp_path, STICK_A, STICK_B)
+    result = installer(env={**hw, **_ONLY_THE_STICK})
+    assert result.returncode == 0
+    assert _env(result)["COMPOSE_PROFILES"] == ""
+
+
+def test_a_radio_device_from_the_environment_means_thread(installer, tmp_path):
+    hw = _serial(tmp_path, STICK_A, STICK_B)
+    env = {**hw, **_ONLY_THE_STICK, "RADIO_DEVICE": "/dev/ttyUSB3"}
+    result = installer(env=env, answers=[])
+    assert result.returncode == 0
+    assert "Which one is the Thread stick" not in result.output
+    values = _env(result)
+    assert values["COMPOSE_PROFILES"] == "thread"
+    assert values["RADIO_DEVICE"] == "/dev/ttyUSB3"
+
+
+def test_thread_mode_from_the_environment_offers_no_none(installer, tmp_path):
+    hw = _serial(tmp_path, STICK_A, STICK_B)
+    env = {**hw, **_ONLY_THE_STICK, "LOXMATTER_MODE": "thread"}
+    result = installer(env=env, answers=["0", "2"])
+    assert result.returncode == 0
+    assert "None - WiFi and Ethernet only" not in result.output
+    assert _env(result)["RADIO_DEVICE"] == f"{hw['SERIAL_BY_ID_DIR']}/{STICK_B}"
+
+
+def test_thread_mode_without_a_terminal_warns_about_the_guessed_stick(installer, tmp_path):
+    # Thread was requested, so "None" is no option, and aborting would be a
+    # new stop on the non-interactive path. Stick 1 is taken - by-id names
+    # sort alphabetically, and on the maintainer's test Pi that is the
+    # Zigbee stick. The guess has to be said out loud, with the way out.
+    hw = _serial(tmp_path, STICK_A, STICK_B)
+    result = installer(env={**hw, **_ONLY_THE_STICK, "LOXMATTER_MODE": "thread"})
+    assert result.returncode == 0
+    assert _env(result)["RADIO_DEVICE"] == f"{hw['SERIAL_BY_ID_DIR']}/{STICK_A}"
+    assert f"{STICK_A} was taken as the Thread stick without asking" in result.output
+    assert "RADIO_DEVICE=" in result.output
+
+
+def test_a_chosen_stick_is_not_warned_about(installer, tmp_path):
+    hw = _serial(tmp_path, STICK_A, STICK_B)
+    env = {**hw, **_ONLY_THE_STICK, "LOXMATTER_MODE": "thread"}
+    result = installer(env=env, answers=["1"])
+    assert result.returncode == 0
+    assert "without asking" not in result.output
+
+
+def test_a_single_stick_in_thread_mode_is_not_warned_about(installer, tmp_path):
+    # One candidate is no guess between two.
+    hw = _serial(tmp_path, STICK_B)
+    result = installer(env={**hw, **_ONLY_THE_STICK, "LOXMATTER_MODE": "thread"})
+    assert result.returncode == 0
+    assert "without asking" not in result.output
+
+
+def test_a_second_run_does_not_show_the_thread_menu(installer, tmp_path):
+    # configure_mode lets the existing .env win anyway; asking first and
+    # overruling the answer with a warning asked a question for nothing.
+    hw = {**_serial(tmp_path, STICK_A, STICK_B), **_ONLY_THE_STICK}
+    first = installer(env=hw, answers=["2"])
+    assert first.returncode == 0
+    second = installer(env=hw, answers=[])
+    assert second.returncode == 0
+    assert "Which one is the Thread stick" not in second.output
+    assert "kept from" in second.output
+    assert "wins over the requested" not in second.output
+    assert _env(second)["RADIO_DEVICE"] == _env(first)["RADIO_DEVICE"]
+
+
+def test_a_closed_terminal_at_the_thread_menu_aborts_cleanly(installer, tmp_path):
+    # The Thread stick menu is the first question ask_questions asks. An
+    # empty terminal there has to abort through die() with exit code 2,
+    # not with a bare `set -e` exit.
+    hw = _serial(tmp_path, STICK_A, STICK_B)
+    result = installer(env={**hw, **_ONLY_THE_STICK}, answers=[])
+    assert result.returncode == 2
+    assert "terminal closed" in result.output
+
+
+def test_a_detected_backbone_is_not_asked(installer, tmp_path):
+    # answers=["1"] only: a backbone question would hit the end of the
+    # answers and abort.
+    hw = _serial(tmp_path, STICK_B)
+    result = installer(env={**hw, "BLUETOOTH_ADAPTER": "0"}, answers=["1"])
+    assert result.returncode == 0
+    assert "Border router network interface: eth0" in result.output
+    assert _env(result)["BACKBONE_IF"] == "eth0"
+
+
+def test_an_undetectable_backbone_is_asked_until_answered(installer, tmp_path):
+    hw = _serial(tmp_path, STICK_B)
+    result = installer(
+        env={**hw, "BLUETOOTH_ADAPTER": "0"},
+        stubs={"ip": "echo\n"},
+        answers=["1", "", "eth1"],
+    )
+    assert result.returncode == 0
+    assert _env(result)["BACKBONE_IF"] == "eth1"
+
+
+def test_a_single_adapter_is_used_without_a_question(installer, tmp_path):
+    result = installer(env=_bluetooth(tmp_path, (0, None)), answers=[])
+    assert result.returncode == 0
+    assert "Bluetooth: hci0 - built in (UART)" in result.output
+    assert _env(result)["BLUETOOTH_ADAPTER"] == "0"
+
+
+def test_two_adapters_are_offered_by_name(installer, tmp_path):
+    hw = _bluetooth(tmp_path, (0, None), (1, "TP-Link UB500 Adapter"))
+    result = installer(env=hw, answers=["2"])
+    assert result.returncode == 0
+    assert "1) hci0 - built in (UART)" in result.output
+    assert "2) hci1 - USB: TP-Link UB500 Adapter" in result.output
+    assert _env(result)["BLUETOOTH_ADAPTER"] == "1"
+
+
+def test_the_adapter_index_is_written_not_the_menu_position(installer, tmp_path):
+    hw = _bluetooth(tmp_path, (0, None), (3, "TP-Link UB500 Adapter"))
+    result = installer(env=hw, answers=["2"])
+    assert result.returncode == 0
+    assert _env(result)["BLUETOOTH_ADAPTER"] == "3"
+
+
+def test_no_adapter_is_a_warning_not_a_question(installer):
+    result = installer(answers=[])
+    assert result.returncode == 0
+    assert "No Bluetooth adapter found" in result.output
+    assert _env(result)["BLUETOOTH_ADAPTER"] == "0"
+
+
+def test_without_a_terminal_the_first_adapter_is_taken(installer, tmp_path):
+    hw = _bluetooth(tmp_path, (0, None), (1, "TP-Link UB500 Adapter"))
+    result = installer(env=hw)
+    assert result.returncode == 0
+    assert _env(result)["BLUETOOTH_ADAPTER"] == "0"
+
+
+def test_the_adapter_from_the_environment_skips_the_menu(installer, tmp_path):
+    hw = _bluetooth(tmp_path, (0, None), (1, "TP-Link UB500 Adapter"))
+    result = installer(env={**hw, "BLUETOOTH_ADAPTER": "5"}, answers=[])
+    assert result.returncode == 0
+    assert "Which adapter" not in result.output
+    assert _env(result)["BLUETOOTH_ADAPTER"] == "5"
+
+
+def test_the_questions_are_announced(installer, tmp_path):
+    env = {
+        **_serial(tmp_path, STICK_A, STICK_B),
+        **_bluetooth(tmp_path, (0, None), (1, "TP-Link UB500 Adapter")),
+        "MINISERVER_IP": "",
+    }
+    result = installer(env=env, answers=["0", "1", "10.0.1.43"])
+    assert result.returncode == 0
+    assert (
+        "Three questions follow: the Thread stick, the Bluetooth adapter, "
+        "and the address of your Loxone Miniserver." in result.output
+    )
+
+
+def test_a_single_question_is_announced_as_one(installer):
+    result = installer(env={"MINISERVER_IP": ""}, answers=["10.0.1.43"])
+    assert result.returncode == 0
+    assert "One question follows: the address of your Loxone Miniserver." in result.output
+
+
+def test_without_a_terminal_nothing_is_announced(installer):
+    result = installer()
+    assert result.returncode == 0
+    assert "question follows" not in result.output
+    assert "questions follow" not in result.output
+
+
+def test_every_question_comes_before_anything_is_installed(installer, tmp_path):
+    # The Miniserver check is the last question's last step, and it is the
+    # one that leaves a trace in the stub log. It has to come before the
+    # first package and before Docker - otherwise the user is called back
+    # to the keyboard minutes into the installation.
+    env = {
+        **_serial(tmp_path, STICK_A, STICK_B),
+        **_bluetooth(tmp_path, (0, None), (1, "TP-Link UB500 Adapter")),
+        "MINISERVER_IP": "",
+    }
+    result = installer(env=env, omit=("git", "docker"), answers=["2", "2", "10.0.1.43"])
+    assert result.returncode == 0
+    calls = result.calls
+    check = next(i for i, call in enumerate(calls) if "jdev/cfg/api" in call)
+    apt = next(i for i, call in enumerate(calls) if call.startswith("apt-get install"))
+    docker = next(i for i, call in enumerate(calls) if "get.docker.com" in call)
+    assert check < apt
+    assert check < docker

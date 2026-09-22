@@ -43,7 +43,6 @@ SUDO=""
 MISSING_PACKAGES=""
 NEED_DOCKER=0
 MODE=""
-DETECTED_RADIO=""
 DOCKER_INSTALL_URL="https://get.docker.com"
 DOCKER_SUDO=0
 TEMP_FILE=""
@@ -57,6 +56,27 @@ HEALTHY=1
 # Overridable so tests can point this at a fabricated directory instead of
 # the real /sys, which does not exist off Linux and is not writable anyway.
 RFKILL_DIR="${RFKILL_DIR:-/sys/class/rfkill}"
+# Where questions are read from. LOXMATTER_TTY exists for the tests only:
+# they point it at a file of answers, one per line. Not in --help on purpose.
+TTY_PATH="${LOXMATTER_TTY:-/dev/tty}"
+# Overridable for the same reason as RFKILL_DIR: the tests point these at
+# fabricated directories instead of the host's real /dev and /sys.
+SERIAL_BY_ID_DIR="${SERIAL_BY_ID_DIR:-/dev/serial/by-id}"
+SERIAL_DEV_DIR="${SERIAL_DEV_DIR:-/dev}"
+SERIAL_CANDIDATES=""
+CHOICE=""
+# What phase one decided, for phase four to write. Empty means "nothing to
+# write": either an existing .env keeps its value, or the mode does not use it.
+CHOSEN_RADIO=""
+CHOSEN_BACKBONE=""
+# Overridable so tests can point this at a fabricated directory instead of
+# the real /sys/class/bluetooth, which does not exist off Linux.
+BT_SYS_DIR="${BT_SYS_DIR:-/sys/class/bluetooth}"
+BT_ADAPTERS=""
+CHOSEN_BT=""
+CHOSEN_MS=""
+MS_PROBLEM=""
+TAB="$(printf '\t')"
 
 # ---------------------------------------------------------------- output --
 
@@ -76,8 +96,8 @@ die() {
 
 state_summary() {
   if [ "$STACK_STARTED" -eq 1 ]; then
-    printf 'The stack in %s was started; run docker compose ps there to see it.\n' \
-      "$TARGET_DIR/deploy/testhost"
+    printf 'The stack in %s was started; run %s compose ps there to see it.\n' \
+      "$TARGET_DIR/deploy/testhost" "$(docker_cmd)"
   elif [ -d "$TARGET_DIR" ]; then
     printf 'The checkout at %s exists; nothing was started.\n' "$TARGET_DIR"
   else
@@ -114,12 +134,12 @@ Options:
 
 These environment variables skip the matching question:
   LOXMATTER_DIR       where to clone
-  LOXMATTER_MODE      thread | wifi
+  LOXMATTER_MODE      thread | wifi (wifi skips the Thread stick menu)
   MINISERVER_IP       address of the Loxone Miniserver
-  RADIO_DEVICE        Thread radio, e.g. /dev/ttyUSB0 (thread mode only)
-  RADIO_BAUDRATE      Thread radio baud rate (thread mode only)
+  RADIO_DEVICE        Thread stick, e.g. /dev/serial/by-id/usb-... (means thread mode)
+  RADIO_BAUDRATE      Thread stick baud rate; 460800 when unset, never asked
   BACKBONE_IF         network interface for the border router (thread mode only)
-  BLUETOOTH_ADAPTER   Bluetooth adapter id, e.g. 0
+  BLUETOOTH_ADAPTER   Bluetooth adapter, e.g. 0 for hci0
   LOXMATTER_API_TOKEN token for scripts and curl; generated when unset
 EOF
 }
@@ -172,16 +192,32 @@ have() { command -v "$1" >/dev/null 2>&1; }
 # portable way to find out whether there is one at all - `test -r /dev/tty`
 # can succeed on a device node that then refuses to open.
 check_tty() {
-  if ( exec </dev/tty ) 2>/dev/null; then
+  if ( exec <"$TTY_PATH" ) 2>/dev/null; then
     HAVE_TTY=1
+    # Opened once and kept open: ask() runs inside $(...), and a subshell
+    # shares this descriptor's offset with its parent - so a file of answers
+    # is read line after line, instead of its first line on every question.
+    exec 3<"$TTY_PATH"
   else
     HAVE_TTY=0
     note "No terminal available; every value has to come from the environment."
   fi
 }
 
+# Prompts go to the terminal the answers come from - except in the tests,
+# where that is a file of answers that must not be written to.
+tty_prompt() {
+  if [ -n "${LOXMATTER_TTY:-}" ]; then
+    printf '%s' "$1" >&2
+  else
+    printf '%s' "$1" >/dev/tty
+  fi
+}
+
 # Asks on the terminal and echoes the answer. Without a terminal, or in a dry
-# run, it echoes the default and asks nothing.
+# run, it echoes the default and asks nothing. Returns 1 when the terminal
+# gives no more input: echoing the default there would let a caller that
+# rejects the default ask again forever.
 ask() {
   ask_prompt="$1"
   ask_default="$2"
@@ -190,18 +226,51 @@ ask() {
     return 0
   fi
   if [ -n "$ask_default" ]; then
-    printf '%s [%s]: ' "$ask_prompt" "$ask_default" >/dev/tty
+    tty_prompt "$ask_prompt [$ask_default]: "
   else
-    printf '%s: ' "$ask_prompt" >/dev/tty
+    tty_prompt "$ask_prompt: "
   fi
-  if ! read -r ask_answer </dev/tty; then
-    ask_answer=""
+  if ! read -r ask_answer <&3; then
+    return 1
   fi
   if [ -z "$ask_answer" ]; then
     ask_answer="$ask_default"
   fi
   printf '%s' "$ask_answer"
 }
+
+# Asks for a number from a menu the caller has already printed, repeats on
+# anything else, and leaves the number in CHOICE. Called directly, never in
+# $(...) - a subshell would take CHOICE with it. $4 is 1 when 0 is a valid
+# answer. At most two digits: a menu never has a hundred lines, and a longer
+# number would reach `[ -le ]` as something the shell cannot compare.
+choose() {
+  choose_prompt="$1"
+  choose_default="$2"
+  choose_max="$3"
+  choose_zero="$4"
+  if [ "$HAVE_TTY" -eq 0 ] || [ "$DRY_RUN" -eq 1 ]; then
+    note "Taking $choose_default - nothing is asked without a terminal or in a dry run."
+  fi
+  while :; do
+    CHOICE="$(ask "$choose_prompt" "$choose_default")" ||
+      die "The terminal closed before this was answered: $choose_prompt"
+    case "$CHOICE" in
+      [0-9]|[0-9][0-9])
+        if [ "$CHOICE" -le "$choose_max" ]; then
+          if [ "$CHOICE" -ge 1 ] || [ "$choose_zero" -eq 1 ]; then
+            return 0
+          fi
+        fi
+        ;;
+    esac
+    warn "Please answer with one of the numbers shown."
+  done
+}
+
+count_lines() { printf '%s' "$1" | grep -c . || true; }
+
+nth_line() { printf '%s' "$1" | sed -n "${2}p"; }
 
 check_privileges() {
   step "checking privileges"
@@ -261,35 +330,256 @@ Install them with your package manager, then run this again."
   note "Will install: $wanted"
 }
 
-detect_radio_device() {
-  for candidate in /dev/ttyUSB* /dev/ttyACM*; do
+# Sets SERIAL_CANDIDATES to the USB serial devices a Thread stick could be,
+# one path per line. /dev/serial/by-id comes first: its names say what the
+# stick is, and they survive a reboot that swaps ttyUSB0 and ttyUSB1 - the
+# same reason the Radios card offers them. `-e` follows the link, so a
+# by-id link left behind by a pulled stick is skipped.
+list_serial_candidates() {
+  SERIAL_CANDIDATES=""
+  for candidate in "$SERIAL_BY_ID_DIR"/*; do
     if [ -e "$candidate" ]; then
-      printf '%s' "$candidate"
-      return 0
+      SERIAL_CANDIDATES="$SERIAL_CANDIDATES$candidate
+"
+    fi
+  done
+  if [ -n "$SERIAL_CANDIDATES" ]; then
+    return 0
+  fi
+  for candidate in "$SERIAL_DEV_DIR"/ttyUSB* "$SERIAL_DEV_DIR"/ttyACM*; do
+    if [ -e "$candidate" ]; then
+      SERIAL_CANDIDATES="$SERIAL_CANDIDATES$candidate
+"
     fi
   done
 }
 
+serial_label() {
+  case "$1" in
+    "$SERIAL_BY_ID_DIR"/*) printf '%s' "${1##*/}" ;;
+    *) printf '%s' "$1" ;;
+  esac
+}
+
+# No "Thread" or "Zigbee" label next to a stick: the firmware cannot be seen
+# from the name. The maintainer's own Thread stick is a SONOFF Dongle Plus
+# MG24 - a name radios/fingerprints.py knows as a Zigbee coordinator.
+# $1 is 1 when "None" is offered; without it the default is the first stick.
+show_thread_menu() {
+  say "Thread stick"
+  note "Thread devices need a USB stick running OpenThread RCP firmware."
+  note "A Zigbee stick does not belong here - set that up on the Radios card"
+  note "of the web interface after the installation."
+  printf '\n'
+  tm_count=0
+  while IFS= read -r tm_path; do
+    if [ -z "$tm_path" ]; then
+      continue
+    fi
+    tm_count=$((tm_count + 1))
+    note "  $tm_count) $(serial_label "$tm_path")"
+  done <<EOF
+$SERIAL_CANDIDATES
+EOF
+  tm_default=1
+  if [ "$1" -eq 1 ]; then
+    note "  0) None - WiFi and Ethernet only (Thread can be switched on later"
+    note "     on the Radios card)"
+    # Two sticks cannot be told apart by name, so the default never picks
+    # one of them silently.
+    if [ "$tm_count" -ne 1 ]; then
+      tm_default=0
+    fi
+  fi
+  printf '\n'
+  choose "Which one is the Thread stick?" "$tm_default" "$tm_count" "$1"
+}
+
 decide_mode() {
-  step "deciding the operating mode"
-  DETECTED_RADIO="$(detect_radio_device)"
+  step "choosing the Thread stick"
   if [ -n "${LOXMATTER_MODE:-}" ]; then
     MODE="$LOXMATTER_MODE"
-  else
-    if [ -n "$DETECTED_RADIO" ]; then
-      note "Found a possible Thread radio at $DETECTED_RADIO."
-      mode_default="thread"
+    case "$MODE" in
+      thread|wifi) : ;;
+      *) die "Operating mode must be 'thread' or 'wifi' (got: $MODE)" ;;
+    esac
+  elif [ -f "$TARGET_DIR/deploy/testhost/.env" ]; then
+    # A second run keeps what is configured. configure_mode reads the mode
+    # from COMPOSE_PROFILES, or from a running otbr container when that line
+    # is missing, and would overrule an answer given here anyway.
+    if [ -n "$(env_file_value COMPOSE_PROFILES)" ]; then
+      MODE="thread"
     else
-      note "No Thread radio found at /dev/ttyUSB* or /dev/ttyACM*."
-      mode_default="wifi"
+      MODE="wifi"
     fi
-    MODE="$(ask "Operating mode - 'thread' for Thread and WiFi, 'wifi' for WiFi and Ethernet only" "$mode_default")"
+    note "Thread: kept from $TARGET_DIR/deploy/testhost/.env."
+    note "Change the Thread stick on the Radios card of the web interface."
+    note "Operating mode: $MODE"
+    return 0
+  elif [ -n "${RADIO_DEVICE:-}" ]; then
+    MODE="thread"
+  else
+    list_serial_candidates
+    if [ -z "$SERIAL_CANDIDATES" ]; then
+      note "No USB stick found - installing for WiFi and Ethernet only."
+      note "Thread can be switched on later on the Radios card."
+      MODE="wifi"
+    else
+      show_thread_menu 1
+      if [ "$CHOICE" -eq 0 ]; then
+        MODE="wifi"
+      else
+        MODE="thread"
+        CHOSEN_RADIO="$(nth_line "$SERIAL_CANDIDATES" "$CHOICE")"
+      fi
+    fi
   fi
-  case "$MODE" in
-    thread|wifi) : ;;
-    *) die "Operating mode must be 'thread' or 'wifi' (got: $MODE)" ;;
-  esac
+  if [ "$MODE" = "thread" ] && [ -z "$CHOSEN_RADIO" ]; then
+    if [ -n "${RADIO_DEVICE:-}" ]; then
+      CHOSEN_RADIO="$RADIO_DEVICE"
+    elif [ -z "$(env_file_value RADIO_DEVICE)" ]; then
+      list_serial_candidates
+      if [ -z "$SERIAL_CANDIDATES" ]; then
+        die "Thread mode was requested, but no USB stick was found under
+$SERIAL_BY_ID_DIR, $SERIAL_DEV_DIR/ttyUSB* or $SERIAL_DEV_DIR/ttyACM*.
+Plug the stick in, pass RADIO_DEVICE=/dev/serial/by-id/..., or use
+LOXMATTER_MODE=wifi."
+      fi
+      show_thread_menu 0
+      CHOSEN_RADIO="$(nth_line "$SERIAL_CANDIDATES" "$CHOICE")"
+      # Thread was requested, so "None" is no option here, and stopping would
+      # be a new abort on the non-interactive path. Taking stick 1 is a guess
+      # between names that cannot tell a Thread stick from a Zigbee stick -
+      # on the maintainer's test Pi, alphabetical order puts the Zigbee
+      # dongle first. Say so, and name the way out.
+      if { [ "$HAVE_TTY" -eq 0 ] || [ "$DRY_RUN" -eq 1 ]; } &&
+         [ "$(count_lines "$SERIAL_CANDIDATES")" -gt 1 ]; then
+        warn "$(serial_label "$CHOSEN_RADIO") was taken as the Thread stick without asking."
+        warn "Several sticks were found, and their names cannot tell a Thread stick"
+        warn "from a Zigbee stick. If this is the wrong one, run the installer again"
+        warn "with RADIO_DEVICE=/dev/serial/by-id/<the Thread stick>, or change it"
+        warn "later on the Radios card of the web interface."
+      fi
+    fi
+  fi
   note "Operating mode: $MODE"
+}
+
+decide_backbone() {
+  if [ "$MODE" != "thread" ]; then
+    return 0
+  fi
+  step "choosing the border router's network interface"
+  if [ -n "$(env_file_value BACKBONE_IF)" ]; then
+    return 0
+  fi
+  if [ -n "${BACKBONE_IF:-}" ]; then
+    CHOSEN_BACKBONE="$BACKBONE_IF"
+    return 0
+  fi
+  CHOSEN_BACKBONE="$(detect_backbone_if)"
+  if [ -n "$CHOSEN_BACKBONE" ]; then
+    note "Border router network interface: $CHOSEN_BACKBONE (from the default route)."
+    note "The Thread border router reaches the rest of your network over it."
+    return 0
+  fi
+  if [ "$DRY_RUN" -eq 1 ]; then
+    note "would ask for the border router's network interface"
+    return 0
+  fi
+  if [ "$HAVE_TTY" -eq 0 ]; then
+    die "BACKBONE_IF: there is no default route to read the border router's
+network interface from, and no terminal to ask on. Pass it in instead:
+  curl -fsSL $RAW_URL | BACKBONE_IF=eth0 sh"
+  fi
+  say "Border router network interface"
+  note "No default route was found, so the interface the Thread border router"
+  note "should use could not be read. Usually eth0 (cable) or wlan0 (WiFi)."
+  while [ -z "$CHOSEN_BACKBONE" ]; do
+    CHOSEN_BACKBONE="$(ask "Network interface" "")" ||
+      die "The terminal closed before the network interface was given."
+  done
+}
+
+# Each predicate mirrors the early returns of its decide_* function: true
+# when that function will show its question. The backbone question is left
+# out - it appears only without a default route, and whether it is needed
+# depends on the Thread answer that has not been given yet.
+thread_menu_expected() {
+  # An existing .env means no menu at all here, mirroring decide_mode's own
+  # second-run branch, which returns before any menu whenever the .env exists.
+  if [ -f "$TARGET_DIR/deploy/testhost/.env" ] || [ -n "${RADIO_DEVICE:-}" ]; then
+    return 1
+  fi
+  case "${LOXMATTER_MODE:-}" in
+    ""|thread) : ;;
+    *) return 1 ;;
+  esac
+  list_serial_candidates
+  [ -n "$SERIAL_CANDIDATES" ]
+}
+
+bluetooth_menu_expected() {
+  if [ -n "${BLUETOOTH_ADAPTER:-}" ] || [ -n "$(env_file_value BLUETOOTH_ADAPTER)" ]; then
+    return 1
+  fi
+  list_bt_adapters
+  [ "$(count_lines "$BT_ADAPTERS")" -gt 1 ]
+}
+
+miniserver_question_expected() {
+  [ -z "${MINISERVER_IP:-}" ] && [ -z "$(env_file_value MINISERVER_IP)" ]
+}
+
+# Appends $1 as the next announced question, without eval: aq_count picks
+# which of the three fixed slots it lands in.
+aq_add() {
+  aq_count=$((aq_count + 1))
+  case "$aq_count" in
+    1) aq_1=$1 ;;
+    2) aq_2=$1 ;;
+    *) aq_3=$1 ;;
+  esac
+}
+
+# Says up front what is coming, so the user knows how long to stay at the
+# keyboard before the installation runs on its own.
+announce_questions() {
+  if [ "$HAVE_TTY" -eq 0 ] || [ "$DRY_RUN" -eq 1 ]; then
+    return 0
+  fi
+  aq_count=0
+  aq_1=""
+  aq_2=""
+  aq_3=""
+  if thread_menu_expected; then
+    aq_add "the Thread stick"
+  fi
+  if bluetooth_menu_expected; then
+    aq_add "the Bluetooth adapter"
+  fi
+  if miniserver_question_expected; then
+    aq_add "the address of your Loxone Miniserver"
+  fi
+  case "$aq_count" in
+    0) return 0 ;;
+    1) aq_text="One question follows: $aq_1." ;;
+    2) aq_text="Two questions follow: $aq_1 and $aq_2." ;;
+    *) aq_text="Three questions follow: $aq_1, $aq_2, and $aq_3." ;;
+  esac
+  say "Questions"
+  note "$aq_text"
+}
+
+# Every question, asked before anything is installed: answering once and
+# walking away beats being called back to the keyboard minutes later, after
+# the package and Docker installation.
+ask_questions() {
+  announce_questions
+  decide_mode
+  decide_backbone
+  decide_bluetooth
+  decide_miniserver
 }
 
 # Strict IPv4 check. Octets are shape-checked with `case` BEFORE any numeric
@@ -352,13 +642,6 @@ Pass it in instead:
   if [ -n "${MINISERVER_IP:-}" ] && ! valid_ipv4 "$MINISERVER_IP"; then
     die "MINISERVER_IP is not a valid IPv4 address: '$MINISERVER_IP'"
   fi
-  if [ "$MODE" = "thread" ] && [ -z "${RADIO_DEVICE:-}" ] &&
-     [ -z "$(env_file_value RADIO_DEVICE)" ] && [ -z "$DETECTED_RADIO" ] &&
-     [ "$HAVE_TTY" -eq 0 ]; then
-    die "Thread mode was requested, but no radio was found at /dev/ttyUSB* or
-/dev/ttyACM* and there is no terminal to ask on. Either plug the radio in,
-pass RADIO_DEVICE=/dev/ttyUSB0, or use LOXMATTER_MODE=wifi."
-  fi
 }
 
 # ------------------------------------------------------------- phase two --
@@ -405,6 +688,18 @@ dk() {
     sudo docker "$@"
   else
     docker "$@"
+  fi
+}
+
+# The docker command to print in a hint for the person running this. After
+# Docker was installed in this run, their shell is not in the 'docker' group
+# until they log in again - plain `docker` would answer "permission denied"
+# on the very command the hint suggests.
+docker_cmd() {
+  if [ "$DOCKER_SUDO" -eq 1 ]; then
+    printf 'sudo docker'
+  else
+    printf 'docker'
   fi
 }
 
@@ -579,50 +874,117 @@ config_written_note() {
   fi
 }
 
-ensure_env_value() {
-  value_key="$1"
-  value_prompt="$2"
-  value_default="$3"
-  value_required="$4"
+# Writes what phase one decided. A second run keeps whatever the existing
+# .env already holds. With $3 = 1 an empty value stops the run instead of
+# writing a line otbr cannot start with.
+write_env_value() {
+  wv_key="$1"
+  wv_value="$2"
+  wv_required="$3"
   if [ "$ENV_IS_NEW" -eq 0 ]; then
-    value_kept="$(env_file_value "$value_key")"
-    if [ -n "$value_kept" ]; then
-      note "$value_key=$value_kept (kept)"
+    wv_kept="$(env_file_value "$wv_key")"
+    if [ -n "$wv_kept" ]; then
+      note "$wv_key=$wv_kept (kept)"
       return 0
     fi
   fi
-  # An environment variable of the same name skips the question entirely.
-  value_override=""
-  eval "value_override=\${$value_key:-}"
-  if [ -n "$value_override" ]; then
-    value_new="$value_override"
-  else
-    value_new="$(ask "$value_prompt" "$value_default")"
+  if [ -z "$wv_value" ] && [ "$wv_required" -eq 1 ]; then
+    die "$wv_key needs a value and none could be obtained. Pass $wv_key=... to
+this script.$(config_written_note)"
   fi
-  if [ -z "$value_new" ] && [ "$value_required" -eq 1 ]; then
-    die "$value_key needs a value and none could be obtained.$(config_written_note)"
-  fi
-  env_set "$value_key" "$value_new"
-  note "$value_key=$value_new"
+  env_set "$wv_key" "$wv_value"
+  note "$wv_key=$wv_value"
 }
 
-ask_miniserver() {
-  if [ "$ENV_IS_NEW" -eq 0 ]; then
-    ms_kept="$(env_file_value MINISERVER_IP)"
-    if [ -n "$ms_kept" ]; then
-      note "MINISERVER_IP=$ms_kept (kept)"
+# Asks the address for /jdev/cfg/api, which a Miniserver answers without
+# signing in, with its serial number and firmware version. Returns 1 when no
+# Miniserver answered and leaves the reason in MS_PROBLEM. The shape parsed
+# here is the one captured in tests/fixtures/miniserver/jdev_cfg_api.json.
+check_miniserver() {
+  cm_ip="$1"
+  MS_PROBLEM=""
+  if [ "$DRY_RUN" -eq 1 ]; then
+    note "would check http://$cm_ip/jdev/cfg/api"
+    return 0
+  fi
+  if ! have curl; then
+    note "curl is not installed yet, so $cm_ip is not checked."
+    return 0
+  fi
+  note "Checking $cm_ip ..."
+  cm_status=0
+  cm_body="$(curl -fsS -m 3 "http://$cm_ip/jdev/cfg/api" 2>/dev/null)" || cm_status=$?
+  if [ "$cm_status" -ne 0 ]; then
+    case "$cm_status" in
+      28) cm_reason="timeout" ;;
+      7) cm_reason="could not connect" ;;
+      22) cm_reason="HTTP error" ;;
+      *) cm_reason="curl exit status $cm_status" ;;
+    esac
+    MS_PROBLEM="No Miniserver answers at $cm_ip ($cm_reason)."
+    warn "$MS_PROBLEM"
+    return 1
+  fi
+  cm_snr="$(printf '%s\n' "$cm_body" | sed -n "s/.*'snr': *'\([^']*\)'.*/\1/p" | head -n 1)"
+  cm_version="$(printf '%s\n' "$cm_body" | sed -n "s/.*'version': *'\([^']*\)'.*/\1/p" | head -n 1)"
+  if [ -z "$cm_snr" ] && [ -z "$cm_version" ]; then
+    MS_PROBLEM="Something answers at $cm_ip, but it is not a Miniserver."
+    warn "$MS_PROBLEM"
+    return 1
+  fi
+  note "Miniserver found at $cm_ip (serial ${cm_snr:-unknown}, firmware ${cm_version:-unknown})."
+}
+
+add_miniserver_finding() {
+  add_finding "The Miniserver address $1 was written although no Miniserver answered
+there. $MS_PROBLEM
+Once the Miniserver is reachable, check the address in the web interface under
+Settings -> Miniserver connection."
+}
+
+decide_miniserver() {
+  step "asking for the Miniserver"
+  # A second run keeps the address and does not check it again.
+  if [ -n "$(env_file_value MINISERVER_IP)" ]; then
+    return 0
+  fi
+  if [ -n "${MINISERVER_IP:-}" ]; then
+    # check_config_source has already refused a malformed one.
+    CHOSEN_MS="$MINISERVER_IP"
+    if ! check_miniserver "$CHOSEN_MS"; then
+      add_miniserver_finding "$CHOSEN_MS"
+    fi
+    return 0
+  fi
+  if [ "$DRY_RUN" -eq 1 ]; then
+    note "would ask for the Miniserver's address and check it"
+    return 0
+  fi
+  # check_config_source has already stopped a run with neither an address
+  # nor a terminal, so from here on there is one to ask on.
+  say "Loxone Miniserver"
+  note "loxmatter signs in to the Miniserver and creates the devices there."
+  note "You find its address in Loxone Config under the Miniserver's"
+  note "properties, or in the Loxone app under Settings -> Miniserver."
+  printf '\n'
+  while :; do
+    CHOSEN_MS="$(ask "IPv4 address of the Miniserver" "")" ||
+      die "The terminal closed before the Miniserver's address was given."
+    if ! valid_ipv4 "$CHOSEN_MS"; then
+      warn "'$CHOSEN_MS' is not an IPv4 address like 192.168.1.10."
+      continue
+    fi
+    if check_miniserver "$CHOSEN_MS"; then
       return 0
     fi
-  fi
-  ms_value="${MINISERVER_IP:-}"
-  while [ -z "$ms_value" ] || ! valid_ipv4 "$ms_value"; do
-    if [ "$HAVE_TTY" -eq 0 ]; then
-      die "MINISERVER_IP is not a valid IPv4 address: '$ms_value'.$(config_written_note)"
+    note "  1) Enter a different address"
+    note "  2) Use it anyway - the Miniserver is not reachable right now"
+    choose "Choice" 1 2 0
+    if [ "$CHOICE" -eq 2 ]; then
+      add_miniserver_finding "$CHOSEN_MS"
+      return 0
     fi
-    ms_value="$(ask "IPv4 address of the Loxone Miniserver" "")"
   done
-  env_set MINISERVER_IP "$ms_value"
-  note "MINISERVER_IP=$ms_value"
 }
 
 detect_backbone_if() {
@@ -630,14 +992,92 @@ detect_backbone_if() {
     awk '{ for (i = 1; i < NF; i++) if ($i == "dev") { print $(i + 1); exit } }'
 }
 
-detect_bt_adapter() {
-  for candidate in /sys/class/bluetooth/hci*; do
-    if [ -e "$candidate" ]; then
-      printf '%s' "${candidate##*/hci}"
+# The product string of the USB device a sysfs path belongs to. An adapter's
+# device link points at a USB interface; the product file sits on the device
+# above it. Walked up a few levels, like radios/inventory.py's _usb_device.
+usb_product() {
+  up_dir="$1"
+  up_steps=0
+  while [ "$up_steps" -le 4 ] && [ -n "$up_dir" ]; do
+    if [ -r "$up_dir/product" ]; then
+      cat "$up_dir/product"
       return 0
     fi
+    up_dir="${up_dir%/*}"
+    up_steps=$((up_steps + 1))
   done
-  printf '0'
+}
+
+# Sets BT_ADAPTERS to one line per adapter: its hci index, a tab, a label.
+# Classified like radios/inventory.py's scan_bluetooth: a USB adapter's
+# device link resolves below a usb bus, a built-in one below a serial port.
+# Only the part after the last /devices/ is looked at, so a directory above
+# sysfs whose name contains "usb" or "serial" cannot mislabel one.
+# `pwd -P` resolves the link: readlink -f is not POSIX.
+list_bt_adapters() {
+  BT_ADAPTERS=""
+  for bt_entry in "$BT_SYS_DIR"/hci*; do
+    bt_index="${bt_entry##*/hci}"
+    case "$bt_index" in
+      ''|*[!0-9]*) continue ;;
+    esac
+    bt_target="$(cd "$bt_entry/device" 2>/dev/null && pwd -P)" || bt_target=""
+    case "${bt_target##*/devices/}" in
+      usb*|*/usb*)
+        bt_product="$(usb_product "$bt_target")"
+        bt_label="USB: ${bt_product:-unknown adapter}"
+        ;;
+      *serial*) bt_label="built in (UART)" ;;
+      *) bt_label="other" ;;
+    esac
+    BT_ADAPTERS="$BT_ADAPTERS$bt_index$TAB$bt_label
+"
+  done
+}
+
+decide_bluetooth() {
+  step "choosing the Bluetooth adapter"
+  if [ -n "${BLUETOOTH_ADAPTER:-}" ]; then
+    CHOSEN_BT="$BLUETOOTH_ADAPTER"
+    return 0
+  fi
+  if [ -n "$(env_file_value BLUETOOTH_ADAPTER)" ]; then
+    return 0
+  fi
+  list_bt_adapters
+  bt_count="$(count_lines "$BT_ADAPTERS")"
+  if [ "$bt_count" -eq 0 ]; then
+    warn "No Bluetooth adapter found. New Matter devices can then only be"
+    warn "commissioned if they are already on your network (for example"
+    warn "through the manufacturer's app). An adapter can be chosen later on"
+    warn "the Radios card of the web interface."
+    CHOSEN_BT=0
+    return 0
+  fi
+  if [ "$bt_count" -eq 1 ]; then
+    bt_line="$(nth_line "$BT_ADAPTERS" 1)"
+    CHOSEN_BT="${bt_line%%"$TAB"*}"
+    note "Bluetooth: hci$CHOSEN_BT - ${bt_line#*"$TAB"}, used to commission Matter devices."
+    return 0
+  fi
+  say "Bluetooth adapter"
+  note "Most Matter devices are commissioned over Bluetooth. The built-in"
+  note "adapter is usually enough; a USB adapter reaches further."
+  printf '\n'
+  bt_position=0
+  while IFS="$TAB" read -r bt_index bt_label; do
+    if [ -z "$bt_index" ]; then
+      continue
+    fi
+    bt_position=$((bt_position + 1))
+    note "  $bt_position) hci$bt_index - $bt_label"
+  done <<EOF
+$BT_ADAPTERS
+EOF
+  printf '\n'
+  choose "Which adapter should be used?" 1 "$bt_count" 0
+  bt_line="$(nth_line "$BT_ADAPTERS" "$CHOICE")"
+  CHOSEN_BT="${bt_line%%"$TAB"*}"
 }
 
 # The .env.example explains why the token has to be plain [0-9a-f]: it travels
@@ -669,7 +1109,10 @@ configure_mode() {
       MODE="wifi"
     fi
     note "COMPOSE_PROFILES kept, mode: $MODE"
-    if [ "$MODE" != "$cm_requested_mode" ]; then
+    # Only LOXMATTER_MODE is a request. A mode decide_mode read out of this
+    # same .env, or a provisional wifi for an old .env without the line, is
+    # not something the user asked for and must not be "overruled" loudly.
+    if [ -n "${LOXMATTER_MODE:-}" ] && [ "$MODE" != "$cm_requested_mode" ]; then
       warn "The existing $ENV_FILE wins over the requested '$cm_requested_mode' mode: mode is '$MODE'. Edit COMPOSE_PROFILES in $ENV_FILE to change it."
     fi
     return 0
@@ -678,7 +1121,7 @@ configure_mode() {
     env_set COMPOSE_PROFILES thread
     MODE="thread"
     note "COMPOSE_PROFILES=thread (this installation already runs otbr)"
-    if [ "$MODE" != "$cm_requested_mode" ]; then
+    if [ -n "${LOXMATTER_MODE:-}" ] && [ "$MODE" != "$cm_requested_mode" ]; then
       warn "The existing $ENV_FILE wins over the requested '$cm_requested_mode' mode: mode is '$MODE'. Edit COMPOSE_PROFILES in $ENV_FILE to change it."
     fi
     return 0
@@ -707,10 +1150,13 @@ configure() {
   fi
   configure_mode
   if [ "$MODE" = "thread" ]; then
-    ensure_env_value RADIO_DEVICE "Thread radio device" "$DETECTED_RADIO" 1
-    ensure_env_value RADIO_BAUDRATE "Thread radio baud rate" "460800" 1
-    ensure_env_value BACKBONE_IF "Network interface for the border router" \
-      "$(detect_backbone_if)" 1
+    write_env_value RADIO_DEVICE "$CHOSEN_RADIO" 1
+    write_env_value RADIO_BAUDRATE "${RADIO_BAUDRATE:-460800}" 1
+    if [ "$ENV_IS_NEW" -eq 1 ] && [ -z "${RADIO_BAUDRATE:-}" ]; then
+      note "  (what the bundled border router image expects; set RADIO_BAUDRATE"
+      note "  before running this script to use a different one)"
+    fi
+    write_env_value BACKBONE_IF "$CHOSEN_BACKBONE" 1
   elif [ "$ENV_IS_NEW" -eq 1 ]; then
     # Without Thread nothing reads BACKBONE_IF yet, but switching Thread on
     # later happens on the Radios card, which never asks for it: left at
@@ -723,9 +1169,8 @@ configure() {
       note "BACKBONE_IF=$detected_backbone (for Thread, should you switch it on later)"
     fi
   fi
-  ensure_env_value BLUETOOTH_ADAPTER "Bluetooth adapter id for BLE commissioning" \
-    "$(detect_bt_adapter)" 0
-  ask_miniserver
+  write_env_value BLUETOOTH_ADAPTER "$CHOSEN_BT" 0
+  write_env_value MINISERVER_IP "$CHOSEN_MS" 1
   if [ "$ENV_IS_NEW" -eq 1 ] || [ -z "$(env_file_value LOXMATTER_API_TOKEN)" ]; then
     token_value="${LOXMATTER_API_TOKEN:-$(gen_token)}"
     # gen_token's /dev/urandom fallback runs through a pipe with no pipefail,
@@ -733,10 +1178,10 @@ configure() {
     # its own exit status - tr on an empty stdin still succeeds, and this
     # would otherwise write an empty token while printing "generated" below.
     if [ "${#token_value}" -ne 64 ]; then
-      die "Could not generate LOXMATTER_API_TOKEN: expected 64 hex characters, got ${#token_value}."
+      die "Could not generate LOXMATTER_API_TOKEN: expected 64 hex characters, got ${#token_value}.$(config_written_note)"
     fi
     case "$token_value" in
-      *[!0-9a-f]*) die "Could not generate LOXMATTER_API_TOKEN: got non-hex output." ;;
+      *[!0-9a-f]*) die "Could not generate LOXMATTER_API_TOKEN: got non-hex output.$(config_written_note)" ;;
     esac
     env_set LOXMATTER_API_TOKEN "$token_value"
     note "LOXMATTER_API_TOKEN generated"
@@ -780,7 +1225,7 @@ start_stack() {
   ( cd "$STACK_DIR" && dk compose up -d ) ||
     die "Could not start the stack in $STACK_DIR. The checkout and .env are in place; fix the
 cause and run this again. The logs are in:
-  cd $STACK_DIR && docker compose logs"
+  cd $STACK_DIR && $(docker_cmd) compose logs"
   STACK_STARTED=1
 }
 
@@ -843,7 +1288,7 @@ check_health() {
     HEALTHY=0
     add_finding "$health_url does not answer, so the bridge is not healthy yet.
 Look at:
-  cd $STACK_DIR && docker compose logs loxmatter"
+  cd $STACK_DIR && $(docker_cmd) compose logs loxmatter"
     return 0
   fi
   note "$health_url answers"
@@ -859,7 +1304,7 @@ check_containers() {
   for service in $expected; do
     if ! printf '%s\n' "$running" | grep -qx "$service"; then
       add_finding "Service '$service' is not running. Look at:
-  cd $STACK_DIR && docker compose logs $service"
+  cd $STACK_DIR && $(docker_cmd) compose logs $service"
     fi
   done
 }
@@ -989,8 +1434,8 @@ main() {
   check_privileges
   collect_missing
   check_can_install
-  decide_mode
   check_config_source
+  ask_questions
   install_packages
   install_docker
   ensure_checkout
