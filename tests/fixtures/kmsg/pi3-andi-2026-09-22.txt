@@ -1,0 +1,1131 @@
+6,390,17931589,-;Bluetooth: hci0: BCM: chip id 94
+6,391,17932230,-;Bluetooth: hci0: BCM: features 0x2e
+6,392,17935675,-;Bluetooth: hci0: BCM43430A1
+6,393,17935715,-;Bluetooth: hci0: BCM43430A1 (001.002.009) build 0000
+6,394,17953254,-;Bluetooth: hci0: BCM43430A1 'brcm/BCM43430A1.raspberrypi,3-model-b.hcd' Patch
+6,433,18795675,-;Bluetooth: hci0: BCM: features 0x2e
+6,434,18799062,-;Bluetooth: hci0: BCM43438A1 37.4MHz Raspberry Pi 3-0141
+6,435,18799116,-;Bluetooth: hci0: BCM43430A1 (001.002.009) build 0508
+2,452,19486524,-;hwmon hwmon1: Undervoltage detected!
+6,461,45726309,-;hwmon hwmon1: Voltage normalised
+2,462,47742429,-;hwmon hwmon1: Undervoltage detected!
+3,479,399126323,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,480,399134572,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,481,399177857,-;Bluetooth: hci0: Frame reassembly failed (-84)
+4,482,399177892,-;Bluetooth: hci0: Received unexpected HCI Event 0x00
+3,483,475846310,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,484,475854395,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,485,475956229,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,486,475964222,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,487,476035498,-;Bluetooth: hci0: Frame reassembly failed (-84)
+4,488,476035528,-;Bluetooth: hci0: Received unexpected HCI Event 0x00
+3,489,476043551,-;Bluetooth: hci0: Frame reassembly failed (-84)
+6,490,481183501,-;hwmon hwmon1: Voltage normalised
+2,491,483199409,-;hwmon hwmon1: Undervoltage detected!
+3,492,483234051,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,493,483242097,-;Bluetooth: hci0: Frame reassembly failed (-84)
+6,494,543679561,-;hwmon hwmon1: Voltage normalised
+2,495,545695524,-;hwmon hwmon1: Undervoltage detected!
+3,496,546056173,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,497,546064233,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,498,560231170,-;Bluetooth: hci0: Frame reassembly failed (-84)
+6,499,598111796,-;hwmon hwmon1: Voltage normalised
+2,500,600127821,-;hwmon hwmon1: Undervoltage detected!
+6,501,628355953,-;hwmon hwmon1: Voltage normalised
+2,502,630367990,-;hwmon hwmon1: Undervoltage detected!
+3,503,688149028,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,504,688158841,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,505,688173943,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,506,688182018,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,507,688262452,-;Bluetooth: hci0: Frame reassembly failed (-84)
+4,508,688262486,-;Bluetooth: hci0: Received unexpected HCI Event 0x00
+3,509,688262530,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,510,688280066,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,511,690244979,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,512,690253145,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,513,690424398,-;Bluetooth: hci0: Frame reassembly failed (-84)
+4,514,690432536,-;Bluetooth: hci0: Received unexpected HCI Event 0x00
+3,515,690432614,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,516,690522479,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,517,690530691,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,518,690641430,-;Bluetooth: hci0: Frame reassembly failed (-84)
+4,519,690641480,-;Bluetooth: hci0: Received unexpected HCI Event 0x00
+3,520,690686390,-;Bluetooth: hci0: Frame reassembly failed (-90)
+3,521,690694465,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,522,705632956,-;Bluetooth: hci0: Frame reassembly failed (-90)
+3,523,705701177,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,524,705709264,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,525,744636923,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,526,744644943,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,527,744662897,-;Bluetooth: hci0: Frame reassembly failed (-84)
+4,528,744662932,-;Bluetooth: hci0: Received unexpected HCI Event 0x00
+3,529,744662980,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,530,744679871,-;Bluetooth: hci0: Frame reassembly failed (-90)
+3,531,744689216,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,532,744705592,-;Bluetooth: hci0: Frame reassembly failed (-84)
+4,533,744708536,-;Bluetooth: hci0: Received unexpected HCI Event 0x00
+3,534,744731080,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,535,744739182,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,536,744763132,-;Bluetooth: hci0: Frame reassembly failed (-84)
+4,537,744763170,-;Bluetooth: hci0: Received unexpected HCI Event 0x00
+3,538,744763211,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,539,744776526,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,540,744802593,-;Bluetooth: hci0: Frame reassembly failed (-84)
+4,541,744802608,-;Bluetooth: hci0: Received unexpected HCI Event 0x00
+3,542,744807663,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,543,744825938,-;Bluetooth: hci0: Frame reassembly failed (-84)
+4,544,744825960,-;Bluetooth: hci0: Received unexpected HCI Event 0x00
+3,545,744830963,-;Bluetooth: hci0: Frame reassembly failed (-84)
+4,546,744852213,-;Bluetooth: hci0: Received unexpected HCI Event 0x00
+3,547,744852264,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,548,744857312,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,549,744882481,-;Bluetooth: hci0: Frame reassembly failed (-84)
+4,550,744882502,-;Bluetooth: hci0: Received unexpected HCI Event 0x00
+3,551,744882558,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,552,744893068,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,553,744910604,-;Bluetooth: hci0: Frame reassembly failed (-84)
+4,554,744910625,-;Bluetooth: hci0: Received unexpected HCI Event 0x00
+3,555,744910677,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,556,744921190,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,557,744926717,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,558,744932311,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,559,744951644,-;Bluetooth: hci0: Frame reassembly failed (-84)
+4,560,744951664,-;Bluetooth: hci0: Received unexpected HCI Event 0x00
+3,561,744951733,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,562,744978386,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,563,744983442,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,564,745008107,-;Bluetooth: hci0: Frame reassembly failed (-84)
+4,565,745008123,-;Bluetooth: hci0: Received unexpected HCI Event 0x00
+3,566,745013224,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,567,745018705,-;Bluetooth: hci0: Frame reassembly failed (-90)
+3,568,745029110,-;Bluetooth: hci0: Frame reassembly failed (-84)
+4,569,745029135,-;Bluetooth: hci0: Received unexpected HCI Event 0x00
+3,570,745034123,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,571,745077823,-;Bluetooth: hci0: Frame reassembly failed (-84)
+4,572,745077843,-;Bluetooth: hci0: Received unexpected HCI Event 0x00
+3,573,745077891,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,574,745088425,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,575,745126571,-;Bluetooth: hci0: Frame reassembly failed (-84)
+4,576,745126595,-;Bluetooth: hci0: Received unexpected HCI Event 0x00
+3,577,745131644,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,578,745138280,-;Bluetooth: hci0: Frame reassembly failed (-84)
+4,579,745138300,-;Bluetooth: hci0: Received unexpected HCI Event 0x00
+3,580,745143306,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,581,746207590,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,582,746216551,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,583,746256606,-;Bluetooth: hci0: Frame reassembly failed (-84)
+4,584,746259422,-;Bluetooth: hci0: Received unexpected HCI Event 0x00
+3,585,746265244,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,586,746642331,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,587,746650483,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,588,746660767,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,589,746668841,-;Bluetooth: hci0: Frame reassembly failed (-84)
+4,590,746693205,-;Bluetooth: hci0: Received unexpected HCI Event 0x00
+3,591,747304111,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,592,747312174,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,593,747330330,-;Bluetooth: hci0: Frame reassembly failed (-84)
+4,594,747330367,-;Bluetooth: hci0: Received unexpected HCI Event 0x00
+3,595,747371834,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,596,747379834,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,597,747405483,-;Bluetooth: hci0: Frame reassembly failed (-84)
+4,598,747405514,-;Bluetooth: hci0: Received unexpected HCI Event 0x00
+3,599,747413541,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,600,747426613,-;Bluetooth: hci0: Frame reassembly failed (-90)
+3,601,747434590,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,602,747455646,-;Bluetooth: hci0: Frame reassembly failed (-84)
+4,603,747455677,-;Bluetooth: hci0: Received unexpected HCI Event 0x00
+3,604,747455725,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,605,747479131,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,606,747487070,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,607,747506009,-;Bluetooth: hci0: Frame reassembly failed (-84)
+4,608,747506035,-;Bluetooth: hci0: Received unexpected HCI Event 0x00
+3,609,747506081,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,610,747522881,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,611,747535744,-;Bluetooth: hci0: Frame reassembly failed (-84)
+4,612,747535772,-;Bluetooth: hci0: Received unexpected HCI Event 0x00
+3,613,747543693,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,614,747555635,-;Bluetooth: hci0: Frame reassembly failed (-84)
+4,615,747555660,-;Bluetooth: hci0: Received unexpected HCI Event 0x00
+3,616,747563650,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,617,747578495,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,618,747586591,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,619,747619440,-;Bluetooth: hci0: Frame reassembly failed (-90)
+4,620,747619463,-;Bluetooth: hci0: Received unexpected HCI Event 0x00
+3,621,747627554,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,622,747627637,-;Bluetooth: hci0: unexpected event 0x04 length: 0 < 10
+3,623,747636357,-;Bluetooth: hci0: Frame reassembly failed (-84)
+4,624,747655989,-;Bluetooth: hci0: Received unexpected HCI Event 0x00
+3,625,748999901,-;Bluetooth: hci0: Frame reassembly failed (-84)
+4,626,748999918,-;Bluetooth: hci0: Received unexpected HCI Event 0x00
+3,627,749008066,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,628,749028557,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,629,749054241,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,630,749064621,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,631,749733322,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,632,749746755,-;Bluetooth: hci0: Frame reassembly failed (-84)
+4,633,749761238,-;Bluetooth: hci0: Received unexpected HCI Event 0x00
+3,634,749761249,-;Bluetooth: hci0: Frame reassembly failed (-90)
+3,635,750110483,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,636,750118622,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,637,750133413,-;Bluetooth: hci0: Frame reassembly failed (-84)
+4,638,750133476,-;Bluetooth: hci0: Received unexpected HCI Event 0x00
+3,639,750133501,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,640,750150311,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,641,750160533,-;Bluetooth: hci0: Frame reassembly failed (-84)
+4,642,750160575,-;Bluetooth: hci0: Received unexpected HCI Event 0x00
+3,643,750168550,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,644,750178030,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,645,750187224,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,646,750206043,-;Bluetooth: hci0: Frame reassembly failed (-84)
+4,647,750206116,-;Bluetooth: hci0: Received unexpected HCI Event 0x00
+3,648,750214146,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,649,750229653,-;Bluetooth: hci0: Frame reassembly failed (-84)
+4,650,750229689,-;Bluetooth: hci0: Received unexpected HCI Event 0x00
+3,651,750229737,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,652,750229802,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,653,750255433,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,654,750264385,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,655,750273205,-;Bluetooth: hci0: Frame reassembly failed (-84)
+4,656,750302382,-;Bluetooth: hci0: Received unexpected HCI Event 0x00
+3,657,750302439,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,658,750310593,-;Bluetooth: hci0: Frame reassembly failed (-84)
+4,659,750328765,-;Bluetooth: hci0: Received unexpected HCI Event 0x00
+3,660,750328824,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,661,750336897,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,662,750353586,-;Bluetooth: hci0: Frame reassembly failed (-84)
+4,663,750353617,-;Bluetooth: hci0: Received unexpected HCI Event 0x00
+3,664,750353670,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,665,750370538,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,666,750383889,-;Bluetooth: hci0: Frame reassembly failed (-84)
+4,667,750383925,-;Bluetooth: hci0: Received unexpected HCI Event 0x00
+3,668,750383968,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,669,750400983,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,670,750431657,-;Bluetooth: hci0: Frame reassembly failed (-84)
+4,671,750431691,-;Bluetooth: hci0: Received unexpected HCI Event 0x00
+3,672,750439678,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,673,750450282,-;Bluetooth: hci0: Frame reassembly failed (-84)
+4,674,750450317,-;Bluetooth: hci0: Received unexpected HCI Event 0x00
+3,675,750458290,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,676,750481186,-;Bluetooth: hci0: Frame reassembly failed (-84)
+4,677,750481215,-;Bluetooth: hci0: Received unexpected HCI Event 0x00
+3,678,750481251,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,679,750502263,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,680,750510256,-;Bluetooth: hci0: Frame reassembly failed (-90)
+3,681,750530508,-;Bluetooth: hci0: Frame reassembly failed (-84)
+4,682,750530542,-;Bluetooth: hci0: Received unexpected HCI Event 0x00
+3,683,750530576,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,684,750547351,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,685,750559410,-;Bluetooth: hci0: Frame reassembly failed (-84)
+4,686,750559442,-;Bluetooth: hci0: Received unexpected HCI Event 0x00
+3,687,750559490,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,688,750581075,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,689,750589066,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,690,750605270,-;Bluetooth: hci0: Frame reassembly failed (-84)
+4,691,750605303,-;Bluetooth: hci0: Received unexpected HCI Event 0x00
+3,692,750605336,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,693,756856783,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,694,756864921,-;Bluetooth: hci0: Frame reassembly failed (-84)
+4,695,756887322,-;Bluetooth: hci0: Received unexpected HCI Event 0x00
+3,696,756887310,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,697,756887355,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,698,756887430,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,699,756913122,-;Bluetooth: hci0: Frame reassembly failed (-84)
+4,700,756938628,-;Bluetooth: hci0: Received unexpected HCI Event 0x00
+3,701,756938730,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,702,756953569,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,703,756962012,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,704,756982901,-;Bluetooth: hci0: Frame reassembly failed (-84)
+4,705,756983432,-;Bluetooth: hci0: Received unexpected HCI Event 0x00
+3,706,756997787,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,707,757011405,-;Bluetooth: hci0: Frame reassembly failed (-84)
+4,708,757011444,-;Bluetooth: hci0: Received unexpected HCI Event 0x00
+3,709,757031183,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,710,757041103,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,711,757055408,-;Bluetooth: hci0: Frame reassembly failed (-84)
+4,712,757055475,-;Bluetooth: hci0: Received unexpected HCI Event 0x00
+3,713,757055521,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,714,757073218,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,715,757085011,-;Bluetooth: hci0: Frame reassembly failed (-84)
+4,716,757085040,-;Bluetooth: hci0: Received unexpected HCI Event 0x00
+3,717,757085072,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,718,757085179,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,719,757111660,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,720,757129814,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,721,757137988,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,722,757158570,-;Bluetooth: hci0: Frame reassembly failed (-84)
+4,723,757158618,-;Bluetooth: hci0: Received unexpected HCI Event 0x00
+3,724,757166708,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,725,757188523,-;Bluetooth: hci0: Frame reassembly failed (-84)
+4,726,757188574,-;Bluetooth: hci0: Received unexpected HCI Event 0x00
+3,727,757188621,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,728,757236396,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,729,757244571,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,730,757608867,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,731,757616934,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,732,757633117,-;Bluetooth: hci0: Frame reassembly failed (-84)
+4,733,757633149,-;Bluetooth: hci0: Received unexpected HCI Event 0x00
+3,734,757633193,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,735,759064246,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,736,759072006,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,737,763352679,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,738,763376151,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,739,763384230,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,740,763411268,-;Bluetooth: hci0: Frame reassembly failed (-84)
+4,741,763411338,-;Bluetooth: hci0: Received unexpected HCI Event 0x00
+3,742,763419573,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,743,763434403,-;Bluetooth: hci0: Frame reassembly failed (-84)
+4,744,763434448,-;Bluetooth: hci0: Received unexpected HCI Event 0x00
+3,745,763442479,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,746,763460587,-;Bluetooth: hci0: Frame reassembly failed (-84)
+4,747,763460618,-;Bluetooth: hci0: Received unexpected HCI Event 0x00
+3,748,763460646,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,749,763484924,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,750,763493023,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,751,763508080,-;Bluetooth: hci0: Frame reassembly failed (-84)
+4,752,763508141,-;Bluetooth: hci0: Received unexpected HCI Event 0x00
+3,753,763517014,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,754,763533003,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,755,763555058,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,756,763564633,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,757,763580602,-;Bluetooth: hci0: Frame reassembly failed (-84)
+4,758,763580633,-;Bluetooth: hci0: Received unexpected HCI Event 0x00
+3,759,763589120,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,760,763629254,-;Bluetooth: hci0: Frame reassembly failed (-84)
+4,761,763629306,-;Bluetooth: hci0: Received unexpected HCI Event 0x00
+3,762,763629340,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,763,763646393,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,764,763856165,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,765,763856191,-;Bluetooth: hci0: ISO packet for unknown connection handle 2568
+3,766,763875308,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,767,763884304,-;Bluetooth: hci0: Frame reassembly failed (-84)
+4,768,763908104,-;Bluetooth: hci0: Received unexpected HCI Event 0x00
+3,769,765477786,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,770,765488641,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,771,765502467,-;Bluetooth: hci0: Frame reassembly failed (-84)
+4,772,765502503,-;Bluetooth: hci0: Received unexpected HCI Event 0x00
+3,773,765502529,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,774,765523802,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,775,765540624,-;Bluetooth: hci0: Frame reassembly failed (-84)
+4,776,765540716,-;Bluetooth: hci0: Received unexpected HCI Event 0x00
+3,777,765558808,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,778,765572597,-;Bluetooth: hci0: Frame reassembly failed (-84)
+4,779,765585808,-;Bluetooth: hci0: Received unexpected HCI Event 0x00
+3,780,765585806,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,781,765585929,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,782,765604629,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,783,765613696,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,784,765635146,-;Bluetooth: hci0: Frame reassembly failed (-84)
+4,785,765635198,-;Bluetooth: hci0: Received unexpected HCI Event 0x00
+3,786,765635238,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,787,765657385,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,788,765665646,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,789,765680696,-;Bluetooth: hci0: Frame reassembly failed (-84)
+4,790,765680737,-;Bluetooth: hci0: Received unexpected HCI Event 0x00
+3,791,765706340,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,792,765714574,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,793,765728611,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,794,765746215,-;Bluetooth: hci0: Frame reassembly failed (-84)
+4,795,765746281,-;Bluetooth: hci0: Received unexpected HCI Event 0x00
+3,796,765760589,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,797,765772581,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,798,765785185,-;Bluetooth: hci0: Frame reassembly failed (-90)
+4,799,765785213,-;Bluetooth: hci0: Received unexpected HCI Event 0x00
+3,800,765806289,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,801,765814349,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,802,765830199,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,803,765847343,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,804,765861922,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,805,765879321,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,806,765888590,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,807,765897370,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,808,765907903,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,809,765928771,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,810,765934083,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,811,765955624,-;Bluetooth: hci0: Frame reassembly failed (-84)
+4,812,765955656,-;Bluetooth: hci0: Received unexpected HCI Event 0x00
+3,813,765955681,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,814,765972650,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,815,765980660,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,816,765988994,-;Bluetooth: hci0: Frame reassembly failed (-84)
+4,817,766010130,-;Bluetooth: hci0: Received unexpected HCI Event 0x00
+3,818,766010129,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,819,766015282,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,820,766335020,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,821,766345672,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,822,767108828,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,823,767129999,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,824,767138267,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,825,767159998,-;Bluetooth: hci0: Frame reassembly failed (-84)
+4,826,767160043,-;Bluetooth: hci0: Received unexpected HCI Event 0x00
+3,827,767160090,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,828,767176989,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,829,767204352,-;Bluetooth: hci0: Frame reassembly failed (-84)
+4,830,767204441,-;Bluetooth: hci0: Received unexpected HCI Event 0x00
+3,831,767204514,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,832,767227463,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,833,767235683,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,834,767245853,-;Bluetooth: hci0: Frame reassembly failed (-84)
+4,835,767245891,-;Bluetooth: hci0: Received unexpected HCI Event 0x00
+3,836,767254021,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,837,767278811,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,838,767286824,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,839,767303874,-;Bluetooth: hci0: Frame reassembly failed (-84)
+4,840,767303905,-;Bluetooth: hci0: Received unexpected HCI Event 0x00
+3,841,767303930,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,842,767320761,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,843,767333188,-;Bluetooth: hci0: Frame reassembly failed (-84)
+4,844,767333225,-;Bluetooth: hci0: Received unexpected HCI Event 0x00
+3,845,767341251,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,846,767356543,-;Bluetooth: hci0: Frame reassembly failed (-84)
+4,847,767356612,-;Bluetooth: hci0: Received unexpected HCI Event 0x00
+3,848,767356650,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,849,767373434,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,850,767382782,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,851,767391242,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,852,767402621,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,853,770383187,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,854,770391284,-;Bluetooth: hci0: Frame reassembly failed (-90)
+3,855,782534691,-;Bluetooth: hci0: Frame reassembly failed (-90)
+3,856,782542931,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,857,792558170,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,858,792572200,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,859,792593669,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,860,792603645,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,861,795650673,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,862,795658799,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,863,795694405,-;Bluetooth: hci0: Frame reassembly failed (-84)
+4,864,795694496,-;Bluetooth: hci0: Received unexpected HCI Event 0x00
+3,865,795702471,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,866,795720297,-;Bluetooth: hci0: Frame reassembly failed (-84)
+4,867,795720331,-;Bluetooth: hci0: Received unexpected HCI Event 0x00
+3,868,795728837,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,869,795748802,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,870,815686554,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,871,815694999,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,872,821583521,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,873,821591685,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,874,821622903,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,875,821631449,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,876,821665833,-;Bluetooth: hci0: Frame reassembly failed (-84)
+4,877,821665853,-;Bluetooth: hci0: Received unexpected HCI Event 0x00
+3,878,821711328,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,879,821719422,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,880,821752297,-;Bluetooth: hci0: Frame reassembly failed (-84)
+4,881,821752331,-;Bluetooth: hci0: Received unexpected HCI Event 0x00
+3,882,821752393,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,883,821769277,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,884,821778141,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,885,821836584,-;Bluetooth: hci0: Frame reassembly failed (-84)
+4,886,821836651,-;Bluetooth: hci0: Received unexpected HCI Event 0x00
+3,887,821845187,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,888,832752444,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,889,832760577,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,890,832803505,-;Bluetooth: hci0: Frame reassembly failed (-84)
+4,891,832803525,-;Bluetooth: hci0: Received unexpected HCI Event 0x00
+3,892,832803562,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,893,835220415,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,894,835228523,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,895,835255751,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,896,835263929,-;Bluetooth: hci0: Frame reassembly failed (-90)
+4,897,835319327,-;Bluetooth: hci0: Received unexpected HCI Event 0x00
+3,898,835319327,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,899,835327966,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,900,838724058,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,901,838732416,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,902,838787130,-;Bluetooth: hci0: Frame reassembly failed (-84)
+4,903,838787170,-;Bluetooth: hci0: Received unexpected HCI Event 0x00
+3,904,838787247,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,905,838823896,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,906,838832117,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,907,851040682,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,908,851048880,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,909,854392191,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,910,854402245,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,911,854763758,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,912,854771896,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,913,854809118,-;Bluetooth: hci0: Frame reassembly failed (-84)
+4,914,854809153,-;Bluetooth: hci0: Received unexpected HCI Event 0x00
+3,915,854817282,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,916,854847996,-;Bluetooth: hci0: Frame reassembly failed (-84)
+4,917,854848057,-;Bluetooth: hci0: Received unexpected HCI Event 0x00
+3,918,854848082,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,919,854864935,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,920,857024890,-;Bluetooth: hci0: command 0x200c tx timeout
+3,921,857024890,-;Bluetooth: hci0: Opcode 0x200c failed: -110
+3,922,857024929,-;Bluetooth: hci0: Unable to disable scanning: -110
+3,923,857050181,-;Bluetooth: hci0: Opcode 0x200c failed: -110
+3,924,857058691,-;Bluetooth: hci0: Unable to disable scanning: -110
+3,925,857068484,-;Bluetooth: hci0: Unable to disable scanning: -110
+3,926,859072851,-;Bluetooth: hci0: command 0x200c tx timeout
+3,927,859080279,-;Bluetooth: hci0: Opcode 0x200c failed: -110
+3,928,859088726,-;Bluetooth: hci0: Unable to disable scanning: -110
+3,929,859098029,-;Bluetooth: hci0: stop background scanning failed: -110
+3,930,861088873,-;Bluetooth: hci0: command 0x200c tx timeout
+3,931,869024888,-;Bluetooth: hci0: command 0x200c tx timeout
+3,932,869024879,-;Bluetooth: hci0: Opcode 0x200c failed: -110
+3,933,869040758,-;Bluetooth: hci0: Unable to disable scanning: -110
+3,934,869050029,-;Bluetooth: hci0: Unable to disable scanning: -110
+3,935,871072877,-;Bluetooth: hci0: command 0x200c tx timeout
+3,936,871072877,-;Bluetooth: hci0: Opcode 0x200c failed: -110
+3,937,871072909,-;Bluetooth: hci0: Unable to disable scanning: -110
+3,938,871072919,-;Bluetooth: hci0: stop background scanning failed: -110
+3,939,881024886,-;Bluetooth: hci0: command 0x200c tx timeout
+3,940,881024885,-;Bluetooth: hci0: Opcode 0x200c failed: -110
+3,941,881040730,-;Bluetooth: hci0: Unable to disable scanning: -110
+3,942,881050035,-;Bluetooth: hci0: Unable to disable scanning: -110
+3,943,883076891,-;Bluetooth: hci0: command 0x200c tx timeout
+3,944,883076891,-;Bluetooth: hci0: Opcode 0x200c failed: -110
+3,945,883092737,-;Bluetooth: hci0: Unable to disable scanning: -110
+3,946,883102069,-;Bluetooth: hci0: stop background scanning failed: -110
+3,947,893025010,-;Bluetooth: hci0: command 0x200c tx timeout
+3,948,893025010,-;Bluetooth: hci0: Opcode 0x200c failed: -110
+3,949,893040968,-;Bluetooth: hci0: Unable to disable scanning: -110
+3,950,893050218,-;Bluetooth: hci0: Unable to disable scanning: -110
+3,951,895072955,-;Bluetooth: hci0: command 0x200c tx timeout
+3,952,895072950,-;Bluetooth: hci0: Opcode 0x200c failed: -110
+3,953,895088812,-;Bluetooth: hci0: Unable to disable scanning: -110
+3,954,895098101,-;Bluetooth: hci0: stop background scanning failed: -110
+3,955,905029037,-;Bluetooth: hci0: command 0x200c tx timeout
+3,956,905029038,-;Bluetooth: hci0: Opcode 0x200c failed: -110
+3,957,905029077,-;Bluetooth: hci0: Unable to disable scanning: -110
+3,958,905029088,-;Bluetooth: hci0: Unable to disable scanning: -110
+3,959,905051526,-;Bluetooth: hci0: Frame reassembly failed (-84)
+3,960,905051536,-;Bluetooth: hci0: ACL packet for unknown connection handle 85
+3,961,907072965,-;Bluetooth: hci0: Opcode 0x200c failed: -110
+3,962,907072989,-;Bluetooth: hci0: command 0x200c tx timeout
+3,963,907088830,-;Bluetooth: hci0: Unable to disable scanning: -110
+3,964,907098132,-;Bluetooth: hci0: stop background scanning failed: -110
+3,965,915006206,-;Bluetooth: hci0: Opcode 0x200c failed: -16
+3,966,915013620,-;Bluetooth: hci0: Unable to disable scanning: -16
+3,967,915022768,-;Bluetooth: hci0: Unable to disable scanning: -16
+3,968,915032547,-;Bluetooth: hci0: Opcode 0x200c failed: -16
+3,969,915040274,-;Bluetooth: hci0: Unable to disable scanning: -16
+3,970,915049409,-;Bluetooth: hci0: stop background scanning failed: -16
+3,971,925015918,-;Bluetooth: hci0: Opcode 0x200c failed: -16
+3,972,925023330,-;Bluetooth: hci0: Unable to disable scanning: -16
+3,973,925032495,-;Bluetooth: hci0: Unable to disable scanning: -16
+3,974,925042282,-;Bluetooth: hci0: Opcode 0x200c failed: -16
+3,975,925049970,-;Bluetooth: hci0: Unable to disable scanning: -16
+3,976,925059133,-;Bluetooth: hci0: stop background scanning failed: -16
+3,977,935010381,-;Bluetooth: hci0: Opcode 0x200c failed: -16
+3,978,935017785,-;Bluetooth: hci0: Unable to disable scanning: -16
+3,979,935026948,-;Bluetooth: hci0: Unable to disable scanning: -16
+3,980,935036698,-;Bluetooth: hci0: Opcode 0x200c failed: -16
+3,981,935044442,-;Bluetooth: hci0: Unable to disable scanning: -16
+3,982,935053605,-;Bluetooth: hci0: stop background scanning failed: -16
+3,983,945013744,-;Bluetooth: hci0: Opcode 0x200c failed: -16
+3,984,945018436,-;Bluetooth: hci0: Unable to disable scanning: -16
+3,985,945024151,-;Bluetooth: hci0: Unable to disable scanning: -16
+3,986,945030441,-;Bluetooth: hci0: Opcode 0x200c failed: -16
+3,987,945035117,-;Bluetooth: hci0: Unable to disable scanning: -16
+3,988,945040851,-;Bluetooth: hci0: stop background scanning failed: -16
+3,989,955015894,-;Bluetooth: hci0: Opcode 0x200c failed: -16
+3,990,955020619,-;Bluetooth: hci0: Unable to disable scanning: -16
+3,991,955026361,-;Bluetooth: hci0: Unable to disable scanning: -16
+3,992,955032682,-;Bluetooth: hci0: Opcode 0x200c failed: -16
+3,993,955037441,-;Bluetooth: hci0: Unable to disable scanning: -16
+3,994,955043133,-;Bluetooth: hci0: stop background scanning failed: -16
+3,995,965014176,-;Bluetooth: hci0: Opcode 0x200c failed: -16
+3,996,965021727,-;Bluetooth: hci0: Unable to disable scanning: -16
+3,997,965030849,-;Bluetooth: hci0: Unable to disable scanning: -16
+3,998,965040732,-;Bluetooth: hci0: Opcode 0x200c failed: -16
+3,999,965048347,-;Bluetooth: hci0: Unable to disable scanning: -16
+3,1000,965057442,-;Bluetooth: hci0: stop background scanning failed: -16
+3,1001,975014216,-;Bluetooth: hci0: Opcode 0x200c failed: -16
+3,1002,975021668,-;Bluetooth: hci0: Unable to disable scanning: -16
+3,1003,975030863,-;Bluetooth: hci0: Unable to disable scanning: -16
+3,1004,975041330,-;Bluetooth: hci0: Opcode 0x200c failed: -16
+3,1005,975048775,-;Bluetooth: hci0: Unable to disable scanning: -16
+3,1006,975058039,-;Bluetooth: hci0: stop background scanning failed: -16
+6,1007,977121211,-;hwmon hwmon1: Voltage normalised
+2,1008,979137304,-;hwmon hwmon1: Undervoltage detected!
+3,1009,985016134,-;Bluetooth: hci0: Opcode 0x200c failed: -16
+3,1010,985023544,-;Bluetooth: hci0: Unable to disable scanning: -16
+3,1011,985032718,-;Bluetooth: hci0: Unable to disable scanning: -16
+3,1012,985042503,-;Bluetooth: hci0: Opcode 0x200c failed: -16
+3,1013,985050187,-;Bluetooth: hci0: Unable to disable scanning: -16
+3,1014,985059336,-;Bluetooth: hci0: stop background scanning failed: -16
+3,1015,1019367859,-;Bluetooth: hci0: Opcode 0x200c failed: -16
+3,1016,1019372610,-;Bluetooth: hci0: Unable to disable scanning: -16
+3,1017,1019378415,-;Bluetooth: hci0: Unable to disable scanning: -16
+3,1018,1019384723,-;Bluetooth: hci0: Opcode 0x200c failed: -16
+3,1019,1019389516,-;Bluetooth: hci0: Unable to disable scanning: -16
+3,1020,1019395168,-;Bluetooth: hci0: stop background scanning failed: -16
+6,1021,1094051603,-;hwmon hwmon1: Voltage normalised
+2,1022,1096065723,-;hwmon hwmon1: Undervoltage detected!
+6,1023,1239202568,-;hwmon hwmon1: Voltage normalised
+2,1024,1241218606,-;hwmon hwmon1: Undervoltage detected!
+6,1025,1295650917,-;hwmon hwmon1: Voltage normalised
+2,1026,1297666948,-;hwmon hwmon1: Undervoltage detected!
+6,1027,1414595547,-;hwmon hwmon1: Voltage normalised
+2,1028,1416611454,-;hwmon hwmon1: Undervoltage detected!
+6,1029,1426691486,-;hwmon hwmon1: Voltage normalised
+2,1030,1428707616,-;hwmon hwmon1: Undervoltage detected!
+6,1031,1489187824,-;hwmon hwmon1: Voltage normalised
+2,1032,1491203850,-;hwmon hwmon1: Undervoltage detected!
+6,1033,1616196315,-;hwmon hwmon1: Voltage normalised
+2,1034,1618212408,-;hwmon hwmon1: Undervoltage detected!
+6,1035,2019397725,-;hwmon hwmon1: Voltage normalised
+2,1036,2021413726,-;hwmon hwmon1: Undervoltage detected!
+6,1037,2049637824,-;hwmon hwmon1: Voltage normalised
+2,1038,2051653816,-;hwmon hwmon1: Undervoltage detected!
+6,1039,2263335691,-;hwmon hwmon1: Voltage normalised
+2,1040,2265350505,-;hwmon hwmon1: Undervoltage detected!
+6,1041,2376230878,-;hwmon hwmon1: Voltage normalised
+2,1042,2378246888,-;hwmon hwmon1: Undervoltage detected!
+6,1043,2525415286,-;hwmon hwmon1: Voltage normalised
+2,1044,2527431389,-;hwmon hwmon1: Undervoltage detected!
+6,1045,2581863550,-;hwmon hwmon1: Voltage normalised
+2,1046,2583879532,-;hwmon hwmon1: Undervoltage detected!
+6,1047,2815720276,-;hwmon hwmon1: Voltage normalised
+2,1048,2817736298,-;hwmon hwmon1: Undervoltage detected!
+6,1049,2896360535,-;hwmon hwmon1: Voltage normalised
+2,1050,2898376546,-;hwmon hwmon1: Undervoltage detected!
+6,1051,2964908751,-;hwmon hwmon1: Voltage normalised
+2,1052,2966920739,-;hwmon hwmon1: Undervoltage detected!
+6,1053,3174569421,-;hwmon hwmon1: Voltage normalised
+2,1054,3176585403,-;hwmon hwmon1: Undervoltage detected!
+6,1055,3237065616,-;hwmon hwmon1: Voltage normalised
+2,1056,3239081635,-;hwmon hwmon1: Undervoltage detected!
+6,1057,3364073961,-;hwmon hwmon1: Voltage normalised
+2,1058,3366090048,-;hwmon hwmon1: Undervoltage detected!
+6,1059,3513262549,-;hwmon hwmon1: Voltage normalised
+2,1060,3515274526,-;hwmon hwmon1: Undervoltage detected!
+6,1061,3634218826,-;hwmon hwmon1: Voltage normalised
+2,1062,3636234900,-;hwmon hwmon1: Undervoltage detected!
+6,1063,3898315772,-;hwmon hwmon1: Voltage normalised
+2,1064,3900331730,-;hwmon hwmon1: Undervoltage detected!
+6,1065,4013228031,-;hwmon hwmon1: Voltage normalised
+2,1066,4015244084,-;hwmon hwmon1: Undervoltage detected!
+6,1067,4087820359,-;hwmon hwmon1: Voltage normalised
+2,1068,4089836454,-;hwmon hwmon1: Undervoltage detected!
+6,1069,4184588700,-;hwmon hwmon1: Voltage normalised
+2,1070,4186604723,-;hwmon hwmon1: Undervoltage detected!
+6,1071,4374093275,-;hwmon hwmon1: Voltage normalised
+2,1072,4376109273,-;hwmon hwmon1: Undervoltage detected!
+6,1073,4482957620,-;hwmon hwmon1: Voltage normalised
+2,1074,4484973597,-;hwmon hwmon1: Undervoltage detected!
+6,1075,4513198249,-;hwmon hwmon1: Voltage normalised
+2,1076,4515213692,-;hwmon hwmon1: Undervoltage detected!
+6,1077,4535373755,-;hwmon hwmon1: Voltage normalised
+2,1078,4537389753,-;hwmon hwmon1: Undervoltage detected!
+6,1079,4597870000,-;hwmon hwmon1: Voltage normalised
+2,1080,4599886008,-;hwmon hwmon1: Undervoltage detected!
+6,1081,4791406513,-;hwmon hwmon1: Voltage normalised
+2,1082,4793422580,-;hwmon hwmon1: Undervoltage detected!
+6,1083,4865998759,-;hwmon hwmon1: Voltage normalised
+2,1084,4868014818,-;hwmon hwmon1: Undervoltage detected!
+6,1085,5242996009,-;hwmon hwmon1: Voltage normalised
+2,1086,5245008026,-;hwmon hwmon1: Undervoltage detected!
+6,1087,5386128492,-;hwmon hwmon1: Voltage normalised
+2,1088,5388144486,-;hwmon hwmon1: Undervoltage detected!
+6,1089,5815537833,-;hwmon hwmon1: Voltage normalised
+2,1090,5817553852,-;hwmon hwmon1: Undervoltage detected!
+6,1091,6005046066,-;hwmon hwmon1: Voltage normalised
+2,1092,6007058425,-;hwmon hwmon1: Undervoltage detected!
+6,1093,6202611381,-;hwmon hwmon1: Voltage normalised
+2,1094,6204627411,-;hwmon hwmon1: Undervoltage detected!
+6,1095,6232856478,-;hwmon hwmon1: Voltage normalised
+2,1096,6234868586,-;hwmon hwmon1: Undervoltage detected!
+6,1097,6295350660,-;hwmon hwmon1: Voltage normalised
+2,1098,6297366765,-;hwmon hwmon1: Undervoltage detected!
+6,1099,6339704188,-;hwmon hwmon1: Voltage normalised
+2,1100,6341720242,-;hwmon hwmon1: Undervoltage detected!
+6,1101,6535261584,-;hwmon hwmon1: Voltage normalised
+2,1102,6537277609,-;hwmon hwmon1: Undervoltage detected!
+6,1103,6632035684,-;hwmon hwmon1: Voltage normalised
+2,1104,6634047818,-;hwmon hwmon1: Undervoltage detected!
+6,1105,6656224281,-;hwmon hwmon1: Voltage normalised
+2,1106,6658240298,-;hwmon hwmon1: Undervoltage detected!
+6,1107,6674368662,-;hwmon hwmon1: Voltage normalised
+2,1108,6676384670,-;hwmon hwmon1: Undervoltage detected!
+6,1109,6833635551,-;hwmon hwmon1: Voltage normalised
+2,1110,6835652304,-;hwmon hwmon1: Undervoltage detected!
+6,1111,6948549643,-;hwmon hwmon1: Voltage normalised
+2,1112,6950565443,-;hwmon hwmon1: Undervoltage detected!
+6,1113,6966693698,-;hwmon hwmon1: Voltage normalised
+2,1114,6968709800,-;hwmon hwmon1: Undervoltage detected!
+6,1115,6984837956,-;hwmon hwmon1: Voltage normalised
+2,1116,6986853969,-;hwmon hwmon1: Undervoltage detected!
+6,1117,7063467051,-;hwmon hwmon1: Voltage normalised
+2,1118,7065479088,-;hwmon hwmon1: Undervoltage detected!
+6,1119,7081611324,-;hwmon hwmon1: Voltage normalised
+2,1120,7083623329,-;hwmon hwmon1: Undervoltage detected!
+6,1121,7099751557,-;hwmon hwmon1: Voltage normalised
+2,1122,7101767547,-;hwmon hwmon1: Undervoltage detected!
+6,1123,7162252361,-;hwmon hwmon1: Voltage normalised
+2,1124,7164264397,-;hwmon hwmon1: Undervoltage detected!
+6,1125,7309418170,-;hwmon hwmon1: Voltage normalised
+2,1126,7311434151,-;hwmon hwmon1: Undervoltage detected!
+6,1127,7365870811,-;hwmon hwmon1: Voltage normalised
+2,1128,7367882790,-;hwmon hwmon1: Undervoltage detected!
+6,1129,7384010994,-;hwmon hwmon1: Voltage normalised
+2,1130,7386027028,-;hwmon hwmon1: Undervoltage detected!
+6,1131,7464651854,-;hwmon hwmon1: Voltage normalised
+2,1132,7466667864,-;hwmon hwmon1: Undervoltage detected!
+6,1133,7567472927,-;hwmon hwmon1: Voltage normalised
+2,1134,7569484909,-;hwmon hwmon1: Undervoltage detected!
+6,1135,7704558298,-;hwmon hwmon1: Voltage normalised
+2,1136,7706574250,-;hwmon hwmon1: Undervoltage detected!
+6,1137,7722702451,-;hwmon hwmon1: Voltage normalised
+2,1138,7724718391,-;hwmon hwmon1: Undervoltage detected!
+6,1139,7728750507,-;hwmon hwmon1: Voltage normalised
+2,1140,7730766482,-;hwmon hwmon1: Undervoltage detected!
+6,1141,7928340329,-;hwmon hwmon1: Voltage normalised
+2,1142,7930352319,-;hwmon hwmon1: Undervoltage detected!
+6,1143,7946484497,-;hwmon hwmon1: Voltage normalised
+2,1144,7948496482,-;hwmon hwmon1: Undervoltage detected!
+6,1145,8123889989,-;hwmon hwmon1: Voltage normalised
+2,1146,8125906162,-;hwmon hwmon1: Undervoltage detected!
+6,1147,8525075783,-;hwmon hwmon1: Voltage normalised
+2,1148,8527091750,-;hwmon hwmon1: Undervoltage detected!
+6,1149,8633940129,-;hwmon hwmon1: Voltage normalised
+2,1150,8635956202,-;hwmon hwmon1: Undervoltage detected!
+6,1151,8672244410,-;hwmon hwmon1: Voltage normalised
+2,1152,8674260357,-;hwmon hwmon1: Undervoltage detected!
+6,1153,8734740843,-;hwmon hwmon1: Voltage normalised
+2,1154,8736756657,-;hwmon hwmon1: Undervoltage detected!
+6,1155,8871829399,-;hwmon hwmon1: Voltage normalised
+2,1156,8873845506,-;hwmon hwmon1: Undervoltage detected!
+6,1157,8928277731,-;hwmon hwmon1: Voltage normalised
+2,1158,8930293695,-;hwmon hwmon1: Undervoltage detected!
+6,1159,9021014185,-;hwmon hwmon1: Voltage normalised
+2,1160,9023030225,-;hwmon hwmon1: Undervoltage detected!
+6,1161,9049238376,-;hwmon hwmon1: Voltage normalised
+2,1162,9051254400,-;hwmon hwmon1: Undervoltage detected!
+6,1163,9117782778,-;hwmon hwmon1: Voltage normalised
+2,1164,9119798789,-;hwmon hwmon1: Undervoltage detected!
+6,1165,9345592270,-;hwmon hwmon1: Voltage normalised
+2,1166,9347608211,-;hwmon hwmon1: Undervoltage detected!
+6,1167,9408088658,-;hwmon hwmon1: Voltage normalised
+2,1168,9410104604,-;hwmon hwmon1: Undervoltage detected!
+6,1169,9426236690,-;hwmon hwmon1: Voltage normalised
+2,1170,9428248722,-;hwmon hwmon1: Undervoltage detected!
+6,1171,9444376934,-;hwmon hwmon1: Voltage normalised
+2,1172,9446393003,-;hwmon hwmon1: Undervoltage detected!
+6,1173,9637914172,-;hwmon hwmon1: Voltage normalised
+2,1174,9639930155,-;hwmon hwmon1: Undervoltage detected!
+6,1175,9728634792,-;hwmon hwmon1: Voltage normalised
+2,1176,9730650787,-;hwmon hwmon1: Undervoltage detected!
+6,1177,9803227258,-;hwmon hwmon1: Voltage normalised
+2,1178,9805243281,-;hwmon hwmon1: Undervoltage detected!
+6,1179,10045149020,-;hwmon hwmon1: Voltage normalised
+2,1180,10047165047,-;hwmon hwmon1: Undervoltage detected!
+6,1181,10222558184,-;hwmon hwmon1: Voltage normalised
+2,1182,10224574192,-;hwmon hwmon1: Undervoltage detected!
+6,1183,10303198733,-;hwmon hwmon1: Voltage normalised
+2,1184,10305214711,-;hwmon hwmon1: Undervoltage detected!
+6,1185,10321346715,-;hwmon hwmon1: Voltage normalised
+2,1186,10323358782,-;hwmon hwmon1: Undervoltage detected!
+6,1187,10583423824,-;hwmon hwmon1: Voltage normalised
+2,1188,10585439791,-;hwmon hwmon1: Undervoltage detected!
+6,1189,10664068098,-;hwmon hwmon1: Voltage normalised
+2,1190,10666080169,-;hwmon hwmon1: Undervoltage detected!
+6,1191,10682208319,-;hwmon hwmon1: Voltage normalised
+2,1192,10684224256,-;hwmon hwmon1: Undervoltage detected!
+6,1193,10772929928,-;hwmon hwmon1: Voltage normalised
+2,1194,10774944806,-;hwmon hwmon1: Undervoltage detected!
+6,1195,10803168834,-;hwmon hwmon1: Voltage normalised
+2,1196,10805184876,-;hwmon hwmon1: Undervoltage detected!
+6,1197,10916069474,-;hwmon hwmon1: Voltage normalised
+2,1198,10918081492,-;hwmon hwmon1: Undervoltage detected!
+6,1199,10972516451,-;hwmon hwmon1: Voltage normalised
+2,1200,10974529793,-;hwmon hwmon1: Undervoltage detected!
+6,1201,11107586624,-;hwmon hwmon1: Voltage normalised
+2,1202,11109602539,-;hwmon hwmon1: Undervoltage detected!
+6,1203,11331364300,-;hwmon hwmon1: Voltage normalised
+2,1204,11333379905,-;hwmon hwmon1: Undervoltage detected!
+6,1205,11349508076,-;hwmon hwmon1: Voltage normalised
+2,1206,11351524064,-;hwmon hwmon1: Undervoltage detected!
+6,1207,11367652180,-;hwmon hwmon1: Voltage normalised
+2,1208,11369668276,-;hwmon hwmon1: Undervoltage detected!
+6,1209,11504741049,-;hwmon hwmon1: Voltage normalised
+2,1210,11506757036,-;hwmon hwmon1: Undervoltage detected!
+6,1211,11522885232,-;hwmon hwmon1: Voltage normalised
+2,1212,11524901108,-;hwmon hwmon1: Undervoltage detected!
+6,1213,11553129301,-;hwmon hwmon1: Voltage normalised
+2,1214,11555141341,-;hwmon hwmon1: Undervoltage detected!
+6,1215,11672070098,-;hwmon hwmon1: Voltage normalised
+2,1216,11674086096,-;hwmon hwmon1: Undervoltage detected!
+6,1217,11728518442,-;hwmon hwmon1: Voltage normalised
+2,1218,11730534478,-;hwmon hwmon1: Undervoltage detected!
+6,1219,11762794604,-;hwmon hwmon1: Voltage normalised
+2,1220,11764806661,-;hwmon hwmon1: Undervoltage detected!
+6,1221,11889803519,-;hwmon hwmon1: Voltage normalised
+2,1222,11891815517,-;hwmon hwmon1: Undervoltage detected!
+6,1223,11907943629,-;hwmon hwmon1: Voltage normalised
+2,1224,11909959738,-;hwmon hwmon1: Undervoltage detected!
+6,1225,12022856355,-;hwmon hwmon1: Voltage normalised
+2,1226,12024872418,-;hwmon hwmon1: Undervoltage detected!
+6,1227,12109544875,-;hwmon hwmon1: Voltage normalised
+2,1228,12111560932,-;hwmon hwmon1: Undervoltage detected!
+6,1229,12188173500,-;hwmon hwmon1: Voltage normalised
+2,1230,12190185430,-;hwmon hwmon1: Undervoltage detected!
+6,1231,12333322371,-;hwmon hwmon1: Voltage normalised
+2,1232,12335338432,-;hwmon hwmon1: Undervoltage detected!
+6,1233,12413962808,-;hwmon hwmon1: Voltage normalised
+2,1234,12415978795,-;hwmon hwmon1: Undervoltage detected!
+6,1235,12436142890,-;hwmon hwmon1: Voltage normalised
+2,1236,12438154870,-;hwmon hwmon1: Undervoltage detected!
+6,1237,12605483777,-;hwmon hwmon1: Voltage normalised
+2,1238,12607499752,-;hwmon hwmon1: Undervoltage detected!
+6,1239,12726446698,-;hwmon hwmon1: Voltage normalised
+2,1240,12728460356,-;hwmon hwmon1: Undervoltage detected!
+6,1241,12891757348,-;hwmon hwmon1: Voltage normalised
+2,1242,12893773323,-;hwmon hwmon1: Undervoltage detected!
+6,1243,13087310503,-;hwmon hwmon1: Voltage normalised
+2,1244,13089326489,-;hwmon hwmon1: Undervoltage detected!
+6,1245,13115538654,-;hwmon hwmon1: Voltage normalised
+2,1246,13117550671,-;hwmon hwmon1: Undervoltage detected!
+6,1247,13133682761,-;hwmon hwmon1: Voltage normalised
+2,1248,13135694755,-;hwmon hwmon1: Undervoltage detected!
+6,1249,13163918962,-;hwmon hwmon1: Voltage normalised
+2,1250,13165934977,-;hwmon hwmon1: Undervoltage detected!
+6,1251,13236495353,-;hwmon hwmon1: Voltage normalised
+2,1252,13238511354,-;hwmon hwmon1: Undervoltage detected!
+6,1253,13254639454,-;hwmon hwmon1: Voltage normalised
+2,1254,13256655484,-;hwmon hwmon1: Undervoltage detected!
+6,1255,13284883649,-;hwmon hwmon1: Voltage normalised
+2,1256,13286895668,-;hwmon hwmon1: Undervoltage detected!
+6,1257,13363504149,-;hwmon hwmon1: Voltage normalised
+2,1258,13365520132,-;hwmon hwmon1: Undervoltage detected!
+6,1259,13393747369,-;hwmon hwmon1: Voltage normalised
+2,1260,13395760297,-;hwmon hwmon1: Undervoltage detected!
+6,1261,13478420851,-;hwmon hwmon1: Voltage normalised
+2,1262,13480432865,-;hwmon hwmon1: Undervoltage detected!
+6,1263,13526801152,-;hwmon hwmon1: Voltage normalised
+2,1264,13528817180,-;hwmon hwmon1: Undervoltage detected!
+6,1265,13615505710,-;hwmon hwmon1: Voltage normalised
+2,1266,13617521717,-;hwmon hwmon1: Undervoltage detected!
+6,1267,13633649845,-;hwmon hwmon1: Voltage normalised
+2,1268,13635665806,-;hwmon hwmon1: Undervoltage detected!
+6,1269,13754610569,-;hwmon hwmon1: Voltage normalised
+2,1270,13756626584,-;hwmon hwmon1: Undervoltage detected!
+6,1271,13899763538,-;hwmon hwmon1: Voltage normalised
+2,1272,13901779497,-;hwmon hwmon1: Undervoltage detected!
+6,1273,13921939622,-;hwmon hwmon1: Voltage normalised
+2,1274,13923955630,-;hwmon hwmon1: Undervoltage detected!
+6,1275,14363446432,-;hwmon hwmon1: Voltage normalised
+2,1276,14365462434,-;hwmon hwmon1: Undervoltage detected!
+6,1277,14399738611,-;hwmon hwmon1: Voltage normalised
+2,1278,14401750705,-;hwmon hwmon1: Undervoltage detected!
+6,1279,14486427147,-;hwmon hwmon1: Voltage normalised
+2,1280,14488439220,-;hwmon hwmon1: Undervoltage detected!
+6,1281,14573111628,-;hwmon hwmon1: Voltage normalised
+2,1282,14575127698,-;hwmon hwmon1: Undervoltage detected!
+6,1283,14641660070,-;hwmon hwmon1: Voltage normalised
+2,1284,14643672082,-;hwmon hwmon1: Undervoltage detected!
+6,1285,14762618633,-;hwmon hwmon1: Voltage normalised
+2,1286,14764632843,-;hwmon hwmon1: Undervoltage detected!
+6,1287,14859385425,-;hwmon hwmon1: Voltage normalised
+2,1288,14861401402,-;hwmon hwmon1: Undervoltage detected!
+6,1289,15095260798,-;hwmon hwmon1: Voltage normalised
+2,1290,15097274890,-;hwmon hwmon1: Undervoltage detected!
+6,1291,15143643106,-;hwmon hwmon1: Voltage normalised
+2,1292,15145659268,-;hwmon hwmon1: Undervoltage detected!
+6,1293,15587165968,-;hwmon hwmon1: Voltage normalised
+2,1294,15589181991,-;hwmon hwmon1: Undervoltage detected!
+6,1295,15691998620,-;hwmon hwmon1: Voltage normalised
+2,1296,15694014683,-;hwmon hwmon1: Undervoltage detected!
+6,1297,15794815401,-;hwmon hwmon1: Voltage normalised
+2,1298,15796831243,-;hwmon hwmon1: Undervoltage detected!
+6,1299,15812959398,-;hwmon hwmon1: Voltage normalised
+2,1300,15814975374,-;hwmon hwmon1: Undervoltage detected!
+6,1301,15897631906,-;hwmon hwmon1: Voltage normalised
+2,1302,15899647927,-;hwmon hwmon1: Undervoltage detected!
+6,1303,15990368489,-;hwmon hwmon1: Voltage normalised
+2,1304,15992384475,-;hwmon hwmon1: Undervoltage detected!
+6,1305,16099233185,-;hwmon hwmon1: Voltage normalised
+2,1306,16101249194,-;hwmon hwmon1: Undervoltage detected!
+6,1307,16202049788,-;hwmon hwmon1: Voltage normalised
+2,1308,16204065845,-;hwmon hwmon1: Undervoltage detected!
+6,1309,16391555003,-;hwmon hwmon1: Voltage normalised
+2,1310,16393571018,-;hwmon hwmon1: Undervoltage detected!
+6,1311,16518563847,-;hwmon hwmon1: Voltage normalised
+2,1312,16520579863,-;hwmon hwmon1: Undervoltage detected!
+6,1313,16548804051,-;hwmon hwmon1: Voltage normalised
+2,1314,16550820045,-;hwmon hwmon1: Undervoltage detected!
+6,1315,16697988953,-;hwmon hwmon1: Voltage normalised
+2,1316,16700005008,-;hwmon hwmon1: Undervoltage detected!
+6,1317,16899590313,-;hwmon hwmon1: Voltage normalised
+2,1318,16901606287,-;hwmon hwmon1: Undervoltage detected!
+6,1319,17183848639,-;hwmon hwmon1: Voltage normalised
+2,1320,17185864132,-;hwmon hwmon1: Undervoltage detected!
+6,1321,17199976133,-;hwmon hwmon1: Voltage normalised
+2,1322,17201992352,-;hwmon hwmon1: Undervoltage detected!
+6,1323,17345129149,-;hwmon hwmon1: Voltage normalised
+2,1324,17347145171,-;hwmon hwmon1: Undervoltage detected!
+6,1325,17363273220,-;hwmon hwmon1: Voltage normalised
+2,1326,17365289262,-;hwmon hwmon1: Undervoltage detected!
+6,1327,17453993821,-;hwmon hwmon1: Voltage normalised
+2,1328,17456009829,-;hwmon hwmon1: Undervoltage detected!
+6,1329,17484234044,-;hwmon hwmon1: Voltage normalised
+2,1330,17486250036,-;hwmon hwmon1: Undervoltage detected!
+6,1331,17506410097,-;hwmon hwmon1: Voltage normalised
+2,1332,17508426204,-;hwmon hwmon1: Undervoltage detected!
+6,1333,17661646598,-;hwmon hwmon1: Voltage normalised
+2,1334,17663659151,-;hwmon hwmon1: Undervoltage detected!
+6,1335,17679787265,-;hwmon hwmon1: Voltage normalised
+2,1336,17681803274,-;hwmon hwmon1: Undervoltage detected!
+6,1337,17800748033,-;hwmon hwmon1: Voltage normalised
+2,1338,17802764055,-;hwmon hwmon1: Undervoltage detected!
+6,1339,17816876458,-;hwmon hwmon1: Voltage normalised
+2,1340,17818892156,-;hwmon hwmon1: Undervoltage detected!
+6,1341,17847120658,-;hwmon hwmon1: Voltage normalised
+2,1342,17849132353,-;hwmon hwmon1: Undervoltage detected!
+6,1343,17915660773,-;hwmon hwmon1: Voltage normalised
+2,1344,17917676788,-;hwmon hwmon1: Undervoltage detected!
+6,1345,17968077046,-;hwmon hwmon1: Voltage normalised
+2,1346,17970093106,-;hwmon hwmon1: Undervoltage detected!
+6,1347,18113232521,-;hwmon hwmon1: Voltage normalised
+2,1348,18115245973,-;hwmon hwmon1: Undervoltage detected!
+6,1349,18141454185,-;hwmon hwmon1: Voltage normalised
+2,1350,18143470211,-;hwmon hwmon1: Undervoltage detected!
+6,1351,18318863348,-;hwmon hwmon1: Voltage normalised
+2,1352,18320879346,-;hwmon hwmon1: Undervoltage detected!
+6,1353,18337011424,-;hwmon hwmon1: Voltage normalised
+2,1354,18339023473,-;hwmon hwmon1: Undervoltage detected!
+6,1355,18597073154,-;hwmon hwmon1: Voltage normalised
+2,1356,18599089162,-;hwmon hwmon1: Undervoltage detected!
+6,1357,18752306200,-;hwmon hwmon1: Voltage normalised
+2,1358,18754322245,-;hwmon hwmon1: Undervoltage detected!
+6,1359,18770450303,-;hwmon hwmon1: Voltage normalised
+2,1360,18772466351,-;hwmon hwmon1: Undervoltage detected!
+6,1361,18828914733,-;hwmon hwmon1: Voltage normalised
+2,1362,18830930747,-;hwmon hwmon1: Undervoltage detected!
+6,1363,18931731359,-;hwmon hwmon1: Voltage normalised
+2,1364,18933747437,-;hwmon hwmon1: Undervoltage detected!
+6,1365,19030516078,-;hwmon hwmon1: Voltage normalised
+2,1366,19032532587,-;hwmon hwmon1: Undervoltage detected!
+6,1367,19115192594,-;hwmon hwmon1: Voltage normalised
+2,1368,19117204668,-;hwmon hwmon1: Undervoltage detected!
+6,1369,19254293563,-;hwmon hwmon1: Voltage normalised
+2,1370,19256309569,-;hwmon hwmon1: Undervoltage detected!
+6,1371,19284533779,-;hwmon hwmon1: Voltage normalised
+2,1372,19286549779,-;hwmon hwmon1: Undervoltage detected!
+6,1373,19381302398,-;hwmon hwmon1: Voltage normalised
+2,1374,19383318437,-;hwmon hwmon1: Undervoltage detected!
+6,1375,19399446502,-;hwmon hwmon1: Voltage normalised
+2,1376,19401462538,-;hwmon hwmon1: Undervoltage detected!
+6,1377,19484118990,-;hwmon hwmon1: Voltage normalised
+2,1378,19486135064,-;hwmon hwmon1: Undervoltage detected!
+6,1379,19552664000,-;hwmon hwmon1: Voltage normalised
+2,1380,19554679517,-;hwmon hwmon1: Undervoltage detected!
+6,1381,19570807612,-;hwmon hwmon1: Voltage normalised
+2,1382,19572823619,-;hwmon hwmon1: Undervoltage detected!
+6,1383,19800633207,-;hwmon hwmon1: Voltage normalised
+2,1384,19802649148,-;hwmon hwmon1: Undervoltage detected!
+6,1385,19818777250,-;hwmon hwmon1: Voltage normalised
+2,1386,19820793266,-;hwmon hwmon1: Undervoltage detected!
+6,1387,19915549867,-;hwmon hwmon1: Voltage normalised
+2,1388,19917561887,-;hwmon hwmon1: Undervoltage detected!
+6,1389,20111103140,-;hwmon hwmon1: Voltage normalised
+2,1390,20113115138,-;hwmon hwmon1: Undervoltage detected!
+6,1391,20141339294,-;hwmon hwmon1: Voltage normalised
+2,1392,20143355316,-;hwmon hwmon1: Undervoltage detected!
+6,1393,20181659587,-;hwmon hwmon1: Voltage normalised
+2,1394,20183675566,-;hwmon hwmon1: Undervoltage detected!
+6,1395,20486077595,-;hwmon hwmon1: Voltage normalised
+2,1396,20488093570,-;hwmon hwmon1: Undervoltage detected!
+6,1397,20516317742,-;hwmon hwmon1: Voltage normalised
+2,1398,20518333707,-;hwmon hwmon1: Undervoltage detected!
+6,1399,20683647536,-;hwmon hwmon1: Voltage normalised
+2,1400,20685663572,-;hwmon hwmon1: Undervoltage detected!
+6,1401,20925570007,-;hwmon hwmon1: Voltage normalised
+2,1402,20927585998,-;hwmon hwmon1: Undervoltage detected!
+6,1403,20943714537,-;hwmon hwmon1: Voltage normalised
+2,1404,20945730167,-;hwmon hwmon1: Undervoltage detected!
+6,1405,21104995568,-;hwmon hwmon1: Voltage normalised
+2,1406,21107011545,-;hwmon hwmon1: Undervoltage detected!
+6,1407,21203780347,-;hwmon hwmon1: Voltage normalised
+2,1408,21205796452,-;hwmon hwmon1: Undervoltage detected!
+6,1409,21409414598,-;hwmon hwmon1: Voltage normalised
+2,1410,21411430193,-;hwmon hwmon1: Undervoltage detected!
+6,1411,22042442908,-;hwmon hwmon1: Voltage normalised
+2,1412,22044458898,-;hwmon hwmon1: Undervoltage detected!
+6,1413,22082763186,-;hwmon hwmon1: Voltage normalised
+2,1414,22084779151,-;hwmon hwmon1: Undervoltage detected!
+6,1415,22215820122,-;hwmon hwmon1: Voltage normalised
+2,1416,22217836164,-;hwmon hwmon1: Undervoltage detected!
+6,1417,22463789912,-;hwmon hwmon1: Voltage normalised
+2,1418,22465805938,-;hwmon hwmon1: Undervoltage detected!
+6,1419,22481934490,-;hwmon hwmon1: Voltage normalised
+2,1420,22483950064,-;hwmon hwmon1: Undervoltage detected!
+6,1421,22494030118,-;hwmon hwmon1: Voltage normalised
+2,1422,22496046115,-;hwmon hwmon1: Undervoltage detected!
+6,1423,22578706660,-;hwmon hwmon1: Voltage normalised
+2,1424,22580718768,-;hwmon hwmon1: Undervoltage detected!
+6,1425,22596847134,-;hwmon hwmon1: Voltage normalised
+2,1426,22598862795,-;hwmon hwmon1: Undervoltage detected!
+6,1427,22614990880,-;hwmon hwmon1: Voltage normalised
+2,1428,22617006880,-;hwmon hwmon1: Undervoltage detected!
+6,1429,22764179257,-;hwmon hwmon1: Voltage normalised
+2,1430,22766191749,-;hwmon hwmon1: Undervoltage detected!
+6,1431,22794415346,-;hwmon hwmon1: Voltage normalised
+2,1432,22796431499,-;hwmon hwmon1: Undervoltage detected!
+6,1433,22875059146,-;hwmon hwmon1: Voltage normalised
+2,1434,22877071681,-;hwmon hwmon1: Undervoltage detected!
+6,1435,23116976849,-;hwmon hwmon1: Voltage normalised
+2,1436,23118992837,-;hwmon hwmon1: Undervoltage detected!
+6,1437,23145200894,-;hwmon hwmon1: Voltage normalised
+2,1438,23147216957,-;hwmon hwmon1: Undervoltage detected!
+6,1439,23163345021,-;hwmon hwmon1: Voltage normalised
+2,1440,23165361049,-;hwmon hwmon1: Undervoltage detected!
+6,1441,23491958764,-;hwmon hwmon1: Voltage normalised
+2,1442,23493970842,-;hwmon hwmon1: Undervoltage detected!
+6,1443,23570579444,-;hwmon hwmon1: Voltage normalised
+2,1444,23572595292,-;hwmon hwmon1: Undervoltage detected!
+6,1445,23778228466,-;hwmon hwmon1: Voltage normalised
+2,1446,23780244444,-;hwmon hwmon1: Undervoltage detected!
+6,1447,23881045277,-;hwmon hwmon1: Voltage normalised
+2,1448,23883061051,-;hwmon hwmon1: Undervoltage detected!
+6,1449,23911289256,-;hwmon hwmon1: Voltage normalised
+2,1450,23913301251,-;hwmon hwmon1: Undervoltage detected!
+6,1451,23929433347,-;hwmon hwmon1: Voltage normalised
+2,1452,23931445344,-;hwmon hwmon1: Undervoltage detected!
+6,1453,23995958258,-;hwmon hwmon1: Voltage normalised
+2,1454,23997973797,-;hwmon hwmon1: Undervoltage detected!
+6,1455,24026197869,-;hwmon hwmon1: Voltage normalised
+2,1456,24028213963,-;hwmon hwmon1: Undervoltage detected!
+6,1457,24076598244,-;hwmon hwmon1: Voltage normalised
+2,1458,24078614259,-;hwmon hwmon1: Undervoltage detected!
+6,1459,24094746467,-;hwmon hwmon1: Voltage normalised
+2,1460,24096758351,-;hwmon hwmon1: Undervoltage detected!
+6,1461,24175383610,-;hwmon hwmon1: Voltage normalised
+2,1462,24177398867,-;hwmon hwmon1: Undervoltage detected!
+6,1463,24266104266,-;hwmon hwmon1: Voltage normalised
+2,1464,24268119421,-;hwmon hwmon1: Undervoltage detected!
+6,1465,24284247495,-;hwmon hwmon1: Voltage normalised
+2,1466,24286263579,-;hwmon hwmon1: Undervoltage detected!
+6,1467,24342711886,-;hwmon hwmon1: Voltage normalised
+2,1468,24344727893,-;hwmon hwmon1: Undervoltage detected!
+6,1469,24439484449,-;hwmon hwmon1: Voltage normalised
+2,1470,24441496484,-;hwmon hwmon1: Undervoltage detected!
+6,1471,24572541350,-;hwmon hwmon1: Voltage normalised
+2,1472,24574553318,-;hwmon hwmon1: Undervoltage detected!
+6,1473,24602777453,-;hwmon hwmon1: Voltage normalised
+2,1474,24604797613,-;hwmon hwmon1: Undervoltage detected!
+6,1475,24647129748,-;hwmon hwmon1: Voltage normalised
+2,1476,24649145795,-;hwmon hwmon1: Undervoltage detected!
+6,1477,24733818469,-;hwmon hwmon1: Voltage normalised
+2,1478,24735834355,-;hwmon hwmon1: Undervoltage detected!
+6,1479,24876955331,-;hwmon hwmon1: Voltage normalised
+2,1480,24878971283,-;hwmon hwmon1: Undervoltage detected!
+6,1481,24895099459,-;hwmon hwmon1: Voltage normalised
+2,1482,24897115381,-;hwmon hwmon1: Undervoltage detected!
+6,1483,25068476656,-;hwmon hwmon1: Voltage normalised
+2,1484,25070492512,-;hwmon hwmon1: Undervoltage detected!
+6,1485,25086620693,-;hwmon hwmon1: Voltage normalised
+2,1486,25088637172,-;hwmon hwmon1: Undervoltage detected!
+6,1487,25183389317,-;hwmon hwmon1: Voltage normalised
+2,1488,25185405263,-;hwmon hwmon1: Undervoltage detected!
+6,1489,25207581312,-;hwmon hwmon1: Voltage normalised
+2,1490,25209597386,-;hwmon hwmon1: Undervoltage detected!
+6,1491,25366850376,-;hwmon hwmon1: Voltage normalised
+2,1492,25368862391,-;hwmon hwmon1: Undervoltage detected!
+6,1493,25524095417,-;hwmon hwmon1: Voltage normalised
+2,1494,25526111413,-;hwmon hwmon1: Undervoltage detected!
+6,1495,25645056189,-;hwmon hwmon1: Voltage normalised
+2,1496,25647072177,-;hwmon hwmon1: Undervoltage detected!
+6,1497,25747874618,-;hwmon hwmon1: Voltage normalised
+2,1498,25749888787,-;hwmon hwmon1: Undervoltage detected!
+6,1499,25778113018,-;hwmon hwmon1: Voltage normalised
+2,1500,25780129029,-;hwmon hwmon1: Undervoltage detected!
+6,1501,25939394028,-;hwmon hwmon1: Voltage normalised
+2,1502,25941410048,-;hwmon hwmon1: Undervoltage detected!
+6,1503,25957542107,-;hwmon hwmon1: Voltage normalised
+2,1504,25959554172,-;hwmon hwmon1: Undervoltage detected!
+6,1505,26193411624,-;hwmon hwmon1: Voltage normalised
+2,1506,26195427680,-;hwmon hwmon1: Undervoltage detected!
+6,1507,26320420434,-;hwmon hwmon1: Voltage normalised
+2,1508,26322436454,-;hwmon hwmon1: Undervoltage detected!
+6,1509,26338564598,-;hwmon hwmon1: Voltage normalised
+2,1510,26340580582,-;hwmon hwmon1: Undervoltage detected!
+6,1511,26417197037,-;hwmon hwmon1: Voltage normalised
+2,1512,26419205051,-;hwmon hwmon1: Undervoltage detected!
+6,1513,26435337153,-;hwmon hwmon1: Voltage normalised
+2,1514,26437349179,-;hwmon hwmon1: Undervoltage detected!
+6,1515,26453477273,-;hwmon hwmon1: Voltage normalised
+2,1516,26455493305,-;hwmon hwmon1: Undervoltage detected!
+6,1517,26614758232,-;hwmon hwmon1: Voltage normalised
+2,1518,26616774287,-;hwmon hwmon1: Undervoltage detected!
+6,1519,27046185489,-;hwmon hwmon1: Voltage normalised
+2,1520,27048201508,-;hwmon hwmon1: Undervoltage detected!
+6,1521,27096585937,-;hwmon hwmon1: Voltage normalised
+2,1522,27098601915,-;hwmon hwmon1: Undervoltage detected!
+6,1523,27114733773,-;hwmon hwmon1: Voltage normalised
+2,1524,27116746066,-;hwmon hwmon1: Undervoltage detected!
+6,1525,27132878082,-;hwmon hwmon1: Voltage normalised
+2,1526,27134890132,-;hwmon hwmon1: Undervoltage detected!
+6,1527,27197386601,-;hwmon hwmon1: Voltage normalised
+2,1528,27199402624,-;hwmon hwmon1: Undervoltage detected!
+6,1529,27253839021,-;hwmon hwmon1: Voltage normalised
+2,1530,27255851018,-;hwmon hwmon1: Undervoltage detected!
+6,1531,27344559103,-;hwmon hwmon1: Voltage normalised
+2,1532,27346571673,-;hwmon hwmon1: Undervoltage detected!
+6,1533,27374795853,-;hwmon hwmon1: Voltage normalised
+2,1534,27376811852,-;hwmon hwmon1: Undervoltage detected!
+6,1535,27431244279,-;hwmon hwmon1: Voltage normalised
+2,1536,27433260294,-;hwmon hwmon1: Undervoltage detected!
+6,1537,27610669455,-;hwmon hwmon1: Voltage normalised
+2,1538,27612685506,-;hwmon hwmon1: Undervoltage detected!
+6,1539,27628817633,-;hwmon hwmon1: Voltage normalised
+2,1540,27630829638,-;hwmon hwmon1: Undervoltage detected!
+6,1541,27650993787,-;hwmon hwmon1: Voltage normalised
+2,1542,27653005750,-;hwmon hwmon1: Undervoltage detected!
+6,1543,27818318817,-;hwmon hwmon1: Voltage normalised
+2,1544,27820334881,-;hwmon hwmon1: Undervoltage detected!
+6,1545,28128784958,-;hwmon hwmon1: Voltage normalised
+2,1546,28130800989,-;hwmon hwmon1: Undervoltage detected!
+6,1547,28185233379,-;hwmon hwmon1: Voltage normalised
+2,1548,28187249324,-;hwmon hwmon1: Undervoltage detected!
+6,1549,28243697659,-;hwmon hwmon1: Voltage normalised
+2,1550,28245713735,-;hwmon hwmon1: Undervoltage detected!
+6,1551,28455382114,-;hwmon hwmon1: Voltage normalised
+2,1552,28457395125,-;hwmon hwmon1: Undervoltage detected!
+6,1553,28588435987,-;hwmon hwmon1: Voltage normalised
+2,1554,28590451980,-;hwmon hwmon1: Undervoltage detected!
+6,1555,28733588907,-;hwmon hwmon1: Voltage normalised
+2,1556,28735604938,-;hwmon hwmon1: Undervoltage detected!
+6,1557,28973498527,-;hwmon hwmon1: Voltage normalised
+2,1558,28975510523,-;hwmon hwmon1: Undervoltage detected!
+6,1559,29013814731,-;hwmon hwmon1: Voltage normalised
+2,1560,29015830785,-;hwmon hwmon1: Undervoltage detected!
+6,1561,29152922409,-;hwmon hwmon1: Voltage normalised
+2,1562,29154935776,-;hwmon hwmon1: Undervoltage detected!
+6,1563,29283960551,-;hwmon hwmon1: Voltage normalised
+2,1564,29285976552,-;hwmon hwmon1: Undervoltage detected!
+6,1565,29378717140,-;hwmon hwmon1: Voltage normalised
+2,1566,29380729174,-;hwmon hwmon1: Undervoltage detected!
+6,1577,29640794824,-;hwmon hwmon1: Voltage normalised
+2,1578,29646846948,-;hwmon hwmon1: Undervoltage detected!
+6,1579,29664986980,-;hwmon hwmon1: Voltage normalised
+2,1580,29669019084,-;hwmon hwmon1: Undervoltage detected!
+6,1581,29675067055,-;hwmon hwmon1: Voltage normalised
+2,1582,29677087212,-;hwmon hwmon1: Undervoltage detected!
+6,1583,29681115099,-;hwmon hwmon1: Voltage normalised
+2,1584,29685147172,-;hwmon hwmon1: Undervoltage detected!
+6,1585,29697243188,-;hwmon hwmon1: Voltage normalised
+2,1586,29699259234,-;hwmon hwmon1: Undervoltage detected!
+6,1587,29735547471,-;hwmon hwmon1: Voltage normalised
+2,1588,29739582513,-;hwmon hwmon1: Undervoltage detected!
+6,1589,29818203994,-;hwmon hwmon1: Voltage normalised
+2,1590,29822240118,-;hwmon hwmon1: Undervoltage detected!
+6,1593,29834332147,-;hwmon hwmon1: Voltage normalised
+2,1594,29838364188,-;hwmon hwmon1: Undervoltage detected!
+6,1599,29864572298,-;hwmon hwmon1: Voltage normalised
+2,1600,29866588367,-;hwmon hwmon1: Undervoltage detected!
+6,1603,29957308882,-;hwmon hwmon1: Voltage normalised
+2,1604,29959324908,-;hwmon hwmon1: Undervoltage detected!
+6,1605,30027869363,-;hwmon hwmon1: Voltage normalised
+2,1606,30031901439,-;hwmon hwmon1: Undervoltage detected!
+6,1609,30064157609,-;hwmon hwmon1: Voltage normalised
+2,1610,30066174111,-;hwmon hwmon1: Undervoltage detected!
+6,1618,30535904625,-;hwmon hwmon1: Voltage normalised
+2,1619,30537920720,-;hwmon hwmon1: Undervoltage detected!
+6,1620,30580257037,-;hwmon hwmon1: Voltage normalised
+2,1621,30582273134,-;hwmon hwmon1: Undervoltage detected!
+6,1622,30862498896,-;hwmon hwmon1: Voltage normalised
+2,1623,30864514887,-;hwmon hwmon1: Undervoltage detected!
+6,1637,31316101931,-;hwmon hwmon1: Voltage normalised
+2,1638,31318118031,-;hwmon hwmon1: Undervoltage detected!
