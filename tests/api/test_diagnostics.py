@@ -847,6 +847,20 @@ def test_bluetooth_findings_of_the_last_hour_are_a_warning(tmp_path):
     assert i18n.t("api.diagnostics.bluetooth_category_power", count=1) in text
 
 
+def test_bluetooth_stuck_findings_of_the_last_hour_are_a_warning(tmp_path):
+    """Final review item 7: `transport` and `power` above already had
+    coverage, `stuck` (`Unable to disable scanning` and friends, design
+    2026-09-22, table in 7.1) did not."""
+    ok, text = _check_bluetooth(
+        _kernel(
+            tmp_path,
+            ["3,1,90000000,-;Bluetooth: hci0: Unable to disable scanning: -16"],
+        )
+    )
+    assert ok is False
+    assert i18n.t("api.diagnostics.bluetooth_category_stuck", count=1) in text
+
+
 def test_bluetooth_is_not_available_without_the_kernel_log(tmp_path):
     ok, text = _check_bluetooth(KernelLog(tmp_path / "missing", tmp_path / "missing"))
     assert ok is True

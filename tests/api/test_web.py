@@ -16162,6 +16162,35 @@ def test_the_pairing_code_names_its_discriminator():
     assert values[""] == {"kind": "unknown"}
 
 
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_the_pairing_code_handles_the_21_digit_form_and_its_vendor_flag():
+    """Final review item 7: only the 11-digit manual code had a test - the
+    21-digit form (design 2026-09-22, section 4: "Bit 2 of chunk 1 set means
+    a 21-digit code with vendor and product id; this bridge accepts it but
+    only decodes the discriminator") and the vendor-flag mismatch branch
+    (`((chunk1 >> 2) & 1) !== (digits.length === 21 ? 1 : 0)`) never ran.
+
+    Both codes below share chunk 1 = 4 (`0b100`, bit 2 set - the 21-digit
+    flag) and chunk 2 = 0, so a correctly decoded discriminator is 0 either
+    way; their Verhoeff check digits were computed by running app.js's own
+    `VERHOEFF_D`/`VERHOEFF_P` tables in `node` over the 20 (21-digit) or 10
+    (11-digit) digits ahead of them, not retyped or derived by hand.
+
+    - `400000000000000000003`: 21 digits, flag set, length matches -> decodes.
+    - `40000000007`: the same chunk 1 (flag SET), but only 11 digits long -
+      the flag says "21-digit code", the length says otherwise, and that
+      mismatch alone must refuse the code as unrecognised, not silently
+      decode it as if it were a plain 11-digit one."""
+    values = _app_state(
+        """
+        const codes = ["400000000000000000003", "40000000007"];
+        console.log(JSON.stringify(Object.fromEntries(codes.map((c) => [c, decodePairingCode(c)]))));
+        """
+    )
+    assert values["400000000000000000003"] == {"kind": "short", "discriminator": 0}
+    assert values["40000000007"] == {"kind": "unknown"}
+
+
 def test_the_typo_string_exists_in_both_languages():
     from loxmatter import i18n
 

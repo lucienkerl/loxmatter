@@ -107,6 +107,29 @@ def test_adverts_are_sorted_by_signal_strength() -> None:
     assert addresses == ["AA:AA:AA:AA:AA:AA", "FB:73:82:07:E3:AD"]
 
 
+def test_a_zero_rssi_sorts_as_the_strong_signal_it_is() -> None:
+    """Final review item 7: the sort key used to be `-(advert.rssi or
+    -1000)` - `_advert()` already drops every device without an `RSSI` at
+    all (see the "no longer heard" entry in `OBJECTS` above), so by the time
+    a `MatterAdvert` reaches this sort its `rssi` is never `None` in
+    practice; the only thing `or -1000` could still catch is a `rssi`
+    of exactly 0, a legitimate (if unusually strong) signal - and `or`
+    treats 0 as falsy, silently replacing it with -1000 dBm, the sort key
+    of the WEAKEST possible signal. A device holding its RSSI at 0 would
+    then have sorted last instead of first."""
+    objects = dict(OBJECTS)
+    objects["/org/bluez/hci0/dev_ZERO"] = {
+        "org.bluez.Device1": {
+            "Address": "00:00:00:00:00:00",
+            "RSSI": 0,
+            "Connected": False,
+            "ServiceData": {MATTER_SERVICE_UUID: bytes.fromhex("00d00d7c11079000")},
+        }
+    }
+    addresses = [advert.address for advert in snapshot_from_objects(objects).adverts]
+    assert addresses[0] == "00:00:00:00:00:00"
+
+
 def test_the_discovering_adapter_is_reported_when_there_are_several() -> None:
     objects = {
         "/org/bluez/hci0": {"org.bluez.Adapter1": {"Powered": True, "Discovering": False}},

@@ -125,7 +125,14 @@ def snapshot_from_objects(objects: Mapping[str, Mapping[str, Mapping[str, Any]]]
                     discovering=bool(properties.get("Discovering", False)),
                 )
             )
-    adverts.sort(key=lambda advert: -(advert.rssi or -1000))
+    # `advert.rssi if advert.rssi is not None else -1000`, not
+    # `advert.rssi or -1000` (final review item 7): `_advert()` above
+    # already drops every device without an `RSSI` at all, so by the time an
+    # advert reaches here its `rssi` is never actually `None` - but `or`
+    # treats a legitimate `rssi` of exactly 0 (an unusually strong signal)
+    # as falsy too, and would have silently sorted it as the weakest
+    # possible one (-1000) instead of among the strongest.
+    adverts.sort(key=lambda advert: -(advert.rssi if advert.rssi is not None else -1000))
     # The adapter that scans is the one matter-server uses; with none
     # scanning, the first one.
     adapters.sort(key=lambda adapter: adapter.name)

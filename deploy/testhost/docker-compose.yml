@@ -323,9 +323,17 @@ services:
       # section 5). Without a device cgroup rule no device node here can be
       # opened, so this grants no access to a radio.
       - /dev:/host/dev:ro
-      # Read-only: BlueZ's Matter advertisements and adapter state for the
-      # commissioning dialog (design 2026-09-22, section 6). The same socket
-      # matter-server uses for BLE. Reading only - the bridge never scans.
+      # BlueZ's Matter advertisements and adapter state for the
+      # commissioning dialog (design 2026-09-22, section 6) - the same
+      # socket matter-server uses for BLE.
+      #
+      # `:ro` protects the SOCKET FILE against being replaced or deleted
+      # from inside the container - it says nothing about what the bridge
+      # may do once connected to the bus behind it: D-Bus has no concept of
+      # a read-only connection, and a mount flag cannot create one. That the
+      # bridge only ever reads (`GetManagedObjects`, never a method that
+      # changes adapter or device state) is this bridge's own discipline,
+      # in `radios/bluez.py`, not something this line enforces.
       - /run/dbus:/run/dbus:ro
     # What actually grants the bridge permission to OPEN a serial device -
     # the /dev bind above only supplies stable names and hotplug visibility
