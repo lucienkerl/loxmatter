@@ -1191,6 +1191,32 @@ async def test_a_failing_online_seed_still_reports_the_device_as_commissioned(
     store.close()
 
 
+async def test_a_failing_follow_up_step_ends_the_attempt_as_failed(api, monkeypatch):
+    """Final-review fix: the try/except/finally around `commission_with_code`
+    only covered the BLE half of the route (up to `unsubscribe()`) -
+    `register_signals` and everything else after `register_device` ran
+    unguarded, so a failure there left the tracker's attempt stuck at
+    `joined` forever even though the HTTP request itself failed. Unlike
+    `fail_follow_with`/`fail_set_online_with` above - deliberately
+    swallowed, see the route's own comments, because a device that is
+    already in the fabric and in the store must not be reported as a
+    failure - a failure in `register_signals` is a genuine bug that must
+    still surface as an error; this test only proves the tracker no longer
+    dangles, not that the response itself changes."""
+    client, store, _, _ = api
+
+    def _broken_register_signals(*args, **kwargs):
+        raise RuntimeError("disk full")
+
+    monkeypatch.setattr(store, "register_signals", _broken_register_signals)
+
+    with pytest.raises(RuntimeError, match="disk full"):
+        await client.post("/api/devices/commission", json={"code": "MT:X"})
+
+    attempt = (await client.get("/api/devices/commission/status")).json()["attempt"]
+    assert attempt["phase"] == "failed"
+
+
 async def test_the_device_list_carries_last_heard_from_the_runtime(
     tmp_path, no_invoke, fake_runtime, fake_client, fake_otbr
 ):
