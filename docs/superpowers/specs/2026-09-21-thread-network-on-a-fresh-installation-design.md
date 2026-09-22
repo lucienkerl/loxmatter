@@ -232,3 +232,37 @@ Afterwards the original volume goes back in place and `ot-ctl state` answers
 - Better feedback during commissioning in the web UI. That is the next design,
   and it depends on this one only in that a Thread device can now be
   commissioned on a fresh installation at all.
+
+### 7.1 Measured on pi3-andi, 22 September 2026
+
+The branch's code ran from a development machine against the Pi's real border
+router (REST through an SSH tunnel) and real matter-server; the bridge and the
+updater were stopped for the duration, and `otbr` ran on a separate empty volume
+(`otbr-state-test`) through a Compose override.
+
+- **Running but not configured**, both forms: `ot-ctl state` → `disabled`,
+  `ot-ctl dataset active` → exactly `Error 23: NotFound`; REST
+  `GET /node/dataset/active` → 204, `GET /node/state` → `"disabled"`.
+- **Watchdog** (`scripts/otbr-watchdog.sh` from this branch, run on the host,
+  container older than the 90 s grace period): exit 0, no output, no restart.
+- **Guard**: with matter-server knowing the IKEA switch (node 3, classified as a
+  Thread device), two passes → `missing` with `thread_devices: 1`; OTBR saw only
+  `GET`s and still answered 204 afterwards.
+- **Fresh case** (matter-server started on an empty data directory): one pass →
+  `PUT /node/dataset/active` with `{}` and `If-None-Match: *` → **201**,
+  `PUT /node/state` → 200, `leader` about 7 s later; matter-server logged
+  "Registered Thread credentials … OpenThread-0f05, ch=12". The empty JSON
+  object is therefore accepted (section 4.2 step 4).
+- **Auto-attach**: `docker restart otbr` with a dataset present → `leader` after
+  18 s without any `enable`. The watchdog path for "enable failed" (section 3)
+  holds.
+- **Against the running installation** (before and after the test): one `GET`
+  (200), status `formed` with `OpenThread-07f0`, channel 24, read from the real
+  dataset; no write to the border router.
+- **Not exercised on hardware**: switching Thread on through the radios card,
+  which needs an updater image built from this branch. `verify_thread`'s new
+  branch uses the same measured predicate as the watchdog.
+- **Seen in passing**: recreating `otbr` quickly after a stop hit
+  `spinel_driver.cpp:87: Failure` once; a second restart cleared it, the same
+  remedy the watchdog applies. The kernel reported `Undervoltage detected!` on
+  this Pi during the test - its power supply is marginal.
