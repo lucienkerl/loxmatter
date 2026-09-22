@@ -1371,7 +1371,10 @@ In `src/loxmatter/api/devices.py`:
 ```python
     @router.get("/devices/commission/status")
     async def commission_status() -> dict[str, object]:
-        """Design 2026-09-22, section 5.2. The dialog polls it every 2 s."""
+        """Design 2026-09-22, section 5.2. The dialog polls it every 2 s.
+
+        Read-only: the POST route drives the sampling (see there), so a page
+        that is not open costs nothing and changes nothing."""
         return progress.status()
 ```
 
@@ -1401,6 +1404,19 @@ def _reason_detail(
         )
         progress.start(discriminator)
         unsubscribe = active_client.add_node_added_listener(progress.node_added)
+
+        async def sample_while_waiting() -> None:
+            # The tracker never samples itself (Task 3): this route owns the
+            # cadence, because it is the only one that runs for as long as the
+            # attempt does. Driving it from the status route instead would tie
+            # the phases to a browser polling, and a failure whose `found` or
+            # `connected` phase nobody observed would be classified `other`
+            # instead of `connection_lost`.
+            while True:
+                await progress.sample()
+                await asyncio.sleep(progress.sample_interval)
+
+        sampler = asyncio.ensure_future(sample_while_waiting())
         try:
             snapshot = await active_client.commission_with_code(request.code)
         except CommissioningError as exc:
@@ -1416,6 +1432,9 @@ def _reason_detail(
             await progress.finish("matter_server_unreachable")
             raise HTTPException(status_code=502, detail=str(exc)) from exc
         finally:
+            sampler.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await sampler
             unsubscribe()
 ```
 
