@@ -1360,6 +1360,9 @@ web.devices.forget_only_keep:
 web.devices.commission_code_required:
   en: "Please enter a pairing code first."
   de: "Bitte zuerst einen Pairing-Code eingeben."
+web.devices.commission_code_typo:
+  en: "This code has a typo — check the digits."
+  de: "Dieser Code enthält einen Tippfehler – prüfen Sie die Ziffern."
 web.devices.commission_success:
   # The limitation formerly named here ("only after a restart of the
   # bridge", spec 12.3) no longer exists: the commissioning route calls

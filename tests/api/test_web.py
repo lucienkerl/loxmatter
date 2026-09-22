@@ -1159,7 +1159,11 @@ def _app_state(setup: str = "", translations: dict[str, str] | None = None) -> d
     # `t` is a global in the browser, and markup expressions call it by
     # name; inside this `new Function` it is a local, so the binding tests
     # at the end of this file would not find it without the export.
-    tail = json.dumps("\n" + fill_strings + "globalThis.t = t;\nreturn app();")
+    tail = json.dumps(
+        "\n"
+        + fill_strings
+        + "globalThis.t = t;\nglobalThis.decodePairingCode = decodePairingCode;\nreturn app();"
+    )
     script = f"""
       const fs = require("node:fs");
       const src = fs.readFileSync({str(WEB_DIR / "app.js")!r}, "utf8");
@@ -15623,3 +15627,32 @@ def test_the_radios_upkeep_texts_exist_in_both_languages():
     ):
         entry = i18n._STRINGS[key]
         assert entry.get("en") and entry.get("de"), key
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_the_pairing_code_names_its_discriminator():
+    """Design 2026-09-22, section 4, with the Matter specification's own test
+    vector: manual code 34970112332 and QR MT:Y.K9042C00KA0648G00 both name
+    discriminator 3840 (short 15). Fault to prove it: shift chunk 2 by 13."""
+    values = _app_state(
+        """
+        const codes = ["34970112332", "3497-011-2332", "34970112333",
+                       "MT:Y.K9042C00KA0648G00", "mt:y.k9042c00ka0648g00", "abc", "1234", ""];
+        console.log(JSON.stringify(Object.fromEntries(codes.map((c) => [c, decodePairingCode(c)]))));
+        """
+    )
+    assert values["34970112332"] == {"kind": "short", "discriminator": 15}
+    assert values["3497-011-2332"] == {"kind": "short", "discriminator": 15}
+    assert values["34970112333"] == {"kind": "typo"}
+    assert values["MT:Y.K9042C00KA0648G00"] == {"kind": "long", "discriminator": 3840}
+    assert values["mt:y.k9042c00ka0648g00"] == {"kind": "long", "discriminator": 3840}
+    assert values["abc"] == {"kind": "unknown"}
+    assert values["1234"] == {"kind": "unknown"}
+    assert values[""] == {"kind": "unknown"}
+
+
+def test_the_typo_string_exists_in_both_languages():
+    from loxmatter import i18n
+
+    entry = i18n._STRINGS["web.devices.commission_code_typo"]
+    assert entry.get("en") and entry.get("de") and entry["en"] != entry["de"]

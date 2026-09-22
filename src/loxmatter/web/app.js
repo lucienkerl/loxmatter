@@ -531,6 +531,82 @@ function normalizePairingCode(raw) {
   return isPairingQrCode(text) ? text : text.replace(/[\s-]/g, "");
 }
 
+// Pairing-code decoding (design 2026-09-22, section 4). Only the
+// discriminator is read - it lets the dialog follow the device in BlueZ and
+// name it in a "not found" message. The passcode is never decoded.
+const VERHOEFF_D = [
+  [0, 1, 2, 3, 4, 5, 6, 7, 8, 9], [1, 2, 3, 4, 0, 6, 7, 8, 9, 5],
+  [2, 3, 4, 0, 1, 7, 8, 9, 5, 6], [3, 4, 0, 1, 2, 8, 9, 5, 6, 7],
+  [4, 0, 1, 2, 3, 9, 5, 6, 7, 8], [5, 9, 8, 7, 6, 0, 4, 3, 2, 1],
+  [6, 5, 9, 8, 7, 1, 0, 4, 3, 2], [7, 6, 5, 9, 8, 2, 1, 0, 4, 3],
+  [8, 7, 6, 5, 9, 3, 2, 1, 0, 4], [9, 8, 7, 6, 5, 4, 3, 2, 1, 0],
+];
+const VERHOEFF_P = [
+  [0, 1, 2, 3, 4, 5, 6, 7, 8, 9], [1, 5, 7, 6, 2, 8, 3, 0, 9, 4],
+  [5, 8, 0, 3, 7, 9, 6, 1, 4, 2], [8, 9, 1, 6, 0, 4, 3, 5, 2, 7],
+  [9, 4, 5, 3, 1, 2, 6, 8, 7, 0], [4, 2, 8, 6, 5, 7, 3, 9, 0, 1],
+  [2, 7, 9, 3, 8, 0, 6, 4, 1, 5], [7, 0, 4, 6, 9, 1, 3, 2, 5, 8],
+];
+const BASE38_ALPHABET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ-.";
+
+function verhoeffValid(digits) {
+  let check = 0;
+  const reversed = digits.split("").reverse();
+  for (let i = 0; i < reversed.length; i++) {
+    check = VERHOEFF_D[check][VERHOEFF_P[i % 8][Number(reversed[i])]];
+  }
+  return check === 0;
+}
+
+function base38Bytes(text) {
+  const bytes = [];
+  for (let i = 0; i < text.length; i += 5) {
+    const chunk = text.slice(i, i + 5);
+    const count = { 5: 3, 4: 2, 2: 1 }[chunk.length];
+    if (count === undefined) return null;
+    let value = 0;
+    for (let j = chunk.length - 1; j >= 0; j--) {
+      const digit = BASE38_ALPHABET.indexOf(chunk[j]);
+      if (digit < 0) return null;
+      value = value * 38 + digit;
+    }
+    for (let k = 0; k < count; k++) {
+      bytes.push(value & 0xff);
+      value = Math.floor(value / 256);
+    }
+  }
+  return bytes;
+}
+
+function bitsAt(bytes, start, length) {
+  let value = 0;
+  for (let i = 0; i < length; i++) {
+    const bit = start + i;
+    if ((bytes[bit >> 3] >> (bit & 7)) & 1) value |= 1 << i;
+  }
+  return value;
+}
+
+function decodePairingCode(raw) {
+  const text = String(raw ?? "").trim();
+  if (/^MT:/i.test(text)) {
+    // version 3, vendor 16, product 16, flow 2, capabilities 8,
+    // discriminator 12 bits from bit 45 on.
+    const bytes = base38Bytes(text.slice(3).toUpperCase());
+    if (!bytes || bytes.length < 11) return { kind: "unknown" };
+    return { kind: "long", discriminator: bitsAt(bytes, 45, 12) };
+  }
+  const digits = text.replace(/[\s-]/g, "");
+  if (!/^\d+$/.test(digits) || (digits.length !== 11 && digits.length !== 21)) {
+    return { kind: "unknown" };
+  }
+  if (!verhoeffValid(digits)) return { kind: "typo" };
+  const chunk1 = Number(digits[0]);
+  const chunk2 = Number(digits.slice(1, 6));
+  if (((chunk1 >> 2) & 1) !== (digits.length === 21 ? 1 : 0)) return { kind: "unknown" };
+  return { kind: "short", discriminator: ((chunk1 & 0x3) << 2) | (chunk2 >> 14) };
+}
+
 // What the chip in the field says. Returns a key instead of text, so
 // this function stays testable without a loaded string table -
 // translation happens only when displayed.
@@ -864,6 +940,7 @@ function app() {
     // the progress display would end up with no code to show at the end.
     commissionRunCode: "",
     commissionRunRoom: "",
+    commissionDiscriminator: null,
 
     // The commissioning card's two tabs (design 2026-09-12, section 3.1).
     // "matter" or "zigbee"; `commissionTabShown()` is what the card shows,
@@ -3406,6 +3483,12 @@ function app() {
         this.commissionMessageIsError = true;
         return;
       }
+      const decoded = decodePairingCode(this.commissionCode);
+      if (decoded.kind === "typo") {
+        this.commissionMessage = t("web.devices.commission_code_typo");
+        this.commissionMessageIsError = true;
+        return;
+      }
       this.commissionBusy = true;
       this.commissionStep = 0;
       this.commissionFailed = false;
@@ -3415,6 +3498,10 @@ function app() {
       this.commissionRunCode = formatPairingCode(this.commissionCode.trim());
       try {
         const body = { code };
+        if (decoded.kind === "short" || decoded.kind === "long") {
+          body.discriminator = { value: decoded.discriminator, kind: decoded.kind };
+        }
+        this.commissionDiscriminator = body.discriminator ?? null;
         if (this.commissionThreadDataset.trim()) {
           body.thread_dataset = this.commissionThreadDataset.trim();
         }
