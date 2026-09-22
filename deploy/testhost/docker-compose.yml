@@ -323,16 +323,24 @@ services:
       # section 5). Without a device cgroup rule no device node here can be
       # opened, so this grants no access to a radio.
       - /dev:/host/dev:ro
+      # Read-only: BlueZ's Matter advertisements and adapter state for the
+      # commissioning dialog (design 2026-09-22, section 6). The same socket
+      # matter-server uses for BLE. Reading only - the bridge never scans.
+      - /run/dbus:/run/dbus:ro
     # What actually grants the bridge permission to OPEN a serial device -
     # the /dev bind above only supplies stable names and hotplug visibility
     # (design 2026-09-12, section 8.1; research F.8/F.9). Container root
     # already holds CAP_MKNOD and Docker's default `c *:* m`, so it can
     # mknod a node itself; removing these rules denies the open with EPERM.
     #
-    # NOT a `devices:` entry, for two measured reasons: `docker compose up`
-    # fails the WHOLE stack when the named node is absent (the documented
-    # reason otbr sits behind a profile), and a `devices:` node is copied in
-    # at create time, so a stick plugged in later is invisible.
+    # NOT a `devices:` entry for the serial stick itself, for two measured
+    # reasons: `docker compose up` fails the WHOLE stack when the named node
+    # is absent (the documented reason otbr sits behind a profile), and a
+    # `devices:` node is copied in at create time, so a stick plugged in
+    # later is invisible. That reasoning does not apply to the `devices:`
+    # key further down: /dev/kmsg is a fixed kernel device node, present on
+    # every Linux host booted so far, never hot-plugged - nothing like an
+    # optional USB radio stick.
     #
     # Majors verified against the kernel's admin-guide/devices.txt:
     #   188 = USB serial converters (ttyUSB*: CP210x, CH34x, FTDI)
@@ -349,6 +357,11 @@ services:
     device_cgroup_rules:
       - 'c 188:* rmw'
       - 'c 166:* rmw'
+    # Read-only: Bluetooth and power faults from the kernel log (design
+    # 2026-09-22, section 7.1). `dmesg` is blocked by Docker's seccomp profile;
+    # the device node is not. Only counted categories reach the web UI.
+    devices:
+      - /dev/kmsg:/dev/kmsg:r
     environment:
       # A dedicated, fixed location instead of the user-home default (see
       # `_resolve_store_path` in src/loxmatter/cli.py) - the mounted

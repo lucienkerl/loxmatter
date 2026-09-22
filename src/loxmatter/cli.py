@@ -51,6 +51,7 @@ from loxmatter.loxone.runtime import Runtime
 from loxmatter.loxone.sender import UdpSender
 from loxmatter.loxone.server import build_app
 from loxmatter.matter.client import BridgeMatterClient, MatterUnavailableError
+from loxmatter.matter.commissioning_progress import CommissioningTracker
 from loxmatter.matter.discovery import (
     extract_signals,
     find_clusters_with_undiscoverable_events,
@@ -63,6 +64,8 @@ from loxmatter.model.locale_store import LocaleStore
 from loxmatter.model.store import Store
 from loxmatter.model.zigbee_settings_store import settings_for_path
 from loxmatter.profiles.table import is_exportable
+from loxmatter.radios.bluetooth_health import KernelLog
+from loxmatter.radios.bluez import BluezReader
 from loxmatter.radios.inventory import scan_serial
 from loxmatter.radios.thread_lockout import open_refusal
 from loxmatter.sources import Sources
@@ -858,6 +861,12 @@ async def _run(
         # `log_handler` arrives already finished (see the docstring above,
         # "Log ring" section) - `install_log_buffer()` itself lives only in
         # `run()`, BEFORE this entire setup.
+        #
+        # Design 2026-09-22: both read-only host sources the commissioning
+        # dialog and the diagnostics page use. Each reads as "not available"
+        # when its mount is missing.
+        kernel_log = KernelLog()
+        commissioning_tracker = CommissioningTracker(bluez=BluezReader(), kernel=kernel_log)
         config = uvicorn.Config(
             build_app(
                 store,
@@ -874,6 +883,8 @@ async def _run(
                 radios_host_dev=radios_host_dev,
                 radios_sys_root=radios_sys_root,
                 thread_network=thread_network,
+                commissioning_tracker=commissioning_tracker,
+                kernel_log=kernel_log,
             ),
             host=host,
             port=listen,
