@@ -81,6 +81,15 @@ that since the WebUI login — without a password set, no `/api` route
 responds anyway, this one included; the
 former dedicated 403 branch for "no token set" has therefore been dropped.
 
+**The bridge reads BlueZ and kernel logs, read-only.** The commissioning dialog
+shows what the bridge is doing — "searching", "found", "connected" — and warns
+when the Bluetooth chip reports errors or the Raspberry Pi reports undervoltage.
+To do this, the bridge reads BlueZ's Matter advertisements over `/run/dbus`
+(the same socket matter-server uses, read-only, never scans) and power/Bluetooth
+faults from the kernel log through `/dev/kmsg` (read-only). Only counted
+categories reach the web UI; without either mount the dialog still works and
+those parts read "not available".
+
 `LOXMATTER_API_TOKEN` nonetheless remains worth setting if this instance
 should also be reachable via script or `curl` — for the browser
 itself it's no longer needed. `openssl rand -hex 32` is the

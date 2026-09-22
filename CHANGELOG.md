@@ -35,6 +35,13 @@ people who don't know the code.
 
 ### Added
 
+- **Commissioning shows what it is doing.** The dialog follows the device
+  from "searching" to "found", "connected" and "joined", lists the Matter
+  devices advertising nearby, and warns when the Bluetooth chip reports
+  errors or the Raspberry Pi reports undervoltage.
+- **A failed commissioning says why.** "No device with discriminator 9 is in
+  range" or "the Bluetooth connection broke off" instead of the raw error, and
+  a code with a typo is caught before anything is sent.
 - **The radios card shows the Thread network's name and channel.** After a
   start it warns when Thread devices exist but the border router has no
   network, instead of quietly creating a new one that would cut them off.
