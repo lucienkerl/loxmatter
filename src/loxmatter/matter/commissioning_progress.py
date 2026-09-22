@@ -100,9 +100,16 @@ class _Attempt:
 class CommissioningTracker:
     """Tracks one commissioning attempt at a time (design 2026-09-22, section 5).
 
-    `sample()` is driven by the caller - the route that runs the `POST` - so
-    this class stays synchronous apart from reading `bluez`; it starts no
-    background task of its own.
+    The tracker never samples itself. `POST /api/devices/commission` runs a
+    task, next to its `await commission_with_code(...)`, that calls
+    `sample()` every `sample_interval` seconds while it waits, and cancels
+    that task in a `finally` when the attempt ends. Design 2026-09-22,
+    section 5.1: BlueZ is sampled every 2 s while an attempt runs, and not at
+    all otherwise. Driving `sample()` from the status route instead - i.e.
+    from however often a browser happens to poll it - would miss phase
+    transitions between polls, and could mis-classify a failure that had
+    already reached `found`/`connected` as `not_found` once the browser's
+    next poll arrived too late to see it.
     """
 
     def __init__(
@@ -117,6 +124,8 @@ class CommissioningTracker:
         self._bluez = bluez
         self._kernel = kernel
         self._clock = clock
+        # Nothing in this module reads `sample_interval`; it is the cadence
+        # the POST route's sampling task is expected to call `sample()` at.
         self.sample_interval = sample_interval
         self._stuck_after = stuck_after
         self.started_at = clock()
@@ -136,6 +145,8 @@ class CommissioningTracker:
         )
 
     def node_added(self, node_id: int) -> None:
+        # `node_id` is deliberately unused - the tracker only needs to know
+        # that a node joined during this attempt, not which one.
         self._advance("joined")
 
     async def finish(self, reason: Reason | None) -> None:
@@ -147,6 +158,10 @@ class CommissioningTracker:
     async def sample(self) -> None:
         attempt = self._attempt
         if attempt is None or self._bluez is None:
+            return
+        if attempt.phase in ("done", "failed"):
+            # A finished attempt is left alone: a status route that samples
+            # must not overwrite the `nearby` list its result is showing.
             return
         snapshot = await self._bluez.snapshot()
         if snapshot is None:

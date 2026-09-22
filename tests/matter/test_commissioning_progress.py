@@ -144,12 +144,26 @@ async def test_phases_never_move_backwards() -> None:
 
 
 async def test_an_ip_attempt_goes_from_searching_to_joined() -> None:
-    tracker, _, _, _ = _tracker()
+    tracker, bluez, _, _ = _tracker()
     tracker.start(None)
+    bluez.snapshots = [BluezSnapshot([_advert(1059)], SCANNING)]
     await tracker.sample()
     assert tracker.phase == "searching"
     tracker.node_added(4)
     assert tracker.phase == "joined"
+
+
+async def test_a_long_discriminator_drives_found_and_connected() -> None:
+    tracker, bluez, _, _ = _tracker()
+    tracker.start(Discriminator(1059, "long"))
+
+    bluez.snapshots = [BluezSnapshot([_advert(1059)], SCANNING)]
+    await tracker.sample()
+    assert tracker.phase == "found"
+
+    bluez.snapshots = [BluezSnapshot([_advert(1059, connected=True)], SCANNING)]
+    await tracker.sample()
+    assert tracker.phase == "connected"
 
 
 async def test_the_status_carries_nearby_devices_and_marks_the_match() -> None:
@@ -217,3 +231,30 @@ async def test_a_failure_keeps_the_last_attempt_with_its_reason() -> None:
     assert attempt["reason"] == "not_found"  # type: ignore[index]
     assert attempt["discriminator"] == {"value": 9, "kind": "short"}  # type: ignore[index]
     assert tracker.status()["bridge_started_at"] == "2026-09-22T07:00:00Z"
+
+
+@pytest.mark.parametrize("reason", ["no_thread_network", "matter_server_unreachable"])
+async def test_finish_ends_the_attempt_as_failed_with_its_reason(reason: str) -> None:
+    tracker, _, _, _ = _tracker()
+    tracker.start(Discriminator(9, "short"))
+    await tracker.finish(reason)  # type: ignore[arg-type]
+    attempt = tracker.status()["attempt"]
+    assert attempt["phase"] == "failed"  # type: ignore[index]
+    assert attempt["reason"] == reason  # type: ignore[index]
+
+
+async def test_sample_leaves_a_finished_attempt_alone() -> None:
+    """A status route that samples must not overwrite the finished attempt's
+    `nearby` list - it is what the "not found" message shows."""
+    tracker, bluez, _, _ = _tracker()
+    tracker.start(Discriminator(9, "short"))
+    await tracker.finish("not_found")
+    before = tracker.status()["attempt"]
+
+    bluez.snapshots = [BluezSnapshot([_advert(1059, address="FB:73:82:07:E3:AD")], SCANNING)]
+    await tracker.sample()
+
+    after = tracker.status()["attempt"]
+    assert after["nearby"] == before["nearby"]  # type: ignore[index]
+    assert after["phase"] == "failed"  # type: ignore[index]
+    assert after["reason"] == "not_found"  # type: ignore[index]
