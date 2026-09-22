@@ -1206,6 +1206,9 @@ web.devices.commission_phase_joined:
 web.devices.commission_phase_done:
   en: "Done"
   de: "Fertig"
+web.devices.commission_elapsed:
+  en: "Running for {seconds} s"
+  de: "Läuft seit {seconds} s"
 web.devices.commission_hint_searching:
   en: "Searching over Bluetooth usually takes seconds, at most 3 minutes."
   de: "Die Suche über Bluetooth dauert meist Sekunden, höchstens 3 Minuten."

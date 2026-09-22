@@ -3164,6 +3164,255 @@ def test_bluetooth_warnings_follow_the_attempts_findings():
     assert values["unavailable"] == []
 
 
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_a_repeat_commission_attempt_does_not_open_on_the_previous_ones_status():
+    """Review fix 1 (2026-09-22): `commissionStatus` was never cleared, and
+    `startCommissionPolling()` fetches once immediately - before the `POST`
+    to `/api/devices/commission` even reaches the server - so a second
+    attempt used to render on the FIRST attempt's finished status (all five
+    phases "done", plus its nearby list and Bluetooth banners) until a real
+    poll answer finally replaced it.
+
+    `commissionDevice()` is driven for real here, not just read as text
+    (unlike `test_commission_device_drives_the_flow_and_stops_where_it
+    _failed`): the bug is a data race between two `await`s, which only
+    shows up by actually running the code. `state.request` (the `POST`)
+    is stubbed to hang forever, so this test can inspect the state exactly
+    at the point between the synchronous setup and that `POST` settling -
+    the `bridge_started_at` probe is allowed to resolve once (so the setup
+    that runs after it executes), and every later `fetch` (the immediate
+    poll, any interval tick) hangs too, so nothing but the fix under test
+    can explain a cleared `commissionStatus` here. `setInterval` is stubbed
+    to a no-op, exactly as `test_the_poller_starts_once_per_attempt_and
+    _stops_when_it_ends` below does - otherwise the real one
+    `startCommissionPolling()` arms would keep this script's process alive
+    long after its `console.log`, since nothing here ever lets
+    `commissionDevice`'s `finally` clear it."""
+    values = _commission_values(
+        """
+        global.setInterval = () => 0;
+        global.clearInterval = () => {};
+        state.commissionCode = "12345678";
+        state.commissionStatus = {
+          attempt: { phase: "done", reason: null, nearby: [{ address: "FB" }],
+                     bluetooth: { available: true, during_attempt: { transport: 1, stuck: 0, power: 0 }, stuck_now: false } },
+        };
+        state.commissionFailed = true;
+        state.commissionReachedPhase = "done";
+        let fetchCalls = 0;
+        globalThis.fetch = async () => {
+          fetchCalls += 1;
+          if (fetchCalls === 1) {
+            return { ok: true, status: 200, json: async () => ({ bridge_started_at: null, attempt: null }) };
+          }
+          return new Promise(() => {});
+        };
+        state.request = () => new Promise(() => {});
+        (async () => {
+          state.commissionDevice();
+          await new Promise((resolve) => setImmediate(resolve));
+          await new Promise((resolve) => setImmediate(resolve));
+          await new Promise((resolve) => setImmediate(resolve));
+          const classes = Object.fromEntries(
+            ["searching", "found", "connected", "joined", "done"].map((p) => [p, state.commissionPhaseClass(p)])
+          );
+          console.log(JSON.stringify({ status: state.commissionStatus, classes }));
+        })();
+        """
+    )
+    assert values["status"] is None
+    assert values["classes"] == {
+        "searching": "running",
+        "found": "",
+        "connected": "",
+        "joined": "",
+        "done": "",
+    }
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_a_poll_that_resolves_after_stopping_cannot_overwrite_a_newer_status():
+    """Review fix 2 (2026-09-22): `stopCommissionPolling()` only clears the
+    `setInterval` - it cannot cancel a `requestJson()` already awaiting.
+    That poll's `.then` still runs afterward and used to assign whatever
+    it fetched into `commissionStatus`, possibly overwriting a status set
+    AFTER the stop (in particular, the one `commissionDevice`'s `catch`
+    branch fetches right after a failure, which carries `attempt.reason`
+    the "not found" message needs).
+
+    A generation token closes this: `startCommissionPolling()` captures one,
+    `stopCommissionPolling()` bumps it, and a poll whose captured token no
+    longer matches when its `await` returns drops the answer instead of
+    assigning it."""
+    values = _commission_values(
+        """
+        let resolveFetch;
+        let fetchCalls = 0;
+        globalThis.fetch = async () => {
+          fetchCalls += 1;
+          return new Promise((resolve) => { resolveFetch = resolve; });
+        };
+        (async () => {
+          state.startCommissionPolling();
+          // Let the immediate poll fire and reach its own `await fetch(...)`.
+          await new Promise((resolve) => setImmediate(resolve));
+          // Stop polling before that GET answers - the same thing
+          // `commissionDevice`'s `catch` branch does right before it fetches
+          // the post-failure status itself.
+          state.stopCommissionPolling();
+          state.commissionStatus = {
+            attempt: { phase: "failed", reason: "not_found", nearby: [], bluetooth: { available: false } },
+          };
+          // The stale poll now answers - with data from the attempt that was
+          // running BEFORE the stop, carrying no `reason` at all.
+          resolveFetch({
+            ok: true, status: 200,
+            json: async () => ({ attempt: { phase: "connected", reason: null, nearby: [], bluetooth: { available: false } } }),
+          });
+          await new Promise((resolve) => setImmediate(resolve));
+          await new Promise((resolve) => setImmediate(resolve));
+          console.log(JSON.stringify({ status: state.commissionStatus, fetchCalls }));
+        })();
+        """
+    )
+    assert values["fetchCalls"] == 1
+    assert values["status"]["attempt"]["phase"] == "failed"
+    assert values["status"]["attempt"]["reason"] == "not_found"
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_the_nearby_list_only_shows_during_search_or_a_not_found_failure():
+    """Review fix 3 (2026-09-22, design section 5.3/6): the nearby list is
+    about a device that has not been found yet - it belongs on screen while
+    the attempt is searching, and after a failure that says the device
+    could not be found, but not once a device is `connected`/`joined`, and
+    not after a plain success, where the list is stale information about a
+    device already dealt with."""
+    values = _commission_values(
+        """
+        const show = (attempt) => { state.commissionStatus = { attempt }; return state.commissionShowNearby(); };
+        console.log(JSON.stringify({
+          searching: show({ phase: "searching", reason: null, nearby: [], bluetooth: { available: false } }),
+          connected: show({ phase: "connected", reason: null, nearby: [], bluetooth: { available: false } }),
+          joined: show({ phase: "joined", reason: null, nearby: [], bluetooth: { available: false } }),
+          notFound: show({ phase: "failed", reason: "not_found", nearby: [], bluetooth: { available: false } }),
+          otherFailure: show({ phase: "failed", reason: "connection_lost", nearby: [], bluetooth: { available: false } }),
+          noAttempt: state.commissionShowNearby(),
+        }));
+        """
+    )
+    assert values["searching"] is True
+    assert values["connected"] is False
+    assert values["joined"] is False
+    assert values["notFound"] is True
+    assert values["otherFailure"] is False
+    assert values["noAttempt"] is False
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_the_phase_list_freezes_instead_of_blanking_when_a_poll_sees_failed_early():
+    """Review fix 4 (2026-09-22): a background poll can observe
+    `attempt.phase === "failed"` before the `POST`'s own rejection sets
+    `commissionFailed` - `commissionDevice` learns of the failure from its
+    own request, not from the poll. Until then, `commissionPhaseClass`
+    computed `current = null` (`COMMISSION_PHASES.indexOf(null) === -1`),
+    which is neither `<` nor `===` any real phase index - every phase
+    therefore got the empty class and the list blanked for one frame.
+
+    `commissionReachedPhase` is already tracked for exactly the
+    `commissionFailed` case below it; using it here too freezes the list on
+    the phase actually reached instead."""
+    values = _commission_values(
+        """
+        state.commissionFailed = false;
+        state.commissionReachedPhase = "connected";
+        state.commissionStatus = {
+          attempt: { phase: "failed", reason: "connection_lost", nearby: [], bluetooth: { available: false } },
+        };
+        const out = Object.fromEntries(
+          ["searching", "found", "connected", "joined", "done"].map((p) => [p, state.commissionPhaseClass(p)])
+        );
+        console.log(JSON.stringify(out));
+        """
+    )
+    assert values == {
+        "searching": "done",
+        "found": "done",
+        "connected": "running",
+        "joined": "",
+        "done": "",
+    }
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_the_elapsed_time_is_whole_seconds_since_the_attempts_start():
+    """Review fix 5 (design 2026-09-22, section 5.3: "the time since the
+    start"). `commissionElapsedSeconds()` reads `attempt.started_at` from
+    the status route and `nowTick` (the same one-second clock the "ago"
+    labels already read, see `sinceText`), so Alpine redraws it every
+    second without a timer of its own - and returns null with no attempt to
+    show one for, so the hint line stays hidden rather than showing "0 s"
+    on the bare form."""
+    values = _commission_values(
+        """
+        state.nowTick = Date.parse("2026-09-22T07:00:09Z");
+        state.commissionStatus = {
+          attempt: { started_at: "2026-09-22T07:00:00Z", phase: "connected", reason: null, nearby: [], bluetooth: { available: false } },
+        };
+        const withAttempt = state.commissionElapsedSeconds();
+        state.commissionStatus = null;
+        const withoutAttempt = state.commissionElapsedSeconds();
+        console.log(JSON.stringify({ withAttempt, withoutAttempt }));
+        """
+    )
+    assert values["withAttempt"] == 9
+    assert values["withoutAttempt"] is None
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_the_poller_starts_once_per_attempt_and_stops_when_it_ends():
+    """Review fix 6 (2026-09-22): nothing proved the timer lifecycle itself
+    - that `commissionDevice` starts exactly one poller per attempt and
+    always stops it again, on a plain success as well as on a failure.
+    `setInterval`/`clearInterval` are stubbed to record their calls instead
+    of actually scheduling anything, in the same node harness the other
+    commissioning tests run `app.js` in."""
+    values = _commission_values(
+        """
+        const events = [];
+        let nextId = 1;
+        global.setInterval = (fn, ms) => { const id = nextId++; events.push(["start", id, ms]); return id; };
+        global.clearInterval = (id) => { events.push(["stop", id]); };
+        const statusOk = async () => ({
+          ok: true, status: 200,
+          json: async () => ({ bridge_started_at: "t0", attempt: { phase: "joined", reason: null, nearby: [], bluetooth: { available: false } } }),
+        });
+        async function run(requestImpl) {
+          state.commissionCode = "12345678";
+          state.commissionFailed = false;
+          state.commissionStep = null;
+          globalThis.fetch = statusOk;
+          state.request = requestImpl;
+          try { await state.commissionDevice(); } catch {}
+        }
+        (async () => {
+          await run(async () => ({ id: 1, label: "Lamp" }));
+          const afterSuccess = events.splice(0);
+          const failing = async () => { const error = new Error("nope"); error.status = 422; throw error; };
+          await run(failing);
+          const afterFailure = events.splice(0);
+          console.log(JSON.stringify({ afterSuccess, afterFailure }));
+        })();
+        """
+    )
+    assert len(values["afterSuccess"]) == 2
+    assert values["afterSuccess"][0][0] == "start"
+    assert values["afterSuccess"][1] == ["stop", values["afterSuccess"][0][1]]
+    assert len(values["afterFailure"]) == 2
+    assert values["afterFailure"][0][0] == "start"
+    assert values["afterFailure"][1] == ["stop", values["afterFailure"][0][1]]
+
+
 async def test_the_commissioning_flow_shows_five_phases_nearby_devices_and_warnings(api):
     """Design 2026-09-22, section 5.3: the old two-step list only ever knew
     the POST to /api/devices/commission and the signals/commands reload
@@ -3192,6 +3441,11 @@ async def test_the_commissioning_flow_shows_five_phases_nearby_devices_and_warni
         assert _web_strings()[f"web.devices.commission_phase_{phase}"]
     assert 'x-for="entry in commissionNearby()"' in flow
     assert 'x-for="key in commissionBluetoothWarnings()"' in flow
+    # The nearby list is gated on `commissionShowNearby()` (review fix 3):
+    # it belongs to `searching` and to a "not found" failure, not to every
+    # phase whose last poll happened to carry a non-empty list.
+    assert 'x-show="commissionShowNearby()' in flow
+    assert "commissionElapsedSeconds()" in flow
 
     # The code of the running attempt sits above the phases - after a
     # success the input field is cleared, otherwise the display would sit

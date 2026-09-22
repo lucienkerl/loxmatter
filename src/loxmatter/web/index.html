@@ -599,11 +599,13 @@
                 </li>
               </template>
             </ol>
+            <p class="hint" x-show="commissionElapsedSeconds() !== null" x-cloak
+               x-text="t('web.devices.commission_elapsed', { seconds: commissionElapsedSeconds() })"></p>
             <p class="hint" x-show="commissionPhaseHint()" x-cloak x-text="commissionPhaseHint()"></p>
             <template x-for="key in commissionBluetoothWarnings()" :key="key">
               <p class="banner warn" x-text="t(key)"></p>
             </template>
-            <div x-show="commissionNearby().length" x-cloak>
+            <div x-show="commissionShowNearby() && commissionNearby().length" x-cloak>
               <p class="hint" x-text="t('web.devices.commission_nearby_heading')"></p>
               <ul class="commission-nearby">
                 <template x-for="entry in commissionNearby()" :key="entry.address">

@@ -952,9 +952,17 @@ function app() {
     commissionDiscriminator: null,
     // Design 2026-09-22, section 5.3: the last answer of
     // GET /api/devices/commission/status while an attempt runs, and the
-    // timer that polls it.
+    // timer that polls it. Cleared to null wherever a new attempt is set
+    // up (see commissionDevice) - otherwise a repeat attempt would open on
+    // whatever the previous one left behind (review fix 1).
     commissionStatus: null,
     commissionPollTimer: null,
+    // Bumped by stopCommissionPolling() and captured by startCommissionPolling()
+    // as each poll's own token - a poll whose token no longer matches this
+    // when its GET resolves belongs to an attempt already stopped and drops
+    // its answer instead of assigning it (review fix 2: clearInterval alone
+    // cannot cancel a requestJson() already awaiting).
+    commissionPollGeneration: 0,
     commissionBridgeStartedAt: null,
     // The furthest phase `commissionStatus.attempt.phase` reached before a
     // failure - `commissionPhaseClass` needs it because the status route's
@@ -3528,6 +3536,11 @@ function app() {
         this.commissionBridgeStartedAt = null;
       }
       this.commissionReachedPhase = "searching";
+      // The previous attempt's answer belongs to that attempt, not this
+      // one - left in place, it would show all five phases done, plus its
+      // nearby list and Bluetooth banners, until the first poll of THIS
+      // attempt lands (review fix 1).
+      this.commissionStatus = null;
       this.startCommissionPolling();
       try {
         const body = { code };
@@ -3626,10 +3639,13 @@ function app() {
         // at all) brings no frame of its own and gets one here - without
         // it, the UI would show nothing but "HTTP 502".
         //
-        // Stopped here, before the status fetch below: otherwise a
-        // background poll could land between that fetch and its use and
-        // overwrite `commissionStatus` with a result this handler never
-        // saw.
+        // Stopped here, before the status fetch below - but clearing the
+        // timer is not what closes the race: a poll whose own `requestJson`
+        // was already awaiting when this runs keeps running regardless and
+        // resolves afterward. What actually stops it from overwriting the
+        // status fetch below is `stopCommissionPolling()` bumping the
+        // generation token, which that poll's answer no longer matches by
+        // the time it lands (review fix 2, `startCommissionPolling`).
         this.stopCommissionPolling();
         // A restart mid-attempt (design 2026-09-22, section 5.3) is a
         // case of its own: `bridge_started_at` moving means the bridge
@@ -3687,10 +3703,19 @@ function app() {
      * reads "failed", which says THAT it failed but not WHERE -
      * `commissionReachedPhase` is the furthest phase seen before that,
      * and is what gets colored red.
+     *
+     * A background poll can observe `attempt.phase === "failed"` a moment
+     * before `commissionDevice`'s own request rejects and sets
+     * `commissionFailed` - `commissionReachedPhase` stands in for `current`
+     * in that window too, so the list freezes on the phase reached instead
+     * of blanking: `COMMISSION_PHASES.indexOf(null)` is -1, which is
+     * neither `<` nor `===` any real phase index, so every phase used to
+     * get the empty class for that one frame (review fix 4).
      */
     commissionPhaseClass(phase) {
       const attempt = this.commissionStatus?.attempt;
-      const current = attempt?.phase === "failed" ? null : (attempt?.phase ?? "searching");
+      const current =
+        attempt?.phase === "failed" ? (this.commissionReachedPhase ?? "searching") : (attempt?.phase ?? "searching");
       const index = COMMISSION_PHASES.indexOf(phase);
       if (this.commissionFailed) {
         // The phase the attempt had reached is the one that failed.
@@ -3716,6 +3741,21 @@ function app() {
       return "";
     },
 
+    /** Whole seconds since the running (or last finished) attempt's
+     * `started_at`, as the status route reports it (design 2026-09-22,
+     * section 5.3: "the time since the start") - or null while there is no
+     * attempt to show one for, so the hint stays hidden on the bare form.
+     * Reads `nowTick`, the same one-second clock `sinceText` above already
+     * reads, so Alpine redraws this every second without a timer of its
+     * own (review fix 5). */
+    commissionElapsedSeconds() {
+      const startedAt = this.commissionStatus?.attempt?.started_at;
+      if (!startedAt) return null;
+      const started = Date.parse(startedAt);
+      if (Number.isNaN(started)) return null;
+      return Math.max(0, Math.floor((this.nowTick - started) / 1000));
+    },
+
     /** The nearby Matter devices BlueZ currently sees, the one the
      * entered code names (if any) sorted first, then by signal strength -
      * so the device someone is actually looking for is the one they see
@@ -3725,6 +3765,19 @@ function app() {
       return [...nearby].sort(
         (a, b) => Number(b.matches) - Number(a.matches) || (b.rssi ?? -999) - (a.rssi ?? -999)
       );
+    },
+
+    /** Whether the nearby list belongs on screen: while the attempt is
+     * searching, or after it failed because the device could not be found
+     * (design 2026-09-22, sections 5.3 and 6) - not once a device is
+     * `connected`/`joined`, and not after a plain success, when the list
+     * would only be stale information about a device already dealt with
+     * (review fix 3). */
+    commissionShowNearby() {
+      const attempt = this.commissionStatus?.attempt;
+      if (!attempt) return false;
+      if (attempt.phase === "searching") return true;
+      return attempt.phase === "failed" && attempt.reason === "not_found";
     },
 
     /** The Bluetooth warning keys to show below the phase list - empty
@@ -3748,32 +3801,52 @@ function app() {
      * the first `setInterval` tick would leave the phase list on its
      * initial state for up to 2 seconds after the button was clicked.
      * Any earlier timer is cleared first, so a second attempt can never
-     * end up polled twice. */
+     * end up polled twice.
+     *
+     * Each poll captures `commissionPollGeneration` as it was when THIS
+     * call started it. `stopCommissionPolling()` cannot cancel a
+     * `requestJson()` a poll is already awaiting - only the interval that
+     * would schedule the next one - so a poll started for an attempt
+     * already stopped can still be in flight when it resolves; comparing
+     * its captured token against the current generation is how it
+     * recognizes that and drops the answer instead of overwriting
+     * `commissionStatus` with data nobody asked for any more
+     * (review fix 2). */
     startCommissionPolling() {
       this.stopCommissionPolling();
+      const generation = this.commissionPollGeneration;
       const poll = async () => {
+        let status;
         try {
-          this.commissionStatus = await requestJson("GET", "/api/devices/commission/status");
-          const phase = this.commissionStatus?.attempt?.phase;
-          if (phase && phase !== "failed" && phase !== "done") this.commissionReachedPhase = phase;
+          status = await requestJson("GET", "/api/devices/commission/status");
         } catch {
           // The next poll tries again; a dead bridge is decided in
           // commissionDevice, from the request that failed there - not
           // from this background poll silently retrying forever.
+          return;
         }
+        if (generation !== this.commissionPollGeneration) return;
+        this.commissionStatus = status;
+        const phase = status?.attempt?.phase;
+        if (phase && phase !== "failed" && phase !== "done") this.commissionReachedPhase = phase;
       };
       poll();
       this.commissionPollTimer = setInterval(poll, COMMISSION_POLL_MS);
     },
 
-    /** Stops the timer `startCommissionPolling` set, if any. Safe to call
-     * whether or not one is running - `commissionDevice` calls it from
-     * both its `catch` and its `finally`. */
+    /** Stops the timer `startCommissionPolling` set, if any, and bumps
+     * `commissionPollGeneration` so a poll that call started - even one
+     * already awaiting its own `requestJson()`, which clearing the timer
+     * alone cannot reach - answers into a generation nothing reads from any
+     * more. Safe to call whether or not a timer is running -
+     * `commissionDevice` calls it from both its `catch` and its
+     * `finally`. */
     stopCommissionPolling() {
       if (this.commissionPollTimer !== null) {
         clearInterval(this.commissionPollTimer);
         this.commissionPollTimer = null;
       }
+      this.commissionPollGeneration++;
     },
 
     /**
