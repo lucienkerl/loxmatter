@@ -1414,6 +1414,39 @@ web.devices.commission_success:
 web.devices.commission_failed:
   en: "Commissioning failed: {message}"
   de: "Einlernen fehlgeschlagen: {message}"
+# The three lines below mirror api.devices.commission_reason_not_found /
+# _not_found_any / _connection_lost (further up in this file) word for word.
+# A RESTORED attempt (design 2026-09-22, section 5.3: a page reloaded while
+# one runs, which then learns of the result only from the status route, not
+# from a POST it never sent) has nothing but `attempt.reason` to go on and
+# must show the same text a live POST's 422 would have shown - but
+# GET /api/i18n only ever sends the browser the `web.*` namespace
+# (`api/language.py:_web_strings()`, proven by
+# `test_get_i18n_only_returns_the_web_namespace` in test_language.py), so
+# the `api.devices.*` originals themselves are never reachable from
+# `app.js`'s `t()`. Keep both copies in sync by hand if the wording changes -
+# there is no third place to share them from without exposing a whole new
+# slice of the api.* namespace to the browser for three lines.
+web.devices.commission_reason_not_found:
+  en: "No device with discriminator {discriminator} is in range, or it is not ready for pairing. Check the code, put the device into pairing mode, and keep it close to the bridge."
+  de: "Kein Gerät mit der Kennung {discriminator} ist in Reichweite, oder es ist nicht zum Einlernen bereit. Prüfen Sie den Code, versetzen Sie das Gerät in den Pairing-Modus und halten Sie es nahe an die Bridge."
+web.devices.commission_reason_not_found_any:
+  en: "No device with this code is in range, or it is not ready for pairing. Check the code, put the device into pairing mode, and keep it close to the bridge."
+  de: "Kein Gerät mit diesem Code ist in Reichweite, oder es ist nicht zum Einlernen bereit. Prüfen Sie den Code, versetzen Sie das Gerät in den Pairing-Modus und halten Sie es nahe an die Bridge."
+web.devices.commission_reason_connection_lost:
+  en: "The device was found, but the Bluetooth connection to it broke off."
+  de: "Das Gerät wurde gefunden, aber die Bluetooth-Verbindung zu ihm ist abgebrochen."
+# The success banner for a RESTORED attempt (design 5.3) - the same news as
+# web.devices.commission_success, minus the device label: the status route
+# reports a finished attempt's phase and reason, never which device it was
+# (section 5.2's `attempt` shape carries no device id or label at all), so a
+# page that only learns of the result this way cannot name the device the
+# way the live POST path's own response does.
+web.devices.commission_restored_success:
+  en: |
+    The device was commissioned and delivers live values from now on – no restart of the bridge needed. They reach the Miniserver as soon as you have exported the templates and imported them into Loxone Config.
+  de: |
+    Das Gerät wurde eingelernt und liefert ab sofort Live-Werte – ohne Neustart der Brücke. Im Miniserver kommen sie an, sobald Sie die Vorlagen exportiert und in Loxone Config importiert haben.
 
 # --- Rooms and search (devices-tab design, 2026-09-05) ---
 # The category names below are the only place a category gets its

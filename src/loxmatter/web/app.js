@@ -1737,6 +1737,12 @@ function app() {
         // answering 503 asks again (`loadZigbeePairing()`).
         await this.loadZigbeeRadio({ poll: false });
         if (this.zigbeeTabVisible()) await this.peekZigbeePairing();
+        // Design 2026-09-22, section 5.3: finds a running commissioning
+        // attempt through the status route and shows its progress - the
+        // case a plain page reload used to lose entirely (see
+        // `restoreCommissionIfRunning`'s own docstring for why this is
+        // safe to call on every visit to the tab, not only the first).
+        await this.restoreCommissionIfRunning();
       } else if (view === "export") {
         await this.loadExportStatus();
       } else if (view === "system") {
@@ -3829,6 +3835,17 @@ function app() {
         this.commissionStatus = status;
         const phase = status?.attempt?.phase;
         if (phase && phase !== "failed" && phase !== "done") this.commissionReachedPhase = phase;
+        // A RESTORED attempt (design 2026-09-22, section 5.3) has no
+        // `commissionDevice()` of its own running on this page to notice a
+        // `failed`/`done` phase and show the result - `commissionBusy` is
+        // exactly the signal for that: it is `true` for the whole span of
+        // an OWN attempt's `POST`, and that call's own catch/success paths
+        // already handle the message and the polling stop in that case.
+        // Only when nothing else is watching does this poll finish it
+        // itself.
+        if (!this.commissionBusy && (phase === "failed" || phase === "done")) {
+          this.finishRestoredCommission(status);
+        }
       };
       poll();
       this.commissionPollTimer = setInterval(poll, COMMISSION_POLL_MS);
@@ -3847,6 +3864,89 @@ function app() {
         this.commissionPollTimer = null;
       }
       this.commissionPollGeneration++;
+    },
+
+    /** Design 2026-09-22, section 5.3: "A page that is reloaded while an
+     * attempt runs finds it through the status route and shows its
+     * progress." Called once, when the Devices view loads (`selectView`) -
+     * on the very first page load as well as on every later visit to the
+     * tab, which is why the very first check is that no poller is already
+     * running: an own attempt's `commissionDevice()` already polls (and
+     * `commissionBusy` guards its own message handling above), and an
+     * earlier restore on the same page load already does too - either way,
+     * fetching the status route again here and finding it still running
+     * would only arm a second, redundant poller for the exact same
+     * attempt.
+     *
+     * A finished attempt, or no attempt at all, leaves the bare form
+     * exactly as it was: only a RUNNING one is worth restoring - the
+     * terminal cases are for whichever page actually ran them to show; a
+     * page that merely reloaded onto their result has nothing useful to add
+     * (and no device label to add it with, see
+     * `web.devices.commission_restored_success`). */
+    async restoreCommissionIfRunning() {
+      if (this.commissionPollTimer !== null) return;
+      let status;
+      try {
+        status = await requestJson("GET", "/api/devices/commission/status");
+      } catch {
+        // No bridge to ask, or not logged in any more by the time this
+        // resolves - either way, nothing to restore; the bare form is the
+        // right thing to show.
+        return;
+      }
+      const attempt = status?.attempt;
+      if (!attempt || attempt.phase === "done" || attempt.phase === "failed") return;
+      this.commissionBridgeStartedAt = status.bridge_started_at ?? null;
+      this.commissionStatus = status;
+      this.commissionStep = 0;
+      this.commissionFailed = false;
+      this.commissionMessage = null;
+      this.commissionReachedPhase = attempt.phase;
+      this.commissionDiscriminator = attempt.discriminator ?? null;
+      this.startCommissionPolling();
+    },
+
+    /** Ends a RESTORED attempt's progress display once a background poll
+     * (`startCommissionPolling`'s own `poll()`, guarded there by
+     * `!commissionBusy`) sees the status route report it finished - the
+     * counterpart, for a page that never sent the `POST` itself, of what
+     * `commissionDevice`'s own success/catch branches do for the page that
+     * did (design 2026-09-22, section 5.3: "the result then arrives through
+     * the status route rather than the POST the old page had open").
+     *
+     * The reason keys mirror the ones the live `POST`'s 422 `detail`
+     * already carries (`_reason_detail` in `api/devices.py`) - see the
+     * comment on `web.devices.commission_reason_not_found` in strings.yaml
+     * for why this page cannot simply reuse the `api.devices.*` originals
+     * themselves. `reason` values other than the two named here (a Thread
+     * cause, a dead matter-server, a restart, an unclassified failure) fall
+     * back to `web.devices.commission_failed` with no further detail text -
+     * this page never saw matter-server's own exception text, only the
+     * category the tracker classified it into. */
+    finishRestoredCommission(status) {
+      this.stopCommissionPolling();
+      const attempt = status?.attempt;
+      if (attempt?.phase === "done") {
+        this.commissionMessage = t("web.devices.commission_restored_success");
+        this.commissionMessageIsError = false;
+        this.commissionFailed = false;
+        return;
+      }
+      const reason = attempt?.reason;
+      const key =
+        reason === "not_found"
+          ? attempt?.discriminator
+            ? "web.devices.commission_reason_not_found"
+            : "web.devices.commission_reason_not_found_any"
+          : reason === "connection_lost"
+            ? "web.devices.commission_reason_connection_lost"
+            : null;
+      this.commissionMessage = key
+        ? t(key, { discriminator: attempt?.discriminator?.value })
+        : t("web.devices.commission_failed", { message: "" });
+      this.commissionMessageIsError = true;
+      this.commissionFailed = true;
     },
 
     /**

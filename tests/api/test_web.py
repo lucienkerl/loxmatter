@@ -3413,6 +3413,179 @@ def test_the_poller_starts_once_per_attempt_and_stops_when_it_ends():
     assert values["afterFailure"][1] == ["stop", values["afterFailure"][0][1]]
 
 
+# ---------------------------------------------------------------------------
+# A reload while an attempt runs (final review item 5, design 2026-09-22,
+# section 5.3): "A page that is reloaded while an attempt runs finds it
+# through the status route and shows its progress; the result then arrives
+# through the status route rather than the POST the old page had open."
+# ---------------------------------------------------------------------------
+
+_DEVICES_VIEW_SETUP_JS = (
+    "globalThis.window = { location: { hash: '' }, history: { replaceState() {} } };"
+    "state.authenticated = true; state.view = 'devices';"
+    # No Zigbee stick configured: the tab stays hidden and `selectView`
+    # never reaches `peekZigbeePairing()`, which this test has no stub for.
+    "state.zigbee = null;"
+    "state.request = async (method, path) => {"
+    "  if (path === '/api/zigbee/radio') return { configured_path: null };"
+    "  return [];"
+    "};"
+)
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_a_reload_finds_a_running_attempt_through_the_status_route():
+    """Through the REAL `selectView('devices')`, exactly as a fresh page
+    load reaches it (`startApp()` ends on `await this.selectView(this.view)`).
+    `globalThis.fetch` stubs `GET /api/devices/commission/status` directly -
+    the restore uses the same bare `requestJson` `startCommissionPolling`
+    already does, not `this.request` - and `setInterval`/`clearInterval` are
+    recorded rather than actually scheduling, the same pattern
+    `test_the_poller_starts_once_per_attempt_and_stops_when_it_ends` above
+    uses so the node process does not have to stay alive.
+
+    Fault to prove it: nothing implements the restore at all yet - remove
+    the call this test's fix adds to `selectView`'s `view === "devices"`
+    branch and `commissionStep` stays `null`, `commissionReachedPhase`
+    stays whatever it was, and no poller starts."""
+    values = _app_state(
+        _DEVICES_VIEW_SETUP_JS
+        + """
+        const events = [];
+        let nextId = 1;
+        global.setInterval = (fn, ms) => { const id = nextId++; events.push(["start", id]); return id; };
+        global.clearInterval = (id) => { events.push(["stop", id]); };
+        globalThis.fetch = async () => ({
+          ok: true, status: 200,
+          json: async () => ({
+            bridge_started_at: "t0",
+            attempt: { started_at: "t1", discriminator: { value: 9, kind: "short" },
+                       phase: "searching", reason: null, nearby: [], bluetooth: { available: false } },
+          }),
+        });
+        (async () => {
+          await state.selectView("devices");
+          console.log(JSON.stringify({
+            step: state.commissionStep,
+            reached: state.commissionReachedPhase,
+            failed: state.commissionFailed,
+            phase: state.commissionStatus?.attempt?.phase,
+            discriminator: state.commissionDiscriminator,
+            starts: events.filter((e) => e[0] === "start").length,
+          }));
+        })();
+        """
+    )
+    assert values["step"] == 0
+    assert values["reached"] == "searching"
+    assert values["failed"] is False
+    assert values["phase"] == "searching"
+    assert values["discriminator"] == {"value": 9, "kind": "short"}
+    assert values["starts"] == 1
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_a_reload_after_the_attempt_already_finished_changes_nothing():
+    """The counterpart of the test above: `attempt.phase` is `done`/`failed`
+    for the last, already-finished attempt (design 5.2: "the running
+    attempt, or the last finished one") - the bare form must stay on
+    screen, not the progress display frozen on a run nobody is waiting
+    for, and no poller should start for a result that already arrived."""
+    values = _app_state(
+        _DEVICES_VIEW_SETUP_JS
+        + """
+        const events = [];
+        global.setInterval = (fn, ms) => { events.push("start"); return 1; };
+        global.clearInterval = () => {};
+        globalThis.fetch = async () => ({
+          ok: true, status: 200,
+          json: async () => ({
+            bridge_started_at: "t0",
+            attempt: { started_at: "t1", discriminator: null,
+                       phase: "done", reason: null, nearby: [], bluetooth: { available: false } },
+          }),
+        });
+        (async () => {
+          await state.selectView("devices");
+          console.log(JSON.stringify({ step: state.commissionStep, starts: events.length }));
+        })();
+        """
+    )
+    assert values == {"step": None, "starts": 0}
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_a_reload_does_not_arm_a_second_poller_over_an_own_attempt():
+    """`commissionPollTimer` already set means a poller is already running -
+    either this very page's own `commissionDevice()`, or an earlier restore
+    - and the restore must not fetch the status route or arm a second one
+    for it (the brief's own rule: "Do not start a second poller when one is
+    already running")."""
+    values = _app_state(
+        _DEVICES_VIEW_SETUP_JS
+        + """
+        state.commissionPollTimer = 42;
+        let fetchCalls = 0;
+        globalThis.fetch = async () => { fetchCalls += 1; return new Promise(() => {}); };
+        (async () => {
+          await state.selectView("devices");
+          console.log(JSON.stringify({ fetchCalls, step: state.commissionStep }));
+        })();
+        """
+    )
+    assert values == {"fetchCalls": 0, "step": None}
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_a_restored_attempt_that_fails_shows_the_reason_and_stops_polling():
+    """Design 5.3: "the result then arrives through the status route rather
+    than the POST the old page had open." A background poll (started by the
+    restore above) sees the next status answer report `failed`/`not_found`
+    and must, on its own, show the same reason text the live POST path would
+    have shown and stop polling - nobody's `commissionDevice()` is running
+    on this page to notice the failure itself (`commissionBusy` stays
+    `false` throughout)."""
+    from loxmatter import i18n
+
+    values = _app_state(
+        _DEVICES_VIEW_SETUP_JS
+        + """
+        let call = 0;
+        const answers = [
+          { bridge_started_at: "t0", attempt: { started_at: "t1",
+            discriminator: { value: 9, kind: "short" }, phase: "searching",
+            reason: null, nearby: [], bluetooth: { available: false } } },
+          { bridge_started_at: "t0", attempt: { started_at: "t1",
+            discriminator: { value: 9, kind: "short" }, phase: "failed",
+            reason: "not_found", nearby: [], bluetooth: { available: false } } },
+        ];
+        let poll;
+        global.setInterval = (fn) => { poll = fn; return 1; };
+        global.clearInterval = () => {};
+        globalThis.fetch = async () => {
+          const body = answers[Math.min(call, answers.length - 1)];
+          call += 1;
+          return { ok: true, status: 200, json: async () => body };
+        };
+        (async () => {
+          await state.selectView("devices");
+          await poll();
+          console.log(JSON.stringify({
+            message: state.commissionMessage,
+            isError: state.commissionMessageIsError,
+            failed: state.commissionFailed,
+            timerCleared: state.commissionPollTimer === null,
+          }));
+        })();
+        """,
+        translations=_web_strings(),
+    )
+    assert values["message"] == i18n.t("web.devices.commission_reason_not_found", discriminator=9)
+    assert values["isError"] is True
+    assert values["failed"] is True
+    assert values["timerCleared"] is True
+
+
 async def test_the_commissioning_flow_shows_five_phases_nearby_devices_and_warnings(api):
     """Design 2026-09-22, section 5.3: the old two-step list only ever knew
     the POST to /api/devices/commission and the signals/commands reload
