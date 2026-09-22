@@ -32,7 +32,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Final, Literal
 
-from loxmatter.radios.bluetooth_health import KernelLog, counts_since
+from loxmatter.radios.bluetooth_health import KernelFinding, KernelLog, counts_since
 from loxmatter.radios.bluez import AdapterState, BluezReader, MatterAdvert
 
 Phase = Literal["searching", "found", "connected", "joined", "done", "failed"]
@@ -84,6 +84,7 @@ def classify_failure(text: str, reached: Phase) -> Reason:
 
 @dataclass
 class _Attempt:
+    token: int
     started_at: datetime
     started_usec: int | None
     discriminator: Discriminator | None
@@ -95,6 +96,13 @@ class _Attempt:
     matched_address: str | None = None
     stuck_since: datetime | None = None
     stuck_now: bool = False
+    # Design 2026-09-22, section 7.1, final review item 3: `discovering:
+    # false` is only a `stuck` finding once the adapter was actually seen
+    # discovering at least once during THIS attempt - otherwise an attempt
+    # commissioned over the IP network (no BLE scan ever expected) or one
+    # whose first sample simply lands before matter-server has told BlueZ
+    # to start scanning would both report a false Bluetooth warning.
+    ever_discovering: bool = False
 
 
 class CommissioningTracker:
@@ -130,39 +138,91 @@ class CommissioningTracker:
         self._stuck_after = stuck_after
         self.started_at = clock()
         self._attempt: _Attempt | None = None
+        # Design 2026-09-22, final review item 2: `start()` hands the route a
+        # token identifying the attempt it just began. Two POSTs in flight -
+        # B's `start()` replaces the attempt A is still tracking - used to
+        # let A's later `finish()` reach into B's live attempt and force it
+        # to `failed` with A's reason; `finish()`/`sample()` now compare the
+        # token they were called with against the CURRENT attempt's and do
+        # nothing on a mismatch. A monotonically increasing counter, not the
+        # attempt object itself, so a caller cannot accidentally keep an
+        # attempt alive by holding a reference to it.
+        self._next_token = 0
+        # `None` is a valid, honest value for "no token" on `finish()`/
+        # `sample()`: it means "whichever attempt is current", which is what
+        # every caller that does not (yet) track a token means - the tests
+        # that predate this fix, and a caller that only ever runs one
+        # attempt at a time to begin with. It is how the old, tokenless
+        # signatures keep working.
+        self._kernel_findings: list[KernelFinding] | None = None
 
     @property
     def phase(self) -> Phase | None:
         return self._attempt.phase if self._attempt is not None else None
 
-    def start(self, discriminator: Discriminator | None) -> None:
+    def phase_for(self, token: int) -> Phase | None:
+        """Like `phase`, but `None` for a stale token too - not just for "no
+        attempt at all". `POST /api/devices/commission` reads this instead
+        of `phase` to classify a failure (`classify_failure`'s `reached`
+        argument): between this route's own `await commission_with_code(...)`
+        raising and that classification running, nothing yields to the event
+        loop, so THIS attempt cannot itself have been replaced in that
+        narrow window - but the `await` itself can run for up to 180 s
+        (design 5.1), long enough for a second POST to call `start()` and
+        replace the attempt this route is still holding a token for. `phase`
+        alone would then read the NEWER attempt's phase and could misclassify
+        an old failure - e.g. call it `not_found` because the newer attempt
+        is still `searching`, when the older one had actually reached
+        `connected` before it failed. The same token-mismatch guard as
+        `finish()`/`sample()` (final review item 2), applied to this read."""
+        if self._attempt is None or token != self._attempt.token:
+            return None
+        return self._attempt.phase
+
+    def start(self, discriminator: Discriminator | None) -> int:
         now = self._clock()
+        self._next_token += 1
+        token = self._next_token
         self._attempt = _Attempt(
+            token=token,
             started_at=now,
             started_usec=self._kernel.now_usec() if self._kernel is not None else None,
             discriminator=discriminator,
             phase_since=now,
         )
+        return token
 
     def node_added(self, node_id: int) -> None:
         # `node_id` is deliberately unused - the tracker only needs to know
         # that a node joined during this attempt, not which one.
         self._advance("joined")
 
-    async def finish(self, reason: Reason | None) -> None:
-        if self._attempt is None:
+    async def finish(self, reason: Reason | None, *, token: int | None = None) -> None:
+        if self._attempt is None or (token is not None and token != self._attempt.token):
             return
         self._attempt.reason = reason
         self._advance("failed" if reason is not None else "done", force=True)
 
-    async def sample(self) -> None:
+    async def sample(self, *, token: int | None = None) -> None:
         attempt = self._attempt
         if attempt is None or self._bluez is None:
+            return
+        if token is not None and token != attempt.token:
             return
         if attempt.phase in ("done", "failed"):
             # A finished attempt is left alone: a status route that samples
             # must not overwrite the `nearby` list its result is showing.
             return
+        # The kernel-log snapshot the status route reads synchronously
+        # (`_bluetooth` below) is refreshed here, off the event loop
+        # (design 2026-09-22, final review item 4): `KernelLog.findings()`
+        # itself blocks on `/dev/kmsg` I/O, which must never run inline on
+        # the loop that also carries the matter-server WebSocket -
+        # `findings_async()` runs it in a thread instead. `status()`/
+        # `_bluetooth()` stay synchronous by reading the cached result of
+        # this call rather than calling into `KernelLog` themselves.
+        if self._kernel is not None:
+            self._kernel_findings = await self._kernel.findings_async()
         snapshot = await self._bluez.snapshot()
         if snapshot is None:
             return
@@ -183,10 +243,20 @@ class CommissioningTracker:
 
     def _update_stuck(self, attempt: _Attempt, adapter: AdapterState | None) -> None:
         """`discovering: false` while `searching` is itself a `stuck` finding
-        (design 7.1) - but only after `stuck_after`, because an attempt's
-        first sample can land before matter-server has started to scan."""
+        (design 7.1) - but only after `stuck_after` (an attempt's first
+        sample can land before matter-server has started to scan), and only
+        for a BLE attempt whose adapter was actually seen scanning at some
+        point (final review item 3): commissioning over the IP network never
+        starts a BLE scan at all, and reporting the adapter stuck for that
+        would be a false Bluetooth warning on a perfectly healthy attempt."""
+        if adapter is not None and adapter.discovering:
+            attempt.ever_discovering = True
         not_scanning = (
-            attempt.phase == "searching" and adapter is not None and not adapter.discovering
+            attempt.phase == "searching"
+            and attempt.discriminator is not None
+            and attempt.ever_discovering
+            and adapter is not None
+            and not adapter.discovering
         )
         if not not_scanning:
             attempt.stuck_since = None
@@ -206,7 +276,15 @@ class CommissioningTracker:
             attempt.phase_since = self._clock()
 
     def _bluetooth(self, attempt: _Attempt) -> dict[str, object]:
-        findings = self._kernel.findings() if self._kernel is not None else None
+        # The cached snapshot `sample()` refreshed via `findings_async()`
+        # (final review item 4) - never a direct, blocking `self._kernel.
+        # findings()` call from here: `status()` is synchronous and reached
+        # from the status route on every poll, so a blocking read inline
+        # here would stall the event loop exactly as the one `sample()`
+        # itself now avoids. `now_usec()` stays a direct call - it reads
+        # `/proc/uptime`, a single small, non-blocking-in-practice read, not
+        # the kmsg ring buffer drain the caching exists for.
+        findings = self._kernel_findings if self._kernel is not None else None
         now_usec = self._kernel.now_usec() if self._kernel is not None else None
         kernel_ok = findings is not None and now_usec is not None
         during = (

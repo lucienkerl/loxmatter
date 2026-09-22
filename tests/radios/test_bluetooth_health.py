@@ -19,10 +19,12 @@ read from `/dev/kmsg` on pi3-andi on 22 September 2026, uptime 31536.15 s."""
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
 
+from loxmatter.radios import bluetooth_health
 from loxmatter.radios.bluetooth_health import (
     KernelFinding,
     KernelLog,
@@ -93,3 +95,135 @@ def test_now_comes_from_proc_uptime(tmp_path: Path) -> None:
 def test_an_unreadable_log_reads_as_not_available(tmp_path: Path) -> None:
     assert KernelLog(tmp_path / "missing").findings() is None
     assert KernelLog(tmp_path / "missing", tmp_path / "missing").now_usec() is None
+
+
+class _Clock:
+    """An injectable `monotonic` stand-in - starts at 0, advances only when
+    a test moves it."""
+
+    def __init__(self) -> None:
+        self.now = 0.0
+
+    def __call__(self) -> float:
+        return self.now
+
+
+def test_findings_reuses_a_reading_within_the_cache_window(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Final review item 4: `findings()` used to re-open and re-drain
+    `/dev/kmsg` on every call. A counting wrapper around the module's own
+    `_records` proves two calls inside `cache_seconds` read the file once,
+    and a third call after the window has passed reads it again."""
+    reads: list[Path] = []
+    real_records = bluetooth_health._records
+
+    def counting_records(path: Path):
+        reads.append(path)
+        yield from real_records(path)
+
+    monkeypatch.setattr(bluetooth_health, "_records", counting_records)
+    clock = _Clock()
+    log = KernelLog(FIXTURE, cache_seconds=2.0, monotonic=clock)
+
+    log.findings()
+    clock.now = 1.0
+    log.findings()
+    assert len(reads) == 1
+
+    clock.now = 5.0
+    log.findings()
+    assert len(reads) == 2
+
+
+async def test_findings_async_reuses_the_same_cache_and_runs_off_the_loop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`findings_async()` shares the cache with `findings()` (whichever runs
+    first pays the read), and its own read happens via `asyncio.to_thread` -
+    proven here by recording the thread id the read ran on, which must differ
+    from this test's own (the event loop's) thread."""
+    import threading
+
+    reader_thread_ids: list[int] = []
+    real_records = bluetooth_health._records
+
+    def recording_records(path: Path):
+        reader_thread_ids.append(threading.get_ident())
+        yield from real_records(path)
+
+    monkeypatch.setattr(bluetooth_health, "_records", recording_records)
+    clock = _Clock()
+    log = KernelLog(FIXTURE, cache_seconds=2.0, monotonic=clock)
+
+    findings = await log.findings_async()
+    assert findings is not None
+    assert reader_thread_ids == [reader_thread_ids[0]]
+    assert reader_thread_ids[0] != threading.get_ident()
+
+    clock.now = 0.5
+    await log.findings_async()
+    assert len(reader_thread_ids) == 1  # still cached, no second read
+
+    clock.now = 3.0
+    cached = log.findings()  # the sync accessor reads the same cache
+    assert cached == findings
+    assert len(reader_thread_ids) == 2  # the window passed, one fresh read
+
+
+def test_the_char_device_branch_reads_a_fifo_non_blocking(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Final review item 6: only the regular-file branch of `_records` had a
+    test - the char-device branch (`os.O_NONBLOCK`, `BlockingIOError` ends
+    the read, `BrokenPipeError` continues, chunk decoding) is the only one
+    that runs on the Pi, since `/dev/kmsg` is a char device.
+
+    A FIFO is not itself a char device (`stat.S_ISFIFO`, not `S_ISCHR`) -
+    unprivileged code cannot create a real one - but `os.O_NONBLOCK` is
+    meaningful on it exactly the way it is on `/dev/kmsg`: a read past what
+    is buffered raises `BlockingIOError` instead of blocking. Patching
+    `stat.S_ISCHR` to true for this path is what sends `_records` into that
+    branch; the FIFO itself is what then actually exercises it end to end -
+    the non-blocking open, a real `os.read()` of the two records written
+    below, and the `BlockingIOError` that ends the generator once the pipe
+    is empty (proven implicitly: this test returns rather than hanging).
+
+    `keepalive_fd` is opened `O_RDWR` and kept open for the whole test: a
+    FIFO opened write-only blocks until a reader exists, and closing the
+    only writer would hand `_records`'s own read a false EOF (`chunk ==
+    b""`) instead of the `BlockingIOError` this test means to exercise."""
+    fifo_path = tmp_path / "kmsg-fifo"
+    os.mkfifo(fifo_path)
+    keepalive_fd = os.open(fifo_path, os.O_RDWR | os.O_NONBLOCK)
+    try:
+        payload = (
+            b"3,1,5,-;Bluetooth: hci0: Unable to disable scanning: -16\n"
+            b"2,2,9,-;hwmon hwmon1: Undervoltage detected!\n"
+        )
+        os.write(keepalive_fd, payload)
+        monkeypatch.setattr(bluetooth_health.stat, "S_ISCHR", lambda mode: True)
+        records = "".join(bluetooth_health._records(fifo_path)).splitlines()
+        findings = [f for record in records if (f := classify_kmsg_record(record)) is not None]
+        assert findings == [KernelFinding("stuck", 5), KernelFinding("power", 9)]
+    finally:
+        os.close(keepalive_fd)
+
+
+def test_a_pathological_run_of_broken_pipes_does_not_spin_forever(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Final review item 6: `BrokenPipeError` makes `_records` `continue` -
+    a ring buffer overwritten faster than this generator can keep up with
+    must not spin on that forever. `os.read` is patched to always raise it;
+    without the bound, `list(_records(...))` here would hang the test
+    (and, on the Pi, the event loop) rather than returning."""
+    path = tmp_path / "fake-char-device"
+    path.write_text("", encoding="utf-8")
+    monkeypatch.setattr(bluetooth_health.stat, "S_ISCHR", lambda mode: True)
+
+    def always_broken_pipe(fd: int, size: int) -> bytes:
+        raise BrokenPipeError
+
+    monkeypatch.setattr(bluetooth_health.os, "read", always_broken_pipe)
+    assert list(bluetooth_health._records(path)) == []
