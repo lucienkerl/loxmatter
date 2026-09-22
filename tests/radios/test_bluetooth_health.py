@@ -1,3 +1,18 @@
+# loxmatter - connects Matter devices to a Loxone Miniserver.
+# Copyright (C) 2026 Lucien Kerl
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
 """Bluetooth and power faults from the kernel log (design 2026-09-22,
 section 7.1). The fixture holds the 1131 `Bluetooth: hci` and `hwmon` records
 read from `/dev/kmsg` on pi3-andi on 22 September 2026, uptime 31536.15 s."""
