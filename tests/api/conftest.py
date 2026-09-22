@@ -365,6 +365,15 @@ class FakeMatterClient:
             None if self.store is None else self.store.device_id_for("matter", address)
         )
 
+    def add_node_added_listener(self, listener):
+        self._node_added_listeners = getattr(self, "_node_added_listeners", [])
+        self._node_added_listeners.append(listener)
+        return lambda: self._node_added_listeners.remove(listener)
+
+    def emit_node_added(self, node_id: int) -> None:
+        for listener in list(getattr(self, "_node_added_listeners", [])):
+            listener(node_id)
+
 
 @pytest.fixture
 def fake_client():
