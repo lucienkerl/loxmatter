@@ -7131,6 +7131,10 @@ function app() {
         if (miniserverIp) {
           params.set("miniserver_ip", miniserverIp);
         }
+        // For the patched file's "last saved" stamp, which Loxone Config
+        // shows in this browser's local time - the bridge's own clock zone
+        // is usually UTC. `getTimezoneOffset` counts west positive.
+        params.set("utc_offset", String(-new Date().getTimezoneOffset()));
         const result = await this.upload(`/api/export/project-sync?${params}`, formData);
         if (result.needs_miniserver_selection) {
           this.projectSync.needsMiniserverSelection = true;

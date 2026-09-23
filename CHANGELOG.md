@@ -10,6 +10,10 @@ people who don't know the code.
 
 ### Added
 
+- **A synced project file says when it was changed.** A project file
+  that comes back from the sync with changes now carries that moment
+  as its "last saved" date, in your local time, instead of the date it
+  was last saved in Loxone Config.
 - **The version card names the commit's date.** On the `dev` channel the
   version alone cannot say which state is installed; the commit line now reads
   "Commit a3f91c2 of 9/21/2026, 6:42:11 PM" as soon as the running image knows it.

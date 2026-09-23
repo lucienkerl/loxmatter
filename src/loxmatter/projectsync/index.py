@@ -95,6 +95,10 @@ class ProjectIndex:
     root_attrs: dict[str, str]
     root_open_end: int
     root_close_start: int
+    # `<C Type="Document">`, the one child of `<ControlList>` - it carries
+    # the file's "last saved" stamp (see `projectsync.savedate`). `None`
+    # only for a file without one, which Loxone Config never writes.
+    document: Element | None
     # The selected `LoxLIVE` block (= Miniserver) this run compares
     # against - newly created captions (see `patch._new_device_edit`)
     # attach at its `inner_end`, no longer at `root_close_start`.
@@ -237,6 +241,7 @@ def build_index(text: str, miniserver_ip: str | None = None) -> ProjectIndex:
         root_attrs=root_attrs,
         root_open_end=root_open_end,
         root_close_start=root_close_start,
+        document=next((e for e in top_level if e.type == "Document"), None),
         target_loxlive=target_loxlive,
         virtual_in_caption=virtual_in_caption,
         virtual_out_caption=virtual_out_caption,

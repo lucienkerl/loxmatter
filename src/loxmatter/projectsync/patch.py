@@ -29,16 +29,21 @@ only carries what the interface needs to show (title/key/status), not the
 `unit_format`/`check_suffix`/`off_path` that a newly created object
 additionally needs.
 
-The one change `apply_plan` makes outside the plan: the output ALWAYS
+Two changes `apply_plan` makes outside the plan: the output ALWAYS
 carries a BOM (`export.xml.BOM`, the same constant as the template files)
 - added if the original had none, otherwise carried over unchanged.
-Anyone checking byte identity against the input must account for that."""
+Anyone checking byte identity against the input must account for that.
+And when the plan changes anything and a `saved_at` is given, the
+document's "last saved" stamp (`Date`/`DateS`, see
+`projectsync.savedate`) moves to that moment - the file was changed
+then, even if Loxone Config did not do it."""
 
 from __future__ import annotations
 
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from datetime import datetime
 from typing import cast
 
 from loxmatter.export.documents import LoxoneCommand
@@ -55,6 +60,7 @@ from loxmatter.model.store import (
 from loxmatter.projectsync.diff import PlanEntry, PlanStatus, SyncPlan
 from loxmatter.projectsync.ids import new_iname, new_unique_id
 from loxmatter.projectsync.index import ProjectIndex
+from loxmatter.projectsync.savedate import saved_date_attrs
 from loxmatter.projectsync.schema import (
     find_any_iodata_attrs,
     new_caption_open_tag,
@@ -293,6 +299,23 @@ def _next_obj_edit(index: ProjectIndex, created_count: int) -> _Edit | None:
     return _Edit(span[0], span[1], f'NextObj="{new_value}"')
 
 
+def _saved_date_edits(index: ProjectIndex, saved_at: datetime) -> list[_Edit]:
+    """Replaces `Date` and `DateS` on the document where they exist.
+
+    A missing attribute is not added: every file Loxone Config writes has
+    both, so a file without them came from somewhere else, and inventing a
+    field it never had is not this module's business."""
+    document = index.document
+    if document is None:
+        return []
+    edits: list[_Edit] = []
+    for name, value in saved_date_attrs(saved_at).items():
+        span = _attr_span(index.text, document.open_start, document.open_end, name)
+        if span is not None:
+            edits.append(_Edit(span[0], span[1], f'{name}="{value}"'))
+    return edits
+
+
 def _apply_edits(text: str, edits: list[_Edit]) -> str:
     for edit in sorted(edits, key=lambda e: e.start, reverse=True):
         text = text[: edit.start] + edit.replacement + text[edit.end :]
@@ -311,10 +334,15 @@ def apply_plan(
     bridge_ip: str,
     port: int,
     listen: int,
+    saved_at: datetime | None = None,
 ) -> bytes:
     """Builds the patched file (design section 3.4/7): updates, new signals
     in already-existing device containers, and completely new device
-    containers."""
+    containers.
+
+    `saved_at` (time-zone aware) becomes the file's "last saved" stamp if
+    anything changed; without it, or without a change, the stamp stays
+    as the file had it."""
     desired_inputs: dict[str, LoxoneInput] = {}
     desired_outputs: dict[str, LoxoneCommand] = {}
     for device in devices:
@@ -359,6 +387,9 @@ def apply_plan(
     next_obj_edit = _next_obj_edit(index, created_count)
     if next_obj_edit is not None:
         edits.append(next_obj_edit)
+    # Only after the plan's own edits: an unchanged file keeps its stamp.
+    if edits and saved_at is not None:
+        edits += _saved_date_edits(index, saved_at)
 
     patched_text = _apply_edits(index.text, edits)
     if not patched_text.startswith(BOM):
