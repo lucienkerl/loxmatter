@@ -73,11 +73,35 @@ class Discriminator:
         return advertised == self.value
 
 
-def classify_failure(text: str, reached: Phase) -> Reason:
-    """matter-server's texts as logged on 21 September 2026 (design 7.2)."""
+def classify_failure(
+    text: str,
+    reached: Phase,
+    *,
+    discriminator: bool = False,
+    saw_match: bool = False,
+) -> Reason:
+    """matter-server's texts as logged on 21 September 2026 (design 7.2).
+
+    The text markers above come from matterjs-server's wording and stay
+    tried first. An older `python-matter-server`, still running on the test
+    Pi as measured on 23 September 2026 (design 7.2, section 10 addendum),
+    fails a code no device answers with only "Commission with code failed
+    for node <n>." - no marker this function knows, so without a fallback
+    the attempt is misclassified `other`. `discriminator` and `saw_match`
+    are the host's own evidence in its place (`CommissioningTracker.
+    saw_match`): when the attempt never got past `searching`, a
+    discriminator was known, and no advertisement matching it was ever
+    seen, the device was never found regardless of what matter-server's
+    text says. Without a discriminator (an IP attempt, where no BLE
+    advertisement is ever expected) or once a matching advertisement WAS
+    seen (the failure happened later, e.g. during PASE, and would be
+    misreported as `not_found`), this fallback stays out of the way and
+    the text-less case keeps falling through to `other` as before."""
     if any(marker in text for marker in _CONNECTION_LOST) or reached in ("found", "connected"):
         return "connection_lost"
     if _NOT_FOUND in text:
+        return "not_found"
+    if reached == "searching" and discriminator and not saw_match:
         return "not_found"
     return "other"
 
@@ -178,6 +202,21 @@ class CommissioningTracker:
         if self._attempt is None or token != self._attempt.token:
             return None
         return self._attempt.phase
+
+    def saw_match(self, token: int) -> bool:
+        """Whether an advertisement matching the token's own attempt's
+        discriminator was ever seen - the host's own evidence for
+        `classify_failure`'s fallback rule (design 2026-09-22, section 10
+        addendum, hardware finding of 23 September 2026): an older
+        `python-matter-server`'s failure text can carry none of the markers
+        `classify_failure` already knows, so this stands in for the text.
+        Same token-mismatch guard as `phase_for`, for the same reason - a
+        stale or missing token answers `False`, not "unknown", which is
+        also the right verdict: no evidence was ever gathered for that
+        attempt specifically."""
+        if self._attempt is None or token != self._attempt.token:
+            return False
+        return self._attempt.matched_address is not None
 
     def start(self, discriminator: Discriminator | None) -> int:
         now = self._clock()

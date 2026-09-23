@@ -123,6 +123,41 @@ def test_failures_are_classified(text: str, reached: str, reason: str) -> None:
     assert classify_failure(text, reached) == reason  # type: ignore[arg-type]
 
 
+# The text below is the older `python-matter-server`'s own wording, as
+# measured on the test Pi (`pi@10.0.1.56`) on 23 September 2026 (design
+# 2026-09-22, section 10 addendum): unlike matterjs-server's texts above, it
+# carries none of the markers `classify_failure` knows, for any failure.
+_OLD_SERVER_TEXT = "Commission with code failed for node 27."
+
+
+def test_an_unmarked_text_with_a_known_discriminator_and_no_match_is_not_found() -> None:
+    assert (
+        classify_failure(_OLD_SERVER_TEXT, "searching", discriminator=True, saw_match=False)
+        == "not_found"
+    )
+
+
+def test_an_unmarked_text_is_unchanged_once_a_matching_advert_was_seen() -> None:
+    """A matching advertisement was seen at some point during the attempt -
+    the device was found, so whatever failed it later must not be reported
+    as `not_found`. `classify_failure`'s existing rules, unaffected by the
+    new fallback, still give `other` for this unmarked text."""
+    assert (
+        classify_failure(_OLD_SERVER_TEXT, "searching", discriminator=True, saw_match=True)
+        == "other"
+    )
+
+
+def test_an_unmarked_text_without_a_discriminator_is_other() -> None:
+    """An IP attempt never expects a BLE advertisement at all, so the
+    absence of one is not evidence of anything - the fallback must not
+    fire."""
+    assert (
+        classify_failure(_OLD_SERVER_TEXT, "searching", discriminator=False, saw_match=False)
+        == "other"
+    )
+
+
 async def test_the_phases_follow_bluez_and_node_added() -> None:
     tracker, bluez, _, _ = _tracker()
     tracker.start(Discriminator(1, "short"))
@@ -360,6 +395,22 @@ async def test_phase_for_reads_the_tokens_own_attempt_not_a_newer_one() -> None:
     assert tracker.phase_for(token_a) is None  # stale - A's own read must not see B
     assert tracker.phase_for(token_b) == "searching"
     assert tracker.phase == "searching"  # the un-scoped reader still sees the CURRENT attempt
+
+
+async def test_saw_match_reads_the_tokens_own_attempt_not_a_newer_one() -> None:
+    """Same token-scoping as `phase_for` (final review item 2), for the
+    evidence `classify_failure`'s fallback rule reads instead."""
+    tracker, bluez, _, _ = _tracker()
+    token_a = tracker.start(Discriminator(9, "short"))
+    assert tracker.saw_match(token_a) is False
+
+    bluez.snapshots = [BluezSnapshot([_advert(0x900)], SCANNING)]  # matches short 9
+    await tracker.sample()
+    assert tracker.saw_match(token_a) is True
+
+    token_b = tracker.start(Discriminator(4, "short"))
+    assert tracker.saw_match(token_a) is False  # stale - A's own read must not see B
+    assert tracker.saw_match(token_b) is False  # B has no match of its own yet
 
 
 async def test_a_failure_keeps_the_last_attempt_with_its_reason() -> None:

@@ -611,7 +611,12 @@ def build_device_router(
                 await progress.finish("no_thread_network", token=token)
                 detail = _commissioning_detail(exc, missing_dataset_reason)
             else:
-                reason = classify_failure(str(exc), progress.phase_for(token) or "searching")
+                reason = classify_failure(
+                    str(exc),
+                    progress.phase_for(token) or "searching",
+                    discriminator=discriminator is not None,
+                    saw_match=progress.saw_match(token),
+                )
                 await progress.finish(reason, token=token)
                 detail = _reason_detail(reason, exc, discriminator)
             raise HTTPException(status_code=422, detail=detail) from exc

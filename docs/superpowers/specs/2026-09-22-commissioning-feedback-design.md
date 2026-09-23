@@ -325,6 +325,31 @@ On `pi3-andi`, with the owner:
    the dialog's warning; the diagnostics line.
 4. The bridge restarted mid-attempt → `bridge_restarted`.
 
+### 23 September 2026, on `pi@10.0.1.56`
+
+A second Pi (a Raspberry Pi 4), used as the test host:
+
+- The diagnostics line read the kernel log from inside the container and
+  reported no faults in the last hour - the `/dev/kmsg` mount works there too.
+- During an attempt, the bridge read BlueZ over `/run/dbus`: adapter `hci0`,
+  `discovering: true` while matter-server scanned, no Matter device
+  advertising nearby, all fault counts 0.
+- The phases went `searching` → `failed`; the discriminator decoded from the
+  code was carried through to the failed attempt.
+- Against that host's older `python-matter-server`, the failure text carried
+  none of the markers `classify_failure` knows - only "Commission with code
+  failed for node 27.", with the real cause ("Discovery timed out") staying in
+  matter-server's own log. `classify_failure` now falls back to the tracker's
+  own evidence in that case: no discriminator match was ever seen and the
+  attempt never got past `searching`, so the reason is `not_found` regardless
+  of the text (`CommissioningTracker.saw_match`, section 5.1).
+- Restarting the bridge mid-attempt: the client's in-flight request broke off,
+  and the status route then answered `attempt: null` with a new
+  `bridge_started_at` - what the browser's "bridge restarted" message keys on.
+- Not exercised on this host: a real device commissioning (none was in
+  pairing mode) and the Bluetooth warning (this Pi 4's adapter reported no
+  faults throughout).
+
 ## 11. Not part of this
 
 - A scan started by the bridge.

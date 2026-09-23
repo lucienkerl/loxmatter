@@ -671,6 +671,29 @@ async def test_a_not_found_failure_names_the_discriminator_and_is_kept(api):
     assert (attempt["phase"], attempt["reason"]) == ("failed", "not_found")
 
 
+async def test_an_older_servers_unmarked_text_is_named_not_found(api):
+    """The older `python-matter-server` still on the test Pi as measured on
+    23 September 2026 (design 2026-09-22, section 10 addendum) fails a code
+    no device answers with only this text - no marker `classify_failure`
+    knows. Without BlueZ wired, `api`'s tracker never sees a matching
+    advertisement, so the route's own evidence (`saw_match`) must carry the
+    classification instead of the text."""
+    client, _, _, fake_client = api
+    fake_client.fail_commission_with = CommissioningError(
+        "Commission with code failed for node 27."
+    )
+    response = await client.post(
+        "/api/devices/commission",
+        json={"code": "34970112332", "discriminator": {"value": 9, "kind": "short"}},
+    )
+    assert response.status_code == 422
+    assert response.json()["detail"] == i18n.t(
+        "web.devices.commission_reason_not_found", discriminator=9
+    )
+    attempt = (await client.get("/api/devices/commission/status")).json()["attempt"]
+    assert (attempt["phase"], attempt["reason"]) == ("failed", "not_found")
+
+
 async def test_a_connection_loss_is_named(api):
     client, _, _, fake_client = api
     fake_client.fail_commission_with = CommissioningError(
