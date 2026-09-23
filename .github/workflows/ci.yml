@@ -102,6 +102,7 @@ jobs:
             echo "version=$version"
             echo "commit=$(git rev-parse --short HEAD)"
             echo "built_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "commit_date=$(TZ=UTC git show -s --date=format-local:%Y-%m-%dT%H:%M:%SZ --format=%cd HEAD)"
           } >> "$GITHUB_OUTPUT"
       - id: tags
         # version comes from a Git tag (refs/tags/v...), and
@@ -137,6 +138,7 @@ jobs:
           build-args: |
             LOXMATTER_VERSION=${{ steps.meta.outputs.version }}
             LOXMATTER_COMMIT=${{ steps.meta.outputs.commit }}
+            LOXMATTER_COMMIT_DATE=${{ steps.meta.outputs.commit_date }}
             LOXMATTER_BUILT_AT=${{ steps.meta.outputs.built_at }}
             LOXMATTER_SCHEMA_VERSION=${{ steps.meta.outputs.schema }}
 
