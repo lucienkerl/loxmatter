@@ -28,6 +28,10 @@ starts directly - the variables are missing. This is not an error condition, but
 the normal case for development: `version` then reads "dev",
 `commit`/`built_at` are None. If someone made this an exception, the
 bridge could no longer start outside of Docker.
+
+`commit_date` is the date of the commit the image was built from, in UTC -
+not the build time. A rebuild of the same state moves `built_at` and leaves
+`commit_date` where it was.
 """
 
 from __future__ import annotations
@@ -42,6 +46,7 @@ from loxmatter.model.store import schema_version
 class BuildInfo:
     version: str
     commit: str | None
+    commit_date: str | None
     built_at: str | None
     schema_version: int
 
@@ -62,6 +67,7 @@ def build_info() -> BuildInfo:
     return BuildInfo(
         version=_clean("LOXMATTER_VERSION") or "dev",
         commit=_clean("LOXMATTER_COMMIT"),
+        commit_date=_clean("LOXMATTER_COMMIT_DATE"),
         built_at=_clean("LOXMATTER_BUILT_AT"),
         # Deliberately NOT from the environment: see docstring of
         # `test_schema_version_cannot_be_forged_from_the_environment`.

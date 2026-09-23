@@ -508,6 +508,14 @@ async def test_the_system_view_shows_the_running_version(api):
         "t('web.system.version_built_at', { built_at: formatTimestamp(versionInfo.built_at) })"
         in page
     )
+    # With a commit date the same span says when that commit was made; without
+    # one it stays the undated sentence, which is what an image built before
+    # this field existed reports (design 2026-09-23, section 6).
+    assert (
+        "t('web.system.version_commit_dated', { commit: formatCommit(versionInfo.commit), "
+        "date: formatTimestamp(versionInfo.commit_date) })" in page
+    )
+    assert "versionInfo.commit_date" in page
 
 
 async def test_the_system_view_shows_when_the_updater_sidecar_is_behind(api):

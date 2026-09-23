@@ -8,6 +8,22 @@ people who don't know the code.
 
 ## [Unreleased]
 
+### Added
+
+- **The version card names the commit's date.** On the `dev` channel the
+  version alone cannot say which state is installed; the commit line now reads
+  "Commit a3f91c2 of 9/21/2026, 6:42:11 PM" as soon as the running image knows it.
+- **Commissioning shows what it is doing.** The dialog follows the device
+  from "searching" to "found", "connected" and "joined", lists the Matter
+  devices advertising nearby, and warns when the Bluetooth chip reports
+  errors or the Raspberry Pi reports undervoltage.
+- **A failed commissioning says why.** "No device with discriminator 9 is in
+  range" or "the Bluetooth connection broke off" instead of the raw error, and
+  a code with a typo is caught before anything is sent.
+- **The radios card shows the Thread network's name and channel.** After a
+  start it warns when Thread devices exist but the border router has no
+  network, instead of quietly creating a new one that would cut them off.
+
 ### Changed
 
 - **The installer asks clearer questions, and all of them up front.** It lists
@@ -32,19 +48,6 @@ people who don't know the code.
   unconfigured border router every 90 seconds.
 - **Switching Thread on in the radios card no longer rolls back** on a border
   router that has no network yet.
-
-### Added
-
-- **Commissioning shows what it is doing.** The dialog follows the device
-  from "searching" to "found", "connected" and "joined", lists the Matter
-  devices advertising nearby, and warns when the Bluetooth chip reports
-  errors or the Raspberry Pi reports undervoltage.
-- **A failed commissioning says why.** "No device with discriminator 9 is in
-  range" or "the Bluetooth connection broke off" instead of the raw error, and
-  a code with a typo is caught before anything is sent.
-- **The radios card shows the Thread network's name and channel.** After a
-  start it warns when Thread devices exist but the border router has no
-  network, instead of quietly creating a new one that would cut them off.
 
 ## [0.4.2] — 2026-09-21
 

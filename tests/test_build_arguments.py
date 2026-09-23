@@ -14,9 +14,9 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""The CI and the Dockerfile must agree on the same four arguments.
+"""The CI and the Dockerfile must agree on the same five arguments.
 
-This is deliberately NOT a test that just claims four lines exist in the
+This is deliberately NOT a test that just claims five lines exist in the
 Dockerfile - such a test would be true as soon as someone types the names,
 and would stay true if the CI then passes different ones. What is checked
 is agreement between both files, which is exactly the error that would
@@ -151,3 +151,26 @@ def test_the_updater_version_strips_the_leading_v_the_same_way_the_bridge_does()
     workflow_source = WORKFLOW.read_text(encoding="utf-8")
     assert 'version="${GITHUB_REF#refs/tags/v}"' in workflow_source
     assert 'echo "version=${GITHUB_REF#refs/tags/v}"' in workflow_source
+
+
+# The commit's own date, in the same UTC shape as `built_at` so the two read
+# alike in the version card. `git show -s` with an explicit format rather than
+# the local default: a runner in another timezone would otherwise publish a
+# different spelling of the same instant.
+COMMIT_DATE_COMMAND = "TZ=UTC git show -s --date=format-local:%Y-%m-%dT%H:%M:%SZ --format=%cd HEAD"
+
+
+def test_the_ci_reads_the_commit_date_in_the_same_shape_as_the_build_time() -> None:
+    workflow_source = WORKFLOW.read_text(encoding="utf-8")
+    assert f"commit_date=$({COMMIT_DATE_COMMAND})" in workflow_source
+    assert "built_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" in workflow_source
+
+
+def test_every_build_argument_of_the_image_is_also_exported_as_an_environment_variable() -> None:
+    """An `ARG` the image does not turn into an `ENV` reaches the build and
+    nothing else: the running bridge would report the value as missing, which
+    is exactly what a fifth argument is easy to forget."""
+    source = DOCKERFILE.read_text(encoding="utf-8")
+    declared = set(re.findall(r"^ARG\s+([A-Z_][A-Z0-9_]*)", source, re.MULTILINE))
+    exported = set(re.findall(r"^\s*(?:ENV\s+)?([A-Z_][A-Z0-9_]*)=\$\{\1\}", source, re.MULTILINE))
+    assert declared <= exported

@@ -56,15 +56,17 @@ async def unauthenticated_api(
     store.close()
 
 
-async def test_die_route_nennt_die_vier_angaben(api, monkeypatch):
+async def test_the_route_names_every_value_of_the_running_build(api, monkeypatch):
     monkeypatch.setenv("LOXMATTER_VERSION", "0.3.0")
     monkeypatch.setenv("LOXMATTER_COMMIT", "a3f91c2")
+    monkeypatch.setenv("LOXMATTER_COMMIT_DATE", "2026-09-08T09:58:12Z")
     monkeypatch.setenv("LOXMATTER_BUILT_AT", "2026-09-08T10:00:00Z")
     response = await api.get("/api/version")
     assert response.status_code == 200
     assert response.json() == {
         "version": "0.3.0",
         "commit": "a3f91c2",
+        "commit_date": "2026-09-08T09:58:12Z",
         "built_at": "2026-09-08T10:00:00Z",
         "schema_version": schema_version(),
     }
@@ -73,12 +75,28 @@ async def test_die_route_nennt_die_vier_angaben(api, monkeypatch):
 async def test_it_responds_even_in_development_checkout(api, monkeypatch):
     """No 500 when variables are missing - otherwise the UI
     would be unusable outside of Docker."""
-    for name in ("LOXMATTER_VERSION", "LOXMATTER_COMMIT", "LOXMATTER_BUILT_AT"):
+    for name in (
+        "LOXMATTER_VERSION",
+        "LOXMATTER_COMMIT",
+        "LOXMATTER_COMMIT_DATE",
+        "LOXMATTER_BUILT_AT",
+    ):
         monkeypatch.delenv(name, raising=False)
     response = await api.get("/api/version")
     assert response.status_code == 200
     assert response.json()["version"] == "dev"
     assert response.json()["commit"] is None
+    assert response.json()["commit_date"] is None
+
+
+async def test_an_empty_commit_date_reads_as_missing(api, monkeypatch):
+    """Docker Compose interpolates a variable missing from `.env` to an empty
+    string - the trap `_clean` exists for. Fault to prove it: read the variable
+    with `os.environ.get` instead of `_clean`."""
+    monkeypatch.setenv("LOXMATTER_COMMIT", "a3f91c2")
+    monkeypatch.setenv("LOXMATTER_COMMIT_DATE", "")
+    response = await api.get("/api/version")
+    assert response.json()["commit_date"] is None
 
 
 async def test_no_access_without_session(unauthenticated_api):
@@ -89,7 +107,7 @@ async def test_no_access_without_session(unauthenticated_api):
 async def test_the_ui_knows_all_texts_of_the_version_card():
     """A missing key shows up in the browser otherwise - as an
     empty field, not as an error. This test confirms the existence
-    of all six keys. But this doesn't prove both languages
+    of all seven keys. But this doesn't prove both languages
     are present: raw_template() falls back to English, so
     a missing de entry would go undetected here. Also
     tests/test_i18n.py doesn't cover that -
@@ -102,9 +120,19 @@ async def test_the_ui_knows_all_texts_of_the_version_card():
         "web.system.version_heading",
         "web.system.version_running",
         "web.system.version_commit",
+        "web.system.version_commit_dated",
         "web.system.version_built_at",
         "web.system.version_dev_hint",
         "web.system.version_dev_channel_hint",
     ):
         assert i18n.raw_template(key)
         assert key in i18n.strings_with_prefix("web.")
+
+
+async def test_the_dated_commit_text_exists_in_both_languages():
+    """The generic check above resolves through the English fallback, so a
+    missing `de` would pass it. Fault to prove it: delete the `de:` line."""
+    from loxmatter import i18n
+
+    entry = i18n._STRINGS["web.system.version_commit_dated"]
+    assert entry.get("en") and entry.get("de") and entry["en"] != entry["de"]
