@@ -159,8 +159,10 @@ from loxmatter.commands.translate import UnsupportedValueError, to_device_calls
 from loxmatter.diagnostics.logbuffer import LogBufferHandler
 from loxmatter.loxone.sender import UdpSender
 from loxmatter.matter.client import BridgeMatterClient
+from loxmatter.matter.commissioning_progress import CommissioningTracker
 from loxmatter.matter.thread_network import ThreadNetworkKeeper
 from loxmatter.model.store import Store
+from loxmatter.radios.bluetooth_health import KernelLog
 from loxmatter.sources import (
     DeviceCall,
     SourceNotConfiguredError,
@@ -416,6 +418,18 @@ def build_app(
     # would go on answering for the stick the user just stopped using.
     zigbee_runtime: ZigbeeRuntime | None = None,
     thread_network: ThreadNetworkKeeper | None = None,
+    # The one `CommissioningTracker` for the bridge (design 2026-09-22,
+    # section 5.1) - `None` lets `build_device_router` build its own, the
+    # same optional-seam pattern as every other parameter here (see
+    # `client` above). A caller that needs to reach the SAME tracker a test
+    # asserts against (e.g. across a restart simulation) passes one in.
+    commissioning_tracker: CommissioningTracker | None = None,
+    # The kernel log the `bluetooth` diagnostics check reads (design
+    # 2026-09-22, section 7.1) - `None` on a host whose kernel log this
+    # bridge cannot read, the same optional-seam pattern as `client` and
+    # `sender` above; `_check_bluetooth` then reports "not available"
+    # rather than a fault.
+    kernel_log: KernelLog | None = None,
 ) -> FastAPI:
     # Callers that predate the device source boundary pass only `client`;
     # for them the registry is the Matter client alone, which is exactly
@@ -529,7 +543,9 @@ def build_app(
     # `/health`, `/` and `/static`, which are mounted further below
     # without `dependencies`.
     app.include_router(
-        build_device_router(store, client, runtime, thread_dataset_source, sources),
+        build_device_router(
+            store, client, runtime, thread_dataset_source, sources, tracker=commissioning_tracker
+        ),
         dependencies=api_guard,
     )
     app.include_router(build_export_router(store), dependencies=api_guard)
@@ -591,6 +607,7 @@ def build_app(
             sender,
             matter_data_dir,
             runtime,
+            kernel_log,
         ),
         dependencies=api_guard,
     )

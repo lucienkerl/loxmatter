@@ -1291,3 +1291,33 @@ async def test_wait_for_link_loss_returns_immediately_without_a_listener():
     """A client that never connected must not hang here."""
     bridge, _upstream = make_connected_pair()
     await asyncio.wait_for(bridge.wait_for_link_loss(), timeout=1.0)
+
+
+async def test_node_added_reaches_a_listener_until_it_unsubscribes():
+    """Design 2026-09-22, section 5.1: `joined` is the one intermediate signal
+    matter-server gives. NODE_UPDATED is not a join."""
+    bridge, upstream = make_connected_pair([FakeNode(12, {})])
+    await bridge.connect()
+    handler = FakeHandler()
+    known: dict[str, int] = {}
+    await bridge.subscribe(known.get, handler)
+
+    seen: list[int] = []
+    unsubscribe = bridge.add_node_added_listener(seen.append)
+
+    new_node = FakeNode(8, {"0/40/1": "IKEA of Sweden", "1/6/0": False})
+    upstream.add_node(new_node)
+    upstream.emit(EventType.NODE_ADDED, new_node, node_id=8)
+    await _settle()
+
+    upstream.emit(EventType.NODE_UPDATED, new_node, node_id=8)
+    await _settle()
+
+    unsubscribe()
+
+    another_node = FakeNode(9, {})
+    upstream.add_node(another_node)
+    upstream.emit(EventType.NODE_ADDED, another_node, node_id=9)
+    await _settle()
+
+    assert seen == [8]

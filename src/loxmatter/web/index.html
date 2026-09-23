@@ -569,33 +569,51 @@
           </div>
 
           <!--
-            The progress display (design "The process becomes visible"). It
-            solves a problem that no layout can solve: commissioning
-            takes anywhere from twenty to sixty seconds depending on the device, and
-            until now that was just a button turning grey - indistinguishable from
-            a hung page.
+            The progress display (design "The process becomes visible",
+            reworked 2026-09-22, section 5.3). It solves a problem that no
+            layout can solve: commissioning takes anywhere from twenty to
+            sixty seconds depending on the device, and until now that was
+            just a button turning grey - indistinguishable from a hung
+            page.
 
-            TWO steps, not three: this UI cannot honestly tell apart
-            more sections than that (see the reasoning at
-            `web.devices.commission_step_joining` in
-            strings.yaml). A third point would look nicer and would be
-            a guess.
+            FIVE phases, not two: the bridge now derives them itself from
+            BlueZ and NODE_ADDED and answers them from
+            GET /api/devices/commission/status, polled every 2 s while an
+            attempt runs (`startCommissionPolling`). Below the phases, the
+            nearby list and the Bluetooth warnings are the same route's
+            other two findings - which devices are advertising, and
+            whether the adapter itself is having trouble.
           -->
           <div x-show="commissionStep !== null" x-cloak>
             <p class="commission-subject">
               <span class="key" x-text="commissionRunCode"></span>
               <span class="hint" x-show="commissionRunRoom" x-text="commissionRunRoom"></span>
             </p>
+            <p class="hint" x-show="commissionDiscriminator" x-cloak
+               x-text="t('web.devices.commission_looking_for', { discriminator: commissionDiscriminator?.value })"></p>
             <ol class="commission-steps">
-              <li class="commission-step" :class="commissionStepClass(0)">
-                <span class="step-marker" aria-hidden="true"></span>
-                <span x-text="t('web.devices.commission_step_joining')"></span>
-              </li>
-              <li class="commission-step" :class="commissionStepClass(1)">
-                <span class="step-marker" aria-hidden="true"></span>
-                <span x-text="t('web.devices.commission_step_loading')"></span>
-              </li>
+              <template x-for="phase in ['searching', 'found', 'connected', 'joined', 'done']" :key="phase">
+                <li class="commission-step" :class="commissionPhaseClass(phase)">
+                  <span class="step-marker" aria-hidden="true"></span>
+                  <span x-text="t('web.devices.commission_phase_' + phase)"></span>
+                </li>
+              </template>
             </ol>
+            <p class="hint" x-show="commissionElapsedSeconds() !== null" x-cloak
+               x-text="t('web.devices.commission_elapsed', { seconds: commissionElapsedSeconds() })"></p>
+            <p class="hint" x-show="commissionPhaseHint()" x-cloak x-text="commissionPhaseHint()"></p>
+            <template x-for="key in commissionBluetoothWarnings()" :key="key">
+              <p class="banner warn" x-text="t(key)"></p>
+            </template>
+            <div x-show="commissionShowNearby() && commissionNearby().length" x-cloak>
+              <p class="hint" x-text="t('web.devices.commission_nearby_heading')"></p>
+              <ul class="commission-nearby">
+                <template x-for="entry in commissionNearby()" :key="entry.address">
+                  <li :class="entry.matches ? 'match' : ''"
+                      x-text="t('web.devices.commission_nearby_entry', { name: entry.name ?? entry.address, discriminator: entry.discriminator, rssi: entry.rssi })"></li>
+                </template>
+              </ul>
+            </div>
             <button
               class="commission-restart"
               x-show="commissionStep === 2 || commissionFailed"

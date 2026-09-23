@@ -24,8 +24,9 @@ changes, the API does not necessarily change along with it.
 from __future__ import annotations
 
 import re
+from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class SignalOut(BaseModel):
@@ -345,6 +346,23 @@ _COMMISSION_QR_PAYLOAD = re.compile(r"[^0-9\s-]")
 _COMMISSION_CODE_SEPARATORS = re.compile(r"[\s-]")
 
 
+class DiscriminatorIn(BaseModel):
+    """The discriminator the browser decoded from the pairing code (design
+    2026-09-22, section 4): 4 bits from a manual code, 12 from a QR payload.
+    Only for showing progress - commissioning itself never depends on it."""
+
+    model_config = ConfigDict(frozen=True)
+
+    value: int = Field(ge=0, le=4095)
+    kind: Literal["short", "long"]
+
+    @model_validator(mode="after")
+    def _short_fits_four_bits(self) -> DiscriminatorIn:
+        if self.kind == "short" and self.value > 15:
+            raise ValueError("a short discriminator has four bits")
+        return self
+
+
 class CommissionRequest(BaseModel):
     """`POST /api/devices/commission` - the pairing code from the device or
     its packaging (spec 7.1). Two forms: the numeric code (11 digits,
@@ -369,6 +387,12 @@ class CommissionRequest(BaseModel):
     # assigned one at any later time. If commissioning fails, no device is
     # created and therefore no room either.
     room: str | None = None
+    # The discriminator the browser decoded from the same code (design
+    # 2026-09-22, section 4/5.2) - only for showing progress in
+    # `CommissioningTracker`, never consulted by commissioning itself. A
+    # code the browser could not decode sends none, and the `found`/
+    # `connected` phases then stay out (section 5.2).
+    discriminator: DiscriminatorIn | None = None
 
     @field_validator("code")
     @classmethod

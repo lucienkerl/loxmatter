@@ -34,9 +34,16 @@ def test_no_service_outside_the_profile_depends_on_otbr() -> None:
 
 def test_only_otbr_needs_the_radio_module() -> None:
     # Anything that touches RADIO_DEVICE must sit in the profile - otherwise
-    # WiFi-only operation fails again on a missing device.
+    # WiFi-only operation fails again on a missing device. `loxmatter`'s own
+    # `devices:` entry (design 2026-09-22, section 7.1) is exempt from that
+    # rule: /dev/kmsg is a fixed kernel device node, present on every Linux
+    # host, never hot-plugged - nothing like the optional USB radio stick
+    # this test otherwise guards against.
     for name, service in _stack()["services"].items():
         if service.get("profiles") == ["thread"]:
+            continue
+        if name == "loxmatter":
+            assert service["devices"] == ["/dev/kmsg:/dev/kmsg:r"], name
             continue
         assert "devices" not in service, name
 
@@ -155,12 +162,14 @@ def test_the_bridge_looks_for_the_hosts_dev_where_compose_mounts_it() -> None:
 
 
 def test_the_bridge_may_open_serial_devices_without_naming_one():
-    """Design 2026-09-12 section 8.1. A `devices:` entry cannot be used
-    here: it fails the WHOLE stack at `docker compose up` when the node is
-    absent (which is why otbr sits behind a profile), and it is copied into
-    the container at create time, so hotplug is invisible. The cgroup rule
-    grants the access instead, and the existing read-only /dev bind supplies
-    the names.
+    """Design 2026-09-12 section 8.1. A `devices:` entry cannot be used for
+    the serial stick itself: it fails the WHOLE stack at `docker compose up`
+    when the node is absent (which is why otbr sits behind a profile), and
+    it is copied into the container at create time, so hotplug is invisible.
+    The cgroup rule grants the access instead, and the existing read-only
+    /dev bind supplies the names. (`loxmatter` does carry its own
+    `devices:` entry since design 2026-09-22 - for /dev/kmsg, a fixed
+    kernel device node that is never hot-plugged, unlike a USB radio stick.)
 
     188 = USB serial converters (ttyUSB*), 166 = ACM USB modems (ttyACM*),
     both verified against the kernel's admin-guide/devices.txt (research

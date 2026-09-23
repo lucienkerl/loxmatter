@@ -1,0 +1,394 @@
+# loxmatter - connects Matter devices to a Loxone Miniserver.
+# Copyright (C) 2026 Lucien Kerl
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+"""What a commissioning attempt is doing (design 2026-09-22, section 5).
+
+matter-server reports no commissioning steps. The phases come from what the
+host can see: BlueZ holds an advertisement with the code's discriminator
+(`found`), BlueZ holds a connection to that device (`connected`, PASE and the
+setup run over it), matter-server announced the new node (`joined`).
+
+One attempt at a time, as `POST /api/devices/commission` already runs them.
+The last attempt stays readable after it ended, so a reloaded page can show
+its result.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
+from typing import Final, Literal
+
+from loxmatter.radios.bluetooth_health import KernelFinding, KernelLog, counts_since
+from loxmatter.radios.bluez import AdapterState, BluezReader, MatterAdvert
+
+Phase = Literal["searching", "found", "connected", "joined", "done", "failed"]
+Reason = Literal[
+    "not_found", "connection_lost", "no_thread_network", "matter_server_unreachable", "other"
+]
+
+_ORDER: Final[dict[str, int]] = {
+    "searching": 0,
+    "found": 1,
+    "connected": 2,
+    "joined": 3,
+    "done": 4,
+    "failed": 4,
+}
+_HOUR_USEC: Final = 3600 * 1_000_000
+_NOT_FOUND: Final = "No commissionable device was discovered"
+_CONNECTION_LOST: Final = ("No device could be commissioned", "unreachable")
+
+
+def _utc_now() -> datetime:
+    return datetime.now(UTC)
+
+
+def _iso(moment: datetime) -> str:
+    return moment.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+@dataclass(frozen=True)
+class Discriminator:
+    value: int
+    kind: Literal["short", "long"]
+
+    def matches(self, advertised: int) -> bool:
+        """A short (4-bit) discriminator names the top four of the 12 bits."""
+        if self.kind == "short":
+            return (advertised >> 8) == self.value
+        return advertised == self.value
+
+
+def classify_failure(
+    text: str,
+    reached: Phase,
+    *,
+    discriminator: bool = False,
+    saw_match: bool = False,
+) -> Reason:
+    """matter-server's texts as logged on 21 September 2026 (design 7.2).
+
+    The text markers above come from matterjs-server's wording and stay
+    tried first. An older `python-matter-server`, still running on the test
+    Pi as measured on 23 September 2026 (design 7.2, section 10 addendum),
+    fails a code no device answers with only "Commission with code failed
+    for node <n>." - no marker this function knows, so without a fallback
+    the attempt is misclassified `other`. `discriminator` and `saw_match`
+    are the host's own evidence in its place (`CommissioningTracker.
+    saw_match`): when the attempt never got past `searching`, a
+    discriminator was known, and no advertisement matching it was ever
+    seen, the device was never found regardless of what matter-server's
+    text says. Without a discriminator (an IP attempt, where no BLE
+    advertisement is ever expected) or once a matching advertisement WAS
+    seen (the failure happened later, e.g. during PASE, and would be
+    misreported as `not_found`), this fallback stays out of the way and
+    the text-less case keeps falling through to `other` as before."""
+    if any(marker in text for marker in _CONNECTION_LOST) or reached in ("found", "connected"):
+        return "connection_lost"
+    if _NOT_FOUND in text:
+        return "not_found"
+    if reached == "searching" and discriminator and not saw_match:
+        return "not_found"
+    return "other"
+
+
+@dataclass
+class _Attempt:
+    token: int
+    started_at: datetime
+    started_usec: int | None
+    discriminator: Discriminator | None
+    phase: Phase = "searching"
+    phase_since: datetime = field(default_factory=_utc_now)
+    reason: Reason | None = None
+    nearby: list[MatterAdvert] = field(default_factory=list)
+    adapter: AdapterState | None = None
+    matched_address: str | None = None
+    stuck_since: datetime | None = None
+    stuck_now: bool = False
+    # Design 2026-09-22, section 7.1, final review item 3: `discovering:
+    # false` is only a `stuck` finding once the adapter was actually seen
+    # discovering at least once during THIS attempt - otherwise an attempt
+    # commissioned over the IP network (no BLE scan ever expected) or one
+    # whose first sample simply lands before matter-server has told BlueZ
+    # to start scanning would both report a false Bluetooth warning.
+    ever_discovering: bool = False
+
+
+class CommissioningTracker:
+    """Tracks one commissioning attempt at a time (design 2026-09-22, section 5).
+
+    The tracker never samples itself. `POST /api/devices/commission` runs a
+    task, next to its `await commission_with_code(...)`, that calls
+    `sample()` every `sample_interval` seconds while it waits, and cancels
+    that task in a `finally` when the attempt ends. Design 2026-09-22,
+    section 5.1: BlueZ is sampled every 2 s while an attempt runs, and not at
+    all otherwise. Driving `sample()` from the status route instead - i.e.
+    from however often a browser happens to poll it - would miss phase
+    transitions between polls, and could mis-classify a failure that had
+    already reached `found`/`connected` as `not_found` once the browser's
+    next poll arrived too late to see it.
+    """
+
+    def __init__(
+        self,
+        *,
+        bluez: BluezReader | None = None,
+        kernel: KernelLog | None = None,
+        clock: Callable[[], datetime] = _utc_now,
+        sample_interval: float = 2.0,
+        stuck_after: float = 10.0,
+    ) -> None:
+        self._bluez = bluez
+        self._kernel = kernel
+        self._clock = clock
+        # Nothing in this module reads `sample_interval`; it is the cadence
+        # the POST route's sampling task is expected to call `sample()` at.
+        self.sample_interval = sample_interval
+        self._stuck_after = stuck_after
+        self.started_at = clock()
+        self._attempt: _Attempt | None = None
+        # Design 2026-09-22, final review item 2: `start()` hands the route a
+        # token identifying the attempt it just began. Two POSTs in flight -
+        # B's `start()` replaces the attempt A is still tracking - used to
+        # let A's later `finish()` reach into B's live attempt and force it
+        # to `failed` with A's reason; `finish()`/`sample()` now compare the
+        # token they were called with against the CURRENT attempt's and do
+        # nothing on a mismatch. A monotonically increasing counter, not the
+        # attempt object itself, so a caller cannot accidentally keep an
+        # attempt alive by holding a reference to it.
+        self._next_token = 0
+        # `None` is a valid, honest value for "no token" on `finish()`/
+        # `sample()`: it means "whichever attempt is current", which is what
+        # every caller that does not (yet) track a token means - the tests
+        # that predate this fix, and a caller that only ever runs one
+        # attempt at a time to begin with. It is how the old, tokenless
+        # signatures keep working.
+        self._kernel_findings: list[KernelFinding] | None = None
+
+    @property
+    def phase(self) -> Phase | None:
+        return self._attempt.phase if self._attempt is not None else None
+
+    def phase_for(self, token: int) -> Phase | None:
+        """Like `phase`, but `None` for a stale token too - not just for "no
+        attempt at all". `POST /api/devices/commission` reads this instead
+        of `phase` to classify a failure (`classify_failure`'s `reached`
+        argument): between this route's own `await commission_with_code(...)`
+        raising and that classification running, nothing yields to the event
+        loop, so THIS attempt cannot itself have been replaced in that
+        narrow window - but the `await` itself can run for up to 180 s
+        (design 5.1), long enough for a second POST to call `start()` and
+        replace the attempt this route is still holding a token for. `phase`
+        alone would then read the NEWER attempt's phase and could misclassify
+        an old failure - e.g. call it `not_found` because the newer attempt
+        is still `searching`, when the older one had actually reached
+        `connected` before it failed. The same token-mismatch guard as
+        `finish()`/`sample()` (final review item 2), applied to this read."""
+        if self._attempt is None or token != self._attempt.token:
+            return None
+        return self._attempt.phase
+
+    def saw_match(self, token: int) -> bool:
+        """Whether an advertisement matching the token's own attempt's
+        discriminator was ever seen - the host's own evidence for
+        `classify_failure`'s fallback rule (design 2026-09-22, section 10
+        addendum, hardware finding of 23 September 2026): an older
+        `python-matter-server`'s failure text can carry none of the markers
+        `classify_failure` already knows, so this stands in for the text.
+        Same token-mismatch guard as `phase_for`, for the same reason - a
+        stale or missing token answers `False`, not "unknown", which is
+        also the right verdict: no evidence was ever gathered for that
+        attempt specifically."""
+        if self._attempt is None or token != self._attempt.token:
+            return False
+        return self._attempt.matched_address is not None
+
+    def start(self, discriminator: Discriminator | None) -> int:
+        now = self._clock()
+        self._next_token += 1
+        token = self._next_token
+        self._attempt = _Attempt(
+            token=token,
+            started_at=now,
+            started_usec=self._kernel.now_usec() if self._kernel is not None else None,
+            discriminator=discriminator,
+            phase_since=now,
+        )
+        return token
+
+    def node_added(self, node_id: int, *, token: int | None = None) -> None:
+        # `node_id` is deliberately unused - the tracker only needs to know
+        # that a node joined during this attempt, not which one.
+        #
+        # Final review item 1: this was the one mutator `finish()`/`sample()`
+        # already learned to scope by token (item 2) but this one had not -
+        # with two POSTs in flight, a node joining during attempt A used to
+        # advance attempt B to `joined` if B was the current attempt by the
+        # time matter-server's `NODE_ADDED` reached this listener. The route
+        # now registers a closure bound to the token it owns instead of
+        # `progress.node_added` itself; the same token-mismatch guard as
+        # `finish()`/`sample()` applies here too.
+        if self._attempt is None or (token is not None and token != self._attempt.token):
+            return
+        self._advance("joined")
+
+    async def finish(self, reason: Reason | None, *, token: int | None = None) -> None:
+        if self._attempt is None or (token is not None and token != self._attempt.token):
+            return
+        # Final review item: a second `finish()` reaching an attempt that
+        # already ended (reachable when the route's follow-up work raises
+        # AFTER a successful `finish(None)` already ran, see `commission_
+        # device`'s outer try/except) must not overwrite the reason it
+        # already ended with - `_advance` below is already a no-op once
+        # `done`/`failed`, but writing `reason` unconditionally first would
+        # still have clobbered it before that no-op ever ran.
+        if self._attempt.phase not in ("done", "failed"):
+            self._attempt.reason = reason
+        self._advance("failed" if reason is not None else "done", force=True)
+
+    async def sample(self, *, token: int | None = None) -> None:
+        attempt = self._attempt
+        if attempt is None or self._bluez is None:
+            return
+        if token is not None and token != attempt.token:
+            return
+        if attempt.phase in ("done", "failed"):
+            # A finished attempt is left alone: a status route that samples
+            # must not overwrite the `nearby` list its result is showing.
+            return
+        # The kernel-log snapshot the status route reads synchronously
+        # (`_bluetooth` below) is refreshed here, off the event loop
+        # (design 2026-09-22, final review item 4): `KernelLog.findings()`
+        # itself blocks on `/dev/kmsg` I/O, which must never run inline on
+        # the loop that also carries the matter-server WebSocket -
+        # `findings_async()` runs it in a thread instead. `status()`/
+        # `_bluetooth()` stay synchronous by reading the cached result of
+        # this call rather than calling into `KernelLog` themselves.
+        if self._kernel is not None:
+            self._kernel_findings = await self._kernel.findings_async()
+        snapshot = await self._bluez.snapshot()
+        if snapshot is None:
+            return
+        attempt.nearby = snapshot.adverts
+        attempt.adapter = snapshot.adapter
+        disc = attempt.discriminator
+        if disc is not None:
+            matching = [advert for advert in snapshot.adverts if disc.matches(advert.discriminator)]
+            if matching and attempt.matched_address is None:
+                attempt.matched_address = matching[0].address
+                self._advance("found")
+            if any(
+                advert.connected and advert.address == attempt.matched_address
+                for advert in matching
+            ):
+                self._advance("connected")
+        self._update_stuck(attempt, snapshot.adapter)
+
+    def _update_stuck(self, attempt: _Attempt, adapter: AdapterState | None) -> None:
+        """`discovering: false` while `searching` is itself a `stuck` finding
+        (design 7.1) - but only after `stuck_after` (an attempt's first
+        sample can land before matter-server has started to scan), and only
+        for a BLE attempt whose adapter was actually seen scanning at some
+        point (final review item 3): commissioning over the IP network never
+        starts a BLE scan at all, and reporting the adapter stuck for that
+        would be a false Bluetooth warning on a perfectly healthy attempt."""
+        if adapter is not None and adapter.discovering:
+            attempt.ever_discovering = True
+        not_scanning = (
+            attempt.phase == "searching"
+            and attempt.discriminator is not None
+            and attempt.ever_discovering
+            and adapter is not None
+            and not adapter.discovering
+        )
+        if not not_scanning:
+            attempt.stuck_since = None
+            attempt.stuck_now = False
+            return
+        if attempt.stuck_since is None:
+            attempt.stuck_since = self._clock()
+        elapsed = (self._clock() - attempt.stuck_since).total_seconds()
+        attempt.stuck_now = elapsed >= self._stuck_after
+
+    def _advance(self, phase: Phase, *, force: bool = False) -> None:
+        attempt = self._attempt
+        if attempt is None or attempt.phase in ("done", "failed"):
+            return
+        if force or _ORDER[phase] > _ORDER[attempt.phase]:
+            attempt.phase = phase
+            attempt.phase_since = self._clock()
+
+    def _bluetooth(self, attempt: _Attempt) -> dict[str, object]:
+        # The cached snapshot `sample()` refreshed via `findings_async()`
+        # (final review item 4) - never a direct, blocking `self._kernel.
+        # findings()` call from here: `status()` is synchronous and reached
+        # from the status route on every poll, so a blocking read inline
+        # here would stall the event loop exactly as the one `sample()`
+        # itself now avoids. `now_usec()` stays a direct call - it reads
+        # `/proc/uptime`, a single small, non-blocking-in-practice read, not
+        # the kmsg ring buffer drain the caching exists for.
+        findings = self._kernel_findings if self._kernel is not None else None
+        now_usec = self._kernel.now_usec() if self._kernel is not None else None
+        kernel_ok = findings is not None and now_usec is not None
+        during = (
+            counts_since(findings or [], attempt.started_usec)
+            if kernel_ok and attempt.started_usec is not None
+            else None
+        )
+        last_hour = (
+            counts_since(findings or [], (now_usec or 0) - _HOUR_USEC) if kernel_ok else None
+        )
+        adapter = attempt.adapter
+        return {
+            "available": kernel_ok or adapter is not None,
+            "adapter": adapter.name if adapter else None,
+            "powered": adapter.powered if adapter else None,
+            "discovering": adapter.discovering if adapter else None,
+            "during_attempt": during,
+            "last_hour": last_hour,
+            "stuck_now": attempt.stuck_now,
+        }
+
+    def status(self) -> dict[str, object]:
+        attempt = self._attempt
+        body: dict[str, object] = {"bridge_started_at": _iso(self.started_at), "attempt": None}
+        if attempt is None:
+            return body
+        disc = attempt.discriminator
+        body["attempt"] = {
+            "started_at": _iso(attempt.started_at),
+            "discriminator": {"value": disc.value, "kind": disc.kind} if disc else None,
+            "phase": attempt.phase,
+            "phase_since": _iso(attempt.phase_since),
+            "reason": attempt.reason,
+            "nearby": [
+                {
+                    "address": advert.address,
+                    "name": advert.name,
+                    "rssi": advert.rssi,
+                    "discriminator": advert.discriminator,
+                    "vendor_id": advert.vendor_id,
+                    "product_id": advert.product_id,
+                    "connected": advert.connected,
+                    "matches": disc.matches(advert.discriminator) if disc else False,
+                }
+                for advert in attempt.nearby
+            ],
+            "bluetooth": self._bluetooth(attempt),
+        }
+        return body

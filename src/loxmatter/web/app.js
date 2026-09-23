@@ -203,6 +203,27 @@ const ZIGBEE_NAMEABLE_ROW_STATES = ["ready", "configuring", "waiting_wake"];
 // whose names come from `roomSelectOptions()`.
 const NEW_ROOM_CHOICE = "__new__";
 
+// The progress display's phases (design 2026-09-22, section 5.3), in the
+// order the bridge derives them from BlueZ and NODE_ADDED, and how often
+// the browser polls `GET /api/devices/commission/status` for them while an
+// attempt runs. 2 seconds: fast enough that the display does not sit still
+// for longer than that between two phases, slow enough not to flood a
+// route whose answer barely changes between polls.
+const COMMISSION_POLL_MS = 2000;
+const COMMISSION_PHASES = ["searching", "found", "connected", "joined", "done"];
+// Final review item 7: `commission_with_code` can await for up to 180 s
+// (design 5.1) before the route's own try/except/finally ends the attempt -
+// but if the route's TASK is cancelled before that (server shutdown, client
+// disconnect), the attempt never reaches `done`/`failed` on its own at all.
+// A reload that then restores THAT into the dialog would trap the operator:
+// the reset button in index.html only appears at
+// `commissionStep === 2 || commissionFailed`, neither of which a
+// perpetually-running restore ever reaches. `restoreCommissionIfRunning`
+// ignores an attempt whose `started_at` is older than this - the route's own
+// ceiling plus a margin for clock skew and the poll interval itself, so an
+// ordinary attempt still well within its 180 s is never mistaken for one.
+const COMMISSION_RESTORE_MAX_AGE_MS = 240000;
+
 // --- Live diagnostics (Spec 10.5) -------------------------------------------
 //
 // Upper bound on the lines kept per stream (logs, UDP capture, command
@@ -529,6 +550,82 @@ function normalizePairingCode(raw) {
   // reachable input, but that equality was previously only inferred via a
   // silent invariant.
   return isPairingQrCode(text) ? text : text.replace(/[\s-]/g, "");
+}
+
+// Pairing-code decoding (design 2026-09-22, section 4). Only the
+// discriminator is read - it lets the dialog follow the device in BlueZ and
+// name it in a "not found" message. The passcode is never decoded.
+const VERHOEFF_D = [
+  [0, 1, 2, 3, 4, 5, 6, 7, 8, 9], [1, 2, 3, 4, 0, 6, 7, 8, 9, 5],
+  [2, 3, 4, 0, 1, 7, 8, 9, 5, 6], [3, 4, 0, 1, 2, 8, 9, 5, 6, 7],
+  [4, 0, 1, 2, 3, 9, 5, 6, 7, 8], [5, 9, 8, 7, 6, 0, 4, 3, 2, 1],
+  [6, 5, 9, 8, 7, 1, 0, 4, 3, 2], [7, 6, 5, 9, 8, 2, 1, 0, 4, 3],
+  [8, 7, 6, 5, 9, 3, 2, 1, 0, 4], [9, 8, 7, 6, 5, 4, 3, 2, 1, 0],
+];
+const VERHOEFF_P = [
+  [0, 1, 2, 3, 4, 5, 6, 7, 8, 9], [1, 5, 7, 6, 2, 8, 3, 0, 9, 4],
+  [5, 8, 0, 3, 7, 9, 6, 1, 4, 2], [8, 9, 1, 6, 0, 4, 3, 5, 2, 7],
+  [9, 4, 5, 3, 1, 2, 6, 8, 7, 0], [4, 2, 8, 6, 5, 7, 3, 9, 0, 1],
+  [2, 7, 9, 3, 8, 0, 6, 4, 1, 5], [7, 0, 4, 6, 9, 1, 3, 2, 5, 8],
+];
+const BASE38_ALPHABET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ-.";
+
+function verhoeffValid(digits) {
+  let check = 0;
+  const reversed = digits.split("").reverse();
+  for (let i = 0; i < reversed.length; i++) {
+    check = VERHOEFF_D[check][VERHOEFF_P[i % 8][Number(reversed[i])]];
+  }
+  return check === 0;
+}
+
+function base38Bytes(text) {
+  const bytes = [];
+  for (let i = 0; i < text.length; i += 5) {
+    const chunk = text.slice(i, i + 5);
+    const count = { 5: 3, 4: 2, 2: 1 }[chunk.length];
+    if (count === undefined) return null;
+    let value = 0;
+    for (let j = chunk.length - 1; j >= 0; j--) {
+      const digit = BASE38_ALPHABET.indexOf(chunk[j]);
+      if (digit < 0) return null;
+      value = value * 38 + digit;
+    }
+    for (let k = 0; k < count; k++) {
+      bytes.push(value & 0xff);
+      value = Math.floor(value / 256);
+    }
+  }
+  return bytes;
+}
+
+function bitsAt(bytes, start, length) {
+  let value = 0;
+  for (let i = 0; i < length; i++) {
+    const bit = start + i;
+    if ((bytes[bit >> 3] >> (bit & 7)) & 1) value |= 1 << i;
+  }
+  return value;
+}
+
+function decodePairingCode(raw) {
+  const text = String(raw ?? "").trim();
+  if (/^MT:/i.test(text)) {
+    // version 3, vendor 16, product 16, flow 2, capabilities 8,
+    // discriminator 12 bits from bit 45 on.
+    const bytes = base38Bytes(text.slice(3).toUpperCase());
+    if (!bytes || bytes.length < 11) return { kind: "unknown" };
+    return { kind: "long", discriminator: bitsAt(bytes, 45, 12) };
+  }
+  const digits = text.replace(/[\s-]/g, "");
+  if (!/^\d+$/.test(digits) || (digits.length !== 11 && digits.length !== 21)) {
+    return { kind: "unknown" };
+  }
+  if (!verhoeffValid(digits)) return { kind: "typo" };
+  const chunk1 = Number(digits[0]);
+  const chunk2 = Number(digits.slice(1, 6));
+  if (((chunk1 >> 2) & 1) !== (digits.length === 21 ? 1 : 0)) return { kind: "unknown" };
+  return { kind: "short", discriminator: ((chunk1 & 0x3) << 2) | (chunk2 >> 14) };
 }
 
 // What the chip in the field says. Returns a key instead of text, so
@@ -864,6 +961,26 @@ function app() {
     // the progress display would end up with no code to show at the end.
     commissionRunCode: "",
     commissionRunRoom: "",
+    commissionDiscriminator: null,
+    // Design 2026-09-22, section 5.3: the last answer of
+    // GET /api/devices/commission/status while an attempt runs, and the
+    // timer that polls it. Cleared to null wherever a new attempt is set
+    // up (see commissionDevice) - otherwise a repeat attempt would open on
+    // whatever the previous one left behind (review fix 1).
+    commissionStatus: null,
+    commissionPollTimer: null,
+    // Bumped by stopCommissionPolling() and captured by startCommissionPolling()
+    // as each poll's own token - a poll whose token no longer matches this
+    // when its GET resolves belongs to an attempt already stopped and drops
+    // its answer instead of assigning it (review fix 2: clearInterval alone
+    // cannot cancel a requestJson() already awaiting).
+    commissionPollGeneration: 0,
+    commissionBridgeStartedAt: null,
+    // The furthest phase `commissionStatus.attempt.phase` reached before a
+    // failure - `commissionPhaseClass` needs it because the status route's
+    // OWN `phase` reads "failed" once the attempt is over, which does not
+    // say WHERE it failed.
+    commissionReachedPhase: null,
 
     // The commissioning card's two tabs (design 2026-09-12, section 3.1).
     // "matter" or "zigbee"; `commissionTabShown()` is what the card shows,
@@ -1632,6 +1749,12 @@ function app() {
         // answering 503 asks again (`loadZigbeePairing()`).
         await this.loadZigbeeRadio({ poll: false });
         if (this.zigbeeTabVisible()) await this.peekZigbeePairing();
+        // Design 2026-09-22, section 5.3: finds a running commissioning
+        // attempt through the status route and shows its progress - the
+        // case a plain page reload used to lose entirely (see
+        // `restoreCommissionIfRunning`'s own docstring for why this is
+        // safe to call on every visit to the tab, not only the first).
+        await this.restoreCommissionIfRunning();
       } else if (view === "export") {
         await this.loadExportStatus();
       } else if (view === "system") {
@@ -3406,6 +3529,12 @@ function app() {
         this.commissionMessageIsError = true;
         return;
       }
+      const decoded = decodePairingCode(this.commissionCode);
+      if (decoded.kind === "typo") {
+        this.commissionMessage = t("web.devices.commission_code_typo");
+        this.commissionMessageIsError = true;
+        return;
+      }
       this.commissionBusy = true;
       this.commissionStep = 0;
       this.commissionFailed = false;
@@ -3413,8 +3542,30 @@ function app() {
       // transmitted one: whoever waits twenty to sixty seconds should
       // recognize the code they typed in.
       this.commissionRunCode = formatPairingCode(this.commissionCode.trim());
+      // The bridge start time BEFORE the attempt (design 2026-09-22,
+      // section 5.3): if it differs after a failure, the bridge itself
+      // restarted mid-attempt rather than the commissioning simply
+      // failing - a distinct case with its own message, since the device
+      // may have joined anyway.
+      try {
+        const before = await requestJson("GET", "/api/devices/commission/status");
+        this.commissionBridgeStartedAt = before?.bridge_started_at ?? null;
+      } catch {
+        this.commissionBridgeStartedAt = null;
+      }
+      this.commissionReachedPhase = "searching";
+      // The previous attempt's answer belongs to that attempt, not this
+      // one - left in place, it would show all five phases done, plus its
+      // nearby list and Bluetooth banners, until the first poll of THIS
+      // attempt lands (review fix 1).
+      this.commissionStatus = null;
+      this.startCommissionPolling();
       try {
         const body = { code };
+        if (decoded.kind === "short" || decoded.kind === "long") {
+          body.discriminator = { value: decoded.discriminator, kind: decoded.kind };
+        }
+        this.commissionDiscriminator = body.discriminator ?? null;
         if (this.commissionThreadDataset.trim()) {
           body.thread_dataset = this.commissionThreadDataset.trim();
         }
@@ -3478,6 +3629,14 @@ function app() {
         // commissions four devices in the kitchen picks it once. A
         // pairing code, by contrast, is worthless after use, and a
         // leftover one would be a source of errors.
+        this.commissionReachedPhase = "done";
+        // One last poll: the phase list should end on "done" rather than
+        // wherever the last background poll happened to land - a status
+        // fetched a few hundred milliseconds before the POST resolved.
+        this.commissionStatus = await requestJson(
+          "GET",
+          "/api/devices/commission/status"
+        ).catch(() => this.commissionStatus);
       } catch (error) {
         // Without this case distinction, this message's heading stood
         // doubled in the UI: a 422 from this route already carries a
@@ -3497,12 +3656,48 @@ function app() {
         // Any other failure (502, 503, a network error with no response
         // at all) brings no frame of its own and gets one here - without
         // it, the UI would show nothing but "HTTP 502".
+        //
+        // Stopped here, before the status fetch below - but clearing the
+        // timer is not what closes the race: a poll whose own `requestJson`
+        // was already awaiting when this runs keeps running regardless and
+        // resolves afterward. What actually stops it from overwriting the
+        // status fetch below is `stopCommissionPolling()` bumping the
+        // generation token, which that poll's answer no longer matches by
+        // the time it lands (review fix 2, `startCommissionPolling`).
+        this.stopCommissionPolling();
+        // A restart mid-attempt (design 2026-09-22, section 5.3) is a
+        // case of its own: `bridge_started_at` moving means the bridge
+        // process itself died and came back, which answers this request
+        // with a network error or a 5xx regardless of whether the device
+        // actually joined - the commissioning message below would call
+        // that a plain failure, which it may not be.
+        let restarted = false;
+        if (error.status === undefined || error.status >= 500) {
+          try {
+            const after = await requestJson("GET", "/api/devices/commission/status");
+            restarted =
+              this.commissionBridgeStartedAt !== null &&
+              after?.bridge_started_at !== this.commissionBridgeStartedAt;
+            this.commissionStatus = after;
+          } catch {
+            restarted = false;
+          }
+        } else {
+          try {
+            this.commissionStatus = await requestJson("GET", "/api/devices/commission/status");
+          } catch {
+            // Keep the last polled status.
+          }
+        }
         const message = String(error.message ?? "");
-        this.commissionMessage =
-          error.status === 422 ? message : t("web.devices.commission_failed", { message });
+        this.commissionMessage = restarted
+          ? t("web.devices.commission_bridge_restarted")
+          : error.status === 422
+            ? message
+            : t("web.devices.commission_failed", { message });
         this.commissionMessageIsError = true;
         // `commissionStep` is NOT reset: it continues to point at the
-        // step it got stuck on, and `commissionStepClass` colors exactly
+        // step it got stuck on, and `commissionPhaseClass` colors exactly
         // that one red. The way back to the form goes via
         // `resetCommission()` on the button below - the typed-in code
         // stays put, since a typo in it is the most likely reason to end
@@ -3510,30 +3705,274 @@ function app() {
         this.commissionFailed = true;
       } finally {
         this.commissionBusy = false;
+        this.stopCommissionPolling();
       }
     },
 
     /**
-     * The state of a step in the progress display: "done", "running",
-     * "failed", or empty (still pending).
+     * The state of a phase in the progress display: "done", "running",
+     * "failed", or empty (still ahead). Driven by `commissionStatus`
+     * (design 2026-09-22, section 5.3), the last answer of `GET
+     * /api/devices/commission/status`, not by a step counter the
+     * frontend maintains itself - the bridge is what actually knows
+     * which phase an attempt is in.
      *
-     * A pure expression on `commissionStep`/`commissionFailed` instead of
-     * a third state variable holding the class names: two fields telling
-     * the same story drift apart sooner or later - and the display is
-     * exactly the place where no one would notice, because it shows
-     * "something" regardless.
+     * On a failure, `commissionStatus.attempt.phase` itself already
+     * reads "failed", which says THAT it failed but not WHERE -
+     * `commissionReachedPhase` is the furthest phase seen before that,
+     * and is what gets colored red.
+     *
+     * A background poll can observe `attempt.phase === "failed"` a moment
+     * before `commissionDevice`'s own request rejects and sets
+     * `commissionFailed` - `commissionReachedPhase` stands in for `current`
+     * in that window too, so the list freezes on the phase reached instead
+     * of blanking: `COMMISSION_PHASES.indexOf(null)` is -1, which is
+     * neither `<` nor `===` any real phase index, so every phase used to
+     * get the empty class for that one frame (review fix 4).
      */
-    commissionStepClass(index) {
-      if (this.commissionStep === null) {
-        return "";
+    commissionPhaseClass(phase) {
+      const attempt = this.commissionStatus?.attempt;
+      const current =
+        attempt?.phase === "failed" ? (this.commissionReachedPhase ?? "searching") : (attempt?.phase ?? "searching");
+      const index = COMMISSION_PHASES.indexOf(phase);
+      if (this.commissionFailed) {
+        // The phase the attempt had reached is the one that failed.
+        const reached = this.commissionReachedPhase ?? "searching";
+        const reachedIndex = COMMISSION_PHASES.indexOf(reached);
+        if (index < reachedIndex) return "done";
+        return index === reachedIndex ? "failed" : "";
       }
-      if (this.commissionFailed && index === this.commissionStep) {
-        return "failed";
+      const currentIndex = COMMISSION_PHASES.indexOf(current);
+      if (index < currentIndex) return "done";
+      if (index === currentIndex) return current === "done" ? "done" : "running";
+      return "";
+    },
+
+    /** The hint line below the phase list - only while it says something a
+     * static label above the list does not already say (how long a phase
+     * usually takes), and only for the two phases long enough that someone
+     * watching might otherwise wonder if it is stuck. */
+    commissionPhaseHint() {
+      const phase = this.commissionStatus?.attempt?.phase;
+      if (phase === "searching") return t("web.devices.commission_hint_searching");
+      if (phase === "found" || phase === "connected") return t("web.devices.commission_hint_setup");
+      return "";
+    },
+
+    /** Whole seconds since the running (or last finished) attempt's
+     * `started_at`, as the status route reports it (design 2026-09-22,
+     * section 5.3: "the time since the start") - or null while there is no
+     * attempt to show one for, so the hint stays hidden on the bare form.
+     * Reads `nowTick`, the same one-second clock `sinceText` above already
+     * reads, so Alpine redraws this every second without a timer of its
+     * own (review fix 5). */
+    commissionElapsedSeconds() {
+      const startedAt = this.commissionStatus?.attempt?.started_at;
+      if (!startedAt) return null;
+      const started = Date.parse(startedAt);
+      if (Number.isNaN(started)) return null;
+      return Math.max(0, Math.floor((this.nowTick - started) / 1000));
+    },
+
+    /** The nearby Matter devices BlueZ currently sees, the one the
+     * entered code names (if any) sorted first, then by signal strength -
+     * so the device someone is actually looking for is the one they see
+     * without scrolling. */
+    commissionNearby() {
+      const nearby = this.commissionStatus?.attempt?.nearby ?? [];
+      return [...nearby].sort(
+        (a, b) => Number(b.matches) - Number(a.matches) || (b.rssi ?? -999) - (a.rssi ?? -999)
+      );
+    },
+
+    /** Whether the nearby list belongs on screen: while the attempt is
+     * searching, or after it failed because the device could not be found
+     * (design 2026-09-22, sections 5.3 and 6) - not once a device is
+     * `connected`/`joined`, and not after a plain success, when the list
+     * would only be stale information about a device already dealt with
+     * (review fix 3). */
+    commissionShowNearby() {
+      const attempt = this.commissionStatus?.attempt;
+      if (!attempt) return false;
+      if (attempt.phase === "searching") return true;
+      return attempt.phase === "failed" && attempt.reason === "not_found";
+    },
+
+    /** The Bluetooth warning keys to show below the phase list - empty
+     * unless the adapter itself is available (design 2026-09-22, section
+     * 5.3: an unavailable adapter is not itself a warning, it is a
+     * separate, more basic state) and it, or the attempt in progress, has
+     * actually seen one of the three faults the bridge can name. */
+    commissionBluetoothWarnings() {
+      const bt = this.commissionStatus?.attempt?.bluetooth;
+      if (!bt || !bt.available) return [];
+      const during = bt.during_attempt ?? {};
+      const keys = [];
+      if (during.transport > 0) keys.push("web.devices.commission_bt_transport");
+      if (during.stuck > 0 || bt.stuck_now) keys.push("web.devices.commission_bt_stuck");
+      if (during.power > 0) keys.push("web.devices.commission_bt_power");
+      return keys;
+    },
+
+    /** Starts polling `GET /api/devices/commission/status` every
+     * `COMMISSION_POLL_MS` and fetches it once immediately - waiting for
+     * the first `setInterval` tick would leave the phase list on its
+     * initial state for up to 2 seconds after the button was clicked.
+     * Any earlier timer is cleared first, so a second attempt can never
+     * end up polled twice.
+     *
+     * Each poll captures `commissionPollGeneration` as it was when THIS
+     * call started it. `stopCommissionPolling()` cannot cancel a
+     * `requestJson()` a poll is already awaiting - only the interval that
+     * would schedule the next one - so a poll started for an attempt
+     * already stopped can still be in flight when it resolves; comparing
+     * its captured token against the current generation is how it
+     * recognizes that and drops the answer instead of overwriting
+     * `commissionStatus` with data nobody asked for any more
+     * (review fix 2). */
+    startCommissionPolling() {
+      this.stopCommissionPolling();
+      const generation = this.commissionPollGeneration;
+      const poll = async () => {
+        let status;
+        try {
+          status = await requestJson("GET", "/api/devices/commission/status");
+        } catch {
+          // The next poll tries again; a dead bridge is decided in
+          // commissionDevice, from the request that failed there - not
+          // from this background poll silently retrying forever.
+          return;
+        }
+        if (generation !== this.commissionPollGeneration) return;
+        this.commissionStatus = status;
+        const phase = status?.attempt?.phase;
+        if (phase && phase !== "failed" && phase !== "done") this.commissionReachedPhase = phase;
+        // A RESTORED attempt (design 2026-09-22, section 5.3) has no
+        // `commissionDevice()` of its own running on this page to notice a
+        // `failed`/`done` phase and show the result - `commissionBusy` is
+        // exactly the signal for that: it is `true` for the whole span of
+        // an OWN attempt's `POST`, and that call's own catch/success paths
+        // already handle the message and the polling stop in that case.
+        // Only when nothing else is watching does this poll finish it
+        // itself.
+        if (!this.commissionBusy && (phase === "failed" || phase === "done")) {
+          this.finishRestoredCommission(status);
+        }
+      };
+      poll();
+      this.commissionPollTimer = setInterval(poll, COMMISSION_POLL_MS);
+    },
+
+    /** Stops the timer `startCommissionPolling` set, if any, and bumps
+     * `commissionPollGeneration` so a poll that call started - even one
+     * already awaiting its own `requestJson()`, which clearing the timer
+     * alone cannot reach - answers into a generation nothing reads from any
+     * more. Safe to call whether or not a timer is running -
+     * `commissionDevice` calls it from both its `catch` and its
+     * `finally`. */
+    stopCommissionPolling() {
+      if (this.commissionPollTimer !== null) {
+        clearInterval(this.commissionPollTimer);
+        this.commissionPollTimer = null;
       }
-      if (index < this.commissionStep) {
-        return "done";
+      this.commissionPollGeneration++;
+    },
+
+    /** Design 2026-09-22, section 5.3: "A page that is reloaded while an
+     * attempt runs finds it through the status route and shows its
+     * progress." Called once, when the Devices view loads (`selectView`) -
+     * on the very first page load as well as on every later visit to the
+     * tab, which is why the very first check is that no poller is already
+     * running: an own attempt's `commissionDevice()` already polls (and
+     * `commissionBusy` guards its own message handling above), and an
+     * earlier restore on the same page load already does too - either way,
+     * fetching the status route again here and finding it still running
+     * would only arm a second, redundant poller for the exact same
+     * attempt.
+     *
+     * A finished attempt, or no attempt at all, leaves the bare form
+     * exactly as it was: only a RUNNING one is worth restoring - the
+     * terminal cases are for whichever page actually ran them to show; a
+     * page that merely reloaded onto their result has nothing useful to add
+     * (and no device label to add it with, see
+     * `web.devices.commission_restored_success`). */
+    async restoreCommissionIfRunning() {
+      if (this.commissionPollTimer !== null) return;
+      let status;
+      try {
+        status = await requestJson("GET", "/api/devices/commission/status");
+      } catch {
+        // No bridge to ask, or not logged in any more by the time this
+        // resolves - either way, nothing to restore; the bare form is the
+        // right thing to show.
+        return;
       }
-      return index === this.commissionStep ? "running" : "";
+      const attempt = status?.attempt;
+      if (!attempt || attempt.phase === "done" || attempt.phase === "failed") return;
+      // A zombie attempt (final review item 7, see COMMISSION_RESTORE_MAX_
+      // AGE_MS above): ignored exactly as if there were no attempt to
+      // restore at all, leaving the bare form on screen. `Date.parse` on a
+      // value that is not a real timestamp yields `NaN`, and every
+      // comparison against `NaN` is false - such a value is therefore never
+      // treated as stale here.
+      const startedAtMs = Date.parse(attempt.started_at);
+      if (!Number.isNaN(startedAtMs) && Date.now() - startedAtMs > COMMISSION_RESTORE_MAX_AGE_MS) {
+        return;
+      }
+      this.commissionBridgeStartedAt = status.bridge_started_at ?? null;
+      this.commissionStatus = status;
+      this.commissionStep = 0;
+      this.commissionFailed = false;
+      this.commissionMessage = null;
+      this.commissionReachedPhase = attempt.phase;
+      this.commissionDiscriminator = attempt.discriminator ?? null;
+      this.startCommissionPolling();
+    },
+
+    /** Ends a RESTORED attempt's progress display once a background poll
+     * (`startCommissionPolling`'s own `poll()`, guarded there by
+     * `!commissionBusy`) sees the status route report it finished - the
+     * counterpart, for a page that never sent the `POST` itself, of what
+     * `commissionDevice`'s own success/catch branches do for the page that
+     * did (design 2026-09-22, section 5.3: "the result then arrives through
+     * the status route rather than the POST the old page had open").
+     *
+     * The reason keys mirror the ones the live `POST`'s 422 `detail`
+     * already carries (`_reason_detail` in `api/devices.py`, which resolves
+     * these same `web.devices.commission_reason_*` keys directly - see the
+     * comment on `web.devices.commission_reason_not_found` in strings.yaml
+     * for why there is only one copy of that wording, not two).
+     * `no_thread_network` gets its own sentence naming the missing Thread
+     * network; `matter_server_unreachable` and `other` share a generic,
+     * reason-less one (final review item 3) - this page never saw
+     * matter-server's own exception text, only the category the tracker
+     * classified it into, so there is no `{message}` to show. Before this
+     * fix, every reason but `not_found`/`connection_lost` fell back to
+     * `web.devices.commission_failed` with an EMPTY `{message}`, rendering
+     * the dangling "Commissioning failed: " with nothing after it. */
+    finishRestoredCommission(status) {
+      this.stopCommissionPolling();
+      const attempt = status?.attempt;
+      if (attempt?.phase === "done") {
+        this.commissionMessage = t("web.devices.commission_restored_success");
+        this.commissionMessageIsError = false;
+        this.commissionFailed = false;
+        return;
+      }
+      const reason = attempt?.reason;
+      const key =
+        reason === "not_found"
+          ? attempt?.discriminator
+            ? "web.devices.commission_reason_not_found"
+            : "web.devices.commission_reason_not_found_any"
+          : reason === "connection_lost"
+            ? "web.devices.commission_reason_connection_lost"
+            : reason === "no_thread_network"
+              ? "web.devices.commission_reason_no_thread_network"
+              : "web.devices.commission_reason_unspecified";
+      this.commissionMessage = t(key, { discriminator: attempt?.discriminator?.value });
+      this.commissionMessageIsError = true;
+      this.commissionFailed = true;
     },
 
     /**

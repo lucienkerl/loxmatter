@@ -102,7 +102,7 @@ import zipfile
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Final, Protocol
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import Response
@@ -110,6 +110,7 @@ from pydantic import BaseModel, ConfigDict
 
 from loxmatter import i18n
 from loxmatter.model.store import Store
+from loxmatter.radios.bluetooth_health import CATEGORIES, KernelLog, counts_since
 
 if TYPE_CHECKING:
     # Exclusively for type annotations - see module docstring for why
@@ -533,6 +534,31 @@ def _check_miniserver(sender: UdpSender | None) -> tuple[bool, str]:
     return True, i18n.t("api.diagnostics.network_path_exists", host=host, port=port)
 
 
+_HOUR_USEC: Final = 3600 * 1_000_000
+
+
+def _check_bluetooth(kernel_log: KernelLog | None) -> tuple[bool, str]:
+    """Bluetooth and power faults of the last hour (design 2026-09-22, 7.1).
+
+    "Not available" is green: a host whose kernel log this bridge may not read
+    is not broken. Only counted categories are shown, never a kernel line."""
+    if kernel_log is None:
+        return True, i18n.t("api.diagnostics.bluetooth_not_available")
+    findings = kernel_log.findings()
+    now = kernel_log.now_usec()
+    if findings is None or now is None:
+        return True, i18n.t("api.diagnostics.bluetooth_not_available")
+    counts = counts_since(findings, now - _HOUR_USEC)
+    parts = [
+        i18n.t(f"api.diagnostics.bluetooth_category_{category}", count=counts[category])
+        for category in CATEGORIES
+        if counts[category]
+    ]
+    if not parts:
+        return True, i18n.t("api.diagnostics.bluetooth_ok")
+    return False, i18n.t("api.diagnostics.bluetooth_findings", findings="; ".join(parts))
+
+
 class ResendableRuntime(Protocol):
     """What this router needs from the runtime: a full resend.
 
@@ -552,6 +578,7 @@ def build_diagnostics_router(
     sender: UdpSender | None,
     matter_data_dir: Path | None,
     runtime: ResendableRuntime,
+    kernel_log: KernelLog | None = None,
 ) -> APIRouter:
     """Builds the `APIRouter` for `/api/diagnostics/*` (Spec 10.5).
 
@@ -605,6 +632,7 @@ def build_diagnostics_router(
             _run_check("store", lambda: _check_store(store)),
             _run_check("ipv6", _check_ipv6),
             _run_check("thread", _check_thread),
+            _run_check("bluetooth", lambda: _check_bluetooth(kernel_log)),
             _run_check("miniserver", lambda: _check_miniserver(sender)),
         ]
 

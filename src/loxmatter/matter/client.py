@@ -246,6 +246,22 @@ class BridgeMatterClient:
         self._queue: asyncio.Queue[_QueueItem] | None = None
         self._handler: RuntimeEventHandler | None = None
         self._resolve_device_id: Callable[[int], int | None] | None = None
+        self._node_added_listeners: list[Callable[[int], None]] = []
+
+    def add_node_added_listener(self, listener: Callable[[int], None]) -> Callable[[], None]:
+        """Call `listener(node_id)` on every `NODE_ADDED` from matter-server.
+
+        For the commissioning tracker (design 2026-09-22, section 5.1): the
+        event arrives before `commission_with_code` returns and is the only
+        intermediate step matter-server reports. Returns the function that
+        removes the listener again."""
+        self._node_added_listeners.append(listener)
+
+        def unsubscribe() -> None:
+            with contextlib.suppress(ValueError):
+                self._node_added_listeners.remove(listener)
+
+        return unsubscribe
 
     def _default_session_factory(self, session: Any) -> Any:
         # Lazily imported, so tests never need to load matter_server.
@@ -738,6 +754,12 @@ class BridgeMatterClient:
                 # path sets `d<id>_online`, the other catches up
                 # subscriptions.
                 queue.put_nowait(_FollowNode(data.node_id))
+                if event is EventType.NODE_ADDED:
+                    for listener in list(self._node_added_listeners):
+                        try:
+                            listener(data.node_id)
+                        except Exception:
+                            logger.exception("A node-added listener failed")
             elif event is EventType.NODE_REMOVED:
                 # data here is the bare node ID (not a node object) - see
                 # MatterClient._handle_event_message.

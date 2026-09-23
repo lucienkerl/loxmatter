@@ -58,6 +58,7 @@ dependencies = [
     "zigpy>=2.2.0",
     "bellows>=1.0.1",
     "zha-quirks>=2.2.2",
+    "dbus-fast>=2.24",
 ]
 
 [project.scripts]
