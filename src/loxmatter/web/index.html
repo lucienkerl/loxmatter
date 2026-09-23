@@ -2178,8 +2178,16 @@
             <div>
               <p x-text="t('web.system.version_running', { version: versionInfo.version })"></p>
               <p class="hint">
+                <!-- The commit line says when that commit was made as soon as
+                     the build knows it (design 2026-09-23). An image built
+                     before this field existed, or by hand on a host, reports
+                     no date and keeps the undated sentence. The build time in
+                     the span below stays: it answers a different question,
+                     namely when this image was produced. -->
                 <span x-show="versionInfo.commit" x-cloak
-                      x-text="t('web.system.version_commit', { commit: formatCommit(versionInfo.commit) })"></span>
+                      x-text="versionInfo.commit_date
+                              ? t('web.system.version_commit_dated', { commit: formatCommit(versionInfo.commit), date: formatTimestamp(versionInfo.commit_date) })
+                              : t('web.system.version_commit', { commit: formatCommit(versionInfo.commit) })"></span>
                 <span x-show="versionInfo.built_at" x-cloak
                       x-text="t('web.system.version_built_at', { built_at: formatTimestamp(versionInfo.built_at) })"></span>
               </p>

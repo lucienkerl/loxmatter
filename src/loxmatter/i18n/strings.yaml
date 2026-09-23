@@ -2110,6 +2110,9 @@ web.system.version_running:
 web.system.version_commit:
   en: "Commit {commit}"
   de: "Commit {commit}"
+web.system.version_commit_dated:
+  en: "Commit {commit} of {date}"
+  de: "Commit {commit} vom {date}"
 web.system.version_built_at:
   en: "built {built_at}"
   de: "gebaut {built_at}"

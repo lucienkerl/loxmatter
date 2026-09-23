@@ -107,7 +107,7 @@ async def test_no_access_without_session(unauthenticated_api):
 async def test_the_ui_knows_all_texts_of_the_version_card():
     """A missing key shows up in the browser otherwise - as an
     empty field, not as an error. This test confirms the existence
-    of all six keys. But this doesn't prove both languages
+    of all seven keys. But this doesn't prove both languages
     are present: raw_template() falls back to English, so
     a missing de entry would go undetected here. Also
     tests/test_i18n.py doesn't cover that -
@@ -120,9 +120,19 @@ async def test_the_ui_knows_all_texts_of_the_version_card():
         "web.system.version_heading",
         "web.system.version_running",
         "web.system.version_commit",
+        "web.system.version_commit_dated",
         "web.system.version_built_at",
         "web.system.version_dev_hint",
         "web.system.version_dev_channel_hint",
     ):
         assert i18n.raw_template(key)
         assert key in i18n.strings_with_prefix("web.")
+
+
+async def test_the_dated_commit_text_exists_in_both_languages():
+    """The generic check above resolves through the English fallback, so a
+    missing `de` would pass it. Fault to prove it: delete the `de:` line."""
+    from loxmatter import i18n
+
+    entry = i18n._STRINGS["web.system.version_commit_dated"]
+    assert entry.get("en") and entry.get("de") and entry["en"] != entry["de"]

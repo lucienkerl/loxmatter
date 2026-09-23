@@ -8,6 +8,12 @@ people who don't know the code.
 
 ## [Unreleased]
 
+### Added
+
+- **The version card names the commit's date.** On the `dev` channel the
+  version alone cannot say which state is installed; the commit line now reads
+  "Commit a3f91c2 of 21/09/2026, 18:42" as soon as the running image knows it.
+
 ### Changed
 
 - **The installer asks clearer questions, and all of them up front.** It lists
