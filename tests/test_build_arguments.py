@@ -14,9 +14,9 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""The CI and the Dockerfile must agree on the same four arguments.
+"""The CI and the Dockerfile must agree on the same five arguments.
 
-This is deliberately NOT a test that just claims four lines exist in the
+This is deliberately NOT a test that just claims five lines exist in the
 Dockerfile - such a test would be true as soon as someone types the names,
 and would stay true if the CI then passes different ones. What is checked
 is agreement between both files, which is exactly the error that would
