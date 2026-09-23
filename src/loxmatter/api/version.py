@@ -43,6 +43,7 @@ from loxmatter.version import build_info
 class VersionOut(BaseModel):
     version: str
     commit: str | None
+    commit_date: str | None
     built_at: str | None
     schema_version: int
 
@@ -56,6 +57,7 @@ def build_version_router() -> APIRouter:
         return VersionOut(
             version=info.version,
             commit=info.commit,
+            commit_date=info.commit_date,
             built_at=info.built_at,
             schema_version=info.schema_version,
         )

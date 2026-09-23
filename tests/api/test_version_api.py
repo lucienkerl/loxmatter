@@ -59,12 +59,14 @@ async def unauthenticated_api(
 async def test_die_route_nennt_die_vier_angaben(api, monkeypatch):
     monkeypatch.setenv("LOXMATTER_VERSION", "0.3.0")
     monkeypatch.setenv("LOXMATTER_COMMIT", "a3f91c2")
+    monkeypatch.setenv("LOXMATTER_COMMIT_DATE", "2026-09-08T09:58:12Z")
     monkeypatch.setenv("LOXMATTER_BUILT_AT", "2026-09-08T10:00:00Z")
     response = await api.get("/api/version")
     assert response.status_code == 200
     assert response.json() == {
         "version": "0.3.0",
         "commit": "a3f91c2",
+        "commit_date": "2026-09-08T09:58:12Z",
         "built_at": "2026-09-08T10:00:00Z",
         "schema_version": schema_version(),
     }
@@ -73,12 +75,28 @@ async def test_die_route_nennt_die_vier_angaben(api, monkeypatch):
 async def test_it_responds_even_in_development_checkout(api, monkeypatch):
     """No 500 when variables are missing - otherwise the UI
     would be unusable outside of Docker."""
-    for name in ("LOXMATTER_VERSION", "LOXMATTER_COMMIT", "LOXMATTER_BUILT_AT"):
+    for name in (
+        "LOXMATTER_VERSION",
+        "LOXMATTER_COMMIT",
+        "LOXMATTER_COMMIT_DATE",
+        "LOXMATTER_BUILT_AT",
+    ):
         monkeypatch.delenv(name, raising=False)
     response = await api.get("/api/version")
     assert response.status_code == 200
     assert response.json()["version"] == "dev"
     assert response.json()["commit"] is None
+    assert response.json()["commit_date"] is None
+
+
+async def test_an_empty_commit_date_reads_as_missing(api, monkeypatch):
+    """Docker Compose interpolates a variable missing from `.env` to an empty
+    string - the trap `_clean` exists for. Fault to prove it: read the variable
+    with `os.environ.get` instead of `_clean`."""
+    monkeypatch.setenv("LOXMATTER_COMMIT", "a3f91c2")
+    monkeypatch.setenv("LOXMATTER_COMMIT_DATE", "")
+    response = await api.get("/api/version")
+    assert response.json()["commit_date"] is None
 
 
 async def test_no_access_without_session(unauthenticated_api):
