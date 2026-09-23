@@ -12,7 +12,7 @@ people who don't know the code.
 
 - **The version card names the commit's date.** On the `dev` channel the
   version alone cannot say which state is installed; the commit line now reads
-  "Commit a3f91c2 of 21/09/2026, 18:42" as soon as the running image knows it.
+  "Commit a3f91c2 of 9/21/2026, 6:42:11 PM" as soon as the running image knows it.
 - **Commissioning shows what it is doing.** The dialog follows the device
   from "searching" to "found", "connected" and "joined", lists the Matter
   devices advertising nearby, and warns when the Bluetooth chip reports

@@ -56,7 +56,7 @@ async def unauthenticated_api(
     store.close()
 
 
-async def test_die_route_nennt_die_vier_angaben(api, monkeypatch):
+async def test_the_route_names_every_value_of_the_running_build(api, monkeypatch):
     monkeypatch.setenv("LOXMATTER_VERSION", "0.3.0")
     monkeypatch.setenv("LOXMATTER_COMMIT", "a3f91c2")
     monkeypatch.setenv("LOXMATTER_COMMIT_DATE", "2026-09-08T09:58:12Z")

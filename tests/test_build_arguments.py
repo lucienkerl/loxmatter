@@ -169,7 +169,7 @@ def test_the_ci_reads_the_commit_date_in_the_same_shape_as_the_build_time() -> N
 def test_every_build_argument_of_the_image_is_also_exported_as_an_environment_variable() -> None:
     """An `ARG` the image does not turn into an `ENV` reaches the build and
     nothing else: the running bridge would report the value as missing, which
-    is exactly what a fourth argument is easy to forget."""
+    is exactly what a fifth argument is easy to forget."""
     source = DOCKERFILE.read_text(encoding="utf-8")
     declared = set(re.findall(r"^ARG\s+([A-Z_][A-Z0-9_]*)", source, re.MULTILINE))
     exported = set(re.findall(r"^\s*(?:ENV\s+)?([A-Z_][A-Z0-9_]*)=\$\{\1\}", source, re.MULTILINE))
