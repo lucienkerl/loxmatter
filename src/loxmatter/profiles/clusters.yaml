@@ -46,12 +46,21 @@
 # every cluster that has (so far) no device demanding otherwise. A new
 # element rank needs, as here, a device that actually requires it,
 # not just a guess.
+#
+# `feedback: true` on an attribute entry marks the state behind a command
+# the same cluster accepts - on/off, level, colour. Where Loxone is the only
+# system controlling a device, such a value only echoes what Loxone just
+# sent, so it is not preselected for export (design 2026-09-24). It is not
+# the same as `functional: false`: a feedback value stays at the top of the
+# signal dialog, only unticked. A cluster added to this table for its
+# commands (window covering, thermostat, door lock) marks its own feedback
+# attributes here when it is added; an unmarked attribute stays preselected.
 clusters:
   6:
     name: onoff
     rank: 10
     attributes:
-      0: {slug: onoff, unit: ""}
+      0: {slug: onoff, unit: "", feedback: true}
     commands:
       # "off"/"on" must be in quotes: otherwise YAML 1.1 reads them
       # as booleans, not as strings (PyYAML trap).
@@ -63,7 +72,7 @@ clusters:
     rank: 20
     attributes:
       # 0-254 to 0-100 %: 100/254
-      0: {slug: level, unit: "%", scale: 0.3937007874015748}
+      0: {slug: level, unit: "%", scale: 0.3937007874015748, feedback: true}
     commands:
       0: {slug: level, takes_value: true, control: percent}
       4: {slug: level_onoff, takes_value: true, control: percent}
@@ -121,10 +130,10 @@ clusters:
       # string stays empty rather than prescribing a made-up precision -
       # the WebUI shows "°" regardless (`signal.unit`, straight from this
       # table, independent of `unit_format`).
-      0: {slug: hue, unit: "°", scale: 1.4173228346456692}
+      0: {slug: hue, unit: "°", scale: 1.4173228346456692, feedback: true}
       # Saturation (CurrentSaturation, 1): 0-254 like `level` (cluster 8) -
       # the same numeric value as there, not recomputed.
-      1: {slug: saturation, unit: "%", scale: 0.3937007874015748}
+      1: {slug: saturation, unit: "%", scale: 0.3937007874015748, feedback: true}
       # Color temperature (ColorTemperatureMireds, 7): Matter returns
       # mired, Loxone wants Kelvin - but Kelvin = 1e6 / mired is a
       # reciprocal, not a factor, and the `scale` mechanism can only
@@ -132,17 +141,17 @@ clusters:
       # makes that clear, instead of inventing a wrong Kelvin number. Open
       # point (missing reciprocal conversion):
       # docs/superpowers/specs/2026-09-03-signal-selection-design.md section 10.
-      7: {slug: colortemp_mireds, unit: mired}
+      7: {slug: colortemp_mireds, unit: mired, feedback: true}
       # Color mode (ColorMode, 8): an enumeration, not a physical
       # quantity - no unit.
-      8: {slug: colormode, unit: ""}
+      8: {slug: colormode, unit: "", feedback: true}
       # CurrentX (3) and CurrentY (4): the chromaticity as the ZCL and
       # Matter both carry it, x = value / 65536. Left raw - a division by
       # 65536 would be expressible as `scale`, but the pair only means
       # anything together, and two independent 0-1 numbers in Loxone are
       # less useful than the two integers the standard names.
-      3: {slug: color_x, unit: ""}
-      4: {slug: color_y, unit: ""}
+      3: {slug: color_x, unit: "", feedback: true}
+      4: {slug: color_y, unit: "", feedback: true}
       # ColorTempPhysicalMinMireds (16395) and ColorTempPhysicalMaxMireds
       # (16396): what color temperature the light can do at all. IDs
       # checked against the installed SDK (chip.clusters.Objects.

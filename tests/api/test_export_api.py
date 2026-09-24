@@ -57,15 +57,16 @@ async def api(
 
 
 async def test_preview_reports_what_would_be_written(api):
-    """`inputs` since Task 6: 5 relevant signals of the plug (see
+    """`inputs` since Task 6: 4 relevant signals of the plug (`onoff` is
+    feedback since 2026-09-24) (see
     `tests/model/test_store.py::test_a_freshly_registered_plug_exports_only_its_meaningful_values`)
-    plus the online signal, makes 6. `skipped` stays at 49 - it still only
+    plus the online signal, makes 5. `skipped` stays at 49 - it still only
     counts what's technically not mappable (`is_exportable`), unaffected by
     the new relevance selection."""
     client, _, device_id = api
     preview = (await client.get("/api/export/preview?bridge_ip=192.168.1.50")).json()
     device = next(d for d in preview["devices"] if d["device_id"] == device_id)
-    assert device["inputs"] == 6
+    assert device["inputs"] == 5
     assert device["commands"] == 3
     assert device["skipped"] == 49
 

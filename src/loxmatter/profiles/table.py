@@ -218,6 +218,43 @@ def marked_non_functional(ref: SignalRef) -> bool:
     return entry.get("functional") is False
 
 
+def marks_feedback(ref: SignalRef) -> bool:
+    """Whether the table marks this attribute as feedback
+    (`feedback: true`): the state behind a command the same cluster accepts.
+
+    Where Loxone is the only system controlling a device, such a value only
+    echoes what Loxone just sent, so it is not preselected for export
+    (design 2026-09-24). It stays functional - the signal dialog keeps
+    showing it at the top, only unticked.
+
+    A mark in the table rather than a derivation from the device: a
+    thermostat accepts commands and reports the measured room temperature
+    in the same cluster, and `_migrate_to_v12` has no snapshot to derive
+    anything from. Events are never feedback.
+    """
+    if ref.kind is SignalKind.EVENT:
+        return False
+    cluster = _table().get(ref.cluster_id)
+    if cluster is None:
+        return False
+    entry = (cluster.get("attributes") or {}).get(ref.element_id)
+    if not entry:
+        return False
+    return entry.get("feedback") is True
+
+
+def feedback_elements() -> list[tuple[int, int]]:
+    """Every `(cluster_id, element_id)` attribute pair marked as feedback,
+    sorted - for `model.store._migrate_to_v12`, which has no `SignalRef`
+    to ask `marks_feedback` with."""
+    return sorted(
+        (cluster_id, element_id)
+        for cluster_id, cluster in _table().items()
+        for element_id, entry in (cluster.get("attributes") or {}).items()
+        if entry and entry.get("feedback") is True
+    )
+
+
 def struct_field(ref: SignalRef) -> int | None:
     """The field number to pull out of a struct - or None.
 

@@ -114,8 +114,9 @@ def test_non_exportable_attributes_do_not_appear(tmp_path):
     """Spec 6.6: of 159 attributes, only 110 can be technically mapped. Since
     task 6, `loxmatter export` additionally exports only what
     `profiles.relevance.is_functional` classifies as actually intended -
-    for this plug, 5 of those remain (see
-    `tests/export/test_signals.py::test_plug_fixture_yields_6_inputs_with_the_relevance_default`)."""
+    for this plug, 4 of those remain, `onoff` being feedback since
+    2026-09-24 (see
+    `tests/export/test_signals.py::test_plug_fixture_yields_5_inputs_with_the_relevance_default`)."""
     CliRunner().invoke(
         app,
         [
@@ -130,7 +131,7 @@ def test_non_exportable_attributes_do_not_appear(tmp_path):
     )
     text = next(tmp_path.glob("VIU_*.xml")).read_text(encoding="utf-8-sig")
     commands = text.count("<VirtualInUdpCmd ")
-    assert commands == 5 + 1  # relevant attributes plus the online signal
+    assert commands == 4 + 1  # relevant attributes plus the online signal
 
 
 def test_plug_gets_only_the_onoff_commands(tmp_path):
@@ -653,3 +654,31 @@ def test_export_marks_a_group_as_exported(tmp_path):
         assert store.group(group.id).exported_at is not None
     finally:
         store.close()
+
+
+def test_a_colour_light_template_has_only_the_online_input(tmp_path):
+    """Design 2026-09-24: Loxone controls the light, so its template carries
+    no feedback input - only the device's own online signal - while every
+    output stays."""
+    result = CliRunner().invoke(
+        app,
+        [
+            "export",
+            "--fixture",
+            str(FIXTURES / "ikea_kajplats_cws_lamp.json"),
+            "--bridge-ip",
+            "192.168.1.50",
+            "--out",
+            str(tmp_path),
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    inputs = next(tmp_path.glob("VIU_*.xml")).read_text(encoding="utf-8-sig")
+    outputs = next(tmp_path.glob("VO_*.xml")).read_text(encoding="utf-8-sig")
+    assert inputs.count("<VirtualInUdpCmd ") == 1
+    assert "_online:\\v" in inputs
+    # 9: the lamp's accepted commands (outputs are untouched by this branch,
+    # only inputs lose the feedback ones - see `loxmatter export --fixture
+    # tests/fixtures/nodes/ikea_kajplats_cws_lamp.json`'s own "N output
+    # commands" line).
+    assert outputs.count("<VirtualOutCmd ") == 9

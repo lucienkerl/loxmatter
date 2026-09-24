@@ -30,6 +30,15 @@ people who don't know the code.
 
 ### Changed
 
+- **Lights and plugs no longer report their state back to Loxone by
+  default.** When Loxone is the only system that switches a device, its
+  on/off, brightness and colour inputs only repeat what Loxone just sent.
+  They are now unticked for every device — also for those already set up,
+  once, with this update. Sensors, buttons, energy readings, the battery and
+  the online input stay. If a device has a button or app of its own that can
+  switch it — a plug, a switch — that is the case where you tick its values
+  again in the signal dialog. Inputs already in your project file are listed
+  as orphaned by the sync; remove them in Loxone Config.
 - **The installer asks clearer questions, and all of them up front.** It lists
   the USB sticks it finds by name and asks which one is the Thread stick — or
   none, which is also the default when there are two it cannot tell apart. It

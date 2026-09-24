@@ -75,8 +75,10 @@ from loxmatter.profiles.relevance import (
 from loxmatter.profiles.table import (
     Exportability,
     element_rank_for,
+    feedback_elements,
     is_exportable,
     lookup,
+    marks_feedback,
     rank_for,
     struct_field,
 )
@@ -153,7 +155,11 @@ DEFAULT_LISTEN_PORT = 8080
 # reading them from `runtime.last_values_for()`, cannot work: text values
 # never survive into a Loxone-mapped signal value in the first place, see
 # the plan's "Task 2 Correction" section).
-_SCHEMA_VERSION = 11
+# Version 12 (no feedback inputs, design 2026-09-24) adds no column: it sets
+# `signal.exported = 0` for every attribute the profile table marks as
+# feedback, see `_migrate_to_v12`. Like `_migrate_to_v3` it re-decides a
+# default for existing rows; unlike there, it only ever unticks.
+_SCHEMA_VERSION = 12
 
 
 def schema_version() -> int:
@@ -818,6 +824,61 @@ def _migrate_to_v11(db: sqlite3.Connection) -> None:
     _add_column_if_missing(db, "device", "serial_number", "TEXT")
 
 
+def _migrate_to_v12(db: sqlite3.Connection) -> None:
+    """Unticks every stored feedback signal (design 2026-09-24, section 5).
+
+    Feedback is the state behind a command the same cluster accepts -
+    `profiles.table.feedback_elements` names the pairs. From version 12 on
+    `register_signals` leaves them unexported on a new device; this brings
+    every device commissioned earlier to the same state, so the next export
+    no longer carries their inputs.
+
+    It cannot tell a preselected feedback signal from one somebody ticked by
+    hand - the store keeps no record of which is which - and unticks both.
+    Decided consciously: leaving stored devices alone would have kept every
+    existing light's feedback inputs. Additive like every migration here: it
+    writes one column of the matching rows and adds or drops nothing, so a
+    rolled-back image finds a valid state.
+
+    **Stamps `device.updated_at` for every device it actually unticks a
+    signal on**, per feedback pair and BEFORE the unticking `UPDATE` -
+    `Store.set_exported` does the same via `_touch_owning_device` for a
+    change through the API, and this migration changes the same column
+    without going through it. Without the stamp, `GET /api/export/status`
+    would keep showing a light this migration just unticked as "exported,
+    unchanged", because nothing else on this row moved. Only devices with at
+    least one row that is actually `exported = 1` before this runs are
+    touched, so a device without a ticked feedback signal is left alone.
+
+    This migration reads `feedback_elements()` as the profile table stands
+    WHEN IT RUNS. A mark added to a later cluster therefore also reaches a
+    database that still upgrades from schema 11 or older at that point, but
+    not one already sitting at schema 12 - the same trade `_migrate_to_v3`
+    makes for its own re-decided defaults. A later mark that must reach
+    already-migrated devices needs its own migration; this one never runs a
+    second time.
+
+    A device commissioned by a rolled-back, schema-11-only image AFTER this
+    migration already ran keeps its feedback ticked: a migration only ever
+    runs once going forward, and rolling the image back does not undo it or
+    make it run again. That is a valid state, not damage - the same one a
+    hand-ticked signal is in, and the user can untick it in the signal
+    dialog like any other."""
+    now = now_iso()
+    for cluster_id, element_id in feedback_elements():
+        db.execute(
+            "UPDATE device SET updated_at = ? WHERE id IN ("
+            "SELECT device_id FROM signal"
+            " WHERE cluster_id = ? AND element_id = ? AND kind = 'attribute' AND exported = 1)",
+            (now, cluster_id, element_id),
+        )
+        db.execute(
+            "UPDATE signal SET exported = 0"
+            " WHERE cluster_id = ? AND element_id = ? AND kind = 'attribute'",
+            (cluster_id, element_id),
+        )
+
+
 # Migrations in order, applied from whichever version is stored - to extend
 # for a later schema change: simply append, with the next version number as
 # the key.
@@ -833,6 +894,7 @@ _MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     9: _migrate_to_v9,
     10: _migrate_to_v10,
     11: _migrate_to_v11,
+    12: _migrate_to_v12,
 }
 
 
@@ -2389,7 +2451,13 @@ class Store:
                 # other hand, never belongs to the user (see above) and is
                 # therefore written in BOTH branches.
                 functional = is_functional(ref, device_types)
-                exported = is_exportable(profile.exportability) and functional
+                # Third question (design 2026-09-24): whether the value is
+                # only feedback of a command - then Loxone sent it itself,
+                # and it stays unticked. `functional` stays true, so the
+                # signal dialog still shows it at the top.
+                exported = (
+                    is_exportable(profile.exportability) and functional and not marks_feedback(ref)
+                )
                 self._db.execute(
                     "INSERT INTO signal "
                     "(device_id, endpoint, cluster_id, element_id, kind, key, title, unit,"
