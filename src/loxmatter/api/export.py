@@ -150,6 +150,25 @@ def _loxone_commands(commands: Sequence[StoredCommand]) -> list[LoxoneCommand]:
     return to_outputs(commands)
 
 
+def _group_has_export(commands: Sequence[StoredGroupCommand]) -> bool:
+    """Whether a group has anything left to export, given its raw stored
+    commands.
+
+    `preview`, `status` and `download` each separately decide whether a
+    group is worth listing at all - and each used to ask a different
+    question: `download` already ran the rows through `to_group_outputs`
+    (which drops unexported ones, see `export.outputs`) before checking
+    for emptiness, while `preview` and `status` checked the unfiltered
+    `store.group_commands(...)` instead. A group whose every command had
+    been unexported then still showed up in the preview with a
+    `VO_g*.xml` name and in the status list as pending, while `download`
+    quietly wrote no file for it - exactly the preview/download mismatch
+    `preview`'s own docstring exists to prevent. One function, called from
+    all three, so the definition of "empty" cannot drift between them
+    again."""
+    return bool(to_group_outputs(commands))
+
+
 def _device_preview(device: StoredDevice, store: Store) -> ExportDeviceOut:
     signals = store.signals(device.id)
     commands = store.commands(device.id)
@@ -290,14 +309,16 @@ def build_export_router(store: Store) -> APIRouter:
         `download` below has always bundled every group's `VO_g*.xml`
         alongside whatever devices it writes - this used to promise a
         different, smaller file list than the download it describes. A
-        group with no commands is skipped here exactly as `download`
-        skips writing a file for it (design 4.3: an emptied group has
+        group with nothing left to export - no commands at all, or every
+        one of them unexported (`_group_has_export`, the same test
+        `download` applies before writing a file) - is skipped here
+        exactly as `download` skips it (design 4.3: an emptied group has
         nothing to export)."""
         devices = [_device_preview(device, store) for device in store.devices()]
         groups = []
         for group in store.groups():
             group_commands = store.group_commands(group.id)
-            if not group_commands:
+            if not _group_has_export(group_commands):
                 continue
             groups.append(_group_preview(group, group_commands))
         system_files = ["VIU_Matter_System.xml", "VO_Matter_System.xml"] if system else []
@@ -434,8 +455,11 @@ def build_export_router(store: Store) -> APIRouter:
             for group in store.groups():
                 group_commands = to_group_outputs(store.group_commands(group.id))
                 if not group_commands:
-                    # An emptied group has no outputs to offer. It keeps
-                    # existing (design 4.3); it just has nothing to export.
+                    # An emptied group has no outputs to offer - the same
+                    # test as `_group_has_export` above, already applied
+                    # (`to_group_outputs` was called on the line above).
+                    # It keeps existing (design 4.3); it just has nothing
+                    # to export.
                     continue
                 archive.writestr(
                     filename_for("VO", group.id, group.label, kind="g"),
@@ -478,14 +502,15 @@ def build_export_router(store: Store) -> APIRouter:
         this endpoint's response as a LIST, not an object - so a group's
         status is a further entry of a different shape
         (`GroupExportStatusOut`, `group_id` instead of `device_id`)
-        rather than a second top-level key. A group with no commands is
-        left out, the same as in `preview` above and for the same reason:
-        it produces no file for `download` to mark exported."""
+        rather than a second top-level key. A group with nothing left to
+        export (`_group_has_export`) is left out, the same as in
+        `preview` above and for the same reason: it produces no file for
+        `download` to mark exported."""
         entries: list[ExportStatusOut | GroupExportStatusOut] = [
             _status_for(device) for device in store.devices()
         ]
         for group in store.groups():
-            if not store.group_commands(group.id):
+            if not _group_has_export(store.group_commands(group.id)):
                 continue
             entries.append(_group_status_for(group))
         return entries

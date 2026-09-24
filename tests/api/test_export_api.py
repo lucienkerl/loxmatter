@@ -679,3 +679,79 @@ async def test_a_lamp_groups_preview_reports_its_hidden_count(tmp_path, no_invok
 
     entry = next(g for g in preview["groups"] if g["group_id"] == group.id)
     assert entry["hidden_count"] > 0
+
+
+async def test_a_lamp_groups_preview_reports_only_the_lumitech_output(
+    tmp_path, no_invoke, fake_runtime
+):
+    """The group counterpart of `test_a_registered_lamp_exports_only_its_lumitech_output`:
+    a group's single commands default to unexported the same as a
+    device's (Task 5), so a group of two lamps reports one exported
+    command - `g{id}_lumitech` - not one per withheld single command.
+
+    Fault to prove it: change `_group_preview`'s `commands` field back to
+    `len(commands)` - the count would include every withheld single
+    command alongside `lumitech`."""
+    store = Store(tmp_path / "t.sqlite")
+    cws_id = store.register_device(load_snapshot("ikea_kajplats_cws_lamp.json"))
+    store.register_signals(cws_id, load_snapshot("ikea_kajplats_cws_lamp.json"))
+    store.register_commands(cws_id, extract_commands(load_snapshot("ikea_kajplats_cws_lamp.json")))
+    ws_id = store.register_device(load_snapshot("ikea_kajplats_ws_lamp.json"))
+    store.register_signals(ws_id, load_snapshot("ikea_kajplats_ws_lamp.json"))
+    store.register_commands(ws_id, extract_commands(load_snapshot("ikea_kajplats_ws_lamp.json")))
+    group = store.create_group("Two lamps", [cws_id, ws_id])
+
+    app = build_app(store, no_invoke, fake_runtime(store))
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        await authenticate(store, client)
+        preview = (await client.get("/api/export/preview?bridge_ip=192.168.1.50")).json()
+    store.close()
+
+    entry = next(g for g in preview["groups"] if g["group_id"] == group.id)
+    assert entry["commands"] == 1
+
+
+async def test_preview_and_status_skip_a_group_with_no_exported_commands(
+    tmp_path, no_invoke, fake_runtime
+):
+    """Final fix pass: `download` has always decided whether a group has
+    anything to export by running its commands through `to_group_outputs`
+    (which drops unexported rows, `export.outputs`), while `preview` and
+    `status` asked the weaker question `not store.group_commands(...)` -
+    true only when the group has no commands AT ALL. A group whose every
+    command is unexported (Task 5 default for a light's single commands)
+    then still appeared in the preview with a `VO_g*.xml` name and in the
+    status list as pending - exactly the promise/reality mismatch
+    `preview`'s own docstring exists to prevent - even though `download`
+    silently wrote no file for it.
+
+    Fault to prove it: replace the `_group_has_export(...)` check in
+    `preview` (or in `status`) with the old unfiltered
+    `not store.group_commands(group.id)` - this test fails because the
+    group re-appears in the preview and the status list even though
+    `download` still omits its file."""
+    store = Store(tmp_path / "t.sqlite")
+    snapshot = load_snapshot("ikea_kajplats_cws_lamp.json")
+    device_id = store.register_device(snapshot)
+    store.register_signals(device_id, snapshot)
+    store.register_commands(device_id, extract_commands(snapshot))
+    group = store.create_group("All withheld", [device_id])
+    commands = store.group_commands(group.id)
+    assert commands, "the lamp group must have commands to withhold"
+    for command in commands:
+        store.set_group_command_exported(command.key, False)
+
+    app = build_app(store, no_invoke, fake_runtime(store))
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        await authenticate(store, client)
+        preview = (await client.get("/api/export/preview?bridge_ip=192.168.1.50")).json()
+        status = (await client.get("/api/export/status")).json()
+        response = await client.get("/api/export/download?bridge_ip=192.168.1.50")
+    store.close()
+
+    assert not any(g["group_id"] == group.id for g in preview["groups"])
+    assert not any(e.get("group_id") == group.id for e in status)
+    names = zipfile.ZipFile(io.BytesIO(response.content)).namelist()
+    assert not any(n.startswith(f"VO_g{group.id}_") for n in names)
