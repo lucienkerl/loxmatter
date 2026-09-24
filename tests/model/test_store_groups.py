@@ -933,3 +933,22 @@ def test_a_member_carrying_the_pair_on_two_endpoints_gets_both(store, lamps_with
     # The other member has exactly its own single row and must not pick
     # up the first member's extra endpoint as a side effect.
     assert tuple(c.endpoint for c in second.commands) == (1,)
+
+
+def test_a_light_group_offers_lumitech_and_withholds_the_single_commands(
+    store, lamps_with_commands
+):
+    group = store.create_group("Living room", lamps_with_commands)
+    flags = {c.slug: (c.exported, c.functional) for c in store.group_commands(group.id)}
+    assert flags.pop("lumitech") == (True, True)
+    assert set(flags.values()) == {(False, False)}
+
+
+def test_a_group_choice_survives_a_membership_recompute(store, lamps_with_commands):
+    """`register_group_commands` updates surviving rows in place.
+
+    Fault to prove it: make it DELETE and re-INSERT every row - this fails."""
+    group = store.create_group("Living room", lamps_with_commands)
+    store.set_group_command_exported(f"g{group.id}_color", True)
+    store.set_group_members(group.id, lamps_with_commands)
+    assert {c.slug: c.exported for c in store.group_commands(group.id)}["color"] is True
