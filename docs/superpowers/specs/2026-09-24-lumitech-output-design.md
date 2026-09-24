@@ -103,6 +103,20 @@ unchanged. For the same light and the same value, the calls a member
 receives through `g{id}_lumitech` are byte-identical to the calls
 `d{id}_{endpoint}_lumitech` produces.
 
+This holds per endpoint, not per member: `adapt_device_command` (Section
+4.1) limits `d{id}_{endpoint}_lumitech` to that one endpoint's own light
+rows before handing them to `adapt_group_command`, so `adapt.py`'s
+`member_dims` flag (whether an on/off-only endpoint gets a plain
+`on`/`off` or no call at all for a brightness value) is computed from that
+endpoint alone. `g{id}_lumitech` hands the member's rows from EVERY one
+of its endpoints to the same function, so `member_dims` there is true as
+soon as any endpoint of the member dims. A device with an on/off-only
+light endpoint next to a dimmable one therefore sees the two paths
+diverge for that first endpoint: reachable directly, it switches on/off;
+reachable through the group, its member also carries a dimmable
+endpoint, so `member_dims` is true there and it gets no call at all for a
+brightness value.
+
 ### 3.3 `colortemp` Rejects a Lumitech Value
 
 `colortemp` keeps taking a plain Kelvin number. A value that
@@ -149,6 +163,28 @@ existing output in this design.
   `ALTER TABLE command ADD COLUMN exported INTEGER` and the same for
   `group_command`. Nothing else. The migration is additive; a
   rollback by the updater to an older version does not read the column.
+  It also does not read the fact that a row is `lumitech` at all -
+  `register_commands` never deletes a command row (Section 4.1's
+  `LUMITECH` pair included), so the rolled-back image still finds every
+  `lumitech` row it wrote and exports it as an ordinary raw command,
+  same as before this feature existed. It then tries to SEND that
+  command as (-1, 0), a pair that exists in neither Matter nor Zigbee,
+  and gets a 400 for its trouble. A project already rewired to
+  `lumitech` therefore loses control of its lights on a rollback to
+  before this feature - inherent to rolling back the one output that
+  replaced the single commands as the default wiring, not a bug in the
+  rollback path itself.
+- **A light that is offline at the bridge's first start after the
+  update** (Section 4.1's `backfill_commands`, which skips a device
+  missing from `snapshots()`) gets no `lumitech` row and no default
+  rule to switch its existing outputs to expert - it keeps its old
+  export exactly as it was before the update, invisibly to the
+  maintainer, until the light is next seen: its first live snapshot then
+  runs `register_commands` (`Runtime.on_node_snapshot`, Section 4.1),
+  which creates the `lumitech` row, flips the light's other exported
+  commands to expert under the default rule, and stamps `device.
+  updated_at` - the same "changed since export" signal a live command
+  change gives any other device.
 - **`NULL` means "follows the default rule"; `0` or `1` is an explicit
   choice**, written only by the checkbox in the web UI. Every row existing
   at migration time is `NULL` and therefore follows the new rule at once -
