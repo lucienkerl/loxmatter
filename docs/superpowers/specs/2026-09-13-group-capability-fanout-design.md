@@ -12,6 +12,11 @@ Section 3 below. Everything else in that design stands, including the
 single category per group, the fan-out's ordering rules, and the absence of
 any group state.
 
+> **Note, 24 September 2026:** the open point in Section 7 ("the same
+> colour-point fallback for a single device") is served by the `lumitech`
+> output of `2026-09-24-lumitech-output-design.md`. The body below is not
+> rewritten.
+
 ## 1. What Happened, and Why the Intersection Is the Wrong Rule for Lights
 
 On 13 September 2026 the maintainer added a Zigbee TRADFRI WW lamp

@@ -27,6 +27,14 @@ people who don't know the code.
 - **The radios card shows the Thread network's name and channel.** After a
   start it warns when Thread devices exist but the border router has no
   network, instead of quietly creating a new one that would cut them off.
+- **Every light and light group has a "Lumitech / RGB" output.** It takes
+  whatever a Loxone lighting controller's Lumitech or RGB actuator sends and
+  drives colour, white temperature and brightness as far as the light
+  supports them — a tunable-white lamp that had no output understanding a
+  Lumitech value at all now has one.
+- **The signal dialog and the group dialog choose which outputs are
+  exported.** An "Outputs" part lists every output with a checkbox instead
+  of exporting them all.
 
 ### Changed
 
@@ -49,6 +57,11 @@ people who don't know the code.
 - **The installer checks the Miniserver address.** It asks the Miniserver for
   its serial number right away. If nothing answers, you can enter another
   address or keep this one; the summary at the end then reminds you to check it.
+- **A light exports only its "Lumitech / RGB" output by default** — also for
+  lights added before this update. The single commands (`on`, `level`,
+  `color`, `colortemp`, ...) move to an expert area and keep working there
+  and at runtime; existing Loxone wiring is unaffected. The project sync
+  lists the old outputs as orphaned.
 
 ### Fixed
 
@@ -61,6 +74,8 @@ people who don't know the code.
   unconfigured border router every 90 seconds.
 - **Switching Thread on in the radios card no longer rolls back** on a border
   router that has no network yet.
+- **The colour temperature output rejects a Lumitech value** with an error,
+  instead of sending 0 mired.
 
 ## [0.4.2] — 2026-09-21
 
