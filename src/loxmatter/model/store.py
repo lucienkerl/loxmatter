@@ -75,6 +75,7 @@ from loxmatter.profiles.relevance import (
 from loxmatter.profiles.table import (
     Exportability,
     element_rank_for,
+    feedback_elements,
     is_exportable,
     lookup,
     marks_feedback,
@@ -154,7 +155,11 @@ DEFAULT_LISTEN_PORT = 8080
 # reading them from `runtime.last_values_for()`, cannot work: text values
 # never survive into a Loxone-mapped signal value in the first place, see
 # the plan's "Task 2 Correction" section).
-_SCHEMA_VERSION = 11
+# Version 12 (no feedback inputs, design 2026-09-24) adds no column: it sets
+# `signal.exported = 0` for every attribute the profile table marks as
+# feedback, see `_migrate_to_v12`. Like `_migrate_to_v3` it re-decides a
+# default for existing rows; unlike there, it only ever unticks.
+_SCHEMA_VERSION = 12
 
 
 def schema_version() -> int:
@@ -819,6 +824,29 @@ def _migrate_to_v11(db: sqlite3.Connection) -> None:
     _add_column_if_missing(db, "device", "serial_number", "TEXT")
 
 
+def _migrate_to_v12(db: sqlite3.Connection) -> None:
+    """Unticks every stored feedback signal (design 2026-09-24, section 5).
+
+    Feedback is the state behind a command the same cluster accepts -
+    `profiles.table.feedback_elements` names the pairs. From version 12 on
+    `register_signals` leaves them unexported on a new device; this brings
+    every device commissioned earlier to the same state, so the next export
+    no longer carries their inputs.
+
+    It cannot tell a preselected feedback signal from one somebody ticked by
+    hand - the store keeps no record of which is which - and unticks both.
+    Decided consciously: leaving stored devices alone would have kept every
+    existing light's feedback inputs. Additive like every migration here: it
+    writes one column of the matching rows and adds or drops nothing, so a
+    rolled-back image finds a valid state."""
+    for cluster_id, element_id in feedback_elements():
+        db.execute(
+            "UPDATE signal SET exported = 0"
+            " WHERE cluster_id = ? AND element_id = ? AND kind = 'attribute'",
+            (cluster_id, element_id),
+        )
+
+
 # Migrations in order, applied from whichever version is stored - to extend
 # for a later schema change: simply append, with the next version number as
 # the key.
@@ -834,6 +862,7 @@ _MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     9: _migrate_to_v9,
     10: _migrate_to_v10,
     11: _migrate_to_v11,
+    12: _migrate_to_v12,
 }
 
 

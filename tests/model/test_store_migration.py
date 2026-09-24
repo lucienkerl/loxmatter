@@ -253,7 +253,7 @@ def test_migrating_an_old_database_sets_the_schema_version(tmp_path):
     store = Store(path)
     store.close()
 
-    assert user_version(path) == 11
+    assert user_version(path) == 12
 
 
 def test_reopening_an_already_migrated_store_is_a_noop(tmp_path):
@@ -268,7 +268,7 @@ def test_reopening_an_already_migrated_store_is_a_noop(tmp_path):
     first = Store(path)
     first.set_exported("d1_1_power", True)
     first.close()
-    assert user_version(path) == 11
+    assert user_version(path) == 12
 
     second = Store(path)
     try:
@@ -277,14 +277,14 @@ def test_reopening_an_already_migrated_store_is_a_noop(tmp_path):
         second.close()
 
     assert power.exported is True
-    assert user_version(path) == 11
+    assert user_version(path) == 12
 
 
 def test_a_fresh_database_is_already_at_the_latest_version(tmp_path):
     path = tmp_path / "fresh.sqlite"
     store = Store(path)
     store.close()
-    assert user_version(path) == 11
+    assert user_version(path) == 12
 
 
 def test_migration_failure_leaves_the_database_unchanged(tmp_path, monkeypatch):
@@ -326,7 +326,7 @@ def test_migrating_an_old_database_adds_exported_at_and_updated_at_as_null(tmp_p
 
     assert device.exported_at is None
     assert device.updated_at is None
-    assert user_version(path) == 11
+    assert user_version(path) == 12
 
 
 def test_opening_a_v1_database_only_runs_the_v2_migration(tmp_path):
@@ -354,7 +354,7 @@ def test_opening_a_v1_database_only_runs_the_v2_migration(tmp_path):
     finally:
         store.close()
 
-    assert user_version(path) == 11
+    assert user_version(path) == 12
     assert device.exported_at is None
     assert device.updated_at is None
     assert signal.key == "d1_1_power"
@@ -370,7 +370,7 @@ def test_reopening_an_already_v2_database_is_a_noop(tmp_path):
 
     first = Store(path)
     first.close()
-    assert user_version(path) == 11
+    assert user_version(path) == 12
 
     second = Store(path)
     try:
@@ -378,7 +378,7 @@ def test_reopening_an_already_v2_database_is_a_noop(tmp_path):
     finally:
         second.close()
 
-    assert user_version(path) == 11
+    assert user_version(path) == 12
     assert device.exported_at is None
     assert device.updated_at is None
 
@@ -755,7 +755,8 @@ def test_the_migration_reproduces_the_functional_export_counts_of_both_fixtures(
     checked-in images, set up under the old schema and migrated, must
     produce the same number of exported signals as a fresh registration
     (`tests/model/test_store.py`:
-    `test_a_freshly_registered_plug_exports_only_its_meaningful_values` = 5,
+    `test_a_freshly_registered_plug_exports_only_its_meaningful_values` = 4
+    since 2026-09-24, `onoff` being feedback,
     `test_a_freshly_registered_button_keeps_both_rockers_and_the_battery` =
     17) - proof that the fallback rule for the administrative endpoint in
     `_migrate_to_v3` (see there) loses nothing on the two only real devices
@@ -773,7 +774,7 @@ def test_the_migration_reproduces_the_functional_export_counts_of_both_fixtures(
     finally:
         store.close()
 
-    assert sorted(counts.values()) == [5, 17]
+    assert sorted(counts.values()) == [4, 17]
 
 
 def test_the_v4_migration_backfills_functional_independently_of_exported(tmp_path):
@@ -824,7 +825,7 @@ def test_migration_to_v5_adds_the_auth_tables_without_touching_devices(tmp_path)
 
     store = Store(path)
     try:
-        assert user_version(path) == 11
+        assert user_version(path) == 12
         assert store.auth.password_hash() is None
         store.auth.create_session("a", created_at=1, expires_at=2)
         assert store.auth.session_expires_at("a") == 2
@@ -852,7 +853,7 @@ def test_migration_to_v6_adds_the_resend_column_defaulting_to_off(tmp_path):
 
     store = Store(path)
     try:
-        assert user_version(path) == 11
+        assert user_version(path) == 12
         assert store.signal_by_key(key).resend is False
     finally:
         store.close()
@@ -881,7 +882,7 @@ def test_migration_to_v7_adds_room_and_device_types_as_null(tmp_path):
 
     store = Store(path)
     try:
-        assert user_version(path) == 11
+        assert user_version(path) == 12
         device = store.device(device_id)
         assert device.room is None
         assert device.device_types is None
@@ -905,7 +906,7 @@ def test_a_fresh_database_survives_the_v7_migration_without_duplicate_column(tmp
 
     store = Store(path)
     try:
-        assert user_version(path) == 11
+        assert user_version(path) == 12
     finally:
         store.close()
 
@@ -937,7 +938,7 @@ def test_a_v7_database_gains_the_group_tables(tmp_path):
 
 def test_a_fresh_database_ends_at_the_latest_version(tmp_path):
     store = Store(tmp_path / "fresh.sqlite")
-    assert store._db.execute("PRAGMA user_version").fetchone()[0] == 11
+    assert store._db.execute("PRAGMA user_version").fetchone()[0] == 12
     store.close()
 
 
@@ -970,7 +971,7 @@ def test_migration_10_adds_the_pending_table_and_only_adds(tmp_path):
 
     store = Store(path)
     try:
-        assert user_version(path) == 11
+        assert user_version(path) == 12
         tables = {
             row[0]
             for row in store._db.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
@@ -1005,7 +1006,7 @@ def test_migration_10_is_idempotent_on_a_fresh_database(tmp_path):
 
     store = Store(path)
     try:
-        assert user_version(path) == 11
+        assert user_version(path) == 12
     finally:
         store.close()
 
@@ -1035,7 +1036,7 @@ def test_migration_to_v11_adds_vendor_product_firmware_serial_as_null(tmp_path):
 
     store = Store(path)
     try:
-        assert user_version(path) == 11
+        assert user_version(path) == 12
         device = store.device(device_id)
         assert device.vendor_name is None
         assert device.product_name is None
@@ -1061,7 +1062,7 @@ def test_a_fresh_database_survives_the_v11_migration_without_duplicate_column(tm
 
     store = Store(path)
     try:
-        assert user_version(path) == 11
+        assert user_version(path) == 12
     finally:
         store.close()
 
@@ -1072,3 +1073,84 @@ def _columns(path, table: str) -> set[str]:
         return {str(row[1]) for row in db.execute(f"PRAGMA table_info({table})")}
     finally:
         db.close()
+
+
+def _open_at_v11_with_feedback_ticked(path: Path) -> dict[str, int]:
+    """A version-11 database as the previous release left it: a colour
+    light and a plug, every feedback signal ticked (the old default), plus
+    two hand-made choices the migration must not touch - the plug's
+    voltage unticked and the light's physical minimum colour temperature
+    ticked. Returns the device IDs by fixture."""
+    store = Store(path)
+    ids: dict[str, int] = {}
+    for name in ("ikea_kajplats_cws_lamp.json", "ikea_grillplats_plug.json"):
+        snap = load(name)
+        device_id = store.register_device(snap)
+        store.register_signals(device_id, snap)
+        ids[name] = device_id
+    store.set_exported(f"d{ids['ikea_grillplats_plug.json']}_2_voltage", False)
+    store.set_exported(f"d{ids['ikea_kajplats_cws_lamp.json']}_1_colortemp_phys_min_mireds", True)
+    store.close()
+
+    db = sqlite3.connect(str(path))
+    db.executescript(
+        "UPDATE signal SET exported = 1 WHERE kind = 'attribute' AND ("
+        " (cluster_id = 6 AND element_id = 0) OR (cluster_id = 8 AND element_id = 0)"
+        " OR (cluster_id = 768 AND element_id IN (0, 1, 3, 4, 7, 8)));"
+        " PRAGMA user_version = 11;"
+    )
+    db.commit()
+    db.close()
+    return ids
+
+
+def test_migration_to_v12_unticks_feedback_on_stored_devices(tmp_path):
+    """Design 2026-09-24, section 5: a light commissioned before the update
+    loses its feedback inputs on the first start after it, as a freshly
+    commissioned one never has them."""
+    path = tmp_path / "v11.sqlite"
+    ids = _open_at_v11_with_feedback_ticked(path)
+
+    store = Store(path)
+    try:
+        assert user_version(path) == 12
+        light = {s.key: s for s in store.signals(ids["ikea_kajplats_cws_lamp.json"])}
+        plug = {s.key: s for s in store.signals(ids["ikea_grillplats_plug.json"])}
+    finally:
+        store.close()
+
+    light_id = ids["ikea_kajplats_cws_lamp.json"]
+    for slug in (
+        "onoff",
+        "level",
+        "hue",
+        "saturation",
+        "color_x",
+        "color_y",
+        "colortemp_mireds",
+        "colormode",
+    ):
+        assert light[f"d{light_id}_1_{slug}"].exported is False, slug
+    assert plug[f"d{ids['ikea_grillplats_plug.json']}_1_onoff"].exported is False
+
+
+def test_migration_to_v12_leaves_every_other_choice_alone(tmp_path):
+    """Only the eight marked attributes change. A sensor value the user
+    unticked stays unticked, a device constant they ticked stays ticked,
+    and the plug's energy readings stay exported."""
+    path = tmp_path / "v11.sqlite"
+    ids = _open_at_v11_with_feedback_ticked(path)
+    plug_id = ids["ikea_grillplats_plug.json"]
+    light_id = ids["ikea_kajplats_cws_lamp.json"]
+
+    store = Store(path)
+    try:
+        plug = {s.key: s for s in store.signals(plug_id)}
+        light = {s.key: s for s in store.signals(light_id)}
+    finally:
+        store.close()
+
+    assert plug[f"d{plug_id}_2_voltage"].exported is False
+    assert light[f"d{light_id}_1_colortemp_phys_min_mireds"].exported is True
+    for slug in ("current", "power", "energy_imported"):
+        assert plug[f"d{plug_id}_2_{slug}"].exported is True, slug
