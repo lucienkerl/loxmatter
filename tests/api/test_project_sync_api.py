@@ -19,7 +19,9 @@
 from __future__ import annotations
 
 import base64
+import re
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import httpx2 as httpx
@@ -260,3 +262,47 @@ async def test_project_sync_distinguishes_a_group_from_a_same_numbered_device(ap
     # WebUI's old behaviour) could not preserve once merged into one card.
     assert {e["device_label"] for e in group_entries} == {"Kitchen group"}
     assert {e["device_label"] for e in device_entries} == {plug.label}
+
+
+async def test_project_sync_stamps_the_file_in_the_users_offset(api):
+    """`utc_offset` reaches the patched file's `Date`: two uploads a few
+    hours apart in offset differ in `Date` by those hours, and not at all
+    in `DateS`, which is UTC (see `projectsync/savedate.py`)."""
+    client, _store = api
+    project = SAMPLE_PROJECT.replace(
+        'Title="Testprojekt">',
+        'Title="Testprojekt" Date="2026-09-23 23:13:53" DateS="559430033">',
+        1,
+    ).encode("utf-8")
+
+    async def stamp(offset: int) -> tuple[datetime, int]:
+        response = await client.post(
+            "/api/export/project-sync",
+            params={"bridge_ip": "10.0.0.5", "utc_offset": offset},
+            files={"file": ("projekt.Loxone", project, "application/xml")},
+        )
+        assert response.status_code == 200
+        patched = base64.b64decode(response.json()["patched_base64"]).decode("utf-8")
+        date = re.search(r'Date="([^"]*)"', patched)
+        date_s = re.search(r'DateS="([^"]*)"', patched)
+        assert date is not None and date_s is not None
+        # `Date` carries no zone; UTC only makes the two comparable.
+        wall_clock = datetime.strptime(date.group(1), "%Y-%m-%d %H:%M:%S").replace(tzinfo=UTC)
+        return wall_clock, int(date_s.group(1))
+
+    east, east_s = await stamp(120)
+    west, west_s = await stamp(-300)
+    assert east_s > 559430033
+    # Seconds apart at most, since the two uploads ran one after the other.
+    assert abs(east_s - west_s) < 60
+    assert abs((east - west) - timedelta(hours=7)) < timedelta(seconds=60)
+
+
+async def test_project_sync_rejects_an_impossible_offset(api):
+    client, _store = api
+    response = await client.post(
+        "/api/export/project-sync",
+        params={"bridge_ip": "10.0.0.5", "utc_offset": 15 * 60},
+        files={"file": ("projekt.Loxone", SAMPLE_PROJECT.encode("utf-8"), "application/xml")},
+    )
+    assert response.status_code == 422

@@ -188,6 +188,33 @@ longer across the entire `<ControlList>`. Newly created captions
 (section 6, creation path) accordingly attach to the end of this
 `LoxLIVE` block, not to the end of `<ControlList>`.
 
+### 3.6 The "last saved" stamp (added 2026-09-23)
+
+A patched file used to keep the stamp of its last save in Loxone Config,
+so it looked older than it was. The stamp is two attributes of
+`<C Type="Document">`, neither documented:
+
+```
+Date="2026-09-23 23:13:53" DateS="559430033"
+```
+
+`Date` is the saving computer's wall-clock time, without a zone; `DateS`
+is the same moment in seconds since 2009-01-01 00:00 UTC. Checked against
+150 real project files from 2016 to 2026: the two always agree up to the
+UTC offset of the day (+1 h in winter, +2 h in summer, 0 on one machine
+set to UTC), and `Date` lies within seconds to minutes of the file's
+mtime. `CDate` and `BDate` beside them are not touched: `BDate` was
+always empty, and `CDate` is earlier than `Date` in some files and later
+in others, so it does not mean "last changed".
+
+When the plan changes anything, `apply_plan` sets both to the moment of
+the sync (`projectsync/savedate.py`). An unchanged file keeps its stamp,
+and a file without the attributes does not get them. The wall-clock half
+needs the user's offset, not the bridge's - a container's clock usually
+runs in UTC - so the WebUI sends the browser's as `utc_offset`. Without
+it, the offset the file itself last recorded (`Date` minus `DateS`)
+stands in.
+
 ## 4. Architecture & data flow
 
 ```

@@ -22,12 +22,14 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta, timezone
 
 from loxmatter import i18n
 from loxmatter.model.store import Store, StoredCommand, StoredGroupCommand, StoredSignal
 from loxmatter.projectsync.diff import SyncPlan, build_plan
 from loxmatter.projectsync.index import ProjectFormatError, build_index
 from loxmatter.projectsync.patch import apply_plan
+from loxmatter.projectsync.savedate import recorded_utc_offset
 
 __all__ = ["ProjectFormatError", "ProjectSyncResult", "run_sync"]
 
@@ -46,11 +48,20 @@ def run_sync(
     port: int,
     listen: int,
     miniserver_ip: str | None = None,
+    utc_offset: timedelta | None = None,
+    now: datetime | None = None,
 ) -> ProjectSyncResult:
     """`miniserver_ip` selects the `LoxLIVE` block (= Miniserver) to compare
     against, if the project file has several configured (see
     `index.build_index`/`index.AmbiguousMiniserverError`) - with exactly
-    one Miniserver in the file it remains optional."""
+    one Miniserver in the file it remains optional.
+
+    `utc_offset` is the user's, for the wall-clock half of the "last
+    saved" stamp (`projectsync.savedate`). The bridge's own clock zone is
+    no substitute: in a container it is usually UTC. Without one, the
+    offset the file itself last recorded stands in - right unless the
+    clocks changed in between - and UTC only when the file records none.
+    `now` exists for tests."""
     try:
         text = raw.decode("utf-8-sig")
     except UnicodeDecodeError as exc:
@@ -95,6 +106,10 @@ def run_sync(
     # format cannot be recognised at all" (design section 10), which should
     # rightly fail the whole upload (`api.project_sync` already catches
     # `ProjectFormatError` into a comprehensible 400).
+    if utc_offset is None:
+        recorded = None if index.document is None else recorded_utc_offset(index.document.attrs)
+        utc_offset = recorded if recorded is not None else timedelta(0)
+    saved_at = (now or datetime.now(UTC)).astimezone(timezone(utc_offset))
     patched = apply_plan(
         index,
         plan,
@@ -106,5 +121,6 @@ def run_sync(
         bridge_ip=bridge_ip,
         port=port,
         listen=listen,
+        saved_at=saved_at,
     )
     return ProjectSyncResult(plan, patched)

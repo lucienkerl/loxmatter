@@ -42,6 +42,7 @@ second set of signal keys for the same device).
 from __future__ import annotations
 
 import base64
+from datetime import timedelta
 
 from fastapi import APIRouter, File, HTTPException, Query, UploadFile
 
@@ -94,6 +95,15 @@ def build_project_sync_router(store: Store) -> APIRouter:
             " selected yet - in that case the response instead carries"
             " `needs_miniserver_selection=True` with the found Miniservers to choose from.",
         ),
+        utc_offset: int | None = Query(
+            None,
+            ge=-14 * 60,
+            le=14 * 60,
+            description="The user's UTC offset in minutes (east positive, +120 for"
+            " CEST). The patched file's `Date` - the wall-clock half of its"
+            ' "last saved" stamp - is written in it. Without it, the offset the file'
+            " last recorded is used.",
+        ),
     ) -> ProjectSyncPlanOut:
         """Builds the diff plan and the patched file in memory -
         writes nothing to disk and marks no device as exported (unlike
@@ -108,6 +118,7 @@ def build_project_sync_router(store: Store) -> APIRouter:
                 port=port,
                 listen=listen,
                 miniserver_ip=miniserver_ip,
+                utc_offset=None if utc_offset is None else timedelta(minutes=utc_offset),
             )
         except AmbiguousMiniserverError as exc:
             if not exc.candidates:
