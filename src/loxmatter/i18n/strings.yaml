@@ -361,6 +361,9 @@ api.errors.kelvin_not_positive:
 api.errors.lumitech_on_colortemp:
   en: "Lumitech value {value!r} does not belong on the colour temperature output: it takes plain Kelvin. Use the lumitech output."
   de: "Lumitech-Wert {value!r} gehört nicht auf den Farbtemperatur-Ausgang: der nimmt reine Kelvin. Den lumitech-Ausgang verwenden."
+api.errors.kelvin_too_high:
+  en: "colour temperature {value!r} is above 1,000,000 K and cannot be expressed in mired"
+  de: "Farbtemperatur {value!r} liegt über 1.000.000 Kelvin und lässt sich nicht in Mired ausdrücken"
 api.errors.command_unsupported:
   en: "Cluster {cluster_id} command {command_id} is not supported"
   de: "Cluster {cluster_id} Kommando {command_id} wird nicht unterstuetzt"

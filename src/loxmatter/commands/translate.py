@@ -141,14 +141,22 @@ def parse_kelvin(value: str) -> float:
     `kelvin_to_mireds` raised a plain `ValueError` and the routes answered
     500 instead of 400, and in a group a tunable-white member failed while a
     colour-only member clamped the same value and sent it. A Lumitech
-    number is also rejected here, not silently truncated (see below)."""
+    number is also rejected here, not silently truncated (see below), and so
+    is any other value `kelvin_to_mireds` would turn into 0 mired."""
     kelvin = _as_number(value)
     # A Lumitech number is not a Kelvin value: `kelvin_to_mireds` turned
-    # 201002700 into 0 mired and sent it (design 2026-09-24, 3.3).
-    if kelvin == int(kelvin) and is_lumitech(int(kelvin)):
+    # 201002700 into 0 mired and sent it (design 2026-09-24, 3.3). The
+    # integer part alone decides this - "200002700.5" is a Lumitech number
+    # with a spurious fraction, not a Kelvin value near 200 million.
+    if is_lumitech(int(kelvin)):
         raise UnsupportedValueError(i18n.t("api.errors.lumitech_on_colortemp", value=value))
     if kelvin <= 0:
         raise UnsupportedValueError(i18n.t("api.errors.kelvin_not_positive", value=value))
+    # Above 1,000,000 K, `int(1_000_000 / kelvin)` truncates to 0 mired -
+    # not a Lumitech number, but just as unsendable. 1,000,000 K itself
+    # still yields 1 mired and passes.
+    if kelvin > 1_000_000:
+        raise UnsupportedValueError(i18n.t("api.errors.kelvin_too_high", value=value))
     return kelvin
 
 
