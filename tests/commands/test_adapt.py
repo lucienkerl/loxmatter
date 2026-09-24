@@ -21,7 +21,7 @@ from __future__ import annotations
 import pytest
 
 from loxmatter import i18n
-from loxmatter.commands.adapt import adapt_group_command
+from loxmatter.commands.adapt import adapt_device_command, adapt_group_command
 from loxmatter.commands.color import kelvin_to_cie_xy, kelvin_to_hue_saturation, rgb_to_cie_xy
 from loxmatter.commands.translate import UnsupportedValueError, level_from_percent
 from loxmatter.model.store import StoredCommand
@@ -31,6 +31,7 @@ from loxmatter.profiles.light_commands import (
     COLOUR_XY,
     LEVEL,
     LEVEL_ONOFF,
+    LUMITECH,
     OFF,
     ON,
     TOGGLE,
@@ -45,6 +46,7 @@ _SLUGS = {
     COLOUR_HS: "color",
     COLOUR_XY: "color_xy",
     COLOUR_TEMPERATURE: "colortemp",
+    LUMITECH: "lumitech",
 }
 
 
@@ -384,3 +386,107 @@ def test_the_warm_end_of_the_locus_clips_negative_srgb_channels():
 def test_a_lumitech_value_on_the_group_colortemp_raises_for_every_member():
     with pytest.raises(UnsupportedValueError):
         adapt_group_command(COLOUR_TEMPERATURE, WW, WHITE_2700_30)
+
+
+def _with_lumitech(member):
+    return [*member, *rows(member[0].address, LUMITECH)]
+
+
+# Design 2026-09-24, 3.1: one test per row of the table.
+def test_lumitech_rgb_on_the_colour_lamp_sends_xy_then_brightness():
+    """XY before hue/saturation when both are carried.
+
+    Fault to prove it: leave `_colour`'s XY rule at `named == COLOUR_XY` -
+    this gets (768, 6)."""
+    got = shape(adapt_group_command(LUMITECH, _with_lumitech(CWS), BLUE_60))
+    x, y = rgb_to_cie_xy(0, 0, 153)
+    assert got == [
+        (768, 7, {"colorX": x, "colorY": y, "transitionTime": 0, **EIF}),
+        (8, 4, {"level": 152, "transitionTime": 0}),
+    ]
+
+
+def test_lumitech_white_on_the_colour_lamp_sends_the_temperature_then_brightness():
+    assert shape(adapt_group_command(LUMITECH, _with_lumitech(CWS), WHITE_2700_30)) == [
+        (768, 10, {"colorTemperatureMireds": 370, **EIF}),
+        (8, 4, {"level": 76, "transitionTime": 0}),
+    ]
+
+
+def test_lumitech_white_on_a_colour_lamp_without_temperature_is_a_colour_point():
+    x, y = kelvin_to_cie_xy(2700)
+    assert shape(adapt_group_command(LUMITECH, _with_lumitech(XY_ONLY), WHITE_2700_30))[0] == (
+        768,
+        7,
+        {"colorX": x, "colorY": y, "transitionTime": 0, **EIF},
+    )
+
+
+def test_lumitech_on_the_tunable_white_lamp():
+    member = _with_lumitech(WS)
+    assert shape(adapt_group_command(LUMITECH, member, BLUE_60)) == [
+        (8, 4, {"level": 152, "transitionTime": 0})
+    ]
+    assert shape(adapt_group_command(LUMITECH, member, WHITE_2700_30)) == [
+        (768, 10, {"colorTemperatureMireds": 370, **EIF}),
+        (8, 4, {"level": 76, "transitionTime": 0}),
+    ]
+
+
+@pytest.mark.parametrize("value", [BLUE_60, WHITE_2700_30])
+def test_lumitech_on_the_dim_only_lamp_is_brightness_only(value):
+    level = 152 if value == BLUE_60 else 76
+    assert shape(adapt_group_command(LUMITECH, _with_lumitech(WW), value)) == [
+        (8, 4, {"level": level, "transitionTime": 0})
+    ]
+
+
+def test_lumitech_on_an_on_off_light_switches_it():
+    member = _with_lumitech(ONOFF)
+    assert shape(adapt_group_command(LUMITECH, member, BLUE_60)) == [(6, 1, {})]
+    assert shape(adapt_group_command(LUMITECH, member, "0")) == [(6, 0, {})]
+
+
+def test_lumitech_brightness_zero_is_a_single_off():
+    assert shape(adapt_group_command(LUMITECH, _with_lumitech(CWS), "200002700")) == [
+        (8, 4, {"level": 0, "transitionTime": 0})
+    ]
+
+
+def test_lumitech_rejects_a_value_that_means_nothing():
+    with pytest.raises(UnsupportedValueError):
+        adapt_group_command(LUMITECH, _with_lumitech(CWS), "101")
+
+
+def test_a_single_light_gets_the_same_calls_as_a_group_member():
+    """Design 2026-09-24, 3.2: byte-identical.
+
+    Fault to prove it: have `adapt_device_command` pass `COLOUR_HS` instead
+    of `LUMITECH` - the colour call differs."""
+    member = _with_lumitech(CWS)
+    lumitech = next(r for r in member if (r.cluster_id, r.command_id) == LUMITECH)
+    for value in (BLUE_60, WHITE_2700_30, "0"):
+        assert adapt_device_command(lumitech, member, value) == adapt_group_command(
+            LUMITECH, member, value
+        )
+
+
+def test_a_single_light_uses_only_its_own_endpoint():
+    """A device with lights on two endpoints: `d9_2_lumitech` drives
+    endpoint 2 only.
+
+    Fault to prove it: drop the endpoint filter - calls for endpoint 1 appear."""
+    device = [
+        *rows("40", OFF, ON, LEVEL_ONOFF, LUMITECH, endpoint=1),
+        *rows("40", OFF, ON, LEVEL_ONOFF, LUMITECH, endpoint=2),
+    ]
+    second = next(r for r in device if r.endpoint == 2 and r.slug == "lumitech")
+    calls = adapt_device_command(second, device, WHITE_2700_30)
+    assert {c.endpoint for c in calls} == {2}
+
+
+def test_any_other_command_goes_through_to_device_calls_unchanged():
+    level = next(r for r in CWS if r.slug == "level_onoff")
+    assert shape(adapt_device_command(level, CWS, "50")) == [
+        (8, 4, {"level": 127, "transitionTime": 0})
+    ]
