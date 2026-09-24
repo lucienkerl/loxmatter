@@ -29,11 +29,13 @@ from loxmatter.profiles.table import (
     command_control,
     command_slug,
     command_takes_value,
+    feedback_elements,
     is_exportable,
     known_attribute_section,
     known_command_pairs,
     lookup,
     marked_non_functional,
+    marks_feedback,
     names_element,
     scale_factor,
     unit_format,
@@ -486,3 +488,55 @@ def test_move_to_color_is_an_analog_output_not_a_digital_one():
     Fault to prove it: set `takes_value: false`."""
     assert command_slug(768, 7) == "color_xy"
     assert command_takes_value(768, 7) is True
+
+
+FEEDBACK_ENTRIES = [
+    (6, 0),  # onoff
+    (8, 0),  # level
+    (768, 0),  # hue
+    (768, 1),  # saturation
+    (768, 3),  # color_x
+    (768, 4),  # color_y
+    (768, 7),  # colortemp_mireds
+    (768, 8),  # colormode
+]
+
+
+@pytest.mark.parametrize(("cluster_id", "element_id"), FEEDBACK_ENTRIES)
+def test_a_state_behind_a_command_is_marked_as_feedback(cluster_id, element_id):
+    """Design 2026-09-24, section 3: where Loxone is the only controller,
+    these values only echo what Loxone just sent.
+
+    Fault to prove it: drop `feedback: true` from any one of the entries."""
+    assert marks_feedback(SignalRef(1, cluster_id, element_id, SignalKind.ATTRIBUTE)) is True
+
+
+@pytest.mark.parametrize(
+    ("cluster_id", "element_id", "what"),
+    [
+        (1026, 0, "a temperature reading"),
+        (47, 12, "the battery level"),
+        (144, 8, "a plug's active power"),
+        (768, 16395, "a device constant"),
+        (4242, 0, "a cluster the table does not know"),
+    ],
+)
+def test_what_loxone_does_not_set_itself_is_not_feedback(cluster_id, element_id, what):
+    """Sensor readings, energy values, the battery and device constants stay
+    as they are (design 2026-09-24, section 2)."""
+    assert marks_feedback(SignalRef(1, cluster_id, element_id, SignalKind.ATTRIBUTE)) is False, what
+
+
+def test_an_event_is_never_feedback():
+    """A button press is the input Loxone wants most. Event 1 of cluster 59
+    shares its element ID with no feedback attribute, so this checks the
+    kind, not an accident of numbering: 6/0 as an EVENT must not read the
+    attribute entry 6/0."""
+    assert marks_feedback(SignalRef(1, 59, 1, SignalKind.EVENT)) is False
+    assert marks_feedback(SignalRef(1, 6, 0, SignalKind.EVENT)) is False
+
+
+def test_feedback_elements_lists_exactly_the_marked_entries():
+    """`_migrate_to_v12` unticks exactly these pairs; a pair too many would
+    silence a sensor on every stored device."""
+    assert feedback_elements() == sorted(FEEDBACK_ENTRIES)
