@@ -17,6 +17,8 @@
 import json
 from pathlib import Path
 
+import pytest
+
 from loxmatter.export.commands import extract_commands
 from loxmatter.matter.models import NodeSnapshot
 from loxmatter.matter.paths import ACCEPTED_COMMAND_LIST_ID, FEATURE_MAP_ID
@@ -406,3 +408,40 @@ def test_the_checked_in_matter_lamps_keep_their_colour_commands():
     colour = {c.command_id for c in extract_commands(load("ikea_kajplats_cws_lamp.json"))}
     assert not {6, 7} & white
     assert {6, 7} <= colour
+
+
+def _lumitech_rows(name: str) -> list[tuple[int, str]]:
+    return [
+        (c.endpoint, c.slug)
+        for c in extract_commands(load(name))
+        if (c.cluster_id, c.command_id) == (-1, 0)
+    ]
+
+
+@pytest.mark.parametrize("name", ["ikea_kajplats_cws_lamp.json", "ikea_kajplats_ws_lamp.json"])
+def test_a_light_endpoint_gets_one_lumitech_output(name):
+    """Design 2026-09-24, 3.1: one output per light endpoint.
+
+    Fault to prove it: drop the append in `extract_commands` - this fails."""
+    assert _lumitech_rows(name) == [(1, "lumitech")]
+    lumitech = next(c for c in extract_commands(load(name)) if c.slug == "lumitech")
+    assert lumitech.takes_value is True
+
+
+def test_a_plug_gets_no_lumitech_output():
+    """A plug carries on/off like a light but is no light (0x010A).
+
+    Fault to prove it: append the row for every endpoint with OnOff - this fails."""
+    assert _lumitech_rows("ikea_grillplats_plug.json") == []
+
+
+def test_a_device_without_light_commands_gets_no_lumitech_output():
+    assert _lumitech_rows("ikea_bilresa_button.json") == []
+
+
+def test_the_lumitech_row_is_also_there_in_raw_mode():
+    assert [
+        c.slug
+        for c in extract_commands(load("ikea_kajplats_ws_lamp.json"), raw=True)
+        if c.slug == "lumitech"
+    ] == ["lumitech"]

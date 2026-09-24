@@ -495,6 +495,7 @@ def test_adding_a_member_without_colour_keeps_the_colour_key(store, lamps):
         (6, 2),
         (8, 0),
         (8, 4),
+        (-1, 0),  # +1: the lumitech output, design 2026-09-24
     }
     group = store.create_group("Colour", [cws])
     colour_slugs = ("color", "color_xy", "colortemp")

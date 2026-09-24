@@ -173,3 +173,10 @@ def category_for(device_types: Mapping[int, frozenset[int]] | None) -> Category:
     if not mapped:
         return Category.OTHER
     return min(mapped, key=lambda category: CATEGORY_RANK[category])
+
+
+def is_light_endpoint(device_types: frozenset[int]) -> bool:
+    """Whether one endpoint's device types make it a light - the same table
+    `category_for` reads, not a second list (design 2026-09-24, 3.1). A
+    dimmable plug (0x010B) is a socket and stays out."""
+    return any(CATEGORY_BY_DEVICE_TYPE.get(t) is Category.LIGHT for t in device_types)
