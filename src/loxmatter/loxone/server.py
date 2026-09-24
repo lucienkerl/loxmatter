@@ -153,9 +153,10 @@ from loxmatter.api.update import build_update_router
 from loxmatter.api.version import build_version_router
 from loxmatter.api.zigbee import build_zigbee_router
 from loxmatter.auth.sessions import SESSION_COOKIE, session_is_valid
+from loxmatter.commands.adapt import adapt_device_command
 from loxmatter.commands.coalesce import CommandGate
 from loxmatter.commands.fanout import dispatch_group, plan_group_calls
-from loxmatter.commands.translate import UnsupportedValueError, to_device_calls
+from loxmatter.commands.translate import UnsupportedValueError
 from loxmatter.diagnostics.logbuffer import LogBufferHandler
 from loxmatter.loxone.sender import UdpSender
 from loxmatter.matter.client import BridgeMatterClient
@@ -682,7 +683,10 @@ def build_app(
             return await _group_command(key, value)
 
         try:
-            calls = to_device_calls(stored, value)
+            # `adapt_device_command`, not `to_device_calls`: the `lumitech`
+            # output needs its endpoint's other light rows (design
+            # 2026-09-24, 4.1); for every other command it is the same call.
+            calls = adapt_device_command(stored, store.commands(stored.device_id), value)
         except UnsupportedValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 

@@ -513,3 +513,86 @@ async def test_a_colour_temperature_of_zero_is_a_400_on_both_paths(api_lamp):
     assert loxone.json()["detail"] == "colour temperature '0' must be above 0 Kelvin"
     webui = await client.post(f"/api/commands/{key}", json={"value": "0"})
     assert webui.status_code == 400
+
+
+@pytest.fixture
+async def lamp_api(
+    tmp_path, invocations, fake_runtime, fake_client
+) -> AsyncIterator[tuple[httpx.AsyncClient, Store, int, int]]:
+    """The KAJPLATS CWS and WS lamps with a recording invoker (design
+    2026-09-24): the two light shapes the lumitech output must serve."""
+    store = Store(tmp_path / "t.sqlite")
+    ids = []
+    for name in ("ikea_kajplats_cws_lamp.json", "ikea_kajplats_ws_lamp.json"):
+        snapshot = load_snapshot(name)
+        device_id = store.register_device(snapshot)
+        store.register_signals(device_id, snapshot)
+        store.register_commands(device_id, extract_commands(snapshot))
+        ids.append(device_id)
+
+    async def invoke(call: DeviceCall) -> None:
+        invocations.append(call)
+
+    app = build_app(store, invoke, fake_runtime(store), client=fake_client)
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        await authenticate(store, client)
+        yield client, store, ids[0], ids[1]
+    store.close()
+
+
+def _pairs(invocations: list[DeviceCall]) -> list[tuple[int, int, int]]:
+    return [(c.endpoint, c.cluster_id, c.command_id) for c in invocations]
+
+
+async def test_lumitech_on_a_single_tunable_white_lamp_sends_temperature_then_brightness(
+    lamp_api, invocations
+):
+    """Design 2026-09-24, 3.1, and hardware check 1 in section 5.
+
+    Fault to prove it: call `to_device_calls` in the route instead of
+    `adapt_device_command` - the route answers 400."""
+    client, _store, _cws, ws = lamp_api
+    response = await client.post(f"/api/commands/d{ws}_1_lumitech", json={"value": "200302700"})
+    assert response.status_code == 200
+    assert _pairs(invocations) == [(1, 768, 10), (1, 8, 4)]
+    assert invocations[0].payload["colorTemperatureMireds"] == 370
+
+
+async def test_lumitech_through_the_loxone_route(lamp_api, invocations):
+    """The same for `/cmd/{key}/{value}` - the route Loxone actually calls.
+
+    Fault to prove it: switch only `api/control.py` to the adapter - this fails."""
+    client, _store, _cws, ws = lamp_api
+    response = await client.get(f"/cmd/d{ws}_1_lumitech/200302700")
+    assert response.status_code == 200
+    assert _pairs(invocations) == [(1, 768, 10), (1, 8, 4)]
+
+
+async def test_the_controls_leave_the_lumitech_output_out(lamp_api):
+    """It is no Matter command: no slider, and not "+1 more".
+
+    Fault to prove it: remove the skip - `hidden_raw_commands` becomes 1."""
+    client, _store, cws, _ws = lamp_api
+    body = (await client.get(f"/api/devices/{cws}/controls")).json()
+    assert "lumitech" not in [c["slug"] for c in body["commands"]]
+    assert body["hidden_raw_commands"] == 0
+
+
+async def test_the_group_lumitech_output_reaches_both_lamps_and_has_no_control(
+    lamp_api, invocations
+):
+    client, _store, cws, ws = lamp_api
+    group = (await client.post("/api/groups", json={"label": "G", "member_ids": [cws, ws]})).json()
+    controls = (await client.get(f"/api/groups/{group['id']}/controls")).json()
+    assert "lumitech" not in [c["slug"] for c in controls["commands"]]
+    assert controls["hidden_raw_commands"] == 0
+
+    response = await client.post(
+        f"/api/commands/g{group['id']}_lumitech", json={"value": "200302700"}
+    )
+    assert response.status_code == 200
+    by_device: dict[str, list[tuple[int, int]]] = {}
+    for call in invocations:
+        by_device.setdefault(call.address, []).append((call.cluster_id, call.command_id))
+    assert sorted(by_device.values()) == [[(768, 10), (8, 4)], [(768, 10), (8, 4)]]
