@@ -37,7 +37,8 @@ has and Matter does not, and that is what this module is:
   Matter;
 - an `AcceptedCommandList`, which Zigbee has no reliable equivalent for;
 - invalid-value sentinels, which are not measurements;
-- a battery level that lives on the wrong endpoint.
+- a battery level that lives on the wrong endpoint;
+- management clusters Matter does not number at all (`BLOCKED_CLUSTER_IDS`).
 
 **The one rule that outranks everything else here: never write a path whose
 value is `None`.** See `build_snapshot`.
@@ -202,8 +203,16 @@ def _all_mapped_matter_types() -> frozenset[int]:
 # exist at this edge instead. Basic (0x0000) carries
 # `reset_to_factory_defaults`; Identify (0x0003) is harmless but noise;
 # OTA (0x0019) is firmware management, not a home-automation output; ZLL
-# commissioning (0x1000) can move the device to a different network.
-BLOCKED_CLUSTER_IDS: frozenset[int] = frozenset({0x0000, 0x0003, 0x0019, 0x1000})
+# commissioning (0x1000) can move the device to a different network; Poll
+# Control (0x0020) sets how often a sleeping device wakes up.
+#
+# The list keeps these clusters out of the INPUTS as well (`_apply_endpoint`):
+# Matter numbers no cluster 0 or 32, so nothing downstream knows them, and
+# `profiles.relevance.is_functional` treats an unknown cluster as wanted. Until
+# 25 September 2026 the list applied to commands only, and the Basic power
+# source and Poll Control's FastPollTimeout of every Zigbee device reached the
+# Loxone export as `c0_a7` and `c32_a3`.
+BLOCKED_CLUSTER_IDS: frozenset[int] = frozenset({0x0000, 0x0003, 0x0019, 0x0020, 0x1000})
 
 # Invalid-value sentinels the ZCL uses to say "no reading", keyed by the
 # Zigbee (cluster, attribute) that carries them. Passing these through would
@@ -672,6 +681,9 @@ def _apply_endpoint(endpoint: EndpointFacts, model: str, attributes: dict[str, o
             or _SENTINELS.get((cluster_id, attribute_id), _NO_SENTINEL) == value
         ):
             continue
+
+        if cluster_id in BLOCKED_CLUSTER_IDS:
+            continue  # management, not home automation - see the list
 
         if cluster_id == _CLUSTER_IAS_ZONE:
             continue  # handled once per endpoint by `_apply_ias_zone` below

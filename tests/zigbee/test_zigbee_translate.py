@@ -669,6 +669,59 @@ def test_dangerous_clusters_never_become_outputs():
     assert set(accepted_commands(endpoint)) == {6}
 
 
+def _motion_sensor_with_management_attributes() -> DeviceFacts:
+    """A TRADFRI motion sensor's endpoint 1 the way the maintainer's Pi held
+    it on 25 September 2026: the Basic attributes `configure.py` reads at
+    join time (manufacturer 4, model 5, power source 7 = battery) and Poll
+    Control's FastPollTimeout (3) next to the sensor reading itself."""
+    return DeviceFacts(
+        ieee="d0:cf:5e:ff:fe:71:a3:19",
+        manufacturer="IKEA of Sweden",
+        model=TRADFRI_MOTION_SENSOR_MODEL,
+        is_mains_powered=False,
+        available=True,
+        quirk_applied=True,
+        endpoints=(
+            EndpointFacts(
+                endpoint=1,
+                profile_id=ZHA_PROFILE,
+                device_type=0x0850,
+                in_cluster_ids=frozenset({0x0000, 0x0001, 0x0003, 0x0020, 0x1000}),
+                attributes={
+                    (0x0000, 0x0004): "IKEA of Sweden",
+                    (0x0000, 0x0005): TRADFRI_MOTION_SENSOR_MODEL,
+                    (0x0000, 0x0007): 3,
+                    (0x0020, 0x0003): 40,
+                    (0x0006, 0x0000): True,
+                },
+            ),
+        ),
+    )
+
+
+def test_management_clusters_never_become_signals():
+    """Basic (0x0000) and Poll Control (0x0020) have no Matter counterpart -
+    Matter numbers nothing 0 or 32 - so nothing downstream knows them, and
+    `is_functional` treats an unknown cluster as wanted: the Basic power
+    source reached the Loxone export as `c0_a7`, Poll Control's timeout as
+    `c32_a3`. The block list that keeps these clusters out of the outputs
+    has to keep them out of the inputs too.
+
+    Fault to prove it: drop the block-list check from `_apply_endpoint`."""
+    attributes = build_snapshot(_motion_sensor_with_management_attributes()).attributes
+    assert not [path for path in attributes if path.split("/")[1] in {"0", "32"}]
+    # and the sensor reading beside them still arrives
+    assert attributes["1/1030/0"] == 1
+
+
+def test_poll_control_is_on_the_block_list():
+    """Poll Control is radio management: how often a sleeping device wakes
+    up. Neither an input nor an output for Loxone.
+
+    Fault to prove it: remove 0x0020 from the block list."""
+    assert 0x0020 in BLOCKED_CLUSTER_IDS
+
+
 # ------------------------------------------------------- argument renaming --
 
 
