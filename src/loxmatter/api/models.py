@@ -253,6 +253,30 @@ class ControlsOut(BaseModel):
     hidden_raw_commands: int
 
 
+class OutputOut(BaseModel):
+    """One virtual output as the web UI's "Outputs" part shows it (design
+    2026-09-24, 4.5). `functional` places it - open at the top or in the
+    expert block - and comes from the store's rule unchanged; `exported` is
+    what the next template carries."""
+
+    model_config = ConfigDict(frozen=True)
+
+    key: str
+    slug: str
+    title: str
+    exported: bool
+    functional: bool
+
+
+class OutputPatch(BaseModel):
+    """Only the export flag can change. The key is the wiring in Loxone
+    (Spec 6.2) - like `SignalPatch`, this model has no field for it."""
+
+    model_config = ConfigDict(frozen=True)
+
+    exported: bool
+
+
 class GroupIn(BaseModel):
     """Body of `POST /api/groups`.
 
@@ -476,6 +500,11 @@ class ExportGroupOut(BaseModel):
     label: str
     vo_filename: str
     commands: int
+    # hidden_count (Task 6): signals and commands the expert area withholds
+    # from this export - a group has no signals, so this counts commands
+    # only (`api.export._group_preview`). Defaults to 0 so existing
+    # callers/tests that build this model without it keep working.
+    hidden_count: int = 0
 
 
 class ExportPreviewOut(BaseModel):

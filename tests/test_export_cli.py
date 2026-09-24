@@ -677,8 +677,8 @@ def test_a_colour_light_template_has_only_the_online_input(tmp_path):
     outputs = next(tmp_path.glob("VO_*.xml")).read_text(encoding="utf-8-sig")
     assert inputs.count("<VirtualInUdpCmd ") == 1
     assert "_online:\\v" in inputs
-    # 9: the lamp's accepted commands (outputs are untouched by this branch,
-    # only inputs lose the feedback ones - see `loxmatter export --fixture
-    # tests/fixtures/nodes/ikea_kajplats_cws_lamp.json`'s own "N output
-    # commands" line).
-    assert outputs.count("<VirtualOutCmd ") == 9
+    # 1: since design 2026-09-24, decision 2, a light's single commands
+    # (`color`, `level`, `on`/`off`, ...) default to unexported - only
+    # `lumitech` remains, and it has no on/off partner to pair with, so
+    # the template carries exactly one output command.
+    assert outputs.count("<VirtualOutCmd ") == 1

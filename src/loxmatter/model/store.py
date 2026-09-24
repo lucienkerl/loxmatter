@@ -65,7 +65,11 @@ from loxmatter.model.update_settings_store import UpdateSettingsStore
 from loxmatter.model.zigbee_pending_store import ZigbeePendingStore
 from loxmatter.model.zigbee_settings_store import ZigbeeSettingsStore
 from loxmatter.profiles.categories import category_for
-from loxmatter.profiles.light_commands import LIGHT_COMMAND_PAIRS
+from loxmatter.profiles.light_commands import (
+    LIGHT_COMMAND_PAIRS,
+    LUMITECH,
+    is_expert_light_command,
+)
 from loxmatter.profiles.relevance import (
     ROOT_NODE_DEVICE_TYPE,
     UTILITY_ENDPOINT_KEEP_CLUSTERS,
@@ -159,7 +163,13 @@ DEFAULT_LISTEN_PORT = 8080
 # `signal.exported = 0` for every attribute the profile table marks as
 # feedback, see `_migrate_to_v12`. Like `_migrate_to_v3` it re-decides a
 # default for existing rows; unlike there, it only ever unticks.
-_SCHEMA_VERSION = 12
+# Version 13 (lumitech output, design 2026-09-24, 4.2) adds a nullable
+# `exported` column to both `command` and `group_command`. Unlike the signal
+# `exported` column, it has no default and no backfill: `NULL` means "follows
+# the default rule" (`_resolved_flags`), so every existing row picks up the
+# new rule the first time it is read, without this migration writing a
+# single value - see `_migrate_to_v13`.
+_SCHEMA_VERSION = 13
 
 
 def schema_version() -> int:
@@ -220,6 +230,7 @@ CREATE TABLE IF NOT EXISTS command (
     key         TEXT NOT NULL UNIQUE,
     slug        TEXT NOT NULL,
     takes_value INTEGER NOT NULL,
+    exported    INTEGER,
     UNIQUE (device_id, endpoint, cluster_id, command_id)
 );
 CREATE TABLE IF NOT EXISTS setting (
@@ -252,6 +263,7 @@ CREATE TABLE IF NOT EXISTS group_command (
     key         TEXT NOT NULL UNIQUE,
     slug        TEXT NOT NULL,
     takes_value INTEGER NOT NULL,
+    exported    INTEGER,
     UNIQUE (group_id, cluster_id, command_id)
 );
 CREATE TABLE IF NOT EXISTS zigbee_pending_config (
@@ -879,6 +891,20 @@ def _migrate_to_v12(db: sqlite3.Connection) -> None:
         )
 
 
+def _migrate_to_v13(db: sqlite3.Connection) -> None:
+    """Adds `command.exported` and `group_command.exported` (design
+    2026-09-24, 4.2), both nullable and without a default.
+
+    `NULL` means "follows the default rule" - `Store` resolves it when it
+    reads a row (`_resolved_flags`); `0`/`1` is a choice made in the web
+    UI. Every existing row therefore follows the new rule on the first
+    start, which is the maintainer's decision 3, without this migration
+    writing a single value. Additive: a rolled-back image never reads the
+    column."""
+    _add_column_if_missing(db, "command", "exported", "INTEGER")
+    _add_column_if_missing(db, "group_command", "exported", "INTEGER")
+
+
 # Migrations in order, applied from whichever version is stored - to extend
 # for a later schema change: simply append, with the next version number as
 # the key.
@@ -895,6 +921,7 @@ _MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     10: _migrate_to_v10,
     11: _migrate_to_v11,
     12: _migrate_to_v12,
+    13: _migrate_to_v13,
 }
 
 
@@ -1037,6 +1064,12 @@ class StoredCommand:
     # /api/commands/{key}`), and the calling route still needs the
     # device_id to check whether the associated device is still active.
     device_id: int
+    # Design 2026-09-24, 4.2: resolved by the store on read - an explicit
+    # choice from the web UI, else the default rule
+    # (`profiles.light_commands.is_expert_light_command`). `functional` is
+    # the rule alone and never the user's; the web UI sorts by it.
+    exported: bool = True
+    functional: bool = True
 
 
 @dataclass(frozen=True)
@@ -1055,6 +1088,12 @@ class StoredGroupCommand:
     cluster_id: int
     command_id: int
     takes_value: bool
+    # Design 2026-09-24, 4.2: resolved by the store on read - an explicit
+    # choice from the web UI, else the default rule
+    # (`profiles.light_commands.is_expert_light_command`). `functional` is
+    # the rule alone and never the user's; the web UI sorts by it.
+    exported: bool = True
+    functional: bool = True
 
 
 @dataclass(frozen=True)
@@ -1070,6 +1109,17 @@ class GroupTarget:
     device_id: int
     device_label: str
     commands: tuple[StoredCommand, ...]
+
+
+def _resolved_flags(
+    pair: tuple[int, int], explicit: object, has_lumitech: bool
+) -> tuple[bool, bool]:
+    """`(exported, functional)` for one command row (design 2026-09-24,
+    4.2): `functional` is the default rule, `exported` the user's choice
+    where there is one and the rule otherwise."""
+    functional = not is_expert_light_command(pair, has_lumitech)
+    exported = functional if explicit is None else bool(explicit)
+    return exported, functional
 
 
 def _encode_device_types(types: Mapping[int, frozenset[int]]) -> str:
@@ -1826,8 +1876,25 @@ class Store:
         # of `create_group`.
         self.register_group_commands(group_id)
 
+    # Design 2026-09-24, 4.2: whether the group carries a `lumitech` row at
+    # all, so `_as_group_command` can resolve the same expert-command rule
+    # as `_COMMAND_SELECT` does for a device command.
+    _GROUP_COMMAND_SELECT = (
+        "SELECT group_command.*,"
+        " EXISTS (SELECT 1 FROM group_command AS sibling"
+        "  WHERE sibling.group_id = group_command.group_id"
+        f"  AND sibling.cluster_id = {LUMITECH[0]} AND sibling.command_id = {LUMITECH[1]})"
+        " AS endpoint_has_lumitech"
+        " FROM group_command"
+    )
+
     @staticmethod
     def _as_group_command(row: sqlite3.Row) -> StoredGroupCommand:
+        exported, functional = _resolved_flags(
+            (int(row["cluster_id"]), int(row["command_id"])),
+            row["exported"],
+            bool(row["endpoint_has_lumitech"]),
+        )
         return StoredGroupCommand(
             key=str(row["key"]),
             slug=str(row["slug"]),
@@ -1835,17 +1902,22 @@ class Store:
             cluster_id=int(row["cluster_id"]),
             command_id=int(row["command_id"]),
             takes_value=bool(row["takes_value"]),
+            exported=exported,
+            functional=functional,
         )
 
     def group_commands(self, group_id: int) -> list[StoredGroupCommand]:
         rows = self._db.execute(
-            "SELECT * FROM group_command WHERE group_id = ? ORDER BY cluster_id, command_id",
+            f"{self._GROUP_COMMAND_SELECT} WHERE group_command.group_id = ?"
+            " ORDER BY cluster_id, command_id",
             (group_id,),
         ).fetchall()
         return [self._as_group_command(r) for r in rows]
 
     def resolve_group_command(self, key: str) -> StoredGroupCommand:
-        row = self._db.execute("SELECT * FROM group_command WHERE key = ?", (key,)).fetchone()
+        row = self._db.execute(
+            f"{self._GROUP_COMMAND_SELECT} WHERE group_command.key = ?", (key,)
+        ).fetchone()
         if row is None:
             raise UnknownCommandError(i18n.t("api.errors.unknown_command", command_key=key))
         return self._as_group_command(row)
@@ -1857,7 +1929,10 @@ class Store:
         which likewise re-adopts `slug` and `takes_value` on every call so
         that a correction in `clusters.yaml` reaches an already stored
         command - a frozen list would be the opposite of that and would
-        let a group claim a capability no member has left (design 4.3).
+        let a group claim a capability no member has left (design 4.3). A
+        surviving row is updated in place rather than deleted and
+        reinserted, so its `exported` choice survives a recompute (design
+        2026-09-24, 4.2).
 
         **Which commands a group offers (design 2026-09-13, 3.1).** A light
         command - a pair in `LIGHT_COMMAND_PAIRS` - is offered when ANY
@@ -2502,6 +2577,31 @@ class Store:
         self._db.execute("UPDATE signal SET exported = ? WHERE key = ?", (int(exported), key))
         self._db.commit()
 
+    def set_command_exported(self, key: str, exported: bool) -> None:
+        """Records an explicit export choice for a device command (`PATCH
+        /api/commands/{key}`, design 2026-09-24, 4.5). Stamps the owning
+        device's `updated_at`: the choice changes its next template. No
+        existence check, like `set_exported` - the route checks."""
+        self._db.execute(
+            "UPDATE device SET updated_at = ?"
+            " WHERE id = (SELECT device_id FROM command WHERE key = ?)",
+            (self._now(), key),
+        )
+        self._db.execute("UPDATE command SET exported = ? WHERE key = ?", (int(exported), key))
+        self._db.commit()
+
+    def set_group_command_exported(self, key: str, exported: bool) -> None:
+        """The group counterpart of `set_command_exported`."""
+        self._db.execute(
+            "UPDATE device_group SET updated_at = ?"
+            " WHERE id = (SELECT group_id FROM group_command WHERE key = ?)",
+            (self._now(), key),
+        )
+        self._db.execute(
+            "UPDATE group_command SET exported = ? WHERE key = ?", (int(exported), key)
+        )
+        self._db.commit()
+
     def set_resend(self, key: str, resend: bool) -> None:
         """Sets a signal's resend flag (`PATCH /api/signals/{key}`,
         periodic resend design, 2026-09-04). Like `set_exported`, with no
@@ -2712,9 +2812,16 @@ class Store:
     # The owning device's identity travels with every command row through
     # this join instead of a stored copy (design 2026-09-11, section 4.1):
     # `command.node_id` used to duplicate `device.node_id`, and a copy is a
-    # second place that can disagree.
+    # second place that can disagree. `endpoint_has_lumitech` (design
+    # 2026-09-24, 4.2) lets `_as_command` resolve the expert-command rule
+    # without a second query per row.
     _COMMAND_SELECT = (
-        "SELECT command.*, device.technology AS technology, device.address AS address"
+        "SELECT command.*, device.technology AS technology, device.address AS address,"
+        " EXISTS (SELECT 1 FROM command AS sibling"
+        "  WHERE sibling.device_id = command.device_id"
+        "  AND sibling.endpoint = command.endpoint"
+        f"  AND sibling.cluster_id = {LUMITECH[0]} AND sibling.command_id = {LUMITECH[1]})"
+        " AS endpoint_has_lumitech"
         " FROM command JOIN device ON device.id = command.device_id"
     )
 
@@ -2734,6 +2841,11 @@ class Store:
 
     @staticmethod
     def _as_command(row: sqlite3.Row) -> StoredCommand:
+        exported, functional = _resolved_flags(
+            (int(row["cluster_id"]), int(row["command_id"])),
+            row["exported"],
+            bool(row["endpoint_has_lumitech"]),
+        )
         return StoredCommand(
             key=row["key"],
             slug=row["slug"],
@@ -2744,4 +2856,6 @@ class Store:
             command_id=int(row["command_id"]),
             takes_value=bool(row["takes_value"]),
             device_id=int(row["device_id"]),
+            exported=exported,
+            functional=functional,
         )

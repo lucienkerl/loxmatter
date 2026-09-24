@@ -34,6 +34,23 @@ COLOUR_HS: Final = (768, 6)
 COLOUR_XY: Final = (768, 7)
 COLOUR_TEMPERATURE: Final = (768, 10)
 
+# The lighting controller output (design 2026-09-24): not a Matter command
+# but one Loxone value - an RGB colour or a Lumitech white, each with its
+# brightness - that `commands/adapt.py` turns into whatever the light
+# carries. A negative cluster id exists in neither Matter nor Zigbee, so the
+# pair can never coincide with a real command.
+LUMITECH: Final = (-1, 0)
+LUMITECH_SLUG: Final = "lumitech"
+
 LIGHT_COMMAND_PAIRS: Final = frozenset(
-    {OFF, ON, TOGGLE, LEVEL, LEVEL_ONOFF, COLOUR_HS, COLOUR_XY, COLOUR_TEMPERATURE}
+    {OFF, ON, TOGGLE, LEVEL, LEVEL_ONOFF, COLOUR_HS, COLOUR_XY, COLOUR_TEMPERATURE, LUMITECH}
 )
+
+
+def is_expert_light_command(pair: tuple[int, int], endpoint_has_lumitech: bool) -> bool:
+    """Whether a command belongs in the expert area rather than the export
+    by default (design 2026-09-24, 4.2): a single light command beside a
+    `lumitech` output, which already carries all of it. Whether the endpoint
+    is a light is read from the rows themselves - it has a `lumitech` row -
+    not from a second source."""
+    return endpoint_has_lumitech and pair in LIGHT_COMMAND_PAIRS and pair != LUMITECH

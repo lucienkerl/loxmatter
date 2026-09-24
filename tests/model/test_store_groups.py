@@ -495,6 +495,7 @@ def test_adding_a_member_without_colour_keeps_the_colour_key(store, lamps):
         (6, 2),
         (8, 0),
         (8, 4),
+        (-1, 0),  # +1: the lumitech output, design 2026-09-24
     }
     group = store.create_group("Colour", [cws])
     colour_slugs = ("color", "color_xy", "colortemp")
@@ -932,3 +933,37 @@ def test_a_member_carrying_the_pair_on_two_endpoints_gets_both(store, lamps_with
     # The other member has exactly its own single row and must not pick
     # up the first member's extra endpoint as a side effect.
     assert tuple(c.endpoint for c in second.commands) == (1,)
+
+
+def test_a_light_group_offers_lumitech_and_withholds_the_single_commands(
+    store, lamps_with_commands
+):
+    group = store.create_group("Living room", lamps_with_commands)
+    flags = {c.slug: (c.exported, c.functional) for c in store.group_commands(group.id)}
+    assert flags.pop("lumitech") == (True, True)
+    assert set(flags.values()) == {(False, False)}
+
+
+def test_a_group_choice_survives_a_membership_recompute(store, lamps_with_commands):
+    """`register_group_commands` updates surviving rows in place.
+
+    Fault to prove it: make it DELETE and re-INSERT every row - this fails."""
+    group = store.create_group("Living room", lamps_with_commands)
+    store.set_group_command_exported(f"g{group.id}_color", True)
+    store.set_group_members(group.id, lamps_with_commands)
+    assert {c.slug: c.exported for c in store.group_commands(group.id)}["color"] is True
+
+
+def test_setting_the_flag_marks_the_group_changed_since_export(store, lamps_with_commands):
+    """The group counterpart of `test_setting_the_flag_marks_the_device_changed_since_export`
+    (`tests/model/test_store_commands.py`): `set_group_command_exported`
+    stamps `device_group.updated_at`, exactly like `set_command_exported`
+    stamps `device.updated_at`.
+
+    Fault to prove it: remove the `UPDATE device_group SET updated_at`
+    line from `set_group_command_exported` - this fails."""
+    group = store.create_group("Living room", lamps_with_commands)
+    store.mark_group_exported(group.id)
+    store.set_group_command_exported(f"g{group.id}_color", True)
+    updated = store.group(group.id)
+    assert updated.updated_at > updated.exported_at

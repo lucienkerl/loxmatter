@@ -3101,6 +3101,54 @@ footer.hint-block {
   border-bottom: 1px solid var(--border);
 }
 
+/* The "Outputs" rows (design 2026-09-24, 4.5): checkbox, title, key. The
+   first column is the signal grid's 58px, so the export column lines up
+   with the one above it in the signal dialog. The key wraps rather than
+   ellipsizes, for the reason given at `.signal-grid .key`: the pill is
+   there to be read and copied whole. */
+.outputs {
+  margin-top: 1.5rem;
+}
+
+.output-grid {
+  display: grid;
+  grid-template-columns: 58px minmax(0, 1fr) minmax(0, 1.5fr);
+  gap: 0.5rem;
+  align-items: center;
+  padding: 0.3rem 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.output-grid > * {
+  min-width: 0;
+}
+
+.output-grid .key {
+  overflow-wrap: break-word;
+}
+
+.output-grid .col-center {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  margin: 0;
+  min-height: 24px;
+}
+
+.output-grid-head {
+  border-top: 1px solid var(--border);
+  padding: 0.35rem 0;
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.signal-group > .output-grid:last-child {
+  border-bottom: none;
+}
+
 /* Not `.signal-row-cells:last-child`: since the rework onto
    `.signal-row-wrap` (design 2026-09-07, section 7.2), the grid row
    ALWAYS has a second sibling, `.signal-detail` - `x-show` only hides
@@ -3314,6 +3362,21 @@ footer.hint-block {
 
   .signal-detail {
     padding-left: 0;
+  }
+
+  /* The key goes below the title instead of beside it: at phone width a
+     third column leaves the title too little room. */
+  .output-grid {
+    grid-template-columns: 58px minmax(0, 1fr);
+    gap: 0.2rem 0.5rem;
+  }
+
+  .output-grid .key {
+    grid-column: 2;
+  }
+
+  .output-grid > .col-center {
+    grid-row: span 2;
   }
 }
 

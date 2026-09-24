@@ -264,3 +264,46 @@ def test_backfill_leaves_a_device_missing_from_the_snapshots_untouched(tmp_path)
         assert len(store.commands(plug_id)) == plug_before
     finally:
         store.close()
+
+
+def _flags(store, device_id):
+    return {c.slug: (c.exported, c.functional) for c in store.commands(device_id)}
+
+
+def test_a_light_exports_only_its_lumitech_output_by_default(store):
+    """Design 2026-09-24, decision 2.
+
+    Fault to prove it: resolve `exported` as `True` for NULL - this fails."""
+    device_id, _, _ = registered(store, "ikea_kajplats_cws_lamp.json")
+    flags = _flags(store, device_id)
+    assert flags.pop("lumitech") == (True, True)
+    assert set(flags.values()) == {(False, False)}
+
+
+def test_a_plug_keeps_every_command_exported(store):
+    device_id, _, _ = registered(store, "ikea_grillplats_plug.json")
+    assert set(_flags(store, device_id).values()) == {(True, True)}
+
+
+def test_an_explicit_choice_wins_over_the_rule_and_survives_reregistration(store):
+    device_id, snap, _ = registered(store, "ikea_kajplats_cws_lamp.json")
+    store.set_command_exported(f"d{device_id}_1_color", True)
+    store.set_command_exported(f"d{device_id}_1_lumitech", False)
+    store.register_commands(device_id, extract_commands(snap))
+    flags = _flags(store, device_id)
+    assert flags["color"] == (True, False)
+    assert flags["lumitech"] == (False, True)
+
+
+def test_resolve_command_carries_the_same_flags(store):
+    device_id, _, _ = registered(store, "ikea_kajplats_cws_lamp.json")
+    assert store.resolve_command(f"d{device_id}_1_color").exported is False
+    assert store.resolve_command(f"d{device_id}_1_lumitech").exported is True
+
+
+def test_setting_the_flag_marks_the_device_changed_since_export(store):
+    device_id, _, _ = registered(store, "ikea_kajplats_cws_lamp.json")
+    store.mark_exported(device_id)
+    store.set_command_exported(f"d{device_id}_1_color", True)
+    device = store.device(device_id)
+    assert device.updated_at > device.exported_at

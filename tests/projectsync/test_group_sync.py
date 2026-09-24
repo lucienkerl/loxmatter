@@ -212,6 +212,12 @@ def test_a_command_entering_the_group_is_a_new_signal_in_the_group_container(
     # Step 2: add the colour lamp - `color` enters the group.
     store.set_group_members(group.id, [white_spectrum_lamp.id, colour_lamp.id])
     assert "color" in {c.slug for c in store.group_commands(group.id)}
+    # `color` is a light's single command, unexported by default since
+    # design 2026-09-24, decision 2 - this test is about the NEW_SIGNAL
+    # container placement, not the export default, so `color` is
+    # explicitly re-selected to keep exercising that path.
+    color_key = f"g{group.id}_color"
+    store.set_group_command_exported(color_key, True)
 
     # Step 3: re-plan against the patched text. The container from step 1
     # already exists, so the new command must be NEW_SIGNAL, not
@@ -224,7 +230,6 @@ def test_a_command_entering_the_group_is_a_new_signal_in_the_group_container(
         groups=store.groups(),
         commands_by_group={group.id: store.group_commands(group.id)},
     )
-    color_key = f"g{group.id}_color"
     color_entries = [e for e in second_plan.entries if e.key == color_key]
     assert len(color_entries) == 1
     assert color_entries[0].status is PlanStatus.NEW_SIGNAL

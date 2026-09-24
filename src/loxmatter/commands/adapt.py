@@ -23,9 +23,11 @@ dimmable lamp, and on/off for the rest. A member that can carry none of it
 gets no calls, which is not a failure.
 
 Pure: no store, no HTTP, no sources. `commands/fanout.py` calls it per
-member, and the device path (`translate.to_device_calls`) is untouched - the
-shared parts are `decode_loxone_colour` and the payload helpers, so both
-paths build byte-identical payloads for the same case.
+member; the device path (`translate.to_device_calls`) is untouched for every
+command except `lumitech`, which is no Matter command - `adapt_device_command`
+below routes it back through this module's own group adapter, over the
+single light's own rows, so both paths build byte-identical payloads for the
+same case.
 """
 
 from __future__ import annotations
@@ -57,12 +59,14 @@ from loxmatter.profiles.light_commands import (
     COLOUR_XY,
     LEVEL,
     LEVEL_ONOFF,
+    LIGHT_COMMAND_PAIRS,
+    LUMITECH,
     OFF,
     ON,
 )
 from loxmatter.sources import DeviceCall
 
-__all__ = ["adapt_group_command"]
+__all__ = ["adapt_device_command", "adapt_group_command"]
 
 Pair = tuple[int, int]
 
@@ -135,7 +139,10 @@ def _colour(
             return [_call(sample, COLOUR_TEMPERATURE, colour_temperature_payload(colour.kelvin))]
         return _colour_point(here, sample, colour.kelvin)
     assert colour.rgb is not None
-    if COLOUR_XY in here and (named == COLOUR_XY or COLOUR_HS not in here):
+    # XY when the command names it, and for `lumitech`, which names neither
+    # colour command: XY is mandatory for a Matter Extended Color Light and
+    # the only colour ZHA sends (design 2026-09-24, 3.1).
+    if COLOUR_XY in here and (named in (COLOUR_XY, LUMITECH) or COLOUR_HS not in here):
         return [_call(sample, COLOUR_XY, xy_payload(*rgb_to_cie_xy(*colour.rgb)))]
     if COLOUR_HS in here:
         return [
@@ -183,7 +190,7 @@ def adapt_group_command(pair: Pair, rows: Sequence[StoredCommand], value: str) -
     Raises `UnsupportedValueError` for a value that cannot mean anything,
     before any call is built: the value is parsed here, once, so a member
     that would take nothing from it still rejects it."""
-    decoded = decode_loxone_colour(value) if pair in (COLOUR_HS, COLOUR_XY) else None
+    decoded = decode_loxone_colour(value) if pair in (COLOUR_HS, COLOUR_XY, LUMITECH) else None
     number: float | None = None
     if pair == COLOUR_TEMPERATURE:
         number = parse_kelvin(value)
@@ -195,3 +202,24 @@ def adapt_group_command(pair: Pair, rows: Sequence[StoredCommand], value: str) -
         here = {(row.cluster_id, row.command_id): row for row in rows if row.endpoint == endpoint}
         calls.extend(_endpoint_calls(pair, here, value, decoded, number, member_dims))
     return calls
+
+
+def adapt_device_command(
+    command: StoredCommand, device_rows: Sequence[StoredCommand], value: str
+) -> list[DeviceCall]:
+    """The calls one stored device command produces (design 2026-09-24, 4.1).
+
+    `lumitech` is no Matter command: it goes through `adapt_group_command`
+    over the light rows of its own endpoint, the same rules a group member
+    follows, so the two paths build byte-identical calls. Every other
+    command is `to_device_calls` unchanged. Here rather than in
+    `translate.py`, because this module imports that one."""
+    if (command.cluster_id, command.command_id) != LUMITECH:
+        return to_device_calls(command, value)
+    rows = [
+        row
+        for row in device_rows
+        if row.endpoint == command.endpoint
+        and (row.cluster_id, row.command_id) in LIGHT_COMMAND_PAIRS
+    ]
+    return adapt_group_command(LUMITECH, rows, value)

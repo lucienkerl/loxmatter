@@ -6449,11 +6449,18 @@ async def test_both_signal_groups_share_one_details_template(api):
     and `signalGroupsFor` depends on `signalsByDevice` - a saved signal
     title would rewrite an `:open` and silently close the expert group
     that was just opened. This test is the only brake against a later,
-    well-meaning simplification to `:open`."""
+    well-meaning simplification to `:open`.
+
+    The dialog's Outputs part (design 2026-09-24, 4.5) follows the same
+    rule for its own two groups: one `<details>` of its own, not one per
+    group - so the dialog holds exactly two, one before the Outputs part
+    and one inside it."""
     client, _, _ = api
     dialog = _signals_dialog(_without_comments((await client.get("/")).text))
     assert 'x-for="group in signalGroupsFor(signalsModalDevice)"' in dialog
-    assert dialog.count("<details") == 1
+    signals_part, outputs_part = dialog.split('<section class="outputs" x-show=')
+    assert signals_part.count("<details") == 1
+    assert outputs_part.count("<details") == 1
     assert 'x-init="$el.open = !group.collapsible"' in dialog
     assert ":open=" not in dialog
     assert "x-text=\"t('web.signals.functional_vs_expert_explanation')\"" in dialog
@@ -9022,10 +9029,15 @@ def test_creating_a_group_reloads_the_list_and_every_groups_commands():
         {"label": "Ceiling", "room": "", "member_ids": [1]},
     ]
     assert values["calls"][1] == ["GET", "/api/groups", None]
-    assert sorted(values["calls"][2:]) == [
+    assert sorted(values["calls"][2:4]) == [
         ["GET", "/api/groups/1/controls", None],
         ["GET", "/api/groups/2/controls", None],
     ]
+    # The dialog also reloads its OWN group's outputs (design 2026-09-24,
+    # 4.5), by the id the POST answered with (1) - a membership change can
+    # add or remove `g{id}_lumitech` and move other rows between the
+    # functional and expert groups.
+    assert values["calls"][4] == ["GET", "/api/groups/1/outputs", None]
     assert values["labels"] == ["Ceiling", "Outside"]
     assert values["loadedSubjects"] == ["g1", "g2"]
 
@@ -16320,3 +16332,75 @@ def test_the_typo_string_exists_in_both_languages():
 
     entry = i18n._STRINGS["web.devices.commission_code_typo"]
     assert entry.get("en") and entry.get("de") and entry["en"] != entry["de"]
+
+
+async def test_the_signal_dialog_ships_an_outputs_part(api):
+    """Shipment only (design 2026-09-24, 4.5): the markup asks for the
+    device's output groups and the script PATCHes a command's export flag.
+    Whether the bindings work was checked in a real browser."""
+    client, _, _ = api
+    html = (await client.get("/")).text
+    assert "outputGroupsFor(outputSubject('d', signalsModalDevice))" in html
+    js = (await client.get("/static/app.js")).text
+    assert "async toggleOutputExported(output)" in js
+    assert "`/api/commands/${output.key}`" in js
+
+
+async def test_the_group_dialog_ships_an_outputs_part_for_an_existing_group(api):
+    client, _, _ = api
+    html = (await client.get("/")).text
+    assert "outputGroupsFor(outputSubject('g', groupDraft.id))" in html
+
+
+def test_the_outputs_group_titles_are_distinct_strings_in_both_languages():
+    """The functional group used to reuse `web.outputs.heading` for its
+    `<summary>` title, so the section's own `<h3>` and its one open group
+    both said "Outputs" - a user saw the word twice for no reason.
+    `web.outputs.group_functional` is now a string of its own.
+
+    Fault to prove it: delete `web.outputs.group_functional`'s `de:` line
+    in strings.yaml."""
+    from loxmatter import i18n
+
+    entry = i18n._STRINGS["web.outputs.group_functional"]
+    assert entry.get("en") and entry.get("de"), entry
+    assert entry["en"] != entry["de"]
+    assert entry["en"] != i18n._STRINGS["web.outputs.heading"]["en"]
+
+
+async def test_the_outputs_sections_hide_when_there_are_no_outputs(api):
+    """Design 2026-09-24, 4.5: a sensor or button has no commands at all,
+    so the Outputs section (heading, hint, grid header, everything) must
+    not render for it - not just an empty group list under a heading.
+    Shipment only: whether `outputGroupsFor` actually returns `[]` for
+    such a device is a store/API concern, checked elsewhere.
+
+    Fault to prove it: remove the `x-show` from one `<section
+    class="outputs">` - this test fails because that occurrence goes back
+    to being unconditional."""
+    client, _, _ = api
+    html = (await client.get("/")).text
+    assert (
+        '<section class="outputs" '
+        "x-show=\"outputGroupsFor(outputSubject('d', signalsModalDevice)).length > 0\">" in html
+    )
+    assert (
+        '<section class="outputs" '
+        "x-show=\"outputGroupsFor(outputSubject('g', groupDraft.id)).length > 0\">" in html
+    )
+
+
+async def test_save_group_dialog_reloads_the_groups_own_outputs(api):
+    """A membership change can add or remove `g{id}_lumitech`, which moves
+    other rows between the functional and expert groups (design 4.2). The
+    dialog's own cached outputs must be refreshed after a save, not only
+    on the next open.
+
+    Fault to prove it: remove the `loadOutputs` call from `saveGroupDialog`
+    - this test fails because the call no longer appears there."""
+    client, _, _ = api
+    js = (await client.get("/static/app.js")).text
+    start = js.index("async saveGroupDialog()")
+    end = js.index("\n    },", start)
+    body = js[start:end]
+    assert 'await this.loadOutputs(this.outputSubject("g", groupId))' in body

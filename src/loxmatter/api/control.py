@@ -149,10 +149,12 @@ from fastapi import APIRouter, HTTPException
 
 from loxmatter import i18n
 from loxmatter.api.models import CommandOut, ControlRange, ControlsOut, ValueIn
+from loxmatter.commands.adapt import adapt_device_command
 from loxmatter.commands.coalesce import CommandGate
 from loxmatter.commands.fanout import dispatch_group, plan_group_calls
-from loxmatter.commands.translate import UnsupportedValueError, to_device_calls
+from loxmatter.commands.translate import UnsupportedValueError
 from loxmatter.model.store import Store, UnknownCommandError, UnknownDeviceError
+from loxmatter.profiles.light_commands import LUMITECH
 from loxmatter.profiles.table import command_control, command_slug, duplicate_control_command
 from loxmatter.sources import DeviceCall, SourceNotConfiguredError, technology_display_name
 
@@ -301,6 +303,10 @@ def build_control_router(
         named = []
         unnamed = 0
         for command in stored:
+            # The lighting controller output is no Matter command: no
+            # widget, and not "unnamed" either (design 2026-09-24, 4.1).
+            if (command.cluster_id, command.command_id) == LUMITECH:
+                continue
             if command_slug(command.cluster_id, command.command_id) is None:
                 unnamed += 1
                 continue
@@ -361,7 +367,10 @@ def build_control_router(
             ) from exc
 
         try:
-            calls = to_device_calls(stored, body.value)
+            # `adapt_device_command`, not `to_device_calls`: the `lumitech`
+            # output needs its endpoint's other light rows (design
+            # 2026-09-24, 4.1); for every other command it is the same call.
+            calls = adapt_device_command(stored, store.commands(stored.device_id), body.value)
         except UnsupportedValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 

@@ -51,6 +51,7 @@ from loxmatter.model.store import (
     UnknownDeviceError,
     UnknownGroupError,
 )
+from loxmatter.profiles.light_commands import LUMITECH
 from loxmatter.profiles.table import command_control, command_slug, duplicate_control_command
 
 # ColorTempPhysicalMinMireds / ColorTempPhysicalMaxMireds, the same pair
@@ -210,6 +211,10 @@ def build_groups_router(store: Store, values: ValueReader) -> APIRouter:
         named: list[CommandOut] = []
         unnamed = 0
         for command in stored:
+            # The lighting controller output is no Matter command: no
+            # widget, and not "unnamed" either (design 2026-09-24, 4.1).
+            if (command.cluster_id, command.command_id) == LUMITECH:
+                continue
             if command_slug(command.cluster_id, command.command_id) is None:
                 unnamed += 1
                 continue

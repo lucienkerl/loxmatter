@@ -37,6 +37,7 @@ from pathlib import Path
 
 import pytest
 
+from loxmatter.export.commands import extract_commands
 from loxmatter.matter.discovery import extract_signals
 from loxmatter.matter.models import NodeSnapshot, SignalKind, SignalRef
 from loxmatter.model.store import DEFAULT_UDP_PORT, Store, changed_since_export
@@ -253,7 +254,7 @@ def test_migrating_an_old_database_sets_the_schema_version(tmp_path):
     store = Store(path)
     store.close()
 
-    assert user_version(path) == 12
+    assert user_version(path) == 13
 
 
 def test_reopening_an_already_migrated_store_is_a_noop(tmp_path):
@@ -268,7 +269,7 @@ def test_reopening_an_already_migrated_store_is_a_noop(tmp_path):
     first = Store(path)
     first.set_exported("d1_1_power", True)
     first.close()
-    assert user_version(path) == 12
+    assert user_version(path) == 13
 
     second = Store(path)
     try:
@@ -277,14 +278,14 @@ def test_reopening_an_already_migrated_store_is_a_noop(tmp_path):
         second.close()
 
     assert power.exported is True
-    assert user_version(path) == 12
+    assert user_version(path) == 13
 
 
 def test_a_fresh_database_is_already_at_the_latest_version(tmp_path):
     path = tmp_path / "fresh.sqlite"
     store = Store(path)
     store.close()
-    assert user_version(path) == 12
+    assert user_version(path) == 13
 
 
 def test_migration_failure_leaves_the_database_unchanged(tmp_path, monkeypatch):
@@ -326,7 +327,7 @@ def test_migrating_an_old_database_adds_exported_at_and_updated_at_as_null(tmp_p
 
     assert device.exported_at is None
     assert device.updated_at is None
-    assert user_version(path) == 12
+    assert user_version(path) == 13
 
 
 def test_opening_a_v1_database_only_runs_the_v2_migration(tmp_path):
@@ -354,7 +355,7 @@ def test_opening_a_v1_database_only_runs_the_v2_migration(tmp_path):
     finally:
         store.close()
 
-    assert user_version(path) == 12
+    assert user_version(path) == 13
     assert device.exported_at is None
     assert device.updated_at is None
     assert signal.key == "d1_1_power"
@@ -370,7 +371,7 @@ def test_reopening_an_already_v2_database_is_a_noop(tmp_path):
 
     first = Store(path)
     first.close()
-    assert user_version(path) == 12
+    assert user_version(path) == 13
 
     second = Store(path)
     try:
@@ -378,7 +379,7 @@ def test_reopening_an_already_v2_database_is_a_noop(tmp_path):
     finally:
         second.close()
 
-    assert user_version(path) == 12
+    assert user_version(path) == 13
     assert device.exported_at is None
     assert device.updated_at is None
 
@@ -825,7 +826,7 @@ def test_migration_to_v5_adds_the_auth_tables_without_touching_devices(tmp_path)
 
     store = Store(path)
     try:
-        assert user_version(path) == 12
+        assert user_version(path) == 13
         assert store.auth.password_hash() is None
         store.auth.create_session("a", created_at=1, expires_at=2)
         assert store.auth.session_expires_at("a") == 2
@@ -853,7 +854,7 @@ def test_migration_to_v6_adds_the_resend_column_defaulting_to_off(tmp_path):
 
     store = Store(path)
     try:
-        assert user_version(path) == 12
+        assert user_version(path) == 13
         assert store.signal_by_key(key).resend is False
     finally:
         store.close()
@@ -882,7 +883,7 @@ def test_migration_to_v7_adds_room_and_device_types_as_null(tmp_path):
 
     store = Store(path)
     try:
-        assert user_version(path) == 12
+        assert user_version(path) == 13
         device = store.device(device_id)
         assert device.room is None
         assert device.device_types is None
@@ -906,7 +907,7 @@ def test_a_fresh_database_survives_the_v7_migration_without_duplicate_column(tmp
 
     store = Store(path)
     try:
-        assert user_version(path) == 12
+        assert user_version(path) == 13
     finally:
         store.close()
 
@@ -938,7 +939,7 @@ def test_a_v7_database_gains_the_group_tables(tmp_path):
 
 def test_a_fresh_database_ends_at_the_latest_version(tmp_path):
     store = Store(tmp_path / "fresh.sqlite")
-    assert store._db.execute("PRAGMA user_version").fetchone()[0] == 12
+    assert store._db.execute("PRAGMA user_version").fetchone()[0] == 13
     store.close()
 
 
@@ -971,7 +972,7 @@ def test_migration_10_adds_the_pending_table_and_only_adds(tmp_path):
 
     store = Store(path)
     try:
-        assert user_version(path) == 12
+        assert user_version(path) == 13
         tables = {
             row[0]
             for row in store._db.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
@@ -1006,7 +1007,7 @@ def test_migration_10_is_idempotent_on_a_fresh_database(tmp_path):
 
     store = Store(path)
     try:
-        assert user_version(path) == 12
+        assert user_version(path) == 13
     finally:
         store.close()
 
@@ -1036,7 +1037,7 @@ def test_migration_to_v11_adds_vendor_product_firmware_serial_as_null(tmp_path):
 
     store = Store(path)
     try:
-        assert user_version(path) == 12
+        assert user_version(path) == 13
         device = store.device(device_id)
         assert device.vendor_name is None
         assert device.product_name is None
@@ -1062,7 +1063,7 @@ def test_a_fresh_database_survives_the_v11_migration_without_duplicate_column(tm
 
     store = Store(path)
     try:
-        assert user_version(path) == 12
+        assert user_version(path) == 13
     finally:
         store.close()
 
@@ -1124,7 +1125,7 @@ def test_migration_to_v12_unticks_feedback_on_stored_devices(tmp_path):
 
     store = Store(path)
     try:
-        assert user_version(path) == 12
+        assert user_version(path) == 13
         light = {s.key: s for s in store.signals(ids["ikea_kajplats_cws_lamp.json"])}
         plug = {s.key: s for s in store.signals(ids["ikea_grillplats_plug.json"])}
     finally:
@@ -1193,7 +1194,7 @@ def test_migration_to_v12_marks_only_devices_it_actually_unticks_as_changed(tmp_
 
     store = Store(path)
     try:
-        assert user_version(path) == 12
+        assert user_version(path) == 13
         light = store.device(light_id)
         button = store.device(button_id)
     finally:
@@ -1201,3 +1202,59 @@ def test_migration_to_v12_marks_only_devices_it_actually_unticks_as_changed(tmp_
 
     assert changed_since_export(light.exported_at, light.updated_at) is True
     assert changed_since_export(button.exported_at, button.updated_at) is False
+
+
+def test_migration_to_v13_adds_a_nullable_exported_column_to_both_command_tables(tmp_path):
+    """Design 2026-09-24, 4.2: every existing row starts at NULL and so
+    follows the new default rule at once.
+
+    Rebuilds BOTH `command` and `group_command` without `exported` - a
+    version of this test that only touched `command` stayed green even
+    after deleting the `group_command` line of `_migrate_to_v13` (review
+    finding): a test asserting on a table it never actually strips the
+    column from cannot fail when that table's migration line goes missing.
+
+    Fault to prove it: give the column `DEFAULT 1` - the NULL check fails."""
+    path = tmp_path / "v12.sqlite"
+    store = Store(path)
+    snap = load("ikea_kajplats_cws_lamp.json")
+    device_id = store.register_device(snap)
+    store.register_signals(device_id, snap)
+    store.register_commands(device_id, extract_commands(snap))
+    group = store.create_group("Living room", [device_id])
+    store.close()
+    db = sqlite3.connect(str(path))
+    db.executescript(
+        "CREATE TABLE command_old AS SELECT id, device_id, node_id, endpoint, cluster_id,"
+        " command_id, key, slug, takes_value FROM command;"
+        " DROP TABLE command;"
+        " ALTER TABLE command_old RENAME TO command;"
+        " CREATE TABLE group_command_old AS SELECT id, group_id, cluster_id, command_id, key,"
+        " slug, takes_value FROM group_command;"
+        " DROP TABLE group_command;"
+        " ALTER TABLE group_command_old RENAME TO group_command;"
+        " PRAGMA user_version = 12;"
+    )
+    db.commit()
+    db.close()
+    assert "exported" not in _columns(path, "command")
+    assert "exported" not in _columns(path, "group_command")
+    raw = sqlite3.connect(str(path))
+    group_command_rows_before = raw.execute("SELECT COUNT(*) FROM group_command").fetchone()[0]
+    raw.close()
+    assert group_command_rows_before > 0, "the group must actually carry a group_command row"
+
+    store = Store(path)
+    try:
+        assert user_version(path) == 13
+        assert "exported" in _columns(path, "command")
+        assert "exported" in _columns(path, "group_command")
+        raw = sqlite3.connect(str(path))
+        assert {r[0] for r in raw.execute("SELECT exported FROM command")} == {None}
+        assert {r[0] for r in raw.execute("SELECT exported FROM group_command")} == {None}
+        raw.close()
+        # And through the store's own view: a NULL row still resolves to
+        # a command, just via the default rule rather than a stored choice.
+        assert store.group_commands(group.id)
+    finally:
+        store.close()
