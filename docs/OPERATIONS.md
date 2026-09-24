@@ -55,6 +55,12 @@ never had a virtual input or output of this kind (no
 `VirtualInCaption`/`VirtualOutCaption` section), the sync creates that
 section along with it — no manual preparation in Loxone Config.
 
+Names you give inputs, outputs and device containers in Loxone Config stay.
+The sync finds its objects by the key in `Check`/`CmdOn`, not by name, and
+writes a title only when it creates an object. A device renamed in
+loxmatter afterwards therefore keeps its old names in Loxone until you
+rename them there too.
+
 New containers used to be experimental and behind a checkbox in the WebUI.
 Since 2026-09-11 they are part of every patched file: the ID scheme for new
 objects is still derived from real project files rather than an official
