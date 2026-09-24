@@ -596,3 +596,45 @@ async def test_the_group_lumitech_output_reaches_both_lamps_and_has_no_control(
     for call in invocations:
         by_device.setdefault(call.address, []).append((call.cluster_id, call.command_id))
     assert sorted(by_device.values()) == [[(768, 10), (8, 4)], [(768, 10), (8, 4)]]
+
+
+async def test_a_deselected_device_command_still_sends_through_cmd(lamp_api, invocations):
+    """Design 2026-09-24, 4.3 and 5 ('Runtime'): `exported` is a Loxone
+    project-sync concern only. `d{cws}_1_level_onoff` is a light pair other
+    than `lumitech` on an endpoint that has a `lumitech` row, so it is
+    deselected by the default rule - and must still work through `/cmd`,
+    same as an unexported signal still carries its UDP wiring today.
+
+    Fault to prove it: add `if not stored.exported: raise HTTPException(404)`
+    to `/cmd/{key}/{value}` in `loxone/server.py` - this test then fails
+    with a 404 instead of 200."""
+    client, store, cws, _ws = lamp_api
+    key = f"d{cws}_1_level_onoff"
+    assert store.resolve_command(key).exported is False
+
+    response = await client.get(f"/cmd/{key}/50")
+
+    assert response.status_code == 200
+    assert _pairs(invocations) == [(1, 8, 4)]
+
+
+async def test_a_deselected_group_command_still_sends_to_every_member(lamp_api, invocations):
+    """The group half of the same rule: `g{id}_level_onoff` is deselected
+    once the group carries `g{id}_lumitech`, and `POST /api/commands/{key}`
+    must still reach both members.
+
+    Fault to prove it: the same `if not stored.exported: raise
+    HTTPException(404)` fault as above, applied to the group branch of
+    `/cmd/{key}/{value}` - this test then fails with a 404 instead of 200."""
+    client, store, cws, ws = lamp_api
+    group = (await client.post("/api/groups", json={"label": "G", "member_ids": [cws, ws]})).json()
+    key = f"g{group['id']}_level_onoff"
+    assert store.resolve_group_command(key).exported is False
+
+    response = await client.post(f"/api/commands/{key}", json={"value": "50"})
+
+    assert response.status_code == 200
+    by_device: dict[str, list[tuple[int, int]]] = {}
+    for call in invocations:
+        by_device.setdefault(call.address, []).append((call.cluster_id, call.command_id))
+    assert sorted(by_device.values()) == [[(8, 4)], [(8, 4)]]
