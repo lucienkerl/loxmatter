@@ -21,9 +21,11 @@ the code:
 
 - The Lumitech decoding (`commands/translate.py`, `decode_loxone_colour`)
   lives only behind `color` and `color_xy`. A tunable-white lamp such as the
-  checked-in KAJPLATS WS works only because it happens to accept
-  MoveToColor (XY) and so has a `color_xy` output - an output whose name
-  says "colour" for a lamp that has none.
+  checked-in KAJPLATS WS has neither: its AcceptedCommandList names
+  MoveToColor (XY), but `extract_commands`' capability gate drops it, and
+  `extract_commands` on its fixture yields `off`, `on`, `toggle`, `level`,
+  `level_onoff`, `colortemp` - no output of such a lamp understands a
+  Lumitech value at all.
 - The obvious output for a white, `colortemp`, expects a plain Kelvin
   number. A Lumitech value there is not rejected but sent wrong:
   `colour_temperature_payload(parse_kelvin("201002700"))` builds
@@ -51,8 +53,9 @@ no such output.
    orphaned and the new one as new.
 4. **Groups get the same output** with the same defaults, so a group reads
    the same in Loxone as a single light.
-5. The output is called **`lumitech`**, titled "Lumitech / RGB" (`de`:
-   "Lumitech / RGB"). Keys: `d{id}_{endpoint}_lumitech`, `g{id}_lumitech`.
+5. The output is called **`lumitech`**, titled "Lumitech / RGB" - the same
+   in both languages, so a constant rather than an `i18n` entry. Keys:
+   `d{id}_{endpoint}_lumitech`, `g{id}_lumitech`.
    "DMX" stays out of the name: it is the hardware interface in Loxone, not
    the actuator type.
 6. The output is a **stored command row with a reserved pseudo pair**
@@ -123,21 +126,28 @@ existing output in this design.
 - **`model/store.py`, `register_group_commands`:** no change of rule. With
   `LUMITECH` in `LIGHT_COMMAND_PAIRS`, the union rule offers
   `g{id}_lumitech` as soon as any member carries it.
-- **`commands/translate.py`, `to_device_calls`:** for `LUMITECH`, builds its
-  calls through the adapter over the rows of the command's own endpoint.
-  The row set comes from the store, the same shape `Store.group_targets`
-  returns for a member.
+- **`commands/adapt.py`, new `adapt_device_command(command, device_rows,
+  value)`:** for `LUMITECH`, builds the calls through `adapt_group_command`
+  over the light rows of the command's own endpoint; for every other pair it
+  is `to_device_calls` unchanged. Both device routes (`/cmd/{key}/{value}` in
+  `loxone/server.py`, `POST /api/commands/{key}` in `api/control.py`) call it
+  in place of `to_device_calls`. It lives in `adapt.py`, not in
+  `translate.py`, because `adapt.py` already imports `translate.py` and the
+  reverse would be a cycle.
 - **`commands/adapt.py`:** treats `LUMITECH` like the two colour pairs when
   decoding, and applies the XY-before-HS rule of Section 3.1 when the named
   pair is `LUMITECH`.
 - **Every place that reads a pair as a real Matter command skips it:** the
-  controls route in `api/control.py` (no slider, no "+N more" count), and
-  anything that would render it as `c{cluster}_cmd{command}` in raw mode.
+  device controls route in `api/control.py` and the group controls route in
+  `api/groups.py` (no slider, no "+N more" count). Raw mode cannot render
+  it as `c{cluster}_cmd{command}`: the row is appended with its slug, never
+  derived from the AcceptedCommandList.
 
 ### 4.2 Export Selection
 
-- **Schema v12:** `ALTER TABLE command ADD COLUMN exported INTEGER` and the
-  same for `group_command`. Nothing else. The migration is additive; a
+- **Schema v13** (v12 is the feedback-input migration of the same day):
+  `ALTER TABLE command ADD COLUMN exported INTEGER` and the same for
+  `group_command`. Nothing else. The migration is additive; a
   rollback by the updater to an older version does not read the column.
 - **`NULL` means "follows the default rule"; `0` or `1` is an explicit
   choice**, written only by the checkbox in the web UI. Every row existing
@@ -151,9 +161,12 @@ existing output in this design.
   endpoint: when the group has `g{id}_lumitech`, its other light pairs are
   expert. Whether an endpoint is a light is thereby read from the rows
   themselves, not from a second source.
-- **One helper decides it**, `command_exported(...)` beside the rule, read
-  by the export, the project sync and the API alike, so the template and the
-  sync cannot disagree about which keys exist.
+- **One place decides it.** The store resolves the rule when it reads a row
+  and hands out `StoredCommand.exported` / `.functional` (and the same on
+  `StoredGroupCommand`) as plain booleans; `to_outputs` /
+  `to_group_outputs` filter on `exported`, and every export path - the
+  template, the project sync, the CLI - goes through those two, so the
+  template and the sync cannot disagree about which keys exist.
 - **Recomputing a group keeps the choice.** `register_group_commands`
   updates surviving rows in place (it deletes only pairs that drop out and
   inserts only new ones), so `exported` survives; this is pinned by a test,
@@ -176,9 +189,10 @@ wiring today.
 - The on/off pairing in `_to_outputs` (`on` with `off_path`) works on the
   exported rows only. With only `on` selected, the output is a plain one
   without an off path.
-- The `lumitech` output's title and description come from `strings.yaml`.
-  The description says what it is for: the lighting controller's Lumitech or
-  RGB actuator.
+- The `lumitech` output's title is "Lumitech / RGB" where every other
+  output's title is its slug (`export/outputs.py`); its `Comment` carries
+  the key, as for every output. There is no description field on a virtual
+  output command to say more.
 - The first sync after the update reports the previously wired outputs
   (`d5_1_color`, `g1_color`, ...) as orphaned and `..._lumitech` as new.
   Nothing is deleted.
@@ -195,11 +209,12 @@ wiring today.
   browser.
 - **Group dialog:** the same "Outputs" part. A group has no signals and so
   no signal dialog.
-- **API:** `PATCH /api/commands/{key}` and
-  `PATCH /api/groups/{id}/commands/{key}` with `{"exported": true|false}`,
-  after `PATCH /api/signals/{key}`. `POST /api/commands/{key}` stays the
-  send route. The command lists in the API responses gain `exported` and
-  `functional`.
+- **API:** `GET /api/devices/{id}/outputs` and `GET /api/groups/{id}/outputs`
+  list the outputs with `key`, `slug`, `title`, `exported` and `functional`.
+  `PATCH /api/commands/{key}` with `{"exported": true|false}` sets the
+  choice, for a device key and a group key alike - the key namespace is
+  shared, the way `POST /api/commands/{key}` already serves both. `POST`
+  stays the send route.
 - **Export tab:** "Commands" counts exported commands only. The "withheld
   in the expert area" column counts signals and commands, and its
   explanation says so.
@@ -222,7 +237,7 @@ wiring today.
   `lumitech` row on endpoint 1; `ikea_grillplats_plug.json` gets none.
 - **`colortemp`:** a Lumitech value is a 400 with a translated message, on
   the device path and the group path.
-- **Store:** migration v11 to v12 on a real v11 database (column present,
+- **Store:** migration v12 to v13 on a real v12 database (column present,
   every row `NULL`); the default rule for light and non-light endpoints and
   for groups; an explicit choice survives `register_commands` and a group
   recompute; `g{id}_lumitech` appears once a member carries `lumitech`.
