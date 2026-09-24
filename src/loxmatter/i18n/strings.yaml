@@ -1991,6 +1991,9 @@ web.signals.export_flag_error:
 web.outputs.heading:
   en: "Outputs"
   de: "Ausgänge"
+web.outputs.group_functional:
+  en: "Exported by default"
+  de: "Standardmäßig exportiert"
 web.outputs.col_output:
   en: "Output"
   de: "Ausgang"

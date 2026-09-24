@@ -2803,14 +2803,16 @@ function app() {
       this.groupDialogError = null;
       this.groupDialogBusy = true;
       try {
-        if (this.groupDraft.id === null) {
-          await this.request("POST", "/api/groups", {
+        let groupId = this.groupDraft.id;
+        if (groupId === null) {
+          const created = await this.request("POST", "/api/groups", {
             label: this.groupDraft.label.trim(),
             room: this.groupDraft.room.trim(),
             member_ids: this.groupDraft.memberIds,
           });
+          groupId = created.id;
         } else {
-          await this.request("PUT", `/api/groups/${this.groupDraft.id}/members`, {
+          await this.request("PUT", `/api/groups/${groupId}/members`, {
             member_ids: this.groupDraft.memberIds,
           });
         }
@@ -2820,6 +2822,11 @@ function app() {
         // may have been removed from another group's list in the same
         // breath, and on creation there is no new id at hand anyway.
         await this.loadAllGroupControls();
+        // A membership change can add or remove `g{id}_lumitech`, which
+        // moves other rows between the functional and expert groups
+        // (design 4.2) - reload so the dialog's own Outputs part reflects
+        // that without having to be closed and reopened first.
+        await this.loadOutputs(this.outputSubject("g", groupId));
         this.closeGroupDialog();
       } catch (error) {
         // The server's `detail` verbatim: it already names the offending
@@ -4943,7 +4950,7 @@ function app() {
       return [
         {
           key: "functional",
-          title: t("web.outputs.heading"),
+          title: t("web.outputs.group_functional"),
           collapsible: false,
           outputs: outputs.filter((o) => o.functional),
         },

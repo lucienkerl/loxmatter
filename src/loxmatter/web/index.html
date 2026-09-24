@@ -3401,7 +3401,7 @@
                    output open at the top, the single commands in the
                    collapsed expert block - the same `<details>` pattern and
                    the same `x-init` rule as the signal groups above. -->
-              <section class="outputs">
+              <section class="outputs" x-show="outputGroupsFor(outputSubject('d', signalsModalDevice)).length > 0">
                 <h3 x-text="t('web.outputs.heading')"></h3>
                 <p class="hint" x-show="hasLumitechOutput(outputSubject('d', signalsModalDevice))" x-text="t('web.outputs.explanation')"></p>
                 <p class="banner danger" x-show="outputsError" x-cloak x-text="outputsError"></p>
@@ -3926,7 +3926,7 @@
                  output open at the top, the single commands in the
                  collapsed expert block - the same `<details>` pattern and
                  the same `x-init` rule as the signal groups above. -->
-            <section class="outputs">
+            <section class="outputs" x-show="outputGroupsFor(outputSubject('g', groupDraft.id)).length > 0">
               <h3 x-text="t('web.outputs.heading')"></h3>
               <p class="hint" x-show="hasLumitechOutput(outputSubject('g', groupDraft.id))" x-text="t('web.outputs.explanation')"></p>
               <p class="banner danger" x-show="outputsError" x-cloak x-text="outputsError"></p>
