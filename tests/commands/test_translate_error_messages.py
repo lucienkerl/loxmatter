@@ -76,3 +76,21 @@ def test_unsupported_command_error_is_english_by_default():
     )
     with pytest.raises(UnsupportedValueError, match="Cluster 99 command 0 is not supported"):
         to_device_calls(command, "")
+
+
+def test_a_lumitech_value_on_colortemp_is_rejected_not_sent_as_zero_mired():
+    """Design 2026-09-24, 3.3: before, 201002700 became 0 mired.
+
+    Fault to prove it: remove the `is_lumitech` check - no error is raised."""
+    with pytest.raises(UnsupportedValueError, match="Lumitech value '201002700'"):
+        parse_kelvin("201002700")
+
+
+def test_the_lumitech_on_colortemp_error_is_german_when_set():
+    i18n.set_language("de")
+    with pytest.raises(UnsupportedValueError, match="Lumitech-Wert '201002700'"):
+        parse_kelvin("201002700")
+
+
+def test_a_plain_kelvin_value_still_passes():
+    assert parse_kelvin("2700") == 2700

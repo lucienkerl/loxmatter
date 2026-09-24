@@ -140,8 +140,13 @@ def parse_kelvin(value: str) -> float:
     adapter alike. 0 K and below do not exist: without this check
     `kelvin_to_mireds` raised a plain `ValueError` and the routes answered
     500 instead of 400, and in a group a tunable-white member failed while a
-    colour-only member clamped the same value and sent it."""
+    colour-only member clamped the same value and sent it. A Lumitech
+    number is also rejected here, not silently truncated (see below)."""
     kelvin = _as_number(value)
+    # A Lumitech number is not a Kelvin value: `kelvin_to_mireds` turned
+    # 201002700 into 0 mired and sent it (design 2026-09-24, 3.3).
+    if kelvin == int(kelvin) and is_lumitech(int(kelvin)):
+        raise UnsupportedValueError(i18n.t("api.errors.lumitech_on_colortemp", value=value))
     if kelvin <= 0:
         raise UnsupportedValueError(i18n.t("api.errors.kelvin_not_positive", value=value))
     return kelvin

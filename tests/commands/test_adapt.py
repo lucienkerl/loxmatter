@@ -379,3 +379,8 @@ def test_the_warm_end_of_the_locus_clips_negative_srgb_channels():
     assert saturation == 254
     assert 0 <= hue <= 30
     assert (hue, saturation) == (19, 254)
+
+
+def test_a_lumitech_value_on_the_group_colortemp_raises_for_every_member():
+    with pytest.raises(UnsupportedValueError):
+        adapt_group_command(COLOUR_TEMPERATURE, WW, WHITE_2700_30)

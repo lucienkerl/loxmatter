@@ -356,6 +356,11 @@ api.errors.value_not_a_number:
 api.errors.kelvin_not_positive:
   en: "colour temperature {value!r} must be above 0 Kelvin"
   de: "Farbtemperatur {value!r} muss über 0 Kelvin liegen"
+# `colortemp` takes plain Kelvin; the Lumitech number belongs on the
+# `lumitech` output (design 2026-09-24, 3.3).
+api.errors.lumitech_on_colortemp:
+  en: "Lumitech value {value!r} does not belong on the colour temperature output: it takes plain Kelvin. Use the lumitech output."
+  de: "Lumitech-Wert {value!r} gehört nicht auf den Farbtemperatur-Ausgang: der nimmt reine Kelvin. Den lumitech-Ausgang verwenden."
 api.errors.command_unsupported:
   en: "Cluster {cluster_id} command {command_id} is not supported"
   de: "Cluster {cluster_id} Kommando {command_id} wird nicht unterstuetzt"
