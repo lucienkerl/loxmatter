@@ -146,6 +146,7 @@ from loxmatter.api.export import build_export_router
 from loxmatter.api.groups import build_groups_router
 from loxmatter.api.language import build_i18n_router, build_language_router
 from loxmatter.api.live import BEARER_SUBPROTOCOL, ObservableRuntime, build_live_router
+from loxmatter.api.outputs import build_outputs_router
 from loxmatter.api.project_sync import build_project_sync_router
 from loxmatter.api.radios import build_radios_router
 from loxmatter.api.settings import build_settings_router
@@ -600,6 +601,7 @@ def build_app(
     # `ValueReader` here for the same reason it does in the control
     # router - the group controls route reads last values, nothing more.
     app.include_router(build_groups_router(store, runtime), dependencies=api_guard)
+    app.include_router(build_outputs_router(store), dependencies=api_guard)
     app.include_router(
         build_diagnostics_router(
             store,
