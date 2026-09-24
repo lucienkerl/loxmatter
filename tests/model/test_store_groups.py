@@ -952,3 +952,18 @@ def test_a_group_choice_survives_a_membership_recompute(store, lamps_with_comman
     store.set_group_command_exported(f"g{group.id}_color", True)
     store.set_group_members(group.id, lamps_with_commands)
     assert {c.slug: c.exported for c in store.group_commands(group.id)}["color"] is True
+
+
+def test_setting_the_flag_marks_the_group_changed_since_export(store, lamps_with_commands):
+    """The group counterpart of `test_setting_the_flag_marks_the_device_changed_since_export`
+    (`tests/model/test_store_commands.py`): `set_group_command_exported`
+    stamps `device_group.updated_at`, exactly like `set_command_exported`
+    stamps `device.updated_at`.
+
+    Fault to prove it: remove the `UPDATE device_group SET updated_at`
+    line from `set_group_command_exported` - this fails."""
+    group = store.create_group("Living room", lamps_with_commands)
+    store.mark_group_exported(group.id)
+    store.set_group_command_exported(f"g{group.id}_color", True)
+    updated = store.group(group.id)
+    assert updated.updated_at > updated.exported_at

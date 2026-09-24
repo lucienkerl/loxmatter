@@ -1208,12 +1208,20 @@ def test_migration_to_v13_adds_a_nullable_exported_column_to_both_command_tables
     """Design 2026-09-24, 4.2: every existing row starts at NULL and so
     follows the new default rule at once.
 
+    Rebuilds BOTH `command` and `group_command` without `exported` - a
+    version of this test that only touched `command` stayed green even
+    after deleting the `group_command` line of `_migrate_to_v13` (review
+    finding): a test asserting on a table it never actually strips the
+    column from cannot fail when that table's migration line goes missing.
+
     Fault to prove it: give the column `DEFAULT 1` - the NULL check fails."""
     path = tmp_path / "v12.sqlite"
     store = Store(path)
     snap = load("ikea_kajplats_cws_lamp.json")
     device_id = store.register_device(snap)
+    store.register_signals(device_id, snap)
     store.register_commands(device_id, extract_commands(snap))
+    group = store.create_group("Living room", [device_id])
     store.close()
     db = sqlite3.connect(str(path))
     db.executescript(
@@ -1221,11 +1229,20 @@ def test_migration_to_v13_adds_a_nullable_exported_column_to_both_command_tables
         " command_id, key, slug, takes_value FROM command;"
         " DROP TABLE command;"
         " ALTER TABLE command_old RENAME TO command;"
+        " CREATE TABLE group_command_old AS SELECT id, group_id, cluster_id, command_id, key,"
+        " slug, takes_value FROM group_command;"
+        " DROP TABLE group_command;"
+        " ALTER TABLE group_command_old RENAME TO group_command;"
         " PRAGMA user_version = 12;"
     )
     db.commit()
     db.close()
     assert "exported" not in _columns(path, "command")
+    assert "exported" not in _columns(path, "group_command")
+    raw = sqlite3.connect(str(path))
+    group_command_rows_before = raw.execute("SELECT COUNT(*) FROM group_command").fetchone()[0]
+    raw.close()
+    assert group_command_rows_before > 0, "the group must actually carry a group_command row"
 
     store = Store(path)
     try:
@@ -1234,6 +1251,10 @@ def test_migration_to_v13_adds_a_nullable_exported_column_to_both_command_tables
         assert "exported" in _columns(path, "group_command")
         raw = sqlite3.connect(str(path))
         assert {r[0] for r in raw.execute("SELECT exported FROM command")} == {None}
+        assert {r[0] for r in raw.execute("SELECT exported FROM group_command")} == {None}
         raw.close()
+        # And through the store's own view: a NULL row still resolves to
+        # a command, just via the default rule rather than a stored choice.
+        assert store.group_commands(group.id)
     finally:
         store.close()
