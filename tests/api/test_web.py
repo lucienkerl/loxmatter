@@ -6449,11 +6449,18 @@ async def test_both_signal_groups_share_one_details_template(api):
     and `signalGroupsFor` depends on `signalsByDevice` - a saved signal
     title would rewrite an `:open` and silently close the expert group
     that was just opened. This test is the only brake against a later,
-    well-meaning simplification to `:open`."""
+    well-meaning simplification to `:open`.
+
+    The dialog's Outputs part (design 2026-09-24, 4.5) follows the same
+    rule for its own two groups: one `<details>` of its own, not one per
+    group - so the dialog holds exactly two, one before the Outputs part
+    and one inside it."""
     client, _, _ = api
     dialog = _signals_dialog(_without_comments((await client.get("/")).text))
     assert 'x-for="group in signalGroupsFor(signalsModalDevice)"' in dialog
-    assert dialog.count("<details") == 1
+    signals_part, outputs_part = dialog.split('<section class="outputs">')
+    assert signals_part.count("<details") == 1
+    assert outputs_part.count("<details") == 1
     assert 'x-init="$el.open = !group.collapsible"' in dialog
     assert ":open=" not in dialog
     assert "x-text=\"t('web.signals.functional_vs_expert_explanation')\"" in dialog
@@ -16320,3 +16327,21 @@ def test_the_typo_string_exists_in_both_languages():
 
     entry = i18n._STRINGS["web.devices.commission_code_typo"]
     assert entry.get("en") and entry.get("de") and entry["en"] != entry["de"]
+
+
+async def test_the_signal_dialog_ships_an_outputs_part(api):
+    """Shipment only (design 2026-09-24, 4.5): the markup asks for the
+    device's output groups and the script PATCHes a command's export flag.
+    Whether the bindings work was checked in a real browser."""
+    client, _, _ = api
+    html = (await client.get("/")).text
+    assert "outputGroupsFor(outputSubject('d', signalsModalDevice))" in html
+    js = (await client.get("/static/app.js")).text
+    assert "async toggleOutputExported(output)" in js
+    assert "`/api/commands/${output.key}`" in js
+
+
+async def test_the_group_dialog_ships_an_outputs_part_for_an_existing_group(api):
+    client, _, _ = api
+    html = (await client.get("/")).text
+    assert "outputGroupsFor(outputSubject('g', groupDraft.id))" in html

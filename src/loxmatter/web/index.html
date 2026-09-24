@@ -3397,6 +3397,46 @@
                   </template>
                 </details>
               </template>
+              <!-- Outputs (design 2026-09-24, 4.5): the lighting controller
+                   output open at the top, the single commands in the
+                   collapsed expert block - the same `<details>` pattern and
+                   the same `x-init` rule as the signal groups above. -->
+              <section class="outputs">
+                <h3 x-text="t('web.outputs.heading')"></h3>
+                <p class="hint" x-show="hasLumitechOutput(outputSubject('d', signalsModalDevice))" x-text="t('web.outputs.explanation')"></p>
+                <p class="banner danger" x-show="outputsError" x-cloak x-text="outputsError"></p>
+                <!-- The same header treatment as the signal grid: the export
+                     column is named once, not in every row. -->
+                <div class="output-grid output-grid-head" x-show="outputGroupsFor(outputSubject('d', signalsModalDevice)).length > 0">
+                  <span x-text="t('web.signals.col_export')"></span>
+                  <span x-text="t('web.outputs.col_output')"></span>
+                  <span></span>
+                </div>
+                <template x-for="group in outputGroupsFor(outputSubject('d', signalsModalDevice))" :key="group.key">
+                  <details class="signal-group" x-init="$el.open = !group.collapsible">
+                    <summary>
+                      <span x-text="group.title"></span>
+                      <span class="muted" x-text="'(' + group.outputs.length + ')'"></span>
+                      <svg class="icon chevron" aria-hidden="true"><use href="#i-chevron"></use></svg>
+                    </summary>
+                    <template x-for="output in group.outputs" :key="output.key">
+                      <div class="output-grid">
+                        <label class="col-center">
+                          <input
+                            type="checkbox"
+                            :checked="output.exported"
+                            :aria-label="t('web.signals.export_checkbox')"
+                            :title="t('web.signals.export_checkbox')"
+                            @change="toggleOutputExported(output)"
+                          />
+                        </label>
+                        <span x-text="output.title"></span>
+                        <span class="key" :title="t('web.signals.key_tooltip')" x-text="output.key"></span>
+                      </div>
+                    </template>
+                  </details>
+                </template>
+              </section>
             </div>
           </template>
         </div>
@@ -3877,6 +3917,53 @@
             </div>
           </template>
         </div>
+
+        <!-- Only for an existing group: a group being created has no id,
+             so it has no outputs yet. -->
+        <template x-if="groupDraft.id !== null">
+          <div>
+            <!-- Outputs (design 2026-09-24, 4.5): the lighting controller
+                 output open at the top, the single commands in the
+                 collapsed expert block - the same `<details>` pattern and
+                 the same `x-init` rule as the signal groups above. -->
+            <section class="outputs">
+              <h3 x-text="t('web.outputs.heading')"></h3>
+              <p class="hint" x-show="hasLumitechOutput(outputSubject('g', groupDraft.id))" x-text="t('web.outputs.explanation')"></p>
+              <p class="banner danger" x-show="outputsError" x-cloak x-text="outputsError"></p>
+              <!-- The same header treatment as the signal grid: the export
+                   column is named once, not in every row. -->
+              <div class="output-grid output-grid-head" x-show="outputGroupsFor(outputSubject('g', groupDraft.id)).length > 0">
+                <span x-text="t('web.signals.col_export')"></span>
+                <span x-text="t('web.outputs.col_output')"></span>
+                <span></span>
+              </div>
+              <template x-for="group in outputGroupsFor(outputSubject('g', groupDraft.id))" :key="group.key">
+                <details class="signal-group" x-init="$el.open = !group.collapsible">
+                  <summary>
+                    <span x-text="group.title"></span>
+                    <span class="muted" x-text="'(' + group.outputs.length + ')'"></span>
+                    <svg class="icon chevron" aria-hidden="true"><use href="#i-chevron"></use></svg>
+                  </summary>
+                  <template x-for="output in group.outputs" :key="output.key">
+                    <div class="output-grid">
+                      <label class="col-center">
+                        <input
+                          type="checkbox"
+                          :checked="output.exported"
+                          :aria-label="t('web.signals.export_checkbox')"
+                          :title="t('web.signals.export_checkbox')"
+                          @change="toggleOutputExported(output)"
+                        />
+                      </label>
+                      <span x-text="output.title"></span>
+                      <span class="key" :title="t('web.signals.key_tooltip')" x-text="output.key"></span>
+                    </div>
+                  </template>
+                </details>
+              </template>
+            </section>
+          </div>
+        </template>
 
         <!-- The server's own `detail`, verbatim: it already names the
              offending device and both categories. A generic sentence in its

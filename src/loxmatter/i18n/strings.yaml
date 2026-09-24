@@ -1983,6 +1983,26 @@ web.signals.title_save_error:
 web.signals.export_flag_error:
   en: "Could not change export flag: {message}"
   de: "Export-Kennzeichen konnte nicht geaendert werden: {message}"
+# The "Outputs" part of the signal dialog and the group dialog (design
+# 2026-09-24, 4.5).
+web.outputs.heading:
+  en: "Outputs"
+  de: "Ausgänge"
+web.outputs.col_output:
+  en: "Output"
+  de: "Ausgang"
+web.outputs.group_expert:
+  en: "Single commands (expert)"
+  de: "Einzelbefehle (Experte)"
+web.outputs.explanation:
+  en: "Connect the lighting controller's Lumitech or RGB actuator to Lumitech / RGB. The single commands stay available here for special cases."
+  de: "Den Lumitech- oder RGB-Aktor des Lichtbausteins an Lumitech / RGB anschließen. Die Einzelbefehle bleiben hier für Sonderfälle verfügbar."
+web.outputs.load_error:
+  en: "Could not load the outputs: {message}"
+  de: "Ausgänge konnten nicht geladen werden: {message}"
+web.outputs.export_flag_error:
+  en: "Could not change the export selection: {message}"
+  de: "Export-Auswahl konnte nicht geändert werden: {message}"
 web.signals.resend_toggle_error:
   en: "Could not change resend flag: {message}"
   de: "Resend-Kennzeichen konnte nicht geaendert werden: {message}"

@@ -1081,6 +1081,10 @@ function app() {
     // list each time. This field is reset at EXACTLY ONE place, the
     // `@close` of the `<dialog>` in index.html - see the comment there.
     signalsModalDevice: null,
+    // The "Outputs" part (design 2026-09-24, 4.5), keyed "d<id>" / "g<id>"
+    // because a device and a group counter both start at 1.
+    outputsBySubject: {},
+    outputsError: null,
     // Pure presentation bookkeeping for the modal's backdrop click, NOT
     // modal state like `signalsModalDevice` above - see the
     // `@mousedown.self`/`@click.self` comment on the `<dialog>` in
@@ -2628,6 +2632,7 @@ function app() {
         roomTouched: true,
       };
       this.groupDialogError = null;
+      this.loadOutputs(this.outputSubject("g", group.id));
       this.$nextTick(() => this.$refs.groupDialog.showModal());
     },
 
@@ -4798,6 +4803,7 @@ function app() {
       this.signalsError = null;
       this.signalsModalDevice = device.id;
       this.$nextTick(() => this.$refs.signalsModal.showModal());
+      this.loadOutputs(this.outputSubject("d", device.id));
     },
 
     /**
@@ -4907,6 +4913,65 @@ function app() {
         Object.assign(signal, updated);
       } catch (error) {
         this.signalsError = t("web.signals.title_save_error", { message: error.message });
+      }
+    },
+
+    outputSubject(kind, id) {
+      return id === null || id === undefined ? null : kind + id;
+    },
+
+    async loadOutputs(subject) {
+      if (!subject) {
+        return;
+      }
+      this.outputsError = null;
+      const path = subject.startsWith("g")
+        ? `/api/groups/${subject.slice(1)}/outputs`
+        : `/api/devices/${subject.slice(1)}/outputs`;
+      try {
+        this.outputsBySubject[subject] = await this.request("GET", path);
+      } catch (error) {
+        this.outputsError = t("web.outputs.load_error", { message: error.message });
+      }
+    },
+
+    // Two groups, placed by the server's `functional` - no copy of the
+    // rule here. Stable keys for the same `x-init` reason as
+    // `signalGroupsFor`.
+    outputGroupsFor(subject) {
+      const outputs = (subject && this.outputsBySubject[subject]) || [];
+      return [
+        {
+          key: "functional",
+          title: t("web.outputs.heading"),
+          collapsible: false,
+          outputs: outputs.filter((o) => o.functional),
+        },
+        {
+          key: "expert",
+          title: t("web.outputs.group_expert"),
+          collapsible: true,
+          outputs: outputs.filter((o) => !o.functional),
+        },
+      ].filter((group) => group.outputs.length > 0);
+    },
+
+    // The explanation names the lighting controller's actuator, so it is
+    // shown only where there is a `lumitech` output to connect - a plug
+    // has none.
+    hasLumitechOutput(subject) {
+      const outputs = (subject && this.outputsBySubject[subject]) || [];
+      return outputs.some((o) => o.slug === "lumitech");
+    },
+
+    async toggleOutputExported(output) {
+      try {
+        const updated = await this.request("PATCH", `/api/commands/${output.key}`, {
+          exported: !output.exported,
+        });
+        Object.assign(output, updated);
+      } catch (error) {
+        this.outputsError = t("web.outputs.export_flag_error", { message: error.message });
       }
     },
 
