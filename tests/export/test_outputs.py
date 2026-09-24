@@ -19,7 +19,9 @@
 
 from __future__ import annotations
 
-from loxmatter.export.outputs import PAIRED_TITLE, to_outputs
+from dataclasses import replace
+
+from loxmatter.export.outputs import LUMITECH_TITLE, PAIRED_TITLE, to_outputs
 from loxmatter.model.store import StoredCommand
 
 
@@ -91,3 +93,43 @@ def test_a_lonely_on_without_an_off_stays_alone():
     outputs = to_outputs([command("d1_1_on", "on")])
     assert [o.title for o in outputs] == ["on"]
     assert outputs[0].off_path == ""
+
+
+def test_an_unexported_command_is_not_an_output():
+    """Design 2026-09-24, 4.4: the template, project sync and CLI export
+    all take only exported commands - filtered once in `_to_outputs`.
+
+    Fault to prove it: remove the `command.exported` filter at the top of
+    `_to_outputs` - `d1_1_color` appears alongside `d1_1_lumitech`."""
+    commands = [
+        command("d1_1_lumitech", "lumitech", takes_value=True),
+        replace(command("d1_1_color", "color", takes_value=True), exported=False),
+    ]
+    assert [o.key for o in to_outputs(commands)] == ["d1_1_lumitech"]
+
+
+def test_the_lumitech_output_is_titled_for_what_it_takes():
+    """Design 2026-09-24, decision 5: every other output's title is its
+    slug, but `lumitech` names a format a Loxone user may not connect with
+    the lighting controller - so it gets the descriptive title instead.
+
+    Fault to prove it: use `command.slug` for the title unconditionally -
+    the output's title reads "lumitech" instead of "Lumitech / RGB"."""
+    [output] = to_outputs([command("d1_1_lumitech", "lumitech", takes_value=True)])
+    assert output.title == LUMITECH_TITLE
+    assert output.analog is True
+
+
+def test_on_alone_is_a_plain_output_when_off_is_withheld():
+    """Design 2026-09-24, 4.4: the on/off pairing works on the exported
+    rows only - with only `on` selected, the output is a plain one
+    without an off path.
+
+    Fault to prove it: filter `exported` after building the pairs instead
+    of before - `d1_1_on` would still pair with the withheld `d1_1_off`."""
+    commands = [
+        command("d1_1_on", "on", takes_value=False),
+        replace(command("d1_1_off", "off", takes_value=False), exported=False),
+    ]
+    outputs = to_outputs(commands)
+    assert [(o.key, o.off_path) for o in outputs] == [("d1_1_on", "")]

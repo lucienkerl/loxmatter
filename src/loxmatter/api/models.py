@@ -476,6 +476,11 @@ class ExportGroupOut(BaseModel):
     label: str
     vo_filename: str
     commands: int
+    # hidden_count (Task 6): signals and commands the expert area withholds
+    # from this export - a group has no signals, so this counts commands
+    # only (`api.export._group_preview`). Defaults to 0 so existing
+    # callers/tests that build this model without it keep working.
+    hidden_count: int = 0
 
 
 class ExportPreviewOut(BaseModel):

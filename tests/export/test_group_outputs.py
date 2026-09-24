@@ -19,6 +19,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -27,7 +28,7 @@ from loxmatter.export.commands import extract_commands
 from loxmatter.export.documents import filename_for, render_virtual_out
 from loxmatter.export.outputs import to_group_outputs
 from loxmatter.matter.models import NodeSnapshot
-from loxmatter.model.store import Store
+from loxmatter.model.store import Store, StoredGroupCommand
 
 FIXTURES = Path(__file__).parents[1] / "fixtures" / "nodes"
 
@@ -68,8 +69,14 @@ def test_a_device_filename_is_unchanged(group):
 
 def test_on_and_off_are_paired_without_an_endpoint(group):
     """`to_outputs` pairs over (endpoint, cluster); a group command has no
-    endpoint, so the group variant pairs over the cluster alone."""
+    endpoint, so the group variant pairs over the cluster alone.
+
+    `on`/`off` are a light's single commands, unexported by default since
+    design 2026-09-24, decision 2 - selected explicitly here so this test
+    keeps exercising the pairing, not the default."""
     store, created = group
+    store.set_group_command_exported(f"g{created.id}_on", True)
+    store.set_group_command_exported(f"g{created.id}_off", True)
     outputs = to_group_outputs(store.group_commands(created.id))
     # `off_path` defaults to `""`, not `None` (see `LoxoneCommand`) - an
     # unpaired output still has an `off_path` that is merely falsy, so the
@@ -82,18 +89,29 @@ def test_on_and_off_are_paired_without_an_endpoint(group):
     assert "/cmd/g" in combined[0].off_path
 
 
-def test_every_group_command_becomes_an_output(group):
+def test_every_exported_group_command_becomes_an_output(group):
+    """Updated for design 2026-09-24, decision 2: a light's single commands
+    (`color`, `level`, `on`/`off`, ...) default to unexported, so only
+    `lumitech` and any explicitly re-selected command still becomes an
+    output - not "every" group command any more."""
     store, created = group
     outputs = to_group_outputs(store.group_commands(created.id))
     keys = {o.key for o in outputs}
     for command in store.group_commands(created.id):
-        assert command.key in keys
+        if command.exported:
+            assert command.key in keys
+        else:
+            assert command.key not in keys
 
 
 def test_a_value_command_is_analog(group):
+    """`level` is a light's single command, unexported by default since
+    design 2026-09-24, decision 2 - selected explicitly here so this test
+    keeps exercising the output shape, not the default."""
     store, created = group
-    outputs = {o.key: o for o in to_group_outputs(store.group_commands(created.id))}
     level = next(c for c in store.group_commands(created.id) if c.slug == "level")
+    store.set_group_command_exported(level.key, True)
+    outputs = {o.key: o for o in to_group_outputs(store.group_commands(created.id))}
     assert outputs[level.key].analog is True
     assert "<v>" in outputs[level.key].path
 
@@ -108,3 +126,29 @@ def test_the_group_template_names_itself_a_group(group):
     ).decode("utf-8")
     assert "Group" in xml or "Gruppe" in xml
     assert created.label in xml
+
+
+def group_command(
+    key: str, slug: str, *, cluster_id: int = 6, takes_value: bool = False
+) -> StoredGroupCommand:
+    return StoredGroupCommand(
+        key=key,
+        slug=slug,
+        group_id=1,
+        cluster_id=cluster_id,
+        command_id=0,
+        takes_value=takes_value,
+    )
+
+
+def test_an_unexported_group_command_is_not_an_output():
+    """Design 2026-09-24, 4.4, group counterpart of the device-side test in
+    `test_outputs.py`.
+
+    Fault to prove it: remove the `command.exported` filter at the top of
+    `_to_outputs` - `g1_color` appears alongside `g1_lumitech`."""
+    commands = [
+        group_command("g1_lumitech", "lumitech", takes_value=True),
+        replace(group_command("g1_color", "color", takes_value=True), exported=False),
+    ]
+    assert [o.key for o in to_group_outputs(commands)] == ["g1_lumitech"]

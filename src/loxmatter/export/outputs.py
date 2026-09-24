@@ -30,10 +30,21 @@ from typing import Protocol
 
 from loxmatter.export.documents import LoxoneCommand
 from loxmatter.model.store import StoredCommand, StoredGroupCommand
+from loxmatter.profiles.light_commands import LUMITECH_SLUG
 
 ON_SLUG = "on"
 OFF_SLUG = "off"
 PAIRED_TITLE = "onoff"
+
+# The one output whose title is not its slug: "lumitech" names a format a
+# Loxone user may not connect with the lighting controller, while "Lumitech
+# / RGB" names both actuator types it takes (design 2026-09-24, decision 5).
+# The same in both languages, so no i18n entry.
+LUMITECH_TITLE = "Lumitech / RGB"
+
+
+def output_title(slug: str) -> str:
+    return LUMITECH_TITLE if slug == LUMITECH_SLUG else slug
 
 
 class OutputCommand(Protocol):
@@ -55,6 +66,8 @@ class OutputCommand(Protocol):
     def slug(self) -> str: ...
     @property
     def takes_value(self) -> bool: ...
+    @property
+    def exported(self) -> bool: ...
 
 
 def _command_path(command: OutputCommand) -> str:
@@ -125,7 +138,14 @@ def _to_outputs[CommandT: OutputCommand](
     an unpaired `on` does not raise but simply passes through as its own
     output - the missing off-path would show up only as a switch in Loxone
     that never turns anything off.
+
+    **Only what the user exports** (design 2026-09-24, 4.4) - filtered
+    here, once, because every export path (template, project sync, CLI)
+    comes through this function; the on/off pairing below then sees the
+    exported rows only, so a withheld `off` never pairs with an exported
+    `on`.
     """
+    commands = [command for command in commands if command.exported]
     by_group: dict[tuple[int, int], dict[str, CommandT]] = {}
     for command in commands:
         by_group.setdefault(pair_key(command), {})[command.slug] = command
@@ -155,7 +175,7 @@ def _to_outputs[CommandT: OutputCommand](
         result.append(
             LoxoneCommand(
                 key=command.key,
-                title=command.slug,
+                title=output_title(command.slug),
                 path=_command_path(command),
                 analog=command.takes_value,
             )

@@ -167,14 +167,23 @@ def _device_preview(device: StoredDevice, store: Store) -> ExportDeviceOut:
     # collapsed "expert" block - `StoredSignal.functional` comes
     # unchanged from `Store.register_signals`
     # (`profiles.relevance.is_functional`), no second computation here.
-    hidden_count = sum(1 for s in signals if not s.functional)
+    # hidden_count: signals AND commands the expert area withholds from
+    # this export (design 2026-09-24, 4.5) - a light's single commands
+    # (`color`, `level`, `on`/`off`, ...) sit there by default, alongside
+    # the signals `is_functional` already excluded.
+    hidden_count = sum(1 for s in signals if not s.functional) + sum(
+        1 for c in commands if not c.functional
+    )
     return ExportDeviceOut(
         device_id=device.id,
         label=device.label,
         viu_filename=filename_for("VIU", device.id, device.label),
         vo_filename=filename_for("VO", device.id, device.label),
         inputs=len(inputs),
-        commands=len(commands),
+        # The row count, not `len(to_outputs(commands))`: a paired on/off
+        # adds one combined entry on top of the two individual ones, which
+        # would count three outputs for two exported commands.
+        commands=sum(1 for c in commands if c.exported),
         skipped=skipped,
         hidden_count=hidden_count,
     )
@@ -245,7 +254,10 @@ def _group_preview(group: StoredGroup, commands: Sequence[StoredGroupCommand]) -
         group_id=group.id,
         label=group.label,
         vo_filename=filename_for("VO", group.id, group.label, kind="g"),
-        commands=len(commands),
+        # The row count, not `len(to_group_outputs(commands))` - see the
+        # comment in `_device_preview` for why.
+        commands=sum(1 for c in commands if c.exported),
+        hidden_count=sum(1 for c in commands if not c.functional),
     )
 
 

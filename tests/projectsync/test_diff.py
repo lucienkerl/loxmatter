@@ -26,7 +26,9 @@ def _signal(key: str, device_id: int, endpoint: int = 1) -> StoredSignal:
     )
 
 
-def _command(key: str, slug: str, device_id: int, command_id: int) -> StoredCommand:
+def _command(
+    key: str, slug: str, device_id: int, command_id: int, *, exported: bool = True
+) -> StoredCommand:
     return StoredCommand(
         key=key,
         slug=slug,
@@ -37,6 +39,7 @@ def _command(key: str, slug: str, device_id: int, command_id: int) -> StoredComm
         command_id=command_id,
         takes_value=False,
         device_id=device_id,
+        exported=exported,
     )
 
 
@@ -197,6 +200,60 @@ def test_has_changes_is_false_when_everything_matches(sample_project):
     # "d9_9_verwaist" stays in the file but does not make has_changes true
     # - ORPHANED is a notice, not a planned change.
     assert plan.has_changes is False
+
+
+# A project already wired to the old single-command output `d1_1_color` -
+# the state a real project is in right after the update (design 2026-09-24,
+# 4.4): the first sync must report this key as orphaned and the new
+# `d1_1_lumitech` as new, without deleting anything. Modelled on
+# `CORRUPTED_ONOFF_PROJECT` above, just with a plain analog `VirtualOutCmd`
+# instead of a combined on/off one.
+PROJECT_WITH_OLD_COLOR_OUTPUT = (
+    '<?xml version="1.0" encoding="utf-8"?>\r\n'
+    '<ControlList Version="275" NextObj="100">\r\n'
+    '\t<C Type="Document" U="2000-0000-0000-aaaaaaaaaaaaaaaa" Title="Testprojekt">\r\n'
+    '\t\t<C Type="LoxLIVE" U="2000-0001-0000-aaaaaaaaaaaaaaaa" Title="Testserver"'
+    ' IntAddr="10.0.0.10" Serial="504F00000000">\r\n'
+    '\t\t\t<C Type="VirtualOutCaption" IName="C2" U="1000-000a-0000-aaaaaaaaaaaaaaaa">\r\n'
+    '\t\t\t\t<C Type="VirtualOut" IName="VQ1" U="1000-000b-0000-aaaaaaaaaaaaaaaa"'
+    ' Title="Matter — Altes Geraet" WF="16384" Address="http://10.0.0.9:8080"'
+    ' CloseAfterSend="true" CmdSep=";">\r\n'
+    '\t\t\t\t\t<C Type="VirtualOutCmd" IName="VQC1" U="1000-000c-0000-aaaaaaaaaaaaaaaa"'
+    ' Title="color" Nio="1" WF="16400" CmdOn="/cmd/d1_1_color/<v>" CmdOnMethod="1"'
+    ' Tx="false">\r\n'
+    '\t\t\t\t\t\t<Co K="I" U="1000-000d-0000-bbbbbbbbbbbbbbbb"/>\r\n'
+    '\t\t\t\t\t\t<IoData Cr="1000-0005-0000-aaaaaaaaaaaaaaaa" Pr="1000-0006-0000-aaaaaaaaaaaaaaaa"/>\r\n'
+    '\t\t\t\t\t\t<Display Unit="&lt;v.1&gt;" StateOnly="true"/>\r\n'
+    "\t\t\t\t\t</C>\r\n"
+    "\t\t\t\t</C>\r\n"
+    "\t\t\t</C>\r\n"
+    "\t\t</C>\r\n"
+    "\t</C>\r\n"
+    "</ControlList>\r\n"
+)
+
+
+def test_an_unexported_command_is_orphaned_and_lumitech_is_new():
+    """Design 2026-09-24, 4.4: the first sync after the update reports the
+    previously wired output (`d1_1_color`) as orphaned and `d1_1_lumitech`
+    as new - nothing is deleted, because `build_plan` goes through
+    `to_outputs`, which now filters on `StoredCommand.exported`.
+
+    Fault to prove it: drop the `exported` filter in `_to_outputs` -
+    `d1_1_color` would come back as `UNCHANGED` instead of `ORPHANED`, and
+    `d1_1_lumitech` would sit alongside it instead of being the only new
+    entry."""
+    index = build_index(PROJECT_WITH_OLD_COLOR_OUTPUT)
+    device = _device(1, "Altes Geraet")
+    commands = [
+        _command("d1_1_color", "color", 1, 0, exported=False),
+        _command("d1_1_lumitech", "lumitech", 1, 1, exported=True),
+    ]
+    plan = build_plan(index, [device], {1: []}, {1: commands})
+
+    statuses = {e.key: e.status for e in plan.entries}
+    assert statuses["d1_1_color"] == PlanStatus.ORPHANED
+    assert statuses["d1_1_lumitech"] == PlanStatus.NEW_SIGNAL
 
 
 def _project_with_inputs(inputs: Sequence[LoxoneInput], device_label: str = "Taster") -> str:

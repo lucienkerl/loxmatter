@@ -2090,8 +2090,8 @@ web.export.col_group:
   en: "Group"
   de: "Gruppe"
 web.export.expert_withheld_explanation:
-  en: "\"Held back as expert\" signals would be technically exportable but don't belong to the device type by default (tile menu → \"Edit signals…\" → \"Expert\" section) – each one can be enabled individually there."
-  de: "„Als Experte zurückgehalten“ sind Signale, die technisch exportierbar wären, aber standardmäßig nicht zum Gerätetyp gehören (Kachelmenü → „Signale bearbeiten…“ → Block „Experte“) – dort lässt sich jedes einzeln freischalten."
+  en: "\"Held back as expert\" counts inputs and outputs that would be technically exportable but don't belong to the device type by default (tile menu → \"Edit signals…\" → \"Expert\" section) – each one can be enabled individually there."
+  de: "„Als Experte zurückgehalten“ zählt Ein- und Ausgänge, die technisch exportierbar wären, aber standardmäßig nicht zum Gerätetyp gehören (Kachelmenü → „Signale bearbeiten…“ → Block „Experte“) – dort lässt sich jedes einzeln freischalten."
 web.export.system_files_prefix:
   en: "System templates: "
   de: "Systemvorlagen: "
