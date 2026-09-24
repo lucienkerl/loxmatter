@@ -424,6 +424,26 @@ def test_feedback_stays_functional_so_the_dialog_keeps_its_order(store):
         assert by_key[key].exported is False, key
 
 
+def test_a_hand_ticked_feedback_signal_stays_ticked_on_a_later_register_signals(store):
+    """`register_signals` only writes `exported` when CREATING a signal
+    (see its docstring) - from then on the value belongs to the user, same
+    as `title`. This pins that the rule also holds for a feedback signal
+    the user ticks by hand against the new, unticked-by-default preset: a
+    later call with the same snapshot (a resync, or a restart that reruns
+    commissioning) must not silently untick it again."""
+    snap = load("ikea_kajplats_cws_lamp.json")
+    device_id = store.register_device(snap)
+    store.register_signals(device_id, snap)
+
+    key = f"d{device_id}_1_onoff"
+    store.set_exported(key, True)
+
+    store.register_signals(device_id, snap)
+
+    by_key = {s.key: s for s in store.signals(device_id)}
+    assert by_key[key].exported is True
+
+
 def test_a_freshly_registered_button_keeps_both_rockers_and_the_battery(store):
     """The case that shows whether the rule is too greedy: all six events of
     both rockers must get through, plus the battery level."""

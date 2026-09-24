@@ -660,7 +660,7 @@ def test_a_colour_light_template_has_only_the_online_input(tmp_path):
     """Design 2026-09-24: Loxone controls the light, so its template carries
     no feedback input - only the device's own online signal - while every
     output stays."""
-    CliRunner().invoke(
+    result = CliRunner().invoke(
         app,
         [
             "export",
@@ -672,8 +672,13 @@ def test_a_colour_light_template_has_only_the_online_input(tmp_path):
             str(tmp_path),
         ],
     )
+    assert result.exit_code == 0, result.output
     inputs = next(tmp_path.glob("VIU_*.xml")).read_text(encoding="utf-8-sig")
     outputs = next(tmp_path.glob("VO_*.xml")).read_text(encoding="utf-8-sig")
     assert inputs.count("<VirtualInUdpCmd ") == 1
     assert "_online:\\v" in inputs
-    assert outputs.count("<VirtualOutCmd ") > 0
+    # 9: the lamp's accepted commands (outputs are untouched by this branch,
+    # only inputs lose the feedback ones - see `loxmatter export --fixture
+    # tests/fixtures/nodes/ikea_kajplats_cws_lamp.json`'s own "N output
+    # commands" line).
+    assert outputs.count("<VirtualOutCmd ") == 9
