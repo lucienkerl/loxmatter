@@ -74,12 +74,19 @@ def _patch(index, device, signals, *, commands=()):
 
 
 def test_updated_attribute_is_replaced_in_place(sample_project):
-    index = build_index(sample_project)
+    """A stale managed attribute is rewritten inside the existing tag. Runs
+    via `Analog` since 2026-09-24, when `Title` stopped being managed
+    (design section 3.3) - the title the file carries stays as it is."""
+    stale = 'Check="d1_1_onoff:\\v" Signed="true" Analog="false"'
+    project = sample_project.replace('Check="d1_1_onoff:\\v" Signed="true" Analog="true"', stale, 1)
+    assert stale in project
+    index = build_index(project)
     device = _device(1, "Altes Geraet")
     signals = [_signal("d1_1_onoff", 1, title="Ein/Aus")]
     patched = _patch(index, device, signals)
-    assert 'Title="Ein/Aus"' in patched
-    assert 'Title="Alter Titel"' not in patched
+    assert 'Check="d1_1_onoff:\\v" Signed="true" Analog="true"' in patched
+    assert 'Title="Alter Titel"' in patched
+    assert 'Title="Ein/Aus"' not in patched
     # The u-id of the updated object stays exactly preserved - wiring
     # (Co) must never be touched by an update.
     assert '"1000-0002-0000-aaaaaaaaaaaaaaaa"' in patched
@@ -382,8 +389,8 @@ DECOY_ATTR_PROJECT = (
     '\t\t\t\t<C Type="VirtualUdpIn" IName="VUI1" U="1000-0001-0000-aaaaaaaaaaaaaaaa"'
     ' Title="Matter — Altes Geraet" WF="16384" Address="10.0.0.5" Port="7000">\r\n'
     '\t\t\t\t\t<C Type="VirtualUdpInCmd" IName="VCI1" U="1000-0002-0000-aaaaaaaaaaaaaaaa"'
-    ' XTitle="Bitte nicht anfassen" Title="Alter Titel" Nio="2" WF="16384"'
-    ' Check="d1_1_onoff:\\v" Analog="true">\r\n'
+    ' XCheck="Bitte nicht anfassen" Title="Alter Titel" Nio="2" WF="16384"'
+    ' Check="d1_1_onoff:1" Analog="true">\r\n'
     '\t\t\t\t\t\t<Co K="AQ" U="1000-0003-0000-bbbbbbbbbbbbbbbb"/>\r\n'
     '\t\t\t\t\t\t<IoData Cr="1000-0005-0000-aaaaaaaaaaaaaaaa" Pr="1000-0006-0000-aaaaaaaaaaaaaaaa"/>\r\n'
     "\t\t\t\t\t</C>\r\n"
@@ -401,17 +408,21 @@ def test_update_does_not_rewrite_an_attribute_that_only_ends_in_the_name():
     the tag, including the second half of a longer attribute name like
     `XTitle`. The update then silently wrote into the WRONG attribute and
     left the real one untouched: exactly the breach of the promise to never
-    touch bytes this project does not understand (draft section 3.2)."""
+    touch bytes this project does not understand (draft section 3.2).
+
+    Runs via `Check` since 2026-09-24: `Title` is no longer updated on an
+    existing object (design section 3.3), so the decoy is `XCheck` and the
+    stale value is the edge suffix `:1` where a state wants `:\\v`."""
     index = build_index(DECOY_ATTR_PROJECT)
     device = _device(1, "Altes Geraet")
-    signals = [_signal("d1_1_onoff", 1, title="Neuer Titel")]
+    signals = [_signal("d1_1_onoff", 1)]
     patched = _patch(index, device, signals)
 
-    assert 'XTitle="Bitte nicht anfassen"' in patched
+    assert 'XCheck="Bitte nicht anfassen"' in patched
     patched_index = build_index(patched)
     cmd = patched_index.input_cmds["d1_1_onoff"]
-    assert cmd.attrs["XTitle"] == "Bitte nicht anfassen"
-    assert cmd.attrs["Title"] == "Neuer Titel"
+    assert cmd.attrs["XCheck"] == "Bitte nicht anfassen"
+    assert cmd.attrs["Check"] == "d1_1_onoff:\\v"
 
 
 # Like `sample_project`, but WITHOUT a single `U` attribute anywhere in

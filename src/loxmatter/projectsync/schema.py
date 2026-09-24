@@ -19,9 +19,11 @@
 Two separate tiers with different levels of certainty:
 
 **Updating existing objects** (`desired_*_attrs`, `MANAGED_*_ATTRS`)
-deliberately touches only the title, the check/CmdOn key itself, the
-analog flag and the unit - scaling, MinVal/MaxVal and any wiring remain
-untouched, even if an export in the meantime suggests a different value.
+deliberately touches only the check/CmdOn key itself and the analog
+flag - scaling, MinVal/MaxVal and any wiring remain untouched, even if an
+export in the meantime suggests a different value. The title is set once,
+when an object is created, and belongs to Loxone Config from then on (see
+`MANAGED_INPUT_CMD_ATTRS`).
 This is the low-risk half: it only changes attribute values within a
 structure already accepted by Config.
 
@@ -57,18 +59,24 @@ from loxmatter.projectsync.scan import Element, parse_attrs
 # `Unit` maintained here would write it to a place Loxone Config never
 # reads, and would make every analog input show up as "updated" again on
 # every run.
-MANAGED_INPUT_CMD_ATTRS: tuple[str, ...] = ("Title", "Check", "Analog")
-MANAGED_OUTPUT_CMD_ATTRS: tuple[str, ...] = ("Title", "CmdOn", "CmdOff", "Analog")
+#
+# `Title` is not here either (2026-09-24, design section 3.3): a user who
+# renames an input or output in Loxone Config wants that name, and a sync
+# that wrote loxmatter's title back would undo it every time and list the
+# object as changed. The object is found by its key in `Check`/`CmdOn`,
+# which a rename does not touch; the title is written once, when the object
+# is created (`new_input_cmd_open_tag`/`new_output_cmd_open_tag`).
+MANAGED_INPUT_CMD_ATTRS: tuple[str, ...] = ("Check", "Analog")
+MANAGED_OUTPUT_CMD_ATTRS: tuple[str, ...] = ("CmdOn", "CmdOff", "Analog")
 
 _IODATA = re.compile(r"<IoData\s+([^/]*)/>")
 
 
 def desired_input_cmd_attrs(entry: LoxoneInput) -> dict[str, str]:
     """Desired state of the attributes managed by the update for an existing
-    `VirtualUdpInCmd` (design section 5) - without `Unit`, see
+    `VirtualUdpInCmd` (design section 5) - without `Unit` and `Title`, see
     `MANAGED_INPUT_CMD_ATTRS`."""
     return {
-        "Title": entry.title,
         "Check": f"{entry.key}:{entry.check_suffix}",
         "Analog": "true" if entry.analog else "false",
     }
@@ -78,9 +86,9 @@ def desired_output_cmd_attrs(command: LoxoneCommand) -> dict[str, str]:
     """Desired state of the attributes managed by the update for an existing
     `VirtualOutCmd`. `CmdOff` is deliberately absent when there is no off
     command - a missing attribute is never treated by `diff.py` as "must
-    be removed", only present attributes are compared."""
+    be removed", only present attributes are compared. Without `Title`,
+    see `MANAGED_INPUT_CMD_ATTRS`."""
     attrs = {
-        "Title": command.title,
         "CmdOn": command.path,
         "Analog": "false" if command.off_path else "true",
     }
