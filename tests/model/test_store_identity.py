@@ -146,7 +146,7 @@ def test_a_v8_database_gains_addresses_and_keeps_node_ids(tmp_path, monkeypatch)
 
     store = Store(path)
     try:
-        assert _user_version(path) == 13
+        assert _user_version(path) == 14
         device = store.device(1)
         assert (device.technology, device.address) == ("matter", "23")
         assert store.device_id_for("matter", "23") == 1
@@ -174,7 +174,7 @@ def test_a_fresh_database_runs_migration_9_without_duplicate_column(tmp_path):
 
     Store(path).close()
 
-    assert _user_version(path) == 13
+    assert _user_version(path) == 14
 
 
 def test_a_failing_migration_9_leaves_version_8_intact(tmp_path, monkeypatch):
