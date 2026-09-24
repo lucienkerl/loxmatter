@@ -38,6 +38,12 @@ people who don't know the code.
 
 ### Changed
 
+- **The project file sync keeps the names you give in Loxone Config.**
+  Rename an input, an output or a device there, and the next sync leaves
+  the name alone and no longer lists it as changed. A new input or output
+  still gets its name from loxmatter when the sync creates it; renaming a
+  device in loxmatter afterwards does not rename what is already in your
+  project.
 - **Lights and plugs no longer report their state back to Loxone by
   default.** When Loxone is the only system that switches a device, its
   on/off, brightness and colour inputs only repeat what Loxone just sent.

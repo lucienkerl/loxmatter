@@ -158,3 +158,35 @@ def test_run_sync_propagates_project_format_error_from_id_generation(tmp_path):
             listen=8080,
         )
     store.close()
+
+
+def test_a_title_renamed_in_loxone_config_survives_the_next_sync(tmp_path):
+    """Design section 3.3, 2026-09-24: once an input or output exists in the
+    project file, its title belongs to Loxone Config. A user who renames a
+    command there must find the name kept on the next sync, and the plan
+    must not list the command as changed - the object is found by its key
+    in `Check`/`CmdOn`, which renaming does not touch."""
+    store = _plug_store(tmp_path)
+    first = run_sync(
+        NO_VIRTUAL_IN_CAPTION_PROJECT.encode("utf-8"),
+        store,
+        bridge_ip="10.0.0.5",
+        port=7000,
+        listen=8080,
+    )
+    renamed = (
+        first.patched.decode("utf-8-sig")
+        .replace('Title="voltage"', 'Title="Spannung Küche"')
+        .replace('Title="toggle"', 'Title="Umschalten"')
+    )
+    assert 'Title="Spannung Küche"' in renamed
+    assert 'Title="Umschalten"' in renamed
+
+    second = run_sync(renamed.encode("utf-8"), store, bridge_ip="10.0.0.5", port=7000, listen=8080)
+    store.close()
+
+    assert {entry.status.value for entry in second.plan.entries} == {"unchanged"}
+    assert not second.plan.has_changes
+    kept = second.patched.decode("utf-8-sig")
+    assert 'Title="Spannung Küche"' in kept
+    assert 'Title="Umschalten"' in kept

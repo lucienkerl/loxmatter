@@ -23,7 +23,6 @@ def test_desired_input_cmd_attrs_covers_only_managed_fields():
     entry = LoxoneInput("d1_1_temp", "Temperatur", "Kommentar", True, "<v.1> °C")
     desired = desired_input_cmd_attrs(entry)
     assert desired == {
-        "Title": "Temperatur",
         "Check": "d1_1_temp:\\v",
         "Analog": "true",
     }
@@ -32,7 +31,7 @@ def test_desired_input_cmd_attrs_covers_only_managed_fields():
 def test_desired_output_cmd_attrs_omits_cmdoff_when_there_is_none():
     command = LoxoneCommand("d1_1_level", "level", "/cmd/d1_1_level/<v>", True)
     desired = desired_output_cmd_attrs(command)
-    assert desired == {"Title": "level", "CmdOn": "/cmd/d1_1_level/<v>", "Analog": "true"}
+    assert desired == {"CmdOn": "/cmd/d1_1_level/<v>", "Analog": "true"}
 
 
 def test_new_caption_open_tag_builds_input_caption():

@@ -109,12 +109,12 @@ def test_existing_matching_input_is_unchanged(sample_project):
     signals = [_signal("d1_1_onoff", 1)]
     plan = build_plan(index, [device], {1: signals}, {1: []})
     entry = next(e for e in plan.entries if e.key == "d1_1_onoff")
-    # The title in the file is "Alter Titel", but `to_inputs` generates the
-    # signal title "Ein/Aus" - so this MUST be `updated`, not `unchanged`.
-    # This test documents the expected behavior for task step 3 below (see
-    # the note there on the title divergence).
-    assert entry.status == PlanStatus.UPDATED
-    assert entry.changes["Title"] == ("Alter Titel", "Ein/Aus")
+    # The title in the file is "Alter Titel", `to_inputs` generates "Ein/Aus".
+    # Since 2026-09-24 the title belongs to Loxone Config once the object
+    # exists (design section 3.3): a user who renamed it there keeps the
+    # name, and the plan does not report it as a change.
+    assert entry.status == PlanStatus.UNCHANGED
+    assert entry.changes == {}
 
 
 def test_new_signal_in_existing_container(sample_project):

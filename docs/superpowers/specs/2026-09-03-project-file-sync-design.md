@@ -106,6 +106,18 @@ existing output is therefore read from `CmdOn` AND `CmdOff` together
 `possible_duplicate` protection did not catch this, because the displaced
 element was no longer in the index at all.
 
+**Update 2026-09-24: the title belongs to Loxone Config once an object
+exists.** The update used to manage `Title` next to `Check`/`CmdOn`/
+`Analog`, so a user who renamed an input or output in Config saw it listed
+as `updated` on the next sync, and downloading the patched file wrote
+loxmatter's name back over theirs. Since matching never depended on the
+title (above), nothing required that: `Title` left `MANAGED_INPUT_CMD_ATTRS`
+and `MANAGED_OUTPUT_CMD_ATTRS` and the `desired_*_attrs` behind them. A
+title is written once, when `new_*_open_tag` creates the object. The cost:
+renaming a device or signal in loxmatter no longer reaches objects that
+already exist in the project file; the user renames them in Config. The
+device containers' titles were never managed and are unaffected.
+
 ### 3.4 Risk levels: update is the default case, creation is opt-in
 
 The real reference file parses cleanly, but the `U` ID scheme for new
