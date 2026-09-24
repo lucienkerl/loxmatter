@@ -838,8 +838,40 @@ def _migrate_to_v12(db: sqlite3.Connection) -> None:
     Decided consciously: leaving stored devices alone would have kept every
     existing light's feedback inputs. Additive like every migration here: it
     writes one column of the matching rows and adds or drops nothing, so a
-    rolled-back image finds a valid state."""
+    rolled-back image finds a valid state.
+
+    **Stamps `device.updated_at` for every device it actually unticks a
+    signal on**, per feedback pair and BEFORE the unticking `UPDATE` -
+    `Store.set_exported` does the same via `_touch_owning_device` for a
+    change through the API, and this migration changes the same column
+    without going through it. Without the stamp, `GET /api/export/status`
+    would keep showing a light this migration just unticked as "exported,
+    unchanged", because nothing else on this row moved. Only devices with at
+    least one row that is actually `exported = 1` before this runs are
+    touched, so a device without a ticked feedback signal is left alone.
+
+    This migration reads `feedback_elements()` as the profile table stands
+    WHEN IT RUNS. A mark added to a later cluster therefore also reaches a
+    database that still upgrades from schema 11 or older at that point, but
+    not one already sitting at schema 12 - the same trade `_migrate_to_v3`
+    makes for its own re-decided defaults. A later mark that must reach
+    already-migrated devices needs its own migration; this one never runs a
+    second time.
+
+    A device commissioned by a rolled-back, schema-11-only image AFTER this
+    migration already ran keeps its feedback ticked: a migration only ever
+    runs once going forward, and rolling the image back does not undo it or
+    make it run again. That is a valid state, not damage - the same one a
+    hand-ticked signal is in, and the user can untick it in the signal
+    dialog like any other."""
+    now = now_iso()
     for cluster_id, element_id in feedback_elements():
+        db.execute(
+            "UPDATE device SET updated_at = ? WHERE id IN ("
+            "SELECT device_id FROM signal"
+            " WHERE cluster_id = ? AND element_id = ? AND kind = 'attribute' AND exported = 1)",
+            (now, cluster_id, element_id),
+        )
         db.execute(
             "UPDATE signal SET exported = 0"
             " WHERE cluster_id = ? AND element_id = ? AND kind = 'attribute'",

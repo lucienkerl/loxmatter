@@ -39,7 +39,7 @@ import pytest
 
 from loxmatter.matter.discovery import extract_signals
 from loxmatter.matter.models import NodeSnapshot, SignalKind, SignalRef
-from loxmatter.model.store import DEFAULT_UDP_PORT, Store
+from loxmatter.model.store import DEFAULT_UDP_PORT, Store, changed_since_export
 from loxmatter.profiles.catalog import element_name
 from loxmatter.profiles.table import Exportability, classify, is_exportable
 
@@ -1080,16 +1080,27 @@ def _open_at_v11_with_feedback_ticked(path: Path) -> dict[str, int]:
     light and a plug, every feedback signal ticked (the old default), plus
     two hand-made choices the migration must not touch - the plug's
     voltage unticked and the light's physical minimum colour temperature
-    ticked. Returns the device IDs by fixture."""
+    ticked. A third device, a button with no feedback attributes at all,
+    is registered alongside them so a test can tell a device the migration
+    actually touches from one it does not. `mark_exported` is called for
+    the light and the button BEFORE the version is lowered, so that
+    "changed since export" is observable afterward rather than trivially
+    true from creation. Returns the device IDs, keyed by fixture filename."""
     store = Store(path)
     ids: dict[str, int] = {}
-    for name in ("ikea_kajplats_cws_lamp.json", "ikea_grillplats_plug.json"):
+    for name in (
+        "ikea_kajplats_cws_lamp.json",
+        "ikea_grillplats_plug.json",
+        "ikea_bilresa_button.json",
+    ):
         snap = load(name)
         device_id = store.register_device(snap)
         store.register_signals(device_id, snap)
         ids[name] = device_id
     store.set_exported(f"d{ids['ikea_grillplats_plug.json']}_2_voltage", False)
     store.set_exported(f"d{ids['ikea_kajplats_cws_lamp.json']}_1_colortemp_phys_min_mireds", True)
+    store.mark_exported(ids["ikea_kajplats_cws_lamp.json"])
+    store.mark_exported(ids["ikea_bilresa_button.json"])
     store.close()
 
     db = sqlite3.connect(str(path))
@@ -1150,7 +1161,43 @@ def test_migration_to_v12_leaves_every_other_choice_alone(tmp_path):
     finally:
         store.close()
 
+    # The plug's voltage assertion below can never fail by itself - the
+    # migration only ever writes 0, so an unticked row stays unticked no
+    # matter what the WHERE clause matches. It documents the user's choice
+    # regardless; what actually guards against an over-broad WHERE are the
+    # ticked device constant (`colortemp_phys_min_mireds`) and the plug's
+    # exported energy readings below, both of which WOULD flip to `False`
+    # if the migration's `cluster_id`/`element_id` match were too wide.
     assert plug[f"d{plug_id}_2_voltage"].exported is False
     assert light[f"d{light_id}_1_colortemp_phys_min_mireds"].exported is True
     for slug in ("current", "power", "energy_imported"):
         assert plug[f"d{plug_id}_2_{slug}"].exported is True, slug
+
+
+def test_migration_to_v12_marks_only_devices_it_actually_unticks_as_changed(tmp_path):
+    """Review fix Important #1: `_migrate_to_v12` changes `signal.exported`
+    directly, bypassing `Store.set_exported` - which is the only other place
+    that flips that column and does so via `_touch_owning_device`. Without a
+    matching stamp here, `GET /api/export/status` would keep calling a light
+    whose feedback this migration just unticked "exported, unchanged".
+
+    The light was ticked (via `_open_at_v11_with_feedback_ticked`) and
+    therefore has a row the migration actually unticks - it must count as
+    changed since its last export. The button has no feedback attributes at
+    all, so the migration writes nothing on its account, and it must stay
+    counted as unchanged."""
+    path = tmp_path / "v11.sqlite"
+    ids = _open_at_v11_with_feedback_ticked(path)
+    light_id = ids["ikea_kajplats_cws_lamp.json"]
+    button_id = ids["ikea_bilresa_button.json"]
+
+    store = Store(path)
+    try:
+        assert user_version(path) == 12
+        light = store.device(light_id)
+        button = store.device(button_id)
+    finally:
+        store.close()
+
+    assert changed_since_export(light.exported_at, light.updated_at) is True
+    assert changed_since_export(button.exported_at, button.updated_at) is False
