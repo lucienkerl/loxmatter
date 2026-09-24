@@ -276,14 +276,14 @@ async def test_device_list_reports_how_many_inputs_the_next_export_would_produce
     `signal_count` (159) and `exportable_count` (110) - both correct, but
     neither answers how many inputs the next export would actually
     produce. `next_export_count` is the same number as
-    `ExportDeviceOut.inputs` in the export preview: 5 functional signals
-    plus the online signal, see
+    `ExportDeviceOut.inputs` in the export preview: 4 functional signals
+    (`onoff` is feedback since 2026-09-24) plus the online signal, see
     `test_export_api.py::test_preview_reports_what_would_be_written`."""
     client, _, device_id, _ = api
     response = await client.get("/api/devices")
     devices = response.json()
     device = next(d for d in devices if d["id"] == device_id)
-    assert device["next_export_count"] == 6
+    assert device["next_export_count"] == 5
 
 
 async def test_signal_tree_marks_what_cannot_be_exported(api):

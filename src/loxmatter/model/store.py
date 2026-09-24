@@ -77,6 +77,7 @@ from loxmatter.profiles.table import (
     element_rank_for,
     is_exportable,
     lookup,
+    marks_feedback,
     rank_for,
     struct_field,
 )
@@ -2389,7 +2390,13 @@ class Store:
                 # other hand, never belongs to the user (see above) and is
                 # therefore written in BOTH branches.
                 functional = is_functional(ref, device_types)
-                exported = is_exportable(profile.exportability) and functional
+                # Third question (design 2026-09-24): whether the value is
+                # only feedback of a command - then Loxone sent it itself,
+                # and it stays unticked. `functional` stays true, so the
+                # signal dialog still shows it at the top.
+                exported = (
+                    is_exportable(profile.exportability) and functional and not marks_feedback(ref)
+                )
                 self._db.execute(
                     "INSERT INTO signal "
                     "(device_id, endpoint, cluster_id, element_id, kind, key, title, unit,"

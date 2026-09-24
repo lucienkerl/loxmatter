@@ -216,16 +216,17 @@ def test_the_online_signal_is_unaffected_by_any_signals_export_flag():
     assert [i.key for i in inputs] == ["d1_online"]
 
 
-def test_plug_fixture_yields_6_inputs_with_the_relevance_default(tmp_path):
+def test_plug_fixture_yields_5_inputs_with_the_relevance_default(tmp_path):
     """Task 6: since then, the `exported` default no longer means only
     `profiles.table.is_exportable` (technically mappable), but additionally
     `profiles.relevance.is_functional` (also actually wanted) - of the
     110 technically mappable signals of the IKEA outlet (see
     `tests/api/test_devices.py::test_signal_tree_marks_what_cannot_be_exported`)
-    only the five remain that mean something: `onoff` plus voltage, current,
-    active power, and the energy meter reading (see
+    only the four remain that mean something: voltage, current, active
+    power, and the energy meter reading - `onoff` is feedback since
+    2026-09-24 (see
     `tests/model/test_store.py::test_a_freshly_registered_plug_exports_only_its_meaningful_values`).
-    Plus the online signal, makes 6."""
+    Plus the online signal, makes 5."""
     snap = load("ikea_grillplats_plug.json")
     store = Store(tmp_path / "t.sqlite")
     try:
@@ -236,15 +237,15 @@ def test_plug_fixture_yields_6_inputs_with_the_relevance_default(tmp_path):
 
     label = f"{snap.vendor_name} {snap.product_name}".strip()
     inputs = to_inputs(signals, device_id, label)
-    assert len(inputs) == 6
+    assert len(inputs) == 5
 
 
 def test_unchecking_one_signal_reduces_the_plug_fixtures_input_count_by_one(tmp_path):
     """Regression Important #3: unchecking exactly one signal in the WebUI
     must shrink the generated export by exactly one input - an attribute,
     not an event, so the effect does not jump to two inputs via
-    pulse+counter. Base count since Task 6: 6 (see
-    `test_plug_fixture_yields_6_inputs_with_the_relevance_default`), so 5
+    pulse+counter. Base count since 2026-09-24: 5 (see
+    `test_plug_fixture_yields_5_inputs_with_the_relevance_default`), so 4
     after unchecking."""
     snap = load("ikea_grillplats_plug.json")
     store = Store(tmp_path / "t.sqlite")
@@ -259,7 +260,7 @@ def test_unchecking_one_signal_reduces_the_plug_fixtures_input_count_by_one(tmp_
 
     label = f"{snap.vendor_name} {snap.product_name}".strip()
     inputs = to_inputs(signals, device_id, label)
-    assert len(inputs) == 5
+    assert len(inputs) == 4
 
 
 def test_the_template_lists_the_button_press_before_the_battery(tmp_path):

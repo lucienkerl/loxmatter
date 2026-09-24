@@ -29,7 +29,7 @@ from loxmatter.model.store import (
     _signal_order,
 )
 from loxmatter.profiles.relevance import device_types_by_endpoint, is_functional
-from loxmatter.profiles.table import Exportability, Profile, lookup
+from loxmatter.profiles.table import Exportability, Profile, lookup, marks_feedback
 
 FIXTURES = Path(__file__).parents[1] / "fixtures" / "nodes"
 
@@ -340,7 +340,7 @@ def test_signal_by_key_is_none_for_an_unknown_key(store):
     assert store.signal_by_key("d1_1_gibtsnicht") is None
 
 
-def test_new_signal_is_exported_exactly_when_it_is_exportable_and_functional(store):
+def test_new_signal_is_exported_exactly_when_it_is_exportable_functional_and_not_feedback(store):
     """Task 6: `expected` below is deliberately NOT computed via
     `profiles.table.is_exportable`, since that is exactly one half of
     `register_signals`'s own formula - a test that calls the same function
@@ -358,7 +358,11 @@ def test_new_signal_is_exported_exactly_when_it_is_exportable_and_functional(sto
     already independently checked against exactly this descriptor data in
     `tests/profiles/test_relevance.py` (tasks 1-2) - rebuilding it here a
     second time would have produced only a second, constantly-maintained
-    copy of the same table, not a stronger test."""
+    copy of the same table, not a stronger test.
+
+    `marks_feedback` (design 2026-09-24) is reused for the same reason as
+    `is_functional`: it is checked on its own against the table in
+    `tests/profiles/test_table.py`."""
     snap = load("ikea_grillplats_plug.json")
     device_id = store.register_device(snap)
     signals = store.register_signals(device_id, snap)
@@ -368,27 +372,56 @@ def test_new_signal_is_exported_exactly_when_it_is_exportable_and_functional(sto
             Exportability.ANALOG,
             Exportability.DIGITAL,
         )
-        expected = technically_exportable and is_functional(signal.ref, device_types)
+        expected = (
+            technically_exportable
+            and is_functional(signal.ref, device_types)
+            and not marks_feedback(signal.ref)
+        )
         assert signal.exported is expected, signal.key
 
 
 def test_a_freshly_registered_plug_exports_only_its_meaningful_values(store):
-    """The goal of this whole design, on the real device: five values that
+    """The goal of this whole design, on the real device: the values that
     mean something, instead of 110 technically mappable ones (draft section
-    1 and 4.4 - 109 was the state before section 5, the counter reading, was
-    implemented)."""
+    1 and 4.4). Four since 2026-09-24: `onoff` is feedback of the plug's own
+    on/off command and no longer preselected - voltage, current, active
+    power and the meter reading stay."""
     snap = load("ikea_grillplats_plug.json")
     device_id = store.register_device(snap)
     store.register_signals(device_id, snap)
 
     exported = {s.key for s in store.signals(device_id) if s.exported}
     assert exported == {
-        "d1_1_onoff",
         "d1_2_voltage",
         "d1_2_current",
         "d1_2_power",
         "d1_2_energy_imported",
     }
+
+
+def test_a_freshly_registered_colour_light_exports_no_feedback(store):
+    """Design 2026-09-24: Loxone switches the light, so none of its eight
+    state values is preselected - `onoff`, `level` and six colour values.
+    Before, exactly these eight were exported."""
+    snap = load("ikea_kajplats_cws_lamp.json")
+    device_id = store.register_device(snap)
+    store.register_signals(device_id, snap)
+
+    assert [s.key for s in store.signals(device_id) if s.exported] == []
+
+
+def test_feedback_stays_functional_so_the_dialog_keeps_its_order(store):
+    """Only `exported` changes. `functional` decides whether the signal
+    dialog shows a value at the top or folds it into the expert block
+    (design 2026-09-24, section 3.2) - feedback belongs at the top."""
+    snap = load("ikea_kajplats_cws_lamp.json")
+    device_id = store.register_device(snap)
+    store.register_signals(device_id, snap)
+
+    by_key = {s.key: s for s in store.signals(device_id)}
+    for key in ("d1_1_onoff", "d1_1_level", "d1_1_hue", "d1_1_colortemp_mireds"):
+        assert by_key[key].functional is True, key
+        assert by_key[key].exported is False, key
 
 
 def test_a_freshly_registered_button_keeps_both_rockers_and_the_battery(store):
