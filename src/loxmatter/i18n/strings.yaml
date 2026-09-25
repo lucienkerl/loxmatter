@@ -2423,9 +2423,9 @@ web.settings.connection_heading:
   de: "Verbindung zum Miniserver"
 web.settings.connection_explanation:
   en: |
-    This means the address of the machine loxmatter runs on – as the Miniserver sees it. <strong>Not</strong> the Miniserver's address. The virtual input only accepts datagrams from this address, and the output commands call it as <span class="key">http://&lt;this IP&gt;:HTTP-port</span>. If the Miniserver's IP is entered here, the templates look correct but stay silent – with no error message.
+    The <strong>IP of the Miniserver</strong> is where loxmatter sends its values. The <strong>IP of this bridge</strong> is the address of the machine loxmatter runs on, as the Miniserver sees it: the virtual input only accepts datagrams from it, and the output commands call it as <span class="key">http://&lt;this IP&gt;:HTTP-port</span>. Swapping the two gives templates that look correct but stay silent, with no error message.
   de: |
-    Gemeint ist die Adresse des Rechners, auf dem loxmatter läuft – so, wie der Miniserver ihn sieht. <strong>Nicht</strong> die Adresse des Miniservers. Der virtuelle Eingang nimmt Datagramme nur von dieser Adresse an, und die Ausgangsbefehle rufen sie als <span class="key">http://&lt;diese IP&gt;:HTTP-Port</span> auf. Steht hier die Miniserver-IP, sehen die Vorlagen richtig aus, bleiben aber stumm – ohne jede Fehlermeldung.
+    An die <strong>IP des Miniservers</strong> schickt loxmatter seine Werte. Die <strong>IP dieser Brücke</strong> ist die Adresse des Rechners, auf dem loxmatter läuft – so, wie der Miniserver ihn sieht: Der virtuelle Eingang nimmt Datagramme nur von dieser Adresse an, und die Ausgangsbefehle rufen sie als <span class="key">http://&lt;diese IP&gt;:HTTP-Port</span> auf. Wer die beiden vertauscht, bekommt Vorlagen, die richtig aussehen, aber stumm bleiben – ohne jede Fehlermeldung.
 web.settings.miniserver_ip_label:
   en: "IP of the Miniserver"
   de: "IP des Miniservers"

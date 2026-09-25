@@ -2027,6 +2027,10 @@
           <h2 x-text="t('web.export.heading')"></h2>
           <div class="row">
             <label
+              ><span x-text="t('web.settings.miniserver_ip_label')"></span>
+              <input type="text" :value="bridgeSettings.miniserver_ip || ''" readonly
+            /></label>
+            <label
               ><span x-text="t('web.bridge_ip_label')"></span>
               <input type="text" :value="bridgeSettings.bridge_ip || ''" readonly
             /></label>
@@ -2644,6 +2648,13 @@
           <p class="hint" x-html="t('web.settings.connection_explanation')"></p>
           <div class="row">
             <label
+              ><span x-text="t('web.settings.miniserver_ip_label')"></span>
+              <input
+                type="text"
+                x-model="settingsDraft.miniserver_ip"
+                :placeholder="t('web.settings.miniserver_ip_placeholder')"
+            /></label>
+            <label
               ><span x-text="t('web.bridge_ip_label')"></span>
               <input
                 type="text"
@@ -2677,6 +2688,13 @@
               x-text="t('web.settings.never_saved')"
             ></span>
           </div>
+          <p
+            x-show="bridgeSettings.miniserver_check"
+            x-cloak
+            class="banner"
+            :class="bridgeSettings.miniserver_check?.found ? 'ok' : 'warn'"
+            x-text="bridgeSettings.miniserver_check?.message"
+          ></p>
           <p x-show="settingsError" x-cloak class="banner danger" x-text="settingsError"></p>
         </div>
 
