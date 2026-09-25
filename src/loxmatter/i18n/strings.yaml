@@ -163,8 +163,8 @@ cli.run.help:
   en: "Connects Matter and Loxone permanently: values out, commands in."
   de: "Verbindet Matter und Loxone dauerhaft: Werte raus, Kommandos rein."
 cli.run.help_miniserver:
-  en: "IP of the Miniserver, used ONLY to set up an installation that has no Miniserver address yet. Once one is stored - here or in the interface, under Settings → Miniserver connection - the stored address wins and this flag is ignored with a warning."
-  de: "IP des Miniservers, nur zur Ersteinrichtung einer Installation, die noch keine Miniserver-Adresse hat. Sobald eine gespeichert ist – hier oder in der Oberfläche unter Einstellungen → Verbindung zum Miniserver –, gilt die gespeicherte Adresse und diese Option wird mit einer Warnung übergangen."
+  en: "IP of the Miniserver, used ONLY to set up an installation that has no Miniserver address yet. Once one is stored - here or in the interface, under Settings → Miniserver connection - the stored address wins and this flag is ignored (the log says so)."
+  de: "IP des Miniservers, nur zur Ersteinrichtung einer Installation, die noch keine Miniserver-Adresse hat. Sobald eine gespeichert ist – hier oder in der Oberfläche unter Einstellungen → Verbindung zum Miniserver –, gilt die gespeicherte Adresse und diese Option wird übergangen (das Protokoll vermerkt es)."
 cli.run.help_port:
   en: "UDP port the Miniserver listens on, used ONLY where no UDP port is stored yet. The port under Settings → Miniserver connection wins."
   de: "UDP-Port, auf dem der Miniserver lauscht, nur solange noch keiner gespeichert ist. Der Port unter Einstellungen → Verbindung zum Miniserver hat Vorrang."
