@@ -39,7 +39,10 @@ people who don't know the code.
   Miniserver connection now has a field for it. Saving applies it at once,
   without a restart, sends every current value to the Miniserver, and says
   whether a Miniserver answered at that address. The installer no longer asks
-  for it. An address from an earlier installation is taken over by itself.
+  for it. An address from an earlier installation is carried over
+  automatically. If you go back to an earlier version afterwards, it uses
+  the address from your original installation, not one you changed in the
+  web interface since.
 
 ### Changed
 
@@ -86,6 +89,8 @@ people who don't know the code.
 - **A UDP port changed in the settings is the one the bridge sends to.** It
   used to reach only the export templates, while values kept going to port
   7000 — so a Miniserver set up from those templates never received them.
+  If you had already saved a different UDP port under Settings, values now
+  go to that port instead of 7000.
 
 ## [0.4.2] — 2026-09-21
 
