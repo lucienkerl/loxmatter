@@ -20,12 +20,16 @@ section 4."""
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 
 import httpx2 as httpx
 import pytest
 from conftest import authenticate
 
+from loxmatter.api import settings as settings_api
+from loxmatter.loxone.probe import MiniserverProbe, ProbeOutcome
+from loxmatter.loxone.sender import UdpSender
 from loxmatter.loxone.server import build_app
 from loxmatter.model.resend_settings_store import (
     DEFAULT_RESEND_INTERVAL_SECONDS,
@@ -153,3 +157,156 @@ async def test_resend_interval_route_requires_a_session(tmp_path, no_invoke, fak
         response = await client.get("/api/settings/resend-interval")
     store.close()
     assert response.status_code == 401
+
+
+@pytest.fixture
+def probed(monkeypatch):
+    """Replaces the network probe - `tests/loxone/test_probe.py` tests the
+    real one against a local server. Returns the list of probed IPs and lets
+    a test choose the answer."""
+    calls: list[str] = []
+    answer = {
+        "probe": MiniserverProbe(
+            ProbeOutcome.FOUND, serial="50:4F:94:00:00:01", firmware="17.3.9.18"
+        )
+    }
+
+    async def fake_probe(ip: str, **_: object) -> MiniserverProbe:
+        calls.append(ip)
+        return answer["probe"]
+
+    monkeypatch.setattr(settings_api, "probe_miniserver", fake_probe)
+    return calls, answer
+
+
+@pytest.fixture
+async def wired_api(tmp_path, no_invoke, fake_runtime, probed):
+    """Like `api`, with a sender the route can retarget and the runtime it
+    resends through."""
+    store = Store(tmp_path / "t.sqlite")
+    runtime = fake_runtime(store)
+    sender = UdpSender(None, DEFAULT_UDP_PORT)
+    app = build_app(store, no_invoke, runtime, sender=sender)
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        await authenticate(store, client)
+        yield client, store, sender, runtime
+    await sender.close()
+    store.close()
+
+
+async def _until(condition, timeout: float = 1.0) -> None:
+    """The resend runs as a background task; wait for it instead of sleeping
+    a fixed time."""
+    deadline = asyncio.get_running_loop().time() + timeout
+    while not condition():
+        assert asyncio.get_running_loop().time() < deadline, "condition never became true"
+        await asyncio.sleep(0.01)
+
+
+def _body(**overrides):
+    body = {"bridge_ip": "192.168.1.20", "udp_port": 7000, "listen_port": 8080}
+    body.update(overrides)
+    return body
+
+
+async def test_a_fresh_installation_has_no_miniserver_ip(api):
+    client, _ = api
+    body = (await client.get("/api/settings")).json()
+    assert body["miniserver_ip"] is None
+    assert body["miniserver_check"] is None
+
+
+async def test_saving_the_miniserver_ip_retargets_the_sender_and_resends(wired_api):
+    client, store, sender, runtime = wired_api
+    response = await client.patch(
+        "/api/settings", json=_body(miniserver_ip="192.168.1.77", udp_port=7001)
+    )
+    assert response.status_code == 200
+    assert response.json()["miniserver_ip"] == "192.168.1.77"
+    assert store.settings.get().miniserver_ip == "192.168.1.77"
+    assert sender.target == ("192.168.1.77", 7001)
+    await _until(lambda: runtime.resend_calls == 1)
+
+
+async def test_saving_the_same_target_again_does_not_resend(wired_api):
+    client, _, _, runtime = wired_api
+    await client.patch("/api/settings", json=_body(miniserver_ip="192.168.1.77"))
+    await _until(lambda: runtime.resend_calls == 1)
+    await client.patch("/api/settings", json=_body(miniserver_ip="192.168.1.77", listen_port=8081))
+    await asyncio.sleep(0.05)
+    assert runtime.resend_calls == 1
+
+
+async def test_the_response_carries_the_probe_result(wired_api, probed):
+    client, _, _, _ = wired_api
+    calls, _ = probed
+    body = (await client.patch("/api/settings", json=_body(miniserver_ip="192.168.1.77"))).json()
+    assert calls == ["192.168.1.77"]
+    check = body["miniserver_check"]
+    assert check["found"] is True
+    assert check["serial"] == "50:4F:94:00:00:01"
+    assert check["firmware"] == "17.3.9.18"
+    assert "192.168.1.77" in check["message"]
+
+
+async def test_an_unreachable_miniserver_is_saved_anyway_with_a_warning(wired_api, probed):
+    client, store, sender, _ = wired_api
+    _, answer = probed
+    answer["probe"] = MiniserverProbe(ProbeOutcome.TIMEOUT)
+    response = await client.patch("/api/settings", json=_body(miniserver_ip="192.168.1.77"))
+    assert response.status_code == 200
+    assert response.json()["miniserver_check"]["found"] is False
+    assert store.settings.get().miniserver_ip == "192.168.1.77"
+    assert sender.target == ("192.168.1.77", 7000)
+
+
+async def test_an_invalid_miniserver_ip_yields_422_and_saves_nothing(wired_api):
+    client, store, sender, _ = wired_api
+    response = await client.patch("/api/settings", json=_body(miniserver_ip="192.168.1"))
+    assert response.status_code == 422
+    assert "192.168.1" in response.json()["detail"]
+    assert store.settings.get().saved_at is None
+    assert sender.target is None
+
+
+async def test_the_invalid_ip_message_is_german_under_the_german_locale(wired_api):
+    client, store, _, _ = wired_api
+    store.locale.set_language("de")
+    response = await client.patch("/api/settings", json=_body(miniserver_ip="miniserver"))
+    assert response.status_code == 422
+    assert "IPv4" in response.json()["detail"]
+    assert "IP des Miniservers" in response.json()["detail"]
+
+
+async def test_an_empty_miniserver_ip_clears_the_address_and_the_target(wired_api, probed):
+    client, store, sender, _ = wired_api
+    calls, _ = probed
+    await client.patch("/api/settings", json=_body(miniserver_ip="192.168.1.77"))
+    body = (await client.patch("/api/settings", json=_body(miniserver_ip=""))).json()
+    assert body["miniserver_ip"] is None
+    assert body["miniserver_check"] is None
+    assert store.settings.get().miniserver_ip is None
+    assert sender.target is None
+    assert calls == ["192.168.1.77"]
+
+
+async def test_a_body_without_the_field_keeps_the_stored_address(wired_api):
+    """A browser tab still running the previous version's app.js after an
+    update knows nothing of the field. Saving the bridge's IP from it must
+    not erase the Miniserver's address (spec section 7)."""
+    client, store, sender, _ = wired_api
+    await client.patch("/api/settings", json=_body(miniserver_ip="192.168.1.77"))
+    await client.patch("/api/settings", json=_body(bridge_ip="192.168.1.21"))
+    assert store.settings.get().miniserver_ip == "192.168.1.77"
+    assert sender.target == ("192.168.1.77", 7000)
+
+
+async def test_changing_only_the_udp_port_retargets_the_sender(wired_api):
+    """The defect in spec section 1: the port in the card used to reach the
+    templates only."""
+    client, _, sender, runtime = wired_api
+    await client.patch("/api/settings", json=_body(miniserver_ip="192.168.1.77"))
+    await client.patch("/api/settings", json=_body(udp_port=7009))
+    assert sender.target == ("192.168.1.77", 7009)
+    await _until(lambda: runtime.resend_calls == 2)

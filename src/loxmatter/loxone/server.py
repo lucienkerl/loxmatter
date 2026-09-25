@@ -552,7 +552,9 @@ def build_app(
     )
     app.include_router(build_export_router(store), dependencies=api_guard)
     app.include_router(build_project_sync_router(store), dependencies=api_guard)
-    app.include_router(build_settings_router(store), dependencies=api_guard)
+    app.include_router(
+        build_settings_router(store, sender=sender, runtime=runtime), dependencies=api_guard
+    )
     # Same guard as every other `/api` router - see
     # `api/update.py`'s module docstring for why an update to a published
     # version deliberately gets no SECOND password prompt on top of it.
