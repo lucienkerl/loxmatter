@@ -48,9 +48,15 @@ additive).
 
 `BridgeSettingsStore.save` keeps its all-fields-in-one-transaction shape and
 takes `miniserver_ip` as a fourth keyword. A separate
-`seed_miniserver(ip, udp_port)` writes only those two keys, and only when
-`miniserver_ip` is not yet stored. It does not touch `saved_at`, because
-nobody saved anything in the interface.
+`seed_miniserver(ip, udp_port)` writes each of those two keys only where it
+is not yet stored. It does not touch `saved_at`, because nobody saved
+anything in the interface.
+
+The port is seeded key by key, not together with the IP, because of the
+defect in section 1: someone who saved 7001 in the card has a Loxone project
+built from templates that say 7001. Overwriting that with `--port`'s 7000
+would keep the bridge sending past it. Leaving it alone makes the sender
+finally agree with the templates.
 
 ## 4. Start (`cli.run`)
 
@@ -61,8 +67,8 @@ every installation made after this change.
 At start, before the sender is built:
 
 1. If `--miniserver` is given and no `miniserver_ip` is stored,
-   `seed_miniserver(miniserver, port)` stores it together with `--port`, and
-   an info line says so. This is how an existing installation carries its
+   `seed_miniserver(miniserver, port)` stores it, together with `--port`
+   where no UDP port is stored yet, and an info line says so. This is how an existing installation carries its
    `.env` address over on the first start of the new version.
 2. If `--miniserver` is given and differs from the stored value, a warning
    says the argument is ignored and names the stored value. It is the same
@@ -89,18 +95,24 @@ change would then never reach the Miniserver.
 
 `_check_miniserver` (`api/diagnostics.py`) reports a failed check with the
 new text `api.diagnostics.no_miniserver_address` when the sender has no
-target. The diagnostics view links that line to Settings → Miniserver
-connection, the same link the export tab already uses
-(`web.settings.miniserver_link`).
+target. The text names the place to fix it, Settings → Miniserver
+connection. It cannot link there: the diagnostics view renders every check's
+detail as plain text (`x-text="check.detail"`), and one check with markup of
+its own is not worth a second rendering path.
 
 ## 7. Saving (`PATCH /api/settings`)
 
 `BridgeSettingsIn` gains `miniserver_ip: str | None`. The route:
 
-1. Validates both IPs as IPv4 addresses (`ipaddress.IPv4Address`). A bad
-   value is a 422 with an i18n detail (`api.settings.invalid_ipv4`, naming
-   the field), in the pattern of `api/devices.py`. An empty Miniserver IP is
-   stored as `None`.
+1. Validates the Miniserver IP as an IPv4 address (`ipaddress.IPv4Address`).
+   A bad value is a 422 with an i18n detail (`api.settings.invalid_ipv4`,
+   naming the field), in the pattern of `api/devices.py`. An empty
+   Miniserver IP, or `null`, is stored as `None`. A body **without** the
+   field keeps the stored IP: a browser tab still running the previous
+   version's `app.js` after an update saves the bridge's IP without knowing
+   the new field, and must not erase the Miniserver's address by doing so.
+   The bridge's IP keeps today's rule (not empty) and is not narrowed to
+   IPv4 here; that would reject values existing installations saved.
 2. Saves all four values.
 3. Calls `sender.set_target(miniserver_ip, udp_port)`. If the target changed
    and is not `None`, it starts `runtime.resend_all()` as a background task,
@@ -199,8 +211,8 @@ actually open.
 ## 12. Tests
 
 - **Store:** the round trip of `miniserver_ip`. `seed_miniserver` writes into
-  an empty store, does not overwrite a stored value, and leaves `saved_at`
-  alone.
+  an empty store, does not overwrite a stored IP or a stored UDP port, and
+  leaves `saved_at` alone.
 - **CLI:** the seed on first start, the stored value winning over the
   argument (with the warning), an empty `--miniserver` counting as absent,
   and the sender built with the stored UDP port rather than `--port`.
