@@ -306,3 +306,52 @@ async def test_project_sync_rejects_an_impossible_offset(api):
         files={"file": ("projekt.Loxone", SAMPLE_PROJECT.encode("utf-8"), "application/xml")},
     )
     assert response.status_code == 422
+
+
+def _store_miniserver(store, ip):
+    store.settings.save(bridge_ip="10.0.0.5", udp_port=7000, listen_port=8080, miniserver_ip=ip)
+
+
+async def test_the_stored_miniserver_resolves_a_file_with_several(api):
+    """Spec section 9: no selection field when the address in Settings
+    already says which Miniserver this bridge talks to."""
+    client, store = api
+    _store_miniserver(store, "10.0.0.20")
+    response = await client.post(
+        "/api/export/project-sync",
+        params={"bridge_ip": "10.0.0.5"},
+        files={
+            "file": ("mehrere_ms.Loxone", TWO_LOXLIVE_PROJECT.encode("utf-8"), "application/xml")
+        },
+    )
+    body = response.json()
+    assert body["needs_miniserver_selection"] is False
+    assert body["patched_base64"] is not None
+
+
+async def test_a_stored_miniserver_not_in_the_file_still_asks(api):
+    client, store = api
+    _store_miniserver(store, "10.0.0.99")
+    response = await client.post(
+        "/api/export/project-sync",
+        params={"bridge_ip": "10.0.0.5"},
+        files={
+            "file": ("mehrere_ms.Loxone", TWO_LOXLIVE_PROJECT.encode("utf-8"), "application/xml")
+        },
+    )
+    assert response.json()["needs_miniserver_selection"] is True
+
+
+async def test_a_single_miniserver_file_ignores_a_stored_address_that_differs(api):
+    """`build_index` rejects a `miniserver_ip` that does not match a single
+    block, so the stored address may only be offered where the choice is
+    open."""
+    client, store = api
+    _store_miniserver(store, "10.0.0.99")
+    response = await client.post(
+        "/api/export/project-sync",
+        params={"bridge_ip": "10.0.0.5"},
+        files={"file": ("p.Loxone", SAMPLE_PROJECT.encode("utf-8"), "application/xml")},
+    )
+    assert response.status_code == 200
+    assert response.json()["patched_base64"] is not None
