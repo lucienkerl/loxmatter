@@ -526,13 +526,12 @@ bluetooth_menu_expected() {
 }
 
 # Appends $1 as the next announced question, without eval: aq_count picks
-# which of the three fixed slots it lands in.
+# which of the two fixed slots it lands in.
 aq_add() {
   aq_count=$((aq_count + 1))
   case "$aq_count" in
     1) aq_1=$1 ;;
-    2) aq_2=$1 ;;
-    *) aq_3=$1 ;;
+    *) aq_2=$1 ;;
   esac
 }
 
@@ -545,7 +544,6 @@ announce_questions() {
   aq_count=0
   aq_1=""
   aq_2=""
-  aq_3=""
   if thread_menu_expected; then
     aq_add "the Thread stick"
   fi
@@ -555,8 +553,7 @@ announce_questions() {
   case "$aq_count" in
     0) return 0 ;;
     1) aq_text="One question follows: $aq_1." ;;
-    2) aq_text="Two questions follow: $aq_1 and $aq_2." ;;
-    *) aq_text="Three questions follow: $aq_1, $aq_2, and $aq_3." ;;
+    *) aq_text="Two questions follow: $aq_1 and $aq_2." ;;
   esac
   say "Questions"
   note "$aq_text"

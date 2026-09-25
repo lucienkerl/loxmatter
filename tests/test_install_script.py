@@ -42,10 +42,6 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parent.parent
 INSTALLER = REPO_ROOT / "install.sh"
 
-# Captured from a real Miniserver (Task 1 of the plan for design
-# 2026-09-21-installer-guided-questions), never written by hand.
-MINISERVER_API_FIXTURE = REPO_ROOT / "tests" / "fixtures" / "miniserver" / "jdev_cfg_api.json"
-
 # Real tools the script is allowed to use. Everything else comes from
 # a stub or counts as not installed.
 SYSTEM_TOOLS = (
@@ -147,9 +143,7 @@ exit 0
 # The script now downloads get.docker.com via `-o <file>` instead of
 # piping it - the stub therefore has to evaluate `-o` itself and write the
 # body there instead of just printing it. Without `-o` (e.g. during the
-# health check), the output goes to stdout as before. The Miniserver check
-# reaches /jdev/cfg/api; addresses listed in FAKE_MS_DEAD time out instead of
-# answering, and MINISERVER_API_BODY is what the others answer with.
+# health check), the output goes to stdout as before.
 _CURL = """out=""
 url=""
 prev=""
@@ -173,14 +167,6 @@ case "$url" in
     body="cp '$STUB_TEMPLATES/docker' '$STUB_BIN/docker' && chmod 755 '$STUB_BIN/docker'"
     ;;
   *health*) body='{"status":"ok"}' ;;
-  *jdev/cfg/api*)
-    for dead in ${FAKE_MS_DEAD-}; do
-      case "$url" in
-        "http://$dead/"*) exit 28 ;;
-      esac
-    done
-    body="$MINISERVER_API_BODY"
-    ;;
 esac
 if [ -n "$out" ]; then
   printf '%s\\n' "$body" > "$out"
@@ -290,12 +276,9 @@ def installer(tmp_path):
             "TMPDIR": str(tmpdir),
             "LOXMATTER_REPO": str(REPO_ROOT),
             "LOXMATTER_DIR": str(home / "loxmatter"),
-            # Without a terminal, the address must come from the environment.
-            # Tests that check exactly this abort set it to "".
+            # Written to .env as-is, without being contacted. Tests about
+            # the no-address path set it to "".
             "MINISERVER_IP": "10.0.1.99",
-            # What a Miniserver answers on /jdev/cfg/api. A test replaces it
-            # to have something that is not a Miniserver answer instead.
-            "MINISERVER_API_BODY": MINISERVER_API_FIXTURE.read_text(),
             # /sys/class/rfkill doesn't exist on macOS and is nowhere
             # writable. This path doesn't exist by default -
             # check_rfkill then finds nothing, just like on a host without
@@ -739,10 +722,10 @@ def test_without_a_miniserver_ip_it_installs_and_leaves_the_address_to_the_web_i
 
 
 def test_a_passed_miniserver_ip_is_written_without_contacting_it(installer):
-    result = installer(env={"MINISERVER_IP": "10.0.1.77", "FAKE_MS_DEAD": "10.0.1.77"})
+    result = installer(env={"MINISERVER_IP": "10.0.1.77"})
     assert result.returncode == 0
     assert _env(result)["MINISERVER_IP"] == "10.0.1.77"
-    assert "No Miniserver answers" not in result.output
+    assert not any("10.0.1.77" in call for call in result.calls)
 
 
 def test_a_token_is_generated(installer):
@@ -1416,3 +1399,29 @@ def test_without_a_terminal_nothing_is_announced(installer):
     assert result.returncode == 0
     assert "question follows" not in result.output
     assert "questions follow" not in result.output
+
+
+def test_every_question_comes_before_anything_is_installed(installer, tmp_path):
+    # The Bluetooth menu is now the last question. Its heading, printed by
+    # say("Bluetooth adapter") (install.sh ~956) as "\n\033[1mBluetooth
+    # adapter\033[0m\n", is distinct from the plain "the Bluetooth adapter"
+    # inside the "Two questions follow: ..." announcement above it - the
+    # bold-on escape immediately before "Bluetooth" is what makes it so.
+    # Result.output is proc.stdout + proc.stderr; every marker checked here
+    # (say/note) goes to stdout, and this run succeeds (nothing hits die(),
+    # the only thing writing to stderr), so stdout's order is preserved
+    # unmixed and reflects execution order. This heading has to come before
+    # the first package and before Docker - otherwise the user is called
+    # back to the keyboard minutes into the installation.
+    env = {
+        **_serial(tmp_path, STICK_A, STICK_B),
+        **_bluetooth(tmp_path, (0, None), (1, "TP-Link UB500 Adapter")),
+        "MINISERVER_IP": "",
+    }
+    result = installer(env=env, omit=("git", "docker"), answers=["2", "2"])
+    assert result.returncode == 0
+    bluetooth_heading = result.output.index("\033[1mBluetooth adapter\033[0m")
+    packages = result.output.index("Installing missing tools")
+    docker = result.output.index("Docker is not installed")
+    assert bluetooth_heading < packages
+    assert bluetooth_heading < docker
