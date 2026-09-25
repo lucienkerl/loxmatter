@@ -62,6 +62,7 @@ def build_settings_router(store: Store) -> APIRouter:
             bridge_ip=patch.bridge_ip,
             udp_port=patch.udp_port,
             listen_port=patch.listen_port,
+            miniserver_ip=store.settings.get().miniserver_ip,
         )
         return _settings_out(store)
 

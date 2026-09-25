@@ -354,7 +354,9 @@ def main() -> None:
     store = Store(store_path)
     if args.demo:
         store.auth.reset_password(hash_password(DEMO_PASSWORD))
-        store.settings.save(bridge_ip="192.168.1.50", udp_port=7000, listen_port=8080)
+        store.settings.save(
+            bridge_ip="192.168.1.50", udp_port=7000, listen_port=8080, miniserver_ip="192.168.1.10"
+        )
         # Same treatment as `exported_at` above and for the same reason:
         # `BridgeSettingsStore.save` sets `saved_at` to now, which is
         # correct in production but changes the screenshot on every run.

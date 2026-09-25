@@ -14,8 +14,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Access to this bridge's connection data - IP and ports, as they are
-already entered today in the export tab (`api/export.py`).
+"""Access to the connection data of the bridge and the Miniserver - IPs and ports.
 
 Its own module and its own class, analogous to `auth_store.py`: the
 `setting` table is generic (key/value) by design, precisely so that further
@@ -38,24 +37,31 @@ _BRIDGE_IP_KEY = "bridge_ip"
 _BRIDGE_UDP_PORT_KEY = "bridge_udp_port"
 _BRIDGE_LISTEN_PORT_KEY = "bridge_listen_port"
 _BRIDGE_SETTINGS_SAVED_AT_KEY = "bridge_settings_saved_at"
+# Since 2026-09-25 (design "The Miniserver's address is set in the web
+# interface"): before that, the address only reached the bridge as
+# `--miniserver`.
+_MINISERVER_IP_KEY = "miniserver_ip"
 
 _ALL_KEYS = (
     _BRIDGE_IP_KEY,
     _BRIDGE_UDP_PORT_KEY,
     _BRIDGE_LISTEN_PORT_KEY,
     _BRIDGE_SETTINGS_SAVED_AT_KEY,
+    _MINISERVER_IP_KEY,
 )
 
 
 @dataclass(frozen=True)
 class BridgeSettings:
-    """`bridge_ip`/`saved_at` are `None` as long as nobody has saved anything
-    - the ports fall back in that case to the default values that were set
-    when the store was created."""
+    """`bridge_ip`/`miniserver_ip`/`saved_at` are `None` as long as nobody has
+    saved (or, for `miniserver_ip`, seeded) anything - the ports fall back in
+    that case to the default values that were set when the store was
+    created."""
 
     bridge_ip: str | None
     udp_port: int
     listen_port: int
+    miniserver_ip: str | None
     saved_at: str | None
 
 
@@ -84,12 +90,17 @@ class BridgeSettingsStore:
             listen_port=int(values[_BRIDGE_LISTEN_PORT_KEY])
             if _BRIDGE_LISTEN_PORT_KEY in values
             else self._default_listen_port,
+            miniserver_ip=values.get(_MINISERVER_IP_KEY),
             saved_at=values.get(_BRIDGE_SETTINGS_SAVED_AT_KEY),
         )
 
-    def save(self, *, bridge_ip: str, udp_port: int, listen_port: int) -> BridgeSettings:
-        """Writes all three values and the timestamp in one transaction -
-        no partial update: the three fields belong together by domain."""
+    def save(
+        self, *, bridge_ip: str, udp_port: int, listen_port: int, miniserver_ip: str | None
+    ) -> BridgeSettings:
+        """Writes all four values and the timestamp in one transaction -
+        no partial update: the fields belong together by domain. A
+        `miniserver_ip` of `None` removes the key, so `get()` reports no
+        address rather than an empty string."""
         saved_at = now_iso()
         for key, value in (
             (_BRIDGE_IP_KEY, bridge_ip),
@@ -102,5 +113,33 @@ class BridgeSettingsStore:
                 "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
                 (key, value),
             )
+        if miniserver_ip is None:
+            self._db.execute("DELETE FROM setting WHERE key = ?", (_MINISERVER_IP_KEY,))
+        else:
+            self._upsert(_MINISERVER_IP_KEY, miniserver_ip)
         self._db.commit()
         return self.get()
+
+    def seed_miniserver(self, ip: str, udp_port: int) -> bool:
+        """Takes `loxmatter run --miniserver`/`--port` over on an installation
+        that has no Miniserver address yet. Each key is written only where it
+        is missing - a UDP port saved in the interface is what the Loxone
+        project's templates say, and stays. `saved_at` is not touched:
+        nobody saved anything in the interface. Returns whether the IP was
+        written."""
+        if self.get().miniserver_ip is not None:
+            return False
+        for key, value in ((_MINISERVER_IP_KEY, ip), (_BRIDGE_UDP_PORT_KEY, str(udp_port))):
+            self._db.execute(
+                "INSERT INTO setting (key, value) VALUES (?, ?) ON CONFLICT(key) DO NOTHING",
+                (key, value),
+            )
+        self._db.commit()
+        return True
+
+    def _upsert(self, key: str, value: str) -> None:
+        self._db.execute(
+            "INSERT INTO setting (key, value) VALUES (?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (key, value),
+        )
