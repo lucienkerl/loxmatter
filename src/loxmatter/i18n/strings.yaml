@@ -163,8 +163,17 @@ cli.run.help:
   en: "Connects Matter and Loxone permanently: values out, commands in."
   de: "Verbindet Matter und Loxone dauerhaft: Werte raus, Kommandos rein."
 cli.run.help_miniserver:
-  en: "IP of the Miniserver"
-  de: "IP des Miniservers"
+  en: "IP of the Miniserver, used ONLY to set up an installation that has no Miniserver address yet. Once one is stored - here or in the interface, under Settings → Miniserver connection - the stored address wins and this flag is ignored (the log says so)."
+  de: "IP des Miniservers, nur zur Ersteinrichtung einer Installation, die noch keine Miniserver-Adresse hat. Sobald eine gespeichert ist – hier oder in der Oberfläche unter Einstellungen → Verbindung zum Miniserver –, gilt die gespeicherte Adresse und diese Option wird übergangen (das Protokoll vermerkt es)."
+cli.run.help_port:
+  en: "UDP port the Miniserver listens on, used ONLY where no UDP port is stored yet. The port under Settings → Miniserver connection wins."
+  de: "UDP-Port, auf dem der Miniserver lauscht, nur solange noch keiner gespeichert ist. Der Port unter Einstellungen → Verbindung zum Miniserver hat Vorrang."
+cli.run.info_miniserver_seeded:
+  en: "Took the Miniserver address {ip} over from --miniserver. From now on it is changed in the interface, under Settings → Miniserver connection."
+  de: "Miniserver-Adresse {ip} aus --miniserver übernommen. Geändert wird sie ab jetzt in der Oberfläche unter Einstellungen → Verbindung zum Miniserver."
+cli.run.warn_miniserver_ignored:
+  en: "Using the stored Miniserver address {stored}. --miniserver (on an existing installation, MINISERVER_IP in .env) only seeds an installation that has no address yet, so {flag} is ignored — this can be disregarded."
+  de: "Es wird die gespeicherte Miniserver-Adresse {stored} verwendet. --miniserver (bei einer bestehenden Installation MINISERVER_IP in .env) legt nur bei einer Installation ohne Adresse einen Startwert fest, deshalb wird {flag} ignoriert - das kann unbeachtet bleiben."
 cli.run.help_listen:
   en: "Port for the HTTP commands coming from Loxone"
   de: "Port für die HTTP-Kommandos aus Loxone"
@@ -778,9 +787,12 @@ api.diagnostics.thread_found:
 api.diagnostics.no_udp_sender:
   en: "No UDP sender configured — the bridge is not sending values to the Miniserver. This is always set for `loxmatter run`; if it's missing here, this service was started with an incomplete setup."
   de: "Kein UDP-Sender konfiguriert - die Bruecke sendet keine Werte an den Miniserver. Das ist bei `loxmatter run` immer gesetzt; fehlt es hier, wurde dieser Dienst mit einem unvollstaendigen Aufbau gestartet."
+api.diagnostics.no_miniserver_address:
+  en: "No Miniserver address is set, so the bridge sends no values. Enter it under Settings → Miniserver connection."
+  de: "Es ist keine Miniserver-Adresse eingetragen, deshalb sendet die Brücke keine Werte. Tragen Sie sie unter Einstellungen → Verbindung zum Miniserver ein."
 api.diagnostics.no_network_path:
-  en: "No network path to {host}:{port} found ({exc}). Is the Miniserver switched on and reachable on the same network? Do the IP and port match `loxmatter run --miniserver`/`--port`?"
-  de: "Kein Netzwerkpfad zu {host}:{port} gefunden ({exc}). Ist der Miniserver eingeschaltet und im selben Netz erreichbar? Stimmen IP und Port aus `loxmatter run --miniserver`/`--port`?"
+  en: "No network path to {host}:{port} found ({exc}). Is the Miniserver switched on and reachable on the same network? Do the IP and port match what is set under Settings → Miniserver connection?"
+  de: "Kein Netzwerkpfad zu {host}:{port} gefunden ({exc}). Ist der Miniserver eingeschaltet und im selben Netz erreichbar? Stimmen IP und Port mit den Werten unter Einstellungen → Verbindung zum Miniserver überein?"
 api.diagnostics.network_path_exists:
   en: "A network path to {host}:{port} exists. This only confirms routing, not actual delivery — the Miniserver does not evaluate UDP responses."
   de: "Ein Netzwerkpfad zu {host}:{port} existiert. Das bestaetigt nur Routing, keine tatsaechliche Zustellung - der Miniserver wertet UDP-Antworten nicht aus."
@@ -981,6 +993,25 @@ projectsync.missing_control_list_close:
 api.settings.resend_interval_too_small:
   en: "resend interval must be at least {minimum}s, got: {value}"
   de: "Resend-Intervall muss mindestens {minimum}s betragen, angegeben: {value}"
+
+api.settings.invalid_ipv4:
+  en: "{field}: \"{value}\" is not an IPv4 address like 192.168.1.10."
+  de: "{field}: „{value}“ ist keine IPv4-Adresse wie 192.168.1.10."
+api.settings.miniserver_found:
+  en: "Miniserver found at {ip} (serial {serial}, firmware {firmware})."
+  de: "Miniserver unter {ip} gefunden (Seriennummer {serial}, Firmware {firmware})."
+api.settings.miniserver_timeout:
+  en: "No Miniserver answers at {ip} (timeout). The address is saved; values go there as soon as the Miniserver is reachable."
+  de: "Unter {ip} antwortet kein Miniserver (Zeitüberschreitung). Die Adresse ist gespeichert; die Werte gehen dorthin, sobald der Miniserver erreichbar ist."
+api.settings.miniserver_no_connection:
+  en: "No Miniserver answers at {ip} (could not connect). The address is saved; values go there as soon as the Miniserver is reachable."
+  de: "Unter {ip} antwortet kein Miniserver (keine Verbindung). Die Adresse ist gespeichert; die Werte gehen dorthin, sobald der Miniserver erreichbar ist."
+api.settings.miniserver_http_error:
+  en: "No Miniserver answers at {ip} (HTTP {status}). The address is saved anyway."
+  de: "Unter {ip} antwortet kein Miniserver (HTTP {status}). Die Adresse ist trotzdem gespeichert."
+api.settings.miniserver_not_a_miniserver:
+  en: "Something answers at {ip}, but it is not a Miniserver. The address is saved anyway - check it."
+  de: "Unter {ip} antwortet etwas, aber kein Miniserver. Die Adresse ist trotzdem gespeichert – bitte prüfen."
 
 projectsync.not_utf8:
   en: "The uploaded file is not a valid UTF-8 text file - a Loxone project file is saved as UTF-8."
@@ -2392,9 +2423,15 @@ web.settings.connection_heading:
   de: "Verbindung zum Miniserver"
 web.settings.connection_explanation:
   en: |
-    This means the address of the machine loxmatter runs on – as the Miniserver sees it. <strong>Not</strong> the Miniserver's address. The virtual input only accepts datagrams from this address, and the output commands call it as <span class="key">http://&lt;this IP&gt;:HTTP-port</span>. If the Miniserver's IP is entered here, the templates look correct but stay silent – with no error message.
+    The <strong>IP of the Miniserver</strong> is where loxmatter sends its values. The <strong>IP of this bridge</strong> is the address of the machine loxmatter runs on, as the Miniserver sees it: the virtual input only accepts datagrams from it, and the output commands call it as <span class="key">http://&lt;this IP&gt;:HTTP-port</span>. Swapping the two gives templates that look correct but stay silent, with no error message.
   de: |
-    Gemeint ist die Adresse des Rechners, auf dem loxmatter läuft – so, wie der Miniserver ihn sieht. <strong>Nicht</strong> die Adresse des Miniservers. Der virtuelle Eingang nimmt Datagramme nur von dieser Adresse an, und die Ausgangsbefehle rufen sie als <span class="key">http://&lt;diese IP&gt;:HTTP-Port</span> auf. Steht hier die Miniserver-IP, sehen die Vorlagen richtig aus, bleiben aber stumm – ohne jede Fehlermeldung.
+    An die <strong>IP des Miniservers</strong> schickt loxmatter seine Werte. Die <strong>IP dieser Brücke</strong> ist die Adresse des Rechners, auf dem loxmatter läuft – so, wie der Miniserver ihn sieht: Der virtuelle Eingang nimmt Datagramme nur von dieser Adresse an, und die Ausgangsbefehle rufen sie als <span class="key">http://&lt;diese IP&gt;:HTTP-Port</span> auf. Wer die beiden vertauscht, bekommt Vorlagen, die richtig aussehen, aber stumm bleiben – ohne jede Fehlermeldung.
+web.settings.miniserver_ip_label:
+  en: "IP of the Miniserver"
+  de: "IP des Miniservers"
+web.settings.miniserver_ip_placeholder:
+  en: "e.g. 192.168.1.10"
+  de: "z. B. 192.168.1.10"
 web.settings.bridge_ip_placeholder:
   en: "e.g. 192.168.1.20"
   de: "z. B. 192.168.1.20"

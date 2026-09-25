@@ -231,3 +231,47 @@ def test_a_removed_observer_is_no_longer_called():
     asyncio.run(sender.send("d1_1_onoff", True))
 
     assert seen == []
+
+
+async def test_without_a_target_nothing_is_sent_or_recorded(receiver):
+    """A fresh installation has no Miniserver address yet (spec section 5)."""
+    sender = UdpSender(None, 7000)
+    assert sender.target is None
+    assert await sender.send("d1_1_temp", 21.5) is False
+    assert list(sender.datagram_log) == []
+    await sender.close()
+
+
+async def test_set_target_sends_the_next_value_to_the_new_address(receiver):
+    host, port = receiver.getsockname()
+    sender = UdpSender(None, 7000)
+    sender.set_target(host, port)
+    assert sender.target == (host, port)
+    await sender.send("d1_1_temp", 21.5)
+    await asyncio.sleep(0.05)
+    assert received(receiver) == [b"d1_1_temp:21.5"]
+    await sender.close()
+
+
+async def test_a_value_suppressed_without_a_target_goes_out_once_there_is_one(receiver):
+    """Recording it as sent while there was nowhere to send it would
+    debounce it forever: a light that does not change would never reach the
+    Miniserver."""
+    host, port = receiver.getsockname()
+    sender = UdpSender(None, 7000)
+    await sender.send("d1_1_onoff", True)
+    sender.set_target(host, port)
+    assert await sender.send("d1_1_onoff", True) is True
+    await asyncio.sleep(0.05)
+    assert received(receiver) == [b"d1_1_onoff:1"]
+    await sender.close()
+
+
+async def test_set_target_none_stops_sending(receiver):
+    host, port = receiver.getsockname()
+    sender = UdpSender(host, port)
+    sender.set_target(None, port)
+    assert await sender.send("d1_1_temp", 21.5) is False
+    await asyncio.sleep(0.05)
+    assert received(receiver) == []
+    await sender.close()

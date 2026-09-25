@@ -16404,3 +16404,46 @@ async def test_save_group_dialog_reloads_the_groups_own_outputs(api):
     end = js.index("\n    },", start)
     body = js[start:end]
     assert 'await this.loadOutputs(this.outputSubject("g", groupId))' in body
+
+
+async def test_the_settings_card_has_a_miniserver_ip_field(api):
+    """Design 2026-09-25, section 9: the card named after the Miniserver
+    finally holds its address - under its own label, never the bridge's."""
+    client, _, _ = api
+    markup = _without_comments((await client.get("/")).text)
+    label = _label_around(markup, 'x-model="settingsDraft.miniserver_ip"')
+    assert "x-text=\"t('web.settings.miniserver_ip_label')\"" in label, label
+    assert "web.bridge_ip_label" not in label, label
+    assert ":placeholder=\"t('web.settings.miniserver_ip_placeholder')\"" in label, label
+
+
+async def test_the_settings_card_shows_the_probe_result(api):
+    client, _, _ = api
+    markup = _without_comments((await client.get("/")).text)
+    assert 'x-text="bridgeSettings.miniserver_check?.message"' in markup
+    assert "bridgeSettings.miniserver_check?.found ? 'ok' : 'warn'" in markup
+
+
+async def test_the_export_block_shows_the_miniserver_ip_read_only(api):
+    client, _, _ = api
+    markup = _without_comments((await client.get("/")).text)
+    label = _label_around(markup, ':value="bridgeSettings.miniserver_ip')
+    assert "x-text=\"t('web.settings.miniserver_ip_label')\"" in label, label
+    assert "readonly" in label, label
+
+
+async def test_save_settings_sends_the_miniserver_ip(api):
+    client, _, _ = api
+    script = (await client.get("/static/app.js")).text
+    start = script.index("async saveSettings() {")
+    body = script[start : script.index("\n    },", start)]
+    assert "miniserver_ip: this.settingsDraft.miniserver_ip.trim() || null," in body
+
+
+async def test_save_settings_clears_the_stale_probe_result_on_error(api):
+    client, _, _ = api
+    script = (await client.get("/static/app.js")).text
+    start = script.index("async saveSettings() {")
+    body = script[start : script.index("\n    },", start)]
+    catch = body[body.index("} catch (error) {") :]
+    assert "this.bridgeSettings = { ...this.bridgeSettings, miniserver_check: null };" in catch

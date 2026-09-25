@@ -90,14 +90,17 @@ logger = logging.getLogger(__name__)
 class UdpSender:
     def __init__(
         self,
-        host: str,
+        host: str | None,
         port: int,
         *,
         rate_limit: float = RATE_LIMIT_PER_SECOND,
         log_size: int = DATAGRAM_LOG_SIZE,
     ) -> None:
-        """Sets up the UDP socket. A rate_limit of 0 or below means: no rate limit."""
-        self._target = (host, port)
+        """Sets up the UDP socket. A rate_limit of 0 or below means: no
+        rate limit. A `host` of `None` is an installation without a
+        Miniserver address yet - see `set_target`."""
+        self._target: tuple[str, int] | None = None
+        self.set_target(host, port)
         self._interval = 1.0 / rate_limit if rate_limit > 0 else 0.0
         self._socket: socket.socket | None = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self._socket.setblocking(False)
@@ -107,10 +110,20 @@ class UdpSender:
         self._datagram_log: RingBuffer[DatagramLogEntry] = RingBuffer(maxlen=log_size)
 
     @property
-    def target(self) -> tuple[str, int]:
-        """Target host/port - for the diagnostics system check
-        (`api.diagnostics._check_miniserver`), otherwise purely internal."""
+    def target(self) -> tuple[str, int] | None:
+        """Target host/port, `None` while no Miniserver address is set -
+        for the diagnostics system check (`api.diagnostics._check_miniserver`)
+        and the settings route, otherwise purely internal."""
         return self._target
+
+    def set_target(self, host: str | None, port: int) -> None:
+        """Points the sender at a new Miniserver address, or at none.
+
+        The debounce cache is deliberately kept: whoever changes the
+        target also calls `Runtime.resend_all`, whose `force=True`
+        bypasses it. A value that was never sent is not in the cache in
+        the first place - see `send`."""
+        self._target = (host, port) if host else None
 
     @property
     def datagram_log(self) -> RingBuffer[DatagramLogEntry]:
@@ -150,6 +163,12 @@ class UdpSender:
         if self._socket is None:
             raise ReportingClosedError(i18n.t("api.server.udp_sender_closed"))
 
+        if self._target is None:
+            # No Miniserver address yet. Returning before anything is
+            # recorded is the point: a value marked as sent here would be
+            # debounced once an address exists, and never arrive.
+            return False
+
         packet = datagram(key, value)
         text = packet.decode()
         if not force and self._last_sent.get(key) == text:
@@ -162,7 +181,10 @@ class UdpSender:
             wait_time = self._next_send_time - loop.time()
             if wait_time > 0:
                 await asyncio.sleep(wait_time)
-            self._socket.sendto(packet, self._target)
+            target = self._target
+            if target is None:  # cleared while this call waited for the lock
+                return False
+            self._socket.sendto(packet, target)
             self._next_send_time = loop.time() + self._interval
             # Only AFTER the actual sendto() - see the module docstring.
             # A skipped (debounced) value above never reaches this line,

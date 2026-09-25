@@ -525,7 +525,10 @@ def _check_miniserver(sender: UdpSender | None) -> tuple[bool, str]:
     instead of a documentation address) - no delivery."""
     if sender is None:
         return False, i18n.t("api.diagnostics.no_udp_sender")
-    host, port = sender.target
+    target = sender.target
+    if target is None:
+        return False, i18n.t("api.diagnostics.no_miniserver_address")
+    host, port = target
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
             probe.connect((host, port))

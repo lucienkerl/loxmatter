@@ -35,6 +35,14 @@ people who don't know the code.
 - **The signal dialog and the group dialog choose which outputs are
   exported.** An "Outputs" part lists every output with a checkbox instead
   of exporting them all.
+- **The Miniserver's address is set in the web interface.** Settings →
+  Miniserver connection now has a field for it. Saving applies it at once,
+  without a restart, sends every current value to the Miniserver, and says
+  whether a Miniserver answered at that address. The installer no longer asks
+  for it. An address from an earlier installation is carried over
+  automatically. If you go back to an earlier version afterwards, it uses
+  the address from your original installation, not one you changed in the
+  web interface since.
 
 ### Changed
 
@@ -56,13 +64,9 @@ people who don't know the code.
 - **The installer asks clearer questions, and all of them up front.** It lists
   the USB sticks it finds by name and asks which one is the Thread stick — or
   none, which is also the default when there are two it cannot tell apart. It
-  names the Bluetooth adapters instead of asking for an id, no longer asks for
-  a baud rate, and says where to find the Miniserver's address. Every question
-  comes before the first package is installed, so you can walk away after
-  answering.
-- **The installer checks the Miniserver address.** It asks the Miniserver for
-  its serial number right away. If nothing answers, you can enter another
-  address or keep this one; the summary at the end then reminds you to check it.
+  names the Bluetooth adapters instead of asking for an id, and no longer asks
+  for a baud rate. Every question comes before the first package is
+  installed, so you can walk away after answering.
 - **A light exports only its "Lumitech / RGB" output by default** — also for
   lights added before this update. The single commands (`on`, `level`,
   `color`, `colortemp`, ...) move to an expert area and keep working there
@@ -82,6 +86,11 @@ people who don't know the code.
   router that has no network yet.
 - **The colour temperature output rejects a Lumitech value** with an error,
   instead of sending 0 mired.
+- **A UDP port changed in the settings is the one the bridge sends to.** It
+  used to reach only the export templates, while values kept going to port
+  7000 — so a Miniserver set up from those templates never received them.
+  If you had already saved a different UDP port under Settings, values now
+  go to that port instead of 7000.
 - **Zigbee devices no longer export `c0_a7` and `c32_a3`.** Every Zigbee
   device offered its power source and a radio timeout as inputs, and both
   were ticked for the export. They are gone for new devices and unticked,

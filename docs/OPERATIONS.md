@@ -8,6 +8,12 @@
 uv run loxmatter run --miniserver 192.168.1.10
 ```
 
+The Miniserver's address is set in the web interface, under Settings →
+Miniserver connection, and can be changed there at any time without a
+restart. `--miniserver` (and `--port`) only seed an installation that has
+none yet — an existing installation with a stored address ignores them, so
+the example above matters mainly for a first start.
+
 Connects permanently to matter-server and to the Miniserver and starts an
 HTTP service (default port 8080, `--listen`) that serves two things at the
 same time:
@@ -307,8 +313,10 @@ in newly generated export templates alike:
   containerized installation, see [Access control](#access-control) above.
 - **For a single invocation, without changing the stored setting:** the
   environment variable `LOXMATTER_LANG` (e.g. `LOXMATTER_LANG=de uv run
-  loxmatter run --miniserver 192.168.1.10`) — takes precedence over the
-  stored setting, for this one process only.
+  loxmatter run --miniserver 192.168.1.10` — the flag is only shown for a
+  complete command line and, as above, only seeds an installation that has
+  no address yet) — takes precedence over the stored setting, for this one
+  process only.
 
 **Careful:** a language change affects only **newly** generated export
 templates — the same property as the update note on signal selection above.

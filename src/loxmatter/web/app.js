@@ -1117,10 +1117,17 @@ function app() {
 
     // --- Settings ---------------------------------------------------
     // `bridgeSettings` is the state last loaded from the server (also read
-    // elsewhere in this file); `settingsDraft` are the three input fields
+    // elsewhere in this file); `settingsDraft` are the four input fields
     // on this tab, adopted only after "Save".
-    bridgeSettings: { bridge_ip: null, udp_port: 7000, listen_port: 8080, saved_at: null },
-    settingsDraft: { bridge_ip: "", udp_port: 7000, listen_port: 8080 },
+    bridgeSettings: {
+      bridge_ip: null,
+      udp_port: 7000,
+      listen_port: 8080,
+      miniserver_ip: null,
+      miniserver_check: null,
+      saved_at: null,
+    },
+    settingsDraft: { miniserver_ip: "", bridge_ip: "", udp_port: 7000, listen_port: 8080 },
     settingsBusy: false,
     settingsError: null,
 
@@ -5275,6 +5282,7 @@ function app() {
       try {
         this.bridgeSettings = await this.request("GET", "/api/settings");
         this.settingsDraft = {
+          miniserver_ip: this.bridgeSettings.miniserver_ip ?? "",
           bridge_ip: this.bridgeSettings.bridge_ip ?? "",
           udp_port: this.bridgeSettings.udp_port,
           listen_port: this.bridgeSettings.listen_port,
@@ -6457,6 +6465,7 @@ function app() {
       this.settingsBusy = true;
       try {
         this.bridgeSettings = await this.request("PATCH", "/api/settings", {
+          miniserver_ip: this.settingsDraft.miniserver_ip.trim() || null,
           bridge_ip: this.settingsDraft.bridge_ip.trim(),
           udp_port: Number(this.settingsDraft.udp_port),
           listen_port: Number(this.settingsDraft.listen_port),
@@ -6464,6 +6473,7 @@ function app() {
         this.showToast(t("web.settings.saved_toast"));
       } catch (error) {
         this.settingsError = t("web.settings.save_error", { message: error.message });
+        this.bridgeSettings = { ...this.bridgeSettings, miniserver_check: null };
       } finally {
         this.settingsBusy = false;
       }

@@ -554,8 +554,8 @@ def _install_stderr_log() -> logging.Handler:
 @app.command(help=i18n.t("cli.run.help"))
 def run(
     url: str = typer.Option("ws://localhost:5580/ws", help=i18n.t("cli.common.help_matter_url")),
-    miniserver: str = typer.Option(..., help=i18n.t("cli.run.help_miniserver")),
-    port: int = typer.Option(7000, help=i18n.t("cli.common.help_udp_port")),
+    miniserver: str | None = typer.Option(None, help=i18n.t("cli.run.help_miniserver")),
+    port: int = typer.Option(7000, help=i18n.t("cli.run.help_port")),
     listen: int = typer.Option(8080, help=i18n.t("cli.run.help_listen")),
     host: str = typer.Option("0.0.0.0", help=i18n.t("cli.run.help_host")),
     api_token: str | None = typer.Option(
@@ -619,10 +619,30 @@ def run(
     )
 
 
+def _apply_miniserver_argument(store: Store, miniserver: str | None, port: int) -> None:
+    """`--miniserver`/`--port` only seed an installation that has no
+    Miniserver address yet (design 2026-09-25, section 4): once one is
+    stored - seeded here or saved in the interface - the store wins, and a
+    differing argument is named in an informational log line, not a
+    warning - on an existing installation MINISERVER_IP stays in `.env`
+    forever, so this fires on every start once the address is changed in
+    the interface, and it is expected, not a problem to fix. An empty
+    string counts as absent, because docker-compose.yml passes
+    `${MINISERVER_IP}` and new installations leave it empty."""
+    if not miniserver:
+        return
+    stored = store.settings.get().miniserver_ip
+    if stored is None:
+        store.settings.seed_miniserver(miniserver, port)
+        logger.info(i18n.t("cli.run.info_miniserver_seeded", ip=miniserver))
+    elif stored != miniserver:
+        logger.info(i18n.t("cli.run.warn_miniserver_ignored", flag=miniserver, stored=stored))
+
+
 async def _run(
     store: Store,
     url: str,
-    miniserver: str,
+    miniserver: str | None,
     port: int,
     listen: int,
     matter_data_dir: Path | None = None,
@@ -650,6 +670,9 @@ async def _run(
 ) -> None:
     """Builds sender, runtime and client on top of `store` and keeps them
     running.
+
+    The sender's target comes from the stored settings; `miniserver`/`port`
+    only seed them (see `_apply_miniserver_argument`).
 
     `store` comes in already open (see `run` above). `UdpSender`,
     `Runtime` and `_build_client` perform no I/O in their constructors
@@ -714,7 +737,12 @@ async def _run(
     named exactly this gap — see there also for the reverse case, a
     `log_handler` of `None`, as received by every caller of `_run()` that
     passes none, e.g. a test)."""
-    sender = UdpSender(miniserver, port)
+    # The store, not the arguments, says where values go - so the port saved
+    # in Settings is the one the sender uses, and an address entered there
+    # survives a restart. See `_apply_miniserver_argument`.
+    _apply_miniserver_argument(store, miniserver, port)
+    connection = store.settings.get()
+    sender = UdpSender(connection.miniserver_ip, connection.udp_port)
     client = _build_client(url)
     # The heartbeat keeps meaning "the bridge and the MANDATORY source are
     # alive" (design 2026-09-12, section 4.9; boundary design open point

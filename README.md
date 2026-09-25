@@ -195,12 +195,13 @@ Debian-based Linux host:
 curl -fsSL https://raw.githubusercontent.com/lucienkerl/loxmatter/main/install.sh | sh
 ```
 
-It asks up to three things before it installs anything: which USB stick is your
-Thread stick (or none), which Bluetooth adapter to use when there is more than
-one, and your Miniserver's IP address, which it checks right away. After that you
-can walk away — it installs what is missing and starts the containers. When it
-finishes it prints the address of the web interface. **Open it and set a
-password**: until you do, no `/api` route answers.
+It asks up to two things before it installs anything: which USB stick is your
+Thread stick (or none), and which Bluetooth adapter to use when there is more
+than one. After that you can walk away — it installs what is missing and starts
+the containers. When it finishes it prints the address of the web interface.
+**Open it and set a password**: until you do, no `/api` route answers. Then
+enter your Miniserver's IP address under Settings → Miniserver connection; the
+bridge checks it right away.
 
 **Prefer to read it before running it?** Same script, three lines:
 

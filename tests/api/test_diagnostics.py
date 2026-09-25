@@ -55,7 +55,12 @@ from conftest import authenticate, load_snapshot
 
 from loxmatter import i18n
 from loxmatter.api import diagnostics
-from loxmatter.api.diagnostics import RingBuffer, _check_bluetooth, _check_thread_credentials
+from loxmatter.api.diagnostics import (
+    RingBuffer,
+    _check_bluetooth,
+    _check_miniserver,
+    _check_thread_credentials,
+)
 from loxmatter.export.commands import extract_commands
 from loxmatter.loxone.sender import UdpSender
 from loxmatter.loxone.server import build_app
@@ -872,3 +877,20 @@ async def test_the_system_check_carries_the_bluetooth_line(api):
     client, _, _ = api
     checks = (await client.get("/api/diagnostics/system")).json()
     assert "bluetooth" in {c["name"] for c in checks}
+
+
+async def test_the_miniserver_check_fails_without_an_address():
+    sender = UdpSender(None, 7000)
+    ok, detail = _check_miniserver(sender)
+    assert not ok
+    assert "Settings" in detail and "Miniserver connection" in detail
+    await sender.close()
+
+
+async def test_the_miniserver_check_without_an_address_in_german():
+    i18n.set_language("de")
+    sender = UdpSender(None, 7000)
+    ok, detail = _check_miniserver(sender)
+    assert not ok
+    assert "Verbindung zum Miniserver" in detail
+    await sender.close()

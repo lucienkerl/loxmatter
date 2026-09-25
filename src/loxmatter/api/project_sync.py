@@ -50,7 +50,7 @@ from loxmatter.api.models import ProjectSyncEntryOut, ProjectSyncMiniserverOut, 
 from loxmatter.model.store import DEFAULT_LISTEN_PORT, DEFAULT_UDP_PORT, Store
 from loxmatter.projectsync.diff import SyncPlan
 from loxmatter.projectsync.index import AmbiguousMiniserverError, ProjectFormatError
-from loxmatter.projectsync.sync import run_sync
+from loxmatter.projectsync.sync import ProjectSyncResult, run_sync
 
 
 def _entries_out(plan: SyncPlan) -> list[ProjectSyncEntryOut]:
@@ -93,7 +93,9 @@ def build_project_sync_router(store: Store) -> APIRouter:
             " file, the same IP as for `loxmatter run --miniserver`). Only needed if the"
             " uploaded file configures more than one Miniserver and none has been"
             " selected yet - in that case the response instead carries"
-            " `needs_miniserver_selection=True` with the found Miniservers to choose from.",
+            " `needs_miniserver_selection=True` with the found Miniservers to choose from."
+            " Without it, the address saved under Settings → Miniserver connection is used"
+            " when the file offers it.",
         ),
         utc_offset: int | None = Query(
             None,
@@ -110,16 +112,31 @@ def build_project_sync_router(store: Store) -> APIRouter:
         `/api/export/download`: an uploaded project file is not a
         downloaded template, see design section 4)."""
         raw = await file.read()
-        try:
-            result = run_sync(
+        offset = None if utc_offset is None else timedelta(minutes=utc_offset)
+
+        def sync(ip: str | None) -> ProjectSyncResult:
+            return run_sync(
                 raw,
                 store,
                 bridge_ip=bridge_ip,
                 port=port,
                 listen=listen,
-                miniserver_ip=miniserver_ip,
-                utc_offset=None if utc_offset is None else timedelta(minutes=utc_offset),
+                miniserver_ip=ip,
+                utc_offset=offset,
             )
+
+        try:
+            try:
+                result = sync(miniserver_ip)
+            except AmbiguousMiniserverError as exc:
+                # The address in Settings says which Miniserver this bridge
+                # talks to (design 2026-09-25, section 9) - used only where
+                # the file leaves the choice open and names that address.
+                stored = store.settings.get().miniserver_ip
+                offered = {c.int_addr for c in exc.candidates}
+                if miniserver_ip is not None or stored is None or stored not in offered:
+                    raise
+                result = sync(stored)
         except AmbiguousMiniserverError as exc:
             if not exc.candidates:
                 raise HTTPException(status_code=400, detail=str(exc)) from exc

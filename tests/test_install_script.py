@@ -30,7 +30,6 @@ pytest happens to run in a terminal or in CI.
 from __future__ import annotations
 
 import os
-import re
 import shutil
 import signal
 import subprocess
@@ -42,10 +41,6 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 INSTALLER = REPO_ROOT / "install.sh"
-
-# Captured from a real Miniserver (Task 1 of the plan for design
-# 2026-09-21-installer-guided-questions), never written by hand.
-MINISERVER_API_FIXTURE = REPO_ROOT / "tests" / "fixtures" / "miniserver" / "jdev_cfg_api.json"
 
 # Real tools the script is allowed to use. Everything else comes from
 # a stub or counts as not installed.
@@ -148,9 +143,7 @@ exit 0
 # The script now downloads get.docker.com via `-o <file>` instead of
 # piping it - the stub therefore has to evaluate `-o` itself and write the
 # body there instead of just printing it. Without `-o` (e.g. during the
-# health check), the output goes to stdout as before. The Miniserver check
-# reaches /jdev/cfg/api; addresses listed in FAKE_MS_DEAD time out instead of
-# answering, and MINISERVER_API_BODY is what the others answer with.
+# health check), the output goes to stdout as before.
 _CURL = """out=""
 url=""
 prev=""
@@ -174,14 +167,6 @@ case "$url" in
     body="cp '$STUB_TEMPLATES/docker' '$STUB_BIN/docker' && chmod 755 '$STUB_BIN/docker'"
     ;;
   *health*) body='{"status":"ok"}' ;;
-  *jdev/cfg/api*)
-    for dead in ${FAKE_MS_DEAD-}; do
-      case "$url" in
-        "http://$dead/"*) exit 28 ;;
-      esac
-    done
-    body="$MINISERVER_API_BODY"
-    ;;
 esac
 if [ -n "$out" ]; then
   printf '%s\\n' "$body" > "$out"
@@ -291,12 +276,9 @@ def installer(tmp_path):
             "TMPDIR": str(tmpdir),
             "LOXMATTER_REPO": str(REPO_ROOT),
             "LOXMATTER_DIR": str(home / "loxmatter"),
-            # Without a terminal, the address must come from the environment.
-            # Tests that check exactly this abort set it to "".
+            # Written to .env as-is, without being contacted. Tests about
+            # the no-address path set it to "".
             "MINISERVER_IP": "10.0.1.99",
-            # What a Miniserver answers on /jdev/cfg/api. A test replaces it
-            # to have something that is not a Miniserver answer instead.
-            "MINISERVER_API_BODY": MINISERVER_API_FIXTURE.read_text(),
             # /sys/class/rfkill doesn't exist on macOS and is nowhere
             # writable. This path doesn't exist by default -
             # check_rfkill then finds nothing, just like on a host without
@@ -453,13 +435,6 @@ def test_an_invalid_miniserver_ip_aborts_before_cloning(installer):
     result = installer(env={"MINISERVER_IP": "not.an.ip"})
     assert result.returncode == 2
     assert "not a valid IPv4" in result.output
-    assert not result.called("git clone")
-
-
-def test_without_a_miniserver_ip_and_without_a_terminal_it_aborts(installer):
-    result = installer(env={"MINISERVER_IP": ""})
-    assert result.returncode == 2
-    assert "MINISERVER_IP" in result.output
     assert not result.called("git clone")
 
 
@@ -666,9 +641,8 @@ def test_sigint_cleans_up_the_temporary_file(installer):
     # a signal to it alone would only be noticed by a shell waiting on its
     # foreground child once that child ends), and afterward nothing must
     # be left in the temporary directory.
-    # The Miniserver check calls curl first, in phase one; only the Docker
-    # download may hang, or the signal would land before any temporary
-    # file exists and the test would prove nothing.
+    # Only the Docker download may hang, or the signal would land before any
+    # temporary file exists and the test would prove nothing.
     hanging_download = 'case "$*" in *get.docker.com*) sleep 30 ;; esac\nexit 0\n'
     proc = installer.start(omit=("docker",), stubs={"curl": hanging_download})
     deadline = time.time() + 10
@@ -735,92 +709,23 @@ def test_the_miniserver_ip_comes_from_the_environment(installer):
     assert _env(result)["MINISERVER_IP"] == "10.0.1.77"
 
 
-def _fixture_serial():
-    body = MINISERVER_API_FIXTURE.read_text()
-    return re.search(r"'snr': *'([^']*)'", body).group(1)
-
-
-def test_a_miniserver_that_answers_is_named(installer):
-    result = installer()
+def test_without_a_miniserver_ip_it_installs_and_leaves_the_address_to_the_web_interface(
+    installer,
+):
+    """Design 2026-09-25, section 10: the address is entered under
+    Settings -> Miniserver connection, not asked for here."""
+    result = installer(env={"MINISERVER_IP": ""})
     assert result.returncode == 0
-    assert f"Miniserver found at 10.0.1.99 (serial {_fixture_serial()}" in result.output
-    assert "Findings" not in result.output
+    assert "the address of your Loxone Miniserver" not in result.output
+    assert _env(result)["MINISERVER_IP"] == ""
+    assert "Settings -> Miniserver connection" in result.output
 
 
-def test_an_unreachable_miniserver_without_a_terminal_becomes_a_finding(installer):
-    # It may simply be switched off during the installation - that must
-    # not stop the run.
-    result = installer(env={"FAKE_MS_DEAD": "10.0.1.99"})
+def test_a_passed_miniserver_ip_is_written_without_contacting_it(installer):
+    result = installer(env={"MINISERVER_IP": "10.0.1.77"})
     assert result.returncode == 0
-    assert "No Miniserver answers at 10.0.1.99 (timeout)" in result.output
-    assert "Findings" in result.output
-    assert _env(result)["MINISERVER_IP"] == "10.0.1.99"
-
-
-def test_something_else_answering_is_not_taken_for_a_miniserver(installer):
-    result = installer(env={"MINISERVER_API_BODY": "<html>router login</html>"})
-    assert result.returncode == 0
-    assert "but it is not a Miniserver" in result.output
-    assert "Findings" in result.output
-    assert _env(result)["MINISERVER_IP"] == "10.0.1.99"
-
-
-def test_the_miniserver_question_says_where_to_find_the_address(installer):
-    result = installer(env={"MINISERVER_IP": ""}, answers=["10.0.1.43"])
-    assert result.returncode == 0
-    assert "Loxone Config" in result.output
-    assert _env(result)["MINISERVER_IP"] == "10.0.1.43"
-
-
-def test_an_unreachable_miniserver_can_be_used_anyway(installer):
-    result = installer(
-        env={"MINISERVER_IP": "", "FAKE_MS_DEAD": "10.0.1.42"},
-        answers=["10.0.1.42", "2"],
-    )
-    assert result.returncode == 0
-    assert _env(result)["MINISERVER_IP"] == "10.0.1.42"
-    assert "Findings" in result.output
-
-
-def test_a_different_address_can_be_entered_after_a_failed_check(installer):
-    result = installer(
-        env={"MINISERVER_IP": "", "FAKE_MS_DEAD": "10.0.1.42"},
-        answers=["10.0.1.42", "1", "10.0.1.43"],
-    )
-    assert result.returncode == 0
-    assert _env(result)["MINISERVER_IP"] == "10.0.1.43"
-    assert "Findings" not in result.output
-
-
-def test_a_malformed_address_is_asked_again(installer):
-    result = installer(env={"MINISERVER_IP": ""}, answers=["10.0.1", "10.0.1.43"])
-    assert result.returncode == 0
-    assert "is not an IPv4 address like" in result.output
-    assert _env(result)["MINISERVER_IP"] == "10.0.1.43"
-
-
-def test_a_dry_run_does_not_contact_the_miniserver(installer):
-    result = installer("--dry-run")
-    assert result.returncode == 0
-    assert "would check http://10.0.1.99/jdev/cfg/api" in result.output
-    assert not any("jdev/cfg/api" in call for call in result.calls)
-
-
-def test_a_second_run_does_not_check_the_miniserver_again(installer):
-    first = installer()
-    assert first.returncode == 0
-    assert any("jdev/cfg/api" in call for call in first.calls)
-    second = installer()
-    assert second.returncode == 0
-    assert not any("jdev/cfg/api" in call for call in second.calls)
-
-
-def test_without_curl_the_miniserver_is_not_checked(installer):
-    # curl is installed in phase two, after the questions.
-    result = installer(omit=("curl",))
-    assert result.returncode == 0
-    assert "10.0.1.99 is not checked" in result.output
-    assert "Findings" not in result.output
+    assert _env(result)["MINISERVER_IP"] == "10.0.1.77"
+    assert not any("10.0.1.77" in call for call in result.calls)
 
 
 def test_a_token_is_generated(installer):
@@ -1130,14 +1035,9 @@ def test_a_dry_run_report_does_not_invent_an_address(installer):
     result = installer("--dry-run")
     assert result.returncode == 0
     assert "Web interface" not in result.output
-    # "would check http://.../jdev/cfg/api" is a real address, not an
-    # invented one - only a "Web interface: http://..." line built from
-    # an unread PORT would be fabricated. Remove the legitimate line
-    # before checking that no other http:// address slipped in.
-    output_without_the_check = result.output.replace(
-        "would check http://10.0.1.99/jdev/cfg/api", ""
-    )
-    assert "http://" not in output_without_the_check
+    # A "Web interface: http://..." line built from an unread PORT would be
+    # fabricated - nothing else prints an http:// address during a dry run.
+    assert "http://" not in result.output
     assert not result.called("git clone")
     assert not result.called("docker compose up")
 
@@ -1214,25 +1114,27 @@ def _bluetooth(tmp_path, *adapters):
 # ------------------------------------------------------------ questions --
 
 
-def test_answers_are_read_one_after_another(installer):
+def test_answers_are_read_one_after_another(installer, tmp_path):
     # ask() runs inside $(...). Reopening the terminal on every call would
     # read the first line of an answers file again and again; one
     # descriptor opened once is what makes the second answer arrive.
+    hw = _bluetooth(tmp_path, (0, None), (1, "TP-Link UB500 Adapter"))
     result = installer(
-        env={"LOXMATTER_MODE": "wifi", "BLUETOOTH_ADAPTER": "0", "MINISERVER_IP": ""},
-        answers=["not-an-ip", "10.0.1.42"],
+        env={**hw, "LOXMATTER_MODE": "wifi"},
+        answers=["not-a-number", "2"],
     )
     assert result.returncode == 0
-    assert _env(result)["MINISERVER_IP"] == "10.0.1.42"
+    assert _env(result)["BLUETOOTH_ADAPTER"] == "1"
 
 
-def test_running_out_of_answers_aborts_instead_of_looping(installer):
-    # A question that rejects its own default (the Miniserver address has
-    # none) used to spin forever on a closed terminal: read failed, the
-    # empty default came back, was rejected, and was asked again.
+def test_running_out_of_answers_aborts_instead_of_looping(installer, tmp_path):
+    # A question that rejects an out-of-range answer used to spin forever on
+    # a closed terminal: read failed, ask() returned nothing, choose() took
+    # that as another invalid answer, and asked again.
+    hw = _bluetooth(tmp_path, (0, None), (1, "TP-Link UB500 Adapter"))
     result = installer(
-        env={"LOXMATTER_MODE": "wifi", "BLUETOOTH_ADAPTER": "0", "MINISERVER_IP": ""},
-        answers=["not-an-ip"],
+        env={**hw, "LOXMATTER_MODE": "wifi"},
+        answers=["not-a-number"],
     )
     assert result.returncode == 2
     assert "terminal closed" in result.output
@@ -1479,20 +1381,17 @@ def test_the_questions_are_announced(installer, tmp_path):
     env = {
         **_serial(tmp_path, STICK_A, STICK_B),
         **_bluetooth(tmp_path, (0, None), (1, "TP-Link UB500 Adapter")),
-        "MINISERVER_IP": "",
     }
-    result = installer(env=env, answers=["0", "1", "10.0.1.43"])
+    result = installer(env=env, answers=["0", "1"])
     assert result.returncode == 0
-    assert (
-        "Three questions follow: the Thread stick, the Bluetooth adapter, "
-        "and the address of your Loxone Miniserver." in result.output
-    )
+    assert "Two questions follow: the Thread stick and the Bluetooth adapter." in result.output
 
 
-def test_a_single_question_is_announced_as_one(installer):
-    result = installer(env={"MINISERVER_IP": ""}, answers=["10.0.1.43"])
+def test_a_single_question_is_announced_as_one(installer, tmp_path):
+    hw = _serial(tmp_path, STICK_A)
+    result = installer(env={**hw, **_ONLY_THE_STICK}, answers=["1"])
     assert result.returncode == 0
-    assert "One question follows: the address of your Loxone Miniserver." in result.output
+    assert "One question follows: the Thread stick." in result.output
 
 
 def test_without_a_terminal_nothing_is_announced(installer):
@@ -1503,20 +1402,28 @@ def test_without_a_terminal_nothing_is_announced(installer):
 
 
 def test_every_question_comes_before_anything_is_installed(installer, tmp_path):
-    # The Miniserver check is the last question's last step, and it is the
-    # one that leaves a trace in the stub log. It has to come before the
-    # first package and before Docker - otherwise the user is called back
-    # to the keyboard minutes into the installation.
+    # The Bluetooth menu is now the last question. Its heading, printed by
+    # say("Bluetooth adapter") (install.sh ~956) as "\n\033[1mBluetooth
+    # adapter\033[0m\n", is distinct from the plain "the Bluetooth adapter"
+    # inside the "Two questions follow: ..." announcement above it - the
+    # bold-on escape immediately before "Bluetooth" is what makes it so.
+    # Result.output is proc.stdout + proc.stderr; every marker checked here
+    # is a say() on stdout, and stdout keeps its own order among itself.
+    # stderr (prompts via tty_prompt when LOXMATTER_TTY is set, and die())
+    # is only appended after it in result.output, not interleaved, so
+    # stdout's order still reflects execution order for the comparisons
+    # below. This heading has to come before the first package and before
+    # Docker - otherwise the user is called back to the keyboard minutes
+    # into the installation.
     env = {
         **_serial(tmp_path, STICK_A, STICK_B),
         **_bluetooth(tmp_path, (0, None), (1, "TP-Link UB500 Adapter")),
         "MINISERVER_IP": "",
     }
-    result = installer(env=env, omit=("git", "docker"), answers=["2", "2", "10.0.1.43"])
+    result = installer(env=env, omit=("git", "docker"), answers=["2", "2"])
     assert result.returncode == 0
-    calls = result.calls
-    check = next(i for i, call in enumerate(calls) if "jdev/cfg/api" in call)
-    apt = next(i for i, call in enumerate(calls) if call.startswith("apt-get install"))
-    docker = next(i for i, call in enumerate(calls) if "get.docker.com" in call)
-    assert check < apt
-    assert check < docker
+    bluetooth_heading = result.output.index("\033[1mBluetooth adapter\033[0m")
+    packages = result.output.index("Installing missing tools")
+    docker = result.output.index("Docker is not installed")
+    assert bluetooth_heading < packages
+    assert bluetooth_heading < docker

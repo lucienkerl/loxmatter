@@ -579,20 +579,42 @@ class BridgeSettingsOut(BaseModel):
     udp_port: int
     listen_port: int
     saved_at: str | None
+    miniserver_ip: str | None
+    # Only a `PATCH` that set an address probes it; `GET` never does.
+    miniserver_check: MiniserverCheckOut | None = None
+
+
+class MiniserverCheckOut(BaseModel):
+    """What `PATCH /api/settings` found at the Miniserver's address
+    (`loxone.probe`). `message` is already translated: the UI shows it as
+    it is."""
+
+    model_config = ConfigDict(frozen=True)
+
+    found: bool
+    serial: str | None
+    firmware: str | None
+    message: str
 
 
 class BridgeSettingsIn(BaseModel):
-    """Body of `PATCH /api/settings` - all three fields together, no
-    partial update: they belong together functionally (the same virtual
-    connection), a partial update could otherwise leave a valid IP paired
-    with a now-wrong port. `min_length=1` on `bridge_ip` yields 422 for an
-    empty field, without a dedicated validator."""
+    """Body of `PATCH /api/settings`. `bridge_ip` and the ports are sent
+    together, no partial update: they belong together functionally (the
+    same virtual connection), a partial update could otherwise leave a valid
+    IP paired with a now-wrong port. `min_length=1` on `bridge_ip` yields
+    422 for an empty field, without a dedicated validator.
+
+    `miniserver_ip` is the one exception (design 2026-09-25, section 7): a
+    body **without** it keeps the stored address, because a browser tab
+    still running the previous version's `app.js` sends none. `null` or an
+    empty string clears it."""
 
     model_config = ConfigDict(frozen=True)
 
     bridge_ip: str = Field(min_length=1)
     udp_port: int
     listen_port: int
+    miniserver_ip: str | None = None
 
 
 class ProjectSyncEntryOut(BaseModel):
