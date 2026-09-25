@@ -160,7 +160,7 @@ is switched off right now is a normal state.
 
 **Settings → Miniserver connection.**
 - A new first field: "IP of the Miniserver" /
-  "IP des Miniservers" (`web.settings.miniserver_ip_label`), with its own
+  `IP des Miniservers` (`web.settings.miniserver_ip_label`), with its own
   placeholder.
 - The existing field keeps `web.bridge_ip_label`. The explanation
   (`web.settings.connection_explanation`) is rewritten so it describes both
