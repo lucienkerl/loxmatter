@@ -315,7 +315,7 @@ def test_cli_reports_connect_timeout_without_traceback_in_german(monkeypatch):
 class _SpySender:
     """Stands in for UdpSender - without a real socket."""
 
-    def __init__(self, host: str, port: int) -> None:
+    def __init__(self, host: str | None, port: int) -> None:
         self.host = host
         self.port = port
         self.close_calls = 0
@@ -471,7 +471,7 @@ def _install_run_spies(
     clients: list[BridgeMatterClient] = []
     supervisor = _SpySupervisor()
 
-    def make_sender(host: str, port: int) -> _SpySender:
+    def make_sender(host: str | None, port: int) -> _SpySender:
         sender = _SpySender(host, port)
         senders.append(sender)
         return sender
@@ -1968,3 +1968,74 @@ async def test_no_flag_and_no_stored_setting_builds_no_zigbee_source(monkeypatch
 
     assert [source.technology for source in captured["sources"].all()] == ["matter"]
     assert _stored_after_the_run(tmp_path / "t.sqlite").saved_at is None, "nothing was written"
+
+
+# --- loxmatter run: --miniserver/--port only seed the store ----------------------
+
+
+async def test_run_seeds_the_miniserver_address_on_first_start(monkeypatch, tmp_path):
+    """An existing installation carries its .env address over on the first
+    start of the version that stores it (spec section 4)."""
+    senders, _, _, _ = _install_run_spies(monkeypatch)
+    monkeypatch.setattr(cli.uvicorn, "Server", _SpyUvicornServer)
+    store = Store(tmp_path / "t.sqlite")
+    path = store.path
+
+    await cli._run(store, "ws://test/ws", "10.0.1.99", 7005, 8080)
+
+    reopened = Store(path)
+    try:
+        assert reopened.settings.get().miniserver_ip == "10.0.1.99"
+        assert reopened.settings.get().udp_port == 7005
+    finally:
+        reopened.close()
+    assert (senders[0].host, senders[0].port) == ("10.0.1.99", 7005)
+
+
+async def test_the_stored_address_wins_over_the_argument(monkeypatch, tmp_path, caplog):
+    senders, _, _, _ = _install_run_spies(monkeypatch)
+    monkeypatch.setattr(cli.uvicorn, "Server", _SpyUvicornServer)
+    store = Store(tmp_path / "t.sqlite")
+    store.settings.save(
+        bridge_ip="10.0.1.5", udp_port=7001, listen_port=8080, miniserver_ip="10.0.1.42"
+    )
+
+    with caplog.at_level(logging.WARNING, logger="loxmatter.cli"):
+        await cli._run(store, "ws://test/ws", "10.0.1.99", 7000, 8080)
+
+    assert (senders[0].host, senders[0].port) == ("10.0.1.42", 7001)
+    assert any(
+        "--miniserver" in r.getMessage() and "10.0.1.42" in r.getMessage() for r in caplog.records
+    )
+
+
+@pytest.mark.parametrize("argument", [None, ""])
+async def test_an_absent_or_empty_argument_seeds_nothing(monkeypatch, tmp_path, argument):
+    """docker-compose.yml passes ${MINISERVER_IP}, which is empty on every
+    installation made after this change."""
+    senders, _, _, _ = _install_run_spies(monkeypatch)
+    monkeypatch.setattr(cli.uvicorn, "Server", _SpyUvicornServer)
+    store = Store(tmp_path / "t.sqlite")
+    path = store.path
+
+    await cli._run(store, "ws://test/ws", argument, 7000, 8080)
+
+    reopened = Store(path)
+    try:
+        assert reopened.settings.get().miniserver_ip is None
+    finally:
+        reopened.close()
+    assert senders[0].host is None
+
+
+def test_run_no_longer_requires_miniserver(monkeypatch, tmp_path):
+    captured: dict[str, object] = {}
+
+    async def fake_run(store, url, miniserver, *args, **kwargs):
+        captured["miniserver"] = miniserver
+        store.close()
+
+    monkeypatch.setattr(cli, "_run", fake_run)
+    result = CliRunner().invoke(app, ["run", "--store-path", str(tmp_path / "t.sqlite")])
+    assert result.exit_code == 0, result.output
+    assert captured["miniserver"] is None
