@@ -172,8 +172,8 @@ cli.run.info_miniserver_seeded:
   en: "Took the Miniserver address {ip} over from --miniserver. From now on it is changed in the interface, under Settings → Miniserver connection."
   de: "Miniserver-Adresse {ip} aus --miniserver übernommen. Geändert wird sie ab jetzt in der Oberfläche unter Einstellungen → Verbindung zum Miniserver."
 cli.run.warn_miniserver_ignored:
-  en: "--miniserver names {flag}, but this bridge already has the Miniserver address {stored} and the stored one wins. Change it in the interface, under Settings → Miniserver connection."
-  de: "--miniserver nennt {flag}, aber diese Brücke hat bereits die Miniserver-Adresse {stored}, und die gespeicherte gilt. Ändern Sie sie in der Oberfläche unter Einstellungen → Verbindung zum Miniserver."
+  en: "Using the stored Miniserver address {stored}. --miniserver (on an existing installation, MINISERVER_IP in .env) only seeds an installation that has no address yet, so {flag} is ignored — this can be disregarded."
+  de: "Es wird die gespeicherte Miniserver-Adresse {stored} verwendet. --miniserver (bei einer bestehenden Installation MINISERVER_IP in .env) legt nur bei einer Installation ohne Adresse einen Startwert fest, deshalb wird {flag} ignoriert - das kann unbeachtet bleiben."
 cli.run.help_listen:
   en: "Port for the HTTP commands coming from Loxone"
   de: "Port für die HTTP-Kommandos aus Loxone"
@@ -791,8 +791,8 @@ api.diagnostics.no_miniserver_address:
   en: "No Miniserver address is set, so the bridge sends no values. Enter it under Settings → Miniserver connection."
   de: "Es ist keine Miniserver-Adresse eingetragen, deshalb sendet die Brücke keine Werte. Tragen Sie sie unter Einstellungen → Verbindung zum Miniserver ein."
 api.diagnostics.no_network_path:
-  en: "No network path to {host}:{port} found ({exc}). Is the Miniserver switched on and reachable on the same network? Do the IP and port match `loxmatter run --miniserver`/`--port`?"
-  de: "Kein Netzwerkpfad zu {host}:{port} gefunden ({exc}). Ist der Miniserver eingeschaltet und im selben Netz erreichbar? Stimmen IP und Port aus `loxmatter run --miniserver`/`--port`?"
+  en: "No network path to {host}:{port} found ({exc}). Is the Miniserver switched on and reachable on the same network? Do the IP and port match what is set under Settings → Miniserver connection?"
+  de: "Kein Netzwerkpfad zu {host}:{port} gefunden ({exc}). Ist der Miniserver eingeschaltet und im selben Netz erreichbar? Stimmen IP und Port mit den Werten unter Einstellungen → Verbindung zum Miniserver überein?"
 api.diagnostics.network_path_exists:
   en: "A network path to {host}:{port} exists. This only confirms routing, not actual delivery — the Miniserver does not evaluate UDP responses."
   de: "Ein Netzwerkpfad zu {host}:{port} existiert. Das bestaetigt nur Routing, keine tatsaechliche Zustellung - der Miniserver wertet UDP-Antworten nicht aus."

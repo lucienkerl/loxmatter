@@ -16438,3 +16438,12 @@ async def test_save_settings_sends_the_miniserver_ip(api):
     start = script.index("async saveSettings() {")
     body = script[start : script.index("\n    },", start)]
     assert "miniserver_ip: this.settingsDraft.miniserver_ip.trim() || null," in body
+
+
+async def test_save_settings_clears_the_stale_probe_result_on_error(api):
+    client, _, _ = api
+    script = (await client.get("/static/app.js")).text
+    start = script.index("async saveSettings() {")
+    body = script[start : script.index("\n    },", start)]
+    catch = body[body.index("} catch (error) {") :]
+    assert "this.bridgeSettings = { ...this.bridgeSettings, miniserver_check: null };" in catch

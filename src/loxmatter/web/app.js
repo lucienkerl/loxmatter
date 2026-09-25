@@ -6473,6 +6473,7 @@ function app() {
         this.showToast(t("web.settings.saved_toast"));
       } catch (error) {
         this.settingsError = t("web.settings.save_error", { message: error.message });
+        this.bridgeSettings = { ...this.bridgeSettings, miniserver_check: null };
       } finally {
         this.settingsBusy = false;
       }

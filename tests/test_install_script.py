@@ -1408,11 +1408,13 @@ def test_every_question_comes_before_anything_is_installed(installer, tmp_path):
     # inside the "Two questions follow: ..." announcement above it - the
     # bold-on escape immediately before "Bluetooth" is what makes it so.
     # Result.output is proc.stdout + proc.stderr; every marker checked here
-    # (say/note) goes to stdout, and this run succeeds (nothing hits die(),
-    # the only thing writing to stderr), so stdout's order is preserved
-    # unmixed and reflects execution order. This heading has to come before
-    # the first package and before Docker - otherwise the user is called
-    # back to the keyboard minutes into the installation.
+    # is a say() on stdout, and stdout keeps its own order among itself.
+    # stderr (prompts via tty_prompt when LOXMATTER_TTY is set, and die())
+    # is only appended after it in result.output, not interleaved, so
+    # stdout's order still reflects execution order for the comparisons
+    # below. This heading has to come before the first package and before
+    # Docker - otherwise the user is called back to the keyboard minutes
+    # into the installation.
     env = {
         **_serial(tmp_path, STICK_A, STICK_B),
         **_bluetooth(tmp_path, (0, None), (1, "TP-Link UB500 Adapter")),

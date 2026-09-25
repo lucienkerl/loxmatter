@@ -623,8 +623,11 @@ def _apply_miniserver_argument(store: Store, miniserver: str | None, port: int) 
     """`--miniserver`/`--port` only seed an installation that has no
     Miniserver address yet (design 2026-09-25, section 4): once one is
     stored - seeded here or saved in the interface - the store wins, and a
-    differing argument is named in a warning, as `--zigbee-device` is. An
-    empty string counts as absent, because docker-compose.yml passes
+    differing argument is named in an informational log line, not a
+    warning - on an existing installation MINISERVER_IP stays in `.env`
+    forever, so this fires on every start once the address is changed in
+    the interface, and it is expected, not a problem to fix. An empty
+    string counts as absent, because docker-compose.yml passes
     `${MINISERVER_IP}` and new installations leave it empty."""
     if not miniserver:
         return
@@ -633,7 +636,7 @@ def _apply_miniserver_argument(store: Store, miniserver: str | None, port: int) 
         store.settings.seed_miniserver(miniserver, port)
         logger.info(i18n.t("cli.run.info_miniserver_seeded", ip=miniserver))
     elif stored != miniserver:
-        logger.warning(i18n.t("cli.run.warn_miniserver_ignored", flag=miniserver, stored=stored))
+        logger.info(i18n.t("cli.run.warn_miniserver_ignored", flag=miniserver, stored=stored))
 
 
 async def _run(

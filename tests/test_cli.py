@@ -2000,12 +2000,15 @@ async def test_the_stored_address_wins_over_the_argument(monkeypatch, tmp_path, 
         bridge_ip="10.0.1.5", udp_port=7001, listen_port=8080, miniserver_ip="10.0.1.42"
     )
 
-    with caplog.at_level(logging.WARNING, logger="loxmatter.cli"):
+    with caplog.at_level(logging.INFO, logger="loxmatter.cli"):
         await cli._run(store, "ws://test/ws", "10.0.1.99", 7000, 8080)
 
     assert (senders[0].host, senders[0].port) == ("10.0.1.42", 7001)
     assert any(
-        "--miniserver" in r.getMessage() and "10.0.1.42" in r.getMessage() for r in caplog.records
+        r.levelno == logging.INFO
+        and "10.0.1.42" in r.getMessage()
+        and "10.0.1.99" in r.getMessage()
+        for r in caplog.records
     )
 
 

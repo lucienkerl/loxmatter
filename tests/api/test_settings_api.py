@@ -291,15 +291,17 @@ async def test_an_empty_miniserver_ip_clears_the_address_and_the_target(wired_ap
     assert calls == ["192.168.1.77"]
 
 
-async def test_a_body_without_the_field_keeps_the_stored_address(wired_api):
+async def test_a_body_without_the_field_keeps_the_stored_address(wired_api, probed):
     """A browser tab still running the previous version's app.js after an
     update knows nothing of the field. Saving the bridge's IP from it must
     not erase the Miniserver's address (spec section 7)."""
     client, store, sender, _ = wired_api
+    calls, _ = probed
     await client.patch("/api/settings", json=_body(miniserver_ip="192.168.1.77"))
     await client.patch("/api/settings", json=_body(bridge_ip="192.168.1.21"))
     assert store.settings.get().miniserver_ip == "192.168.1.77"
     assert sender.target == ("192.168.1.77", 7000)
+    assert calls == ["192.168.1.77"], "an old tab's save must not re-probe an unchanged address"
 
 
 async def test_changing_only_the_udp_port_retargets_the_sender(wired_api):
