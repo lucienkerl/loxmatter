@@ -778,6 +778,9 @@ api.diagnostics.thread_found:
 api.diagnostics.no_udp_sender:
   en: "No UDP sender configured — the bridge is not sending values to the Miniserver. This is always set for `loxmatter run`; if it's missing here, this service was started with an incomplete setup."
   de: "Kein UDP-Sender konfiguriert - die Bruecke sendet keine Werte an den Miniserver. Das ist bei `loxmatter run` immer gesetzt; fehlt es hier, wurde dieser Dienst mit einem unvollstaendigen Aufbau gestartet."
+api.diagnostics.no_miniserver_address:
+  en: "No Miniserver address is set, so the bridge sends no values. Enter it under Settings → Miniserver connection."
+  de: "Es ist keine Miniserver-Adresse eingetragen, deshalb sendet die Brücke keine Werte. Tragen Sie sie unter Einstellungen → Verbindung zum Miniserver ein."
 api.diagnostics.no_network_path:
   en: "No network path to {host}:{port} found ({exc}). Is the Miniserver switched on and reachable on the same network? Do the IP and port match `loxmatter run --miniserver`/`--port`?"
   de: "Kein Netzwerkpfad zu {host}:{port} gefunden ({exc}). Ist der Miniserver eingeschaltet und im selben Netz erreichbar? Stimmen IP und Port aus `loxmatter run --miniserver`/`--port`?"
