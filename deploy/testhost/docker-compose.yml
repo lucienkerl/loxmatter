@@ -22,7 +22,8 @@
 #   - loxmatter (Phase 4, Review-Fix I5, 2026-09-02) -> built from this repository
 #     itself (see ../../Dockerfile, also the note there that the
 #     image is still untested - no Docker/network in the environment that
-#     added this service). Requires MINISERVER_IP in .env.
+#     added this service). MINISERVER_IP in .env is optional (a starting
+#     value; see .env.example).
 # The project name stands HERE, not in .env (2026-09-03).
 #
 # Otherwise Compose derives it from the directory name, and the names of

@@ -60,13 +60,13 @@ cd ~/matter-loxone/deploy/testhost
 cp .env.example .env      # adjust RADIO_DEVICE/RADIO_BAUDRATE/BACKBONE_IF/BLUETOOTH_ADAPTER if needed
 mkdir -p data
 
-# MINISERVER_IP must be set, shipped empty. LOXMATTER_API_TOKEN
-# is optional (see below) - anyone who wants to set it anyway REPLACES the
-# existing line instead of appending a second one: a second definition
-# of the same variable would technically work (Compose takes the last one),
-# but whoever edits the file later would then change the wrong line.
+# MINISERVER_IP is optional: enter the address in the web interface under
+# Settings -> Miniserver connection. LOXMATTER_API_TOKEN is optional too
+# (see below) - anyone who wants to set it anyway REPLACES the existing
+# line instead of appending a second one: a second definition of the same
+# variable would technically work (Compose takes the last one), but
+# whoever edits the file later would then change the wrong line.
 sed -i "s|^LOXMATTER_API_TOKEN=.*|LOXMATTER_API_TOKEN=$(openssl rand -hex 32)|" .env
-sed -i "s|^MINISERVER_IP=.*|MINISERVER_IP=10.0.1.99|" .env   # substitute your own address
 ```
 
 **Access to the interface: a password, not `LOXMATTER_API_TOKEN`.** Since
