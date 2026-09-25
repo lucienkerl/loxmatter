@@ -91,6 +91,11 @@ people who don't know the code.
   7000 — so a Miniserver set up from those templates never received them.
   If you had already saved a different UDP port under Settings, values now
   go to that port instead of 7000.
+- **Zigbee devices no longer export `c0_a7` and `c32_a3`.** Every Zigbee
+  device offered its power source and a radio timeout as inputs, and both
+  were ticked for the export. They are gone for new devices and unticked,
+  once, with this update for those already set up; the sync lists them as
+  orphaned if they are already in your project file.
 
 ## [0.4.2] — 2026-09-21
 

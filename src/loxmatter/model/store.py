@@ -169,7 +169,10 @@ DEFAULT_LISTEN_PORT = 8080
 # the default rule" (`_resolved_flags`), so every existing row picks up the
 # new rule the first time it is read, without this migration writing a
 # single value - see `_migrate_to_v13`.
-_SCHEMA_VERSION = 13
+# Version 14 (fix 2026-09-25) adds no column: it unticks the signals of
+# Zigbee management clusters (Basic, Poll Control, ...) and moves them to the
+# expert block, see `_migrate_to_v14`. Like version 12, it only ever unticks.
+_SCHEMA_VERSION = 14
 
 
 def schema_version() -> int:
@@ -905,6 +908,58 @@ def _migrate_to_v13(db: sqlite3.Connection) -> None:
     _add_column_if_missing(db, "group_command", "exported", "INTEGER")
 
 
+# Zigbee's management clusters, Basic (0x0000), Identify (0x0003), OTA
+# (0x0019), Poll Control (0x0020) and ZLL commissioning (0x1000), as
+# `zigbee.translate.BLOCKED_CLUSTER_IDS` stood when `_migrate_to_v14` was
+# written. Frozen here rather than imported: nothing outside
+# `loxmatter/sources/` and `loxmatter/zigbee/` may learn that Zigbee exists
+# (design 2026-09-11, section 2), and a migration records what it did once -
+# a cluster added to the block list later needs its own migration.
+_ZIGBEE_MANAGEMENT_CLUSTERS_V14 = (0x0000, 0x0003, 0x0019, 0x0020, 0x1000)
+
+
+def _migrate_to_v14(db: sqlite3.Connection) -> None:
+    """Unticks the signals of Zigbee management clusters and moves them to
+    the expert block (fix 2026-09-25).
+
+    `zigbee.translate` passed every attribute through by number, and its
+    block list applied to commands only - so every Zigbee device registered
+    the Basic power source (`c0_a7`) and Poll Control's FastPollTimeout
+    (`c32_a3`) as signals. Matter numbers neither cluster, `is_functional`
+    treats an unknown cluster as wanted, and both were preselected for the
+    Loxone export. From this version on the snapshot no longer carries
+    them; this brings the rows stored before to the state they would have
+    had, `exported = 0` and `functional = 0`. Nothing else could: the
+    snapshot no longer names them, so `register_signals` never revisits
+    these rows.
+
+    Additive like every migration here: it writes two columns of the
+    matching rows and adds or drops nothing, so a rolled-back image finds a
+    valid state (it would re-tick nothing, and re-register the rows it
+    still produces as they are).
+
+    Stamps `device.updated_at` for every device it actually unticks a signal
+    on, BEFORE the unticking `UPDATE` - the same reasoning as
+    `_migrate_to_v12`: its next export changes, and nothing else on the row
+    moves."""
+    placeholders = ", ".join("?" for _ in _ZIGBEE_MANAGEMENT_CLUSTERS_V14)
+    match = (
+        "SELECT signal.id FROM signal JOIN device ON device.id = signal.device_id"
+        " WHERE device.technology = 'zigbee' AND signal.kind = 'attribute'"
+        f" AND signal.cluster_id IN ({placeholders})"
+    )
+    db.execute(
+        "UPDATE device SET updated_at = ? WHERE id IN ("
+        f"SELECT signal.device_id FROM signal WHERE signal.id IN ({match})"
+        " AND signal.exported = 1)",
+        (now_iso(), *_ZIGBEE_MANAGEMENT_CLUSTERS_V14),
+    )
+    db.execute(
+        f"UPDATE signal SET exported = 0, functional = 0 WHERE id IN ({match})",
+        _ZIGBEE_MANAGEMENT_CLUSTERS_V14,
+    )
+
+
 # Migrations in order, applied from whichever version is stored - to extend
 # for a later schema change: simply append, with the next version number as
 # the key.
@@ -922,6 +977,7 @@ _MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     11: _migrate_to_v11,
     12: _migrate_to_v12,
     13: _migrate_to_v13,
+    14: _migrate_to_v14,
 }
 
 
