@@ -258,6 +258,23 @@ def test_otbr_opens_the_stick_through_one_fixed_container_path():
     assert url == "spinel+hdlc+uart:///dev/ttyThread?uart-baudrate=460800"
 
 
+def test_otbr_starts_every_run_with_an_empty_run_directory():
+    """A host reboot does not recreate otbr, `restart: unless-stopped` starts
+    the same container again, and the writable layer keeps /run. Measured on
+    the second test Pi on 29 September 2026: after a reboot /run/dbus/pid
+    still held the pid of the run before, dbus-daemon refused to start ("The
+    pid file ... exists"), and otbr-agent gave up after 30 s with `Failed to
+    get DBus connection`. The container stayed up, Thread stayed down, and
+    the watchdog's `docker restart` kept the same layer, so it could not
+    help. `docker kill` then `docker start` reproduced it; with /run on a
+    tmpfs the same sequence left dbus running.
+
+    Fault to prove it: remove the tmpfs entry, or point it anywhere but /run
+    (/var/run is a symlink to /run in this image)."""
+    otbr = _stack()["services"]["otbr"]
+    assert "/run" in otbr["tmpfs"]
+
+
 # --- Where zigpy's database lands ----------------------------------------------
 #
 # Every compose file under deploy/, not only the one `_stack()` reads: a second
