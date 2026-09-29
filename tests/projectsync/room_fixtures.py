@@ -12,13 +12,14 @@
 # GNU General Public License for more details.
 #
 # You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 """Room list snippets for `projectsync` tests (design 2026-09-29)."""
 
 from __future__ import annotations
 
 # Rooms as Loxone Config writes them (design 2026-09-29, section 3): a
-# `PlaceCaption` with the `Nicht zugeordnet` room (`First="true"`) and one
+# `PlaceCaption` with the default room (marked `First="true"`) and one
 # ordinary room, and a rights group caption with one `RightGroup` per room
 # (`Place.RGR` -> `RightGroup.U`). Inserted directly under `Document`, next
 # to the `LoxLIVE` block, where real files carry them.

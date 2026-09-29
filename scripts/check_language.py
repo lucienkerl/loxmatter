@@ -151,10 +151,6 @@ GERMAN_AS_DATA = (
     # so it is data about those fixtures, not prose about the screenshots.
     '.replace("Altes Geraet',
     '.replace("Matter — Altes Geraet',
-    # tests/projectsync/room_fixtures.py: the comment describing the fixture's
-    # German room names ("Nicht zugeordnet", "Küche") that appear in the XML
-    # strings below it - those names are data (what Loxone Config writes).
-    "Nicht zugeordnet",
 )
 
 # Markdown-only quotation markers (see section 2.2 of the spec addendum on

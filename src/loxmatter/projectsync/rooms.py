@@ -63,15 +63,16 @@ class RoomAssignment:
 
 
 def room_key(name: str) -> str:
-    """The form in which two room names are compared: `küche` in loxmatter
-    finds `Küche` in Loxone Config instead of creating a second room."""
+    """The form in which two room names are compared: normalized for
+    case-insensitive and whitespace-insensitive matching to find the same room
+    in Loxone Config instead of creating a second room."""
     return name.strip().casefold()
 
 
 def can_create_rooms(index: ProjectIndex) -> bool:
     """Whether a new `Place` has somewhere to go. A self-closing
     `PlaceCaption` has no content range to append to - Loxone Config never
-    writes one, since the `Nicht zugeordnet` room always exists."""
+    writes one, since Loxone always creates a default room marked `First="true"`."""
     caption = index.place_caption
     return caption is not None and not caption.self_closing and caption.inner_end is not None
 
