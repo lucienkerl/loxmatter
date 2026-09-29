@@ -3020,8 +3020,8 @@ web.export.projectsync_room_status_not_creatable:
   en: "Cannot be created"
   de: "Nicht anlegbar"
 web.export.projectsync_room_note_created:
-  en: "Created together with its user rights group. This has not yet been tested on every Loxone Config version – please check the room after opening the file."
-  de: "Wird zusammen mit seiner Berechtigungsgruppe angelegt. Noch nicht mit jeder Version von Loxone Config erprobt – bitte den Raum nach dem Öffnen der Datei prüfen."
+  en: "Created in Loxone Config, with its user rights group where the project uses them. This has not yet been tested on every Loxone Config version – please check the room after opening the file."
+  de: "Wird in Loxone Config angelegt, samt Berechtigungsgruppe, wo das Projekt welche verwendet. Noch nicht mit jeder Version von Loxone Config erprobt – bitte den Raum nach dem Öffnen der Datei prüfen."
 web.export.projectsync_room_note_ambiguous:
   en: "Loxone Config has several rooms with this name; new objects go into the first."
   de: "Loxone Config hat mehrere Räume mit diesem Namen; neue Objekte kommen in den ersten."
