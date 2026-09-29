@@ -862,8 +862,10 @@ function app() {
     authError: null,
     // The two recovery commands on the login screen ("Forgot password?").
     // Not in strings.yaml: they are commands, not prose, and the same in
-    // every language. The same text as in `api.auth.fail_already_set_up`
-    // and docs/OPERATIONS.md - keep the three in step.
+    // every language. The same command stands in five places - here, in
+    // `api.auth.fail_already_set_up` and `cli.set_password.fail_db_not_found`
+    // (strings.yaml), in docs/OPERATIONS.md and in deploy/testhost/README.md.
+    // Keep them in step.
     resetCommandDocker: "docker exec -it loxmatter loxmatter set-password",
     resetCommandSource: "uv run loxmatter set-password",
 

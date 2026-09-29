@@ -112,8 +112,9 @@ def _require_length(password: str) -> None:
 # `LOXMATTER_STORE` - `uv run loxmatter set-password` on the host, lacking
 # that environment variable, hits a different, newly created file there and
 # falsely reports success without actually unlocking the bridge (escape-hatch
-# finding, 2026-09-03). README.md and the release note describe the same
-# path and must not drift apart from this text.
+# finding, 2026-09-03). The login screen ("Forgot password?", `web/app.js`),
+# docs/OPERATIONS.md and deploy/testhost/README.md name the same command and
+# must not drift apart from this text.
 def build_auth_router(store: Store) -> APIRouter:
     router = APIRouter()
     # One instance per app, not per request - otherwise it would count nothing.

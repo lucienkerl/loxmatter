@@ -264,9 +264,9 @@ async def test_the_interface_offers_setup_and_login_instead_of_a_token_field(api
     delivered markup - Alpine only shows or hides them in the browser via
     `x-if`/`x-show`, so a test without a browser engine always sees both.
     Checked here: five password fields of type `password` (two for setup,
-    one for login, two for changing it in Settings - type `password` so nothing can be read over someone's
-    shoulder), the two submit labels, and that the old token input is
-    gone."""
+    one for login, two for changing it in Settings - type `password` so
+    nothing can be read over someone's shoulder), the two submit labels,
+    and that the old token input is gone."""
     client, _, _ = api
     page = (await client.get("/")).text
     # Two for setup, one for login, two for the password card in Settings.
