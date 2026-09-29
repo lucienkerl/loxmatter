@@ -8,6 +8,21 @@ people who don't know the code.
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-09-29
+
+### Before you update
+
+- **The database schema rises from 11 to 14.** The update backs the database
+  up before it starts, as every update does, and nothing needs doing by
+  hand. Going back to a 0.4 version afterwards is not tested: a 0.4 bridge
+  does not know which outputs this release chooses to export. If you
+  ever need to go back, restore the backup the update made rather than
+  running the old version on the new database.
+- **System → Version asks once more to refresh the updater service — run the
+  command it shows.** Right after that, the Thread border router is
+  recreated once, so that it comes back after a restart of the Raspberry Pi
+  (see "Fixed"), and Thread devices go quiet for about half a minute.
+
 ### Added
 
 - **The project sync puts new inputs and outputs into their room.** A
