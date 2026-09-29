@@ -217,13 +217,14 @@ def new_caption_open_tag(kind: str, u: str) -> str:
     return f"<C {render_attrs(attrs)}>"
 
 
-# Room attributes worth copying from an existing room (design 2026-09-29,
-# section 6.1). Both are undocumented; copying them from a room Loxone
-# Config wrote itself beats inventing values. `PGroup`, `Rating` and
-# `UseFav` are the user's own choices for that one room; `First` and its
-# `WF` mark the default room (the one Loxone Config marks with `First="true"`), which is why
+# Room attributes copied from an existing room (design 2026-09-29, section
+# 6.1). Only `PType`: it is undocumented, so copying it from a room Loxone
+# Config wrote itself beats inventing a value. `Icon` is a per-room user
+# choice like `PGroup`, `Rating` and `UseFav`, and is left for Loxone Config
+# to choose - a copied icon would be wrong for the new room. `First` and its
+# `WF` mark the default room (the one marked `First="true"`), which is why
 # `patch._room_edits` never picks that one as the template.
-_PLACE_TEMPLATE_ATTRS = ("Icon", "PType")
+_PLACE_TEMPLATE_ATTRS = ("PType",)
 
 
 def new_place_tag(title: str, u: str, rgr_u: str | None, template: Mapping[str, str] | None) -> str:

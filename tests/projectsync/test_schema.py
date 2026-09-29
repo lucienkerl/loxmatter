@@ -202,7 +202,7 @@ def test_new_output_container_open_tag_carries_base_url():
     assert not tag.endswith("/>")
 
 
-def test_new_place_tag_copies_icon_and_ptype_from_the_template():
+def test_new_place_tag_copies_ptype_and_leaves_out_icon():
     template = {
         "Title": "Küche",
         "WF": "16384",
@@ -214,8 +214,9 @@ def test_new_place_tag_copies_icon_and_ptype_from_the_template():
     tag = new_place_tag("Werkstatt", "u-place", "u-rights", template)
     assert tag == (
         '<C Type="Place" V="178" U="u-place" Title="Werkstatt" WF="16384"'
-        ' Icon="0000005a-00ff-0000-0000000000000000" PType="3" RGR="u-rights"/>'
+        ' PType="3" RGR="u-rights"/>'
     )
+    assert "Icon=" not in tag
 
 
 def test_new_place_tag_without_template_or_rights_group():

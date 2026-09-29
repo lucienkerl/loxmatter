@@ -19,7 +19,7 @@
 - Only `new_signal`/`new_device` entries get a room (spec section 5).
 - Matching key: `name.strip().casefold()` (spec section 4).
 - New objects carry `V="178"`, like every other object the sync creates.
-- Created `Place`: `Type`, `V`, `U`, `Title`, `WF="16384"`, then `Icon` and `PType` copied from the first `Place` without `First="true"` (if any), then `RGR` (only if a rights group is written). Never `PGroup`, `Rating`, `UseFav`, `First`.
+- Created `Place`: `Type`, `V`, `U`, `Title`, `WF="16384"`, then `PType` copied from the first `Place` without `First="true"` (if any), then `RGR` (only if a rights group is written). `Icon` is never written (decided 2026-09-29). Never `PGroup`, `Rating`, `UseFav`, `First`.
 - Created `RightGroup`: `Type="RightGroup" V="178" U=… Title=… Cl="0,0,0" WF="16384" GT="1" MG=""`.
 - `NextObj` rises by the number of created objects (existing `_next_obj_edit`).
 - **Running tests:** never with `run_in_background`, never via `Monitor`, never end a turn waiting for a notification. Run the named test files in the foreground. The full suite does not fit in one Bash call (10+ minutes); the final task splits it.

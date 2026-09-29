@@ -144,10 +144,12 @@ A new room is two objects:
 - a `Place`, appended at the end of the `PlaceCaption`'s content:
   `V="178"`, a new `U`, `Title` = the loxmatter room name exactly as
   stored, `WF="16384"`, `RGR` = the new rights group's `U`, and `PType`
-  and `Icon` copied from the first room in the file that does not carry
+  copied from the first room in the file that does not carry
   `First="true"` (the `Nicht zugeordnet` room, whose `WF` and `First`
-  must not be copied). If there is no such room, `PType` and `Icon` are
-  left out. `PGroup`, `Rating` and `UseFav` are never written.
+  must not be copied). If there is no such room, `PType` is left out.
+  `Icon`, `PGroup`, `Rating` and `UseFav` are never written. Decided
+  2026-09-29: an icon copied from an unrelated room is wrong in the
+  Loxone app, so Loxone Config chooses it.
 - a `RightGroup`, appended at the end of the rights group caption's
   content: `V="178"`, a new `U`, `Title` = the same name, `Cl="0,0,0"`,
   `WF="16384"`, `GT="1"`, `MG=""`.
@@ -178,7 +180,8 @@ creation is not hidden behind a checkbox: the user decided on
 2026-09-29 that rooms missing in Config should be created. Acceptance of
 this feature therefore includes one import of a patched file with a
 newly created room into Loxone Config, including a check that the room
-appears in the room list and in the user rights dialog.
+appears in the room list and in the user rights dialog, and that
+Config opens a room without `Icon` and which icon it shows.
 
 ## 7. Plan and WebUI
 
