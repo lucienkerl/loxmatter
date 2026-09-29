@@ -14,7 +14,7 @@
 
 - Everything in the repository is English: code, comments, docstrings, test names, commit messages (`CLAUDE.md`). German appears only as `de:` values in `src/loxmatter/i18n/strings.yaml` and as data in quoted test strings (fixture room names such as `"Küche"`).
 - Commit messages: Conventional Commits, English, ending with the line `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`.
-- Every user-visible string goes through `strings.yaml` with `en` and `de`; the German tone of the project sync card is impersonal ("Bitte in Loxone Config manuell prüfen."), not "du"/"Sie".
+- Every user-visible string goes through `strings.yaml` with `en` and `de`; the German tone of the project sync card is impersonal (`Bitte in Loxone Config manuell prüfen.`), never addressing the reader as `du` or `Sie`.
 - Existing objects are never touched because of rooms: no `IoData` of an existing cmd is read for comparison or rewritten (spec section 2).
 - Only `new_signal`/`new_device` entries get a room (spec section 5).
 - Matching key: `name.strip().casefold()` (spec section 4).
@@ -73,7 +73,7 @@ test file):
 from __future__ import annotations
 
 # Rooms as Loxone Config writes them (design 2026-09-29, section 3): a
-# `PlaceCaption` with the "Nicht zugeordnet" room (`First="true"`) and one
+# `PlaceCaption` with the `Nicht zugeordnet` room (`First="true"`) and one
 # ordinary room, and a rights group caption with one `RightGroup` per room
 # (`Place.RGR` -> `RightGroup.U`). Inserted directly under `Document`, next
 # to the `LoxLIVE` block, where real files carry them.
@@ -415,15 +415,15 @@ class RoomAssignment:
 
 
 def room_key(name: str) -> str:
-    """The form in which two room names are compared: "küche" in loxmatter
-    finds "Küche" in Loxone Config instead of creating a second room."""
+    """The form in which two room names are compared: `küche` in loxmatter
+    finds `Küche` in Loxone Config instead of creating a second room."""
     return name.strip().casefold()
 
 
 def can_create_rooms(index: ProjectIndex) -> bool:
     """Whether a new `Place` has somewhere to go. A self-closing
     `PlaceCaption` has no content range to append to - Loxone Config never
-    writes one, since the "Nicht zugeordnet" room always exists."""
+    writes one, since the `Nicht zugeordnet` room always exists."""
     caption = index.place_caption
     return caption is not None and not caption.self_closing and caption.inner_end is not None
 
@@ -742,7 +742,7 @@ In `src/loxmatter/projectsync/schema.py` add `from collections.abc import Mappin
 # section 6.1). Both are undocumented; copying them from a room Loxone
 # Config wrote itself beats inventing values. `PGroup`, `Rating` and
 # `UseFav` are the user's own choices for that one room; `First` and its
-# `WF` mark the "Nicht zugeordnet" room, which is why `patch._room_edits`
+# `WF` mark the `Nicht zugeordnet` room, which is why `patch._room_edits`
 # never picks that one as the template.
 _PLACE_TEMPLATE_ATTRS = ("Icon", "PType")
 
@@ -909,7 +909,7 @@ def test_a_missing_room_is_created_with_its_rights_group(rooms_project):
     assert _attr(new_place, "Title") == "Werkstatt"
     assert _attr(new_rights, "Title") == "Werkstatt"
     assert _attr(new_place, "RGR") == _attr(new_rights, "U")
-    # Icon/PType from "Küche", not from "Nicht zugeordnet".
+    # Icon/PType from `Küche`, not from `Nicht zugeordnet`.
     assert _attr(new_place, "PType") == "3"
     assert 'First="true"' not in new_place
     # Every cmd of the new device points at the new room.
@@ -1024,7 +1024,7 @@ def _room_edits(index: ProjectIndex, plan: SyncPlan) -> tuple[dict[str, str], li
     assert caption is not None and caption.inner_end is not None
     rights = index.right_group_caption
     rights_end = None if rights is None else rights.inner_end
-    # "Nicht zugeordnet" (`First="true"`) carries its own `WF` and marks
+    # `Nicht zugeordnet` (`First="true"`) carries its own `WF` and marks
     # itself as the default room - never a template for an ordinary one.
     template = next((p.attrs for p in index.places if p.attrs.get("First") != "true"), None)
 

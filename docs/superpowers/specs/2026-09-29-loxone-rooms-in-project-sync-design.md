@@ -14,7 +14,7 @@ output belongs to one of them. The two never meet: a virtual input or
 output the sync creates takes its room from whatever neighbouring object
 it copies its `<IoData>` from (`sibling_iodata_attrs`,
 `find_any_iodata_attrs` in `projectsync/schema.py`). In practice that is
-"Nicht zugeordnet", or at random the room of an unrelated neighbour. The
+`Nicht zugeordnet`, or at random the room of an unrelated neighbour. The
 user then sorts every new object into its room by hand in Loxone Config,
 although loxmatter already knew the answer.
 
@@ -57,7 +57,7 @@ caption anywhere in the tree instead of assuming a depth:
 
 ```
 <C Type="PlaceCaption" V="175" U="…" Title="Räume" WF="16384" u="…">
-  <C Type="Place" V="175" U="15ea0aa5-0122-3bad-…" Title="Nicht zugeordnet" WF="6307840" Icon="…" First="true" PType="2" RGR="…"/>
+  <C Type="Place" V="175" U="15ea0aa5-0122-3bad-…" Title=`Nicht zugeordnet` WF="6307840" Icon="…" First="true" PType="2" RGR="…"/>
   <C Type="Place" V="175" U="15ea0aa5-0128-3bcb-…" Title="Bad" WF="16384" Icon="00000218-00ff-0000-0000000000000000" Rating="1" UseFav="true" PGroup="5" PType="2" RGR="15ea0aa5-0128-3bcd-…"/>
 </C>
 ```
@@ -92,8 +92,8 @@ title occurred twice among the rooms of any checked file.
 ## 4. Matching
 
 A loxmatter room and a Loxone room match when their titles are equal
-after `strip()` and `casefold()`. "küche" in loxmatter therefore finds
-"Küche" in Config instead of creating a second room next to it. A
+after `strip()` and `casefold()`. `küche` in loxmatter therefore finds
+`Küche` in Config instead of creating a second room next to it. A
 loxmatter room name is already stripped on the way into the store
 (`_normalized_room`); stripping the Loxone side as well costs nothing.
 
@@ -145,7 +145,7 @@ A new room is two objects:
   `V="178"`, a new `U`, `Title` = the loxmatter room name exactly as
   stored, `WF="16384"`, `RGR` = the new rights group's `U`, and `PType`
   and `Icon` copied from the first room in the file that does not carry
-  `First="true"` (the "Nicht zugeordnet" room, whose `WF` and `First`
+  `First="true"` (the `Nicht zugeordnet` room, whose `WF` and `First`
   must not be copied). If there is no such room, `PType` and `Icon` are
   left out. `PGroup`, `Rating` and `UseFav` are never written.
 - a `RightGroup`, appended at the end of the rights group caption's
