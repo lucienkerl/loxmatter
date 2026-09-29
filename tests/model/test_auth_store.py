@@ -121,3 +121,18 @@ def test_delete_all_sessions_leaves_the_password_untouched(tmp_path):
         assert store.auth.password_hash() == "hash"
     finally:
         store.close()
+
+
+def test_set_password_hash_leaves_the_sessions_in_place(tmp_path):
+    """The WebUI password change (design 2026-09-29, decision 2) relies on
+    this: unlike `reset_password`, a changed password does not sign
+    anybody out."""
+    store = Store(tmp_path / "t.sqlite")
+    try:
+        store.auth.set_password_hash_if_unset("alt")
+        store.auth.create_session("s1", created_at=1, expires_at=10**10)
+        store.auth.set_password_hash("neu")
+        assert store.auth.password_hash() == "neu"
+        assert store.auth.session_expires_at("s1") == 10**10
+    finally:
+        store.close()

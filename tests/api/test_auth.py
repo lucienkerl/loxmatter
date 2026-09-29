@@ -36,7 +36,8 @@ import httpx2 as httpx
 import pytest
 from conftest import load_snapshot
 
-from loxmatter.auth.passwords import MIN_PASSWORD_LENGTH, hash_password
+from loxmatter.auth.passwords import MIN_PASSWORD_LENGTH, hash_password, verify_password
+from loxmatter.auth.sessions import open_session, session_is_valid
 from loxmatter.auth.throttle import FAILURES_BEFORE_THROTTLING
 from loxmatter.loxone.runtime import Runtime
 from loxmatter.loxone.server import build_app
@@ -61,6 +62,22 @@ async def auth_client(
     store.register_signals(device_id, snapshot)
     runtime = Runtime(store, _NullSender())
     app = build_app(store, no_invoke, runtime)
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        yield client, store
+    store.close()
+
+
+@pytest.fixture
+async def token_client(
+    tmp_path: Path, no_invoke: Any
+) -> AsyncIterator[tuple[httpx.AsyncClient, Store]]:
+    """Like `auth_client`, but with the bearer token `"secret"` configured -
+    the path scripts take, and the only way to reach an `/api` route while
+    no password is set."""
+    store = Store(tmp_path / "t.sqlite")
+    runtime = Runtime(store, _NullSender())
+    app = build_app(store, no_invoke, runtime, api_token="secret")
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         yield client, store
@@ -404,4 +421,137 @@ async def test_no_response_ever_contains_the_password_or_its_hash(auth_client):
 
     for response in responses:
         assert PASSWORT not in response.text
+        assert stored not in response.text
+
+
+# ---------------------------------------------------------------------------
+# PUT /api/auth/password - changing a known password (design 2026-09-29).
+# ---------------------------------------------------------------------------
+
+NEW_PASSWORD = "ein-neues-passwort"
+
+
+async def test_a_logged_in_client_changes_the_password(auth_client):
+    client, store = auth_client
+    await client.post("/auth/setup", json={"password": PASSWORT})
+
+    response = await client.put("/api/auth/password", json={"password": NEW_PASSWORD})
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok"}
+    stored = store.auth.password_hash()
+    assert stored is not None
+    assert verify_password(NEW_PASSWORD, stored)
+    assert not verify_password(PASSWORT, stored)
+
+
+async def test_after_a_change_only_the_new_password_logs_in(auth_client):
+    client, _ = auth_client
+    await client.post("/auth/setup", json={"password": PASSWORT})
+    await client.put("/api/auth/password", json={"password": NEW_PASSWORD})
+    await client.post("/auth/logout")
+
+    assert (await client.post("/auth/login", json={"password": PASSWORT})).status_code == 401
+    assert (await client.post("/auth/login", json={"password": NEW_PASSWORD})).status_code == 200
+
+
+async def test_a_change_leaves_every_session_valid(auth_client):
+    """Decision 2 of the design: the new password applies to future logins
+    only - neither the session that made the change nor one opened
+    elsewhere before it is signed out."""
+    client, store = auth_client
+    await client.post("/auth/setup", json={"password": PASSWORT})
+    own_session = client.cookies.get("loxmatter_session")
+    other_session = open_session(store.auth)
+
+    await client.put("/api/auth/password", json={"password": NEW_PASSWORD})
+
+    assert own_session is not None
+    assert session_is_valid(store.auth, own_session)
+    assert session_is_valid(store.auth, other_session)
+    assert (await client.get("/api/devices")).status_code == 200
+
+
+async def test_the_bearer_token_may_change_the_password(token_client):
+    client, store = token_client
+    store.auth.set_password_hash(hash_password(PASSWORT))
+
+    response = await client.put(
+        "/api/auth/password",
+        json={"password": NEW_PASSWORD},
+        headers={"Authorization": "Bearer secret"},
+    )
+
+    assert response.status_code == 200
+    stored = store.auth.password_hash()
+    assert stored is not None
+    assert verify_password(NEW_PASSWORD, stored)
+
+
+async def test_changing_needs_a_login(auth_client):
+    client, store = auth_client
+    store.auth.set_password_hash(hash_password(PASSWORT))
+    before = store.auth.password_hash()
+
+    response = await client.put("/api/auth/password", json={"password": NEW_PASSWORD})
+
+    assert response.status_code == 401
+    assert store.auth.password_hash() == before
+
+
+async def test_changing_rejects_a_short_password(auth_client):
+    client, store = auth_client
+    await client.post("/auth/setup", json={"password": PASSWORT})
+    before = store.auth.password_hash()
+
+    response = await client.put("/api/auth/password", json={"password": "kurz"})
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == (
+        f"The password must be at least {MIN_PASSWORD_LENGTH} characters long."
+    )
+    assert store.auth.password_hash() == before
+
+
+async def test_changing_rejects_a_short_password_in_german(auth_client):
+    """German companion test to test_changing_rejects_a_short_password."""
+    client, store = auth_client
+    store.locale.set_language("de")
+    await client.post("/auth/setup", json={"password": PASSWORT})
+
+    response = await client.put("/api/auth/password", json={"password": "kurz"})
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == (
+        f"Das Passwort muss mindestens {MIN_PASSWORD_LENGTH} Zeichen haben."
+    )
+
+
+async def test_changing_is_no_second_way_to_the_first_password(token_client):
+    """Without a password, the token still passes the guard - the route must
+    not turn into a setup path that skips the rules of `/auth/setup`."""
+    client, store = token_client
+
+    response = await client.put(
+        "/api/auth/password",
+        json={"password": NEW_PASSWORD},
+        headers={"Authorization": "Bearer secret"},
+    )
+
+    assert response.status_code == 409
+    assert store.auth.password_hash() is None
+
+
+async def test_a_password_change_never_echoes_the_password_or_its_hash(auth_client):
+    client, store = auth_client
+    await client.post("/auth/setup", json={"password": PASSWORT})
+    responses = [
+        await client.put("/api/auth/password", json={"password": "kurz"}),
+        await client.put("/api/auth/password", json={"password": NEW_PASSWORD}),
+    ]
+    stored = store.auth.password_hash()
+    assert stored is not None
+    for response in responses:
+        assert NEW_PASSWORD not in response.text
+        assert "kurz" not in response.text
         assert stored not in response.text

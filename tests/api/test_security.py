@@ -898,6 +898,19 @@ async def test_without_a_password_every_api_route_is_closed(open_client):
         assert response.status_code == 401, f"{path} still served data without a password"
 
 
+async def test_the_password_change_route_is_behind_the_guard(secured_client):
+    """`PUT /api/auth/password` sits next to the four open `/auth` routes by
+    name only - it must never be reachable while logged out."""
+    client, _app, _device_id, store = secured_client
+    store.auth.set_password_hash(hash_password("ein-gutes-passwort"))
+    before = store.auth.password_hash()
+
+    response = await client.put("/api/auth/password", json={"password": "ein-neues-passwort"})
+
+    assert response.status_code == 401
+    assert store.auth.password_hash() == before
+
+
 async def test_without_a_password_the_miniserver_routes_stay_open(open_client):
     """`/cmd` and `/resync` stay open in EVERY state - the Miniserver can
     send neither a header nor a cookie."""
