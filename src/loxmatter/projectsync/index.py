@@ -37,8 +37,8 @@ assignment, for the full derivation)."""
 from __future__ import annotations
 
 import re
-from collections.abc import Sequence
-from dataclasses import dataclass
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass, field
 
 from loxmatter import i18n
 from loxmatter.projectsync.keys import key_from_check, key_from_output_cmd
@@ -111,6 +111,17 @@ class ProjectIndex:
     output_containers: dict[str, Element]
     all_u_values: set[str]
     all_inames: set[str]
+    # Rooms (design 2026-09-29, section 3). They belong to the whole
+    # project, not to a `LoxLIVE` block, so they are searched in the whole
+    # tree - under `Document` in every file since 2015, directly under
+    # `<ControlList>` in the oldest one. `None`/empty for a file without a
+    # room list; `projectsync.rooms` then creates no room.
+    place_caption: Element | None = None
+    places: list[Element] = field(default_factory=list)
+    # The `LoxCaption` with `CaptionType="13"` ("Berechtigungsgruppen")
+    # that holds one `RightGroup` per room. `None` in projects from before
+    # the rights system; a room created there gets no `RGR`.
+    right_group_caption: Element | None = None
 
 
 def _find_all_loxlive(elements: list[Element]) -> list[Element]:
@@ -125,6 +136,19 @@ def _find_all_loxlive(elements: list[Element]) -> list[Element]:
             found.append(element)
         found.extend(_find_all_loxlive(element.children))
     return found
+
+
+def _find_first(elements: list[Element], matches: Callable[[Element], bool]) -> Element | None:
+    """The first element in document order, at any depth, for which
+    `matches` holds - like `_find_all_loxlive`, without assuming a fixed
+    nesting depth."""
+    for element in elements:
+        if matches(element):
+            return element
+        found = _find_first(element.children, matches)
+        if found is not None:
+            return found
+    return None
 
 
 def _describe(loxlives: list[Element]) -> str:
@@ -236,6 +260,11 @@ def build_index(text: str, miniserver_ip: str | None = None) -> ProjectIndex:
                     output_cmds[key] = cmd
                     output_containers[key] = container
 
+    place_caption = _find_first(top_level, lambda e: e.type == "PlaceCaption")
+    right_group_caption = _find_first(
+        top_level, lambda e: e.type == "LoxCaption" and e.attrs.get("CaptionType") == "13"
+    )
+
     return ProjectIndex(
         text=text,
         root_attrs=root_attrs,
@@ -254,4 +283,9 @@ def build_index(text: str, miniserver_ip: str | None = None) -> ProjectIndex:
         # collide with (design section 6).
         all_u_values=set(_U_ATTR.findall(text)),
         all_inames=set(_INAME_ATTR.findall(text)),
+        place_caption=place_caption,
+        places=[]
+        if place_caption is None
+        else [e for e in place_caption.children if e.type == "Place"],
+        right_group_caption=right_group_caption,
     )
