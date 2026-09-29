@@ -39,7 +39,7 @@
 | `src/loxmatter/i18n/strings.yaml` | modify | room block texts |
 | `src/loxmatter/web/index.html`, `app.js`, `style.css` | modify | room block, target room line |
 | `tests/projectsync/conftest.py` | modify | `rooms_project`, `places_only_project` fixtures |
-| `tests/projectsync/test_index.py`, `test_rooms.py` (new), `test_diff.py`, `test_schema.py`, `test_patch_rooms.py` (new) | tests | |
+| `tests/projectsync/test_index.py`, `test_room_matching.py` (new), `test_diff.py`, `test_schema.py`, `test_patch_rooms.py` (new) | tests | |
 | `tests/api/test_project_sync_api.py`, `tests/api/test_web.py` | tests | |
 | `CHANGELOG.md` | modify | user-facing note |
 
@@ -273,7 +273,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 **Files:**
 - Create: `src/loxmatter/projectsync/rooms.py`
-- Test: `tests/projectsync/test_rooms.py`
+- Test: `tests/projectsync/test_room_matching.py`
 
 **Interfaces:**
 - Consumes: `ProjectIndex.place_caption`, `ProjectIndex.places` (Task 1).
@@ -286,7 +286,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 - [ ] **Step 1: Write the failing tests**
 
-Create `tests/projectsync/test_rooms.py` (with the repository's GPL header, copied from any other test file):
+Create `tests/projectsync/test_room_matching.py` (with the repository's GPL header, copied from any other test file):
 
 ```python
 """Tests for `projectsync.rooms` - design 2026-09-29, sections 4 and 6."""
@@ -358,7 +358,7 @@ def test_an_old_project_without_rights_groups_can_still_get_rooms(places_only_pr
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Run: `uv run pytest tests/projectsync/test_rooms.py -v`
+Run: `uv run pytest tests/projectsync/test_room_matching.py -v`
 Expected: FAIL with `ModuleNotFoundError: No module named 'loxmatter.projectsync.rooms'`.
 
 - [ ] **Step 3: Implement**
@@ -461,13 +461,13 @@ Add `"rooms"` handling to `src/loxmatter/projectsync/__init__.py` only if that f
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
-Run: `uv run pytest tests/projectsync/test_rooms.py -v`
+Run: `uv run pytest tests/projectsync/test_room_matching.py -v`
 Expected: all PASS.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/loxmatter/projectsync/rooms.py tests/projectsync/test_rooms.py
+git add src/loxmatter/projectsync/rooms.py tests/projectsync/test_room_matching.py
 git commit -m "feat(projectsync): match loxmatter room names against Loxone rooms
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
