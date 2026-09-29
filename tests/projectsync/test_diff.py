@@ -1,3 +1,4 @@
+import dataclasses
 import json
 from collections.abc import Sequence
 from pathlib import Path
@@ -8,6 +9,7 @@ from loxmatter.model.store import SignalRef, Store, StoredCommand, StoredDevice,
 from loxmatter.profiles.table import Exportability
 from loxmatter.projectsync.diff import PlanStatus, build_plan
 from loxmatter.projectsync.index import build_index
+from loxmatter.projectsync.rooms import RoomStatus
 
 FIXTURES = Path(__file__).parents[1] / "fixtures" / "nodes"
 
@@ -343,3 +345,43 @@ def test_a_project_imported_before_the_reordering_still_matches(tmp_path):
     # asserts above green unchanged, while every entry actually
     # came out as `updated`. Only this extra line would have caught that.
     assert set(statuses.values()) == {PlanStatus.UNCHANGED}
+
+
+def test_new_entries_carry_their_devices_room(rooms_project):
+    """`d1_1_temp` is new in an existing container, device 2 is new
+    altogether; `d1_1_onoff` exists and gets no room (design 2026-09-29,
+    section 5)."""
+    index = build_index(rooms_project)
+    device1 = dataclasses.replace(_device(1, "Altes Geraet"), room="küche")
+    device2 = dataclasses.replace(_device(2, "Neues Geraet"), room="Werkstatt")
+    signals = {
+        1: [_signal("d1_1_onoff", 1), _signal("d1_1_temp", 1, endpoint=2)],
+        2: [_signal("d2_1_onoff", 2)],
+    }
+    plan = build_plan(index, [device1, device2], signals, {1: [], 2: []})
+
+    by_key = {entry.key: entry for entry in plan.entries}
+    assert by_key["d1_1_onoff"].room is None
+    assert by_key["d1_1_temp"].room == "küche"
+    assert by_key["d2_1_onoff"].room == "Werkstatt"
+    assert [(a.name, a.status) for a in plan.rooms] == [
+        ("küche", RoomStatus.FOUND),
+        ("Werkstatt", RoomStatus.CREATED),
+    ]
+    assignment = plan.room_for(by_key["d1_1_temp"])
+    assert assignment is not None and assignment.loxone_title == "Küche"
+    assert plan.room_for(by_key["d1_1_onoff"]) is None
+
+
+def test_a_room_only_existing_objects_need_is_not_assigned(rooms_project):
+    index = build_index(rooms_project)
+    device = dataclasses.replace(_device(1, "Altes Geraet"), room="Werkstatt")
+    plan = build_plan(index, [device], {1: [_signal("d1_1_onoff", 1)]}, {1: []})
+    assert plan.rooms == []
+
+
+def test_a_device_without_a_room_gets_no_assignment(rooms_project):
+    index = build_index(rooms_project)
+    plan = build_plan(index, [_device(2, "Neues Geraet")], {2: [_signal("d2_1_onoff", 2)]}, {2: []})
+    assert plan.rooms == []
+    assert all(entry.room is None for entry in plan.entries)

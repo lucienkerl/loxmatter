@@ -22,7 +22,7 @@ section 5)."""
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import StrEnum
 
 from loxmatter.export.documents import LoxoneCommand
@@ -36,6 +36,7 @@ from loxmatter.model.store import (
     StoredSignal,
 )
 from loxmatter.projectsync.index import ProjectIndex
+from loxmatter.projectsync.rooms import RoomAssignment, assign_rooms, room_key
 from loxmatter.projectsync.scan import Element
 from loxmatter.projectsync.schema import (
     MANAGED_INPUT_CMD_ATTRS,
@@ -83,11 +84,17 @@ class PlanEntry:
     # so anything that groups entries by owner must key on this as well,
     # or a group's outputs land in a device's container.
     owner_kind: str = "device"
+    # The owner's room in loxmatter (design 2026-09-29, section 5) - only
+    # on NEW_SIGNAL/NEW_DEVICE entries: an object that already exists keeps
+    # whatever room Loxone Config gave it, so its room is never looked at.
+    room: str | None = None
 
 
 @dataclass(frozen=True)
 class SyncPlan:
     entries: list[PlanEntry]
+    # One per distinct room a new entry needs (design 2026-09-29, section 7).
+    rooms: list[RoomAssignment] = field(default_factory=list)
 
     @property
     def has_changes(self) -> bool:
@@ -95,6 +102,13 @@ class SyncPlan:
             entry.status in (PlanStatus.UPDATED, PlanStatus.NEW_SIGNAL, PlanStatus.NEW_DEVICE)
             for entry in self.entries
         )
+
+    def room_for(self, entry: PlanEntry) -> RoomAssignment | None:
+        """The room assignment `entry` goes into, if it has a room."""
+        if entry.room is None:
+            return None
+        key = room_key(entry.room)
+        return next((a for a in self.rooms if room_key(a.name) == key), None)
 
 
 def _diff_managed_attrs(
@@ -266,6 +280,15 @@ def _orphaned_entries(
     return orphaned
 
 
+_NEW_STATUSES = (PlanStatus.NEW_SIGNAL, PlanStatus.NEW_DEVICE)
+
+
+def _with_owner_room(entry: PlanEntry, room: str | None) -> PlanEntry:
+    if room is None or entry.status not in _NEW_STATUSES:
+        return entry
+    return replace(entry, room=room)
+
+
 def build_plan(
     index: ProjectIndex,
     devices: Sequence[StoredDevice],
@@ -292,5 +315,15 @@ def build_plan(
         known_output_keys.update(command.key for command in outputs)
         entries += _plan_outputs(index, "group", group.id, group.label, outputs)
 
+    owner_rooms: dict[tuple[str, int], str | None] = {
+        ("device", device.id): device.room for device in devices
+    }
+    owner_rooms.update({("group", group.id): group.room for group in groups})
+    entries = [
+        _with_owner_room(entry, owner_rooms.get((entry.owner_kind, entry.device_id)))
+        for entry in entries
+    ]
+
     entries += _orphaned_entries(index, known_input_keys, known_output_keys)
-    return SyncPlan(entries)
+    rooms = assign_rooms(index, [entry.room for entry in entries if entry.room is not None])
+    return SyncPlan(entries, rooms)
