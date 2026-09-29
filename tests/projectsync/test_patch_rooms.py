@@ -137,7 +137,7 @@ def test_a_missing_room_is_created_with_its_rights_group(rooms_project):
     assert _attr(new_place, "Title") == "Werkstatt"
     assert _attr(new_rights, "Title") == "Werkstatt"
     assert _attr(new_place, "RGR") == _attr(new_rights, "U")
-    # Icon/PType from `Küche`, not from `Nicht zugeordnet`.
+    # Icon/PType come from the ordinary room, not from the default room (`First="true"`).
     assert _attr(new_place, "PType") == "3"
     assert 'First="true"' not in new_place
     # Every cmd of the new device points at the new room.
