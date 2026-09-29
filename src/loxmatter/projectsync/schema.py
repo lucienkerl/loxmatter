@@ -260,8 +260,9 @@ def new_right_group_tag(title: str, u: str) -> str:
 def sibling_iodata_attrs(text: str, element: Element) -> dict[str, str] | None:
     """The attributes of the `<IoData .../>` child of an existing cmd
     element, if present - the source for the permission values of a newly
-    created sibling object (design section 6: the same Cr/Pr values as a
-    neighbouring object, instead of inventing them)."""
+    created sibling object (design section 6: the same values as a
+    neighbouring object, instead of inventing them; `new_cmd_children_xml`
+    drops the category and the visualization settings again)."""
     if element.self_closing or element.inner_end is None:
         return None
     match = _IODATA.search(text, element.open_end, element.inner_end)
@@ -283,6 +284,16 @@ def find_any_iodata_attrs(text: str, caption: Element | None) -> dict[str, str] 
 
 
 _DEFAULT_UNIT_FORMAT = "<v.1>"
+
+# `IoData` attributes that are NOT carried over from a neighbouring object
+# (user report, 2026-09-29: "the category does not fit", and new virtual
+# inputs showed "Use in visualization" ticked). Both are a per-object choice
+# the neighbour made for itself: `Cr` is the category, `Visu`/`VisuPwd`/
+# `UseInFav`/`IconV` decide whether and how the object appears in the app.
+# Checked against the real project files: `Visu` only ever occurs as
+# `"true"`, so leaving it out is Loxone Config's own "not in the
+# visualization". What stays is the room (`Pr`) and the permissions.
+_IODATA_NOT_COPIED = frozenset({"Cr", "Visu", "VisuPwd", "UseInFav", "IconV"})
 
 
 def new_cmd_children_xml(
@@ -313,9 +324,13 @@ def new_cmd_children_xml(
 
     **`place_u` (design 2026-09-29, section 5):** the `U` of the Loxone
     room this object belongs in. It replaces the `Pr` copied from a
-    neighbour, keeping the copied `Cr` (the category is not this
-    feature's business); without a neighbour to copy from, the `IoData`
-    carries `Pr` alone."""
+    neighbour; without a neighbour to copy from, the `IoData` carries
+    `Pr` alone.
+
+    **Category and visualization (2026-09-29):** neither is copied, see
+    `_IODATA_NOT_COPIED` - a new object arrives without a category and
+    without "Use in visualization", and the user decides both in Loxone
+    Config."""
     if kind == "input":
         connectors = [
             f'<Co K="AQ" U="{new_unique_id(existing_u)}"/>',
@@ -334,6 +349,8 @@ def new_cmd_children_xml(
     display_attrs.append(("Unit", unit_format or _DEFAULT_UNIT_FORMAT))
     display_attrs.append(("StateOnly", "true"))
 
+    if iodata_attrs:
+        iodata_attrs = {k: v for k, v in iodata_attrs.items() if k not in _IODATA_NOT_COPIED}
     if place_u is not None:
         iodata_attrs = {**(iodata_attrs or {}), "Pr": place_u}
 

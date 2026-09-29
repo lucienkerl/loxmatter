@@ -18,6 +18,14 @@ people who don't know the code.
   `docker exec -it loxmatter loxmatter set-password`, with a button to copy
   it. It works from any directory on the host and signs out every browser.
 
+### Fixed
+
+- **New virtual inputs and outputs no longer take a neighbour's category.**
+  The project sync used to copy the category of the object next to it, which
+  rarely fit. New objects now arrive without one, and without the
+  neighbour's visualization settings; the room and the permissions are still
+  set.
+
 ## [0.5.0] — 2026-09-29
 
 ### Before you update

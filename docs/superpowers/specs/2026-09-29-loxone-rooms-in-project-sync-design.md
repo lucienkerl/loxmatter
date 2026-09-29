@@ -43,6 +43,9 @@ Config has no such room yet, the sync creates it.
   design's section 2.
 - **No categories.** `<IoData Cr="…">` (the Loxone category) keeps the
   value it gets today.
+  *Superseded the same day:* a new object no longer gets a category at all
+  - the one copied from a neighbour did not fit (user report). See
+  `_IODATA_NOT_COPIED` in `projectsync/schema.py`.
 
 ## 3. How a Loxone project file stores rooms
 

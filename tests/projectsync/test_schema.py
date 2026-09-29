@@ -139,7 +139,7 @@ def test_new_cmd_children_xml_contains_one_connector_for_output_with_iodata():
         kind="output", existing_u=existing_u, iodata_attrs={"Cr": "x", "Pr": "y"}
     )
     assert xml.count('Co K="I"') == 1
-    assert '<IoData Cr="x" Pr="y"/>' in xml
+    assert '<IoData Pr="y"/>' in xml
 
 
 def test_new_cmd_children_xml_puts_the_unit_into_the_display_element():
@@ -243,7 +243,7 @@ def test_place_u_replaces_the_copied_room():
         iodata_attrs={"Cr": "cat", "Pr": "old-room"},
         place_u="new-room",
     )
-    assert '<IoData Cr="cat" Pr="new-room"/>' in xml
+    assert '<IoData Pr="new-room"/>' in xml
 
 
 def test_place_u_without_a_copied_iodata_writes_pr_only():
@@ -262,4 +262,35 @@ def test_without_place_u_the_copied_iodata_is_unchanged():
         existing_u={"1000-0000-0000-aaaaaaaaaaaaaaaa"},
         iodata_attrs={"Cr": "cat", "Pr": "old-room"},
     )
-    assert '<IoData Cr="cat" Pr="old-room"/>' in xml
+    assert '<IoData Pr="old-room"/>' in xml
+
+
+def test_the_neighbours_category_and_visualization_are_not_copied():
+    """User report 2026-09-29: new virtual inputs arrived with the
+    neighbour's category and with "Use in visualization" ticked. Both are
+    the neighbour's own choice; the room and the permissions are what a new
+    object shares with it."""
+    xml = new_cmd_children_xml(
+        kind="input",
+        existing_u={"1000-0000-0000-aaaaaaaaaaaaaaaa"},
+        iodata_attrs={
+            "Visu": "true",
+            "VisuPwd": "true",
+            "UseInFav": "true",
+            "IconV": "icon",
+            "Cr": "cat",
+            "Pr": "room",
+            "Ugr": "group",
+            "Ugx": "group",
+        },
+    )
+    assert '<IoData Pr="room" Ugr="group" Ugx="group"/>' in xml
+
+
+def test_an_iodata_with_only_a_category_is_left_out():
+    xml = new_cmd_children_xml(
+        kind="input",
+        existing_u={"1000-0000-0000-aaaaaaaaaaaaaaaa"},
+        iodata_attrs={"Cr": "cat"},
+    )
+    assert "<IoData" not in xml

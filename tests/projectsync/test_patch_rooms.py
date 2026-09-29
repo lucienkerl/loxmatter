@@ -112,8 +112,8 @@ def test_a_new_signal_goes_into_the_matching_room(rooms_project):
     signals = [_signal("d1_1_onoff", 1), _signal("d1_1_temp", 1, title="Temperatur")]
     patched = _patch(index, device, signals)
     assert f'Pr="{KITCHEN_U}"' in _cmd_xml(patched, "d1_1_temp")
-    # The copied category stays.
-    assert 'Cr="1000-0005-0000-aaaaaaaaaaaaaaaa"' in _cmd_xml(patched, "d1_1_temp")
+    # The neighbour's category is not copied (user report, 2026-09-29).
+    assert "Cr=" not in _cmd_xml(patched, "d1_1_temp")
     assert len(_places(patched)) == 2  # no room created
 
 
