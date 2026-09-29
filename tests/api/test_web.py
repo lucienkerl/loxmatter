@@ -3379,6 +3379,46 @@ def test_the_elapsed_time_is_whole_seconds_since_the_attempts_start():
 
 
 @pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_the_elapsed_time_stops_when_the_attempt_ends():
+    """An attempt that ended - joined, or failed after its 180 s - is not
+    running any more, so "Running for" must not keep counting. The status
+    route's `phase_since` of a `done`/`failed` attempt is the moment it
+    ended; the count stops there. A page whose own attempt ended without a
+    final status in that shape (the last fetch failed) has no end to count
+    to and hides the line rather than counting on. Fault to prove it: read
+    `nowTick` whatever the phase."""
+    values = _commission_values(
+        """
+        state.nowTick = Date.parse("2026-09-22T07:05:00Z");
+        const bt = { available: false };
+        state.commissionStatus = {
+          attempt: { started_at: "2026-09-22T07:00:00Z", phase: "done", phase_since: "2026-09-22T07:00:42Z", reason: null, nearby: [], bluetooth: bt },
+        };
+        const done = state.commissionElapsedSeconds();
+        state.commissionStatus = {
+          attempt: { started_at: "2026-09-22T07:00:00Z", phase: "failed", phase_since: "2026-09-22T07:03:00Z", reason: "not_found", nearby: [], bluetooth: bt },
+        };
+        const failed = state.commissionElapsedSeconds();
+        state.commissionStatus = {
+          attempt: { started_at: "2026-09-22T07:00:00Z", phase: "joined", phase_since: "2026-09-22T07:00:30Z", reason: null, nearby: [], bluetooth: bt },
+        };
+        const running = state.commissionElapsedSeconds();
+        state.commissionFailed = true;
+        const endedWithoutFinalStatus = state.commissionElapsedSeconds();
+        state.commissionFailed = false;
+        state.commissionStep = 2;
+        const succeededWithoutFinalStatus = state.commissionElapsedSeconds();
+        console.log(JSON.stringify({ done, failed, running, endedWithoutFinalStatus, succeededWithoutFinalStatus }));
+        """
+    )
+    assert values["done"] == 42
+    assert values["failed"] == 180
+    assert values["running"] == 300
+    assert values["endedWithoutFinalStatus"] is None
+    assert values["succeededWithoutFinalStatus"] is None
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
 def test_the_poller_starts_once_per_attempt_and_stops_when_it_ends():
     """Review fix 6 (2026-09-22): nothing proved the timer lifecycle itself
     - that `commissionDevice` starts exactly one poller per attempt and

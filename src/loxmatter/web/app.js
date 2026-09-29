@@ -3784,13 +3784,25 @@ function app() {
      * attempt to show one for, so the hint stays hidden on the bare form.
      * Reads `nowTick`, the same one-second clock `sinceText` above already
      * reads, so Alpine redraws this every second without a timer of its
-     * own (review fix 5). */
+     * own (review fix 5).
+     *
+     * An attempt that ended - joined, or failed after its 180 s - stops
+     * counting: the `phase_since` of a `done`/`failed` attempt is the
+     * moment it ended. A page whose own attempt ended without a final
+     * status in that shape (its last fetch failed) has no end to count to,
+     * and hides the line rather than counting on. */
     commissionElapsedSeconds() {
-      const startedAt = this.commissionStatus?.attempt?.started_at;
-      if (!startedAt) return null;
-      const started = Date.parse(startedAt);
+      const attempt = this.commissionStatus?.attempt;
+      const started = Date.parse(attempt?.started_at);
       if (Number.isNaN(started)) return null;
-      return Math.max(0, Math.floor((this.nowTick - started) / 1000));
+      let end = this.nowTick;
+      if (attempt.phase === "done" || attempt.phase === "failed") {
+        end = Date.parse(attempt.phase_since);
+        if (Number.isNaN(end)) return null;
+      } else if (this.commissionFailed || this.commissionStep === 2) {
+        return null;
+      }
+      return Math.max(0, Math.floor((end - started) / 1000));
     },
 
     /** The nearby Matter devices BlueZ currently sees, the one the
