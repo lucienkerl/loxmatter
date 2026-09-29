@@ -263,13 +263,14 @@ async def test_the_interface_offers_setup_and_login_instead_of_a_token_field(api
     (review fix Fix 1). Both screens are unconditionally present in the
     delivered markup - Alpine only shows or hides them in the browser via
     `x-if`/`x-show`, so a test without a browser engine always sees both.
-    Checked here: three password fields of type `password` (two for setup,
-    one for login - type `password` so nothing can be read over someone's
+    Checked here: five password fields of type `password` (two for setup,
+    one for login, two for changing it in Settings - type `password` so nothing can be read over someone's
     shoulder), the two submit labels, and that the old token input is
     gone."""
     client, _, _ = api
     page = (await client.get("/")).text
-    assert page.count('type="password"') == 3
+    # Two for setup, one for login, two for the password card in Settings.
+    assert page.count('type="password"') == 5
     assert "x-text=\"t('web.auth.setup_submit')\"" in page
     assert "x-text=\"t('web.auth.login_submit')\"" in page
     assert "token-box" not in page
@@ -16570,3 +16571,28 @@ async def test_save_settings_clears_the_stale_probe_result_on_error(api):
     body = script[start : script.index("\n    },", start)]
     catch = body[body.index("} catch (error) {") :]
     assert "this.bridgeSettings = { ...this.bridgeSettings, miniserver_check: null };" in catch
+
+
+async def test_the_settings_view_offers_a_password_change(api):
+    """Design 2026-09-29, section 4: two fields, one button, sent to the
+    guarded route - and no field for the current password (decision 1)."""
+    client, _, _ = api
+    page = _without_comments((await client.get("/")).text)
+    script = (await client.get("/static/app.js")).text
+    assert 'x-model="newPasswordDraft"' in page
+    assert 'x-model="newPasswordRepeatDraft"' in page
+    assert "changePassword()" in page
+    assert "current-password" not in _label_around(page, 'x-model="newPasswordDraft"')
+    assert '"PUT", "/api/auth/password"' in script
+
+
+async def test_the_password_card_never_keeps_the_password_in_memory(api):
+    """Like `submitPassword`: whatever the outcome, both drafts are cleared
+    in a `finally`, so the password does not stay in the page."""
+    client, _, _ = api
+    script = (await client.get("/static/app.js")).text
+    start = script.index("async changePassword()")
+    body = script[start : script.index("\n    },", start)]
+    finally_part = body[body.index("finally") :]
+    assert 'this.newPasswordDraft = ""' in finally_part
+    assert 'this.newPasswordRepeatDraft = ""' in finally_part

@@ -3057,6 +3057,33 @@
         </div>
 
         <div class="card">
+          <h2 x-text="t('web.settings.password_heading')"></h2>
+          <p class="hint" x-text="t('web.settings.password_explanation')"></p>
+          <!-- No field for the current password: being logged in is the proof
+               (design 2026-09-29, decision 1). -->
+          <div class="row">
+            <label
+              ><span x-text="t('web.settings.password_new_label')"></span>
+              <input type="password" autocomplete="new-password" x-model="newPasswordDraft"
+                     @keydown.enter="changePassword()" />
+            </label>
+            <label
+              ><span x-text="t('web.settings.password_repeat_label')"></span>
+              <input type="password" autocomplete="new-password" x-model="newPasswordRepeatDraft"
+                     @keydown.enter="changePassword()" />
+            </label>
+            <button
+              class="primary"
+              @click="changePassword()"
+              :disabled="passwordChangeBusy"
+              x-text="t('web.settings.password_submit')"
+            ></button>
+          </div>
+          <p class="hint" x-text="t('web.auth.password_hint')"></p>
+          <p x-show="passwordChangeError" x-cloak class="banner danger" x-text="passwordChangeError"></p>
+        </div>
+
+        <div class="card">
           <h2 x-text="t('web.settings.resend_heading')"></h2>
           <p class="hint" x-text="t('web.settings.resend_explanation')"></p>
           <div class="row">

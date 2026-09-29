@@ -1231,6 +1231,15 @@ function app() {
     resendIntervalBusy: false,
     resendIntervalError: null,
 
+    // --- Password change (Settings) -------------------------------------
+    // Separate from `passwordDraft`/`passwordRepeatDraft` of the setup and
+    // login screens: those are cleared on every login attempt, and the two
+    // forms must not share a half-typed value.
+    newPasswordDraft: "",
+    newPasswordRepeatDraft: "",
+    passwordChangeBusy: false,
+    passwordChangeError: null,
+
     // --- Export --------------------------------------------------------
     exportIncludeSystem: false,
     exportOnlyPending: false,
@@ -6567,6 +6576,34 @@ function app() {
         this.resendIntervalError = t("web.settings.resend_save_error", { message: error.message });
       } finally {
         this.resendIntervalBusy = false;
+      }
+    },
+
+    /**
+     * Sends a new password to `PUT /api/auth/password` (design 2026-09-29).
+     * Only the match of the two fields is checked here; the minimum length
+     * is the server's, and its 422 text is shown as it comes. Via
+     * `this.request`, not `requestJson`: a 401 here means the session
+     * expired, and that must lead back to the login screen.
+     */
+    async changePassword() {
+      this.passwordChangeError = null;
+      if (this.newPasswordDraft !== this.newPasswordRepeatDraft) {
+        this.passwordChangeError = t("web.auth.password_mismatch");
+        return;
+      }
+      this.passwordChangeBusy = true;
+      try {
+        await this.request("PUT", "/api/auth/password", { password: this.newPasswordDraft });
+        this.showToast(t("web.settings.password_changed_toast"));
+      } catch (error) {
+        this.passwordChangeError = error.message;
+      } finally {
+        this.passwordChangeBusy = false;
+        // In every case, as in `submitPassword`: a password does not stay in
+        // the page's memory, not even after a failed attempt.
+        this.newPasswordDraft = "";
+        this.newPasswordRepeatDraft = "";
       }
     },
 

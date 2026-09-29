@@ -2474,6 +2474,24 @@ web.settings.language_de:
 web.settings.language_error:
   en: "Could not change language: {message}"
   de: "Sprache konnte nicht geändert werden: {message}"
+web.settings.password_heading:
+  en: "Password"
+  de: "Passwort"
+web.settings.password_explanation:
+  en: "Sets a new password for this WebUI. Browsers that are signed in right now stay signed in; the new password applies to the next login."
+  de: "Vergibt ein neues Passwort für diese WebUI. Browser, die gerade angemeldet sind, bleiben angemeldet; das neue Passwort gilt ab der nächsten Anmeldung."
+web.settings.password_new_label:
+  en: "New password"
+  de: "Neues Passwort"
+web.settings.password_repeat_label:
+  en: "Repeat new password"
+  de: "Neues Passwort wiederholen"
+web.settings.password_submit:
+  en: "Change password"
+  de: "Passwort ändern"
+web.settings.password_changed_toast:
+  en: "Password changed."
+  de: "Passwort geändert."
 web.settings.resend_heading:
   en: "Periodic resend"
   de: "Periodischer Resend"
