@@ -110,7 +110,7 @@ async def test_setup_is_closed_for_good_once_a_password_is_set(auth_client):
     assert second.json()["detail"] == (
         "A password has already been set for this service – initial setup is "
         "therefore permanently complete. Forgot the password? In the reference "
-        "deployment, `docker compose exec loxmatter loxmatter set-password` resets "
+        "deployment, `docker exec -it loxmatter loxmatter set-password` resets "
         "it; for a source install, `uv run loxmatter set-password`."
     )
 
@@ -126,7 +126,7 @@ async def test_setup_is_closed_for_good_once_a_password_is_set_in_german(auth_cl
     assert second.json()["detail"] == (
         "Für diesen Dienst ist bereits ein Passwort vergeben – die Ersteinrichtung "
         "ist damit dauerhaft abgeschlossen. Passwort vergessen? Im Referenz-"
-        "Deployment setzt `docker compose exec loxmatter loxmatter set-password` "
+        "Deployment setzt `docker exec -it loxmatter loxmatter set-password` "
         "es neu; bei einer Installation aus dem Quellcode `uv run loxmatter "
         "set-password`."
     )

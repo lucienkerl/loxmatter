@@ -206,8 +206,8 @@ cli.set_password.help:
   en: "Resets the interface password — the emergency exit for when it has been forgotten."
   de: "Setzt das Passwort der Oberfläche neu — der Notausgang für den Fall, dass es vergessen wurde."
 cli.set_password.fail_db_not_found:
-  en: "Database {path} was not found. `set-password` RESETS a password, so it deliberately does not create a new database — that would create an empty, unrelated database and report success while the actual bridge stayed locked. Check the path, pass it via --store-path, or — in the reference deployment — run the command inside the running container: `docker compose exec loxmatter loxmatter set-password`. On a fresh install from source, the database may simply not exist yet — it is created on the first `loxmatter run`."
-  de: "Datenbank {path} wurde nicht gefunden. `set-password` setzt ein Passwort ZURÜCK und legt deshalb absichtlich keine neue Datenbank an — das würde eine leere Fremddatenbank erzeugen und Erfolg melden, während die eigentliche Brücke gesperrt bliebe. Prüfe den Pfad, gib ihn über --store-path an, oder führe den Befehl — im Referenz-Deployment — im laufenden Container aus: `docker compose exec loxmatter loxmatter set-password`. Bei einer frischen Installation aus dem Quellcode kann die Datenbank auch schlicht noch fehlen — sie entsteht erst beim ersten `loxmatter run`."
+  en: "Database {path} was not found. `set-password` RESETS a password, so it deliberately does not create a new database — that would create an empty, unrelated database and report success while the actual bridge stayed locked. Check the path, pass it via --store-path, or — in the reference deployment — run the command inside the running container: `docker exec -it loxmatter loxmatter set-password`. On a fresh install from source, the database may simply not exist yet — it is created on the first `loxmatter run`."
+  de: "Datenbank {path} wurde nicht gefunden. `set-password` setzt ein Passwort ZURÜCK und legt deshalb absichtlich keine neue Datenbank an — das würde eine leere Fremddatenbank erzeugen und Erfolg melden, während die eigentliche Brücke gesperrt bliebe. Prüfe den Pfad, gib ihn über --store-path an, oder führe den Befehl — im Referenz-Deployment — im laufenden Container aus: `docker exec -it loxmatter loxmatter set-password`. Bei einer frischen Installation aus dem Quellcode kann die Datenbank auch schlicht noch fehlen — sie entsteht erst beim ersten `loxmatter run`."
 cli.set_password.prompt:
   en: "New password"
   de: "Neues Passwort"
@@ -715,8 +715,8 @@ api.auth.fail_too_many_attempts:
   en: "Too many failed attempts – try again in {wait} seconds."
   de: "Zu viele Fehlversuche – in {wait} Sekunden wieder möglich."
 api.auth.fail_already_set_up:
-  en: "A password has already been set for this service – initial setup is therefore permanently complete. Forgot the password? In the reference deployment, `docker compose exec loxmatter loxmatter set-password` resets it; for a source install, `uv run loxmatter set-password`."
-  de: "Für diesen Dienst ist bereits ein Passwort vergeben – die Ersteinrichtung ist damit dauerhaft abgeschlossen. Passwort vergessen? Im Referenz-Deployment setzt `docker compose exec loxmatter loxmatter set-password` es neu; bei einer Installation aus dem Quellcode `uv run loxmatter set-password`."
+  en: "A password has already been set for this service – initial setup is therefore permanently complete. Forgot the password? In the reference deployment, `docker exec -it loxmatter loxmatter set-password` resets it; for a source install, `uv run loxmatter set-password`."
+  de: "Für diesen Dienst ist bereits ein Passwort vergeben – die Ersteinrichtung ist damit dauerhaft abgeschlossen. Passwort vergessen? Im Referenz-Deployment setzt `docker exec -it loxmatter loxmatter set-password` es neu; bei einer Installation aus dem Quellcode `uv run loxmatter set-password`."
 api.auth.fail_no_password_set:
   en: "No password has been set for this service yet – please complete initial setup first."
   de: "Für diesen Dienst ist noch kein Passwort vergeben – bitte zuerst die Ersteinrichtung abschließen."

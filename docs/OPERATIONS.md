@@ -242,10 +242,14 @@ without shell access to the host; the price is a window between the start of
 the service and the first login in which anyone on the network can take over
 the bridge — it should therefore last minutes, not days. A forgotten
 password is reset in the reference deployment (see
-[`deploy/testhost/`](../deploy/testhost/)) with `docker compose exec
-loxmatter loxmatter set-password` **inside the running container**; for an
-installation from source, correspondingly `uv run loxmatter set-password` on
-the host. Both log out all open sessions in the process. **Important for a
+[`deploy/testhost/`](../deploy/testhost/)) with `docker exec -it loxmatter
+loxmatter set-password`, which runs **inside the running container** and
+works from any directory; for an installation from source, correspondingly
+`uv run loxmatter set-password` on the host. Both log out all open sessions
+in the process. The login screen shows both commands under "Forgot
+password?". A password you still know is changed in the WebUI instead,
+under Settings → Password; that change leaves every open session signed
+in. **Important for a
 containerized installation:** the database there typically lives in a named
 Docker volume and is reachable via `LOXMATTER_STORE` only *inside* the
 container — `set-password` on the host would hit a different, empty database
