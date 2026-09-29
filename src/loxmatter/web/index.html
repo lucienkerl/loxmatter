@@ -250,6 +250,27 @@
         <p class="banner danger" x-show="authError" x-cloak x-text="authError"></p>
         <button class="primary" :disabled="authBusy" @click="submitLogin()"
                 x-text="t('web.auth.login_submit')"></button>
+        <!-- A native <details>, no Alpine state: nothing is fetched, the
+             commands are the same for every installation (design 2026-09-29,
+             section 5). The classes are the ones of the commissioning
+             disclosures, so the same gesture looks the same everywhere. -->
+        <details class="commission-disclosure forgot-password">
+          <summary x-text="t('web.auth.forgot_summary')"></summary>
+          <div class="disclosure-body">
+            <p class="hint" x-text="t('web.auth.forgot_explanation')"></p>
+            <div class="command-copy">
+              <code x-text="resetCommandDocker"></code>
+              <button type="button" @click="copyCommand(resetCommandDocker)"
+                      x-text="t('web.auth.copy')"></button>
+            </div>
+            <p class="hint" x-text="t('web.auth.forgot_source_label')"></p>
+            <div class="command-copy">
+              <code x-text="resetCommandSource"></code>
+              <button type="button" @click="copyCommand(resetCommandSource)"
+                      x-text="t('web.auth.copy')"></button>
+            </div>
+          </div>
+        </details>
       </main>
     </template>
 
@@ -3054,6 +3075,33 @@
             ></button>
           </nav>
           <p x-show="settingsError" x-cloak class="banner danger" x-text="settingsError"></p>
+        </div>
+
+        <div class="card">
+          <h2 x-text="t('web.settings.password_heading')"></h2>
+          <p class="hint" x-text="t('web.settings.password_explanation')"></p>
+          <!-- No field for the current password: being logged in is the proof
+               (design 2026-09-29, decision 1). -->
+          <div class="row">
+            <label
+              ><span x-text="t('web.settings.password_new_label')"></span>
+              <input type="password" autocomplete="new-password" x-model="newPasswordDraft"
+                     @keydown.enter="changePassword()" />
+            </label>
+            <label
+              ><span x-text="t('web.settings.password_repeat_label')"></span>
+              <input type="password" autocomplete="new-password" x-model="newPasswordRepeatDraft"
+                     @keydown.enter="changePassword()" />
+            </label>
+            <button
+              class="primary"
+              @click="changePassword()"
+              :disabled="passwordChangeBusy"
+              x-text="t('web.settings.password_submit')"
+            ></button>
+          </div>
+          <p class="hint" x-text="t('web.auth.password_hint')"></p>
+          <p x-show="passwordChangeError" x-cloak class="banner danger" x-text="passwordChangeError"></p>
         </div>
 
         <div class="card">

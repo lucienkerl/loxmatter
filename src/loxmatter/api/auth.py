@@ -15,7 +15,9 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 """The four access routes: `/auth-info`, `/auth/setup`, `/auth/login`,
-`/auth/logout` (Spec 8).
+`/auth/logout` (Spec 8) - plus `PUT /api/auth/password`, which is NOT one of
+them: it lives in its own router behind the guard (`build_password_router`
+at the end of this module).
 
 **These are the only routes that do NOT hang behind `build_api_guard`** -
 they must be reachable while logged out, otherwise no one could log in.
@@ -91,6 +93,18 @@ class StatusOut(BaseModel):
 _PASSWORD_HASH_LIMITER = anyio.CapacityLimiter(4)
 
 
+def _require_length(password: str) -> None:
+    """A dedicated check instead of `Field(min_length=...)` on the model:
+    the message ends up in the UI and should be shown there in the
+    configured language and say what to do - not as a pydantic error list.
+    Shared by `/auth/setup` and `PUT /api/auth/password`."""
+    if len(password) < MIN_PASSWORD_LENGTH:
+        raise HTTPException(
+            status_code=422,
+            detail=i18n.t("api.auth.fail_password_too_short", min_length=MIN_PASSWORD_LENGTH),
+        )
+
+
 # The 409 text in `api.auth.fail_already_set_up` (`i18n/strings.yaml`)
 # deliberately names BOTH recovery paths, not just one: the reference
 # deployment (`deploy/testhost/docker-compose.yml`) puts the database in a
@@ -98,23 +112,13 @@ _PASSWORD_HASH_LIMITER = anyio.CapacityLimiter(4)
 # `LOXMATTER_STORE` - `uv run loxmatter set-password` on the host, lacking
 # that environment variable, hits a different, newly created file there and
 # falsely reports success without actually unlocking the bridge (escape-hatch
-# finding, 2026-09-03). README.md and the release note describe the same
-# path and must not drift apart from this text.
+# finding, 2026-09-03). The login screen ("Forgot password?", `web/app.js`),
+# docs/OPERATIONS.md and deploy/testhost/README.md name the same command and
+# must not drift apart from this text.
 def build_auth_router(store: Store) -> APIRouter:
     router = APIRouter()
     # One instance per app, not per request - otherwise it would count nothing.
     throttle = LoginThrottle()
-
-    def _require_length(password: str) -> None:
-        """A dedicated check instead of `Field(min_length=...)` on the
-        model: the message ends up in the UI and should be shown there in
-        the configured language and say what to do - not as a pydantic
-        error list."""
-        if len(password) < MIN_PASSWORD_LENGTH:
-            raise HTTPException(
-                status_code=422,
-                detail=i18n.t("api.auth.fail_password_too_short", min_length=MIN_PASSWORD_LENGTH),
-            )
 
     def _client_id(request: Request) -> str:
         """The connection's peer address, NOT `X-Forwarded-For`: that header
@@ -307,6 +311,41 @@ def build_auth_router(store: Store) -> APIRouter:
         if session_id is not None:
             store.auth.delete_session(session_id)
         response.delete_cookie(SESSION_COOKIE, path="/")
+        return StatusOut(status="ok")
+
+    return router
+
+
+def build_password_router(store: Store) -> APIRouter:
+    """`PUT /api/auth/password` - changing a known password from the WebUI
+    (design "Changing the password in the WebUI", 2026-09-29).
+
+    Unlike the four routes in `build_auth_router`, this one hangs BEHIND
+    `build_api_guard` (`loxone.server.build_app` wires it with
+    `dependencies=api_guard`): being logged in - or holding the bearer
+    token - IS the proof, and the route has no check of its own. No current
+    password is asked for (design decision 1), and no session is signed
+    out (decision 2): `set_password_hash` overwrites the hash only, unlike
+    `reset_password`, which stays the emergency exit's method.
+
+    No `LoginThrottle`: nothing secret is verified here, so there is
+    nothing to guess. The hashing still runs through
+    `_PASSWORD_HASH_LIMITER`, for the same reason as in setup and login -
+    scrypt blocks the event loop and takes 16 MiB per computation."""
+    router = APIRouter(prefix="/api")
+
+    @router.put("/auth/password")
+    async def change_password(body: PasswordIn) -> StatusOut:
+        _require_length(body.password)
+        if store.auth.password_hash() is None:
+            # Only reachable with the bearer token: without a password the
+            # guard lets nobody else through. Initial setup stays the only
+            # way to the FIRST password, with its own rules (login design 5).
+            raise HTTPException(status_code=409, detail=i18n.t("api.auth.fail_no_password_set"))
+        hashed = await anyio.to_thread.run_sync(
+            hash_password, body.password, limiter=_PASSWORD_HASH_LIMITER
+        )
+        store.auth.set_password_hash(hashed)
         return StatusOut(status="ok")
 
     return router

@@ -206,8 +206,8 @@ cli.set_password.help:
   en: "Resets the interface password — the emergency exit for when it has been forgotten."
   de: "Setzt das Passwort der Oberfläche neu — der Notausgang für den Fall, dass es vergessen wurde."
 cli.set_password.fail_db_not_found:
-  en: "Database {path} was not found. `set-password` RESETS a password, so it deliberately does not create a new database — that would create an empty, unrelated database and report success while the actual bridge stayed locked. Check the path, pass it via --store-path, or — in the reference deployment — run the command inside the running container: `docker compose exec loxmatter loxmatter set-password`. On a fresh install from source, the database may simply not exist yet — it is created on the first `loxmatter run`."
-  de: "Datenbank {path} wurde nicht gefunden. `set-password` setzt ein Passwort ZURÜCK und legt deshalb absichtlich keine neue Datenbank an — das würde eine leere Fremddatenbank erzeugen und Erfolg melden, während die eigentliche Brücke gesperrt bliebe. Prüfe den Pfad, gib ihn über --store-path an, oder führe den Befehl — im Referenz-Deployment — im laufenden Container aus: `docker compose exec loxmatter loxmatter set-password`. Bei einer frischen Installation aus dem Quellcode kann die Datenbank auch schlicht noch fehlen — sie entsteht erst beim ersten `loxmatter run`."
+  en: "Database {path} was not found. `set-password` RESETS a password, so it deliberately does not create a new database — that would create an empty, unrelated database and report success while the actual bridge stayed locked. Check the path, pass it via --store-path, or — in the reference deployment — run the command inside the running container: `docker exec -it loxmatter loxmatter set-password`. On a fresh install from source, the database may simply not exist yet — it is created on the first `loxmatter run`."
+  de: "Datenbank {path} wurde nicht gefunden. `set-password` setzt ein Passwort ZURÜCK und legt deshalb absichtlich keine neue Datenbank an — das würde eine leere Fremddatenbank erzeugen und Erfolg melden, während die eigentliche Brücke gesperrt bliebe. Prüfe den Pfad, gib ihn über --store-path an, oder führe den Befehl — im Referenz-Deployment — im laufenden Container aus: `docker exec -it loxmatter loxmatter set-password`. Bei einer frischen Installation aus dem Quellcode kann die Datenbank auch schlicht noch fehlen — sie entsteht erst beim ersten `loxmatter run`."
 cli.set_password.prompt:
   en: "New password"
   de: "Neues Passwort"
@@ -715,8 +715,8 @@ api.auth.fail_too_many_attempts:
   en: "Too many failed attempts – try again in {wait} seconds."
   de: "Zu viele Fehlversuche – in {wait} Sekunden wieder möglich."
 api.auth.fail_already_set_up:
-  en: "A password has already been set for this service – initial setup is therefore permanently complete. Forgot the password? In the reference deployment, `docker compose exec loxmatter loxmatter set-password` resets it; for a source install, `uv run loxmatter set-password`."
-  de: "Für diesen Dienst ist bereits ein Passwort vergeben – die Ersteinrichtung ist damit dauerhaft abgeschlossen. Passwort vergessen? Im Referenz-Deployment setzt `docker compose exec loxmatter loxmatter set-password` es neu; bei einer Installation aus dem Quellcode `uv run loxmatter set-password`."
+  en: "A password has already been set for this service – initial setup is therefore permanently complete. Forgot the password? In the reference deployment, `docker exec -it loxmatter loxmatter set-password` resets it; for a source install, `uv run loxmatter set-password`."
+  de: "Für diesen Dienst ist bereits ein Passwort vergeben – die Ersteinrichtung ist damit dauerhaft abgeschlossen. Passwort vergessen? Im Referenz-Deployment setzt `docker exec -it loxmatter loxmatter set-password` es neu; bei einer Installation aus dem Quellcode `uv run loxmatter set-password`."
 api.auth.fail_no_password_set:
   en: "No password has been set for this service yet – please complete initial setup first."
   de: "Für diesen Dienst ist noch kein Passwort vergeben – bitte zuerst die Ersteinrichtung abschließen."
@@ -1108,6 +1108,24 @@ web.auth.session_expired:
 web.auth.password_mismatch:
   en: "The two entries do not match."
   de: "Die beiden Eingaben stimmen nicht überein."
+web.auth.forgot_summary:
+  en: "Forgot password?"
+  de: "Passwort vergessen?"
+web.auth.forgot_explanation:
+  en: "Run this on the host the bridge runs on. It asks for a new password and signs out every browser."
+  de: "Führe das auf dem Rechner aus, auf dem die Brücke läuft. Es fragt nach einem neuen Passwort und meldet alle Browser ab."
+web.auth.forgot_source_label:
+  en: "Installed from source instead of Docker:"
+  de: "Aus dem Quellcode statt mit Docker installiert:"
+web.auth.copy:
+  en: "Copy"
+  de: "Kopieren"
+web.auth.copied_toast:
+  en: "Command copied."
+  de: "Befehl kopiert."
+web.auth.copy_failed_toast:
+  en: "Could not copy – click the command to select it and copy it by hand."
+  de: "Kopieren hat nicht geklappt – klick auf den Befehl, um ihn zu markieren, und kopiere ihn von Hand."
 
 # --- web.devices — device list, commissioning, operation ---
 web.devices.commission_heading:
@@ -2474,6 +2492,24 @@ web.settings.language_de:
 web.settings.language_error:
   en: "Could not change language: {message}"
   de: "Sprache konnte nicht geändert werden: {message}"
+web.settings.password_heading:
+  en: "Password"
+  de: "Passwort"
+web.settings.password_explanation:
+  en: "Sets a new password for this WebUI. Browsers that are signed in right now stay signed in; the new password applies to the next login."
+  de: "Vergibt ein neues Passwort für diese WebUI. Browser, die gerade angemeldet sind, bleiben angemeldet; das neue Passwort gilt ab der nächsten Anmeldung."
+web.settings.password_new_label:
+  en: "New password"
+  de: "Neues Passwort"
+web.settings.password_repeat_label:
+  en: "Repeat new password"
+  de: "Neues Passwort wiederholen"
+web.settings.password_submit:
+  en: "Change password"
+  de: "Passwort ändern"
+web.settings.password_changed_toast:
+  en: "Password changed."
+  de: "Passwort geändert."
 web.settings.resend_heading:
   en: "Periodic resend"
   de: "Periodischer Resend"

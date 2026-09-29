@@ -102,7 +102,7 @@ and logs out all open sessions in the process. Run this on THIS stack **inside
 the running container**, not on the Pi itself:
 
 ```bash
-docker compose exec loxmatter loxmatter set-password
+docker exec -it loxmatter loxmatter set-password
 ```
 
 Why `uv run loxmatter set-password` does NOT work on the Pi here:

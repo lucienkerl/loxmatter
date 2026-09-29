@@ -366,6 +366,52 @@ async function requestJson(method, path, body) {
 }
 
 /**
+ * Copies `text` to the clipboard and says whether that worked.
+ *
+ * `navigator.clipboard` exists only in a secure context - HTTPS or
+ * `localhost` - and this service speaks plain HTTP on the LAN, so on
+ * `http://<pi>:8080/` the property is `undefined`. The fallback is the old
+ * way: a temporary, invisible `<textarea>`, selected, and
+ * `document.execCommand("copy")`. Deprecated, but it is the only path a
+ * page on plain HTTP has. If both fail, the caller says so, and the
+ * command stays selectable with one click (`user-select: all`).
+ */
+async function copyToClipboard(text) {
+  if (window.isSecureContext && navigator.clipboard) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch {
+      // Permission denied or similar - fall through to the old path.
+    }
+  }
+  // Selecting the textarea takes the focus away from the copy button;
+  // it goes back afterwards, or a keyboard user lands on `<body>`.
+  const previousFocus = document.activeElement;
+  const area = document.createElement("textarea");
+  area.value = text;
+  area.setAttribute("readonly", "");
+  area.style.position = "fixed";
+  area.style.opacity = "0";
+  document.body.appendChild(area);
+  area.select();
+  // `select()` alone selects nothing in a readonly textarea on iOS Safari -
+  // exactly the phone on plain HTTP this fallback exists for.
+  area.setSelectionRange(0, text.length);
+  let copied = false;
+  try {
+    copied = document.execCommand("copy");
+  } catch {
+    copied = false;
+  }
+  area.remove();
+  if (previousFocus instanceof HTMLElement) {
+    previousFocus.focus({ preventScroll: true });
+  }
+  return copied;
+}
+
+/**
  * Downloads a file from `/api`. Via `fetch` and not via an `<a href>`,
  * because a 401 would otherwise land as raw error text in the browser
  * window instead of in the UI - and because the blob download can set
@@ -814,6 +860,14 @@ function app() {
     passwordRepeatDraft: "",
     authBusy: false,
     authError: null,
+    // The two recovery commands on the login screen ("Forgot password?").
+    // Not in strings.yaml: they are commands, not prose, and the same in
+    // every language. The same command stands in five places - here, in
+    // `api.auth.fail_already_set_up` and `cli.set_password.fail_db_not_found`
+    // (strings.yaml), in docs/OPERATIONS.md and in deploy/testhost/README.md.
+    // Keep them in step.
+    resetCommandDocker: "docker exec -it loxmatter loxmatter set-password",
+    resetCommandSource: "uv run loxmatter set-password",
 
     // --- Translation ---------------------------------------------------------
     // Same pattern as authReady: until GET /api/i18n has answered, the
@@ -1230,6 +1284,15 @@ function app() {
     resendIntervalDraft: 300,
     resendIntervalBusy: false,
     resendIntervalError: null,
+
+    // --- Password change (Settings) -------------------------------------
+    // Separate from `passwordDraft`/`passwordRepeatDraft` of the setup and
+    // login screens: those are cleared on every login attempt, and the two
+    // forms must not share a half-typed value.
+    newPasswordDraft: "",
+    newPasswordRepeatDraft: "",
+    passwordChangeBusy: false,
+    passwordChangeError: null,
 
     // --- Export --------------------------------------------------------
     exportIncludeSystem: false,
@@ -1682,6 +1745,11 @@ function app() {
         // gets as far as the login screen anyway.
       }
       window.location.reload();
+    },
+
+    async copyCommand(text) {
+      const copied = await copyToClipboard(text);
+      this.showToast(copied ? t("web.auth.copied_toast") : t("web.auth.copy_failed_toast"), !copied);
     },
 
     // ---------------------------------------------------------------------
@@ -6567,6 +6635,34 @@ function app() {
         this.resendIntervalError = t("web.settings.resend_save_error", { message: error.message });
       } finally {
         this.resendIntervalBusy = false;
+      }
+    },
+
+    /**
+     * Sends a new password to `PUT /api/auth/password` (design 2026-09-29).
+     * Only the match of the two fields is checked here; the minimum length
+     * is the server's, and its 422 text is shown as it comes. Via
+     * `this.request`, not `requestJson`: a 401 here means the session
+     * expired, and that must lead back to the login screen.
+     */
+    async changePassword() {
+      this.passwordChangeError = null;
+      if (this.newPasswordDraft !== this.newPasswordRepeatDraft) {
+        this.passwordChangeError = t("web.auth.password_mismatch");
+        return;
+      }
+      this.passwordChangeBusy = true;
+      try {
+        await this.request("PUT", "/api/auth/password", { password: this.newPasswordDraft });
+        this.showToast(t("web.settings.password_changed_toast"));
+      } catch (error) {
+        this.passwordChangeError = error.message;
+      } finally {
+        this.passwordChangeBusy = false;
+        // In every case, as in `submitPassword`: a password does not stay in
+        // the page's memory, not even after a failed attempt.
+        this.newPasswordDraft = "";
+        this.newPasswordRepeatDraft = "";
       }
     },
 

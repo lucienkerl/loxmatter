@@ -80,13 +80,14 @@ class AuthStore:
 
     def set_password_hash(self, value: str) -> None:
         """Sets the hash, overwriting any existing one, committing on its
-        own.
+        own - and leaving every session in place.
 
-        NOT the path for `loxmatter set-password` (see `reset_password`
-        below, which folds this statement together with signing out every
-        session into ONE transaction) - this piece stays public because test
-        code uses it to preset a password in a fixture without touching any
-        session."""
+        The path of `PUT /api/auth/password` (WebUI password change, design
+        2026-09-29), which deliberately signs nobody out. NOT the path for
+        `loxmatter set-password` (see `reset_password` below, which folds
+        this statement together with signing out every session into ONE
+        transaction). Test code also uses it to preset a password in a
+        fixture without touching any session."""
         self._db.execute(
             "INSERT INTO setting (key, value) VALUES (?, ?) "
             "ON CONFLICT(key) DO UPDATE SET value = excluded.value",

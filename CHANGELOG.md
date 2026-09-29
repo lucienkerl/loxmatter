@@ -8,6 +8,16 @@ people who don't know the code.
 
 ## [Unreleased]
 
+### Added
+
+- **Change the password in the WebUI.** Settings has a new "Password" card.
+  Browsers that are signed in stay signed in; the new password applies to
+  the next login.
+- **The login screen says what to do about a forgotten password.** "Forgot
+  password?" shows the command that resets it,
+  `docker exec -it loxmatter loxmatter set-password`, with a button to copy
+  it. It works from any directory on the host and signs out every browser.
+
 ## [0.5.0] — 2026-09-29
 
 ### Before you update

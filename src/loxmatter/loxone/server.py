@@ -133,7 +133,7 @@ from starlette.requests import HTTPConnection
 from starlette.responses import Response as StarletteResponse
 
 from loxmatter import i18n
-from loxmatter.api.auth import build_auth_router
+from loxmatter.api.auth import build_auth_router, build_password_router
 from loxmatter.api.control import build_control_router
 from loxmatter.api.devices import RuntimeValues, ThreadDatasetSource, build_device_router
 from loxmatter.api.diagnostics import (
@@ -535,15 +535,15 @@ def build_app(
             i18n.set_language(store.locale.get_language())
         return await call_next(request)
 
-    # `dependencies=api_guard` on each of the eleven `/api` routers (see
+    # `dependencies=api_guard` on each of the twelve `/api` routers (see
     # `build_api_guard` above; the eighth was `POST
     # /api/export/project-sync`, the ninth `build_language_router`, the
-    # tenth `build_update_router`, the eleventh `build_groups_router`):
-    # this protects without exception every route of
-    # these eleven routers, including the WebSocket routes `/api/live` and
-    # `/api/diagnostics/live` - and explicitly NOT `/cmd`, `/resync`,
-    # `/health`, `/` and `/static`, which are mounted further below
-    # without `dependencies`.
+    # tenth `build_update_router`, the eleventh `build_groups_router`, the
+    # twelfth `build_password_router`): this protects without exception
+    # every route of these twelve routers, including the WebSocket routes
+    # `/api/live` and `/api/diagnostics/live` - and explicitly NOT `/cmd`,
+    # `/resync`, `/health`, `/` and `/static`, which are mounted further
+    # below without `dependencies`.
     app.include_router(
         build_device_router(
             store, client, runtime, thread_dataset_source, sources, tracker=commissioning_tracker
@@ -588,6 +588,7 @@ def build_app(
         )
     app.include_router(build_language_router(store), dependencies=api_guard)
     app.include_router(build_version_router(), dependencies=api_guard)
+    app.include_router(build_password_router(store), dependencies=api_guard)
     app.include_router(build_live_router(runtime), dependencies=api_guard)
     # The same `invoke` as below at `/cmd/{key}/{value}` - see the
     # api/control.py module docstring: one translation, two callers, or
