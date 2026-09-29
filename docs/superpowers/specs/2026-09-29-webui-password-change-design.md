@@ -66,10 +66,11 @@ Details:
   boundary.
 - **No `LoginThrottle`.** The route verifies no secret, so there is nothing
   to guess and nothing to count.
-- **Storage: new `AuthStore.set_password(value)`**, which overwrites the
-  hash and leaves `session` untouched (decision 2). `reset_password`, which
-  also deletes every session, remains the method of `set-password` and is
-  not changed.
+- **Storage: the existing `AuthStore.set_password_hash(value)`**, which
+  overwrites the hash and leaves `session` untouched (decision 2). Until
+  now only test fixtures called it; its docstring gains this route as its
+  production caller. `reset_password`, which also deletes every session,
+  remains the method of `set-password` and is not changed.
 - As with the other auth routes, neither the response body nor the log
   ever contains the password or the hash.
 
@@ -99,6 +100,15 @@ the server:
 - Below it, for an installation from source: `uv run loxmatter set-password`,
   also with a copy button.
 - One sentence saying that the command signs out every session.
+
+**The copy buttons cannot rely on `navigator.clipboard` alone.** The
+Clipboard API exists only in a secure context — HTTPS or `localhost` — and
+this service speaks plain HTTP on the LAN (login design 14.1), so on
+`http://<pi>:8080/` the property is `undefined`. The button therefore falls
+back to selecting the text in a temporary `<textarea>` and
+`document.execCommand("copy")`, and the command itself is rendered with
+`user-select: all`, so that a single click selects it for copying by hand
+if both fail.
 
 The panel is static content in `index.html`, its text from `strings.yaml`.
 It reveals nothing about this bridge: the command is the same for every
@@ -151,8 +161,8 @@ worth more than the password.
 - No password set, caller with token → 409; still no password set
   afterward.
 - The response body contains neither the password nor the hash.
-- `AuthStore.set_password` overwrites the hash and leaves the `session`
-  rows in place.
+- `AuthStore.set_password_hash` overwrites the hash and leaves the
+  `session` rows in place (`tests/model/test_auth_store.py`).
 
 `tests/api/test_security.py`: the new router joins the router-by-router
 check — without cookie and token, `PUT /api/auth/password` → 401.
