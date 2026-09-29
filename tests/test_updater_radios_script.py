@@ -85,6 +85,11 @@ OTBR_DEFAULTS = (
     "DEFAULT_COMPOSE_DEVICES='[\"/dev/ttyUSB0:/dev/ttyThread\"]'\n"
     'DEFAULT_INSPECT_DEVICES=\'[{"PathOnHost": "/dev/ttyUSB0", '
     '"PathInContainer": "/dev/ttyThread", "CgroupPermissions": "rwm"}]\'\n'
+    # The two shapes of the same tmpfs, measured with the updater image's
+    # Compose 2.27 and `docker inspect` on the second test Pi, 29 September
+    # 2026: a list of "path[:options]" against a map of path to options.
+    "DEFAULT_COMPOSE_TMPFS='[\"/run\"]'\n"
+    'DEFAULT_INSPECT_TMPFS=\'{"/run": ""}\'\n'
 )
 
 DOCKER_STUB = (
@@ -130,20 +135,22 @@ case "$1" in
     if [ ! -f "$FAKE/otbr_state" ]; then
       echo '[]'; echo 'Error: No such object: otbr' >&2; exit 1
     fi
-    printf '[{"Id": "otbr-%s", "Image": "%s", "Config": {"Image": "%s", "Env": ["PATH=/usr/sbin:/usr/bin", "RADIO_URL=%s"]}, "HostConfig": {"Devices": %s}}]\n' \
+    printf '[{"Id": "otbr-%s", "Image": "%s", "Config": {"Image": "%s", "Env": ["PATH=/usr/sbin:/usr/bin", "RADIO_URL=%s"]}, "HostConfig": {"Devices": %s, "Tmpfs": %s}}]\n' \
       "$(cat "$FAKE/otbr_ups" 2>/dev/null || echo 0)" \
       "$(cat "$FAKE/actual_image_id" 2>/dev/null || echo "$DEFAULT_IMAGE_ID")" \
       "$(cat "$FAKE/actual_image" 2>/dev/null || echo "$DEFAULT_IMAGE")" \
       "$(cat "$FAKE/actual_radio_url" 2>/dev/null || echo "$DEFAULT_RADIO_URL")" \
-      "$(cat "$FAKE/actual_devices" 2>/dev/null || echo "$DEFAULT_INSPECT_DEVICES")"
+      "$(cat "$FAKE/actual_devices" 2>/dev/null || echo "$DEFAULT_INSPECT_DEVICES")" \
+      "$(cat "$FAKE/actual_tmpfs" 2>/dev/null || echo "$DEFAULT_INSPECT_TMPFS")"
     exit 0 ;;
   compose)
     case "$*" in *"$(cat "$FAKE/compose_fail" 2>/dev/null || echo __never__)"*) exit 1 ;; esac
     case "$*" in
       *" config "*)
-        printf '{"name": "testhost", "services": {"otbr": {"image": "%s", "devices": %s, "environment": {"RADIO_URL": "%s"}}}}\n' \
+        printf '{"name": "testhost", "services": {"otbr": {"image": "%s", "devices": %s, "tmpfs": %s, "environment": {"RADIO_URL": "%s"}}}}\n' \
           "$(cat "$FAKE/compose_image" 2>/dev/null || echo "$DEFAULT_IMAGE")" \
           "$(cat "$FAKE/compose_devices" 2>/dev/null || echo "$DEFAULT_COMPOSE_DEVICES")" \
+          "$(cat "$FAKE/compose_tmpfs" 2>/dev/null || echo "$DEFAULT_COMPOSE_TMPFS")" \
           "$(cat "$FAKE/compose_radio_url" 2>/dev/null || echo "$DEFAULT_RADIO_URL")" ;;
       *" pull "*otbr*)
         # A pull that lasts $FAKE/pull_seconds of the script's clock: it
@@ -2110,6 +2117,53 @@ def test_upkeep_recreates_otbr_for_a_changed_radio_url_without_pulling(radios):
     assert (state["phase"], state["healthy"]) == ("done", True)
     assert state["id"].startswith("otbr-upkeep-")
     assert _compose(calls, "pull") == []
+    assert len(_compose(calls, "up", "otbr")) == 1
+
+
+def test_upkeep_recreates_otbr_that_lacks_the_run_tmpfs(radios):
+    """An otbr created before the Compose file gave it a tmpfs on /run keeps
+    the stale /run/dbus/pid of its last run across a host reboot and comes up
+    without Thread (measured on the second test Pi, 29 September 2026). A
+    bridge update does not recreate otbr, so the upkeep has to - once.
+
+    Fault to prove it: leave tmpfs out of the comparison - no job starts."""
+    _upkeep(radios)
+    (radios.fake / "actual_tmpfs").write_text("null")
+    _, calls, state = radios()
+    assert state["id"].startswith("otbr-upkeep-")
+    assert (state["phase"], state["healthy"]) == ("done", True)
+    assert _compose(calls, "pull") == []
+    assert len(_compose(calls, "up", "otbr")) == 1
+
+
+@pytest.mark.parametrize(
+    ("compose_tmpfs", "inspect_tmpfs"),
+    [
+        ('["/run"]', '{"/run": ""}'),
+        ('["/run:size=64m", "/tmp"]', '{"/tmp": "", "/run": "size=64m"}'),
+        # No tmpfs on either side: an older Compose file, as a bridge
+        # rollback brings back, against the otbr it created.
+        ("null", "null"),
+    ],
+    ids=["plain", "with-options", "none"],
+)
+def test_upkeep_reads_both_tmpfs_forms_as_the_same_mounts(radios, compose_tmpfs, inspect_tmpfs):
+    """Fault to prove it: compare the tmpfs as each side prints it - every
+    pass finds drift, and otbr is recreated on every installation."""
+    _upkeep(radios)
+    (radios.fake / "compose_tmpfs").write_text(compose_tmpfs)
+    (radios.fake / "actual_tmpfs").write_text(inspect_tmpfs)
+    _, calls, state = radios()
+    assert state["id"] == "job-0"
+    assert _compose(calls, "up") == []
+    assert "otbr matches its Compose configuration" in _log_text(radios)
+
+
+def test_upkeep_recreates_otbr_for_changed_tmpfs_options(radios):
+    _upkeep(radios)
+    (radios.fake / "compose_tmpfs").write_text('["/run:size=64m"]')
+    _, calls, state = radios()
+    assert state["id"].startswith("otbr-upkeep-")
     assert len(_compose(calls, "up", "otbr")) == 1
 
 

@@ -607,11 +607,19 @@ UPKEEP_CHECKED="$UPDATE_DIR/otbr-upkeep-checked"
 UPKEEP_TRIED="$UPDATE_DIR/otbr-upkeep-tried"
 UPKEEP_PULL_FAILED="$UPDATE_DIR/otbr-upkeep-pull-failed-at"
 
-# What Compose would create, reduced to the three fields that decide
+# What Compose would create, reduced to the four fields that decide
 # whether the running container is still the one asked for. A device entry
 # is a string in Compose 2.27 (the updater image's) - "source:target", maybe
 # with ":permissions" - and an object in later versions; both reduce to
 # "source:target", the form `docker inspect` can be compared with.
+#
+# tmpfs is the fourth (29 September 2026). An otbr created before the
+# Compose file put /run on a tmpfs keeps the stale /run/dbus/pid of its last
+# run across a host reboot and comes up without Thread, and a bridge update
+# never recreates otbr - only this upkeep does. Compose 2.27 prints a list
+# of "path[:options]", `docker inspect` a map of path to options (both
+# measured on the second test Pi); each side reduces to the list form,
+# options kept, so a changed size is drift and the same mount is not.
 # shellcheck disable=SC2016  # a jq program, expanded by jq
 UPKEEP_DESIRED='
   .services.otbr as $s
@@ -622,12 +630,13 @@ UPKEEP_DESIRED='
                      then (split(":") | if length == 1 then .[0] + ":" + .[0] else .[0] + ":" + .[1] end)
                      else "\(.source):\(.target // .source)" end)
                | sort),
+     tmpfs: (($s.tmpfs // []) | if type == "string" then [.] else . end | sort),
      radio_url: (($s.environment // {})
                  | if type == "array"
                    then (map(select(startswith("RADIO_URL="))) | (last // "") | ltrimstr("RADIO_URL="))
                    else (.RADIO_URL // "") end)}'
 
-# The same three fields of the running container. `.Config.Image` is the
+# The same four fields of the running container. `.Config.Image` is the
 # reference the container was created from, as written, and device paths
 # are kept as given - symlinks unresolved - so they compare with Compose's
 # own strings.
@@ -636,6 +645,8 @@ UPKEEP_ACTUAL='
   .[0]
   | {image: (.Config.Image // ""),
      devices: ((.HostConfig.Devices // []) | map("\(.PathOnHost):\(.PathInContainer)") | sort),
+     tmpfs: ((.HostConfig.Tmpfs // {}) | to_entries
+             | map(if .value == "" then .key else "\(.key):\(.value)" end) | sort),
      radio_url: ((.Config.Env // []) | map(select(startswith("RADIO_URL="))) | (last // "") | ltrimstr("RADIO_URL="))}'
 
 # The checksum and size `cksum` prints for its input, as one word.
