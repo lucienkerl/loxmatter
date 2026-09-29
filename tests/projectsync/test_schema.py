@@ -10,6 +10,8 @@ from loxmatter.projectsync.schema import (
     new_input_container_open_tag,
     new_output_cmd_open_tag,
     new_output_container_open_tag,
+    new_place_tag,
+    new_right_group_tag,
     sibling_iodata_attrs,
 )
 
@@ -198,3 +200,65 @@ def test_new_output_container_open_tag_carries_base_url():
     assert 'Address="http://10.0.0.5:8080"' in tag
     assert 'V="178"' in tag
     assert not tag.endswith("/>")
+
+
+def test_new_place_tag_copies_icon_and_ptype_from_the_template():
+    template = {
+        "Title": "Küche",
+        "WF": "16384",
+        "Icon": "0000005a-00ff-0000-0000000000000000",
+        "PType": "3",
+        "PGroup": "4",
+        "Rating": "1",
+    }
+    tag = new_place_tag("Werkstatt", "u-place", "u-rights", template)
+    assert tag == (
+        '<C Type="Place" V="178" U="u-place" Title="Werkstatt" WF="16384"'
+        ' Icon="0000005a-00ff-0000-0000000000000000" PType="3" RGR="u-rights"/>'
+    )
+
+
+def test_new_place_tag_without_template_or_rights_group():
+    assert new_place_tag("Werkstatt", "u-place", None, None) == (
+        '<C Type="Place" V="178" U="u-place" Title="Werkstatt" WF="16384"/>'
+    )
+
+
+def test_new_place_tag_escapes_the_title():
+    assert 'Title="Bad &amp; WC"' in new_place_tag("Bad & WC", "u", None, None)
+
+
+def test_new_right_group_tag():
+    assert new_right_group_tag("Werkstatt", "u-rights") == (
+        '<C Type="RightGroup" V="178" U="u-rights" Title="Werkstatt" Cl="0,0,0"'
+        ' WF="16384" GT="1" MG=""/>'
+    )
+
+
+def test_place_u_replaces_the_copied_room():
+    xml = new_cmd_children_xml(
+        kind="output",
+        existing_u={"1000-0000-0000-aaaaaaaaaaaaaaaa"},
+        iodata_attrs={"Cr": "cat", "Pr": "old-room"},
+        place_u="new-room",
+    )
+    assert '<IoData Cr="cat" Pr="new-room"/>' in xml
+
+
+def test_place_u_without_a_copied_iodata_writes_pr_only():
+    xml = new_cmd_children_xml(
+        kind="output",
+        existing_u={"1000-0000-0000-aaaaaaaaaaaaaaaa"},
+        iodata_attrs=None,
+        place_u="new-room",
+    )
+    assert '<IoData Pr="new-room"/>' in xml
+
+
+def test_without_place_u_the_copied_iodata_is_unchanged():
+    xml = new_cmd_children_xml(
+        kind="output",
+        existing_u={"1000-0000-0000-aaaaaaaaaaaaaaaa"},
+        iodata_attrs={"Cr": "cat", "Pr": "old-room"},
+    )
+    assert '<IoData Cr="cat" Pr="old-room"/>' in xml
