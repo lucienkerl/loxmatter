@@ -4977,6 +4977,31 @@ async def test_the_projectsync_card_static_text_is_translated(api):
     assert "Gepatchte Datei herunterladen<" not in markup
 
 
+async def test_the_projectsync_plan_shows_rooms(api):
+    """Design 2026-09-29, section 7: a room block above the device cards and
+    each new entry's target room. Markup only - the bindings are checked in
+    the browser (see the plan's Task 7, step 6)."""
+    client, _, _ = api
+    markup = (await client.get("/")).text
+    assert "projectSync.plan.rooms" in markup
+    assert "x-text=\"t('web.export.projectsync_rooms_heading')\"" in markup
+    assert "projectSyncRoomStatusLabel(room.status)" in markup
+    assert "entry.target_room" in markup
+    script = (await client.get("/static/app.js")).text
+    for key in (
+        "projectsync_room_status_found",
+        "projectsync_room_status_created",
+        "projectsync_room_status_ambiguous",
+        "projectsync_room_status_not_creatable",
+        "projectsync_room_note_created",
+        "projectsync_room_note_ambiguous",
+        "projectsync_room_note_not_creatable",
+    ):
+        assert f"web.export.{key}" in script
+    # The target room text is resolved in the markup, not in a helper.
+    assert "web.export.projectsync_target_room" in markup
+
+
 async def test_the_projectsync_card_dynamic_strings_are_translated(api):
     """Task 16 (project file sync card): the bridge IP error in
     `uploadProjectFile` (shares `web.export.bridge_ip_missing` with Task

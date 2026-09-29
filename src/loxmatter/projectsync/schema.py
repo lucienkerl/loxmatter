@@ -38,6 +38,7 @@ section 6 openly names."""
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 
 from loxmatter.export.documents import (
     LoxoneCommand,
@@ -216,6 +217,46 @@ def new_caption_open_tag(kind: str, u: str) -> str:
     return f"<C {render_attrs(attrs)}>"
 
 
+# Room attributes copied from an existing room (design 2026-09-29, section
+# 6.1). Only `PType`: it is undocumented, so copying it from a room Loxone
+# Config wrote itself beats inventing a value. `Icon` is a per-room user
+# choice like `PGroup`, `Rating` and `UseFav`, and is left for Loxone Config
+# to choose - a copied icon would be wrong for the new room. `First` and its
+# `WF` mark the default room (the one marked `First="true"`), which is why
+# `patch._room_edits` never picks that one as the template.
+_PLACE_TEMPLATE_ATTRS = ("PType",)
+
+
+def new_place_tag(title: str, u: str, rgr_u: str | None, template: Mapping[str, str] | None) -> str:
+    """A new room (`<C Type="Place" .../>`, self-closing like every room in
+    a real file). `rgr_u` is the `U` of its companion `RightGroup`, or
+    `None` in a project from before the rights system, whose rooms carry
+    no `RGR` (design 2026-09-29, section 6.2)."""
+    attrs = [("Type", "Place"), ("V", "178"), ("U", u), ("Title", title), ("WF", "16384")]
+    if template:
+        attrs += [(name, template[name]) for name in _PLACE_TEMPLATE_ATTRS if name in template]
+    if rgr_u is not None:
+        attrs.append(("RGR", rgr_u))
+    return f"<C {render_attrs(attrs)}/>"
+
+
+def new_right_group_tag(title: str, u: str) -> str:
+    """The user rights group Loxone Config keeps next to every room, under
+    the same title (design 2026-09-29, section 3). The attribute values are
+    the ones every room's rights group carries in the checked files."""
+    attrs = [
+        ("Type", "RightGroup"),
+        ("V", "178"),
+        ("U", u),
+        ("Title", title),
+        ("Cl", "0,0,0"),
+        ("WF", "16384"),
+        ("GT", "1"),
+        ("MG", ""),
+    ]
+    return f"<C {render_attrs(attrs)}/>"
+
+
 def sibling_iodata_attrs(text: str, element: Element) -> dict[str, str] | None:
     """The attributes of the `<IoData .../>` child of an existing cmd
     element, if present - the source for the permission values of a newly
@@ -251,6 +292,7 @@ def new_cmd_children_xml(
     iodata_attrs: dict[str, str] | None,
     analog: bool = False,
     unit_format: str = "",
+    place_u: str | None = None,
 ) -> str:
     """XML text of the child elements of a freshly created cmd object:
     wiring stubs (two for an input - `AQ`/`Q` -, one for an output - `I`),
@@ -267,7 +309,13 @@ def new_cmd_children_xml(
     as before threw away every signal's unit. If `unit_format` is empty
     (an analog signal with no known unit, see `profiles.table.
     unit_format`), the bare format string remains - an empty `Unit=""`
-    does not occur anywhere in the reference file."""
+    does not occur anywhere in the reference file.
+
+    **`place_u` (design 2026-09-29, section 5):** the `U` of the Loxone
+    room this object belongs in. It replaces the `Pr` copied from a
+    neighbour, keeping the copied `Cr` (the category is not this
+    feature's business); without a neighbour to copy from, the `IoData`
+    carries `Pr` alone."""
     if kind == "input":
         connectors = [
             f'<Co K="AQ" U="{new_unique_id(existing_u)}"/>',
@@ -285,6 +333,9 @@ def new_cmd_children_xml(
         display_attrs.append(("Type", "2"))
     display_attrs.append(("Unit", unit_format or _DEFAULT_UNIT_FORMAT))
     display_attrs.append(("StateOnly", "true"))
+
+    if place_u is not None:
+        iodata_attrs = {**(iodata_attrs or {}), "Pr": place_u}
 
     parts = list(connectors)
     if iodata_attrs:

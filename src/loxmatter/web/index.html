@@ -1920,6 +1920,31 @@
                   </span>
                 </div>
 
+                <!-- Rooms new objects go into (design 2026-09-29, section 7):
+                     one row per loxmatter room a new entry needs. Empty when
+                     nothing new is created, so a plan with only updates shows
+                     no block. -->
+                <div class="projectsync-rooms" x-show="(projectSync.plan.rooms || []).length > 0">
+                  <div class="projectsync-io-label" x-text="t('web.export.projectsync_rooms_heading')"></div>
+                  <template x-for="room in projectSync.plan.rooms || []" :key="room.name">
+                    <div class="projectsync-entry">
+                      <div class="projectsync-entry-head">
+                        <span class="projectsync-entry-title" x-text="room.loxone_title || room.name"></span>
+                        <span
+                          class="badge"
+                          :class="projectSyncRoomBadgeClass(room.status)"
+                          x-text="projectSyncRoomStatusLabel(room.status)"
+                        ></span>
+                      </div>
+                      <p
+                        class="hint projectsync-entry-note"
+                        x-show="projectSyncRoomNote(room)"
+                        x-text="projectSyncRoomNote(room)"
+                      ></p>
+                    </div>
+                  </template>
+                </div>
+
                 <template
                   x-for="group in projectSyncGroupedEntries(projectSync.plan.entries)"
                   :key="group.key"
@@ -1974,6 +1999,11 @@
                                 class="hint projectsync-entry-note"
                                 x-show="projectSyncEntryNote(entry)"
                                 x-text="projectSyncEntryNote(entry)"
+                              ></p>
+                              <p
+                                class="hint projectsync-entry-note"
+                                x-show="entry.target_room"
+                                x-text="t('web.export.projectsync_target_room', { room: entry.target_room })"
                               ></p>
                               <!-- Review-Fix Important #6: the attribute diff supplied
                                    by the backend (`entry.changes`, only populated when

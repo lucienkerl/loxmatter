@@ -629,7 +629,10 @@ class ProjectSyncEntryOut(BaseModel):
     (`projectSyncGroupedEntries` in `app.js`); without this field it keys
     that grouping on `device_id` alone and a group's outputs land inside
     the same-numbered device's card, mislabelled with the device's name
-    (devices are planned first, so the device's label wins the merge)."""
+    (devices are planned first, so the device's label wins the merge).
+
+    `target_room` (design 2026-09-29, section 7) is the title of the Loxone
+    room a new entry goes into, `None` when it keeps its neighbour's room."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -641,6 +644,7 @@ class ProjectSyncEntryOut(BaseModel):
     title: str
     status: str
     changes: dict[str, list[str]]
+    target_room: str | None = None
 
 
 class ProjectSyncMiniserverOut(BaseModel):
@@ -653,6 +657,17 @@ class ProjectSyncMiniserverOut(BaseModel):
 
     title: str
     int_addr: str
+
+
+class ProjectSyncRoomOut(BaseModel):
+    """One loxmatter room a new entry needs, and what the sync does with it
+    (`projectsync.rooms.RoomAssignment`, design 2026-09-29, section 7)."""
+
+    model_config = ConfigDict(frozen=True)
+
+    name: str
+    status: str
+    loxone_title: str | None
 
 
 class ProjectSyncPlanOut(BaseModel):
@@ -673,6 +688,7 @@ class ProjectSyncPlanOut(BaseModel):
     needs_miniserver_selection: bool = False
     available_miniservers: list[ProjectSyncMiniserverOut] = Field(default_factory=list)
     entries: list[ProjectSyncEntryOut] = Field(default_factory=list)
+    rooms: list[ProjectSyncRoomOut] = Field(default_factory=list)
     has_changes: bool = False
     patched_base64: str | None = None
 
