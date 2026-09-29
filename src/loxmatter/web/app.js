@@ -7510,15 +7510,20 @@ function app() {
       return labels[status] || status;
     },
 
-    /** Badge colour for a room: a created room is new, a room that could
-     * not be created or exists twice wants a look, an existing one is fine
-     * - the same colours `projectSyncStatusBadgeClass` uses for entries. */
+    /** Badge colour for a room: a created room is new, a room that exists
+     * twice is an error, a room that could not be created is only a
+     * warning (the fallback is harmless: objects keep their neighbours'
+     * room), an existing one is fine - the colours
+     * `projectSyncStatusBadgeClass` uses for entries. */
     projectSyncRoomBadgeClass(status) {
       if (status === "created") {
         return this.projectSyncStatusBadgeClass("new_device");
       }
-      if (status === "ambiguous" || status === "not_creatable") {
+      if (status === "ambiguous") {
         return this.projectSyncStatusBadgeClass("possible_duplicate");
+      }
+      if (status === "not_creatable") {
+        return this.projectSyncStatusBadgeClass("updated");
       }
       return this.projectSyncStatusBadgeClass("unchanged");
     },
