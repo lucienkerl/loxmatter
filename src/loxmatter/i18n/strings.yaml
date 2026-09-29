@@ -1108,6 +1108,24 @@ web.auth.session_expired:
 web.auth.password_mismatch:
   en: "The two entries do not match."
   de: "Die beiden Eingaben stimmen nicht überein."
+web.auth.forgot_summary:
+  en: "Forgot password?"
+  de: "Passwort vergessen?"
+web.auth.forgot_explanation:
+  en: "Run this on the host the bridge runs on. It asks for a new password and signs out every browser."
+  de: "Führe das auf dem Rechner aus, auf dem die Brücke läuft. Es fragt nach einem neuen Passwort und meldet alle Browser ab."
+web.auth.forgot_source_label:
+  en: "Installed from source instead of Docker:"
+  de: "Aus dem Quellcode statt mit Docker installiert:"
+web.auth.copy:
+  en: "Copy"
+  de: "Kopieren"
+web.auth.copied_toast:
+  en: "Command copied."
+  de: "Befehl kopiert."
+web.auth.copy_failed_toast:
+  en: "Could not copy – click the command to select it and copy it by hand."
+  de: "Kopieren hat nicht geklappt – klick auf den Befehl, um ihn zu markieren, und kopiere ihn von Hand."
 
 # --- web.devices — device list, commissioning, operation ---
 web.devices.commission_heading:

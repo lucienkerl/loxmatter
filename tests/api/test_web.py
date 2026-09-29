@@ -16596,3 +16596,38 @@ async def test_the_password_card_never_keeps_the_password_in_memory(api):
     finally_part = body[body.index("finally") :]
     assert 'this.newPasswordDraft = ""' in finally_part
     assert 'this.newPasswordRepeatDraft = ""' in finally_part
+
+
+async def test_the_login_screen_names_the_recovery_commands(api):
+    """Design 2026-09-29, section 5: the forgotten-password path is on the
+    screen that needs it - the same command the 409 text and OPERATIONS.md
+    name (section 6)."""
+    client, _, _ = api
+    page = _without_comments((await client.get("/")).text)
+    script = (await client.get("/static/app.js")).text
+    login = page[page.index("web.auth.login_submit") :]
+    login = login[: login.index("</template>")]
+    assert "web.auth.forgot_summary" in login
+    assert 'x-text="resetCommandDocker"' in login
+    assert 'x-text="resetCommandSource"' in login
+    assert 'resetCommandDocker: "docker exec -it loxmatter loxmatter set-password"' in script
+    assert 'resetCommandSource: "uv run loxmatter set-password"' in script
+
+
+async def test_the_copy_button_works_without_a_secure_context(api):
+    """`navigator.clipboard` exists only over HTTPS or on localhost; this
+    service speaks HTTP on the LAN. The fallback must be there."""
+    client, _, _ = api
+    script = (await client.get("/static/app.js")).text
+    start = script.index("async function copyToClipboard(")
+    body = script[start : script.index("\n}\n", start)]
+    assert "window.isSecureContext" in body
+    assert 'document.execCommand("copy")' in body
+
+
+async def test_the_recovery_command_can_be_selected_with_one_click(api):
+    client, _, _ = api
+    css = (await client.get("/static/style.css")).text
+    rule = css[css.index(".command-copy code") :]
+    rule = rule[: rule.index("}")]
+    assert "user-select: all" in rule

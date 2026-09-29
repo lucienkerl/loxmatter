@@ -1243,6 +1243,35 @@ button:disabled {
   font-size: 1rem;
 }
 
+/* "Forgot password?" on the login screen. The command sits in a box of its
+   own with the copy button beside it; `user-select: all` makes one click
+   select all of it, the manual way out if copying fails (plain HTTP has
+   no Clipboard API, see `copyToClipboard` in app.js). `overflow-wrap:
+   anywhere` lets the long docker line break on a phone instead of pushing
+   the button off the screen. */
+.command-copy {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.command-copy code {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  user-select: all;
+  font-family: var(--mono);
+  font-size: 0.9em;
+  padding: 0.4rem 0.5rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+
+.command-copy button {
+  flex: 0 0 auto;
+}
+
 .auth-screen .hint {
   font-size: 0.85rem;
   opacity: 0.8;

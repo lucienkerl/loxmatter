@@ -366,6 +366,43 @@ async function requestJson(method, path, body) {
 }
 
 /**
+ * Copies `text` to the clipboard and says whether that worked.
+ *
+ * `navigator.clipboard` exists only in a secure context - HTTPS or
+ * `localhost` - and this service speaks plain HTTP on the LAN, so on
+ * `http://<pi>:8080/` the property is `undefined`. The fallback is the old
+ * way: a temporary, invisible `<textarea>`, selected, and
+ * `document.execCommand("copy")`. Deprecated, but it is the only path a
+ * page on plain HTTP has. If both fail, the caller says so, and the
+ * command stays selectable with one click (`user-select: all`).
+ */
+async function copyToClipboard(text) {
+  if (window.isSecureContext && navigator.clipboard) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch {
+      // Permission denied or similar - fall through to the old path.
+    }
+  }
+  const area = document.createElement("textarea");
+  area.value = text;
+  area.setAttribute("readonly", "");
+  area.style.position = "fixed";
+  area.style.opacity = "0";
+  document.body.appendChild(area);
+  area.select();
+  let copied = false;
+  try {
+    copied = document.execCommand("copy");
+  } catch {
+    copied = false;
+  }
+  area.remove();
+  return copied;
+}
+
+/**
  * Downloads a file from `/api`. Via `fetch` and not via an `<a href>`,
  * because a 401 would otherwise land as raw error text in the browser
  * window instead of in the UI - and because the blob download can set
@@ -814,6 +851,12 @@ function app() {
     passwordRepeatDraft: "",
     authBusy: false,
     authError: null,
+    // The two recovery commands on the login screen ("Forgot password?").
+    // Not in strings.yaml: they are commands, not prose, and the same in
+    // every language. The same text as in `api.auth.fail_already_set_up`
+    // and docs/OPERATIONS.md - keep the three in step.
+    resetCommandDocker: "docker exec -it loxmatter loxmatter set-password",
+    resetCommandSource: "uv run loxmatter set-password",
 
     // --- Translation ---------------------------------------------------------
     // Same pattern as authReady: until GET /api/i18n has answered, the
@@ -1691,6 +1734,11 @@ function app() {
         // gets as far as the login screen anyway.
       }
       window.location.reload();
+    },
+
+    async copyCommand(text) {
+      const copied = await copyToClipboard(text);
+      this.showToast(copied ? t("web.auth.copied_toast") : t("web.auth.copy_failed_toast"), !copied);
     },
 
     // ---------------------------------------------------------------------

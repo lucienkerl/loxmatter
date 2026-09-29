@@ -250,6 +250,27 @@
         <p class="banner danger" x-show="authError" x-cloak x-text="authError"></p>
         <button class="primary" :disabled="authBusy" @click="submitLogin()"
                 x-text="t('web.auth.login_submit')"></button>
+        <!-- A native <details>, no Alpine state: nothing is fetched, the
+             commands are the same for every installation (design 2026-09-29,
+             section 5). The classes are the ones of the commissioning
+             disclosures, so the same gesture looks the same everywhere. -->
+        <details class="commission-disclosure forgot-password">
+          <summary x-text="t('web.auth.forgot_summary')"></summary>
+          <div class="disclosure-body">
+            <p class="hint" x-text="t('web.auth.forgot_explanation')"></p>
+            <div class="command-copy">
+              <code x-text="resetCommandDocker"></code>
+              <button type="button" @click="copyCommand(resetCommandDocker)"
+                      x-text="t('web.auth.copy')"></button>
+            </div>
+            <p class="hint" x-text="t('web.auth.forgot_source_label')"></p>
+            <div class="command-copy">
+              <code x-text="resetCommandSource"></code>
+              <button type="button" @click="copyCommand(resetCommandSource)"
+                      x-text="t('web.auth.copy')"></button>
+            </div>
+          </div>
+        </details>
       </main>
     </template>
 
