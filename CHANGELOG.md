@@ -10,6 +10,12 @@ people who don't know the code.
 
 ### Added
 
+- **The project sync puts new inputs and outputs into their room.** A
+  virtual input or output the sync creates now lands in the Loxone Config
+  room with the same name as its device's or group's room. A room Loxone
+  Config does not have yet is created, together with its user rights group.
+  Inputs and outputs that already exist keep the room you gave them in
+  Loxone Config.
 - **A synced project file says when it was changed.** A project file
   that comes back from the sync with changes now carries that moment
   as its "last saved" date, in your local time, instead of the date it
