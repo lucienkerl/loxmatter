@@ -388,6 +388,9 @@ class CommissioningTracker:
                     "matches": disc.matches(advert.discriminator) if disc else False,
                 }
                 for advert in attempt.nearby
+                # A connected device has no RSSI (see `radios/bluez.py`) and
+                # is not advertising any more - it is not "nearby".
+                if advert.rssi is not None
             ],
             "bluetooth": self._bluetooth(attempt),
         }
