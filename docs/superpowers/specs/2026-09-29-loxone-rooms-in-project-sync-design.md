@@ -49,9 +49,11 @@ Config has no such room yet, the sync creates it.
 Checked on 17 real project files from 2014 to 2026.
 
 A room is a `Place` object under the single `PlaceCaption`, which sits
-directly under `<C Type="Document">` - not under a `LoxLIVE` block.
+directly under `<C Type="Document">` (in the oldest checked file, from
+2014, directly under `<ControlList>`) - never under a `LoxLIVE` block.
 Rooms therefore belong to the whole project, whichever Miniserver the sync
-has resolved (sync design, section 3.5):
+has resolved (sync design, section 3.5), and the index searches for the
+caption anywhere in the tree instead of assuming a depth:
 
 ```
 <C Type="PlaceCaption" V="175" U="…" Title="Räume" WF="16384" u="…">
@@ -209,12 +211,12 @@ surgery, no server-side state (sync design, sections 3.2 and 4).
 - **`projectsync/index.py`** additionally records, for the whole
   document: the `PlaceCaption` element, every `Place` (title, `U`,
   attributes), and the rights group caption (`LoxCaption` with
-  `CaptionType="13"`, searched anywhere below `Document`).
+  `CaptionType="13"`), both searched anywhere in the tree.
 - **A new module `projectsync/rooms.py`** owns sections 4 and 6.1's
   decisions: from the index and the set of loxmatter room names needed by
-  new entries, it returns the room assignments (section 7) plus, for
-  every room to create, its planned `Place` `U` and `RightGroup` `U`.
-  Pure functions, no text editing.
+  new entries, it returns the room assignments (section 7). Pure
+  functions, no text editing, no IDs: the `U` values of a created room
+  are generated in `patch.py`, like every other new object's.
 - **`projectsync/diff.py`** passes each new entry's device or group room
   to `rooms.py` and stores the result in the plan.
 - **`projectsync/schema.py`** gains `new_place_tag` and
