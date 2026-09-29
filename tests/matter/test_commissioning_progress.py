@@ -29,7 +29,13 @@ from loxmatter.matter.commissioning_progress import (
     classify_failure,
 )
 from loxmatter.radios.bluetooth_health import KernelFinding
-from loxmatter.radios.bluez import AdapterState, BluezSnapshot, MatterAdvert
+from loxmatter.radios.bluez import (
+    MATTER_SERVICE_UUID,
+    AdapterState,
+    BluezSnapshot,
+    MatterAdvert,
+    snapshot_from_objects,
+)
 
 
 def _advert(
@@ -176,6 +182,32 @@ async def test_the_phases_follow_bluez_and_node_added() -> None:
 
     await tracker.finish(None)
     assert tracker.phase == "done"
+
+
+async def test_a_connection_after_the_scan_stopped_still_reaches_connected() -> None:
+    """Once the scanner stops discovery to connect, BlueZ drops the device's
+    RSSI (see `tests/radios/test_bluez.py`). Read through the real snapshot
+    parser, the connected device must still move the attempt on."""
+    tracker, bluez, _, _ = _tracker()
+    tracker.start(Discriminator(1059, "long"))
+    device = {
+        "Address": "FB:73:82:07:E3:AD",
+        "ServiceData": {MATTER_SERVICE_UUID: bytes.fromhex("0023047c11019000")},
+    }
+    path = "/org/bluez/hci0/dev_FB_73_82_07_E3_AD"
+
+    heard = {path: {"org.bluez.Device1": {**device, "RSSI": -60, "Connected": False}}}
+    bluez.snapshots = [snapshot_from_objects(heard)]
+    await tracker.sample()
+    assert tracker.phase == "found"
+
+    connected = {path: {"org.bluez.Device1": {**device, "Connected": True}}}
+    bluez.snapshots = [snapshot_from_objects(connected)]
+    await tracker.sample()
+    assert tracker.phase == "connected"
+    # Connected, it no longer advertises: not a "nearby" device with an
+    # empty signal strength.
+    assert tracker.status()["attempt"]["nearby"] == []  # type: ignore[index]
 
 
 async def test_phases_never_move_backwards() -> None:

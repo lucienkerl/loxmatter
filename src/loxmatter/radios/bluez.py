@@ -87,8 +87,13 @@ def _advert(properties: Mapping[str, Any]) -> MatterAdvert | None:
     service_data = properties.get("ServiceData") or {}
     raw = service_data.get(MATTER_SERVICE_UUID)
     rssi = properties.get("RSSI")
-    if raw is None or not isinstance(rssi, int):
-        # No RSSI: BlueZ remembers the device but has not heard it lately.
+    connected = bool(properties.get("Connected", False))
+    if raw is None or not (isinstance(rssi, int) or connected):
+        # No RSSI: BlueZ remembers the device but has not heard it lately -
+        # unless it is connected. The scanner stops discovery before it
+        # connects, and BlueZ then drops the RSSI of every device it found
+        # (`discovery_cleanup` in its `adapter.c`), including the one being
+        # set up.
         return None
     parsed = parse_matter_service_data(bytes(raw))
     if parsed is None:
@@ -99,11 +104,11 @@ def _advert(properties: Mapping[str, Any]) -> MatterAdvert | None:
     return MatterAdvert(
         address=str(properties.get("Address", "")),
         name=name if isinstance(name, str) else None,
-        rssi=rssi,
+        rssi=rssi if isinstance(rssi, int) else None,
         discriminator=discriminator,
         vendor_id=vendor_id,
         product_id=product_id,
-        connected=bool(properties.get("Connected", False)),
+        connected=connected,
         adapter=adapter if isinstance(adapter, str) else None,
     )
 
@@ -126,12 +131,11 @@ def snapshot_from_objects(objects: Mapping[str, Mapping[str, Mapping[str, Any]]]
                 )
             )
     # `advert.rssi if advert.rssi is not None else -1000`, not
-    # `advert.rssi or -1000` (final review item 7): `_advert()` above
-    # already drops every device without an `RSSI` at all, so by the time an
-    # advert reaches here its `rssi` is never actually `None` - but `or`
-    # treats a legitimate `rssi` of exactly 0 (an unusually strong signal)
-    # as falsy too, and would have silently sorted it as the weakest
-    # possible one (-1000) instead of among the strongest.
+    # `advert.rssi or -1000` (final review item 7): `rssi` is `None` only
+    # for a connected device `_advert()` kept without one, but `or` treats
+    # a legitimate `rssi` of exactly 0 (an unusually strong signal) as
+    # falsy too, and would have silently sorted it as the weakest possible
+    # one (-1000) instead of among the strongest.
     adverts.sort(key=lambda advert: -(advert.rssi if advert.rssi is not None else -1000))
     # The adapter that scans is the one matter-server uses; with none
     # scanning, the first one.

@@ -93,6 +93,29 @@ def test_only_heard_matter_devices_are_listed() -> None:
     assert snapshot.adapter == AdapterState(name="hci0", powered=True, discovering=True)
 
 
+def test_a_connected_matter_device_is_listed_without_an_rssi() -> None:
+    """The scanner stops discovery before it connects, and BlueZ 5.82
+    (`adapter.c`, `discovery_cleanup` -> `invalidate_rssi_and_tx_power`)
+    then drops `RSSI` from every device it found. The device being set up
+    is connected and still carries its service data, but no RSSI - dropping
+    it like a device no longer heard hid its `Connected: true`, and the
+    progress display went from "found" straight to "done"."""
+    objects = dict(OBJECTS)
+    objects["/org/bluez/hci0/dev_FB_73_82_07_E3_AD"] = {
+        "org.bluez.Device1": {
+            "Address": "FB:73:82:07:E3:AD",
+            "Name": "LED Light0x07C2",
+            "Connected": True,
+            "Adapter": "/org/bluez/hci0",
+            "ServiceData": {MATTER_SERVICE_UUID: LAMP_SERVICE_DATA},
+        },
+    }
+    adverts = snapshot_from_objects(objects).adverts
+    assert [(advert.address, advert.rssi, advert.connected) for advert in adverts] == [
+        ("FB:73:82:07:E3:AD", None, True)
+    ]
+
+
 def test_adverts_are_sorted_by_signal_strength() -> None:
     objects = dict(OBJECTS)
     objects["/org/bluez/hci0/dev_AA"] = {
@@ -109,14 +132,10 @@ def test_adverts_are_sorted_by_signal_strength() -> None:
 
 def test_a_zero_rssi_sorts_as_the_strong_signal_it_is() -> None:
     """Final review item 7: the sort key used to be `-(advert.rssi or
-    -1000)` - `_advert()` already drops every device without an `RSSI` at
-    all (see the "no longer heard" entry in `OBJECTS` above), so by the time
-    a `MatterAdvert` reaches this sort its `rssi` is never `None` in
-    practice; the only thing `or -1000` could still catch is a `rssi`
-    of exactly 0, a legitimate (if unusually strong) signal - and `or`
-    treats 0 as falsy, silently replacing it with -1000 dBm, the sort key
-    of the WEAKEST possible signal. A device holding its RSSI at 0 would
-    then have sorted last instead of first."""
+    -1000)` - and `or` treats an `rssi` of exactly 0, a legitimate (if
+    unusually strong) signal, as falsy, silently replacing it with
+    -1000 dBm, the sort key of the WEAKEST possible signal. A device holding
+    its RSSI at 0 would then have sorted last instead of first."""
     objects = dict(OBJECTS)
     objects["/org/bluez/hci0/dev_ZERO"] = {
         "org.bluez.Device1": {

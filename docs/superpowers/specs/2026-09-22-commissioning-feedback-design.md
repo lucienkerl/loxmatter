@@ -162,6 +162,12 @@ While the `POST` is open, the dialog polls the status route every 2 s and shows:
 - during `searching`, the nearby list (section 6);
 - the Bluetooth warning when there is one (section 7.1).
 
+`joined` starts with `NODE_ADDED`, shortly before the `POST` returns, so on the
+bridge it usually ends before the next poll (noted 29 September 2026: the list
+went from `found` straight to `done`). After a successful `POST` the dialog
+therefore shows `joined` itself while it loads the new device's signals and
+commands, for at least one second, and only then `done`.
+
 A page that is reloaded while an attempt runs finds it through the status route
 and shows its progress; the result then arrives through the status route
 rather than the `POST` the old page had open.
