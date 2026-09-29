@@ -137,8 +137,10 @@ def test_a_missing_room_is_created_with_its_rights_group(rooms_project):
     assert _attr(new_place, "Title") == "Werkstatt"
     assert _attr(new_rights, "Title") == "Werkstatt"
     assert _attr(new_place, "RGR") == _attr(new_rights, "U")
-    # Icon/PType come from the ordinary room, not from the default room (`First="true"`).
+    # PType comes from the ordinary room, not from the default room (`First="true"`).
+    # Icon is left to Loxone Config.
     assert _attr(new_place, "PType") == "3"
+    assert "Icon=" not in new_place
     assert 'First="true"' not in new_place
     # Every cmd of the new device points at the new room.
     for key in ("d2_1_onoff", "d2_online"):
@@ -157,7 +159,10 @@ def test_a_room_shared_by_two_devices_is_created_once(rooms_project):
     patched = apply_plan(
         index, plan, devices, signals, commands, bridge_ip="10.0.0.5", port=7000, listen=8080
     ).decode("utf-8-sig")
-    assert [_attr(p, "Title") for p in _places(patched)].count("Werkstatt") == 1
+    werkstatt = [p for p in _places(patched) if _attr(p, "Title") == "Werkstatt"]
+    assert len(werkstatt) == 1
+    for key in ("d2_1_onoff", "d3_1_onoff"):
+        assert f'Pr="{_attr(werkstatt[0], "U")}"' in _cmd_xml(patched, key)
 
 
 def test_next_obj_counts_the_room_objects(rooms_project):
