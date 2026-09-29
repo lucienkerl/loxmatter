@@ -3138,6 +3138,63 @@ def test_the_phase_list_follows_the_status_route():
 
 
 @pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_a_successful_attempt_shows_joined_before_done():
+    """NODE_ADDED arrives shortly before `commission_with_code` returns, so
+    `joined` usually lasted less than one 2 s poll on the bridge and the
+    list jumped from `connected` (or `found`) straight to `done`. The page
+    now holds `joined` itself while it loads the new device's signals and
+    commands - what that phase says it is doing - and for at least
+    `COMMISSION_JOINED_MIN_MS`.
+
+    Driven for real: the POST resolves, the loads resolve at once, and
+    `setTimeout` is captured so the test decides when the minimum ends.
+    Every status poll answers `done`, as the bridge does by then - the
+    hold must win over it. Fault to prove it: drop the hold from
+    `commissionPhaseClass`, and `joined` reads "done" in the first
+    snapshot."""
+    values = _commission_values(
+        """
+        global.setInterval = () => 0;
+        global.clearInterval = () => {};
+        const timers = [];
+        global.setTimeout = (fn, ms) => { timers.push({ fn, ms }); return 0; };
+        const done = { bridge_started_at: null, attempt: { phase: "done", reason: null, nearby: [], bluetooth: { available: false } } };
+        globalThis.fetch = async () => ({ ok: true, status: 200, json: async () => done });
+        state.commissionCode = "12345678";
+        state.commissionReachedPhase = "connected";
+        state.request = async () => ({ id: "d1", label: "Lamp" });
+        state.loadControls = async () => {};
+        state.loadSignals = async () => {};
+        const classes = () => Object.fromEntries(
+          ["searching", "found", "connected", "joined", "done"].map((p) => [p, state.commissionPhaseClass(p)])
+        );
+        const settle = async () => { for (let i = 0; i < 20; i++) await new Promise((r) => setImmediate(r)); };
+        (async () => {
+          const run = state.commissionDevice();
+          await settle();
+          const held = classes();
+          const hint = state.commissionPhaseHint();
+          const minimum = timers.map((timer) => timer.ms);
+          timers.forEach((timer) => timer.fn());
+          await run;
+          console.log(JSON.stringify({ held, hint, minimum, after: classes() }));
+        })();
+        """
+    )
+    assert values["held"] == {
+        "searching": "done",
+        "found": "done",
+        "connected": "done",
+        "joined": "running",
+        "done": "",
+    }
+    assert values["hint"] == ""
+    assert values["minimum"] == [_js_constant("COMMISSION_JOINED_MIN_MS")]
+    assert values["after"]["joined"] == "done"
+    assert values["after"]["done"] == "done"
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
 def test_the_nearby_list_marks_the_device_the_code_names():
     values = _commission_values(
         """
@@ -3376,6 +3433,46 @@ def test_the_elapsed_time_is_whole_seconds_since_the_attempts_start():
     )
     assert values["withAttempt"] == 9
     assert values["withoutAttempt"] is None
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_the_elapsed_time_stops_when_the_attempt_ends():
+    """An attempt that ended - joined, or failed after its 180 s - is not
+    running any more, so "Running for" must not keep counting. The status
+    route's `phase_since` of a `done`/`failed` attempt is the moment it
+    ended; the count stops there. A page whose own attempt ended without a
+    final status in that shape (the last fetch failed) has no end to count
+    to and hides the line rather than counting on. Fault to prove it: read
+    `nowTick` whatever the phase."""
+    values = _commission_values(
+        """
+        state.nowTick = Date.parse("2026-09-22T07:05:00Z");
+        const bt = { available: false };
+        state.commissionStatus = {
+          attempt: { started_at: "2026-09-22T07:00:00Z", phase: "done", phase_since: "2026-09-22T07:00:42Z", reason: null, nearby: [], bluetooth: bt },
+        };
+        const done = state.commissionElapsedSeconds();
+        state.commissionStatus = {
+          attempt: { started_at: "2026-09-22T07:00:00Z", phase: "failed", phase_since: "2026-09-22T07:03:00Z", reason: "not_found", nearby: [], bluetooth: bt },
+        };
+        const failed = state.commissionElapsedSeconds();
+        state.commissionStatus = {
+          attempt: { started_at: "2026-09-22T07:00:00Z", phase: "joined", phase_since: "2026-09-22T07:00:30Z", reason: null, nearby: [], bluetooth: bt },
+        };
+        const running = state.commissionElapsedSeconds();
+        state.commissionFailed = true;
+        const endedWithoutFinalStatus = state.commissionElapsedSeconds();
+        state.commissionFailed = false;
+        state.commissionStep = 2;
+        const succeededWithoutFinalStatus = state.commissionElapsedSeconds();
+        console.log(JSON.stringify({ done, failed, running, endedWithoutFinalStatus, succeededWithoutFinalStatus }));
+        """
+    )
+    assert values["done"] == 42
+    assert values["failed"] == 180
+    assert values["running"] == 300
+    assert values["endedWithoutFinalStatus"] is None
+    assert values["succeededWithoutFinalStatus"] is None
 
 
 @pytest.mark.skipif(NODE is None, reason="node is required for this test")
@@ -3784,10 +3881,11 @@ async def test_commission_device_drives_the_flow_and_stops_where_it_failed(api):
     # returned would race a later attempt's own polling.
     assert "this.startCommissionPolling();" in body
     assert "this.stopCommissionPolling();" in body
-    # Step 1 comes BEFORE the reload, step 2 after it.
-    load = body.index(
-        "await Promise.all([this.loadControls(device.id), this.loadSignals(device.id)]);"
-    )
+    # Step 1 comes BEFORE the reload, step 2 after it. The reload also
+    # waits out the minimum `joined` is shown for
+    # (`test_a_successful_attempt_shows_joined_before_done`).
+    load = body.index("this.loadControls(device.id),")
+    assert body.index("await Promise.all([") < load
     assert body.index("this.commissionStep = 1;") < load
     assert load < body.index("this.commissionStep = 2;")
     # The error branch marks it, but does not reset it.
@@ -4877,6 +4975,31 @@ async def test_the_projectsync_card_static_text_is_translated(api):
 
     assert "x-text=\"t('web.export.projectsync_download_button')\"" in markup
     assert "Gepatchte Datei herunterladen<" not in markup
+
+
+async def test_the_projectsync_plan_shows_rooms(api):
+    """Design 2026-09-29, section 7: a room block above the device cards and
+    each new entry's target room. Markup only - the bindings are checked in
+    the browser (see the plan's Task 7, step 6)."""
+    client, _, _ = api
+    markup = (await client.get("/")).text
+    assert "projectSync.plan.rooms" in markup
+    assert "x-text=\"t('web.export.projectsync_rooms_heading')\"" in markup
+    assert "projectSyncRoomStatusLabel(room.status)" in markup
+    assert "entry.target_room" in markup
+    script = (await client.get("/static/app.js")).text
+    for key in (
+        "projectsync_room_status_found",
+        "projectsync_room_status_created",
+        "projectsync_room_status_ambiguous",
+        "projectsync_room_status_not_creatable",
+        "projectsync_room_note_created",
+        "projectsync_room_note_ambiguous",
+        "projectsync_room_note_not_creatable",
+    ):
+        assert f"web.export.{key}" in script
+    # The target room text is resolved in the markup, not in a helper.
+    assert "web.export.projectsync_target_room" in markup
 
 
 async def test_the_projectsync_card_dynamic_strings_are_translated(api):

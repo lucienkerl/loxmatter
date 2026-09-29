@@ -114,6 +114,9 @@ extend-immutable-calls = ["fastapi.File"]
 [tool.mypy]
 strict = true
 files = ["src", "scripts"]
+# `tests/projectsync/conftest.py` (pulled in by scripts/capture_screenshots.py)
+# imports its sibling `room_fixtures`, which pytest finds via rootdir/prepend.
+mypy_path = "tests/projectsync"
 
 [[tool.mypy.overrides]]
 # chip provides no py.typed marking/stubs - see

@@ -1,3 +1,5 @@
+from room_fixtures import PLACES_ONLY_XML, with_rooms
+
 from loxmatter.projectsync.index import AmbiguousMiniserverError, ProjectFormatError, build_index
 
 # Two `LoxLIVE` blocks (two Miniservers configured in one project), each
@@ -238,3 +240,47 @@ def test_paired_and_single_output_commands_do_not_collide():
     assert set(index.output_cmds) == {"d1_1_off", "d1_1_on", "d1_1_on + d1_1_off"}
     assert index.output_cmds["d1_1_on + d1_1_off"].attrs["Title"] == "onoff"
     assert index.output_cmds["d1_1_on"].attrs["Title"] == "on"
+
+
+def test_index_finds_the_rooms_and_the_rights_group_caption(rooms_project):
+    index = build_index(rooms_project)
+    assert index.place_caption is not None
+    assert [p.attrs["Title"] for p in index.places] == ["Nicht zugeordnet", "Küche"]
+    assert index.right_group_caption is not None
+    assert index.right_group_caption.attrs["CaptionType"] == "13"
+
+
+def test_index_without_rooms_has_none(sample_project):
+    index = build_index(sample_project)
+    assert index.place_caption is None
+    assert index.places == []
+    assert index.right_group_caption is None
+
+
+def test_old_project_has_rooms_but_no_rights_group_caption(places_only_project):
+    index = build_index(places_only_project)
+    assert [p.attrs["Title"] for p in index.places] == ["Küche"]
+    assert index.right_group_caption is None
+
+
+def test_rights_group_caption_is_found_when_nested(sample_project):
+    """In most real files the rights groups sit under another `LoxCaption`,
+    not directly under `Document` (design 2026-09-29, section 3)."""
+    nested = (
+        '\t\t<C Type="LoxCaption" V="175" U="3000-0020-0000-aaaaaaaaaaaaaaaa" Title="Benutzer">\r\n'
+        '\t\t\t<C Type="LoxCaption" V="175" U="3000-0010-0000-aaaaaaaaaaaaaaaa"'
+        ' Title="Berechtigungsgruppen" CaptionType="13" SubType="13"></C>\r\n'
+        "\t\t</C>\r\n"
+    )
+    index = build_index(with_rooms(sample_project, nested))
+    assert index.right_group_caption is not None
+    assert index.right_group_caption.attrs["U"] == "3000-0010-0000-aaaaaaaaaaaaaaaa"
+
+
+def test_place_caption_directly_under_control_list_is_found(sample_project):
+    """The oldest checked file (2014) has its `PlaceCaption` directly under
+    `<ControlList>`, not under `Document`."""
+    anchor = '<ControlList Version="275" NextObj="100">\r\n'
+    project = sample_project.replace(anchor, anchor + PLACES_ONLY_XML, 1)
+    index = build_index(project)
+    assert [p.attrs["Title"] for p in index.places] == ["Küche"]

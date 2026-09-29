@@ -60,6 +60,7 @@ from loxmatter.model.store import (
 from loxmatter.projectsync.diff import PlanEntry, PlanStatus, SyncPlan
 from loxmatter.projectsync.ids import new_iname, new_unique_id
 from loxmatter.projectsync.index import ProjectIndex
+from loxmatter.projectsync.rooms import RoomStatus, room_key
 from loxmatter.projectsync.savedate import saved_date_attrs
 from loxmatter.projectsync.schema import (
     find_any_iodata_attrs,
@@ -69,6 +70,8 @@ from loxmatter.projectsync.schema import (
     new_input_container_open_tag,
     new_output_cmd_open_tag,
     new_output_container_open_tag,
+    new_place_tag,
+    new_right_group_tag,
     sibling_iodata_attrs,
 )
 
@@ -111,6 +114,55 @@ def _display_format(obj: LoxoneInput | LoxoneCommand, is_input: bool) -> tuple[b
     return entry.analog, entry.unit_format
 
 
+def _room_edits(index: ProjectIndex, plan: SyncPlan) -> tuple[dict[str, str], list[_Edit], int]:
+    """Where every room of the plan lives in the patched file (design
+    2026-09-29, section 6): returns `room_key` -> `Place.U` for every room
+    a new object can point at, the insertions for rooms this sync creates,
+    and the number of objects created (for `NextObj`).
+
+    All new rooms go in ONE insertion at the end of the `PlaceCaption`,
+    and all new rights groups in one at the end of their caption: two
+    insertions at the same position would come out in reverse order
+    (`_apply_edits` writes back to front)."""
+    place_us: dict[str, str] = {
+        room_key(a.name): a.place_u
+        for a in plan.rooms
+        if a.status in (RoomStatus.FOUND, RoomStatus.AMBIGUOUS) and a.place_u
+    }
+    to_create = [a for a in plan.rooms if a.status is RoomStatus.CREATED]
+    if not to_create:
+        return place_us, [], 0
+
+    caption = index.place_caption
+    # `rooms.can_create_rooms` is why an assignment is CREATED at all.
+    assert caption is not None and caption.inner_end is not None
+    rights = index.right_group_caption
+    rights_end = None if rights is None else rights.inner_end
+    # The default room (`First="true"`) carries its own `WF` and marks
+    # itself as the default room - never a template for an ordinary one.
+    template = next((p.attrs for p in index.places if p.attrs.get("First") != "true"), None)
+
+    places_xml: list[str] = []
+    rights_xml: list[str] = []
+    for assignment in to_create:
+        title = assignment.loxone_title or assignment.name.strip()
+        place_u = new_unique_id(index.all_u_values)
+        rights_u = None if rights_end is None else new_unique_id(index.all_u_values)
+        places_xml.append(new_place_tag(title, place_u, rights_u, template))
+        if rights_u is not None:
+            rights_xml.append(new_right_group_tag(title, rights_u))
+        place_us[room_key(assignment.name)] = place_u
+
+    edits = [_Edit(caption.inner_end, caption.inner_end, "".join(places_xml))]
+    if rights_end is not None and rights_xml:
+        edits.append(_Edit(rights_end, rights_end, "".join(rights_xml)))
+    return place_us, edits, len(places_xml) + len(rights_xml)
+
+
+def _place_u_for(place_us: Mapping[str, str], entry: PlanEntry) -> str | None:
+    return None if entry.room is None else place_us.get(room_key(entry.room))
+
+
 def _update_edits(index: ProjectIndex, entry: PlanEntry) -> list[_Edit]:
     element = (index.input_cmds if entry.kind == "input" else index.output_cmds)[entry.key]
     edits: list[_Edit] = []
@@ -132,6 +184,7 @@ def _new_signal_edit(
     index: ProjectIndex,
     entry: PlanEntry,
     entries_by_key: Mapping[str, LoxoneInput] | Mapping[str, LoxoneCommand],
+    place_u: str | None,
 ) -> _Edit:
     is_input = entry.kind == "input"
     container = index.input_containers if is_input else index.output_containers
@@ -164,6 +217,7 @@ def _new_signal_edit(
         iodata_attrs=iodata,
         analog=analog,
         unit_format=unit_format,
+        place_u=place_u,
     )
     full_xml = f"{open_tag}{children_xml}</C>"
     pos = matching_container.inner_end
@@ -177,6 +231,7 @@ def _new_device_edit(
     bridge_ip: str,
     port: int,
     listen: int,
+    place_u: str | None,
 ) -> tuple[_Edit, int]:
     """ONE new container for ALL `NEW_DEVICE` entries that share one
     `(kind, owner_kind, device_id)` - the same grouping key
@@ -259,6 +314,7 @@ def _new_device_edit(
             iodata_attrs=iodata,
             analog=analog,
             unit_format=unit_format,
+            place_u=place_u,
         )
         cmds.append(f"{cmd_open}{children_xml}</C>")
 
@@ -338,7 +394,8 @@ def apply_plan(
 ) -> bytes:
     """Builds the patched file (design section 3.4/7): updates, new signals
     in already-existing device containers, and completely new device
-    containers.
+    containers, and, for new objects whose owner has a room, the Loxone rooms
+    they go into (design 2026-09-29).
 
     `saved_at` (time-zone aware) becomes the file's "last saved" stamp if
     anything changed; without it, or without a change, the stamp stays
@@ -355,8 +412,7 @@ def apply_plan(
         for output_item in to_group_outputs((commands_by_group or {}).get(group.id, [])):
             desired_outputs[output_item.key] = output_item
 
-    edits: list[_Edit] = []
-    created_count = 0
+    place_us, edits, created_count = _room_edits(index, plan)
     # (kind, owner_kind, id) - NOT (kind, id): both counters start at 1,
     # so group 1 and device 1 would otherwise share one container. `dict`
     # preserves the plan's order, so the generated file is reproducible.
@@ -366,7 +422,7 @@ def apply_plan(
             edits += _update_edits(index, entry)
         elif entry.status is PlanStatus.NEW_SIGNAL:
             source = desired_inputs if entry.kind == "input" else desired_outputs
-            edits.append(_new_signal_edit(index, entry, source))
+            edits.append(_new_signal_edit(index, entry, source, _place_u_for(place_us, entry)))
             created_count += 1
         elif entry.status is PlanStatus.NEW_DEVICE:
             new_device_groups.setdefault(
@@ -379,7 +435,13 @@ def apply_plan(
         # itself: container + one cmd per entry, plus the newly created
         # caption if any.
         edit, group_created_count = _new_device_edit(
-            index, group_entries, source, bridge_ip, port, listen
+            index,
+            group_entries,
+            source,
+            bridge_ip,
+            port,
+            listen,
+            _place_u_for(place_us, group_entries[0]),
         )
         edits.append(edit)
         created_count += group_created_count

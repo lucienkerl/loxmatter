@@ -28,6 +28,7 @@ from loxmatter.matter.models import NodeSnapshot
 from loxmatter.model.store import Store
 from loxmatter.projectsync.diff import PlanStatus, build_plan
 from loxmatter.projectsync.index import build_index
+from loxmatter.projectsync.rooms import RoomStatus
 
 FIXTURES = Path(__file__).parents[1] / "fixtures" / "nodes"
 
@@ -352,3 +353,20 @@ def test_a_deleted_groups_leftover_output_is_orphaned(sample_project, group_stor
     second_plan = build_plan(patched_index, [], {}, {})
     orphaned_keys = {e.key for e in second_plan.entries if e.status is PlanStatus.ORPHANED}
     assert leftover_keys <= orphaned_keys
+
+
+def test_a_new_group_output_carries_the_groups_room(rooms_project, group_store):
+    store, group = group_store
+    store.set_group_room(group.id, "Küche")
+    index = build_index(rooms_project)
+    plan = build_plan(
+        index,
+        [],
+        {},
+        {},
+        groups=store.groups(),
+        commands_by_group={group.id: store.group_commands(group.id)},
+    )
+    new = [e for e in plan.entries if e.owner_kind == "group"]
+    assert new and all(e.room == "Küche" for e in new)
+    assert [a.status for a in plan.rooms] == [RoomStatus.FOUND]

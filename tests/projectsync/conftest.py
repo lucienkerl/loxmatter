@@ -121,3 +121,20 @@ SAMPLE_PROJECT = (
 @pytest.fixture
 def sample_project() -> str:
     return SAMPLE_PROJECT
+
+
+@pytest.fixture
+def rooms_project(sample_project: str) -> str:
+    # Imported here, not at the top: `scripts/capture_screenshots.py`
+    # imports this module as `tests.projectsync.conftest`, where the
+    # sibling module `room_fixtures` is not on `sys.path`.
+    from room_fixtures import with_rooms
+
+    return with_rooms(sample_project)
+
+
+@pytest.fixture
+def places_only_project(sample_project: str) -> str:
+    from room_fixtures import PLACES_ONLY_XML, with_rooms
+
+    return with_rooms(sample_project, PLACES_ONLY_XML)
