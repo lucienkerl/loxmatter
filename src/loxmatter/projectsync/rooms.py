@@ -24,6 +24,7 @@ the `U` values of created rooms, like every other new object's."""
 
 from __future__ import annotations
 
+import unicodedata
 from collections.abc import Iterable
 from dataclasses import dataclass
 from enum import StrEnum
@@ -63,10 +64,11 @@ class RoomAssignment:
 
 
 def room_key(name: str) -> str:
-    """The form in which two room names are compared: normalized for
-    case-insensitive and whitespace-insensitive matching to find the same room
-    in Loxone Config instead of creating a second room."""
-    return name.strip().casefold()
+    """The form in which two room names are compared: Unicode-normalized
+    (NFC, so a decomposed spelling typed on macOS matches the composed title
+    in Loxone Config), case-folded and stripped of surrounding whitespace, to
+    find the same room instead of creating a second one."""
+    return unicodedata.normalize("NFC", name).strip().casefold()
 
 
 def can_create_rooms(index: ProjectIndex) -> bool:

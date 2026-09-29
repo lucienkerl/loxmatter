@@ -19,11 +19,21 @@
 from __future__ import annotations
 
 from loxmatter.projectsync.index import build_index
-from loxmatter.projectsync.rooms import RoomAssignment, RoomStatus, assign_rooms, room_key
+from loxmatter.projectsync.rooms import (
+    RoomAssignment,
+    RoomStatus,
+    assign_rooms,
+    can_create_rooms,
+    room_key,
+)
 
 
 def test_room_key_ignores_case_and_surrounding_whitespace():
     assert room_key("  Küche ") == room_key("küche") == room_key("KÜCHE")
+
+
+def test_room_key_matches_composed_and_decomposed_spellings():
+    assert room_key("K\u00fcche") == room_key("Ku\u0308che")
 
 
 def test_an_existing_room_is_found_whatever_the_case(rooms_project):
@@ -74,3 +84,13 @@ def test_without_a_room_list_nothing_can_be_created(sample_project):
 def test_an_old_project_without_rights_groups_can_still_get_rooms(places_only_project):
     index = build_index(places_only_project)
     assert assign_rooms(index, ["Werkstatt"])[0].status is RoomStatus.CREATED
+
+
+def test_a_self_closing_room_list_cannot_take_new_rooms(sample_project):
+    from room_fixtures import with_rooms
+
+    caption = '<C Type="PlaceCaption" V="178" U="u-caption" Title="Räume"/>'
+    index = build_index(with_rooms(sample_project, caption + "\r\n"))
+    assert not can_create_rooms(index)
+    [assignment] = assign_rooms(index, ["Werkstatt"])
+    assert assignment.status is RoomStatus.NOT_CREATABLE
