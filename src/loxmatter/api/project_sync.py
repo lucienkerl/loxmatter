@@ -46,11 +46,23 @@ from datetime import timedelta
 
 from fastapi import APIRouter, File, HTTPException, Query, UploadFile
 
-from loxmatter.api.models import ProjectSyncEntryOut, ProjectSyncMiniserverOut, ProjectSyncPlanOut
+from loxmatter.api.models import (
+    ProjectSyncEntryOut,
+    ProjectSyncMiniserverOut,
+    ProjectSyncPlanOut,
+    ProjectSyncRoomOut,
+)
 from loxmatter.model.store import DEFAULT_LISTEN_PORT, DEFAULT_UDP_PORT, Store
-from loxmatter.projectsync.diff import SyncPlan
+from loxmatter.projectsync.diff import PlanEntry, SyncPlan
 from loxmatter.projectsync.index import AmbiguousMiniserverError, ProjectFormatError
 from loxmatter.projectsync.sync import ProjectSyncResult, run_sync
+
+
+def _target_room(plan: SyncPlan, entry: PlanEntry) -> str | None:
+    assignment = plan.room_for(entry)
+    if assignment is None or not assignment.targets_a_room:
+        return None
+    return assignment.loxone_title
 
 
 def _entries_out(plan: SyncPlan) -> list[ProjectSyncEntryOut]:
@@ -69,6 +81,7 @@ def _entries_out(plan: SyncPlan) -> list[ProjectSyncEntryOut]:
             title=entry.title,
             status=entry.status.value,
             changes={name: [old, new] for name, (old, new) in entry.changes.items()},
+            target_room=_target_room(plan, entry),
         )
         for entry in plan.entries
     ]
@@ -152,6 +165,10 @@ def build_project_sync_router(store: Store) -> APIRouter:
 
         return ProjectSyncPlanOut(
             entries=_entries_out(result.plan),
+            rooms=[
+                ProjectSyncRoomOut(name=a.name, status=a.status.value, loxone_title=a.loxone_title)
+                for a in result.plan.rooms
+            ],
             has_changes=result.plan.has_changes,
             patched_base64=base64.b64encode(result.patched).decode("ascii"),
         )

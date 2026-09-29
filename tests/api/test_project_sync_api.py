@@ -355,3 +355,63 @@ async def test_a_single_miniserver_file_ignores_a_stored_address_that_differs(ap
     )
     assert response.status_code == 200
     assert response.json()["patched_base64"] is not None
+
+
+ROOMS_XML = (
+    '\t\t<C Type="PlaceCaption" V="175" U="3000-0000-0000-aaaaaaaaaaaaaaaa" Title="Räume">\r\n'
+    '\t\t\t<C Type="Place" V="175" U="3000-0002-0000-aaaaaaaaaaaaaaaa" Title="Küche"'
+    ' WF="16384" PType="3"/>\r\n'
+    "\t\t</C>\r\n"
+)
+
+
+def _with_rooms(project: str) -> bytes:
+    anchor = 'Title="Testprojekt">\r\n'
+    return project.replace(anchor, anchor + ROOMS_XML, 1).encode("utf-8")
+
+
+async def test_project_sync_reports_a_found_room_and_the_entries_target(api):
+    client, store = api
+    [device] = store.devices()
+    store.set_room(device.id, "küche")
+    response = await client.post(
+        "/api/export/project-sync",
+        params={"bridge_ip": "10.0.0.5"},
+        files={"file": ("projekt.Loxone", _with_rooms(SAMPLE_PROJECT), "application/xml")},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["rooms"] == [{"name": "küche", "status": "found", "loxone_title": "Küche"}]
+    assert {entry["target_room"] for entry in body["entries"]} == {"Küche"}
+    patched = base64.b64decode(body["patched_base64"])
+    assert b'Pr="3000-0002-0000-aaaaaaaaaaaaaaaa"' in patched
+
+
+async def test_project_sync_reports_a_room_it_creates(api):
+    client, store = api
+    [device] = store.devices()
+    store.set_room(device.id, "Werkstatt")
+    response = await client.post(
+        "/api/export/project-sync",
+        params={"bridge_ip": "10.0.0.5"},
+        files={"file": ("projekt.Loxone", _with_rooms(SAMPLE_PROJECT), "application/xml")},
+    )
+    body = response.json()
+    assert body["rooms"] == [
+        {"name": "Werkstatt", "status": "created", "loxone_title": "Werkstatt"}
+    ]
+    assert b'Title="Werkstatt"' in base64.b64decode(body["patched_base64"])
+
+
+async def test_project_sync_without_a_room_list_names_no_target(api):
+    client, store = api
+    [device] = store.devices()
+    store.set_room(device.id, "Werkstatt")
+    response = await client.post(
+        "/api/export/project-sync",
+        params={"bridge_ip": "10.0.0.5"},
+        files={"file": ("projekt.Loxone", SAMPLE_PROJECT.encode("utf-8"), "application/xml")},
+    )
+    body = response.json()
+    assert body["rooms"] == [{"name": "Werkstatt", "status": "not_creatable", "loxone_title": None}]
+    assert all(entry["target_room"] is None for entry in body["entries"])
