@@ -125,6 +125,25 @@ services:
       nofile:
         soft: 1024
         hard: 4096
+    # /run starts empty on every run of the container (29 September 2026,
+    # measured on the second test Pi). A host reboot does not recreate
+    # otbr - `restart: unless-stopped` starts the same container, and its
+    # writable layer keeps /run. After a reboot /run/dbus/pid still named
+    # the run before, dbus-daemon refused to start ("The pid file ...
+    # exists"), and otbr-agent gave up after 30 s with `Failed to get DBus
+    # connection`. The container looked up, Thread was down, and the
+    # watchdog's `docker restart` kept the same layer and could not help.
+    # A clean `docker restart` never shows it - the image's shutdown trap
+    # stops dbus and removes the file; only an unclean stop leaves it
+    # behind (`docker kill` then `docker start` reproduces it, and with
+    # this tmpfs the same sequence leaves dbus running).
+    #
+    # The tmpfs hides what the image ships under /run - lock/, mount/,
+    # systemd/ and utmp, all empty - and /var/run and /var/lock are
+    # symlinks into it. Nothing otbr starts reads those; otbr-agent's own
+    # socket and lock file go straight into /run and are recreated.
+    tmpfs:
+      - /run
     volumes:
       # The Thread state otherwise survives NO rebuild of the container
       # (2026-09-03). The image provides no volume for it, and OTBR stores

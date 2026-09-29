@@ -81,6 +81,10 @@ people who don't know the code.
 
 ### Fixed
 
+- **Thread comes back after the Raspberry Pi restarts.** A restart could
+  leave the border router running without a Thread network, and neither
+  its watchdog nor a restart of the container brought it back; only
+  recreating it did. It now starts cleanly every time.
 - **The installer's hints work right after it installed Docker.** Until you
   log out and back in, your shell is not in the `docker` group; the commands
   the installer suggests for looking at the logs now say `sudo docker` in
