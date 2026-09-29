@@ -1652,6 +1652,12 @@ footer.hint-block {
   font-size: 0.88rem;
 }
 
+/* Rooms block of the project sync plan (design 2026-09-29, section 7):
+   sits between the summary and the device cards, spaced like a card. */
+.projectsync-rooms {
+  margin-bottom: 0.75rem;
+}
+
 .projectsync-tally-item {
   display: inline-flex;
   align-items: center;

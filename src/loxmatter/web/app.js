@@ -7498,6 +7498,45 @@ function app() {
       return "";
     },
 
+    /** Label for a room assignment's status (`projectsync/rooms.py`,
+     * `RoomStatus`). */
+    projectSyncRoomStatusLabel(status) {
+      const labels = {
+        found: t("web.export.projectsync_room_status_found"),
+        created: t("web.export.projectsync_room_status_created"),
+        ambiguous: t("web.export.projectsync_room_status_ambiguous"),
+        not_creatable: t("web.export.projectsync_room_status_not_creatable"),
+      };
+      return labels[status] || status;
+    },
+
+    /** Badge colour for a room: a created room is new, a room that could
+     * not be created or exists twice wants a look, an existing one is fine
+     * - the same colours `projectSyncStatusBadgeClass` uses for entries. */
+    projectSyncRoomBadgeClass(status) {
+      if (status === "created") {
+        return this.projectSyncStatusBadgeClass("new_device");
+      }
+      if (status === "ambiguous" || status === "not_creatable") {
+        return this.projectSyncStatusBadgeClass("possible_duplicate");
+      }
+      return this.projectSyncStatusBadgeClass("unchanged");
+    },
+
+    /** Explanation under a room row; empty for a room that simply exists. */
+    projectSyncRoomNote(room) {
+      if (room.status === "created") {
+        return t("web.export.projectsync_room_note_created");
+      }
+      if (room.status === "ambiguous") {
+        return t("web.export.projectsync_room_note_ambiguous");
+      }
+      if (room.status === "not_creatable") {
+        return t("web.export.projectsync_room_note_not_creatable");
+      }
+      return "";
+    },
+
     /** Display label for the attribute names from `entry.changes` - the
      * same keys as `MANAGED_INPUT_CMD_ATTRS`/`MANAGED_OUTPUT_CMD_ATTRS` in
      * `projectsync/schema.py`. Unknown names (should not happen) appear
