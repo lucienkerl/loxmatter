@@ -385,6 +385,9 @@ async function copyToClipboard(text) {
       // Permission denied or similar - fall through to the old path.
     }
   }
+  // Selecting the textarea takes the focus away from the copy button;
+  // it goes back afterwards, or a keyboard user lands on `<body>`.
+  const previousFocus = document.activeElement;
   const area = document.createElement("textarea");
   area.value = text;
   area.setAttribute("readonly", "");
@@ -392,6 +395,9 @@ async function copyToClipboard(text) {
   area.style.opacity = "0";
   document.body.appendChild(area);
   area.select();
+  // `select()` alone selects nothing in a readonly textarea on iOS Safari -
+  // exactly the phone on plain HTTP this fallback exists for.
+  area.setSelectionRange(0, text.length);
   let copied = false;
   try {
     copied = document.execCommand("copy");
@@ -399,6 +405,9 @@ async function copyToClipboard(text) {
     copied = false;
   }
   area.remove();
+  if (previousFocus instanceof HTMLElement) {
+    previousFocus.focus({ preventScroll: true });
+  }
   return copied;
 }
 
