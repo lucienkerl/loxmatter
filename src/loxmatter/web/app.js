@@ -211,6 +211,11 @@ const NEW_ROOM_CHOICE = "__new__";
 // route whose answer barely changes between polls.
 const COMMISSION_POLL_MS = 2000;
 const COMMISSION_PHASES = ["searching", "found", "connected", "joined", "done"];
+// How long a successful attempt shows `joined` at least. On the bridge that
+// phase starts with NODE_ADDED, shortly before the POST returns, so it
+// usually fell between two polls and was never seen; the page holds it
+// itself while it loads the new device's signals and commands.
+const COMMISSION_JOINED_MIN_MS = 1000;
 // Final review item 7: `commission_with_code` can await for up to 180 s
 // (design 5.1) before the route's own try/except/finally ends the attempt -
 // but if the route's TASK is cancelled before that (server shutdown, client
@@ -981,6 +986,9 @@ function app() {
     // OWN `phase` reads "failed" once the attempt is over, which does not
     // say WHERE it failed.
     commissionReachedPhase: null,
+    // The phase the page shows instead of the status route's while it holds
+    // `joined` after a successful POST (COMMISSION_JOINED_MIN_MS), else null.
+    commissionHeldPhase: null,
 
     // The commissioning card's two tabs (design 2026-09-12, section 3.1).
     // "matter" or "zigbee"; `commissionTabShown()` is what the card shows,
@@ -3629,7 +3637,17 @@ function app() {
         // permanently, until the view happened to be entered again at
         // some point.
         this.commissionStep = 1;
-        await Promise.all([this.loadControls(device.id), this.loadSignals(device.id)]);
+        // The device has joined; what is left is loading its signals and
+        // commands - exactly what `joined` says. Held here, because the
+        // bridge's own `joined` was usually over before a poll saw it.
+        this.commissionReachedPhase = "joined";
+        this.commissionHeldPhase = "joined";
+        await Promise.all([
+          this.loadControls(device.id),
+          this.loadSignals(device.id),
+          new Promise((resolve) => setTimeout(resolve, COMMISSION_JOINED_MIN_MS)),
+        ]);
+        this.commissionHeldPhase = null;
         this.commissionStep = 2;
         // The earlier sentence "live values only after a bridge restart"
         // has been dropped because the limitation itself is gone: the
@@ -3724,6 +3742,7 @@ function app() {
         this.commissionFailed = true;
       } finally {
         this.commissionBusy = false;
+        this.commissionHeldPhase = null;
         this.stopCommissionPolling();
       }
     },
@@ -3752,7 +3771,8 @@ function app() {
     commissionPhaseClass(phase) {
       const attempt = this.commissionStatus?.attempt;
       const current =
-        attempt?.phase === "failed" ? (this.commissionReachedPhase ?? "searching") : (attempt?.phase ?? "searching");
+        this.commissionHeldPhase ??
+        (attempt?.phase === "failed" ? (this.commissionReachedPhase ?? "searching") : (attempt?.phase ?? "searching"));
       const index = COMMISSION_PHASES.indexOf(phase);
       if (this.commissionFailed) {
         // The phase the attempt had reached is the one that failed.
@@ -3772,7 +3792,7 @@ function app() {
      * usually takes), and only for the two phases long enough that someone
      * watching might otherwise wonder if it is stuck. */
     commissionPhaseHint() {
-      const phase = this.commissionStatus?.attempt?.phase;
+      const phase = this.commissionHeldPhase ?? this.commissionStatus?.attempt?.phase;
       if (phase === "searching") return t("web.devices.commission_hint_searching");
       if (phase === "found" || phase === "connected") return t("web.devices.commission_hint_setup");
       return "";
