@@ -1912,6 +1912,9 @@ web.firmware.col_state:
 web.firmware.install:
   en: "Install"
   de: "Installieren"
+web.firmware.show_progress:
+  en: "Show progress"
+  de: "Fortschritt anzeigen"
 web.firmware.daily_check:
   en: "Check for updates once a day. Updates are never installed automatically."
   de: "Einmal täglich nach Updates suchen. Installiert wird nie automatisch."
