@@ -24,7 +24,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable
-from datetime import datetime, time, timedelta
+from datetime import UTC, datetime, time, timedelta
 from typing import Final, Protocol
 
 logger = logging.getLogger(__name__)
@@ -40,17 +40,30 @@ class _Settings(Protocol):
     def get_daily_check_enabled(self) -> bool: ...
 
 
+def _instant(moment: datetime) -> datetime:
+    """The absolute instant; a naive value is read as the machine's local time."""
+    return moment.astimezone(UTC)
+
+
+def _next_target(now: datetime, at: time) -> datetime:
+    """The next `at` on the local calendar, in `now`'s own time zone, so a DST
+    change moves the offset but not the wall-clock hour. Exactly `at` counts as
+    tomorrow, so a wake-up at 06:00:00 never schedules a second run for it."""
+    target = datetime.combine(now.date(), at, tzinfo=now.tzinfo)
+    if _instant(target) <= _instant(now):
+        target = datetime.combine(now.date() + timedelta(days=1), at, tzinfo=now.tzinfo)
+    return target
+
+
 def seconds_until(now: datetime, at: time) -> float:
-    """Seconds from `now` to the next `at`; exactly `at` counts as tomorrow,
-    so a wake-up at 06:00:00 never schedules a second run for 06:00:00."""
-    target = now.replace(hour=at.hour, minute=at.minute, second=0, microsecond=0)
-    if target <= now:
-        target += timedelta(days=1)
-    return (target - now).total_seconds()
+    """Seconds from `now` to the next `at`."""
+    return (_instant(_next_target(now, at)) - _instant(now)).total_seconds()
 
 
 def _local_now() -> datetime:
-    return datetime.now().astimezone()
+    # Naive on purpose: an `astimezone()` value carries a fixed offset and would
+    # keep it across a DST change. Naive values are read as system local time.
+    return datetime.now()  # noqa: DTZ005 - naive local time, see above
 
 
 async def run_daily(
@@ -62,11 +75,14 @@ async def run_daily(
     at: time = DAILY_CHECK_AT,
 ) -> None:
     while True:
-        await sleep(seconds_until(now(), at))
-        if not settings.get_daily_check_enabled():
-            continue
+        target = _next_target(now(), at)
+        # A wake-up can come early (timer resolution, a wall-clock step), so
+        # sleep until the target has really passed before running.
+        while (remaining := (_instant(target) - _instant(now())).total_seconds()) > 0:
+            await sleep(remaining)
         try:
-            await checker.check_all()
+            if settings.get_daily_check_enabled():
+                await checker.check_all()
         except asyncio.CancelledError:
             raise
         except Exception:
