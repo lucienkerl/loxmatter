@@ -24,7 +24,6 @@ watches the node cache; a restart of loxmatter loses nothing that
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import functools
 import logging
 import time
@@ -188,10 +187,16 @@ class FirmwareJobs:
     async def stop(self) -> None:
         for reread in list(self._rereads):
             reread.cancel()
-        if self._task is not None and not self._task.done():
-            self._task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await self._task
+        task = self._task
+        if task is not None and not task.done():
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                # Only the job's own cancellation; a cancel of `stop` itself
+                # goes on.
+                if not task.cancelled():
+                    raise
 
     async def _guarded(self, device_id: int, job: Callable[[], Awaitable[None]]) -> None:
         """A crash ends the job as failed; a cancellation (shutdown) leaves

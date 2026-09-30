@@ -75,6 +75,15 @@ def test_a_new_check_clears_a_failed_job_but_not_a_running_one(tmp_path):
     assert status is not None and status.job_state == "transferring"
 
 
+def test_a_new_check_clears_an_interrupted_job(tmp_path):
+    # The dialog's retry after an interruption relies on this.
+    store, device_id = _store_with_lamp(tmp_path)
+    store.firmware_status.end_job(device_id, "interrupted", None, "t1")
+    store.firmware_status.record_check(device_id, KAJPLATS_OFFER, "t2")
+    status = store.firmware_status.get(device_id)
+    assert status is not None and status.job_state is None
+
+
 def test_a_job_moves_through_its_states(tmp_path):
     store, device_id = _store_with_lamp(tmp_path)
     store.firmware_status.start_job(device_id, "t1")

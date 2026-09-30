@@ -116,8 +116,9 @@ class FirmwareStatusStore:
         )
         self._db.execute(
             "UPDATE firmware_status SET job_state = NULL, job_progress = NULL, job_error = NULL"
-            f" WHERE device_id = ? AND job_state IN {_ENDED_JOB_STATES}",
-            (device_id,),
+            " WHERE device_id = ? AND job_state IN"
+            f" ({', '.join('?' for _ in _ENDED_JOB_STATES)})",
+            (device_id, *_ENDED_JOB_STATES),
         )
         self._db.commit()
 

@@ -2,6 +2,7 @@
 
 import asyncio
 import sys
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -160,13 +161,36 @@ async def test_a_second_check_all_joins_the_running_one(firmware_api):
     source.hang_check = True
     first = await client.post("/api/firmware/check")
     assert first.status_code == 202
-    while source.checked != [lamp]:
-        await asyncio.sleep(0)
+
+    async def asked() -> None:
+        while source.checked != [lamp]:
+            await asyncio.sleep(0)
+
+    await asyncio.wait_for(asked(), 5)
     second = await client.post("/api/firmware/check")
     assert second.status_code == 202
     assert second.json()["running"] is True
     assert source.checked == [lamp]
     await firmware.checker.stop()
+
+
+@pytest.mark.parametrize(
+    ("url", "shown"),
+    [
+        ("https://example.com/notes", "https://example.com/notes"),
+        ("http://example.com/notes", "http://example.com/notes"),
+        ("javascript:alert(1)", None),
+        ("ftp://example.com/notes", None),
+    ],
+)
+async def test_only_a_web_release_notes_link_is_passed_on(firmware_api, url, shown):
+    # The DCL is third-party data and the dialog renders the link as an href.
+    client, _, source, _, lamp_id, lamp = firmware_api
+    source.offers[lamp] = replace(KAJPLATS_OFFER, release_notes_url=url)
+    await client.post(f"/api/devices/{lamp_id}/firmware/check")
+    data = (await client.get("/api/firmware")).json()
+    row = next(d for d in data["devices"] if d["device_id"] == lamp_id)
+    assert row["offer"]["release_notes_url"] == shown
 
 
 async def test_install_starts_the_job(firmware_api):
@@ -273,6 +297,10 @@ async def test_the_routes_need_a_login(tmp_path, no_invoke, fake_runtime, fake_o
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         assert (await client.get("/api/firmware")).status_code == 401
+        install = await client.post(
+            "/api/devices/1/firmware/update", json={"software_version": 16908288}
+        )
+        assert install.status_code == 401
     store.close()
 
 

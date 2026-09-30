@@ -1,3 +1,19 @@
+# loxmatter - connects Matter devices to a Loxone Miniserver.
+# Copyright (C) 2026 Lucien Kerl
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 """Asking for firmware offers (design 2026-09-30, section 6.1).
 
 One code path for the daily run, the overview button and the dialog button.
@@ -7,7 +23,6 @@ covers a double click and a second browser."""
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -73,10 +88,16 @@ class FirmwareChecker:
 
     async def stop(self) -> None:
         """Ends a running check and waits for it (shutdown)."""
-        if self._task is not None and not self._task.done():
-            self._task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await self._task
+        task = self._task
+        if task is not None and not task.done():
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                # Only the check's own cancellation; a cancel of `stop`
+                # itself goes on.
+                if not task.cancelled():
+                    raise
 
     async def check_one(self, device_id: int) -> None:
         source = self._supported_source()

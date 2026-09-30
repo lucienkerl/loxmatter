@@ -43,6 +43,14 @@ _STATES_WITH_OFFER = frozenset(
 )
 
 
+def _web_link(url: str | None) -> str | None:
+    """The release notes link only when it is a web address: it comes from
+    the DCL, third-party data, and the dialog renders it as an `href`."""
+    if url is not None and url.lower().startswith(("http://", "https://")):
+        return url
+    return None
+
+
 class FirmwareService:
     def __init__(
         self,
@@ -119,7 +127,7 @@ class FirmwareService:
             else FirmwareOfferOut(
                 version=offer.software_version,
                 version_string=offer.software_version_string,
-                release_notes_url=offer.release_notes_url,
+                release_notes_url=_web_link(offer.release_notes_url),
                 source=offer.source,
             ),
             checked_at=None if status is None else status.checked_at,

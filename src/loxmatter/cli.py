@@ -868,7 +868,12 @@ async def _run(
             typer.echo(i18n.t("cli.run.echo_commands_backfilled", count=gained))
         # Design 2026-09-30, 7.4: a transfer outlives a restart of loxmatter
         # (matter-server runs it); pick it up again, and start the daily check.
-        firmware.jobs.resume_all()
+        try:
+            firmware.jobs.resume_all()
+        except Exception:
+            # A store error here must not take the bridge down; the rows
+            # stay active and the next start tries again.
+            logger.exception("Resuming the firmware jobs failed")
         firmware_schedule_task = asyncio.ensure_future(
             run_daily(firmware.checker, store.firmware_settings)
         )

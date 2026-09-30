@@ -614,7 +614,7 @@ class BridgeMatterClient:
     # on 2026-09-30: the old python-matter-server (schema 11) answers
     # `check_node_update` as well.
 
-    _FIRMWARE_REFRESH_PATHS: Final = ["0/42/2", "0/42/3", "0/40/9", "0/40/10"]
+    _FIRMWARE_REFRESH_PATHS: Final = ("0/42/2", "0/42/3", "0/40/9", "0/40/10")
 
     def firmware_supported(self) -> bool:
         info = getattr(self._upstream, "server_info", None)
