@@ -598,6 +598,18 @@ api.firmware.job_no_new_version:
 api.firmware.job_gave_up:
   en: "The update did not finish within three hours and was abandoned."
   de: "Das Update wurde nicht innerhalb von drei Stunden abgeschlossen und abgebrochen."
+api.firmware.fail_unsupported:
+  en: "Firmware updates need a matter-server with API schema 10 or newer, connected. The current one does not offer them."
+  de: "Firmware-Updates brauchen einen verbundenen matter-server mit API-Schema 10 oder neuer. Der aktuelle bietet sie nicht an."
+api.firmware.fail_busy:
+  en: "An update is already running on {device}. Wait until it has finished."
+  de: "Auf {device} läuft bereits ein Update. Warten Sie, bis es abgeschlossen ist."
+api.firmware.fail_offer_changed:
+  en: "This update is no longer offered. Check for updates again."
+  de: "Dieses Update wird nicht mehr angeboten. Prüfen Sie erneut auf Updates."
+api.firmware.fail_offline:
+  en: "The device is not reachable right now, so the update cannot start."
+  de: "Das Gerät ist gerade nicht erreichbar, deshalb kann das Update nicht starten."
 
 # The errors of the pairing routes (design 3.4). Each one says what the
 # user's next move is, because each sends them somewhere different: to the
