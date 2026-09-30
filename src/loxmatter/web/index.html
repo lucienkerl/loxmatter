@@ -2664,6 +2664,8 @@
                    @change="setFirmwareDailyCheck($event.target.checked, $event.target)" />
             <span x-text="t('web.firmware.daily_check')"></span>
           </label>
+          <p class="hint firmware-next-check" x-show="firmware?.next_check_at" x-cloak
+             x-text="firmware?.next_check_at ? t('web.firmware.next_check', { when: formatTimestamp(firmware.next_check_at) }) : ''"></p>
         </div>
 
         <div class="card">

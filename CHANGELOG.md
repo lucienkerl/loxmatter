@@ -19,8 +19,8 @@ people who don't know the code.
   button that opens a dialog asking first. After a failed or interrupted
   update, the dialog offers the update again. A device tile shows an
   available update and the progress of a running one. The bridge checks once
-  a day at 06:00 and never installs on its own; the daily check can be
-  switched off in the card.
+  a day and shows when the next check runs; it never installs on its own,
+  and the daily check can be switched off in the card.
 - **The Matter version of every device** is shown in the update list and in
   the device's expert settings.
 - **Change the password in the WebUI.** Settings has a new "Password" card.

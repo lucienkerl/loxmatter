@@ -21,6 +21,9 @@ routes; only `cli` starts the schedule and resumes jobs."""
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from datetime import datetime
+
 from loxmatter.api.models import (
     FirmwareCheckOut,
     FirmwareDeviceOut,
@@ -30,6 +33,7 @@ from loxmatter.api.models import (
 from loxmatter.firmware import states
 from loxmatter.firmware.check import FirmwareChecker
 from loxmatter.firmware.job import FirmwareJobs
+from loxmatter.firmware.schedule import local_now, next_check_at
 from loxmatter.model.store import Store, StoredDevice
 from loxmatter.sources import SourceNotConfiguredError, Sources
 from loxmatter.sources.firmware import FirmwareSource
@@ -47,8 +51,10 @@ class FirmwareService:
         *,
         checker: FirmwareChecker | None = None,
         jobs: FirmwareJobs | None = None,
+        local_clock: Callable[[], datetime] = local_now,
     ) -> None:
         self._store = store
+        self._local_clock = local_clock
         self._sources = sources
         self.checker = checker or FirmwareChecker(store, self.source_for)
         self.jobs = jobs or FirmwareJobs(store, self.source_for)
@@ -123,9 +129,13 @@ class FirmwareService:
 
     def overview(self) -> FirmwareOverviewOut:
         progress = self.checker.progress
+        daily = self._store.firmware_settings.get_daily_check_enabled()
         return FirmwareOverviewOut(
             supported=self.supported(),
-            daily_check_enabled=self._store.firmware_settings.get_daily_check_enabled(),
+            daily_check_enabled=daily,
+            # The scheduler's own clock and target: the container may run in
+            # UTC, so naming a fixed hour in the UI would be wrong.
+            next_check_at=next_check_at(self._local_clock()) if daily else None,
             last_checked_at=self._store.firmware_status.last_checked_at(),
             check=FirmwareCheckOut(
                 running=progress.running, checked=progress.checked, total=progress.total

@@ -759,6 +759,8 @@ class FirmwareOverviewOut(BaseModel):
 
     supported: bool
     daily_check_enabled: bool
+    # UTC; None while the daily check is switched off.
+    next_check_at: str | None
     last_checked_at: str | None
     check: FirmwareCheckOut
     updating_device_id: int | None

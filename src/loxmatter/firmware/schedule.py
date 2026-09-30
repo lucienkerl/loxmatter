@@ -16,8 +16,10 @@
 
 """The daily firmware check at 06:00 local time (design 2026-09-30, 6.2).
 
-It only ever checks; installing always takes a click. A run missed while
-the bridge was down is not caught up."""
+"Local" is the container's time zone, which is UTC unless the deployment
+sets one; the overview therefore shows the next run as an instant rather
+than naming an hour. It only ever checks; installing always takes a click.
+A run missed while the bridge was down is not caught up."""
 
 from __future__ import annotations
 
@@ -60,7 +62,12 @@ def seconds_until(now: datetime, at: time) -> float:
     return (_instant(_next_target(now, at)) - _instant(now)).total_seconds()
 
 
-def _local_now() -> datetime:
+def next_check_at(now: datetime, at: time = DAILY_CHECK_AT) -> str:
+    """The instant `run_daily` will next wake up at, as a UTC ISO string."""
+    return _instant(_next_target(now, at)).isoformat()
+
+
+def local_now() -> datetime:
     # Naive on purpose: an `astimezone()` value carries a fixed offset and would
     # keep it across a DST change. Naive values are read as system local time.
     return datetime.now()  # noqa: DTZ005 - naive local time, see above
@@ -70,7 +77,7 @@ async def run_daily(
     checker: _Checker,
     settings: _Settings,
     *,
-    now: Callable[[], datetime] = _local_now,
+    now: Callable[[], datetime] = local_now,
     sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
     at: time = DAILY_CHECK_AT,
 ) -> None:

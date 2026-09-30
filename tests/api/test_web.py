@@ -16650,6 +16650,10 @@ async def test_the_firmware_parts_are_delivered(api):
         "t('web.devices.expert_matter_version')",
     ):
         assert needle in html
+    # The next daily check, only while one is scheduled (a null hides it).
+    next_check = html[html.index("t('web.firmware.next_check'") - 300 :][:400]
+    assert 'x-show="firmware?.next_check_at"' in next_check
+    assert "formatTimestamp(firmware.next_check_at)" in next_check
     assert 'this.request("GET", "/api/firmware")' in script
     # Every install goes through the dialog's own button; the pill, the
     # kebab item and the table button only open the dialog.
@@ -16663,3 +16667,38 @@ async def test_the_firmware_parts_are_delivered(api):
         )
     ]
     assert "openFirmwareModal(device)" in kebab
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+async def test_the_next_firmware_check_line_follows_next_check_at(api):
+    """The line under the daily-check box, through its SERVED bindings:
+    hidden before the overview loaded and while `next_check_at` is null
+    (daily check off), shown with the formatted instant otherwise.
+
+    Fault to prove it: bind `x-show` to `firmware?.daily_check_enabled`, or
+    drop the `?.` so a not-yet-loaded overview throws."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+    line = next(
+        attributes
+        for tag, attributes, _ancestors in _served_elements(page)
+        if tag == "p" and "web.firmware.next_check" in attributes.get("x-text", "")
+    )
+    values = _app_state(
+        _BINDINGS_JS + "const out = {};"
+        "state.firmware = null;"
+        f"out.hidden_unloaded = Boolean(run({json.dumps(line['x-show'])}));"
+        "state.firmware = { daily_check_enabled: true, next_check_at: null };"
+        f"out.hidden_null = Boolean(run({json.dumps(line['x-show'])}));"
+        "state.firmware.next_check_at = '2026-10-01T06:00:00+00:00';"
+        f"out.shown = Boolean(run({json.dumps(line['x-show'])}));"
+        f"out.text = run({json.dumps(line['x-text'])});"
+        "out.expected = 'Next check: ' + state.formatTimestamp('2026-10-01T06:00:00+00:00');"
+        "console.log(JSON.stringify(out));",
+        translations={"web.firmware.next_check": "Next check: {when}"},
+    )
+    assert values["hidden_unloaded"] is False
+    assert values["hidden_null"] is False
+    assert values["shown"] is True
+    assert values["text"] == values["expected"]
+    assert values["text"].startswith("Next check: ") and "2026" in values["text"]

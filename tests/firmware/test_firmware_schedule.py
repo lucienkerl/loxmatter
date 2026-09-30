@@ -1,12 +1,12 @@
 """The daily firmware check (design 2026-09-30, section 6.2)."""
 
 import asyncio
-from datetime import datetime, time, timedelta, timezone
+from datetime import UTC, datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 import pytest
 
-from loxmatter.firmware.schedule import run_daily, seconds_until
+from loxmatter.firmware.schedule import next_check_at, run_daily, seconds_until
 
 BERLIN = ZoneInfo("Europe/Berlin")
 
@@ -35,6 +35,18 @@ def test_target_stays_at_six_wall_clock_across_the_spring_change():
     # 2026-03-29 is the spring-forward day: the day is 23 hours long, so 07:00 to 06:00 takes 22 hours.
     now = datetime(2026, 3, 28, 7, 0, tzinfo=BERLIN)
     assert seconds_until(now, time(6, 0)) == 22 * 3600
+
+
+def test_next_check_at_is_the_next_target_in_utc():
+    # 06:00 in Berlin summer time is 04:00 UTC.
+    assert next_check_at(datetime(2026, 9, 30, 7, 0, tzinfo=BERLIN)) == "2026-10-01T04:00:00+00:00"
+
+
+def test_next_check_at_a_naive_now_is_read_as_local_time():
+    # Naive on purpose: the scheduler's default clock returns naive local time.
+    now = datetime(2026, 9, 30, 5, 0)  # noqa: DTZ001
+    expected = datetime(2026, 9, 30, 6, 0).astimezone(UTC).isoformat()
+    assert next_check_at(now) == expected
 
 
 class _Stop(Exception):

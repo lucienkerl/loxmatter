@@ -1913,8 +1913,11 @@ web.firmware.install:
   en: "Install"
   de: "Installieren"
 web.firmware.daily_check:
-  en: "Check for updates every day at 06:00. Updates are never installed automatically."
-  de: "Täglich um 06:00 nach Updates suchen. Installiert wird nie automatisch."
+  en: "Check for updates once a day. Updates are never installed automatically."
+  de: "Einmal täglich nach Updates suchen. Installiert wird nie automatisch."
+web.firmware.next_check:
+  en: "Next check: {when}"
+  de: "Nächste Prüfung: {when}"
 web.firmware.state_available:
   en: "Update available"
   de: "Update verfügbar"

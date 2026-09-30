@@ -135,14 +135,20 @@ daily run, the overview button, and the dialog button all call these.
 
 ### 6.2 The daily run
 
-- At 06:00 in the bridge's local time, when enabled.
+- At 06:00 in the bridge's local time, when enabled. That is the
+  container's time zone, which is UTC unless the deployment sets one, so
+  06:00 can be 07:00 or 08:00 in Germany. The UI therefore names no hour:
+  the overview carries `next_check_at` (UTC, from the scheduler's own
+  target logic, null while the daily check is off) and the card shows it
+  under the switch in the browser's local time.
 - The switch lives in the existing `setting` table under
   `firmware.daily_check_enabled`, read and written through a small
   `FirmwareSettingsStore` following `update_settings_store.py`. Missing
   means enabled.
 - The scheduler takes its clock as a parameter so tests can drive it.
 - A run missed because the bridge was down is not caught up; the next one
-  is tomorrow at 06:00. The overview shows when the last check ran.
+  is the next day's. The overview shows when the last check ran and when
+  the next one runs.
 
 ## 7. Installing
 
@@ -273,9 +279,10 @@ session; the text below is what counts. In words:
   device restarts at the end and Loxone gets no values for about a minute;
   if its signals change, re-export the Loxone template. Buttons "Check
   again", "Cancel", "Install update".
-- **Dialog, during.** The step list of the bridge update: image fetched,
-  device accepted, transfer with a progress bar and percent, device
-  restarts, new version confirmed. It can be closed; the install goes on.
+- **Dialog, during.** A step list like the bridge update's, with four
+  steps: device accepted, transfer with a progress bar and percent, device
+  restarts, new version confirmed. There is no "image fetched" step: nothing
+  loxmatter can read marks the moment matter-server has the image. It can be closed; the install goes on.
 - **System → "Device updates" card.** Last check time, a "Check for updates
   now" button (with "Checking 4 of 11 …" while running), filter chips
   (all / update available / no source), a table of device, installed,

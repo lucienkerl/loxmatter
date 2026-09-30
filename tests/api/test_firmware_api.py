@@ -2,6 +2,7 @@
 
 import asyncio
 import sys
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import httpx2 as httpx
@@ -252,7 +253,16 @@ async def test_the_daily_check_can_be_switched_off(firmware_api):
     response = await client.put("/api/firmware/settings", json={"daily_check_enabled": False})
     assert response.status_code == 200
     assert response.json()["daily_check_enabled"] is False
+    assert response.json()["next_check_at"] is None
     assert store.firmware_settings.get_daily_check_enabled() is False
+
+
+async def test_the_overview_names_the_next_daily_check(firmware_api):
+    client, *_ = firmware_api
+    next_check_at = (await client.get("/api/firmware")).json()["next_check_at"]
+    moment = datetime.fromisoformat(next_check_at)
+    assert moment.utcoffset() == timedelta(0)
+    assert timedelta(0) < moment - datetime.now(UTC) <= timedelta(hours=25)
 
 
 async def test_the_routes_need_a_login(tmp_path, no_invoke, fake_runtime, fake_otbr):
