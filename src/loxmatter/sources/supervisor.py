@@ -81,6 +81,7 @@ async def attach(source: DeviceSource, store: Store, runtime: Runtime) -> int:
     store.backfill_device_types(snapshots)
     store.backfill_network_features(snapshots)
     store.backfill_basic_information(snapshots)
+    store.backfill_matter_spec_version(snapshots)
     gained: int = store.backfill_commands(snapshots)
     await runtime.resend_all()
     return gained

@@ -134,6 +134,9 @@ class DeviceExpertOut(BaseModel):
     vendor: str | None
     model: str | None
     firmware: str | None
+    # `SpecificationVersion` (0/40/21) as a person reads it; `None` for a
+    # non-Matter device (design 2026-09-30, 9.3).
+    matter_version: str | None = None
     serial: str | None
     endpoints: list[EndpointClustersOut]
 
@@ -711,3 +714,62 @@ class ResendIntervalIn(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     interval_seconds: float = Field(gt=0)
+
+
+class FirmwareOfferOut(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    version: int
+    version_string: str
+    release_notes_url: str | None
+    source: str
+
+
+class FirmwareDeviceOut(BaseModel):
+    """One row of the update overview (design 2026-09-30, 9.1)."""
+
+    model_config = ConfigDict(frozen=True)
+
+    device_id: int
+    label: str
+    room: str | None
+    technology: str
+    matter_version: str | None
+    installed: str | None
+    # `None` when the source cannot tell (a Zigbee device in stage 1).
+    online: bool | None
+    state: str
+    progress: int | None
+    offer: FirmwareOfferOut | None
+    checked_at: str | None
+    check_error: str | None
+    job_error: str | None
+
+
+class FirmwareCheckOut(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    running: bool
+    checked: int
+    total: int
+
+
+class FirmwareOverviewOut(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    supported: bool
+    daily_check_enabled: bool
+    # UTC; None while the daily check is switched off.
+    next_check_at: str | None
+    last_checked_at: str | None
+    check: FirmwareCheckOut
+    updating_device_id: int | None
+    devices: list[FirmwareDeviceOut]
+
+
+class FirmwareInstallIn(BaseModel):
+    software_version: int
+
+
+class FirmwareSettingsIn(BaseModel):
+    daily_check_enabled: bool

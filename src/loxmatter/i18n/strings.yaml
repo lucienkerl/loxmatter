@@ -589,6 +589,31 @@ api.errors.zigbee_not_configured:
   en: "No Zigbee stick is set up in this installation. Pick one under Settings first."
   de: "In dieser Installation ist kein Zigbee-Stick eingerichtet. Wählen Sie zuerst unter Einstellungen einen aus."
 
+api.firmware.check_timeout:
+  en: "The device or the update directory did not answer within 60 seconds."
+  de: "Das Gerät oder das Update-Verzeichnis hat nicht innerhalb von 60 Sekunden geantwortet."
+api.firmware.job_no_new_version:
+  en: "The device went back to idle without reporting the new version. Try again later."
+  de: "Das Gerät ist in den Ruhezustand zurückgekehrt, ohne die neue Version zu melden. Versuchen Sie es später erneut."
+api.firmware.job_not_started:
+  en: "The device did not start the update. Try again later."
+  de: "Das Gerät hat das Update nicht begonnen. Versuchen Sie es später erneut."
+api.firmware.job_gave_up:
+  en: "The update did not finish within three hours and was abandoned."
+  de: "Das Update wurde nicht innerhalb von drei Stunden abgeschlossen und abgebrochen."
+api.firmware.fail_unsupported:
+  en: "Firmware updates need a matter-server with API schema 10 or newer, connected. The current one does not offer them."
+  de: "Firmware-Updates brauchen einen verbundenen matter-server mit API-Schema 10 oder neuer. Der aktuelle bietet sie nicht an."
+api.firmware.fail_busy:
+  en: "An update is already running on {device}. Wait until it has finished."
+  de: "Auf {device} läuft bereits ein Update. Warten Sie, bis es abgeschlossen ist."
+api.firmware.fail_offer_changed:
+  en: "This update is no longer offered. Check for updates again."
+  de: "Dieses Update wird nicht mehr angeboten. Prüfen Sie erneut auf Updates."
+api.firmware.fail_offline:
+  en: "The device is not reachable right now, so the update cannot start."
+  de: "Das Gerät ist gerade nicht erreichbar, deshalb kann das Update nicht starten."
+
 # The errors of the pairing routes (design 3.4). Each one says what the
 # user's next move is, because each sends them somewhere different: to the
 # radios card, back to the list, or simply to wait a moment.
@@ -1773,6 +1798,9 @@ web.devices.menu_signals:
 web.devices.menu_expert:
   en: "Expert settings…"
   de: "Experteneinstellungen…"
+web.devices.menu_firmware:
+  en: "Software update…"
+  de: "Software-Update…"
 
 # --- Expert settings modal (device-expert-settings design, 2026-09-13) ---
 web.devices.expert_heading:
@@ -1796,6 +1824,9 @@ web.devices.expert_model:
 web.devices.expert_firmware:
   en: "Firmware"
   de: "Firmware"
+web.devices.expert_matter_version:
+  en: "Matter version"
+  de: "Matter-Version"
 web.devices.expert_serial:
   en: "Serial number"
   de: "Seriennummer"
@@ -1829,6 +1860,181 @@ web.devices.expert_signal_strength:
 web.devices.expert_ip_address:
   en: "IP address"
   de: "IP-Adresse"
+
+# --- Firmware updates (device-software-update design, 2026-09-30) ---
+# `source_*` keys use underscores: the source value the server sends
+# (`main-net-dcl`) is mapped to its key in app.js (`firmwareSourceText`).
+web.firmware.matter_version_older:
+  en: "1.2 or older"
+  de: "1.2 oder älter"
+web.firmware.card_heading:
+  en: "Device updates"
+  de: "Geräte-Updates"
+web.firmware.last_checked:
+  en: "Last checked {when}"
+  de: "Zuletzt geprüft {when}"
+web.firmware.never_checked:
+  en: "Not checked yet"
+  de: "Noch nicht geprüft"
+web.firmware.check_now:
+  en: "Check for updates now"
+  de: "Jetzt auf Updates prüfen"
+web.firmware.checking:
+  en: "Checking {checked} of {total} …"
+  de: "Prüfe {checked} von {total} …"
+web.firmware.unsupported:
+  en: "Firmware updates are not available right now: matter-server is not connected, or it is too old (API schema 10 or newer needed)."
+  de: "Firmware-Updates sind gerade nicht verfügbar: matter-server ist nicht verbunden oder zu alt (API-Schema 10 oder neuer nötig)."
+web.firmware.filter_all:
+  en: "All {count}"
+  de: "Alle {count}"
+web.firmware.filter_available:
+  en: "Update available {count}"
+  de: "Update verfügbar {count}"
+web.firmware.filter_no_source:
+  en: "No update source {count}"
+  de: "Ohne Update-Quelle {count}"
+web.firmware.col_device:
+  en: "Device"
+  de: "Gerät"
+web.firmware.col_matter:
+  en: "Matter"
+  de: "Matter"
+web.firmware.col_installed:
+  en: "Installed"
+  de: "Installiert"
+web.firmware.col_available:
+  en: "Available"
+  de: "Verfügbar"
+web.firmware.col_state:
+  en: "Status"
+  de: "Status"
+web.firmware.install:
+  en: "Install"
+  de: "Installieren"
+web.firmware.show_progress:
+  en: "Show progress"
+  de: "Fortschritt anzeigen"
+web.firmware.daily_check:
+  en: "Check for updates once a day. Updates are never installed automatically."
+  de: "Einmal täglich nach Updates suchen. Installiert wird nie automatisch."
+web.firmware.next_check:
+  en: "Next check: {when}"
+  de: "Nächste Prüfung: {when}"
+web.firmware.state_available:
+  en: "Update available"
+  de: "Update verfügbar"
+web.firmware.state_none_found:
+  en: "No update found"
+  de: "Kein Update gefunden"
+web.firmware.state_no_source:
+  en: "No update source"
+  de: "Keine Update-Quelle"
+web.firmware.state_no_source_hint:
+  en: "The manufacturer publishes no updates over Matter. Use its app or the device's own web page."
+  de: "Der Hersteller veröffentlicht keine Updates über Matter. Nutzen Sie seine App oder die Web-Oberfläche des Geräts."
+web.firmware.state_unchecked:
+  en: "Not checked"
+  de: "Nicht geprüft"
+web.firmware.state_check_failed:
+  en: "Last check failed"
+  de: "Letzte Prüfung fehlgeschlagen"
+web.firmware.state_transferring:
+  en: "Updating · {progress} %"
+  de: "Wird übertragen · {progress} %"
+web.firmware.state_transferring_no_progress:
+  en: "Updating …"
+  de: "Wird übertragen …"
+web.firmware.state_applying:
+  en: "Applying"
+  de: "Wird angewendet"
+web.firmware.state_stalled:
+  en: "No progress for 15 minutes"
+  de: "Seit 15 Minuten kein Fortschritt"
+web.firmware.state_failed:
+  en: "Update failed"
+  de: "Update fehlgeschlagen"
+web.firmware.state_interrupted:
+  en: "Update interrupted"
+  de: "Update unterbrochen"
+web.firmware.unreachable:
+  en: "unreachable"
+  de: "nicht erreichbar"
+web.firmware.pill_available:
+  en: "Update available: {from} → {to}"
+  de: "Update verfügbar: {from} → {to}"
+web.firmware.dialog_heading:
+  en: "Software update · {device}"
+  de: "Software-Update · {device}"
+web.firmware.dialog_installed:
+  en: "Installed"
+  de: "Installiert"
+web.firmware.dialog_available:
+  en: "Available"
+  de: "Verfügbar"
+web.firmware.dialog_source:
+  en: "Source"
+  de: "Quelle"
+web.firmware.dialog_checked:
+  en: "Checked"
+  de: "Geprüft"
+web.firmware.source_main_net_dcl:
+  en: "CSA directory (DCL)"
+  de: "CSA-Verzeichnis (DCL)"
+web.firmware.source_test_net_dcl:
+  en: "CSA test directory"
+  de: "CSA-Testverzeichnis"
+web.firmware.source_local:
+  en: "Local file"
+  de: "Lokale Datei"
+web.firmware.release_notes:
+  en: "Manufacturer's release notes"
+  de: "Versionshinweise des Herstellers"
+web.firmware.before_heading:
+  en: "Before you start"
+  de: "Bevor Sie starten"
+web.firmware.before_duration:
+  en: "The transfer takes a while, over Thread often 15 to 45 minutes. The device stays usable meanwhile."
+  de: "Die Übertragung dauert eine Weile, über Thread oft 15 bis 45 Minuten. Das Gerät bleibt in der Zeit bedienbar."
+web.firmware.before_restart:
+  en: "At the end the device restarts and is unreachable for about a minute. Loxone receives no values from it during that time."
+  de: "Zum Schluss startet das Gerät neu und ist etwa eine Minute nicht erreichbar. Loxone erhält in der Zeit keine Werte von ihm."
+web.firmware.before_export:
+  en: "If its signals change, the tile shows \"Changed since export\". Then export the Loxone template again."
+  de: "Ändern sich seine Signale, zeigt die Kachel „Geändert seit Export“. Exportieren Sie dann die Loxone-Vorlage neu."
+web.firmware.check_again:
+  en: "Check again"
+  de: "Erneut prüfen"
+web.firmware.cancel:
+  en: "Cancel"
+  de: "Abbrechen"
+web.firmware.install_update:
+  en: "Install update"
+  de: "Update installieren"
+web.firmware.close:
+  en: "Close"
+  de: "Schließen"
+web.firmware.step_accepted:
+  en: "Device accepted the update"
+  de: "Gerät hat das Update angenommen"
+web.firmware.step_transfer:
+  en: "Transfer to the device"
+  de: "Übertragung ans Gerät"
+web.firmware.step_restart:
+  en: "Device restarts with the new version"
+  de: "Gerät startet mit der neuen Version"
+web.firmware.step_confirmed:
+  en: "New version confirmed"
+  de: "Neue Version bestätigt"
+web.firmware.running_hint:
+  en: "You can close this dialog. The update continues in the bridge; the tile shows its progress."
+  de: "Sie können diesen Dialog schließen. Das Update läuft in der Brücke weiter, die Kachel zeigt den Stand."
+web.firmware.done:
+  en: "Updated to {version}."
+  de: "Auf {version} aktualisiert."
+web.firmware.action_error:
+  en: "The action failed: {message}"
+  de: "Die Aktion ist fehlgeschlagen: {message}"
 
 # --- control modal: sliders instead of bare number fields for
 # value-carrying commands. `control_brightness` deliberately does NOT

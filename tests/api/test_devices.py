@@ -165,6 +165,13 @@ async def test_expert_reads_vendor_model_and_firmware_from_basic_information(api
     assert data["serial"] is None
 
 
+async def test_expert_shows_the_matter_version(api):
+    """The GRILLPLATS fixture carries 0/40/21 = 0x01040000 (design 2026-09-30, 9.3)."""
+    client, _, device_id, _ = api
+    response = await client.get(f"/api/devices/{device_id}/expert")
+    assert response.json()["matter_version"] == "1.4"
+
+
 async def test_expert_endpoints_list_matter_clusters_by_endpoint(api):
     """Endpoint 0 of the plug fixture carries clusters
     {29, 31, 40, 42, 48, 49, 51, 53, 60, 62, 63} (11 total), endpoint 1
@@ -211,6 +218,7 @@ async def test_expert_labels_a_zigbee_devices_address_as_its_ieee_address(zigbee
     assert data["model"] == "TRADFRI bulb"
     assert data["firmware"] is None
     assert data["serial"] is None
+    assert data["matter_version"] is None
 
 
 async def test_expert_yields_404_for_an_unknown_device(api):
