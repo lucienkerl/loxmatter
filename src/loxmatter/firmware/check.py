@@ -7,7 +7,6 @@ covers a double click and a second browser."""
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -61,6 +60,7 @@ class FirmwareChecker:
         """Starts a check of every device in the background, or joins the
         running one. Returns at once."""
         if self._task is None or self._task.done():
+            self._checked = self._total = 0
             self._task = asyncio.ensure_future(self._run_all())
         return self.progress
 
@@ -94,7 +94,12 @@ class FirmwareChecker:
         devices = [d for d in self._store.devices() if d.technology == source.technology]
         self._checked, self._total = 0, len(devices)
         for device in devices:
-            await self._check_device(source, device)
+            try:
+                await self._check_device(source, device)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("firmware check for device %s failed", device.id)
             self._checked += 1
 
     async def _check_device(self, source: FirmwareSource, device: StoredDevice) -> None:
@@ -107,10 +112,14 @@ class FirmwareChecker:
             raise
         except Exception as exc:  # noqa: BLE001 - one device's failure is that device's answer
             logger.info("firmware check for device %s failed: %s", device.id, exc)
-            with contextlib.suppress(Exception):
+            try:
                 self._store.firmware_status.record_check_error(
                     device.id, describe_failure(exc), self._now()
                 )
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("could not record the check error for device %s", device.id)
             return
         if (
             offer is not None

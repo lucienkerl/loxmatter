@@ -352,9 +352,6 @@ api.errors.group_category_mismatch:
 api.errors.group_duplicate_member:
   en: "a group's member list cannot contain the same device twice"
   de: "die Mitgliederliste einer Gruppe darf ein Gerät nicht doppelt enthalten"
-api.firmware.check_timeout:
-  en: "The device or the update directory did not answer within 60 seconds."
-  de: "Das Gerät oder das Update-Verzeichnis hat nicht innerhalb von 60 Sekunden geantwortet."
 api.errors.unknown_command:
   # The placeholder is deliberately not called "key" - i18n.t()'s own
   # first parameter is named that, and "key=..." as a keyword argument
@@ -591,6 +588,10 @@ api.errors.zigbee_unknown_device:
 api.errors.zigbee_not_configured:
   en: "No Zigbee stick is set up in this installation. Pick one under Settings first."
   de: "In dieser Installation ist kein Zigbee-Stick eingerichtet. Wählen Sie zuerst unter Einstellungen einen aus."
+
+api.firmware.check_timeout:
+  en: "The device or the update directory did not answer within 60 seconds."
+  de: "Das Gerät oder das Update-Verzeichnis hat nicht innerhalb von 60 Sekunden geantwortet."
 
 # The errors of the pairing routes (design 3.4). Each one says what the
 # user's next move is, because each sends them somewhere different: to the

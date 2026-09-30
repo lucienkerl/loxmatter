@@ -116,3 +116,22 @@ async def test_the_bilresa_offer_is_stored_with_its_window(tmp_path):
     source.offers[button] = BILRESA_OFFER
     await checker.check_all()
     assert store.firmware_status.get(button_id).offer.min_applicable == 17301509
+
+
+async def test_a_failure_outside_check_update_does_not_stop_the_run(tmp_path):
+    store, source, checker, (lamp_id, lamp), (button_id, button) = _setup(tmp_path)
+    source.offers[button] = BILRESA_OFFER
+    original = source.firmware_facts
+
+    def facts(address):
+        if address == lamp:
+            raise RuntimeError("facts broke")
+        return original(address)
+
+    source.firmware_facts = facts
+
+    await checker.check_all()
+
+    assert store.firmware_status.get(button_id).offer == BILRESA_OFFER
+    assert store.firmware_status.get(lamp_id) is None
+    assert (checker.progress.checked, checker.progress.total) == (2, 2)
