@@ -952,7 +952,12 @@ async def _run(
                     raise
             except Exception:
                 logger.exception("The daily firmware check ended with an error")
-        firmware.checker.cancel()
+        try:
+            await firmware.checker.stop()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("The firmware check could not be stopped cleanly on shutdown")
         try:
             # A running transfer is left to matter-server; its row stays
             # active so the next start resumes following it (design 7.4).

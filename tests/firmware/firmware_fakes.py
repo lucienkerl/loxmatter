@@ -59,6 +59,9 @@ class FakeFirmwareSource:
         return self.supported
 
     def firmware_facts(self, address: str) -> FirmwareFacts | None:
+        # The real client reads a Matter node id with `int(address)`; a
+        # Zigbee IEEE address raises there too.
+        int(address)
         return self.facts.get(address)
 
     async def refresh_firmware_facts(self, address: str) -> None:

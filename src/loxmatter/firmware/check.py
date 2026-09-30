@@ -7,6 +7,7 @@ covers a double click and a second browser."""
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -70,15 +71,22 @@ class FirmwareChecker:
         assert self._task is not None
         await asyncio.shield(self._task)
 
-    def cancel(self) -> None:
-        if self._task is not None:
+    async def stop(self) -> None:
+        """Ends a running check and waits for it (shutdown)."""
+        if self._task is not None and not self._task.done():
             self._task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._task
 
     async def check_one(self, device_id: int) -> None:
         source = self._supported_source()
         if source is None:
             return
-        await self._check_device(source, self._store.device(device_id))
+        device = self._store.device(device_id)
+        # Only the source's own devices: a Zigbee address is no Matter node id.
+        if device.technology != source.technology:
+            return
+        await self._check_device(source, device)
 
     def _supported_source(self) -> FirmwareSource | None:
         source = self._source_for()

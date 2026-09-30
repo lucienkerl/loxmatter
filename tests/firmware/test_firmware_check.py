@@ -92,7 +92,7 @@ async def test_a_second_start_joins_the_running_check(tmp_path):
     assert first.running and second.running
     await asyncio.sleep(0)
     assert len(source.checked) == 1  # only one run is asking
-    checker.cancel()
+    await checker.stop()
 
 
 async def test_check_one_asks_only_that_device(tmp_path):

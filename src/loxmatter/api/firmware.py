@@ -80,7 +80,11 @@ def build_firmware_router(store: Store, firmware: FirmwareService) -> APIRouter:
                 status_code=409, detail=i18n.t("api.firmware.fail_unsupported")
             ) from exc
         except FirmwareBusyError as exc:
-            busy_label = _device(exc.device_id).label
+            try:
+                busy_label = store.device(exc.device_id).label
+            except UnknownDeviceError:
+                # Removed while its update runs: the id is all that is left.
+                busy_label = str(exc.device_id)
             raise HTTPException(
                 status_code=409, detail=i18n.t("api.firmware.fail_busy", device=busy_label)
             ) from exc

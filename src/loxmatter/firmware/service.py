@@ -34,6 +34,10 @@ from loxmatter.model.store import Store, StoredDevice
 from loxmatter.sources import SourceNotConfiguredError, Sources
 from loxmatter.sources.firmware import FirmwareSource
 
+_STATES_WITH_OFFER = frozenset(
+    {states.AVAILABLE, states.CHECK_FAILED, *states.ACTIVE_JOB_STATES, *states.ENDED_JOB_STATES}
+)
+
 
 class FirmwareService:
     def __init__(
@@ -64,14 +68,23 @@ class FirmwareService:
 
     def device_out(self, device: StoredDevice) -> FirmwareDeviceOut:
         source = self.source_for()
+        own_device = source is not None and device.technology == source.technology
         facts = None
-        if source is not None and source.connected and device.technology == source.technology:
+        if source is not None and own_device and source.connected:
             facts = source.firmware_facts(device.address)
         status = self._store.firmware_status.get(device.id)
         offer = None if status is None else status.offer
         installed_number = None if facts is None else facts.software_version
+        if facts is not None:
+            has_requestor = facts.has_requestor
+        else:
+            # Unreachable (design 5): keep the last state. Only a device with
+            # the requestor cluster ever gets a status row; one without a row
+            # cannot be told apart from one without the cluster, so it stays
+            # `no_source` rather than claiming `unchecked`.
+            has_requestor = own_device and status is not None
         state = states.derive_state(
-            has_requestor=facts is not None and facts.has_requestor,
+            has_requestor=has_requestor,
             installed=installed_number,
             checked_at=None if status is None else status.checked_at,
             check_error=None if status is None else status.check_error,
@@ -90,12 +103,13 @@ class FirmwareService:
             ),
             installed=(facts.software_version_string if facts is not None else None)
             or device.firmware,
-            online=None if facts is None else facts.available,
+            online=facts.available if facts is not None else (False if own_device else None),
             state=state,
             progress=None if status is None else status.job_progress,
-            # An offer the device has already reached is not shown.
+            # Only states that use the offer show it; that also hides one
+            # the device has already reached (`none_found`).
             offer=None
-            if offer is None or state == states.NONE_FOUND
+            if offer is None or state not in _STATES_WITH_OFFER
             else FirmwareOfferOut(
                 version=offer.software_version,
                 version_string=offer.software_version_string,
