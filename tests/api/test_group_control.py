@@ -449,8 +449,10 @@ async def test_one_colour_value_gives_colour_to_the_colour_lamp_and_brightness_t
     by_address: dict[str, list[tuple[int, int]]] = {}
     for call in invocations:
         by_address.setdefault(call.address, []).append((call.cluster_id, call.command_id))
-    assert by_address[cws.address] == [(768, 6), (8, 4)]
-    assert by_address[ws.address] == [(8, 4)]
+    # Each lamp's state is unknown, so each is switched on before its
+    # brightness (design 2026-09-30, switch on before brightness).
+    assert by_address[cws.address] == [(768, 6), (6, 1), (8, 4)]
+    assert by_address[ws.address] == [(6, 1), (8, 4)]
 
 
 async def test_a_lumitech_white_gives_both_lamps_their_white_temperature(api, invocations):
@@ -461,7 +463,7 @@ async def test_a_lumitech_white_gives_both_lamps_their_white_temperature(api, in
     per_address: dict[str, list[tuple[int, int]]] = {}
     for call in invocations:
         per_address.setdefault(call.address, []).append((call.cluster_id, call.command_id))
-    assert all(calls == [(768, 10), (8, 4)] for calls in per_address.values())
+    assert all(calls == [(768, 10), (6, 1), (8, 4)] for calls in per_address.values())
     assert len(per_address) == 2
 
 
@@ -599,7 +601,8 @@ async def test_the_502_counts_members_not_calls(api, invocations, failing_nodes,
         "api.errors.group_partially_unreachable", reached=1, total=2, devices=cws.label
     )
     assert [(call.address, call.cluster_id, call.command_id) for call in invocations] == [
-        (ws.address, 8, 4)
+        (ws.address, 6, 1),
+        (ws.address, 8, 4),
     ]
 
 
@@ -641,7 +644,8 @@ async def test_the_cmd_log_counts_only_the_members_given_something_to_do(
     assert await _logged(caplog, "no answer from") == (
         f"group command {color!r} reached 1 of 2 members; no answer from: {cws.label}"
     )
-    assert [call.address for call in invocations] == [dim_only.address]
+    # An On, then the brightness (design 2026-09-30, switch on before brightness).
+    assert [call.address for call in invocations] == [dim_only.address, dim_only.address]
 
 
 @pytest.mark.parametrize("route", ["loxone", "webui"])
@@ -736,10 +740,14 @@ async def test_a_lumitech_white_dims_the_dim_only_member_and_whitens_the_colour_
         )
     assert [(cluster, command) for cluster, command, _ in per_address[cws.address]] == [
         (768, 10),
+        (6, 1),
         (8, 4),
     ]
-    assert per_address[cws.address][1][2]["level"] == 76
-    assert per_address[dim_only.address] == [(8, 4, {"level": 76, "transitionTime": 0})]
+    assert per_address[cws.address][2][2]["level"] == 76
+    assert per_address[dim_only.address] == [
+        (6, 1, {}),
+        (8, 4, {"level": 76, "transitionTime": 0}),
+    ]
 
 
 @pytest.fixture
@@ -830,10 +838,14 @@ async def test_the_three_lamp_group_gives_each_cws_lamp_colour_and_the_ww_lamp_o
     for cws in (cws_one, cws_two):
         assert [(cluster, command) for cluster, command, _ in per_address[cws.address]] == [
             (768, 6),
+            (6, 1),
             (8, 4),
         ]
-        assert per_address[cws.address][1][2]["level"] == 152
-    assert per_address[ww.address] == [(8, 4, {"level": 152, "transitionTime": 0})]
+        assert per_address[cws.address][2][2]["level"] == 152
+    assert per_address[ww.address] == [
+        (6, 1, {}),
+        (8, 4, {"level": 152, "transitionTime": 0}),
+    ]
 
 
 @pytest.mark.parametrize("route", ["loxone", "webui"])
@@ -862,10 +874,14 @@ async def test_the_three_lamp_group_gives_each_cws_lamp_white_and_the_ww_lamp_on
     for cws in (cws_one, cws_two):
         assert [(cluster, command) for cluster, command, _ in per_address[cws.address]] == [
             (768, 10),
+            (6, 1),
             (8, 4),
         ]
-        assert per_address[cws.address][1][2]["level"] == 76
-    assert per_address[ww.address] == [(8, 4, {"level": 76, "transitionTime": 0})]
+        assert per_address[cws.address][2][2]["level"] == 76
+    assert per_address[ww.address] == [
+        (6, 1, {}),
+        (8, 4, {"level": 76, "transitionTime": 0}),
+    ]
 
 
 @pytest.fixture

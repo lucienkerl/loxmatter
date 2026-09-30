@@ -292,8 +292,11 @@ async def test_a_superseded_value_is_answered_200(
             responses = await asyncio.gather(first, third)
 
         assert [response.status_code for response in responses] == [200, 200]
-        await settle_until(lambda: len(lamp.ran) == 2, "the newest value ran")
-        assert [call.payload["level"] for call in lamp.ran] == [25, 76]
+        await settle_until(lambda: len(lamp.ran) == 3, "the newest value ran")
+        # The first value finds the lamp in an unknown state and switches it
+        # on first (design 2026-09-30, switch on before brightness).
+        assert (lamp.ran[0].cluster_id, lamp.ran[0].command_id) == (6, 1)
+        assert [call.payload["level"] for call in lamp.ran[1:]] == [25, 76]
         assert caplog.messages == []
     finally:
         store.close()
@@ -329,22 +332,115 @@ async def test_a_slider_value_that_follows_too_soon_waits_for_the_interval(
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             assert (await client.get(f"/cmd/{level_key}/10")).status_code == 200
-            await settle_until(lambda: len(ran) == 1, "the first value ran")
+            await settle_until(lambda: len(ran) == 2, "the first value ran")
             assert (await client.get(f"/cmd/{level_key}/20")).status_code == 200
             assert (await client.get(f"/cmd/{toggle_key}/1")).status_code == 200
             for _ in range(50):
                 await asyncio.sleep(0)
-            assert len(ran) == 1, "the second value did not wait for the interval"
+            assert len(ran) == 2, "the second value did not wait for the interval"
             assert (await client.get(f"/cmd/{level_key}/30")).status_code == 200
             loop = asyncio.get_running_loop()
             deadline = loop.time() + 5
-            while len(ran) < 3:
+            while len(ran) < 6:
                 assert loop.time() < deadline, f"only ran {ran}"
                 await asyncio.sleep(0.01)
             await asyncio.sleep(0.3)
     finally:
         store.close()
-    assert [(c.cluster_id, c.command_id) for c in ran] == [(8, 4), (8, 4), (6, 2), (8, 4)]
+    # An On before the first value, whose lamp's state is unknown, and
+    # before the one after the toggle, which leaves it unknown again
+    # (design 2026-09-30, switch on before brightness).
+    assert [(c.cluster_id, c.command_id) for c in ran] == [
+        (6, 1),
+        (8, 4),
+        (8, 4),
+        (6, 2),
+        (6, 1),
+        (8, 4),
+    ]
+
+
+async def test_a_lamp_switched_off_elsewhere_is_switched_on_before_its_brightness(
+    tmp_path, fake_runtime, fake_client, monkeypatch
+):
+    """Design 2026-09-30 (switch on before brightness), through the routes:
+    `build_app` reads the lamp's reported OnOff from the runtime, under the
+    signal key `d{id}_{endpoint}_onoff`.
+
+    The first brightness finds the lamp unknown and switches it on first.
+    The second, while the lamp reports on, costs no extra call. Then the
+    lamp reports off - a wall switch - and the third is switched on first
+    again.
+
+    Faults to prove it: have `_reported_on` in `build_app` read any other
+    key, or return `None` - the third brightness goes out alone."""
+    monkeypatch.setattr("loxmatter.loxone.server.VALUE_INTERVAL_SECONDS", 0.0)
+    store = Store(tmp_path / "t.sqlite")
+    snapshot = load_snapshot("ikea_kajplats_ws_lamp.json")
+    device_id = store.register_device(snapshot)
+    store.register_signals(device_id, snapshot)
+    store.register_commands(device_id, extract_commands(snapshot))
+    key = next(c.key for c in store.commands(device_id) if c.slug == "level_onoff")
+    runtime = fake_runtime(store)
+
+    sent: list[tuple[int, int]] = []
+
+    async def invoke(call: DeviceCall) -> None:
+        sent.append((call.cluster_id, call.command_id))
+
+    try:
+        app = build_app(store, invoke, runtime, client=fake_client)
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            await authenticate(store, client)
+
+            async def dim(value: str) -> None:
+                response = await client.post(f"/api/commands/{key}", json={"value": value})
+                assert response.status_code == 200
+
+            await dim("50")
+            runtime.seed(f"d{device_id}_1_onoff", True)
+            await dim("60")
+            runtime.seed(f"d{device_id}_1_onoff", False)
+            await dim("70")
+    finally:
+        store.close()
+    assert sent == [(6, 1), (8, 4), (8, 4), (6, 1), (8, 4)]
+
+
+async def test_a_dimmer_without_an_on_command_gets_its_brightness_alone(
+    tmp_path, fake_runtime, fake_client
+):
+    """`build_app` asks the store whether the endpoint takes On (6, 1); one
+    whose accepted commands leave it out is sent the level call alone.
+
+    Fault to prove it: have `_accepts_on` in `build_app` answer `True` - an
+    On goes to a device that never offered one."""
+    store = Store(tmp_path / "t.sqlite")
+    snapshot = load_snapshot("ikea_kajplats_ws_lamp.json")
+    device_id = store.register_device(snapshot)
+    store.register_signals(device_id, snapshot)
+    store.register_commands(
+        device_id,
+        [c for c in extract_commands(snapshot) if (c.cluster_id, c.command_id) != (6, 1)],
+    )
+    key = next(c.key for c in store.commands(device_id) if c.slug == "level_onoff")
+
+    sent: list[tuple[int, int]] = []
+
+    async def invoke(call: DeviceCall) -> None:
+        sent.append((call.cluster_id, call.command_id))
+
+    try:
+        app = build_app(store, invoke, fake_runtime(store), client=fake_client)
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            await authenticate(store, client)
+            response = await client.post(f"/api/commands/{key}", json={"value": "50"})
+            assert response.status_code == 200
+    finally:
+        store.close()
+    assert sent == [(8, 4)]
 
 
 async def test_unknown_command_yields_404(api):
@@ -616,7 +712,7 @@ async def test_lumitech_on_a_single_tunable_white_lamp_sends_temperature_then_br
     client, _store, _cws, ws = lamp_api
     response = await client.post(f"/api/commands/d{ws}_1_lumitech", json={"value": "200302700"})
     assert response.status_code == 200
-    assert _pairs(invocations) == [(1, 768, 10), (1, 8, 4)]
+    assert _pairs(invocations) == [(1, 768, 10), (1, 6, 1), (1, 8, 4)]
     assert invocations[0].payload["colorTemperatureMireds"] == 370
 
 
@@ -627,7 +723,7 @@ async def test_lumitech_through_the_loxone_route(lamp_api, invocations):
     client, _store, _cws, ws = lamp_api
     response = await client.get(f"/cmd/d{ws}_1_lumitech/200302700")
     assert response.status_code == 200
-    assert _pairs(invocations) == [(1, 768, 10), (1, 8, 4)]
+    assert _pairs(invocations) == [(1, 768, 10), (1, 6, 1), (1, 8, 4)]
 
 
 async def test_the_controls_leave_the_lumitech_output_out(lamp_api):
@@ -656,7 +752,7 @@ async def test_the_group_lumitech_output_reaches_both_lamps_and_has_no_control(
     by_device: dict[str, list[tuple[int, int]]] = {}
     for call in invocations:
         by_device.setdefault(call.address, []).append((call.cluster_id, call.command_id))
-    assert sorted(by_device.values()) == [[(768, 10), (8, 4)], [(768, 10), (8, 4)]]
+    assert sorted(by_device.values()) == [[(768, 10), (6, 1), (8, 4)], [(768, 10), (6, 1), (8, 4)]]
 
 
 async def test_a_deselected_device_command_still_sends_through_cmd(lamp_api, invocations):
@@ -676,7 +772,7 @@ async def test_a_deselected_device_command_still_sends_through_cmd(lamp_api, inv
     response = await client.get(f"/cmd/{key}/50")
 
     assert response.status_code == 200
-    assert _pairs(invocations) == [(1, 8, 4)]
+    assert _pairs(invocations) == [(1, 6, 1), (1, 8, 4)]
 
 
 async def test_a_deselected_group_command_still_sends_to_every_member(lamp_api, invocations):
@@ -698,4 +794,4 @@ async def test_a_deselected_group_command_still_sends_to_every_member(lamp_api, 
     by_device: dict[str, list[tuple[int, int]]] = {}
     for call in invocations:
         by_device.setdefault(call.address, []).append((call.cluster_id, call.command_id))
-    assert sorted(by_device.values()) == [[(8, 4)], [(8, 4)]]
+    assert sorted(by_device.values()) == [[(6, 1), (8, 4)], [(6, 1), (8, 4)]]
