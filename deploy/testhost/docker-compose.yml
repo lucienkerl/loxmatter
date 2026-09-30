@@ -12,10 +12,9 @@
 #     variant reads RADIO_URL as an environment variable and accepts
 #     --backbone-interface as a command-line argument, exactly as
 #     configured below.
-#   - ghcr.io/matter-js/matterjs-server:stable (8 September 2026, UNTESTED -
-#     see README, section "Migration to matterjs-server (UNTESTED)"; the
-#     README writes the addition with umlauts, here it stands without umlauts like every
-#     comment in this file) -> --bluetooth-adapter
+#   - ghcr.io/matter-js/matterjs-server:stable (8 September 2026, running
+#     on the test Pi since 30 September 2026 - see README, section
+#     "Migration to matterjs-server") -> --bluetooth-adapter
 #     ${BLUETOOTH_ADAPTER} still applies for BLE commissioning via hci0,
 #     plus NOBLE_BINDINGS=dbus because the container runs unprivileged
 #     (see README).
@@ -171,16 +170,15 @@ services:
       - otbr-state:/var/lib/thread
 
   matter-server:
-    # matterjs-server instead of python-matter-server (8 September 2026,
-    # UNTESTED - see README, section "Migration to matterjs-server
-    # (UNTESTED)").
+    # matterjs-server instead of python-matter-server (8 September 2026;
+    # migrated on the test Pi on 30 September 2026 - see README, section
+    # "Migration to matterjs-server").
     # python-matter-server is archived at 8.1.2; the successor speaks
-    # the same WebSocket API and uses the same data directory, but migrates
-    # it on the FIRST start to its own format. This migration is
-    # one-way: if it fails, the Fabric is gone and every commissioned
-    # device must be reset and re-paired. Beforehand
-    # pull `GET /api/diagnostics/fabric-backup` and download the archive from the Pi
-    # - that's exactly what the route is for.
+    # the same WebSocket API and uses the same data directory, and on start
+    # reads the old files (chip.json, <compressed-fabric-id>.json) into its
+    # own format. Back up ./data BEFORE the first start on this image, and
+    # verify the archive - the README says how, and why a plain `tar` as
+    # the user pi misses the node file.
     image: ghcr.io/matter-js/matterjs-server:stable
     container_name: matter-server
     network_mode: host
@@ -194,7 +192,7 @@ services:
     #
     # It remains anyway because that cannot be determined on this machine:
     # removing it experimentally would mean risking BLE commissioning,
-    # which is already considered UNTESTED - and a failure there
+    # which has not been tried on this image yet - and a failure there
     # looks like a non-failure in the logs (see README, "Enable BLE").
     # So it should be checked on the Pi, and only after BLE via D-Bus
     # has demonstrably worked once: remove the line, recreate the container,
@@ -213,8 +211,9 @@ services:
       # before the first start:
       #     sudo chown -R 1000:1000 deploy/testhost/data
       #     sudo chmod -R u+rwX,go+rX deploy/testhost/data
-      # Without this the container won't start - it cannot access its own
-      # data directory.
+      # Without this the container does NOT fail loudly: on 23 September 2026
+      # it started, read chip.json, could not read the root-owned node file
+      # (mode 600) and came up with 0 nodes - every device silently gone.
       - ./data:/data
       - /run/dbus:/run/dbus:ro
     environment:
@@ -236,12 +235,13 @@ services:
     # "Enable BLE"), and the list here was deliberately its replica plus
     # `--bluetooth-adapter`.
     #
-    # For this image the default CMD is UNTESTED. If it carries something that
-    # loxmatter builds on - e.g. a different `--port`, while loxmatter firmly
-    # addresses `ws://127.0.0.1:5580/ws` - it would silently be gone here. So before
-    # the first `up`, check and compare with this list (README, "What
-    # to check afterwards", point 3):
-    #     docker inspect --format '{{.Config.Cmd}}' \
+    # For this image the default CMD was measured on 30 September 2026: it is
+    # empty (`null`), the entrypoint only starts MatterServer.js, and `--port`
+    # defaults to 5580 - which loxmatter firmly addresses as
+    # `ws://127.0.0.1:5580/ws`. Nothing is lost by this list. If the image
+    # changes, check again before the `up` (README, "What was checked
+    # afterwards", point 1):
+    #     docker inspect --format '{{json .Config.Cmd}}' \
     #         ghcr.io/matter-js/matterjs-server:stable
     command:
       - --storage-path
