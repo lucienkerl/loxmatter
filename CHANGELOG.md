@@ -8,8 +8,21 @@ people who don't know the code.
 
 ## [Unreleased]
 
+### Before you update
+
+- **The database schema rises from 14 to 15.** Nothing needs doing by hand.
+
 ### Added
 
+- **Firmware updates for Matter devices.** System has a new "Device updates"
+  card: which devices have an update in the CSA directory, and an Install
+  button that opens a dialog asking first. After a failed or interrupted
+  update, the dialog offers the update again. A device tile shows an
+  available update and the progress of a running one. The bridge checks once
+  a day at 06:00 and never installs on its own; the daily check can be
+  switched off in the card.
+- **The Matter version of every device** is shown in the update list and in
+  the device's expert settings.
 - **Change the password in the WebUI.** Settings has a new "Password" card.
   Browsers that are signed in stay signed in; the new password applies to
   the next login.
