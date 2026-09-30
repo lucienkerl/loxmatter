@@ -162,6 +162,7 @@ from loxmatter.auth.sessions import SESSION_COOKIE, session_is_valid
 from loxmatter.commands.adapt import adapt_device_command
 from loxmatter.commands.coalesce import VALUE_INTERVAL_SECONDS, CommandGate
 from loxmatter.commands.fanout import MemberPlan, group_outcome, plan_group_calls
+from loxmatter.commands.switch_on import SwitchOnFirst
 from loxmatter.commands.translate import UnsupportedValueError
 from loxmatter.diagnostics.logbuffer import LogBufferHandler
 from loxmatter.loxone.sender import UdpSender
@@ -496,10 +497,34 @@ def build_app(
     app = FastAPI(title="loxmatter", docs_url=None, redoc_url=None)
     command_log: RingBuffer[CommandLogEntry] = RingBuffer(maxlen=COMMAND_LOG_SIZE)
     api_guard = [Depends(build_api_guard(api_token, store))]
+
     # One per application, shared by every command route below: one request
     # per device at a time, and only the newest brightness or colour value
     # waits (design 2026-09-13, command coalescing).
-    gate = CommandGate(invoke, min_interval=VALUE_INTERVAL_SECONDS)
+    #
+    # Behind the gate, an On before a brightness that may find its lamp off
+    # (design 2026-09-30, switch on before brightness): a KAJPLATS switched
+    # on by MoveToLevelWithOnOff alone comes on dim.
+    def _reported_on(call: DeviceCall) -> bool | None:
+        device_id = store.device_id_for(call.technology, call.address)
+        if device_id is None:
+            return None
+        value = runtime.last_values_for(device_id).get(f"d{device_id}_{call.endpoint}_onoff")
+        return None if value is None else bool(value)
+
+    def _accepts_on(call: DeviceCall) -> bool:
+        device_id = store.device_id_for(call.technology, call.address)
+        if device_id is None:
+            return False
+        return any(
+            (row.endpoint, row.cluster_id, row.command_id) == (call.endpoint, 6, 1)
+            for row in store.commands(device_id)
+        )
+
+    gate = CommandGate(
+        SwitchOnFirst(invoke, reported_on=_reported_on, accepts_on=_accepts_on),
+        min_interval=VALUE_INTERVAL_SECONDS,
+    )
 
     def _append_command_log(*, method: str, path: str, status: int) -> None:
         """Appends an entry - wrapped in its own try/except, a failure

@@ -21,6 +21,14 @@ people who don't know the code.
   answer.** Loxone never evaluated that answer; the log names the device.
   The web UI still reports it as before.
 
+### Fixed
+
+- **A lamp switched on to a brightness comes on at that brightness.** An IKEA
+  KAJPLATS tunable-white lamp came on dim when Loxone switched it from off
+  straight to a high brightness, although it reported the right value. The
+  bridge now switches a lamp that may be off on first, and then sets the
+  brightness.
+
 ### Added
 
 - **Change the password in the WebUI.** Settings has a new "Password" card.
