@@ -190,8 +190,9 @@ async def test_a_loxone_value_and_a_web_ui_click_share_one_queue(
     `admitted` counts the requests that reached `store.resolve_command`;
     from there to the gate both routes await nothing, so a counted request
     is already queued. The click arrives while the Loxone value is still
-    running on the plug, and neither has answered - the two really are in
-    flight together, not one after the other.
+    running on the plug. The Loxone value has been answered already -
+    `/cmd` does not wait for the device (design 2026-09-30) - and the click
+    has not, so the two really are on the plug's queue together.
 
     Fault to prove it: let `build_app` call `build_control_router` without
     `gate=gate` - each route then queues on a gate of its own, and the two
@@ -225,7 +226,7 @@ async def test_a_loxone_value_and_a_web_ui_click_share_one_queue(
             assert plug.active == {address: 1}
             web_ui = asyncio.ensure_future(client.post(f"/api/commands/{key}", json={"value": "1"}))
             await settle_until(lambda: admitted[0] == 2, "the web UI click reached the route")
-            assert not loxone.done()
+            assert loxone.done()
             assert not web_ui.done()
 
             plug.release.set()
@@ -239,16 +240,26 @@ async def test_a_loxone_value_and_a_web_ui_click_share_one_queue(
 
 
 @pytest.mark.parametrize("route", ["loxone", "webui"])
-async def test_a_superseded_value_is_answered_200(tmp_path, fake_runtime, fake_client, route):
+async def test_a_superseded_value_is_answered_200(
+    tmp_path, fake_runtime, fake_client, route, monkeypatch, caplog
+):
     """Design 2026-09-13 (command coalescing), rule 6: a value replaced by a
     newer one before it was sent answers as if it had succeeded - the newer
     value is on its way. Three brightness values for one lamp: the first
     runs, the second waits and is replaced by the third, and the second
     answers 200 while the lamp is still busy with the first.
 
-    Fault to prove it: in the device route, treat `gate.run`'s `False` as a
+    Through `/cmd` all three are answered at once (design 2026-09-30), and
+    the log says nothing about the second: it did not fail.
+
+    Fault to prove it: in the web UI route, treat `gate.run`'s `False` as a
     failure (`if not await gate.run(calls): raise RuntimeError(...)`) -
-    the second answers 502."""
+    the second answers 502. In `_log_device_outcome`, the same - a failure
+    is logged for the second."""
+    # The newest value would otherwise wait out the interval after the
+    # first; the interval has tests of its own.
+    monkeypatch.setattr("loxmatter.loxone.server.VALUE_INTERVAL_SECONDS", 0.0)
+    caplog.set_level("WARNING", logger="loxmatter.loxone.server")
     store = Store(tmp_path / "t.sqlite")
     snapshot = load_snapshot("ikea_kajplats_ws_lamp.json")
     device_id = store.register_device(snapshot)
@@ -274,16 +285,66 @@ async def test_a_superseded_value_is_answered_200(tmp_path, fake_runtime, fake_c
             second = asyncio.ensure_future(send("20"))
             third = asyncio.ensure_future(send("30"))
             await settle_until(second.done, "the second value was replaced")
-            assert not first.done()
+            assert first.done() is (route == "loxone")
             assert second.result().status_code == 200
 
             lamp.release.set()
             responses = await asyncio.gather(first, third)
 
         assert [response.status_code for response in responses] == [200, 200]
+        await settle_until(lambda: len(lamp.ran) == 2, "the newest value ran")
         assert [call.payload["level"] for call in lamp.ran] == [25, 76]
+        assert caplog.messages == []
     finally:
         store.close()
+
+
+async def test_a_slider_value_that_follows_too_soon_waits_for_the_interval(
+    tmp_path, fake_runtime, fake_client, monkeypatch
+):
+    """Design 2026-09-30, section 3: `build_app` gives the gate
+    `VALUE_INTERVAL_SECONDS`. A second brightness value right after the
+    first has run waits for the interval. A toggle sent after it waits
+    behind it rather than jumping ahead - the order is kept - and a third
+    value cannot jump past the toggle either, so all of them go out.
+
+    Fault to prove it: build the gate in `build_app` without
+    `min_interval` - the second value runs at once."""
+    monkeypatch.setattr("loxmatter.loxone.server.VALUE_INTERVAL_SECONDS", 0.2)
+    store = Store(tmp_path / "t.sqlite")
+    snapshot = load_snapshot("ikea_kajplats_ws_lamp.json")
+    device_id = store.register_device(snapshot)
+    store.register_signals(device_id, snapshot)
+    store.register_commands(device_id, extract_commands(snapshot))
+    level_key = next(c.key for c in store.commands(device_id) if c.slug == "level_onoff")
+    toggle_key = next(c.key for c in store.commands(device_id) if c.slug == "toggle")
+
+    ran: list[DeviceCall] = []
+
+    async def invoke(call: DeviceCall) -> None:
+        ran.append(call)
+
+    try:
+        app = build_app(store, invoke, fake_runtime(store), client=fake_client)
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            assert (await client.get(f"/cmd/{level_key}/10")).status_code == 200
+            await settle_until(lambda: len(ran) == 1, "the first value ran")
+            assert (await client.get(f"/cmd/{level_key}/20")).status_code == 200
+            assert (await client.get(f"/cmd/{toggle_key}/1")).status_code == 200
+            for _ in range(50):
+                await asyncio.sleep(0)
+            assert len(ran) == 1, "the second value did not wait for the interval"
+            assert (await client.get(f"/cmd/{level_key}/30")).status_code == 200
+            loop = asyncio.get_running_loop()
+            deadline = loop.time() + 5
+            while len(ran) < 3:
+                assert loop.time() < deadline, f"only ran {ran}"
+                await asyncio.sleep(0.01)
+            await asyncio.sleep(0.3)
+    finally:
+        store.close()
+    assert [(c.cluster_id, c.command_id) for c in ran] == [(8, 4), (8, 4), (6, 2), (8, 4)]
 
 
 async def test_unknown_command_yields_404(api):

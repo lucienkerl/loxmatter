@@ -12,6 +12,19 @@ people who don't know the code.
 
 - **The database schema rises from 14 to 15.** Nothing needs doing by hand.
 
+### Changed
+
+- **Lights follow the colour wheel live.** Dragging a colour wheel or a
+  slider in the Loxone app used to leave the lamps further and further
+  behind: the Miniserver sends its next value only once the bridge has
+  answered the last one, and the bridge answered only when the lamp had.
+  The bridge now answers at once and sends each lamp only its newest value,
+  at most one every 0.4 seconds. On, off and toggle are never skipped or
+  held back, and the last value always arrives.
+- **A lamp that does not answer a Loxone command is in the log, not in the
+  answer.** Loxone never evaluated that answer; the log names the device.
+  The web UI still reports it as before.
+
 ### Added
 
 - **Firmware updates for Matter devices.** System has a new "Device updates"

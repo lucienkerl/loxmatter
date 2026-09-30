@@ -32,6 +32,25 @@ from loxmatter.loxone.server import build_app
 from loxmatter.model.store import Store
 from loxmatter.sources import DeviceCall, SourceNotConfiguredError
 
+_SERVER_LOG = "loxmatter.loxone.server"
+
+
+async def _logged(caplog: pytest.LogCaptureFixture, text: str) -> str:
+    """The first message logged by the Loxone routes that contains `text`,
+    once it has been logged. `/cmd` answers before the members do (design
+    2026-09-30), so what they did is only in the log, and only after
+    they finished.
+
+    Waited for in time, not in loop turns as `settle_until` does: a second
+    value for the same lamp waits out `VALUE_INTERVAL_SECONDS` first."""
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + 5
+    while not any(text in m for m in caplog.messages):
+        if loop.time() > deadline:
+            raise AssertionError(f"never logged: {text}")
+        await asyncio.sleep(0.01)
+    return next(m for m in caplog.messages if text in m)
+
 
 @pytest.fixture
 def invocations() -> list[DeviceCall]:
@@ -102,14 +121,21 @@ async def test_a_bad_value_is_a_400_and_sends_nothing(api, invocations):
     assert invocations == []
 
 
-async def test_a_failing_member_yields_502_and_names_it(api, invocations, failing_nodes):
+async def test_a_failing_member_is_answered_200_and_named_in_the_log(
+    api, invocations, failing_nodes, caplog
+):
+    """Design 2026-09-30: `/cmd` answers before the members do, so a member
+    that does not answer is named in the log rather than in a 502."""
+    caplog.set_level("WARNING", logger=_SERVER_LOG)
     client, store, group_id = api
     members = store.group_members(group_id)
     failing_nodes.add(members[0].address)
     key = next(c.key for c in store.group_commands(group_id) if c.slug == "on")
     response = await client.get(f"/cmd/{key}/1")
-    assert response.status_code == 502
-    assert members[0].label in response.json()["detail"]
+    assert response.status_code == 200
+    assert await _logged(caplog, "no answer from") == (
+        f"group command {key!r} reached 1 of 2 members; no answer from: {members[0].label}"
+    )
     # the reachable member was still switched
     assert {call.address for call in invocations} == {members[1].address}
 
@@ -163,35 +189,37 @@ async def test_a_failing_member_is_a_502_on_the_webui_route(api, failing_nodes):
     assert members[0].label in response.json()["detail"]
 
 
-async def test_an_all_unconfigured_group_is_a_503_naming_the_technology_and_the_count(
-    api, unconfigured_nodes
+async def test_an_all_unconfigured_group_is_logged_as_not_sent_naming_the_technology(
+    api, unconfigured_nodes, caplog
 ):
     """Boundary design open point 12: every member was never ASKED - its
     technology has no running source right now - so this must not read
-    like "did not answer" (502).
+    like "did not answer". Through `/cmd` it is logged (design 2026-09-30).
 
-    The detail is asserted, not just the status: a 503 whose text is built
-    from an empty technology and a zero count is the same 503 to a status
-    assertion, and that is exactly what the review found (`technology=""`
-    and `total=0` both survived the whole suite).
-
-    Faults to prove it: pass `technology=""` to `i18n.t` in the 503 branch
-    of `loxone/server.py`, and separately pass `total=0`."""
+    Fault to prove it: in `_log_group_outcome` (loxone/server.py), drop the
+    branch for a group no member of which was asked - the log then reads
+    "reached 0 of 2 members; no answer from" both lamps."""
+    caplog.set_level("WARNING", logger=_SERVER_LOG)
     client, store, group_id = api
     members = store.group_members(group_id)
     unconfigured_nodes.update(m.address for m in members)
     key = next(c.key for c in store.group_commands(group_id) if c.slug == "on")
     response = await client.get(f"/cmd/{key}/1")
-    assert response.status_code == 503
-    assert response.json()["detail"] == i18n.t(
-        "api.errors.group_source_not_configured_many",
-        technology="Matter",
-        total=len(members),
+    assert response.status_code == 200
+    assert await _logged(caplog, "was not sent") == (
+        f"group command {key!r} was not sent to any member: Matter is not running"
     )
+    assert not any("no answer from" in m for m in caplog.messages)
 
 
 async def test_an_all_unconfigured_group_is_a_503_on_the_webui_route(api, unconfigured_nodes):
-    """The same assertion on the other route - the two must not drift.
+    """Boundary design open point 12, on the route that still answers with
+    the outcome.
+
+    The detail is asserted, not just the status: a 503 whose text is built
+    from an empty technology and a zero count is the same 503 to a status
+    assertion, and that is exactly what the review found (`technology=""`
+    and `total=0` both survived the whole suite).
 
     Faults to prove it: `technology=""` and `total=0` in the 503 branch of
     `api/control.py`."""
@@ -208,31 +236,14 @@ async def test_an_all_unconfigured_group_is_a_503_on_the_webui_route(api, unconf
     )
 
 
-async def test_a_single_member_group_reads_in_the_singular(api, unconfigured_nodes):
-    """A group of one used to report "1 members were not reached", and a
-    group of one is the common case. `i18n.t` has no plural rule, so the
-    branch picks between two keys.
-
-    Fault to prove it: always use `api.errors.group_source_not_configured_many`."""
-    client, store, _group_id = api
-    lonely = store.devices()[0]
-    group = store.create_group("Hallway", [lonely.id])
-    unconfigured_nodes.add(lonely.address)
-    key = next(c.key for c in store.group_commands(group.id) if c.slug == "on")
-    response = await client.get(f"/cmd/{key}/1")
-    assert response.status_code == 503
-    detail = response.json()["detail"]
-    assert detail == i18n.t("api.errors.group_source_not_configured_one", technology="Matter")
-    assert "1 member was not reached" in detail
-
-
 async def test_a_single_member_group_reads_in_the_singular_on_the_webui_route(
     api, unconfigured_nodes
 ):
-    """The web-UI twin of the test above - `api/control.py` picks between
-    the same two keys with its own copy of the branch, and until this test
-    existed nothing measured that copy: replacing its `key_for_total` with
-    the plural key unconditionally left the whole file green.
+    """A group of one used to report "1 members were not reached", and a
+    group of one is the common case. `i18n.t` has no plural rule, so
+    `api/control.py` picks between two keys. (`/cmd` used to have its own
+    copy of the branch; it logs instead since design 2026-09-30, and its
+    log line counts no members.)
 
     Fault to prove it: in `api/control.py`, always use
     `api.errors.group_source_not_configured_many`."""
@@ -296,7 +307,7 @@ async def mixed_technology_api(
     store.close()
 
 
-@pytest.mark.parametrize("route", ["loxone", "webui"])
+@pytest.mark.parametrize("route", ["webui"])
 async def test_the_503_names_the_first_members_technology_not_the_last(
     mixed_technology_api, unconfigured_nodes, route
 ):
@@ -313,7 +324,7 @@ async def test_the_503_names_the_first_members_technology_not_the_last(
     two-radio outage and sends the owner to restart the wrong service.
 
     Fault to prove it: read `unconfigured_technologies[-1]` in
-    `api/control.py` and in `loxone/server.py`."""
+    `api/control.py`. (The `/cmd` half is the log test below.)"""
     client, store, group_id = mixed_technology_api
     members = store.group_members(group_id)
     assert [m.technology for m in members] == ["zigbee", "matter"]
@@ -333,18 +344,37 @@ async def test_the_503_names_the_first_members_technology_not_the_last(
     assert "Matter" not in detail
 
 
-async def test_a_group_half_of_which_switched_is_not_a_flat_503(
-    api, invocations, unconfigured_nodes
+async def test_the_cmd_log_names_the_first_members_technology_not_the_last(
+    mixed_technology_api, unconfigured_nodes, caplog
 ):
-    """One member switched, the other has no source. Answering 503 "Matter
-    is not set up, so 1 members were not reached" would name no member,
-    give no reached count, and tell the user nothing happened - while half
-    the group had just switched. Any partial success is a 502 with the
-    member names and the reached count.
+    """The `/cmd` half of the test above: a Zigbee lamp first, a Matter lamp
+    second, both without a source - the log line names Zigbee.
 
-    Fault to prove it: gate the 503 on `outcome.unconfigured and not
-    outcome.unreachable` again instead of on every member being
-    unconfigured."""
+    Fault to prove it: read `unconfigured_technologies[-1]` in
+    `_log_group_outcome` (loxone/server.py)."""
+    caplog.set_level("WARNING", logger=_SERVER_LOG)
+    client, store, group_id = mixed_technology_api
+    members = store.group_members(group_id)
+    unconfigured_nodes.update(m.address for m in members)
+    key = next(c.key for c in store.group_commands(group_id) if c.slug == "on")
+
+    assert (await client.get(f"/cmd/{key}/1")).status_code == 200
+
+    assert (await _logged(caplog, "was not sent")).endswith(": Zigbee is not running")
+
+
+async def test_a_group_half_of_which_switched_is_not_logged_as_not_sent(
+    api, invocations, unconfigured_nodes, caplog
+):
+    """One member switched, the other has no source. "Not sent to any
+    member" would tell the reader nothing happened - while half the group
+    had just switched. Any partial success names the members and the
+    reached count.
+
+    Fault to prove it: in `_log_group_outcome`, take the not-sent branch on
+    `outcome.unconfigured and not outcome.unreachable` instead of on every
+    member being unconfigured."""
+    caplog.set_level("WARNING", logger=_SERVER_LOG)
     client, store, group_id = api
     members = store.group_members(group_id)
     unconfigured_nodes.add(members[1].address)
@@ -352,12 +382,9 @@ async def test_a_group_half_of_which_switched_is_not_a_flat_503(
 
     response = await client.get(f"/cmd/{key}/1")
 
-    assert response.status_code == 502
-    assert response.json()["detail"] == i18n.t(
-        "api.errors.group_partially_unreachable",
-        reached=1,
-        total=2,
-        devices=members[1].label,
+    assert response.status_code == 200
+    assert await _logged(caplog, "no answer from") == (
+        f"group command {key!r} reached 1 of 2 members; no answer from: {members[1].label}"
     )
     # and the half that worked really did switch
     assert [call.address for call in invocations] == [members[0].address]
@@ -384,22 +411,24 @@ async def test_a_group_half_of_which_switched_is_not_a_flat_503_on_the_webui_rou
     assert [call.address for call in invocations] == [members[0].address]
 
 
-async def test_a_mix_of_unreachable_and_unconfigured_members_stays_a_502(
-    api, failing_nodes, unconfigured_nodes
+async def test_a_mix_of_unreachable_and_unconfigured_members_names_every_failed_member(
+    api, failing_nodes, unconfigured_nodes, caplog
 ):
     """As soon as one member was actually asked and did not answer, this is
-    not the all-unconfigured 503 case any more - `GroupOutcome.unreachable`
-    is non-empty, and the existing 502 path names every failed member."""
+    not the all-unconfigured case any more - `GroupOutcome.unreachable`
+    is non-empty, and the log line names every failed member."""
+    caplog.set_level("WARNING", logger=_SERVER_LOG)
     client, store, group_id = api
     members = store.group_members(group_id)
     failing_nodes.add(members[0].address)
     unconfigured_nodes.add(members[1].address)
     key = next(c.key for c in store.group_commands(group_id) if c.slug == "on")
     response = await client.get(f"/cmd/{key}/1")
-    assert response.status_code == 502
-    detail = response.json()["detail"]
-    assert members[0].label in detail
-    assert members[1].label in detail
+    assert response.status_code == 200
+    line = await _logged(caplog, "no answer from")
+    assert "reached 0 of 2 members" in line
+    assert members[0].label in line
+    assert members[1].label in line
 
 
 async def test_one_colour_value_gives_colour_to_the_colour_lamp_and_brightness_to_the_white_one(
@@ -497,7 +526,7 @@ async def test_a_member_given_nothing_is_a_plain_success(dim_only_api, invocatio
     assert [call.address for call in invocations] == [cws.address]
 
 
-@pytest.mark.parametrize("route", ["loxone", "webui"])
+@pytest.mark.parametrize("route", ["webui"])
 async def test_a_group_whose_only_asked_member_has_no_source_is_a_503(
     dim_only_api, invocations, unconfigured_nodes, route
 ):
@@ -510,7 +539,7 @@ async def test_a_group_whose_only_asked_member_has_no_source_is_a_503(
     "no answer" from one that was never asked.
 
     Fault to prove it: compare `len(outcome.unconfigured)` with `len(plans)`
-    again in `loxone/server.py` and in `api/control.py`."""
+    again in `api/control.py`. (The `/cmd` half is the log test below.)"""
     client, store, group_id = dim_only_api
     cws, _dim_only = store.group_members(group_id)
     unconfigured_nodes.add(cws.address)
@@ -525,7 +554,7 @@ async def test_a_group_whose_only_asked_member_has_no_source_is_a_503(
     assert invocations == []
 
 
-@pytest.mark.parametrize("route", ["loxone", "webui"])
+@pytest.mark.parametrize("route", ["webui"])
 async def test_the_502_counts_only_the_members_given_something_to_do(
     dim_only_api, failing_nodes, route
 ):
@@ -534,7 +563,7 @@ async def test_the_502_counts_only_the_members_given_something_to_do(
     reached although nothing was sent to it; the honest count is 0 of 1.
 
     Fault to prove it: count `len(plans)` again for `total` and `reached`
-    in `loxone/server.py` and in `api/control.py`."""
+    in `api/control.py`. (The `/cmd` half is the log test below.)"""
     client, store, group_id = dim_only_api
     cws, _dim_only = store.group_members(group_id)
     failing_nodes.add(cws.address)
@@ -548,16 +577,16 @@ async def test_the_502_counts_only_the_members_given_something_to_do(
     )
 
 
-@pytest.mark.parametrize("route", ["loxone", "webui"])
+@pytest.mark.parametrize("route", ["webui"])
 async def test_the_502_counts_members_not_calls(api, invocations, failing_nodes, route):
     """Blue at 60 % gives the CWS lamp two calls (colour, brightness) and the
     WS lamp one. The CWS lamp does not answer: one of two MEMBERS was
     reached, whatever the number of calls.
 
     Fault to prove it: count `asked` as the sum of the plans' calls in
-    `loxone/server.py` or `api/control.py` - the detail then reads "reached
-    2 of 3". In every earlier 502 test each member asked got exactly one
-    call, and there the two counts agree."""
+    `api/control.py` - the detail then reads "reached 2 of 3". In every
+    earlier 502 test each member asked got exactly one call, and there the
+    two counts agree. (The `/cmd` half is the log test below.)"""
     client, store, group_id = api
     cws, ws = store.group_members(group_id)
     failing_nodes.add(cws.address)
@@ -572,6 +601,47 @@ async def test_the_502_counts_members_not_calls(api, invocations, failing_nodes,
     assert [(call.address, call.cluster_id, call.command_id) for call in invocations] == [
         (ws.address, 8, 4)
     ]
+
+
+async def test_the_cmd_log_counts_only_the_members_given_something_to_do(
+    dim_only_api, invocations, failing_nodes, unconfigured_nodes, caplog
+):
+    """The `/cmd` halves of the three tests above, in `_log_group_outcome`:
+    the dim-only lamp is given nothing for a `colortemp` value, so it is
+    neither reached nor missed, and a colour value is counted in members,
+    not in calls.
+
+    Faults to prove it: in `_log_group_outcome` (loxone/server.py), count
+    `len(plans)` for `asked` - the first line reads "reached 1 of 2"; or
+    count the plans' calls - the last line reads "reached 1 of 3"."""
+    caplog.set_level("WARNING", logger=_SERVER_LOG)
+    client, store, group_id = dim_only_api
+    cws, dim_only = store.group_members(group_id)
+    colortemp = next(c.key for c in store.group_commands(group_id) if c.slug == "colortemp")
+    color = next(c.key for c in store.group_commands(group_id) if c.slug == "color")
+
+    failing_nodes.add(cws.address)
+    assert (await client.get(f"/cmd/{colortemp}/2700")).status_code == 200
+    assert await _logged(caplog, "no answer from") == (
+        f"group command {colortemp!r} reached 0 of 1 members; no answer from: {cws.label}"
+    )
+
+    failing_nodes.clear()
+    unconfigured_nodes.add(cws.address)
+    caplog.clear()
+    assert (await client.get(f"/cmd/{colortemp}/2700")).status_code == 200
+    assert (await _logged(caplog, "was not sent")).startswith(
+        f"group command {colortemp!r} was not sent to any member"
+    )
+
+    unconfigured_nodes.clear()
+    failing_nodes.add(cws.address)
+    caplog.clear()
+    assert (await client.get(f"/cmd/{color}/60000000")).status_code == 200
+    assert await _logged(caplog, "no answer from") == (
+        f"group command {color!r} reached 1 of 2 members; no answer from: {cws.label}"
+    )
+    assert [call.address for call in invocations] == [dim_only.address]
 
 
 @pytest.mark.parametrize("route", ["loxone", "webui"])
@@ -844,17 +914,24 @@ async def test_a_dragged_slider_reaches_each_lamp_one_value_at_a_time(slow_api, 
     which on 13 September 2026 overlapped on the same Thread lamps until the
     OpenThread agent gave up.
 
-    Each request has reached the route before the next is sent, and the
-    first is still waiting for the lamps when the fifth arrives - asserted
-    below, because that is what makes this a burst: `httpx.ASGITransport`
-    holds no lock, so the requests really run side by side in this event
-    loop. Each lamp then runs one call at a time, ends on the newest value,
-    and skips at least one of the values that were only waiting.
+    Each request has reached the route before the next is sent -
+    `httpx.ASGITransport` holds no lock, so the requests really run side by
+    side in this event loop. Each lamp then runs one call at a time, ends
+    on the newest value, and skips at least one of the values that were
+    only waiting.
 
-    Fault to prove it: call `dispatch_group(plans, invoke)` without `run`
-    in `_group_command` (loxone/server.py) or `_execute_group_command`
-    (api/control.py) - the lamps then run five calls at once and receive
-    all five values."""
+    Through the web UI the first is still waiting for the lamps when the
+    fifth arrives. Through `/cmd` every value is already answered while the
+    lamps are still busy with the first (design 2026-09-30): the Miniserver
+    sends its next value only after that answer, so this is what lets the
+    values reach the gate at all instead of queuing in the Miniserver.
+
+    Faults to prove it: call `dispatch_group(plans, invoke)` without `run`
+    in `_execute_group_command` (api/control.py), or `invoke` the members'
+    calls directly in `_group_command` (loxone/server.py) - the lamps then
+    run five calls at once and receive all five values. Or await the
+    members in `_group_command` before answering - the `/cmd` requests are
+    not answered while the lamps are busy."""
     client, store, group_id, lamps, admitted = slow_api
     addresses = {member.address for member in store.group_members(group_id)}
     key = next(c.key for c in store.group_commands(group_id) if c.slug == "level_onoff")
@@ -868,7 +945,10 @@ async def test_a_dragged_slider_reaches_each_lamp_one_value_at_a_time(slow_api, 
 
     # The ones in between may already have answered: a superseded request
     # answers as soon as a newer value replaces it.
-    assert not requests[0].done()
+    if route == "loxone":
+        await settle_until(lambda: all(r.done() for r in requests), "every value was answered")
+    else:
+        assert not requests[0].done()
     assert {address: lamps.active.get(address, 0) > 0 for address in addresses} == {
         address: True for address in addresses
     }
@@ -877,14 +957,31 @@ async def test_a_dragged_slider_reaches_each_lamp_one_value_at_a_time(slow_api, 
     responses = await asyncio.gather(*requests)
 
     assert [response.status_code for response in responses] == [200] * 5
+    for address in addresses:
+        levels = await _levels_once_settled(lamps, address)
+        assert levels[-1] == 127  # 50 %
+        assert len(levels) < 5
     assert {address: lamps.max_active[address] for address in addresses} == {
         address: 1 for address in addresses
     }
-    for address in addresses:
-        levels = [
+
+
+async def _levels_once_settled(lamps: SlowDevices, address: str) -> list[object]:
+    """The brightness levels `address` received, once it has received the
+    newest (127, 50 %): through `/cmd` the answer comes before the lamp has
+    run anything, and the newest value waits out `VALUE_INTERVAL_SECONDS`."""
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + 5
+
+    def levels() -> list[object]:
+        return [
             call.payload["level"]
             for call in lamps.ran
             if call.address == address and call.cluster_id == 8
         ]
-        assert levels[-1] == 127  # 50 %
-        assert len(levels) < 5
+
+    while 127 not in levels():
+        if loop.time() > deadline:
+            raise AssertionError(f"{address} never received the newest value: {levels()}")
+        await asyncio.sleep(0.01)
+    return levels()

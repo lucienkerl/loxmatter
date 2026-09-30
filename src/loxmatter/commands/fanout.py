@@ -47,7 +47,7 @@ from loxmatter.model.store import GroupTarget, StoredGroupCommand
 from loxmatter.profiles.light_commands import LIGHT_COMMAND_PAIRS
 from loxmatter.sources import DeviceCall, SourceNotConfiguredError
 
-__all__ = ["GroupOutcome", "MemberPlan", "dispatch_group", "plan_group_calls"]
+__all__ = ["GroupOutcome", "MemberPlan", "dispatch_group", "group_outcome", "plan_group_calls"]
 
 
 @dataclass(frozen=True)
@@ -226,6 +226,15 @@ async def dispatch_group(
     results = await asyncio.gather(
         *(_run_member(plan, invoke, run) for plan in plans), return_exceptions=True
     )
+    return group_outcome(plans, results)
+
+
+def group_outcome(plans: Sequence[MemberPlan], results: Sequence[object]) -> GroupOutcome:
+    """Which members failed, from what each member's run returned or raised,
+    in plan order - `dispatch_group`'s report, for a caller that ran the
+    members itself: `/cmd` submits them to the gate and reads their outcomes
+    later (design 2026-09-30). `results` is what
+    `asyncio.gather(..., return_exceptions=True)` returns."""
     # BaseException, not Exception: cancelling the task that awaits this
     # function still propagates CancelledError out, because CPython's
     # _GatheringFuture re-raises it regardless of return_exceptions - so
