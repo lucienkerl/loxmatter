@@ -16651,3 +16651,15 @@ async def test_the_firmware_parts_are_delivered(api):
     ):
         assert needle in html
     assert 'this.request("GET", "/api/firmware")' in script
+    # Every install goes through the dialog's own button; the pill, the
+    # kebab item and the table button only open the dialog.
+    assert html.count("installFirmware(") == 1
+    assert html.count("openFirmwareModal(") >= 3
+    pill = html[html.index('class="status-pill update"') :][:300]
+    assert "openFirmwareModal(device)" in pill
+    kebab = html[
+        html.index("t('web.devices.menu_firmware')") - 300 : html.index(
+            "t('web.devices.menu_firmware')"
+        )
+    ]
+    assert "openFirmwareModal(device)" in kebab

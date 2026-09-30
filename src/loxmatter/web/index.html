@@ -2591,7 +2591,7 @@
             <span style="flex: 1 1 auto"></span>
             <button
               @click="checkFirmwareAll()"
-              :disabled="!firmware?.supported || firmware?.check.running"
+              :disabled="!firmware?.supported || firmware?.check.running || firmwareCheckBusy"
               x-text="firmware?.check.running
                       ? t('web.firmware.checking', { checked: firmware.check.checked, total: firmware.check.total })
                       : t('web.firmware.check_now')"
@@ -2647,7 +2647,7 @@
                            design requires (2, 9.2). -->
                       <button
                         class="primary"
-                        x-show="entry.state === 'available'"
+                        x-show="firmwareCanInstall(entry)"
                         :disabled="firmware.updating_device_id !== null || entry.online === false"
                         @click="openFirmwareModal(devices.find((d) => d.id === entry.device_id))"
                         x-text="t('web.firmware.install')"
@@ -2661,7 +2661,7 @@
           <label class="firmware-daily" x-show="firmware" x-cloak>
             <input type="checkbox" id="firmware-daily-check"
                    :checked="firmware?.daily_check_enabled"
-                   @change="setFirmwareDailyCheck($event.target.checked)" />
+                   @change="setFirmwareDailyCheck($event.target.checked, $event.target)" />
             <span x-text="t('web.firmware.daily_check')"></span>
           </label>
         </div>
@@ -3754,7 +3754,7 @@
                  x-text="firmwareModalRow().check_error ?? firmwareModalRow().job_error"></p>
 
               <!-- Before: the three consequences that show in operation. -->
-              <div class="banner warn" x-show="firmwareModalRow().state === 'available'">
+              <div class="banner warn" x-show="firmwareCanInstall(firmwareModalRow())">
                 <strong x-text="t('web.firmware.before_heading')"></strong>
                 <ul>
                   <li x-text="t('web.firmware.before_duration')"></li>
@@ -3786,8 +3786,8 @@
                         x-text="t('web.firmware.check_again')"></button>
                 <span style="flex: 1 1 auto"></span>
                 <button type="button" @click="closeFirmwareModal()"
-                        x-text="firmwareModalRow().state === 'available' ? t('web.firmware.cancel') : t('web.firmware.close')"></button>
-                <button type="button" class="primary" x-show="firmwareModalRow().state === 'available'"
+                        x-text="firmwareCanInstall(firmwareModalRow()) ? t('web.firmware.cancel') : t('web.firmware.close')"></button>
+                <button type="button" class="primary" x-show="firmwareCanInstall(firmwareModalRow())"
                         :disabled="firmwareBusy || firmware.updating_device_id !== null || firmwareModalRow().online === false"
                         @click="installFirmware()" x-text="t('web.firmware.install_update')"></button>
               </div>

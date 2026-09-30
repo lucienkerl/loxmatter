@@ -1880,8 +1880,8 @@ web.firmware.checking:
   en: "Checking {checked} of {total} …"
   de: "Prüfe {checked} von {total} …"
 web.firmware.unsupported:
-  en: "This matter-server does not offer firmware updates (API schema 10 or newer needed)."
-  de: "Dieser matter-server bietet keine Firmware-Updates an (API-Schema 10 oder neuer nötig)."
+  en: "Firmware updates are not available right now: matter-server is not connected, or it is too old (API schema 10 or newer needed)."
+  de: "Firmware-Updates sind gerade nicht verfügbar: matter-server ist nicht verbunden oder zu alt (API-Schema 10 oder neuer nötig)."
 web.firmware.filter_all:
   en: "All {count}"
   de: "Alle {count}"

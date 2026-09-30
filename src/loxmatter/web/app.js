@@ -1193,6 +1193,7 @@ function app() {
     firmwareModalDevice: null,
     firmwareModalBackdropMousedown: false,
     firmwareBusy: false,
+    firmwareCheckBusy: false,
     firmwareError: null,
     firmwareFilter: "all",
     firmwareDoneVersion: null,
@@ -1588,6 +1589,9 @@ function app() {
         // and neither the password field nor the error banner would be
         // reachable.
         this.closeSignalsModal();
+        // Same for the firmware dialog.
+        const firmwareDialog = this.$refs.firmwareModal;
+        if (firmwareDialog?.open) firmwareDialog.close();
       }
     },
 
@@ -5076,6 +5080,14 @@ function app() {
       return FIRMWARE_ACTIVE_STATES.includes(row?.state);
     },
 
+    /** A stored offer can be installed again after a failed check or
+     * install: the server accepts it while the device is reachable. */
+    firmwareCanInstall(row) {
+      if (!row) return false;
+      if (row.state === "available") return true;
+      return ["check_failed", "failed", "interrupted"].includes(row.state) && row.offer != null;
+    },
+
     firmwareModalRow() {
       return this.firmwareModalDevice === null ? null : this.firmwareFor(this.firmwareModalDevice);
     },
@@ -5112,11 +5124,15 @@ function app() {
     },
 
     async checkFirmwareAll() {
+      if (this.firmwareCheckBusy) return;
       this.firmwareError = null;
+      this.firmwareCheckBusy = true;
       try {
         await this.request("POST", "/api/firmware/check");
       } catch (error) {
         this.firmwareError = t("web.firmware.action_error", { message: error.message });
+      } finally {
+        this.firmwareCheckBusy = false;
       }
       await this.loadFirmware();
     },
@@ -5155,12 +5171,14 @@ function app() {
       await this.loadFirmware();
     },
 
-    async setFirmwareDailyCheck(enabled) {
+    async setFirmwareDailyCheck(enabled, checkbox) {
       this.firmwareError = null;
       try {
         this.firmware = await this.request("PUT", "/api/firmware/settings", { daily_check_enabled: enabled });
       } catch (error) {
         this.firmwareError = t("web.firmware.action_error", { message: error.message });
+        // The checkbox has already flipped; the server did not follow.
+        if (checkbox) checkbox.checked = !enabled;
       }
     },
 
