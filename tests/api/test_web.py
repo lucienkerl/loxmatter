@@ -16669,6 +16669,18 @@ async def test_the_firmware_parts_are_delivered(api):
     assert "openFirmwareModal(device)" in kebab
 
 
+async def test_a_running_update_opens_its_dialog_from_the_overview(api):
+    """While a device updates, its row in the System overview has a button
+    that opens the same dialog with the step list - never an install."""
+    client, _, _ = api
+    html = (await client.get("/")).text
+    button = html[: html.index("t('web.firmware.show_progress')")]
+    button = button[button.rindex("<button") :]
+    assert 'x-show="firmwareRunning(entry)"' in button
+    assert "openFirmwareModal(" in button
+    assert "installFirmware(" not in button
+
+
 @pytest.mark.skipif(NODE is None, reason="node is required for this test")
 async def test_the_next_firmware_check_line_follows_next_check_at(api):
     """The line under the daily-check box, through its SERVED bindings:

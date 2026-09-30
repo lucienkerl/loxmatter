@@ -2652,6 +2652,13 @@
                         @click="openFirmwareModal(devices.find((d) => d.id === entry.device_id))"
                         x-text="t('web.firmware.install')"
                       ></button>
+                      <!-- A running update: the same dialog, showing its
+                           step list and progress. -->
+                      <button
+                        x-show="firmwareRunning(entry)"
+                        @click="openFirmwareModal(devices.find((d) => d.id === entry.device_id))"
+                        x-text="t('web.firmware.show_progress')"
+                      ></button>
                     </td>
                   </tr>
                 </template>
