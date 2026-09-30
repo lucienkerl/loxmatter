@@ -412,7 +412,20 @@ update**, and its results are written into this section:
 4. The Matter version from `0/40/21` shows the same as on the old server.
 
 Where to run it is open: a second test installation, or the test Pi after
-its own move to matterjs-server. Until this section holds results, the
+its own move to matterjs-server.
+
+**Results so far.** The test Pi moved to matterjs-server on September 30,
+2026 (`matter-server/1.4.0`, matter.js 0.17.9, schema 13). The same
+read-only probe as in section 3, run the same evening:
+
+1. Passed: `schema_version` 13.
+2. Passed: the same offers for nodes 4, 12, 13, 16 and 22, `None` for 11,
+   15, 21 and 26, no `0/42` on the Tasmota plugs. Two field values differ
+   from the old server, neither of which loxmatter reads:
+   `firmware_information` is `None` instead of `""`, and BILRESA's
+   `min_applicable_software_version` is `0` instead of `17301509`.
+3. Open: no install has run yet.
+4. Open: not probed yet. Until this section holds results, the
 changelog entry stays under "Unreleased" and no release is cut with it.
 
 ## 11. Later stages
