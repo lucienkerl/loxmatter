@@ -127,6 +127,7 @@ from typing import Any, Final
 from loxmatter import i18n
 from loxmatter.matter.models import NodeSnapshot, Technology
 from loxmatter.sources import DeviceCall, RuntimeEventHandler
+from loxmatter.sources.firmware import FIRMWARE_MIN_SCHEMA, FirmwareFacts, UpdateOffer
 
 logger = logging.getLogger(__name__)
 
@@ -605,6 +606,74 @@ class BridgeMatterClient:
         """
         await self._require_upstream().set_thread_operational_dataset(dataset)
         self._thread_dataset_set = True
+
+    # --- Firmware updates (design 2026-09-30, section 8). Verified against
+    # matter-python-client 1.4.0: `check_node_update(node_id) ->
+    # MatterSoftwareVersion | None` and `update_node(node_id,
+    # software_version)`, both `require_schema=10`. Measured on the test Pi
+    # on 2026-09-30: the old python-matter-server (schema 11) answers
+    # `check_node_update` as well.
+
+    _FIRMWARE_REFRESH_PATHS: Final = ["0/42/2", "0/42/3", "0/40/9", "0/40/10"]
+
+    def firmware_supported(self) -> bool:
+        info = getattr(self._upstream, "server_info", None)
+        schema = getattr(info, "schema_version", None)
+        return self.connected and isinstance(schema, int) and schema >= FIRMWARE_MIN_SCHEMA
+
+    def _node(self, address: str) -> Any | None:
+        node_id = int(address)
+        for node in self._require_upstream().get_nodes():
+            if node.node_id == node_id:
+                return node
+        return None
+
+    def firmware_facts(self, address: str) -> FirmwareFacts | None:
+        node = self._node(address)
+        if node is None:
+            return None
+        attributes = node.node_data.attributes
+
+        def as_int(path: str) -> int | None:
+            value = attributes.get(path)
+            return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+        text = attributes.get("0/40/10")
+        return FirmwareFacts(
+            available=bool(node.available),
+            has_requestor=any(path.startswith("0/42/") for path in attributes),
+            software_version=as_int("0/40/9"),
+            software_version_string=text.strip() or None if isinstance(text, str) else None,
+            spec_version=as_int("0/40/21"),
+            update_state=as_int("0/42/2"),
+            update_progress=as_int("0/42/3"),
+        )
+
+    async def refresh_firmware_facts(self, address: str) -> None:
+        """Reads the update attributes from the device itself and writes them
+        into the node cache - for a device that does not report progress on
+        its own (design 7.2)."""
+        upstream = self._require_upstream()
+        values = await upstream.read_attribute(int(address), list(self._FIRMWARE_REFRESH_PATHS))
+        node = self._node(address)
+        if node is not None:
+            node.node_data.attributes.update(values)
+
+    async def check_update(self, address: str) -> UpdateOffer | None:
+        result = await self._require_upstream().check_node_update(int(address))
+        if result is None:
+            return None
+        return UpdateOffer(
+            software_version=int(result.software_version),
+            software_version_string=str(result.software_version_string),
+            min_applicable=int(result.min_applicable_software_version),
+            max_applicable=int(result.max_applicable_software_version),
+            release_notes_url=result.release_notes_url or None,
+            source=str(getattr(result.update_source, "value", result.update_source)),
+        )
+
+    async def start_update(self, address: str, software_version: int) -> None:
+        await self._require_upstream().update_node(int(address), software_version)
 
     async def send(self, call: DeviceCall) -> None:
         """Executes a translated `DeviceCall` over the upstream.
