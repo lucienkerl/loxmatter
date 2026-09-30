@@ -251,6 +251,10 @@ class FirmwareJobs:
         last_reread = started
         idle_since: float | None = None
         seen_busy = False
+        # When `update_node` returned: a device that is still Idle two minutes
+        # later never started. Counted from there, not from the job's start,
+        # because the call may block for a while.
+        start_returned_at: float | None = None
         last_written: tuple[str, int | None] | None = None
         while True:
             now = self._clock()
@@ -259,6 +263,8 @@ class FirmwareJobs:
                 if failure is not None:
                     self._end(device_id, states.FAILED, describe_failure(failure))
                     return
+                if start_returned_at is None:
+                    start_returned_at = now
             if not source.connected:
                 self._end(device_id, states.INTERRUPTED, None)
                 return
@@ -283,6 +289,11 @@ class FirmwareJobs:
                 if now - idle_since >= timing.idle_fail_after:
                     self._end(device_id, states.FAILED, i18n.t("api.firmware.job_no_new_version"))
                     return
+            elif (
+                start_returned_at is not None and now - start_returned_at >= timing.idle_fail_after
+            ):
+                self._end(device_id, states.FAILED, i18n.t("api.firmware.job_not_started"))
+                return
             if now - started >= timing.give_up_after:
                 self._end(device_id, states.FAILED, i18n.t("api.firmware.job_gave_up"))
                 return

@@ -595,6 +595,9 @@ api.firmware.check_timeout:
 api.firmware.job_no_new_version:
   en: "The device went back to idle without reporting the new version. Try again later."
   de: "Das Gerät ist in den Ruhezustand zurückgekehrt, ohne die neue Version zu melden. Versuchen Sie es später erneut."
+api.firmware.job_not_started:
+  en: "The device did not start the update. Try again later."
+  de: "Das Gerät hat das Update nicht begonnen. Versuchen Sie es später erneut."
 api.firmware.job_gave_up:
   en: "The update did not finish within three hours and was abandoned."
   de: "Das Update wurde nicht innerhalb von drei Stunden abgeschlossen und abgebrochen."

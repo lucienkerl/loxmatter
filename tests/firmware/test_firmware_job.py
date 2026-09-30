@@ -100,6 +100,40 @@ async def test_back_to_idle_without_new_version_fails_after_two_minutes(tmp_path
     assert status.offer == KAJPLATS_OFFER  # still offered, can be retried
 
 
+async def test_an_install_the_device_never_starts_fails_after_two_minutes(tmp_path):
+    store, source, clock, jobs, lamp_id, lamp = _setup(tmp_path)
+    # `start_update` returns at once; the device never leaves Idle.
+    jobs.start(lamp_id, 16908288)
+    await jobs.wait()
+    status = store.firmware_status.get(lamp_id)
+    assert status.job_state == states.FAILED
+    assert status.job_error == "The device did not start the update. Try again later."
+    assert 120 <= clock.t <= 130
+    assert status.offer == KAJPLATS_OFFER
+    assert jobs.running_device_id is None
+    source.set_state(lamp, 1)
+    jobs.start(lamp_id, 16908288)  # the lock is free again
+    await jobs.stop()
+
+
+async def test_the_not_started_clock_counts_from_the_end_of_the_start(tmp_path):
+    store, source, clock, jobs, lamp_id, _ = _slow_setup(tmp_path)
+    release = asyncio.Event()
+
+    async def slow_start(address: str, software_version: int) -> None:
+        source.started.append((address, software_version))
+        await release.wait()
+
+    source.start_update = slow_start  # type: ignore[method-assign]
+    # `update_node` blocks for 300 s, then the device still stays Idle.
+    clock.script = [(300, release.set)]
+    jobs.start(lamp_id, 16908288)
+    await jobs.wait()
+    status = store.firmware_status.get(lamp_id)
+    assert status.job_state == states.FAILED
+    assert 420 <= clock.t <= 430
+
+
 async def test_no_change_for_fifteen_minutes_is_stalled_and_recovers(tmp_path):
     store, source, clock, jobs, lamp_id, lamp = _setup(tmp_path)
     seen = []
