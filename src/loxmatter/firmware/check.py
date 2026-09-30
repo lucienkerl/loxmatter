@@ -14,7 +14,7 @@ from dataclasses import dataclass
 
 from loxmatter import i18n
 from loxmatter.model.store import Store, StoredDevice
-from loxmatter.sources.firmware import FirmwareSource
+from loxmatter.sources.firmware import FirmwareFacts, FirmwareSource
 from loxmatter.timestamps import now_iso
 
 logger = logging.getLogger(__name__)
@@ -112,7 +112,10 @@ class FirmwareChecker:
 
     async def _check_device(self, source: FirmwareSource, device: StoredDevice) -> None:
         facts = source.firmware_facts(device.address)
-        if facts is None or not facts.has_requestor or not facts.available:
+        if facts is None:
+            return
+        self._refresh_details(device, facts)
+        if not facts.has_requestor or not facts.available:
             return
         try:
             offer = await asyncio.wait_for(source.check_update(device.address), self._timeout)
@@ -136,3 +139,15 @@ class FirmwareChecker:
         ):
             offer = None
         self._store.firmware_status.record_check(device.id, offer, self._now())
+
+    def _refresh_details(self, device: StoredDevice, facts: FirmwareFacts) -> None:
+        """An install that was interrupted but finished anyway, or one done
+        with the vendor's app, leaves the stored version stale; the expert
+        area reads it from there. A `None` keeps the stored value."""
+        firmware = facts.software_version_string
+        spec_version = facts.spec_version
+        if (firmware is None or firmware == device.firmware) and (
+            spec_version is None or spec_version == device.matter_spec_version
+        ):
+            return
+        self._store.set_firmware_details(device.id, firmware, spec_version)

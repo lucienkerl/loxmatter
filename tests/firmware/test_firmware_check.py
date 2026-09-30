@@ -66,6 +66,26 @@ async def test_an_offer_the_device_already_has_is_not_stored(tmp_path):
     assert store.firmware_status.get(lamp_id).offer is None
 
 
+async def test_a_check_refreshes_a_firmware_updated_outside_loxmatter(tmp_path):
+    # An interrupted install that finished anyway, or the vendor's app.
+    store, source, checker, (lamp_id, lamp), _ = _setup(tmp_path)
+    source.facts[lamp] = replace(
+        idle_facts(16908288, "1.2.0"), has_requestor=False, spec_version=0x01050000
+    )
+    await checker.check_all()
+    device = store.device(lamp_id)
+    assert (device.firmware, device.matter_spec_version) == ("1.2.0", 0x01050000)
+
+
+async def test_a_check_leaves_unchanged_firmware_details_unwritten(tmp_path):
+    store, _, checker, (lamp_id, _), _ = _setup(tmp_path)
+    store.set_firmware_details(lamp_id, "1.1.0", 0x01040000)
+    writes = []
+    store.set_firmware_details = lambda *args: writes.append(args)  # type: ignore[method-assign]
+    await checker.check_one(lamp_id)
+    assert writes == []
+
+
 async def test_a_failed_check_keeps_the_previous_offer(tmp_path):
     store, source, checker, (lamp_id, _), _ = _setup(tmp_path)
     store.firmware_status.record_check(lamp_id, KAJPLATS_OFFER, "yesterday")
