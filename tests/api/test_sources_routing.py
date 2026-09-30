@@ -301,14 +301,31 @@ async def test_forget_only_is_offered_and_accepted_with_no_stick_stored(zigbee_p
     assert device_id not in [device.id for device in store.devices()]
 
 
-async def test_cmd_without_the_devices_source_is_503(zigbee_plug):
-    """Fault to prove it: delete the `except SourceNotConfiguredError`
-    branch in `/cmd/{key}/{value}` - the generic handler then answers 502."""
+async def test_cmd_without_the_devices_source_logs_one_line_without_a_traceback(
+    zigbee_plug, caplog
+):
+    """`/cmd` answers before the device is asked (design 2026-09-30), so a
+    technology with no running source is logged, not answered with 503 -
+    as a warning: nothing is broken, the source is just not running.
+
+    Fault to prove it: delete the `SourceNotConfiguredError` branch in
+    `_log_device_outcome` (loxone/server.py) - the generic branch then logs
+    an error with a traceback."""
+    caplog.set_level("WARNING", logger="loxmatter.loxone.server")
     client, _, on_key, _ = await zigbee_plug(with_zigbee=False)
 
     response = await client.get(f"/cmd/{on_key}/1")
 
-    assert response.status_code == 503
+    assert response.status_code == 200
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + 5
+    while not caplog.records:
+        assert loop.time() < deadline, "nothing was logged"
+        await asyncio.sleep(0.01)
+    [record] = caplog.records
+    assert record.levelname == "WARNING"
+    assert record.getMessage().startswith(f"command {on_key!r} was not sent: ")
+    assert record.exc_info is None
 
 
 async def test_the_control_route_without_the_devices_source_is_503(zigbee_plug):

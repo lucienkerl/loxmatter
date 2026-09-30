@@ -658,3 +658,159 @@ async def test_supersession_starts_after_the_last_waiting_toggle_not_the_first()
         (6, None),
         (8, 30),
     ]
+
+
+# Design 2026-09-30 (live slider values): `submit` and `min_interval`.
+
+
+class InstantDevices:
+    """An invoker that answers at once and records what ran."""
+
+    def __init__(self) -> None:
+        self.ran: list[DeviceCall] = []
+
+    async def __call__(self, device_call: DeviceCall) -> None:
+        self.ran.append(device_call)
+
+
+async def test_submit_returns_before_the_device_answers_and_hands_on_the_outcome():
+    """Fault to prove it: have `submit` await `_outcome` before it returns
+    the future - `submit` would have to be awaited, and nothing is queued
+    by the time it returns."""
+    devices = SlowDevices()
+    gate = CommandGate(devices)
+    outcome = gate.submit(level("lamp", 10))
+    assert not outcome.done()
+    await _let_run()
+    assert devices.active == {"lamp": 1}
+    devices.release.set()
+    assert await outcome is True
+
+
+async def test_submitted_requests_queue_in_the_order_they_were_submitted():
+    """A toggle and a value submitted in one go reach the lamp in that
+    order, because `submit` queues before it returns rather than in a task
+    of its own.
+
+    Fault to prove it: queue inside the task `submit` starts - requests
+    submitted before the loop turns can then only queue in the order the
+    loop happens to start their tasks, which nothing here promises."""
+    devices = InstantDevices()
+    gate = CommandGate(devices)
+    outcomes = [
+        gate.submit([call("lamp", 6, 2)]),
+        gate.submit(level("lamp", 10)),
+        gate.submit([call("lamp", 6, 2)]),
+    ]
+    assert await asyncio.gather(*outcomes) == [True, True, True]
+    assert [(c.cluster_id, c.command_id) for c in devices.ran] == [(6, 2), (8, 4), (6, 2)]
+
+
+async def test_a_submitted_value_is_replaced_by_a_newer_one_and_the_newest_runs():
+    """What makes `/cmd` live: values the Miniserver no longer waits for
+    pile up here, and only the newest is sent."""
+    devices = SlowDevices()
+    gate = CommandGate(devices)
+    outcomes = [gate.submit(level("lamp", 10))]
+    await _let_run()
+    outcomes += [gate.submit(level("lamp", value)) for value in (20, 30, 40)]
+    await _let_run()
+    devices.release.set()
+    assert await asyncio.gather(*outcomes) == [True, False, False, True]
+    assert [c.payload["level"] for c in devices.ran] == [10, 40]
+
+
+async def test_a_submitted_failure_is_in_the_future_and_not_logged_as_unretrieved():
+    loop = asyncio.get_running_loop()
+    reported: list[dict[str, object]] = []
+    previous = loop.get_exception_handler()
+    loop.set_exception_handler(lambda _loop, context: reported.append(context))
+    try:
+        devices = SlowDevices()
+        devices.failing.add(("lamp", 6, 1))
+        gate = CommandGate(devices)
+        seen = gate.submit([call("lamp", 6, 1)])
+        gate.submit([call("lamp", 6, 1)])
+        devices.release.set()
+        with pytest.raises(RuntimeError, match="no answer from lamp"):
+            await seen
+        await _let_run()
+        assert gate._submitted == set()
+        gc.collect()
+        await _let_run()
+    finally:
+        loop.set_exception_handler(previous)
+    assert [c["message"] for c in reported] == []
+
+
+async def test_an_empty_submitted_request_runs_nothing_and_succeeds():
+    devices = InstantDevices()
+    assert await CommandGate(devices).submit([]) is True
+    assert devices.ran == []
+
+
+async def test_a_value_that_follows_too_soon_waits_and_can_still_be_replaced():
+    """The lamp has answered the first value, but the second arrives within
+    the interval: it waits instead of running, and a third replaces it.
+
+    Fault to prove it: ignore `min_interval` in `_drain` - the second runs
+    at once, and the lamp receives 10, 20 and 30."""
+    devices = InstantDevices()
+    gate = CommandGate(devices, min_interval=0.2)
+    assert await gate.run(level("lamp", 10)) is True
+    second = gate.submit(level("lamp", 20))
+    await _let_run()
+    assert [c.payload["level"] for c in devices.ran] == [10]
+    third = gate.submit(level("lamp", 30))
+    assert await second is False
+    assert await asyncio.wait_for(third, timeout=2) is True
+    assert [c.payload["level"] for c in devices.ran] == [10, 30]
+
+
+async def test_the_newest_value_goes_out_once_the_interval_is_over():
+    """The last value is never dropped by the interval, only delayed.
+
+    Fault to prove it: `return` from `_drain` instead of sleeping - the
+    value is never sent."""
+    devices = InstantDevices()
+    gate = CommandGate(devices, min_interval=0.05)
+    loop = asyncio.get_running_loop()
+    await gate.run(level("lamp", 10))
+    started = loop.time()
+    assert await asyncio.wait_for(gate.run(level("lamp", 20)), timeout=2) is True
+    assert loop.time() - started >= 0.04
+    assert [c.payload["level"] for c in devices.ran] == [10, 20]
+
+
+async def test_on_off_and_toggle_are_never_held_back_by_the_interval():
+    """Fault to prove it: pause before every request, not only those with
+    slots - the toggle waits a minute."""
+    devices = InstantDevices()
+    gate = CommandGate(devices, min_interval=60)
+    await gate.run(level("lamp", 10))
+    assert await asyncio.wait_for(gate.run([call("lamp", 6, 2)]), timeout=1) is True
+
+
+async def test_the_interval_counts_per_device():
+    devices = InstantDevices()
+    gate = CommandGate(devices, min_interval=60)
+    await gate.run(level("lamp", 10))
+    assert await asyncio.wait_for(gate.run(level("other", 20)), timeout=1) is True
+
+
+async def test_the_interval_holds_after_the_queue_has_drained():
+    """A slider whose values arrive a little slower than the lamp answers
+    empties the queue after every value, and its lane goes with it.
+
+    Fault to prove it: keep the time of the last start in the lane - the
+    lane is gone when the second value arrives, and it runs at once."""
+    devices = InstantDevices()
+    gate = CommandGate(devices, min_interval=0.2)
+    await gate.run(level("lamp", 10))
+    await _let_run()
+    assert gate._lanes == {}
+    second = gate.submit(level("lamp", 20))
+    await _let_run()
+    assert not second.done()
+    assert len(devices.ran) == 1
+    assert await asyncio.wait_for(second, timeout=2) is True
