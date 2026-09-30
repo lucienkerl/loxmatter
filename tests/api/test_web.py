@@ -6292,7 +6292,8 @@ async def test_exactly_one_dialog_of_each_kind_is_delivered(api):
     `aria-labelledby` in the tile menu already had to dodge once). The
     count (one signal modal, one control modal from task 7, one group
     dialog since the device groups of 2026-09-10, one expert settings
-    modal since 2026-09-13) is the only assertion that would even notice
+    modal since 2026-09-13, one firmware update dialog since 2026-09-30) is
+    the only assertion that would even notice
     this regression: a `<dialog>` inside the tile would otherwise look
     exactly the same in the shipped text as one at the end of the page.
     The group dialog is the case in point - it holds a checkbox per
@@ -6300,15 +6301,16 @@ async def test_exactly_one_dialog_of_each_kind_is_delivered(api):
     group.
 
     The location check (after `</main>`) additionally proves that all
-    four sit outside the view sections and thus outside any
+    dialogs sit outside the view sections and thus outside any
     device loop."""
     client, _, _ = api
     markup = _without_comments((await client.get("/")).text)
-    assert markup.count("<dialog") == 4
+    assert markup.count("<dialog") == 5
     assert 'x-ref="signalsModal"' in markup
     assert 'x-ref="controlModal"' in markup
     assert 'x-ref="groupDialog"' in markup
     assert 'x-ref="expertModal"' in markup
+    assert 'x-ref="firmwareModal"' in markup
     assert markup.index("<dialog") > markup.index("</main>")
 
 
@@ -16631,3 +16633,21 @@ async def test_the_recovery_command_can_be_selected_with_one_click(api):
     rule = css[css.index(".command-copy code") :]
     rule = rule[: rule.index("}")]
     assert "user-select: all" in rule
+
+
+async def test_the_firmware_parts_are_delivered(api):
+    """Design 2026-09-30, 9.2/9.3: the card, the dialog, the pill, the kebab
+    item and the expert row. Delivery only - the bindings run in the browser
+    harness (plan Task 8, Step 7)."""
+    client, _, _ = api
+    html = (await client.get("/")).text
+    script = (await client.get("/static/app.js")).text
+    for needle in (
+        "t('web.firmware.card_heading')",
+        'x-ref="firmwareModal"',
+        "firmwarePillText(device.id)",
+        "openFirmwareModal(device)",
+        "t('web.devices.expert_matter_version')",
+    ):
+        assert needle in html
+    assert 'this.request("GET", "/api/firmware")' in script

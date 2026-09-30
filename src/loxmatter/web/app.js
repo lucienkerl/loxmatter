@@ -203,6 +203,11 @@ const ZIGBEE_NAMEABLE_ROW_STATES = ["ready", "configuring", "waiting_wake"];
 // whose names come from `roomSelectOptions()`.
 const NEW_ROOM_CHOICE = "__new__";
 
+// The firmware states in which an install is still running - the same set
+// as `ACTIVE_JOB_STATES` in `firmware/states.py`. The tile pill, the
+// dialog's step list and its "Check again" lock all read this one list.
+const FIRMWARE_ACTIVE_STATES = ["transferring", "applying", "stalled"];
+
 // The progress display's phases (design 2026-09-22, section 5.3), in the
 // order the bridge derives them from BlueZ and NODE_ADDED, and how often
 // the browser polls `GET /api/devices/commission/status` for them while an
@@ -1177,6 +1182,21 @@ function app() {
     expertData: null,
     expertError: null,
 
+    // Firmware updates (design 2026-09-30). `firmware` is the last
+    // `GET /api/firmware`; `firmwareModalDevice` the device whose dialog is
+    // open. Polled every 5 s while a check or an install runs, else every 60 s.
+    // `firmwareDoneVersion` is the version an install in the open dialog
+    // ended on, so the dialog can say so instead of silently falling back
+    // to "No update found".
+    firmware: null,
+    firmwareTimer: null,
+    firmwareModalDevice: null,
+    firmwareModalBackdropMousedown: false,
+    firmwareBusy: false,
+    firmwareError: null,
+    firmwareFilter: "all",
+    firmwareDoneVersion: null,
+
     // --- Settings ---------------------------------------------------
     // `bridgeSettings` is the state last loaded from the server (also read
     // elsewhere in this file); `settingsDraft` are the four input fields
@@ -1557,6 +1577,9 @@ function app() {
     noteAuthError(error) {
       if (error instanceof UnauthorizedError) {
         this.authenticated = false;
+        // The firmware poll would otherwise keep asking with no session.
+        clearTimeout(this.firmwareTimer);
+        this.firmwareTimer = null;
         this.authError = error.message;
         // This 401 can come from a modal action (saveTitle, toggleExported,
         // toggleResend, writeRaw). Without this call the signal modal
@@ -1661,6 +1684,9 @@ function app() {
       // the device list for no deeper reason than that both are cheap.
       await this.loadDevices();
       await this.loadGroups();
+      // Not awaited: the update overview is a pill on some tiles, never
+      // something the dashboard waits for. It schedules its own next poll.
+      this.loadFirmware();
       // Every card shows values and controls immediately, with no click
       // needed (device dashboard design, section 3) - that is why
       // startApp() loads both for EVERY device, not just for one after an
@@ -4971,6 +4997,185 @@ function app() {
       this.$refs.expertModal.close();
     },
 
+    // ---------------------------------------------------------------------
+    // Firmware updates (design 2026-09-30, 9.2)
+    // ---------------------------------------------------------------------
+
+    /** Loads the update overview and schedules the next load: every 5 s
+     * while something runs, every 60 s otherwise. A `setTimeout` chain,
+     * so a slow answer never stacks two polls. */
+    async loadFirmware() {
+      if (this.firmwareTimer) {
+        clearTimeout(this.firmwareTimer);
+        this.firmwareTimer = null;
+      }
+      const before = this.firmwareModalRow();
+      try {
+        this.firmware = await this.request("GET", "/api/firmware");
+      } catch {
+        // Keep the last known overview; the next poll tries again.
+      }
+      const after = this.firmwareModalRow();
+      if (FIRMWARE_ACTIVE_STATES.includes(before?.state) && after && !FIRMWARE_ACTIVE_STATES.includes(after.state)) {
+        // The install this dialog followed has ended. `failed` and
+        // `interrupted` say so themselves; anything else is a success.
+        this.firmwareDoneVersion = ["failed", "interrupted"].includes(after.state) ? null : after.installed;
+      }
+      if (!this.authenticated) return;
+      const busy = this.firmware && (this.firmware.check.running || this.firmware.updating_device_id !== null);
+      this.firmwareTimer = setTimeout(() => this.loadFirmware(), busy ? 5000 : 60000);
+    },
+
+    firmwareFor(deviceId) {
+      return this.firmware?.devices.find((row) => row.device_id === deviceId) || null;
+    },
+
+    matterVersionText(value) {
+      if (value === "<1.3") return t("web.firmware.matter_version_older");
+      return value ?? "–";
+    },
+
+    firmwareStateText(row) {
+      if (!row) return "";
+      if (row.state === "transferring") {
+        return row.progress === null
+          ? t("web.firmware.state_transferring_no_progress")
+          : t("web.firmware.state_transferring", { progress: row.progress });
+      }
+      return t("web.firmware.state_" + row.state);
+    },
+
+    /** Where an offer comes from, as a person reads it. The server sends
+     * the library's value (`main-net-dcl`); the keys use underscores like
+     * every other key in `strings.yaml`. An unknown source shows as sent. */
+    firmwareSourceText(source) {
+      const keys = {
+        "main-net-dcl": "web.firmware.source_main_net_dcl",
+        "test-net-dcl": "web.firmware.source_test_net_dcl",
+        local: "web.firmware.source_local",
+      };
+      return keys[source] ? t(keys[source]) : source;
+    },
+
+    /** The pill on a device tile: an offer, or a running install. Empty
+     * when there is nothing to say - the tile then shows no pill. */
+    firmwarePillText(deviceId) {
+      const row = this.firmwareFor(deviceId);
+      if (!row) return "";
+      if (row.state === "available" && row.offer) {
+        return t("web.firmware.pill_available", { from: row.installed ?? "?", to: row.offer.version_string });
+      }
+      if (FIRMWARE_ACTIVE_STATES.includes(row.state)) {
+        return this.firmwareStateText(row);
+      }
+      return "";
+    },
+
+    /** Whether an install is running on this row's device. */
+    firmwareRunning(row) {
+      return FIRMWARE_ACTIVE_STATES.includes(row?.state);
+    },
+
+    firmwareModalRow() {
+      return this.firmwareModalDevice === null ? null : this.firmwareFor(this.firmwareModalDevice);
+    },
+
+    firmwareModalDeviceObject() {
+      return this.devices.find((device) => device.id === this.firmwareModalDevice) || null;
+    },
+
+    /** Same `$nextTick` reason as `openExpertModal`: the content is built
+     * by `x-if` and does not exist yet on this tick. */
+    openFirmwareModal(device) {
+      if (!device) return;
+      this.firmwareError = null;
+      this.firmwareDoneVersion = null;
+      this.firmwareModalDevice = device.id;
+      this.$nextTick(() => this.$refs.firmwareModal.showModal());
+    },
+
+    /** The `@close` handler on the `<dialog>` is the one place that resets
+     * the dialog's state, like `closeExpertModal`. */
+    closeFirmwareModal() {
+      this.$refs.firmwareModal.close();
+    },
+
+    firmwareRows() {
+      const rows = this.firmware?.devices ?? [];
+      if (this.firmwareFilter === "available") return rows.filter((row) => row.state === "available");
+      if (this.firmwareFilter === "no_source") return rows.filter((row) => row.state === "no_source");
+      return rows;
+    },
+
+    firmwareCount(state) {
+      return (this.firmware?.devices ?? []).filter((row) => row.state === state).length;
+    },
+
+    async checkFirmwareAll() {
+      this.firmwareError = null;
+      try {
+        await this.request("POST", "/api/firmware/check");
+      } catch (error) {
+        this.firmwareError = t("web.firmware.action_error", { message: error.message });
+      }
+      await this.loadFirmware();
+    },
+
+    async checkFirmwareOne() {
+      const deviceId = this.firmwareModalDevice;
+      this.firmwareError = null;
+      this.firmwareDoneVersion = null;
+      this.firmwareBusy = true;
+      try {
+        await this.request("POST", `/api/devices/${deviceId}/firmware/check`);
+      } catch (error) {
+        this.firmwareError = t("web.firmware.action_error", { message: error.message });
+      } finally {
+        this.firmwareBusy = false;
+      }
+      await this.loadFirmware();
+    },
+
+    async installFirmware() {
+      const deviceId = this.firmwareModalDevice;
+      const row = this.firmwareFor(deviceId);
+      if (!row?.offer) return;
+      this.firmwareError = null;
+      this.firmwareDoneVersion = null;
+      this.firmwareBusy = true;
+      try {
+        await this.request("POST", `/api/devices/${deviceId}/firmware/update`, {
+          software_version: row.offer.version,
+        });
+      } catch (error) {
+        this.firmwareError = t("web.firmware.action_error", { message: error.message });
+      } finally {
+        this.firmwareBusy = false;
+      }
+      await this.loadFirmware();
+    },
+
+    async setFirmwareDailyCheck(enabled) {
+      this.firmwareError = null;
+      try {
+        this.firmware = await this.request("PUT", "/api/firmware/settings", { daily_check_enabled: enabled });
+      } catch (error) {
+        this.firmwareError = t("web.firmware.action_error", { message: error.message });
+      }
+    },
+
+    /** Step list of a running install, in the style of the bridge update
+     * card: "done", "run" or "todo" per step. Transferring without a
+     * progress yet means the device has not accepted the image so far. */
+    firmwareSteps(row) {
+      const order = ["accepted", "transfer", "restart", "confirmed"];
+      const current = { transferring: row?.progress === null ? 0 : 1, stalled: 1, applying: 2 }[row?.state];
+      return order.map((key, index) => ({
+        key,
+        status: current === undefined ? "todo" : index < current ? "done" : index === current ? "run" : "todo",
+      }));
+    },
+
     /**
      * Whether a mouse event lies on the modal's BACKDROP - and not on the
      * dialog itself.
@@ -6842,6 +7047,7 @@ function app() {
         }
         await this.loadUpdateStatus();
         await this.loadUpdateCheck();
+        await this.loadFirmware();
         this.systemChecks = await this.request("GET", "/api/diagnostics/system");
       } catch (error) {
         this.systemError = t("web.system.load_error", { message: error.message });

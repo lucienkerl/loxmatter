@@ -27,10 +27,12 @@ to prove the fallback case.
 from __future__ import annotations
 
 import re
+from pathlib import Path
 
 import pytest
 
 from loxmatter import i18n
+from loxmatter.firmware import states as firmware_states
 from loxmatter.profiles.categories import Category
 
 
@@ -294,3 +296,44 @@ def test_the_zigbee_and_radios_sentences_say_sie_like_the_rest_of_the_card():
         and _INFORMAL_GERMAN.search(i18n._STRINGS[key]["de"])
     }
     assert informal == {}
+
+
+_WEB_DIR = Path(i18n.__file__).resolve().parents[1] / "web"
+
+
+def test_every_firmware_key_the_web_ui_names_exists_in_both_languages():
+    """The WebUI's `t()` returns the key itself for a missing entry, so a typo
+    in `index.html`/`app.js` ships as a visible `web.firmware.…` on screen,
+    and a missing `de` falls back to English inside a German page. Nothing
+    else checks the literal keys, so this does for the firmware parts
+    (design 2026-09-30, 9.2). The composed keys - `state_` + every row state
+    `firmware/states.py` derives, `step_` + a step, the source map in
+    `app.js` - are built here, because no pattern over the source sees them."""
+    source = (_WEB_DIR / "index.html").read_text(encoding="utf-8") + (
+        _WEB_DIR / "app.js"
+    ).read_text(encoding="utf-8")
+    literal = set(
+        re.findall(
+            r"""t\(\s*["'](web\.(?:firmware\.|devices\.(?:menu_firmware|expert_matter_version))[\w.]*)["']\s*[,)]""",
+            source,
+        )
+    )
+    states = {
+        firmware_states.AVAILABLE,
+        firmware_states.NONE_FOUND,
+        firmware_states.NO_SOURCE,
+        firmware_states.UNCHECKED,
+        firmware_states.CHECK_FAILED,
+        *firmware_states.ACTIVE_JOB_STATES,
+        *firmware_states.ENDED_JOB_STATES,
+    }
+    composed = (
+        {f"web.firmware.state_{state}" for state in states}
+        | {f"web.firmware.step_{step}" for step in ("accepted", "transfer", "restart", "confirmed")}
+        | {f"web.firmware.source_{source}" for source in ("main_net_dcl", "test_net_dcl", "local")}
+    )
+    assert len(literal) > 20
+    for key in sorted(literal | composed):
+        assert key in i18n._STRINGS, key
+        assert i18n._STRINGS[key].get("en"), key
+        assert i18n._STRINGS[key].get("de"), key
