@@ -125,6 +125,8 @@ _KNOWN_TABLES = frozenset(
         # new table for a different feature belongs on this list; a new
         # table for these two settings would still fail the test.
         "zigbee_pending_config",
+        # Schema 15 (firmware updates): a new table for a different feature.
+        "firmware_status",
     }
 )
 
