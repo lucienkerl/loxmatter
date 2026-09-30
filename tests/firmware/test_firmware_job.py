@@ -1,6 +1,7 @@
 """Installing one firmware update (design 2026-09-30, section 7)."""
 
 import asyncio
+import sqlite3
 
 import pytest
 from firmware_fakes import KAJPLATS_OFFER, FakeFirmwareSource, idle_facts, register
@@ -288,3 +289,91 @@ async def test_an_interrupted_job_whose_start_still_runs_leaves_no_task_behind(t
     assert store.firmware_status.get(lamp_id).job_state == states.INTERRUPTED
     assert _other_tasks() == []
     assert errors == []
+
+
+async def test_a_crashing_job_ends_as_failed(tmp_path):
+    store, _, _, jobs, lamp_id, _ = _setup(tmp_path)
+
+    def broken(*_args, **_kwargs):
+        raise sqlite3.OperationalError("disk I/O error")
+
+    store.firmware_status.update_job = broken  # type: ignore[method-assign]
+    jobs.start(lamp_id, 16908288)
+    await jobs.wait()
+    status = store.firmware_status.get(lamp_id)
+    assert status.job_state == states.FAILED and "disk I/O error" in status.job_error
+    assert jobs.running_device_id is None
+
+
+async def test_a_crashing_resumed_job_ends_as_failed(tmp_path):
+    store, source, _, jobs, lamp_id, lamp = _setup(tmp_path)
+    store.firmware_status.start_job(lamp_id, "before restart")
+    source.set_state(lamp, 4, 50)
+    real = source.firmware_facts
+    calls = []
+
+    def flaky(address):
+        calls.append(address)
+        if len(calls) > 2:
+            raise RuntimeError("cache broke")
+        return real(address)
+
+    source.firmware_facts = flaky  # type: ignore[method-assign]
+    assert jobs.resume_all() == 1
+    await jobs.wait()
+    status = store.firmware_status.get(lamp_id)
+    assert status.job_state == states.FAILED and status.job_error == "cache broke"
+
+
+async def test_stopping_leaves_the_row_active_for_the_next_start(tmp_path):
+    store, source, _, jobs, lamp_id, lamp = _setup(tmp_path)
+    source.set_state(lamp, 4, 10)
+    jobs.start(lamp_id, 16908288)
+    await asyncio.sleep(0)
+    await jobs.stop()
+    assert store.firmware_status.get(lamp_id).job_state in states.ACTIVE_JOB_STATES
+
+
+async def test_resume_does_not_touch_a_running_job(tmp_path):
+    store, source, _, jobs, lamp_id, _ = _setup(tmp_path)
+    other_id, other = register(store, "ikea_bilresa_button.json")
+    store.firmware_status.record_check(other_id, KAJPLATS_OFFER, "t0")
+    source.facts[other] = idle_facts(1, "0.1")
+    jobs.start(lamp_id, 16908288)
+    store.firmware_status.start_job(other_id, "before restart")
+    task = jobs._task
+    assert jobs.resume_all() == 0
+    assert jobs._task is task and jobs.running_device_id == lamp_id
+    assert store.firmware_status.get(other_id).job_state == states.TRANSFERRING
+    await jobs.stop()
+
+
+async def test_resume_finishes_an_update_that_was_applied_while_down(tmp_path):
+    store, source, _, jobs, lamp_id, lamp = _setup(tmp_path)
+    store.firmware_status.start_job(lamp_id, "before restart")
+    source.finish(lamp, 16908288, "1.2.0")
+    assert jobs.resume_all() == 0
+    await jobs.wait()
+    status = store.firmware_status.get(lamp_id)
+    assert status.job_state is None and status.offer is None
+    assert store.device(lamp_id).firmware == "1.2.0"
+    assert source.followed == [lamp]
+
+
+async def test_an_unchanged_state_is_not_written_again(tmp_path):
+    store, source, clock, jobs, lamp_id, lamp = _setup(tmp_path)
+    writes = []
+    real = store.firmware_status.update_job
+
+    def counting(*args):
+        writes.append(args[1:3])
+        real(*args)
+
+    store.firmware_status.update_job = counting  # type: ignore[method-assign]
+    clock.script = [
+        (2, lambda: source.set_state(lamp, 4, 10)),
+        (60, lambda: source.finish(lamp, 16908288, "1.2.0")),
+    ]
+    jobs.start(lamp_id, 16908288)
+    await jobs.wait()
+    assert writes == [(states.TRANSFERRING, None), (states.TRANSFERRING, 10)]

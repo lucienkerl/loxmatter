@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import functools
 import logging
 import time
 from collections.abc import Awaitable, Callable
@@ -89,6 +90,8 @@ class FirmwareJobs:
         self._timing = timing
         self._task: asyncio.Task[None] | None = None
         self._device_id: int | None = None
+        # Re-reads after an update that finished while loxmatter was down.
+        self._rereads: set[asyncio.Task[None]] = set()
 
     @property
     def running_device_id(self) -> int | None:
@@ -123,13 +126,18 @@ class FirmwareJobs:
         self._store.firmware_status.start_job(device_id, self._now())
         self._device_id = device_id
         self._task = asyncio.ensure_future(
-            self._install(source, device_id, device.address, software_version)
+            self._guarded(
+                device_id,
+                lambda: self._install(source, device_id, device.address, software_version),
+            )
         )
 
     def resume_all(self) -> int:
         """After a start of loxmatter: follows a device whose transfer is
         still running, and marks every other remembered job interrupted.
         Returns how many jobs it resumed (0 or 1)."""
+        if self.running_device_id is not None:
+            return 0
         source = self._source_for()
         if source is None or not source.firmware_supported():
             return 0
@@ -140,6 +148,20 @@ class FirmwareJobs:
                 continue
             device = by_id.get(device_id)
             facts = None if device is None else source.firmware_facts(device.address)
+            if (
+                device is not None
+                and facts is not None
+                and status.offer is not None
+                and facts.software_version is not None
+                and facts.software_version >= status.offer.software_version
+            ):
+                # The update finished while loxmatter was down. The store part
+                # is synchronous; only the re-read of the structure is a task.
+                self._record_success(device_id, facts)
+                reread = asyncio.ensure_future(self._reread(source, device_id, device.address))
+                self._rereads.add(reread)
+                reread.add_done_callback(self._rereads.discard)
+                continue
             busy = facts is not None and states.job_state_for(facts.update_state) is not None
             if device is None or not busy or status.offer is None or resumed:
                 self._store.firmware_status.end_job(
@@ -147,8 +169,12 @@ class FirmwareJobs:
                 )
                 continue
             self._device_id = device_id
+            target = status.offer.software_version
             self._task = asyncio.ensure_future(
-                self._follow(source, device_id, device.address, status.offer.software_version)
+                self._guarded(
+                    device_id,
+                    functools.partial(self._follow, source, device_id, device.address, target),
+                )
             )
             resumed = 1
         return resumed
@@ -156,12 +182,30 @@ class FirmwareJobs:
     async def wait(self) -> None:
         if self._task is not None:
             await asyncio.shield(self._task)
+        for reread in list(self._rereads):
+            await asyncio.shield(reread)
 
     async def stop(self) -> None:
+        for reread in list(self._rereads):
+            reread.cancel()
         if self._task is not None and not self._task.done():
             self._task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await self._task
+
+    async def _guarded(self, device_id: int, job: Callable[[], Awaitable[None]]) -> None:
+        """A crash ends the job as failed; a cancellation (shutdown) leaves
+        the row active so `resume_all` can pick the transfer up again."""
+        try:
+            await job()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.exception("firmware job of device %s crashed", device_id)
+            try:
+                self._end(device_id, states.FAILED, describe_failure(exc))
+            except Exception:
+                logger.exception("ending the firmware job of device %s failed", device_id)
 
     async def _install(
         self, source: FirmwareSource, device_id: int, address: str, target: int
@@ -179,8 +223,9 @@ class FirmwareJobs:
         finally:
             if not starter.done():
                 starter.cancel()
-                # Waiting does not raise; a pending start is never left behind.
-                await asyncio.wait({starter})
+                # Waiting does not raise; bounded so a shielded client call
+                # cannot hang shutdown.
+                await asyncio.wait({starter}, timeout=5)
 
     @staticmethod
     def _log_late_start(device_id: int, starter: asyncio.Future[None]) -> None:
@@ -206,6 +251,7 @@ class FirmwareJobs:
         last_reread = started
         idle_since: float | None = None
         seen_busy = False
+        last_written: tuple[str, int | None] | None = None
         while True:
             now = self._clock()
             if starter is not None and starter.done() and not starter.cancelled():
@@ -245,9 +291,12 @@ class FirmwareJobs:
                 if now - last_change >= timing.stall_after
                 else (job_state or states.TRANSFERRING)
             )
-            self._store.firmware_status.update_job(
-                device_id, shown, progress if shown == states.TRANSFERRING else None, self._now()
-            )
+            shown_progress = progress if shown == states.TRANSFERRING else None
+            if (shown, shown_progress) != last_written:
+                self._store.firmware_status.update_job(
+                    device_id, shown, shown_progress, self._now()
+                )
+                last_written = (shown, shown_progress)
             if (
                 now - last_change >= timing.reread_after
                 and now - last_reread >= timing.reread_after
@@ -264,14 +313,20 @@ class FirmwareJobs:
     def _end(self, device_id: int, state: str, error: str | None) -> None:
         self._store.firmware_status.end_job(device_id, state, error, self._now())
 
-    async def _succeed(
-        self, source: FirmwareSource, device_id: int, address: str, facts: FirmwareFacts
-    ) -> None:
+    def _record_success(self, device_id: int, facts: FirmwareFacts) -> None:
         self._store.set_firmware_details(
             device_id, facts.software_version_string, facts.spec_version
         )
         self._store.firmware_status.drop_offer(device_id)
         self._store.firmware_status.end_job(device_id, None, None, self._now())
+
+    async def _succeed(
+        self, source: FirmwareSource, device_id: int, address: str, facts: FirmwareFacts
+    ) -> None:
+        self._record_success(device_id, facts)
+        await self._reread(source, device_id, address)
+
+    async def _reread(self, source: FirmwareSource, device_id: int, address: str) -> None:
         # An update can renumber endpoints (the Tasmota plug did); re-reading
         # the structure is what lets "Changed since export" appear.
         try:
