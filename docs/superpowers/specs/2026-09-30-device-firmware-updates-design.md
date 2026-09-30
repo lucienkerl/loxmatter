@@ -30,6 +30,10 @@ Taken with Lucien on September 30, 2026:
 - **The test Pi is `pi@10.0.1.56`.**
 - **The Matter version a device implements is shown** in the update
   overview and in the device's expert area (section 9.3).
+- **Built and first tested against the old server, verified against
+  matterjs-server before release.** The test Pi keeps the old
+  `python-matter-server` for now; moving it is its own piece of work.
+  Section 10.3 is a release gate.
 
 ## 3. What already exists, measured
 
@@ -369,6 +373,40 @@ refreshed together with `device.firmware` (7.3).
 
 IKEA firmware cannot be rolled back. A battery device (MYGGSPRAY) is the
 slow edge case and is tried only after the lamp works.
+
+### 10.3 Release gate: matterjs-server
+
+Section 10.2 runs against the old `python-matter-server`, because that is
+what `pi@10.0.1.56` runs. The Compose file has named
+`ghcr.io/matter-js/matterjs-server:stable` since September 8, 2026, so
+**every new installation gets matterjs-server**. A pass on the old server
+proves the old path only.
+
+Why the test Pi is not on matterjs-server: on September 23, 2026 a
+`docker compose up -d loxmatter` pulled matterjs-server in, which started
+with zero nodes because it does not read the old server's storage. The old
+image was brought back by hand with `docker run` (created 2026-09-23
+05:22 UTC, no Compose label). Moving that Pi means re-commissioning every
+device or migrating the fabric; that is a separate design, not part of this
+one.
+
+**The feature is not released until the following has passed against a
+matterjs-server with at least one commissioned device that has a DCL
+update**, and its results are written into this section:
+
+1. The server's `schema_version` is at least 10, so the capability is
+   reported as available.
+2. `check_node_update` returns the same kind of answer as in section 3:
+   an offer for an outdated device, `None` for a current one. Field names
+   and the `update_source` values match `MatterSoftwareVersion`.
+3. One install runs through: `update_node` is accepted, `0/42/2` and
+   `0/42/3` move as recorded in 10.2 (or the differences are recorded and
+   handled), and `0/40/9` reaches the offered version.
+4. The Matter version from `0/40/21` shows the same as on the old server.
+
+Where to run it is open: a second test installation, or the test Pi after
+its own move to matterjs-server. Until this section holds results, the
+changelog entry stays under "Unreleased" and no release is cut with it.
 
 ## 11. Later stages
 
