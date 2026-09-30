@@ -15,7 +15,10 @@ colour call and a brightness call per member, all members at once, so the
 Thread lamps received six to seven unicasts per second, each with its reply.
 
 The Miniserver does not wait for an HTTP answer before sending the next
-value, so calls for the same lamp overlapped. At 19:27:51 the first member
+value, so calls for the same lamp overlapped. (Corrected on 30 September
+2026: for the virtual outputs measured then, it does wait. See
+`2026-09-30-live-slider-values-design.md`, which makes `/cmd` answer at
+once so that this gate has values to replace.) At 19:27:51 the first member
 stopped answering. At 19:28:15 matter-server could no longer send over
 `wpan0`, because the OpenThread agent had already exited. The cron watchdog
 restarted it at 19:30:01, and the network was back six seconds later.

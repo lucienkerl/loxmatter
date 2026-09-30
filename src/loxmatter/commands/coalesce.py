@@ -39,10 +39,18 @@ from dataclasses import dataclass, field
 from loxmatter import i18n, sources
 from loxmatter.sources import DeviceCall, DeviceUnreachableError
 
-__all__ = ["CommandGate", "slot_of"]
+__all__ = ["VALUE_INTERVAL_SECONDS", "CommandGate", "slot_of"]
 
 Invoker = Callable[[DeviceCall], Awaitable[None]]
 Slot = tuple[int, str]
+
+# The least time between the starts of two brightness or colour requests for
+# one device (design 2026-09-30, section 3). On the test Pi one colour value
+# - a colour call and a brightness call - took 160-250 ms on 30 September
+# 2026, so this leaves the radio a short rest between them: at most about
+# five Thread calls a second per lamp, and a lamp at most one interval and
+# one round trip behind the slider.
+VALUE_INTERVAL_SECONDS = 0.4
 
 _CLUSTER_LEVEL = 8
 _CLUSTER_COLOUR = 768
@@ -141,12 +149,36 @@ class CommandGate:
     `wait_timeout` bounds how long a request may wait while its device makes
     no progress. `None` reads `sources.SOURCE_CALL_TIMEOUT_SECONDS` each
     time a request waits, not once here: it is the bound of one call, so a
-    test that shortens that constant shortens both."""
+    test that shortens that constant shortens both.
 
-    def __init__(self, invoke: Invoker, *, wait_timeout: float | None = None) -> None:
+    `min_interval` is the least time between the starts of two requests
+    with slots for one device (design 2026-09-30). A request that would
+    start sooner waits in the queue, where a newer value can still replace
+    it. A request without slots - on, off, toggle - is never held back, and
+    does not start the clock either. `build_app` passes
+    `VALUE_INTERVAL_SECONDS`; the default of 0 keeps the gate as it was."""
+
+    def __init__(
+        self,
+        invoke: Invoker,
+        *,
+        wait_timeout: float | None = None,
+        min_interval: float = 0.0,
+    ) -> None:
         self._invoke = invoke
         self._wait_timeout = wait_timeout
+        self._min_interval = min_interval
         self._lanes: dict[tuple[str, str], _Lane] = {}
+        # Event loop time at which the last request with slots started, per
+        # device: what `min_interval` counts from. Kept here rather than in
+        # the lane, because a lane goes when its queue drains, and a slider
+        # whose values arrive a little slower than a lamp answers drains it
+        # after every value.
+        self._paced_at: dict[tuple[str, str], float] = {}
+        # The outcome tasks `submit` started, held so that the event loop,
+        # which keeps only weak references to tasks, does not collect one
+        # while its request still waits.
+        self._submitted: set[asyncio.Task[bool]] = set()
 
     async def run(self, calls: Sequence[DeviceCall]) -> bool:
         """Runs `calls` on their device after every request already running
@@ -168,8 +200,41 @@ class CommandGate:
         A caller that is cancelled while waiting does not take its request
         out of the queue: the value was sent to the bridge, and a Miniserver
         dropping the connection does not mean it no longer wants it."""
-        if not calls:
+        queued = self._enqueue(calls)
+        if queued is None:
             return True
+        return await self._outcome(*queued)
+
+    def submit(self, calls: Sequence[DeviceCall]) -> asyncio.Future[bool]:
+        """Queues `calls` like `run`, but without waiting for them: the
+        request is in its device's queue when this returns, in the order
+        `submit` was called, and the returned future holds what `run` would
+        have returned or raised (design 2026-09-30).
+
+        Whoever needs to know how the request ended adds a callback to the
+        future; an outcome nobody looks at is not logged as unretrieved.
+        The wait bound applies as it does to `run`, so a request for a
+        device that stopped answering still leaves the queue."""
+        queued = self._enqueue(calls)
+        if queued is None:
+            done: asyncio.Future[bool] = asyncio.get_running_loop().create_future()
+            done.set_result(True)
+            return done
+        task = asyncio.ensure_future(self._outcome(*queued))
+        self._submitted.add(task)
+        task.add_done_callback(self._submitted.discard)
+        task.add_done_callback(_consume)
+        return task
+
+    def _enqueue(
+        self, calls: Sequence[DeviceCall]
+    ) -> tuple[tuple[str, str], _Lane, _Request] | None:
+        """Puts a request into its device's queue and makes sure a worker
+        runs it. Awaits nothing, so two requests queue in the order they
+        were handed in. `None` for an empty request, which has nothing to
+        queue."""
+        if not calls:
+            return None
         key = (calls[0].technology, calls[0].address)
         if any((c.technology, c.address) != key for c in calls):
             raise ValueError("one request must address one device")
@@ -189,7 +254,7 @@ class CommandGate:
         # lane and strand every request for the device.
         if lane.worker is None or lane.worker.done():
             lane.worker = asyncio.ensure_future(self._drain(key, lane))
-        return await self._outcome(key, lane, request)
+        return key, lane, request
 
     async def _outcome(self, key: tuple[str, str], lane: _Lane, request: _Request) -> bool:
         seconds = (
@@ -238,9 +303,21 @@ class CommandGate:
         Nothing is awaited between the last emptiness check and the `finally`
         below, so a request appended while the last one runs is always
         picked up by this loop, never stranded between two workers."""
+        loop = asyncio.get_running_loop()
         try:
             while lane.waiting:
+                pause = self._pause_before(key, lane.waiting[0], loop.time())
+                if pause > 0:
+                    # The request stays in the queue while it waits for its
+                    # turn, so a newer value can still replace it, and the
+                    # loop looks again at whatever is first afterwards: the
+                    # replacement, or nothing if the wait bound took the
+                    # request out.
+                    await asyncio.sleep(pause)
+                    continue
                 request = lane.waiting.pop(0)
+                if request.slots is not None:
+                    self._paced_at[key] = loop.time()
                 try:
                     for device_call in request.calls:
                         await self._invoke(device_call)
@@ -269,6 +346,15 @@ class CommandGate:
             lane.worker = None
             if not lane.waiting and self._lanes.get(key) is lane:
                 del self._lanes[key]
+
+    def _pause_before(self, key: tuple[str, str], request: _Request, now: float) -> float:
+        """How long `request` must still wait before it may start, which is
+        only ever more than 0 for a request with slots that would follow the
+        last one sooner than `min_interval`."""
+        paced_at = self._paced_at.get(key)
+        if request.slots is None or paced_at is None:
+            return 0.0
+        return paced_at + self._min_interval - now
 
 
 def _supersede(lane: _Lane, slots: Mapping[Slot, int]) -> None:

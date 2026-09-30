@@ -14,7 +14,9 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+import asyncio
 import json
+import logging
 from pathlib import Path
 
 import httpx2
@@ -121,8 +123,34 @@ async def test_health_answers_without_touching_matter(client):
     assert calls == []
 
 
-async def test_a_failing_matter_call_yields_502_not_a_traceback(tmp_path):
-    """A device that currently does not answer must not produce a traceback."""
+async def _logged(caplog, text: str) -> logging.LogRecord:
+    """The first record logged by the Loxone routes whose message contains
+    `text`, once it has been logged: `/cmd` answers before the device does
+    (design 2026-09-30)."""
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + 5
+    while True:
+        for record in caplog.records:
+            if text in record.getMessage():
+                return record
+        if loop.time() > deadline:
+            raise AssertionError(f"never logged: {text}")
+        await asyncio.sleep(0.01)
+
+
+async def test_a_failing_matter_call_is_answered_200_and_logged_with_its_traceback(
+    tmp_path, caplog
+):
+    """A device that currently does not answer must not produce a traceback
+    in the response - and since design 2026-09-30 it produces no 502 either:
+    `/cmd` answers before the device does, because the Miniserver sends a
+    virtual output's next value only once the last one is answered. The
+    failure is in the log, with the traceback, so a bug in the invoker still
+    reads differently there from a lamp that is switched off at the wall.
+
+    Fault to prove it: log the failure in `_log_device_outcome` without
+    `exc_info` - the record carries no exception."""
+    caplog.set_level("WARNING", logger="loxmatter.loxone.server")
     raw = json.loads((FIXTURES / "ikea_grillplats_plug.json").read_text(encoding="utf-8"))
     snap = NodeSnapshot.from_raw(raw["node_id"], raw)
     store = Store(tmp_path / "t.sqlite")
@@ -137,37 +165,47 @@ async def test_a_failing_matter_call_yields_502_not_a_traceback(tmp_path):
     transport = httpx2.ASGITransport(app=app)
     async with httpx2.AsyncClient(transport=transport, base_url="http://test") as c:
         response = await c.get(f"/cmd/d{device_id}_1_on/1")
-    assert response.status_code == 502
-    assert "Traceback" not in response.text
-    # Task 6: shares api.errors.device_unreachable with control.py's
-    # execute_command (see test_control.py::
-    # test_a_device_that_does_not_answer_yields_502).
-    assert response.json()["detail"] == "device unreachable: device does not respond"
+        assert response.status_code == 200
+        assert "Traceback" not in response.text
+        record = await _logged(caplog, f"device call for key 'd{device_id}_1_on' failed")
+    assert record.levelname == "ERROR"
+    assert record.exc_info is not None
+    assert str(record.exc_info[1]) == "device does not respond"
     store.close()
 
 
-async def test_a_failing_matter_call_yields_502_with_the_german_detail_text(tmp_path):
-    """German companion test to
-    test_a_failing_matter_call_yields_502_not_a_traceback (task 6) -
-    `store.locale.set_language`, not `i18n.set_language` directly: the
-    sync_language middleware reads from the store anew on every request."""
+async def test_cmd_answers_before_the_device_does(tmp_path):
+    """The heart of design 2026-09-30: the Miniserver waits for the answer
+    before it sends the next value, so `/cmd` must not wait for the lamp.
+
+    Fault to prove it: `await gate.run(calls)` in the device branch of
+    `/cmd` again - the request is not answered while the plug is busy."""
     raw = json.loads((FIXTURES / "ikea_grillplats_plug.json").read_text(encoding="utf-8"))
     snap = NodeSnapshot.from_raw(raw["node_id"], raw)
     store = Store(tmp_path / "t.sqlite")
     device_id = store.register_device(snap)
     store.register_signals(device_id, snap)
     store.register_commands(device_id, extract_commands(snap))
-    store.locale.set_language("de")
+
+    release = asyncio.Event()
+    ran = []
 
     async def invoke(call):
-        raise TimeoutError("device does not respond")
+        await release.wait()
+        ran.append(call)
 
     app = build_app(store, invoke, Runtime(store, FakeSender()))
     transport = httpx2.ASGITransport(app=app)
     async with httpx2.AsyncClient(transport=transport, base_url="http://test") as c:
-        response = await c.get(f"/cmd/d{device_id}_1_on/1")
-    assert response.status_code == 502
-    assert response.json()["detail"] == "Geraet nicht erreichbar: device does not respond"
+        response = await asyncio.wait_for(c.get(f"/cmd/d{device_id}_1_on/1"), timeout=5)
+        assert response.status_code == 200
+        assert ran == []
+        release.set()
+        for _ in range(100):
+            if ran:
+                break
+            await asyncio.sleep(0)
+    assert [(call.cluster_id, call.command_id) for call in ran] == [(6, 1)]
     store.close()
 
 

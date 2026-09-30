@@ -17,12 +17,15 @@
 """Accepts the HTTP calls of the virtual outputs - and also those of the
 WebUI.
 
-The Miniserver does not evaluate a virtual output's response - it fires
-and forgets. The status codes of the Loxone routes below are therefore
-not for Loxone, but for the human who checks the log to see why a block
-has no effect. Accordingly, they must be distinguishable: 404 for an
-unknown key, 400 for an unsuitable value, 502 for a device that does not
-respond.
+The Miniserver does not evaluate a virtual output's response, but it does
+wait for it: it sends a virtual output's next value only once the last one
+is answered (measured on the test Pi, 30 September 2026). The status codes
+of the Loxone routes below are therefore not for Loxone, but for the human
+who checks the log to see why a block has no effect: 404 for an unknown
+key, 400 for an unsuitable value. `/cmd` answers both before anything is
+sent and then answers 200 without waiting for the device, so that a slider
+does not queue stale values in the Miniserver (design 2026-09-30); a device
+that does not respond is named in the log instead of in a 502.
 
 `client` is new compared to phase 4: the WebUI routes under `/api` need the
 Matter client for commissioning and removing devices, the Loxone
@@ -119,10 +122,12 @@ down was therefore missing exactly where a diagnostician needs it most."""
 
 from __future__ import annotations
 
+import asyncio
+import functools
 import logging
 import os
 import secrets
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from pathlib import Path
 from typing import Protocol
 
@@ -155,8 +160,8 @@ from loxmatter.api.version import build_version_router
 from loxmatter.api.zigbee import build_zigbee_router
 from loxmatter.auth.sessions import SESSION_COOKIE, session_is_valid
 from loxmatter.commands.adapt import adapt_device_command
-from loxmatter.commands.coalesce import CommandGate
-from loxmatter.commands.fanout import dispatch_group, plan_group_calls
+from loxmatter.commands.coalesce import VALUE_INTERVAL_SECONDS, CommandGate
+from loxmatter.commands.fanout import MemberPlan, group_outcome, plan_group_calls
 from loxmatter.commands.translate import UnsupportedValueError
 from loxmatter.diagnostics.logbuffer import LogBufferHandler
 from loxmatter.loxone.sender import UdpSender
@@ -387,6 +392,56 @@ class _RuntimeDependency(RuntimeValues, ObservableRuntime, Protocol):
     async def resend_all(self) -> int: ...
 
 
+def _log_device_outcome(key: str, outcome: asyncio.Future[bool]) -> None:
+    """Logs how a `/cmd` device value ended, once the lamp has answered
+    (design 2026-09-30): the Miniserver was answered before that.
+
+    A device that is not answering is logged with its traceback, as the
+    route used to do before its 502: without it, a real bug in the invoker
+    would read in the log the same as a lamp that is switched off at the
+    wall. A technology with no running source was never asked, so it gets
+    one line, as it used to get a 503."""
+    if outcome.cancelled():
+        return
+    exc = outcome.exception()
+    if exc is None:
+        return
+    if isinstance(exc, SourceNotConfiguredError):
+        logger.warning("command %r was not sent: %s", key, exc)
+        return
+    logger.error("device call for key %r failed", key, exc_info=exc)
+
+
+def _log_group_outcome(
+    key: str, plans: Sequence[MemberPlan], members: asyncio.Future[list[object]]
+) -> None:
+    """Logs how a `/cmd` group value ended, once every member has answered
+    (design 2026-09-30). The failed members are named, not just counted: "2
+    of 4" alone leaves the reader guessing which two."""
+    if members.cancelled():
+        return
+    outcome = group_outcome(plans, members.result())
+    # Counted over the members given something to do: a light command can
+    # leave a member with an empty plan (design 2026-09-13, 3.2), and that
+    # member was neither reached nor missed.
+    asked = sum(1 for plan in plans if plan.calls)
+    if outcome.unconfigured and len(outcome.unconfigured) == asked:
+        # The first member's technology, as the web UI's 503 names it.
+        logger.warning(
+            "group command %r was not sent to any member: %s is not running",
+            key,
+            technology_display_name(outcome.unconfigured_technologies[0]),
+        )
+    elif outcome.failed:
+        logger.warning(
+            "group command %r reached %d of %d members; no answer from: %s",
+            key,
+            asked - len(outcome.failed),
+            asked,
+            ", ".join(outcome.failed),
+        )
+
+
 def build_app(
     store: Store,
     invoke: Invoker,
@@ -444,7 +499,7 @@ def build_app(
     # One per application, shared by every command route below: one request
     # per device at a time, and only the newest brightness or colour value
     # waits (design 2026-09-13, command coalescing).
-    gate = CommandGate(invoke)
+    gate = CommandGate(invoke, min_interval=VALUE_INTERVAL_SECONDS)
 
     def _append_command_log(*, method: str, path: str, status: int) -> None:
         """Appends an entry - wrapped in its own try/except, a failure
@@ -695,56 +750,32 @@ def build_app(
         except UnsupportedValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-        try:
-            # Multiple calls because a Loxone value can mean more than one thing
-            # - the color output carries color AND brightness
-            # (see `to_device_calls`). The first failure stops and is
-            # reported; a partial state is possible
-            # and justified there.
-            #
-            # Through the gate, which runs them after whatever this device
-            # is still busy with and re-raises what a call raised, so the
-            # two clauses below see the same exceptions as before - plus
-            # `DeviceUnreachableError` for a request that waited longer
-            # than a call may take, or whose call its source cut off. Its
-            # `False` - a newer value replaced these calls before they
-            # started - is a 200 like any other: the Miniserver's newest
-            # value is the one on its way. A cancelled request (the client
-            # went away) raises `CancelledError`, which is no `Exception`
-            # and so leaves this route unchanged, as it always did.
-            await gate.run(calls)
-        except SourceNotConfiguredError as exc:
-            # Nothing was asked of the device, so this is not 502.
-            raise HTTPException(status_code=503, detail=str(exc)) from exc
-        except Exception as exc:  # every device problem becomes 502
-            # logger.exception writes the full traceback to the server log,
-            # NOT to the HTTP response (see
-            # test_a_failing_matter_call_yields_502_not_a_traceback). Without
-            # this, a real bug in the invoker would look the same in the log
-            # as a device that's not responding now - both would then be
-            # just "Device unreachable: <message>" without a traceback,
-            # and the difference between "Zigbee mesh gone" and "typo
-            # in invoker" would be lost.
-            logger.exception("device call for key %r failed", key)
-            raise HTTPException(
-                status_code=502, detail=i18n.t("api.errors.device_unreachable", exc=exc)
-            ) from exc
-
+        # Multiple calls because a Loxone value can mean more than one thing
+        # - the color output carries color AND brightness (see
+        # `to_device_calls`); the gate runs them in order, as one request.
+        #
+        # Queued, not awaited (design 2026-09-30, live slider values): the
+        # Miniserver sends its next value only once this one is answered, so
+        # a route that waited for the lamp would keep every stale slider
+        # position queued in the Miniserver, where nothing can replace it.
+        # Answered at once, the values arrive here, and the gate sends the
+        # newest. Whether a value can be sent at all is decided above,
+        # before the answer: an unknown key is still a 404 and an
+        # unsuitable value a 400. How the lamp took it is only logged - the
+        # Miniserver never evaluated the status anyway.
+        gate.submit(calls).add_done_callback(functools.partial(_log_device_outcome, key))
         return {"status": "ok", "key": key}
 
     async def _group_command(key: str, value: str) -> dict[str, str]:
         """The group half of `/cmd/{key}/{value}` (design 2026-09-10, 3).
 
-        The status codes are the device path's, unchanged: 404 unknown
-        key, 400 unsuitable value, 502 at least one member failed while
-        the group was otherwise reachable, 503 NO member was even asked
-        (boundary design open point 12 - see `GroupOutcome`). The
-        Miniserver evaluates none of them - they are for the human reading
-        the log, and that is what decides what each detail says: the 502
-        names every failed member and counts how many were reached, since
-        the group did something and the human needs to know what; the 503
-        names the technology and the group size, since nothing was asked
-        and there is no per-member story to tell.
+        404 unknown key and 400 unsuitable value, answered before anything
+        is sent. Every member's plan is then queued at the gate and the
+        route answers 200 without waiting for the lamps (design 2026-09-30,
+        see `command` above). What the members did is logged once they have
+        all finished, the same two cases that used to be the 502 and the
+        503 - the Miniserver never evaluated those codes, they were for the
+        human reading the log (boundary design open point 12).
         """
         try:
             group_command = store.resolve_group_command(key)
@@ -757,62 +788,13 @@ def build_app(
         except UnsupportedValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-        # `run=gate.run`: each member waits for its own device, and a member
-        # whose value a newer one replaced counts as reached (design
-        # 2026-09-13, command coalescing, rule 6).
-        outcome = await dispatch_group(plans, invoke, run=gate.run)
-        # Counted over the members given something to do: a light command
-        # can leave a member with an empty plan (design 2026-09-13, 3.2), and
-        # that member was neither reached nor missed. Counting it would turn
-        # "the only member asked has no source" into a 502 that calls the
-        # untouched member reached and the unasked one silent.
-        asked = sum(1 for plan in plans if plan.calls)
-        if outcome.unconfigured and len(outcome.unconfigured) == asked:
-            # 503 only when the WHOLE group was never ASKED - the same
-            # branch, and the same reasoning, as in
-            # `api/control.py::_execute_group_command`: any member that DID
-            # switch makes this a partial success, which belongs in the 502
-            # below because that one names the members and counts what was
-            # reached.
-            technology = outcome.unconfigured_technologies[0]
-            key_for_total = (
-                "api.errors.group_source_not_configured_one"
-                if len(outcome.unconfigured) == 1
-                else "api.errors.group_source_not_configured_many"
-            )
-            raise HTTPException(
-                status_code=503,
-                detail=i18n.t(
-                    key_for_total,
-                    technology=technology_display_name(technology),
-                    total=len(outcome.unconfigured),
-                ),
-            )
-        if outcome.failed:
-            # The failed labels are logged, not just counted (a review
-            # finding): the status code exists for the human reading
-            # the log, and "reached 2 of 4" alone still leaves them
-            # grepping the HTTP response for which two. `outcome.failed`
-            # names every failed member regardless of kind, so a mix of
-            # unreachable and unconfigured members - and a group where some
-            # members switched and the rest have no source - is still named
-            # in full, with its reached count.
-            logger.warning(
-                "group command %r reached %d of %d members; no answer from: %s",
-                key,
-                asked - len(outcome.failed),
-                asked,
-                ", ".join(outcome.failed),
-            )
-            raise HTTPException(
-                status_code=502,
-                detail=i18n.t(
-                    "api.errors.group_partially_unreachable",
-                    reached=asked - len(outcome.failed),
-                    total=asked,
-                    devices=", ".join(outcome.failed),
-                ),
-            )
+        # Each member waits for its own device, and a member whose value a
+        # newer one replaced counts as reached (design 2026-09-13, command
+        # coalescing, rule 6). Queued in plan order before the answer.
+        members = asyncio.gather(
+            *(gate.submit(plan.calls) for plan in plans), return_exceptions=True
+        )
+        members.add_done_callback(functools.partial(_log_group_outcome, key, plans))
         return {"status": "ok", "key": key}
 
     return app
