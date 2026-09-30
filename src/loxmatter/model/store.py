@@ -58,6 +58,8 @@ from loxmatter.matter.models import (
     technology_or_none,
 )
 from loxmatter.model.auth_store import AuthStore
+from loxmatter.model.firmware_settings_store import FirmwareSettingsStore
+from loxmatter.model.firmware_status_store import FirmwareStatusStore
 from loxmatter.model.locale_store import LocaleStore
 from loxmatter.model.resend_settings_store import ResendSettingsStore
 from loxmatter.model.settings_store import BridgeSettingsStore
@@ -172,7 +174,10 @@ DEFAULT_LISTEN_PORT = 8080
 # Version 14 (fix 2026-09-25) adds no column: it unticks the signals of
 # Zigbee management clusters (Basic, Poll Control, ...) and moves them to the
 # expert block, see `_migrate_to_v14`. Like version 12, it only ever unticks.
-_SCHEMA_VERSION = 14
+# Version 15 (firmware updates, design 2026-09-30) adds the table
+# `firmware_status` and the nullable column `device.matter_spec_version`,
+# see `_migrate_to_v15`. Both additive: a rolled-back image names neither.
+_SCHEMA_VERSION = 15
 
 
 def schema_version() -> int:
@@ -205,7 +210,8 @@ CREATE TABLE IF NOT EXISTS device (
     vendor_name      TEXT,
     product_name     TEXT,
     firmware         TEXT,
-    serial_number    TEXT
+    serial_number    TEXT,
+    matter_spec_version INTEGER
 );
 CREATE TABLE IF NOT EXISTS signal (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -274,6 +280,22 @@ CREATE TABLE IF NOT EXISTS zigbee_pending_config (
     endpoint   INTEGER NOT NULL,
     cluster_id INTEGER NOT NULL,
     PRIMARY KEY (address, endpoint, cluster_id)
+);
+CREATE TABLE IF NOT EXISTS firmware_status (
+    device_id            INTEGER PRIMARY KEY REFERENCES device(id),
+    checked_at           TEXT,
+    check_error          TEXT,
+    offer_version        INTEGER,
+    offer_version_string TEXT,
+    offer_min_applicable INTEGER,
+    offer_max_applicable INTEGER,
+    offer_notes_url      TEXT,
+    offer_source         TEXT,
+    job_state            TEXT,
+    job_progress         INTEGER,
+    job_started_at       TEXT,
+    job_changed_at       TEXT,
+    job_error            TEXT
 );
 """
 
@@ -960,6 +982,17 @@ def _migrate_to_v14(db: sqlite3.Connection) -> None:
     )
 
 
+def _migrate_to_v15(db: sqlite3.Connection) -> None:
+    """Adds `device.matter_spec_version` and `firmware_status` (firmware
+    updates, design 2026-09-30, sections 8 and 9.3).
+
+    The table comes from `_SCHEMA`'s `CREATE TABLE IF NOT EXISTS`, which
+    `Store.__init__` runs before `_migrate`; the column needs the ALTER.
+    No backfill here: `Store.backfill_matter_spec_version` fills it from the
+    next snapshot, the way `backfill_basic_information` fills `firmware`."""
+    _add_column_if_missing(db, "device", "matter_spec_version", "INTEGER")
+
+
 # Migrations in order, applied from whichever version is stored - to extend
 # for a later schema change: simply append, with the next version number as
 # the key.
@@ -978,6 +1011,7 @@ _MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     12: _migrate_to_v12,
     13: _migrate_to_v13,
     14: _migrate_to_v14,
+    15: _migrate_to_v15,
 }
 
 
@@ -1278,6 +1312,13 @@ def _text_attribute(snapshot: NodeSnapshot, path: str) -> str | None:
     return _blank_to_none(value) if isinstance(value, str) else None
 
 
+def _int_attribute(snapshot: NodeSnapshot, path: str) -> int | None:
+    """An integer attribute from the snapshot, `None` if absent or not an
+    int (a `bool` is not one here)."""
+    value = snapshot.attributes.get(path)
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
 @dataclass(frozen=True)
 class StoredDevice:
     """A row from `device` (Spec 5) - for the device API.
@@ -1332,6 +1373,10 @@ class StoredDevice:
     product_name: str | None
     firmware: str | None
     serial_number: str | None
+    # The raw SpecificationVersion (0/40/21, design 2026-09-30, 9.3) - `None`
+    # for a Zigbee device and for a Matter device from before 1.3. Unlike
+    # the four fields above it is refreshed after a firmware update.
+    matter_spec_version: int | None = None
 
 
 @dataclass(frozen=True)
@@ -1437,6 +1482,9 @@ class Store:
         # `zigbee_settings_store.py`. Same connection, same `setting` table,
         # no schema bump.
         self.zigbee_settings = ZigbeeSettingsStore(self._db)
+        # Firmware updates (design 2026-09-30) - same connection twice more.
+        self.firmware_status = FirmwareStatusStore(self._db)
+        self.firmware_settings = FirmwareSettingsStore(self._db)
 
     def close(self) -> None:
         self._db.close()
@@ -1547,8 +1595,8 @@ class Store:
             "INSERT INTO device"
             " (unique_id, node_id, technology, address, label, udp_port, updated_at, room,"
             " device_types, network_features, vendor_name, product_name, firmware,"
-            " serial_number)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            " serial_number, matter_spec_version)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 identity,
                 self._legacy_node_id_for(technology, address),
@@ -1564,6 +1612,7 @@ class Store:
                 _blank_to_none(snapshot.product_name),
                 _text_attribute(snapshot, "0/40/10"),
                 _text_attribute(snapshot, "0/40/15"),
+                _int_attribute(snapshot, "0/40/21"),
             ),
         )
         self._db.commit()
@@ -1666,6 +1715,9 @@ class Store:
             product_name=row["product_name"],
             firmware=row["firmware"],
             serial_number=row["serial_number"],
+            matter_spec_version=(
+                None if row["matter_spec_version"] is None else int(row["matter_spec_version"])
+            ),
         )
 
     def devices(self) -> list[StoredDevice]:
@@ -2379,6 +2431,46 @@ class Store:
             filled += 1
         self._db.commit()
         return filled
+
+    def backfill_matter_spec_version(self, snapshots: Sequence[NodeSnapshot]) -> int:
+        """Fills `device.matter_spec_version` where it is still NULL and the
+        snapshot carries 0/40/21; returns how many rows that touched. Same
+        rules as `backfill_basic_information`: never overwrites, skips a
+        device missing from `snapshots`, leaves `updated_at` alone."""
+        by_identity = {self._identity_of(snapshot): snapshot for snapshot in snapshots}
+        rows = self._db.execute(
+            "SELECT id, technology, address FROM device"
+            " WHERE matter_spec_version IS NULL AND active = 1"
+        ).fetchall()
+        filled = 0
+        for row in rows:
+            snapshot = by_identity.get((str(row["technology"]), str(row["address"])))
+            if snapshot is None:
+                continue
+            spec_version = _int_attribute(snapshot, "0/40/21")
+            if spec_version is None:
+                continue
+            self._db.execute(
+                "UPDATE device SET matter_spec_version = ? WHERE id = ?",
+                (spec_version, int(row["id"])),
+            )
+            filled += 1
+        self._db.commit()
+        return filled
+
+    def set_firmware_details(
+        self, device_id: int, firmware: str | None, spec_version: int | None
+    ) -> None:
+        """After a successful firmware update (design 7.3): the new version
+        replaces the one captured at commissioning. A `None` keeps the
+        stored value - a device that stops reporting a field has not lost
+        it."""
+        self._db.execute(
+            "UPDATE device SET firmware = COALESCE(?, firmware),"
+            " matter_spec_version = COALESCE(?, matter_spec_version) WHERE id = ?",
+            (firmware, spec_version, device_id),
+        )
+        self._db.commit()
 
     def rename_room(self, old: str, new: str) -> int:
         """Renames a room across all active devices AND all groups, and

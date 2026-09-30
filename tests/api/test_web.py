@@ -6292,7 +6292,8 @@ async def test_exactly_one_dialog_of_each_kind_is_delivered(api):
     `aria-labelledby` in the tile menu already had to dodge once). The
     count (one signal modal, one control modal from task 7, one group
     dialog since the device groups of 2026-09-10, one expert settings
-    modal since 2026-09-13) is the only assertion that would even notice
+    modal since 2026-09-13, one firmware update dialog since 2026-09-30) is
+    the only assertion that would even notice
     this regression: a `<dialog>` inside the tile would otherwise look
     exactly the same in the shipped text as one at the end of the page.
     The group dialog is the case in point - it holds a checkbox per
@@ -6300,15 +6301,16 @@ async def test_exactly_one_dialog_of_each_kind_is_delivered(api):
     group.
 
     The location check (after `</main>`) additionally proves that all
-    four sit outside the view sections and thus outside any
+    dialogs sit outside the view sections and thus outside any
     device loop."""
     client, _, _ = api
     markup = _without_comments((await client.get("/")).text)
-    assert markup.count("<dialog") == 4
+    assert markup.count("<dialog") == 5
     assert 'x-ref="signalsModal"' in markup
     assert 'x-ref="controlModal"' in markup
     assert 'x-ref="groupDialog"' in markup
     assert 'x-ref="expertModal"' in markup
+    assert 'x-ref="firmwareModal"' in markup
     assert markup.index("<dialog") > markup.index("</main>")
 
 
@@ -16631,3 +16633,72 @@ async def test_the_recovery_command_can_be_selected_with_one_click(api):
     rule = css[css.index(".command-copy code") :]
     rule = rule[: rule.index("}")]
     assert "user-select: all" in rule
+
+
+async def test_the_firmware_parts_are_delivered(api):
+    """Design 2026-09-30, 9.2/9.3: the card, the dialog, the pill, the kebab
+    item and the expert row. Delivery only - the bindings run in the browser
+    harness (plan Task 8, Step 7)."""
+    client, _, _ = api
+    html = (await client.get("/")).text
+    script = (await client.get("/static/app.js")).text
+    for needle in (
+        "t('web.firmware.card_heading')",
+        'x-ref="firmwareModal"',
+        "firmwarePillText(device.id)",
+        "openFirmwareModal(device)",
+        "t('web.devices.expert_matter_version')",
+    ):
+        assert needle in html
+    # The next daily check, only while one is scheduled (a null hides it).
+    next_check = html[html.index("t('web.firmware.next_check'") - 300 :][:400]
+    assert 'x-show="firmware?.next_check_at"' in next_check
+    assert "formatTimestamp(firmware.next_check_at)" in next_check
+    assert 'this.request("GET", "/api/firmware")' in script
+    # Every install goes through the dialog's own button; the pill, the
+    # kebab item and the table button only open the dialog.
+    assert html.count("installFirmware(") == 1
+    assert html.count("openFirmwareModal(") >= 3
+    pill = html[html.index('class="status-pill update"') :][:300]
+    assert "openFirmwareModal(device)" in pill
+    kebab = html[
+        html.index("t('web.devices.menu_firmware')") - 300 : html.index(
+            "t('web.devices.menu_firmware')"
+        )
+    ]
+    assert "openFirmwareModal(device)" in kebab
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+async def test_the_next_firmware_check_line_follows_next_check_at(api):
+    """The line under the daily-check box, through its SERVED bindings:
+    hidden before the overview loaded and while `next_check_at` is null
+    (daily check off), shown with the formatted instant otherwise.
+
+    Fault to prove it: bind `x-show` to `firmware?.daily_check_enabled`, or
+    drop the `?.` so a not-yet-loaded overview throws."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+    line = next(
+        attributes
+        for tag, attributes, _ancestors in _served_elements(page)
+        if tag == "p" and "web.firmware.next_check" in attributes.get("x-text", "")
+    )
+    values = _app_state(
+        _BINDINGS_JS + "const out = {};"
+        "state.firmware = null;"
+        f"out.hidden_unloaded = Boolean(run({json.dumps(line['x-show'])}));"
+        "state.firmware = { daily_check_enabled: true, next_check_at: null };"
+        f"out.hidden_null = Boolean(run({json.dumps(line['x-show'])}));"
+        "state.firmware.next_check_at = '2026-10-01T06:00:00+00:00';"
+        f"out.shown = Boolean(run({json.dumps(line['x-show'])}));"
+        f"out.text = run({json.dumps(line['x-text'])});"
+        "out.expected = 'Next check: ' + state.formatTimestamp('2026-10-01T06:00:00+00:00');"
+        "console.log(JSON.stringify(out));",
+        translations={"web.firmware.next_check": "Next check: {when}"},
+    )
+    assert values["hidden_unloaded"] is False
+    assert values["hidden_null"] is False
+    assert values["shown"] is True
+    assert values["text"] == values["expected"]
+    assert values["text"].startswith("Next check: ") and "2026" in values["text"]

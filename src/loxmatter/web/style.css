@@ -3982,3 +3982,110 @@ p.zigbee-countdown {
 .zigbee-leave-banner > span {
   flex: 1 1 16rem;
 }
+
+/* Firmware updates (design 2026-09-30). The tile pill is copper, the
+ * type badge's tint - an offer, not a warning. It is a `<button>`, so the
+ * global button rule's border, radius and colours are reset here; its size
+ * comes from `.device-foot .status-pill` above. */
+.status-pill.update {
+  background: var(--type-bg);
+  color: var(--type-fg);
+  border: 0;
+  border-radius: 999px;
+  cursor: pointer;
+  font-family: inherit;
+  text-align: left;
+}
+
+.firmware-filter {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin: 0.75rem 0;
+}
+
+.firmware-filter button {
+  border-radius: 999px;
+  padding: 0.15rem 0.7rem;
+}
+
+.firmware-filter button.on {
+  background: var(--accent);
+  color: var(--accent-contrast);
+  border-color: var(--accent);
+}
+
+/* The table scrolls in its own box at phone width, never the page. */
+.firmware-table-wrap {
+  overflow-x: auto;
+}
+
+.firmware-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.firmware-table th {
+  text-align: left;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border);
+  padding: 0.4rem 0.6rem 0.4rem 0;
+}
+
+.firmware-table td {
+  border-bottom: 1px solid var(--border);
+  padding: 0.55rem 0.6rem 0.55rem 0;
+  vertical-align: middle;
+}
+
+.firmware-table td.mono {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.firmware-state.is-available {
+  color: var(--type-fg);
+  font-weight: 600;
+}
+
+.firmware-state.is-check_failed,
+.firmware-state.is-failed,
+.firmware-state.is-interrupted,
+.firmware-state.is-stalled {
+  color: var(--warn);
+  font-weight: 600;
+}
+
+.firmware-state.is-no_source,
+.firmware-state.is-unchecked,
+.firmware-state.is-none_found {
+  color: var(--text-muted);
+}
+
+.firmware-daily {
+  display: flex;
+  gap: 0.6rem;
+  align-items: center;
+  margin-top: 1rem;
+  padding-top: 0.9rem;
+  border-top: 1px solid var(--border);
+}
+
+/* The transfer bar inside the `.steps` item that is running. */
+.firmware-progress {
+  display: block;
+  width: 100%;
+  margin-top: 0.35rem;
+  accent-color: var(--accent);
+}
+
+.firmware-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 1rem;
+}

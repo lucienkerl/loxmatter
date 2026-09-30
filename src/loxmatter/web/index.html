@@ -1508,6 +1508,13 @@
                       <svg class="icon"><use href="#i-warn"></use></svg>
                       <span x-text="t('web.devices.changed_since_export')"></span>
                     </span>
+                    <!-- Firmware (design 2026-09-30, 9.2): an offer or a
+                         running install. Copper, not warning yellow: an
+                         offer is not a problem. A click opens the dialog. -->
+                    <button type="button" class="status-pill update" x-show="firmwarePillText(device.id)" x-cloak
+                            @click="openFirmwareModal(device)">
+                      <span x-text="firmwarePillText(device.id)"></span>
+                    </button>
                     <span style="flex: 1 1 auto"></span>
                     <!-- The open/closed state lives in the DOM, not in Alpine:
                          a `<details>` needs no `open` field per tile,
@@ -1753,6 +1760,12 @@
                           class="tile-menu-item"
                           @click="closeTileMenu($el); openExpertModal(device)"
                           x-text="t('web.devices.menu_expert')"
+                        ></button>
+                        <button
+                          class="tile-menu-item"
+                          x-show="firmwareFor(device.id) && firmwareFor(device.id).state !== 'no_source'"
+                          @click="closeTileMenu($el); openFirmwareModal(device)"
+                          x-text="t('web.devices.menu_firmware')"
                         ></button>
                         <button
                           class="tile-menu-item"
@@ -2569,6 +2582,90 @@
             x-text="t('web.system.resync_button')"
           ></button>
           <p x-show="resyncError" x-cloak class="banner danger" x-text="resyncError"></p>
+        </div>
+
+        <!-- Device updates (design 2026-09-30, 9.2). -->
+        <div class="card firmware-card">
+          <div class="row">
+            <h2 style="margin: 0" x-text="t('web.firmware.card_heading')"></h2>
+            <span style="flex: 1 1 auto"></span>
+            <button
+              @click="checkFirmwareAll()"
+              :disabled="!firmware?.supported || firmware?.check.running || firmwareCheckBusy"
+              x-text="firmware?.check.running
+                      ? t('web.firmware.checking', { checked: firmware.check.checked, total: firmware.check.total })
+                      : t('web.firmware.check_now')"
+            ></button>
+          </div>
+          <p class="hint" x-show="firmware && !firmware.supported" x-cloak x-text="t('web.firmware.unsupported')"></p>
+          <p class="hint" x-show="firmware" x-cloak
+             x-text="firmware?.last_checked_at
+                     ? t('web.firmware.last_checked', { when: formatTimestamp(firmware.last_checked_at) })
+                     : t('web.firmware.never_checked')"></p>
+          <p class="banner danger" x-show="firmwareError && firmwareModalDevice === null" x-cloak x-text="firmwareError"></p>
+          <div class="firmware-filter" x-show="firmware" x-cloak>
+            <button type="button" :class="{ on: firmwareFilter === 'all' }" @click="firmwareFilter = 'all'"
+                    x-text="t('web.firmware.filter_all', { count: firmware?.devices.length ?? 0 })"></button>
+            <button type="button" :class="{ on: firmwareFilter === 'available' }" @click="firmwareFilter = 'available'"
+                    x-text="t('web.firmware.filter_available', { count: firmwareCount('available') })"></button>
+            <button type="button" :class="{ on: firmwareFilter === 'no_source' }" @click="firmwareFilter = 'no_source'"
+                    x-text="t('web.firmware.filter_no_source', { count: firmwareCount('no_source') })"></button>
+          </div>
+          <div class="firmware-table-wrap" x-show="firmware" x-cloak>
+            <table class="firmware-table">
+              <thead>
+                <tr>
+                  <th x-text="t('web.firmware.col_device')"></th>
+                  <th x-text="t('web.firmware.col_matter')"></th>
+                  <th x-text="t('web.firmware.col_installed')"></th>
+                  <th x-text="t('web.firmware.col_available')"></th>
+                  <th x-text="t('web.firmware.col_state')"></th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                <!-- `entry`, not `row`: `row in …` is the Zigbee pairing
+                     list's template, which a test finds by that name. -->
+                <template x-for="entry in firmwareRows()" :key="entry.device_id">
+                  <tr>
+                    <td>
+                      <span x-text="entry.label"></span>
+                      <span class="hint" x-show="entry.room" x-text="entry.room"></span>
+                    </td>
+                    <td class="mono" x-text="matterVersionText(entry.matter_version)"></td>
+                    <td class="mono" x-text="entry.installed ?? '–'"></td>
+                    <td class="mono" x-text="entry.offer?.version_string ?? '–'"></td>
+                    <td>
+                      <span class="firmware-state" :class="'is-' + entry.state"
+                            :title="entry.state === 'no_source' ? t('web.firmware.state_no_source_hint') : (entry.check_error ?? entry.job_error ?? '')"
+                            x-text="firmwareStateText(entry)"></span>
+                      <span class="hint" x-show="entry.online === false" x-text="t('web.firmware.unreachable')"></span>
+                    </td>
+                    <td>
+                      <!-- Opens the dialog rather than installing: the
+                           dialog's "Install update" is the confirmation the
+                           design requires (2, 9.2). -->
+                      <button
+                        class="primary"
+                        x-show="firmwareCanInstall(entry)"
+                        :disabled="firmware.updating_device_id !== null || entry.online === false"
+                        @click="openFirmwareModal(devices.find((d) => d.id === entry.device_id))"
+                        x-text="t('web.firmware.install')"
+                      ></button>
+                    </td>
+                  </tr>
+                </template>
+              </tbody>
+            </table>
+          </div>
+          <label class="firmware-daily" x-show="firmware" x-cloak>
+            <input type="checkbox" id="firmware-daily-check"
+                   :checked="firmware?.daily_check_enabled"
+                   @change="setFirmwareDailyCheck($event.target.checked, $event.target)" />
+            <span x-text="t('web.firmware.daily_check')"></span>
+          </label>
+          <p class="hint firmware-next-check" x-show="firmware?.next_check_at" x-cloak
+             x-text="firmware?.next_check_at ? t('web.firmware.next_check', { when: formatTimestamp(firmware.next_check_at) }) : ''"></p>
         </div>
 
         <div class="card">
@@ -3581,6 +3678,7 @@
                   <span class="k" x-text="t('web.devices.expert_vendor')"></span><span x-text="expertData.vendor ?? ''"></span>
                   <span class="k" x-text="t('web.devices.expert_model')"></span><span x-text="expertData.model ?? ''"></span>
                   <span class="k" x-text="t('web.devices.expert_firmware')"></span><span x-text="expertData.firmware ?? ''"></span>
+                  <span class="k" x-show="expertData.technology === 'matter'" x-text="t('web.devices.expert_matter_version')"></span><span x-show="expertData.technology === 'matter'" x-text="matterVersionText(expertData.matter_version)"></span>
                   <span class="k" x-text="t('web.devices.expert_serial')"></span><span x-text="expertData.serial ?? ''"></span>
                 </div>
               </section>
@@ -3606,6 +3704,95 @@
                   <span class="k" x-text="t('web.devices.expert_ip_address')"></span><span>—</span>
                 </div>
               </section>
+            </div>
+          </template>
+        </div>
+      </template>
+    </dialog>
+
+    <!-- Firmware update dialog (design 2026-09-30, 9.2). Same open/close
+         mechanics as the expert modal above: `@close` is the one place that
+         resets `firmwareModalDevice`. The step list reuses the bridge update
+         card's `.steps` (`done`/`now`), so both updates read alike. -->
+    <dialog
+      x-ref="firmwareModal"
+      class="expert-modal firmware-modal"
+      aria-labelledby="firmware-modal-heading"
+      @close="firmwareModalDevice = null; firmwareError = null; firmwareDoneVersion = null"
+      @mousedown="firmwareModalBackdropMousedown = isBackdropEvent($event, $el)"
+      @click.self="if (firmwareModalBackdropMousedown && isBackdropEvent($event, $el)) $el.close(); firmwareModalBackdropMousedown = false"
+    >
+      <template x-if="firmwareModalDeviceObject()">
+        <div class="expert-modal-body">
+          <div class="expert-modal-head">
+            <h2 id="firmware-modal-heading"
+                x-text="t('web.firmware.dialog_heading', { device: firmwareModalDeviceObject().label })"></h2>
+            <span style="flex: 1 1 auto"></span>
+            <button class="expert-modal-close" :title="t('web.firmware.close')" :aria-label="t('web.firmware.close')"
+                    @click="closeFirmwareModal()"><svg class="icon" aria-hidden="true"><use href="#i-close"></use></svg></button>
+          </div>
+          <p class="banner danger" x-show="firmwareError" x-cloak x-text="firmwareError"></p>
+          <template x-if="firmwareModalRow()">
+            <div>
+              <div class="expert-kv">
+                <span class="k" x-text="t('web.firmware.dialog_installed')"></span><span class="mono" x-text="firmwareModalRow().installed ?? '–'"></span>
+                <span class="k" x-text="t('web.firmware.dialog_available')"></span><span class="mono" x-text="firmwareModalRow().offer?.version_string ?? '–'"></span>
+                <span class="k" x-text="t('web.devices.expert_matter_version')"></span><span class="mono" x-text="matterVersionText(firmwareModalRow().matter_version)"></span>
+                <span class="k" x-show="firmwareModalRow().offer" x-text="t('web.firmware.dialog_source')"></span><span x-show="firmwareModalRow().offer" x-text="firmwareModalRow().offer ? firmwareSourceText(firmwareModalRow().offer.source) : ''"></span>
+                <span class="k" x-text="t('web.firmware.dialog_checked')"></span><span x-text="firmwareModalRow().checked_at ? formatTimestamp(firmwareModalRow().checked_at) : t('web.firmware.never_checked')"></span>
+              </div>
+              <p x-show="firmwareModalRow().offer?.release_notes_url" x-cloak>
+                <a :href="firmwareModalRow().offer?.release_notes_url" target="_blank" rel="noopener" x-text="t('web.firmware.release_notes')"></a>
+              </p>
+              <!-- An install this dialog followed has just ended well: say
+                   so, rather than fall back to "No update found". -->
+              <p class="banner ok" x-show="firmwareDoneVersion" x-cloak
+                 x-text="t('web.firmware.done', { version: firmwareDoneVersion })"></p>
+              <p class="firmware-state" :class="'is-' + firmwareModalRow().state" x-show="!firmwareDoneVersion"
+                 x-text="firmwareStateText(firmwareModalRow())"></p>
+              <p class="hint" x-show="firmwareModalRow().state === 'no_source'" x-cloak
+                 x-text="t('web.firmware.state_no_source_hint')"></p>
+              <p class="hint" x-show="firmwareModalRow().check_error || firmwareModalRow().job_error" x-cloak
+                 x-text="firmwareModalRow().check_error ?? firmwareModalRow().job_error"></p>
+
+              <!-- Before: the three consequences that show in operation. -->
+              <div class="banner warn" x-show="firmwareCanInstall(firmwareModalRow())">
+                <strong x-text="t('web.firmware.before_heading')"></strong>
+                <ul>
+                  <li x-text="t('web.firmware.before_duration')"></li>
+                  <li x-text="t('web.firmware.before_restart')"></li>
+                  <li x-text="t('web.firmware.before_export')"></li>
+                </ul>
+              </div>
+
+              <!-- During: the step list of the bridge update card. -->
+              <template x-if="firmwareRunning(firmwareModalRow())">
+                <div>
+                  <ul class="steps">
+                    <template x-for="step in firmwareSteps(firmwareModalRow())" :key="step.key">
+                      <li :class="{ done: step.status === 'done', now: step.status === 'run' }">
+                        <span x-text="t('web.firmware.step_' + step.key)"></span>
+                        <template x-if="step.key === 'transfer' && step.status === 'run' && firmwareModalRow().progress !== null">
+                          <progress class="firmware-progress" max="100" :value="firmwareModalRow().progress"></progress>
+                        </template>
+                      </li>
+                    </template>
+                  </ul>
+                  <p class="hint" x-text="t('web.firmware.running_hint')"></p>
+                </div>
+              </template>
+
+              <div class="firmware-actions">
+                <button type="button" @click="checkFirmwareOne()"
+                        :disabled="firmwareBusy || !firmware?.supported || firmwareRunning(firmwareModalRow())"
+                        x-text="t('web.firmware.check_again')"></button>
+                <span style="flex: 1 1 auto"></span>
+                <button type="button" @click="closeFirmwareModal()"
+                        x-text="firmwareCanInstall(firmwareModalRow()) ? t('web.firmware.cancel') : t('web.firmware.close')"></button>
+                <button type="button" class="primary" x-show="firmwareCanInstall(firmwareModalRow())"
+                        :disabled="firmwareBusy || firmware.updating_device_id !== null || firmwareModalRow().online === false"
+                        @click="installFirmware()" x-text="t('web.firmware.install_update')"></button>
+              </div>
             </div>
           </template>
         </div>

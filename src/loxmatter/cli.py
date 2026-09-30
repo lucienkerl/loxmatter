@@ -47,6 +47,8 @@ from loxmatter.export.documents import (
 )
 from loxmatter.export.outputs import to_group_outputs, to_outputs
 from loxmatter.export.signals import to_inputs
+from loxmatter.firmware.schedule import run_daily
+from loxmatter.firmware.service import FirmwareService
 from loxmatter.loxone.runtime import Runtime
 from loxmatter.loxone.sender import UdpSender
 from loxmatter.loxone.server import build_app
@@ -838,6 +840,8 @@ async def _run(
     zigbee = await zigbee_runtime.open()  # None when no radio is configured
     invoke = sources.send
 
+    firmware = FirmwareService(store, sources)
+    firmware_schedule_task: asyncio.Task[None] | None = None
     supervisor_tasks: list[asyncio.Task[None]] = []
     thread_network_task: asyncio.Task[None] | None = None
     try:
@@ -862,6 +866,17 @@ async def _run(
             gained += await attach(source, store, runtime)
         if gained:
             typer.echo(i18n.t("cli.run.echo_commands_backfilled", count=gained))
+        # Design 2026-09-30, 7.4: a transfer outlives a restart of loxmatter
+        # (matter-server runs it); pick it up again, and start the daily check.
+        try:
+            firmware.jobs.resume_all()
+        except Exception:
+            # A store error here must not take the bridge down; the rows
+            # stay active and the next start tries again.
+            logger.exception("Resuming the firmware jobs failed")
+        firmware_schedule_task = asyncio.ensure_future(
+            run_daily(firmware.checker, store.firmware_settings)
+        )
         # A supervisor per source runs for as long as the service runs: if
         # the connection to a source dies, it rebuilds it and lets `attach`
         # run again. Without it the bridge stays mute after a restart of a
@@ -913,6 +928,7 @@ async def _run(
                 thread_network=thread_network,
                 commissioning_tracker=commissioning_tracker,
                 kernel_log=kernel_log,
+                firmware=firmware,
             ),
             host=host,
             port=listen,
@@ -931,6 +947,30 @@ async def _run(
             raise
         except Exception:
             logger.exception("The Zigbee runtime could not be stopped cleanly on shutdown")
+        if firmware_schedule_task is not None:
+            firmware_schedule_task.cancel()
+            try:
+                await firmware_schedule_task
+            except asyncio.CancelledError:
+                # Same distinction as for the Thread network keeper below.
+                if not firmware_schedule_task.cancelled():
+                    raise
+            except Exception:
+                logger.exception("The daily firmware check ended with an error")
+        try:
+            await firmware.checker.stop()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("The firmware check could not be stopped cleanly on shutdown")
+        try:
+            # A running transfer is left to matter-server; its row stays
+            # active so the next start resumes following it (design 7.4).
+            await firmware.jobs.stop()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("The firmware jobs could not be stopped cleanly on shutdown")
         if thread_network_task is not None:
             thread_network_task.cancel()
             try:

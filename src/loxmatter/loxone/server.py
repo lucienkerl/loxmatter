@@ -148,6 +148,7 @@ from loxmatter.api.diagnostics import (
 )
 from loxmatter.api.diagnostics_live import build_diagnostics_live_router
 from loxmatter.api.export import build_export_router
+from loxmatter.api.firmware import build_firmware_router
 from loxmatter.api.groups import build_groups_router
 from loxmatter.api.language import build_i18n_router, build_language_router
 from loxmatter.api.live import BEARER_SUBPROTOCOL, ObservableRuntime, build_live_router
@@ -164,6 +165,7 @@ from loxmatter.commands.coalesce import VALUE_INTERVAL_SECONDS, CommandGate
 from loxmatter.commands.fanout import MemberPlan, group_outcome, plan_group_calls
 from loxmatter.commands.translate import UnsupportedValueError
 from loxmatter.diagnostics.logbuffer import LogBufferHandler
+from loxmatter.firmware.service import FirmwareService
 from loxmatter.loxone.sender import UdpSender
 from loxmatter.matter.client import BridgeMatterClient
 from loxmatter.matter.commissioning_progress import CommissioningTracker
@@ -487,12 +489,19 @@ def build_app(
     # `sender` above; `_check_bluetooth` then reports "not available"
     # rather than a fault.
     kernel_log: KernelLog | None = None,
+    # The one `FirmwareService` (design 2026-09-30) - `cli` passes the one
+    # whose jobs it resumes and whose checker the daily schedule drives.
+    firmware: FirmwareService | None = None,
 ) -> FastAPI:
     # Callers that predate the device source boundary pass only `client`;
     # for them the registry is the Matter client alone, which is exactly
     # what they had (design 2026-09-11, section 6.2).
     if sources is None and client is not None:
         sources = Sources([client])
+    if firmware is None:
+        # Every app has the routes; without a firmware-capable source the
+        # overview says `supported: false`. Only `cli` starts the schedule.
+        firmware = FirmwareService(store, sources if sources is not None else Sources([]))
     app = FastAPI(title="loxmatter", docs_url=None, redoc_url=None)
     command_log: RingBuffer[CommandLogEntry] = RingBuffer(maxlen=COMMAND_LOG_SIZE)
     api_guard = [Depends(build_api_guard(api_token, store))]
@@ -660,6 +669,7 @@ def build_app(
     # router - the group controls route reads last values, nothing more.
     app.include_router(build_groups_router(store, runtime), dependencies=api_guard)
     app.include_router(build_outputs_router(store), dependencies=api_guard)
+    app.include_router(build_firmware_router(store, firmware), dependencies=api_guard)
     app.include_router(
         build_diagnostics_router(
             store,

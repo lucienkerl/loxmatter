@@ -97,6 +97,7 @@ from loxmatter.api.models import (
 )
 from loxmatter.export.commands import extract_commands
 from loxmatter.export.signals import to_inputs
+from loxmatter.firmware.states import format_spec_version
 from loxmatter.matter.client import BridgeMatterClient, CommissioningError, MatterUnavailableError
 from loxmatter.matter.commissioning_progress import (
     CommissioningTracker,
@@ -388,6 +389,7 @@ def build_device_router(
             vendor=device.vendor_name,
             model=device.product_name,
             firmware=device.firmware,
+            matter_version=format_spec_version(device.matter_spec_version, device.technology),
             serial=device.serial_number,
             endpoints=_endpoints_summary(signals),
         )
