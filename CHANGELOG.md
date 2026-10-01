@@ -10,7 +10,7 @@ people who don't know the code.
 
 ### Before you update
 
-- **The database schema rises from 14 to 15.** Nothing needs doing by hand.
+- **The database schema rises from 14 to 16.** Nothing needs doing by hand.
 
 ### Added
 

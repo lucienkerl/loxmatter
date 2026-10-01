@@ -177,7 +177,7 @@ DEFAULT_LISTEN_PORT = 8080
 # Version 15 (firmware updates, design 2026-09-30) adds the table
 # `firmware_status` and the nullable column `device.matter_spec_version`,
 # see `_migrate_to_v15`. Both additive: a rolled-back image names neither.
-_SCHEMA_VERSION = 15
+_SCHEMA_VERSION = 16
 
 
 def schema_version() -> int:
@@ -993,6 +993,53 @@ def _migrate_to_v15(db: sqlite3.Connection) -> None:
     _add_column_if_missing(db, "device", "matter_spec_version", "INTEGER")
 
 
+# What `register_signals` named and measured these two signals before they
+# were converted (design 2026-10-01, section 4): (cluster, element, old
+# title, new title, new unit). Frozen here, like
+# `_ZIGBEE_MANAGEMENT_CLUSTERS_V14`, rather than read from `clusters.yaml`,
+# whose values a later change may move again.
+_CONVERTED_SIGNALS_V16: tuple[tuple[int, int, str, str, str], ...] = (
+    (768, 7, "colortemp_mireds", "colortemp_kelvin", "K"),
+    (1024, 0, "illuminance", "illuminance_lux", "lx"),
+)
+
+
+def _migrate_to_v16(db: sqlite3.Connection) -> None:
+    """Colour temperature and illuminance reach Loxone in Kelvin and lux
+    since 2026-10-01; their keys stay (the Loxone input recognises the
+    value by it), but a stored row still carried the old unit and, unless
+    the user renamed it, the old default title.
+
+    The unit moves unconditionally - it is never the user's. The title only
+    where it still equals the old default: a title the user chose stays
+    theirs (`set_title`). `register_signals` would move the unit too, but
+    only for a device that reports in; the migration also reaches one that
+    is offline.
+
+    Stamps `device.updated_at` for every device it touches, BEFORE the
+    update, because title and unit go into the export and the project sync
+    - the same reasoning as `_migrate_to_v12`.
+
+    Additive: rows only, no column. A rolled-back image shows the new title
+    over a mired value until it re-registers the unit - harmless."""
+    for cluster_id, element_id, old_title, new_title, new_unit in _CONVERTED_SIGNALS_V16:
+        match = "kind = 'attribute' AND cluster_id = ? AND element_id = ?"
+        db.execute(
+            "UPDATE device SET updated_at = ? WHERE id IN ("
+            f"SELECT device_id FROM signal WHERE {match}"
+            " AND (unit != ? OR title = ?))",
+            (now_iso(), cluster_id, element_id, new_unit, old_title),
+        )
+        db.execute(
+            f"UPDATE signal SET title = ? WHERE {match} AND title = ?",
+            (new_title, cluster_id, element_id, old_title),
+        )
+        db.execute(
+            f"UPDATE signal SET unit = ? WHERE {match}",
+            (new_unit, cluster_id, element_id),
+        )
+
+
 # Migrations in order, applied from whichever version is stored - to extend
 # for a later schema change: simply append, with the next version number as
 # the key.
@@ -1012,6 +1059,7 @@ _MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     13: _migrate_to_v13,
     14: _migrate_to_v14,
     15: _migrate_to_v15,
+    16: _migrate_to_v16,
 }
 
 
