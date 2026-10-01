@@ -106,8 +106,10 @@ two constants.
 ## 4. Existing Installations
 
 - **Key:** unchanged, see decision 1.
-- **Unit:** follows on the next registration. `register_signals` already
-  updates `unit` on every call for an existing signal.
+- **Unit:** `register_signals` already updates `unit` on every call for
+  an existing signal, but only for a device that reports in. The store
+  migration below sets it as well, so an offline device shows the right
+  unit too.
 - **Title:** the stored title is the slug at creation time, and from then
   on it belongs to the user (`set_title`). An existing colour temperature
   signal would keep the title `colortemp_mireds` next to a Kelvin value.
@@ -118,7 +120,9 @@ two constants.
   column (migrations stay additive, so a rollback of the updater still
   works without restoring the database; the old version would then show
   the new title over a mired value until the next update, which is
-  harmless).
+  harmless). Title and unit go into the export and the project sync, so
+  the migration stamps `device.updated_at` of every device it touches,
+  like `_migrate_to_v12`.
 - **Changelog:** an entry under Unreleased that says, in the user's terms,
   that these two inputs now carry Kelvin and lux and that thresholds or
   formulas on them have to be adjusted.
