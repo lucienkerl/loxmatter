@@ -2616,7 +2616,8 @@
                reason the server already translated. -->
           <div class="banner firmware-queue-band" x-show="firmware?.queue.active" x-cloak>
             <span x-text="firmwareQueueBusyText()"></span>
-            <button type="button" @click="clearFirmwareQueue()" x-text="t('web.firmware.queue_cancel_rest')"></button>
+            <button type="button" x-show="firmware?.queue.device_ids.length > 0"
+                    @click="clearFirmwareQueue()" x-text="t('web.firmware.queue_cancel_rest')"></button>
           </div>
           <div class="banner warn firmware-queue-band" x-show="firmware?.queue.halted_reason" x-cloak>
             <span x-text="t('web.firmware.queue_halted', { reason: firmware?.queue.halted_reason })"></span>
@@ -3879,7 +3880,7 @@
             <button type="button" class="primary"
                     :disabled="firmwareQueueBusy || firmwareQueueSelection.length === 0"
                     @click="startFirmwareQueue()"
-                    x-text="t('web.firmware.queue_install', { count: firmwareQueueSelection.length })"></button>
+                    x-text="firmwareQueueInstallText()"></button>
           </div>
         </div>
       </template>

@@ -56,7 +56,7 @@ class FakeFirmwareSource:
         self.followed: list[str] = []
 
     def firmware_supported(self) -> bool:
-        return self.supported
+        return self.supported and self.connected
 
     def firmware_facts(self, address: str) -> FirmwareFacts | None:
         # The real client reads a Matter node id with `int(address)`; a

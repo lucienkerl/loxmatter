@@ -627,7 +627,7 @@ api.firmware.queue_halted_unsupported:
   de: "der matter-server bietet keine Firmware-Updates mehr an"
 api.firmware.queue_halted_error:
   en: "an unexpected error stopped it; the bridge log has the details"
-  de: "ein unerwarteter Fehler hat sie angehalten; Details stehen im Log der Bridge"
+  de: "ein unerwarteter Fehler hat sie angehalten; Details stehen im Log der Brücke"
 
 # The errors of the pairing routes (design 3.4). Each one says what the
 # user's next move is, because each sends them somewhere different: to the
@@ -2058,14 +2058,17 @@ web.firmware.queue_heading:
   de: "Alle Geräte aktualisieren"
 web.firmware.queue_intro:
   en: "These devices have an update. Untick any you want to leave as they are."
-  de: "Diese Geräte haben ein Update. Entferne den Haken bei allen, die bleiben sollen, wie sie sind."
+  de: "Diese Geräte haben ein Update. Entfernen Sie den Haken bei allen, die bleiben sollen, wie sie sind."
 web.firmware.queue_offline:
   en: "offline – skipped if it still is when its turn comes"
   de: "offline – wird übersprungen, wenn es dann noch offline ist"
 web.firmware.queue_background:
   en: "The updates run one after another on the bridge. You can close the browser."
-  de: "Die Updates laufen nacheinander auf der Bridge. Du kannst den Browser schließen."
-web.firmware.queue_install:
+  de: "Die Updates laufen nacheinander in der Brücke. Sie können den Browser schließen."
+web.firmware.queue_install_one:
+  en: "Install 1 update"
+  de: "1 Update installieren"
+web.firmware.queue_install_many:
   en: "Install {count} updates"
   de: "{count} Updates installieren"
 web.firmware.queue_running:
@@ -2074,7 +2077,10 @@ web.firmware.queue_running:
 web.firmware.queue_running_last:
   en: "{device}: {state}"
   de: "{device}: {state}"
-web.firmware.queue_waiting:
+web.firmware.queue_waiting_one:
+  en: "1 update queued"
+  de: "1 Update in der Warteschlange"
+web.firmware.queue_waiting_many:
   en: "{count} updates queued"
   de: "{count} Updates in der Warteschlange"
 web.firmware.queue_cancel_rest:

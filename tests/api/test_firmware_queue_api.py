@@ -92,9 +92,11 @@ async def test_enqueue_when_unsupported_is_409(queue_api):
 async def test_delete_empties_the_queue(queue_api):
     client, store, _, _, lamp_id, button_id = queue_api
     store.firmware_status.enqueue([lamp_id, button_id], "t1")
+    store.firmware_settings.set_queue_halted_reason("api.firmware.queue_halted_disconnected")
     response = await client.delete("/api/firmware/queue")
     assert response.status_code == 200
     assert response.json()["queue"]["device_ids"] == []
+    assert response.json()["queue"]["halted_reason"] is None
 
 
 async def test_a_halted_queue_is_reported_and_resume_clears_the_halt(queue_api):

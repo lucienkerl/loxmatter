@@ -5283,7 +5283,14 @@ function app() {
           count: queue.device_ids.length,
         });
       }
-      return t("web.firmware.queue_waiting", { count: queue.device_ids.length });
+      const waiting = queue.device_ids.length;
+      return waiting === 1 ? t("web.firmware.queue_waiting_one") : t("web.firmware.queue_waiting_many", { count: waiting });
+    },
+
+    /** Label of the queue dialog's install button: singular for one device. */
+    firmwareQueueInstallText() {
+      const count = this.firmwareQueueSelection.length;
+      return count === 1 ? t("web.firmware.queue_install_one") : t("web.firmware.queue_install_many", { count });
     },
 
     /** Step list of a running install, in the style of the bridge update

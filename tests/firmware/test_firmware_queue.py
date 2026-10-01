@@ -193,6 +193,41 @@ async def test_an_interrupted_install_halts_the_queue(tmp_path):
     await _close(queue, jobs)
 
 
+async def test_an_interrupted_last_device_does_not_halt_the_queue(tmp_path):
+    store, source, clock, jobs, queue, (lamp_id, lamp), _ = _setup(tmp_path)
+    _interrupt_first(source, clock, {lamp: "1.2.0"})
+    queue.enqueue([lamp_id])
+    queue.start()
+    await _idle(queue)
+
+    # The device's own state says "interrupted"; a halt with nothing left
+    # would only offer a "Continue" that does nothing.
+    assert store.firmware_status.get(lamp_id).job_state == states.INTERRUPTED
+    assert store.firmware_status.queued() == []
+    assert store.firmware_settings.get_queue_halted_reason() is None
+    await _close(queue, jobs)
+
+
+async def test_a_link_lost_between_two_devices_halts_as_disconnected(tmp_path):
+    store, source, clock, jobs, queue, (lamp_id, lamp), (button_id, button) = _setup(tmp_path)
+    _auto_finish(source, clock, {lamp: "1.2.0", button: "1.9.15"})
+    original_wait = jobs.wait
+
+    async def wait_then_lose_the_link():
+        await original_wait()
+        source.connected = False
+
+    jobs.wait = wait_then_lose_the_link  # type: ignore[method-assign]
+    queue.enqueue([lamp_id, button_id])
+    queue.start()
+    await _idle(queue)
+
+    assert store.firmware_settings.get_queue_halted_reason() == HALTED_DISCONNECTED
+    assert store.firmware_status.queued() == [button_id]
+    assert source.started == [(lamp, LAMP_TARGET)]
+    await _close(queue, jobs)
+
+
 async def test_resume_continues_after_a_halt(tmp_path):
     store, source, clock, jobs, queue, (lamp_id, lamp), (button_id, button) = _setup(tmp_path)
     _interrupt_first(source, clock, {lamp: "1.2.0", button: "1.9.15"})

@@ -16874,6 +16874,34 @@ async def test_update_all_counts_and_preselects_the_offered_devices(api):
 
 
 @pytest.mark.skipif(NODE is None, reason="node is required for this test")
+async def test_the_queue_install_button_names_its_count(api):
+    """One ticked device reads "Install 1 update", not "1 updates".
+
+    Fault to prove it: drop the `count === 1` branch from
+    `firmwareQueueInstallText()`."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+    (text,) = [
+        attributes["x-text"]
+        for _tag, attributes, _ancestors in _served_elements(page)
+        if "firmwareQueueInstallText()" in attributes.get("x-text", "")
+    ]
+    values = _app_state(
+        _BINDINGS_JS + "const out = {};"
+        "state.firmwareQueueSelection = [1];"
+        f"out.one = run({json.dumps(text)});"
+        "state.firmwareQueueSelection = [1, 2, 3];"
+        f"out.three = run({json.dumps(text)});"
+        "console.log(JSON.stringify(out));",
+        translations={
+            "web.firmware.queue_install_one": "Install 1 update",
+            "web.firmware.queue_install_many": "Install {count} updates",
+        },
+    )
+    assert values == {"one": "Install 1 update", "three": "Install 3 updates"}
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
 async def test_the_queue_bands_follow_the_overview(api):
     """The running band shows while the queue is active and names the
     device being updated, its state and how many wait behind it; the
@@ -16887,6 +16915,7 @@ async def test_the_queue_bands_follow_the_overview(api):
     page = (await client.get("/")).text
     running_text, running_show = _served_with_x_show(page, "firmwareQueueBusyText()")
     halted_text, halted_show = _served_with_x_show(page, "web.firmware.queue_halted")
+    _, cancel_show = _served_with_x_show(page, "web.firmware.queue_cancel_rest")
     rows = [
         _firmware_row(7, "transferring", label="Lamp", progress=43),
         _firmware_row(8, "available", queue_position=1),
@@ -16902,9 +16931,14 @@ async def test_the_queue_bands_follow_the_overview(api):
         f"out.running_text = run({json.dumps(running_text)});"
         "state.firmware.queue.device_ids = [];"
         f"out.running_last_text = run({json.dumps(running_text)});"
+        f"out.cancel_last = Boolean(run({json.dumps(cancel_show)}));"
         "state.firmware.queue.device_ids = [8, 9];"
         "state.firmware.updating_device_id = null;"
+        f"out.cancel_waiting = Boolean(run({json.dumps(cancel_show)}));"
         f"out.waiting_text = run({json.dumps(running_text)});"
+        "state.firmware.queue.device_ids = [8];"
+        f"out.waiting_one_text = run({json.dumps(running_text)});"
+        "state.firmware.queue.device_ids = [8, 9];"
         "state.firmware.queue.active = false;"
         "state.firmware.updating_device_id = null;"
         "state.firmware.queue.halted_reason = 'x';"
@@ -16914,7 +16948,8 @@ async def test_the_queue_bands_follow_the_overview(api):
         translations={
             "web.firmware.queue_running": "{device}: {state} · {count} more queued",
             "web.firmware.queue_running_last": "{device}: {state}",
-            "web.firmware.queue_waiting": "{count} updates queued",
+            "web.firmware.queue_waiting_one": "1 update queued",
+            "web.firmware.queue_waiting_many": "{count} updates queued",
             "web.firmware.state_transferring": "{progress} %",
             "web.firmware.queue_halted": "Stopped: {reason}",
         },
@@ -16926,6 +16961,9 @@ async def test_the_queue_bands_follow_the_overview(api):
         "running_text": "Lamp: 43 % · 2 more queued",
         "running_last_text": "Lamp: 43 %",
         "waiting_text": "2 updates queued",
+        "waiting_one_text": "1 update queued",
+        "cancel_last": False,
+        "cancel_waiting": True,
         "halted_shown": True,
         "halted_text": "Stopped: x",
     }

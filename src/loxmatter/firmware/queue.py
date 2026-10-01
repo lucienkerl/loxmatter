@@ -156,6 +156,11 @@ class FirmwareQueue:
                 await self._jobs.wait()
                 continue
             source = self._source_for()
+            if source is not None and not source.connected:
+                # `firmware_supported()` is false while disconnected too;
+                # name the real cause.
+                self._halt(HALTED_DISCONNECTED)
+                return
             if source is None or not source.firmware_supported():
                 self._halt(HALTED_UNSUPPORTED)
                 return
@@ -206,7 +211,11 @@ class FirmwareQueue:
         finally:
             self._current = None
         ended = self._store.firmware_status.get(device_id)
-        if ended is not None and ended.job_state == states.INTERRUPTED:
+        if (
+            ended is not None
+            and ended.job_state == states.INTERRUPTED
+            and self._store.firmware_status.queued()
+        ):
             self._halt(HALTED_DISCONNECTED)
 
     def _offline(self, device_id: int) -> None:
