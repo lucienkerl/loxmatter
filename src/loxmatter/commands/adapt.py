@@ -133,16 +133,21 @@ def _colour(
     """The colour part of a decoded colour-output value. A white goes as the
     temperature command where the member carries it, else as a colour point.
     A colour goes as the colour command the group command names where the
-    member carries it, else as the other one."""
+    member carries it, else as the other one; `lumitech` names neither and
+    takes hue/saturation first."""
     if colour.kelvin is not None:
         if COLOUR_TEMPERATURE in here:
             return [_call(sample, COLOUR_TEMPERATURE, colour_temperature_payload(colour.kelvin))]
         return _colour_point(here, sample, colour.kelvin)
     assert colour.rgb is not None
-    # XY when the command names it, and for `lumitech`, which names neither
-    # colour command: XY is mandatory for a Matter Extended Color Light and
-    # the only colour ZHA sends (design 2026-09-24, 3.1).
-    if COLOUR_XY in here and (named in (COLOUR_XY, LUMITECH) or COLOUR_HS not in here):
+    # XY only when the command names it or the member has nothing else.
+    # `lumitech` names neither colour command and takes hue/saturation where
+    # the member carries it: XY sends the sRGB primaries, which a lamp with
+    # wider LEDs reaches only by mixing in other light - measured on a
+    # KAJPLATS E14 CWS on 1 October 2026, red came back at saturation 209 of
+    # 254, while hue/saturation took it to its own red edge (design
+    # 2026-09-24, 3.1, as amended on that day).
+    if COLOUR_XY in here and (named == COLOUR_XY or COLOUR_HS not in here):
         return [_call(sample, COLOUR_XY, xy_payload(*rgb_to_cie_xy(*colour.rgb)))]
     if COLOUR_HS in here:
         return [

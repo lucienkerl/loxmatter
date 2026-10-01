@@ -82,11 +82,23 @@ commands then decide what is sent. The rules are those of
 - **Order:** colour or colour temperature first, then brightness, with
   `ExecuteIfOff` - the order `to_device_calls` documents, so a lamp that was
   off does not flash up in its old colour.
-- **XY before hue/saturation.** When a light carries both, the colour goes
-  as MoveToColor (XY): XY is mandatory for a Matter Extended Color Light and
-  hue/saturation optional, and ZHA sends colour only as XY. On a group, the
-  output's own name decides between `color` and `color_xy`; `lumitech`
-  names neither, so it needs this fixed rule.
+- **Hue/saturation before XY** (amended 2026-10-01; until then XY came
+  first). When a light carries both, the colour goes as
+  MoveToHueAndSaturation, and XY only when the light has no hue/saturation -
+  most Zigbee lamps, since ZHA sends colour only as XY. XY sends the sRGB
+  primaries, and a lamp whose LEDs reach further reaches them only by
+  mixing. Measured on the KAJPLATS E14 CWS (node 21) on 2026-10-01, red
+  `100`:
+
+  ```
+  MoveToColor 0.64/0.33     -> ColorMode 1, CurrentSaturation 209, x 0.6400 y 0.3300
+  MoveToHueAndSaturation 0/254 -> ColorMode 0, CurrentSaturation 254, x 0.6723 y 0.3241
+  ```
+
+  Saturation 254 means "as saturated as the lamp can", which is what a
+  Loxone colour at a full channel asks for. On a group, the output's own
+  name still decides between `color` and `color_xy`; `lumitech` names
+  neither, so it needs this fixed rule.
 - **One output per light endpoint.** An endpoint is a light when its Matter
   device type is one `profiles/categories.py` maps to the light category -
   the same table, not a second list. A dimmable plug is not a light and gets
@@ -149,7 +161,7 @@ existing output in this design.
   `translate.py`, because `adapt.py` already imports `translate.py` and the
   reverse would be a cycle.
 - **`commands/adapt.py`:** treats `LUMITECH` like the two colour pairs when
-  decoding, and applies the XY-before-HS rule of Section 3.1 when the named
+  decoding, and applies the HS-before-XY rule of Section 3.1 when the named
   pair is `LUMITECH`.
 - **Every place that reads a pair as a real Matter command skips it:** the
   device controls route in `api/control.py` and the group controls route in

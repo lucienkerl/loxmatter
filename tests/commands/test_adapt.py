@@ -22,7 +22,12 @@ import pytest
 
 from loxmatter import i18n
 from loxmatter.commands.adapt import adapt_device_command, adapt_group_command
-from loxmatter.commands.color import kelvin_to_cie_xy, kelvin_to_hue_saturation, rgb_to_cie_xy
+from loxmatter.commands.color import (
+    kelvin_to_cie_xy,
+    kelvin_to_hue_saturation,
+    rgb_to_cie_xy,
+    rgb_to_hue_saturation,
+)
 from loxmatter.commands.translate import UnsupportedValueError, level_from_percent
 from loxmatter.model.store import StoredCommand
 from loxmatter.profiles.light_commands import (
@@ -393,17 +398,30 @@ def _with_lumitech(member):
 
 
 # Design 2026-09-24, 3.1: one test per row of the table.
-def test_lumitech_rgb_on_the_colour_lamp_sends_xy_then_brightness():
-    """XY before hue/saturation when both are carried.
+def test_lumitech_rgb_on_the_colour_lamp_sends_hue_saturation_then_brightness():
+    """Hue/saturation before XY when both are carried.
 
-    Fault to prove it: leave `_colour`'s XY rule at `named == COLOUR_XY` -
-    this gets (768, 6)."""
+    Measured on a KAJPLATS E14 CWS on 1 October 2026: XY places red at the
+    sRGB primary (0.64, 0.33), which the lamp reaches only at saturation
+    209 of 254 - it mixes in other light. Hue 0 / saturation 254 takes it to
+    its own red edge at x 0.672.
+
+    Fault to prove it: put `LUMITECH` back into `_colour`'s XY rule - this
+    gets (768, 7)."""
     got = shape(adapt_group_command(LUMITECH, _with_lumitech(CWS), BLUE_60))
-    x, y = rgb_to_cie_xy(0, 0, 153)
+    hue, saturation = rgb_to_hue_saturation(0, 0, 153)
     assert got == [
-        (768, 7, {"colorX": x, "colorY": y, "transitionTime": 0, **EIF}),
+        (768, 6, {"hue": hue, "saturation": saturation, "transitionTime": 0, **EIF}),
         (8, 4, {"level": 152, "transitionTime": 0}),
     ]
+
+
+def test_lumitech_rgb_on_a_colour_lamp_without_hue_saturation_sends_xy():
+    """A lamp that carries XY only - most Zigbee colour lamps - still gets
+    its colour."""
+    got = shape(adapt_group_command(LUMITECH, _with_lumitech(XY_ONLY), BLUE_60))
+    x, y = rgb_to_cie_xy(0, 0, 153)
+    assert got[0] == (768, 7, {"colorX": x, "colorY": y, "transitionTime": 0, **EIF})
 
 
 def test_lumitech_white_on_the_colour_lamp_sends_the_temperature_then_brightness():
