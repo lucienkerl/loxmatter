@@ -681,6 +681,67 @@ async def test_a_reported_value_records_when_it_arrived(environment):
     assert runtime.reported_at_for(button_device_id) == {}
 
 
+async def test_on_node_snapshot_sends_a_known_signal_whose_value_changed(environment, monkeypatch):
+    """THE FIRST TRADFRI DETECTION AFTER THE 1 OCTOBER UPDATE. The detection
+    carried a hold time for the first time - a new path - so the Zigbee
+    source delivered a whole snapshot, and in it occupancy went from 0 to 1.
+    `on_node_snapshot` only cached it: Loxone never heard of that motion, and
+    the WebUI got no start for its countdown until the next detection.
+
+    "Sends nothing" is right for a NEW signal, which has no input in Loxone
+    yet - not for a known one whose value changed in the same snapshot.
+
+    Fault to prove it: cache the values of a snapshot without sending."""
+    runtime, sender, _, device_id, _ = environment
+    seen: list[tuple[str, object]] = []
+    await runtime.on_node_snapshot(device_id, _plug_snapshot())
+    runtime.add_observer(lambda key, value: seen.append((key, value)))
+    before = runtime.last_values_for(device_id)
+
+    snapshot = _plug_snapshot()
+    changed = replace(snapshot, attributes={**snapshot.attributes, "1/6/0": True})
+
+    def extended_extract_signals(snapshot: NodeSnapshot) -> list[SignalRef]:
+        return [*extract_signals(snapshot), SignalRef(9, 1234, 5, SignalKind.ATTRIBUTE)]
+
+    monkeypatch.setattr("loxmatter.model.store.extract_signals", extended_extract_signals)
+    await runtime.on_node_snapshot(device_id, changed)
+
+    signal = runtime._signal_for(device_id, "1/6/0", SignalKind.ATTRIBUTE)
+    assert signal is not None
+    assert before[signal.key] != runtime.last_values_for(device_id)[signal.key]
+    # Loxone hears the change, the WebUI too - and only the change.
+    assert sender.keys() == [signal.key]
+    assert (signal.key, runtime.last_values_for(device_id)[signal.key]) in seen
+    assert signal.key in runtime.reported_at_for(device_id)
+
+
+async def test_a_signal_born_in_a_snapshot_knows_when_it_arrived(environment, monkeypatch):
+    """A freshly paired TRADFRI motion sensor gets its occupancy AND its
+    hold time with its first detection - both new signals, born in one
+    snapshot. Nothing is sent for them (Loxone has no input yet), but the
+    WebUI's countdown needs to know when the value arrived, or it starts
+    only at the second detection.
+
+    Fault to prove it: record `reported_at` only for changed known
+    signals."""
+    runtime, sender, _, device_id, _ = environment
+    await runtime.on_node_snapshot(device_id, _plug_snapshot())
+    snapshot = _plug_snapshot()
+    born = replace(snapshot, attributes={**snapshot.attributes, "9/1234/5": 1})
+
+    def extended_extract_signals(snapshot: NodeSnapshot) -> list[SignalRef]:
+        return [*extract_signals(snapshot), SignalRef(9, 1234, 5, SignalKind.ATTRIBUTE)]
+
+    monkeypatch.setattr("loxmatter.model.store.extract_signals", extended_extract_signals)
+    await runtime.on_node_snapshot(device_id, born)
+
+    signal = runtime._signal_for(device_id, "9/1234/5", SignalKind.ATTRIBUTE)
+    assert signal is not None
+    assert signal.key in runtime.reported_at_for(device_id)
+    assert signal.key not in sender
+
+
 async def test_on_node_snapshot_seeds_the_values_without_sending(environment):
     """Same reasoning as for `seed_from_snapshot`: the cache fills up,
     nothing is sent. A freshly created signal has no virtual input in
