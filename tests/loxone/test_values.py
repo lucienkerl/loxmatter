@@ -44,6 +44,29 @@ def test_level_is_scaled_from_254_to_percent():
     assert to_loxone_value(attr(8, 0), 127) == pytest.approx(50.0, abs=0.2)
 
 
+def test_illuminance_reaches_loxone_in_lux():
+    assert to_loxone_value(attr(1024, 0), 20001) == pytest.approx(100.0)
+
+
+def test_illuminance_too_dark_to_measure_is_zero_lux():
+    assert to_loxone_value(attr(1024, 0), 0) == 0.0
+
+
+def test_colour_temperature_reaches_loxone_in_kelvin():
+    """The output (768, 10) has always taken Kelvin; the feedback input now
+    speaks the same unit."""
+    assert to_loxone_value(attr(768, 7), 250) == pytest.approx(4000.0)
+
+
+def test_a_colour_temperature_of_zero_mired_is_not_sent():
+    assert to_loxone_value(attr(768, 7), 0) is None
+
+
+def test_the_physical_colour_temperature_limits_stay_in_mired():
+    """Design 2026-10-01, section 3.5."""
+    assert to_loxone_value(attr(768, 16395), 153) == pytest.approx(153.0)
+
+
 def test_boolean_passes_through_unscaled():
     assert to_loxone_value(attr(6, 0), True) is True
 

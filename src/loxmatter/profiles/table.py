@@ -31,6 +31,7 @@ data table, not as a branch in the exporter.
 from __future__ import annotations
 
 import functools
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -40,6 +41,7 @@ import yaml
 
 from loxmatter.matter.models import SignalKind, SignalRef
 from loxmatter.profiles.catalog import element_name
+from loxmatter.profiles.conversions import CONVERSIONS
 
 _TABLE_PATH = Path(__file__).with_name("clusters.yaml")
 
@@ -96,7 +98,27 @@ def classify(value: object) -> Exportability:
 @functools.cache
 def _table() -> dict[int, dict[str, Any]]:
     raw = yaml.safe_load(_TABLE_PATH.read_text(encoding="utf-8"))
-    return {int(k): v for k, v in (raw.get("clusters") or {}).items()}
+    clusters = {int(k): v for k, v in (raw.get("clusters") or {}).items()}
+    check_conversions(clusters)
+    return clusters
+
+
+def check_conversions(clusters: Mapping[int, Mapping[str, Any]]) -> None:
+    """Rejects a `convert:` that names no function in `CONVERSIONS`, and an
+    entry with both `scale` and `convert` - which of the two would apply
+    is not obvious, so neither is guessed (design 2026-10-01, 3.1).
+
+    Runs when the table is first loaded, so a broken entry stops the
+    bridge at startup and a test, not a value on its way to Loxone."""
+    for cluster_id, cluster in clusters.items():
+        for element_id, entry in (cluster.get("attributes") or {}).items():
+            name = entry.get("convert")
+            if name is None:
+                continue
+            if "scale" in entry:
+                raise ValueError(f"{cluster_id}/{element_id}: `scale` and `convert` together")
+            if name not in CONVERSIONS:
+                raise ValueError(f"{cluster_id}/{element_id}: unknown conversion {name!r}")
 
 
 # The rank of a cluster the table does not carry (design
@@ -367,9 +389,13 @@ _UNIT_DECIMALS: dict[str, int] = {
     "%": 1,
     "V": 1,
     "A": 1,
-    # Hue in degrees and color temperature in mired are meaningfully integers.
+    # Hue in degrees, Kelvin, lux and the mired limits are meaningfully integers.
     "°": 0,
     "mired": 0,
+    # Kelvin and lux, converted since 2026-10-01: one Kelvin or one lux is
+    # below what anyone can see, so whole numbers.
+    "K": 0,
+    "lx": 0,
 }
 
 # Loxone writes no space before percent (`<v>%`), but does before every
@@ -431,6 +457,25 @@ def scale_factor(ref: SignalRef) -> float:
     if not entry:
         return 1.0
     return float(entry.get("scale", 1.0))
+
+
+def converter(ref: SignalRef) -> Callable[[float], float | None] | None:
+    """The named conversion of an attribute (`convert:` in
+    `clusters.yaml`), or None if it has none. `check_conversions` has
+    already ensured the name exists."""
+    cluster = _table().get(ref.cluster_id, {})
+    entry = (cluster.get("attributes") or {}).get(ref.element_id)
+    if not entry or "convert" not in entry:
+        return None
+    return CONVERSIONS[entry["convert"]]
+
+
+def is_converted(ref: SignalRef) -> bool:
+    """Whether the value Loxone receives differs from the device's raw
+    value - a `convert`, or a `scale` other than 1. The WebUI shows the
+    raw value for exactly these signals (design 2026-10-01, decision 2);
+    this is the one place that rule lives."""
+    return converter(ref) is not None or scale_factor(ref) != 1.0
 
 
 def command_slug(cluster_id: int, command_id: int) -> str | None:

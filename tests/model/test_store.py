@@ -419,7 +419,7 @@ def test_feedback_stays_functional_so_the_dialog_keeps_its_order(store):
     store.register_signals(device_id, snap)
 
     by_key = {s.key: s for s in store.signals(device_id)}
-    for key in ("d1_1_onoff", "d1_1_level", "d1_1_hue", "d1_1_colortemp_mireds"):
+    for key in ("d1_1_onoff", "d1_1_level", "d1_1_hue", "d1_1_colortemp_kelvin"):
         assert by_key[key].functional is True, key
         assert by_key[key].exported is False, key
 

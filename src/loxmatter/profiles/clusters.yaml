@@ -134,14 +134,12 @@ clusters:
       # Saturation (CurrentSaturation, 1): 0-254 like `level` (cluster 8) -
       # the same numeric value as there, not recomputed.
       1: {slug: saturation, unit: "%", scale: 0.3937007874015748, feedback: true}
-      # Color temperature (ColorTemperatureMireds, 7): Matter returns
-      # mired, Loxone wants Kelvin - but Kelvin = 1e6 / mired is a
-      # reciprocal, not a factor, and the `scale` mechanism can only
-      # multiply. The value therefore stays in mired, with a slug that
-      # makes that clear, instead of inventing a wrong Kelvin number. Open
-      # point (missing reciprocal conversion):
-      # docs/superpowers/specs/2026-09-03-signal-selection-design.md section 10.
-      7: {slug: colortemp_mireds, unit: mired, feedback: true}
+      # Color temperature (ColorTemperatureMireds, 7): Matter reports
+      # mired, Loxone and the output (768, 10) speak Kelvin. Kelvin =
+      # 1e6 / mired is a reciprocal, so `convert`, not `scale` (design
+      # 2026-10-01). The slug says Kelvin; a signal registered before that
+      # keeps its key `..._colortemp_mireds` and carries Kelvin as well.
+      7: {slug: colortemp_kelvin, unit: K, feedback: true, convert: kelvin_from_mired}
       # Color mode (ColorMode, 8): an enumeration, not a physical
       # quantity - no unit.
       8: {slug: colormode, unit: "", feedback: true}
@@ -164,9 +162,9 @@ clusters:
       # Loxone input they would be two numbers that never change. In
       # the expert block they remain manually selectable.
       #
-      # Like 7 above, they stay in mired - Kelvin = 1e6 / mired is
-      # a reciprocal that `scale` cannot express. The API converts
-      # them for the UI (see api/control.py).
+      # They stay in mired: converting them would swap minimum and maximum,
+      # and the API already converts them for the slider (design
+      # 2026-10-01, section 3.5; see api/control.py).
       16395: {slug: colortemp_phys_min_mireds, unit: mired, functional: false}
       16396: {slug: colortemp_phys_max_mireds, unit: mired, functional: false}
     commands:
@@ -280,11 +278,11 @@ clusters:
     name: illuminance
     rank: 10
     attributes:
-      # Deliberately left raw. Both Matter and the ZCL use
-      # 10000*log10(lux)+1, so the two agree exactly - and turning that back
-      # into lux is a power, not a factor, which `scale` cannot express (the
-      # same reason the colour temperature below stays in mired).
-      0: {slug: illuminance, unit: ""}
+      # ZCL and Matter both encode 10000*log10(lux)+1. Turning that back
+      # into lux is a power, so `convert`, not `scale` (design 2026-10-01).
+      # A signal registered before that keeps its key `..._illuminance`
+      # and carries lux as well.
+      0: {slug: illuminance_lux, unit: lx, convert: lux_from_log}
   1280:
     name: iaszone
     rank: 40

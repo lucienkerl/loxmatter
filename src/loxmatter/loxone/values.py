@@ -31,7 +31,13 @@ consumers that are often the reason for installing a metering plug.
 from __future__ import annotations
 
 from loxmatter.matter.models import SignalRef
-from loxmatter.profiles.table import Exportability, classify, scale_factor, struct_member
+from loxmatter.profiles.table import (
+    Exportability,
+    classify,
+    converter,
+    scale_factor,
+    struct_member,
+)
 
 MAX_DECIMALS = 6
 
@@ -45,6 +51,9 @@ def to_loxone_value(ref: SignalRef, raw: object) -> float | bool | None:
     if kind is not Exportability.ANALOG:
         return None
     assert isinstance(raw, (int, float))
+    convert = converter(ref)
+    if convert is not None:
+        return convert(float(raw))
     return float(raw) * scale_factor(ref)
 
 

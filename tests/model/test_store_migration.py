@@ -1139,7 +1139,7 @@ def test_migration_to_v12_unticks_feedback_on_stored_devices(tmp_path):
         "saturation",
         "color_x",
         "color_y",
-        "colortemp_mireds",
+        "colortemp_kelvin",
         "colormode",
     ):
         assert light[f"d{light_id}_1_{slug}"].exported is False, slug

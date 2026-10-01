@@ -25,11 +25,14 @@ from loxmatter.profiles.table import (
     _UNIT_DECIMALS,
     MAX_LOXONE_DECIMALS,
     Exportability,
+    check_conversions,
     classify,
     command_control,
     command_slug,
     command_takes_value,
+    converter,
     feedback_elements,
+    is_converted,
     is_exportable,
     known_attribute_section,
     known_command_pairs,
@@ -467,7 +470,7 @@ def test_the_five_added_clusters_name_their_elements():
     generic name and the signal loses its title."""
     assert lookup(SignalRef(1, 1030, 0, SignalKind.ATTRIBUTE), True).slug == "occupancy"
     assert lookup(SignalRef(1, 69, 0, SignalKind.ATTRIBUTE), True).slug == "state"
-    assert lookup(SignalRef(1, 1024, 0, SignalKind.ATTRIBUTE), 5000).slug == "illuminance"
+    assert lookup(SignalRef(1, 1024, 0, SignalKind.ATTRIBUTE), 5000).slug == "illuminance_lux"
     assert lookup(SignalRef(1, 768, 3, SignalKind.ATTRIBUTE), 41943).slug == "color_x"
     assert lookup(SignalRef(1, 768, 4, SignalKind.ATTRIBUTE), 21627).slug == "color_y"
 
@@ -497,7 +500,7 @@ FEEDBACK_ENTRIES = [
     (768, 1),  # saturation
     (768, 3),  # color_x
     (768, 4),  # color_y
-    (768, 7),  # colortemp_mireds
+    (768, 7),  # colortemp_kelvin
     (768, 8),  # colormode
 ]
 
@@ -540,3 +543,53 @@ def test_feedback_elements_lists_exactly_the_marked_entries():
     """`_migrate_to_v12` unticks exactly these pairs; a pair too many would
     silence a sensor on every stored device."""
     assert feedback_elements() == sorted(FEEDBACK_ENTRIES)
+
+
+def test_a_convert_entry_names_an_existing_function():
+    """Every `convert:` in `clusters.yaml` must name an entry of
+    `CONVERSIONS` - a typo fails here, not on a running bridge.
+
+    Fault to prove it: rename `lux_from_log` in the YAML."""
+    check_conversions(table._table())
+
+
+def test_scale_and_convert_together_are_rejected():
+    clusters = {1024: {"attributes": {0: {"slug": "x", "scale": 2, "convert": "lux_from_log"}}}}
+    with pytest.raises(ValueError, match="1024/0"):
+        check_conversions(clusters)
+
+
+def test_an_unknown_conversion_is_rejected():
+    clusters = {1024: {"attributes": {0: {"slug": "x", "convert": "lux_from_luck"}}}}
+    with pytest.raises(ValueError, match="lux_from_luck"):
+        check_conversions(clusters)
+
+
+def test_illuminance_and_colour_temperature_carry_their_conversion():
+    assert converter(SignalRef(1, 1024, 0, SignalKind.ATTRIBUTE)) is not None
+    assert converter(SignalRef(1, 768, 7, SignalKind.ATTRIBUTE)) is not None
+    assert converter(SignalRef(1, 8, 0, SignalKind.ATTRIBUTE)) is None
+
+
+@pytest.mark.parametrize(
+    ("cluster_id", "element_id", "expected"),
+    [
+        (1024, 0, True),  # convert
+        (768, 7, True),  # convert
+        (8, 0, True),  # scale 100/254
+        (47, 12, True),  # scale 0.5
+        (6, 0, False),  # onoff, plain
+        (768, 16395, False),  # physical limit, stays raw mired
+        (64999, 7, False),  # unknown cluster
+    ],
+)
+def test_is_converted_follows_scale_and_convert(cluster_id, element_id, expected):
+    """One rule for the WebUI's raw value line (design 2026-10-01,
+    decision 2): what the bridge sends differs from what the device
+    reported."""
+    assert is_converted(SignalRef(1, cluster_id, element_id, SignalKind.ATTRIBUTE)) is expected
+
+
+def test_lux_and_kelvin_are_whole_numbers_in_loxone():
+    assert unit_format("lx") == "<v.0> lx"
+    assert unit_format("K") == "<v.0> K"
