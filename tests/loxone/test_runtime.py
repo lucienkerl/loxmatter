@@ -121,6 +121,73 @@ def environment(tmp_path):
     store.close()
 
 
+def _lamp_snapshot() -> NodeSnapshot:
+    raw = json.loads((FIXTURES / "ikea_kajplats_cws_lamp.json").read_text(encoding="utf-8"))
+    return NodeSnapshot.from_raw(raw["node_id"], raw)
+
+
+@pytest.fixture
+def lamp_store(tmp_path):
+    """The colour lamp, whose 768/7 is converted (mired to Kelvin) and
+    whose 6/0 is not. Returns `(store, device_id)`."""
+    store = Store(tmp_path / "lamp.sqlite")
+    snap = _lamp_snapshot()
+    device_id = store.register_device(snap)
+    store.register_signals(device_id, snap)
+    yield store, device_id
+    store.close()
+
+
+async def test_the_raw_value_of_a_converted_signal_is_kept(lamp_store):
+    """The WebUI shows the device's own number beside the converted one
+    (design 2026-10-01, section 5.1)."""
+    store, device_id = lamp_store
+    runtime = Runtime(store, FakeSender())
+    await runtime.on_attribute(device_id, "1/768/7", 250)
+
+    key = f"d{device_id}_1_colortemp_kelvin"
+    assert runtime.last_values_for(device_id)[key] == pytest.approx(4000.0)
+    assert runtime.last_raw_values_for(device_id) == {key: 250}
+
+
+async def test_an_unconverted_signal_keeps_no_raw_value(lamp_store):
+    """On/off arrives unchanged - a second copy of it would be noise.
+
+    Fault to prove it: drop the `is_converted` check - this fails."""
+    store, device_id = lamp_store
+    runtime = Runtime(store, FakeSender())
+    await runtime.on_attribute(device_id, "1/6/0", True)
+
+    assert runtime.last_raw_values_for(device_id) == {}
+
+
+async def test_the_observer_receives_the_raw_value(lamp_store):
+    store, device_id = lamp_store
+    seen: list[tuple[str, object, object]] = []
+    runtime = Runtime(store, FakeSender())
+    runtime.add_observer(lambda key, value, raw: seen.append((key, value, raw)))
+
+    await runtime.on_attribute(device_id, "1/768/7", 250)
+    await runtime.on_attribute(device_id, "1/6/0", True)
+
+    assert seen == [
+        (f"d{device_id}_1_colortemp_kelvin", pytest.approx(4000.0), 250),
+        (f"d{device_id}_1_onoff", True, None),
+    ]
+
+
+async def test_seeding_keeps_the_raw_value_too(lamp_store):
+    """`seed_from_snapshot` runs through `_cache_attribute` like a live
+    update; the raw value must not be missing until the first change."""
+    store, device_id = lamp_store
+    runtime = Runtime(store, FakeSender())
+    await runtime.seed_from_snapshot([_lamp_snapshot()])
+
+    # The fixture lamp reports 370 mired (tests/fixtures/nodes/
+    # ikea_kajplats_cws_lamp.json, "1/768/7").
+    assert runtime.last_raw_values_for(device_id)[f"d{device_id}_1_colortemp_kelvin"] == 370
+
+
 async def test_attribute_change_becomes_a_scaled_datagram(environment):
     runtime, sender, _, device_id, _ = environment
     await runtime.on_attribute(device_id, "2/144/4", 230000)
@@ -866,7 +933,7 @@ async def test_zigbee_health_is_reported_as_its_own_signal(tmp_path):
     sender = FakeSender()
     seen: list[tuple[str, object]] = []
     runtime = Runtime(store, sender, link_ok=lambda: True)
-    runtime.add_observer(lambda key, value: seen.append((key, value)))
+    runtime.add_observer(lambda key, value, raw: seen.append((key, value)))
 
     await runtime.set_zigbee_connected(True)
 

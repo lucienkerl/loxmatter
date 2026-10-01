@@ -35,7 +35,7 @@ async def test_observer_sees_every_value_the_sender_sees(tmp_path, plug_store):
     store, device_id = plug_store
     seen: list[tuple[str, object]] = []
     runtime = Runtime(store, RecordingSender())
-    runtime.add_observer(lambda key, value: seen.append((key, value)))
+    runtime.add_observer(lambda key, value, raw: seen.append((key, value)))
     await runtime.on_attribute(device_id, "2/144/4", 230000)
     assert seen == [(f"d{device_id}_2_voltage", pytest.approx(230.0))]
 
@@ -54,7 +54,7 @@ async def test_a_failing_observer_does_not_stop_the_udp_sender(tmp_path, plug_st
 
     runtime = Runtime(store, Sender())
 
-    def boom(key: str, value: object) -> None:
+    def boom(key: str, value: object, raw: object) -> None:
         raise RuntimeError("Beobachter kaputt")
 
     runtime.add_observer(boom)
@@ -66,7 +66,7 @@ async def test_removed_observer_stops_receiving(tmp_path, plug_store):
     store, device_id = plug_store
     seen: list[str] = []
     runtime = Runtime(store, RecordingSender())
-    observer = lambda key, value: seen.append(key)
+    observer = lambda key, value, raw: seen.append(key)
     runtime.add_observer(observer)
     runtime.remove_observer(observer)
     await runtime.on_attribute(device_id, "2/144/4", 230000)
@@ -80,6 +80,20 @@ async def test_websocket_delivers_a_value(api_with_runtime):
         message = await asyncio.wait_for(ws.receive_json(), timeout=2)
     assert message["key"] == f"d{device_id}_2_voltage"
     assert message["value"] == pytest.approx(230.0)
+
+
+async def test_the_live_message_carries_the_raw_value(api_with_runtime):
+    """Design 2026-10-01, section 5.2: voltage is scaled (mV to V), so the
+    message carries the raw millivolts as well.
+
+    Fault to prove it: drop `"raw": raw` from the queued dict in
+    `api/live.py`."""
+    client, runtime, device_id = api_with_runtime
+    async with client.websocket_connect("/api/live") as ws:
+        await runtime.on_attribute(device_id, "2/144/4", 230000)
+        message = await asyncio.wait_for(ws.receive_json(), timeout=2)
+    assert message["key"] == f"d{device_id}_2_voltage"
+    assert message["raw"] == 230000
 
 
 async def test_a_disconnecting_client_is_dropped_without_noise(api_with_runtime):
@@ -127,7 +141,7 @@ async def test_full_queue_does_not_affect_sender_or_observer_registration(plug_s
 
     runtime = Runtime(store, Sender())
     queue = BoundedQueue(maxsize=8, connection_label="test-client")
-    runtime.add_observer(lambda key, value: queue.put({"key": key, "value": value}))
+    runtime.add_observer(lambda key, value, raw: queue.put({"key": key, "value": value}))
 
     total = 20  # much more than the queue size of 8
     for i in range(total):

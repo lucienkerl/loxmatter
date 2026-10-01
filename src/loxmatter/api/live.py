@@ -22,7 +22,8 @@ a WebSocket, not a REST endpoint. Every connection registers with
 remove_observer`) - the same subscription that also feeds the UDP sender
 (see `loxone.runtime.Runtime`). No second path, no polling: what arrives
 here is literally the same key/value that `Runtime` has already sent to
-Loxone.
+Loxone, plus the raw device value of a converted signal (`raw`, otherwise
+null) - Loxone never sees that one.
 
 **The observer never blocks.** A dedicated queue per connection decouples
 the observer call - which runs synchronously and in-line in the call path of
@@ -66,7 +67,7 @@ unchanged so as not to alter that import. `__all__` turns this into an
 explicit re-export instead of an implicit one (mypy strict requires that),
 without the unused `as X` alias that Ruff (PLC0414) flags."""
 
-Observer = Callable[[str, object], None]
+Observer = Callable[[str, object, object], None]
 
 
 class ObservableRuntime(Protocol):
@@ -90,8 +91,8 @@ def build_live_router(runtime: ObservableRuntime) -> APIRouter:
         await websocket.accept(subprotocol=subprotocol)
         queue = BoundedQueue(QUEUE_MAXSIZE, connection_label=str(websocket.client))
 
-        def observer(key: str, value: object) -> None:
-            queue.put({"key": key, "value": value})
+        def observer(key: str, value: object, raw: object) -> None:
+            queue.put({"key": key, "value": value, "raw": raw})
 
         runtime.add_observer(observer)
         watcher = asyncio.create_task(watch_for_disconnect(websocket))

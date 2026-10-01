@@ -174,10 +174,10 @@ class _SeededRuntime:
         to fully satisfy `RuntimeValues`."""
         self._values[f"d{device_id}_online"] = online
 
-    def add_observer(self, callback: Callable[[str, object], None]) -> None:
+    def add_observer(self, callback: Callable[[str, object, object], None]) -> None:
         return None
 
-    def remove_observer(self, callback: Callable[[str, object], None]) -> None:
+    def remove_observer(self, callback: Callable[[str, object, object], None]) -> None:
         return None
 
     async def resend_all(self) -> int:

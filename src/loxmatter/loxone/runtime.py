@@ -50,6 +50,7 @@ from loxmatter.export.commands import extract_commands
 from loxmatter.loxone.values import to_loxone_value
 from loxmatter.matter.models import NodeSnapshot, SignalKind
 from loxmatter.model.store import Store, StoredSignal
+from loxmatter.profiles.table import is_converted, struct_member
 from loxmatter.timestamps import now_iso
 
 PULSE_MILLISECONDS = 200
@@ -114,6 +115,11 @@ class Runtime:
         # the question answerable in the first place.
         self._last_heard: dict[int, str] = {}
         self._last_values: dict[str, float | bool] = {}
+        # The device's own number for every CONVERTED signal, before
+        # `scale` or `convert` (design 2026-10-01, section 5.1) - only for
+        # the WebUI, never sent. Unconverted signals have nothing here:
+        # their raw value IS `_last_values`.
+        self._last_raw: dict[str, int | float] = {}
         self._counters: dict[str, int] = {}
         self._heartbeat_on = False
         # Long-lived background tasks (heartbeat and resend loop).
@@ -143,9 +149,9 @@ class Runtime:
         self._signals: dict[tuple[int, str, str], StoredSignal] = {}
         self._indexed: set[int] = set()
         # WebUI observers (spec 8.3) - see `add_observer`.
-        self._observers: list[Callable[[str, object], None]] = []
+        self._observers: list[Callable[[str, object, object], None]] = []
 
-    def add_observer(self, callback: Callable[[str, object], None]) -> None:
+    def add_observer(self, callback: Callable[[str, object, object], None]) -> None:
         """Registers an observer that sees every value the UDP sender also
         sees (spec 8.3) - no second path, no polling.
 
@@ -158,10 +164,13 @@ class Runtime:
         - An observer that throws is logged and skipped. It must not take
           the UDP path down with it - the same rule that hardened the
           heartbeat loop in phase 4 (see `_heartbeat_loop`): a closed
-          browser tab must not stop the bridge."""
+          browser tab must not stop the bridge.
+
+        The third argument is the raw device value of a converted signal
+        (see `_last_raw`), otherwise None."""
         self._observers.append(callback)
 
-    def remove_observer(self, callback: Callable[[str, object], None]) -> None:
+    def remove_observer(self, callback: Callable[[str, object, object], None]) -> None:
         """Unsubscribes an observer - e.g. when a WebSocket disconnects. An
         unknown observer (e.g. unsubscribed twice) is not an error, it is
         silently ignored."""
@@ -176,7 +185,7 @@ class Runtime:
         does not linger as a zombie."""
         return len(self._observers)
 
-    def _notify_observers(self, key: str, value: object) -> None:
+    def _notify_observers(self, key: str, value: object, raw: object = None) -> None:
         """Calls every observer with the key/value pair just sent - ALWAYS
         only after `self._sender.send(...)` has returned (see the call
         sites in `on_attribute`, `on_event`, `_release_pulse` and
@@ -188,7 +197,7 @@ class Runtime:
         in progress."""
         for observer in list(self._observers):
             try:
-                observer(key, value)
+                observer(key, value, raw)
             except Exception:
                 # Same reasoning as in `_heartbeat_loop`: an observer
                 # failure (e.g. a bug in the WebUI) must not take the UDP
@@ -251,6 +260,10 @@ class Runtime:
         if value is None:
             return None
         self._last_values[signal.key] = value
+        if is_converted(signal.ref):
+            member = struct_member(signal.ref, raw)
+            if isinstance(member, (int, float)) and not isinstance(member, bool):
+                self._last_raw[signal.key] = member
         return signal.key
 
     async def on_attribute(self, device_id: int, path: str, raw: object) -> None:
@@ -260,7 +273,7 @@ class Runtime:
             return
         value = self._last_values[key]
         await self._sender.send(key, value)
-        self._notify_observers(key, value)
+        self._notify_observers(key, value, self._last_raw.get(key))
 
     async def seed_from_snapshot(self, snapshots: Sequence[NodeSnapshot]) -> int:
         """Fills the cache from the current device state (spec 6.4).
@@ -493,6 +506,13 @@ class Runtime:
         """
         prefix = f"d{device_id}_"
         return {k: v for k, v in self._last_values.items() if k.startswith(prefix)}
+
+    def last_raw_values_for(self, device_id: int) -> dict[str, int | float]:
+        """The raw device values of a device's converted signals, by key -
+        the companion of `last_values_for` for the WebUI's raw value line
+        (design 2026-10-01, section 5.2). Same prefix rule as there."""
+        prefix = f"d{device_id}_"
+        return {k: v for k, v in self._last_raw.items() if k.startswith(prefix)}
 
     async def resend_all(self) -> int:
         """Sends EVERY known value again, bypassing debouncing - regardless
