@@ -135,7 +135,10 @@ class FirmwareQueue:
                 raise
             except Exception:
                 logger.exception("the firmware update queue failed")
-                self._halt(HALTED_ERROR)
+                try:
+                    self._halt(HALTED_ERROR)
+                except Exception:
+                    logger.exception("recording the halt of the firmware update queue failed")
             if not self._wake.is_set():
                 self._idle.set()
 
@@ -196,6 +199,9 @@ class FirmwareQueue:
         self._store.firmware_status.dequeue(device_id)
         self._current = device_id
         try:
+            # `jobs.stop()` cancelling the job passes through and ends this
+            # task; fine, as shutdown stops the queue first and the store
+            # keeps the queue.
             await self._jobs.wait()
         finally:
             self._current = None

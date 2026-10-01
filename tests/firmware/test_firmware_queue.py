@@ -15,6 +15,7 @@ from loxmatter.firmware import states
 from loxmatter.firmware.job import FirmwareJobs, JobTiming
 from loxmatter.firmware.queue import (
     HALTED_DISCONNECTED,
+    HALTED_ERROR,
     HALTED_UNSUPPORTED,
     FirmwareQueue,
 )
@@ -264,5 +265,32 @@ async def test_enqueue_clears_a_halt(tmp_path):
     store, _source, _clock, jobs, queue, (lamp_id, _), _ = _setup(tmp_path)
     store.firmware_settings.set_queue_halted_reason(HALTED_UNSUPPORTED)
     queue.enqueue([lamp_id])
+    assert store.firmware_settings.get_queue_halted_reason() is None
+    await _close(queue, jobs)
+
+
+async def test_an_unexpected_error_halts_and_resume_recovers(tmp_path):
+    store, source, clock, jobs, queue, (lamp_id, lamp), (button_id, button) = _setup(tmp_path)
+    _auto_finish(source, clock, {lamp: "1.2.0", button: "1.9.15"})
+    original = source.firmware_facts
+
+    def broken(address):
+        raise RuntimeError("boom")
+
+    source.firmware_facts = broken
+    queue.enqueue([lamp_id, button_id])
+    queue.start()
+    await _idle(queue)
+
+    assert store.firmware_settings.get_queue_halted_reason() == HALTED_ERROR
+    assert queue._task is not None and not queue._task.done()
+    assert store.firmware_status.queued() == [lamp_id, button_id]
+
+    source.firmware_facts = original
+    queue.resume()
+    await _idle(queue)
+
+    assert store.firmware_status.get(lamp_id).offer is None
+    assert store.firmware_status.get(button_id).offer is None
     assert store.firmware_settings.get_queue_halted_reason() is None
     await _close(queue, jobs)
