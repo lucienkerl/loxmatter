@@ -931,11 +931,13 @@ def _install_onoff_sensor_handlers(device: Any) -> None:
         # belonged to a listener that is gone - after a restart, occupancy
         # would read 1 until the next detection. A fresh listener starts
         # unoccupied; the next motion says otherwise within a second.
+        # Compared as a number: zigpy loads the cache back from SQLite as the
+        # plain `int` it stored, so after a restart this is `1`, never `True`.
         try:
             stale = cluster.get(ONOFF_ATTRIBUTE)
         except KeyError:
             stale = None
-        if stale is True:
+        if isinstance(stale, int) and int(stale) == 1:
             cluster.update_attribute(ONOFF_ATTRIBUTE, False)
 
 

@@ -67,8 +67,9 @@ people who don't know the code.
   update or any other restart, IKEA TRADFRI motion sensors went silent until
   they were paired again, and contact, water and motion sensors that send
   their state as an alarm could miss it. The bridge now listens to them
-  again as soon as it starts. A TRADFRI motion sensor starts at "no motion" and reports the
-  next detection as usual.
+  again as soon as it starts. A TRADFRI motion sensor starts at "no motion",
+  and its first motion after a restart reaches Loxone and starts the
+  countdown on its tile.
 - **New signals appear on the dashboard without a page reload.** A signal
   that a device reports for the first time while the page is open, such as
   the motion of an IKEA TRADFRI motion sensor after its first detection,

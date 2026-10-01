@@ -58,10 +58,12 @@ from fakes import (
 )
 
 from loxmatter import i18n
+from loxmatter.loxone.runtime import Runtime
 from loxmatter.matter.models import NodeSnapshot
 from loxmatter.model.store import Store
 from loxmatter.radios.fingerprints import Fingerprint
 from loxmatter.sources import DeviceCall, DeviceUnreachableError
+from loxmatter.sources.supervisor import attach
 from loxmatter.zigbee import source as source_module
 from loxmatter.zigbee.source import ZIGBEE_CHANNELS, ZigbeeSource, ZigbeeUnavailableError
 
@@ -1439,15 +1441,19 @@ async def test_an_ias_sensor_paired_before_a_restart_still_raises_its_alarm(buil
     assert (9, "1/69/0", False) in harness.handler.attributes
 
 
-async def test_occupancy_left_on_by_a_restart_reads_as_unoccupied(build) -> None:
+@pytest.mark.parametrize("stored", [True, 1], ids=["as-written", "as-loaded-from-sqlite"])
+async def test_occupancy_left_on_by_a_restart_reads_as_unoccupied(build, stored: Any) -> None:
     """zigpy persists the last `on_off` - but the timer that would have
     cleared it died with the old process. Left alone, occupancy stays 1
     until the next detection; a fresh listener starts it at 0 instead.
 
-    Fault to prove it: keep the cached `True` when installing the
-    listener."""
+    zigpy loads the value back from SQLite as the plain `int` it stored,
+    which is the case that matters after a restart.
+
+    Fault to prove it: keep the cached value when installing the listener,
+    or recognise only `True`."""
     sensor = tradfri_motion_sensor()
-    sensor.endpoints[1].out_clusters[0x0006].update_attribute(0x0000, True)
+    sensor.endpoints[1].out_clusters[0x0006]._cached[0x0000] = stored
     harness = build(FakeApplication(devices=[sensor]))
     await harness.source.connect()
     await harness.source.subscribe(lambda _address: 9, harness.handler)
@@ -1456,6 +1462,69 @@ async def test_occupancy_left_on_by_a_restart_reads_as_unoccupied(build) -> None
     snapshot = (await harness.source.snapshots())[0]
 
     assert snapshot.attributes["1/1030/0"] == 0
+
+
+# A TRADFRI motion sensor across a bridge restart, end to end: the real
+# `Runtime` and `supervisor.attach` around this source. Each piece passed
+# its own tests on 1 October 2026 while the first motion after an update
+# still never reached Loxone - zigpy hands a value loaded from its database
+# back as the plain `int` SQLite stored, not as the `bool` it was written as,
+# and only the whole chain shows what that does.
+
+
+class _RecordingSender:
+    def __init__(self) -> None:
+        self.sent: list[tuple[str, object]] = []
+
+    async def send(self, key: str, value: object, *, force: bool = False) -> bool:
+        self.sent.append((key, value))
+        return True
+
+    async def close(self) -> None:
+        return None
+
+
+async def test_the_first_motion_after_a_restart_reaches_loxone_and_the_ui(build, tmp_path) -> None:
+    """Paired before an update, with occupancy last seen as 1 and no hold
+    time yet - the state of all three sensors on the test Pi. After the
+    restart the occupancy starts at 0, and the first detection reaches
+    Loxone, the WebUI, and the countdown's `reported_at`.
+
+    Fault to prove it: read `on_off` as a `bool` only, in `translate.py` or
+    in the stale-value reset."""
+    store = Store(tmp_path / "s.sqlite")
+    before = tradfri_motion_sensor()
+    before.endpoints[1].out_clusters[0x0006].update_attribute(0x0000, True)
+    old = build(FakeApplication(devices=[before]), store=store)
+    await old.source.connect()
+    snapshot = (await old.source.snapshots())[0]
+    device_id = store.register_device(snapshot)
+    store.register_signals(device_id, snapshot)
+
+    # The new process: zigpy loads `on_off` from SQLite as the int it stored.
+    sensor = tradfri_motion_sensor()
+    sensor.endpoints[1].out_clusters[0x0006]._cached[0x0000] = 1
+    harness = build(FakeApplication(devices=[sensor]), store=store)
+    await harness.source.connect()
+    sender = _RecordingSender()
+    runtime = Runtime(store, sender)
+    seen: list[tuple[str, Any]] = []
+    runtime.add_observer(lambda key, value: seen.append((key, value)))
+    await attach(harness.source, store, runtime)
+    await _settle(harness.source)
+    occupancy = f"d{device_id}_1_occupancy"
+
+    assert runtime.last_values_for(device_id)[occupancy] == 0
+    sender.sent.clear()
+    seen.clear()
+
+    sensor.endpoints[1].out_clusters[0x0006].receive_command(0x42, (0, 1800, 0))
+    await _settle(harness.source)
+
+    assert (occupancy, 1.0) in sender.sent
+    assert (occupancy, 1.0) in seen
+    assert occupancy in runtime.reported_at_for(device_id)
+    store.close()
 
 
 async def test_one_failing_update_does_not_end_delivery(build) -> None:
