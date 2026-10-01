@@ -613,6 +613,18 @@ api.firmware.fail_offer_changed:
 api.firmware.fail_offline:
   en: "The device is not reachable right now, so the update cannot start."
   de: "Das Gerät ist gerade nicht erreichbar, deshalb kann das Update nicht starten."
+api.firmware.queue_offline_at_turn:
+  en: "Offline when its turn in the update queue came"
+  de: "War offline, als es in der Update-Warteschlange an der Reihe war"
+api.firmware.queue_halted_disconnected:
+  en: "the connection to matter-server was lost during an update"
+  de: "die Verbindung zum matter-server ist während eines Updates abgebrochen"
+api.firmware.queue_halted_unsupported:
+  en: "matter-server no longer offers firmware updates"
+  de: "der matter-server bietet keine Firmware-Updates mehr an"
+api.firmware.queue_halted_error:
+  en: "an unexpected error stopped it; the bridge log has the details"
+  de: "ein unerwarteter Fehler hat sie angehalten; Details stehen im Log der Bridge"
 
 # The errors of the pairing routes (design 3.4). Each one says what the
 # user's next move is, because each sends them somewhere different: to the
