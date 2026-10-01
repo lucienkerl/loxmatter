@@ -79,7 +79,9 @@ everything that must survive a restart is in the store.
 - **The loop**, while devices are queued and the queue is not halted:
   1. If an install is running (resumed after a restart, or started with a
      single click), wait for it with `jobs.wait()`.
-  2. Take the first device and clear its `queued_at`.
+  2. Look at the first device. It leaves the queue (its `queued_at` is
+     cleared) when it is skipped, marked offline, or its install starts —
+     not before, so a device whose start is refused stays first.
   3. No offer, or the installed `0/40/9` has reached it: skip, record
      nothing.
   4. Offline: end its job `failed` with the error
@@ -87,11 +89,11 @@ everything that must survive a restart is in the store.
      Go on.
   5. Otherwise `jobs.start(device_id, offer.software_version)`, then
      `jobs.wait()`. `FirmwareBusyError` (a single install started in the
-     same instant) puts the device back at the front and waits again.
+     same instant) leaves the device first; the loop waits for that install.
   6. Read the job's end state. `interrupted` halts the queue with
      `api.firmware.queue_halted_disconnected`. `FirmwareUnsupportedError`
      from `start` halts it with `api.firmware.queue_halted_unsupported`;
-     the device is put back at the front. Anything else: next device.
+     the device stays first. Anything else: next device.
 - **Errors in the loop itself** are logged and halt the queue with
   `api.firmware.queue_halted_error`, rather than ending the task silently
   with devices still queued.
@@ -168,7 +170,7 @@ reason already translated) and, per device, `queue_position: int | null`
   `failed` and goes on; `failed` goes on; `interrupted` halts with the rest
   still queued; unsupported halts and keeps the device; `resume` and
   `clear`; picking the queue up after a restart from the store; waiting for
-  an install that already runs; `FirmwareBusyError` puts the device back.
+  an install that already runs.
 - Migration 15 → 16 is additive.
 - API answers, the 409s, and their `en`/`de` strings.
 - WebUI: the dialog, the running band, and the halted band run in the
