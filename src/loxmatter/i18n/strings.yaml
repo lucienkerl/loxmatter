@@ -2050,6 +2050,48 @@ web.firmware.done:
 web.firmware.action_error:
   en: "The action failed: {message}"
   de: "Die Aktion ist fehlgeschlagen: {message}"
+web.firmware.update_all:
+  en: "Update all ({count})"
+  de: "Alle aktualisieren ({count})"
+web.firmware.queue_heading:
+  en: "Update all devices"
+  de: "Alle Geräte aktualisieren"
+web.firmware.queue_intro:
+  en: "These devices have an update. Untick any you want to leave as they are."
+  de: "Diese Geräte haben ein Update. Entferne den Haken bei allen, die bleiben sollen, wie sie sind."
+web.firmware.queue_offline:
+  en: "offline – skipped if it still is when its turn comes"
+  de: "offline – wird übersprungen, wenn es dann noch offline ist"
+web.firmware.queue_background:
+  en: "The updates run one after another on the bridge. You can close the browser."
+  de: "Die Updates laufen nacheinander auf der Bridge. Du kannst den Browser schließen."
+web.firmware.queue_install:
+  en: "Install {count} updates"
+  de: "{count} Updates installieren"
+web.firmware.queue_running:
+  en: "Updating {device} · {state} · {count} more queued"
+  de: "Aktualisiere {device} · {state} · {count} weitere in der Warteschlange"
+web.firmware.queue_waiting:
+  en: "{count} updates queued"
+  de: "{count} Updates in der Warteschlange"
+web.firmware.queue_cancel_rest:
+  en: "Cancel the rest"
+  de: "Rest abbrechen"
+web.firmware.queue_halted:
+  en: "The update queue has stopped: {reason}"
+  de: "Die Update-Warteschlange ist angehalten: {reason}"
+web.firmware.queue_resume:
+  en: "Continue"
+  de: "Fortsetzen"
+web.firmware.queue_clear:
+  en: "Clear the queue"
+  de: "Warteschlange leeren"
+web.firmware.state_queued:
+  en: "Queued (#{position})"
+  de: "In Warteschlange ({position}.)"
+web.firmware.pill_queued:
+  en: "Update queued"
+  de: "Update in Warteschlange"
 
 # --- control modal: sliders instead of bare number fields for
 # value-carrying commands. `control_brightness` deliberately does NOT

@@ -6292,8 +6292,8 @@ async def test_exactly_one_dialog_of_each_kind_is_delivered(api):
     `aria-labelledby` in the tile menu already had to dodge once). The
     count (one signal modal, one control modal from task 7, one group
     dialog since the device groups of 2026-09-10, one expert settings
-    modal since 2026-09-13, one firmware update dialog since 2026-09-30) is
-    the only assertion that would even notice
+    modal since 2026-09-13, one firmware update dialog since 2026-09-30,
+    one update queue checklist since 2026-10-01) is the only assertion that would even notice
     this regression: a `<dialog>` inside the tile would otherwise look
     exactly the same in the shipped text as one at the end of the page.
     The group dialog is the case in point - it holds a checkbox per
@@ -6305,12 +6305,13 @@ async def test_exactly_one_dialog_of_each_kind_is_delivered(api):
     device loop."""
     client, _, _ = api
     markup = _without_comments((await client.get("/")).text)
-    assert markup.count("<dialog") == 5
+    assert markup.count("<dialog") == 6
     assert 'x-ref="signalsModal"' in markup
     assert 'x-ref="controlModal"' in markup
     assert 'x-ref="groupDialog"' in markup
     assert 'x-ref="expertModal"' in markup
     assert 'x-ref="firmwareModal"' in markup
+    assert 'x-ref="firmwareQueueModal"' in markup
     assert markup.index("<dialog") > markup.index("</main>")
 
 
@@ -16714,3 +16715,209 @@ async def test_the_next_firmware_check_line_follows_next_check_at(api):
     assert values["shown"] is True
     assert values["text"] == values["expected"]
     assert values["text"].startswith("Next check: ") and "2026" in values["text"]
+
+
+# ---------------------------------------------------------------------------
+# Firmware update queue (design 2026-10-01, 5.2): "Update all" in the Device
+# updates card, the checklist dialog, the running and halted bands, and the
+# queued state in the table and on the tile pill.
+# ---------------------------------------------------------------------------
+
+
+def _firmware_queue_state(rows: list[dict], **queue: object) -> str:
+    """Setup that gives the app an overview with `rows` and the queue
+    fields in `queue` (defaults: empty, idle, not halted)."""
+    overview = {
+        "supported": True,
+        "check": {"running": False, "checked": 0, "total": 0},
+        "updating_device_id": None,
+        "queue": {"device_ids": [], "active": False, "halted_reason": None, **queue},
+        "devices": rows,
+    }
+    return f"state.firmware = {json.dumps(overview)};"
+
+
+def _firmware_row(device_id: int, state: str, **fields: object) -> dict:
+    row: dict[str, object] = {
+        "device_id": device_id,
+        "label": f"Device {device_id}",
+        "room": None,
+        "online": True,
+        "state": state,
+        "progress": None,
+        "installed": "1.0",
+        "offer": None,
+        "queue_position": None,
+    }
+    row.update(fields)
+    return row
+
+
+def _served_with_x_show(page: str, needle: str) -> tuple[str, str]:
+    """The `x-text` of the one served element whose `x-text` contains
+    `needle`, and the `x-show` of that element or its nearest ancestor
+    that has one - the band that element sits in."""
+    matches = [
+        (attributes, ancestors)
+        for _tag, attributes, ancestors in _served_elements(page)
+        if needle in attributes.get("x-text", "")
+    ]
+    assert len(matches) == 1, (
+        f"expected one element with {needle!r} in x-text, found {len(matches)}"
+    )
+    attributes, ancestors = matches[0]
+    for candidate in [attributes, *(ancestor for _, ancestor in reversed(ancestors))]:
+        if "x-show" in candidate:
+            return attributes["x-text"], candidate["x-show"]
+    raise AssertionError(f"no x-show on or around the element with {needle!r}")
+
+
+async def test_the_firmware_queue_parts_are_delivered(api):
+    """Delivery only - the bindings run in the node tests below. Only the
+    dialog's own button starts a queue: "Update all" opens the checklist
+    first, the confirmation the design requires (5.2)."""
+    client, _, _ = api
+    html = (await client.get("/")).text
+    script = (await client.get("/static/app.js")).text
+    for needle in (
+        'x-ref="firmwareQueueModal"',
+        "openFirmwareQueueModal()",
+        "startFirmwareQueue()",
+        "t('web.firmware.update_all'",
+        "t('web.firmware.queue_halted'",
+        "clearFirmwareQueue()",
+        "resumeFirmwareQueue()",
+    ):
+        assert needle in html
+    assert '"/api/firmware/queue"' in script
+    assert html.count("startFirmwareQueue(") == 1
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+async def test_update_all_counts_and_preselects_the_offered_devices(api):
+    """The served "Update all" button counts the devices with an offer that
+    are not queued yet, and is disabled while a queue runs.
+
+    Fault to prove it: drop `row.queue_position === null` from
+    `firmwareQueueCandidates()` (the count reads 2), or drop
+    `firmware?.queue.active` from the button's `:disabled`."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+    button = next(
+        attributes
+        for tag, attributes, _ancestors in _served_elements(page)
+        if tag == "button" and "web.firmware.update_all" in attributes.get("x-text", "")
+    )
+    rows = [
+        _firmware_row(1, "available", offer={"version": 2, "version_string": "2.0"}),
+        _firmware_row(
+            2, "available", offer={"version": 2, "version_string": "2.0"}, queue_position=1
+        ),
+        _firmware_row(3, "none_found"),
+    ]
+    values = _app_state(
+        _BINDINGS_JS + _firmware_queue_state(rows) + "const out = {};"
+        f"out.text = run({json.dumps(button['x-text'])});"
+        f"out.disabled = boundTrue({json.dumps(button[':disabled'])});"
+        "out.candidates = state.firmwareQueueCandidates().map((r) => r.device_id);"
+        "state.firmware.queue.active = true;"
+        f"out.disabled_running = boundTrue({json.dumps(button[':disabled'])});"
+        "console.log(JSON.stringify(out));",
+        translations={"web.firmware.update_all": "Update all ({count})"},
+    )
+    assert values == {
+        "text": "Update all (1)",
+        "disabled": False,
+        "candidates": [1],
+        "disabled_running": True,
+    }
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+async def test_the_queue_bands_follow_the_overview(api):
+    """The running band shows while the queue is active and names the
+    device being updated, its state and how many wait behind it; the
+    halted band shows while a halt reason is set.
+
+    Fault to prove it: count `queue.device_ids.length - 1` in
+    `firmwareQueueBusyText()`, or bind the halted band to `queue.active`."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+    running_text, running_show = _served_with_x_show(page, "firmwareQueueBusyText()")
+    halted_text, halted_show = _served_with_x_show(page, "web.firmware.queue_halted")
+    rows = [
+        _firmware_row(7, "transferring", label="Lamp", progress=43),
+        _firmware_row(8, "available", queue_position=1),
+        _firmware_row(9, "available", queue_position=2),
+    ]
+    values = _app_state(
+        _BINDINGS_JS + _firmware_queue_state(rows, device_ids=[8, 9]) + "const out = {};"
+        f"out.running_idle = Boolean(run({json.dumps(running_show)}));"
+        f"out.halted_idle = Boolean(run({json.dumps(halted_show)}));"
+        "state.firmware.queue.active = true;"
+        "state.firmware.updating_device_id = 7;"
+        f"out.running_active = Boolean(run({json.dumps(running_show)}));"
+        f"out.running_text = run({json.dumps(running_text)});"
+        "state.firmware.queue.active = false;"
+        "state.firmware.updating_device_id = null;"
+        "state.firmware.queue.halted_reason = 'x';"
+        f"out.halted_shown = Boolean(run({json.dumps(halted_show)}));"
+        f"out.halted_text = run({json.dumps(halted_text)});"
+        "console.log(JSON.stringify(out));",
+        translations={
+            "web.firmware.queue_running": "Updating {device} · {state} · {count} more queued",
+            "web.firmware.state_transferring": "{progress} %",
+            "web.firmware.queue_halted": "Stopped: {reason}",
+        },
+    )
+    assert values == {
+        "running_idle": False,
+        "halted_idle": False,
+        "running_active": True,
+        "running_text": "Updating Lamp · 43 % · 2 more queued",
+        "halted_shown": True,
+        "halted_text": "Stopped: x",
+    }
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_a_queued_device_reads_queued_in_table_and_pill():
+    """A queued device reads "Queued" with its place in the table and on
+    the tile pill; a running install keeps its own text, queued or not.
+
+    Fault to prove it: check `queue_position` before
+    `FIRMWARE_ACTIVE_STATES` in `firmwarePillText()` (the running row
+    reads "Update queued"), or drop the queued branch from
+    `firmwareStateText()`."""
+    rows = [
+        _firmware_row(
+            1, "available", offer={"version": 2, "version_string": "2.0"}, queue_position=3
+        ),
+        _firmware_row(2, "transferring", progress=43),
+        _firmware_row(3, "transferring", progress=43, queue_position=1),
+        _firmware_row(4, "available", offer={"version": 2, "version_string": "2.0"}),
+    ]
+    values = _app_state(
+        _BINDINGS_JS + _firmware_queue_state(rows) + "const out = {};"
+        "out.state_queued = state.firmwareStateText(state.firmwareFor(1));"
+        "out.pill_queued = state.firmwarePillText(1);"
+        "out.state_running = state.firmwareStateText(state.firmwareFor(2));"
+        "out.pill_running = state.firmwarePillText(2);"
+        "out.pill_running_queued = state.firmwarePillText(3);"
+        "out.pill_offer = state.firmwarePillText(4);"
+        "console.log(JSON.stringify(out));",
+        translations={
+            "web.firmware.state_queued": "Queued (#{position})",
+            "web.firmware.pill_queued": "Update queued",
+            "web.firmware.state_transferring": "Updating · {progress} %",
+            "web.firmware.pill_available": "Update available: {from} → {to}",
+        },
+    )
+    assert values == {
+        "state_queued": "Queued (#3)",
+        "pill_queued": "Update queued",
+        "state_running": "Updating · 43 %",
+        "pill_running": "Updating · 43 %",
+        "pill_running_queued": "Updating · 43 %",
+        "pill_offer": "Update available: 1.0 → 2.0",
+    }

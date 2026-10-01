@@ -4089,3 +4089,34 @@ p.zigbee-countdown {
   gap: 0.5rem;
   margin-top: 1rem;
 }
+
+/* The update queue's band in the card: its text, then its buttons. */
+.firmware-queue-band {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.firmware-queue-band > span {
+  flex: 1 1 16rem;
+}
+
+/* The checklist in the "Update all" dialog: one device per line. */
+.firmware-queue-list {
+  list-style: none;
+  margin: 0.75rem 0;
+  padding: 0;
+}
+
+.firmware-queue-list li {
+  border-bottom: 1px solid var(--border);
+  padding: 0.45rem 0;
+}
+
+.firmware-queue-list label {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: baseline;
+}
