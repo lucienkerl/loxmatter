@@ -16837,10 +16837,12 @@ async def test_update_all_counts_and_preselects_the_offered_devices(api):
 async def test_the_queue_bands_follow_the_overview(api):
     """The running band shows while the queue is active and names the
     device being updated, its state and how many wait behind it; the
-    halted band shows while a halt reason is set.
+    halted band shows while a halt reason is set. The last device drops
+    the "more queued" part; between two devices only the count shows.
 
     Fault to prove it: count `queue.device_ids.length - 1` in
-    `firmwareQueueBusyText()`, or bind the halted band to `queue.active`."""
+    `firmwareQueueBusyText()`, drop its `queue_running_last` branch, or bind
+    the halted band to `queue.active`."""
     client, _, _ = api
     page = (await client.get("/")).text
     running_text, running_show = _served_with_x_show(page, "firmwareQueueBusyText()")
@@ -16858,6 +16860,11 @@ async def test_the_queue_bands_follow_the_overview(api):
         "state.firmware.updating_device_id = 7;"
         f"out.running_active = Boolean(run({json.dumps(running_show)}));"
         f"out.running_text = run({json.dumps(running_text)});"
+        "state.firmware.queue.device_ids = [];"
+        f"out.running_last_text = run({json.dumps(running_text)});"
+        "state.firmware.queue.device_ids = [8, 9];"
+        "state.firmware.updating_device_id = null;"
+        f"out.waiting_text = run({json.dumps(running_text)});"
         "state.firmware.queue.active = false;"
         "state.firmware.updating_device_id = null;"
         "state.firmware.queue.halted_reason = 'x';"
@@ -16866,6 +16873,8 @@ async def test_the_queue_bands_follow_the_overview(api):
         "console.log(JSON.stringify(out));",
         translations={
             "web.firmware.queue_running": "Updating {device} · {state} · {count} more queued",
+            "web.firmware.queue_running_last": "Updating {device} · {state}",
+            "web.firmware.queue_waiting": "{count} updates queued",
             "web.firmware.state_transferring": "{progress} %",
             "web.firmware.queue_halted": "Stopped: {reason}",
         },
@@ -16875,6 +16884,8 @@ async def test_the_queue_bands_follow_the_overview(api):
         "halted_idle": False,
         "running_active": True,
         "running_text": "Updating Lamp · 43 % · 2 more queued",
+        "running_last_text": "Updating Lamp · 43 %",
+        "waiting_text": "2 updates queued",
         "halted_shown": True,
         "halted_text": "Stopped: x",
     }

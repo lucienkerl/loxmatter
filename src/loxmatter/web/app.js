@@ -5272,6 +5272,10 @@ function app() {
       const queue = this.firmware?.queue;
       if (!queue) return "";
       const row = this.firmware.updating_device_id === null ? null : this.firmwareFor(this.firmware.updating_device_id);
+      if (row && queue.device_ids.length === 0) {
+        // The last device: "0 more queued" would read like a fault.
+        return t("web.firmware.queue_running_last", { device: row.label, state: this.firmwareStateText(row) });
+      }
       if (row) {
         return t("web.firmware.queue_running", {
           device: row.label,
