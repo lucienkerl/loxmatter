@@ -366,8 +366,10 @@ class Runtime:
            carry synthesized descriptors and commands like any Matter node.
         5. `d<id>_signals` to the WebUI observers, if steps 1 and 4 added a
            signal or a command - see the comment at the step.
+        6. A known signal whose cached value this snapshot CHANGED is sent
+           and reported like `on_attribute` - see the comment at the step.
 
-        Sends nothing to Loxone itself, exactly like `seed_from_snapshot` (see
+        Apart from step 6, sends nothing to Loxone itself, exactly like `seed_from_snapshot` (see
         there). An additional reason here: a freshly created signal does
         not even have a virtual input in Loxone yet - that only comes into
         being once the template has been exported and imported.
@@ -377,8 +379,24 @@ class Runtime:
         self._store.register_signals(device_id, snapshot)
         self.invalidate_index(device_id)
         self._cache_online(device_id, snapshot.available)
+        changed: list[str] = []
         for path, raw in snapshot.attributes.items():
-            self._cache_attribute(device_id, path, raw)
+            previous = None
+            signal = self._signal_for(device_id, path, SignalKind.ATTRIBUTE)
+            if signal is not None:
+                previous = self._last_values.get(signal.key)
+            key = self._cache_attribute(device_id, path, raw)
+            if key is None:
+                continue
+            if previous is not None and self._last_values[key] != previous:
+                changed.append(key)
+            elif key not in before[0]:
+                # Born in this snapshot: nothing to send - Loxone has no
+                # input yet - but it did just arrive, and the WebUI's
+                # hold-time countdown starts from that (design 2026-10-01,
+                # 3.3). A freshly paired TRADFRI sensor gets its occupancy
+                # this way, with its first detection.
+                self._reported_at[key] = now_iso()
         self._store.register_commands(device_id, extract_commands(snapshot))
         self._store.refresh_device_types(device_id, snapshot)
         # 5. Tell an open dashboard. The live stream carries values, and a
@@ -390,6 +408,17 @@ class Runtime:
         #    UI's business, Loxone has no input for it.
         if self._structure(device_id) != before:
             self._notify_observers(self._signals_key(device_id), True)
+        # 6. A KNOWN signal whose value changed in this snapshot is a report
+        #    like any other: Loxone has an input for it and the WebUI counts
+        #    from it. The first TRADFRI detection after the 1 October update
+        #    brought a new path - its hold time - and with it occupancy 0 -> 1;
+        #    only cached, that motion never reached Loxone. A signal with no
+        #    cached value before is the "sends nothing" case above.
+        for key in changed:
+            value = self._last_values[key]
+            self._reported_at[key] = now_iso()
+            await self._sender.send(key, value)
+            self._notify_observers(key, value)
 
     def _structure(self, device_id: int) -> tuple[frozenset[str], frozenset[str]]:
         """The keys of a device's signals and commands - what the dashboard

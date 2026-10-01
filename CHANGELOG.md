@@ -57,6 +57,12 @@ people who don't know the code.
 
 ### Fixed
 
+- **A change that arrives together with a new signal reaches Loxone.** When
+  a device reported a new signal for the first time, other values that
+  changed in the same message were only stored, not sent. The first motion
+  an IKEA TRADFRI motion sensor reported after the update never reached
+  Loxone this way, and the countdown on its tile started only with the
+  next motion.
 - **Zigbee sensors keep reporting after the bridge restarts.** After an
   update or any other restart, IKEA TRADFRI motion sensors went silent until
   they were paired again, and contact, water and motion sensors that send

@@ -60,8 +60,17 @@ which is what the browser needs.
 
 `Runtime` records, per signal key, when `on_attribute` last delivered it
 (ISO time, like `_last_heard`, not persisted). `GET /api/devices/<id>/
-signals` returns it as `reported_at`. A value only seeded from a snapshot
-has no `reported_at`: the bridge did not watch it arrive.
+signals` returns it as `reported_at`. A value only seeded at startup
+(`seed_from_snapshot`) has no `reported_at`: the bridge did not watch it
+arrive.
+
+**Amended the same evening, after the first test on the Pi.** A detection
+that brings a new path - the first one carrying a hold time - reaches the
+runtime as a whole snapshot, and `on_node_snapshot` only cached its values.
+The countdown then started at the second detection, and worse, Loxone never
+heard of the first one. `on_node_snapshot` now treats a known signal whose
+cached value changed like `on_attribute` (sent, reported, `reported_at`),
+and gives a signal born in the snapshot a `reported_at` without sending it.
 
 ### 3.4 The chip
 
