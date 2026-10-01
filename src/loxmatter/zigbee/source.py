@@ -99,6 +99,7 @@ from loxmatter.zigbee.configure import (
     PollingLoop,
     PollingSchedule,
     configure_device,
+    install_command_handlers,
     watch_for_wakeups,
 )
 from loxmatter.zigbee.quirks import ensure_quirks_loaded
@@ -1447,6 +1448,12 @@ class ZigbeeSource:
             self._queue = asyncio.Queue()
         if self._dispatch_task is None or self._dispatch_task.done():
             self._dispatch_task = asyncio.create_task(self._dispatch_loop(self._queue))
+        # Before the cluster listeners, so that clearing a TRADFRI sensor's
+        # stale occupancy is not reported as news - the baseline below reads
+        # it as it now is. See `install_command_handlers` for why this is
+        # not left to configure-on-join.
+        for device in self._devices():
+            install_command_handlers(device)
         self._register_cluster_listeners()
         # **The previous one is stopped first, and awaited.** Assigning over
         # it would leave its `_run()` task pending on a checker nobody can
