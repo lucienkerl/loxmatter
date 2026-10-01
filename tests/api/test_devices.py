@@ -1281,6 +1281,35 @@ async def test_the_device_list_carries_last_heard_from_the_runtime(
     store.close()
 
 
+async def test_a_signal_carries_when_it_was_last_reported(
+    tmp_path, no_invoke, fake_runtime, fake_client, fake_otbr
+):
+    """The tile's hold-time countdown starts from the last report of
+    `occupancy`, and must be right after a page reload too - which only
+    the server can answer (design 2026-10-01, 3.3). A signal the bridge
+    never watched arrive reports `None`.
+
+    Fault to prove it: leave `reported_at` at `None` in `_signal_out`."""
+    store = Store(tmp_path / "t.sqlite")
+    snapshot = load_snapshot("ikea_grillplats_plug.json")
+    device_id = store.register_device(snapshot)
+    store.register_signals(device_id, snapshot)
+    fake_client.store = store
+    runtime = fake_runtime(store)
+    reported, silent = store.signals(device_id)[:2]
+    runtime.reported_at[reported.key] = "2026-10-01T18:30:00+00:00"
+    app = build_app(store, no_invoke, runtime, client=fake_client, thread_dataset_source=fake_otbr)
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
+        await authenticate(store, c)
+        signals = (await c.get(f"/api/devices/{device_id}/signals")).json()
+
+    by_key = {s["key"]: s for s in signals}
+    assert by_key[reported.key]["reported_at"] == "2026-10-01T18:30:00+00:00"
+    assert by_key[silent.key]["reported_at"] is None
+    store.close()
+
+
 async def test_the_device_list_carries_room_and_category(api):
     client, _store, device_id, _fake = api
     devices = (await client.get("/api/devices")).json()

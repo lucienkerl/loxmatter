@@ -2353,6 +2353,41 @@ footer.hint-block {
   overflow-wrap: break-word;
 }
 
+/* The occupancy's hold-time chip (design 2026-10-01, variant B). Pushed to
+   the end of the key cell, so it reads as part of the value beside it. Quiet
+   while it only states the hold time; the accent colour while it counts
+   down - the one moment it carries news. Tabular figures keep "2:41" from
+   jittering as it ticks. */
+.value-key:has(.hold-chip) {
+  display: flex;
+  align-items: baseline;
+  gap: 0.4rem;
+}
+
+/* A flex item's automatic minimum is its content width - without this a
+   long technical title would push the row wider instead of wrapping (the
+   `.value-key` trap described further down). */
+.value-key:has(.hold-chip) > :first-child {
+  min-width: 0;
+}
+
+.hold-chip {
+  margin-left: auto;
+  flex: none;
+  font-family: var(--mono);
+  font-size: 0.6875rem;
+  font-variant-numeric: tabular-nums;
+  padding: 0 0.3rem;
+  border-radius: 3px;
+  background: var(--off-bg);
+  color: var(--text-muted);
+}
+
+.hold-chip-running {
+  background: var(--type-bg);
+  color: var(--type-fg);
+}
+
 .value-rows .value {
   font-family: var(--mono);
   font-size: 0.75rem;

@@ -224,7 +224,10 @@ def tradfri_motion_sensor(ieee: str = TRADFRI_MOTION_SENSOR, **kwargs: Any) -> F
                 1,
                 profile_id=0x0104,
                 device_type=0x0850,
-                out_clusters=[FakeCluster(ON_OFF, declared=[0x0000], commands=ON_OFF_COMMANDS)],
+                # 0x4001 is `OnTime`, declared on zigpy's `OnOff` like `on_off`.
+                out_clusters=[
+                    FakeCluster(ON_OFF, declared=[0x0000, 0x4001], commands=ON_OFF_COMMANDS)
+                ],
             )
         ],
         **kwargs,
@@ -484,9 +487,117 @@ async def test_on_with_timed_off_counts_as_motion_too(store) -> None:
     on_a_network(device)
     await configure_device(device, store=store)
 
-    out_cluster_of(device, ON_OFF).receive_command(0x42, ())
+    out_cluster_of(device, ON_OFF).receive_command(0x42, timed_off(1800))
 
     assert out_cluster_of(device, ON_OFF).get(0x0000) is True
+
+
+def timed_off(on_time: int) -> tuple[int, int, int]:
+    """`onWithTimedOff`'s arguments as zigpy hands them to a listener: a
+    tuple-shaped schema of `on_off_control`, `on_time` (tenths of a second)
+    and `off_wait_time`."""
+    return (0, on_time, 0)
+
+
+async def test_on_with_timed_off_clears_itself_after_the_time_it_names(store) -> None:
+    """THE SENSOR NEVER SENDS `off`. It sends `onWithTimedOff` with the
+    duration set on its back, and a lamp bound to it would switch itself off
+    once that ran out. Here the bridge plays the lamp - without that, the
+    first motion would leave occupancy at 1 for good (seen on the test Pi,
+    2026-10-01).
+
+    Fault to prove it: set `True` on 0x42 and never schedule anything."""
+    device = tradfri_motion_sensor()
+    on_a_network(device)
+    await configure_device(device, store=store)
+    on_off = out_cluster_of(device, ON_OFF)
+
+    on_off.receive_command(0x42, timed_off(1))  # 0.1 s
+    assert on_off.get(0x0000) is True
+
+    await asyncio.sleep(0.2)
+    assert on_off.get(0x0000) is False
+
+
+async def test_on_with_timed_off_keeps_its_on_time_as_the_hold_time(store) -> None:
+    """The duration set on the sensor's back reaches the UI and Loxone as
+    the sensor's hold time - and only from here: the command is the one
+    place it exists. Stored in OnOff's own `OnTime` (0x4001, tenths of a
+    second), which zigpy declares and persists, BEFORE the occupancy, so
+    the snapshot the occupancy event triggers already carries it (design
+    2026-10-01, 3.1).
+
+    Fault to prove it: drop `on_time` once the timer is scheduled."""
+    device = tradfri_motion_sensor()
+    on_a_network(device)
+    await configure_device(device, store=store)
+    on_off = out_cluster_of(device, ON_OFF)
+    seen_at_occupancy: list[Any] = []
+    on_off.on_event(
+        "attribute_updated",
+        lambda event: (
+            seen_at_occupancy.append(on_off.get(0x4001)) if event.attribute_id == 0 else None
+        ),
+    )
+
+    on_off.receive_command(0x42, timed_off(1800))
+
+    assert on_off.get(0x4001) == 1800
+    assert seen_at_occupancy == [1800]
+
+
+async def test_renewed_motion_restarts_the_timer(store) -> None:
+    """A person still in the room re-triggers the sensor before the time
+    runs out; occupancy must not drop out in between.
+
+    Fault to prove it: leave the first timer running beside the second."""
+    device = tradfri_motion_sensor()
+    on_a_network(device)
+    await configure_device(device, store=store)
+    on_off = out_cluster_of(device, ON_OFF)
+
+    on_off.receive_command(0x42, timed_off(2))  # clears at 0.2 s
+    await asyncio.sleep(0.1)
+    on_off.receive_command(0x42, timed_off(2))  # now clears at 0.3 s
+    await asyncio.sleep(0.15)
+    assert on_off.get(0x0000) is True
+
+    await asyncio.sleep(0.15)
+    assert on_off.get(0x0000) is False
+
+
+async def test_a_plain_on_cancels_a_pending_timed_off(store) -> None:
+    """`on` means on until `off` - a timer left over from an earlier
+    `onWithTimedOff` must not switch it off behind its back.
+
+    Fault to prove it: leave the timer running on `on`."""
+    device = tradfri_motion_sensor()
+    on_a_network(device)
+    await configure_device(device, store=store)
+    on_off = out_cluster_of(device, ON_OFF)
+
+    on_off.receive_command(0x42, timed_off(1))
+    on_off.receive_command(1, ())
+    await asyncio.sleep(0.2)
+
+    assert on_off.get(0x0000) is True
+
+
+@pytest.mark.parametrize("on_time", [0, 0xFFFF])
+async def test_an_on_time_without_an_end_keeps_occupancy_on(store, on_time: int) -> None:
+    """0 names no duration, and the ZCL reads 0xFFFF as "on, never
+    counted down" - neither is a timer to run.
+
+    Fault to prove it: schedule `on_time / 10` seconds whatever it is."""
+    device = tradfri_motion_sensor()
+    on_a_network(device)
+    await configure_device(device, store=store)
+    on_off = out_cluster_of(device, ON_OFF)
+
+    on_off.receive_command(0x42, timed_off(on_time))
+    await asyncio.sleep(0.05)
+
+    assert on_off.get(0x0000) is True
 
 
 async def test_a_lamp_is_never_mistaken_for_the_tradfri_motion_sensor(store) -> None:

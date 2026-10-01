@@ -199,6 +199,9 @@ class FakeRuntime:
         # Empty means "nothing heard since startup" - a test that wants to
         # trace the timestamp all the way into the JSON response sets it here.
         self.last_heard: dict[int, str] = {}
+        # When each signal key was last reported, as `Runtime._reported_at`
+        # keeps it - set by a test that traces it into the JSON response.
+        self.reported_at: dict[str, str] = {}
         # What `resend_all` reports as its count, and how often it was
         # called - a test that traces the number all the way into the
         # response sets the first, a test of the wiring reads the second.
@@ -212,6 +215,10 @@ class FakeRuntime:
     def last_values_for(self, device_id: int) -> dict[str, float | bool]:
         prefix = f"d{device_id}_"
         return {k: v for k, v in self._values.items() if k.startswith(prefix)}
+
+    def reported_at_for(self, device_id: int) -> dict[str, str]:
+        prefix = f"d{device_id}_"
+        return {k: v for k, v in self.reported_at.items() if k.startswith(prefix)}
 
     def last_heard_for(self, device_id: int) -> str | None:
         """Like `Runtime.last_heard_for`: the timestamp of the last receipt,

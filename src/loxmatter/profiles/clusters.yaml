@@ -268,6 +268,11 @@ clusters:
       # the same attribute and the same bit 0 - nothing is converted. A
       # bitmap, not a quantity: no unit.
       0: {slug: occupancy, unit: ""}
+      # HoldTime: how long the sensor stays occupied after a detection - for
+      # the TRADFRI motion sensor the switch on its back, translated from its
+      # `onWithTimedOff` (design 2026-10-01). A setting, not a reading: the
+      # tile counts down with it, and it is exported only by hand.
+      3: {slug: hold_time, unit: s, functional: false}
   69:
     name: booleanstate
     rank: 10

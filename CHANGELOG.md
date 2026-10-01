@@ -35,6 +35,12 @@ people who don't know the code.
   password?" shows the command that resets it,
   `docker exec -it loxmatter loxmatter set-password`, with a button to copy
   it. It works from any directory on the host and signs out every browser.
+- **A motion sensor's tile shows how long it stays occupied.** Next to
+  "occupancy" the tile counts down the time left, such as "2:41 left", and
+  starts again when the sensor sees motion again. When nobody is there, it
+  shows the duration itself, such as "3 min hold". For the IKEA TRADFRI
+  motion sensor that is the duration set on its back. It is also available
+  as a signal of its own, `hold_time`, which can be exported to Loxone.
 
 ### Changed
 
@@ -51,6 +57,15 @@ people who don't know the code.
 
 ### Fixed
 
+- **New signals appear on the dashboard without a page reload.** A signal
+  that a device reports for the first time while the page is open, such as
+  the motion of an IKEA TRADFRI motion sensor after its first detection,
+  now shows up on its own.
+- **The IKEA TRADFRI motion sensor reports "no motion" again.** After the
+  first motion, the Zigbee sensor stayed at "motion" for good: it never says
+  when the motion is over, it only tells a lamp how long to stay on. The
+  bridge now counts that time down itself and reports "no motion" once it
+  runs out, using the duration set on the back of the sensor.
 - **Colours on a colour lamp are as saturated as the lamp can show.** A red
   from the Loxone lighting controller came out pale on an IKEA KAJPLATS
   colour lamp: the bridge sent the colour as a point that the lamp could

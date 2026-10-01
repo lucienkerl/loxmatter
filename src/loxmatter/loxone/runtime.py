@@ -113,6 +113,11 @@ class Runtime:
         # `online` stays what it is; this is the second number that makes
         # the question answerable in the first place.
         self._last_heard: dict[int, str] = {}
+        # Per signal key, when `on_attribute` last delivered it - the start
+        # of the WebUI's hold-time countdown, also after a page reload
+        # (design 2026-10-01, 3.3). Not persisted, like `_last_heard`, and
+        # never set by seeding: a seeded value was not watched arriving.
+        self._reported_at: dict[str, str] = {}
         self._last_values: dict[str, float | bool] = {}
         self._counters: dict[str, int] = {}
         self._heartbeat_on = False
@@ -259,6 +264,7 @@ class Runtime:
         if key is None:
             return
         value = self._last_values[key]
+        self._reported_at[key] = now_iso()
         await self._sender.send(key, value)
         self._notify_observers(key, value)
 
@@ -324,7 +330,7 @@ class Runtime:
         """Catches up a device whose attribute paths have changed - called
         from `BridgeMatterClient.follow`.
 
-        Four steps. Only one order is binding: `invalidate_index` MUST
+        Five steps. Only one order is binding: `invalidate_index` MUST
         run before seeding (step 3). Whether `register_signals` comes
         before or after `invalidate_index` has no consequence - both just
         need to be finished before seeding makes its first `_signal_for`
@@ -358,13 +364,16 @@ class Runtime:
            with an exception, and that must not cost the new signals their
            values. Zigbee devices take the same path - their snapshots
            carry synthesized descriptors and commands like any Matter node.
+        5. `d<id>_signals` to the WebUI observers, if steps 1 and 4 added a
+           signal or a command - see the comment at the step.
 
-        Sends nothing itself, exactly like `seed_from_snapshot` (see
+        Sends nothing to Loxone itself, exactly like `seed_from_snapshot` (see
         there). An additional reason here: a freshly created signal does
         not even have a virtual input in Loxone yet - that only comes into
         being once the template has been exported and imported.
         """
         self._mark_heard(device_id)
+        before = self._structure(device_id)
         self._store.register_signals(device_id, snapshot)
         self.invalidate_index(device_id)
         self._cache_online(device_id, snapshot.available)
@@ -372,6 +381,27 @@ class Runtime:
             self._cache_attribute(device_id, path, raw)
         self._store.register_commands(device_id, extract_commands(snapshot))
         self._store.refresh_device_types(device_id, snapshot)
+        # 5. Tell an open dashboard. The live stream carries values, and a
+        #    value for a key the browser never loaded has nowhere to go - a
+        #    TRADFRI motion sensor's occupancy, born with its first motion,
+        #    stayed invisible until a page reload. Only when something was
+        #    actually added, or every repeated snapshot would make every tab
+        #    reload the device for nothing. Observers only: the key is the
+        #    UI's business, Loxone has no input for it.
+        if self._structure(device_id) != before:
+            self._notify_observers(self._signals_key(device_id), True)
+
+    def _structure(self, device_id: int) -> tuple[frozenset[str], frozenset[str]]:
+        """The keys of a device's signals and commands - what the dashboard
+        loaded once and cannot learn about from a value."""
+        return (
+            frozenset(signal.key for signal in self._store.signals(device_id)),
+            frozenset(command.key for command in self._store.commands(device_id)),
+        )
+
+    @staticmethod
+    def _signals_key(device_id: int) -> str:
+        return f"d{device_id}_signals"
 
     async def on_event(self, device_id: int, path: str) -> None:
         self._mark_heard(device_id)
@@ -469,6 +499,12 @@ class Runtime:
         `_last_heard` in the constructor for why this is not persisted.
         """
         return self._last_heard.get(device_id)
+
+    def reported_at_for(self, device_id: int) -> dict[str, str]:
+        """When each of this device's signals was last reported, by key -
+        see `_reported_at` in the constructor."""
+        prefix = f"d{device_id}_"
+        return {key: at for key, at in self._reported_at.items() if key.startswith(prefix)}
 
     def last_values_for(self, device_id: int) -> dict[str, float | bool]:
         """All most-recently-known values of a device, indexed by signal

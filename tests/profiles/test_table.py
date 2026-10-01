@@ -472,6 +472,20 @@ def test_the_five_added_clusters_name_their_elements():
     assert lookup(SignalRef(1, 768, 4, SignalKind.ATTRIBUTE), 21627).slug == "color_y"
 
 
+def test_the_occupancy_hold_time_is_named_and_expert_only():
+    """`HoldTime` (1030/3) is how long a sensor stays occupied after a
+    detection - for a TRADFRI motion sensor the switch on its back (design
+    2026-10-01, 3.1). A setting, not a reading: named so the tile can find
+    it, in seconds, and not ticked for export by default.
+
+    Fault to prove it: leave 1030/3 out of the table, or drop its
+    `functional: false`."""
+    profile = lookup(SignalRef(1, 1030, 3, SignalKind.ATTRIBUTE), 180)
+    assert profile.slug == "hold_time"
+    assert profile.unit == "s"
+    assert marked_non_functional(SignalRef(1, 1030, 3, SignalKind.ATTRIBUTE)) is True
+
+
 def test_the_raw_ias_bitmap_is_expert_only():
     """The edge derives 69/0 or 1030/0 from this same bitmap, so exporting
     it as well would send one physical fact to Loxone twice.

@@ -1361,7 +1361,22 @@
                          would otherwise no longer be visible anywhere. -->
                     <template x-for="signal in firstSignalsFor(device.id)" :key="signal.key">
                       <span class="value-row">
-                        <span class="value-key" x-text="signal.title"></span>
+                        <!-- The hold-time chip sits at the END of the key
+                             cell, right beside the value (design
+                             2026-10-01, variant B): the value column is
+                             capped at `fit-content(9rem)`, the key column
+                             has the room. Empty for every signal but an
+                             occupancy with a hold time. -->
+                        <span class="value-key">
+                          <span x-text="signal.title"></span>
+                          <span
+                            class="hold-chip"
+                            :class="{ 'hold-chip-running': holdChipRunning(device.id, signal) }"
+                            x-show="holdChipText(device.id, signal)"
+                            x-text="holdChipText(device.id, signal)"
+                            x-cloak
+                          ></span>
+                        </span>
                         <span
                           class="value"
                           :class="{ 'value-fresh': signalIsFresh(signal) }"

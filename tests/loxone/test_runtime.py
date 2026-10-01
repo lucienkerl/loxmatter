@@ -623,6 +623,64 @@ async def test_on_node_snapshot_registers_a_new_signal_and_lets_it_through(
     assert sender.keys() == [key]
 
 
+async def test_on_node_snapshot_tells_the_web_ui_about_a_new_signal(environment, monkeypatch):
+    """A signal row created at runtime - a TRADFRI motion sensor's
+    occupancy, born with its first motion - must reach an open dashboard
+    without a page reload. The live stream carries values only, so the
+    runtime announces the change itself: `d<id>_signals`, which the browser
+    answers by reloading that one device.
+
+    Fault to prove it: notify no observer from `on_node_snapshot`."""
+    runtime, sender, _, device_id, _ = environment
+    seen: list[tuple[str, object]] = []
+    runtime.add_observer(lambda key, value: seen.append((key, value)))
+
+    def extended_extract_signals(snapshot: NodeSnapshot) -> list[SignalRef]:
+        return [*extract_signals(snapshot), SignalRef(9, 1234, 5, SignalKind.ATTRIBUTE)]
+
+    monkeypatch.setattr("loxmatter.model.store.extract_signals", extended_extract_signals)
+    await runtime.on_node_snapshot(device_id, _plug_snapshot())
+
+    assert seen == [(f"d{device_id}_signals", True)]
+    # The UI's business only - nothing for Loxone, which has no input for it.
+    assert f"d{device_id}_signals" not in sender
+
+
+async def test_on_node_snapshot_stays_quiet_when_nothing_new_appeared(environment):
+    """Every repeated snapshot would otherwise make every open tab reload
+    the device for nothing.
+
+    Fault to prove it: notify on every call."""
+    runtime, _, _, device_id, _ = environment
+    seen: list[tuple[str, object]] = []
+    runtime.add_observer(lambda key, value: seen.append((key, value)))
+
+    await runtime.on_node_snapshot(device_id, _plug_snapshot())
+
+    assert seen == []
+
+
+async def test_a_reported_value_records_when_it_arrived(environment):
+    """The WebUI's hold-time countdown starts from the last report of
+    `occupancy`, also after a page reload (design 2026-10-01, 3.3). A
+    value only seeded from a snapshot was not watched arriving and has no
+    time; a report for another device does not leak in.
+
+    Fault to prove it: record nothing in `on_attribute`."""
+    runtime, _, _, device_id, button_device_id = environment
+    await runtime.on_node_snapshot(device_id, _plug_snapshot())
+    assert runtime.reported_at_for(device_id) == {}
+
+    await runtime.on_attribute(device_id, "2/144/4", 1500)
+
+    signal = runtime._signal_for(device_id, "2/144/4", SignalKind.ATTRIBUTE)
+    assert signal is not None
+    reported = runtime.reported_at_for(device_id)
+    assert list(reported) == [signal.key]
+    assert reported[signal.key].endswith("+00:00")
+    assert runtime.reported_at_for(button_device_id) == {}
+
+
 async def test_on_node_snapshot_seeds_the_values_without_sending(environment):
     """Same reasoning as for `seed_from_snapshot`: the cache fills up,
     nothing is sent. A freshly created signal has no virtual input in

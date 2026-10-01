@@ -172,13 +172,18 @@ class RuntimeValues(Protocol):
 
     def last_values_for(self, device_id: int) -> dict[str, float | bool]: ...
 
+    def reported_at_for(self, device_id: int) -> dict[str, str]: ...
+
     def last_heard_for(self, device_id: int) -> str | None: ...
 
     async def set_online(self, device_id: int, online: bool) -> None: ...
 
 
 def _signal_out(
-    signal: StoredSignal, values: dict[str, float | bool], labels: dict[int, str]
+    signal: StoredSignal,
+    values: dict[str, float | bool],
+    labels: dict[int, str],
+    reported_at: dict[str, str],
 ) -> SignalOut:
     """`functional` comes unchanged from `StoredSignal.functional` -
     `profiles.relevance.is_functional` needs the device types per endpoint
@@ -222,6 +227,7 @@ def _signal_out(
         title=signal.title,
         unit=signal.unit,
         value=values.get(signal.key),
+        reported_at=reported_at.get(signal.key),
         exportable=exportable,
         reason=reason,
         exported=signal.exported,
@@ -376,7 +382,10 @@ def build_device_router(
         # Built once per device, not per signal - see the docstring of
         # `_signal_out`.
         labels = endpoint_labels(device.device_types)
-        return [_signal_out(signal, values, labels) for signal in store.signals(device_id)]
+        reported_at = runtime.reported_at_for(device_id)
+        return [
+            _signal_out(signal, values, labels, reported_at) for signal in store.signals(device_id)
+        ]
 
     @router.get("/devices/{device_id}/expert")
     async def get_expert(device_id: int) -> DeviceExpertOut:
@@ -481,7 +490,7 @@ def build_device_router(
         assert updated is not None  # just found, not deleted within the same request
         values = runtime.last_values_for(updated.device_id)
         labels = endpoint_labels(device.device_types)
-        return _signal_out(updated, values, labels)
+        return _signal_out(updated, values, labels, runtime.reported_at_for(updated.device_id))
 
     @router.get("/devices/commission/status")
     async def commission_status() -> dict[str, object]:

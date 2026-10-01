@@ -110,12 +110,14 @@ def _state_of(*, zone_type: int, zone_status: int) -> object:
     return build_snapshot(_ias(zone_type=zone_type, zone_status=zone_status)).attributes["1/69/0"]
 
 
-def _onoff_sensor(*, value: bool | None) -> DeviceFacts:
+def _onoff_sensor(*, value: bool | None, on_time: int | None = None) -> DeviceFacts:
     """The classic IKEA TRADFRI motion sensor (E1525, E1745): no IAS Zone
     cluster and no OccupancySensing cluster at all - `OnOff` is its OUTPUT
     cluster, never its input one, so it carries no `in_cluster_ids` here.
     `value=None` is a sensor that has never sent a command yet."""
     attributes: dict[tuple[int, int], object] = {} if value is None else {(0x0006, 0x0000): value}
+    if on_time is not None:
+        attributes[(0x0006, 0x4001)] = on_time
     return DeviceFacts(
         ieee="d0:cf:5e:ff:fe:71:a3:19",
         manufacturer="IKEA of Sweden",
@@ -582,6 +584,26 @@ def test_the_classic_tradfri_motion_sensors_raw_onoff_attribute_is_not_also_expo
     Fault to prove it: leave the generic passthrough's `(6, 0)` row in."""
     snapshot = build_snapshot(_onoff_sensor(value=True))
     assert "1/6/0" not in snapshot.attributes
+
+
+def test_the_tradfri_motion_sensors_on_time_is_its_hold_time():
+    """`configure.py` keeps the `on_time` of the last `onWithTimedOff` in
+    OnOff's `OnTime` (tenths of a second); Matter carries the same fact as
+    `OccupancySensing.HoldTime`, in seconds (design 2026-10-01, 3.1).
+
+    Fault to prove it: pass `(6, 0x4001)` through unconverted."""
+    snapshot = build_snapshot(_onoff_sensor(value=True, on_time=1800))
+    assert snapshot.attributes["1/1030/3"] == 180
+    assert "1/6/16385" not in snapshot.attributes
+
+
+def test_a_tradfri_motion_sensor_without_an_on_time_writes_no_hold_time():
+    """No detection with a duration yet: nothing to show, and the `None`
+    rule (`build_snapshot`) says leave the path out.
+
+    Fault to prove it: default the hold time to 0."""
+    snapshot = build_snapshot(_onoff_sensor(value=True))
+    assert "1/1030/3" not in snapshot.attributes
 
 
 def test_a_tradfri_motion_sensor_that_has_never_reported_writes_no_path():
