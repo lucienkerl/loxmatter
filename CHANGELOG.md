@@ -51,6 +51,12 @@ people who don't know the code.
 
 ### Fixed
 
+- **Colours on a colour lamp are as saturated as the lamp can show.** A red
+  from the Loxone lighting controller came out pale on an IKEA KAJPLATS
+  colour lamp: the bridge sent the colour as a point that the lamp could
+  only reach by mixing in other light. A lamp that understands hue and
+  saturation now gets the colour that way and shows a full red. Lamps that
+  only understand colour points, such as most Zigbee lamps, are unchanged.
 - **A lamp switched on to a brightness comes on at that brightness.** An IKEA
   KAJPLATS tunable-white lamp came on dim when Loxone switched it from off
   straight to a high brightness, although it reported the right value. The
