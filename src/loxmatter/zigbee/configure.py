@@ -86,6 +86,7 @@ __all__ = [
     "PollingLoop",
     "PollingSchedule",
     "configure_device",
+    "install_command_handlers",
     "read_current_values",
     "retry_pending",
     "watch_for_wakeups",
@@ -434,8 +435,7 @@ async def configure_device(
     # An enrolment request may arrive at any time, including from a device
     # that refuses everything else, so the handler goes on before the first
     # packet leaves. Installing it costs nothing on the air.
-    _install_ias_handlers(device)
-    _install_onoff_sensor_handlers(device)
+    install_command_handlers(device)
 
     if getattr(device, "skip_configuration", False):
         # 79 shipped quirks set this, and they set it because binding or
@@ -812,6 +812,21 @@ class _IasZoneListener:
         task.add_done_callback(self._tasks.discard)
 
 
+def install_command_handlers(device: Any) -> None:
+    """The listeners that turn a device's client COMMANDS into attribute
+    values: an IAS alarm, a TRADFRI motion sensor's `on`/`off`.
+
+    They live on zigpy's cluster objects, in memory. `configure_device`
+    installs them when a device joins - and nothing else did, so after a
+    bridge restart every already-paired sensor kept sending while none of it
+    reached Loxone (seen on the test Pi, 2026-10-01, right after an update).
+    `ZigbeeSource.subscribe` therefore calls this for every known device as
+    well. Both installers are guarded per cluster, so calling it twice costs
+    nothing."""
+    _install_ias_handlers(device)
+    _install_onoff_sensor_handlers(device)
+
+
 def _install_ias_handlers(device: Any) -> None:
     """One listener per IasZone cluster, once.
 
@@ -912,6 +927,16 @@ def _install_onoff_sensor_handlers(device: Any) -> None:
         listener = _OnOffSensorListener(cluster)
         setattr(cluster, _ONOFF_SENSOR_LISTENER_ATTRIBUTE, listener)
         cluster.add_listener(listener)
+        # zigpy persists `on_off`, but the timer that would have cleared it
+        # belonged to a listener that is gone - after a restart, occupancy
+        # would read 1 until the next detection. A fresh listener starts
+        # unoccupied; the next motion says otherwise within a second.
+        try:
+            stale = cluster.get(ONOFF_ATTRIBUTE)
+        except KeyError:
+            stale = None
+        if stale is True:
+            cluster.update_attribute(ONOFF_ATTRIBUTE, False)
 
 
 async def _bind_onoff_sensor(device: Any) -> None:

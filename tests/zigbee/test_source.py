@@ -1394,6 +1394,70 @@ async def test_renewed_motion_is_delivered_although_occupancy_stays_1(build) -> 
     assert (9, "1/1030/0", 1) not in harness.handler.attributes
 
 
+async def test_a_tradfri_motion_sensor_paired_before_a_restart_still_reports(build) -> None:
+    """THE BRIDGE RESTART OF 1 OCTOBER 2026. The listener that turns the
+    sensor's `on`/`off` commands into occupancy was installed by
+    `configure_device` alone - which runs when a device JOINS. After the
+    update restarted the bridge, every TRADFRI motion sensor kept sending
+    (zigpy's `last_seen` moved on) and none of it reached Loxone.
+
+    Here the sensor is in the catalogue but was never configured in this
+    process, exactly the state after a restart.
+
+    Fault to prove it: install the command handlers only in
+    `configure_device`."""
+    sensor = tradfri_motion_sensor()
+    harness = build(FakeApplication(devices=[sensor]))
+    await harness.source.connect()
+    await harness.source.subscribe(lambda _address: 9, harness.handler)
+    await _settle(harness.source)
+
+    sensor.endpoints[1].out_clusters[0x0006].receive_command(0x42, (0, 1800, 0))
+    await _settle(harness.source)
+
+    assert harness.handler.snapshots[-1][1].attributes["1/1030/0"] == 1
+
+
+async def test_an_ias_sensor_paired_before_a_restart_still_raises_its_alarm(build) -> None:
+    """The same gap, one cluster over: an IAS alarm is a client command
+    too (`status_change_notification`), and its listener was installed
+    only at join as well.
+
+    Fault to prove it: install only the TRADFRI handler at subscribe."""
+    sensor = contact_sensor()
+    harness = build(FakeApplication(devices=[sensor]))
+    await harness.source.connect()
+    await harness.source.subscribe(lambda _address: 9, harness.handler)
+    await harness.source.follow(str(sensor.ieee))
+    await _settle(harness.source)
+    harness.handler.attributes.clear()
+
+    sensor.endpoints[1].in_clusters[0x0500].receive_command(0, (1, 0, 0, 0))
+    await _settle(harness.source)
+
+    # The contact opened, and BooleanState is inverted against IAS.
+    assert (9, "1/69/0", False) in harness.handler.attributes
+
+
+async def test_occupancy_left_on_by_a_restart_reads_as_unoccupied(build) -> None:
+    """zigpy persists the last `on_off` - but the timer that would have
+    cleared it died with the old process. Left alone, occupancy stays 1
+    until the next detection; a fresh listener starts it at 0 instead.
+
+    Fault to prove it: keep the cached `True` when installing the
+    listener."""
+    sensor = tradfri_motion_sensor()
+    sensor.endpoints[1].out_clusters[0x0006].update_attribute(0x0000, True)
+    harness = build(FakeApplication(devices=[sensor]))
+    await harness.source.connect()
+    await harness.source.subscribe(lambda _address: 9, harness.handler)
+    await _settle(harness.source)
+
+    snapshot = (await harness.source.snapshots())[0]
+
+    assert snapshot.attributes["1/1030/0"] == 0
+
+
 async def test_one_failing_update_does_not_end_delivery(build) -> None:
     """Fault to prove it: remove the `except Exception` in the dispatch
     loop."""
