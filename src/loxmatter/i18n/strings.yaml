@@ -613,6 +613,9 @@ api.firmware.fail_offer_changed:
 api.firmware.fail_offline:
   en: "The device is not reachable right now, so the update cannot start."
   de: "Das Gerät ist gerade nicht erreichbar, deshalb kann das Update nicht starten."
+api.firmware.queue_nothing_to_install:
+  en: "None of the selected devices has an update to install."
+  de: "Keines der ausgewählten Geräte hat ein Update zum Installieren."
 api.firmware.queue_offline_at_turn:
   en: "Offline when its turn in the update queue came"
   de: "War offline, als es in der Update-Warteschlange an der Reihe war"

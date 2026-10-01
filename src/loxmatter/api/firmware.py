@@ -26,6 +26,7 @@ from loxmatter.api.models import (
     FirmwareDeviceOut,
     FirmwareInstallIn,
     FirmwareOverviewOut,
+    FirmwareQueueIn,
     FirmwareSettingsIn,
 )
 from loxmatter.firmware.job import (
@@ -97,6 +98,30 @@ def build_firmware_router(store: Store, firmware: FirmwareService) -> APIRouter:
                 status_code=409, detail=i18n.t("api.firmware.fail_offline")
             ) from exc
         return firmware.device_out(device)
+
+    @router.post("/firmware/queue", status_code=status.HTTP_202_ACCEPTED)
+    async def enqueue(body: FirmwareQueueIn) -> FirmwareOverviewOut:
+        _require_supported()
+        if firmware.queue.enqueue(body.device_ids) == 0 and not set(body.device_ids) & set(
+            store.firmware_status.queued()
+        ):
+            raise HTTPException(
+                status_code=409, detail=i18n.t("api.firmware.queue_nothing_to_install")
+            )
+        firmware.queue.start()
+        return firmware.overview()
+
+    @router.post("/firmware/queue/resume")
+    async def resume_queue() -> FirmwareOverviewOut:
+        _require_supported()
+        firmware.queue.resume()
+        firmware.queue.start()
+        return firmware.overview()
+
+    @router.delete("/firmware/queue")
+    async def clear_queue() -> FirmwareOverviewOut:
+        firmware.queue.clear()
+        return firmware.overview()
 
     @router.put("/firmware/settings")
     async def put_settings(body: FirmwareSettingsIn) -> FirmwareOverviewOut:
