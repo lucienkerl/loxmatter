@@ -16793,6 +16793,46 @@ async def test_the_firmware_queue_parts_are_delivered(api):
     assert html.count("startFirmwareQueue(") == 1
 
 
+async def test_the_queue_dialog_waits_for_the_translation_table(api):
+    """Seen in a real browser: the checklist dialog's heading, intro,
+    warning box and Cancel read `web.firmware.*`. Without an `x-if` of its
+    own, Alpine builds the dialog's content on its first pass, before
+    `GET /api/i18n` has answered, and `t()` (not reactive by design, see
+    its comment in app.js) returns the bare key - for good, as nothing in
+    those bindings would ever re-evaluate them. The same trap as
+    `test_the_group_dialog_waits_for_the_translation_table`.
+
+    Every element in the dialog with a `t(` in any attribute must sit in a
+    `<template x-if>` inside the dialog; the `<dialog>` itself stays
+    outside, or `$refs.firmwareQueueModal` would not exist for
+    `showModal()`.
+
+    Fault to prove it: remove `<template x-if="firmwareQueueModalOpen">`
+    around the dialog's body."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+    inside = [
+        (tag, attributes, ancestors)
+        for tag, attributes, ancestors in _served_elements(page)
+        if any(ancestor.get("x-ref") == "firmwareQueueModal" for _, ancestor in ancestors)
+    ]
+    translated = [
+        (tag, attributes, ancestors)
+        for tag, attributes, ancestors in inside
+        if any("t(" in value for value in attributes.values())
+    ]
+    assert len(translated) >= 8, "the queue dialog's translated bindings were not found"
+    unguarded = [
+        (tag, attributes)
+        for tag, attributes, ancestors in translated
+        if not any(
+            ancestor_tag == "template" and "x-if" in ancestor
+            for ancestor_tag, ancestor in ancestors
+        )
+    ]
+    assert unguarded == []
+
+
 @pytest.mark.skipif(NODE is None, reason="node is required for this test")
 async def test_update_all_counts_and_preselects_the_offered_devices(api):
     """The served "Update all" button counts the devices with an offer that
@@ -16872,8 +16912,8 @@ async def test_the_queue_bands_follow_the_overview(api):
         f"out.halted_text = run({json.dumps(halted_text)});"
         "console.log(JSON.stringify(out));",
         translations={
-            "web.firmware.queue_running": "Updating {device} · {state} · {count} more queued",
-            "web.firmware.queue_running_last": "Updating {device} · {state}",
+            "web.firmware.queue_running": "{device}: {state} · {count} more queued",
+            "web.firmware.queue_running_last": "{device}: {state}",
             "web.firmware.queue_waiting": "{count} updates queued",
             "web.firmware.state_transferring": "{progress} %",
             "web.firmware.queue_halted": "Stopped: {reason}",
@@ -16883,8 +16923,8 @@ async def test_the_queue_bands_follow_the_overview(api):
         "running_idle": False,
         "halted_idle": False,
         "running_active": True,
-        "running_text": "Updating Lamp · 43 % · 2 more queued",
-        "running_last_text": "Updating Lamp · 43 %",
+        "running_text": "Lamp: 43 % · 2 more queued",
+        "running_last_text": "Lamp: 43 %",
         "waiting_text": "2 updates queued",
         "halted_shown": True,
         "halted_text": "Stopped: x",

@@ -2069,11 +2069,11 @@ web.firmware.queue_install:
   en: "Install {count} updates"
   de: "{count} Updates installieren"
 web.firmware.queue_running:
-  en: "Updating {device} · {state} · {count} more queued"
-  de: "Aktualisiere {device} · {state} · {count} weitere in der Warteschlange"
+  en: "{device}: {state} · {count} more queued"
+  de: "{device}: {state} · {count} weitere in der Warteschlange"
 web.firmware.queue_running_last:
-  en: "Updating {device} · {state}"
-  de: "Aktualisiere {device} · {state}"
+  en: "{device}: {state}"
+  de: "{device}: {state}"
 web.firmware.queue_waiting:
   en: "{count} updates queued"
   de: "{count} Updates in der Warteschlange"
