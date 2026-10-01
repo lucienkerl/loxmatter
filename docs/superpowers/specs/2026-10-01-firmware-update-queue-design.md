@@ -50,8 +50,8 @@ ALTER TABLE firmware_status ADD COLUMN queued_at TEXT;
 
 - A device is queued while `queued_at` is set. Order: `queued_at`, then
   `device_id` (one enqueue writes the same timestamp for every device).
-- A deleted device leaves the queue through the existing
-  `ON DELETE CASCADE`.
+- A removed device leaves the queue: `Store.forget_device` only marks the
+  row inactive (no `DELETE`, so no cascade), and clears `queued_at` with it.
 - Why the queue halted is the key `firmware.queue_halted_reason` in the
   existing `setting` table, read and written next to
   `firmware.daily_check_enabled` in `FirmwareSettingsStore`. Missing means
