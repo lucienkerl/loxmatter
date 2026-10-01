@@ -8265,6 +8265,77 @@ def test_the_shipped_last_heard_line_takes_the_newer_of_the_two_sources():
 
 
 @pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_the_occupancy_chip_counts_down_the_hold_time():
+    """Variant B of the 2026-10-01 mockups: a chip beside `occupancy` that
+    reads "2:41 left" while occupied and the hold time otherwise (design
+    2026-10-01, 3.4). The start is the LATER of the server's `reported_at`
+    - right after a page reload - and the tab's own `liveSeenAt` - right
+    after a renewed detection. A countdown that ran out while occupancy is
+    still 1 shows the hold time, never "0:00".
+
+    Fault to prove it: start the countdown from `liveSeenAt` alone; after a
+    reload the chip then never counts at all."""
+    values = _app_state(
+        setup="""
+        const now = Date.parse("2026-10-01T18:33:00Z");
+        const occupancy = {
+          key: "d22_1_occupancy", path: "1/1030/0", cluster_id: 1030, endpoint: 1,
+          value: 1, reported_at: "2026-10-01T18:31:00+00:00",
+        };
+        const hold = {
+          key: "d22_1_hold_time", path: "1/1030/3", cluster_id: 1030, endpoint: 1,
+          value: 180, reported_at: null,
+        };
+        const battery = { key: "d22_0_battery", path: "0/47/12", cluster_id: 47, endpoint: 0, value: 80 };
+        state.signalsByDevice[22] = [occupancy, hold, battery];
+        state.nowTick = now;
+        const out = {};
+        out.after_reload = state.holdChipText(22, occupancy);
+        out.running = state.holdChipRunning(22, occupancy);
+        // A renewed detection the tab saw live, 30 s ago.
+        state.liveSeenAt[occupancy.key] = now - 30000;
+        out.renewed = state.holdChipText(22, occupancy);
+        // Ran out, still occupied.
+        state.nowTick = now + 600000;
+        out.ran_out = state.holdChipText(22, occupancy);
+        out.ran_out_running = state.holdChipRunning(22, occupancy);
+        // Not occupied.
+        state.liveValues[occupancy.key] = 0;
+        out.idle = state.holdChipText(22, occupancy);
+        // Not an occupancy signal, and a sensor without a hold time.
+        out.battery = state.holdChipText(22, battery);
+        state.signalsByDevice[22] = [occupancy];
+        out.no_hold = state.holdChipText(22, occupancy);
+        console.log(JSON.stringify(out));
+        """,
+        translations=_web_strings(),
+    )
+
+    assert values["after_reload"] == "1:00 left"
+    assert values["running"] is True
+    assert values["renewed"] == "2:30 left"
+    assert values["ran_out"] == "3 min hold"
+    assert values["ran_out_running"] is False
+    assert values["idle"] == "3 min hold"
+    assert values["battery"] == ""
+    assert values["no_hold"] == ""
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_the_hold_time_reads_as_minutes_or_seconds():
+    """180 s is "3 min", 45 s is "45 s", 90 s is "1:30 min" - the duration
+    is set by a switch with a handful of positions, and the chip states it
+    the way the switch does."""
+    values = _app_state(
+        setup="""
+        console.log(JSON.stringify([180, 45, 90, 60].map((s) => state.holdDurationText(s))));
+        """,
+    )
+
+    assert values == ["3 min", "45 s", "1:30 min", "1 min"]
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
 def test_the_shipped_live_handler_reloads_a_device_that_gained_a_signal():
     """`d<id>_signals` is the runtime saying a device gained a signal or a
     command (`Runtime.on_node_snapshot`) - a TRADFRI motion sensor's

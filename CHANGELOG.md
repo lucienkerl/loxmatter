@@ -30,6 +30,12 @@ people who don't know the code.
   password?" shows the command that resets it,
   `docker exec -it loxmatter loxmatter set-password`, with a button to copy
   it. It works from any directory on the host and signs out every browser.
+- **A motion sensor's tile shows how long it stays occupied.** Next to
+  "occupancy" the tile counts down the time left, such as "2:41 left", and
+  starts again when the sensor sees motion again. When nobody is there, it
+  shows the duration itself, such as "3 min hold". For the IKEA TRADFRI
+  motion sensor that is the duration set on its back. It is also available
+  as a signal of its own, `hold_time`, which can be exported to Loxone.
 
 ### Changed
 

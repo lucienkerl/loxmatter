@@ -3021,6 +3021,79 @@ function app() {
       return groups;
     },
 
+    // --- Occupancy hold time (design 2026-10-01) ----------------------------
+
+    /** The `HoldTime` signal beside an `occupancy` signal - same device,
+     * same endpoint - or `null`. The occupancy itself is `<ep>/1030/0`,
+     * the hold time `<ep>/1030/3`, in seconds. */
+    holdTimeSignalFor(deviceId, signal) {
+      if (!signal || signal.path !== `${signal.endpoint}/1030/0`) {
+        return null;
+      }
+      const signals = this.signalsByDevice[deviceId] || [];
+      return signals.find((other) => other.path === `${signal.endpoint}/1030/3`) || null;
+    },
+
+    /** Milliseconds of hold time left, or `null` when there is no running
+     * countdown: not occupied, no hold time, no known start, or run out.
+     * The start is the LATER of the server's `reported_at` (right after a
+     * page reload) and this tab's own `liveSeenAt` (right after a renewed
+     * detection, which arrives as the same value 1 again). Reads
+     * `nowTick`, so Alpine redraws it every second. */
+    holdRemainingMs(deviceId, signal) {
+      const holdSeconds = Number(this.liveValueOf(this.holdTimeSignalFor(deviceId, signal)));
+      if (!(holdSeconds > 0) || !this.liveValueOf(signal)) {
+        return null;
+      }
+      const served = signal.reported_at ? Date.parse(signal.reported_at) : NaN;
+      const seen = this.liveSeenAt[signal.key];
+      const startedAt = Math.max(
+        Number.isNaN(served) ? -Infinity : served,
+        seen === undefined ? -Infinity : seen,
+      );
+      if (!Number.isFinite(startedAt)) {
+        return null;
+      }
+      const remaining = startedAt + holdSeconds * 1000 - this.nowTick;
+      return remaining > 0 ? remaining : null;
+    },
+
+    holdChipRunning(deviceId, signal) {
+      return this.holdRemainingMs(deviceId, signal) !== null;
+    },
+
+    /** "2:41 left" while counting down, otherwise the hold time itself -
+     * also when the count ran out while occupancy is still 1: a Matter
+     * sensor extends its hold without reporting, and the chip must not
+     * claim "0:00" for a room that is still occupied. Empty where there is
+     * no hold time to show. */
+    holdChipText(deviceId, signal) {
+      const holdSignal = this.holdTimeSignalFor(deviceId, signal);
+      const holdSeconds = Number(this.liveValueOf(holdSignal));
+      if (!holdSignal || !(holdSeconds > 0)) {
+        return "";
+      }
+      const remaining = this.holdRemainingMs(deviceId, signal);
+      if (remaining !== null) {
+        const seconds = Math.ceil(remaining / 1000);
+        const time = `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+        return t("web.devices.hold_left", { time });
+      }
+      return t("web.devices.hold_time", { duration: this.holdDurationText(holdSeconds) });
+    },
+
+    /** 180 -> "3 min", 45 -> "45 s", 90 -> "1:30 min": the way the switch
+     * on the sensor states it. Units read the same in both languages. */
+    holdDurationText(seconds) {
+      const whole = Math.round(seconds);
+      if (whole < 60) {
+        return `${whole} s`;
+      }
+      const minutes = Math.floor(whole / 60);
+      const rest = whole % 60;
+      return rest === 0 ? `${minutes} min` : `${minutes}:${String(rest).padStart(2, "0")} min`;
+    },
+
     liveValueOf(signal) {
       // No signal, no value. `formatValue` turns this into the dash it
       // already shows for `undefined` anyway - the tile displays "-"

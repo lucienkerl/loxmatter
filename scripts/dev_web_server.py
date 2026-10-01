@@ -159,6 +159,11 @@ class _SeededRuntime:
         prefix = f"d{device_id}_"
         return {k: v for k, v in self._values.items() if k.startswith(prefix)}
 
+    def reported_at_for(self, device_id: int) -> dict[str, str]:
+        """Seeded values were never watched arriving - the same honest
+        answer `Runtime.reported_at_for` gives for them."""
+        return {}
+
     def last_heard_for(self, device_id: int) -> str | None:
         """This service never hears anything real (no Matter client) - so
         `None` here is not merely the minimum value that satisfies the

@@ -1623,6 +1623,12 @@ web.devices.search_count:
 web.devices.search_clear:
   en: "Clear search"
   de: "Suche leeren"
+web.devices.hold_left:
+  en: "{time} left"
+  de: "noch {time}"
+web.devices.hold_time:
+  en: "{duration} hold"
+  de: "Nachlauf {duration}"
 web.devices.more_signals_short:
   en: "more"
   de: "weitere"

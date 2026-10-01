@@ -225,6 +225,10 @@ _COLOR_CAPABILITIES_ATTRIBUTE: Final = 0x400A
 # never its input one. See `_endpoint_facts` and `_listen_to_device`.
 _TRADFRI_ONOFF_CLUSTER: Final = 0x0006
 _TRADFRI_ONOFF_ATTRIBUTE: Final = 0x0000
+# `OnTime`, where `configure.py` keeps the sensor's hold time (design
+# 2026-10-01, 3.1), and the occupancy path `translate.py` makes of `on_off`.
+_TRADFRI_ON_TIME_ATTRIBUTE: Final = 0x4001
+_OCCUPANCY_PATH_SUFFIX: Final = "/1030/0"
 
 # A ZCL status of 0 is SUCCESS; everything else is a device that was reached
 # and refused.
@@ -689,6 +693,11 @@ class ZigbeeSource:
         # and a value that is has to go through `on_attribute` rather than
         # through a fresh snapshot - see `_deliver`.
         self._delivered: dict[str, dict[str, Any]] = {}
+        # TRADFRI motion sensors that detected motion since their last
+        # delivery. A renewed detection leaves occupancy at 1, so `_deliver`
+        # would pass nothing on; this is what makes it pass the occupancy
+        # on anyway (design 2026-10-01, 3.2).
+        self._detected: set[str] = set()
         # Devices whose ColorCapabilities were asked for on this connection.
         # Cleared on every connect, so a lamp that was switched off at the
         # wall is asked again after a reconnect, and not before.
@@ -1084,6 +1093,7 @@ class ZigbeeSource:
         self._close_window()
         self._release_cluster_listeners()
         self._delivered.clear()
+        self._detected.clear()
         dispatch_task, self._dispatch_task = self._dispatch_task, None
         self._queue = None
         if dispatch_task is not None:
@@ -1334,12 +1344,13 @@ class ZigbeeSource:
         if getattr(getattr(endpoint, "device", None), "model", None) == TRADFRI_MOTION_SENSOR_MODEL:
             onoff = endpoint.out_clusters.get(_TRADFRI_ONOFF_CLUSTER)
             if onoff is not None:
-                try:
-                    value = onoff.get(_TRADFRI_ONOFF_ATTRIBUTE)
-                except KeyError:
-                    value = None
-                if value is not None:
-                    attributes[(_TRADFRI_ONOFF_CLUSTER, _TRADFRI_ONOFF_ATTRIBUTE)] = value
+                for attribute_id in (_TRADFRI_ONOFF_ATTRIBUTE, _TRADFRI_ON_TIME_ATTRIBUTE):
+                    try:
+                        value = onoff.get(attribute_id)
+                    except KeyError:
+                        value = None
+                    if value is not None:
+                        attributes[(_TRADFRI_ONOFF_CLUSTER, attribute_id)] = value
         return EndpointFacts(
             endpoint=endpoint.endpoint_id,
             # Both are `None` until the endpoint has been interviewed. 0
@@ -1574,18 +1585,33 @@ class ZigbeeSource:
             # reason `_endpoint_facts` is: an ordinary remote's or switch's
             # output OnOff cluster is explicitly not this bridge's job
             # (design 11).
-            clusters += [
+            detecting = [
                 cluster
                 for endpoint in device.non_zdo_endpoints
                 for cluster in endpoint.out_clusters.values()
                 if cluster.cluster_id == _TRADFRI_ONOFF_CLUSTER
             ]
-        for cluster in clusters:
+        else:
+            detecting = []
+        for cluster in [*clusters, *detecting]:
             for event_name in ATTRIBUTE_EVENTS:
-                # The default argument binds this device's address per
-                # loop iteration instead of reading the name from the
-                # enclosing scope too late.
-                def on_attribute_event(_event: Any, address: str = address) -> None:
+                # The default arguments bind this device's address and
+                # cluster per loop iteration instead of reading the names
+                # from the enclosing scope too late.
+                def on_attribute_event(
+                    event: Any,
+                    address: str = address,
+                    detects: bool = cluster in detecting,
+                ) -> None:
+                    # `on_off` set to True is a detection, renewed or not -
+                    # noted here, acted on in `_deliver`. Still nothing but
+                    # bookkeeping and `put_nowait`: this runs inside zigpy.
+                    if (
+                        detects
+                        and getattr(event, "attribute_id", None) == _TRADFRI_ONOFF_ATTRIBUTE
+                        and getattr(event, "value", None) is True
+                    ):
+                        self._detected.add(address)
                     queue.put_nowait(address)
 
                 unsubscribers.append(cluster.on_event(event_name, on_attribute_event))
@@ -1633,6 +1659,8 @@ class ZigbeeSource:
         snapshot = await self._snapshot(device)
         attributes = dict(snapshot.attributes)
         previous = self._delivered.get(address)
+        detected = address in self._detected
+        self._detected.discard(address)
         if previous is None or force_snapshot or set(attributes) - set(previous):
             await handler.on_node_snapshot(device_id, snapshot)
             # Only after the handler returned: if it raised - it writes into
@@ -1641,7 +1669,11 @@ class ZigbeeSource:
             self._delivered[address] = attributes
             return
         for path, value in attributes.items():
-            if previous.get(path) != value:
+            # A renewed detection leaves occupancy at 1 and is news anyway:
+            # the WebUI restarts its countdown on it, and the UDP sender
+            # drops the repeated value for Loxone (design 2026-10-01, 3.2).
+            renewed = detected and path.endswith(_OCCUPANCY_PATH_SUFFIX)
+            if renewed or previous.get(path) != value:
                 await handler.on_attribute(device_id, path, value)
         self._delivered[address] = attributes
 

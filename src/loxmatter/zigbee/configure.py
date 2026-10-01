@@ -108,6 +108,9 @@ ONOFF_CLUSTER: Final = 0x0006
 # its OUTPUT cluster, not its input one, and the only place it says
 # anything at all (see `_bind_onoff_sensor`, below).
 ONOFF_ATTRIBUTE: Final = 0x0000  # `OnOff.OnOff` - identical to Matter's own numbering
+# `OnOff.OnTime`, tenths of a second: where the sensor's hold time is kept
+# (design 2026-10-01, 3.1). zigpy declares it on `OnOff` and persists it.
+ONOFF_ON_TIME_ATTRIBUTE: Final = 0x4001
 ONOFF_OFF_COMMAND: Final = 0x00
 ONOFF_ON_COMMAND: Final = 0x01
 ONOFF_ON_WITH_TIMED_OFF_COMMAND: Final = 0x42
@@ -851,7 +854,12 @@ class _OnOffSensorListener:
 
     def cluster_command(self, tsn: int, command_id: int, args: Any) -> None:
         if command_id == ONOFF_ON_WITH_TIMED_OFF_COMMAND:
-            self._set(True, off_after=_on_time_seconds(args))
+            off_after = _on_time_seconds(args)
+            if off_after is not None:
+                # Before the occupancy: the snapshot its event triggers
+                # must already carry the hold time it belongs to.
+                self._cluster.update_attribute(ONOFF_ON_TIME_ATTRIBUTE, round(off_after * 10))
+            self._set(True, off_after=off_after)
         elif command_id == ONOFF_ON_COMMAND:
             self._set(True, off_after=None)
         elif command_id == ONOFF_OFF_COMMAND:

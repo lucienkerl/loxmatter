@@ -55,6 +55,10 @@ class SignalOut(BaseModel):
     title: str
     unit: str
     value: float | bool | str | None
+    # When the bridge last watched this value arrive (`Runtime.
+    # reported_at_for`), or `None` - the start of the tile's hold-time
+    # countdown after a page reload (design 2026-10-01, 3.3).
+    reported_at: str | None = None
     exportable: bool
     reason: str | None
     exported: bool

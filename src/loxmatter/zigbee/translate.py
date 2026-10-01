@@ -437,6 +437,8 @@ _CLUSTER_POWER_CONFIGURATION = 1  # Zigbee "Power Configuration" - battery
 _CLUSTER_IAS_ZONE = 0x0500  # 1280 decimal - Zigbee-only, no Matter equivalent
 _CLUSTER_BOOLEAN_STATE = 69  # Matter BooleanState - IAS edge target
 _CLUSTER_OCCUPANCY_SENSING = 1030  # Matter/Zigbee OccupancySensing - IAS edge target
+_ATTRIBUTE_ON_TIME = 0x4001  # OnOff `OnTime`, tenths of a second
+_ATTRIBUTE_HOLD_TIME = 3  # OccupancySensing `HoldTime`, seconds
 
 _ATTRIBUTE_BATTERY_PERCENTAGE = 0x0021  # BatteryPercentageRemaining, half percent
 _ATTRIBUTE_BATTERY_VOLTAGE = 0x0020  # BatteryVoltage, 100 mV units
@@ -633,7 +635,8 @@ def _apply_ias_zone(endpoint: EndpointFacts, attributes: dict[str, object]) -> N
 
 
 def _apply_onoff_sensor(endpoint: EndpointFacts, model: str, attributes: dict[str, object]) -> None:
-    """Writes the classic TRADFRI motion sensor's OnOff signal as occupancy.
+    """Writes the classic TRADFRI motion sensor's OnOff signal as occupancy,
+    and its `OnTime` as the hold time.
 
     `configure.py` is what turns the sensor's `on`/`off` commands into this
     endpoint's OWN OnOff attribute cache, at `(6, 0)` - the only place the
@@ -645,9 +648,16 @@ def _apply_onoff_sensor(endpoint: EndpointFacts, model: str, attributes: dict[st
     if model != TRADFRI_MOTION_SENSOR_MODEL:
         return
     value = endpoint.attributes.get((_CLUSTER_ONOFF, 0))
-    if not isinstance(value, bool):
-        return
-    attributes[f"{endpoint.endpoint}/{_CLUSTER_OCCUPANCY_SENSING}/0"] = int(value)
+    if isinstance(value, bool):
+        attributes[f"{endpoint.endpoint}/{_CLUSTER_OCCUPANCY_SENSING}/0"] = int(value)
+    # The `on_time` of the last `onWithTimedOff`, which `configure.py` keeps
+    # in OnOff's `OnTime` - tenths of a second, where Matter's `HoldTime`
+    # counts seconds (design 2026-10-01, 3.1).
+    on_time = _as_plain_int(endpoint.attributes.get((_CLUSTER_ONOFF, _ATTRIBUTE_ON_TIME)))
+    if on_time is not None:
+        attributes[f"{endpoint.endpoint}/{_CLUSTER_OCCUPANCY_SENSING}/{_ATTRIBUTE_HOLD_TIME}"] = (
+            round(on_time / 10)
+        )
 
 
 # --------------------------------------------------------------- the snapshot --
@@ -688,8 +698,8 @@ def _apply_endpoint(endpoint: EndpointFacts, model: str, attributes: dict[str, o
         if cluster_id == _CLUSTER_IAS_ZONE:
             continue  # handled once per endpoint by `_apply_ias_zone` below
 
-        if is_tradfri_motion_sensor and (cluster_id, attribute_id) == (_CLUSTER_ONOFF, 0):
-            continue  # handled once per endpoint by `_apply_onoff_sensor` below
+        if is_tradfri_motion_sensor and cluster_id == _CLUSTER_ONOFF:
+            continue  # occupancy and hold time, by `_apply_onoff_sensor` below
 
         if cluster_id == _CLUSTER_POWER_CONFIGURATION:
             if attribute_id == _ATTRIBUTE_BATTERY_PERCENTAGE:

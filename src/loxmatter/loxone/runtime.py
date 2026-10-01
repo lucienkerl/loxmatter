@@ -113,6 +113,11 @@ class Runtime:
         # `online` stays what it is; this is the second number that makes
         # the question answerable in the first place.
         self._last_heard: dict[int, str] = {}
+        # Per signal key, when `on_attribute` last delivered it - the start
+        # of the WebUI's hold-time countdown, also after a page reload
+        # (design 2026-10-01, 3.3). Not persisted, like `_last_heard`, and
+        # never set by seeding: a seeded value was not watched arriving.
+        self._reported_at: dict[str, str] = {}
         self._last_values: dict[str, float | bool] = {}
         self._counters: dict[str, int] = {}
         self._heartbeat_on = False
@@ -259,6 +264,7 @@ class Runtime:
         if key is None:
             return
         value = self._last_values[key]
+        self._reported_at[key] = now_iso()
         await self._sender.send(key, value)
         self._notify_observers(key, value)
 
@@ -493,6 +499,12 @@ class Runtime:
         `_last_heard` in the constructor for why this is not persisted.
         """
         return self._last_heard.get(device_id)
+
+    def reported_at_for(self, device_id: int) -> dict[str, str]:
+        """When each of this device's signals was last reported, by key -
+        see `_reported_at` in the constructor."""
+        prefix = f"d{device_id}_"
+        return {key: at for key, at in self._reported_at.items() if key.startswith(prefix)}
 
     def last_values_for(self, device_id: int) -> dict[str, float | bool]:
         """All most-recently-known values of a device, indexed by signal

@@ -1077,7 +1077,10 @@ def tradfri_motion_sensor(ieee: str = "d0:cf:5e:ff:fe:71:a3:19") -> FakeDevice:
                 profile_id=0x0104,
                 device_type=0x0850,
                 in_clusters=[FakeCluster(0x0001, declared=[0x0020, 0x0021], cached={0x0021: 150})],
-                out_clusters=[FakeCluster(0x0006, declared=[0x0000], commands=ON_OFF_COMMANDS)],
+                # 0x4001 is `OnTime`, declared on zigpy's `OnOff` like `on_off`.
+                out_clusters=[
+                    FakeCluster(0x0006, declared=[0x0000, 0x4001], commands=ON_OFF_COMMANDS)
+                ],
             )
         ],
     )

@@ -224,7 +224,10 @@ def tradfri_motion_sensor(ieee: str = TRADFRI_MOTION_SENSOR, **kwargs: Any) -> F
                 1,
                 profile_id=0x0104,
                 device_type=0x0850,
-                out_clusters=[FakeCluster(ON_OFF, declared=[0x0000], commands=ON_OFF_COMMANDS)],
+                # 0x4001 is `OnTime`, declared on zigpy's `OnOff` like `on_off`.
+                out_clusters=[
+                    FakeCluster(ON_OFF, declared=[0x0000, 0x4001], commands=ON_OFF_COMMANDS)
+                ],
             )
         ],
         **kwargs,
@@ -514,6 +517,33 @@ async def test_on_with_timed_off_clears_itself_after_the_time_it_names(store) ->
 
     await asyncio.sleep(0.2)
     assert on_off.get(0x0000) is False
+
+
+async def test_on_with_timed_off_keeps_its_on_time_as_the_hold_time(store) -> None:
+    """The duration set on the sensor's back reaches the UI and Loxone as
+    the sensor's hold time - and only from here: the command is the one
+    place it exists. Stored in OnOff's own `OnTime` (0x4001, tenths of a
+    second), which zigpy declares and persists, BEFORE the occupancy, so
+    the snapshot the occupancy event triggers already carries it (design
+    2026-10-01, 3.1).
+
+    Fault to prove it: drop `on_time` once the timer is scheduled."""
+    device = tradfri_motion_sensor()
+    on_a_network(device)
+    await configure_device(device, store=store)
+    on_off = out_cluster_of(device, ON_OFF)
+    seen_at_occupancy: list[Any] = []
+    on_off.on_event(
+        "attribute_updated",
+        lambda event: (
+            seen_at_occupancy.append(on_off.get(0x4001)) if event.attribute_id == 0 else None
+        ),
+    )
+
+    on_off.receive_command(0x42, timed_off(1800))
+
+    assert on_off.get(0x4001) == 1800
+    assert seen_at_occupancy == [1800]
 
 
 async def test_renewed_motion_restarts_the_timer(store) -> None:

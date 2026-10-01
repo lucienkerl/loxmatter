@@ -1346,6 +1346,54 @@ async def test_a_tradfri_motion_sensors_first_onoff_command_wakes_the_dispatch_l
     assert harness.handler.snapshots[-1][1].attributes["1/1030/0"] == 1
 
 
+async def test_a_snapshot_carries_the_tradfri_motion_sensors_hold_time(build) -> None:
+    """`configure.py` keeps the hold time in the OUTPUT OnOff cluster's
+    `OnTime` (0x4001), beside the occupancy - `_endpoint_facts` must read
+    it from there as well (design 2026-10-01, 3.1).
+
+    Fault to prove it: read only `(6, 0)` from the output cluster."""
+    sensor = tradfri_motion_sensor()
+    on_off = sensor.endpoints[1].out_clusters[0x0006]
+    on_off.update_attribute(0x4001, 1800)
+    on_off.update_attribute(0x0000, True)
+    harness = build(FakeApplication(devices=[sensor]))
+    await harness.source.connect()
+
+    snapshot = (await harness.source.snapshots())[0]
+
+    assert snapshot.attributes["1/1030/3"] == 180
+
+
+async def test_renewed_motion_is_delivered_although_occupancy_stays_1(build) -> None:
+    """While occupied, a further detection restarts the bridge's timer but
+    leaves the value at 1 - and `_deliver` passes on changed values only.
+    The WebUI's countdown would then run out while occupancy was still 1
+    (design 2026-10-01, 3.2). Loxone sees nothing new: the UDP sender
+    drops a repeated value on its own.
+
+    Fault to prove it: deliver the occupancy path only when it changed."""
+    sensor = tradfri_motion_sensor()
+    on_off = sensor.endpoints[1].out_clusters[0x0006]
+    on_off.update_attribute(0x0000, True)
+    harness = build(FakeApplication(devices=[sensor]))
+    await harness.source.connect()
+    await harness.source.subscribe(lambda _address: 9, harness.handler)
+    await harness.source.follow(str(sensor.ieee))
+    await _settle(harness.source)
+    harness.handler.attributes.clear()
+
+    on_off.update_attribute(0x0000, True)  # renewed motion
+    await _settle(harness.source)
+
+    assert harness.handler.attributes == [(9, "1/1030/0", 1)]
+
+    # An unrelated report from the same sensor is not a detection.
+    harness.handler.attributes.clear()
+    sensor.endpoints[1].in_clusters[0x0001].report(0x0021, 140)
+    await _settle(harness.source)
+    assert (9, "1/1030/0", 1) not in harness.handler.attributes
+
+
 async def test_one_failing_update_does_not_end_delivery(build) -> None:
     """Fault to prove it: remove the `except Exception` in the dispatch
     loop."""
