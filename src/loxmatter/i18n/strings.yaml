@@ -613,6 +613,21 @@ api.firmware.fail_offer_changed:
 api.firmware.fail_offline:
   en: "The device is not reachable right now, so the update cannot start."
   de: "Das Gerät ist gerade nicht erreichbar, deshalb kann das Update nicht starten."
+api.firmware.queue_nothing_to_install:
+  en: "None of the selected devices has an update to install."
+  de: "Keines der ausgewählten Geräte hat ein Update zum Installieren."
+api.firmware.queue_offline_at_turn:
+  en: "Offline when its turn in the update queue came"
+  de: "War offline, als es in der Update-Warteschlange an der Reihe war"
+api.firmware.queue_halted_disconnected:
+  en: "the connection to matter-server was lost during an update"
+  de: "die Verbindung zum matter-server ist während eines Updates abgebrochen"
+api.firmware.queue_halted_unsupported:
+  en: "matter-server no longer offers firmware updates"
+  de: "der matter-server bietet keine Firmware-Updates mehr an"
+api.firmware.queue_halted_error:
+  en: "an unexpected error stopped it; the bridge log has the details"
+  de: "ein unerwarteter Fehler hat sie angehalten; Details stehen im Log der Brücke"
 
 # The errors of the pairing routes (design 3.4). Each one says what the
 # user's next move is, because each sends them somewhere different: to the
@@ -2041,6 +2056,57 @@ web.firmware.done:
 web.firmware.action_error:
   en: "The action failed: {message}"
   de: "Die Aktion ist fehlgeschlagen: {message}"
+web.firmware.update_all:
+  en: "Update all ({count})"
+  de: "Alle aktualisieren ({count})"
+web.firmware.queue_heading:
+  en: "Update all devices"
+  de: "Alle Geräte aktualisieren"
+web.firmware.queue_intro:
+  en: "These devices have an update. Untick any you want to leave as they are."
+  de: "Diese Geräte haben ein Update. Entfernen Sie den Haken bei allen, die bleiben sollen, wie sie sind."
+web.firmware.queue_offline:
+  en: "offline – skipped if it still is when its turn comes"
+  de: "offline – wird übersprungen, wenn es dann noch offline ist"
+web.firmware.queue_background:
+  en: "The updates run one after another on the bridge. You can close the browser."
+  de: "Die Updates laufen nacheinander in der Brücke. Sie können den Browser schließen."
+web.firmware.queue_install_one:
+  en: "Install 1 update"
+  de: "1 Update installieren"
+web.firmware.queue_install_many:
+  en: "Install {count} updates"
+  de: "{count} Updates installieren"
+web.firmware.queue_running:
+  en: "{device}: {state} · {count} more queued"
+  de: "{device}: {state} · {count} weitere in der Warteschlange"
+web.firmware.queue_running_last:
+  en: "{device}: {state}"
+  de: "{device}: {state}"
+web.firmware.queue_waiting_one:
+  en: "1 update queued"
+  de: "1 Update in der Warteschlange"
+web.firmware.queue_waiting_many:
+  en: "{count} updates queued"
+  de: "{count} Updates in der Warteschlange"
+web.firmware.queue_cancel_rest:
+  en: "Cancel the rest"
+  de: "Rest abbrechen"
+web.firmware.queue_halted:
+  en: "The update queue has stopped: {reason}"
+  de: "Die Update-Warteschlange ist angehalten: {reason}"
+web.firmware.queue_resume:
+  en: "Continue"
+  de: "Fortsetzen"
+web.firmware.queue_clear:
+  en: "Clear the queue"
+  de: "Warteschlange leeren"
+web.firmware.state_queued:
+  en: "Queued (#{position})"
+  de: "In Warteschlange ({position}.)"
+web.firmware.pill_queued:
+  en: "Update queued"
+  de: "Update in Warteschlange"
 
 # --- control modal: sliders instead of bare number fields for
 # value-carrying commands. `control_brightness` deliberately does NOT

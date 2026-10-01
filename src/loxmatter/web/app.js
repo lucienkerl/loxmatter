@@ -1197,6 +1197,14 @@ function app() {
     firmwareError: null,
     firmwareFilter: "all",
     firmwareDoneVersion: null,
+    // The update queue's checklist dialog (design 2026-10-01, 5.2):
+    // `firmwareQueueSelection` the ticked device ids. `firmwareQueueModalOpen`
+    // mirrors the dialog's `open`, which Alpine cannot watch, so the card's
+    // error banner can stay quiet while the dialog shows the error itself.
+    firmwareQueueSelection: [],
+    firmwareQueueModalOpen: false,
+    firmwareQueueModalBackdropMousedown: false,
+    firmwareQueueBusy: false,
 
     // --- Settings ---------------------------------------------------
     // `bridgeSettings` is the state last loaded from the server (also read
@@ -1592,6 +1600,9 @@ function app() {
         // Same for the firmware dialog.
         const firmwareDialog = this.$refs.firmwareModal;
         if (firmwareDialog?.open) firmwareDialog.close();
+        // And for the update queue's checklist.
+        const firmwareQueueDialog = this.$refs.firmwareQueueModal;
+        if (firmwareQueueDialog?.open) firmwareQueueDialog.close();
       }
     },
 
@@ -5099,7 +5110,9 @@ function app() {
         this.firmwareDoneVersion = ["failed", "interrupted"].includes(after.state) ? null : after.installed;
       }
       if (!this.authenticated) return;
-      const busy = this.firmware && (this.firmware.check.running || this.firmware.updating_device_id !== null);
+      const busy =
+        this.firmware &&
+        (this.firmware.check.running || this.firmware.updating_device_id !== null || this.firmware.queue.active);
       this.firmwareTimer = setTimeout(() => this.loadFirmware(), busy ? 5000 : 60000);
     },
 
@@ -5119,6 +5132,10 @@ function app() {
           ? t("web.firmware.state_transferring_no_progress")
           : t("web.firmware.state_transferring", { progress: row.progress });
       }
+      // A queued device waits for its turn; a running one says how far it is.
+      if (row.queue_position != null && !FIRMWARE_ACTIVE_STATES.includes(row.state)) {
+        return t("web.firmware.state_queued", { position: row.queue_position });
+      }
       return t("web.firmware.state_" + row.state);
     },
 
@@ -5134,11 +5151,15 @@ function app() {
       return keys[source] ? t(keys[source]) : source;
     },
 
-    /** The pill on a device tile: an offer, or a running install. Empty
-     * when there is nothing to say - the tile then shows no pill. */
+    /** The pill on a device tile: an offer, a place in the update queue or
+     * a running install. Empty when there is nothing to say - the tile
+     * then shows no pill. */
     firmwarePillText(deviceId) {
       const row = this.firmwareFor(deviceId);
       if (!row) return "";
+      if (row.queue_position != null && !FIRMWARE_ACTIVE_STATES.includes(row.state)) {
+        return t("web.firmware.pill_queued");
+      }
       if (row.state === "available" && row.offer) {
         return t("web.firmware.pill_available", { from: row.installed ?? "?", to: row.offer.version_string });
       }
@@ -5253,6 +5274,96 @@ function app() {
         // The checkbox has already flipped; the server did not follow.
         if (checkbox) checkbox.checked = !enabled;
       }
+    },
+
+    // ---------------------------------------------------------------------
+    // Firmware update queue (design 2026-10-01, 5.2): "Update all" opens a
+    // checklist, the bridge installs the ticked devices one after another.
+    // ---------------------------------------------------------------------
+
+    /** The devices "Update all" offers: an offer, and not queued yet. */
+    firmwareQueueCandidates() {
+      return (this.firmware?.devices ?? []).filter(
+        (row) => row.state === "available" && row.offer && row.queue_position === null,
+      );
+    },
+
+    /** Every candidate starts ticked; the user unticks what should stay. */
+    openFirmwareQueueModal() {
+      this.firmwareError = null;
+      this.firmwareQueueSelection = this.firmwareQueueCandidates().map((row) => row.device_id);
+      this.firmwareQueueModalOpen = true;
+      this.$nextTick(() => this.$refs.firmwareQueueModal.showModal());
+    },
+
+    /** As with the firmware dialog, `@close` resets the dialog's state. */
+    closeFirmwareQueueModal() {
+      this.$refs.firmwareQueueModal.close();
+    },
+
+    async startFirmwareQueue() {
+      if (this.firmwareQueueBusy) return;
+      this.firmwareError = null;
+      this.firmwareQueueBusy = true;
+      try {
+        this.firmware = await this.request("POST", "/api/firmware/queue", {
+          device_ids: this.firmwareQueueSelection,
+        });
+        this.closeFirmwareQueueModal();
+      } catch (error) {
+        // The dialog stays open and shows the error above its checklist.
+        this.firmwareError = t("web.firmware.action_error", { message: error.message });
+      } finally {
+        this.firmwareQueueBusy = false;
+      }
+      await this.loadFirmware();
+    },
+
+    async resumeFirmwareQueue() {
+      this.firmwareError = null;
+      try {
+        this.firmware = await this.request("POST", "/api/firmware/queue/resume");
+      } catch (error) {
+        this.firmwareError = t("web.firmware.action_error", { message: error.message });
+      }
+      await this.loadFirmware();
+    },
+
+    async clearFirmwareQueue() {
+      this.firmwareError = null;
+      try {
+        this.firmware = await this.request("DELETE", "/api/firmware/queue");
+      } catch (error) {
+        this.firmwareError = t("web.firmware.action_error", { message: error.message });
+      }
+      await this.loadFirmware();
+    },
+
+    /** The running band: the device being updated and how far it is, or -
+     * between two devices - only how many still wait. */
+    firmwareQueueBusyText() {
+      const queue = this.firmware?.queue;
+      if (!queue) return "";
+      const row = this.firmware.updating_device_id === null ? null : this.firmwareFor(this.firmware.updating_device_id);
+      if (row && queue.device_ids.length === 0) {
+        // The last device: "0 more queued" would read like a fault.
+        return t("web.firmware.queue_running_last", { device: row.label, state: this.firmwareStateText(row) });
+      }
+      if (row) {
+        return t("web.firmware.queue_running", {
+          device: row.label,
+          state: this.firmwareStateText(row),
+          count: queue.device_ids.length,
+        });
+      }
+      const waiting = queue.device_ids.length;
+      return waiting === 1 ? t("web.firmware.queue_waiting_one") : t("web.firmware.queue_waiting_many", { count: waiting });
+    },
+
+    /** Label of the queue dialog's install button: singular for one device. */
+    firmwareQueueInstallText() {
+      const count = this.firmwareQueueSelection.length;
+      return count === 1 ? t("web.firmware.queue_install_one") : t("web.firmware.queue_install_many", { count });
     },
 
     /** Step list of a running install, in the style of the bridge update

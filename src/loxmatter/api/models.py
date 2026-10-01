@@ -748,6 +748,8 @@ class FirmwareDeviceOut(BaseModel):
     checked_at: str | None
     check_error: str | None
     job_error: str | None
+    # 1-based place in the update queue; None when not queued.
+    queue_position: int | None
 
 
 class FirmwareCheckOut(BaseModel):
@@ -756,6 +758,15 @@ class FirmwareCheckOut(BaseModel):
     running: bool
     checked: int
     total: int
+
+
+class FirmwareQueueOut(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    device_ids: list[int]
+    active: bool
+    # Already translated; None while the queue is not halted.
+    halted_reason: str | None
 
 
 class FirmwareOverviewOut(BaseModel):
@@ -768,7 +779,12 @@ class FirmwareOverviewOut(BaseModel):
     last_checked_at: str | None
     check: FirmwareCheckOut
     updating_device_id: int | None
+    queue: FirmwareQueueOut
     devices: list[FirmwareDeviceOut]
+
+
+class FirmwareQueueIn(BaseModel):
+    device_ids: list[int]
 
 
 class FirmwareInstallIn(BaseModel):

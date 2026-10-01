@@ -22,6 +22,7 @@ A device without a row has never been checked and never updated."""
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 from loxmatter.sources.firmware import UpdateOffer
@@ -42,6 +43,7 @@ class FirmwareStatus:
     job_started_at: str | None
     job_changed_at: str | None
     job_error: str | None
+    queued_at: str | None
 
 
 class FirmwareStatusStore:
@@ -78,6 +80,7 @@ class FirmwareStatusStore:
             job_started_at=row["job_started_at"],
             job_changed_at=row["job_changed_at"],
             job_error=row["job_error"],
+            queued_at=row["queued_at"],
         )
 
     def get(self, device_id: int) -> FirmwareStatus | None:
@@ -168,4 +171,35 @@ class FirmwareStatusStore:
             " job_changed_at = ? WHERE device_id = ?",
             (state, error, changed_at, device_id),
         )
+        self._db.commit()
+
+    def enqueue(self, device_ids: Sequence[int], queued_at: str) -> int:
+        """Queues each device not queued yet; one already queued keeps its place."""
+        added = 0
+        for device_id in device_ids:
+            self._ensure_row(device_id)
+            cursor = self._db.execute(
+                "UPDATE firmware_status SET queued_at = ?"
+                " WHERE device_id = ? AND queued_at IS NULL",
+                (queued_at, device_id),
+            )
+            added += cursor.rowcount
+        self._db.commit()
+        return added
+
+    def queued(self) -> list[int]:
+        rows = self._db.execute(
+            "SELECT device_id FROM firmware_status WHERE queued_at IS NOT NULL"
+            " ORDER BY queued_at, device_id"
+        ).fetchall()
+        return [int(row["device_id"]) for row in rows]
+
+    def dequeue(self, device_id: int) -> None:
+        self._db.execute(
+            "UPDATE firmware_status SET queued_at = NULL WHERE device_id = ?", (device_id,)
+        )
+        self._db.commit()
+
+    def clear_queue(self) -> None:
+        self._db.execute("UPDATE firmware_status SET queued_at = NULL")
         self._db.commit()

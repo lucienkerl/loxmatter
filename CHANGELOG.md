@@ -10,7 +10,7 @@ people who don't know the code.
 
 ### Before you update
 
-- **The database schema rises from 14 to 15.** Nothing needs doing by hand.
+- **The database schema rises from 14 to 16.** Nothing needs doing by hand.
 
 ### Added
 
@@ -21,6 +21,11 @@ people who don't know the code.
   available update and the progress of a running one. The bridge checks once
   a day and shows when the next check runs; it never installs on its own,
   and the daily check can be switched off in the card.
+- **Update every device at once.** "Update all" in the Device updates card
+  lists every device with an update, all ticked. The bridge installs them one
+  after another on its own; the browser can be closed. A device that fails
+  does not stop the others; a lost connection to matter-server pauses the
+  queue until you continue it.
 - **The Matter version of every device** is shown in the update list and in
   the device's expert settings.
 - **Change the password in the WebUI.** Settings has a new "Password" card.

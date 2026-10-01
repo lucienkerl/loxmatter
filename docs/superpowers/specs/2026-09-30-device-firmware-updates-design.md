@@ -259,6 +259,8 @@ All under `/api`, behind the existing guard.
 | `POST /devices/{id}/firmware/update` | 202; 409 for offer mismatch, another install running, device offline, capability missing; 404 for an unknown device |
 | `PUT /firmware/settings` | `{"daily_check_enabled": bool}` |
 
+The update queue adds three routes; see [the queue design](2026-10-01-firmware-update-queue-design.md).
+
 Every `detail` a user can see goes through `i18n.t(...)`.
 
 ### 9.2 Screens

@@ -2604,6 +2604,14 @@
           <div class="row">
             <h2 style="margin: 0" x-text="t('web.firmware.card_heading')"></h2>
             <span style="flex: 1 1 auto"></span>
+            <!-- Opens the checklist (design 2026-10-01, 5.2); only the
+                 dialog's own button starts the queue. Locked while one runs
+                 or waits: a second batch would only reorder the first. -->
+            <button
+              @click="openFirmwareQueueModal()"
+              :disabled="!firmware?.supported || firmwareQueueCandidates().length === 0 || firmware?.queue.active || firmware?.queue.device_ids.length > 0"
+              x-text="t('web.firmware.update_all', { count: firmwareQueueCandidates().length })"
+            ></button>
             <button
               @click="checkFirmwareAll()"
               :disabled="!firmware?.supported || firmware?.check.running || firmwareCheckBusy"
@@ -2617,7 +2625,20 @@
              x-text="firmware?.last_checked_at
                      ? t('web.firmware.last_checked', { when: formatTimestamp(firmware.last_checked_at) })
                      : t('web.firmware.never_checked')"></p>
-          <p class="banner danger" x-show="firmwareError && firmwareModalDevice === null" x-cloak x-text="firmwareError"></p>
+          <p class="banner danger" x-show="firmwareError && firmwareModalDevice === null && !firmwareQueueModalOpen" x-cloak
+             x-text="firmwareError"></p>
+          <!-- The update queue: running on the bridge, or halted with the
+               reason the server already translated. -->
+          <div class="banner firmware-queue-band" x-show="firmware?.queue.active" x-cloak>
+            <span x-text="firmwareQueueBusyText()"></span>
+            <button type="button" x-show="firmware?.queue.device_ids.length > 0"
+                    @click="clearFirmwareQueue()" x-text="t('web.firmware.queue_cancel_rest')"></button>
+          </div>
+          <div class="banner warn firmware-queue-band" x-show="firmware?.queue.halted_reason" x-cloak>
+            <span x-text="t('web.firmware.queue_halted', { reason: firmware?.queue.halted_reason })"></span>
+            <button type="button" @click="resumeFirmwareQueue()" x-text="t('web.firmware.queue_resume')"></button>
+            <button type="button" @click="clearFirmwareQueue()" x-text="t('web.firmware.queue_clear')"></button>
+          </div>
           <div class="firmware-filter" x-show="firmware" x-cloak>
             <button type="button" :class="{ on: firmwareFilter === 'all' }" @click="firmwareFilter = 'all'"
                     x-text="t('web.firmware.filter_all', { count: firmware?.devices.length ?? 0 })"></button>
@@ -2663,7 +2684,7 @@
                       <button
                         class="primary"
                         x-show="firmwareCanInstall(entry)"
-                        :disabled="firmware.updating_device_id !== null || entry.online === false"
+                        :disabled="firmware.updating_device_id !== null || entry.online === false || firmware.queue.active || firmware.queue.device_ids.length > 0"
                         @click="openFirmwareModal(devices.find((d) => d.id === entry.device_id))"
                         x-text="t('web.firmware.install')"
                       ></button>
@@ -3817,6 +3838,65 @@
               </div>
             </div>
           </template>
+        </div>
+      </template>
+    </dialog>
+
+    <!-- Update queue checklist (design 2026-10-01, 5.2). Same open/close
+         mechanics as the firmware dialog above; every device with an offer
+         starts ticked. The bridge installs them one after another, so the
+         browser may close once the queue is started. -->
+    <dialog
+      x-ref="firmwareQueueModal"
+      class="expert-modal firmware-modal"
+      aria-labelledby="firmware-queue-heading"
+      @close="firmwareQueueModalOpen = false; firmwareError = null"
+      @mousedown="firmwareQueueModalBackdropMousedown = isBackdropEvent($event, $el)"
+      @click.self="if (firmwareQueueModalBackdropMousedown && isBackdropEvent($event, $el)) $el.close(); firmwareQueueModalBackdropMousedown = false"
+    >
+      <!-- `x-if`, like the firmware dialog's: built only once the dialog
+           opens, after the translation table has loaded - `t()` is not
+           reactive and would otherwise leave the bare keys here. -->
+      <template x-if="firmwareQueueModalOpen">
+        <div class="expert-modal-body">
+          <div class="expert-modal-head">
+            <h2 id="firmware-queue-heading" x-text="t('web.firmware.queue_heading')"></h2>
+            <span style="flex: 1 1 auto"></span>
+            <button class="expert-modal-close" :title="t('web.firmware.close')" :aria-label="t('web.firmware.close')"
+                    @click="closeFirmwareQueueModal()"><svg class="icon" aria-hidden="true"><use href="#i-close"></use></svg></button>
+          </div>
+          <p class="banner danger" x-show="firmwareError" x-cloak x-text="firmwareError"></p>
+          <p x-text="t('web.firmware.queue_intro')"></p>
+          <ul class="firmware-queue-list">
+            <template x-for="entry in firmwareQueueCandidates()" :key="entry.device_id">
+              <li>
+                <label>
+                  <input type="checkbox" :value="entry.device_id" x-model.number="firmwareQueueSelection" />
+                  <span x-text="entry.label"></span>
+                  <span class="hint" x-show="entry.room" x-text="entry.room"></span>
+                  <span class="mono" x-text="(entry.installed ?? '?') + ' → ' + entry.offer.version_string"></span>
+                  <span class="hint" x-show="entry.online === false" x-text="t('web.firmware.queue_offline')"></span>
+                </label>
+              </li>
+            </template>
+          </ul>
+          <div class="banner warn">
+            <strong x-text="t('web.firmware.before_heading')"></strong>
+            <ul>
+              <li x-text="t('web.firmware.before_duration')"></li>
+              <li x-text="t('web.firmware.before_restart')"></li>
+              <li x-text="t('web.firmware.before_export')"></li>
+              <li x-text="t('web.firmware.queue_background')"></li>
+            </ul>
+          </div>
+          <div class="firmware-actions">
+            <span style="flex: 1 1 auto"></span>
+            <button type="button" @click="closeFirmwareQueueModal()" x-text="t('web.firmware.cancel')"></button>
+            <button type="button" class="primary"
+                    :disabled="firmwareQueueBusy || firmwareQueueSelection.length === 0"
+                    @click="startFirmwareQueue()"
+                    x-text="firmwareQueueInstallText()"></button>
+          </div>
         </div>
       </template>
     </dialog>
