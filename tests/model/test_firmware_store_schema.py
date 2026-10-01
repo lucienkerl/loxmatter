@@ -1,4 +1,4 @@
-"""Schema 15 (design 2026-09-30, sections 8 and 9.3): additive only."""
+"""Schema 16 (design 2026-09-30, sections 8 and 9.3): additive only."""
 
 import json
 import sqlite3
@@ -23,8 +23,8 @@ def _columns(path: Path, table: str) -> set[str]:
         db.close()
 
 
-def test_schema_version_is_15():
-    assert schema_version() == 15
+def test_schema_version_is_16():
+    assert schema_version() == 16
 
 
 def test_register_device_stores_the_spec_version(tmp_path):

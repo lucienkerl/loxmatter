@@ -177,7 +177,9 @@ DEFAULT_LISTEN_PORT = 8080
 # Version 15 (firmware updates, design 2026-09-30) adds the table
 # `firmware_status` and the nullable column `device.matter_spec_version`,
 # see `_migrate_to_v15`. Both additive: a rolled-back image names neither.
-_SCHEMA_VERSION = 15
+# Version 16 (firmware update queue, design 2026-10-01) adds the nullable
+# column `firmware_status.queued_at`, see `_migrate_to_v16`. Additive.
+_SCHEMA_VERSION = 16
 
 
 def schema_version() -> int:
@@ -295,7 +297,8 @@ CREATE TABLE IF NOT EXISTS firmware_status (
     job_progress         INTEGER,
     job_started_at       TEXT,
     job_changed_at       TEXT,
-    job_error            TEXT
+    job_error            TEXT,
+    queued_at            TEXT
 );
 """
 
@@ -993,6 +996,12 @@ def _migrate_to_v15(db: sqlite3.Connection) -> None:
     _add_column_if_missing(db, "device", "matter_spec_version", "INTEGER")
 
 
+def _migrate_to_v16(db: sqlite3.Connection) -> None:
+    """Adds `firmware_status.queued_at`, the update queue (design
+    2026-10-01, section 3). A set value means the device is queued."""
+    _add_column_if_missing(db, "firmware_status", "queued_at", "TEXT")
+
+
 # Migrations in order, applied from whichever version is stored - to extend
 # for a later schema change: simply append, with the next version number as
 # the key.
@@ -1012,6 +1021,7 @@ _MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     13: _migrate_to_v13,
     14: _migrate_to_v14,
     15: _migrate_to_v15,
+    16: _migrate_to_v16,
 }
 
 
@@ -1667,6 +1677,9 @@ class Store:
         try:
             self._db.execute("DELETE FROM device_group_member WHERE device_id = ?", (device_id,))
             self._db.execute("UPDATE device SET active = 0 WHERE id = ?", (device_id,))
+            self._db.execute(
+                "UPDATE firmware_status SET queued_at = NULL WHERE device_id = ?", (device_id,)
+            )
         except (ValueError, sqlite3.Error):
             self._db.rollback()
             raise

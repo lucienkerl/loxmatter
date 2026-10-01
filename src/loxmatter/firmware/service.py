@@ -24,15 +24,18 @@ from __future__ import annotations
 from collections.abc import Callable
 from datetime import datetime
 
+from loxmatter import i18n
 from loxmatter.api.models import (
     FirmwareCheckOut,
     FirmwareDeviceOut,
     FirmwareOfferOut,
     FirmwareOverviewOut,
+    FirmwareQueueOut,
 )
 from loxmatter.firmware import states
 from loxmatter.firmware.check import FirmwareChecker
 from loxmatter.firmware.job import FirmwareJobs
+from loxmatter.firmware.queue import FirmwareQueue
 from loxmatter.firmware.schedule import local_now, next_check_at
 from loxmatter.model.store import Store, StoredDevice
 from loxmatter.sources import SourceNotConfiguredError, Sources
@@ -59,6 +62,7 @@ class FirmwareService:
         *,
         checker: FirmwareChecker | None = None,
         jobs: FirmwareJobs | None = None,
+        queue: FirmwareQueue | None = None,
         local_clock: Callable[[], datetime] = local_now,
     ) -> None:
         self._store = store
@@ -66,6 +70,7 @@ class FirmwareService:
         self._sources = sources
         self.checker = checker or FirmwareChecker(store, self.source_for)
         self.jobs = jobs or FirmwareJobs(store, self.source_for)
+        self.queue = queue or FirmwareQueue(store, self.jobs, self.source_for)
 
     def source_for(self) -> FirmwareSource | None:
         """The Matter source, if it can update firmware. Looked up on every
@@ -80,7 +85,11 @@ class FirmwareService:
         source = self.source_for()
         return source is not None and source.firmware_supported()
 
-    def device_out(self, device: StoredDevice) -> FirmwareDeviceOut:
+    def device_out(
+        self, device: StoredDevice, queued: list[int] | None = None
+    ) -> FirmwareDeviceOut:
+        if queued is None:
+            queued = self._store.firmware_status.queued()
         source = self.source_for()
         own_device = source is not None and device.technology == source.technology
         facts = None
@@ -133,10 +142,13 @@ class FirmwareService:
             checked_at=None if status is None else status.checked_at,
             check_error=None if status is None else status.check_error,
             job_error=None if status is None else status.job_error,
+            queue_position=queued.index(device.id) + 1 if device.id in queued else None,
         )
 
     def overview(self) -> FirmwareOverviewOut:
         progress = self.checker.progress
+        queued = self._store.firmware_status.queued()
+        halted = self._store.firmware_settings.get_queue_halted_reason()
         daily = self._store.firmware_settings.get_daily_check_enabled()
         return FirmwareOverviewOut(
             supported=self.supported(),
@@ -149,5 +161,10 @@ class FirmwareService:
                 running=progress.running, checked=progress.checked, total=progress.total
             ),
             updating_device_id=self.jobs.running_device_id,
-            devices=[self.device_out(device) for device in self._store.devices()],
+            queue=FirmwareQueueOut(
+                device_ids=queued,
+                active=self.queue.active,
+                halted_reason=None if halted is None else i18n.t(halted),
+            ),
+            devices=[self.device_out(device, queued) for device in self._store.devices()],
         )

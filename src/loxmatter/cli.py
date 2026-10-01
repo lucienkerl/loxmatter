@@ -874,6 +874,11 @@ async def _run(
             # A store error here must not take the bridge down; the rows
             # stay active and the next start tries again.
             logger.exception("Resuming the firmware jobs failed")
+        try:
+            # Design 2026-10-01: a queue that outlived the restart goes on.
+            firmware.queue.start()
+        except Exception:
+            logger.exception("Starting the firmware update queue failed")
         firmware_schedule_task = asyncio.ensure_future(
             run_daily(firmware.checker, store.firmware_settings)
         )
@@ -963,6 +968,14 @@ async def _run(
             raise
         except Exception:
             logger.exception("The firmware check could not be stopped cleanly on shutdown")
+        try:
+            # Before the jobs: the queue must not start the next device while
+            # they shut down. Its devices stay queued in the store.
+            await firmware.queue.stop()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("The firmware update queue could not be stopped cleanly on shutdown")
         try:
             # A running transfer is left to matter-server; its row stays
             # active so the next start resumes following it (design 7.4).
