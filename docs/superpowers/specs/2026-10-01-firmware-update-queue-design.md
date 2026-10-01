@@ -73,7 +73,7 @@ everything that must survive a restart is in the store.
   offer and is not queued yet, all with the same `queued_at`. Clears the
   halt reason and wakes the task. Returns how many devices it queued.
 - **`resume()`**: clears the halt reason and wakes the task.
-- **`clear()`**: clears `queued_at` on every row. An install already running
+- **`clear()`**: clears `queued_at` on every row and the halt reason. An install already running
   goes on; a transfer between matter-server and a device cannot be
   cancelled, today as before.
 - **The loop**, while devices are queued and the queue is not halted:
