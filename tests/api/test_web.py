@@ -8265,6 +8265,57 @@ def test_the_shipped_last_heard_line_takes_the_newer_of_the_two_sources():
 
 
 @pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_the_shipped_live_handler_reloads_a_device_that_gained_a_signal():
+    """`d<id>_signals` is the runtime saying a device gained a signal or a
+    command (`Runtime.on_node_snapshot`) - a TRADFRI motion sensor's
+    occupancy, born with its first motion, which appeared on the dashboard
+    only after a page reload. The handler must reload that one device's
+    rows, and nothing for any other key.
+
+    Fault to prove it: treat `d<id>_signals` like any other value."""
+    values = _app_state(
+        setup="""
+        const sockets = [];
+        globalThis.window = {
+          location: { protocol: "http:", host: "example.invalid" },
+          setTimeout: () => 0,
+          clearTimeout: () => {},
+        };
+        globalThis.WebSocket = class {
+          constructor() {
+            this.listeners = {};
+            sockets.push(this);
+          }
+          addEventListener(type, handler) {
+            (this.listeners[type] = this.listeners[type] || []).push(handler);
+          }
+          close() {}
+        };
+        const calls = [];
+        state.loadSignals = async (id) => calls.push(["signals", id]);
+        state.loadControls = async (id) => calls.push(["controls", id]);
+        state.loadExportStatus = async () => calls.push(["export"]);
+
+        state.connectLive();
+        const deliver = (key, value) => {
+          for (const handler of sockets[0].listeners.message || []) {
+            handler({ data: JSON.stringify({ key, value }) });
+          }
+        };
+        const out = {};
+        deliver("d22_1_occupancy", 1);
+        out.after_value = [...calls];
+        deliver("d22_signals", true);
+        out.after_signals = [...calls];
+        console.log(JSON.stringify(out));
+        """,
+    )
+
+    assert values["after_value"] == []
+    assert values["after_signals"] == [["signals", 22], ["controls", 22], ["export"]]
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
 def test_the_shipped_live_handler_does_not_credit_the_online_key():
     """The scenario of 8 September, played through the shipped handler.
 

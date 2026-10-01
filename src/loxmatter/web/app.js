@@ -8301,6 +8301,19 @@ function app() {
 
       socket.addEventListener("message", (event) => {
         const message = JSON.parse(event.data);
+        // `d<id>_signals`: the device gained a signal or a command at
+        // runtime (`Runtime.on_node_snapshot`) - a TRADFRI motion
+        // sensor's occupancy, say, born with its first motion. A value
+        // carries no row to show it in, so this tab reloads what it loaded
+        // once in `startApp()` for that one device; without it the new
+        // signal appeared only after a page reload.
+        const gained = /^d(\d+)_signals$/.exec(message.key);
+        if (gained) {
+          const deviceId = Number(gained[1]);
+          this.loadSignals(deviceId);
+          this.loadControls(deviceId);
+          this.loadExportStatus();
+        }
         this.liveValues[message.key] = message.value;
         const now = Date.now();
         this.liveSeenAt[message.key] = now;

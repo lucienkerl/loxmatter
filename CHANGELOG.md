@@ -46,6 +46,10 @@ people who don't know the code.
 
 ### Fixed
 
+- **New signals appear on the dashboard without a page reload.** A signal
+  that a device reports for the first time while the page is open, such as
+  the motion of an IKEA TRADFRI motion sensor after its first detection,
+  now shows up on its own.
 - **The IKEA TRADFRI motion sensor reports "no motion" again.** After the
   first motion, the Zigbee sensor stayed at "motion" for good: it never says
   when the motion is over, it only tells a lamp how long to stay on. The
