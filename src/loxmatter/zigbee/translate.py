@@ -634,6 +634,20 @@ def _apply_ias_zone(endpoint: EndpointFacts, attributes: dict[str, object]) -> N
     attributes[f"{endpoint.endpoint}/{cluster_id}/{attribute_id}"] = value
 
 
+def _as_on_off(value: object) -> int | None:
+    """`on_off` as 0 or 1, or `None` if it is neither.
+
+    **Not `bool` alone.** The listener writes a `bool`, but zigpy loads its
+    attribute cache back from SQLite as the plain `int` SQLite stored - so
+    after every bridge restart the value is `1`, not `True`. Read as `bool`
+    only, the occupancy vanished from the snapshot on each restart, and the
+    first detection afterwards never reached Loxone (test Pi, 1 October
+    2026). zigpy's own `t.Bool` is an `int` subclass and reads the same."""
+    if isinstance(value, int) and int(value) in (0, 1):
+        return int(value)
+    return None
+
+
 def _apply_onoff_sensor(endpoint: EndpointFacts, model: str, attributes: dict[str, object]) -> None:
     """Writes the classic TRADFRI motion sensor's OnOff signal as occupancy,
     and its `OnTime` as the hold time.
@@ -641,15 +655,16 @@ def _apply_onoff_sensor(endpoint: EndpointFacts, model: str, attributes: dict[st
     `configure.py` is what turns the sensor's `on`/`off` commands into this
     endpoint's OWN OnOff attribute cache, at `(6, 0)` - the only place the
     value exists to be read from, since this device holds no OccupancySensing
-    cluster at all. Reading it directly as `bool` rather than through
-    `_as_plain_int`: that helper deliberately excludes `bool` (a `bool` is an
-    `int` subclass and would otherwise be mistaken for a bitmap), and here
-    the value genuinely IS the on/off state, not a bitmap to mask."""
+    cluster at all. Read through `_as_on_off` rather than `_as_plain_int`:
+    that helper deliberately excludes `bool` (a `bool` is an `int` subclass
+    and would otherwise be mistaken for a bitmap), and here the value
+    genuinely IS the on/off state - as a `bool` while the bridge runs, as an
+    `int` after a restart."""
     if model != TRADFRI_MOTION_SENSOR_MODEL:
         return
-    value = endpoint.attributes.get((_CLUSTER_ONOFF, 0))
-    if isinstance(value, bool):
-        attributes[f"{endpoint.endpoint}/{_CLUSTER_OCCUPANCY_SENSING}/0"] = int(value)
+    occupied = _as_on_off(endpoint.attributes.get((_CLUSTER_ONOFF, 0)))
+    if occupied is not None:
+        attributes[f"{endpoint.endpoint}/{_CLUSTER_OCCUPANCY_SENSING}/0"] = occupied
     # The `on_time` of the last `onWithTimedOff`, which `configure.py` keeps
     # in OnOff's `OnTime` - tenths of a second, where Matter's `HoldTime`
     # counts seconds (design 2026-10-01, 3.1).

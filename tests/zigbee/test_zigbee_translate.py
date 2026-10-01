@@ -606,6 +606,17 @@ def test_a_tradfri_motion_sensor_without_an_on_time_writes_no_hold_time():
     assert "1/1030/3" not in snapshot.attributes
 
 
+def test_the_tradfri_motion_sensors_on_off_loaded_from_zigpys_database_counts():
+    """zigpy writes `on_off` as the `bool` the listener hands it, but loads
+    it back from SQLite as the plain `int` SQLite stored. Read as `bool`
+    only, every restart dropped the occupancy from the snapshot (test Pi,
+    1 October 2026).
+
+    Fault to prove it: accept only `bool`."""
+    assert build_snapshot(_onoff_sensor(value=1)).attributes["1/1030/0"] == 1  # type: ignore[arg-type]
+    assert build_snapshot(_onoff_sensor(value=0)).attributes["1/1030/0"] == 0  # type: ignore[arg-type]
+
+
 def test_a_tradfri_motion_sensor_that_has_never_reported_writes_no_path():
     """The one rule `build_snapshot` never breaks: a signal with no value
     yet is left out entirely, not written as `None` or a guessed default.
