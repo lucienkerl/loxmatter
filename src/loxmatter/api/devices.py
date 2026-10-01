@@ -114,7 +114,7 @@ from loxmatter.model.store import Store, StoredDevice, StoredSignal, UnknownDevi
 from loxmatter.profiles.catalog import cluster_name
 from loxmatter.profiles.categories import CATEGORY_RANK, category_for
 from loxmatter.profiles.endpoints import endpoint_labels
-from loxmatter.profiles.table import Exportability, is_exportable
+from loxmatter.profiles.table import Exportability, is_converted, is_exportable
 from loxmatter.profiles.transport import transport_for
 from loxmatter.sources import (
     DeviceUnreachableError,
@@ -172,13 +172,18 @@ class RuntimeValues(Protocol):
 
     def last_values_for(self, device_id: int) -> dict[str, float | bool]: ...
 
+    def last_raw_values_for(self, device_id: int) -> dict[str, int | float]: ...
+
     def last_heard_for(self, device_id: int) -> str | None: ...
 
     async def set_online(self, device_id: int, online: bool) -> None: ...
 
 
 def _signal_out(
-    signal: StoredSignal, values: dict[str, float | bool], labels: dict[int, str]
+    signal: StoredSignal,
+    values: dict[str, float | bool],
+    raw_values: dict[str, int | float],
+    labels: dict[int, str],
 ) -> SignalOut:
     """`functional` comes unchanged from `StoredSignal.functional` -
     `profiles.relevance.is_functional` needs the device types per endpoint
@@ -215,6 +220,7 @@ def _signal_out(
     endpoint_label = labels.get(signal.ref.endpoint)
     if endpoint_label is None:
         endpoint_label = i18n.t("web.signals.endpoint_plain", endpoint=signal.ref.endpoint)
+    converted = is_converted(signal.ref)
     return SignalOut(
         key=signal.key,
         path=signal.ref.path,
@@ -227,6 +233,8 @@ def _signal_out(
         exported=signal.exported,
         functional=signal.functional,
         resend=signal.resend,
+        converted=converted,
+        raw_value=raw_values.get(signal.key) if converted else None,
         endpoint=signal.ref.endpoint,
         cluster_id=signal.ref.cluster_id,
         endpoint_label=endpoint_label,
@@ -373,10 +381,13 @@ def build_device_router(
     async def get_signals(device_id: int) -> list[SignalOut]:
         device = _require_device(device_id)
         values = runtime.last_values_for(device_id)
+        raw_values = runtime.last_raw_values_for(device_id)
         # Built once per device, not per signal - see the docstring of
         # `_signal_out`.
         labels = endpoint_labels(device.device_types)
-        return [_signal_out(signal, values, labels) for signal in store.signals(device_id)]
+        return [
+            _signal_out(signal, values, raw_values, labels) for signal in store.signals(device_id)
+        ]
 
     @router.get("/devices/{device_id}/expert")
     async def get_expert(device_id: int) -> DeviceExpertOut:
@@ -480,8 +491,9 @@ def build_device_router(
         updated = store.signal_by_key(key)
         assert updated is not None  # just found, not deleted within the same request
         values = runtime.last_values_for(updated.device_id)
+        raw_values = runtime.last_raw_values_for(updated.device_id)
         labels = endpoint_labels(device.device_types)
-        return _signal_out(updated, values, labels)
+        return _signal_out(updated, values, raw_values, labels)
 
     @router.get("/devices/commission/status")
     async def commission_status() -> dict[str, object]:

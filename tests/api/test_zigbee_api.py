@@ -256,6 +256,9 @@ class _AttachableRuntime:
     def last_values_for(self, device_id: int) -> dict[str, float | bool]:
         return {}
 
+    def last_raw_values_for(self, device_id: int) -> dict[str, int | float]:
+        return {}
+
     def last_heard_for(self, device_id: int) -> str | None:
         return None
 

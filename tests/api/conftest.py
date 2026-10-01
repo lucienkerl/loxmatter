@@ -213,6 +213,11 @@ class FakeRuntime:
         prefix = f"d{device_id}_"
         return {k: v for k, v in self._values.items() if k.startswith(prefix)}
 
+    def last_raw_values_for(self, device_id: int) -> dict[str, int | float]:
+        """No converted value has arrived at this double; tests of the raw
+        value use `api_with_runtime`, which has the real `Runtime`."""
+        return {}
+
     def last_heard_for(self, device_id: int) -> str | None:
         """Like `Runtime.last_heard_for`: the timestamp of the last receipt,
         or `None` for as long as nothing has come from this device.

@@ -45,7 +45,11 @@ class SignalOut(BaseModel):
     resend_marked`) should resend this signal again even without a
     change. Does not affect `/resync` or bridge startup
     (`Runtime.resend_all`) - those deliberately ignore this field, see
-    the docstring there."""
+    the docstring there.
+
+    `converted`/`raw_value` (design 2026-10-01, section 5.2) let the UI
+    show the device's own number (mV, mireds) under the converted value
+    (V, Kelvin)."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -60,6 +64,12 @@ class SignalOut(BaseModel):
     exported: bool
     functional: bool
     resend: bool
+    # Design 2026-10-01, section 5.2: whether `value` is a conversion of
+    # the device's number (`profiles.table.is_converted`), and that number
+    # itself - None for an unconverted signal, and for a converted one
+    # whose value has not arrived yet.
+    converted: bool
+    raw_value: int | float | None
     # endpoint/cluster_id (design 2026-09-07, section 7.4): `path` carries
     # the same numbers as "1/59/2", but as text. The UI groups by
     # endpoint and recognizes the battery level by cluster 47 -

@@ -1430,3 +1430,31 @@ async def test_the_device_list_says_how_a_device_is_connected(api):
     assert devices[0]["transport"] == "thread"
     assert devices[0]["technology"] == "matter"
     assert "node_id" not in devices[0]
+
+
+async def test_a_converted_signal_reports_its_raw_value(api_with_runtime):
+    """Design 2026-10-01, section 5.2: voltage is scaled (mV to V).
+
+    Fault to prove it: pass `{}` instead of `raw_values` in `get_signals`."""
+    client, runtime, device_id = api_with_runtime
+    await runtime.on_attribute(device_id, "2/144/4", 230000)
+
+    response = await client.get(f"/api/devices/{device_id}/signals")
+    signal = {s["key"]: s for s in response.json()}[f"d{device_id}_2_voltage"]
+
+    assert signal["value"] == pytest.approx(230.0)
+    assert signal["converted"] is True
+    assert signal["raw_value"] == 230000
+
+
+async def test_an_unconverted_signal_reports_no_raw_value(api_with_runtime):
+    """On/off arrives unchanged; `converted` is false and there is no raw
+    value to show."""
+    client, runtime, device_id = api_with_runtime
+    await runtime.on_attribute(device_id, "1/6/0", True)
+
+    response = await client.get(f"/api/devices/{device_id}/signals")
+    signal = {s["key"]: s for s in response.json()}[f"d{device_id}_1_onoff"]
+
+    assert signal["converted"] is False
+    assert signal["raw_value"] is None
