@@ -3492,12 +3492,23 @@
                           fades again, without anything in the layout
                           moving.
                         -->
-                        <span
-                          class="value col-right"
-                          :class="{ 'value-fresh': signalIsFresh(signal) }"
-                          :title="signalAgeTitle(signal)"
-                          x-text="formatValue(liveValueOf(signal)) + (signal.unit ? ' ' + signal.unit : '')"
-                        ></span>
+                        <span class="col-right value-stack">
+                          <span
+                            class="value"
+                            :class="{ 'value-fresh': signalIsFresh(signal) }"
+                            :title="signalAgeTitle(signal)"
+                            x-text="formatValue(liveValueOf(signal)) + (signal.unit ? ' ' + signal.unit : '')"
+                          ></span>
+                          <!-- The device's own number under a converted
+                               value (design 2026-10-01, section 5.3):
+                               small and muted, because the converted
+                               value above is the one that matters. -->
+                          <span
+                            class="raw-value"
+                            x-show="rawValueText(signal)"
+                            x-text="rawValueText(signal)"
+                          ></span>
+                        </span>
                         <!-- The same control as in the export column,
                              and that is deliberate: both are a yes/no per
                              signal in the same row. The first design

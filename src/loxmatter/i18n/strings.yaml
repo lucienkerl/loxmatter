@@ -2175,6 +2175,11 @@ web.groups.delete_error:
   de: "Gruppe konnte nicht gelöscht werden: {message}"
 
 # --- web.signals — Signalansicht ---
+# The device's own number under a converted value (design 2026-10-01,
+# section 5.3) - "23000" under "200 lx", "250" under "4000 K".
+web.signals.raw_value:
+  en: "raw value: {value}"
+  de: "Rohwert: {value}"
 web.signals.key_hint:
   en: "The key (in the \"Loxone input\" column, greyed out) is the wiring in Loxone and cannot be changed here — doing so would silently disable a block there."
   de: "Der Schlüssel (in der Spalte „Loxone-Eingang“, grau hinterlegt) ist die Verdrahtung in Loxone und lässt sich hier nicht ändern – ein Klick würde dort einen Baustein still lahmlegen."

@@ -1464,6 +1464,10 @@ function app() {
 
     // --- Live connection (Spec 8.3) -----------------------------------------
     liveValues: {},
+    // The raw device value of a converted signal, by key, from the live
+    // socket (design 2026-10-01, section 5.3) - the companion of
+    // `liveValues`, read only through `liveRawOf`.
+    liveRaw: {},
     socket: null,
     socketConnected: false,
     socketEverConnected: false,
@@ -3035,6 +3039,28 @@ function app() {
       return live === undefined ? signal.value : live;
     },
 
+    // The device's own number behind a converted value, or `undefined` -
+    // for an unconverted signal there is nothing to show beside the value
+    // itself. Same order as `liveValueOf`: the live socket first, then
+    // what the signal list was loaded with.
+    liveRawOf(signal) {
+      if (!signal || !signal.converted) {
+        return undefined;
+      }
+      const live = this.liveRaw[signal.key];
+      if (live !== undefined && live !== null) {
+        return live;
+      }
+      return signal.raw_value ?? undefined;
+    },
+
+    // "raw value: 23000", or "" when there is none - an empty string lets
+    // `x-show` hide the line and `signalAgeTitle` leave the tooltip alone.
+    rawValueText(signal) {
+      const raw = this.liveRawOf(signal);
+      return raw === undefined ? "" : t("web.signals.raw_value", { value: this.formatValue(raw) });
+    },
+
     // Shared with `saveGroupLabel` - the two used to be near-verbatim
     // copies (collection segment, draft map, error field, that is all
     // that differs). `collection` is the URL segment ("devices" or
@@ -3547,9 +3573,14 @@ function app() {
         return "";
       }
       const text = this.signalSeenText(signal);
-      return text
+      const age = text
         ? t("web.header.last_updated", { text })
         : t("web.header.unchanged_since_load");
+      // The tile has no room for a second line (design 2026-10-01, 5.3),
+      // so the raw value rides in the tooltip there - and here in the
+      // dialog too, where it costs nothing.
+      const raw = this.rawValueText(signal);
+      return raw ? `${age} · ${raw}` : age;
     },
 
     // Writes the numeric code while typing exactly as it appears on the
@@ -5516,9 +5547,8 @@ function app() {
     // `signalsByDevice` holds ALL signals, not only the
     // exported ones (see api/devices.py, `get_signals`), and their values
     // are already scaled (loxone/values.py, `to_loxone_value`) - level
-    // and saturation in percent, hue in degrees. Only the color
-    // temperature stays in mired, because Kelvin is a reciprocal that
-    // `scale` cannot do.
+    // and saturation in percent, hue in degrees, colour temperature in
+    // Kelvin (since 2026-10-01).
     // Looked up by PATH, not by the slug in the key: if a key collides
     // within a device, `Store._assign_key` appends the element ID
     // (`d1_1_hue_0`), and a comparison against `_hue` would then come up
@@ -5543,12 +5573,14 @@ function app() {
      */
     readStartValues(deviceId) {
       // Cluster 8 attribute 0 = CurrentLevel; cluster 768: 0 = CurrentHue,
-      // 1 = CurrentSaturation, 7 = ColorTemperatureMireds, 8 = ColorMode.
+      // 1 = CurrentSaturation, 7 = ColorTemperatureMireds - which the
+      // bridge converts to Kelvin before anything reads it (design
+      // 2026-10-01) - and 8 = ColorMode.
       // All checked against the installed SDK (see design, section 4).
-      const mireds = this.signalValueByPath(deviceId, 768, 7);
+      const kelvin = this.signalValueByPath(deviceId, 768, 7);
       return {
         percent: this.signalValueByPath(deviceId, 8, 0),
-        kelvin: mireds > 0 ? Math.round(1000000 / mireds) : undefined,
+        kelvin: kelvin > 0 ? Math.round(kelvin) : undefined,
         hue: this.signalValueByPath(deviceId, 768, 0),
         saturation: this.signalValueByPath(deviceId, 768, 1),
         colormode: this.signalValueByPath(deviceId, 768, 8),
@@ -8302,6 +8334,7 @@ function app() {
       socket.addEventListener("message", (event) => {
         const message = JSON.parse(event.data);
         this.liveValues[message.key] = message.value;
+        this.liveRaw[message.key] = message.raw;
         const now = Date.now();
         this.liveSeenAt[message.key] = now;
         // Which device a message belongs to is in its key: signal keys

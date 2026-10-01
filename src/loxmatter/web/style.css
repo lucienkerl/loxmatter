@@ -1318,6 +1318,21 @@ button:disabled {
   color: var(--ok);
 }
 
+/* Converted value with the device's raw number underneath (design
+   2026-10-01, section 5.3). One grid cell, two lines, right-aligned like
+   the value always was. */
+.value-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+}
+
+.raw-value {
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+
 /* Whoever has turned off motion at the OS level gets none here.
    The highlight stays - it is the information, not the fade. */
 @media (prefers-reduced-motion: reduce) {

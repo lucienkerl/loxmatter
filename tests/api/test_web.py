@@ -16714,3 +16714,45 @@ async def test_the_next_firmware_check_line_follows_next_check_at(api):
     assert values["shown"] is True
     assert values["text"] == values["expected"]
     assert values["text"].startswith("Next check: ") and "2026" in values["text"]
+
+
+async def test_the_live_socket_keeps_the_raw_value(api):
+    """Design 2026-10-01, section 5.3. Delivery only - the binding itself
+    is checked in a browser harness."""
+    client, _, _ = api
+    script = (await client.get("/static/app.js")).text
+    # The first `message` listener is the diagnostics socket's; the signal
+    # socket is the one that writes `liveValues`.
+    handler_start = script.rindex(
+        'socket.addEventListener("message"', 0, script.index("this.liveValues[message.key] =")
+    )
+    handler = script[handler_start : script.index("\n      });", handler_start)]
+    assert "this.liveRaw[message.key] = message.raw;" in handler
+    assert "liveRawOf(signal) {" in script
+    assert "rawValueText(signal) {" in script
+
+
+async def test_the_raw_value_is_translated_and_shown_in_the_dialog_and_tooltip(api):
+    client, _, _ = api
+    script = (await client.get("/static/app.js")).text
+    page = (await client.get("/")).text
+    body_start = script.index("rawValueText(signal) {")
+    body = script[body_start : script.index("\n    },", body_start)]
+    assert 't("web.signals.raw_value"' in body
+    title_start = script.index("signalAgeTitle(signal) {")
+    title = script[title_start : script.index("\n    },", title_start)]
+    assert "this.rawValueText(signal)" in title
+    assert 'x-text="rawValueText(signal)"' in page
+
+
+async def test_the_kelvin_slider_starts_from_the_kelvin_signal(api):
+    """768/7 is Kelvin since 2026-10-01; dividing 1e6 by it again would put
+    the slider at about 250 K.
+
+    Fault to prove it: restore `1000000 / mireds`."""
+    client, _, _ = api
+    script = (await client.get("/static/app.js")).text
+    start = script.index("readStartValues(deviceId) {")
+    body = script[start : script.index("\n    },", start)]
+    assert "1000000 /" not in body
+    assert "this.signalValueByPath(deviceId, 768, 7)" in body
