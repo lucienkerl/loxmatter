@@ -836,16 +836,55 @@ class _OnOffSensorListener:
     very cluster the commands arrive on is what makes the value readable at
     all afterwards - `translate.py`'s `_apply_onoff_sensor` is the only
     thing that reads it back out, as occupancy rather than as a light's
-    on/off state."""
+    on/off state.
+
+    **The sensor never sends `off`.** A detection is `onWithTimedOff`,
+    carrying the duration set on the sensor's back, and a bound lamp would
+    switch itself off once that ran out. So this listener plays the lamp
+    and clears the value itself - Zigbee2MQTT and ZHA do the same. Without
+    the timer, the first motion would leave occupancy at 1 for good (seen on
+    the test Pi, 2026-10-01)."""
 
     def __init__(self, cluster: Any) -> None:
         self._cluster = cluster
+        self._timer: asyncio.TimerHandle | None = None
 
     def cluster_command(self, tsn: int, command_id: int, args: Any) -> None:
-        if command_id in (ONOFF_ON_COMMAND, ONOFF_ON_WITH_TIMED_OFF_COMMAND):
-            self._cluster.update_attribute(ONOFF_ATTRIBUTE, True)
+        if command_id == ONOFF_ON_WITH_TIMED_OFF_COMMAND:
+            self._set(True, off_after=_on_time_seconds(args))
+        elif command_id == ONOFF_ON_COMMAND:
+            self._set(True, off_after=None)
         elif command_id == ONOFF_OFF_COMMAND:
-            self._cluster.update_attribute(ONOFF_ATTRIBUTE, False)
+            self._set(False, off_after=None)
+
+    def _set(self, value: bool, *, off_after: float | None) -> None:
+        # Every command replaces the timer before it: renewed motion starts
+        # the count again, and a plain `on` or `off` ends it.
+        if self._timer is not None:
+            self._timer.cancel()
+            self._timer = None
+        self._cluster.update_attribute(ONOFF_ATTRIBUTE, value)
+        if off_after is not None:
+            self._timer = asyncio.get_running_loop().call_later(off_after, self._timed_off)
+
+    def _timed_off(self) -> None:
+        self._timer = None
+        self._cluster.update_attribute(ONOFF_ATTRIBUTE, False)
+
+
+def _on_time_seconds(args: Any) -> float | None:
+    """`onWithTimedOff`'s `on_time` in seconds, or `None` where it names no
+    end: 0 is no duration at all, and the ZCL reads 0xFFFF as "on, never
+    counted down". The arguments are zigpy's tuple-shaped command schema -
+    `on_off_control`, `on_time` in tenths of a second, `off_wait_time` - read
+    by position the way `_IasZoneListener` reads its own."""
+    try:
+        on_time = int(args[1])
+    except (IndexError, TypeError, ValueError):
+        return None
+    if on_time in (0, 0xFFFF):
+        return None
+    return on_time / 10
 
 
 def _install_onoff_sensor_handlers(device: Any) -> None:
