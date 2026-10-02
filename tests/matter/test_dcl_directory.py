@@ -1,6 +1,7 @@
 """Human-readable product names (design 2026-10-02, section 7). Fixtures are
 the DCL's answers of October 2, 2026."""
 
+import asyncio
 import sqlite3
 from datetime import UTC, datetime, timedelta
 
@@ -109,6 +110,9 @@ async def test_offline_falls_back_to_numbers_and_is_not_cached(tmp_path):
     )
     fetch.fail = False
     fetch.answers[f"{BASE}/dcl/model/models/4476/36865"] = MODEL_36865
+    # Not cached in the store: once the in-memory pause is over, the DCL
+    # is asked again.
+    now[0] += timedelta(minutes=5)
     assert (await directory.model(4476, 36865)).name == "KAJPLATS E27 WS globe 1055lm"
 
 
@@ -191,3 +195,80 @@ async def test_a_naive_stored_timestamp_counts_as_utc(tmp_path):
     directory = DclDirectory(store, fetch, now=lambda: now[0])
     assert await directory.model(4476, 1) is None
     assert fetch.urls == []
+
+
+async def test_after_a_network_failure_the_dcl_rests_for_five_minutes(tmp_path):
+    """Offline, every scan would otherwise wait 5 s per vendor and model."""
+    now = [datetime(2026, 10, 2, tzinfo=UTC)]
+    directory, fetch = _directory(
+        tmp_path,
+        {
+            f"{BASE}/dcl/vendorinfo/vendors/4476": VENDOR_4476,
+            f"{BASE}/dcl/model/models/4476/36865": MODEL_36865,
+        },
+        now,
+    )
+    fetch.fail = True
+    await directory.product_label(4476, 36865)
+    # One failure is enough: the other lookup may already rest.
+    asked = len(fetch.urls)
+    assert asked >= 1
+    fetch.fail = False
+    now[0] += timedelta(minutes=4, seconds=59)
+    label = await directory.product_label(4476, 36865)
+    assert len(fetch.urls) == asked
+    assert label.product == i18n.t(
+        "web.commissioning.unknown_product", vendor="0x117C", product="0x9001"
+    )
+    now[0] += timedelta(seconds=1)
+    label = await directory.product_label(4476, 36865)
+    assert label.product == "KAJPLATS E27 WS globe 1055lm"
+    assert len(fetch.urls) == asked + 2
+
+
+async def test_a_failure_rest_leaves_the_stored_cache_alone(tmp_path):
+    now = [datetime(2026, 10, 2, tzinfo=UTC)]
+    directory, fetch = _directory(
+        tmp_path, {f"{BASE}/dcl/model/models/4476/36865": MODEL_36865}, now
+    )
+    assert await directory.model(4476, 36865) is not None
+    fetch.fail = True
+    assert await directory.model(4476, 1) is None
+    # A cached entry still answers while the DCL rests.
+    assert (await directory.model(4476, 36865)).name == "KAJPLATS E27 WS globe 1055lm"
+
+
+async def test_vendor_and_model_are_asked_at_the_same_time(tmp_path):
+    now = [datetime(2026, 10, 2, tzinfo=UTC)]
+    started = []
+    both = asyncio.Event()
+
+    async def fetch(url):
+        started.append(url)
+        if len(started) == 2:
+            both.set()
+        # Answered only once both requests are under way.
+        await asyncio.wait_for(both.wait(), 1)
+        return {
+            f"{BASE}/dcl/vendorinfo/vendors/4476": VENDOR_4476,
+            f"{BASE}/dcl/model/models/4476/36865": MODEL_36865,
+        }.get(url)
+
+    directory = DclDirectory(Store(tmp_path / "t.sqlite").dcl, fetch, now=lambda: now[0])
+    label = await directory.product_label(4476, 36865)
+    assert label.detail == "IKEA of Sweden · LED2407G8"
+
+
+async def test_a_numeric_part_number_counts_as_none(tmp_path):
+    now = [datetime(2026, 10, 2, tzinfo=UTC)]
+    model = {"model": {**MODEL_36865["model"], "partNumber": 2407}}
+    directory, _ = _directory(
+        tmp_path,
+        {
+            f"{BASE}/dcl/vendorinfo/vendors/4476": VENDOR_4476,
+            f"{BASE}/dcl/model/models/4476/36865": model,
+        },
+        now,
+    )
+    label = await directory.product_label(4476, 36865)
+    assert label.detail == "IKEA of Sweden"

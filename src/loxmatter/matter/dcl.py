@@ -17,10 +17,13 @@
 2026-10-02, section 7).
 
 Cache first: a found entry is kept for good, "not in the DCL" for seven
-days, a network failure not at all. Test vendor ids are never asked."""
+days, a network failure not at all - but after one the DCL is not asked
+again for five minutes (in memory only), so an offline bridge does not wait
+out a timeout per device on every scan. Test vendor ids are never asked."""
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import sqlite3
 from collections.abc import Awaitable, Callable
@@ -39,6 +42,7 @@ logger = logging.getLogger(__name__)
 DCL_BASE: Final = "https://on.dcl.csa-iot.org"
 _TIMEOUT_SECONDS: Final = 5.0
 _RETRY_MISSING_AFTER: Final = timedelta(days=7)
+_REST_AFTER_FAILURE: Final = timedelta(minutes=5)
 _HINT_POWER_CYCLE: Final = 1 << 0
 
 Fetch = Callable[[str], Awaitable["dict[str, Any] | None"]]
@@ -81,6 +85,20 @@ class DclDirectory:
         self._store = store
         self._fetch = fetch
         self._now = now
+        # After a network failure: no request before this moment.
+        self._resting_until: datetime | None = None
+
+    async def _ask(self, url: str) -> tuple[bool, dict[str, Any] | None]:
+        """`(True, answer)`, or `(False, None)` while resting after a
+        network failure or for a failure now."""
+        if self._resting_until is not None and self._now() < self._resting_until:
+            return False, None
+        try:
+            return True, await self._fetch(url)
+        except Exception as exc:  # noqa: BLE001 - offline is a normal state here
+            logger.info("DCL not reachable (%s): %s", url, exc)
+            self._resting_until = self._now() + _REST_AFTER_FAILURE
+            return False, None
 
     def _fresh_missing(self, fetched_at: str) -> bool:
         try:
@@ -99,10 +117,8 @@ class DclDirectory:
             cached.entry is not None or self._fresh_missing(cached.fetched_at)
         ):
             return cached.entry
-        try:
-            data = await self._fetch(f"{DCL_BASE}/dcl/vendorinfo/vendors/{vendor_id}")
-        except Exception as exc:  # noqa: BLE001 - offline is a normal state here
-            logger.info("DCL vendor %s not reachable: %s", vendor_id, exc)
+        answered, data = await self._ask(f"{DCL_BASE}/dcl/vendorinfo/vendors/{vendor_id}")
+        if not answered:
             return None
         info = (data or {}).get("vendorInfo")
         if not isinstance(info, dict):
@@ -125,10 +141,8 @@ class DclDirectory:
             cached.entry is not None or self._fresh_missing(cached.fetched_at)
         ):
             return cached.entry
-        try:
-            data = await self._fetch(f"{DCL_BASE}/dcl/model/models/{vendor_id}/{product_id}")
-        except Exception as exc:  # noqa: BLE001 - offline is a normal state here
-            logger.info("DCL model %s/%s not reachable: %s", vendor_id, product_id, exc)
+        answered, data = await self._ask(f"{DCL_BASE}/dcl/model/models/{vendor_id}/{product_id}")
+        if not answered:
             return None
         model = (data or {}).get("model")
         if not isinstance(model, dict):
@@ -137,13 +151,18 @@ class DclDirectory:
         entry = None
         if isinstance(name, str) and name.strip():
             instruction = model.get("commissioningModeInitialStepsInstruction")
+            part_number = model.get("partNumber")
             device_type = model.get("deviceTypeId")
             hint = model.get("commissioningModeInitialStepsHint")
             entry = DclModel(
                 vendor_id=vendor_id,
                 product_id=product_id,
                 name=name.strip(),
-                part_number=(model.get("partNumber") or None),
+                part_number=(
+                    part_number.strip()
+                    if isinstance(part_number, str) and part_number.strip()
+                    else None
+                ),
                 device_type=device_type if isinstance(device_type, int) else None,
                 initial_steps_hint=hint if isinstance(hint, int) else 0,
                 initial_steps_instruction=(
@@ -171,8 +190,9 @@ class DclDirectory:
                 detail="",
                 pairing_hint=i18n.t("web.commissioning.hint_manual"),
             )
-        vendor = await self.vendor(vendor_id)
-        model = await self.model(vendor_id, product_id)
+        vendor, model = await asyncio.gather(
+            self.vendor(vendor_id), self.model(vendor_id, product_id)
+        )
         if model is None:
             return ProductLabel(
                 product=i18n.t(
@@ -183,9 +203,8 @@ class DclDirectory:
                 detail=vendor.name if vendor is not None else "",
                 pairing_hint=i18n.t("web.commissioning.hint_manual"),
             )
-        detail = " · ".join(
-            part for part in (vendor.name if vendor else None, model.part_number) if part
-        )
+        part_number = model.part_number if isinstance(model.part_number, str) else None
+        detail = " · ".join(part for part in (vendor.name if vendor else None, part_number) if part)
         if model.initial_steps_instruction:
             hint = model.initial_steps_instruction
         elif model.initial_steps_hint & _HINT_POWER_CYCLE:
