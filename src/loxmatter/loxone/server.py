@@ -140,7 +140,7 @@ from starlette.responses import Response as StarletteResponse
 from loxmatter import i18n
 from loxmatter.api.auth import build_auth_router, build_password_router
 from loxmatter.api.control import build_control_router
-from loxmatter.api.devices import RuntimeValues, ThreadDatasetSource, build_device_router
+from loxmatter.api.devices import RuntimeValues, build_device_router
 from loxmatter.api.diagnostics import (
     CommandLogEntry,
     RingBuffer,
@@ -165,6 +165,7 @@ from loxmatter.commands.coalesce import VALUE_INTERVAL_SECONDS, CommandGate
 from loxmatter.commands.fanout import MemberPlan, group_outcome, plan_group_calls
 from loxmatter.commands.switch_on import SwitchOnFirst
 from loxmatter.commands.translate import UnsupportedValueError
+from loxmatter.commissioning.run import ThreadDatasetSource
 from loxmatter.diagnostics.logbuffer import LogBufferHandler
 from loxmatter.firmware.service import FirmwareService
 from loxmatter.loxone.sender import UdpSender
