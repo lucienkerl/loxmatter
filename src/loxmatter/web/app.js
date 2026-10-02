@@ -1011,6 +1011,12 @@ function app() {
     commissionThreadError: null,
     // The last refused action, in the bridge's own words.
     commissioningError: null,
+    // The tile whose device blinks after its kebab menu's Identify, or
+    // null. Local: the bridge runs a tile's blink 30 s without renewal and
+    // never reports it, so the page lets the mark lapse after the same
+    // 30 s (`deviceBlinkTimer`).
+    deviceBlinking: null,
+    deviceBlinkTimer: null,
     // Devices a card named that this page has loaded the list for
     // (`adoptCommissionedDevices()`).
     commissionAdoptedIds: [],
@@ -3720,6 +3726,10 @@ function app() {
       }
       return this.loadCommissioning().then(() => {
         if (this.commissionTabShown() === "matter") this.autoScanCommissioning();
+        // Opened over a device that waits for its name (the background
+        // line's "Open dialog"): that name field, not the code field.
+        const front = this.namingFocusTarget(null, this.commissioning);
+        if (front !== null) this.focusCardName(front);
       });
     },
 
@@ -3754,12 +3764,117 @@ function app() {
 
     async loadCommissioning() {
       try {
+        const previous = this.commissioning;
         this.commissioning = await this.request("GET", "/api/commissioning");
+        // A device that just became the front of the naming line blinks
+        // (the bridge starts that); its name field takes the focus, so
+        // the name can be typed right away and Enter confirms it (4.4).
+        const target = this.namingFocusTarget(previous, this.commissioning);
+        if (target !== null && this.commissionDialogOpen) this.focusCardName(target);
         await this.adoptCommissionedDevices();
       } catch {
         // Keep the last view; the next poll tries again.
       }
       this.scheduleCommissioningPoll();
+    },
+
+    /** The front of the naming line: the card that blinks and is asked for
+     * its name. */
+    isNamingFront(card) {
+      return card.state === "naming" && (this.commissioning?.naming ?? [])[0] === card.id;
+    },
+
+    /** The card whose name field a poll should focus: the front of the
+     * naming line, when it is a different card than before - a poll that
+     * changes nothing must not pull the focus back every second. */
+    namingFocusTarget(previous, current) {
+      const before = previous?.naming?.[0] ?? null;
+      const now = current?.naming?.[0] ?? null;
+      return now !== null && now !== before ? now : null;
+    },
+
+    /** Focuses a card's name field once Alpine has rendered it - unless
+     * another text field holds text and has the focus: someone halfway
+     * through typing (or a scanner halfway through a code) keeps it. The
+     * one exception is the name field of a card that has just left the
+     * naming line: its Enter is what hands the focus on to the next. */
+    focusCardName(cardId) {
+      this.$nextTick(() => {
+        const field = document.querySelector(`[data-card-name="${cardId}"]`);
+        const active = document.activeElement;
+        if (!field || active === field) return;
+        const typing = active && ["INPUT", "TEXTAREA"].includes(active.tagName) && active.value;
+        const named = Number(active?.getAttribute?.("data-card-name") ?? NaN);
+        const leftTheLine = !Number.isNaN(named) && !(this.commissioning?.naming ?? []).includes(named);
+        if (typing && !leftTheLine) return;
+        field.focus();
+      });
+    },
+
+    /** Whether Identify on this card (or, with `null`, on a tile) is held
+     * back: while a new device waits for its name, its blink is how the
+     * user finds it, and a click elsewhere would take the blink away
+     * (only one device blinks at a time). The front card itself keeps
+     * its button, to stop the blink. */
+    identifyBlockedByNaming(cardId) {
+      const naming = this.commissioning?.naming ?? [];
+      return naming.length > 0 && naming[0] !== cardId;
+    },
+
+    /** The name, then the confirmation: the bridge renames the device on
+     * confirm from the card's name, so the PATCH has to land first. A
+     * refusal (no name: 422) shows the bridge's sentence. */
+    async confirmName(card, name) {
+      this.commissioningError = null;
+      try {
+        await this.request("PATCH", `/api/commissioning/cards/${card.id}`, { name });
+        await this.request("POST", `/api/commissioning/cards/${card.id}/confirm-name`);
+      } catch (error) {
+        this.commissioningError = error.message;
+      }
+      await this.loadCommissioning();
+    },
+
+    async skipName(card) {
+      this.commissioningError = null;
+      await this.request("POST", `/api/commissioning/cards/${card.id}/skip-name`).catch((error) => {
+        this.commissioningError = error.message;
+      });
+      await this.loadCommissioning();
+    },
+
+    /** Identify from a card: stops the blink if this card's device is the
+     * one blinking, starts it (30 s) otherwise. */
+    async toggleCardIdentify(card) {
+      this.commissioningError = null;
+      const on = this.commissioning?.blinking_card !== card.id;
+      await this.request("POST", `/api/commissioning/cards/${card.id}/identify`, { on }).catch(
+        (error) => {
+          this.commissioningError = error.message;
+        }
+      );
+      await this.loadCommissioning();
+    },
+
+    /** Identify from a tile's kebab menu (design 9.3). A refusal - no
+     * Identify cluster (409), device unreachable (502) - reaches the
+     * devices page's action banner. */
+    async toggleDeviceIdentify(device) {
+      const on = this.deviceBlinking !== device.id;
+      this.deviceActionError = null;
+      try {
+        await this.request("POST", `/api/devices/${device.id}/identify`, { on });
+        this.deviceBlinking = on ? device.id : null;
+        clearTimeout(this.deviceBlinkTimer);
+        this.deviceBlinkTimer = null;
+        if (on) {
+          this.deviceBlinkTimer = setTimeout(() => {
+            if (this.deviceBlinking === device.id) this.deviceBlinking = null;
+          }, 30000);
+        }
+      } catch (error) {
+        this.deviceActionError = error.message;
+      }
     },
 
     /** A card that names a device this page does not list yet has just

@@ -17084,8 +17084,10 @@ async def test_the_entry_button_reads_commission_devices(api):
     page = (await client.get("/")).text
     (button,) = [
         attributes
-        for tag, attributes, _ancestors in _served_elements(page)
-        if tag == "button" and attributes.get("@click") == "openCommissionDialog()"
+        for tag, attributes, ancestors in _served_elements(page)
+        if tag == "button"
+        and attributes.get("@click") == "openCommissionDialog()"
+        and not any(a.get("class") == "commission-background" for _, a in ancestors)
     ]
     assert button["x-text"] == "t('web.devices.commission_heading')"
     strings = yaml.safe_load((WEB_DIR.parent / "i18n" / "strings.yaml").read_text("utf-8"))
@@ -17168,3 +17170,482 @@ async def test_the_warning_the_note_and_the_name_field_follow_their_bindings(api
         "unfocused": "Old",
         "unnamed": "",
     }
+
+
+# --- Task 9: naming line, identify, background line (design 4.4, 9) -----
+
+
+def _tile_menu_element(page: str, tag: str, predicate) -> dict[str, str]:
+    """The one `tag` inside a DEVICE tile's kebab menu (not a group's) that
+    `predicate` accepts."""
+    matches = [
+        attributes
+        for element_tag, attributes, ancestors in _served_elements(page)
+        if element_tag == tag
+        and any(a.get("class") == "tile-menu-items" for _, a in ancestors)
+        and predicate(attributes)
+    ]
+    assert len(matches) == 1, (tag, len(matches))
+    return matches[0]
+
+
+def _naming_strings() -> dict:
+    return yaml.safe_load((WEB_DIR.parent / "i18n" / "strings.yaml").read_text("utf-8"))
+
+
+async def test_the_naming_line_and_identify_are_delivered(api):
+    """A card in the naming line asks for its name, offers "Use name" and
+    "Continue without a name", and every card with a blinking device has
+    Identify; the device tile's kebab menu has Identify for a device that
+    can blink, before Export.
+
+    Fault to prove it: drop the prompt, a button, or the menu item."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+    script = (await client.get("/static/app.js")).text
+    prompt = _card_element(
+        page, "p", lambda a: a.get("x-text") == "t('web.commissioning.naming_prompt')"
+    )
+    assert prompt["x-show"] == "isNamingFront(card)"
+    confirm = _card_element(page, "button", lambda a: "confirmName(card" in a.get("@click", ""))
+    assert confirm["x-show"] == "card.state === 'naming'"
+    skip = _card_element(page, "button", lambda a: a.get("@click") == "skipName(card)")
+    assert skip["x-show"] == "card.state === 'naming'"
+    identify = _card_element(
+        page, "button", lambda a: a.get("@click") == "toggleCardIdentify(card)"
+    )
+    assert "card.can_identify" in identify["x-show"]
+    item = _tile_menu_element(
+        page, "button", lambda a: "toggleDeviceIdentify(device)" in a.get("@click", "")
+    )
+    assert item["x-show"] == "device.identify"
+    menu = page[page.index('<div class="tile-menu-items">') :]
+    assert menu.index("toggleDeviceIdentify(device)") < menu.index("exportDevice(device)")
+    for route in (
+        "/confirm-name`",
+        "/skip-name`",
+        "/identify`",
+    ):
+        assert route in script, route
+    strings = _naming_strings()
+    for key in (
+        "naming_prompt",
+        "confirm_name",
+        "skip_name",
+        "identify",
+        "identify_stop",
+        "identify_blocked",
+        "background",
+        "open_dialog",
+    ):
+        entry = strings["web.commissioning." + key]
+        assert entry["en"] and entry["de"], key
+    assert strings["web.commissioning.open_dialog"] == {"en": "Open dialog", "de": "Dialog öffnen"}
+
+
+async def test_the_background_line_sits_on_the_devices_page_outside_the_dialog(api):
+    """While the session has work and the dialog is closed, the devices
+    page says so and offers to open the dialog again.
+
+    Fault to prove it: put the line inside the dialog, or show it while
+    the dialog is open."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+    (line,) = [
+        (attributes, ancestors)
+        for tag, attributes, ancestors in _served_elements(page)
+        if tag == "div" and attributes.get("class") == "commission-background"
+    ]
+    attributes, ancestors = line
+    assert attributes["x-show"] == "commissioningHasWork() && !commissionDialogOpen"
+    assert not any(a.get("x-ref") == "commissionDialog" for _, a in ancestors)
+    assert any(a.get("x-show") == "view === 'devices'" for _, a in ancestors)
+    (button,) = [
+        attrs
+        for tag, attrs, anc in _served_elements(page)
+        if tag == "button" and any(a.get("class") == "commission-background" for _, a in anc)
+    ]
+    assert button["@click"] == "openCommissionDialog()"
+    assert button["x-text"] == "t('web.commissioning.open_dialog')"
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+async def test_the_background_line_counts_what_runs_and_what_waits(api):
+    """The served sentence, run: two in progress (queued and running), one
+    waiting for a name; and the line shows only with the dialog closed.
+
+    Fault to prove it: count `ready` cards as in progress."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+    (line,) = [
+        attributes
+        for tag, attributes, _ in _served_elements(page)
+        if tag == "div" and attributes.get("class") == "commission-background"
+    ]
+    (sentence,) = [
+        attrs
+        for tag, attrs, anc in _served_elements(page)
+        if tag == "span"
+        and attrs.get("class") == "grow"
+        and any(a.get("class") == "commission-background" for _, a in anc)
+    ]
+    cards = [
+        _commissioning_card(1, "running"),
+        _commissioning_card(2, "queued"),
+        _commissioning_card(3, "ready"),
+        _commissioning_card(4, "naming"),
+        _commissioning_card(5, "done"),
+    ]
+    values = _app_state(
+        _BINDINGS_JS
+        + _commissioning_view(cards, naming=[4])
+        + f"""
+        const out = {{}};
+        out.text = run({json.dumps(sentence["x-text"])});
+        state.commissionDialogOpen = true;
+        out.open = Boolean(run({json.dumps(line["x-show"])}));
+        state.commissionDialogOpen = false;
+        out.closed = Boolean(run({json.dumps(line["x-show"])}));
+        console.log(JSON.stringify(out));
+        """,
+        translations={
+            "web.commissioning.background": "{working} in progress, {naming} waiting.",
+        },
+    )
+    assert values == {"text": "2 in progress, 1 waiting.", "open": False, "closed": True}
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_only_the_front_of_the_naming_line_is_asked_for_its_name():
+    """`isNamingFront` is the first card of the line, in state `naming`;
+    `namingFocusTarget` names a card only when the front changed to it.
+
+    Fault to prove it: answer true for every naming card, or focus the
+    front on every poll."""
+    values = _app_state(
+        _commissioning_view(
+            [_commissioning_card(1, "naming"), _commissioning_card(2, "naming")], naming=[2, 1]
+        )
+        + """
+        const out = {};
+        const cards = state.commissioning.cards;
+        out.front = cards.map((card) => state.isNamingFront(card));
+        out.empty = state.isNamingFront({ id: 2, state: 'done' });
+        out.first = state.namingFocusTarget(null, { naming: [2, 1] });
+        out.same = state.namingFocusTarget({ naming: [2, 1] }, { naming: [2, 1] });
+        out.next = state.namingFocusTarget({ naming: [2, 1] }, { naming: [1] });
+        out.gone = state.namingFocusTarget({ naming: [1] }, { naming: [] });
+        out.added = state.namingFocusTarget({ naming: [] }, { naming: [7] });
+        console.log(JSON.stringify(out));
+        """
+    )
+    assert values == {
+        "front": [False, True],
+        "empty": False,
+        "first": 2,
+        "same": None,
+        "next": 1,
+        "gone": None,
+        "added": 7,
+    }
+
+
+# The page's `document` for the focus tests: one name field per card id,
+# recording which one was focused.
+_FOCUS_DOCUMENT_JS = """
+const focused = [];
+const fields = {};
+const fieldFor = (id) => fields[id] ??= { tagName: 'INPUT', value: '', getAttribute: (name) => (name === 'data-card-name' ? String(id) : null), focus() { focused.push(id); globalThis.document.activeElement = this; } };
+globalThis.document = {
+  activeElement: null,
+  querySelector(selector) {
+    const match = /^\\[data-card-name="(\\d+)"\\]$/.exec(selector);
+    return match ? fieldFor(Number(match[1])) : null;
+  },
+};
+"""
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_a_new_front_of_the_naming_line_takes_the_focus_while_the_dialog_is_open():
+    """After a poll in which a card became the front of the line, its name
+    field takes the focus; a poll that changes nothing leaves the focus
+    alone, and so does a closed dialog. Someone halfway through typing
+    another code keeps their field.
+
+    Fault to prove it: drop the focus from `loadCommissioning()`, or focus
+    with the dialog closed."""
+    values = _app_state(
+        _BINDINGS_JS
+        + _FOCUS_DOCUMENT_JS
+        + """
+        let answer = { cards: [], naming: [] };
+        state.request = async () => answer;
+        state.authenticated = true;
+        state.$nextTick = (callback) => callback();
+        (async () => {
+          const out = {};
+          state.commissionDialogOpen = true;
+          await state.loadCommissioning();
+          answer = { cards: [], naming: [3] };
+          await state.loadCommissioning();
+          out.first = [...focused];
+          await state.loadCommissioning();
+          out.again = [...focused];
+          answer = { cards: [], naming: [3, 4] };
+          await state.loadCommissioning();
+          out.behind = [...focused];
+          // The name typed into 3 and confirmed: 3 left the line, and its
+          // filled field hands the focus on.
+          fieldFor(3).value = 'Desk lamp';
+          answer = { cards: [], naming: [4] };
+          await state.loadCommissioning();
+          out.next = [...focused];
+          // A filled name field of a card still in the line keeps it.
+          fieldFor(4).value = 'Hall';
+          answer = { cards: [], naming: [9, 4] };
+          await state.loadCommissioning();
+          out.stillNaming = [...focused];
+          state.commissionDialogOpen = false;
+          answer = { cards: [], naming: [5] };
+          await state.loadCommissioning();
+          out.closed = [...focused];
+          state.commissionDialogOpen = true;
+          globalThis.document.activeElement = { tagName: 'INPUT', value: 'MT:Y.K9' };
+          answer = { cards: [], naming: [6] };
+          await state.loadCommissioning();
+          out.typing = [...focused];
+          console.log(JSON.stringify(out));
+        })();
+        """
+    )
+    assert values == {
+        "first": [3],
+        "again": [3],
+        "behind": [3],
+        "next": [3, 4],
+        "stillNaming": [3, 4],
+        "closed": [3, 4],
+        "typing": [3, 4],
+    }
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_opening_the_dialog_over_a_waiting_device_focuses_its_name():
+    """The background line's "Open dialog" leads to the device that waits:
+    the front of the line takes the focus even when the poll before had
+    the same front.
+
+    Fault to prove it: focus only on a change of the front."""
+    values = _app_state(
+        _BINDINGS_JS
+        + _FOCUS_DOCUMENT_JS
+        + """
+        state.request = async () => ({ cards: [], naming: [8] });
+        state.authenticated = true;
+        state.commissionTab = 'matter';
+        state.$nextTick = (callback) => callback();
+        state.$refs = { commissionDialog: { showModal() {} }, commissionCode: { focus() {} } };
+        (async () => {
+          state.commissionDialogOpen = false;
+          await state.loadCommissioning();
+          const before = [...focused];
+          await state.openCommissionDialog();
+          console.log(JSON.stringify({ before, after: [...focused] }));
+        })();
+        """
+    )
+    assert values == {"before": [], "after": [8]}
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+async def test_naming_confirms_skips_and_identifies_through_the_routes(api):
+    """Enter in a naming card's name field and "Use name" PATCH the name and
+    confirm it; Enter on any other card only PATCHes; "Continue without a
+    name" skips; Identify starts the card's blink and stops it while it is
+    the blinking card. A refused confirm shows the bridge's sentence.
+
+    Fault to prove it: confirm without the PATCH, or send `on: true` for
+    the blinking card."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+    name = _card_element(page, "input", lambda a: a.get(":data-card-name") == "card.id")
+    confirm = _card_element(page, "button", lambda a: "confirmName(card" in a.get("@click", ""))
+    values = _app_state(
+        _BINDINGS_JS
+        + _commissioning_view([], naming=[4], blinking_card=4)
+        + f"""
+        const asked = [];
+        state.request = async (method, path, payload) => {{
+          asked.push([method, path, payload ?? null]);
+          if (path.endsWith('/9/confirm-name')) throw new Error('A name is missing.');
+          if (method === 'GET') return {{ cards: [], naming: [4], blinking_card: 4 }};
+          return {{}};
+        }};
+        (async () => {{
+          const out = {{}};
+          const naming = {{ id: 4, state: 'naming', name: null }};
+          const done = {{ id: 5, state: 'done', name: null }};
+          await exec({json.dumps(name["@keydown.enter.prevent"])},
+            {{ card: naming, $event: {{ target: {{ value: 'Desk lamp' }} }} }});
+          await exec({json.dumps(name["@keydown.enter.prevent"])},
+            {{ card: done, $event: {{ target: {{ value: 'Hall' }} }} }});
+          const field = {{ value: 'Porch' }};
+          const cardElement = {{ querySelector: () => field }};
+          await exec({json.dumps(confirm["@click"])},
+            {{ card: naming, $el: {{ closest: () => cardElement }} }});
+          await state.skipName(naming);
+          await state.toggleCardIdentify({{ id: 4 }});
+          await state.toggleCardIdentify({{ id: 5 }});
+          await state.confirmName({{ id: 9, state: 'naming' }}, '');
+          out.error = state.commissioningError;
+          out.sent = asked.filter(([m]) => m !== 'GET');
+          console.log(JSON.stringify(out));
+        }})();
+        """
+    )
+    assert values["sent"] == [
+        ["PATCH", "/api/commissioning/cards/4", {"name": "Desk lamp"}],
+        ["POST", "/api/commissioning/cards/4/confirm-name", None],
+        ["PATCH", "/api/commissioning/cards/5", {"name": "Hall"}],
+        ["PATCH", "/api/commissioning/cards/4", {"name": "Porch"}],
+        ["POST", "/api/commissioning/cards/4/confirm-name", None],
+        ["POST", "/api/commissioning/cards/4/skip-name", None],
+        ["POST", "/api/commissioning/cards/4/identify", {"on": False}],
+        ["POST", "/api/commissioning/cards/5/identify", {"on": True}],
+        ["PATCH", "/api/commissioning/cards/9", {"name": ""}],
+        ["POST", "/api/commissioning/cards/9/confirm-name", None],
+    ]
+    assert values["error"] == "A name is missing."
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+async def test_identify_waits_while_a_new_device_waits_for_its_name(api):
+    """While the naming line is not empty, Identify on any other card and
+    in every tile menu is disabled with the reason as its title - a click
+    there would take the blink away from the device being named. The
+    front card keeps its button (to stop the blink).
+
+    Fault to prove it: bind no `:disabled`, or disable the front card's
+    button as well."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+    card_button = _card_element(
+        page, "button", lambda a: a.get("@click") == "toggleCardIdentify(card)"
+    )
+    tile_item = _tile_menu_element(
+        page, "button", lambda a: "toggleDeviceIdentify(device)" in a.get("@click", "")
+    )
+    values = _app_state(
+        _BINDINGS_JS
+        + _commissioning_view([], naming=[4, 6], blinking_card=4)
+        + f"""
+        const out = {{}};
+        const card = {json.dumps(card_button)};
+        const tile = {json.dumps(tile_item)};
+        out.front = boundTrue(card[':disabled'], {{ card: {{ id: 4 }} }});
+        out.behind = boundTrue(card[':disabled'], {{ card: {{ id: 6 }} }});
+        out.other = boundTrue(card[':disabled'], {{ card: {{ id: 5 }} }});
+        out.otherTitle = run(card[':title'], {{ card: {{ id: 5 }} }});
+        out.frontTitle = run(card[':title'], {{ card: {{ id: 4 }} }});
+        out.tile = boundTrue(tile[':disabled'], {{ device: {{ id: 1 }} }});
+        out.tileTitle = run(tile[':title'], {{ device: {{ id: 1 }} }});
+        state.commissioning.naming = [];
+        out.otherFree = boundTrue(card[':disabled'], {{ card: {{ id: 5 }} }});
+        out.tileFree = boundTrue(tile[':disabled'], {{ device: {{ id: 1 }} }});
+        out.tileFreeTitle = run(tile[':title'], {{ device: {{ id: 1 }} }});
+        state.commissioning = null;
+        out.tileNoView = boundTrue(tile[':disabled'], {{ device: {{ id: 1 }} }});
+        console.log(JSON.stringify(out));
+        """,
+        translations={"web.commissioning.identify_blocked": "Waiting for a name."},
+    )
+    assert values == {
+        "front": False,
+        "behind": True,
+        "other": True,
+        "otherTitle": "Waiting for a name.",
+        "frontTitle": None,
+        "tile": True,
+        "tileTitle": "Waiting for a name.",
+        "otherFree": False,
+        "tileFree": False,
+        "tileFreeTitle": None,
+        "tileNoView": False,
+    }
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_a_tile_identify_runs_thirty_seconds_and_shows_a_refusal_in_the_banner():
+    """`toggleDeviceIdentify` starts the blink, marks the tile for 30 s (the
+    bridge runs it 30 s without renewal), stops it on the second click, and
+    puts a 409/502 into the devices page's action banner.
+
+    Fault to prove it: keep `deviceBlinking` past the timer, or swallow the
+    error."""
+    values = _app_state(
+        """
+        const timers = [];
+        globalThis.setTimeout = (callback, ms) => { timers.push([callback, ms]); return timers.length; };
+        globalThis.clearTimeout = () => {};
+        const asked = [];
+        state.request = async (method, path, payload) => {
+          asked.push([method, path, payload]);
+          if (path === '/api/devices/2/identify') throw new Error('The device does not answer.');
+        };
+        (async () => {
+          const out = {};
+          await state.toggleDeviceIdentify({ id: 1 });
+          out.on = state.deviceBlinking;
+          out.ms = timers.at(-1)[1];
+          await state.toggleDeviceIdentify({ id: 1 });
+          out.off = state.deviceBlinking;
+          await state.toggleDeviceIdentify({ id: 1 });
+          timers.at(-1)[0]();
+          out.lapsed = state.deviceBlinking;
+          await state.toggleDeviceIdentify({ id: 2 });
+          out.failed = state.deviceBlinking;
+          out.error = state.deviceActionError;
+          out.sent = asked;
+          console.log(JSON.stringify(out));
+        })();
+        """
+    )
+    assert values["on"] == 1
+    assert values["ms"] == 30000
+    assert values["off"] is None
+    assert values["lapsed"] is None
+    assert values["failed"] is None
+    assert values["error"] == "The device does not answer."
+    assert values["sent"] == [
+        ["POST", "/api/devices/1/identify", {"on": True}],
+        ["POST", "/api/devices/1/identify", {"on": False}],
+        ["POST", "/api/devices/1/identify", {"on": True}],
+        ["POST", "/api/devices/2/identify", {"on": True}],
+    ]
+
+
+async def test_escape_in_a_cards_new_room_field_does_not_close_the_dialog(api):
+    """A modal `<dialog>` closes on Escape; the new-room field's Escape
+    cancels the field and must not travel on to the dialog.
+
+    Fault to prove it: `@keydown.escape.stop` without `.prevent`."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+    field = _card_element(page, "input", lambda a: a.get("class") == "new-room-input")
+    assert field.get("@keydown.escape.stop.prevent") == "cancelCardNewRoom()"
+
+
+async def test_a_blinking_card_pulses_its_icon(api):
+    """The card whose device blinks pulses its icon, and the pulse stops
+    for anyone who asked for less motion.
+
+    Fault to prove it: drop the class binding or the reduced-motion rule."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+    css = (await client.get("/static/style.css")).text
+    badge = _card_element(page, "span", lambda a: "is-blinking" in a.get(":class", ""))
+    assert "commissioning?.blinking_card === card.id" in badge[":class"]
+    assert ".is-blinking" in css
+    reduced = css.split("@media (prefers-reduced-motion: reduce)")
+    assert any(".is-blinking" in part.split("}\n}", 1)[0] for part in reduced[1:])

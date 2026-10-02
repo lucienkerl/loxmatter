@@ -4118,6 +4118,66 @@ p.zigbee-countdown {
   }
 }
 
+/* The devices page's line while commissioning runs with the dialog
+ * closed. */
+.commission-background {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  margin: 0 0 1rem;
+  padding: 0.6rem 0.85rem;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  background: var(--type-bg);
+  color: var(--accent);
+}
+
+.commission-background .grow {
+  flex: 1 1 12rem;
+  min-width: 0;
+  color: var(--text);
+}
+
+/* The front of the naming line asks for its name in the accent, the
+ * colour of "your turn". */
+.commission-naming-prompt {
+  margin: 0;
+  font-weight: 600;
+  color: var(--accent);
+}
+
+/* The card whose device blinks: its icon pulses copper to yellow, like
+ * the device's own light. */
+.type-badge.is-blinking {
+  animation: commission-identify-pulse 1s ease-in-out infinite alternate;
+}
+
+@keyframes commission-identify-pulse {
+  from {
+    background: var(--type-bg);
+    color: var(--accent);
+  }
+  to {
+    background: #f6d24a;
+    color: #5a3a00;
+  }
+}
+
+/* Identify while it runs: pressed. */
+.commission-card-actions button.is-on {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .type-badge.is-blinking {
+    animation: none;
+    background: #f6d24a;
+    color: #5a3a00;
+  }
+}
+
 .commission-card-fields {
   display: flex;
   gap: 0.5rem;

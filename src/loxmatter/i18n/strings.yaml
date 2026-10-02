@@ -1340,6 +1340,34 @@ web.commissioning.thread_dataset_remove:
 web.commissioning.close:
   en: "Close"
   de: "Schließen"
+web.commissioning.naming_prompt:
+  en: "This device is blinking. Which one is it? Enter a name and press Enter."
+  de: "Dieses Gerät blinkt. Welches ist es? Tragen Sie einen Namen ein und drücken Sie Enter."
+web.commissioning.confirm_name:
+  en: "Use name"
+  de: "Name übernehmen"
+web.commissioning.skip_name:
+  en: "Continue without a name"
+  de: "Ohne Namen weiter"
+web.commissioning.identify:
+  en: "Identify"
+  de: "Identifizieren"
+web.commissioning.identify_stop:
+  en: "Stop identifying"
+  de: "Identifizieren stoppen"
+web.commissioning.identify_blocked:
+  # The title of a disabled Identify button: only one device blinks at a
+  # time, and the one waiting for its name keeps the blink.
+  en: "A new device is waiting for its name."
+  de: "Ein neues Gerät wartet auf seinen Namen."
+web.commissioning.background:
+  en: "Commissioning in the background: {working} in progress, {naming} waiting for a name."
+  de: "Einlernen läuft im Hintergrund: {working} in Arbeit, {naming} warten auf Namen."
+web.commissioning.open_dialog:
+  # The background line's button only; the devices page's entry button
+  # reads "Commission devices" (`web.devices.commission_heading`).
+  en: "Open dialog"
+  de: "Dialog öffnen"
 web.commissioning.intro:
   en: "Put the devices into pairing mode, then scan their codes one after another. Each code lands on its device's card; the bridge commissions them one by one in the background."
   de: "Versetzen Sie die Geräte in den Anlernmodus und scannen Sie dann ihre Codes nacheinander. Jeder Code landet auf der Karte seines Geräts; die Bridge lernt sie im Hintergrund eines nach dem anderen ein."

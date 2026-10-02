@@ -387,6 +387,16 @@
           </div>
         </div>
 
+        <!-- Commissioning that goes on with the dialog closed (design 4.4):
+             what is in progress, what waits for a name, and the way back
+             to the dialog. The page polls every five seconds meanwhile
+             (`scheduleCommissioningPoll()`). -->
+        <div class="commission-background" x-show="commissioningHasWork() && !commissionDialogOpen" x-cloak>
+          <span class="spinner" aria-hidden="true"></span>
+          <span class="grow" x-text="t('web.commissioning.background', { working: (commissioning?.cards ?? []).filter((c) => ['queued', 'running'].includes(c.state)).length, naming: (commissioning?.naming ?? []).length })"></span>
+          <button type="button" @click="openCommissionDialog()" x-text="t('web.commissioning.open_dialog')"></button>
+        </div>
+
         <p x-show="devicesError" x-cloak class="banner danger" x-text="devicesError"></p>
         <p x-show="deviceActionError" x-cloak class="banner danger" x-text="deviceActionError"></p>
         <p x-show="groupsError" x-cloak class="banner danger" x-text="groupsError"></p>
@@ -1331,6 +1341,17 @@
                           x-show="firmwareFor(device.id) && firmwareFor(device.id).state !== 'no_source'"
                           @click="closeTileMenu($el); openFirmwareModal(device)"
                           x-text="t('web.devices.menu_firmware')"
+                        ></button>
+                        <!-- Identify (design 9.3): only for a device that can
+                             blink, held back while a new device waits for its
+                             name (`identifyBlockedByNaming()`). -->
+                        <button
+                          class="tile-menu-item"
+                          x-show="device.identify"
+                          :disabled="identifyBlockedByNaming(null)"
+                          :title="identifyBlockedByNaming(null) ? t('web.commissioning.identify_blocked') : null"
+                          @click="closeTileMenu($el); toggleDeviceIdentify(device)"
+                          x-text="deviceBlinking === device.id ? t('web.commissioning.identify_stop') : t('web.commissioning.identify')"
                         ></button>
                         <button
                           class="tile-menu-item"
@@ -3711,7 +3732,8 @@
           <template x-for="card in sortedCards()" :key="card.id">
             <div class="commission-card" :class="'is-' + card.state">
               <div class="commission-card-top">
-                <span class="type-badge" aria-hidden="true">
+                <span class="type-badge" aria-hidden="true"
+                      :class="{ 'is-blinking': commissioning?.blinking_card === card.id }">
                   <svg class="icon"><use href="#i-cat-other"></use></svg>
                 </span>
                 <div class="grow">
@@ -3729,6 +3751,8 @@
                 <span class="hint" x-show="card.has_code" x-text="t('web.commissioning.code_ok')"></span>
               </div>
               <p class="hint" x-show="card.note" x-text="card.note"></p>
+              <p class="commission-naming-prompt" x-show="isNamingFront(card)"
+                 x-text="t('web.commissioning.naming_prompt')"></p>
               <!-- Name and room from the moment a code is attached, and in
                    every later state: the bridge forgets the code once a
                    card is done, so `has_code` alone would take the fields
@@ -3744,7 +3768,7 @@
                          :data-card-name="card.id"
                          x-effect="if (document.activeElement !== $el) $el.value = card.name ?? ''"
                          @change="patchCard(card, { name: $event.target.value })"
-                         @keydown.enter.prevent="patchCard(card, { name: $event.target.value })" />
+                         @keydown.enter.prevent="card.state === 'naming' ? confirmName(card, $event.target.value) : patchCard(card, { name: $event.target.value })" />
                   <select :aria-label="t('web.commissioning.room')"
                           @change="chooseCardRoom(card, $event.target.value)">
                     <option value="" :selected="!card.room && commissionNewRoomFor !== card.id"
@@ -3759,7 +3783,8 @@
                   </select>
                   <!-- The new room's name: Enter or leaving the field PATCHes
                        it (`saveCardNewRoom()`), Escape or an empty field
-                       keeps the card's room. -->
+                       keeps the card's room. Escape is also prevented: a
+                       modal `<dialog>` would close on it. -->
                   <input x-show="commissionNewRoomFor === card.id" x-cloak
                          type="text" class="new-room-input"
                          x-model="commissionNewRoomDraft"
@@ -3767,11 +3792,27 @@
                          :placeholder="t('web.devices.room_new_placeholder')"
                          :aria-label="t('web.devices.room_new_placeholder')"
                          @keydown.enter.prevent="saveCardNewRoom(card)"
-                         @keydown.escape.stop="cancelCardNewRoom()"
+                         @keydown.escape.stop.prevent="cancelCardNewRoom()"
                          @blur="saveCardNewRoom(card)" />
                 </div>
               </template>
+              <!-- Naming (design 4.4) and Identify (9). "Use name" reads the
+                   field itself: its text reaches `card.name` only through a
+                   PATCH, and none has been sent while it is typed. Identify
+                   on any card but the front of the naming line waits while
+                   the line is not empty (`identifyBlockedByNaming()`). -->
               <div class="commission-card-actions">
+                <button type="button" class="primary" x-show="card.state === 'naming'"
+                        @click="confirmName(card, $el.closest('.commission-card').querySelector('[data-card-name]')?.value ?? card.name ?? '')"
+                        x-text="t('web.commissioning.confirm_name')"></button>
+                <button type="button" x-show="card.state === 'naming'"
+                        @click="skipName(card)" x-text="t('web.commissioning.skip_name')"></button>
+                <button type="button" x-show="card.can_identify && ['naming', 'done'].includes(card.state)"
+                        :class="{ 'is-on': commissioning?.blinking_card === card.id }"
+                        :disabled="identifyBlockedByNaming(card.id)"
+                        :title="identifyBlockedByNaming(card.id) ? t('web.commissioning.identify_blocked') : null"
+                        @click="toggleCardIdentify(card)"
+                        x-text="commissioning?.blinking_card === card.id ? t('web.commissioning.identify_stop') : t('web.commissioning.identify')"></button>
                 <button type="button" x-show="['not_nearby', 'failed'].includes(card.state)"
                         @click="rescanCommissioning()" x-text="t('web.commissioning.scan_again')"></button>
                 <button type="button" x-show="['not_nearby', 'failed'].includes(card.state)"
