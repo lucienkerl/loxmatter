@@ -279,6 +279,12 @@ class CommissioningSession:
                 logger.warning("Bluetooth scan failed: %s", exc)
                 self.bluetooth_warning = True
                 return False
+            except Exception as exc:  # noqa: BLE001 - any failure is a warning
+                # dbus-fast's own errors when the bus drops, or a snapshot
+                # that could not be built: the same warning, type only.
+                logger.warning("Bluetooth scan failed unexpectedly: %s", type(exc).__name__)
+                self.bluetooth_warning = True
+                return False
             finally:
                 self._scanning = False
         async with self._results:
@@ -449,11 +455,12 @@ class CommissioningSession:
         card = self._card(card_id)
         if name is not None:
             _refuse_a_code_as_name(name)
+        if card.device_id is not None and (card.state == "done" or not isinstance(room, Unset)):
+            self._check_device(card)
+        if name is not None:
             card.name = name
         if not isinstance(room, Unset):
             card.room = room
-        if card.device_id is not None and (card.state == "done" or not isinstance(room, Unset)):
-            self._check_device(card)
         if card.device_id is not None and card.state == "done":
             if name is not None and name.strip():
                 self._store.rename_device(card.device_id, name.strip())
@@ -547,6 +554,16 @@ class CommissioningSession:
                 # the card stays queued and the loop waits for it (8.3).
                 client = self._client_for()
                 if client is None or not client.connected:
+                    continue
+                # A scan that ran meanwhile may no longer see the device.
+                if (
+                    card.advert_address is not None
+                    and card_id not in self._forced
+                    and card.advert_address not in self._latest
+                ):
+                    self._queue.pop(0)
+                    card.state = "not_nearby"
+                    card.note = i18n.t("web.commissioning.note_not_nearby", hint=card.pairing_hint)
                     continue
                 self._queue.pop(0)
                 self._forced.discard(card_id)

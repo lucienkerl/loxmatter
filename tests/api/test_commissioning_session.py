@@ -853,3 +853,45 @@ async def test_confirming_a_name_does_not_wait_for_the_device(h):
     assert stopped == []
     answer.set()
     await settle_until(lambda: stopped == [True], "the blink stops in the background")
+
+
+async def test_any_scan_failure_warns_and_reports_false(h, caplog):
+    h.scanner.fail_with = RuntimeError("the bus dropped")
+    with caplog.at_level(logging.DEBUG):
+        assert not await h.session.scan()
+    assert h.session.view()["bluetooth_warning"] is True
+    assert h.session.view()["scan"]["state"] == "idle"
+    assert "RuntimeError" in caplog.text
+    assert "the bus dropped" not in caplog.text
+
+
+async def test_the_worker_rechecks_range_after_taking_the_radio(h):
+    card = await ready_card(h, "AA:01", 3840, KAJPLATS_E27, -60, QR_CODE)
+    h.scanner.hold = asyncio.Event()
+    h.scanner.adverts = []
+    scans = len(h.scanner.scans)
+    scan = asyncio.ensure_future(h.session.scan())
+    await settle_until(lambda: len(h.scanner.scans) == scans + 1, "the scan runs")
+    await h.session.start()
+    await settle_until(lambda: h.session._radio._waiters, "the worker waits for the radio")
+    hold, h.scanner.hold = h.scanner.hold, None
+    hold.set()
+    assert await scan
+    await idle(h)
+    assert card_view(h, card.id)["state"] == "not_nearby"
+    assert h.gate.calls == 0
+
+
+async def test_a_refused_update_leaves_name_and_room_alone(h):
+    card = await h.session.add_code(QR_CODE_ON_NETWORK, None)
+    await h.session.start()
+    await idle(h)
+    await h.session.skip_name(card.id)
+    before = card_view(h, card.id)
+    h.store.forget_device(before["device_id"])
+    with pytest.raises(CodeRejected) as gone:
+        await h.session.update_card(card.id, name="Flurlampe", room="Flur")
+    assert gone.value.status == 404
+    after = card_view(h, card.id)
+    assert after["name"] == before["name"]
+    assert after["room"] == before["room"]
