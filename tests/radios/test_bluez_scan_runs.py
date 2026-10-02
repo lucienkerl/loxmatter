@@ -1,103 +1,176 @@
 """The bridge's own scan (design 2026-10-02, section 6.1). The call order
-is the one measured on the test Pi on October 2, 2026."""
+is the one measured on the test Pi on October 2, 2026.
+
+Also measured there: BlueZ ties `SetDiscoveryFilter` and `StartDiscovery`
+to the D-Bus connection that called them and ends that discovery when the
+connection closes, and on 29 September 2026 that it clears every device's
+`RSSI` once discovery stops. So every call of one scan goes through one
+connection, and the objects are read before `StopDiscovery`."""
+
+import asyncio
 
 import pytest
 
-from loxmatter.radios.bluez import MATTER_SERVICE_UUID, BluezScanError, BluezScanner
+from loxmatter.radios.bluez import (
+    MATTER_SERVICE_UUID,
+    BluezScanError,
+    BluezScanner,
+    BluezSnapshot,
+)
+
+LAMP_SERVICE_DATA = bytes.fromhex("0023047c11019000")
 
 
-class Calls:
-    def __init__(self, fail_on=None, fail_with_exception=None):
+def _objects(*, rssi):
+    device = {
+        "Address": "AA:BB:CC:DD:EE:01",
+        "ServiceData": {MATTER_SERVICE_UUID: LAMP_SERVICE_DATA},
+        "Connected": False,
+        "Adapter": "/org/bluez/hci0",
+    }
+    if rssi is not None:
+        device["RSSI"] = rssi
+    return {
+        "/org/bluez/hci0": {"org.bluez.Adapter1": {"Powered": True, "Discovering": True}},
+        "/org/bluez/hci0/dev_AA_BB_CC_DD_EE_01": {"org.bluez.Device1": device},
+    }
+
+
+class Connection:
+    """One D-Bus connection. Like BlueZ, it forgets every RSSI once
+    discovery stops - an object read after `StopDiscovery` has none."""
+
+    def __init__(self, bus, number):
+        self.bus = bus
+        self.number = number
+        self.closed = False
+        self.discovering = False
+
+    async def call(self, path, interface, member, signature, body):
+        assert not self.closed, "a call on a closed connection"
+        self.bus.made.append((self.number, path, interface, member, signature, body))
+        if member == self.bus.fail_on:
+            raise self.bus.fail_with(f"{member} refused")
+        if member == "StartDiscovery":
+            self.discovering = True
+        elif member == "StopDiscovery":
+            self.discovering = False
+        elif member == "GetManagedObjects":
+            return [_objects(rssi=-60 if self.discovering else None)]
+        return []
+
+    def disconnect(self):
+        self.closed = True
+        self.discovering = False
+
+
+class Bus:
+    def __init__(self, fail_on=None, fail_with=BluezScanError):
         self.made = []
+        self.connections = []
         self.fail_on = fail_on
-        self.fail_with_exception = fail_with_exception or BluezScanError
+        self.fail_with = fail_with
 
-    async def __call__(self, path, interface, member, signature, body):
-        self.made.append((path, interface, member, signature, body))
-        if member == self.fail_on:
-            raise self.fail_with_exception(f"{member} refused")
+    async def connect(self):
+        connection = Connection(self, len(self.connections))
+        self.connections.append(connection)
+        return connection
+
+    def members(self):
+        return [made[3] for made in self.made]
 
 
-async def test_scan_filters_starts_waits_and_stops():
-    calls = Calls()
+async def noop(seconds):
+    pass
+
+
+async def test_one_connection_filters_starts_waits_reads_and_stops():
+    bus = Bus()
     slept = []
 
     async def sleep(seconds):
         slept.append(seconds)
 
-    await BluezScanner(calls, sleep=sleep).scan()
-    members = [made[2] for made in calls.made]
-    assert members == ["SetDiscoveryFilter", "StartDiscovery", "StopDiscovery"]
-    filter_body = calls.made[0][4][0]
+    await BluezScanner(bus.connect, sleep=sleep).scan()
+    assert bus.members() == [
+        "SetDiscoveryFilter",
+        "StartDiscovery",
+        "GetManagedObjects",
+        "StopDiscovery",
+    ]
+    assert len(bus.connections) == 1
+    assert {made[0] for made in bus.made} == {0}
+    assert bus.connections[0].closed
+    filter_body = bus.made[0][5][0]
     assert filter_body["Transport"].value == "le"
     assert filter_body["UUIDs"].value == [MATTER_SERVICE_UUID]
     assert slept == [10.0]
+    adapter_calls = [made for made in bus.made if made[3] != "GetManagedObjects"]
     assert all(
-        made[0] == "/org/bluez/hci0" and made[1] == "org.bluez.Adapter1" for made in calls.made
+        made[1] == "/org/bluez/hci0" and made[2] == "org.bluez.Adapter1" for made in adapter_calls
     )
 
 
-async def test_stop_runs_even_when_the_wait_is_cancelled():
-    import asyncio
+async def test_the_result_is_read_while_discovery_still_runs():
+    """BlueZ clears every RSSI when discovery stops, and the reader drops a
+    device without one: read after the stop, the scan would find nothing."""
+    snapshot = await BluezScanner(Bus().connect, sleep=noop).scan()
+    assert isinstance(snapshot, BluezSnapshot)
+    assert [advert.address for advert in snapshot.adverts] == ["AA:BB:CC:DD:EE:01"]
+    assert snapshot.adverts[0].rssi == -60
+    assert snapshot.adverts[0].discriminator == 1059
 
-    calls = Calls()
+
+async def test_stop_runs_and_the_connection_closes_when_the_wait_is_cancelled():
+    bus = Bus()
 
     async def sleep(seconds):
         raise asyncio.CancelledError
 
     with pytest.raises(asyncio.CancelledError):
-        await BluezScanner(calls, sleep=sleep).scan()
-    assert calls.made[-1][2] == "StopDiscovery"
+        await BluezScanner(bus.connect, sleep=sleep).scan()
+    assert bus.members()[-1] == "StopDiscovery"
+    assert bus.connections[0].closed
 
 
-async def test_a_refused_start_raises_and_does_not_stop():
-    calls = Calls(fail_on="StartDiscovery")
-
-    async def noop(s):
-        pass
-
+async def test_a_refused_start_raises_does_not_stop_and_closes():
+    bus = Bus(fail_on="StartDiscovery")
     with pytest.raises(BluezScanError):
-        await BluezScanner(calls, sleep=noop).scan()
-    assert [made[2] for made in calls.made] == ["SetDiscoveryFilter", "StartDiscovery"]
+        await BluezScanner(bus.connect, sleep=noop).scan()
+    assert bus.members() == ["SetDiscoveryFilter", "StartDiscovery"]
+    assert bus.connections[0].closed
 
 
-async def test_bluez_scan_error_on_stop_returns_normally():
-    """With StopDiscovery raising BluezScanError, scan() returns normally."""
-    calls = Calls(fail_on="StopDiscovery", fail_with_exception=BluezScanError)
-
-    async def noop(s):
-        pass
-
-    # Should not raise; the exception from StopDiscovery is logged and suppressed
-    await BluezScanner(calls, sleep=noop).scan()
-    assert calls.made[-1][2] == "StopDiscovery"
+async def test_a_refused_filter_raises_and_does_not_start():
+    bus = Bus(fail_on="SetDiscoveryFilter")
+    with pytest.raises(BluezScanError):
+        await BluezScanner(bus.connect, sleep=noop).scan()
+    assert bus.members() == ["SetDiscoveryFilter"]
+    assert bus.connections[0].closed
 
 
-async def test_os_error_on_stop_with_cancelled_sleep_raises_cancelled():
-    """With StopDiscovery raising OSError and sleep raising CancelledError,
-    scan() raises CancelledError (not OSError)."""
-    import asyncio
+async def test_a_refused_stop_still_returns_the_result():
+    bus = Bus(fail_on="StopDiscovery")
+    snapshot = await BluezScanner(bus.connect, sleep=noop).scan()
+    assert bus.members()[-1] == "StopDiscovery"
+    assert [advert.address for advert in snapshot.adverts] == ["AA:BB:CC:DD:EE:01"]
+    assert bus.connections[0].closed
 
-    calls = Calls(fail_on="StopDiscovery", fail_with_exception=OSError)
+
+async def test_a_failed_stop_never_masks_a_cancellation():
+    bus = Bus(fail_on="StopDiscovery", fail_with=OSError)
 
     async def sleep(seconds):
         raise asyncio.CancelledError
 
-    # CancelledError from sleep should be preserved and re-raised,
-    # not replaced by OSError from StopDiscovery
     with pytest.raises(asyncio.CancelledError):
-        await BluezScanner(calls, sleep=sleep).scan()
-    assert calls.made[-1][2] == "StopDiscovery"
+        await BluezScanner(bus.connect, sleep=sleep).scan()
+    assert bus.members()[-1] == "StopDiscovery"
 
 
-async def test_refused_set_discovery_filter_raises_and_does_not_start():
-    """A refused SetDiscoveryFilter raises BluezScanError and
-    StartDiscovery is never called."""
-    calls = Calls(fail_on="SetDiscoveryFilter")
-
-    async def noop(s):
-        pass
-
+async def test_a_failed_read_raises_after_stopping():
+    bus = Bus(fail_on="GetManagedObjects")
     with pytest.raises(BluezScanError):
-        await BluezScanner(calls, sleep=noop).scan()
-    assert [made[2] for made in calls.made] == ["SetDiscoveryFilter"]
+        await BluezScanner(bus.connect, sleep=noop).scan()
+    assert bus.members()[-1] == "StopDiscovery"
+    assert bus.connections[0].closed
