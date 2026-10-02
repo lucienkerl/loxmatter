@@ -340,7 +340,14 @@ The Pi runs matterjs-server since September 30, 2026.
 
 1. Whether BlueZ allows the loxmatter container `SetDiscoveryFilter` and
    `StartDiscovery` over the read-only `/run/dbus` mount; the kernel log after
-   the scan.
+   the scan. **Passed on October 2, 2026, 12:02:** the container runs as
+   `uid=0`; `SetDiscoveryFilter` (transport `le`, UUID `fff6`),
+   `StartDiscovery` and, 10.0 s later, `StopDiscovery` all returned
+   `METHOD_RETURN`; `Discovering` was `False` before and after. No device was
+   in pairing mode, so the scan found none. `journalctl -k` showed no
+   Bluetooth or HCI line in the 10 minutes around it; `hciconfig` reports
+   `hci0` UP RUNNING with 0 errors. The read-only mount of the socket
+   directory does not block method calls.
 2. Scan and commissioning alternating three times; the adapter must not wedge.
 3. The DCL is reachable from the container.
 4. Identify on a KAJPLATS lamp and on a Zigbee device; stop with 0; only one
