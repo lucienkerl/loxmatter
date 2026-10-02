@@ -10,7 +10,7 @@ from typing import Any
 import pytest
 
 from loxmatter.matter.client import BridgeMatterClient
-from loxmatter.sources import IdentifySource, IdentifyUnsupportedError
+from loxmatter.sources import DeviceUnreachableError, IdentifySource, IdentifyUnsupportedError
 
 
 class IdentifyNode:
@@ -25,6 +25,7 @@ class IdentifyUpstream:
         self._nodes = nodes
         self.server_info = SimpleNamespace(schema_version=schema)
         self.sent: list[tuple[int, int, Any]] = []
+        self.fail_with: Exception | None = None
 
     async def start_listening(self, init_ready: asyncio.Event | None = None) -> None:
         if init_ready is not None:
@@ -41,6 +42,8 @@ class IdentifyUpstream:
         return lambda: None
 
     async def send_device_command(self, node_id: int, endpoint_id: int, command: Any) -> None:
+        if self.fail_with is not None:
+            raise self.fail_with
         self.sent.append((node_id, endpoint_id, command))
 
 
@@ -91,5 +94,16 @@ async def test_a_device_without_identify_is_unsupported():
         assert bridge.supports_identify("23") is False
         with pytest.raises(IdentifyUnsupportedError):
             await bridge.identify("23", 30)
+    finally:
+        await bridge.disconnect()
+
+
+async def test_a_refused_command_is_a_device_that_does_not_answer():
+    upstream = IdentifyUpstream([IdentifyNode(24, {"0/40/1": "IKEA", "1/3/0": 0})])
+    upstream.fail_with = RuntimeError("Node 24 is not available")
+    bridge = await _connected(upstream)
+    try:
+        with pytest.raises(DeviceUnreachableError, match="not available"):
+            await bridge.identify("24", 30)
     finally:
         await bridge.disconnect()

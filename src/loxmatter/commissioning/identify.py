@@ -24,7 +24,7 @@ import logging
 from collections.abc import Awaitable, Callable
 from typing import Final
 
-from loxmatter.sources import IdentifySource, IdentifyUnsupportedError
+from loxmatter.sources import IdentifySource, IdentifyUnsupportedError, bounded_source_call
 
 logger = logging.getLogger(__name__)
 
@@ -53,13 +53,24 @@ class IdentifyCoordinator:
 
     async def start(self, device_id: int, *, renew: bool, seconds: int = IDENTIFY_SECONDS) -> None:
         async with self._lock:
-            await self._stop_locked()
-            source, address = self._resolve(device_id)
-            await source.identify(address, seconds)
-            self._blinking = device_id
-            self._task = asyncio.ensure_future(
-                self._keep(device_id, source, address, renew, seconds)
-            )
+            await self._start_locked(device_id, renew, seconds)
+
+    async def start_if_idle(self, device_id: int, seconds: int) -> bool:
+        """A short, non-renewed blink that never interrupts another one.
+        True if it started."""
+        async with self._lock:
+            if self._blinking is not None:
+                return False
+            await self._start_locked(device_id, False, seconds)
+            return True
+
+    async def _start_locked(self, device_id: int, renew: bool, seconds: int) -> None:
+        # The same device restarts without a stop in between.
+        await self._stop_locked(send_stop=self._blinking != device_id)
+        source, address = self._resolve(device_id)
+        await bounded_source_call(source.identify(address, seconds))
+        self._blinking = device_id
+        self._task = asyncio.ensure_future(self._keep(device_id, source, address, renew, seconds))
 
     async def stop(self) -> None:
         async with self._lock:
@@ -75,17 +86,17 @@ class IdentifyCoordinator:
             raise IdentifyUnsupportedError(technology)
         return source, address
 
-    async def _stop_locked(self) -> None:
+    async def _stop_locked(self, *, send_stop: bool = True) -> None:
         task, device_id = self._task, self._blinking
         self._task, self._blinking = None, None
         if task is not None and not task.done():
             task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await task
-        if device_id is not None:
+        if device_id is not None and send_stop:
             try:
                 source, address = self._resolve(device_id)
-                await source.identify(address, 0)
+                await bounded_source_call(source.identify(address, 0))
             except Exception as exc:  # noqa: BLE001 - the device stops by itself within 30 s
                 logger.info("Stopping identify on device %s failed: %s", device_id, exc)
 
@@ -101,6 +112,6 @@ class IdentifyCoordinator:
         while True:
             await self._sleep(RENEW_EVERY)
             try:
-                await source.identify(address, seconds)
+                await bounded_source_call(source.identify(address, seconds))
             except Exception as exc:  # noqa: BLE001 - keep trying; the blink lapses by itself
                 logger.info("Renewing identify on device %s failed: %s", device_id, exc)

@@ -5,12 +5,14 @@ import asyncio
 import pytest
 
 from loxmatter.commissioning.identify import IdentifyCoordinator
-from loxmatter.sources import IdentifyUnsupportedError
+from loxmatter.sources import DeviceUnreachableError, IdentifyUnsupportedError
 
 
 class Source:
     def __init__(self):
         self.calls = []
+        self.hang = set()
+        self.fail = set()
 
     def supports_identify(self, address):
         return address != "no-identify"
@@ -18,6 +20,10 @@ class Source:
     async def identify(self, address, seconds):
         if address == "no-identify":
             raise IdentifyUnsupportedError("no Identify cluster")
+        if address in self.hang:
+            await asyncio.Event().wait()
+        if (address, seconds) in self.fail:
+            raise DeviceUnreachableError("asleep")
         self.calls.append((address, seconds))
 
 
@@ -96,3 +102,78 @@ async def test_an_unsupported_device_raises_and_blinks_nothing():
     with pytest.raises(IdentifyUnsupportedError):
         await coordinator.start(3, renew=False)
     assert coordinator.blinking is None
+
+
+async def test_a_hanging_device_call_is_bounded(monkeypatch):
+    monkeypatch.setattr("loxmatter.sources.SOURCE_CALL_TIMEOUT_SECONDS", 0.05)
+    source = Source()
+    source.hang.add("11")
+    coordinator = _coordinator(source)
+    with pytest.raises(DeviceUnreachableError):
+        await asyncio.wait_for(coordinator.start(1, renew=False), 2)
+    assert coordinator.blinking is None
+    # The lock is free again.
+    await asyncio.wait_for(coordinator.start(2, renew=False), 2)
+    assert coordinator.blinking == 2
+    await coordinator.aclose()
+
+
+async def test_a_hanging_stop_is_bounded_and_lets_the_next_start(monkeypatch):
+    monkeypatch.setattr("loxmatter.sources.SOURCE_CALL_TIMEOUT_SECONDS", 0.05)
+    source = Source()
+    coordinator = _coordinator(source)
+    await coordinator.start(1, renew=False)
+    source.hang.add("11")
+    await asyncio.wait_for(coordinator.start(2, renew=False), 2)
+    assert coordinator.blinking == 2
+    await coordinator.aclose()
+
+
+async def test_restarting_the_blinking_device_skips_the_stop():
+    source = Source()
+    coordinator = _coordinator(source)
+    await coordinator.start(1, renew=False)
+    await coordinator.start(1, renew=False)
+    assert source.calls == [("11", 30), ("11", 30)]
+    assert coordinator.blinking == 1
+    await coordinator.aclose()
+
+
+async def test_a_failing_stop_of_the_old_device_still_starts_the_new_one():
+    source = Source()
+    source.fail.add(("11", 0))
+    coordinator = _coordinator(source)
+    await coordinator.start(1, renew=False)
+    await coordinator.start(2, renew=False)
+    assert source.calls == [("11", 30), ("12", 30)]
+    assert coordinator.blinking == 2
+    await coordinator.aclose()
+
+
+async def test_the_new_device_failing_leaves_nothing_blinking():
+    source = Source()
+    source.fail.add(("12", 30))
+    coordinator = _coordinator(source)
+    await coordinator.start(1, renew=False)
+    with pytest.raises(DeviceUnreachableError):
+        await coordinator.start(2, renew=False)
+    assert coordinator.blinking is None
+
+
+async def test_start_if_idle_blinks_when_nothing_does():
+    source = Source()
+    coordinator = _coordinator(source)
+    assert await coordinator.start_if_idle(1, 3) is True
+    assert source.calls == [("11", 3)]
+    assert coordinator.blinking == 1
+    await coordinator.aclose()
+
+
+async def test_start_if_idle_leaves_a_running_blink_alone():
+    source = Source()
+    coordinator = _coordinator(source)
+    await coordinator.start(1, renew=False)
+    assert await coordinator.start_if_idle(2, 3) is False
+    assert source.calls == [("11", 30)]
+    assert coordinator.blinking == 1
+    await coordinator.aclose()

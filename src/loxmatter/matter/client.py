@@ -126,7 +126,12 @@ from typing import Any, Final
 
 from loxmatter import i18n
 from loxmatter.matter.models import NodeSnapshot, Technology
-from loxmatter.sources import DeviceCall, IdentifyUnsupportedError, RuntimeEventHandler
+from loxmatter.sources import (
+    DeviceCall,
+    DeviceUnreachableError,
+    IdentifyUnsupportedError,
+    RuntimeEventHandler,
+)
 from loxmatter.sources.firmware import FIRMWARE_MIN_SCHEMA, FirmwareFacts, UpdateOffer
 
 logger = logging.getLogger(__name__)
@@ -700,16 +705,25 @@ class BridgeMatterClient:
         if not endpoints:
             raise IdentifyUnsupportedError(i18n.t("api.commissioning.fail_no_identify"))
         for endpoint in endpoints:
-            await self.send(
-                DeviceCall(
-                    technology="matter",
-                    address=address,
-                    endpoint=endpoint,
-                    cluster_id=0x0003,
-                    command_id=0x00,
-                    payload={"identifyTime": seconds},
+            try:
+                await self.send(
+                    DeviceCall(
+                        technology="matter",
+                        address=address,
+                        endpoint=endpoint,
+                        cluster_id=0x0003,
+                        command_id=0x00,
+                        payload={"identifyTime": seconds},
+                    )
                 )
-            )
+            except (IdentifyUnsupportedError, MatterUnavailableError, asyncio.CancelledError):
+                raise
+            except Exception as exc:
+                # matter-server's `FailedCommand` for a node that is offline
+                # or refuses the command: "asked, no answer" for the caller.
+                raise DeviceUnreachableError(
+                    i18n.t("api.errors.device_unreachable", exc=exc)
+                ) from exc
 
     async def send(self, call: DeviceCall) -> None:
         """Executes a translated `DeviceCall` over the upstream.

@@ -27,6 +27,7 @@ from loxmatter.matter.client import CommissioningError, MatterUnavailableError
 from loxmatter.matter.commissioning_progress import CommissioningTracker
 from loxmatter.matter.otbr import ThreadDatasetUnavailableError
 from loxmatter.model.store import Store
+from loxmatter.sources import DeviceUnreachableError, IdentifyUnsupportedError
 from loxmatter.zigbee.translate import DeviceFacts, EndpointFacts, build_snapshot
 
 _ZLL_PROFILE = 0xC05E
@@ -1477,3 +1478,17 @@ async def test_device_out_says_whether_it_can_identify(api):
     client, _, device_id, _ = api
     devices = (await client.get("/api/devices")).json()
     assert next(d for d in devices if d["id"] == device_id)["identify"] is True
+
+
+async def test_identify_route_answers_409_for_a_device_without_identify(api):
+    client, _, device_id, fake = api
+    fake.fail_identify_with = IdentifyUnsupportedError("no Identify cluster")
+    response = await client.post(f"/api/devices/{device_id}/identify", json={"on": True})
+    assert response.status_code == 409
+
+
+async def test_identify_route_answers_502_when_the_device_does_not_answer(api):
+    client, _, device_id, fake = api
+    fake.fail_identify_with = DeviceUnreachableError("device unreachable: asleep")
+    response = await client.post(f"/api/devices/{device_id}/identify", json={"on": True})
+    assert response.status_code == 502
