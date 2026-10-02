@@ -657,12 +657,13 @@ def build_app(
             i18n.set_language(store.locale.get_language())
         return await call_next(request)
 
-    # `dependencies=api_guard` on each of the twelve `/api` routers (see
+    # `dependencies=api_guard` on each of the `/api` routers (see
     # `build_api_guard` above; the eighth was `POST
     # /api/export/project-sync`, the ninth `build_language_router`, the
     # tenth `build_update_router`, the eleventh `build_groups_router`, the
-    # twelfth `build_password_router`): this protects without exception
-    # every route of these twelve routers, including the WebSocket routes
+    # twelfth `build_password_router`, and later ones such as
+    # `build_commissioning_router`): this protects without exception
+    # every route of these routers, including the WebSocket routes
     # `/api/live` and `/api/diagnostics/live` - and explicitly NOT `/cmd`,
     # `/resync`, `/health`, `/` and `/static`, which are mounted further
     # below without `dependencies`.

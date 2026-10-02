@@ -665,7 +665,7 @@ class CommissioningSession:
         the caller - this is a user's click, not the worker."""
         card = self._card(card_id)
         if card.device_id is None:
-            return
+            raise CodeRejected("api.commissioning.fail_no_identify", 409)
         if on:
             await self._identify.start(card.device_id, renew=False)
         elif self._identify.blinking == card.device_id:

@@ -16,6 +16,7 @@ from commissioning_fakes import (
 from conftest import authenticate, settle_until
 
 from loxmatter import i18n
+from loxmatter.commissioning.session import CommissioningSession
 from loxmatter.loxone.server import build_app
 from loxmatter.model.store import Store
 from loxmatter.sources import IdentifyUnsupportedError
@@ -111,12 +112,47 @@ async def test_a_typo_is_422_and_a_duplicate_409(api):
     typo = await client.post("/api/commissioning/codes", json={"code": "34970112333", "room": None})
     assert typo.status_code == 422
     assert typo.json()["detail"] == i18n.t("api.commissioning.fail_typo")
+    assert "34970112333" not in typo.text
     first = await client.post("/api/commissioning/codes", json={"code": QR_CODE, "room": None})
     assert first.status_code == 201
     again = await client.post("/api/commissioning/codes", json={"code": QR_CODE, "room": None})
     assert again.status_code == 409
     assert again.json()["detail"] == i18n.t("api.commissioning.fail_duplicate")
     assert QR_CODE not in again.text
+
+
+async def test_a_malformed_body_never_echoes_the_code(api):
+    client, _, _ = api
+    unreadable = i18n.t("api.commissioning.fail_unreadable_code")
+    for body in (
+        {"code": 34970112332},
+        {"cod": "MT:Y.K9042C00KA0648G00"},
+        {"code": ""},
+        {"code": "MT:Y.K9042C00KA0648G00", "room": 5},
+    ):
+        response = await client.post("/api/commissioning/codes", json=body)
+        assert response.status_code == 422, body
+        assert response.json()["detail"] == unreadable
+        assert "34970112332" not in response.text
+        assert "Y.K9042C00KA0648G00" not in response.text
+    for raw in (b"34970112332", b'{"code": 34970112332'):
+        response = await client.post(
+            "/api/commissioning/codes",
+            content=raw,
+            headers={"content-type": "application/json"},
+        )
+        assert response.status_code == 422
+        assert "34970112332" not in response.text
+
+
+async def test_identify_a_card_without_a_device_is_409(api):
+    client, _, _ = api
+    created = await client.post("/api/commissioning/codes", json={"code": QR_CODE, "room": None})
+    response = await client.post(
+        f"/api/commissioning/cards/{created.json()['id']}/identify", json={"on": True}
+    )
+    assert response.status_code == 409
+    assert response.json()["detail"] == i18n.t("api.commissioning.fail_no_identify")
 
 
 async def test_a_typo_detail_is_german_under_the_german_locale(api):
@@ -304,12 +340,20 @@ async def test_build_app_makes_a_session_when_a_client_exists(
 
 
 async def test_a_device_tile_blink_shows_on_its_card(
-    tmp_path, no_invoke, fake_client, fake_runtime, fake_otbr
+    tmp_path, no_invoke, fake_client, fake_runtime, fake_otbr, monkeypatch
 ):
     """Design 9.2: `build_app` builds ONE coordinator for the device tiles and
     the session it makes itself, so a blink started from a tile is the
     card's blink too. Fault to prove it: let `build_device_router` build
     its own coordinator again - `blinking_card` then stays `None`."""
+    made: list[CommissioningSession] = []
+
+    class Recording(CommissioningSession):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            made.append(self)
+
+    monkeypatch.setattr("loxmatter.loxone.server.CommissioningSession", Recording)
     store = Store(tmp_path / "t.sqlite")
     fake_client.store = store
     app = build_app(
@@ -324,13 +368,7 @@ async def test_a_device_tile_blink_shows_on_its_card(
         card_id = created.json()["id"]
         await client.post("/api/commissioning/start")
 
-        async def state() -> str:
-            return card_in((await client.get("/api/commissioning")).json(), card_id)["state"]
-
-        for _ in range(1000):
-            if await state() == "naming":
-                break
-        assert await state() == "naming"
+        await settle_until(lambda: card_in(made[0].view(), card_id)["state"] == "naming", "naming")
         await client.post(f"/api/commissioning/cards/{card_id}/skip-name")
         view = (await client.get("/api/commissioning")).json()
         assert view["blinking_card"] is None

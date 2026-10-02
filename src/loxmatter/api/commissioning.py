@@ -27,12 +27,11 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Response, status
+from fastapi import APIRouter, Body, HTTPException, Response, status
 
 from loxmatter import i18n
 from loxmatter.api.models import (
     CommissioningCardIn,
-    CommissioningCodeIn,
     CommissioningScanIn,
     IdentifyRequest,
 )
@@ -67,9 +66,23 @@ def build_commissioning_router(session: CommissioningSession) -> APIRouter:
         return session.view()
 
     @router.post("/codes", status_code=status.HTTP_201_CREATED)
-    async def add_code(request: CommissioningCodeIn) -> dict[str, Any]:
+    async def add_code(body: Any = Body(default=None)) -> dict[str, Any]:  # noqa: B008
+        # The body is read raw and checked here: FastAPI's own 422 for a
+        # wrong type or a misspelled key echoes the request body (`input`),
+        # which would put the pairing code into a response.
+        code = body.get("code") if isinstance(body, dict) else None
+        room = body.get("room") if isinstance(body, dict) else None
+        if (
+            not isinstance(code, str)
+            or not code.strip()
+            or not (room is None or isinstance(room, str))
+        ):
+            raise HTTPException(
+                status_code=422,
+                detail=i18n.t("api.commissioning.fail_unreadable_code"),
+            )
         try:
-            card = await session.add_code(request.code, request.room)
+            card = await session.add_code(code, room)
         except CodeRejected as exc:
             raise _rejected(exc) from exc
         return session.card_view(card.id)
