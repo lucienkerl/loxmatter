@@ -236,6 +236,21 @@ def _identify_source(sources: Sources | None, technology: str) -> IdentifySource
     return source if isinstance(source, IdentifySource) else None
 
 
+def identify_coordinator(store: Store, sources: Sources | None) -> IdentifyCoordinator:
+    """The bridge's one `IdentifyCoordinator`: `build_app` makes it once and
+    hands the same instance to the device tiles and the commissioning
+    dialog, so a blink from either stops the other's (design 2026-10-02,
+    section 9.2)."""
+
+    def _stored_address(device_id: int) -> tuple[str, str]:
+        device = store.device(device_id)
+        return device.technology, device.address
+
+    return IdentifyCoordinator(
+        lambda technology: _identify_source(sources, technology), _stored_address
+    )
+
+
 def _device_out(
     device: StoredDevice,
     store: Store,
@@ -325,13 +340,7 @@ def build_device_router(
         except Exception:  # noqa: BLE001 - a flag on a tile never fails the list
             return False
 
-    def _stored_address(device_id: int) -> tuple[str, str]:
-        device = store.device(device_id)
-        return device.technology, device.address
-
-    coordinator = identify or IdentifyCoordinator(
-        lambda technology: _identify_source(sources, technology), _stored_address
-    )
+    coordinator = identify or identify_coordinator(store, sources)
 
     def _require_client() -> BridgeMatterClient:
         if client is None:

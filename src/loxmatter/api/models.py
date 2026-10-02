@@ -129,6 +129,30 @@ class IdentifyRequest(BaseModel):
     on: bool
 
 
+class CommissioningScanIn(BaseModel):
+    """`POST /api/commissioning/scan` - the body is optional. `automatic`:
+    the dialog's own scan on opening, skipped within 60 s of the last one."""
+
+    automatic: bool = False
+
+
+class CommissioningCodeIn(BaseModel):
+    """`POST /api/commissioning/codes`. The code is handed to the session
+    and never echoed back (design 2026-10-02, global constraint)."""
+
+    code: str
+    room: str | None = None
+
+
+class CommissioningCardIn(BaseModel):
+    """`PATCH /api/commissioning/cards/{id}`. A field left out stays as it
+    is; `"room": null` clears the room - `model_fields_set` tells the two
+    apart."""
+
+    name: str | None = None
+    room: str | None = None
+
+
 class EndpointClustersOut(BaseModel):
     model_config = ConfigDict(frozen=True)
 

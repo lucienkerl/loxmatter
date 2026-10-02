@@ -735,6 +735,10 @@ class CommissioningSession:
         rssi = -card.rssi if card.rssi is not None else 1_000
         return (_STATE_ORDER[card.state], within, rssi, card.id)
 
+    def card_view(self, card_id: int) -> dict[str, Any]:
+        """One card as `view()` shows it - the body of the card routes."""
+        return self._card_view(self._card(card_id))
+
     def _card_view(self, card: Card) -> dict[str, Any]:
         payload = card.payload
         return {

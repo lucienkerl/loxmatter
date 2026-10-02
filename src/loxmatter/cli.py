@@ -35,7 +35,9 @@ import uvicorn
 from matter_server.client.exceptions import CannotConnect
 
 from loxmatter import i18n
+from loxmatter.api.devices import identify_coordinator
 from loxmatter.auth.passwords import MIN_PASSWORD_LENGTH, hash_password
+from loxmatter.commissioning.session import CommissioningSession
 from loxmatter.devtools.fake_miniserver import FakeMiniserver
 from loxmatter.diagnostics.logbuffer import LogBufferHandler, install_log_buffer
 from loxmatter.export.commands import extract_commands
@@ -54,6 +56,7 @@ from loxmatter.loxone.sender import UdpSender
 from loxmatter.loxone.server import build_app
 from loxmatter.matter.client import BridgeMatterClient, MatterUnavailableError
 from loxmatter.matter.commissioning_progress import CommissioningTracker
+from loxmatter.matter.dcl import DclDirectory
 from loxmatter.matter.discovery import (
     extract_signals,
     find_clusters_with_undiscoverable_events,
@@ -61,13 +64,14 @@ from loxmatter.matter.discovery import (
     find_unreported_attributes,
 )
 from loxmatter.matter.models import NodeSnapshot, SignalKind
+from loxmatter.matter.otbr import fetch_active_dataset
 from loxmatter.matter.thread_network import ThreadNetworkKeeper
 from loxmatter.model.locale_store import LocaleStore
 from loxmatter.model.store import Store
 from loxmatter.model.zigbee_settings_store import settings_for_path
 from loxmatter.profiles.table import is_exportable
 from loxmatter.radios.bluetooth_health import KernelLog
-from loxmatter.radios.bluez import BluezReader
+from loxmatter.radios.bluez import BluezReader, BluezScanner
 from loxmatter.radios.inventory import scan_serial
 from loxmatter.radios.thread_lockout import open_refusal
 from loxmatter.sources import Sources
@@ -844,6 +848,7 @@ async def _run(
     firmware_schedule_task: asyncio.Task[None] | None = None
     supervisor_tasks: list[asyncio.Task[None]] = []
     thread_network_task: asyncio.Task[None] | None = None
+    commissioning_session: CommissioningSession | None = None
     try:
         try:
             await client.connect()
@@ -914,7 +919,23 @@ async def _run(
         # dialog and the diagnostics page use. Each reads as "not available"
         # when its mount is missing.
         kernel_log = KernelLog()
-        commissioning_tracker = CommissioningTracker(bluez=BluezReader(), kernel=kernel_log)
+        bluez = BluezReader()
+        commissioning_tracker = CommissioningTracker(bluez=bluez, kernel=kernel_log)
+        # Design 2026-10-02: the commissioning dialog's session, with the
+        # one coordinator the device tiles share, so only one device blinks.
+        identify = identify_coordinator(store, sources)
+        commissioning_session = CommissioningSession(
+            store=store,
+            client_for=lambda: client,
+            runtime=runtime,
+            tracker=commissioning_tracker,
+            fetch_dataset=fetch_active_dataset,
+            reader=bluez,
+            scanner=BluezScanner(),
+            kernel=kernel_log,
+            dcl=DclDirectory(store.dcl),
+            identify=identify,
+        )
         config = uvicorn.Config(
             build_app(
                 store,
@@ -934,6 +955,8 @@ async def _run(
                 commissioning_tracker=commissioning_tracker,
                 kernel_log=kernel_log,
                 firmware=firmware,
+                commissioning_session=commissioning_session,
+                identify=identify,
             ),
             host=host,
             port=listen,
@@ -941,6 +964,16 @@ async def _run(
         )
         await uvicorn.Server(config).serve()
     finally:
+        if commissioning_session is not None:
+            try:
+                # First, while the sources are still connected: it ends the
+                # worker and the naming line and stops a running blink
+                # (`aclose` closes the identify coordinator too).
+                await commissioning_session.aclose()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("The commissioning session could not be closed on shutdown")
         try:
             # Before the loop below, and before `sources.all()` is
             # disconnected further down: this ends the Zigbee supervisor and
