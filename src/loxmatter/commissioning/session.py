@@ -53,7 +53,7 @@ from loxmatter.matter.setup_payload import (
     decode,
     discriminator_for,
 )
-from loxmatter.model.store import Store
+from loxmatter.model.store import Store, UnknownDeviceError
 from loxmatter.radios.bluetooth_health import KernelLog, counts_since
 from loxmatter.radios.bluez import BluezReader, BluezScanError, BluezScanner, MatterAdvert
 
@@ -79,18 +79,6 @@ _VENDOR_ID_PATH: Final = "0/40/2"
 _PRODUCT_ID_PATH: Final = "0/40/4"
 
 CardState = Literal["found", "ready", "queued", "running", "naming", "done", "not_nearby", "failed"]
-
-# The order of the cards in the dialog (design 4.2); within a group by RSSI.
-_STATE_ORDER: Final[dict[str, int]] = {
-    "naming": 0,
-    "running": 1,
-    "queued": 2,
-    "ready": 3,
-    "found": 4,
-    "not_nearby": 5,
-    "failed": 5,
-    "done": 6,
-}
 
 
 class Unset(enum.Enum):
@@ -130,6 +118,17 @@ class CodeRejected(Exception):
         self.detail = i18n.t(key)
         self.status = status
         super().__init__(self.detail)
+
+
+def _normalized(text: str, payload: SetupPayload) -> str:
+    """One spelling per code, for the duplicate check and for
+    `commission()`: a manual code without the spaces and hyphens it is
+    printed with (as `CommissionRequest._strip_separators` does), a QR
+    payload in upper case (base38 has no lower-case letters; `-` and `.`
+    belong to its alphabet and stay)."""
+    if payload.kind == "long":
+        return text.upper()
+    return "".join(char for char in text if not (char.isspace() or char == "-"))
 
 
 def _refuse_a_code_as_name(name: str) -> None:
@@ -188,6 +187,15 @@ class CommissioningSession:
         # One lock for the radio: a scan and a commissioning never overlap.
         self._radio = asyncio.Lock()
         self._scanning = False
+        # The addresses that advertised in the latest scan - what a code
+        # is matched against and what the worker checks before a card
+        # (design 8.2, 8.3). Not a fresh BlueZ read: once the bridge's scan
+        # has stopped, BlueZ has cleared every RSSI and the reader would
+        # see nothing.
+        self._latest: set[str] = set()
+        # Results of two scans are taken one after the other: a scan's DCL
+        # lookups can still run while the next scan ends.
+        self._results = asyncio.Lock()
         self._last_scan_at: float | None = None
         self.bluetooth_warning = False
         # A Thread dataset entered by hand ("Different Thread network"):
@@ -197,6 +205,7 @@ class CommissioningSession:
         self._thread_dataset: str | None = None
         self._worker: asyncio.Task[None] | None = None
         self._side_tasks: set[asyncio.Task[None]] = set()
+        self._naming_calls = asyncio.Lock()
 
     # --- properties ---------------------------------------------------
 
@@ -265,18 +274,19 @@ class CommissioningSession:
             self._last_scan_at = now
             start_usec = self._kernel.now_usec() if self._kernel is not None else None
             try:
-                await self._scanner.scan(seconds=SCAN_SECONDS)
+                snapshot = await self._scanner.scan(seconds=SCAN_SECONDS)
             except BluezScanError as exc:
                 logger.warning("Bluetooth scan failed: %s", exc)
                 self.bluetooth_warning = True
                 return False
             finally:
                 self._scanning = False
-        snapshot = await self._reader.snapshot()
-        if snapshot is not None:
+        async with self._results:
+            self._latest = {advert.address for advert in snapshot.adverts}
             for advert in snapshot.adverts:
                 await self._take_advert(advert)
-            await self._rematch_not_nearby({advert.address for advert in snapshot.adverts})
+            self._forget_unseen()
+            await self._rematch_not_nearby(self._latest)
         if self._kernel is not None and start_usec is not None:
             findings = await self._kernel.findings_async()
             counts = counts_since(findings or [], start_usec)
@@ -285,17 +295,38 @@ class CommissioningSession:
             self.bluetooth_warning = False
         return True
 
-    async def _take_advert(self, advert: MatterAdvert) -> None:
+    def _refresh_known(self, advert: MatterAdvert) -> bool:
+        """Updates the card that already shows this device; False if none."""
         for card_id, known in self._adverts.items():
             if known.address == advert.address and card_id in self._cards:
                 self._adverts[card_id] = advert
                 self._cards[card_id].rssi = advert.rssi
-                return
+                return True
+        return False
+
+    async def _take_advert(self, advert: MatterAdvert) -> None:
+        if self._refresh_known(advert):
+            return
         label = await self._dcl.product_label(advert.vendor_id, advert.product_id)
+        # Looked again: the lookup may have let another card for this
+        # device in meanwhile.
+        if self._refresh_known(advert):
+            return
         card = self._new_card("found", label, payload=None)
         card.rssi = advert.rssi
         card.advert_address = advert.address
         self._adverts[card.id] = advert
+
+    def _forget_unseen(self) -> None:
+        """A `found` card whose device did not advertise in the latest scan
+        goes: it was not seen again. One with a code attached stays."""
+        for card in list(self._cards.values()):
+            if (
+                card.state == "found"
+                and card.id not in self._codes
+                and card.advert_address not in self._latest
+            ):
+                self._drop(card.id)
 
     async def _rematch_not_nearby(self, advertising: set[str]) -> None:
         """ "Scan again" for a `not_nearby` card: a skipped card whose device
@@ -328,15 +359,17 @@ class CommissioningSession:
     def _matching_found(
         self, payload: SetupPayload, advertising: set[str] | None = None
     ) -> list[Card]:
-        """The `found` cards whose advert fits the code's discriminator -
-        with `advertising`, only those whose device is in that scan."""
+        """The `found` cards whose advert fits the code's discriminator and
+        whose device is in `advertising` (by default the latest scan)."""
+        if advertising is None:
+            advertising = self._latest
         discriminator = discriminator_for(payload)
         return [
             card
             for card in self._cards.values()
             if card.state == "found"
             and card.id in self._adverts
-            and (advertising is None or self._adverts[card.id].address in advertising)
+            and self._adverts[card.id].address in advertising
             and discriminator.matches(self._adverts[card.id].discriminator)
         ]
 
@@ -348,6 +381,7 @@ class CommissioningSession:
             raise CodeRejected("api.commissioning.fail_typo", 422) from exc
         except UnreadableCodeError as exc:
             raise CodeRejected("api.commissioning.fail_unreadable_code", 422) from exc
+        text = _normalized(text, payload)
         if text in self._codes.values():
             raise CodeRejected("api.commissioning.fail_duplicate", 409)
 
@@ -418,6 +452,8 @@ class CommissioningSession:
             card.name = name
         if not isinstance(room, Unset):
             card.room = room
+        if card.device_id is not None and (card.state == "done" or not isinstance(room, Unset)):
+            self._check_device(card)
         if card.device_id is not None and card.state == "done":
             if name is not None and name.strip():
                 self._store.rename_device(card.device_id, name.strip())
@@ -497,11 +533,8 @@ class CommissioningSession:
             if (
                 card.advert_address is not None
                 and card_id not in self._forced
-                and not await self._still_advertising(card.advert_address)
+                and card.advert_address not in self._latest
             ):
-                # Removed or cleared while BlueZ was read.
-                if not self._queue or self._queue[0] != card_id or card_id not in self._cards:
-                    continue
                 self._queue.pop(0)
                 card.state = "not_nearby"
                 card.note = i18n.t("web.commissioning.note_not_nearby", hint=card.pairing_hint)
@@ -510,19 +543,14 @@ class CommissioningSession:
                 # Removed or cleared while a scan held the radio.
                 if not self._queue or self._queue[0] != card_id or card_id not in self._cards:
                     continue
+                # matter-server may have gone while a scan held the radio:
+                # the card stays queued and the loop waits for it (8.3).
+                client = self._client_for()
+                if client is None or not client.connected:
+                    continue
                 self._queue.pop(0)
                 self._forced.discard(card_id)
                 await self._run(card, client)
-
-    async def _still_advertising(self, address: str) -> bool:
-        try:
-            snapshot = await self._reader.snapshot()
-        except Exception as exc:  # noqa: BLE001 - no evidence is no reason to skip
-            logger.info("Reading BlueZ before commissioning failed: %s", exc)
-            return True
-        if snapshot is None:
-            return True
-        return any(advert.address == address for advert in snapshot.adverts)
 
     async def _run(self, card: Card, client: BridgeMatterClient) -> None:
         code = self._codes[card.id]
@@ -553,8 +581,7 @@ class CommissioningSession:
                 "Commissioning card %s failed unexpectedly: %s", card.id, type(exc).__name__
             )
             card.state = "failed"
-            # The type only: an unrecognised exception's text is not known
-            # to be free of the code, and the note reaches the API.
+            # The note reaches the API: the type only there, too.
             card.note = i18n.t("api.errors.commissioning_failed", exc=type(exc).__name__)
             return
         finally:
@@ -667,6 +694,19 @@ class CommissioningSession:
 
     # --- naming -------------------------------------------------------
 
+    def _check_device(self, card: Card) -> None:
+        """The card's device must still exist: one deleted on the device
+        page meanwhile ends the card's naming turn and answers 404 - a
+        rename of it would silently write nothing."""
+        if card.device_id is None:
+            return
+        try:
+            self._store.device(card.device_id)
+        except UnknownDeviceError as exc:
+            if card.state == "naming":
+                self._leave_naming(card)
+            raise CodeRejected("api.commissioning.fail_device_gone", 404) from exc
+
     async def confirm_name(self, card_id: int) -> Card:
         card = self._card(card_id)
         if card.state != "naming" or card.device_id is None:
@@ -675,25 +715,36 @@ class CommissioningSession:
         if not name:
             raise CodeRejected("api.commissioning.fail_name_missing", 422)
         _refuse_a_code_as_name(name)
+        self._check_device(card)
         self._store.rename_device(card.device_id, name)
-        await self._leave_naming(card)
+        self._leave_naming(card)
         return card
 
     async def skip_name(self, card_id: int) -> Card:
         card = self._card(card_id)
         if card.state != "naming":
             return card
-        await self._leave_naming(card)
+        self._leave_naming(card)
         return card
 
-    async def _leave_naming(self, card: Card) -> None:
+    def _leave_naming(self, card: Card) -> None:
+        """Ends a card's naming turn. The identify calls that follow - stop
+        this device, start the next one - run in the background: a device
+        that does not answer must not hold up the click."""
         was_first = bool(self._naming) and self._naming[0] == card.id
         if card.id in self._naming:
             self._naming.remove(card.id)
         self._done(card)
-        await self._after_naming_left(card, was_first)
+        self._spawn(self._after_naming_left(card, was_first))
 
     async def _after_naming_left(self, card: Card, was_first: bool) -> None:
+        # One after the other: two names confirmed in quick succession must
+        # not let the first one's "start the next" land after the second
+        # one's "stop it".
+        async with self._naming_calls:
+            await self._hand_on_blink(card, was_first)
+
+    async def _hand_on_blink(self, card: Card, was_first: bool) -> None:
         if card.device_id is not None and self._identify.blinking == card.device_id:
             await self._quietly(self._identify.stop())
         if was_first and self._naming:
@@ -704,13 +755,18 @@ class CommissioningSession:
     # --- identify -----------------------------------------------------
 
     async def identify_card(self, card_id: int, on: bool) -> None:
-        """Identify from a card: 30 s without renewal, or stop. Errors reach
-        the caller - this is a user's click, not the worker."""
+        """Identify from a card: 30 s without renewal (renewed for the front
+        of the naming line), or stop. Errors reach the caller - this is a
+        user's click, not the worker."""
         card = self._card(card_id)
         if card.device_id is None:
             raise CodeRejected("api.commissioning.fail_no_identify", 409)
+        self._check_device(card)
         if on:
-            await self._identify.start(card.device_id, renew=False)
+            # The front of the naming line blinks until it is named (4.4),
+            # also when it is started again from its card.
+            front = card.state == "naming" and bool(self._naming) and self._naming[0] == card.id
+            await self._identify.start(card.device_id, renew=front)
         elif self._identify.blinking == card.device_id:
             await self._identify.stop()
 
@@ -764,20 +820,11 @@ class CommissioningSession:
             "matter_connected": self._matter_connected(),
             "naming": list(self._naming),
             "blinking_card": blinking_card,
-            "cards": [
-                self._card_view(card) for card in sorted(self._cards.values(), key=self._order)
-            ],
+            # In card order: the dialog sorts them (`sortedCards()` in
+            # app.js, design 4.2) by state, naming line, queue position
+            # and id - one order, kept in one place.
+            "cards": [self._card_view(card) for card in self._cards.values()],
         }
-
-    def _order(self, card: Card) -> tuple[int, int, int, int]:
-        if card.state == "naming" and card.id in self._naming:
-            within = self._naming.index(card.id)
-        elif card.state == "queued" and card.id in self._queue:
-            within = self._queue.index(card.id)
-        else:
-            within = 0
-        rssi = -card.rssi if card.rssi is not None else 1_000
-        return (_STATE_ORDER[card.state], within, rssi, card.id)
 
     def card_view(self, card_id: int) -> dict[str, Any]:
         """One card as `view()` shows it - the body of the card routes."""

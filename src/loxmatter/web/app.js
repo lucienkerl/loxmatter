@@ -589,8 +589,11 @@ function normalizePairingCode(raw) {
 }
 
 // Pairing-code decoding (design 2026-09-22, section 4). Only the
-// discriminator is read - it lets the dialog follow the device in BlueZ and
-// name it in a "not found" message. The passcode is never decoded.
+// discriminator is read; the passcode is never decoded. The page no longer
+// calls it - the bridge decodes codes itself since the commissioning queue
+// (`matter/setup_payload.py`) - but it stays as the reference the Python
+// decoder is checked against (`tests/matter/test_setup_payload_decoding.py`
+// and the decoding tests in `tests/api/test_web.py`).
 const VERHOEFF_D = [
   [0, 1, 2, 3, 4, 5, 6, 7, 8, 9], [1, 2, 3, 4, 0, 6, 7, 8, 9, 5],
   [2, 3, 4, 0, 1, 7, 8, 9, 5, 6], [3, 4, 0, 1, 2, 8, 9, 5, 6, 7],
@@ -4109,10 +4112,14 @@ function app() {
         done: 6,
       };
       const naming = this.commissioning?.naming ?? [];
+      // The queue's own order: a card queued again ("Try anyway", a
+      // rescan) runs after the ones already waiting, whatever its id.
+      const place = (card) => (card.state === "queued" ? card.queue_position ?? 0 : 0);
       return [...(this.commissioning?.cards ?? [])].sort(
         (a, b) =>
           (order[a.state] ?? 7) - (order[b.state] ?? 7) ||
           naming.indexOf(a.id) - naming.indexOf(b.id) ||
+          place(a) - place(b) ||
           a.id - b.id
       );
     },

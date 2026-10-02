@@ -787,8 +787,8 @@ async def test_a_short_discriminator_above_15_is_refused(api):
     rejected - both this route and `commission_with_code` answer 422.
     `detail[0]["loc"]` is FastAPI's own shape for a request validation
     error and only appears for that case (a commissioning failure's
-    `detail` is a plain string, see `_reason_detail`); `fake_client.commissioned`
-    staying empty proves the fake client's `commission_with_code` was never
+    `detail` is a plain string, see `commissioning.run._reason_detail`);
+    `fake_client.commissioned` staying empty proves the fake client's `commission_with_code` was never
     called at all."""
     client, _, _, fake_client = api
     response = await client.post(

@@ -16366,6 +16366,26 @@ def test_the_cards_sort_by_state_then_id():
 
 
 @pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_queued_cards_sort_by_their_place_in_the_queue():
+    """A card queued again ("Try anyway") waits behind the ones already in
+    the queue, even with the smaller id - the dialog shows the order the
+    worker takes them in.
+
+    Fault to prove it: drop the `queue_position` comparison from
+    `sortedCards()`."""
+    cards = [
+        _commissioning_card(1, "queued", queue_position=3),
+        _commissioning_card(2, "queued", queue_position=1),
+        _commissioning_card(3, "queued", queue_position=2),
+    ]
+    values = _app_state(
+        _commissioning_view(cards)
+        + "console.log(JSON.stringify(state.sortedCards().map((card) => card.id)));"
+    )
+    assert values == [2, 3, 1]
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
 def test_every_card_state_has_its_chip():
     """Each state reads its own chip; a running card reads the tracker's
     phase once there is one, a queued card its place.

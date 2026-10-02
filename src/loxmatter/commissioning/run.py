@@ -214,7 +214,7 @@ async def commission(
     token = tracker.start(discriminator)
     # A closure bound to THIS attempt's token (final review item 1),
     # not `tracker.node_added` itself: matter-server's `NODE_ADDED`
-    # listeners stay registered for as long as this route's own task
+    # listeners stay registered for as long as this call's own task
     # does, so with two POSTs in flight, device A's `NODE_ADDED` must
     # not advance attempt B just because B has since become the
     # tracker's current attempt.
@@ -223,7 +223,7 @@ async def commission(
     )
 
     async def sample_while_waiting() -> None:
-        # The tracker never samples itself (Task 3): this route owns the
+        # The tracker never samples itself (Task 3): this function owns the
         # cadence, because it is the only one that runs for as long as the
         # attempt does. Driving it from the status route instead would tie
         # the phases to a browser polling, and a failure whose `found` or
@@ -284,8 +284,8 @@ async def commission(
         # `suppress(CancelledError): await sampler` (review fix): a
         # sampler that already died on its own (see the comment in
         # `sample_while_waiting` above - now unreachable, but this stays
-        # defensive) must not re-raise here, or the route would answer
-        # 500 for a device that is actually commissioned. `suppress`
+        # defensive) must not re-raise here, or the caller would report a
+        # failure for a device that is actually commissioned. `suppress`
         # would also swallow a cancellation aimed at the REQUEST itself
         # (e.g. the client disconnecting), not only the one `cancel()`
         # just issued for the sampler.
@@ -305,7 +305,7 @@ async def commission(
     # comments: the device is already committed by that point), a
     # failure here is a genuine bug and must still surface as an error;
     # this guard only closes the tracker out, it does not change what
-    # the route answers - the `raise` below is unchanged and unwrapped.
+    # the caller sees - the `raise` below is unchanged and unwrapped.
     try:
         # The same sequence as in the CLI export (cli.py): register_device
         # before register_signals before register_commands, because both
@@ -353,7 +353,7 @@ async def commission(
         # device_id, and `BridgeMatterClient._dispatch_loop` accordingly
         # discards the notification ("update for unknown node ...
         # discarded") - the one opportunity at which `d<id>_online` would
-        # have arisen by itself is thus gone before this route even gets
+        # have arisen by itself is thus gone before this function even gets
         # its turn again.
         #
         # For a device sitting quietly on the network, no further

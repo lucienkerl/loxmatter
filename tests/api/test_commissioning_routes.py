@@ -85,7 +85,7 @@ async def test_routes_need_a_login(api):
 
 async def test_qr_code_after_a_scan_makes_the_card_ready_and_never_returns_the_code(api):
     client, h, _ = api
-    h.reader.adverts = [advert("AA:01", 3840, KAJPLATS_E27, -60)]
+    h.scanner.adverts = [advert("AA:01", 3840, KAJPLATS_E27, -60)]
     scan = await client.post("/api/commissioning/scan", json={"automatic": False})
     assert scan.status_code == 202
     assert len(scan.json()["cards"]) == 1
@@ -268,6 +268,19 @@ async def test_skip_name_ends_the_naming_turn(api):
     assert skipped.json()["state"] == "done"
 
 
+async def test_confirming_a_name_for_a_deleted_device_is_404_and_ends_the_turn(api):
+    client, h, _ = api
+    card_id = await naming_card(client, h)
+    h.store.forget_device(card_in(h.session.view(), card_id)["device_id"])
+    await client.patch(f"/api/commissioning/cards/{card_id}", json={"name": "Flurlampe"})
+    confirmed = await client.post(f"/api/commissioning/cards/{card_id}/confirm-name")
+    assert confirmed.status_code == 404
+    assert confirmed.json()["detail"] == i18n.t("api.commissioning.fail_device_gone")
+    view = (await client.get("/api/commissioning")).json()
+    assert view["naming"] == []
+    assert card_in(view, card_id)["state"] == "done"
+
+
 async def test_force_queues_a_card_that_is_not_nearby(api):
     client, h, _ = api
     h.gate.held = True
@@ -313,7 +326,8 @@ async def test_identify_a_card_records_the_blink(api):
     device_id = card_in(h.session.view(), card_id)["device_id"]
     response = await client.post(f"/api/commissioning/cards/{card_id}/identify", json={"on": True})
     assert response.status_code == 204
-    assert h.identify.starts()[-1] == ("start", device_id, False, 30)
+    # The front of the naming line: renewed until it is named (design 4.4).
+    assert h.identify.starts()[-1] == ("start", device_id, True, 30)
     off = await client.post(f"/api/commissioning/cards/{card_id}/identify", json={"on": False})
     assert off.status_code == 204
     assert h.identify.blinking is None

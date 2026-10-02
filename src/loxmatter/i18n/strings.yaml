@@ -741,6 +741,11 @@ api.commissioning.fail_unknown_card:
 api.commissioning.fail_card_running:
   en: "This device is being commissioned right now."
   de: "Dieses Gerät wird gerade eingelernt."
+# The card's device was deleted on the device page while the card was
+# still listed; its naming turn ends.
+api.commissioning.fail_device_gone:
+  en: "This device has been removed in the meantime."
+  de: "Dieses Gerät wurde inzwischen entfernt."
 # `DELETE /api/devices/{id}?forget_only=true` for a device whose technology
 # HAS a configured source: that source is how the device is removed. Shown
 # when a stick was set up again while the forget-only offer was on screen.
@@ -1718,7 +1723,7 @@ web.devices.commission_failed:
 #
 # The SINGLE source of truth for this wording (final review item 4): these
 # used to be duplicated verbatim under `api.devices.*`, because a live 422's
-# `detail` (`_reason_detail` in `api/devices.py`) and a RESTORED attempt
+# `detail` (`_reason_detail` in `commissioning/run.py`) and a RESTORED attempt
 # (design 2026-09-22, section 5.3 - a page reloaded while one runs, which
 # then learns of the result only from the status route, not from a POST it
 # never sent) need the same sentence from two different places. Only the
@@ -1726,7 +1731,7 @@ web.devices.commission_failed:
 # `api/language.py:_web_strings()`, proven by
 # `test_get_i18n_only_returns_the_web_namespace` in test_language.py), so the
 # restored-attempt side could only ever read a key from here - but server
-# code can resolve ANY key regardless of namespace, so `_reason_detail`
+# code can resolve ANY key regardless of namespace, so `run._reason_detail`
 # reads these same `web.*` keys too instead of keeping a second copy in
 # sync by hand.
 web.devices.commission_reason_not_found:
@@ -1746,7 +1751,7 @@ web.devices.commission_reason_connection_lost:
 # dangling "Commissioning failed: " with nothing after it, because a
 # restored attempt only ever learns the tracker's classification, never
 # matter-server's own exception text (unlike the live POST's 422, which
-# still shows `str(exc)` verbatim for `other` - see `_reason_detail`).
+# still shows `str(exc)` verbatim for `other` - see `run._reason_detail`).
 web.devices.commission_reason_no_thread_network:
   # Names the missing Thread network specifically, rather than the generic
   # sentence below, because the remedy differs: enter the dataset by hand,

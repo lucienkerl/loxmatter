@@ -125,22 +125,33 @@ async def no_sleep(seconds: float) -> None:
 
 
 class FakeScanner:
+    """The bridge's own scan: answers with `adverts` as they are when the
+    scan ends (after `hold`, if set) - what BlueZ holds while discovery
+    still runs, RSSI included."""
+
     def __init__(self) -> None:
+        self.adverts: list[MatterAdvert] = []
         self.scans: list[float] = []
         self.hold: asyncio.Event | None = None
         self.fail_with: Exception | None = None
 
-    async def scan(self, adapter_path: str = "/org/bluez/hci0", seconds: float = 10.0) -> None:
+    async def scan(
+        self, adapter_path: str = "/org/bluez/hci0", seconds: float = 10.0
+    ) -> BluezSnapshot:
         self.scans.append(seconds)
         if self.fail_with is not None:
             raise self.fail_with
         if self.hold is not None:
             await self.hold.wait()
+        return BluezSnapshot(adverts=list(self.adverts), adapter=None)
 
 
 class FakeReader:
-    """`reads` counts the snapshots taken; while `hold` is set, a snapshot
-    waits on it and then answers with the adverts of that moment."""
+    """What matter-server's own scan leaves in BlueZ - read by the early
+    warning while a card runs. Empty by default: after the bridge's scan
+    has stopped, BlueZ has cleared every RSSI and the reader drops the
+    device. `reads` counts the snapshots taken; while `hold` is set, a
+    snapshot waits on it and then answers with the adverts of that moment."""
 
     def __init__(self) -> None:
         self.adverts: list[MatterAdvert] = []
