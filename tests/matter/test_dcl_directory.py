@@ -1,6 +1,7 @@
 """Human-readable product names (design 2026-10-02, section 7). Fixtures are
 the DCL's answers of October 2, 2026."""
 
+import sqlite3
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -126,4 +127,67 @@ async def test_without_ids_the_label_says_so(tmp_path):
     directory, fetch = _directory(tmp_path, {}, now)
     label = await directory.product_label(None, None)
     assert label.product == i18n.t("web.commissioning.numeric_code_device")
+    assert fetch.urls == []
+
+
+class _FailingWrites:
+    """A store view whose cache writes fail like a read-only database."""
+
+    def __init__(self, inner):
+        self._inner = inner
+
+    def vendor(self, vendor_id):
+        return self._inner.vendor(vendor_id)
+
+    def model(self, vendor_id, product_id):
+        return self._inner.model(vendor_id, product_id)
+
+    def put_vendor(self, *args):
+        raise sqlite3.OperationalError("attempt to write a readonly database")
+
+    def put_model(self, *args):
+        raise sqlite3.OperationalError("attempt to write a readonly database")
+
+
+async def test_a_failing_cache_write_keeps_the_fetched_name(tmp_path):
+    fetch = Fetcher(
+        {
+            f"{BASE}/dcl/vendorinfo/vendors/4476": VENDOR_4476,
+            f"{BASE}/dcl/model/models/4476/36865": MODEL_36865,
+        }
+    )
+    store = _FailingWrites(Store(tmp_path / "t.sqlite").dcl)
+    directory = DclDirectory(store, fetch, now=lambda: datetime(2026, 10, 2, tzinfo=UTC))
+    model = await directory.model(4476, 36865)
+    vendor = await directory.vendor(4476)
+    assert model is not None and model.name == "KAJPLATS E27 WS globe 1055lm"
+    assert vendor is not None and vendor.name == "IKEA of Sweden"
+
+
+async def test_oddly_shaped_answers_mean_no_entry_or_zero_hint(tmp_path):
+    now = [datetime(2026, 10, 2, tzinfo=UTC)]
+    directory, _ = _directory(
+        tmp_path,
+        {
+            f"{BASE}/dcl/vendorinfo/vendors/1": {"vendorInfo": ["x"]},
+            f"{BASE}/dcl/model/models/1/2": {"model": "x"},
+            f"{BASE}/dcl/model/models/1/3": {
+                "model": {"productName": "Lamp", "commissioningModeInitialStepsHint": "n/a"}
+            },
+        },
+        now,
+    )
+    assert await directory.vendor(1) is None
+    assert await directory.model(1, 2) is None
+    lamp = await directory.model(1, 3)
+    assert lamp is not None and lamp.initial_steps_hint == 0
+
+
+async def test_a_naive_stored_timestamp_counts_as_utc(tmp_path):
+    now = [datetime(2026, 10, 2, tzinfo=UTC)]
+    directory, fetch = _directory(tmp_path, {}, now)
+    store = Store(tmp_path / "t.sqlite").dcl
+    store.put_model(4476, 1, None, "2026-10-01T00:00:00")  # no UTC offset
+    directory = DclDirectory(store, fetch, now=lambda: now[0])
+    assert await directory.model(4476, 1) is None
     assert fetch.urls == []

@@ -22,6 +22,7 @@ days, a network failure not at all. Test vendor ids are never asked."""
 from __future__ import annotations
 
 import logging
+import sqlite3
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -86,6 +87,8 @@ class DclDirectory:
             moment = datetime.fromisoformat(fetched_at)
         except ValueError:
             return False
+        if moment.tzinfo is None:
+            moment = moment.replace(tzinfo=UTC)
         return self._now() - moment < _RETRY_MISSING_AFTER
 
     async def vendor(self, vendor_id: int) -> DclVendor | None:
@@ -101,12 +104,17 @@ class DclDirectory:
         except Exception as exc:  # noqa: BLE001 - offline is a normal state here
             logger.info("DCL vendor %s not reachable: %s", vendor_id, exc)
             return None
-        info = (data or {}).get("vendorInfo") or {}
+        info = (data or {}).get("vendorInfo")
+        if not isinstance(info, dict):
+            info = {}
         name = info.get("vendorName")
         entry = (
             DclVendor(vendor_id, name.strip()) if isinstance(name, str) and name.strip() else None
         )
-        self._store.put_vendor(vendor_id, entry, self._now().isoformat())
+        try:
+            self._store.put_vendor(vendor_id, entry, self._now().isoformat())
+        except sqlite3.Error as exc:  # the name is cosmetic; keep the answer
+            logger.warning("DCL vendor %s could not be cached: %s", vendor_id, exc)
         return entry
 
     async def model(self, vendor_id: int, product_id: int) -> DclModel | None:
@@ -122,26 +130,32 @@ class DclDirectory:
         except Exception as exc:  # noqa: BLE001 - offline is a normal state here
             logger.info("DCL model %s/%s not reachable: %s", vendor_id, product_id, exc)
             return None
-        model = (data or {}).get("model") or {}
+        model = (data or {}).get("model")
+        if not isinstance(model, dict):
+            model = {}
         name = model.get("productName")
         entry = None
         if isinstance(name, str) and name.strip():
             instruction = model.get("commissioningModeInitialStepsInstruction")
             device_type = model.get("deviceTypeId")
+            hint = model.get("commissioningModeInitialStepsHint")
             entry = DclModel(
                 vendor_id=vendor_id,
                 product_id=product_id,
                 name=name.strip(),
                 part_number=(model.get("partNumber") or None),
                 device_type=device_type if isinstance(device_type, int) else None,
-                initial_steps_hint=int(model.get("commissioningModeInitialStepsHint") or 0),
+                initial_steps_hint=hint if isinstance(hint, int) else 0,
                 initial_steps_instruction=(
                     instruction.strip()
                     if isinstance(instruction, str) and instruction.strip()
                     else None
                 ),
             )
-        self._store.put_model(vendor_id, product_id, entry, self._now().isoformat())
+        try:
+            self._store.put_model(vendor_id, product_id, entry, self._now().isoformat())
+        except sqlite3.Error as exc:  # the name is cosmetic; keep the answer
+            logger.warning("DCL model %s/%s could not be cached: %s", vendor_id, product_id, exc)
         return entry
 
     async def product_label(self, vendor_id: int | None, product_id: int | None) -> ProductLabel:

@@ -23,7 +23,7 @@ def _columns(path: Path, table: str) -> set[str]:
         db.close()
 
 
-def test_schema_version_is_16():
+def test_schema_version_is_current():
     assert schema_version() == 17
 
 
