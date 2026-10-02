@@ -15,12 +15,13 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 """Matter commissioning advertisements and adapter state, read from BlueZ.
 
-Design 2026-09-22, sections 3 and 6. matter-server scans over BlueZ while it
-commissions; BlueZ keeps every advertisement it received as an
-`org.bluez.Device1` object. This module reads those objects - it never starts
-a scan itself: on 21 September 2026 the Raspberry Pi 3's on-board adapter
-wedged after a single commissioning attempt, and a second scanning client on
-the same chip is the last thing it needs.
+Design 2026-09-22, sections 3 and 6. The `BluezReader` class reads
+`org.bluez.Device1` objects - it never starts a scan itself: on 21 September
+2026 the Raspberry Pi 3's on-board adapter wedged after a single commissioning
+attempt, and a second scanning client on the same chip is the last thing it
+needs. The `BluezScanner` class starts a short scan of its own (design
+2026-10-02, section 6.1) under a serializing lock to filter for Matter
+devices in pairing mode.
 
 A Matter device in commissioning mode advertises service data under
 `MATTER_SERVICE_UUID`: byte 0 is the opcode (0x00 = commissionable), bytes 1-2
@@ -32,6 +33,7 @@ Nothing in it is secret.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
@@ -198,3 +200,70 @@ class BluezReader:
             logger.debug("BlueZ not readable: %s", exc)
             return None
         return snapshot_from_objects(objects)
+
+
+MethodCaller = Callable[[str, str, str, str, list[Any]], Awaitable[None]]
+
+
+class BluezScanError(RuntimeError):
+    """BlueZ answered a scan call with an error."""
+
+
+async def _call_bluez(
+    path: str, interface: str, member: str, signature: str, body: list[Any]
+) -> None:
+    from dbus_fast import BusType, Message, MessageType
+    from dbus_fast.aio import MessageBus
+
+    bus = await MessageBus(bus_type=BusType.SYSTEM).connect()
+    try:
+        reply = await bus.call(
+            Message(
+                destination="org.bluez",
+                path=path,
+                interface=interface,
+                member=member,
+                signature=signature,
+                body=body,
+            )
+        )
+    finally:
+        bus.disconnect()
+    if reply is None or reply.message_type == MessageType.ERROR:
+        raise BluezScanError(f"BlueZ refused {member}: {getattr(reply, 'error_name', None)}")
+
+
+class BluezScanner:
+    """A short scan of our own (design 2026-10-02, section 6.1).
+
+    Measured on the test Pi on 2 October 2026: the container (uid 0) may
+    call all three methods over the read-only /run/dbus mount. The caller
+    holds the scan/commissioning lock; this class does not know it."""
+
+    def __init__(
+        self,
+        call: MethodCaller | None = None,
+        *,
+        sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+    ) -> None:
+        self._call = call or _call_bluez
+        self._sleep = sleep
+
+    async def scan(self, adapter_path: str = "/org/bluez/hci0", seconds: float = 10.0) -> None:
+        from dbus_fast import Variant
+
+        await self._call(
+            adapter_path,
+            _ADAPTER,
+            "SetDiscoveryFilter",
+            "a{sv}",
+            [{"Transport": Variant("s", "le"), "UUIDs": Variant("as", [MATTER_SERVICE_UUID])}],
+        )
+        await self._call(adapter_path, _ADAPTER, "StartDiscovery", "", [])
+        try:
+            await self._sleep(seconds)
+        finally:
+            try:
+                await self._call(adapter_path, _ADAPTER, "StopDiscovery", "", [])
+            except BluezScanError as exc:
+                logger.warning("Stopping the Bluetooth scan failed: %s", exc)
