@@ -348,6 +348,13 @@ The Pi runs matterjs-server since September 30, 2026.
    Bluetooth or HCI line in the 10 minutes around it; `hciconfig` reports
    `hci0` UP RUNNING with 0 errors. The read-only mount of the socket
    directory does not block method calls.
+   **Repeated with the branch's `BluezScanner` on October 2, 2026, evening:**
+   one D-Bus connection for filter, start, read and stop (BlueZ ends a
+   discovery when the connection that started it closes, and clears every
+   RSSI when it stops — so the objects are read before `StopDiscovery`).
+   `Discovering` read `False` before, `True` 3 s into a 6 s scan, `False`
+   after; no Bluetooth line in `journalctl -k`, `hciconfig` 0 errors. No
+   device was in pairing mode, so the snapshot was empty.
 2. Scan and commissioning alternating three times; the adapter must not wedge.
 3. The DCL is reachable from the container.
 4. Identify on a KAJPLATS lamp and on a Zigbee device; stop with 0; only one
