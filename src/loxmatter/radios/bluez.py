@@ -265,5 +265,5 @@ class BluezScanner:
         finally:
             try:
                 await self._call(adapter_path, _ADAPTER, "StopDiscovery", "", [])
-            except BluezScanError as exc:
+            except Exception as exc:  # noqa: BLE001
                 logger.warning("Stopping the Bluetooth scan failed: %s", exc)
