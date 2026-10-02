@@ -1222,11 +1222,119 @@ web.commissioning.note_not_nearby:
 web.commissioning.note_no_signal_yet:
   en: "No matching device is advertising yet."
   de: "Noch sendet kein passendes Gerät."
+web.commissioning.code_label:
+  en: "Scan or type a code"
+  de: "Code scannen oder eintippen"
+web.commissioning.default_room:
+  en: "Room for new cards"
+  de: "Raum für neue Karten"
+web.commissioning.no_room:
+  en: "No room"
+  de: "Kein Raum"
+web.commissioning.scan_again:
+  en: "Scan again"
+  de: "Erneut suchen"
+web.commissioning.scan_running:
+  en: "Scanning over Bluetooth (10 s) …"
+  de: "Suche per Bluetooth (10 s) …"
+web.commissioning.scan_blocked:
+  en: "Scanning is paused while a device is commissioned."
+  de: "Gesucht wird nicht, solange ein Gerät eingelernt wird."
+web.commissioning.scan_found:
+  en: "{count} devices in pairing mode nearby."
+  de: "{count} Geräte im Anlernmodus in der Nähe."
+web.commissioning.bluetooth_warning:
+  en: "The Bluetooth adapter reported errors during the scan. Restarting the bridge host usually clears it; a USB Bluetooth adapter avoids it."
+  de: "Der Bluetooth-Adapter hat beim Suchen Fehler gemeldet. Ein Neustart des Bridge-Rechners behebt das meist; ein USB-Bluetooth-Adapter vermeidet es."
+web.commissioning.signal:
+  en: "Signal {rssi} dBm"
+  de: "Signal {rssi} dBm"
+web.commissioning.code_ok:
+  en: "Code ✓"
+  de: "Code ✓"
+web.commissioning.name:
+  en: "Name"
+  de: "Name"
+web.commissioning.room:
+  en: "Room"
+  de: "Raum"
+web.commissioning.try_anyway:
+  en: "Try anyway"
+  de: "Trotzdem versuchen"
+web.commissioning.remove:
+  en: "Remove"
+  de: "Entfernen"
+web.commissioning.clear:
+  en: "Clear list"
+  de: "Liste leeren"
+web.commissioning.start:
+  en: "Commission ready devices"
+  de: "Bereite Geräte einlernen"
+web.commissioning.start_n:
+  en: "Commission ready devices ({count})"
+  de: "Bereite Geräte einlernen ({count})"
+web.commissioning.state_found:
+  en: "Code missing"
+  de: "Code fehlt"
+web.commissioning.state_ready:
+  en: "Ready"
+  de: "Bereit"
+web.commissioning.state_queued:
+  en: "Queued #{position}"
+  de: "In Warteschlange #{position}"
+web.commissioning.state_running:
+  en: "Commissioning …"
+  de: "Wird eingelernt …"
+web.commissioning.state_naming:
+  en: "Waiting for a name"
+  de: "Wartet auf Namen"
+web.commissioning.state_done:
+  en: "Commissioned"
+  de: "Eingelernt"
+web.commissioning.state_not_nearby:
+  en: "Not nearby"
+  de: "Nicht in der Nähe"
+web.commissioning.state_failed:
+  en: "Failed"
+  de: "Fehlgeschlagen"
+web.commissioning.phase_searching:
+  en: "Searching for the device"
+  de: "Gerät wird gesucht"
+web.commissioning.phase_found:
+  en: "Device found"
+  de: "Gerät gefunden"
+web.commissioning.phase_connected:
+  en: "Connected — setting up"
+  de: "Verbunden – wird eingerichtet"
+web.commissioning.phase_joined:
+  en: "Joined — loading signals"
+  de: "Beigetreten – Signale werden geladen"
+web.commissioning.foot_working:
+  en: "{count} in progress"
+  de: "{count} in Arbeit"
+web.commissioning.foot_naming:
+  en: "{count} waiting for a name"
+  de: "{count} warten auf Namen"
+web.commissioning.foot_done:
+  en: "{count} commissioned"
+  de: "{count} eingelernt"
+web.commissioning.add_code:
+  en: "Add"
+  de: "Hinzufügen"
+web.commissioning.open:
+  en: "Open dialog"
+  de: "Dialog öffnen"
+web.commissioning.close:
+  en: "Close"
+  de: "Schließen"
+web.commissioning.intro:
+  en: "Put the devices into pairing mode, then scan their codes one after another. Each code lands on its device's card; the bridge commissions them one by one in the background."
+  de: "Versetzen Sie die Geräte in den Anlernmodus und scannen Sie dann ihre Codes nacheinander. Jeder Code landet auf der Karte seines Geräts; die Bridge lernt sie im Hintergrund eines nach dem anderen ein."
 
 # --- web.devices — device list, commissioning, operation ---
 web.devices.commission_heading:
-  en: "Commission a new device"
-  de: "Neues Gerät einlernen"
+  en: "Commission devices"
+  de: "Geräte einlernen"
 web.devices.code_placeholder:
   # Shows the FORM instead of describing it. The earlier parenthetical
   # ("11 digits or MT:…") named the form - whoever is holding the sticker

@@ -372,469 +372,20 @@
            View 1: Devices
            ================================================================ -->
       <section x-show="view === 'devices'">
-        <div class="card">
-          <h2 x-text="t('web.devices.commission_heading')"></h2>
-          <!--
-            The two tabs (design 2026-09-12, section 3.1), in the `nav.tabs`
-            shape the language card and the update channel already use -
-            with one deliberate difference from both: those disable their
-            buttons, and this strip never does. The Zigbee tab is ABSENT
-            without a configured stick, not disabled: a tab that explains
-            why it does nothing is worse than no tab, and an installation
-            with no Zigbee stick is the normal case. The whole strip goes
-            with it, so the card of such an installation is exactly the card
-            it always was.
-
-            `zigbeeTabVisible()` reads the STORED setting, never whether the
-            pairing list answered - see app.js.
-          -->
-          <template x-if="zigbeeTabVisible()">
-            <nav class="tabs commission-tabs" role="tablist">
-              <button
-                type="button"
-                role="tab"
-                :aria-selected="commissionTabShown() === 'matter' ? 'true' : 'false'"
-                :class="{ active: commissionTabShown() === 'matter' }"
-                @click="selectCommissionTab('matter')"
-                x-text="t('web.devices.commission_tab_matter')"
-              ></button>
-              <button
-                type="button"
-                role="tab"
-                :aria-selected="commissionTabShown() === 'zigbee' ? 'true' : 'false'"
-                :class="{ active: commissionTabShown() === 'zigbee' }"
-                @click="selectCommissionTab('zigbee')"
-                x-text="t('web.zigbee.tab')"
-              ></button>
-            </nav>
-          </template>
-          <!-- The Matter tab: the card as it has always been, unchanged. -->
-          <div x-show="commissionTabShown() === 'matter'">
-          <div x-show="commissionStep === null">
-            <!--
-              Layout since the "Code first" design (2026-09-07): the
-              pairing code stands alone on the first line, everything else
-              below it in a quieter second one. Before this, four
-              equally wide fields sat side by side here with three paragraphs
-              of help text below - 78 words, permanently visible, detached from
-              the fields they explain, and the longest of them belonged to the
-              rarest field (the Thread dataset).
-
-              Not a single sentence of it was lost: the two long
-              notes now sit in the `<details>` disclosures below, each
-              next to the field it concerns. The third one (the room note) became
-              a one-liner next to the selection field, because the
-              selection field with "No room" already gives half the information
-              itself.
-            -->
-            <div class="code-with-sticker">
-              <div class="code-col">
-                <label class="field-label" for="commission-code"
-                       x-text="t('web.devices.code_label')"></label>
-                <!--
-                  The code gets its own border around field AND button, instead
-                  of hanging both as siblings in a `.row`: it is the
-                  only required field on this card, and Enter in the field does
-                  the same as the button next to it. The monospace font is
-                  not decoration - that is exactly how the code appears on the
-                  device's sticker, and in a proportional font an O cannot be
-                  told apart from a 0 when copying it out.
-                -->
-                <div class="code-field">
-                  <input
-                    type="text"
-                    id="commission-code"
-                    class="code-input"
-                    spellcheck="false"
-                    autocomplete="off"
-                    x-ref="commissionCode"
-                    x-model="commissionCode"
-                    :placeholder="t('web.devices.code_placeholder')"
-                    aria-describedby="code-examples code-where-hint"
-                    @input="formatCommissionCode($event.target)"
-                    @keydown="commissionCodeKeydown($event)"
-                    @keydown.enter="commissionDevice()"
-                  />
-                  <!--
-                    No `inputmode="numeric"`: on the phone that would bring up
-                    the numeric keyboard, and there is no dash key there. But
-                    it would lock typing a QR text behind a shift key, and
-                    this card has exactly one field for both forms.
-
-                    The chip stays visible-but-empty when the field is empty
-                    (`visibility: hidden` in style.css) instead of removed, so
-                    the field does not change its width on the first keystroke.
-                  -->
-                  <span
-                    class="code-detect"
-                    :class="'tone-' + commissionCodeBadge().tone"
-                    x-text="commissionCodeBadge().text"
-                    aria-live="polite"
-                  ></span>
-                  <button
-                    class="primary"
-                    @click="commissionDevice()"
-                    :disabled="commissionBusy"
-                    x-text="t('web.devices.commission_submit')"
-                  ></button>
-                </div>
-                <p class="code-examples" id="code-examples">
-                  <span><b x-text="t('web.devices.code_detect_manual')"></b>
-                    <code x-text="t('web.devices.code_example_manual')"></code></span>
-                  <span><b x-text="t('web.devices.code_detect_qr')"></b>
-                    <code x-text="t('web.devices.code_example_qr')"></code></span>
-                </p>
-                <p class="hint" id="code-where-hint" x-text="t('web.devices.code_where_hint')"></p>
-              </div>
-              <!--
-                The QR square is a suggestion made of rectangles - three
-                finder patterns plus noise -, not a readable code. A real QR
-                code in the image would be an invitation to scan it, and it
-                would lead nowhere.
-
-                All colors come from the existing variables, so the sketch
-                works in both themes; --warn highlights the number and
-                thereby carries the same meaning as everywhere else
-                ("look here"), instead of introducing a new one.
-              -->
-              <svg class="code-sticker" width="188" height="112"
-                   viewBox="0 0 188 112" role="img"
-                   :aria-label="t('web.devices.sticker_alt')">
-                <rect x="1" y="1" width="186" height="110" rx="6"
-                      fill="var(--bg)" stroke="var(--border)" stroke-width="1" />
-                <g fill="var(--text)">
-                  <rect x="16" y="16" width="22" height="22" rx="1" />
-                  <rect x="20" y="20" width="14" height="14" rx="1" fill="var(--bg)" />
-                  <rect x="24" y="24" width="6" height="6" />
-                  <rect x="62" y="16" width="22" height="22" rx="1" />
-                  <rect x="66" y="20" width="14" height="14" rx="1" fill="var(--bg)" />
-                  <rect x="70" y="24" width="6" height="6" />
-                  <rect x="16" y="62" width="22" height="22" rx="1" />
-                  <rect x="20" y="66" width="14" height="14" rx="1" fill="var(--bg)" />
-                  <rect x="24" y="70" width="6" height="6" />
-                  <rect x="46" y="18" width="4" height="4" /><rect x="54" y="26" width="4" height="4" />
-                  <rect x="46" y="34" width="4" height="4" /><rect x="46" y="46" width="4" height="4" />
-                  <rect x="62" y="46" width="4" height="4" /><rect x="70" y="54" width="4" height="4" />
-                  <rect x="78" y="46" width="4" height="4" /><rect x="54" y="54" width="4" height="4" />
-                  <rect x="62" y="62" width="4" height="4" /><rect x="78" y="70" width="4" height="4" />
-                  <rect x="70" y="78" width="4" height="4" /><rect x="46" y="70" width="4" height="4" />
-                  <rect x="16" y="46" width="4" height="4" /><rect x="30" y="46" width="4" height="4" />
-                  <rect x="62" y="78" width="4" height="4" /><rect x="54" y="70" width="4" height="4" />
-                </g>
-                <rect x="96" y="52" width="86" height="20" rx="4"
-                      fill="var(--warn-bg)" stroke="var(--warn)" stroke-width="1" />
-                <!-- font-family spelled out instead of var(--mono): SVG presentation attributes
-                     do not resolve CSS variables in every engine, and monospace here is
-                     not a stylistic choice -- 0 and O must stay distinguishable, because that
-                     is exactly how the code appears on the sticker. -->
-                <text x="100" y="66"
-                      font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace"
-                      font-size="10" fill="var(--text)">1234-567-8901</text>
-                <text x="98" y="44" font-size="8.5" letter-spacing="0.6"
-                      fill="var(--text-muted)">MATTER</text>
-              </svg>
-            </div>
-
-          <div class="commission-meta">
-            <label class="inline-field">
-              <span x-text="t('web.devices.room_label')"></span>
-              <select x-model="commissionRoom">
-                <option value="" x-text="t('web.devices.room_none')"></option>
-                <template x-for="room in roomSelectOptions()" :key="room">
-                  <option :value="room" x-text="room"></option>
-                </template>
-                <option value="__new__" x-text="t('web.devices.room_new')"></option>
-              </select>
-            </label>
-            <input
-              x-show="commissionRoom === '__new__'"
-              x-cloak
-              type="text"
-              class="new-room-input"
-              x-model="commissionNewRoom"
-              :placeholder="t('web.devices.room_new_placeholder')"
-              :aria-label="t('web.devices.room_new_placeholder')"
-            />
-            <span class="hint" x-text="t('web.devices.commission_room_hint')"></span>
+        <!--
+          The entry to commissioning (design 2026-10-02, section 4.1): one
+          button that opens the commissioning dialog (after `</main>`, with
+          the other dialogs). The dialog holds what this card
+          used to hold - the Matter tab, now cards of what is nearby, and the
+          Zigbee tab, unchanged.
+        -->
+        <div class="card commission-entry">
+          <div class="row">
+            <h2 x-text="t('web.devices.commission_heading')"></h2>
+            <span class="grow"></span>
+            <button type="button" class="primary" @click="openCommissionDialog()"
+                    x-text="t('web.commissioning.open')"></button>
           </div>
-
-          <div class="commission-help">
-            <!--
-              Two native `<details>` instead of a dedicated open/closed state
-              in `app()`: the browser can already do that, and a state
-              nobody has to reset can't drift out of sync with anything else
-              either. The same reasoning as for the tile menu and the signal
-              groups in the modal.
-            -->
-            <details class="commission-disclosure">
-              <summary x-text="t('web.devices.code_help_summary')"></summary>
-              <div class="disclosure-body">
-                <p class="hint" x-text="t('web.devices.commission_hint')"></p>
-              </div>
-            </details>
-            <details class="commission-disclosure">
-              <summary x-text="t('web.devices.thread_summary')"></summary>
-              <div class="disclosure-body">
-                <label class="field-label" for="commission-thread"
-                       x-text="t('web.devices.thread_dataset_label')"></label>
-                <input
-                  type="text"
-                  id="commission-thread"
-                  x-model="commissionThreadDataset"
-                  :placeholder="t('web.devices.thread_dataset_placeholder')"
-                />
-                <p class="hint" x-text="t('web.devices.thread_dataset_hint')"></p>
-              </div>
-            </details>
-          </div>
-          </div>
-
-          <!--
-            The progress display (design "The process becomes visible",
-            reworked 2026-09-22, section 5.3). It solves a problem that no
-            layout can solve: commissioning takes anywhere from twenty to
-            sixty seconds depending on the device, and until now that was
-            just a button turning grey - indistinguishable from a hung
-            page.
-
-            FIVE phases, not two: the bridge now derives them itself from
-            BlueZ and NODE_ADDED and answers them from
-            GET /api/devices/commission/status, polled every 2 s while an
-            attempt runs (`startCommissionPolling`). Below the phases, the
-            nearby list and the Bluetooth warnings are the same route's
-            other two findings - which devices are advertising, and
-            whether the adapter itself is having trouble.
-          -->
-          <div x-show="commissionStep !== null" x-cloak>
-            <p class="commission-subject">
-              <span class="key" x-text="commissionRunCode"></span>
-              <span class="hint" x-show="commissionRunRoom" x-text="commissionRunRoom"></span>
-            </p>
-            <p class="hint" x-show="commissionDiscriminator" x-cloak
-               x-text="t('web.devices.commission_looking_for', { discriminator: commissionDiscriminator?.value })"></p>
-            <ol class="commission-steps">
-              <template x-for="phase in ['searching', 'found', 'connected', 'joined', 'done']" :key="phase">
-                <li class="commission-step" :class="commissionPhaseClass(phase)">
-                  <span class="step-marker" aria-hidden="true"></span>
-                  <span x-text="t('web.devices.commission_phase_' + phase)"></span>
-                </li>
-              </template>
-            </ol>
-            <p class="hint" x-show="commissionElapsedSeconds() !== null" x-cloak
-               x-text="t('web.devices.commission_elapsed', { seconds: commissionElapsedSeconds() })"></p>
-            <p class="hint" x-show="commissionPhaseHint()" x-cloak x-text="commissionPhaseHint()"></p>
-            <template x-for="key in commissionBluetoothWarnings()" :key="key">
-              <p class="banner warn" x-text="t(key)"></p>
-            </template>
-            <div x-show="commissionShowNearby() && commissionNearby().length" x-cloak>
-              <p class="hint" x-text="t('web.devices.commission_nearby_heading')"></p>
-              <ul class="commission-nearby">
-                <template x-for="entry in commissionNearby()" :key="entry.address">
-                  <li :class="entry.matches ? 'match' : ''"
-                      x-text="t('web.devices.commission_nearby_entry', { name: entry.name ?? entry.address, discriminator: entry.discriminator, rssi: entry.rssi })"></li>
-                </template>
-              </ul>
-            </div>
-            <button
-              class="commission-restart"
-              x-show="commissionStep === 2 || commissionFailed"
-              x-cloak
-              @click="resetCommission()"
-              x-text="commissionFailed ? t('web.devices.commission_retry') : t('web.devices.commission_again')"
-            ></button>
-          </div>
-
-          <!--
-            The message sits outside both halves, because it belongs to
-            both: the check for an empty code fires BEFORE a run begins
-            (i.e. at the form), success and failure report afterward
-            (i.e. at the progress display). Two copies of the same banner
-            would be two places where it could get stuck.
-          -->
-          <p
-            x-show="commissionMessage"
-            x-cloak
-            :class="commissionMessageIsError ? 'banner danger' : 'banner ok'"
-            x-text="commissionMessage"
-          ></p>
-          </div>
-
-          <!--
-            The Zigbee tab (design 2026-09-12, section 3.1), in the design's
-            order: reset guidance and ONE button first, not an open network -
-            ZHA opens the window as the page loads and burns it while the
-            user is still reading how to reset their device. Then, while
-            the window is open, the countdown with Stop and Keep open
-            longer. Then one row per device, keyed by IEEE.
-          -->
-          <div class="zigbee-pairing" x-show="commissionTabShown() === 'zigbee'" x-cloak>
-            <!-- The list's own failure, as the API words it. A 503 here is a
-                 radio swap in flight or a stick just cleared; the tab stays
-                 either way, and says which. -->
-            <p class="banner danger" x-show="zigbeePairingError" x-cloak x-text="zigbeePairingError"></p>
-            <div class="zigbee-reset">
-              <p class="hint" x-text="t('web.zigbee.reset_intro')"></p>
-              <ul class="zigbee-reset-hints">
-                <li x-text="t('web.zigbee.reset_hint_lamp')"></li>
-                <li x-text="t('web.zigbee.reset_hint_battery')"></li>
-              </ul>
-            </div>
-            <!-- Start and the running window's two buttons share one line
-                 of the same height; the countdown is the line under them. -->
-            <div class="row zigbee-window" x-show="!zigbeeWindowOpen()">
-              <button
-                class="primary"
-                @click="startZigbeeSearch()"
-                :disabled="zigbeePermitBusy || zigbeePairingUnavailable"
-                x-text="t('web.zigbee.start')"
-              ></button>
-            </div>
-            <div class="row zigbee-window" x-show="zigbeeWindowOpen()" x-cloak>
-              <button @click="stopZigbeeSearch()" :disabled="zigbeePermitBusy" x-text="t('web.zigbee.stop')"></button>
-              <button
-                @click="extendZigbeeSearch()"
-                :disabled="zigbeePermitBusy || zigbeePairingUnavailable"
-                x-text="t('web.zigbee.extend')"
-              ></button>
-            </div>
-            <p class="zigbee-countdown" x-show="zigbeeWindowOpen()" x-cloak
-               x-text="t('web.zigbee.countdown', { time: zigbeeCountdownText() })"></p>
-            <p class="banner danger" x-show="zigbeePermitError" x-cloak x-text="zigbeePermitError"></p>
-            <p class="hint" x-show="zigbeeWindowOpen() && zigbeeRows().length === 0" x-cloak
-               x-text="t('web.zigbee.searching_empty')"></p>
-            <!--
-              Two groups (`zigbeeRowGroups()`): the rows still to be dealt
-              with, open, and the rows already in the device list, collapsed
-              under their count - the list holds every device the radio has
-              seen, and those pushed the device tiles far down. ONE row
-              template for both, so the two cannot drift apart: the open
-              group is a `<details>` held open with its summary hidden.
-              `zigbeeAddedExpanded` carries the collapsed group's state across
-              the poll, which re-renders the group every two seconds. The open
-              group's summary is hidden, so it takes its name from
-              `aria-label` instead of reading as an unnamed group.
-            -->
-            <div class="zigbee-row-groups" x-show="zigbeeRows().length > 0" x-cloak>
-              <template x-for="group in zigbeeRowGroups()" :key="group.key">
-                <details
-                  class="zigbee-row-group"
-                  :class="'zigbee-row-group-' + group.key"
-                  :open="group.key === 'open' || zigbeeAddedExpanded"
-                  :aria-label="group.key === 'open' ? t('web.zigbee.open_group_label') : null"
-                  @toggle="if (group.key === 'added') zigbeeAddedExpanded = $el.open"
-                >
-                  <summary x-show="group.key === 'added'" x-text="zigbeeAddedSummary(group.rows.length)"></summary>
-                  <ul class="zigbee-rows">
-                    <template x-for="row in group.rows" :key="row.ieee">
-                      <li class="zigbee-row" :class="'tone-' + zigbeeRowTone(row)">
-                        <div class="zigbee-row-head">
-                          <span class="zigbee-row-dot" aria-hidden="true"></span>
-                          <div class="zigbee-row-text">
-                            <strong class="zigbee-row-title" x-text="zigbeeRowTitle(row)"></strong>
-                            <span class="zigbee-row-state" x-text="zigbeeRowState(row)"></span>
-                            <code class="zigbee-row-ieee" x-show="zigbeeRowTitle(row) !== row.ieee" x-text="row.ieee"></code>
-                          </div>
-                        </div>
-                        <!-- The quirk hint sits on a row that has finished its
-                             interview, and apart from the state line: a device
-                             with no quirk is not a failed one, and users confuse
-                             the two. -->
-                        <p class="hint zigbee-row-quirk" x-show="zigbeeRowNameable(row)"
-                           x-text="row.quirk_applied ? t('web.zigbee.quirk_applied') : t('web.zigbee.quirk_none')"></p>
-                        <!-- Name and room. Before adoption they are what "Add"
-                             sends; after it, each saves on its own when the
-                             field is left (or the select changes). The room
-                             control is the commissioning card's: the same options
-                             (`roomSelectOptions()`), the same "" for no room and
-                             the same "+ New room…" field (`resolveRoomChoice()`).
-                             During a 503 (a radio swap) the fields are disabled
-                             like the buttons: nothing typed there could be saved
-                             until the list answers again. -->
-                        <div class="zigbee-row-fields" x-show="zigbeeRowNameable(row)">
-                          <label class="inline-field zigbee-name-field">
-                            <span x-text="t('web.zigbee.name_label')"></span>
-                            <!-- A one-row textarea, not an input: a prefilled
-                                 `<Manufacturer> <Model>` is long by nature, and an
-                                 input cut it off at 375 px, so nobody could check
-                                 the name before keeping it. The wrapper grows with
-                                 the text (style.css, `.zigbee-name-grow`); Enter
-                                 still submits, and a line break never gets in
-                                 (`zigbeeRowEdited()`). Not `.enter.prevent`:
-                                 the Enter that confirms an input method's
-                                 candidate (Japanese, Chinese) is a keydown too,
-                                 and it added a half-typed name. -->
-                            <span class="zigbee-name-grow" :data-value="zigbeeRowDrafts[row.ieee].name">
-                              <textarea
-                                rows="1"
-                                aria-multiline="false"
-                                x-model="zigbeeRowDrafts[row.ieee].name"
-                                @input="zigbeeRowEdited(row.ieee, 'name')"
-                                @blur="saveZigbeeName(row.ieee)"
-                                @keydown.enter="if (!$event.isComposing && $event.keyCode !== 229) { $event.preventDefault(); zigbeeRowAdopted(row) ? $el.blur() : adoptZigbeeDevice(row.ieee) }"
-                                :disabled="zigbeePairingUnavailable"
-                              ></textarea>
-                            </span>
-                          </label>
-                          <label class="inline-field">
-                            <span x-text="t('web.devices.room_label')"></span>
-                            <select
-                              x-model="zigbeeRowDrafts[row.ieee].room"
-                              @change="zigbeeRowEdited(row.ieee, 'room'); saveZigbeeRoom(row.ieee)"
-                              :disabled="zigbeePairingUnavailable"
-                            >
-                              <option value="" x-text="t('web.devices.room_none')"></option>
-                              <template x-for="room in roomSelectOptions()" :key="room">
-                                <option :value="room" x-text="room"></option>
-                              </template>
-                              <option value="__new__" x-text="t('web.devices.room_new')"></option>
-                            </select>
-                          </label>
-                          <input
-                            x-show="zigbeeRowDrafts[row.ieee].room === '__new__'"
-                            x-cloak
-                            type="text"
-                            class="new-room-input"
-                            x-model="zigbeeRowDrafts[row.ieee].newRoom"
-                            @input="zigbeeRowEdited(row.ieee, 'room')"
-                            @blur="saveZigbeeRoom(row.ieee)"
-                            :disabled="zigbeePairingUnavailable"
-                            :placeholder="t('web.devices.room_new_placeholder')"
-                            :aria-label="t('web.devices.room_new_placeholder')"
-                          />
-                        </div>
-                        <p class="hint zigbee-row-added-hint" tabindex="-1" x-show="zigbeeRowNameable(row) && zigbeeRowAdopted(row)" x-cloak
-                           x-text="zigbeeRowWasSaved(row) ? t('web.zigbee.saved') : t('web.zigbee.adopted_hint')"></p>
-                        <div class="row zigbee-row-actions">
-                          <button
-                            class="primary"
-                            x-show="zigbeeRowOffers(row, 'adopt')"
-                            :disabled="zigbeeRowLocked(row)"
-                            @click="adoptZigbeeDevice(row.ieee)"
-                            x-text="t('web.zigbee.adopt')"
-                          ></button>
-                          <button
-                            x-show="zigbeeRowOffers(row, 'retry')"
-                            :disabled="zigbeeRowLocked(row)"
-                            @click="retryZigbeeDevice(row.ieee)"
-                            x-text="t('web.zigbee.retry')"
-                          ></button>
-                          <button
-                            x-show="zigbeeRowOffers(row, 'remove')"
-                            :disabled="zigbeeRowLocked(row)"
-                            @click="removeZigbeeDevice(row.ieee)"
-                            x-text="t('web.zigbee.remove')"
-                          ></button>
-                        </div>
-                        <p class="banner danger zigbee-row-error" x-show="zigbeeRowError(row)" x-cloak
-                           x-text="zigbeeRowError(row)"></p>
-                      </li>
-                    </template>
-                  </ul>
-                </details>
-              </template>
-            </div>
-          </div>
-
         </div>
 
         <p x-show="devicesError" x-cloak class="banner danger" x-text="devicesError"></p>
@@ -3899,6 +3450,459 @@
           </div>
         </div>
       </template>
+    </dialog>
+
+    <!--
+      The commissioning dialog. Same open/close mechanics as the expert
+      modal: `@close` is the one place every way out arrives (close
+      button, Escape, backdrop), and the backdrop closes it only when the
+      gesture started there too (`isBackdropEvent`). Its body has an
+      `x-if="stringsReady"` guard, like the group dialog's: built before
+      `GET /api/i18n` has answered, every `t()` in it would keep the bare
+      key for good. That guard is the only one - none on
+      `commissionDialogOpen` - so the Zigbee pane keeps its drafts and its
+      poll across a close and an open, as it did while it lived in the
+      card.
+    -->
+    <dialog
+      x-ref="commissionDialog"
+      class="expert-modal commission-modal"
+      aria-labelledby="commission-modal-heading"
+      @close="commissionDialogOpen = false; scheduleCommissioningPoll(); leaveCommissionDialogZigbee()"
+      @mousedown="commissionDialogBackdropMousedown = isBackdropEvent($event, $el)"
+      @click.self="if (commissionDialogBackdropMousedown && isBackdropEvent($event, $el)) $el.close(); commissionDialogBackdropMousedown = false"
+    >
+    <template x-if="stringsReady">
+    <div class="expert-modal-body">
+      <div class="expert-modal-head">
+        <h2 id="commission-modal-heading" x-text="t('web.devices.commission_heading')"></h2>
+        <span style="flex: 1 1 auto"></span>
+        <button type="button" class="expert-modal-close"
+                :title="t('web.commissioning.close')" :aria-label="t('web.commissioning.close')"
+                @click="closeCommissionDialog()"><svg class="icon" aria-hidden="true"><use href="#i-close"></use></svg></button>
+      </div>
+      <!--
+        The two tabs (design 2026-09-12, section 3.1), in the `nav.tabs`
+        shape the language card and the update channel already use -
+        with one deliberate difference from both: those disable their
+        buttons, and this strip never does. The Zigbee tab is ABSENT
+        without a configured stick, not disabled: a tab that explains
+        why it does nothing is worse than no tab, and an installation
+        with no Zigbee stick is the normal case. The whole strip goes
+        with it, so the card of such an installation is exactly the card
+        it always was.
+
+        `zigbeeTabVisible()` reads the STORED setting, never whether the
+        pairing list answered - see app.js.
+      -->
+      <template x-if="zigbeeTabVisible()">
+        <nav class="tabs commission-tabs" role="tablist">
+          <button
+            type="button"
+            role="tab"
+            :aria-selected="commissionTabShown() === 'matter' ? 'true' : 'false'"
+            :class="{ active: commissionTabShown() === 'matter' }"
+            @click="selectCommissionTab('matter')"
+            x-text="t('web.devices.commission_tab_matter')"
+          ></button>
+          <button
+            type="button"
+            role="tab"
+            :aria-selected="commissionTabShown() === 'zigbee' ? 'true' : 'false'"
+            :class="{ active: commissionTabShown() === 'zigbee' }"
+            @click="selectCommissionTab('zigbee')"
+            x-text="t('web.zigbee.tab')"
+          ></button>
+        </nav>
+      </template>
+      <!--
+        The Matter tab (design 2026-10-02, section 4.2): the code field
+        first - a handheld scanner types into it and ends with Enter -,
+        then one card per device in pairing mode nearby. The bridge
+        attaches each code to the card it belongs to; the cards come
+        from `sortedCards()`, never straight from the poll.
+      -->
+      <div class="commission-matter" x-show="commissionTabShown() === 'matter'">
+        <p class="hint" x-text="t('web.commissioning.intro')"></p>
+        <div class="code-with-sticker">
+          <div class="code-col">
+            <label class="field-label" for="commission-code"
+                   x-text="t('web.commissioning.code_label')"></label>
+            <!--
+              The code gets its own border around field AND button, instead
+              of hanging both as siblings in a `.row`: it is the
+              only required field on this card, and Enter in the field does
+              the same as the button next to it. The monospace font is
+              not decoration - that is exactly how the code appears on the
+              device's sticker, and in a proportional font an O cannot be
+              told apart from a 0 when copying it out.
+            -->
+            <div class="code-field">
+              <input
+                type="text"
+                id="commission-code"
+                class="code-input"
+                spellcheck="false"
+                autocomplete="off"
+                x-ref="commissionCode"
+                x-model="commissionCode"
+                :placeholder="t('web.devices.code_placeholder')"
+                aria-describedby="code-examples code-where-hint"
+                @input="formatCommissionCode($event.target)"
+                @keydown="commissionCodeKeydown($event)"
+                @keydown.enter.prevent="addCommissionCode()"
+              />
+              <!--
+                No `inputmode="numeric"`: on the phone that would bring up
+                the numeric keyboard, and there is no dash key there. But
+                it would lock typing a QR text behind a shift key, and
+                this card has exactly one field for both forms.
+
+                The chip stays visible-but-empty when the field is empty
+                (`visibility: hidden` in style.css) instead of removed, so
+                the field does not change its width on the first keystroke.
+              -->
+              <span
+                class="code-detect"
+                :class="'tone-' + commissionCodeBadge().tone"
+                x-text="commissionCodeBadge().text"
+                aria-live="polite"
+              ></span>
+              <button
+                class="primary"
+                type="button"
+                @click="addCommissionCode()"
+                x-text="t('web.commissioning.add_code')"
+              ></button>
+            </div>
+            <p class="code-examples" id="code-examples">
+              <span><b x-text="t('web.devices.code_detect_manual')"></b>
+                <code x-text="t('web.devices.code_example_manual')"></code></span>
+              <span><b x-text="t('web.devices.code_detect_qr')"></b>
+                <code x-text="t('web.devices.code_example_qr')"></code></span>
+            </p>
+            <p class="hint" id="code-where-hint" x-text="t('web.devices.code_where_hint')"></p>
+          </div>
+          <!--
+            The QR square is a suggestion made of rectangles - three
+            finder patterns plus noise -, not a readable code. A real QR
+            code in the image would be an invitation to scan it, and it
+            would lead nowhere.
+
+            All colors come from the existing variables, so the sketch
+            works in both themes; --warn highlights the number and
+            thereby carries the same meaning as everywhere else
+            ("look here"), instead of introducing a new one.
+          -->
+          <svg class="code-sticker" width="188" height="112"
+               viewBox="0 0 188 112" role="img"
+               :aria-label="t('web.devices.sticker_alt')">
+            <rect x="1" y="1" width="186" height="110" rx="6"
+                  fill="var(--bg)" stroke="var(--border)" stroke-width="1" />
+            <g fill="var(--text)">
+              <rect x="16" y="16" width="22" height="22" rx="1" />
+              <rect x="20" y="20" width="14" height="14" rx="1" fill="var(--bg)" />
+              <rect x="24" y="24" width="6" height="6" />
+              <rect x="62" y="16" width="22" height="22" rx="1" />
+              <rect x="66" y="20" width="14" height="14" rx="1" fill="var(--bg)" />
+              <rect x="70" y="24" width="6" height="6" />
+              <rect x="16" y="62" width="22" height="22" rx="1" />
+              <rect x="20" y="66" width="14" height="14" rx="1" fill="var(--bg)" />
+              <rect x="24" y="70" width="6" height="6" />
+              <rect x="46" y="18" width="4" height="4" /><rect x="54" y="26" width="4" height="4" />
+              <rect x="46" y="34" width="4" height="4" /><rect x="46" y="46" width="4" height="4" />
+              <rect x="62" y="46" width="4" height="4" /><rect x="70" y="54" width="4" height="4" />
+              <rect x="78" y="46" width="4" height="4" /><rect x="54" y="54" width="4" height="4" />
+              <rect x="62" y="62" width="4" height="4" /><rect x="78" y="70" width="4" height="4" />
+              <rect x="70" y="78" width="4" height="4" /><rect x="46" y="70" width="4" height="4" />
+              <rect x="16" y="46" width="4" height="4" /><rect x="30" y="46" width="4" height="4" />
+              <rect x="62" y="78" width="4" height="4" /><rect x="54" y="70" width="4" height="4" />
+            </g>
+            <rect x="96" y="52" width="86" height="20" rx="4"
+                  fill="var(--warn-bg)" stroke="var(--warn)" stroke-width="1" />
+            <!-- font-family spelled out instead of var(--mono): SVG presentation attributes
+                 do not resolve CSS variables in every engine, and monospace here is
+                 not a stylistic choice -- 0 and O must stay distinguishable, because that
+                 is exactly how the code appears on the sticker. -->
+            <text x="100" y="66"
+                  font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace"
+                  font-size="10" fill="var(--text)">1234-567-8901</text>
+            <text x="98" y="44" font-size="8.5" letter-spacing="0.6"
+                  fill="var(--text-muted)">MATTER</text>
+          </svg>
+        </div>
+
+        <div class="commission-controls">
+          <label class="inline-field">
+            <span x-text="t('web.commissioning.default_room')"></span>
+            <select id="commission-default-room" x-model="commissionDefaultRoom">
+              <option value="" x-text="t('web.commissioning.no_room')"></option>
+              <template x-for="room in roomSelectOptions()" :key="room">
+                <option :value="room" x-text="room"></option>
+              </template>
+            </select>
+          </label>
+          <button type="button" @click="rescanCommissioning()"
+                  :disabled="commissioning?.scan?.state !== 'idle'"
+                  x-text="t('web.commissioning.scan_again')"></button>
+        </div>
+        <div class="commission-help">
+        <details class="commission-disclosure">
+          <summary x-text="t('web.devices.code_help_summary')"></summary>
+          <div class="disclosure-body">
+            <p class="hint" x-text="t('web.devices.commission_hint')"></p>
+          </div>
+        </details>
+        </div>
+        <p class="hint commission-scan-line" x-text="scanLine()"></p>
+        <p class="banner warn" x-show="commissioning?.bluetooth_warning" x-cloak
+           x-text="t('web.commissioning.bluetooth_warning')"></p>
+        <p class="banner danger" x-show="commissioningError" x-cloak x-text="commissioningError"></p>
+        <div class="commission-cards">
+          <template x-for="card in sortedCards()" :key="card.id">
+            <div class="commission-card" :class="'is-' + card.state">
+              <div class="commission-card-top">
+                <span class="type-badge" aria-hidden="true">
+                  <svg class="icon"><use href="#i-cat-other"></use></svg>
+                </span>
+                <div class="grow">
+                  <div class="commission-card-name" x-text="card.product"></div>
+                  <div class="hint"
+                       x-text="[card.detail, card.rssi != null ? t('web.commissioning.signal', { rssi: card.rssi }) : ''].filter(Boolean).join(' · ')"></div>
+                </div>
+              </div>
+              <div class="row">
+                <span class="status-pill" :class="cardChipClass(card)">
+                  <span class="spinner" x-show="card.state === 'running'" aria-hidden="true"></span>
+                  <span x-text="cardChip(card)"></span>
+                </span>
+                <span class="grow"></span>
+                <span class="hint" x-show="card.has_code" x-text="t('web.commissioning.code_ok')"></span>
+              </div>
+              <p class="hint" x-show="card.note" x-text="card.note"></p>
+              <!-- Name and room from the moment a code is attached, and in
+                   every later state: the bridge forgets the code once a
+                   card is done, so `has_code` alone would take the fields
+                   away right after commissioning. The name field is
+                   written by `x-effect` rather than `:value`, and not
+                   while it has the focus - the poll replaces the card
+                   every second, and a `:value` would wipe what is being
+                   typed. -->
+              <template x-if="card.state !== 'found'">
+                <div class="commission-card-fields">
+                  <input type="text" :aria-label="t('web.commissioning.name')"
+                         :placeholder="t('web.commissioning.name')"
+                         :data-card-name="card.id"
+                         x-effect="if (document.activeElement !== $el) $el.value = card.name ?? ''"
+                         @change="patchCard(card, { name: $event.target.value })"
+                         @keydown.enter.prevent="patchCard(card, { name: $event.target.value })" />
+                  <select :aria-label="t('web.commissioning.room')"
+                          @change="patchCard(card, { room: $event.target.value || null })">
+                    <option value="" :selected="!card.room" x-text="t('web.commissioning.no_room')"></option>
+                    <template x-for="room in cardRoomOptions(card)" :key="room">
+                      <option :value="room" :selected="card.room === room" x-text="room"></option>
+                    </template>
+                  </select>
+                </div>
+              </template>
+              <div class="commission-card-actions">
+                <button type="button" x-show="['not_nearby', 'failed'].includes(card.state)"
+                        @click="rescanCommissioning()" x-text="t('web.commissioning.scan_again')"></button>
+                <button type="button" x-show="['not_nearby', 'failed'].includes(card.state)"
+                        @click="forceCard(card)" x-text="t('web.commissioning.try_anyway')"></button>
+                <button type="button" x-show="['ready', 'not_nearby', 'failed'].includes(card.state)"
+                        @click="removeCard(card)" x-text="t('web.commissioning.remove')"></button>
+              </div>
+            </div>
+          </template>
+        </div>
+        <div class="commission-foot">
+          <button type="button" class="primary" @click="startCommissioning()"
+                  :disabled="!readyCount()"
+                  x-text="readyCount() ? t('web.commissioning.start_n', { count: readyCount() }) : t('web.commissioning.start')"></button>
+          <button type="button" @click="clearCommissioning()" x-text="t('web.commissioning.clear')"></button>
+          <span class="hint" x-text="footLine()"></span>
+        </div>
+      </div>
+
+      <!--
+        The Zigbee tab (design 2026-09-12, section 3.1), in the design's
+        order: reset guidance and ONE button first, not an open network -
+        ZHA opens the window as the page loads and burns it while the
+        user is still reading how to reset their device. Then, while
+        the window is open, the countdown with Stop and Keep open
+        longer. Then one row per device, keyed by IEEE.
+      -->
+      <div class="zigbee-pairing" x-show="commissionTabShown() === 'zigbee'" x-cloak>
+        <!-- The list's own failure, as the API words it. A 503 here is a
+             radio swap in flight or a stick just cleared; the tab stays
+             either way, and says which. -->
+        <p class="banner danger" x-show="zigbeePairingError" x-cloak x-text="zigbeePairingError"></p>
+        <div class="zigbee-reset">
+          <p class="hint" x-text="t('web.zigbee.reset_intro')"></p>
+          <ul class="zigbee-reset-hints">
+            <li x-text="t('web.zigbee.reset_hint_lamp')"></li>
+            <li x-text="t('web.zigbee.reset_hint_battery')"></li>
+          </ul>
+        </div>
+        <!-- Start and the running window's two buttons share one line
+             of the same height; the countdown is the line under them. -->
+        <div class="row zigbee-window" x-show="!zigbeeWindowOpen()">
+          <button
+            class="primary"
+            @click="startZigbeeSearch()"
+            :disabled="zigbeePermitBusy || zigbeePairingUnavailable"
+            x-text="t('web.zigbee.start')"
+          ></button>
+        </div>
+        <div class="row zigbee-window" x-show="zigbeeWindowOpen()" x-cloak>
+          <button @click="stopZigbeeSearch()" :disabled="zigbeePermitBusy" x-text="t('web.zigbee.stop')"></button>
+          <button
+            @click="extendZigbeeSearch()"
+            :disabled="zigbeePermitBusy || zigbeePairingUnavailable"
+            x-text="t('web.zigbee.extend')"
+          ></button>
+        </div>
+        <p class="zigbee-countdown" x-show="zigbeeWindowOpen()" x-cloak
+           x-text="t('web.zigbee.countdown', { time: zigbeeCountdownText() })"></p>
+        <p class="banner danger" x-show="zigbeePermitError" x-cloak x-text="zigbeePermitError"></p>
+        <p class="hint" x-show="zigbeeWindowOpen() && zigbeeRows().length === 0" x-cloak
+           x-text="t('web.zigbee.searching_empty')"></p>
+        <!--
+          Two groups (`zigbeeRowGroups()`): the rows still to be dealt
+          with, open, and the rows already in the device list, collapsed
+          under their count - the list holds every device the radio has
+          seen, and those pushed the device tiles far down. ONE row
+          template for both, so the two cannot drift apart: the open
+          group is a `<details>` held open with its summary hidden.
+          `zigbeeAddedExpanded` carries the collapsed group's state across
+          the poll, which re-renders the group every two seconds. The open
+          group's summary is hidden, so it takes its name from
+          `aria-label` instead of reading as an unnamed group.
+        -->
+        <div class="zigbee-row-groups" x-show="zigbeeRows().length > 0" x-cloak>
+          <template x-for="group in zigbeeRowGroups()" :key="group.key">
+            <details
+              class="zigbee-row-group"
+              :class="'zigbee-row-group-' + group.key"
+              :open="group.key === 'open' || zigbeeAddedExpanded"
+              :aria-label="group.key === 'open' ? t('web.zigbee.open_group_label') : null"
+              @toggle="if (group.key === 'added') zigbeeAddedExpanded = $el.open"
+            >
+              <summary x-show="group.key === 'added'" x-text="zigbeeAddedSummary(group.rows.length)"></summary>
+              <ul class="zigbee-rows">
+                <template x-for="row in group.rows" :key="row.ieee">
+                  <li class="zigbee-row" :class="'tone-' + zigbeeRowTone(row)">
+                    <div class="zigbee-row-head">
+                      <span class="zigbee-row-dot" aria-hidden="true"></span>
+                      <div class="zigbee-row-text">
+                        <strong class="zigbee-row-title" x-text="zigbeeRowTitle(row)"></strong>
+                        <span class="zigbee-row-state" x-text="zigbeeRowState(row)"></span>
+                        <code class="zigbee-row-ieee" x-show="zigbeeRowTitle(row) !== row.ieee" x-text="row.ieee"></code>
+                      </div>
+                    </div>
+                    <!-- The quirk hint sits on a row that has finished its
+                         interview, and apart from the state line: a device
+                         with no quirk is not a failed one, and users confuse
+                         the two. -->
+                    <p class="hint zigbee-row-quirk" x-show="zigbeeRowNameable(row)"
+                       x-text="row.quirk_applied ? t('web.zigbee.quirk_applied') : t('web.zigbee.quirk_none')"></p>
+                    <!-- Name and room. Before adoption they are what "Add"
+                         sends; after it, each saves on its own when the
+                         field is left (or the select changes). The room
+                         control is the commissioning card's: the same options
+                         (`roomSelectOptions()`), the same "" for no room and
+                         the same "+ New room…" field (`resolveRoomChoice()`).
+                         During a 503 (a radio swap) the fields are disabled
+                         like the buttons: nothing typed there could be saved
+                         until the list answers again. -->
+                    <div class="zigbee-row-fields" x-show="zigbeeRowNameable(row)">
+                      <label class="inline-field zigbee-name-field">
+                        <span x-text="t('web.zigbee.name_label')"></span>
+                        <!-- A one-row textarea, not an input: a prefilled
+                             `<Manufacturer> <Model>` is long by nature, and an
+                             input cut it off at 375 px, so nobody could check
+                             the name before keeping it. The wrapper grows with
+                             the text (style.css, `.zigbee-name-grow`); Enter
+                             still submits, and a line break never gets in
+                             (`zigbeeRowEdited()`). Not `.enter.prevent`:
+                             the Enter that confirms an input method's
+                             candidate (Japanese, Chinese) is a keydown too,
+                             and it added a half-typed name. -->
+                        <span class="zigbee-name-grow" :data-value="zigbeeRowDrafts[row.ieee].name">
+                          <textarea
+                            rows="1"
+                            aria-multiline="false"
+                            x-model="zigbeeRowDrafts[row.ieee].name"
+                            @input="zigbeeRowEdited(row.ieee, 'name')"
+                            @blur="saveZigbeeName(row.ieee)"
+                            @keydown.enter="if (!$event.isComposing && $event.keyCode !== 229) { $event.preventDefault(); zigbeeRowAdopted(row) ? $el.blur() : adoptZigbeeDevice(row.ieee) }"
+                            :disabled="zigbeePairingUnavailable"
+                          ></textarea>
+                        </span>
+                      </label>
+                      <label class="inline-field">
+                        <span x-text="t('web.devices.room_label')"></span>
+                        <select
+                          x-model="zigbeeRowDrafts[row.ieee].room"
+                          @change="zigbeeRowEdited(row.ieee, 'room'); saveZigbeeRoom(row.ieee)"
+                          :disabled="zigbeePairingUnavailable"
+                        >
+                          <option value="" x-text="t('web.devices.room_none')"></option>
+                          <template x-for="room in roomSelectOptions()" :key="room">
+                            <option :value="room" x-text="room"></option>
+                          </template>
+                          <option value="__new__" x-text="t('web.devices.room_new')"></option>
+                        </select>
+                      </label>
+                      <input
+                        x-show="zigbeeRowDrafts[row.ieee].room === '__new__'"
+                        x-cloak
+                        type="text"
+                        class="new-room-input"
+                        x-model="zigbeeRowDrafts[row.ieee].newRoom"
+                        @input="zigbeeRowEdited(row.ieee, 'room')"
+                        @blur="saveZigbeeRoom(row.ieee)"
+                        :disabled="zigbeePairingUnavailable"
+                        :placeholder="t('web.devices.room_new_placeholder')"
+                        :aria-label="t('web.devices.room_new_placeholder')"
+                      />
+                    </div>
+                    <p class="hint zigbee-row-added-hint" tabindex="-1" x-show="zigbeeRowNameable(row) && zigbeeRowAdopted(row)" x-cloak
+                       x-text="zigbeeRowWasSaved(row) ? t('web.zigbee.saved') : t('web.zigbee.adopted_hint')"></p>
+                    <div class="row zigbee-row-actions">
+                      <button
+                        class="primary"
+                        x-show="zigbeeRowOffers(row, 'adopt')"
+                        :disabled="zigbeeRowLocked(row)"
+                        @click="adoptZigbeeDevice(row.ieee)"
+                        x-text="t('web.zigbee.adopt')"
+                      ></button>
+                      <button
+                        x-show="zigbeeRowOffers(row, 'retry')"
+                        :disabled="zigbeeRowLocked(row)"
+                        @click="retryZigbeeDevice(row.ieee)"
+                        x-text="t('web.zigbee.retry')"
+                      ></button>
+                      <button
+                        x-show="zigbeeRowOffers(row, 'remove')"
+                        :disabled="zigbeeRowLocked(row)"
+                        @click="removeZigbeeDevice(row.ieee)"
+                        x-text="t('web.zigbee.remove')"
+                      ></button>
+                    </div>
+                    <p class="banner danger zigbee-row-error" x-show="zigbeeRowError(row)" x-cloak
+                       x-text="zigbeeRowError(row)"></p>
+                  </li>
+                </template>
+              </ul>
+            </details>
+          </template>
+        </div>
+      </div>
+
+    </div>
+    </template>
     </dialog>
 
     <!--
