@@ -597,3 +597,51 @@ async def test_a_rescan_queues_a_revived_card_while_the_worker_runs(h):
     assert card_view(h, waiting.id)["state"] == "naming"
     assert card_view(h, skipped.id)["state"] == "naming"
     assert h.client.commissioned == [QR_CODE_ON_NETWORK, QR_CODE]
+
+
+# A dataset in the shape `ot-ctl dataset active -x` prints; its tail is
+# what the assertions look for, so it must not occur anywhere else.
+THREAD_DATASET = "0e080000000000010000" + "4a0300000f" + "35060004001fffe0" + "c0de" * 8
+
+
+async def test_a_manual_thread_dataset_reaches_every_commissioning(h):
+    h.session.set_thread_dataset(THREAD_DATASET)
+    await h.session.add_code(QR_CODE_ON_NETWORK, None)
+    h.reader.adverts = [advert("AA:02", 3840, KAJPLATS_E27, -60)]
+    await h.session.scan()
+    await h.session.add_code(QR_CODE, None)
+    await h.session.start()
+    await idle(h)
+    assert h.client.datasets == [THREAD_DATASET, THREAD_DATASET]
+    order = [step for step in h.client.order if step in ("dataset", "commission")]
+    assert order == ["dataset", "commission", "dataset", "commission"]
+
+
+async def test_removing_the_manual_thread_dataset_falls_back_to_the_border_router(h):
+    h.session.set_thread_dataset(THREAD_DATASET)
+    h.session.set_thread_dataset(None)
+    await h.session.add_code(QR_CODE_ON_NETWORK, None)
+    await h.session.start()
+    await idle(h)
+    assert THREAD_DATASET not in h.client.datasets
+    assert h.session.view()["thread_dataset_set"] is False
+
+
+async def test_the_thread_dataset_never_appears_in_the_view_or_the_log(h, caplog):
+    caplog.set_level(logging.DEBUG)
+    assert h.session.view()["thread_dataset_set"] is False
+    h.session.set_thread_dataset(THREAD_DATASET)
+    view = h.session.view()
+    assert view["thread_dataset_set"] is True
+    assert "c0dec0de" not in json.dumps(view)
+    with pytest.raises(CodeRejected) as rejected:
+        h.session.set_thread_dataset(THREAD_DATASET + "c")
+    assert rejected.value.status == 422
+    assert rejected.value.detail == i18n.t("api.devices.fail_manual_thread_dataset")
+    # A rejected dataset leaves the one set before in place.
+    assert h.session.view()["thread_dataset_set"] is True
+    await h.session.add_code(QR_CODE_ON_NETWORK, None)
+    await h.session.start()
+    await idle(h)
+    for record in caplog.records:
+        assert "c0dec0de" not in record.getMessage()

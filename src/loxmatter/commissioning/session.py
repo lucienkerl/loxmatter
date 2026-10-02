@@ -37,9 +37,15 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Final, Literal
 
 from loxmatter import i18n
-from loxmatter.commissioning.run import CommissionFailed, ThreadDatasetSource, commission
+from loxmatter.commissioning.run import (
+    MANUAL_DATASET_ORIGIN_KEY,
+    CommissionFailed,
+    ThreadDatasetSource,
+    commission,
+)
 from loxmatter.matter.commissioning_progress import CommissioningTracker
 from loxmatter.matter.dcl import DclDirectory, ProductLabel
+from loxmatter.matter.otbr import ThreadDatasetUnavailableError, validated_dataset
 from loxmatter.matter.setup_payload import (
     SetupPayload,
     TypoError,
@@ -171,6 +177,11 @@ class CommissioningSession:
         self._scanning = False
         self._last_scan_at: float | None = None
         self.bluetooth_warning = False
+        # A Thread dataset entered by hand ("Different Thread network"):
+        # handed to every commissioning instead of the Border Router's.
+        # In memory only - it holds the network key, so it is never
+        # stored, logged or part of `view()`.
+        self._thread_dataset: str | None = None
         self._worker: asyncio.Task[None] | None = None
         self._side_tasks: set[asyncio.Task[None]] = set()
 
@@ -204,6 +215,22 @@ class CommissioningSession:
     def _matter_connected(self) -> bool:
         client = self._client_for()
         return client is not None and bool(client.connected)
+
+    def set_thread_dataset(self, dataset: str | None) -> None:
+        """Sets (or with `None` removes) the hand-entered Thread dataset.
+
+        Checked with the same `validated_dataset` that `commission()` uses,
+        so a wrong one is refused here, at the field, rather than failing
+        every card later. A refused one leaves the previous one in place."""
+        if dataset is None:
+            self._thread_dataset = None
+            return
+        try:
+            self._thread_dataset = validated_dataset(dataset, i18n.t(MANUAL_DATASET_ORIGIN_KEY))
+        except ThreadDatasetUnavailableError as exc:
+            # The reason names the length only, never the value.
+            logger.warning("Entered Thread dataset rejected: %s", exc)
+            raise CodeRejected("api.devices.fail_manual_thread_dataset", 422) from exc
 
     # --- scanning -----------------------------------------------------
 
@@ -499,6 +526,7 @@ class CommissioningSession:
                 runtime=self._runtime,
                 tracker=self._tracker,
                 fetch_dataset=self._fetch_dataset,
+                manual_dataset=self._thread_dataset,
             )
         except CommissionFailed as exc:
             card.state = "failed"
@@ -717,6 +745,7 @@ class CommissioningSession:
                 ),
             },
             "bluetooth_warning": self.bluetooth_warning,
+            "thread_dataset_set": self._thread_dataset is not None,
             "matter_connected": self._matter_connected(),
             "naming": list(self._naming),
             "blinking_card": blinking_card,

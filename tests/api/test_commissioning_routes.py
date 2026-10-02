@@ -379,3 +379,46 @@ async def test_a_device_tile_blink_shows_on_its_card(
         assert (await client.get("/api/commissioning")).json()["blinking_card"] == card_id
         await client.post(f"/api/devices/{device_id}/identify", json={"on": False})
     store.close()
+
+
+THREAD_DATASET = "0e080000000000010000" + "4a0300000f" + "35060004001fffe0" + "c0de" * 8
+
+
+async def test_a_thread_dataset_is_set_and_removed_without_ever_coming_back(api):
+    client, _, _ = api
+    response = await client.put(
+        "/api/commissioning/thread-dataset", json={"dataset": THREAD_DATASET}
+    )
+    assert response.status_code == 204
+    view = (await client.get("/api/commissioning")).json()
+    assert view["thread_dataset_set"] is True
+    assert "c0dec0de" not in str(view)
+    response = await client.put("/api/commissioning/thread-dataset", json={"dataset": None})
+    assert response.status_code == 204
+    assert (await client.get("/api/commissioning")).json()["thread_dataset_set"] is False
+
+
+async def test_an_unusable_thread_dataset_is_422_without_an_echo(api):
+    client, h, _ = api
+    rejected = i18n.t("api.devices.fail_manual_thread_dataset")
+    for body in (
+        {"dataset": THREAD_DATASET + "c"},
+        {"dataset": "network key c0dec0de"},
+        {"dataset": 0xC0DEC0DE},
+        {"datset": THREAD_DATASET},
+        [THREAD_DATASET],
+    ):
+        response = await client.put("/api/commissioning/thread-dataset", json=body)
+        assert response.status_code == 422, body
+        assert response.json()["detail"] == rejected
+        assert "c0dec0de" not in response.text.lower()
+        assert str(0xC0DEC0DE) not in response.text
+    raw = b'{"dataset": "' + THREAD_DATASET.encode()
+    response = await client.put(
+        "/api/commissioning/thread-dataset",
+        content=raw,
+        headers={"content-type": "application/json"},
+    )
+    assert response.status_code == 422
+    assert "c0dec0de" not in response.text
+    assert h.session.view()["thread_dataset_set"] is False

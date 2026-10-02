@@ -87,6 +87,27 @@ def build_commissioning_router(session: CommissioningSession) -> APIRouter:
             raise _rejected(exc) from exc
         return session.card_view(card.id)
 
+    @router.put("/thread-dataset", status_code=status.HTTP_204_NO_CONTENT)
+    async def thread_dataset(body: Any = Body(default=None)) -> Response:  # noqa: B008
+        # Read raw for the same reason as `/codes`: FastAPI's own 422 echoes
+        # the body, and a Thread dataset holds the network key.
+        if not isinstance(body, dict) or "dataset" not in body:
+            raise HTTPException(
+                status_code=422,
+                detail=i18n.t("api.devices.fail_manual_thread_dataset"),
+            )
+        dataset = body["dataset"]
+        if not (dataset is None or isinstance(dataset, str)):
+            raise HTTPException(
+                status_code=422,
+                detail=i18n.t("api.devices.fail_manual_thread_dataset"),
+            )
+        try:
+            session.set_thread_dataset(dataset)
+        except CodeRejected as exc:
+            raise _rejected(exc) from exc
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+
     @router.patch("/cards/{card_id}")
     async def update_card(card_id: int, request: CommissioningCardIn) -> dict[str, Any]:
         room: str | None | Unset = request.room if "room" in request.model_fields_set else UNSET

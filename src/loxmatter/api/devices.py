@@ -136,7 +136,7 @@ logger = logging.getLogger(__name__)
 # tell these two apart, because `classify()` itself does not either.
 #
 # Keys rather than finished sentences, resolved at call time, for the same
-# reason as `_MANUAL_DATASET_ORIGIN_KEY` above: a hard German chunk inside an
+# reason as `commissioning.run.MANUAL_DATASET_ORIGIN_KEY`: a hard German chunk inside an
 # English sentence is half a translation, and the language is not settled at
 # import time.
 _UNEXPORTABLE_REASON_KEYS: dict[Exportability, str] = {

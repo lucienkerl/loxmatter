@@ -65,7 +65,7 @@ ThreadDatasetSource = Callable[[], Awaitable[str]]
 # i18n phase, a fixed German chunk in the middle of an English sentence
 # would be half a translation. At import time the language is also not yet
 # determined at all (cli.py only sets it afterwards).
-_MANUAL_DATASET_ORIGIN_KEY = "api.devices.manual_dataset_origin"
+MANUAL_DATASET_ORIGIN_KEY = "api.devices.manual_dataset_origin"
 
 
 @dataclass(frozen=True)
@@ -169,7 +169,7 @@ async def commission(
         # `MatterUnavailableError`, so a 500 "Internal Server Error",
         # the most meaningless of all responses.
         try:
-            dataset = validated_dataset(manual_dataset, i18n.t(_MANUAL_DATASET_ORIGIN_KEY))
+            dataset = validated_dataset(manual_dataset, i18n.t(MANUAL_DATASET_ORIGIN_KEY))
         except ThreadDatasetUnavailableError as exc:
             # 422 like a rejected pairing code: the request is
             # well-formed, but its content is unusable. The reason
