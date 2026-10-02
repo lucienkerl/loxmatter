@@ -230,6 +230,50 @@ async def test_confirm_without_a_name_is_refused_and_skip_keeps_the_default_labe
     assert h.identify.blinking is None
 
 
+async def test_a_name_that_is_a_pairing_code_is_refused(h):
+    """A scanner that types into a name field instead of the code field
+    leaves a pairing code there; the session takes no code as a name, in
+    `update_card` or in `confirm_name`, so it never reaches the store as a
+    device's label. A typed-out manual code counts, with or without its
+    dashes and spaces; a name that only contains digits does not.
+
+    Fault to prove it: check only `confirm_name`, or only QR payloads."""
+    card = await h.session.add_code(QR_CODE_ON_NETWORK, None)
+    await h.session.start()
+    await idle(h)
+    device_id = card_view(h, card.id)["device_id"]
+    label = h.store.device(device_id).label
+    spaced = f"{MANUAL_CODE[:4]}-{MANUAL_CODE[4:7]} {MANUAL_CODE[7:]}"
+    for name in (QR_CODE, MANUAL_CODE, spaced, f"  {QR_CODE.lower()}  "):
+        with pytest.raises(CodeRejected) as refused:
+            await h.session.update_card(card.id, name=name)
+        assert refused.value.detail == i18n.t("api.commissioning.fail_name_is_code")
+        assert refused.value.status == 422
+        assert card_view(h, card.id)["name"] != name
+    # A code that reached the card some other way is refused on confirm too.
+    card.name = MANUAL_CODE
+    with pytest.raises(CodeRejected) as on_confirm:
+        await h.session.confirm_name(card.id)
+    assert on_confirm.value.detail == i18n.t("api.commissioning.fail_name_is_code")
+    assert card_view(h, card.id)["state"] == "naming"
+    assert h.store.device(device_id).label == label
+    await h.session.update_card(card.id, name="Lamp 2")
+    assert (await h.session.confirm_name(card.id)).state == "done"
+    assert h.store.device(device_id).label == "Lamp 2"
+
+
+async def test_a_done_card_takes_no_pairing_code_as_its_name_either(h):
+    card = await h.session.add_code(QR_CODE_ON_NETWORK, None)
+    await h.session.start()
+    await idle(h)
+    await h.session.skip_name(card.id)
+    device_id = card_view(h, card.id)["device_id"]
+    label = h.store.device(device_id).label
+    with pytest.raises(CodeRejected):
+        await h.session.update_card(card.id, name=MANUAL_CODE)
+    assert h.store.device(device_id).label == label
+
+
 async def test_scanning_while_running_queues_at_the_end(h):
     h.gate.held = True
     h.reader.adverts = [advert("AA:02", 3841, KAJPLATS_E14, -60)]

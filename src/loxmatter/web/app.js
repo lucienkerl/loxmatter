@@ -987,6 +987,9 @@ function app() {
     commissioningTimer: null,
     commissionDialogOpen: false,
     commissionDialogBackdropMousedown: false,
+    // The last name `confirmName()` sent ({ id, name }), so the `change`
+    // the same Enter fires does not PATCH it again (`changeCardName()`).
+    commissionNameSent: null,
     // The code field. A handheld scanner types into it and ends with Enter,
     // which sends the code and empties the field for the next one.
     commissionCode: "",
@@ -3729,7 +3732,7 @@ function app() {
         // Opened over a device that waits for its name (the background
         // line's "Open dialog"): that name field, not the code field.
         const front = this.namingFocusTarget(null, this.commissioning);
-        if (front !== null) this.focusCardName(front);
+        if (front !== null) this.focusCardName(front, { fromOpening: true });
       });
     },
 
@@ -3794,21 +3797,36 @@ function app() {
     },
 
     /** Focuses a card's name field once Alpine has rendered it - unless
-     * another text field holds text and has the focus: someone halfway
-     * through typing (or a scanner halfway through a code) keeps it. The
-     * one exception is the name field of a card that has just left the
-     * naming line: its Enter is what hands the focus on to the next. */
-    focusCardName(cardId) {
+     * the focus sits in a field that takes text (an input that is not a
+     * checkbox, radio or button; a textarea; a select), empty or not. Above
+     * all the code field: a handheld scanner types the next code plus Enter
+     * into whatever has the focus, and in a name field that code would
+     * become the device's name. The front card is found by its prompt and
+     * its blink instead. The focus moves from nothing, the page or the
+     * dialog itself, a control that takes no text, and - Enter's handover -
+     * the name field of a card that has just left the naming line.
+     * `fromOpening`: opening the dialog over a waiting device is the step
+     * to that device, so the code field the dialog focused first hands
+     * the focus on while it is still empty. */
+    focusCardName(cardId, { fromOpening = false } = {}) {
       this.$nextTick(() => {
         const field = document.querySelector(`[data-card-name="${cardId}"]`);
         const active = document.activeElement;
         if (!field || active === field) return;
-        const typing = active && ["INPUT", "TEXTAREA"].includes(active.tagName) && active.value;
         const named = Number(active?.getAttribute?.("data-card-name") ?? NaN);
         const leftTheLine = !Number.isNaN(named) && !(this.commissioning?.naming ?? []).includes(named);
-        if (typing && !leftTheLine) return;
+        const emptyCodeField = fromOpening && active === this.$refs.commissionCode && !active.value;
+        if (this.takesText(active) && !leftTheLine && !emptyCodeField) return;
         field.focus();
       });
+    },
+
+    /** Whether a focused element is a field someone types into. */
+    takesText(element) {
+      if (!element) return false;
+      if (["TEXTAREA", "SELECT"].includes(element.tagName) || element.isContentEditable) return true;
+      const noText = ["checkbox", "radio", "button", "submit", "reset", "range", "color", "file", "image"];
+      return element.tagName === "INPUT" && !noText.includes((element.type ?? "text").toLowerCase());
     },
 
     /** Whether Identify on this card (or, with `null`, on a tile) is held
@@ -3826,6 +3844,7 @@ function app() {
      * refusal (no name: 422) shows the bridge's sentence. */
     async confirmName(card, name) {
       this.commissioningError = null;
+      this.commissionNameSent = { id: card.id, name };
       try {
         await this.request("PATCH", `/api/commissioning/cards/${card.id}`, { name });
         await this.request("POST", `/api/commissioning/cards/${card.id}/confirm-name`);
@@ -4018,6 +4037,16 @@ function app() {
         this.commissioningError = error.message;
       });
       await this.loadCommissioning();
+    },
+
+    /** A name field's `change`. Enter on a naming card already sent the
+     * name with its confirmation (`confirmName()`), and some browsers fire
+     * `change` for the same Enter: that one is not sent twice. Leaving a
+     * naming card's field without Enter still saves what was typed. */
+    changeCardName(card, name) {
+      const sent = this.commissionNameSent;
+      if (card.state === "naming" && sent?.id === card.id && sent.name === name) return undefined;
+      return this.patchCard(card, { name });
     },
 
     async patchCard(card, fields) {

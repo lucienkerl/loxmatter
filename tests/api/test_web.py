@@ -17459,6 +17459,224 @@ def test_opening_the_dialog_over_a_waiting_device_focuses_its_name():
 
 
 @pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_a_new_front_never_takes_the_focus_from_the_code_field():
+    """Someone scanning with a handheld scanner keeps the code field, empty
+    or not: a scanner types the next code plus Enter into whatever has the
+    focus, and in a name field that code would become the device's name.
+    The focus moves only from nothing, the page or the dialog itself, a
+    control that takes no text (a checkbox, a button), or the name field of
+    the card that just left the line - Enter's handover, filled or not.
+
+    Fault to prove it: move the focus out of an empty code field (the bug
+    seen in a browser), or let a checkbox's "on" count as typing."""
+    values = _app_state(
+        _BINDINGS_JS
+        + _FOCUS_DOCUMENT_JS
+        + """
+        let answer = { cards: [], naming: [] };
+        state.request = async () => answer;
+        state.authenticated = true;
+        state.$nextTick = (callback) => callback();
+        const codeField = { tagName: 'INPUT', type: 'text', id: 'commission-code', value: '' };
+        let front = 0;
+        const frontChange = async (active) => {
+          globalThis.document.activeElement = active;
+          front += 1;
+          answer = { cards: [], naming: [front] };
+          await state.loadCommissioning();
+          return [...focused];
+        };
+        (async () => {
+          const out = {};
+          state.commissionDialogOpen = true;
+          await state.loadCommissioning();
+          out.emptyCode = await frontChange(codeField);
+          codeField.value = 'MT:Y.K9';
+          out.filledCode = await frontChange(codeField);
+          out.emptyNewRoom = await frontChange({ tagName: 'INPUT', type: 'text', value: '' });
+          out.select = await frontChange({ tagName: 'SELECT', value: '' });
+          out.textarea = await frontChange({ tagName: 'TEXTAREA', value: '' });
+          out.checkbox = await frontChange({ tagName: 'INPUT', type: 'checkbox', value: 'on' });
+          out.button = await frontChange({ tagName: 'BUTTON', value: '' });
+          out.body = await frontChange({ tagName: 'BODY' });
+          out.dialog = await frontChange({ tagName: 'DIALOG' });
+          out.nothing = await frontChange(null);
+          // Enter in the front's (empty) name field: it left the line.
+          out.handover = await frontChange(fieldFor(front));
+          console.log(JSON.stringify(out));
+        })();
+        """
+    )
+    assert values == {
+        "emptyCode": [],
+        "filledCode": [],
+        "emptyNewRoom": [],
+        "select": [],
+        "textarea": [],
+        "checkbox": [6],
+        "button": [6, 7],
+        "body": [6, 7, 8],
+        "dialog": [6, 7, 8, 9],
+        "nothing": [6, 7, 8, 9, 10],
+        "handover": [6, 7, 8, 9, 10, 11],
+    }
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_opening_the_dialog_over_a_waiting_device_takes_the_focus_from_the_code_field():
+    """Opening the dialog is the one deliberate step to the device that
+    waits: the code field the dialog focused first, still empty, hands the
+    focus to the front's name field. Once something was scanned into it,
+    it keeps the focus.
+
+    Fault to prove it: apply the polling rule to the opening as well, so
+    "Open dialog" leaves the waiting device's name field unfocused."""
+    values = _app_state(
+        _BINDINGS_JS
+        + _FOCUS_DOCUMENT_JS
+        + """
+        state.request = async () => ({ cards: [], naming: [8] });
+        state.authenticated = true;
+        state.commissionTab = 'matter';
+        state.$nextTick = (callback) => callback();
+        const codeField = { tagName: 'INPUT', type: 'text', value: '',
+                            focus() { globalThis.document.activeElement = this; } };
+        state.$refs = { commissionDialog: { showModal() {}, close() {} }, commissionCode: codeField };
+        (async () => {
+          const out = {};
+          await state.openCommissionDialog();
+          out.empty = [...focused];
+          state.commissionDialogOpen = false;
+          state.request = async () => {
+            codeField.value = 'MT:Y.K9';
+            return { cards: [], naming: [8] };
+          };
+          await state.openCommissionDialog();
+          out.scanned = [...focused];
+          console.log(JSON.stringify(out));
+        })();
+        """
+    )
+    assert values == {"empty": [8], "scanned": [8]}
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+async def test_enter_on_a_naming_card_sends_its_name_once(api):
+    """Enter confirms (PATCH, then confirm); the `change` some browsers fire
+    for the same Enter sends nothing more. A `change` from leaving a naming
+    card's field without Enter still saves the name, and on any other card
+    `change` PATCHes as before.
+
+    Fault to prove it: PATCH on every `change`, or on none for a naming card."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+    name = _card_element(page, "input", lambda a: a.get(":data-card-name") == "card.id")
+    values = _app_state(
+        _BINDINGS_JS
+        + _commissioning_view([], naming=[4])
+        + f"""
+        const asked = [];
+        state.request = async (method, path, payload) => {{
+          asked.push([method, path, payload ?? null]);
+          return method === 'GET' ? {{ cards: [], naming: [4] }} : {{}};
+        }};
+        const enter = {json.dumps(name["@keydown.enter.prevent"])};
+        const change = {json.dumps(name["@change"])};
+        (async () => {{
+          const naming = {{ id: 4, state: 'naming', name: null }};
+          const done = {{ id: 5, state: 'done', name: null }};
+          const typed = (value) => ({{ $event: {{ target: {{ value }} }} }});
+          // `exec` returns nothing to await; a macrotask lets each
+          // handler's requests finish before the next one starts.
+          const settle = () => new Promise((resolve) => setImmediate(resolve));
+          exec(enter, {{ card: naming, ...typed('Desk lamp') }});
+          exec(change, {{ card: naming, ...typed('Desk lamp') }});
+          await settle();
+          exec(change, {{ card: {{ id: 6, state: 'naming', name: null }}, ...typed('Hall') }});
+          await settle();
+          exec(change, {{ card: done, ...typed('Porch') }});
+          await settle();
+          console.log(JSON.stringify(asked.filter(([m]) => m !== 'GET')));
+        }})();
+        """
+    )
+    assert values == [
+        ["PATCH", "/api/commissioning/cards/4", {"name": "Desk lamp"}],
+        ["POST", "/api/commissioning/cards/4/confirm-name", None],
+        ["PATCH", "/api/commissioning/cards/6", {"name": "Hall"}],
+        ["PATCH", "/api/commissioning/cards/5", {"name": "Porch"}],
+    ]
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+async def test_use_name_reads_the_field_of_its_own_card(api):
+    """ "Use name" confirms the text in its own card's name field - not the
+    first name field in the dialog, and not `card.name`, which is stale
+    while the text has not been sent.
+
+    Fault to prove it: read `$root.querySelector('[data-card-name]')`, or
+    `card.name`."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+    confirm = _card_element(page, "button", lambda a: "confirmName(card" in a.get("@click", ""))
+    values = _app_state(
+        _BINDINGS_JS
+        + _commissioning_view([], naming=[4, 7])
+        + f"""
+        const confirmed = [];
+        state.confirmName = (card, name) => confirmed.push([card.id, name]);
+        const cardElement = (value) => {{
+          const field = {{ value }};
+          return {{ querySelector: (selector) => (selector === '[data-card-name]' ? field : null) }};
+        }};
+        const elements = {{ 4: cardElement('Desk lamp'), 7: cardElement('') }};
+        const button = (id) => ({{
+          closest: (selector) => (selector === '.commission-card' ? elements[id] : null),
+        }});
+        const firstField = {{ querySelector: () => ({{ value: 'Desk lamp' }}) }};
+        const click = {json.dumps(confirm["@click"])};
+        exec(click, {{ card: {{ id: 4, name: 'stale' }}, $el: button(4), $root: firstField }});
+        exec(click, {{ card: {{ id: 7, name: 'stale' }}, $el: button(7), $root: firstField }});
+        console.log(JSON.stringify(confirmed));
+        """
+    )
+    assert values == [[4, "Desk lamp"], [7, ""]]
+
+
+async def test_the_entry_card_says_what_the_dialog_is_for(api):
+    """The devices page's entry is a hint and the button, not a button on
+    an otherwise empty card; the hint sits before the button.
+
+    Fault to prove it: leave the hint out, or put it after the button."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+    inside = [
+        (tag, attributes)
+        for tag, attributes, ancestors in _served_elements(page)
+        if any(a.get("class") == "card commission-entry" for _, a in ancestors)
+    ]
+    texts = [attributes.get("x-text") for _, attributes in inside]
+    hint = "t('web.commissioning.entry_hint')"
+    assert hint in texts
+    assert texts.index(hint) < texts.index("t('web.devices.commission_heading')")
+    strings = _naming_strings()
+    assert strings["web.commissioning.entry_hint"] == {
+        "en": "Put devices into pairing mode and scan their codes — several at once.",
+        "de": "Bringen Sie Geräte in den Anlernmodus und scannen Sie ihre Codes – auch mehrere auf einmal.",
+    }
+
+
+def test_the_background_line_needs_no_agreement_with_its_counts():
+    """ "1 warten auf Namen" read wrong: the counts follow a colon, so no
+    verb has to agree with them, in either language."""
+    strings = _naming_strings()
+    assert strings["web.commissioning.background"] == {
+        "en": "Commissioning in the background · in progress: {working} · waiting for a name: {naming}",
+        "de": "Einlernen im Hintergrund · in Arbeit: {working} · warten auf Namen: {naming}",
+    }
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
 async def test_naming_confirms_skips_and_identifies_through_the_routes(api):
     """Enter in a naming card's name field and "Use name" PATCH the name and
     confirm it; Enter on any other card only PATCHes; "Continue without a

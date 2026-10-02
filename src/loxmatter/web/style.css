@@ -3978,9 +3978,10 @@ p.zigbee-countdown {
 
 /* --- The commissioning dialog (design 2026-10-02, section 4) ----------- */
 
-/* The devices page's entry: the button that opens the dialog. */
+/* The devices page's entry: a one-line hint and the button that opens the
+ * dialog. On a phone the button wraps below the hint. */
 .commission-entry .grow {
-  flex: 1 1 auto;
+  flex: 1 1 14rem;
 }
 
 /* The expert modal's frame, wider: a header with the code field and the

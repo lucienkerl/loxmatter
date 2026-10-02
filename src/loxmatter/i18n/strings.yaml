@@ -730,6 +730,11 @@ api.commissioning.fail_busy:
 api.commissioning.fail_name_missing:
   en: "Enter a name, or continue without one."
   de: "Tragen Sie einen Namen ein oder fahren Sie ohne Namen fort."
+# A card name that decodes as a Matter pairing code: a scanner typed into
+# the name field. The detail never quotes the code.
+api.commissioning.fail_name_is_code:
+  en: "This looks like a pairing code, not a name. Scan codes into the code field."
+  de: "Das sieht aus wie ein Pairing-Code, nicht wie ein Name. Scannen Sie Codes in das Codefeld."
 api.commissioning.fail_unknown_card:
   en: "This card no longer exists."
   de: "Diese Karte gibt es nicht mehr."
@@ -1361,8 +1366,11 @@ web.commissioning.identify_blocked:
   en: "A new device is waiting for its name."
   de: "Ein neues Gerät wartet auf seinen Namen."
 web.commissioning.background:
-  en: "Commissioning in the background: {working} in progress, {naming} waiting for a name."
-  de: "Einlernen läuft im Hintergrund: {working} in Arbeit, {naming} warten auf Namen."
+  en: "Commissioning in the background · in progress: {working} · waiting for a name: {naming}"
+  de: "Einlernen im Hintergrund · in Arbeit: {working} · warten auf Namen: {naming}"
+web.commissioning.entry_hint:
+  en: "Put devices into pairing mode and scan their codes — several at once."
+  de: "Bringen Sie Geräte in den Anlernmodus und scannen Sie ihre Codes – auch mehrere auf einmal."
 web.commissioning.open_dialog:
   # The background line's button only; the devices page's entry button
   # reads "Commission devices" (`web.devices.commission_heading`).

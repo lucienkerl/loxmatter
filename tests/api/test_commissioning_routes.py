@@ -8,6 +8,7 @@ import httpx2 as httpx
 import pytest
 from commissioning_fakes import (
     KAJPLATS_E27,
+    MANUAL_CODE,
     QR_CODE,
     QR_CODE_ON_NETWORK,
     advert,
@@ -241,6 +242,22 @@ async def test_confirm_name_needs_a_name(api):
     assert done.status_code == 200
     assert done.json()["state"] == "done"
     assert h.store.device(done.json()["device_id"]).label == "Flurlampe"
+
+
+async def test_a_pairing_code_as_a_name_is_refused_without_echoing_it(api):
+    """The 422 says what went wrong in words; the code itself is never part
+    of the answer (a pairing code is never in an API response)."""
+    client, h, _ = api
+    card_id = await naming_card(client, h)
+    for name in (QR_CODE, MANUAL_CODE):
+        refused = await client.patch(f"/api/commissioning/cards/{card_id}", json={"name": name})
+        assert refused.status_code == 422
+        assert refused.json()["detail"] == i18n.t("api.commissioning.fail_name_is_code")
+        assert name not in refused.text
+        assert name[3:] not in refused.text
+    view = await client.get("/api/commissioning")
+    assert card_in(view.json(), card_id)["state"] == "naming"
+    assert MANUAL_CODE not in view.text and QR_CODE not in view.text
 
 
 async def test_skip_name_ends_the_naming_turn(api):

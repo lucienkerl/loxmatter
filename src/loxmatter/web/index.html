@@ -381,7 +381,7 @@
         -->
         <div class="card commission-entry">
           <div class="row">
-            <span class="grow"></span>
+            <span class="grow hint" x-text="t('web.commissioning.entry_hint')"></span>
             <button type="button" class="primary" @click="openCommissionDialog()"
                     x-text="t('web.devices.commission_heading')"></button>
           </div>
@@ -3767,7 +3767,7 @@
                          :placeholder="t('web.commissioning.name')"
                          :data-card-name="card.id"
                          x-effect="if (document.activeElement !== $el) $el.value = card.name ?? ''"
-                         @change="patchCard(card, { name: $event.target.value })"
+                         @change="changeCardName(card, $event.target.value)"
                          @keydown.enter.prevent="card.state === 'naming' ? confirmName(card, $event.target.value) : patchCard(card, { name: $event.target.value })" />
                   <select :aria-label="t('web.commissioning.room')"
                           @change="chooseCardRoom(card, $event.target.value)">

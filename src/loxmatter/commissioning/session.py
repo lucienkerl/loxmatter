@@ -132,6 +132,19 @@ class CodeRejected(Exception):
         super().__init__(self.detail)
 
 
+def _refuse_a_code_as_name(name: str) -> None:
+    """A pairing code is no name. A handheld scanner types a code plus
+    Enter into whatever field holds the focus; landing in a name field, it
+    would become a device's label - written to the store, shown on every
+    tile. Only a code that decodes counts: a manual code with a typo, or a
+    name that merely holds digits, passes."""
+    try:
+        decode(name)
+    except UnreadableCodeError:
+        return
+    raise CodeRejected("api.commissioning.fail_name_is_code", 422)
+
+
 class CommissioningSession:
     def __init__(
         self,
@@ -401,6 +414,7 @@ class CommissioningSession:
         still keep the default label."""
         card = self._card(card_id)
         if name is not None:
+            _refuse_a_code_as_name(name)
             card.name = name
         if not isinstance(room, Unset):
             card.room = room
@@ -660,6 +674,7 @@ class CommissioningSession:
         name = card.name.strip()
         if not name:
             raise CodeRejected("api.commissioning.fail_name_missing", 422)
+        _refuse_a_code_as_name(name)
         self._store.rename_device(card.device_id, name)
         await self._leave_naming(card)
         return card
