@@ -1172,7 +1172,8 @@ def _app_state(setup: str = "", translations: dict[str, str] | None = None) -> d
     tail = json.dumps(
         "\n"
         + fill_strings
-        + "globalThis.t = t;\nglobalThis.decodePairingCode = decodePairingCode;\nreturn app();"
+        + "globalThis.t = t;\nglobalThis.decodePairingCode = decodePairingCode;\n"
+        + "globalThis.UnauthorizedError = UnauthorizedError;\nreturn app();"
     )
     script = f"""
       const fs = require("node:fs");
@@ -2954,8 +2955,8 @@ async def test_the_commissioning_card_is_translated(api):
     German literals remain in the markup.
 
     Since the commissioning dialog (design 2026-10-02) the Thread dataset
-    field is gone: `POST /api/commissioning/codes` takes a code and a room,
-    and the bridge fetches the dataset from the border router itself."""
+    has its own route (`PUT /api/commissioning/thread-dataset`) and sits in
+    a disclosure; its label is translated like the rest."""
     client, _, _ = api
     markup = _without_comments((await client.get("/")).text)
     assert "x-text=\"t('web.devices.commission_heading')\"" in markup
@@ -3059,20 +3060,19 @@ async def test_the_code_help_sits_in_a_disclosure_beside_the_code_field(api):
     to reset also cannot drift out of sync with anything else - the same
     reasoning as with the tile menu and the signal groups.
 
-    The second disclosure, the Thread dataset field, went with the
-    commissioning dialog (design 2026-10-02): `POST
-    /api/commissioning/codes` takes a code and a room, and the bridge reads
-    the dataset from the border router itself."""
+    The second disclosure is the Thread dataset's ("Different Thread
+    network"), which the dialog first dropped and fix round 1 brought back
+    (`PUT /api/commissioning/thread-dataset`)."""
     client, _, _ = api
     markup = _without_comments((await client.get("/")).text)
 
     help_start = markup.index('<div class="commission-help">')
     help_block = markup[help_start : markup.index('<div class="commission-cards">')]
-    assert help_block.count('<details class="commission-disclosure">') == 1
+    assert help_block.count('<details class="commission-disclosure">') == 2
     assert "x-text=\"t('web.devices.code_help_summary')\"" in help_block
     assert "x-text=\"t('web.devices.commission_hint')\"" in help_block
     assert markup.count("x-text=\"t('web.devices.commission_hint')\"") == 1
-    assert "commissionThreadDataset" not in markup
+    assert "x-text=\"t('web.devices.thread_summary')\"" in help_block
 
 
 async def test_the_commissioning_disclosures_do_not_shift_what_stands_around_them(api):
@@ -12468,6 +12468,7 @@ async def test_leaving_the_tab_closes_the_join_window(api):
           throw new Error("unexpected " + method + " " + path);
         };
         state.zigbee = { configured_path: "/dev/serial/by-id/a" };
+        state.commissionDialogOpen = true;
         (async () => {
           // A window opened with the tab's own Start, and the user presses
           // Matter.
@@ -12744,7 +12745,7 @@ def test_leaving_the_devices_view_closes_the_join_window_and_stops_the_poll():
         "    ? new Date(Date.now() + 60000).toISOString() : null };"
         "  return [];"
         "};"
-        "state.authenticated = true; state.view = 'devices';"
+        "state.authenticated = true; state.view = 'devices'; state.commissionDialogOpen = true;"
         "state.zigbee = { configured_path: '/dev/serial/by-id/a' };"
         "(async () => {"
         "  await state.selectCommissionTab('zigbee');"
@@ -12859,6 +12860,9 @@ _PAIRING_PAGE_JS = (
     "state.authenticated = true; state.view = 'devices';"
     "state.zigbee = { configured_path: '/dev/serial/by-id/a' };"
     "state.commissionTab = 'zigbee';"
+    # The Zigbee pane lives in the commissioning dialog, and is only on
+    # screen while that is open (`zigbeePaneShown()`).
+    "state.commissionDialogOpen = true;"
     "const future = () => new Date(Date.now() + 254000).toISOString();"
     "const settle = () => new Promise((resolve) => setImmediate(resolve));"
     "const radioBody = { configured_path: '/dev/serial/by-id/a', serial: [],"
@@ -12963,7 +12967,7 @@ def test_only_a_window_opened_here_is_closed_on_leaving():
     is no claim (the second run sends Stops), or do not clear the claim on a
     GET without a window (the third one does)."""
     values = _app_state(
-        _BINDINGS_JS + _PAIRING_PAGE_JS + "const permits = []; let opened = null;"
+        _BINDINGS_JS + _PAIRING_PAGE_JS + _DIALOG_REFS_JS + "const permits = []; let opened = null;"
         "let pairing = { permit_until: null, rows: [] };"
         "state.request = async (method, path, payload) => {"
         "  if (path === '/api/zigbee/permit') {"
@@ -12980,9 +12984,11 @@ def test_only_a_window_opened_here_is_closed_on_leaving():
         "  await state.selectView('export');"
         "  const openedHere = { permits: permits.splice(0), opened };"
         "  state.commissionTab = 'matter';"
+        # The dialog was closed to reach Export.
+        "  state.commissionDialogOpen = false;"
         "  pairing = { permit_until: future(), rows: [] };"
         "  await state.selectView('devices');"
-        "  const landed = state.commissionTabShown();"
+        "  const landed = state.commissionDialogOpen && state.commissionTabShown();"
         "  await state.selectCommissionTab('matter');"
         "  await state.selectCommissionTab('zigbee');"
         "  await state.selectView('export');"
@@ -13041,12 +13047,13 @@ def test_a_reload_lands_on_an_open_windows_countdown_and_closes_nothing():
         "  if (path === '/api/zigbee/pairing') return JSON.parse(JSON.stringify(pairing));"
         "  if (path === '/api/zigbee/radio') return radioBody;"
         "  return [];"
-        "};"
+        "};" + _DIALOG_REFS_JS + "state.commissionDialogOpen = false;"
         "(async () => {"
         "  state.restoreCommission();"
         "  const fresh = state.commissionTab;"
         "  await state.selectView('devices');"
-        "  const open = { tab: state.commissionTabShown(), counting: state.zigbeeCountdown() > 0,"
+        "  const open = { tab: state.commissionDialogOpen && state.commissionTabShown(),"
+        "    counting: state.zigbeeCountdown() > 0,"
         "    polling: state.zigbeePairingTimer !== null, calls: calls.splice(0) };"
         "  state.commissionTab = 'matter';"
         "  pairing = { permit_until: null, rows: [] };"
@@ -13908,6 +13915,9 @@ const bootPage = async (backing) => {
   page.loadI18n = async () => {};
   page.loadAuthInfo = async () => { page.authenticated = true; };
   page.startApp = async () => { await page.selectView(page.view); };
+  page.$nextTick = (callback) => callback();
+  page.$refs = { commissionDialog: { open: false, showModal() { this.open = true; },
+    close() { this.open = false; } }, commissionCode: { focus() {} } };
   await page.init();
   return {
     page,
@@ -14083,12 +14093,13 @@ def test_a_reload_restores_the_claim_through_init():
         (async () => {
           const storage = {};
           const before = await bootPage(storage);
+          await before.page.openCommissionDialog();
           await before.page.selectCommissionTab('zigbee');
           await before.page.startZigbeeSearch();
           const opened = bridge.until;
           bridge.permits.length = 0; bridge.conditions.length = 0;
           const after = await bootPage(storage);
-          const landed = after.page.commissionTabShown();
+          const landed = after.page.commissionDialogOpen && after.page.commissionTabShown();
           await after.use().selectView('export');
           await settle();
           console.log(JSON.stringify({ landed, permits: bridge.permits,
@@ -14516,35 +14527,49 @@ async def test_the_open_row_group_has_an_accessible_name(api):
 def test_the_zigbee_tab_selects_itself_once_per_open_window():
     """Entering Devices while a window is open selected the Zigbee tab EVERY
     time - over a user who had picked the Matter tab by hand during that
-    window, and over a Matter commissioning under way. Now once per window.
+    window, and over a Matter commissioning under way. Now once per window,
+    and in the commissioning dialog it opens for it.
 
     Through the REAL tab clicks and view changes:
 
-    - A window is open: entering Devices selects Zigbee. The user clicks
-      Matter, goes to Export and comes back: still Matter.
+    - A window is open: entering Devices opens the dialog on Zigbee. The
+      user clicks Matter, closes the dialog, goes to Export and comes back:
+      no dialog, and still Matter.
+    - The same with the dialog closed straight from the Zigbee tab: closing
+      it is a choice about that window too.
     - That window ends (a list shows none) and a new one opens: entering
-      Devices selects Zigbee again.
+      Devices opens the dialog on Zigbee again.
     - The commissioning dialog is open (`commissionDialogOpen`) while a
       window opens: entering Devices leaves its tab alone.
 
     Fault to prove it: drop the `zigbeeTabChosen` check from
-    `peekZigbeePairing()`, do not clear it in `noteZigbeeWindowGone()`, or
-    drop the `commissionDialogOpen` check."""
+    `peekZigbeePairing()`, do not clear it in `noteZigbeeWindowGone()`, do
+    not set it when the dialog closes over a window, or drop the
+    `commissionDialogOpen` check."""
     values = _app_state(
         _BINDINGS_JS
         + _PAIRING_PAGE_JS
         + _BRIDGE_JS
+        + _DIALOG_REFS_JS
         + """
+        const closeDialog = () => {
+          state.$refs.commissionDialog.close();
+          state.commissionDialogOpen = false;
+          state.leaveCommissionDialogZigbee();
+        };
+        const shown = () => (state.commissionDialogOpen ? state.commissionTabShown() : 'closed');
         (async () => {
           const out = {};
+          state.commissionDialogOpen = false;
           state.view = 'export'; state.commissionTab = 'matter';
           openFor(254);
           await state.selectView('devices');
-          out.first = state.commissionTabShown();
+          out.first = shown();
           await state.selectCommissionTab('matter');
+          closeDialog();
           await state.selectView('export');
           await state.selectView('devices');
-          out.afterChoosingMatter = state.commissionTabShown();
+          out.afterChoosingMatter = [shown(), state.commissionTabShown()];
 
           bridge.until = null;
           await state.selectView('export');
@@ -14552,25 +14577,30 @@ def test_the_zigbee_tab_selects_itself_once_per_open_window():
           bridge.shift += 20000; openFor(254);
           await state.selectView('export');
           await state.selectView('devices');
-          out.nextWindow = state.commissionTabShown();
+          out.nextWindow = shown();
+          closeDialog();
+          await state.selectView('export');
+          await state.selectView('devices');
+          out.afterClosingOnZigbee = shown();
 
           bridge.until = null;
           state.commissionTab = 'matter';
           await state.selectView('export');
           await state.selectView('devices');                   // sees no window
-          state.commissionDialogOpen = true;
+          await state.openCommissionDialog();
           bridge.shift += 20000; openFor(254);
           await state.selectView('export');
           await state.selectView('devices');
-          out.duringMatterCommissioning = state.commissionTabShown();
+          out.duringMatterCommissioning = shown();
           console.log(JSON.stringify(out));
         })();
         """
     )
     assert values == {
         "first": "zigbee",
-        "afterChoosingMatter": "matter",
+        "afterChoosingMatter": ["closed", "matter"],
         "nextWindow": "zigbee",
+        "afterClosingOnZigbee": "closed",
         "duringMatterCommissioning": "matter",
     }
 
@@ -16308,13 +16338,14 @@ async def test_the_commission_dialog_sits_in_the_devices_view_and_closes_on_the_
 
 
 @pytest.mark.skipif(NODE is None, reason="node is required for this test")
-def test_the_cards_sort_by_state_then_signal():
-    """Naming, running, queued, ready, found, not nearby/failed, done; within
-    a group the stronger signal first, and the naming line keeps its own
-    order.
+def test_the_cards_sort_by_state_then_id():
+    """Naming, running, queued, ready, found, not nearby/failed, done; the
+    naming line keeps its own order, and within a group the older card
+    first - never the signal, which changes with every scan and would move
+    a card while someone types its name.
 
     Fault to prove it: swap `queued` and `ready` in `sortedCards()`'s order,
-    or compare `a.rssi - b.rssi`."""
+    or sort a group by `rssi`."""
     cards = [
         _commissioning_card(1, "done"),
         _commissioning_card(2, "found", rssi=-80),
@@ -16331,7 +16362,7 @@ def test_the_cards_sort_by_state_then_signal():
         _commissioning_view(cards, naming=[9, 8])
         + "console.log(JSON.stringify(state.sortedCards().map((card) => card.id)));"
     )
-    assert values == [9, 8, 7, 6, 5, 3, 2, 10, 4, 1]
+    assert values == [9, 8, 7, 6, 5, 2, 3, 10, 4, 1]
 
 
 @pytest.mark.skipif(NODE is None, reason="node is required for this test")
@@ -16643,3 +16674,497 @@ def test_a_device_commissioned_in_the_background_reaches_the_tiles():
         "signals 9",
         "GET /api/commissioning",
     ]
+
+
+# --- Fix round 1 of the commissioning dialog (review of Task 8) ---
+
+
+def _dialog_element(page: str, tag: str, **wanted: str) -> dict[str, str]:
+    """The one `tag` inside the commissioning dialog whose attributes include
+    every `wanted` pair (keys spelled as in `_zigbee_row_element`)."""
+
+    def spelled(name: str) -> str:
+        if name.startswith("at_"):
+            return "@" + name[3:].replace("_", "-")
+        if name.startswith("colon_"):
+            return ":" + name[6:].replace("_", "-")
+        return name.rstrip("_").replace("_", "-")
+
+    matches = [
+        attributes
+        for element_tag, attributes, ancestors in _served_elements(page)
+        if element_tag == tag
+        and any(ancestor.get("x-ref") == "commissionDialog" for _, ancestor in ancestors)
+        and all(attributes.get(spelled(key)) == value for key, value in wanted.items())
+    ]
+    assert len(matches) == 1, (tag, wanted, len(matches))
+    return matches[0]
+
+
+def _card_element(page: str, tag: str, predicate) -> dict[str, str]:
+    """The one `tag` inside the dialog's card loop that `predicate` accepts."""
+    matches = [
+        attributes
+        for element_tag, attributes, ancestors in _served_elements(page)
+        if element_tag == tag
+        and any(a.get("x-for") == "card in sortedCards()" for _, a in ancestors)
+        and predicate(attributes)
+    ]
+    assert len(matches) == 1, (tag, len(matches))
+    return matches[0]
+
+
+# The commissioning dialog's `$refs` and `$nextTick` for a node harness, so
+# `openCommissionDialog()` can run; `dialogLog` records show and close.
+_DIALOG_REFS_JS = """
+const dialogLog = [];
+const dialogRefs = (page) => {
+  page.$nextTick = (callback) => callback();
+  page.$refs = {
+    commissionDialog: { open: false, showModal() { this.open = true; dialogLog.push('show'); },
+      close() { this.open = false; dialogLog.push('close'); } },
+    commissionCode: { focus() {} },
+  };
+};
+dialogRefs(state);
+"""
+
+
+# The commissioning routes for a node harness: a view, and every request
+# recorded in `asked`. Zigbee paths go to `bridgeRequest` when it exists.
+_COMMISSIONING_REQUEST_JS = (
+    """
+const asked = [];
+const commissioningRequest = async (method, path, payload) => {
+  asked.push([method, path, payload ?? null]);
+  if (path.startsWith('/api/commissioning')) {
+    return { scan: { state: 'idle', last_scan_age: null }, cards: [], naming: [],
+      bluetooth_warning: false, thread_dataset_set: false };
+  }
+  if (typeof bridgeRequest === 'function') return bridgeRequest(method, path, payload);
+  return [];
+};
+state.request = commissioningRequest;
+"""
+    + _DIALOG_REFS_JS
+    + """
+const autoScans = () => asked.filter(([m, p, b]) => p === '/api/commissioning/scan' && b?.automatic).length;
+"""
+)
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_losing_the_session_closes_the_commission_dialog():
+    """A 401 from an action inside the dialog switches the page to the
+    login screen; an open modal in front of it would leave the password
+    field unreachable - the signals and firmware dialogs close, so does
+    this one.
+
+    Fault to prove it: drop the `commissionDialog` close from
+    `noteAuthError()`."""
+    values = _app_state(
+        _COMMISSIONING_REQUEST_JS + "state.$refs.signalsModal = { close() {} };"
+        "state.$refs.commissionDialog.open = true;"
+        "state.noteAuthError(new UnauthorizedError());"
+        "const closedOnce = state.$refs.commissionDialog.open;"
+        # A closed dialog is not closed again (`close()` on it is harmless,
+        # but the convention checks `open` first).
+        "state.noteAuthError(new UnauthorizedError());"
+        "console.log(JSON.stringify({ open: closedOnce, log: dialogLog }));"
+    )
+    assert values == {"open": False, "log": ["close"]}
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_an_open_zigbee_window_opens_the_dialog_on_its_tab_without_a_matter_scan():
+    """Entering Devices while a join window is open used to select the
+    Zigbee tab - inside a dialog nobody had opened, so the open network was
+    no longer on screen. It now opens the dialog on that tab, without the
+    Matter tab's automatic scan; switching to Matter scans once. Closing the
+    dialog stops the pairing poll, and entering Devices again does not
+    reopen it for the same window.
+
+    Fault to prove it: leave `openCommissionDialog()` out of
+    `peekZigbeePairing()`, drop `commissionDialogOpen` from
+    `zigbeePaneShown()`, or scan on every switch to the Matter tab."""
+    values = _app_state(
+        _BINDINGS_JS
+        + _PAIRING_PAGE_JS
+        + _BRIDGE_JS
+        + _COMMISSIONING_REQUEST_JS
+        + """
+        (async () => {
+          const out = {};
+          state.commissionDialogOpen = false;
+          state.view = 'export'; state.commissionTab = 'matter';
+          openFor(254);
+          await state.selectView('devices');
+          out.entered = { open: state.commissionDialogOpen, tab: state.commissionTabShown(),
+            shown: dialogLog.slice(), polling: state.zigbeePairingOnScreen(), scans: autoScans() };
+          await state.selectCommissionTab('matter');
+          await state.selectCommissionTab('zigbee');
+          await state.selectCommissionTab('matter');
+          out.matterScans = autoScans();
+          await state.selectCommissionTab('zigbee');
+          out.pollingOpen = state.zigbeePairingOnScreen();
+          state.$refs.commissionDialog.close();
+          state.commissionDialogOpen = false; state.scheduleCommissioningPoll();
+          state.leaveCommissionDialogZigbee();
+          out.pollingClosed = state.zigbeePairingOnScreen();
+          await state.selectView('export');
+          await state.selectView('devices');
+          out.reentered = state.commissionDialogOpen;
+          console.log(JSON.stringify(out));
+        })();
+        """
+    )
+    assert values == {
+        "entered": {
+            "open": True,
+            "tab": "zigbee",
+            "shown": ["show"],
+            "polling": True,
+            "scans": 0,
+        },
+        "matterScans": 1,
+        "pollingOpen": True,
+        "pollingClosed": False,
+        "reentered": False,
+    }
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_the_dialog_opened_on_the_matter_tab_scans_once():
+    """Opening the dialog on the Matter tab asks for the automatic scan,
+    once per opening, and a later switch to Zigbee and back does not ask
+    again.
+
+    Fault to prove it: forget to reset the once-flag in
+    `openCommissionDialog()`."""
+    values = _app_state(
+        _BINDINGS_JS
+        + _PAIRING_PAGE_JS
+        + _BRIDGE_JS
+        + _COMMISSIONING_REQUEST_JS
+        + """
+        (async () => {
+          state.commissionDialogOpen = false; state.commissionTab = 'matter';
+          await state.openCommissionDialog();
+          await state.selectCommissionTab('zigbee');
+          await state.selectCommissionTab('matter');
+          const first = autoScans();
+          state.$refs.commissionDialog.close(); state.commissionDialogOpen = false;
+          await state.openCommissionDialog();
+          console.log(JSON.stringify([first, autoScans()]));
+        })();
+        """
+    )
+    assert values == [1, 2]
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+async def test_both_room_selects_offer_a_new_room(api):
+    """ "+ New room…" is back in the room for new cards and in every card's
+    room select, each with a field for the name (`NEW_ROOM_CHOICE`,
+    `resolveRoomChoice()`). A new room typed for new cards goes with the
+    next code; one typed on a card is PATCHed to that card, and an empty
+    one sends nothing.
+
+    Through the SERVED handlers.
+
+    Fault to prove it: send `commissionDefaultRoom` as it is (the room is
+    "__new__"), or PATCH the card the moment "+ New room…" is picked."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+    default_select = _dialog_element(page, "select", id="commission-default-room")
+    default_field = _dialog_element(page, "input", x_model="commissionDefaultNewRoom")
+    card_select = _card_element(page, "select", lambda a: "chooseCardRoom" in a.get("@change", ""))
+    card_field = _card_element(
+        page, "input", lambda a: a.get("x-model") == "commissionNewRoomDraft"
+    )
+    new_options = [
+        attributes
+        for tag, attributes, ancestors in _served_elements(page)
+        if tag == "option"
+        and attributes.get("value") == "__new__"
+        and any(a.get("x-ref") == "commissionDialog" for _, a in ancestors)
+        and attributes.get("x-text") == "t('web.devices.room_new')"
+    ]
+    # The default select, every card's select, and the Zigbee rows' one.
+    assert len(new_options) == 3
+    assert default_select["x-model"] == "commissionDefaultRoom"
+    values = _app_state(
+        _BINDINGS_JS
+        + _COMMISSIONING_REQUEST_JS
+        + f"""
+        (async () => {{
+          const out = {{}};
+          state.commissionDefaultRoom = '__new__';
+          out.defaultFieldShown = run({json.dumps(default_field["x-show"])});
+          state.commissionDefaultNewRoom = ' Attic ';
+          state.commissionCode = '1234-567-8901';
+          await state.addCommissionCode();
+          state.commissionDefaultNewRoom = '';
+          state.commissionCode = '1234-567-8902';
+          await state.addCommissionCode();
+          const card = {{ id: 4, state: 'ready', room: null }};
+          const extra = {{ card, $nextTick: (callback) => callback(), $el: {{ focus() {{}} }} }};
+          await exec({json.dumps(card_select["@change"])},
+            {{ ...extra, $event: {{ target: {{ value: '__new__' }} }} }});
+          out.cardFieldShown = run({json.dumps(card_field["x-show"])}, extra);
+          out.otherCardFieldShown = run({json.dumps(card_field["x-show"])},
+            {{ card: {{ id: 5 }} }});
+          state.commissionNewRoomDraft = 'Bath ';
+          await exec({json.dumps(card_field["@keydown.enter.prevent"])}, extra);
+          out.cardFieldAfter = run({json.dumps(card_field["x-show"])}, extra);
+          await exec({json.dumps(card_select["@change"])},
+            {{ ...extra, $event: {{ target: {{ value: '__new__' }} }} }});
+          await exec({json.dumps(card_field["@blur"])}, extra);
+          await exec({json.dumps(card_select["@change"])},
+            {{ ...extra, $event: {{ target: {{ value: '' }} }} }});
+          out.sent = asked.filter(([m]) => m !== 'GET').map(([m, p, b]) => [m, p, b]);
+          console.log(JSON.stringify(out));
+        }})();
+        """
+    )
+    assert values["defaultFieldShown"] is True
+    assert values["cardFieldShown"] is True
+    assert values["otherCardFieldShown"] is False
+    assert values["cardFieldAfter"] is False
+    assert values["sent"] == [
+        ["POST", "/api/commissioning/codes", {"code": "12345678901", "room": "Attic"}],
+        ["POST", "/api/commissioning/codes", {"code": "12345678902", "room": None}],
+        ["PATCH", "/api/commissioning/cards/4", {"room": "Bath"}],
+        ["PATCH", "/api/commissioning/cards/4", {"room": None}],
+    ]
+
+
+async def test_the_dialog_offers_a_different_thread_network(api):
+    """The capability the single-code flow had: a collapsed "Different
+    Thread network" disclosure with a text area and a save button; once a
+    dataset is set, a line that says so and a Remove button instead - the
+    dataset itself never comes back from the bridge.
+
+    Fault to prove it: drop the disclosure, or show the text area while a
+    dataset is set."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+    script = (await client.get("/static/app.js")).text
+    summary = _dialog_element(page, "summary", x_text="t('web.devices.thread_summary')")
+    assert summary
+    area = _dialog_element(page, "textarea", x_model="commissionThreadDataset")
+    assert area[":placeholder"] == "t('web.devices.thread_dataset_placeholder')"
+    save = _dialog_element(page, "button", at_click="saveThreadDataset()")
+    remove = _dialog_element(page, "button", at_click="removeThreadDataset()")
+    status = _dialog_element(page, "p", x_text="t('web.commissioning.thread_dataset_set')")
+    assert save["x-text"] == "t('web.commissioning.thread_dataset_save')"
+    assert remove["x-text"] == "t('web.commissioning.thread_dataset_remove')"
+    assert '"/api/commissioning/thread-dataset"' in script
+    # The two halves follow `thread_dataset_set`.
+    shown = [
+        (tag, attributes)
+        for tag, attributes, ancestors in _served_elements(page)
+        if tag == "template" and attributes.get("x-if", "").endswith("thread_dataset_set")
+    ]
+    assert len(shown) == 2, shown
+    assert status
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_a_thread_dataset_is_saved_and_removed_through_the_route():
+    """Save sends the dataset once and empties the field - the page does
+    not keep a network key around; a refusal keeps it with the reason.
+    Remove sends `null`.
+
+    Fault to prove it: keep the dataset in the field after a 204."""
+    values = _app_state(
+        _COMMISSIONING_REQUEST_JS
+        + """
+        let refuse = false;
+        state.request = async (method, path, payload) => {
+          if (refuse && method === 'PUT') { asked.push([method, path, payload]); throw new Error('Not a dataset'); }
+          return commissioningRequest(method, path, payload);
+        };
+        (async () => {
+          const out = {};
+          state.commissionThreadDataset = ' 0e08abcd ';
+          await state.saveThreadDataset();
+          out.saved = { field: state.commissionThreadDataset, error: state.commissionThreadError };
+          refuse = true; state.commissionThreadDataset = 'nope';
+          await state.saveThreadDataset();
+          out.refused = { field: state.commissionThreadDataset, error: state.commissionThreadError };
+          refuse = false;
+          await state.removeThreadDataset();
+          out.sent = asked.filter(([m]) => m === 'PUT');
+          console.log(JSON.stringify(out));
+        })();
+        """
+    )
+    assert values["saved"] == {"field": "", "error": None}
+    assert values["refused"] == {"field": "nope", "error": "Not a dataset"}
+    assert values["sent"] == [
+        ["PUT", "/api/commissioning/thread-dataset", {"dataset": "0e08abcd"}],
+        ["PUT", "/api/commissioning/thread-dataset", {"dataset": "nope"}],
+        ["PUT", "/api/commissioning/thread-dataset", {"dataset": None}],
+    ]
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_a_second_enter_while_a_code_is_sent_does_nothing():
+    """A handheld scanner can send its Enter twice, and a user can press it
+    again while the POST is under way: one POST. A code typed meanwhile is
+    not wiped when the first answer clears the field.
+
+    Fault to prove it: drop the in-flight guard, or clear the field
+    unconditionally."""
+    values = _app_state(
+        _COMMISSIONING_REQUEST_JS
+        + """
+        let release = null;
+        state.request = async (method, path, payload) => {
+          if (path === '/api/commissioning/codes') {
+            asked.push([method, path, payload]);
+            await new Promise((resolve) => { release = resolve; });
+            return {};
+          }
+          return commissioningRequest(method, path, payload);
+        };
+        (async () => {
+          state.commissionCode = '1234-567-8901';
+          const first = state.addCommissionCode();
+          await state.addCommissionCode();
+          state.commissionCode = '1234-567-89';
+          release();
+          await first;
+          const kept = state.commissionCode;
+          state.commissionCode = '1234-567-8902';
+          const second = state.addCommissionCode();
+          await new Promise((resolve) => setImmediate(resolve));
+          release();
+          await second;
+          console.log(JSON.stringify({
+            posts: asked.filter(([m, p]) => p === '/api/commissioning/codes').length,
+            kept, cleared: state.commissionCode }));
+        })();
+        """
+    )
+    assert values == {"posts": 2, "kept": "1234-567-89", "cleared": ""}
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_a_running_card_without_a_known_phase_reads_running():
+    """The tracker also reports `done` and `failed`, which have no chip of
+    their own - and `phase_done` would show as its bare key.
+
+    Fault to prove it: build the key from any truthy `card.phase`."""
+    cards = [
+        _commissioning_card(1, "running", phase="done"),
+        _commissioning_card(2, "running", phase="failed"),
+        _commissioning_card(3, "running", phase=None),
+        _commissioning_card(4, "running", phase="joined"),
+    ]
+    values = _app_state(
+        _commissioning_view(cards)
+        + "console.log(JSON.stringify(state.commissioning.cards.map((c) => state.cardChip(c))));",
+        translations={
+            "web.commissioning.state_running": "Running",
+            "web.commissioning.phase_joined": "Joined",
+        },
+    )
+    assert values == ["Running", "Running", "Running", "Joined"]
+
+
+async def test_the_entry_button_reads_commission_devices(api):
+    """The button on the devices page names what it does, not "Open
+    dialog" - the plan keeps `web.commissioning.open_dialog` for the
+    background line (Task 9), a different key.
+
+    Fault to prove it: put `web.commissioning.open_dialog` on the button."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+    (button,) = [
+        attributes
+        for tag, attributes, _ancestors in _served_elements(page)
+        if tag == "button" and attributes.get("@click") == "openCommissionDialog()"
+    ]
+    assert button["x-text"] == "t('web.devices.commission_heading')"
+    strings = yaml.safe_load((WEB_DIR.parent / "i18n" / "strings.yaml").read_text("utf-8"))
+    assert strings["web.devices.commission_heading"] == {
+        "en": "Commission devices",
+        "de": "Geräte einlernen",
+    }
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_one_device_nearby_reads_in_the_singular():
+    """ "1 devices in pairing mode nearby" read wrong; one is its own key.
+
+    Fault to prove it: use `scan_found` for every count."""
+    values = _app_state(
+        _commissioning_view([]) + "const out = [];"
+        "for (const n of [0, 1, 2]) {"
+        "  state.commissioning.cards = Array.from({ length: n }, (_, i) => ({ id: i, state: 'found' }));"
+        "  out.push(state.scanLine());"
+        "}"
+        "console.log(JSON.stringify(out));",
+        translations={
+            "web.commissioning.scan_found": "{count} devices.",
+            "web.commissioning.scan_found_one": "1 device.",
+        },
+    )
+    assert values == ["0 devices.", "1 device.", "2 devices."]
+    strings = yaml.safe_load((WEB_DIR.parent / "i18n" / "strings.yaml").read_text("utf-8"))
+    assert strings["web.commissioning.scan_found_one"] == {
+        "en": "1 device in pairing mode nearby.",
+        "de": "1 Gerät im Anlernmodus in der Nähe.",
+    }
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+async def test_the_warning_the_note_and_the_name_field_follow_their_bindings(api):
+    """The served bindings, run: the Bluetooth banner shows only with the
+    session's warning (and not before the first answer), a card's note
+    only when it has one, and the name field takes the card's name from a
+    poll - except while it has the focus, so typing survives the poll.
+
+    Fault to prove it: bind the name field with `:value`, or write it
+    whether or not it is focused."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+    banner = _dialog_element(page, "p", x_text="t('web.commissioning.bluetooth_warning')")
+    note = _card_element(page, "p", lambda a: a.get("x-text") == "card.note")
+    name = _card_element(page, "input", lambda a: a.get(":data-card-name") == "card.id")
+    assert ":value" not in name
+    values = _app_state(
+        _BINDINGS_JS
+        + f"""
+        const out = {{}};
+        const banner = {json.dumps(banner["x-show"])};
+        state.commissioning = null; out.bannerNone = Boolean(run(banner));
+        state.commissioning = {{ bluetooth_warning: false }}; out.bannerOff = Boolean(run(banner));
+        state.commissioning = {{ bluetooth_warning: true }}; out.bannerOn = Boolean(run(banner));
+        const note = {json.dumps(note["x-show"])};
+        out.noteNone = Boolean(run(note, {{ card: {{ note: null }} }}));
+        out.noteText = Boolean(run(note, {{ card: {{ note: 'Device stopped advertising' }} }}));
+        const field = {{ value: 'Kitchen ta' }};
+        globalThis.document = {{ activeElement: field }};
+        exec({json.dumps(name["x-effect"])}, {{ $el: field, card: {{ name: 'Old' }} }});
+        out.focused = field.value;
+        globalThis.document = {{ activeElement: null }};
+        exec({json.dumps(name["x-effect"])}, {{ $el: field, card: {{ name: 'Old' }} }});
+        out.unfocused = field.value;
+        exec({json.dumps(name["x-effect"])}, {{ $el: field, card: {{ name: null }} }});
+        out.unnamed = field.value;
+        console.log(JSON.stringify(out));
+        """
+    )
+    assert values == {
+        "bannerNone": False,
+        "bannerOff": False,
+        "bannerOn": True,
+        "noteNone": False,
+        "noteText": True,
+        "focused": "Kitchen ta",
+        "unfocused": "Old",
+        "unnamed": "",
+    }

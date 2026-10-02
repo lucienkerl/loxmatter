@@ -203,6 +203,12 @@ const ZIGBEE_NAMEABLE_ROW_STATES = ["ready", "configuring", "waiting_wake"];
 // whose names come from `roomSelectOptions()`.
 const NEW_ROOM_CHOICE = "__new__";
 
+// The tracker phases a running commissioning card names on its chip
+// (`web.commissioning.phase_<phase>`). The tracker also reports `done` and
+// `failed`, which the card's own state already says - those, like no phase
+// yet, read "Commissioning …".
+const COMMISSION_CHIP_PHASES = ["searching", "found", "connected", "joined"];
+
 // The firmware states in which an install is still running - the same set
 // as `ACTIVE_JOB_STATES` in `firmware/states.py`. The tile pill, the
 // dialog's step list and its "Check again" lock all read this one list.
@@ -984,8 +990,25 @@ function app() {
     // The code field. A handheld scanner types into it and ends with Enter,
     // which sends the code and empties the field for the next one.
     commissionCode: "",
-    // "Room for new cards": the room each code takes along, "" for none.
+    // "Room for new cards": the room each code takes along, "" for none,
+    // `NEW_ROOM_CHOICE` for the name typed into `commissionDefaultNewRoom`.
     commissionDefaultRoom: "",
+    commissionDefaultNewRoom: "",
+    // The card whose room select shows "+ New room…", and the name typed
+    // for it. One at a time, like the tile menu's `newRoomFor`; page state
+    // rather than the card's, because the poll replaces the cards.
+    commissionNewRoomFor: null,
+    commissionNewRoomDraft: "",
+    // A code POST under way: a second Enter meanwhile sends nothing.
+    commissionCodeSending: false,
+    // Whether this opening of the dialog has asked for its automatic scan -
+    // once, on the Matter tab, whether it opened there or was switched to.
+    commissionAutoScanned: false,
+    // "Different Thread network": what is typed into the text area. Emptied
+    // once the bridge has taken it - the page keeps no network key around;
+    // `commissioning.thread_dataset_set` says whether one is set.
+    commissionThreadDataset: "",
+    commissionThreadError: null,
     // The last refused action, in the bridge's own words.
     commissioningError: null,
     // Devices a card named that this page has loaded the list for
@@ -1546,6 +1569,9 @@ function app() {
         // And for the update queue's checklist.
         const firmwareQueueDialog = this.$refs.firmwareQueueModal;
         if (firmwareQueueDialog?.open) firmwareQueueDialog.close();
+        // And for the commissioning dialog.
+        const commissionDialog = this.$refs.commissionDialog;
+        if (commissionDialog?.open) commissionDialog.close();
       }
     },
 
@@ -3678,9 +3704,12 @@ function app() {
 
     /** Opens the dialog and, on the Matter tab, asks for a scan. The bridge
      * skips the automatic one if a scan ran in the last minute or a device
-     * is being commissioned, so opening the dialog twice costs nothing. */
+     * is being commissioned, so opening the dialog twice costs nothing.
+     * Opened on the Zigbee tab, it scans nothing until the Matter tab is
+     * chosen (`autoScanCommissioning()`). */
     openCommissionDialog() {
       this.commissionDialogOpen = true;
+      this.commissionAutoScanned = false;
       this.$nextTick(() => {
         this.$refs.commissionDialog.showModal();
         this.$refs.commissionCode?.focus();
@@ -3690,10 +3719,15 @@ function app() {
         void this.loadZigbeePairing();
       }
       return this.loadCommissioning().then(() => {
-        if (this.commissionTabShown() === "matter") {
-          this.request("POST", "/api/commissioning/scan", { automatic: true }).catch(() => {});
-        }
+        if (this.commissionTabShown() === "matter") this.autoScanCommissioning();
       });
+    },
+
+    /** The automatic scan, once per opening of the dialog. */
+    autoScanCommissioning() {
+      if (this.commissionAutoScanned) return;
+      this.commissionAutoScanned = true;
+      this.request("POST", "/api/commissioning/scan", { automatic: true }).catch(() => {});
     },
 
     closeCommissionDialog() {
@@ -3705,6 +3739,13 @@ function app() {
      * Zigbee tab this way closes the join window this page opened, as
      * switching to the Matter tab always did (`selectCommissionTab()`). */
     leaveCommissionDialogZigbee() {
+      // Closing the dialog over an open window is a choice about that
+      // window, like picking the Matter tab during it: entering Devices
+      // again does not open the dialog for it a second time.
+      if (this.zigbeeWindowOpen() && !this.zigbeeTabChosen) {
+        this.zigbeeTabChosen = true;
+        this.rememberCommission();
+      }
       if (this.commissionTabShown() === "zigbee") {
         this.stopZigbeePairingTimer();
         void this.closeZigbeeWindow();
@@ -3762,21 +3803,87 @@ function app() {
 
     /** Enter in the code field: a handheld scanner types the code and an
      * Enter, so the field is emptied and focused again for the next one.
-     * A refused code stays in the field, with the bridge's reason above. */
+     * A refused code stays in the field, with the bridge's reason above.
+     *
+     * One POST at a time: a second Enter while one is under way sends
+     * nothing. And the field is emptied only if it still holds the code
+     * that was sent - what was typed meanwhile is the next code. */
     async addCommissionCode() {
       const code = normalizePairingCode(this.commissionCode);
-      if (!code) return;
+      if (!code || this.commissionCodeSending) return;
+      this.commissionCodeSending = true;
       this.commissioningError = null;
       try {
         await this.request("POST", "/api/commissioning/codes", {
           code,
-          room: this.commissionDefaultRoom || null,
+          room:
+            this.resolveRoomChoice(this.commissionDefaultRoom, this.commissionDefaultNewRoom) ||
+            null,
         });
-        this.commissionCode = "";
+        if (normalizePairingCode(this.commissionCode) === code) this.commissionCode = "";
       } catch (error) {
         this.commissioningError = error.message;
+      } finally {
+        this.commissionCodeSending = false;
       }
       this.$refs.commissionCode?.focus();
+      await this.loadCommissioning();
+    },
+
+    /** A card's room select. "+ New room…" opens the name field under it
+     * and sends nothing yet (`saveCardNewRoom()`); any other choice is
+     * PATCHed at once. */
+    async chooseCardRoom(card, choice) {
+      if (choice === NEW_ROOM_CHOICE) {
+        this.commissionNewRoomFor = card.id;
+        this.commissionNewRoomDraft = "";
+        return;
+      }
+      if (this.commissionNewRoomFor === card.id) this.commissionNewRoomFor = null;
+      await this.patchCard(card, { room: choice || null });
+    },
+
+    /** Enter or leaving the new-room field: the typed name becomes the
+     * card's room. Nothing typed sends nothing and closes the field - the
+     * select falls back to the card's room. Enter and the blur it causes
+     * reach here both; only the first one finds the field still open. */
+    async saveCardNewRoom(card) {
+      if (this.commissionNewRoomFor !== card.id) return;
+      const room = this.resolveRoomChoice(NEW_ROOM_CHOICE, this.commissionNewRoomDraft);
+      this.commissionNewRoomFor = null;
+      this.commissionNewRoomDraft = "";
+      if (room) await this.patchCard(card, { room });
+    },
+
+    cancelCardNewRoom() {
+      this.commissionNewRoomFor = null;
+      this.commissionNewRoomDraft = "";
+    },
+
+    /** "Different Thread network": hands the dataset to the bridge, which
+     * checks it and uses it for every device commissioned from here on.
+     * On success the field is emptied; a refusal keeps it, with the reason
+     * (which never repeats the dataset). */
+    async saveThreadDataset() {
+      const dataset = this.commissionThreadDataset.trim();
+      if (!dataset) return;
+      this.commissionThreadError = null;
+      try {
+        await this.request("PUT", "/api/commissioning/thread-dataset", { dataset });
+        this.commissionThreadDataset = "";
+      } catch (error) {
+        this.commissionThreadError = error.message;
+      }
+      await this.loadCommissioning();
+    },
+
+    async removeThreadDataset() {
+      this.commissionThreadError = null;
+      try {
+        await this.request("PUT", "/api/commissioning/thread-dataset", { dataset: null });
+      } catch (error) {
+        this.commissionThreadError = error.message;
+      }
       await this.loadCommissioning();
     },
 
@@ -3843,9 +3950,9 @@ function app() {
 
     /** The cards in the design's order (4.2): waiting for a name, running,
      * queued, ready, found, not nearby/failed, done; the naming line keeps
-     * its own order, and within a group the stronger signal comes first.
-     * The bridge sends them sorted already - sorted again here so the page
-     * does not depend on that. */
+     * its own order, and within a group the older card comes first. Not
+     * the stronger signal: that changes with every scan, and a card that
+     * moved would move the field someone is typing a name into. */
     sortedCards() {
       const order = {
         naming: 0,
@@ -3862,15 +3969,16 @@ function app() {
         (a, b) =>
           (order[a.state] ?? 7) - (order[b.state] ?? 7) ||
           naming.indexOf(a.id) - naming.indexOf(b.id) ||
-          (b.rssi ?? -999) - (a.rssi ?? -999)
+          a.id - b.id
       );
     },
 
     /** The chip's text: a running card names the tracker's phase once it
-     * has one, a queued card its place in the queue. */
+     * has one with a chip (`COMMISSION_CHIP_PHASES`), a queued card its
+     * place in the queue. */
     cardChip(card) {
       if (card.state === "running") {
-        return card.phase
+        return COMMISSION_CHIP_PHASES.includes(card.phase)
           ? t("web.commissioning.phase_" + card.phase)
           : t("web.commissioning.state_running");
       }
@@ -3900,6 +4008,7 @@ function app() {
       if (scan.state === "scanning") return t("web.commissioning.scan_running");
       if (scan.state === "blocked") return t("web.commissioning.scan_blocked");
       const found = (this.commissioning.cards ?? []).filter((card) => card.state === "found").length;
+      if (found === 1) return t("web.commissioning.scan_found_one");
       return t("web.commissioning.scan_found", { count: found });
     },
 
@@ -3962,28 +4071,30 @@ function app() {
         this.noteZigbeePaneShown();
         await this.loadZigbeePairing();
       }
+      // A dialog opened on the Zigbee tab has not scanned yet.
+      if (tab === "matter" && this.commissionDialogOpen) this.autoScanCommissioning();
     },
 
     /** Entering Devices with a stick configured: one look at the pairing
      * list whichever tab is selected. A window that is open - opened before
-     * a reload, or by another tab or a phone - selects the Zigbee tab, so
-     * its countdown is on screen rather than behind the Matter tab: an open
-     * network is worth seeing. Selecting it closes nothing.
+     * a reload, or by another tab or a phone - opens the commissioning
+     * dialog on the Zigbee tab, so its countdown is on screen: an open
+     * network is worth seeing. Opening it closes nothing, and scans for no
+     * Matter device (`openCommissionDialog()`).
      *
      * Once per open window, not on every entry: a user who picked the Matter
-     * tab by hand while the window was open meant it, and is not moved back
-     * each time they return from another view. And never under an open
-     * commissioning dialog: switching its tab would hide what the user is
-     * looking at. */
+     * tab by hand, or closed the dialog, while the window was open meant it,
+     * and is not shown it again each time they return from another view. And
+     * never over a dialog already open: switching its tab would hide what
+     * the user is looking at. */
     async peekZigbeePairing() {
       if (this.zigbeePaneShown()) this.noteZigbeePaneShown();
       await this.loadZigbeePairing();
-      if (this.view !== "devices" || this.commissionTabShown() === "zigbee") return;
-      if (!this.zigbeeWindowOpen() || this.zigbeeTabChosen || this.commissionDialogOpen) return;
+      if (this.view !== "devices" || this.commissionDialogOpen) return;
+      if (!this.zigbeeWindowOpen() || this.zigbeeTabChosen) return;
       this.commissionTab = "zigbee";
       this.rememberCommission();
-      this.noteZigbeePaneShown();
-      this.scheduleZigbeePairingLoad(this.zigbeePairingPollInterval());
+      await this.openCommissionDialog();
     },
 
     /** The Zigbee pane has just come on screen, by a click or by entering
@@ -4015,9 +4126,14 @@ function app() {
       });
     },
 
-    /** Whether the Zigbee pane is the one on screen, logged in or not. */
+    /** Whether the Zigbee pane is the one on screen, logged in or not: the
+     * Zigbee tab of an open commissioning dialog on the devices page. */
     zigbeePaneShown() {
-      return this.view === "devices" && this.commissionTabShown() === "zigbee";
+      return (
+        this.view === "devices" &&
+        this.commissionDialogOpen &&
+        this.commissionTabShown() === "zigbee"
+      );
     },
 
     setZigbeeOpenedUntil(until) {

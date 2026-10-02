@@ -1243,6 +1243,11 @@ web.commissioning.scan_blocked:
 web.commissioning.scan_found:
   en: "{count} devices in pairing mode nearby."
   de: "{count} Geräte im Anlernmodus in der Nähe."
+web.commissioning.scan_found_one:
+  # `scan_found` for one device: "1 devices" reads wrong. Zero reads fine
+  # with the plural.
+  en: "1 device in pairing mode nearby."
+  de: "1 Gerät im Anlernmodus in der Nähe."
 web.commissioning.bluetooth_warning:
   en: "The Bluetooth adapter reported errors during the scan. Restarting the bridge host usually clears it; a USB Bluetooth adapter avoids it."
   de: "Der Bluetooth-Adapter hat beim Suchen Fehler gemeldet. Ein Neustart des Bridge-Rechners behebt das meist; ein USB-Bluetooth-Adapter vermeidet es."
@@ -1321,9 +1326,17 @@ web.commissioning.foot_done:
 web.commissioning.add_code:
   en: "Add"
   de: "Hinzufügen"
-web.commissioning.open:
-  en: "Open dialog"
-  de: "Dialog öffnen"
+web.commissioning.thread_dataset_save:
+  en: "Use this network"
+  de: "Dieses Netz verwenden"
+web.commissioning.thread_dataset_set:
+  # The bridge never sends the dataset back (it holds the network key), so
+  # the page can only say that one is set.
+  en: "A Thread dataset is set: every device commissioned from here joins that network. It is kept until the bridge restarts."
+  de: "Ein Thread-Datensatz ist gesetzt: jedes Gerät, das von hier eingelernt wird, tritt diesem Netz bei. Er bleibt bis zum Neustart der Brücke."
+web.commissioning.thread_dataset_remove:
+  en: "Remove"
+  de: "Entfernen"
 web.commissioning.close:
   en: "Close"
   de: "Schließen"

@@ -381,10 +381,9 @@
         -->
         <div class="card commission-entry">
           <div class="row">
-            <h2 x-text="t('web.devices.commission_heading')"></h2>
             <span class="grow"></span>
             <button type="button" class="primary" @click="openCommissionDialog()"
-                    x-text="t('web.commissioning.open')"></button>
+                    x-text="t('web.devices.commission_heading')"></button>
           </div>
         </div>
 
@@ -3460,9 +3459,11 @@
       `x-if="stringsReady"` guard, like the group dialog's: built before
       `GET /api/i18n` has answered, every `t()` in it would keep the bare
       key for good. That guard is the only one - none on
-      `commissionDialogOpen` - so the Zigbee pane keeps its drafts and its
-      poll across a close and an open, as it did while it lived in the
-      card.
+      `commissionDialogOpen` - so the Zigbee pane keeps its drafts across a
+      close and an open, as it did while it lived in the card. Its poll
+      runs only while the dialog is open (`zigbeePaneShown()`); a join
+      window open on entering Devices opens the dialog on that tab
+      (`peekZigbeePairing()`).
     -->
     <dialog
       x-ref="commissionDialog"
@@ -3640,8 +3641,21 @@
               <template x-for="room in roomSelectOptions()" :key="room">
                 <option :value="room" x-text="room"></option>
               </template>
+              <option value="__new__" x-text="t('web.devices.room_new')"></option>
             </select>
           </label>
+          <!-- A new room for new cards: sent with each code from now on
+               (`resolveRoomChoice()`), and offered on every card once one
+               of them carries it (`cardRoomOptions()`). -->
+          <input
+            x-show="commissionDefaultRoom === '__new__'"
+            x-cloak
+            type="text"
+            class="new-room-input"
+            x-model="commissionDefaultNewRoom"
+            :placeholder="t('web.devices.room_new_placeholder')"
+            :aria-label="t('web.devices.room_new_placeholder')"
+          />
           <button type="button" @click="rescanCommissioning()"
                   :disabled="commissioning?.scan?.state !== 'idle'"
                   x-text="t('web.commissioning.scan_again')"></button>
@@ -3651,6 +3665,41 @@
           <summary x-text="t('web.devices.code_help_summary')"></summary>
           <div class="disclosure-body">
             <p class="hint" x-text="t('web.devices.commission_hint')"></p>
+          </div>
+        </details>
+        <!-- A Thread network other than this Border Router's. The bridge
+             keeps the dataset in memory and hands it to every
+             commissioning; it never sends it back, so once one is set the
+             page shows only that one is, and a way to remove it. -->
+        <details class="commission-disclosure">
+          <summary x-text="t('web.devices.thread_summary')"></summary>
+          <div class="disclosure-body">
+            <p class="hint" x-text="t('web.devices.thread_dataset_hint')"></p>
+            <template x-if="!commissioning?.thread_dataset_set">
+              <div class="commission-thread">
+                <label class="field-label" for="commission-thread-dataset"
+                       x-text="t('web.devices.thread_dataset_label')"></label>
+                <textarea id="commission-thread-dataset" rows="3" spellcheck="false"
+                          autocomplete="off"
+                          x-model="commissionThreadDataset"
+                          :placeholder="t('web.devices.thread_dataset_placeholder')"></textarea>
+                <div class="row">
+                  <button type="button" @click="saveThreadDataset()"
+                          :disabled="!commissionThreadDataset.trim()"
+                          x-text="t('web.commissioning.thread_dataset_save')"></button>
+                </div>
+              </div>
+            </template>
+            <template x-if="commissioning?.thread_dataset_set">
+              <div class="row commission-thread">
+                <p class="hint" x-text="t('web.commissioning.thread_dataset_set')"></p>
+                <span class="grow"></span>
+                <button type="button" @click="removeThreadDataset()"
+                        x-text="t('web.commissioning.thread_dataset_remove')"></button>
+              </div>
+            </template>
+            <p class="banner danger" x-show="commissionThreadError" x-cloak
+               x-text="commissionThreadError"></p>
           </div>
         </details>
         </div>
@@ -3697,12 +3746,29 @@
                          @change="patchCard(card, { name: $event.target.value })"
                          @keydown.enter.prevent="patchCard(card, { name: $event.target.value })" />
                   <select :aria-label="t('web.commissioning.room')"
-                          @change="patchCard(card, { room: $event.target.value || null })">
-                    <option value="" :selected="!card.room" x-text="t('web.commissioning.no_room')"></option>
+                          @change="chooseCardRoom(card, $event.target.value)">
+                    <option value="" :selected="!card.room && commissionNewRoomFor !== card.id"
+                            x-text="t('web.commissioning.no_room')"></option>
                     <template x-for="room in cardRoomOptions(card)" :key="room">
-                      <option :value="room" :selected="card.room === room" x-text="room"></option>
+                      <option :value="room"
+                              :selected="card.room === room && commissionNewRoomFor !== card.id"
+                              x-text="room"></option>
                     </template>
+                    <option value="__new__" :selected="commissionNewRoomFor === card.id"
+                            x-text="t('web.devices.room_new')"></option>
                   </select>
+                  <!-- The new room's name: Enter or leaving the field PATCHes
+                       it (`saveCardNewRoom()`), Escape or an empty field
+                       keeps the card's room. -->
+                  <input x-show="commissionNewRoomFor === card.id" x-cloak
+                         type="text" class="new-room-input"
+                         x-model="commissionNewRoomDraft"
+                         x-effect="if (commissionNewRoomFor === card.id) $nextTick(() => $el.focus())"
+                         :placeholder="t('web.devices.room_new_placeholder')"
+                         :aria-label="t('web.devices.room_new_placeholder')"
+                         @keydown.enter.prevent="saveCardNewRoom(card)"
+                         @keydown.escape.stop="cancelCardNewRoom()"
+                         @blur="saveCardNewRoom(card)" />
                 </div>
               </template>
               <div class="commission-card-actions">

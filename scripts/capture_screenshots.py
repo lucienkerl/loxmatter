@@ -423,7 +423,7 @@ def capture(page: Page) -> None:
     # Since the commissioning dialog (design 2026-10-02) the code field
     # sits in the dialog the devices page's "Commission devices" card
     # opens; the crop is the dialog, like the signals modal's above.
-    page.click('.commission-entry button:has-text("Open dialog")')
+    page.click('.commission-entry button:has-text("Commission devices")')
     page.wait_for_selector("dialog.commission-modal[open]", timeout=5000)
     page.fill("#commission-code", "34970112332")
     shoot(page, "commissioning", "dialog.commission-modal", fixed=True)
