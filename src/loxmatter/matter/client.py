@@ -126,7 +126,7 @@ from typing import Any, Final
 
 from loxmatter import i18n
 from loxmatter.matter.models import NodeSnapshot, Technology
-from loxmatter.sources import DeviceCall, RuntimeEventHandler
+from loxmatter.sources import DeviceCall, IdentifyUnsupportedError, RuntimeEventHandler
 from loxmatter.sources.firmware import FIRMWARE_MIN_SCHEMA, FirmwareFacts, UpdateOffer
 
 logger = logging.getLogger(__name__)
@@ -674,6 +674,42 @@ class BridgeMatterClient:
 
     async def start_update(self, address: str, software_version: int) -> None:
         await self._require_upstream().update_node(int(address), software_version)
+
+    def _identify_endpoints(self, address: str) -> list[int]:
+        node_id = int(address)
+        for node in self._require_upstream().get_nodes():
+            if node.node_id == node_id:
+                endpoints = set()
+                for path in node.node_data.attributes:
+                    parts = path.split("/")
+                    if len(parts) == 3 and parts[1] == "3":
+                        endpoints.add(int(parts[0]))
+                return sorted(endpoints)
+        return []
+
+    def supports_identify(self, address: str) -> bool:
+        try:
+            return bool(self._identify_endpoints(address))
+        except MatterUnavailableError:
+            return False
+
+    async def identify(self, address: str, seconds: int) -> None:
+        """Identify (cluster 0x0003, command 0) on every endpoint that has
+        the cluster (design 2026-10-02, section 9.1). `seconds = 0` stops."""
+        endpoints = self._identify_endpoints(address)
+        if not endpoints:
+            raise IdentifyUnsupportedError(i18n.t("api.commissioning.fail_no_identify"))
+        for endpoint in endpoints:
+            await self.send(
+                DeviceCall(
+                    technology="matter",
+                    address=address,
+                    endpoint=endpoint,
+                    cluster_id=0x0003,
+                    command_id=0x00,
+                    payload={"identifyTime": seconds},
+                )
+            )
 
     async def send(self, call: DeviceCall) -> None:
         """Executes a translated `DeviceCall` over the upstream.

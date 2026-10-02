@@ -120,6 +120,13 @@ class DeviceOut(BaseModel):
     room: str | None
     category: str
     category_rank: int
+    # Whether the device can blink on request (Identify cluster present);
+    # design 2026-10-02, section 9.1.
+    identify: bool = False
+
+
+class IdentifyRequest(BaseModel):
+    on: bool
 
 
 class EndpointClustersOut(BaseModel):

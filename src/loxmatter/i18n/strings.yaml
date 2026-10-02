@@ -712,6 +712,9 @@ api.control.fail_not_wired:
 api.devices.fail_no_matter_client:
   en: "No matter-server client configured — the bridge is running without a Matter connection"
   de: "Matter-Client nicht verfuegbar - die Bruecke laeuft ohne Verbindung zu matter-server"
+api.commissioning.fail_no_identify:
+  en: "This device cannot identify itself."
+  de: "Dieses Gerät kann sich nicht durch Blinken melden."
 # `DELETE /api/devices/{id}?forget_only=true` for a device whose technology
 # HAS a configured source: that source is how the device is removed. Shown
 # when a stick was set up again while the forget-only offer was on screen.

@@ -91,10 +91,12 @@ from loxmatter.api.models import (
     DeviceOut,
     DevicePatch,
     EndpointClustersOut,
+    IdentifyRequest,
     RoomRename,
     SignalOut,
     SignalPatch,
 )
+from loxmatter.commissioning.identify import IdentifyCoordinator
 from loxmatter.export.commands import extract_commands
 from loxmatter.export.signals import to_inputs
 from loxmatter.firmware.states import format_spec_version
@@ -118,6 +120,8 @@ from loxmatter.profiles.table import Exportability, is_exportable
 from loxmatter.profiles.transport import transport_for
 from loxmatter.sources import (
     DeviceUnreachableError,
+    IdentifySource,
+    IdentifyUnsupportedError,
     SourceNotConfiguredError,
     Sources,
     bounded_source_removal,
@@ -239,7 +243,23 @@ def _signal_out(
     )
 
 
-def _device_out(device: StoredDevice, store: Store, runtime: RuntimeValues) -> DeviceOut:
+def _identify_source(sources: Sources | None, technology: str) -> IdentifySource | None:
+    """The source serving `technology`, if it can make a device blink."""
+    if sources is None:
+        return None
+    try:
+        source = sources.get(technology)
+    except SourceNotConfiguredError:
+        return None
+    return source if isinstance(source, IdentifySource) else None
+
+
+def _device_out(
+    device: StoredDevice,
+    store: Store,
+    runtime: RuntimeValues,
+    supports_identify: Callable[[StoredDevice], bool] = lambda _device: False,
+) -> DeviceOut:
     # `store.signals(device.id)` fetches the full row per signal here, even
     # though `list_devices` (Minor #2, review 2026-09-02) only counts them -
     # an N+1 access per device in `GET /api/devices`. Deliberately accepted
@@ -275,6 +295,7 @@ def _device_out(device: StoredDevice, store: Store, runtime: RuntimeValues) -> D
         room=device.room,
         category=category.value,
         category_rank=CATEGORY_RANK[category],
+        identify=supports_identify(device),
     )
 
 
@@ -347,6 +368,7 @@ def build_device_router(
     thread_dataset_source: ThreadDatasetSource | None = None,
     sources: Sources | None = None,
     tracker: CommissioningTracker | None = None,
+    identify: IdentifyCoordinator | None = None,
 ) -> APIRouter:
     router = APIRouter(prefix="/api")
     fetch_dataset = thread_dataset_source or fetch_active_dataset
@@ -358,6 +380,23 @@ def build_device_router(
         except UnknownDeviceError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
+    def _supports_identify(device: StoredDevice) -> bool:
+        source = _identify_source(sources, device.technology)
+        if source is None:
+            return False
+        try:
+            return source.supports_identify(device.address)
+        except Exception:  # noqa: BLE001 - a flag on a tile never fails the list
+            return False
+
+    def _stored_address(device_id: int) -> tuple[str, str]:
+        device = store.device(device_id)
+        return device.technology, device.address
+
+    coordinator = identify or IdentifyCoordinator(
+        lambda technology: _identify_source(sources, technology), _stored_address
+    )
+
     def _require_client() -> BridgeMatterClient:
         if client is None:
             raise HTTPException(
@@ -366,14 +405,31 @@ def build_device_router(
             )
         return client
 
+    @router.post("/devices/{device_id}/identify", status_code=204)
+    async def identify_device(device_id: int, request: IdentifyRequest) -> None:
+        _require_device(device_id)
+        try:
+            if request.on:
+                await coordinator.start(device_id, renew=False)
+            elif coordinator.blinking == device_id:
+                await coordinator.stop()
+        except IdentifyUnsupportedError as exc:
+            raise HTTPException(
+                status_code=409, detail=i18n.t("api.commissioning.fail_no_identify")
+            ) from exc
+        except (MatterUnavailableError, DeviceUnreachableError) as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+
     @router.get("/devices")
     async def list_devices() -> list[DeviceOut]:
-        return [_device_out(device, store, runtime) for device in store.devices()]
+        return [
+            _device_out(device, store, runtime, _supports_identify) for device in store.devices()
+        ]
 
     @router.get("/devices/{device_id}")
     async def get_device(device_id: int) -> DeviceOut:
         device = _require_device(device_id)
-        return _device_out(device, store, runtime)
+        return _device_out(device, store, runtime, _supports_identify)
 
     @router.get("/devices/{device_id}/signals")
     async def get_signals(device_id: int) -> list[SignalOut]:
@@ -417,7 +473,7 @@ def build_device_router(
             store.rename_device(device.id, patch.label)
         if patch.room is not None:
             store.set_room(device.id, patch.room)
-        return _device_out(store.device(device.id), store, runtime)
+        return _device_out(store.device(device.id), store, runtime, _supports_identify)
 
     @router.post("/rooms/rename")
     async def rename_room(patch: RoomRename) -> dict[str, int]:
@@ -803,7 +859,7 @@ def build_device_router(
                     device_id,
                 )
             await progress.finish(None, token=token)
-            return _device_out(store.device(device_id), store, runtime)
+            return _device_out(store.device(device_id), store, runtime, _supports_identify)
         except Exception:
             await progress.finish("other", token=token)
             raise

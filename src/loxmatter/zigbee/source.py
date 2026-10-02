@@ -90,12 +90,15 @@ from loxmatter.radios.inventory import under_host_dev
 from loxmatter.sources import (
     DeviceCall,
     DeviceUnreachableError,
+    IdentifyUnsupportedError,
     ReportingClosedError,
     RuntimeEventHandler,
 )
 from loxmatter.timestamps import now_iso
 from loxmatter.zigbee.availability import AvailabilityChecker, is_available
 from loxmatter.zigbee.configure import (
+    IDENTIFY_CLUSTER,
+    IDENTIFY_COMMAND,
     PollingLoop,
     PollingSchedule,
     configure_device,
@@ -1712,6 +1715,27 @@ class ZigbeeSource:
                 )
             )
         return device
+
+    def supports_identify(self, address: str) -> bool:
+        device = self._device_or_none(address)
+        if device is None:
+            return False
+        return any(
+            IDENTIFY_CLUSTER in endpoint.in_clusters for endpoint in device.non_zdo_endpoints
+        )
+
+    async def identify(self, address: str, seconds: int) -> None:
+        """Identify on the first endpoint that has the cluster
+        (design 2026-10-02, section 9.1). `seconds = 0` stops."""
+        device = self._require_device(address)
+        for endpoint in device.non_zdo_endpoints:
+            cluster = endpoint.in_clusters.get(IDENTIFY_CLUSTER)
+            if cluster is None:
+                continue
+            with _as_device_error():
+                await cluster.command(IDENTIFY_COMMAND, identify_time=seconds)
+            return
+        raise IdentifyUnsupportedError(i18n.t("api.commissioning.fail_no_identify"))
 
     async def send(self, call: DeviceCall) -> None:
         """Executes one translated `DeviceCall` on one cluster.

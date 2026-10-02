@@ -1459,3 +1459,21 @@ async def test_the_device_list_says_how_a_device_is_connected(api):
     assert devices[0]["transport"] == "thread"
     assert devices[0]["technology"] == "matter"
     assert "node_id" not in devices[0]
+
+
+async def test_identify_route_starts_and_stops(api):
+    client, store, device_id, fake = api
+    address = store.device(device_id).address
+    assert (
+        await client.post(f"/api/devices/{device_id}/identify", json={"on": True})
+    ).status_code == 204
+    assert (
+        await client.post(f"/api/devices/{device_id}/identify", json={"on": False})
+    ).status_code == 204
+    assert fake.identified == [(address, 30), (address, 0)]
+
+
+async def test_device_out_says_whether_it_can_identify(api):
+    client, _, device_id, _ = api
+    devices = (await client.get("/api/devices")).json()
+    assert next(d for d in devices if d["id"] == device_id)["identify"] is True
