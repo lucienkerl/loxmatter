@@ -1477,7 +1477,7 @@ async def test_a_refusal_becomes_commission_failed(tmp_path, fake_client, fake_r
     assert raised.value.reason == "not_found"
 ```
 
-The fixtures `fake_client`, `fake_runtime`, `fake_otbr` live in `tests/api/conftest.py` and are not visible from `tests/commissioning/`. Either put this file under `tests/api/` as `tests/api/test_commission_run.py`, or add a `tests/commissioning/conftest.py` that imports them — prefer placing the file under `tests/api/`. The room is "Küche" because the store normalises rooms as given; it is test data, not prose.
+The fixtures `fake_client`, `fake_runtime`, `fake_otbr` live in `tests/api/conftest.py` and are not visible from `tests/commissioning/`. Either put this file under `tests/api/` as `tests/api/test_commission_run.py`, or add a `tests/commissioning/conftest.py` that imports them — prefer placing the file under `tests/api/`. The room is `"Küche"` because the store normalises rooms as given; it is test data, not prose.
 
 - [ ] **Step 3: Move the code** as described above.
 
@@ -1935,7 +1935,7 @@ app.js methods (complete):
 
 The phase keys: check which phase names the session exposes (`searching`, `found`, `connected`, `joined` from the tracker) and add one `web.commissioning.phase_<name>` per phase. `confirmName` is added in Task 9; until then the Enter handler may call `patchCard` only — Task 9 replaces it.
 
-The `<dialog>` uses the expert modal's pattern: `@close="commissionDialogOpen = false; scheduleCommissioningPoll()"`, backdrop handling with `isBackdropEvent`. The devices page keeps a card with heading `web.devices.commission_heading` (new text "Commission devices" / "Geräte einlernen") and a primary button `@click="openCommissionDialog()"`. The Zigbee tab content moves into the dialog unchanged.
+The `<dialog>` uses the expert modal's pattern: `@close="commissionDialogOpen = false; scheduleCommissioningPoll()"`, backdrop handling with `isBackdropEvent`. The devices page keeps a card with heading `web.devices.commission_heading` (new text `"Commission devices"` / `"Geräte einlernen"`) and a primary button `@click="openCommissionDialog()"`. The Zigbee tab content moves into the dialog unchanged.
 
 Strings (en/de):
 
