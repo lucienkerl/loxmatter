@@ -53,7 +53,12 @@ def test_manual_code_gives_the_short_discriminator(code):
 
 def test_21_digit_code_decodes():
     payload = decode("400000000000000000003")
-    assert (payload.kind, payload.discriminator) == ("short", 0)
+    assert (payload.kind, payload.discriminator, payload.vendor_id, payload.product_id) == (
+        "short",
+        0,
+        0,
+        0,
+    )
 
 
 @pytest.mark.parametrize("code", ["34970112333"])
@@ -68,10 +73,33 @@ def test_unreadable_codes_raise(code):
         decode(code)
 
 
+def test_non_ascii_digits_raise_unreadable():
+    with pytest.raises(UnreadableCodeError):
+        decode("3497011233²")
+
+
+def test_arabic_indic_digits_raise_unreadable():
+    with pytest.raises(UnreadableCodeError):
+        decode("3497011233٢")
+
+
+@pytest.mark.parametrize("code", ["3497\t011\n2332"])
+def test_whitespace_including_tab_and_newline_is_stripped(code):
+    assert decode(code) == SetupPayload(
+        kind="short", discriminator=15, vendor_id=None, product_id=None, ble=None, on_network=None
+    )
+
+
 def test_the_error_text_never_contains_the_code():
     with pytest.raises(UnreadableCodeError) as raised:
         decode("MT:SECRET99")
     assert "SECRET" not in str(raised.value)
+
+
+def test_error_text_never_quotes_non_ascii_digits():
+    with pytest.raises(UnreadableCodeError) as raised:
+        decode("3497011233²")
+    assert "²" not in str(raised.value)
 
 
 def test_the_payload_has_no_passcode():

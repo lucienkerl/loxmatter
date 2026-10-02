@@ -126,8 +126,8 @@ def decode(code: str) -> SetupPayload:
             ble=bool(capabilities & _CAP_BLE),
             on_network=bool(capabilities & _CAP_ON_NETWORK),
         )
-    digits = "".join(char for char in text if char not in " -")
-    if not digits.isdigit() or len(digits) not in (11, 21):
+    digits = "".join(char for char in text if not (char.isspace() or char == "-"))
+    if not (digits.isascii() and digits.isdigit()) or len(digits) not in (11, 21):
         raise UnreadableCodeError("not a Matter pairing code")
     if not _verhoeff_valid(digits):
         raise TypoError("check digit does not match")
