@@ -1167,6 +1167,26 @@ web.auth.copy_failed_toast:
   en: "Could not copy – click the command to select it and copy it by hand."
   de: "Kopieren hat nicht geklappt – klick auf den Befehl, um ihn zu markieren, und kopiere ihn von Hand."
 
+# --- web.commissioning — commissioning queue (design 2026-10-02) ---
+web.commissioning.hint_power_cycle:
+  en: "Switch the power off and on again to put it into pairing mode."
+  de: "Schalten Sie den Strom aus und wieder ein, um den Anlernmodus zu starten."
+web.commissioning.hint_manual:
+  en: "See the manufacturer's instructions for pairing mode."
+  de: "Wie der Anlernmodus startet, steht in der Anleitung des Herstellers."
+web.commissioning.unknown_product:
+  en: "Vendor {vendor} · Product {product}"
+  de: "Hersteller {vendor} · Produkt {product}"
+web.commissioning.test_device:
+  en: "Test device (vendor {vendor})"
+  de: "Testgerät (Hersteller {vendor})"
+web.commissioning.numeric_code_device:
+  en: "Device with numeric code"
+  de: "Gerät mit Zahlencode"
+web.commissioning.product_unknown_until_done:
+  en: "Product known after commissioning"
+  de: "Produkt erst nach dem Einlernen bekannt"
+
 # --- web.devices — device list, commissioning, operation ---
 web.devices.commission_heading:
   en: "Commission a new device"

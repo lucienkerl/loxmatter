@@ -127,6 +127,9 @@ _KNOWN_TABLES = frozenset(
         "zigbee_pending_config",
         # Schema 15 (firmware updates): a new table for a different feature.
         "firmware_status",
+        # Schema 17 (commissioning queue): the DCL product-name cache.
+        "dcl_vendor",
+        "dcl_model",
     }
 )
 

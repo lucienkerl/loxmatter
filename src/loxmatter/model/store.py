@@ -58,6 +58,7 @@ from loxmatter.matter.models import (
     technology_or_none,
 )
 from loxmatter.model.auth_store import AuthStore
+from loxmatter.model.dcl_store import DclStore
 from loxmatter.model.firmware_settings_store import FirmwareSettingsStore
 from loxmatter.model.firmware_status_store import FirmwareStatusStore
 from loxmatter.model.locale_store import LocaleStore
@@ -179,7 +180,10 @@ DEFAULT_LISTEN_PORT = 8080
 # see `_migrate_to_v15`. Both additive: a rolled-back image names neither.
 # Version 16 (firmware update queue, design 2026-10-01) adds the nullable
 # column `firmware_status.queued_at`, see `_migrate_to_v16`. Additive.
-_SCHEMA_VERSION = 16
+# Version 17 (commissioning queue, design 2026-10-02, section 7) adds the
+# tables `dcl_vendor` and `dcl_model`, a cache of the CSA DCL's product
+# names. New tables only: a rolled-back image never names them.
+_SCHEMA_VERSION = 17
 
 
 def schema_version() -> int:
@@ -299,6 +303,24 @@ CREATE TABLE IF NOT EXISTS firmware_status (
     job_changed_at       TEXT,
     job_error            TEXT,
     queued_at            TEXT
+);
+CREATE TABLE IF NOT EXISTS dcl_vendor (
+    vendor_id   INTEGER PRIMARY KEY,
+    vendor_name TEXT,
+    missing     INTEGER NOT NULL DEFAULT 0,
+    fetched_at  TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS dcl_model (
+    vendor_id                 INTEGER NOT NULL,
+    product_id                INTEGER NOT NULL,
+    product_name              TEXT,
+    part_number               TEXT,
+    device_type               INTEGER,
+    initial_steps_hint        INTEGER,
+    initial_steps_instruction TEXT,
+    missing                   INTEGER NOT NULL DEFAULT 0,
+    fetched_at                TEXT NOT NULL,
+    PRIMARY KEY (vendor_id, product_id)
 );
 """
 
@@ -1002,6 +1024,12 @@ def _migrate_to_v16(db: sqlite3.Connection) -> None:
     _add_column_if_missing(db, "firmware_status", "queued_at", "TEXT")
 
 
+def _migrate_to_v17(db: sqlite3.Connection) -> None:
+    """Adds `dcl_vendor` and `dcl_model` (design 2026-10-02, section 7).
+    Both come from `_SCHEMA`'s `CREATE TABLE IF NOT EXISTS`, which runs
+    before `_migrate`; nothing else to do."""
+
+
 # Migrations in order, applied from whichever version is stored - to extend
 # for a later schema change: simply append, with the next version number as
 # the key.
@@ -1022,6 +1050,7 @@ _MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     14: _migrate_to_v14,
     15: _migrate_to_v15,
     16: _migrate_to_v16,
+    17: _migrate_to_v17,
 }
 
 
@@ -1495,6 +1524,7 @@ class Store:
         # Firmware updates (design 2026-09-30) - same connection twice more.
         self.firmware_status = FirmwareStatusStore(self._db)
         self.firmware_settings = FirmwareSettingsStore(self._db)
+        self.dcl = DclStore(self._db)
 
     def close(self) -> None:
         self._db.close()
