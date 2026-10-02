@@ -715,6 +715,27 @@ api.devices.fail_no_matter_client:
 api.commissioning.fail_no_identify:
   en: "This device cannot identify itself."
   de: "Dieses Gerät kann sich nicht durch Blinken melden."
+api.commissioning.fail_unreadable_code:
+  en: "This is not a Matter pairing code."
+  de: "Das ist kein Matter-Code."
+api.commissioning.fail_typo:
+  en: "The check digit does not match. Please check the code for a typo."
+  de: "Die Prüfziffer stimmt nicht. Bitte prüfen Sie den Code auf einen Tippfehler."
+api.commissioning.fail_duplicate:
+  en: "This code has already been scanned."
+  de: "Dieser Code wurde bereits gescannt."
+api.commissioning.fail_busy:
+  en: "Scanning is paused while a device is commissioned."
+  de: "Gesucht wird nicht, solange ein Gerät eingelernt wird."
+api.commissioning.fail_name_missing:
+  en: "Enter a name, or continue without one."
+  de: "Tragen Sie einen Namen ein oder fahren Sie ohne Namen fort."
+api.commissioning.fail_unknown_card:
+  en: "This card no longer exists."
+  de: "Diese Karte gibt es nicht mehr."
+api.commissioning.fail_card_running:
+  en: "This device is being commissioned right now."
+  de: "Dieses Gerät wird gerade eingelernt."
 # `DELETE /api/devices/{id}?forget_only=true` for a device whose technology
 # HAS a configured source: that source is how the device is removed. Shown
 # when a stick was set up again while the forget-only offer was on screen.
@@ -1189,6 +1210,18 @@ web.commissioning.numeric_code_device:
 web.commissioning.product_unknown_until_done:
   en: "Product known after commissioning"
   de: "Produkt erst nach dem Einlernen bekannt"
+web.commissioning.note_several:
+  en: "Matches {count} devices nearby. Which one it is shows after commissioning."
+  de: "Passt zu {count} Geräten in der Nähe. Welches es ist, zeigt sich nach dem Einlernen."
+web.commissioning.note_wifi:
+  en: "Wi-Fi device: searched on the network."
+  de: "WLAN-Gerät: wird im Netz gesucht."
+web.commissioning.note_not_nearby:
+  en: "Not found nearby. {hint}"
+  de: "Nicht in der Nähe gefunden. {hint}"
+web.commissioning.note_no_signal_yet:
+  en: "No matching device is advertising yet."
+  de: "Noch sendet kein passendes Gerät."
 
 # --- web.devices — device list, commissioning, operation ---
 web.devices.commission_heading:
