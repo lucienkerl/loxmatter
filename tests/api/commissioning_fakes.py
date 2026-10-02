@@ -29,7 +29,7 @@ from typing import Any
 
 from loxmatter.commissioning.session import CommissioningSession
 from loxmatter.matter.commissioning_progress import CommissioningTracker
-from loxmatter.matter.dcl import DclDirectory
+from loxmatter.matter.dcl import DclDirectory, ProductLabel
 from loxmatter.matter.models import NodeSnapshot
 from loxmatter.model.store import Store
 from loxmatter.radios.bluetooth_health import KernelFinding
@@ -139,11 +139,43 @@ class FakeScanner:
 
 
 class FakeReader:
+    """`reads` counts the snapshots taken; while `hold` is set, a snapshot
+    waits on it and then answers with the adverts of that moment."""
+
     def __init__(self) -> None:
         self.adverts: list[MatterAdvert] = []
+        self.reads = 0
+        self.hold: asyncio.Event | None = None
 
     async def snapshot(self) -> BluezSnapshot | None:
+        self.reads += 1
+        if self.hold is not None:
+            await self.hold.wait()
         return BluezSnapshot(adverts=list(self.adverts), adapter=None)
+
+
+class HeldLabels:
+    """Makes the session's DCL lookup wait: `arm()` holds the next lookup
+    on `release`, every later one passes straight through. `waiting` is
+    set while a held lookup waits."""
+
+    def __init__(self, session: CommissioningSession) -> None:
+        self._original = session._dcl.product_label
+        self.release = asyncio.Event()
+        self.waiting = False
+        self._armed = False
+        session._dcl.product_label = self._label  # type: ignore[method-assign]
+
+    def arm(self) -> None:
+        self._armed = True
+
+    async def _label(self, vendor_id: int | None, product_id: int | None) -> ProductLabel:
+        if self._armed:
+            self._armed = False
+            self.waiting = True
+            await self.release.wait()
+            self.waiting = False
+        return await self._original(vendor_id, product_id)
 
 
 class FakeKernel:

@@ -1,7 +1,9 @@
 """The commissioning session: cards, codes, the worker and the naming line
 (design 2026-10-02, sections 4, 8 and 9)."""
 
+import asyncio
 import json
+import logging
 
 import pytest
 from commissioning_fakes import (
@@ -11,6 +13,7 @@ from commissioning_fakes import (
     MANUAL_CODE,
     QR_CODE,
     QR_CODE_ON_NETWORK,
+    HeldLabels,
     advert,
     build_session,
     snapshot_of,
@@ -178,8 +181,14 @@ async def test_worker_commissions_in_order_and_names_with_preset_name(h):
     device = h.store.device(one["device_id"])
     assert device.label == "Esstisch"
     assert device.room == "Esszimmer"
-    assert card_view(h, second.id)["state"] == "naming"
-    assert h.identify.starts() == [("start", one["device_id"], False, 3)]
+    two = card_view(h, second.id)
+    assert two["state"] == "naming"
+    # The check blink of the named device, then the front of the naming
+    # line, which always takes the blink over (design 4.4).
+    assert h.identify.starts() == [
+        ("start", one["device_id"], False, 3),
+        ("start", two["device_id"], True, 30),
+    ]
 
 
 async def test_unnamed_devices_queue_for_naming_and_only_the_first_blinks(h):
@@ -286,8 +295,11 @@ async def test_no_early_warning_while_a_matching_device_advertises(h):
     await h.session.start()
     await settle_until(lambda: card_view(h, card.id)["phase"] == "searching", "searching")
     h.clock.now += 21.0
-    for _ in range(50):
-        await settle_until(lambda: True, "a few turns")
+    reads = h.reader.reads
+    # The monitor must actually have looked again after the jump - a test
+    # that only waited would also pass with a monitor that never ticks.
+    await settle_until(lambda: h.reader.reads >= reads + 3, "the monitor read BlueZ again")
+    assert card_view(h, card.id)["phase"] == "searching"
     assert card_view(h, card.id)["note"] is None
 
 
@@ -337,17 +349,21 @@ async def test_numeric_code_card_takes_over_its_device_after_commissioning(h):
 
 async def test_clear_keeps_the_running_card(h):
     h.gate.held = True
-    h.reader.adverts = [advert("AA:05", 1234, BILRESA, -40)]
+    # 3841: the manual code matches it, the QR code (3840) does not.
+    h.reader.adverts = [advert("AA:05", 3841, BILRESA, -40)]
     await h.session.scan()
     first = await h.session.add_code(QR_CODE_ON_NETWORK, None)
     await h.session.start()
     await settle_until(lambda: card_view(h, first.id)["state"] == "running", "running")
-    await h.session.add_code(MANUAL_CODE, None)
+    queued = await h.session.add_code(MANUAL_CODE, None)
+    assert card_view(h, queued.id)["state"] == "queued"
     h.session.clear()
     assert [c["id"] for c in h.session.view()["cards"]] == [first.id]
+    h.gate.held = False
     h.gate.release_all()
     await idle(h)
     assert h.gate.calls == 1
+    assert h.client.commissioned == [QR_CODE_ON_NETWORK]
 
 
 async def test_bluetooth_warning_after_a_wedge_line(h):
@@ -406,3 +422,178 @@ async def test_aclose_cancels_a_running_worker_and_closes_identify(h):
     await h.session.aclose()
     assert h.identify.closed
     assert not h.session.busy
+
+
+async def test_a_code_added_while_the_worker_drains_is_still_commissioned(h):
+    # The DCL lookup for a new card is awaited; a worker that finishes its
+    # last card meanwhile must not leave the new card queued with nobody
+    # to run it. Both adverts fit the manual code, neither the QR code.
+    h.reader.adverts = [
+        advert("AA:01", 3841, KAJPLATS_E27, -60),
+        advert("AA:02", 3842, KAJPLATS_E14, -65),
+    ]
+    await h.session.scan()
+    labels = HeldLabels(h.session)
+    h.gate.held = True
+    first = await h.session.add_code(QR_CODE_ON_NETWORK, None)
+    await h.session.start()
+    await settle_until(lambda: card_view(h, first.id)["state"] == "running", "running")
+    labels.arm()
+    adding = asyncio.ensure_future(h.session.add_code(MANUAL_CODE, None))
+    await settle_until(lambda: labels.waiting, "the lookup waits")
+    h.gate.held = False
+    h.gate.release_all()
+    await settle_until(lambda: h.session._worker.done(), "the worker ended")
+    labels.release.set()
+    second = await adding
+    await idle(h)
+    assert card_view(h, second.id)["state"] == "naming"
+    assert h.client.commissioned == [QR_CODE_ON_NETWORK, MANUAL_CODE]
+
+
+async def test_an_unexpected_failure_keeps_the_code_out_of_log_and_note(h, caplog):
+    caplog.set_level(logging.DEBUG)
+    h.gate.failures = [RuntimeError(f"matter-server choked on {QR_CODE}")]
+    card = await h.session.add_code(QR_CODE_ON_NETWORK, None)
+    await h.session.start()
+    await idle(h)
+    view = card_view(h, card.id)
+    assert view["state"] == "failed"
+    assert "Y.K9042C00KA0648G00" not in (view["note"] or "")
+    assert caplog.records, "the failure is logged"
+    for record in caplog.records:
+        assert "Y.K9042C00KA0648G00" not in record.getMessage()
+        assert record.exc_info is None
+        assert record.exc_text is None
+
+
+async def test_an_unexpected_failure_fails_the_card_and_moves_on(h):
+    h.gate.failures = [RuntimeError("boom"), None]
+    first = await h.session.add_code(QR_CODE_ON_NETWORK, None)
+    h.reader.adverts = [advert("AA:02", 3841, KAJPLATS_E14, -60)]
+    await h.session.scan()
+    second = await h.session.add_code(MANUAL_CODE, None)
+    await h.session.start()
+    await idle(h)
+    one = card_view(h, first.id)
+    assert one["state"] == "failed"
+    assert one["note"] == i18n.t("api.errors.commissioning_failed", exc="RuntimeError")
+    assert one["has_code"] is True
+    assert card_view(h, second.id)["state"] == "naming"
+    assert h.gate.calls == 2
+
+
+async def test_removing_the_head_during_the_advert_check_keeps_the_next_card(h):
+    gone = await ready_card(h, "AA:01", 3840, KAJPLATS_E27, -60, QR_CODE)
+    h.reader.adverts = []
+    nxt = await h.session.add_code(QR_CODE_ON_NETWORK, None)
+    h.reader.hold = asyncio.Event()
+    reads = h.reader.reads
+    await h.session.start()
+    await settle_until(lambda: h.reader.reads > reads, "the worker reads BlueZ")
+    h.session.remove(gone.id)
+    hold, h.reader.hold = h.reader.hold, None
+    hold.set()
+    await idle(h)
+    assert card_view(h, nxt.id)["state"] == "naming"
+    assert h.client.commissioned == [QR_CODE_ON_NETWORK]
+
+
+async def test_the_front_of_the_naming_line_takes_over_a_running_blink(h):
+    await h.identify.start(999, renew=False)
+    card = await h.session.add_code(QR_CODE_ON_NETWORK, None)
+    await h.session.start()
+    await idle(h)
+    device_id = card_view(h, card.id)["device_id"]
+    assert h.identify.starts()[-1] == ("start", device_id, True, 30)
+    assert h.session.view()["blinking_card"] == card.id
+
+
+async def test_a_preset_name_check_blink_never_interrupts(h):
+    await h.identify.start(999, renew=False)
+    card = await h.session.add_code(QR_CODE_ON_NETWORK, None)
+    await h.session.update_card(card.id, name="Esstisch")
+    await h.session.start()
+    await idle(h)
+    assert card_view(h, card.id)["state"] == "done"
+    assert h.identify.blinking == 999
+    assert h.identify.starts() == [("start", 999, False, 30)]
+
+
+async def test_removing_the_naming_front_hands_the_blink_on(h):
+    a = await h.session.add_code(QR_CODE_ON_NETWORK, None)
+    h.reader.adverts = [advert("AA:02", 3840, KAJPLATS_E27, -60)]
+    await h.session.scan()
+    b = await h.session.add_code(QR_CODE, None)
+    await h.session.start()
+    await idle(h)
+    device_b = card_view(h, b.id)["device_id"]
+    assert h.session.view()["blinking_card"] == a.id
+    h.session.remove(a.id)
+    await settle_until(lambda: h.identify.blinking == device_b, "b blinks")
+    assert h.identify.starts()[-1] == ("start", device_b, True, 30)
+    assert h.session.view()["naming"] == [b.id]
+    assert h.session.view()["blinking_card"] == b.id
+
+
+async def test_the_scan_is_blocked_during_follow_up_work(h):
+    h.reader.adverts = [
+        advert("AA:01", 3840, KAJPLATS_E27, -60),
+        advert("AA:02", 3841, KAJPLATS_E14, -65),
+    ]
+    await h.session.scan()
+    card = await h.session.add_code(MANUAL_CODE, None)
+    labels = HeldLabels(h.session)
+    labels.arm()
+    h.gate.snapshots = [snapshot_of(200, 4476, KAJPLATS_E27)]
+    await h.session.start()
+    # `_adopt` looks the product up after the device is commissioned,
+    # while the worker still holds the radio.
+    await settle_until(lambda: labels.waiting, "the follow-up lookup waits")
+    assert card_view(h, card.id)["state"] == "running"
+    assert h.session.busy
+    assert h.session.view()["scan"]["state"] == "blocked"
+    assert not await h.session.scan()
+    labels.release.set()
+    await idle(h)
+    assert h.session.view()["scan"]["state"] == "idle"
+    assert not h.session.busy
+
+
+async def test_a_rescan_matches_only_adverts_seen_now(h):
+    card = await h.session.add_code(MANUAL_CODE, None)
+    h.reader.adverts = [
+        advert("AA:01", 3840, KAJPLATS_E27, -60),
+        advert("AA:02", 3841, KAJPLATS_E14, -65),
+    ]
+    await h.session.scan()
+    # Two devices fit the short discriminator: the code stays on its own.
+    assert card_view(h, card.id)["state"] == "not_nearby"
+    # AA:02 has gone quiet; its card from the first scan is still listed,
+    # but only what advertises now counts, and that is one device.
+    h.reader.adverts = [advert("AA:01", 3840, KAJPLATS_E27, -60)]
+    await h.session.scan()
+    cards = h.session.view()["cards"]
+    moved = [c for c in cards if c["has_code"]]
+    assert [c["product"] for c in moved] == ["KAJPLATS E27 WS globe 1055lm"]
+    assert moved[0]["state"] == "ready"
+
+
+async def test_a_rescan_queues_a_revived_card_while_the_worker_runs(h):
+    skipped = await ready_card(h, "AA:01", 3840, KAJPLATS_E27, -60, QR_CODE)
+    h.reader.adverts = []
+    await h.session.start()
+    await idle(h)
+    assert card_view(h, skipped.id)["state"] == "not_nearby"
+    # The worker waits for matter-server with a card in its queue.
+    h.client.connected = False
+    waiting = await h.session.add_code(QR_CODE_ON_NETWORK, None)
+    await h.session.start()
+    h.reader.adverts = [advert("AA:01", 3840, KAJPLATS_E27, -60)]
+    assert await h.session.scan()
+    assert card_view(h, skipped.id)["state"] == "queued"
+    h.client.connected = True
+    await idle(h)
+    assert card_view(h, waiting.id)["state"] == "naming"
+    assert card_view(h, skipped.id)["state"] == "naming"
+    assert h.client.commissioned == [QR_CODE_ON_NETWORK, QR_CODE]

@@ -168,7 +168,6 @@ class CommissioningSession:
         self._forced: set[int] = set()
         # One lock for the radio: a scan and a commissioning never overlap.
         self._radio = asyncio.Lock()
-        self._running: int | None = None
         self._scanning = False
         self._last_scan_at: float | None = None
         self.bluetooth_warning = False
@@ -179,8 +178,9 @@ class CommissioningSession:
 
     @property
     def busy(self) -> bool:
-        """Whether the worker holds the radio for a commissioning."""
-        return self._running is not None
+        """Whether the worker holds the radio - for a commissioning or the
+        follow-up work after it. A scan is refused for exactly as long."""
+        return self._radio.locked() and not self._scanning
 
     @property
     def has_work(self) -> bool:
@@ -188,6 +188,18 @@ class CommissioningSession:
 
     def _worker_active(self) -> bool:
         return self._worker is not None and not self._worker.done()
+
+    def _startable(self) -> CardState:
+        """A card that could run: queued while the worker runs, ready
+        otherwise (design 4.3: codes scanned while it runs queue at the end)."""
+        return "queued" if self._worker_active() else "ready"
+
+    def _enqueue(self, card: Card) -> None:
+        """Puts a `queued` card at the end of the queue and makes sure a
+        worker runs it - a queued card nobody runs would wait forever."""
+        if card.state == "queued" and card.id not in self._queue:
+            self._queue.append(card.id)
+        self._ensure_worker()
 
     def _matter_connected(self) -> bool:
         client = self._client_for()
@@ -247,36 +259,44 @@ class CommissioningSession:
 
     async def _rematch_not_nearby(self, advertising: set[str]) -> None:
         """ "Scan again" for a `not_nearby` card: a skipped card whose device
-        advertises again is ready again; a code-only card that now matches
-        exactly one scanned card moves onto it."""
+        advertises again can run again; a code-only card that matches
+        exactly one device advertising in this scan moves onto its card.
+        Either is queued while the worker runs, ready otherwise."""
         for card in list(self._cards.values()):
             if card.state != "not_nearby" or card.payload is None:
                 continue
             if card.advert_address is not None:
                 if card.advert_address in advertising:
-                    card.state = "ready"
+                    card.state = self._startable()
                     card.note = None
+                    self._enqueue(card)
                 continue
-            matches = self._matching_found(card.payload)
+            matches = self._matching_found(card.payload, advertising)
             if len(matches) != 1:
                 continue
             target = matches[0]
             target.payload = card.payload
             target.name = card.name
             target.room = card.room
-            target.state = "ready"
+            target.state = self._startable()
             self._codes[target.id] = self._codes.pop(card.id)
             self._drop(card.id)
+            self._enqueue(target)
 
     # --- codes --------------------------------------------------------
 
-    def _matching_found(self, payload: SetupPayload) -> list[Card]:
+    def _matching_found(
+        self, payload: SetupPayload, advertising: set[str] | None = None
+    ) -> list[Card]:
+        """The `found` cards whose advert fits the code's discriminator -
+        with `advertising`, only those whose device is in that scan."""
         discriminator = discriminator_for(payload)
         return [
             card
             for card in self._cards.values()
             if card.state == "found"
             and card.id in self._adverts
+            and (advertising is None or self._adverts[card.id].address in advertising)
             and discriminator.matches(self._adverts[card.id].discriminator)
         ]
 
@@ -291,15 +311,19 @@ class CommissioningSession:
         if text in self._codes.values():
             raise CodeRejected("api.commissioning.fail_duplicate", 409)
 
-        startable: CardState = "queued" if self._worker_active() else "ready"
+        # Queued if the worker ran when the code was scanned or runs once the
+        # lookup below is back; `_enqueue` then makes sure a worker runs it,
+        # even if the one that ran has finished during the lookup.
+        worker_ran = self._worker_active()
         matches = self._matching_found(payload)
         if len(matches) == 1:
             card = matches[0]
             card.payload = payload
             card.room = room
-            card.state = startable
+            card.state = self._startable()
         else:
             label = await self._dcl.product_label(payload.vendor_id, payload.product_id)
+            startable: CardState = "queued" if worker_ran else self._startable()
             if len(matches) > 1:
                 card = self._new_card(startable, label, payload=payload)
                 card.candidates = [match.advert_address or "" for match in matches]
@@ -313,7 +337,7 @@ class CommissioningSession:
             card.room = room
         self._codes[card.id] = text
         if card.state == "queued":
-            self._queue.append(card.id)
+            self._enqueue(card)
         return card
 
     def _new_card(
@@ -434,6 +458,9 @@ class CommissioningSession:
                 and card_id not in self._forced
                 and not await self._still_advertising(card.advert_address)
             ):
+                # Removed or cleared while BlueZ was read.
+                if not self._queue or self._queue[0] != card_id or card_id not in self._cards:
+                    continue
                 self._queue.pop(0)
                 card.state = "not_nearby"
                 card.note = i18n.t("web.commissioning.note_not_nearby", hint=card.pairing_hint)
@@ -461,7 +488,6 @@ class CommissioningSession:
         room = card.room
         card.state = "running"
         card.phase = None
-        self._running = card.id
         monitor = asyncio.ensure_future(self._monitor(card))
         try:
             result = await commission(
@@ -478,8 +504,12 @@ class CommissioningSession:
             card.state = "failed"
             card.note = exc.detail
             return
-        except Exception as exc:
-            logger.exception("Commissioning card %s failed unexpectedly", card.id)
+        except Exception as exc:  # noqa: BLE001 - the worker goes on
+            # The type only, no message and no traceback: an unrecognised
+            # exception's text is not known to be free of the code.
+            logger.error(
+                "Commissioning card %s failed unexpectedly: %s", card.id, type(exc).__name__
+            )
             card.state = "failed"
             # The type only: an unrecognised exception's text is not known
             # to be free of the code, and the note reaches the API.
@@ -488,18 +518,22 @@ class CommissioningSession:
         finally:
             monitor.cancel()
             await asyncio.gather(monitor, return_exceptions=True)
-            self._running = None
             card.phase = None
         try:
             await self._finish(card, result.device_id, result.snapshot, room)
-        except Exception:
+        except Exception as exc:  # noqa: BLE001 - commissioned anyway
             # The device is commissioned and registered; a failed rename or
             # lookup afterwards must neither stop the worker nor mark it failed.
-            logger.exception("Follow-up work for commissioned card %s failed", card.id)
+            # Logged by type only, like a failed commissioning above.
+            logger.error(
+                "Follow-up work for commissioned card %s failed: %s", card.id, type(exc).__name__
+            )
             card.device_id = result.device_id
             if card.state == "running":
                 card.state = "naming"
                 self._naming.append(card.id)
+                if self._naming[0] == card.id:
+                    await self._quietly(self._identify.start(result.device_id, renew=True))
 
     async def _monitor(self, card: Card) -> None:
         """Phase and early warning while a card runs (design 8.3)."""
@@ -551,7 +585,9 @@ class CommissioningSession:
             return
         card.state = "naming"
         self._naming.append(card.id)
-        if self._naming[0] == card.id and self._identify.blinking is None:
+        if self._naming[0] == card.id:
+            # The front of the naming line always blinks (design 4.4): it
+            # takes over from a blink started on a tile or card.
             await self._quietly(self._identify.start(device_id, renew=True))
 
     async def _adopt(self, card: Card, snapshot: NodeSnapshot) -> None:
@@ -660,7 +696,7 @@ class CommissioningSession:
         """The JSON of `GET /api/commissioning`. Never contains a code."""
         if self._scanning:
             scan_state = "scanning"
-        elif self.busy:
+        elif self._radio.locked():
             scan_state = "blocked"
         else:
             scan_state = "idle"
