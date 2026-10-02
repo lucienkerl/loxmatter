@@ -275,6 +275,9 @@ class FakeMatterClient:
     def __init__(self) -> None:
         self.commissioned: list[str] = []
         self.removed: list[str] = []
+        # `(address, seconds)` of every Identify the device API asked for.
+        self.identified: list[tuple[str, int]] = []
+        self.fail_identify_with: Exception | None = None
         self.datasets: list[str] = []
         self.fail_commission_with: Exception | None = None
         self.fail_remove_with: Exception | None = None
@@ -346,6 +349,14 @@ class FakeMatterClient:
             attributes={},
             available=self.available,
         )
+
+    def supports_identify(self, address: str) -> bool:
+        return True
+
+    async def identify(self, address: str, seconds: int) -> None:
+        if self.fail_identify_with is not None:
+            raise self.fail_identify_with
+        self.identified.append((address, seconds))
 
     async def remove(self, address: str) -> None:
         if self.fail_remove_with is not None:

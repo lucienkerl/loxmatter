@@ -139,8 +139,9 @@ from starlette.responses import Response as StarletteResponse
 
 from loxmatter import i18n
 from loxmatter.api.auth import build_auth_router, build_password_router
+from loxmatter.api.commissioning import build_commissioning_router
 from loxmatter.api.control import build_control_router
-from loxmatter.api.devices import RuntimeValues, ThreadDatasetSource, build_device_router
+from loxmatter.api.devices import RuntimeValues, build_device_router, identify_coordinator
 from loxmatter.api.diagnostics import (
     CommandLogEntry,
     RingBuffer,
@@ -165,14 +166,20 @@ from loxmatter.commands.coalesce import VALUE_INTERVAL_SECONDS, CommandGate
 from loxmatter.commands.fanout import MemberPlan, group_outcome, plan_group_calls
 from loxmatter.commands.switch_on import SwitchOnFirst
 from loxmatter.commands.translate import UnsupportedValueError
+from loxmatter.commissioning.identify import IdentifyCoordinator
+from loxmatter.commissioning.run import ThreadDatasetSource
+from loxmatter.commissioning.session import CommissioningSession
 from loxmatter.diagnostics.logbuffer import LogBufferHandler
 from loxmatter.firmware.service import FirmwareService
 from loxmatter.loxone.sender import UdpSender
 from loxmatter.matter.client import BridgeMatterClient
 from loxmatter.matter.commissioning_progress import CommissioningTracker
+from loxmatter.matter.dcl import DclDirectory
+from loxmatter.matter.otbr import fetch_active_dataset
 from loxmatter.matter.thread_network import ThreadNetworkKeeper
 from loxmatter.model.store import Store
 from loxmatter.radios.bluetooth_health import KernelLog
+from loxmatter.radios.bluez import BluezReader, BluezScanner
 from loxmatter.sources import (
     DeviceCall,
     SourceNotConfiguredError,
@@ -493,6 +500,13 @@ def build_app(
     # The one `FirmwareService` (design 2026-09-30) - `cli` passes the one
     # whose jobs it resumes and whose checker the daily schedule drives.
     firmware: FirmwareService | None = None,
+    # The commissioning dialog's session (design 2026-10-02, section 8) and
+    # the one coordinator that lets a single device blink at a time. `cli`
+    # passes both so it can close the session on shutdown; without them
+    # this function builds its own - a session only when a Matter client
+    # exists, since every card ends in `client.commission_with_code`.
+    commissioning_session: CommissioningSession | None = None,
+    identify: IdentifyCoordinator | None = None,
 ) -> FastAPI:
     # Callers that predate the device source boundary pass only `client`;
     # for them the registry is the Matter client alone, which is exactly
@@ -503,6 +517,25 @@ def build_app(
         # Every app has the routes; without a firmware-capable source the
         # overview says `supported: false`. Only `cli` starts the schedule.
         firmware = FirmwareService(store, sources if sources is not None else Sources([]))
+    # ONE coordinator for the device tiles and the commissioning dialog:
+    # a blink started from either ends the other's (design 9.2).
+    if identify is None:
+        identify = identify_coordinator(store, sources)
+    if commissioning_session is None and client is not None:
+        if commissioning_tracker is None:
+            commissioning_tracker = CommissioningTracker()
+        commissioning_session = CommissioningSession(
+            store=store,
+            client_for=lambda: client,
+            runtime=runtime,
+            tracker=commissioning_tracker,
+            fetch_dataset=thread_dataset_source or fetch_active_dataset,
+            reader=BluezReader(),
+            scanner=BluezScanner(),
+            kernel=kernel_log,
+            dcl=DclDirectory(store.dcl),
+            identify=identify,
+        )
     app = FastAPI(title="loxmatter", docs_url=None, redoc_url=None)
     command_log: RingBuffer[CommandLogEntry] = RingBuffer(maxlen=COMMAND_LOG_SIZE)
     api_guard = [Depends(build_api_guard(api_token, store))]
@@ -624,21 +657,32 @@ def build_app(
             i18n.set_language(store.locale.get_language())
         return await call_next(request)
 
-    # `dependencies=api_guard` on each of the twelve `/api` routers (see
+    # `dependencies=api_guard` on each of the `/api` routers (see
     # `build_api_guard` above; the eighth was `POST
     # /api/export/project-sync`, the ninth `build_language_router`, the
     # tenth `build_update_router`, the eleventh `build_groups_router`, the
-    # twelfth `build_password_router`): this protects without exception
-    # every route of these twelve routers, including the WebSocket routes
+    # twelfth `build_password_router`, and later ones such as
+    # `build_commissioning_router`): this protects without exception
+    # every route of these routers, including the WebSocket routes
     # `/api/live` and `/api/diagnostics/live` - and explicitly NOT `/cmd`,
     # `/resync`, `/health`, `/` and `/static`, which are mounted further
     # below without `dependencies`.
     app.include_router(
         build_device_router(
-            store, client, runtime, thread_dataset_source, sources, tracker=commissioning_tracker
+            store,
+            client,
+            runtime,
+            thread_dataset_source,
+            sources,
+            tracker=commissioning_tracker,
+            identify=identify,
         ),
         dependencies=api_guard,
     )
+    if commissioning_session is not None:
+        app.include_router(
+            build_commissioning_router(commissioning_session), dependencies=api_guard
+        )
     app.include_router(build_export_router(store), dependencies=api_guard)
     app.include_router(build_project_sync_router(store), dependencies=api_guard)
     app.include_router(

@@ -10,10 +10,21 @@ people who don't know the code.
 
 ### Before you update
 
-- **The database schema rises from 14 to 16.** Nothing needs doing by hand.
+- **The database schema rises from 14 to 17.** Nothing needs doing by hand.
 
 ### Added
 
+- **Commission many devices in one go.** "Commission devices" lists every
+  Matter device in pairing mode nearby, with its product name. Scan the codes
+  one after another, in any order; each one finds its device. The bridge
+  commissions them in the background while you keep scanning, and each new
+  device blinks so you can name it before the next one is done. Name and room
+  can be set before, during and after, and a new room can be created right in
+  the dialog. A name that is really a pairing code is refused. For a device
+  that belongs to a Thread network from another border router, the dialog
+  still offers "Different Thread network".
+- **Identify any device.** A device's menu has "Identify": the lamp blinks
+  for up to 30 seconds, and only one device blinks at a time.
 - **Firmware updates for Matter devices.** System has a new "Device updates"
   card: which devices have an update in the CSA directory, and an Install
   button that opens a dialog asking first. After a failed or interrupted

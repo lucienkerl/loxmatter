@@ -27,6 +27,7 @@ from loxmatter.matter.client import CommissioningError, MatterUnavailableError
 from loxmatter.matter.commissioning_progress import CommissioningTracker
 from loxmatter.matter.otbr import ThreadDatasetUnavailableError
 from loxmatter.model.store import Store
+from loxmatter.sources import DeviceUnreachableError, IdentifyUnsupportedError
 from loxmatter.zigbee.translate import DeviceFacts, EndpointFacts, build_snapshot
 
 _ZLL_PROFILE = 0xC05E
@@ -786,8 +787,8 @@ async def test_a_short_discriminator_above_15_is_refused(api):
     rejected - both this route and `commission_with_code` answer 422.
     `detail[0]["loc"]` is FastAPI's own shape for a request validation
     error and only appears for that case (a commissioning failure's
-    `detail` is a plain string, see `_reason_detail`); `fake_client.commissioned`
-    staying empty proves the fake client's `commission_with_code` was never
+    `detail` is a plain string, see `commissioning.run._reason_detail`);
+    `fake_client.commissioned` staying empty proves the fake client's `commission_with_code` was never
     called at all."""
     client, _, _, fake_client = api
     response = await client.post(
@@ -1459,3 +1460,35 @@ async def test_the_device_list_says_how_a_device_is_connected(api):
     assert devices[0]["transport"] == "thread"
     assert devices[0]["technology"] == "matter"
     assert "node_id" not in devices[0]
+
+
+async def test_identify_route_starts_and_stops(api):
+    client, store, device_id, fake = api
+    address = store.device(device_id).address
+    assert (
+        await client.post(f"/api/devices/{device_id}/identify", json={"on": True})
+    ).status_code == 204
+    assert (
+        await client.post(f"/api/devices/{device_id}/identify", json={"on": False})
+    ).status_code == 204
+    assert fake.identified == [(address, 30), (address, 0)]
+
+
+async def test_device_out_says_whether_it_can_identify(api):
+    client, _, device_id, _ = api
+    devices = (await client.get("/api/devices")).json()
+    assert next(d for d in devices if d["id"] == device_id)["identify"] is True
+
+
+async def test_identify_route_answers_409_for_a_device_without_identify(api):
+    client, _, device_id, fake = api
+    fake.fail_identify_with = IdentifyUnsupportedError("no Identify cluster")
+    response = await client.post(f"/api/devices/{device_id}/identify", json={"on": True})
+    assert response.status_code == 409
+
+
+async def test_identify_route_answers_502_when_the_device_does_not_answer(api):
+    client, _, device_id, fake = api
+    fake.fail_identify_with = DeviceUnreachableError("device unreachable: asleep")
+    response = await client.post(f"/api/devices/{device_id}/identify", json={"on": True})
+    assert response.status_code == 502

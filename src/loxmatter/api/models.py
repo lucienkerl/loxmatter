@@ -120,6 +120,29 @@ class DeviceOut(BaseModel):
     room: str | None
     category: str
     category_rank: int
+    # Whether the device can blink on request (Identify cluster present);
+    # design 2026-10-02, section 9.1.
+    identify: bool = False
+
+
+class IdentifyRequest(BaseModel):
+    on: bool
+
+
+class CommissioningScanIn(BaseModel):
+    """`POST /api/commissioning/scan` - the body is optional. `automatic`:
+    the dialog's own scan on opening, skipped within 60 s of the last one."""
+
+    automatic: bool = False
+
+
+class CommissioningCardIn(BaseModel):
+    """`PATCH /api/commissioning/cards/{id}`. A field left out stays as it
+    is; `"room": null` clears the room - `model_fields_set` tells the two
+    apart."""
+
+    name: str | None = None
+    room: str | None = None
 
 
 class EndpointClustersOut(BaseModel):

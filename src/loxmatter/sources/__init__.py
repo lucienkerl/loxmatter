@@ -28,7 +28,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable, Coroutine, Iterable
 from dataclasses import dataclass, field
-from typing import Any, Protocol
+from typing import Any, Protocol, runtime_checkable
 
 from loxmatter import i18n
 from loxmatter.matter.models import NodeSnapshot, Technology
@@ -39,6 +39,8 @@ __all__ = [
     "DeviceCall",
     "DeviceSource",
     "DeviceUnreachableError",
+    "IdentifySource",
+    "IdentifyUnsupportedError",
     "ReportingClosedError",
     "RuntimeEventHandler",
     "SourceNotConfiguredError",
@@ -48,6 +50,17 @@ __all__ = [
     "bounded_source_removal",
     "technology_display_name",
 ]
+
+
+class IdentifyUnsupportedError(RuntimeError):
+    """The device has no Identify cluster (design 2026-10-02, section 9.1)."""
+
+
+@runtime_checkable
+class IdentifySource(Protocol):
+    def supports_identify(self, address: str) -> bool: ...
+
+    async def identify(self, address: str, seconds: int) -> None: ...
 
 
 @dataclass(frozen=True)

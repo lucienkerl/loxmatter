@@ -2042,3 +2042,34 @@ def test_run_no_longer_requires_miniserver(monkeypatch, tmp_path):
     result = CliRunner().invoke(app, ["run", "--store-path", str(tmp_path / "t.sqlite")])
     assert result.exit_code == 0, result.output
     assert captured["miniserver"] is None
+
+
+async def test__run_hands_one_session_and_one_coordinator_to_build_app(monkeypatch, tmp_path):
+    """Design 2026-10-02, section 9.2: the device tiles and the commissioning
+    dialog share ONE `IdentifyCoordinator`, or a blink from one would not
+    stop the other's. `_run` builds the session around that coordinator and
+    the bridge's one tracker, and closes it on shutdown.
+
+    Fault to prove it: build the session with a second coordinator, leave
+    the tracker out, or drop the `aclose()` from the `finally`."""
+    _install_run_spies(monkeypatch)
+    monkeypatch.setattr(cli.uvicorn, "Server", _SpyUvicornServer)
+    captured = _capture_build_app(monkeypatch)
+    closed: list[object] = []
+
+    class _RecordingSession(cli.CommissioningSession):
+        async def aclose(self) -> None:
+            closed.append(self)
+            await super().aclose()
+
+    monkeypatch.setattr(cli, "CommissioningSession", _RecordingSession)
+    store = Store(tmp_path / "t.sqlite")
+
+    await cli._run(store, "ws://test/ws", "127.0.0.1", 7000, 8080)
+
+    session = captured["commissioning_session"]
+    assert isinstance(session, _RecordingSession)
+    assert session._identify is captured["identify"]
+    assert session._tracker is captured["commissioning_tracker"]
+    assert session._kernel is captured["kernel_log"]
+    assert closed == [session]

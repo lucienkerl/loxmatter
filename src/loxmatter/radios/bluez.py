@@ -15,12 +15,13 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 """Matter commissioning advertisements and adapter state, read from BlueZ.
 
-Design 2026-09-22, sections 3 and 6. matter-server scans over BlueZ while it
-commissions; BlueZ keeps every advertisement it received as an
-`org.bluez.Device1` object. This module reads those objects - it never starts
-a scan itself: on 21 September 2026 the Raspberry Pi 3's on-board adapter
-wedged after a single commissioning attempt, and a second scanning client on
-the same chip is the last thing it needs.
+Design 2026-09-22, sections 3 and 6. The `BluezReader` class reads
+`org.bluez.Device1` objects - it never starts a scan itself: on 21 September
+2026 the Raspberry Pi 3's on-board adapter wedged after a single commissioning
+attempt, and a second scanning client on the same chip is the last thing it
+needs. The `BluezScanner` class starts a short scan of its own (design
+2026-10-02, section 6.1) under a serializing lock to filter for Matter
+devices in pairing mode.
 
 A Matter device in commissioning mode advertises service data under
 `MATTER_SERVICE_UUID`: byte 0 is the opcode (0x00 = commissionable), bytes 1-2
@@ -32,10 +33,11 @@ Nothing in it is secret.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
-from typing import Any, Final
+from typing import Any, Final, Protocol
 
 logger = logging.getLogger(__name__)
 
@@ -198,3 +200,116 @@ class BluezReader:
             logger.debug("BlueZ not readable: %s", exc)
             return None
         return snapshot_from_objects(objects)
+
+
+class BluezScanError(RuntimeError):
+    """BlueZ answered a scan call with an error, or could not be reached."""
+
+
+class BluezConnection(Protocol):
+    """One D-Bus connection to BlueZ. `call` answers with the reply's body,
+    plain Python values, and raises `BluezScanError` for a refused call."""
+
+    async def call(
+        self, path: str, interface: str, member: str, signature: str, body: list[Any]
+    ) -> list[Any]: ...
+
+    def disconnect(self) -> None: ...
+
+
+Connect = Callable[[], Awaitable[BluezConnection]]
+
+
+class _SystemBusConnection:
+    def __init__(self, bus: Any) -> None:
+        self._bus = bus
+
+    async def call(
+        self, path: str, interface: str, member: str, signature: str, body: list[Any]
+    ) -> list[Any]:
+        from dbus_fast import Message, MessageType
+
+        reply = await self._bus.call(
+            Message(
+                destination="org.bluez",
+                path=path,
+                interface=interface,
+                member=member,
+                signature=signature,
+                body=body,
+            )
+        )
+        if reply is None or reply.message_type == MessageType.ERROR:
+            raise BluezScanError(f"BlueZ refused {member}: {getattr(reply, 'error_name', None)}")
+        result: list[Any] = _unwrap(list(reply.body))
+        return result
+
+    def disconnect(self) -> None:
+        self._bus.disconnect()
+
+
+async def _connect_system_bus() -> BluezConnection:
+    from dbus_fast import BusType
+    from dbus_fast.aio import MessageBus
+
+    try:
+        bus = await MessageBus(bus_type=BusType.SYSTEM).connect()
+    except Exception as exc:  # no socket is a failed scan, not a crash
+        raise BluezScanError(f"D-Bus not reachable: {exc}") from exc
+    return _SystemBusConnection(bus)
+
+
+class BluezScanner:
+    """A short scan of our own (design 2026-10-02, section 6.1).
+
+    Measured on the test Pi on 2 October 2026: the container (uid 0) may
+    call all three methods over the read-only /run/dbus mount. The caller
+    holds the scan/commissioning lock; this class does not know it.
+
+    Every call of one scan goes through ONE connection: BlueZ ties a
+    discovery filter and a running discovery to the connection that set
+    them and ends that discovery when it closes - a connection per call
+    would stop the scan the moment `StartDiscovery` returned. And the
+    objects are read BEFORE `StopDiscovery`: once discovery stops, BlueZ
+    clears every device's `RSSI` (measured 29 September 2026), and
+    `_advert()` drops a device without one."""
+
+    def __init__(
+        self,
+        connect: Connect | None = None,
+        *,
+        sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+    ) -> None:
+        self._connect = connect or _connect_system_bus
+        self._sleep = sleep
+
+    async def scan(
+        self, adapter_path: str = "/org/bluez/hci0", seconds: float = 10.0
+    ) -> BluezSnapshot:
+        from dbus_fast import Variant
+
+        connection = await self._connect()
+        try:
+            await connection.call(
+                adapter_path,
+                _ADAPTER,
+                "SetDiscoveryFilter",
+                "a{sv}",
+                [{"Transport": Variant("s", "le"), "UUIDs": Variant("as", [MATTER_SERVICE_UUID])}],
+            )
+            await connection.call(adapter_path, _ADAPTER, "StartDiscovery", "", [])
+            try:
+                await self._sleep(seconds)
+                body = await connection.call(
+                    "/", "org.freedesktop.DBus.ObjectManager", "GetManagedObjects", "", []
+                )
+            finally:
+                try:
+                    await connection.call(adapter_path, _ADAPTER, "StopDiscovery", "", [])
+                except Exception as exc:  # noqa: BLE001 - never masks the original error
+                    logger.warning("Stopping the Bluetooth scan failed: %s", exc)
+        finally:
+            connection.disconnect()
+        if not body or not isinstance(body[0], Mapping):
+            raise BluezScanError("BlueZ answered GetManagedObjects without objects")
+        return snapshot_from_objects(body[0])

@@ -648,10 +648,7 @@ button:disabled {
 
 /* The marker every step gets, `done`/`now` included - drawn as a
  * pseudo-element instead of a second element in the markup, since
- * `index.html`'s `<li>` carries nothing but its own text (unlike
- * `.commission-step`'s dedicated `<span class="step-marker">`, added for
- * a different flow that this one predates and should not be made to
- * depend on). */
+ * `index.html`'s `<li>` carries nothing but its own text. */
 .steps li::before {
   content: "";
   position: absolute;
@@ -666,8 +663,7 @@ button:disabled {
 
 /* `done` and `now` must both read without colour (task requirement,
  * also WCAG 1.4.1): `done` gets a filled marker plus a checkmark drawn
- * from two border lines - the same technique `.commission-step.done
- * .step-marker::after` already uses below for the pairing flow - and
+ * from two border lines - and
  * `now` gets bold text plus a spinning ring, so a single frozen
  * screenshot still shows which step is current even in greyscale. A
  * step that is neither stays a plain, muted, empty ring - "not reached
@@ -710,8 +706,7 @@ button:disabled {
   }
 }
 
-/* Same accommodation as `.commission-step.running .step-marker` below:
- * a spinning ring is exactly the sustained motion
+/* A spinning ring is exactly the sustained motion
  * `prefers-reduced-motion` asks for less of. The current step stays
  * distinguishable without it - dashed instead of a closed ring. */
 @media (prefers-reduced-motion: reduce) {
@@ -934,32 +929,6 @@ button:disabled {
   }
 }
 
-/* The quiet second line: room, room hint, and the two disclosures. */
-.commission-meta {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem 1.1rem;
-  flex-wrap: wrap;
-  margin-top: 0.8rem;
-}
-
-.commission-meta .inline-field {
-  display: flex;
-  align-items: center;
-  gap: 0.45rem;
-  font-size: 0.85rem;
-  color: var(--text-muted);
-}
-
-/* Like with the code field: the global `input[type="text"]` rule gives every
- * text field a 12rem minimum width, so that a device name does not look
- * truncated. A room name does not need that, and it pushed the disclosures
- * onto the next line. */
-.commission-meta .new-room-input {
-  flex: 0 1 11rem;
-  min-width: 0;
-}
-
 /* The two disclosures stand ON TOP OF EACH OTHER in their own row, not
  * next to the room field in the same one.
  *
@@ -1040,155 +1009,6 @@ button:disabled {
 
 .disclosure-body .hint {
   margin: 0.5rem 0 0;
-}
-
-/* --- Progress display ---------------------------------------------------
- *
- * It replaces the form for the duration of a run. Commissioning takes
- * twenty to sixty seconds; before this it was just a button turning grey,
- * i.e. indistinguishable from a hung page.
- * ------------------------------------------------------------------- */
-
-.commission-subject {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  flex-wrap: wrap;
-  margin: 0 0 0.8rem;
-}
-
-.commission-steps {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-}
-
-/* The nearby device the entered code names (design 2026-09-22, section
- * 5.3) - weight is enough to pick it out of the list without a second
- * colour next to the phase display's own. */
-.commission-nearby li.match {
-  font-weight: 600;
-}
-
-.commission-step {
-  position: relative;
-  padding: 0 0 0.9rem 1.9rem;
-  color: var(--text-muted);
-  font-size: 0.88rem;
-}
-
-.commission-step:last-child {
-  padding-bottom: 0;
-}
-
-/* The track between the dots. It colours in as soon as a
- * step is done - that is the actual information this display conveys:
- * how far it has gotten. */
-.commission-step::before {
-  content: "";
-  position: absolute;
-  left: 0.42rem;
-  top: 1.15rem;
-  bottom: -0.1rem;
-  width: 1px;
-  background: var(--border);
-}
-
-.commission-step:last-child::before {
-  display: none;
-}
-
-.commission-step.done::before {
-  background: var(--accent);
-}
-
-.step-marker {
-  position: absolute;
-  left: 0;
-  top: 0.28rem;
-  width: 0.9rem;
-  height: 0.9rem;
-  border-radius: 50%;
-  border: 1.5px solid var(--border);
-  background: var(--surface);
-}
-
-.commission-step.running {
-  color: var(--text);
-  font-weight: 500;
-}
-
-.commission-step.running .step-marker {
-  border-color: var(--accent);
-  border-top-color: transparent;
-  animation: commission-spin 0.8s linear infinite;
-}
-
-.commission-step.done {
-  color: var(--text);
-}
-
-.commission-step.done .step-marker {
-  border-color: var(--accent);
-  background: var(--accent);
-}
-
-/* The check mark inside the filled dot. `--accent-contrast` is exactly the
- * colour that the text on the primary button also carries - the same
- * surface, the same contrasting colour. */
-.commission-step.done .step-marker::after {
-  content: "";
-  position: absolute;
-  left: 0.24rem;
-  top: 0.09rem;
-  width: 0.22rem;
-  height: 0.42rem;
-  border-right: 1.5px solid var(--accent-contrast);
-  border-bottom: 1.5px solid var(--accent-contrast);
-  transform: rotate(42deg);
-}
-
-.commission-step.failed {
-  color: var(--danger);
-}
-
-.commission-step.failed .step-marker {
-  border-color: var(--danger);
-  background: var(--danger-bg);
-}
-
-@keyframes commission-spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-/* A spinning ring is exactly the kind of continuous motion that
- * `prefers-reduced-motion` means. The running step still stays
- * recognisable as such - dashed instead of open. */
-@media (prefers-reduced-motion: reduce) {
-  .commission-step.running .step-marker {
-    animation: none;
-    border-style: dashed;
-    border-top-color: var(--accent);
-  }
-}
-
-/* Back to the form. Deliberately a quiet text button: the run is
- * over, the card has nothing left to offer that would be worth a primary
- * button. */
-.commission-restart {
-  margin-top: 1rem;
-  background: none;
-  border: none;
-  padding: 0;
-  color: var(--text-muted);
-  font-size: 0.82rem;
-  text-decoration: underline;
-}
-
-.commission-restart:hover {
-  color: var(--text);
 }
 
 /* Header right side: logout button and live status side by side, stacked
@@ -4154,4 +3974,239 @@ p.zigbee-countdown {
   flex-wrap: wrap;
   gap: 0.5rem;
   align-items: baseline;
+}
+
+/* --- The commissioning dialog (design 2026-10-02, section 4) ----------- */
+
+/* The devices page's entry: a one-line hint and the button that opens the
+ * dialog. On a phone the button wraps below the hint. */
+.commission-entry .grow {
+  flex: 1 1 14rem;
+}
+
+/* The expert modal's frame, wider: a header with the code field and the
+ * sticker sketch, and cards two to a row where there is room. */
+.commission-modal {
+  width: min(52rem, 94vw);
+}
+
+.commission-modal .commission-tabs {
+  margin-top: 0.8rem;
+}
+
+.commission-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem 1rem;
+  flex-wrap: wrap;
+  margin-top: 0.8rem;
+}
+
+.commission-controls .inline-field {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+/* The name of a new room for new cards, beside its select. */
+.commission-controls .new-room-input {
+  flex: 0 1 11rem;
+  min-width: 0;
+}
+
+/* "Different Thread network": a dataset is one long hex line, so the
+ * field is as wide as the disclosure and wraps it. */
+.commission-thread textarea {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  font-family: var(--mono);
+  word-break: break-all;
+  margin: 0.3rem 0 0.5rem;
+}
+
+.commission-thread.row .grow {
+  flex: 1 1 auto;
+}
+
+.commission-scan-line {
+  margin: 0.8rem 0 0.4rem;
+}
+
+.commission-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 20rem), 1fr));
+  gap: 0.7rem;
+  margin: 0.6rem 0;
+}
+
+.commission-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  padding: 0.75rem 0.85rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+/* A finished card steps back; one that needs a hand stands out. */
+.commission-card.is-done {
+  background: var(--bg);
+}
+
+.commission-card.is-not_nearby,
+.commission-card.is-failed {
+  border-color: var(--warn);
+}
+
+.commission-card-top {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+}
+
+.commission-card-top .grow,
+.commission-card .row .grow {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.commission-card-name {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.commission-card .hint {
+  margin: 0;
+}
+
+/* The chip sits at the start of its row, not pushed right like in a tile
+ * header, and is never a button here. */
+.commission-card .status-pill {
+  margin-left: 0;
+  cursor: default;
+}
+
+.status-pill.ok {
+  background: var(--ok-bg);
+  color: var(--ok);
+}
+
+/* Waiting for a name: the accent, the colour of "your turn". */
+.status-pill.blink {
+  background: var(--type-bg);
+  color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.spinner {
+  display: inline-block;
+  width: 0.7rem;
+  height: 0.7rem;
+  border-radius: 50%;
+  border: 1.5px solid currentColor;
+  border-top-color: transparent;
+  animation: update-step-spin 0.8s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spinner {
+    animation: none;
+    border-style: dashed;
+  }
+}
+
+/* The devices page's line while commissioning runs with the dialog
+ * closed. */
+.commission-background {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  margin: 0 0 1rem;
+  padding: 0.6rem 0.85rem;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  background: var(--type-bg);
+  color: var(--accent);
+}
+
+.commission-background .grow {
+  flex: 1 1 12rem;
+  min-width: 0;
+  color: var(--text);
+}
+
+/* The front of the naming line asks for its name in the accent, the
+ * colour of "your turn". */
+.commission-naming-prompt {
+  margin: 0;
+  font-weight: 600;
+  color: var(--accent);
+}
+
+/* The card whose device blinks: its icon pulses copper to yellow, like
+ * the device's own light. */
+.type-badge.is-blinking {
+  animation: commission-identify-pulse 1s ease-in-out infinite alternate;
+}
+
+@keyframes commission-identify-pulse {
+  from {
+    background: var(--type-bg);
+    color: var(--accent);
+  }
+  to {
+    background: #f6d24a;
+    color: #5a3a00;
+  }
+}
+
+/* Identify while it runs: pressed. */
+.commission-card-actions button.is-on {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .type-badge.is-blinking {
+    animation: none;
+    background: #f6d24a;
+    color: #5a3a00;
+  }
+}
+
+.commission-card-fields {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+/* The global text-field rule's 12rem minimum would push the room select
+ * onto its own line in a two-column card grid. */
+.commission-card-fields input[type="text"] {
+  flex: 1 1 9rem;
+  min-width: 0;
+}
+
+.commission-card-fields select {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+.commission-card-actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.commission-foot {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem 1rem;
+  flex-wrap: wrap;
+  margin-top: 0.8rem;
 }

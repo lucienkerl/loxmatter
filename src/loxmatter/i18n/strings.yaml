@@ -712,6 +712,40 @@ api.control.fail_not_wired:
 api.devices.fail_no_matter_client:
   en: "No matter-server client configured — the bridge is running without a Matter connection"
   de: "Matter-Client nicht verfuegbar - die Bruecke laeuft ohne Verbindung zu matter-server"
+api.commissioning.fail_no_identify:
+  en: "This device cannot identify itself."
+  de: "Dieses Gerät kann sich nicht durch Blinken melden."
+api.commissioning.fail_unreadable_code:
+  en: "This is not a Matter pairing code."
+  de: "Das ist kein Matter-Code."
+api.commissioning.fail_typo:
+  en: "The check digit does not match. Please check the code for a typo."
+  de: "Die Prüfziffer stimmt nicht. Bitte prüfen Sie den Code auf einen Tippfehler."
+api.commissioning.fail_duplicate:
+  en: "This code has already been scanned."
+  de: "Dieser Code wurde bereits gescannt."
+api.commissioning.fail_busy:
+  en: "Scanning is paused while a device is commissioned."
+  de: "Gesucht wird nicht, solange ein Gerät eingelernt wird."
+api.commissioning.fail_name_missing:
+  en: "Enter a name, or continue without one."
+  de: "Tragen Sie einen Namen ein oder fahren Sie ohne Namen fort."
+# A card name that decodes as a Matter pairing code: a scanner typed into
+# the name field. The detail never quotes the code.
+api.commissioning.fail_name_is_code:
+  en: "This looks like a pairing code, not a name. Scan codes into the code field."
+  de: "Das sieht aus wie ein Pairing-Code, nicht wie ein Name. Scannen Sie Codes in das Codefeld."
+api.commissioning.fail_unknown_card:
+  en: "This card no longer exists."
+  de: "Diese Karte gibt es nicht mehr."
+api.commissioning.fail_card_running:
+  en: "This device is being commissioned right now."
+  de: "Dieses Gerät wird gerade eingelernt."
+# The card's device was deleted on the device page while the card was
+# still listed; its naming turn ends.
+api.commissioning.fail_device_gone:
+  en: "This device has been removed in the meantime."
+  de: "Dieses Gerät wurde inzwischen entfernt."
 # `DELETE /api/devices/{id}?forget_only=true` for a device whose technology
 # HAS a configured source: that source is how the device is removed. Shown
 # when a stick was set up again while the forget-only offer was on screen.
@@ -1167,10 +1201,194 @@ web.auth.copy_failed_toast:
   en: "Could not copy – click the command to select it and copy it by hand."
   de: "Kopieren hat nicht geklappt – klick auf den Befehl, um ihn zu markieren, und kopiere ihn von Hand."
 
+# --- web.commissioning — commissioning queue (design 2026-10-02) ---
+web.commissioning.hint_power_cycle:
+  en: "Switch the power off and on again to put it into pairing mode."
+  de: "Schalten Sie den Strom aus und wieder ein, um den Anlernmodus zu starten."
+web.commissioning.hint_manual:
+  en: "See the manufacturer's instructions for pairing mode."
+  de: "Wie der Anlernmodus startet, steht in der Anleitung des Herstellers."
+web.commissioning.unknown_product:
+  en: "Vendor {vendor} · Product {product}"
+  de: "Hersteller {vendor} · Produkt {product}"
+web.commissioning.test_device:
+  en: "Test device (vendor {vendor})"
+  de: "Testgerät (Hersteller {vendor})"
+web.commissioning.numeric_code_device:
+  en: "Device with numeric code"
+  de: "Gerät mit Zahlencode"
+web.commissioning.product_unknown_until_done:
+  en: "Product known after commissioning"
+  de: "Produkt erst nach dem Einlernen bekannt"
+web.commissioning.note_several:
+  en: "Matches {count} devices nearby. Which one it is shows after commissioning."
+  de: "Passt zu {count} Geräten in der Nähe. Welches es ist, zeigt sich nach dem Einlernen."
+web.commissioning.note_wifi:
+  en: "Wi-Fi device: searched on the network."
+  de: "WLAN-Gerät: wird im Netz gesucht."
+web.commissioning.note_not_nearby:
+  en: "Not found nearby. {hint}"
+  de: "Nicht in der Nähe gefunden. {hint}"
+web.commissioning.note_no_signal_yet:
+  en: "No matching device is advertising yet."
+  de: "Noch sendet kein passendes Gerät."
+web.commissioning.code_label:
+  en: "Scan or type a code"
+  de: "Code scannen oder eintippen"
+web.commissioning.default_room:
+  en: "Room for new cards"
+  de: "Raum für neue Karten"
+web.commissioning.no_room:
+  en: "No room"
+  de: "Kein Raum"
+web.commissioning.scan_again:
+  en: "Scan again"
+  de: "Erneut suchen"
+web.commissioning.scan_running:
+  en: "Scanning over Bluetooth (10 s) …"
+  de: "Suche per Bluetooth (10 s) …"
+web.commissioning.scan_blocked:
+  en: "Scanning is paused while a device is commissioned."
+  de: "Gesucht wird nicht, solange ein Gerät eingelernt wird."
+web.commissioning.scan_found:
+  en: "{count} devices in pairing mode nearby."
+  de: "{count} Geräte im Anlernmodus in der Nähe."
+web.commissioning.scan_found_one:
+  # `scan_found` for one device: "1 devices" reads wrong. Zero reads fine
+  # with the plural.
+  en: "1 device in pairing mode nearby."
+  de: "1 Gerät im Anlernmodus in der Nähe."
+web.commissioning.bluetooth_warning:
+  en: "The Bluetooth adapter reported errors during the scan. Restarting the bridge host usually clears it; a USB Bluetooth adapter avoids it."
+  de: "Der Bluetooth-Adapter hat beim Suchen Fehler gemeldet. Ein Neustart des Bridge-Rechners behebt das meist; ein USB-Bluetooth-Adapter vermeidet es."
+web.commissioning.signal:
+  en: "Signal {rssi} dBm"
+  de: "Signal {rssi} dBm"
+web.commissioning.code_ok:
+  en: "Code ✓"
+  de: "Code ✓"
+web.commissioning.name:
+  en: "Name"
+  de: "Name"
+web.commissioning.room:
+  en: "Room"
+  de: "Raum"
+web.commissioning.try_anyway:
+  en: "Try anyway"
+  de: "Trotzdem versuchen"
+web.commissioning.remove:
+  en: "Remove"
+  de: "Entfernen"
+web.commissioning.clear:
+  en: "Clear list"
+  de: "Liste leeren"
+web.commissioning.start:
+  en: "Commission ready devices"
+  de: "Bereite Geräte einlernen"
+web.commissioning.start_n:
+  en: "Commission ready devices ({count})"
+  de: "Bereite Geräte einlernen ({count})"
+web.commissioning.state_found:
+  en: "Code missing"
+  de: "Code fehlt"
+web.commissioning.state_ready:
+  en: "Ready"
+  de: "Bereit"
+web.commissioning.state_queued:
+  en: "Queued #{position}"
+  de: "In Warteschlange #{position}"
+web.commissioning.state_running:
+  en: "Commissioning …"
+  de: "Wird eingelernt …"
+web.commissioning.state_naming:
+  en: "Waiting for a name"
+  de: "Wartet auf Namen"
+web.commissioning.state_done:
+  en: "Commissioned"
+  de: "Eingelernt"
+web.commissioning.state_not_nearby:
+  en: "Not nearby"
+  de: "Nicht in der Nähe"
+web.commissioning.state_failed:
+  en: "Failed"
+  de: "Fehlgeschlagen"
+web.commissioning.phase_searching:
+  en: "Searching for the device"
+  de: "Gerät wird gesucht"
+web.commissioning.phase_found:
+  en: "Device found"
+  de: "Gerät gefunden"
+web.commissioning.phase_connected:
+  en: "Connected — setting up"
+  de: "Verbunden – wird eingerichtet"
+web.commissioning.phase_joined:
+  en: "Joined — loading signals"
+  de: "Beigetreten – Signale werden geladen"
+web.commissioning.foot_working:
+  en: "{count} in progress"
+  de: "{count} in Arbeit"
+web.commissioning.foot_naming:
+  en: "{count} waiting for a name"
+  de: "{count} warten auf Namen"
+web.commissioning.foot_done:
+  en: "{count} commissioned"
+  de: "{count} eingelernt"
+web.commissioning.add_code:
+  en: "Add"
+  de: "Hinzufügen"
+web.commissioning.thread_dataset_save:
+  en: "Use this network"
+  de: "Dieses Netz verwenden"
+web.commissioning.thread_dataset_set:
+  # The bridge never sends the dataset back (it holds the network key), so
+  # the page can only say that one is set.
+  en: "A Thread dataset is set: every device commissioned from here joins that network. It is kept until the bridge restarts."
+  de: "Ein Thread-Datensatz ist gesetzt: jedes Gerät, das von hier eingelernt wird, tritt diesem Netz bei. Er bleibt bis zum Neustart der Brücke."
+web.commissioning.thread_dataset_remove:
+  en: "Remove"
+  de: "Entfernen"
+web.commissioning.close:
+  en: "Close"
+  de: "Schließen"
+web.commissioning.naming_prompt:
+  en: "This device is blinking. Which one is it? Enter a name and press Enter."
+  de: "Dieses Gerät blinkt. Welches ist es? Tragen Sie einen Namen ein und drücken Sie Enter."
+web.commissioning.confirm_name:
+  en: "Use name"
+  de: "Name übernehmen"
+web.commissioning.skip_name:
+  en: "Continue without a name"
+  de: "Ohne Namen weiter"
+web.commissioning.identify:
+  en: "Identify"
+  de: "Identifizieren"
+web.commissioning.identify_stop:
+  en: "Stop identifying"
+  de: "Identifizieren stoppen"
+web.commissioning.identify_blocked:
+  # The title of a disabled Identify button: only one device blinks at a
+  # time, and the one waiting for its name keeps the blink.
+  en: "A new device is waiting for its name."
+  de: "Ein neues Gerät wartet auf seinen Namen."
+web.commissioning.background:
+  en: "Commissioning in the background · in progress: {working} · waiting for a name: {naming}"
+  de: "Einlernen im Hintergrund · in Arbeit: {working} · warten auf Namen: {naming}"
+web.commissioning.entry_hint:
+  en: "Put devices into pairing mode and scan their codes — several at once."
+  de: "Bringen Sie Geräte in den Anlernmodus und scannen Sie ihre Codes – auch mehrere auf einmal."
+web.commissioning.open_dialog:
+  # The background line's button only; the devices page's entry button
+  # reads "Commission devices" (`web.devices.commission_heading`).
+  en: "Open dialog"
+  de: "Dialog öffnen"
+web.commissioning.intro:
+  en: "Put the devices into pairing mode, then scan their codes one after another. Each code lands on its device's card; the bridge commissions them one by one in the background."
+  de: "Versetzen Sie die Geräte in den Anlernmodus und scannen Sie dann ihre Codes nacheinander. Jeder Code landet auf der Karte seines Geräts; die Bridge lernt sie im Hintergrund eines nach dem anderen ein."
+
 # --- web.devices — device list, commissioning, operation ---
 web.devices.commission_heading:
-  en: "Commission a new device"
-  de: "Neues Gerät einlernen"
+  en: "Commission devices"
+  de: "Geräte einlernen"
 web.devices.code_placeholder:
   # Shows the FORM instead of describing it. The earlier parenthetical
   # ("11 digits or MT:…") named the form - whoever is holding the sticker
@@ -1505,7 +1723,7 @@ web.devices.commission_failed:
 #
 # The SINGLE source of truth for this wording (final review item 4): these
 # used to be duplicated verbatim under `api.devices.*`, because a live 422's
-# `detail` (`_reason_detail` in `api/devices.py`) and a RESTORED attempt
+# `detail` (`_reason_detail` in `commissioning/run.py`) and a RESTORED attempt
 # (design 2026-09-22, section 5.3 - a page reloaded while one runs, which
 # then learns of the result only from the status route, not from a POST it
 # never sent) need the same sentence from two different places. Only the
@@ -1513,7 +1731,7 @@ web.devices.commission_failed:
 # `api/language.py:_web_strings()`, proven by
 # `test_get_i18n_only_returns_the_web_namespace` in test_language.py), so the
 # restored-attempt side could only ever read a key from here - but server
-# code can resolve ANY key regardless of namespace, so `_reason_detail`
+# code can resolve ANY key regardless of namespace, so `run._reason_detail`
 # reads these same `web.*` keys too instead of keeping a second copy in
 # sync by hand.
 web.devices.commission_reason_not_found:
@@ -1533,7 +1751,7 @@ web.devices.commission_reason_connection_lost:
 # dangling "Commissioning failed: " with nothing after it, because a
 # restored attempt only ever learns the tracker's classification, never
 # matter-server's own exception text (unlike the live POST's 422, which
-# still shows `str(exc)` verbatim for `other` - see `_reason_detail`).
+# still shows `str(exc)` verbatim for `other` - see `run._reason_detail`).
 web.devices.commission_reason_no_thread_network:
   # Names the missing Thread network specifically, rather than the generic
   # sentence below, because the remedy differs: enter the dataset by hand,

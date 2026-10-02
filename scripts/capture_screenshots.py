@@ -403,11 +403,10 @@ def capture(page: Page) -> None:
     select_view(page, "Settings")
     shoot(page, "settings", "card:Miniserver connection", "card:Periodic resend")
 
-    # Special case 1: commissioning card with example code, but do NOT
-    # submit - without a real Matter server, submitting would just
-    # produce an error message. This image carries the header and tab
-    # bar for the whole gallery, so here deliberately starting from the
-    # top of the page.
+    # Special case 1: the commissioning dialog with an example code, but
+    # do NOT submit - without a real Matter server, submitting would just
+    # produce an error message. (This image used to carry the header and
+    # tab bar for the whole gallery; the dialog does not show them.)
     select_view(page, "Devices")
     # The selector hangs off the `id`, no longer off the placeholder text:
     # that used to be "Pairing code (11 digits or MT:…)" and, since the
@@ -420,14 +419,16 @@ def capture(page: Page) -> None:
     # grouping and the chip visible at all. `fill()` triggers the `input`
     # event that `formatCommissionCode` hangs off of - the number in the
     # image is therefore grouped, the same as after typing.
+    #
+    # Since the commissioning dialog (design 2026-10-02) the code field
+    # sits in the dialog the devices page's "Commission devices" card
+    # opens; the crop is the dialog, like the signals modal's above.
+    page.click('.commission-entry button:has-text("Commission devices")')
+    page.wait_for_selector("dialog.commission-modal[open]", timeout=5000)
     page.fill("#commission-code", "34970112332")
-    shoot(
-        page,
-        "commissioning",
-        "header.app-header",
-        "card:Commission a new device",
-        pad_bottom=0,
-    )
+    shoot(page, "commissioning", "dialog.commission-modal", fixed=True)
+    page.keyboard.press("Escape")
+    page.wait_for_timeout(300)
 
     # Special case 2: upload the example project file from the
     # projectsync tests and wait for the diff plan. Two German labels from
