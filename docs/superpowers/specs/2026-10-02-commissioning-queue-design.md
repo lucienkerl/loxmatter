@@ -111,14 +111,21 @@ background: 2 in progress, 1 waiting for a name" with "Open dialog".
 
 | State | Meaning | Actions |
 | --- | --- | --- |
-| `found` | Seen by the scan, no code yet | — |
+| `found` | Seen by the scan, no code yet | Remove |
 | `ready` | Code attached, not started | Remove |
-| `queued` | In the queue, shows its position | — |
+| `queued` | In the queue, shows its position | Remove |
 | `running` | Being commissioned; phase and progress from the tracker | — |
 | `naming` | Commissioned without a name; waiting in the naming line | Confirm name, Continue without a name, Identify |
 | `done` | Commissioned and named (or skipped) | Identify |
 | `not_nearby` | Code matches no advertising device | Scan again, Try anyway, Remove |
 | `failed` | Commissioning failed; reason from `classify_failure` | Scan again, Try anyway |
+
+**Removing a card for a device that still advertises (2026-10-15).** A
+`found` card had no Remove, and a card removed any other way came back with
+the next scan - the dialog scans on every opening. A removed card's device
+is now left out of later scans for as long as it keeps advertising; it shows
+again once it has dropped out of a scan and returns, or when a code that
+fits it is added. "Clear list" does the same for every card it removes.
 
 ### 4.4 After commissioning
 

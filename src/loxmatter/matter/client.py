@@ -532,15 +532,39 @@ class BridgeMatterClient:
         unhandled 500, and a device that could never be removed from the
         bridge again. "Already gone" is exactly what the user asked for.
 
-        Every other refusal still reaches the caller: a node that exists but
-        cannot be removed is not one to forget."""
-        # Lazily imported like the other `matter_server` imports here.
-        from matter_server.common.errors import NodeNotExists
+        **Nor is a refusal for a node matter-server no longer holds.** A
+        device that removes its last fabric drops the connection before it
+        answers, so the RemoveFabric request times out on a device that has
+        in fact left (seen on two IKEA lamps on the test Pi, 2026-10-15),
+        and matter-server can answer with an error although it has dropped
+        the node. What decides is whether the node is still in the client's
+        node cache, which matter-server's `NODE_REMOVED` event keeps
+        current - not the wording of the error.
 
+        A refusal for a node matter-server still holds reaches the caller
+        as `MatterUnavailableError`, which the removal route answers with a
+        502 and its reason: a node that exists but cannot be removed is not
+        one to forget, and before, the raw `MatterError` was a bare 500."""
+        # Lazily imported like the other `matter_server` imports here.
+        from matter_server.common.errors import MatterError, NodeNotExists
+
+        upstream = self._require_upstream()
+        node_id = int(address)
         try:
-            await self._require_upstream().remove_node(int(address))
+            await upstream.remove_node(node_id)
         except NodeNotExists:
             logger.info("Node %s was no longer known to matter-server; removed already", address)
+        except MatterError as exc:
+            if any(node.node_id == node_id for node in upstream.get_nodes()):
+                raise MatterUnavailableError(
+                    i18n.t("api.errors.matter_removal_refused", exc=exc)
+                ) from exc
+            logger.info(
+                "matter-server answered the removal of node %s with %r, "
+                "but no longer holds it; removed",
+                address,
+                exc,
+            )
 
     @property
     def thread_dataset_set(self) -> bool:

@@ -1361,12 +1361,18 @@
                         ></button>
                         <button
                           class="tile-menu-item is-danger"
+                          :disabled="isRemoving(device)"
                           @click="closeTileMenu($el); removeDevice(device)"
                           x-text="t('web.devices.remove')"
                         ></button>
                       </div>
                     </details>
                   </div>
+                  <!-- A removal under way (`isRemoving`): said on the tile
+                       itself, since an offline device can take a while and
+                       the tile otherwise looked untouched. -->
+                  <p class="hint device-removing" role="status" x-show="isRemoving(device)" x-cloak
+                     x-text="deviceRemovingText(device)"></p>
                   <p class="hint" x-show="!bridgeSettings.bridge_ip" x-cloak>
                     <span x-text="t('web.devices.export_hint_prefix')"></span>
                     <a href="#/settings" x-text="t('web.settings.miniserver_link')"></a>
@@ -3817,7 +3823,11 @@
                         @click="rescanCommissioning()" x-text="t('web.commissioning.scan_again')"></button>
                 <button type="button" x-show="['not_nearby', 'failed'].includes(card.state)"
                         @click="forceCard(card)" x-text="t('web.commissioning.try_anyway')"></button>
-                <button type="button" x-show="['ready', 'not_nearby', 'failed'].includes(card.state)"
+                <!-- Every card the worker is not holding, `found` included: a
+                     device just put into pairing mode that is not meant to
+                     be commissioned now must be removable (the next scan
+                     leaves it out while it keeps advertising). -->
+                <button type="button" x-show="['found', 'ready', 'queued', 'not_nearby', 'failed'].includes(card.state)"
                         @click="removeCard(card)" x-text="t('web.commissioning.remove')"></button>
               </div>
             </div>

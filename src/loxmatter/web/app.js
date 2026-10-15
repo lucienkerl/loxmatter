@@ -34,6 +34,10 @@
 // must recover on its own, without flooding the line with attempts every
 // second).
 const RECONNECT_DELAY_INITIAL_MS = 1000;
+
+// How often a tile whose removal goes on in the background (`DELETE`
+// answered 202) asks the bridge whether its device is gone yet.
+const DEVICE_REMOVAL_POLL_MS = 2000;
 const RECONNECT_DELAY_MAX_MS = 15000;
 
 // After how many unsuccessful attempts of the VERY FIRST connection
@@ -869,6 +873,14 @@ function app() {
     // --- Devices -------------------------------------------------------------
     devices: [],
     devicesError: null,
+    // Device id -> true while this tab removes it or watches a removal the
+    // bridge reports (`removing`); the tile shows "Removing…" and offers no
+    // second removal.
+    deviceRemovals: {},
+    // Devices this tab has seen removed. A list request answered before the
+    // removal ended can arrive after it, and used to put the tile back until
+    // the next reload; ids are never reused (Spec 6.2), so this only grows.
+    removedDeviceIds: [],
     // Controls by SUBJECT, not only by device: a device's subject is its
     // numeric id, a group's is the string "g3" (see `groupSubject`). One
     // map rather than two, because the two kinds of key cannot collide (a
@@ -1879,10 +1891,24 @@ function app() {
 
     async loadDevices() {
       this.devicesError = null;
+      let devices;
       try {
-        this.devices = await this.request("GET", "/api/devices");
+        devices = await this.request("GET", "/api/devices");
       } catch (error) {
         this.devicesError = t("web.devices.list_load_error", { message: error.message });
+        return;
+      }
+      if (!Array.isArray(devices)) {
+        this.devices = devices;
+        return;
+      }
+      this.devices = devices.filter((device) => !this.removedDeviceIds.includes(device.id));
+      // A removal the bridge still runs - started before a reload, or in
+      // another tab: watched here too, so the tile goes when it ends.
+      for (const device of this.devices) {
+        if (device.removing && !this.deviceRemovals[device.id]) {
+          this.watchDeviceRemoval(device);
+        }
       }
     },
 
@@ -2096,6 +2122,7 @@ function app() {
       return {
         "is-offline": !this.isOnline(device),
         "is-changed": this.isOnline(device) && this.changedSinceExport(device.id),
+        "is-removing": this.isRemoving(device),
       };
     },
 
@@ -3169,23 +3196,87 @@ function app() {
             groups: affectedGroups.map((group) => group.label).join(", "),
           });
       }
+      if (this.isRemoving(device)) return;
       const confirmed = window.confirm(confirmText);
       if (!confirmed) {
         return;
       }
       this.deviceActionError = null;
       this.deviceForgetOffer = null;
+      // Set before the request, not after: the tile says "Removing…" at
+      // once and a second click cannot send a second DELETE.
+      this.deviceRemovals[device.id] = true;
+      let answer;
       try {
-        await this.request("DELETE", `/api/devices/${device.id}`);
+        answer = await this.request("DELETE", `/api/devices/${device.id}`);
       } catch (error) {
-        if (error.status === 503 && error.offer === "forget_only") {
+        delete this.deviceRemovals[device.id];
+        if (error.status === 404) {
+          // Removed meanwhile - by the removal of another tab, say. Gone is
+          // what was asked for.
+          await this.afterDeviceRemoved(device);
+        } else if (error.status === 503 && error.offer === "forget_only") {
           this.deviceForgetOffer = { id: device.id, label: device.label, reason: error.message };
         } else {
           this.deviceActionError = t("web.devices.remove_error", { message: error.message });
         }
         return;
       }
+      if (answer?.removing) {
+        // 202: the device did not answer within the bridge's short wait
+        // (offline, or a Thread device that needs a session first). The
+        // bridge goes on removing it; the tile watches.
+        await this.watchDeviceRemoval(device);
+        return;
+      }
+      delete this.deviceRemovals[device.id];
       await this.afterDeviceRemoved(device);
+    },
+
+    /** Whether a removal of this device is under way: this tab's own, or one
+     * the bridge reports (`removing`). */
+    isRemoving(device) {
+      return Boolean(this.deviceRemovals[device.id]) || Boolean(device.removing);
+    },
+
+    /** The line on a tile being removed. An offline device is the one that
+     * takes long - the bridge keeps trying to reach it - and says so. */
+    deviceRemovingText(device) {
+      return this.isOnline(device) ? t("web.devices.removing") : t("web.devices.removing_offline");
+    },
+
+    /** Follows a removal the bridge runs in the background until the device
+     * is gone (404) or the removal has ended without it (`removal_error`).
+     * One watcher per device; a failed request - a bridge restart, a short
+     * network drop - is only a reason to ask again. */
+    async watchDeviceRemoval(device) {
+      this.deviceRemovals[device.id] = true;
+      for (;;) {
+        await new Promise((resolve) => setTimeout(resolve, DEVICE_REMOVAL_POLL_MS));
+        let current;
+        try {
+          current = await this.request("GET", `/api/devices/${device.id}`);
+        } catch (error) {
+          if (error.status === 404) {
+            delete this.deviceRemovals[device.id];
+            await this.afterDeviceRemoved(device);
+            return;
+          }
+          if (error instanceof UnauthorizedError) {
+            delete this.deviceRemovals[device.id];
+            return;
+          }
+          continue;
+        }
+        if (!current.removing) {
+          delete this.deviceRemovals[device.id];
+          this.devices = this.devices.map((d) => (d.id === current.id ? current : d));
+          if (current.removal_error) {
+            this.deviceActionError = t("web.devices.remove_error", { message: current.removal_error });
+          }
+          return;
+        }
+      }
     },
 
     /** The second step of a removal the server offered to do without the
@@ -3223,6 +3314,9 @@ function app() {
      * was removed. */
     async afterDeviceRemoved(device) {
       try {
+        if (!this.removedDeviceIds.includes(device.id)) {
+          this.removedDeviceIds.push(device.id);
+        }
         this.devices = this.devices.filter((d) => d.id !== device.id);
         delete this.controlsBySubject[device.id];
         delete this.signalsByDevice[device.id];

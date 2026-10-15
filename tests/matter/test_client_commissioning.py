@@ -221,9 +221,49 @@ async def test_removing_a_node_matter_server_no_longer_knows_succeeds(client):
     upstream.fail_remove_with = NodeNotExists("Node 7 does not exist or has not been interviewed.")
     await bridge.remove("7")
 
+    upstream.nodes.append(FakeNodeData(7, {}))
     upstream.fail_remove_with = NodeNotReady("Node 7 is not ready")
-    with pytest.raises(NodeNotReady):
+    with pytest.raises(MatterUnavailableError, match="Node 7 is not ready"):
         await bridge.remove("7")
+    await bridge.disconnect()
+
+
+async def test_a_refused_removal_of_a_node_matter_server_dropped_succeeds(client):
+    """A device that removes its last fabric drops the connection before it
+    answers, so RemoveFabric times out on a device that has left - and the
+    bridge kept a device matter-server no longer held. The node cache, not
+    the error, decides.
+
+    Fault to prove it: raise on every `MatterError` other than
+    `NodeNotExists` again."""
+    from matter_server.common.errors import SDKStackError
+
+    bridge, upstream = client
+    await bridge.connect()
+    upstream.fail_remove_with = SDKStackError("RemoveFabric timed out")
+
+    await bridge.remove("7")
+
+    await bridge.disconnect()
+
+
+async def test_a_refused_removal_is_a_matter_error_with_its_reason(client):
+    """A node matter-server still holds and will not remove reaches the
+    route as `MatterUnavailableError` - its 502 - not as a raw `MatterError`
+    the route did not catch and answered with a bare 500."""
+    from matter_server.common.errors import SDKStackError
+
+    bridge, upstream = client
+    await bridge.connect()
+    upstream.nodes.append(FakeNodeData(7, {}))
+    upstream.fail_remove_with = SDKStackError("RemoveFabric timed out")
+
+    with pytest.raises(MatterUnavailableError) as raised:
+        await bridge.remove("7")
+
+    assert str(raised.value) == i18n.t(
+        "api.errors.matter_removal_refused", exc=upstream.fail_remove_with
+    )
     await bridge.disconnect()
 
 

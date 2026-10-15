@@ -123,6 +123,12 @@ class DeviceOut(BaseModel):
     # Whether the device can blink on request (Identify cluster present);
     # design 2026-10-02, section 9.1.
     identify: bool = False
+    # A removal of this device is under way (`DELETE /api/devices/{id}`
+    # answered 202), or the latest one failed with `removal_error`. Kept by
+    # the bridge, not the page, so a reload or a second tab shows the same
+    # state instead of a tile that looks untouched.
+    removing: bool = False
+    removal_error: str | None = None
 
 
 class IdentifyRequest(BaseModel):

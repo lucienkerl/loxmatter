@@ -4210,3 +4210,31 @@ p.zigbee-countdown {
   flex-wrap: wrap;
   margin-top: 0.8rem;
 }
+
+/* A tile whose removal is under way (`isRemoving`, app.js): its content
+ * dimmed like an offline tile's, and the line saying so with the spinning
+ * ring of the update steps in front of it. */
+.device-card.is-removing > *:not(.device-foot):not(.device-removing) {
+  opacity: 0.55;
+}
+
+.device-removing::before {
+  content: "";
+  display: inline-block;
+  width: 0.8em;
+  height: 0.8em;
+  margin-right: 0.4em;
+  vertical-align: -0.1em;
+  border: 2px solid var(--accent);
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: update-step-spin 0.8s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .device-removing::before {
+    animation: none;
+    border-style: dashed;
+    border-top-color: var(--accent);
+  }
+}

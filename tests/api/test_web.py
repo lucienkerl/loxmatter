@@ -17887,3 +17887,184 @@ async def test_a_blinking_card_pulses_its_icon(api):
     assert ".is-blinking" in css
     reduced = css.split("@media (prefers-reduced-motion: reduce)")
     assert any(".is-blinking" in part.split("}\n}", 1)[0] for part in reduced[1:])
+
+
+# ---------------------------------------------------------------------------
+# Removing a device that does not answer at once (DELETE answered 202)
+# ---------------------------------------------------------------------------
+
+_REMOVAL_JS = """
+const realTimeout = setTimeout;
+globalThis.setTimeout = (fn) => realTimeout(fn, 0);
+global.window = { confirm: () => true };
+state.groups = [];
+state.devices = [{ id: 9, label: "Lamp", online: false, removing: false }];
+const calls = [];
+"""
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_a_removal_answered_202_shows_on_the_tile_until_the_device_is_gone():
+    """An offline device held the DELETE open for up to two minutes with
+    nothing on the tile to show for it. The bridge now answers 202; the
+    tile reads as removing from the click on, and goes once the device
+    answers 404.
+
+    Fault to prove it: drop the `answer?.removing` branch from
+    `removeDevice()` - the tile then goes at once on the 202, while the
+    bridge still holds the device."""
+    values = _app_state(
+        _REMOVAL_JS
+        + """
+        let polls = 0;
+        let seenRemoving = null;
+        state.request = async (method, path) => {
+          calls.push(`${method} ${path}`);
+          if (method === "DELETE") return { removing: true };
+          if (path === "/api/devices/9") {
+            polls += 1;
+            if (polls === 1) {
+              seenRemoving = state.isRemoving(state.devices[0]);
+              return { id: 9, label: "Lamp", online: false, removing: true };
+            }
+            const error = new Error("gone"); error.status = 404; throw error;
+          }
+          return [];
+        };
+        (async () => {
+          await state.removeDevice(state.devices[0]);
+          console.log(JSON.stringify({
+            calls, seenRemoving, devices: state.devices.map((d) => d.id),
+            removing: state.deviceRemovals, removed: state.removedDeviceIds }));
+        })();
+        """
+    )
+    assert values["seenRemoving"] is True
+    assert values["calls"][:3] == [
+        "DELETE /api/devices/9",
+        "GET /api/devices/9",
+        "GET /api/devices/9",
+    ]
+    assert values["devices"] == []
+    assert values["removing"] == {}
+    assert values["removed"] == [9]
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_a_second_click_during_a_removal_sends_no_second_delete():
+    """Device 10 on the test Pi was deleted twice at once - the tile gave no
+    sign the first click had done anything.
+
+    Fault to prove it: drop the `isRemoving` guard from `removeDevice()`."""
+    values = _app_state(
+        _REMOVAL_JS
+        + """
+        let release;
+        state.request = async (method, path) => {
+          calls.push(`${method} ${path}`);
+          if (method === "DELETE") {
+            await new Promise((resolve) => { release = resolve; });
+            return null;
+          }
+          return [];
+        };
+        (async () => {
+          const first = state.removeDevice(state.devices[0]);
+          await state.removeDevice(state.devices[0]);
+          release();
+          await first;
+          console.log(JSON.stringify({
+            deletes: calls.filter((c) => c.startsWith("DELETE")).length }));
+        })();
+        """
+    )
+    assert values["deletes"] == 1
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_a_device_list_answered_before_a_removal_does_not_bring_the_tile_back():
+    """A list request answered before the removal ended, arriving after it,
+    put the removed device back on screen until the page was reloaded.
+
+    Fault to prove it: assign the list in `loadDevices()` unfiltered."""
+    values = _app_state(
+        _REMOVAL_JS
+        + """
+        let releaseList;
+        state.request = async (method, path) => {
+          if (method === "DELETE") return null;
+          if (path === "/api/devices") {
+            await new Promise((resolve) => { releaseList = resolve; });
+            return [{ id: 9, label: "Lamp", online: false, removing: false }];
+          }
+          return [];
+        };
+        (async () => {
+          const late = state.loadDevices();
+          await state.removeDevice(state.devices[0]);
+          releaseList();
+          await late;
+          console.log(JSON.stringify({ devices: state.devices.map((d) => d.id) }));
+        })();
+        """
+    )
+    assert values["devices"] == []
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_a_removal_the_bridge_still_runs_is_watched_after_a_reload():
+    """A reload in the middle of a background removal showed an ordinary
+    tile, and the device then vanished only on the reload after that."""
+    values = _app_state(
+        _REMOVAL_JS
+        + """
+        state.devices = [];
+        let gets = 0;
+        state.request = async (method, path) => {
+          if (path === "/api/devices") return [{ id: 9, label: "Lamp", online: false, removing: true }];
+          if (path === "/api/devices/9") {
+            gets += 1;
+            const error = new Error("gone"); error.status = 404; throw error;
+          }
+          return [];
+        };
+        (async () => {
+          await state.loadDevices();
+          const watching = Boolean(state.deviceRemovals[9]);
+          for (let i = 0; i < 20 && state.devices.length; i++) {
+            await new Promise((resolve) => realTimeout(resolve, 5));
+          }
+          console.log(JSON.stringify({ watching, gets, devices: state.devices.map((d) => d.id) }));
+        })();
+        """
+    )
+    assert values["watching"] is True
+    assert values["gets"] == 1
+    assert values["devices"] == []
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_a_background_removal_that_failed_says_why():
+    values = _app_state(
+        _REMOVAL_JS
+        + """
+        state.request = async (method, path) => {
+          if (method === "DELETE") return { removing: true };
+          if (path === "/api/devices/9") {
+            return { id: 9, label: "Lamp", online: false, removing: false,
+                     removal_error: "no answer" };
+          }
+          return [];
+        };
+        (async () => {
+          await state.removeDevice(state.devices[0]);
+          console.log(JSON.stringify({
+            error: state.deviceActionError, devices: state.devices.map((d) => d.id),
+            removing: state.isRemoving(state.devices[0]) }));
+        })();
+        """,
+        translations={"web.devices.remove_error": "could not remove: {message}"},
+    )
+    assert values["error"] == "could not remove: no answer"
+    assert values["devices"] == [9]
+    assert values["removing"] is False
