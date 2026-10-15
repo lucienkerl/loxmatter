@@ -952,3 +952,114 @@ async def test_clearing_the_list_keeps_found_cards_from_coming_back(h):
     assert await h.session.scan()
 
     assert h.session.view()["cards"] == []
+
+
+async def first_runs_then_time_passes(h, seconds):
+    """Starts the queue, holds the first commissioning until `seconds` have
+    passed on the session's clock, then lets everything run."""
+    h.gate.held = True
+    await h.session.start()
+    await settle_until(lambda: h.gate.calls == 1, "the first card runs")
+    h.clock.now += seconds
+    h.gate.held = False
+    h.gate.release_all()
+    await idle(h)
+
+
+async def test_a_bluetooth_card_after_a_long_first_one_scans_again_before_it_runs(h):
+    # Measured 15 October 2026: matter-server connects to the Bluetooth
+    # entry it heard during the first card, long gone from BlueZ by then.
+    first = await h.session.add_code(QR_CODE_ON_NETWORK, None)
+    second = await ready_card(h, "AA:02", 3840, KAJPLATS_E27, -60, QR_CODE)
+    assert h.scanner.scans == [10.0]
+    await first_runs_then_time_passes(h, 90)
+    assert h.scanner.scans == [10.0, 10.0]
+    assert h.client.commissioned == [QR_CODE_ON_NETWORK, QR_CODE]
+    assert card_view(h, first.id)["state"] == "naming"
+    assert card_view(h, second.id)["state"] == "naming"
+
+
+async def test_no_second_scan_right_after_one(h):
+    await ready_card(h, "AA:02", 3840, KAJPLATS_E27, -60, QR_CODE)
+    await h.session.start()
+    await idle(h)
+    assert h.scanner.scans == [10.0]
+    assert h.client.commissioned == [QR_CODE]
+
+
+async def test_an_on_network_card_needs_no_scan_before_it_runs(h):
+    await h.session.add_code(QR_CODE_ON_NETWORK, None)
+    h.clock.now = 90
+    await h.session.start()
+    await idle(h)
+    assert h.scanner.scans == []
+    assert h.client.commissioned == [QR_CODE_ON_NETWORK]
+
+
+async def test_the_scan_before_a_card_follows_a_new_bluetooth_address(h):
+    await h.session.add_code(QR_CODE_ON_NETWORK, None)
+    second = await ready_card(h, "AA:02", 3840, KAJPLATS_E27, -60, QR_CODE)
+    # The lamp has changed its address by the time its turn comes.
+    h.scanner.adverts = [advert("AA:09", 3840, KAJPLATS_E27, -55)]
+    await first_runs_then_time_passes(h, 90)
+    assert h.client.commissioned == [QR_CODE_ON_NETWORK, QR_CODE]
+    view = card_view(h, second.id)
+    assert view["state"] == "naming"
+    # Not shown a second time as a new device in pairing mode.
+    assert [card["state"] for card in h.session.view()["cards"]] == ["naming", "naming"]
+
+
+async def test_a_device_gone_by_the_scan_before_its_turn_is_skipped(h):
+    await h.session.add_code(QR_CODE_ON_NETWORK, None)
+    second = await ready_card(h, "AA:02", 3840, KAJPLATS_E27, -60, QR_CODE)
+    h.scanner.adverts = []
+    await first_runs_then_time_passes(h, 90)
+    assert card_view(h, second.id)["state"] == "not_nearby"
+    assert h.client.commissioned == [QR_CODE_ON_NETWORK]
+
+
+async def test_a_failed_scan_before_a_card_lets_the_card_run(h):
+    await h.session.add_code(QR_CODE_ON_NETWORK, None)
+    second = await ready_card(h, "AA:02", 3840, KAJPLATS_E27, -60, QR_CODE)
+    h.scanner.fail_with = BluezScanError("adapter gone")
+    await first_runs_then_time_passes(h, 90)
+    assert len(h.scanner.scans) == 2
+    assert card_view(h, second.id)["state"] == "naming"
+    assert h.client.commissioned == [QR_CODE_ON_NETWORK, QR_CODE]
+
+
+# matterjs-server's text for a Bluetooth connect that failed on an address
+# BlueZ no longer had (test Pi, 15 October 2026), shortened.
+LOST_BLUETOOTH = CommissioningError(
+    "Commission failed: discovery of node with discriminator 1 failed: No device could be "
+    "commissioned (1 of 1 started attempt(s) failed, 1 discovered)"
+)
+
+
+async def test_a_lost_bluetooth_connection_scans_again_and_tries_once_more(h):
+    card = await ready_card(h, "AA:02", 3840, KAJPLATS_E27, -60, QR_CODE)
+    h.gate.failures = [LOST_BLUETOOTH, None]
+    await h.session.start()
+    await idle(h)
+    assert h.gate.calls == 2
+    assert h.scanner.scans == [10.0, 10.0]
+    assert card_view(h, card.id)["state"] == "naming"
+
+
+async def test_only_one_more_try_after_a_lost_bluetooth_connection(h):
+    card = await ready_card(h, "AA:02", 3840, KAJPLATS_E27, -60, QR_CODE)
+    h.gate.failures = [LOST_BLUETOOTH, LOST_BLUETOOTH]
+    await h.session.start()
+    await idle(h)
+    assert h.gate.calls == 2
+    assert card_view(h, card.id)["state"] == "failed"
+
+
+async def test_an_on_network_card_is_not_tried_again(h):
+    card = await h.session.add_code(QR_CODE_ON_NETWORK, None)
+    h.gate.failures = [LOST_BLUETOOTH, None]
+    await h.session.start()
+    await idle(h)
+    assert h.gate.calls == 1
+    assert h.scanner.scans == []
+    assert card_view(h, card.id)["state"] == "failed"

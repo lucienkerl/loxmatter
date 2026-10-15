@@ -40,6 +40,7 @@ from loxmatter import i18n
 from loxmatter.commissioning.run import (
     MANUAL_DATASET_ORIGIN_KEY,
     CommissionFailed,
+    CommissionResult,
     ThreadDatasetSource,
     commission,
 )
@@ -55,7 +56,13 @@ from loxmatter.matter.setup_payload import (
 )
 from loxmatter.model.store import Store, UnknownDeviceError
 from loxmatter.radios.bluetooth_health import KernelLog, counts_since
-from loxmatter.radios.bluez import BluezReader, BluezScanError, BluezScanner, MatterAdvert
+from loxmatter.radios.bluez import (
+    BluezReader,
+    BluezScanError,
+    BluezScanner,
+    BluezSnapshot,
+    MatterAdvert,
+)
 
 if TYPE_CHECKING:
     from loxmatter.api.devices import RuntimeValues
@@ -67,6 +74,25 @@ logger = logging.getLogger(__name__)
 
 SCAN_SECONDS: Final = 10.0
 AUTO_SCAN_MIN_INTERVAL: Final = 60.0
+# A Bluetooth card whose last scan ended longer ago than this gets a fresh
+# scan right before it runs.
+#
+# Measured on the test Pi on 15 October 2026: twice the first Bluetooth
+# lamp of a queue was commissioned and the next one failed - matter-server
+# connected to an address BlueZ no longer had ("interface not found in
+# proxy object"), and every retry then failed at once with "unexpected
+# state error". The IKEA lamps changed their Bluetooth address during the
+# day.
+#
+# Read in matter.js and noble, not measured: matter.js keeps every
+# Bluetooth device it heard, by address and without expiry, and connects to
+# that entry; noble reports a device BlueZ announces even while it is not
+# scanning itself; and matter.js drops an entry once the same advertisement
+# arrives from another address more than a minute later. A scan of ours
+# right before the card is meant to make BlueZ announce the device under
+# its current address. 20 s stays below BlueZ's default 30 s for
+# forgetting a device it no longer hears.
+REFRESH_SCAN_AFTER_SECONDS: Final = 20.0
 EARLY_WARNING_SECONDS: Final = 20.0
 CHECK_BLINK_SECONDS: Final = 3
 # How often the worker looks at the tracker and BlueZ while a card runs -
@@ -204,6 +230,7 @@ class CommissioningSession:
         # lookups can still run while the next scan ends.
         self._results = asyncio.Lock()
         self._last_scan_at: float | None = None
+        self._scan_ended_at: float | None = None
         self.bluetooth_warning = False
         # A Thread dataset entered by hand ("Different Thread network"):
         # handed to every commissioning instead of the Border Router's.
@@ -281,19 +308,34 @@ class CommissioningSession:
             self._last_scan_at = now
             start_usec = self._kernel.now_usec() if self._kernel is not None else None
             try:
-                snapshot = await self._scanner.scan(seconds=SCAN_SECONDS)
-            except BluezScanError as exc:
-                logger.warning("Bluetooth scan failed: %s", exc)
-                self.bluetooth_warning = True
-                return False
-            except Exception as exc:  # noqa: BLE001 - any failure is a warning
-                # dbus-fast's own errors when the bus drops, or a snapshot
-                # that could not be built: the same warning, type only.
-                logger.warning("Bluetooth scan failed unexpectedly: %s", type(exc).__name__)
-                self.bluetooth_warning = True
-                return False
+                snapshot = await self._radio_scan()
             finally:
                 self._scanning = False
+        if snapshot is None:
+            return False
+        await self._take_snapshot(snapshot)
+        await self._update_warning(start_usec)
+        return True
+
+    async def _radio_scan(self) -> BluezSnapshot | None:
+        """The scan itself; the caller holds the radio. `None` when it
+        failed - the warning is set then."""
+        try:
+            return await self._scanner.scan(seconds=SCAN_SECONDS)
+        except BluezScanError as exc:
+            logger.warning("Bluetooth scan failed: %s", exc)
+            self.bluetooth_warning = True
+            return None
+        except Exception as exc:  # noqa: BLE001 - any failure is a warning
+            # dbus-fast's own errors when the bus drops, or a snapshot
+            # that could not be built: the same warning, type only.
+            logger.warning("Bluetooth scan failed unexpectedly: %s", type(exc).__name__)
+            self.bluetooth_warning = True
+            return None
+        finally:
+            self._scan_ended_at = self._clock()
+
+    async def _take_snapshot(self, snapshot: BluezSnapshot) -> None:
         async with self._results:
             self._latest = {advert.address for advert in snapshot.adverts}
             for address in [a for a in self._dismissed if a not in self._latest]:
@@ -302,13 +344,56 @@ class CommissioningSession:
                 await self._take_advert(advert)
             self._forget_unseen()
             await self._rematch_not_nearby(self._latest)
+
+    async def _update_warning(self, start_usec: int | None) -> None:
         if self._kernel is not None and start_usec is not None:
             findings = await self._kernel.findings_async()
             counts = counts_since(findings or [], start_usec)
             self.bluetooth_warning = bool(counts["stuck"] or counts["transport"])
         else:
             self.bluetooth_warning = False
-        return True
+
+    def _uses_bluetooth(self, card: Card) -> bool:
+        payload = card.payload
+        return payload is not None and not (payload.on_network and not payload.ble)
+
+    async def _refresh_before(self, card: Card, *, always: bool = False) -> None:
+        """A fresh scan right before a Bluetooth card runs, unless the last
+        one has just ended (see `REFRESH_SCAN_AFTER_SECONDS`) and `always`
+        is not set. The worker holds the radio. A failed scan changes
+        nothing: the card runs on what the last scan saw."""
+        if not self._uses_bluetooth(card):
+            return
+        if (
+            not always
+            and self._scan_ended_at is not None
+            and self._clock() - self._scan_ended_at < REFRESH_SCAN_AFTER_SECONDS
+        ):
+            return
+        start_usec = self._kernel.now_usec() if self._kernel is not None else None
+        snapshot = await self._radio_scan()
+        if snapshot is None:
+            return
+        self._follow_new_address(card, snapshot)
+        await self._take_snapshot(snapshot)
+        await self._update_warning(start_usec)
+
+    def _follow_new_address(self, card: Card, snapshot: BluezSnapshot) -> None:
+        """Moves the card onto its device's new Bluetooth address, if the
+        device changed it since the card was found: the one advert that
+        fits the card's code. Otherwise the scan would show the device as a
+        second, new card and the card itself as no longer nearby."""
+        if card.payload is None or card.advert_address is None:
+            return
+        if any(advert.address == card.advert_address for advert in snapshot.adverts):
+            return
+        discriminator = discriminator_for(card.payload)
+        matches = [
+            advert for advert in snapshot.adverts if discriminator.matches(advert.discriminator)
+        ]
+        if len(matches) == 1:
+            card.advert_address = matches[0].address
+            self._adverts[card.id] = matches[0]
 
     def _refresh_known(self, advert: MatterAdvert) -> bool:
         """Updates the card that already shows this device; False if none."""
@@ -591,6 +676,7 @@ class CommissioningSession:
                 client = self._client_for()
                 if client is None or not client.connected:
                     continue
+                await self._refresh_before(card)
                 # A scan that ran meanwhile may no longer see the device.
                 if (
                     card.advert_address is not None
@@ -612,17 +698,18 @@ class CommissioningSession:
         card.phase = None
         monitor = asyncio.ensure_future(self._monitor(card))
         try:
-            result = await commission(
-                code=code,
-                room=room,
-                discriminator=discriminator_for(card.payload) if card.payload else None,
-                client=client,
-                store=self._store,
-                runtime=self._runtime,
-                tracker=self._tracker,
-                fetch_dataset=self._fetch_dataset,
-                manual_dataset=self._thread_dataset,
-            )
+            try:
+                result = await self._commission(card, code, room, client)
+            except CommissionFailed as exc:
+                if exc.reason != "connection_lost" or not self._uses_bluetooth(card):
+                    raise
+                # Once more after a fresh scan, see `REFRESH_SCAN_AFTER_SECONDS`:
+                # on the test Pi such an attempt failed on an address BlueZ
+                # no longer had, and matter-server still waited its full
+                # 180 s for it (15 October 2026).
+                logger.info("Card %s lost its Bluetooth connection; scanning again", card.id)
+                await self._refresh_before(card, always=True)
+                result = await self._commission(card, code, room, client)
         except CommissionFailed as exc:
             card.state = "failed"
             card.note = exc.detail
@@ -656,6 +743,21 @@ class CommissioningSession:
                 self._naming.append(card.id)
                 if self._naming[0] == card.id:
                     await self._quietly(self._identify.start(result.device_id, renew=True))
+
+    async def _commission(
+        self, card: Card, code: str, room: str | None, client: BridgeMatterClient
+    ) -> CommissionResult:
+        return await commission(
+            code=code,
+            room=room,
+            discriminator=discriminator_for(card.payload) if card.payload else None,
+            client=client,
+            store=self._store,
+            runtime=self._runtime,
+            tracker=self._tracker,
+            fetch_dataset=self._fetch_dataset,
+            manual_dataset=self._thread_dataset,
+        )
 
     async def _monitor(self, card: Card) -> None:
         """Phase and early warning while a card runs (design 8.3)."""
