@@ -419,6 +419,11 @@ api.errors.unknown_node:
 api.errors.matter_server_unreachable:
   en: "matter-server unreachable: {exc}"
   de: "matter-server nicht erreichbar: {exc}"
+api.errors.matter_removal_refused:
+  # `BridgeMatterClient.remove`: matter-server refused to remove a node it
+  # still holds. A 502 on the device tile, not a crash.
+  en: "matter-server could not remove the device: {exc}"
+  de: "matter-server konnte das Gerät nicht entfernen: {exc}"
 api.errors.command_unknown_to_sdk:
   en: "Cluster {cluster_id} command {command_id} is unknown to the chip SDK"
   de: "Cluster {cluster_id} Kommando {command_id} ist der chip-SDK unbekannt"
@@ -1626,6 +1631,14 @@ web.devices.export_last:
 web.devices.label_save_error:
   en: "Could not save name: {message}"
   de: "Name konnte nicht gespeichert werden: {message}"
+web.devices.removing:
+  en: "Removing…"
+  de: "Wird entfernt …"
+web.devices.removing_offline:
+  # An offline device: matter-server keeps trying to reach it so it can
+  # leave the network, up to `SOURCE_REMOVAL_TIMEOUT_SECONDS`.
+  en: "Removing… The device is offline, so this can take up to two minutes. You can leave this page."
+  de: "Wird entfernt … Das Gerät ist offline, das kann bis zu zwei Minuten dauern. Sie können die Seite verlassen."
 web.devices.remove_error:
   en: "Could not remove device: {message}"
   de: "Gerät konnte nicht entfernt werden: {message}"

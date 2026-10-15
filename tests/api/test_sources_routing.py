@@ -400,6 +400,83 @@ async def test_a_removal_is_not_held_to_the_bound_of_a_command(zigbee_plug, monk
     assert zigbee.removed == ["00:12:4b:00:1c:a1:b2:c3"]
 
 
+async def test_a_slow_removal_answers_202_and_finishes_in_the_background(zigbee_plug, monkeypatch):
+    """An offline device held the DELETE open for up to two minutes, with
+    nothing on the tile to say anything was happening - and a browser or
+    proxy that gave up first left a device the bridge went on to remove on
+    screen until the page was reloaded. The route now answers 202 once its
+    own short wait is over, the tile reads `removing` from the device, and
+    the device is gone (404) once the removal ends.
+
+    Fault to prove it: `await` the removal task in the route again."""
+    monkeypatch.setattr("loxmatter.api.devices.REMOVAL_ANSWER_SECONDS", 0.05)
+    client, device_id, _, zigbee = await zigbee_plug(with_zigbee=True)
+    zigbee.remove_delay = 0.3
+
+    response = await client.delete(f"/api/devices/{device_id}")
+
+    assert response.status_code == 202
+    device = (await client.get(f"/api/devices/{device_id}")).json()
+    assert device["removing"] is True
+    assert device["removal_error"] is None
+
+    async def gone() -> bool:
+        return (await client.get(f"/api/devices/{device_id}")).status_code == 404
+
+    for _ in range(100):
+        if await gone():
+            break
+        await asyncio.sleep(0.02)
+    assert await gone()
+    assert zigbee.removed == ["00:12:4b:00:1c:a1:b2:c3"]
+
+
+async def test_a_second_delete_joins_the_removal_under_way(zigbee_plug, monkeypatch):
+    """Device 10 on the test Pi was deleted twice at once, and its node was
+    asked to leave the fabric twice. A DELETE while a removal of the same
+    device runs waits on that one instead of starting another.
+
+    Fault to prove it: always start a new task in the route."""
+    monkeypatch.setattr("loxmatter.api.devices.REMOVAL_ANSWER_SECONDS", 0.05)
+    client, device_id, _, zigbee = await zigbee_plug(with_zigbee=True)
+    zigbee.remove_delay = 0.3
+
+    first, second = await asyncio.gather(
+        client.delete(f"/api/devices/{device_id}"),
+        client.delete(f"/api/devices/{device_id}"),
+    )
+    assert {first.status_code, second.status_code} == {202}
+    await asyncio.sleep(0.6)
+
+    assert zigbee.removed == ["00:12:4b:00:1c:a1:b2:c3"]
+
+
+async def test_a_removal_that_fails_in_the_background_shows_on_the_device(zigbee_plug, monkeypatch):
+    """Nobody waits on the request any more when a background removal fails,
+    so the reason stays on the device - for the tile that is polling and for
+    a reload - until the next DELETE tries again."""
+    monkeypatch.setattr("loxmatter.api.devices.REMOVAL_ANSWER_SECONDS", 0.05)
+    client, device_id, _, zigbee = await zigbee_plug(with_zigbee=True)
+    zigbee.remove_delay = 0.2
+    zigbee.fail_remove_with = DeviceUnreachableError("the device did not answer")
+
+    assert (await client.delete(f"/api/devices/{device_id}")).status_code == 202
+
+    async def device() -> dict[str, Any]:
+        return (await client.get(f"/api/devices/{device_id}")).json()
+
+    for _ in range(100):
+        if not (await device())["removing"]:
+            break
+        await asyncio.sleep(0.02)
+    assert (await device())["removal_error"] == "the device did not answer"
+
+    zigbee.remove_delay = 0.0
+    zigbee.fail_remove_with = None
+    assert (await client.delete(f"/api/devices/{device_id}")).status_code == 204
+    assert (await client.get(f"/api/devices/{device_id}")).status_code == 404
+
+
 async def test_cmd_reaches_the_zigbee_source(zigbee_plug):
     client, _, on_key, zigbee = await zigbee_plug(with_zigbee=True)
 

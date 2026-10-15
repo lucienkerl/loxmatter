@@ -52,6 +52,17 @@ The second order thus leaves behind a visible, diagnosable state instead
 of a silent one on failure; `remove_device` below therefore implements
 it.
 
+**The removal outlives the request.** Both steps run in a task of their
+own, and the route waits for it only `REMOVAL_ANSWER_SECONDS`: a device
+that answers is gone by then (204, or 502 with the reason), and one that
+does not - offline, or a Thread device that needs a session first - gets a
+202 while the task goes on under its own bound. The tile shows the removal
+from `removing`/`removal_error` on `GET /api/devices/{id}` until that
+answers 404. Held open for the whole removal instead, the request left the
+tile with no answer for up to two minutes, and a browser or proxy that gave
+up first left a device the bridge went on to remove still on screen. A
+second `DELETE` while the task runs joins it rather than starting another.
+
 **Unverified assumption (Minor #3, Review 2026-09-02):** "A second
 `DELETE` remains possible" above assumes that `remove` may be called again
 against a device that was already removed from the fabric on the first (partially
@@ -76,6 +87,8 @@ remains to be done on the live service.
 
 from __future__ import annotations
 
+import asyncio
+import functools
 import logging
 from collections.abc import Callable
 from typing import Protocol
@@ -118,6 +131,7 @@ from loxmatter.profiles.endpoints import endpoint_labels
 from loxmatter.profiles.table import Exportability, is_exportable
 from loxmatter.profiles.transport import transport_for
 from loxmatter.sources import (
+    DeviceSource,
     DeviceUnreachableError,
     IdentifySource,
     IdentifyUnsupportedError,
@@ -128,6 +142,12 @@ from loxmatter.sources import (
 )
 
 logger = logging.getLogger(__name__)
+
+# How long `DELETE /api/devices/{id}` waits for the removal before it answers
+# 202 and lets it go on in the background (see the module docstring). Long
+# enough for a device that is reachable, so the common case still ends in
+# one request; read at call time so a test can shorten it.
+REMOVAL_ANSWER_SECONDS = 5.0
 
 
 # Why a signal is not exportable (Spec 6.6) - only for the two cases that
@@ -342,6 +362,46 @@ def build_device_router(
 
     coordinator = identify or identify_coordinator(store, sources)
 
+    # Removals under way, and the reason the latest one of a device failed
+    # - in memory, like the commissioning session: a restart ends a removal
+    # the way it ended the request that carried it before.
+    removals: dict[int, asyncio.Task[None]] = {}
+    removal_failures: dict[int, str] = {}
+
+    def _with_removal(out: DeviceOut) -> DeviceOut:
+        removing = out.id in removals
+        error = removal_failures.get(out.id)
+        if not removing and error is None:
+            return out
+        return out.model_copy(update={"removing": removing, "removal_error": error})
+
+    async def _remove_through(source: DeviceSource, device: StoredDevice) -> None:
+        # Order: see module docstring - the fabric first, then the store.
+        #
+        # Bounded like every other call into a source (boundary design
+        # open point 11), but by the removal's own, longer bound and not
+        # by a command's 10 s: matter-server forgets the node and then
+        # asks the device to leave the fabric, which for an offline Thread
+        # device takes longer than that - cut off early, the device stayed
+        # listed here while matter-server had dropped it. See
+        # `SOURCE_REMOVAL_TIMEOUT_SECONDS`. The expiry arrives as
+        # `DeviceUnreachableError`.
+        await bounded_source_removal(source.remove(device.address))
+        store.forget_device(device.id)
+
+    def _removal_finished(device_id: int, task: asyncio.Task[None]) -> None:
+        if removals.get(device_id) is task:
+            del removals[device_id]
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is None:
+            return
+        removal_failures[device_id] = str(exc) or type(exc).__name__
+        if not isinstance(exc, (MatterUnavailableError, DeviceUnreachableError)):
+            # Nobody may be waiting on the request any more to see it.
+            logger.error("Removing device %s failed", device_id, exc_info=exc)
+
     def _require_client() -> BridgeMatterClient:
         if client is None:
             raise HTTPException(
@@ -368,13 +428,14 @@ def build_device_router(
     @router.get("/devices")
     async def list_devices() -> list[DeviceOut]:
         return [
-            _device_out(device, store, runtime, _supports_identify) for device in store.devices()
+            _with_removal(_device_out(device, store, runtime, _supports_identify))
+            for device in store.devices()
         ]
 
     @router.get("/devices/{device_id}")
     async def get_device(device_id: int) -> DeviceOut:
         device = _require_device(device_id)
-        return _device_out(device, store, runtime, _supports_identify)
+        return _with_removal(_device_out(device, store, runtime, _supports_identify))
 
     @router.get("/devices/{device_id}/signals")
     async def get_signals(device_id: int) -> list[SignalOut]:
@@ -418,7 +479,9 @@ def build_device_router(
             store.rename_device(device.id, patch.label)
         if patch.room is not None:
             store.set_room(device.id, patch.room)
-        return _device_out(store.device(device.id), store, runtime, _supports_identify)
+        return _with_removal(
+            _device_out(store.device(device.id), store, runtime, _supports_identify)
+        )
 
     @router.post("/rooms/rename")
     async def rename_room(patch: RoomRename) -> dict[str, int]:
@@ -597,18 +660,19 @@ def build_device_router(
                     technology=technology_display_name(device.technology),
                 ),
             )
+        task = removals.get(device.id)
+        if task is None:
+            removal_failures.pop(device.id, None)
+            task = asyncio.create_task(_remove_through(source, device))
+            removals[device.id] = task
+            task.add_done_callback(functools.partial(_removal_finished, device.id))
+        # `asyncio.wait`, not `wait_for`: running out of patience here must
+        # not cancel the removal, only stop waiting for it.
+        done, _pending = await asyncio.wait({task}, timeout=REMOVAL_ANSWER_SECONDS)
+        if not done:
+            return JSONResponse(status_code=202, content={"removing": True})
         try:
-            # Order: see module docstring - the fabric first, then the store.
-            #
-            # Bounded like every other call into a source (boundary design
-            # open point 11), but by the removal's own, longer bound and not
-            # by a command's 10 s: matter-server forgets the node and then
-            # asks the device to leave the fabric, which for an offline
-            # Thread device takes longer than that - cut off early, the
-            # device stayed listed here while matter-server had dropped it.
-            # See `SOURCE_REMOVAL_TIMEOUT_SECONDS`. The expiry arrives as
-            # `DeviceUnreachableError`, caught right below.
-            await bounded_source_removal(source.remove(device.address))
+            task.result()
         except (MatterUnavailableError, DeviceUnreachableError) as exc:
             # One vocabulary across sources (boundary design open point 11).
             # `MatterUnavailableError` stays in the tuple rather than being
@@ -617,14 +681,13 @@ def build_device_router(
             #
             # A bare `TimeoutError` is deliberately NOT in this tuple. It was,
             # and nothing could reach it: the only timeout this route can
-            # produce is the one above, and that arrives as
+            # produce is the removal's bound, and that arrives as
             # `DeviceUnreachableError` - by design, since `str(TimeoutError())`
             # is empty and would have made this a 502 with a blank detail. A
             # source that lets a raw `TimeoutError` escape instead of raising
             # `DeviceUnreachableError` at its own edge is a bug in that
             # source, and should look like one.
             raise HTTPException(status_code=502, detail=str(exc)) from exc
-        store.forget_device(device.id)
         return None
 
     return router

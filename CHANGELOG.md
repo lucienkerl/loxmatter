@@ -68,6 +68,16 @@ people who don't know the code.
 
 ### Fixed
 
+- **Removing a device no longer seems to hang.** The tile says "Removing…"
+  at once; for an offline device it adds that this can take up to two
+  minutes, and you can leave the page meanwhile. A second click sends no
+  second request, and a removed device no longer stays on the page until
+  the next reload.
+- **A device that left the network is removed even when it did not say
+  so.** A lamp drops the connection as it leaves, and its removal was
+  reported as failed although it had worked.
+- **Devices in pairing mode can be removed from the commissioning list.**
+  A removed one stays away while it keeps advertising.
 - **A change that arrives together with a new signal reaches Loxone.** When
   a device reported a new signal for the first time, other values that
   changed in the same message were only stored, not sent. The first motion
