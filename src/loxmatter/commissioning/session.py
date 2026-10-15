@@ -179,6 +179,13 @@ class CommissioningSession:
         # The advert each scanned card came from, for matching a code
         # (discriminator) and adopting a numeric-code card (vendor/product).
         self._adverts: dict[int, MatterAdvert] = {}
+        # Devices whose card the user removed while they still advertise,
+        # by address, with their latest advert. A scan does not bring them
+        # back as a new `found` card - the dialog opens with a scan of its
+        # own, and a removed card used to return with it. An entry ends when
+        # its device stops advertising, or when a code that fits it is
+        # added (see `_restore_dismissed`).
+        self._dismissed: dict[str, MatterAdvert] = {}
         self._next_id = 1
         self._queue: list[int] = []
         self._naming: list[int] = []
@@ -289,6 +296,8 @@ class CommissioningSession:
                 self._scanning = False
         async with self._results:
             self._latest = {advert.address for advert in snapshot.adverts}
+            for address in [a for a in self._dismissed if a not in self._latest]:
+                del self._dismissed[address]
             for advert in snapshot.adverts:
                 await self._take_advert(advert)
             self._forget_unseen()
@@ -311,6 +320,9 @@ class CommissioningSession:
         return False
 
     async def _take_advert(self, advert: MatterAdvert) -> None:
+        if advert.address in self._dismissed:
+            self._dismissed[advert.address] = advert
+            return
         if self._refresh_known(advert):
             return
         label = await self._dcl.product_label(advert.vendor_id, advert.product_id)
@@ -395,6 +407,7 @@ class CommissioningSession:
         # lookup below is back; `_enqueue` then makes sure a worker runs it,
         # even if the one that ran has finished during the lookup.
         worker_ran = self._worker_active()
+        await self._restore_dismissed(payload)
         matches = self._matching_found(payload)
         if len(matches) == 1:
             card = matches[0]
@@ -419,6 +432,17 @@ class CommissioningSession:
         if card.state == "queued":
             self._enqueue(card)
         return card
+
+    async def _restore_dismissed(self, payload: SetupPayload) -> None:
+        """A code typed or scanned for a device whose card was removed
+        brings that card back: the code says the user wants the device
+        after all, and without its card the code could only land in
+        `not_nearby` next to a device that is advertising right there."""
+        discriminator = discriminator_for(payload)
+        for address, advert in list(self._dismissed.items()):
+            if address in self._latest and discriminator.matches(advert.discriminator):
+                del self._dismissed[address]
+                await self._take_advert(advert)
 
     def _new_card(
         self, state: CardState, label: ProductLabel, *, payload: SetupPayload | None
@@ -471,15 +495,27 @@ class CommissioningSession:
         return card
 
     def remove(self, card_id: int) -> None:
+        """Any card that is not being commissioned right now - a `found`
+        card for a device just put into pairing mode included."""
         card = self._card(card_id)
         if card.state == "running":
             raise CodeRejected("api.commissioning.fail_card_running", 409)
+        self._dismiss(card)
         self._drop(card_id)
 
     def clear(self) -> None:
         """Every card that is not being commissioned right now."""
         for card_id in [cid for cid, card in self._cards.items() if card.state != "running"]:
+            self._dismiss(self._cards[card_id])
             self._drop(card_id)
+
+    def _dismiss(self, card: Card) -> None:
+        """Keeps the next scan from bringing a removed card straight back
+        while its device is still advertising. Only for a device not yet
+        commissioned: a commissioned one stops advertising anyway."""
+        advert = self._adverts.get(card.id)
+        if advert is not None and card.device_id is None:
+            self._dismissed[advert.address] = advert
 
     def _drop(self, card_id: int) -> None:
         card = self._cards.pop(card_id)

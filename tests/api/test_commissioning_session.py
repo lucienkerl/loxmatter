@@ -895,3 +895,60 @@ async def test_a_refused_update_leaves_name_and_room_alone(h):
     after = card_view(h, card.id)
     assert after["name"] == before["name"]
     assert after["room"] == before["room"]
+
+
+async def test_a_removed_found_card_stays_gone_while_its_device_advertises(h):
+    """A device just put into pairing mode shows as a `found` card, and the
+    dialog had no way to remove one: there was no button, and a card removed
+    any other way came back with the scan the dialog runs on every opening.
+
+    Fault to prove it: drop the `_dismissed` check from `_take_advert`."""
+    h.scanner.adverts = [
+        advert("AA:01", 3840, KAJPLATS_E27, -60),
+        advert("AA:02", 3000, KAJPLATS_E14, -70),
+    ]
+    assert await h.session.scan()
+    removed = next(c for c in h.session.view()["cards"] if c["rssi"] == -60)
+    h.session.remove(removed["id"])
+
+    assert await h.session.scan()
+
+    assert [c["rssi"] for c in h.session.view()["cards"]] == [-70]
+
+
+async def test_a_removed_device_returns_once_it_has_stopped_advertising(h):
+    """The dismissal is for this round of pairing mode only: a device that
+    was out of pairing mode for a scan and is put back in shows again."""
+    h.scanner.adverts = [advert("AA:01", 3840, KAJPLATS_E27, -60)]
+    assert await h.session.scan()
+    h.session.remove(h.session.view()["cards"][0]["id"])
+    h.scanner.adverts = []
+    assert await h.session.scan()
+    h.scanner.adverts = [advert("AA:01", 3840, KAJPLATS_E27, -55)]
+
+    assert await h.session.scan()
+
+    assert [c["state"] for c in h.session.view()["cards"]] == ["found"]
+
+
+async def test_a_code_for_a_removed_device_brings_its_card_back(h):
+    """A code that fits a removed, still advertising device says the user
+    wants it after all - it must not land in `not_nearby` next to it."""
+    h.scanner.adverts = [advert("AA:01", 3840, KAJPLATS_E27, -60)]
+    assert await h.session.scan()
+    h.session.remove(h.session.view()["cards"][0]["id"])
+
+    card = await h.session.add_code(QR_CODE, None)
+
+    assert card.state == "ready"
+    assert card.advert_address == "AA:01"
+
+
+async def test_clearing_the_list_keeps_found_cards_from_coming_back(h):
+    h.scanner.adverts = [advert("AA:01", 3840, KAJPLATS_E27, -60)]
+    assert await h.session.scan()
+    h.session.clear()
+
+    assert await h.session.scan()
+
+    assert h.session.view()["cards"] == []
