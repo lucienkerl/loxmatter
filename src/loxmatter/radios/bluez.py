@@ -272,7 +272,15 @@ class BluezScanner:
     would stop the scan the moment `StartDiscovery` returned. And the
     objects are read BEFORE `StopDiscovery`: once discovery stops, BlueZ
     clears every device's `RSSI` (measured 29 September 2026), and
-    `_advert()` drops a device without one."""
+    `_advert()` drops a device without one.
+
+    The discovery filter names the LE transport only, not the Matter UUID.
+    BlueZ matches a `UUIDs` filter against the advertised service-UUID
+    list, and Matter requires only the 0xFFF6 service data: two IKEA
+    KAJPLATS E14 CWS lamps (firmware 1.2.0) advertising at -26/-33 dBm were
+    invisible with the UUID filter and found without it (measured on the
+    test Pi on 15 October 2026). `snapshot_from_objects` already keeps
+    only devices with commissionable Matter service data."""
 
     def __init__(
         self,
@@ -295,7 +303,7 @@ class BluezScanner:
                 _ADAPTER,
                 "SetDiscoveryFilter",
                 "a{sv}",
-                [{"Transport": Variant("s", "le"), "UUIDs": Variant("as", [MATTER_SERVICE_UUID])}],
+                [{"Transport": Variant("s", "le")}],
             )
             await connection.call(adapter_path, _ADAPTER, "StartDiscovery", "", [])
             try:
