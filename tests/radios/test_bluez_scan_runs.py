@@ -103,7 +103,9 @@ async def test_one_connection_filters_starts_waits_reads_and_stops():
     assert bus.connections[0].closed
     filter_body = bus.made[0][5][0]
     assert filter_body["Transport"].value == "le"
-    assert filter_body["UUIDs"].value == [MATTER_SERVICE_UUID]
+    # No UUID filter: BlueZ would drop Matter devices that carry 0xFFF6
+    # only as service data (measured 15 October 2026).
+    assert "UUIDs" not in filter_body
     assert slept == [10.0]
     adapter_calls = [made for made in bus.made if made[3] != "GetManagedObjects"]
     assert all(
