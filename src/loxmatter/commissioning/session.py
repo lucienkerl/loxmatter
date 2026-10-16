@@ -954,7 +954,9 @@ class CommissioningSession:
             scan_state = "blocked"
         else:
             scan_state = "idle"
-        blinking = self._identify.blinking
+        # `lit`, not `blinking`: a device whose renewal went unanswered has
+        # stopped, and the dialog must not keep saying it blinks.
+        blinking = self._identify.lit
         blinking_card = next(
             (
                 card.id

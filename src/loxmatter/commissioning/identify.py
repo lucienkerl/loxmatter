@@ -21,6 +21,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import time
 from collections.abc import Awaitable, Callable
 from typing import Final
 
@@ -29,7 +30,11 @@ from loxmatter.sources import IdentifySource, IdentifyUnsupportedError, bounded_
 logger = logging.getLogger(__name__)
 
 IDENTIFY_SECONDS: Final = 30
-RENEW_EVERY: Final = 25
+# A third of `IDENTIFY_SECONDS`, so one renewal can go unanswered without the
+# blink lapsing. At 25 s a renewal more than 5 s late was enough to end it -
+# and while matter-server commissions the next device, a renewal can wait out
+# its whole 10 s bound (`SOURCE_CALL_TIMEOUT_SECONDS`).
+RENEW_EVERY: Final = 10
 
 
 class IdentifyCoordinator:
@@ -39,16 +44,32 @@ class IdentifyCoordinator:
         device_address: Callable[[int], tuple[str, str]],
         *,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._source_for = source_for
         self._device_address = device_address
         self._sleep = sleep
+        self._clock = clock
         self._blinking: int | None = None
+        # When the last identify the device acknowledged runs out.
+        self._lit_until = 0.0
         self._task: asyncio.Task[None] | None = None
         self._lock = asyncio.Lock()
 
     @property
     def blinking(self) -> int | None:
+        """The device this coordinator keeps blinking - the one a stop
+        goes to."""
+        return self._blinking
+
+    @property
+    def lit(self) -> int | None:
+        """`blinking`, but only while the last identify the device answered
+        has not run out: what the dialog may show as blinking. A renewal
+        that goes unanswered lets the blink lapse on the device while
+        `blinking` still names it, and the renewal keeps trying."""
+        if self._blinking is None or self._clock() >= self._lit_until:
+            return None
         return self._blinking
 
     async def start(self, device_id: int, *, renew: bool, seconds: int = IDENTIFY_SECONDS) -> None:
@@ -70,6 +91,7 @@ class IdentifyCoordinator:
         source, address = self._resolve(device_id)
         await bounded_source_call(source.identify(address, seconds))
         self._blinking = device_id
+        self._lit_until = self._clock() + seconds
         self._task = asyncio.ensure_future(self._keep(device_id, source, address, renew, seconds))
 
     async def stop(self) -> None:
@@ -109,9 +131,15 @@ class IdentifyCoordinator:
                 self._blinking = None
                 self._task = None
             return
+        # A fixed cadence, counted from the start: a renewal that waited out
+        # its bound must not push the next one back towards the lapse.
+        due = self._clock()
         while True:
-            await self._sleep(RENEW_EVERY)
+            due += RENEW_EVERY
+            await self._sleep(max(0.0, due - self._clock()))
             try:
                 await bounded_source_call(source.identify(address, seconds))
             except Exception as exc:  # noqa: BLE001 - keep trying; the blink lapses by itself
                 logger.info("Renewing identify on device %s failed: %s", device_id, exc)
+            else:
+                self._lit_until = self._clock() + seconds
