@@ -4247,14 +4247,67 @@ function app() {
       }[card.state];
     },
 
-    scanLine() {
+    /** The scan panel's state (design 2026-10-16): a scan under way, none
+     * while a device is commissioned, or the last result - devices in
+     * pairing mode waiting for a code, or none. Empty before the first
+     * answer. */
+    scanPanelState() {
       const scan = this.commissioning?.scan;
       if (!scan) return "";
-      if (scan.state === "scanning") return t("web.commissioning.scan_running");
-      if (scan.state === "blocked") return t("web.commissioning.scan_blocked");
-      const found = (this.commissioning.cards ?? []).filter((card) => card.state === "found").length;
+      if (scan.state === "scanning" || scan.state === "blocked") return scan.state;
+      return this.foundCount() ? "found" : "none";
+    },
+
+    foundCount() {
+      return (this.commissioning?.cards ?? []).filter((card) => card.state === "found").length;
+    },
+
+    /** The panel's heading. */
+    scanLine() {
+      const state = this.scanPanelState();
+      if (!state) return "";
+      if (state === "scanning") return t("web.commissioning.scan_running");
+      if (state === "blocked") return t("web.commissioning.scan_paused");
+      const found = this.foundCount();
       if (found === 1) return t("web.commissioning.scan_found_one");
       return t("web.commissioning.scan_found", { count: found });
+    },
+
+    /** The line under the heading. */
+    scanHint() {
+      return {
+        scanning: t("web.commissioning.scan_running_hint"),
+        blocked: t("web.commissioning.scan_blocked"),
+        found: t("web.commissioning.scan_found_hint"),
+        none: t("web.commissioning.scan_none_hint"),
+      }[this.scanPanelState()] ?? "";
+    },
+
+    scanPanelIcon() {
+      return { blocked: "#i-pause", found: "#i-check" }[this.scanPanelState()] ?? "#i-bluetooth";
+    },
+
+    /** The share of the running scan still to go, 1 at its start and 0 at
+     * its end, from the poll's `last_scan_age` - the scan's age when the
+     * bridge answered. A scan that overruns its length stays at 0. */
+    scanRemaining() {
+      const scan = this.commissioning?.scan;
+      if (scan?.state !== "scanning" || !scan.seconds) return 0;
+      const age = scan.last_scan_age ?? 0;
+      return Math.min(1, Math.max(0, (scan.seconds - age) / scan.seconds));
+    },
+
+    /** Whole seconds left on the ring; never 0 while the scan still runs,
+     * which would read as finished. */
+    scanSecondsLeft() {
+      const seconds = this.commissioning?.scan?.seconds ?? 0;
+      return Math.max(1, Math.ceil(this.scanRemaining() * seconds));
+    },
+
+    /** The ring's `stroke-dashoffset`: the full circumference (2π · 27,
+     * the circle in index.html) is an empty ring. */
+    scanRingOffset() {
+      return (2 * Math.PI * 27 * (1 - this.scanRemaining())).toFixed(1);
     },
 
     footLine() {
