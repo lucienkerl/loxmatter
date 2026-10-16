@@ -966,6 +966,10 @@ class CommissioningSession:
         return {
             "scan": {
                 "state": scan_state,
+                # How long a scan runs, so the dialog can count down the
+                # one under way from `last_scan_age` (its start) without a
+                # second copy of the number.
+                "seconds": SCAN_SECONDS,
                 "last_scan_age": (
                     None if self._last_scan_at is None else self._clock() - self._last_scan_at
                 ),

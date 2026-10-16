@@ -434,6 +434,20 @@ async def test_a_failed_scan_warns_and_reports_false(h):
     assert h.session.view()["scan"]["state"] == "idle"
 
 
+async def test_a_running_scan_reports_its_length_and_its_age(h):
+    """The dialog counts the scan down from these two (design 2026-10-16).
+
+    Fault to prove it: take `last_scan_age` from the end of the scan."""
+    h.scanner.hold = asyncio.Event()
+    h.clock.now = 100.0
+    task = asyncio.create_task(h.session.scan())
+    await settle_until(lambda: h.session.view()["scan"]["state"] == "scanning", "the scan runs")
+    h.clock.now = 104.0
+    assert h.session.view()["scan"] == {"state": "scanning", "seconds": 10.0, "last_scan_age": 4.0}
+    h.scanner.hold.set()
+    assert await task
+
+
 async def test_unknown_and_running_cards_are_refused(h):
     with pytest.raises(CodeRejected) as unknown:
         h.session.remove(99)
