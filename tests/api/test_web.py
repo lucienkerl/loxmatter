@@ -17224,8 +17224,11 @@ async def test_the_naming_line_and_identify_are_delivered(api):
     page = (await client.get("/")).text
     script = (await client.get("/static/app.js")).text
     prompt = _card_element(
-        page, "p", lambda a: a.get("x-text") == "t('web.commissioning.naming_prompt')"
+        page, "p", lambda a: "t('web.commissioning.naming_prompt')" in a.get("x-text", "")
     )
+    # "This device is blinking" only while it does.
+    assert "commissioning?.blinking_card === card.id" in prompt["x-text"]
+    assert "t('web.commissioning.naming_prompt_unlit')" in prompt["x-text"]
     assert prompt["x-show"] == "isNamingFront(card)"
     confirm = _card_element(page, "button", lambda a: "confirmName(card" in a.get("@click", ""))
     assert confirm["x-show"] == "card.state === 'naming'"
@@ -17250,6 +17253,7 @@ async def test_the_naming_line_and_identify_are_delivered(api):
     strings = _naming_strings()
     for key in (
         "naming_prompt",
+        "naming_prompt_unlit",
         "confirm_name",
         "skip_name",
         "identify",

@@ -558,6 +558,18 @@ async def test_the_front_of_the_naming_line_takes_over_a_running_blink(h):
     assert h.session.view()["blinking_card"] == card.id
 
 
+async def test_a_lapsed_blink_is_not_shown_as_blinking(h):
+    """The front of the naming line whose renewal went unanswered - while
+    the next device was being commissioned - has stopped blinking; the
+    dialog must say so. Fault to prove it: `view()` reading `blinking`."""
+    card = await h.session.add_code(QR_CODE_ON_NETWORK, None)
+    await h.session.start()
+    await idle(h)
+    assert h.session.view()["blinking_card"] == card.id
+    h.identify.lapsed = True
+    assert h.session.view()["blinking_card"] is None
+
+
 async def test_a_preset_name_check_blink_never_interrupts(h):
     await h.identify.start(999, renew=False)
     card = await h.session.add_code(QR_CODE_ON_NETWORK, None)

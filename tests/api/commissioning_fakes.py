@@ -204,12 +204,18 @@ class FakeKernel:
 class FakeIdentify:
     """The `IdentifyCoordinator` interface. `calls` holds `("start",
     device_id, renew, seconds)` and `("stop",)`; a blink lasts until it is
-    stopped or replaced - the fake has no timer."""
+    stopped or replaced - the fake has no timer. `lapsed` stands for a
+    renewal the device did not answer: `lit` is then `None`."""
 
     def __init__(self) -> None:
         self.blinking: int | None = None
+        self.lapsed = False
         self.calls: list[tuple[Any, ...]] = []
         self.closed = False
+
+    @property
+    def lit(self) -> int | None:
+        return None if self.lapsed else self.blinking
 
     async def start(self, device_id: int, *, renew: bool, seconds: int = 30) -> None:
         self.calls.append(("start", device_id, renew, seconds))

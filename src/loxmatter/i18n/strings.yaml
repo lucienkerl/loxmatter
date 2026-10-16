@@ -1358,6 +1358,11 @@ web.commissioning.close:
 web.commissioning.naming_prompt:
   en: "This device is blinking. Which one is it? Enter a name and press Enter."
   de: "Dieses Gerät blinkt. Welches ist es? Tragen Sie einen Namen ein und drücken Sie Enter."
+web.commissioning.naming_prompt_unlit:
+  # The same prompt while the device is not blinking: it cannot, or its
+  # blink lapsed. "Identify" starts it again.
+  en: "This device is waiting for its name. Enter a name and press Enter."
+  de: "Dieses Gerät wartet auf seinen Namen. Tragen Sie einen Namen ein und drücken Sie Enter."
 web.commissioning.confirm_name:
   en: "Use name"
   de: "Name übernehmen"
