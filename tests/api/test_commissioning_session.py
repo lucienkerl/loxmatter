@@ -434,6 +434,20 @@ async def test_a_failed_scan_warns_and_reports_false(h):
     assert h.session.view()["scan"]["state"] == "idle"
 
 
+async def test_a_running_scan_reports_its_length_and_its_age(h):
+    """The dialog counts the scan down from these two (design 2026-10-16).
+
+    Fault to prove it: take `last_scan_age` from the end of the scan."""
+    h.scanner.hold = asyncio.Event()
+    h.clock.now = 100.0
+    task = asyncio.create_task(h.session.scan())
+    await settle_until(lambda: h.session.view()["scan"]["state"] == "scanning", "the scan runs")
+    h.clock.now = 104.0
+    assert h.session.view()["scan"] == {"state": "scanning", "seconds": 10.0, "last_scan_age": 4.0}
+    h.scanner.hold.set()
+    assert await task
+
+
 async def test_unknown_and_running_cards_are_refused(h):
     with pytest.raises(CodeRejected) as unknown:
         h.session.remove(99)
@@ -556,6 +570,18 @@ async def test_the_front_of_the_naming_line_takes_over_a_running_blink(h):
     device_id = card_view(h, card.id)["device_id"]
     assert h.identify.starts()[-1] == ("start", device_id, True, 30)
     assert h.session.view()["blinking_card"] == card.id
+
+
+async def test_a_lapsed_blink_is_not_shown_as_blinking(h):
+    """The front of the naming line whose renewal went unanswered - while
+    the next device was being commissioned - has stopped blinking; the
+    dialog must say so. Fault to prove it: `view()` reading `blinking`."""
+    card = await h.session.add_code(QR_CODE_ON_NETWORK, None)
+    await h.session.start()
+    await idle(h)
+    assert h.session.view()["blinking_card"] == card.id
+    h.identify.lapsed = True
+    assert h.session.view()["blinking_card"] is None
 
 
 async def test_a_preset_name_check_blink_never_interrupts(h):

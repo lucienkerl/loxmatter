@@ -16502,10 +16502,43 @@ def test_the_scan_line_follows_the_scan_state():
         translations={
             "web.commissioning.scan_found": "{count} nearby.",
             "web.commissioning.scan_running": "Scanning",
-            "web.commissioning.scan_blocked": "Paused",
+            "web.commissioning.scan_paused": "Paused",
         },
     )
     assert values == {"idle": "2 nearby.", "scanning": "Scanning", "blocked": "Paused", "none": ""}
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_the_scan_panel_counts_the_running_scan_down():
+    """The ring and its seconds follow the scan's age from the poll: full at
+    the start, never 0 while the scan still runs, and empty with none.
+
+    Fault to prove it: count the seconds from the scan's age instead of
+    from what is left of it."""
+    values = _app_state(
+        _commissioning_view([]) + "const out = {};"
+        "state.commissioning.scan = { state: 'scanning', seconds: 10, last_scan_age: 0 };"
+        "out.start = [state.scanPanelState(), state.scanSecondsLeft(), state.scanRingOffset()];"
+        "state.commissioning.scan.last_scan_age = 3.2;"
+        "out.mid = [state.scanSecondsLeft(), state.scanRingOffset()];"
+        "state.commissioning.scan.last_scan_age = 12;"
+        "out.over = [state.scanSecondsLeft(), state.scanRingOffset()];"
+        "state.commissioning.scan = { state: 'idle', seconds: 10, last_scan_age: 14 };"
+        "out.idle = [state.scanPanelState(), state.scanRingOffset()];"
+        "state.commissioning.cards = [{ id: 1, state: 'found' }];"
+        "out.found = state.scanPanelState();"
+        "state.commissioning.scan.state = 'blocked';"
+        "out.blocked = [state.scanPanelState(), state.scanPanelIcon()];"
+        "console.log(JSON.stringify(out));"
+    )
+    assert values == {
+        "start": ["scanning", 10, "0.0"],
+        "mid": [7, "54.3"],
+        "over": [1, "169.6"],
+        "idle": ["none", "169.6"],
+        "found": "found",
+        "blocked": ["blocked", "#i-pause"],
+    }
 
 
 @pytest.mark.skipif(NODE is None, reason="node is required for this test")
@@ -17224,8 +17257,11 @@ async def test_the_naming_line_and_identify_are_delivered(api):
     page = (await client.get("/")).text
     script = (await client.get("/static/app.js")).text
     prompt = _card_element(
-        page, "p", lambda a: a.get("x-text") == "t('web.commissioning.naming_prompt')"
+        page, "p", lambda a: "t('web.commissioning.naming_prompt')" in a.get("x-text", "")
     )
+    # "This device is blinking" only while it does.
+    assert "commissioning?.blinking_card === card.id" in prompt["x-text"]
+    assert "t('web.commissioning.naming_prompt_unlit')" in prompt["x-text"]
     assert prompt["x-show"] == "isNamingFront(card)"
     confirm = _card_element(page, "button", lambda a: "confirmName(card" in a.get("@click", ""))
     assert confirm["x-show"] == "card.state === 'naming'"
@@ -17250,6 +17286,7 @@ async def test_the_naming_line_and_identify_are_delivered(api):
     strings = _naming_strings()
     for key in (
         "naming_prompt",
+        "naming_prompt_unlit",
         "confirm_name",
         "skip_name",
         "identify",

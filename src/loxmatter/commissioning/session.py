@@ -954,7 +954,9 @@ class CommissioningSession:
             scan_state = "blocked"
         else:
             scan_state = "idle"
-        blinking = self._identify.blinking
+        # `lit`, not `blinking`: a device whose renewal went unanswered has
+        # stopped, and the dialog must not keep saying it blinks.
+        blinking = self._identify.lit
         blinking_card = next(
             (
                 card.id
@@ -966,6 +968,10 @@ class CommissioningSession:
         return {
             "scan": {
                 "state": scan_state,
+                # How long a scan runs, so the dialog can count down the
+                # one under way from `last_scan_age` (its start) without a
+                # second copy of the number.
+                "seconds": SCAN_SECONDS,
                 "last_scan_age": (
                     None if self._last_scan_at is None else self._clock() - self._last_scan_at
                 ),

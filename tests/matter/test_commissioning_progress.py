@@ -19,6 +19,7 @@ matter-server texts are the ones logged on pi3-andi on 21 September 2026."""
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -182,6 +183,27 @@ async def test_the_phases_follow_bluez_and_node_added() -> None:
 
     await tracker.finish(None)
     assert tracker.phase == "done"
+
+
+async def test_each_phase_is_logged_with_the_seconds_since_the_start(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """How long a commissioning took, and where, could only be read from
+    matter-server's log until the tracker logged its own phases."""
+    tracker, bluez, _, clock = _tracker()
+    with caplog.at_level(logging.INFO, logger="loxmatter.matter.commissioning_progress"):
+        token = tracker.start(Discriminator(1, "short"))
+        clock.now += timedelta(seconds=4)
+        bluez.snapshots = [BluezSnapshot([_advert(0x105)], SCANNING)]
+        await tracker.sample()
+        clock.now += timedelta(seconds=99.5)
+        await tracker.finish("connection_lost", token=token)
+
+    assert [record.getMessage() for record in caplog.records] == [
+        f"Commissioning attempt {token}: started",
+        f"Commissioning attempt {token}: found after 4.0 s",
+        f"Commissioning attempt {token}: failed after 103.5 s (connection_lost)",
+    ]
 
 
 async def test_a_connection_after_the_scan_stopped_still_reaches_connected() -> None:
