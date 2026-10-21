@@ -8,6 +8,8 @@ people who don't know the code.
 
 ## [Unreleased]
 
+## [0.6.0] — 2026-10-21
+
 ### Before you update
 
 - **The database schema rises from 14 to 17.** Nothing needs doing by hand.
@@ -18,7 +20,9 @@ people who don't know the code.
   Matter device in pairing mode nearby, with its product name. Scan the codes
   one after another, in any order; each one finds its device. The bridge
   commissions them in the background while you keep scanning, and each new
-  device blinks so you can name it before the next one is done. Name and room
+  device blinks so you can name it before the next one is done; it keeps
+  blinking while it waits for its name, even while the bridge is busy
+  commissioning the next device. Name and room
   can be set before, during and after, and a new room can be created right in
   the dialog. A name that is really a pairing code is refused. For a device
   that belongs to a Thread network from another border router, the dialog
@@ -55,6 +59,13 @@ people who don't know the code.
 
 ### Changed
 
+- **The Bluetooth scan shows that it is running.** While the commissioning
+  dialog searches for devices nearby, a ring counts the ten seconds down
+  beside "Scan again", and the result, or why no scan runs, appears in the
+  same place. Before, a running scan was a grey line that looked idle.
+- **Each commissioning leaves a trace in the bridge's log.** The log names
+  every step with the seconds since the start, and the reason when an
+  attempt fails, so a slow or failed commissioning can be followed there.
 - **Lights follow the colour wheel live.** Dragging a colour wheel or a
   slider in the Loxone app used to leave the lamps further and further
   behind: the Miniserver sends its next value only once the bridge has
