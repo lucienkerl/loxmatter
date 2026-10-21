@@ -27,6 +27,7 @@ its result.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -34,6 +35,8 @@ from typing import Final, Literal
 
 from loxmatter.radios.bluetooth_health import KernelFinding, KernelLog, counts_since
 from loxmatter.radios.bluez import AdapterState, BluezReader, MatterAdvert
+
+logger = logging.getLogger(__name__)
 
 Phase = Literal["searching", "found", "connected", "joined", "done", "failed"]
 Reason = Literal[
@@ -229,6 +232,7 @@ class CommissioningTracker:
             discriminator=discriminator,
             phase_since=now,
         )
+        logger.info("Commissioning attempt %s: started", token)
         return token
 
     def node_added(self, node_id: int, *, token: int | None = None) -> None:
@@ -332,6 +336,17 @@ class CommissioningTracker:
         if force or _ORDER[phase] > _ORDER[attempt.phase]:
             attempt.phase = phase
             attempt.phase_since = self._clock()
+            # Each phase with the seconds since the attempt began: until this
+            # line, a commissioning left no trace in the bridge's own log, and
+            # how long it took could only be pieced together from
+            # matter-server's log and the HTTP calls.
+            logger.info(
+                "Commissioning attempt %s: %s after %.1f s%s",
+                attempt.token,
+                phase,
+                (attempt.phase_since - attempt.started_at).total_seconds(),
+                f" ({attempt.reason})" if phase == "failed" and attempt.reason else "",
+            )
 
     def _bluetooth(self, attempt: _Attempt) -> dict[str, object]:
         # The cached snapshot `sample()` refreshed via `findings_async()`
