@@ -278,8 +278,13 @@ list" in the dialog removes every card that is not `running`.
 `src/loxmatter/commissioning/identify.py`: `IdentifyCoordinator` with
 `start(device_id, renew: bool)` and `stop()`. A start first stops the device
 that is blinking (`IdentifyTime` 0). A device in the naming line is started
-with 30 s and renewed every 25 s until its name is confirmed, so it stops on
-its own within 30 s if the bridge goes away. A start from a tile or a card
+with 30 s and renewed every 10 s until its name is confirmed, so it stops on
+its own within 30 s if the bridge goes away. (First 25 s: one renewal more
+than 5 s late - easily the case while matter-server commissions the next
+device - let the blink lapse, and the dialog kept saying it blinked.) The
+dialog shows a device as blinking only while the last identify it answered
+has not run out (`IdentifyCoordinator.lit`); a lapsed blink comes back with
+the next renewal the device answers. A start from a tile or a card
 runs 30 s without renewal and shows "Stop identifying" while it runs.
 
 ### 9.3 Device page
@@ -332,7 +337,7 @@ Which one is it? Enter a name and press Enter."), and the API errors.
   preset name, a failure followed by the next card, the pause while
   matter-server is away, "Try anyway", the range check before a card.
 - **Lock:** a scan never overlaps a commissioning attempt.
-- **Identify:** one at a time, renewal every 25 s, stop with 0, unsupported
+- **Identify:** one at a time, renewal every 10 s, stop with 0, unsupported
   devices; Matter and Zigbee.
 - **DCL:** the answers of section 3 as fixtures; offline, not found, the
   7-day retry, test vendor ids; migration 16 → 17 additive.

@@ -3757,8 +3757,10 @@
                 <span class="hint" x-show="card.has_code" x-text="t('web.commissioning.code_ok')"></span>
               </div>
               <p class="hint" x-show="card.note" x-text="card.note"></p>
+              <!-- "This device is blinking" only while it does: a renewal
+                   the device did not answer lets the blink lapse. -->
               <p class="commission-naming-prompt" x-show="isNamingFront(card)"
-                 x-text="t('web.commissioning.naming_prompt')"></p>
+                 x-text="commissioning?.blinking_card === card.id ? t('web.commissioning.naming_prompt') : t('web.commissioning.naming_prompt_unlit')"></p>
               <!-- Name and room from the moment a code is attached, and in
                    every later state: the bridge forgets the code once a
                    card is done, so `has_code` alone would take the fields
