@@ -1249,12 +1249,34 @@ web.commissioning.no_room:
 web.commissioning.scan_again:
   en: "Scan again"
   de: "Erneut suchen"
+# The scan panel (design 2026-10-16): a heading and a line under it per
+# state. The ring beside a running scan shows the seconds left, so the
+# heading no longer names the scan's length.
 web.commissioning.scan_running:
-  en: "Scanning over Bluetooth (10 s) …"
-  de: "Suche per Bluetooth (10 s) …"
+  en: "Searching for Bluetooth devices …"
+  de: "Suche nach Bluetooth-Geräten …"
+web.commissioning.scan_running_hint:
+  en: "Looking for devices in pairing mode nearby. Each one found gets a card below."
+  de: "Geräte im Anlernmodus in der Nähe werden gesucht. Jedes gefundene Gerät bekommt unten eine Karte."
+web.commissioning.scan_seconds_unit:
+  # Under the number in the ring; there is room for a few letters only.
+  en: "sec"
+  de: "Sek."
+web.commissioning.scan_placeholder:
+  en: "Devices found appear here when the search is done."
+  de: "Gefundene Geräte erscheinen hier, sobald die Suche fertig ist."
+web.commissioning.scan_paused:
+  en: "Search paused"
+  de: "Suche pausiert"
 web.commissioning.scan_blocked:
   en: "Scanning is paused while a device is commissioned."
   de: "Gesucht wird nicht, solange ein Gerät eingelernt wird."
+web.commissioning.scan_found_hint:
+  en: "Search finished. A device is missing? Check that it is in pairing mode and search again."
+  de: "Suche abgeschlossen. Ein Gerät fehlt? Prüfen Sie den Anlernmodus und suchen Sie erneut."
+web.commissioning.scan_none_hint:
+  en: "Put the device into pairing mode, then search again."
+  de: "Versetzen Sie das Gerät in den Anlernmodus und suchen Sie dann erneut."
 web.commissioning.scan_found:
   en: "{count} devices in pairing mode nearby."
   de: "{count} Geräte im Anlernmodus in der Nähe."

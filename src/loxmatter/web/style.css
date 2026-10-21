@@ -4031,8 +4031,202 @@ p.zigbee-countdown {
   flex: 1 1 auto;
 }
 
-.commission-scan-line {
-  margin: 0.8rem 0 0.4rem;
+/* The scan panel (design 2026-10-16). One box in four colours: copper
+ * while a scan runs - the dialog's one moving thing -, green with devices
+ * found, plain with none, grey while a device is commissioned. */
+.commission-scan {
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+  margin: 0.9rem 0 0.4rem;
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.commission-scan .grow {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.commission-scan > button {
+  flex: none;
+}
+
+.commission-scan.is-scanning {
+  background: var(--type-bg);
+  border-color: color-mix(in srgb, var(--accent) 35%, transparent);
+}
+
+.commission-scan.is-found {
+  background: var(--ok-bg);
+  border-color: color-mix(in srgb, var(--ok) 40%, transparent);
+}
+
+.commission-scan.is-blocked {
+  background: var(--off-bg);
+}
+
+.commission-scan-title {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 1.05rem;
+  font-weight: 650;
+}
+
+.commission-scan.is-found .commission-scan-title {
+  color: var(--ok);
+}
+
+.commission-scan-hint {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+.commission-scan-ring {
+  position: relative;
+  flex: none;
+  width: 4rem;
+  height: 4rem;
+  color: var(--accent);
+}
+
+.commission-scan-ring svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.commission-scan-ring circle {
+  fill: none;
+  stroke-width: 5;
+}
+
+.commission-scan-ring .track {
+  stroke: color-mix(in srgb, var(--accent) 22%, transparent);
+}
+
+/* The dash is the circle's circumference (2π · 27); `scanRingOffset()`
+ * moves it. Linear over one poll interval, so the ring runs down evenly
+ * between two answers instead of jumping once a second. */
+.commission-scan-ring .fill {
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-dasharray: 169.6;
+  transition: stroke-dashoffset 1s linear;
+}
+
+.commission-scan-seconds {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  font-size: 1.35rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.commission-scan-seconds small {
+  margin-top: 0.15rem;
+  font-size: 0.7rem;
+  font-weight: 500;
+}
+
+.commission-scan-badge {
+  flex: none;
+  width: 2.5rem;
+  height: 2.5rem;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--off-bg);
+  color: var(--off);
+}
+
+.commission-scan.is-found .commission-scan-badge {
+  background: var(--ok);
+  color: var(--surface);
+}
+
+.commission-scan.is-blocked .commission-scan-badge {
+  background: var(--surface);
+}
+
+.commission-scan-badge .icon {
+  width: 1.2rem;
+  height: 1.2rem;
+  stroke-width: 2.4;
+}
+
+/* A halo around the Bluetooth mark, so the heading moves too while the
+ * ring is between two steps. */
+.commission-scan-pulse {
+  position: relative;
+  display: inline-flex;
+  color: var(--accent);
+}
+
+.commission-scan-pulse::before {
+  content: "";
+  position: absolute;
+  inset: -0.1rem;
+  border-radius: 50%;
+  background: currentColor;
+  animation: commission-scan-pulse 1.6s ease-out infinite;
+}
+
+.commission-scan-pulse .icon {
+  position: relative;
+  stroke-width: 2.2;
+}
+
+@keyframes commission-scan-pulse {
+  from {
+    transform: scale(1);
+    opacity: 0.45;
+  }
+  to {
+    transform: scale(1.9);
+    opacity: 0;
+  }
+}
+
+/* The ring and its number still count down; only the motion goes. */
+@media (prefers-reduced-motion: reduce) {
+  .commission-scan-ring .fill {
+    transition: none;
+  }
+
+  .commission-scan-pulse::before {
+    animation: none;
+    opacity: 0;
+  }
+}
+
+/* Where the scan's devices will land, while it runs. */
+.commission-card-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 4.5rem;
+  padding: 0.75rem 0.85rem;
+  border: 1.5px dashed var(--border);
+  border-radius: 8px;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  text-align: center;
+}
+
+@media (max-width: 480px) {
+  .commission-scan {
+    flex-wrap: wrap;
+  }
 }
 
 .commission-cards {

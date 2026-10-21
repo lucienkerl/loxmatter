@@ -165,6 +165,13 @@
       <symbol id="i-check" viewBox="0 0 24 24">
         <path d="M5 12.5l4.5 4.5L19 7.5" />
       </symbol>
+      <!-- The commissioning dialog's scan panel (design 2026-10-16). -->
+      <symbol id="i-bluetooth" viewBox="0 0 24 24">
+        <path d="M7 7l10 10-5 5V2l5 5L7 17" />
+      </symbol>
+      <symbol id="i-pause" viewBox="0 0 24 24">
+        <path d="M9 6v12M15 6v12" />
+      </symbol>
       <!-- Three filled dots instead of strokes: `.icon` sets
            `fill: none; stroke: currentColor`, which is correct for line icons,
            but would make a dot invisible. `#i-offline` already makes
@@ -3683,9 +3690,6 @@
             :placeholder="t('web.devices.room_new_placeholder')"
             :aria-label="t('web.devices.room_new_placeholder')"
           />
-          <button type="button" @click="rescanCommissioning()"
-                  :disabled="commissioning?.scan?.state !== 'idle'"
-                  x-text="t('web.commissioning.scan_again')"></button>
         </div>
         <div class="commission-help">
         <details class="commission-disclosure">
@@ -3730,7 +3734,47 @@
           </div>
         </details>
         </div>
-        <p class="hint commission-scan-line" x-text="scanLine()"></p>
+        <!--
+          The scan panel (design 2026-10-16): a scan under way had been one
+          grey hint line, easy to miss while the dialog waits ten seconds
+          for nothing visible. Now a ring counts the scan down and the
+          result, or the reason no scan runs, stands in the same place,
+          beside the button that starts the next one. The ring's length is
+          `scanRingOffset()`, from the poll's `last_scan_age`; the CSS
+          transition carries it from one poll to the next.
+        -->
+        <div class="commission-scan" role="status" aria-live="polite"
+             x-show="commissioning?.scan" x-cloak
+             :class="'is-' + scanPanelState()">
+          <div class="commission-scan-ring" x-show="scanPanelState() === 'scanning'" aria-hidden="true">
+            <svg viewBox="0 0 64 64">
+              <circle class="track" cx="32" cy="32" r="27"></circle>
+              <circle class="fill" cx="32" cy="32" r="27" transform="rotate(-90 32 32)"
+                      :style="{ strokeDashoffset: scanRingOffset() }"></circle>
+            </svg>
+            <span class="commission-scan-seconds">
+              <span x-text="scanSecondsLeft()"></span>
+              <small x-text="t('web.commissioning.scan_seconds_unit')"></small>
+            </span>
+          </div>
+          <span class="commission-scan-badge" x-show="scanPanelState() !== 'scanning'" aria-hidden="true">
+            <svg class="icon"><use :href="scanPanelIcon()"></use></svg>
+          </span>
+          <div class="grow">
+            <div class="commission-scan-title">
+              <span class="commission-scan-pulse" x-show="scanPanelState() === 'scanning'" aria-hidden="true">
+                <svg class="icon"><use href="#i-bluetooth"></use></svg>
+              </span>
+              <span x-text="scanLine()"></span>
+            </div>
+            <div class="commission-scan-hint" x-text="scanHint()"></div>
+          </div>
+          <button type="button" @click="rescanCommissioning()"
+                  x-show="scanPanelState() !== 'scanning'"
+                  :class="{ primary: scanPanelState() === 'none' }"
+                  :disabled="commissioning?.scan?.state !== 'idle'"
+                  x-text="t('web.commissioning.scan_again')"></button>
+        </div>
         <p class="banner warn" x-show="commissioning?.bluetooth_warning" x-cloak
            x-text="t('web.commissioning.bluetooth_warning')"></p>
         <p class="banner danger" x-show="commissioningError" x-cloak x-text="commissioningError"></p>
@@ -3834,6 +3878,8 @@
               </div>
             </div>
           </template>
+          <div class="commission-card-placeholder" x-show="scanPanelState() === 'scanning'" x-cloak
+               x-text="t('web.commissioning.scan_placeholder')"></div>
         </div>
         <div class="commission-foot">
           <button type="button" class="primary" @click="startCommissioning()"
