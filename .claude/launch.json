@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "loxmatter-demo",
+      "runtimeExecutable": "uv",
+      "runtimeArgs": ["run", "python", "scripts/dev_web_server.py", "--demo", "--port", "8431"],
+      "port": 8431
+    }
+  ]
+}

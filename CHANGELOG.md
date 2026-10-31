@@ -11,6 +11,12 @@ people who don't know the code.
 ### Before you update
 
 - **The database schema rises from 14 to 16.** Nothing needs doing by hand.
+- **Colour temperature and brightness inputs change unit.** The colour
+  temperature of a lamp now reaches Loxone in Kelvin instead of mired, and
+  the brightness a motion sensor measures in lux instead of the sensor's
+  raw number. The inputs keep their names, so nothing needs re-importing -
+  but a threshold or formula on them in Loxone Config has to be adjusted:
+  "dark" below 15000 raw is about 30 lx now.
 
 ### Added
 
@@ -33,6 +39,9 @@ people who don't know the code.
 
 ### Changed
 
+- **The signal list shows the device's raw value under every converted
+  value** - "raw value: 23000" under "200 lx" - and the tile's tooltip
+  shows it too.
 - **Lights follow the colour wheel live.** Dragging a colour wheel or a
   slider in the Loxone app used to leave the lamps further and further
   behind: the Miniserver sends its next value only once the bridge has

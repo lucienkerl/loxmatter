@@ -394,7 +394,7 @@ All tests run without hardware and without network.
    fewer inputs than the previous one. The preview shows `inputs` and
    `hidden_count` per device (section 7), but does not compare that to
    the previous export.
-7. **Mired → Kelvin missing (final review, fix 1a).** Cluster 768
+7. ~~**Mired → Kelvin missing (final review, fix 1a).** Cluster 768
    (ColorControl), attribute `ColorTemperatureMireds` (7): Matter delivers
    mired, Loxone expects Kelvin, and `Kelvin = 1e6 / Mired` is a
    reciprocal — the existing `scale` mechanism in `clusters.yaml` can only
@@ -403,4 +403,6 @@ All tests run without hardware and without network.
    solution would need either a second conversion kind in
    `profiles/table.py` (an `invert` or `formula` field alongside `scale`)
    or a runtime conversion in `loxone.values.to_loxone_value` — outside
-   the scope of this fix.
+   the scope of this fix.~~
+   **Done (2026-10-01).** `convert: kelvin_from_mired` in `clusters.yaml`, see
+   docs/superpowers/specs/2026-10-01-lux-kelvin-conversion-design.md.
