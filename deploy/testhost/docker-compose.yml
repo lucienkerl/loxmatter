@@ -107,7 +107,15 @@ services:
       # hosts from inside the Thread network.
       NAT64: "0"
       FIREWALL: "0"
-    command: --backbone-interface ${BACKBONE_IF}
+    # OTBR_REST_PORT moves the REST API off 8081 (ioBroker's admin page
+    # holds 8081 on many Loxone hosts). The image's entrypoint has no
+    # option for the port, so it rides in the one slot the entrypoint
+    # passes through to otbr-agent word for word: `--trel-url`'s value
+    # lands at the end of OTBR_AGENT_OPTS, and otbr-agent's getopt_long
+    # reads options after the radio URL as well. Unset, the command is
+    # exactly what it always was, so no existing border router is
+    # recreated for it. tests/test_compose_otbr_port.py holds both shapes.
+    command: --backbone-interface ${BACKBONE_IF}${OTBR_REST_PORT:+ --trel-url "--rest-listen-port ${OTBR_REST_PORT}"}
     # Without this limit OTBR doesn't start (2026-09-03, measured on a
     # Pi 4). The Docker daemon passes a `nofile` of 1,073,741,816 into the
     # container here; `start-stop-daemon`, which the image's init script
@@ -396,6 +404,9 @@ services:
       # volume survives a `docker compose down`/`up`, a user home inside
       # the container does not.
       LOXMATTER_STORE: /data/loxmatter.sqlite
+      # Where the bridge reaches its border router's REST API: the `otbr`
+      # service above, on OTBR_REST_PORT when .env moves it off 8081.
+      LOXMATTER_OTBR_URL: http://127.0.0.1:${OTBR_REST_PORT:-8081}
       # Additional access to all `/api` routes (commissioning, removal,
       # fabric backup) via `Authorization: Bearer <token>` - see
       # `build_api_guard` in src/loxmatter/loxone/server.py and README.md.
@@ -426,8 +437,13 @@ services:
       - ws://127.0.0.1:5580/ws
       - --miniserver
       - ${MINISERVER_IP}
+      # LOXMATTER_PORT in .env moves the web interface and the Miniserver's
+      # HTTP port off 8080 - for a host where something else already holds
+      # it, such as a Home Assistant installation's border router web page.
+      # The value stays on the line right after `--listen`: install.sh and
+      # scripts/update.sh read the default from there.
       - --listen
-      - "8080"
+      - "${LOXMATTER_PORT:-8080}"
       # Active since Task 8 - see the comment at the volume line above:
       # the two belong together. Without the volume line this argument
       # would be ineffective (the route would see no directory and
@@ -530,7 +546,7 @@ services:
       # deploys always comes from that service's own `.env` line (see the
       # comment on its `image:` above).
       LOXMATTER_IMAGE: ghcr.io/lucienkerl/loxmatter
-      LOXMATTER_HEALTH_URL: http://host.docker.internal:8080/health
+      LOXMATTER_HEALTH_URL: http://host.docker.internal:${LOXMATTER_PORT:-8080}/health
       LOXMATTER_HEALTH_TIMEOUT: "120"
 
 volumes:

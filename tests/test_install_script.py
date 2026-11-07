@@ -987,6 +987,87 @@ def test_the_health_port_comes_from_the_compose_file(installer):
     assert "assuming 8080" not in result.output
 
 
+def test_a_chosen_port_is_written_and_probed(installer):
+    # A host where 8080 is taken (Home Assistant's border router web page):
+    # LOXMATTER_PORT lands in .env, and the health probe follows it.
+    result = installer(env={"LOXMATTER_PORT": "8000"})
+    assert result.returncode == 0
+    env_file = result.home / "loxmatter" / "deploy" / "testhost" / ".env"
+    assert "LOXMATTER_PORT=8000" in env_file.read_text()
+    assert any(":8000/health" in call for call in result.calls)
+    assert not any(":8080/health" in call for call in result.calls)
+
+
+def test_a_port_that_is_not_a_number_stops_before_anything_is_written(installer):
+    result = installer(env={"LOXMATTER_PORT": "80a"})
+    assert result.returncode != 0
+    assert "LOXMATTER_PORT is not a port number" in result.output
+    assert not (result.home / "loxmatter").exists()
+
+
+# `ss -Hltnp "sport = :PORT"` for the ports listed in FAKE_LISTENERS as
+# "port:process" pairs - the shape the real one prints, reduced to what
+# port_holder reads.
+_SS = """for a in "$@"; do last="$a"; done
+port="${last##*:}"
+for pair in ${FAKE_LISTENERS-}; do
+  if [ "${pair%%:*}" = "$port" ]; then
+    echo "LISTEN 0 4096 0.0.0.0:$port 0.0.0.0:* users:((\\"${pair#*:}\\",pid=1,fd=3))"
+  fi
+done
+exit 0
+"""
+
+
+def test_taken_ports_move_to_the_next_free_ones(installer):
+    # The Pi of the first real migration: Home Assistant's border router web
+    # page on 8080, ioBroker's admin page on 8081 and 8082 also taken.
+    result = installer(
+        stubs={"ss": _SS},
+        env={"FAKE_LISTENERS": "8080:otbr-web 8081:iobroker.js-con 8082:otbr-agent"},
+    )
+    assert result.returncode == 0, result.output
+    text = result.env_file.read_text()
+    assert "LOXMATTER_PORT=8083" in text
+    assert "OTBR_REST_PORT=8084" in text
+    assert "Port 8080 (web interface) is in use by otbr-web" in result.output
+    assert "Port 8081 (border router) is in use by iobroker.js-con" in result.output
+    assert any(":8083/health" in call for call in result.calls)
+
+
+def test_free_ports_write_nothing(installer):
+    result = installer(stubs={"ss": _SS})
+    assert result.returncode == 0, result.output
+    text = result.env_file.read_text()
+    assert "LOXMATTER_PORT=8" not in text
+    assert "OTBR_REST_PORT=8" not in text
+
+
+def test_a_chosen_port_that_is_taken_stops_before_anything_is_written(installer):
+    result = installer(
+        stubs={"ss": _SS}, env={"LOXMATTER_PORT": "9000", "FAKE_LISTENERS": "9000:nginx"}
+    )
+    assert result.returncode != 0
+    assert "LOXMATTER_PORT=9000 is already in use by nginx" in result.output
+    assert not (result.home / "loxmatter").exists()
+
+
+def test_another_matter_server_stops_the_run_before_anything_is_written(installer):
+    result = installer(stubs={"ss": _SS}, env={"FAKE_LISTENERS": "5580:python3"})
+    assert result.returncode != 0
+    assert "Port 5580 is in use by python3" in result.output
+    assert not (result.home / "loxmatter").exists()
+
+
+def test_a_second_run_does_not_trip_over_its_own_ports(installer):
+    first = installer(stubs={"ss": _SS})
+    assert first.returncode == 0
+    second = installer(
+        stubs={"ss": _SS}, env={"FAKE_LISTENERS": "8080:loxmatter 8081:otbr-agent 5580:node"}
+    )
+    assert second.returncode == 0, second.output
+
+
 def test_an_ambiguous_port_falls_back_audibly(installer):
     # Two --listen entries: better to give up loudly than to silently pick
     # the wrong number and blame the service for it afterward.

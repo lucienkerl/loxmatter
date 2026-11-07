@@ -142,6 +142,8 @@ These environment variables skip the matching question:
   BACKBONE_IF         network interface for the border router (thread mode only)
   BLUETOOTH_ADAPTER   Bluetooth adapter, e.g. 0 for hci0
   LOXMATTER_API_TOKEN token for scripts and curl; generated when unset
+  LOXMATTER_PORT      port of the web interface; 8080, or the next free one
+  OTBR_REST_PORT      port of the border router's REST API; 8081, or the next free one
 EOF
 }
 
@@ -597,6 +599,93 @@ ask_questions() {
   decide_mode
   decide_backbone
   decide_bluetooth
+  decide_ports
+}
+
+# ----------------------------------------------------------------- ports --
+#
+# A host that already runs something else - Home Assistant's border router
+# web page on 8080, ioBroker's admin page on 8081, another Matter server on
+# 5580 - would otherwise fail at `compose up`, or worse, start a second
+# service that loses the port race silently. Checked before anything is
+# installed, with no question: a port that is taken moves to the next free
+# one, and the run says which and why.
+
+CHOSEN_PORT=""
+CHOSEN_OTBR_REST_PORT=""
+
+# The listener on TCP port $1 as "process" (or "another program" when the
+# name is not visible to this user), or nothing when the port is free. No
+# `ss` means no check: a host without iproute2 is told so once, and the
+# defaults stand.
+port_holder() {
+  ph_line="$(ss -Hltnp "sport = :$1" 2>/dev/null | head -n 1)" || ph_line=""
+  [ -n "$ph_line" ] || return 0
+  ph_name="$(printf '%s' "$ph_line" | sed -n 's/.*users:(("\([^"]*\)".*/\1/p')"
+  printf '%s' "${ph_name:-another program}"
+}
+
+# The first port from $1 upward (at most 50 tries) that nothing listens on
+# and that is not $2 - the other port this run has already picked.
+next_free_port() {
+  nf_port="$1"
+  nf_tries=0
+  while [ "$nf_tries" -lt 50 ]; do
+    if [ "$nf_port" != "$2" ] && [ -z "$(port_holder "$nf_port")" ]; then
+      printf '%s' "$nf_port"
+      return 0
+    fi
+    nf_port=$((nf_port + 1))
+    nf_tries=$((nf_tries + 1))
+  done
+  return 1
+}
+
+# $1 variable name, $2 its value from the environment (may be empty), $3 the
+# default, $4 what it is for, $5 the port already taken by this run. Sets
+# PICKED_PORT: the port to write, or empty when the default stands. Not a
+# function whose output is captured: `die` has to end the run, not a
+# subshell.
+pick_port() {
+  PICKED_PORT=""
+  pp_wanted="${2:-$3}"
+  pp_holder="$(port_holder "$pp_wanted")"
+  if [ -z "$pp_holder" ]; then
+    PICKED_PORT="$2"
+    return 0
+  fi
+  if [ -n "$2" ]; then
+    die "$1=$2 is already in use by $pp_holder. Pick another port, or leave $1 unset to have a free one chosen. Nothing was changed."
+  fi
+  pp_free="$(next_free_port $((pp_wanted + 1)) "$5")" ||
+    die "Port $pp_wanted ($4) is in use by $pp_holder, and no free port was found after it. Set $1=... to a free port. Nothing was changed."
+  note "Port $pp_wanted ($4) is in use by $pp_holder - using $pp_free instead ($1=$pp_free)."
+  PICKED_PORT="$pp_free"
+}
+
+decide_ports() {
+  # Passed in: written as given, also where nothing below runs.
+  CHOSEN_PORT="${LOXMATTER_PORT:-}"
+  CHOSEN_OTBR_REST_PORT="${OTBR_REST_PORT:-}"
+  # A second run keeps what the first one chose: the bridge itself holds
+  # these ports by now, and would otherwise be "in the way" of itself.
+  if [ -f "$TARGET_DIR/deploy/testhost/.env" ]; then
+    return 0
+  fi
+  if ! command -v ss >/dev/null 2>&1; then
+    note "Cannot check for ports in use (no 'ss' on this host); 8080, 8081 and 5580 are assumed free."
+    return 0
+  fi
+  matter_holder="$(port_holder 5580)"
+  if [ -n "$matter_holder" ]; then
+    die "Port 5580 is in use by $matter_holder - another Matter server runs on this host
+(Home Assistant's, for example). Two Matter servers cannot share this host.
+Nothing was changed."
+  fi
+  pick_port LOXMATTER_PORT "${LOXMATTER_PORT:-}" 8080 "web interface" ""
+  CHOSEN_PORT="$PICKED_PORT"
+  pick_port OTBR_REST_PORT "${OTBR_REST_PORT:-}" 8081 "border router" "${CHOSEN_PORT:-8080}"
+  CHOSEN_OTBR_REST_PORT="$PICKED_PORT"
 }
 
 # Strict IPv4 check. Octets are shape-checked with `case` BEFORE any numeric
@@ -653,6 +742,24 @@ check_config_source() {
   if [ -n "${MINISERVER_IP:-}" ] && ! valid_ipv4 "$MINISERVER_IP"; then
     die "MINISERVER_IP is not a valid IPv4 address: '$MINISERVER_IP'"
   fi
+  case "${LOXMATTER_PORT:-}" in
+    "") ;;
+    *[!0-9]*|0*) die "LOXMATTER_PORT is not a port number: '$LOXMATTER_PORT'" ;;
+    *)
+      if [ "$LOXMATTER_PORT" -gt 65535 ]; then
+        die "LOXMATTER_PORT is not a port number: '$LOXMATTER_PORT'"
+      fi
+      ;;
+  esac
+  case "${OTBR_REST_PORT:-}" in
+    "") ;;
+    *[!0-9]*|0*) die "OTBR_REST_PORT is not a port number: '$OTBR_REST_PORT'" ;;
+    *)
+      if [ "$OTBR_REST_PORT" -gt 65535 ]; then
+        die "OTBR_REST_PORT is not a port number: '$OTBR_REST_PORT'"
+      fi
+      ;;
+  esac
 }
 
 # ------------------------------------------------------------- phase two --
@@ -1113,6 +1220,14 @@ configure() {
   # One passed in is still written, and the bridge takes it over on its first
   # start; check_config_source has already refused a malformed one.
   write_env_value MINISERVER_IP "${MINISERVER_IP:-}" 0
+  # Only written when passed in: an empty line would say nothing that the
+  # defaults do not already say.
+  if [ -n "$CHOSEN_PORT" ]; then
+    write_env_value LOXMATTER_PORT "$CHOSEN_PORT" 0
+  fi
+  if [ -n "$CHOSEN_OTBR_REST_PORT" ]; then
+    write_env_value OTBR_REST_PORT "$CHOSEN_OTBR_REST_PORT" 0
+  fi
   if [ "$ENV_IS_NEW" -eq 1 ] || [ -z "$(env_file_value LOXMATTER_API_TOKEN)" ]; then
     token_value="${LOXMATTER_API_TOKEN:-$(gen_token)}"
     # gen_token's /dev/urandom fallback runs through a pipe with no pipefail,
@@ -1192,6 +1307,11 @@ $1"
 # would probe it for its whole budget and then blame the service for not
 # answering.
 stack_port() {
+  port_value="$(env_file_value LOXMATTER_PORT)"
+  case "$port_value" in
+    ""|*[!0-9]*) ;;
+    *) printf '%s' "$port_value"; return 0 ;;
+  esac
   port_value="$(awk '
     /^[[:space:]]*-[[:space:]]*--listen[[:space:]]*$/ { want = 1; next }
     want { gsub(/[^0-9]/, ""); if ($0 != "") { print; found++ }; want = 0 }

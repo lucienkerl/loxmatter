@@ -26,6 +26,14 @@ people who don't know the code.
   you pause ZHA, and removing devices there is a separate, optional last step
   that only touches devices which arrived here.
 
+- **Ports that are already taken no longer stop the installation.** The
+  installer checks the web interface's port (8080) and the border router's
+  REST port (8081) first and moves a taken one to the next free port, saying
+  which program holds it - Home Assistant's border router page and
+  ioBroker's admin page are common. Both can also be set in `.env`
+  (`LOXMATTER_PORT`, `OTBR_REST_PORT`). Another Matter server on port 5580
+  stops the run before anything is changed.
+
 ### Fixed
 
 - **The installer no longer stops at "Starting the containers" when your user
