@@ -1741,3 +1741,57 @@ def test_a_changed_folder_is_where_it_installs(installer):
     assert result.returncode == 0, result.output
     assert (result.home / "lox" / "deploy" / "testhost" / ".env").exists()
     assert not (result.home / "loxmatter").exists()
+
+
+def test_a_privileged_border_router_gives_its_stick_from_ot_rcp_device(installer, tmp_path):
+    # Home Assistant's own compose example runs the border router privileged:
+    # no device is listed, only OT_RCP_DEVICE names /dev/ttyUSB0 - and the
+    # by-id link to that node is what lands in .env (the Pi of the first real
+    # migration, 7 November 2026).
+    hw = _serial(tmp_path, "usb-SONOFF_MG24-if00-port0")
+    node = Path(hw["SERIAL_DEV_DIR"]) / "ttyUSB0"
+    docker = _DOCKER_HA.replace(
+        "*Devices*) printf '/dev/serial/by-id/usb-SONOFF_MG24-if00-port0\\n/dev/net/tun\\n' ;;",
+        "*Devices*) ;;",
+    ).replace("uart:///dev/ttyUSB0?", f"uart://{node}?")
+    assert "usb-SONOFF_MG24" not in docker
+    result = installer(
+        stubs={"ss": _SS, "docker": docker},
+        env={
+            **hw,
+            "LOXMATTER_TAKE_OVER": "home-assistant",
+            "FAKE_LISTENERS": "5580:python3 8080:otbr-web 8081:iobroker.js-con 8082:otbr-agent",
+        },
+    )
+    assert result.returncode == 0, result.output
+    text = result.env_file.read_text()
+    assert f"RADIO_DEVICE={hw['SERIAL_BY_ID_DIR']}/usb-SONOFF_MG24-if00-port0" in text, (
+        result.output + text
+    )
+
+
+def test_the_take_over_reads_through_sudo_when_docker_refuses_this_user(installer):
+    # pi outside the docker group: `docker inspect -f` is refused but still
+    # prints an empty line, exactly as the real one does. That line must not
+    # be taken for the stick - the run on 7 November 2026 stopped with
+    # "Could not tell which stick homeassistant-otbr-1 uses".
+    denied = (
+        """if [ -z "${STUB_VIA_SUDO-}" ] && [ "${1-} ${2-}" != "compose version" ]; then
+  [ "${1-}" = "inspect" ] && echo
+  echo "permission denied while trying to connect to the docker API" >&2
+  exit 1
+fi
+"""
+        + _DOCKER_HA
+    )
+    result = installer(
+        stubs={"ss": _SS, "docker": denied},
+        env={
+            "LOXMATTER_TAKE_OVER": "home-assistant",
+            "FAKE_LISTENERS": "5580:python3 8080:otbr-web 8081:iobroker.js-con 8082:otbr-agent",
+        },
+    )
+    assert result.returncode == 0, result.output
+    text = result.env_file.read_text()
+    assert "RADIO_DEVICE=/dev/serial/by-id/usb-SONOFF_MG24-if00-port0" in text
+    assert "RADIO_BAUDRATE=460800" in text
