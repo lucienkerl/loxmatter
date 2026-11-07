@@ -33,6 +33,15 @@ people who don't know the code.
   ioBroker's admin page are common. Both can also be set in `.env`
   (`LOXMATTER_PORT`, `OTBR_REST_PORT`). Another Matter server on port 5580
   stops the run before anything is changed.
+- **Taking over from Home Assistant on the same host.** With
+  `LOXMATTER_TAKE_OVER=home-assistant` the installer hands Home Assistant
+  Container's Matter server and Thread border router to loxmatter:
+  loxmatter's Matter server starts on a copy of Home Assistant's Matter data
+  (same fabric, nothing is paired again, and Home Assistant keeps its Matter
+  devices through it), and loxmatter's border router takes the Thread stick
+  with the same Thread network. `scripts/home-assistant-handover.sh
+  give-back` starts Home Assistant's containers again on their untouched
+  data.
 
 ### Fixed
 

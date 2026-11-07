@@ -144,6 +144,9 @@ These environment variables skip the matching question:
   LOXMATTER_API_TOKEN token for scripts and curl; generated when unset
   LOXMATTER_PORT      port of the web interface; 8080, or the next free one
   OTBR_REST_PORT      port of the border router's REST API; 8081, or the next free one
+  LOXMATTER_TAKE_OVER home-assistant: take over Home Assistant's Matter server and
+                      border router on this host (scripts/home-assistant-handover.sh
+                      give-back undoes it)
 EOF
 }
 
@@ -596,10 +599,66 @@ announce_questions() {
 # the package and Docker installation.
 ask_questions() {
   announce_questions
+  decide_take_over
   decide_mode
   decide_backbone
   decide_bluetooth
   decide_ports
+}
+
+# ------------------------------------------------------------ take-over --
+#
+# Home Assistant Container on the same host runs a Matter server on 5580 and
+# a border router on the Thread stick, and neither can run twice.
+# LOXMATTER_TAKE_OVER=home-assistant hands both to loxmatter: the
+# installer only reads here, and writes the stick into .env; the change
+# itself is scripts/home-assistant-handover.sh `take`, run in place of
+# `compose up` (start_stack), and its `give-back` undoes it.
+
+# Docker for reading, before join_docker_group has settled whether this user
+# needs sudo for it.
+docker_read() {
+  docker "$@" 2>/dev/null || { [ -n "$SUDO" ] && $SUDO docker "$@" 2>/dev/null; }
+}
+
+# The name of a container running Home Assistant's Matter server, or nothing.
+home_assistant_matter_container() {
+  docker_read ps -a --format '{{.Names}}	{{.Image}}' |
+    awk -F '	' '$2 ~ /python-matter-server/ { print $1; exit }'
+}
+
+decide_take_over() {
+  [ -n "${LOXMATTER_TAKE_OVER:-}" ] || return 0
+  step "looking at Home Assistant on this host"
+  say "Taking over from Home Assistant"
+  if [ -f "$TARGET_DIR/deploy/testhost/.env" ]; then
+    note "Configured by an earlier run; kept."
+    return 0
+  fi
+  if [ "$NEED_DOCKER" -eq 1 ]; then
+    die "LOXMATTER_TAKE_OVER=home-assistant needs Docker, and Docker is not installed here. Nothing was changed."
+  fi
+  to_matter="$(home_assistant_matter_container)"
+  [ -n "$to_matter" ] ||
+    die "No Home Assistant Matter server (python-matter-server) runs on this host - nothing to take over. Nothing was changed."
+  note "Matter server: $to_matter - loxmatter starts on a copy of its data"
+  to_otbr="$(docker_read ps -a --format '{{.Names}}	{{.Image}}' |
+    awk -F '	' '$1 != "otbr" && ($2 ~ /border-router/ || $2 ~ /\/otbr(:|$)/) { print $1; exit }')"
+  if [ -z "$to_otbr" ]; then
+    note "Thread border router: none - Thread stays off"
+    return 0
+  fi
+  to_radio="$(docker_read inspect -f '{{range .HostConfig.Devices}}{{.PathOnHost}}{{"\n"}}{{end}}' "$to_otbr" |
+    grep -v '/dev/net/tun' | head -n 1)"
+  to_baud="$(docker_read inspect -f '{{range .Config.Env}}{{.}}{{"\n"}}{{end}}' "$to_otbr" |
+    sed -n 's/.*uart-baudrate=\([0-9]*\).*/\1/p' | head -n 1)"
+  [ -n "$to_radio" ] ||
+    die "Could not tell which stick $to_otbr uses. Nothing was changed."
+  RADIO_DEVICE="$to_radio"
+  if [ -z "${RADIO_BAUDRATE:-}" ] && [ -n "$to_baud" ]; then
+    RADIO_BAUDRATE="$to_baud"
+  fi
+  note "Thread border router: $to_otbr on $to_radio - loxmatter's border router takes this stick"
 }
 
 # ----------------------------------------------------------------- ports --
@@ -677,10 +736,17 @@ decide_ports() {
     return 0
   fi
   matter_holder="$(port_holder 5580)"
-  if [ -n "$matter_holder" ]; then
-    die "Port 5580 is in use by $matter_holder - another Matter server runs on this host
-(Home Assistant's, for example). Two Matter servers cannot share this host.
+  if [ -n "$matter_holder" ] && [ -z "${LOXMATTER_TAKE_OVER:-}" ]; then
+    if [ "$NEED_DOCKER" -eq 0 ] && [ -n "$(home_assistant_matter_container)" ]; then
+      die "Port 5580 is in use by Home Assistant's Matter server. Two Matter servers
+cannot share this host. To let loxmatter take over Home Assistant's Matter
+server and Thread border router (Home Assistant keeps its Matter devices
+through loxmatter's server), run this again with
+  LOXMATTER_TAKE_OVER=home-assistant
 Nothing was changed."
+    fi
+    die "Port 5580 is in use by $matter_holder - another Matter server runs on this host.
+Two Matter servers cannot share this host. Nothing was changed."
   fi
   pick_port LOXMATTER_PORT "${LOXMATTER_PORT:-}" 8080 "web interface" ""
   CHOSEN_PORT="$PICKED_PORT"
@@ -750,6 +816,10 @@ check_config_source() {
         die "LOXMATTER_PORT is not a port number: '$LOXMATTER_PORT'"
       fi
       ;;
+  esac
+  case "${LOXMATTER_TAKE_OVER:-}" in
+    ""|home-assistant) ;;
+    *) die "LOXMATTER_TAKE_OVER can only be 'home-assistant' (got: $LOXMATTER_TAKE_OVER)" ;;
   esac
   case "${OTBR_REST_PORT:-}" in
     "") ;;
@@ -1265,6 +1335,14 @@ start_stack() {
     return 0
   fi
   mkdir -p "$STACK_DIR/data"
+  if [ -n "${LOXMATTER_TAKE_OVER:-}" ] && [ ! -f "$STACK_DIR/.homeassistant-handover" ]; then
+    "$TARGET_DIR/scripts/home-assistant-handover.sh" take ||
+      die "The take-over from Home Assistant stopped. What it printed above says where; to return
+to Home Assistant:
+  $TARGET_DIR/scripts/home-assistant-handover.sh give-back"
+    STACK_STARTED=1
+    return 0
+  fi
   # No --build: deploy/testhost/docker-compose.yml names a published image,
   # and `up` only falls back to building when no such image can be obtained
   # at all (see the comment above that file's `image:` line) - the exact

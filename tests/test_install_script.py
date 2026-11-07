@@ -137,6 +137,11 @@ case "${1-}" in
     cp "$LOXMATTER_REPO/deploy/testhost/docker-compose.yml" "$target/deploy/testhost/"
     cp "$LOXMATTER_REPO/deploy/testhost/.env.example" "$target/deploy/testhost/"
     cp "$LOXMATTER_REPO/scripts/update.sh" "$target/scripts/"
+    # The take-over itself has tests of its own; here it only has to be
+    # called, so a stand-in logs the call.
+    printf '#!/bin/sh\nprintf "%%s\\n" "handover $*" >> "$STUB_LOG"\n' \
+      > "$target/scripts/home-assistant-handover.sh"
+    chmod 755 "$target/scripts/home-assistant-handover.sh"
     ;;
   rev-list) echo "${FAKE_BEHIND-0}" ;;
 esac
@@ -1573,3 +1578,68 @@ def test_every_question_comes_before_anything_is_installed(installer, tmp_path):
     docker = result.output.index("Docker is not installed")
     assert thread_heading < packages
     assert thread_heading < docker
+
+
+# Home Assistant Container on the same host: its Matter server and its border
+# router on the MG24 stick, as `docker ps -a` and `docker inspect` show them on
+# the Pi of the first real migration (7 November 2026).
+_DOCKER_HA = _DOCKER.replace(
+    """if [ "${1-}" = "ps" ]; then""",
+    """if [ "${1-}" = "ps" ] && [ "${2-}" = "-a" ]; then
+  printf 'homeassistant\\tghcr.io/home-assistant/home-assistant:stable\\n'
+  printf 'matter-server\\tghcr.io/home-assistant-libs/python-matter-server:stable\\n'
+  printf 'homeassistant-otbr-1\\topenthread/border-router:latest\\n'
+  exit 0
+fi
+if [ "${1-}" = "inspect" ]; then
+  case "$3" in
+    *Devices*) printf '/dev/serial/by-id/usb-SONOFF_MG24-if00-port0\\n/dev/net/tun\\n' ;;
+    *Env*) printf 'OT_RCP_DEVICE=spinel+hdlc+uart:///dev/ttyUSB0?uart-baudrate=460800\\nOT_REST_LISTEN_PORT=8082\\n' ;;
+  esac
+  exit 0
+fi
+if [ "${1-}" = "ps" ]; then""",
+)
+
+
+def test_home_assistants_matter_server_stops_the_run_with_the_way_out(installer):
+    result = installer(
+        stubs={"ss": _SS, "docker": _DOCKER_HA}, env={"FAKE_LISTENERS": "5580:python3"}
+    )
+    assert result.returncode != 0
+    assert "Port 5580 is in use by Home Assistant's Matter server" in result.output
+    assert "LOXMATTER_TAKE_OVER=home-assistant" in result.output
+    assert not (result.home / "loxmatter").exists()
+
+
+def test_the_take_over_takes_home_assistants_stick_and_hands_the_start_to_the_script(installer):
+    result = installer(
+        stubs={"ss": _SS, "docker": _DOCKER_HA},
+        env={
+            "LOXMATTER_TAKE_OVER": "home-assistant",
+            "FAKE_LISTENERS": "5580:python3 8080:otbr-web 8081:iobroker.js-con 8082:otbr-agent",
+        },
+    )
+    assert result.returncode == 0, result.output
+    text = result.env_file.read_text()
+    assert "RADIO_DEVICE=/dev/serial/by-id/usb-SONOFF_MG24-if00-port0" in text
+    assert "RADIO_BAUDRATE=460800" in text
+    assert "COMPOSE_PROFILES=thread" in text
+    # Neither the ports Home Assistant still holds nor ioBroker's.
+    assert "LOXMATTER_PORT=8083" in text
+    assert "OTBR_REST_PORT=8084" in text
+    assert "handover take" in result.calls
+    assert not any(call.startswith("docker compose up") for call in result.calls)
+
+
+def test_a_take_over_without_home_assistant_stops_before_anything_is_written(installer):
+    result = installer(stubs={"ss": _SS}, env={"LOXMATTER_TAKE_OVER": "home-assistant"})
+    assert result.returncode != 0
+    assert "No Home Assistant Matter server" in result.output
+    assert not (result.home / "loxmatter").exists()
+
+
+def test_an_unknown_take_over_is_refused(installer):
+    result = installer(env={"LOXMATTER_TAKE_OVER": "openhab"})
+    assert result.returncode != 0
+    assert "LOXMATTER_TAKE_OVER can only be 'home-assistant'" in result.output
