@@ -1642,9 +1642,12 @@ def test_the_take_over_takes_home_assistants_stick_and_hands_the_start_to_the_sc
     assert "RADIO_DEVICE=/dev/serial/by-id/usb-SONOFF_MG24-if00-port0" in text
     assert "RADIO_BAUDRATE=460800" in text
     assert "COMPOSE_PROFILES=thread" in text
-    # Neither the ports Home Assistant still holds nor ioBroker's.
-    assert "LOXMATTER_PORT=8083" in text
-    assert "OTBR_REST_PORT=8084" in text
+    # Home Assistant's border router is stopped before loxmatter starts: its
+    # web page's 8080 is free by then, and its REST port 8082 is taken over,
+    # so Home Assistant's OTBR integration keeps reaching a border router.
+    # ioBroker's 8081 stays avoided.
+    assert "LOXMATTER_PORT=8" not in text
+    assert "OTBR_REST_PORT=8082" in text
     assert "handover take" in result.calls
     assert not any(call.startswith("docker compose up") for call in result.calls)
 
@@ -1795,3 +1798,9 @@ fi
     text = result.env_file.read_text()
     assert "RADIO_DEVICE=/dev/serial/by-id/usb-SONOFF_MG24-if00-port0" in text
     assert "RADIO_BAUDRATE=460800" in text
+
+
+def test_a_health_timeout_that_is_not_a_number_is_refused(installer):
+    result = installer(env={"LOXMATTER_HEALTH_TIMEOUT": "2m"})
+    assert result.returncode != 0
+    assert "LOXMATTER_HEALTH_TIMEOUT is not a number of seconds" in result.output

@@ -53,6 +53,12 @@ people who don't know the code.
 
 ### Fixed
 
+- **After a take-over from Home Assistant, the installer waits up to two
+  minutes for the bridge** instead of 20 seconds, so the first start, which
+  reads Home Assistant's Matter data, no longer ends in a false "does not
+  answer". loxmatter's border router now answers on Home Assistant's old
+  REST port, so Home Assistant's OTBR integration keeps working, and a web
+  port held only by Home Assistant's border router page counts as free.
 - **Taking over from Home Assistant no longer stops at "Could not tell which
   stick" for a user outside the `docker` group.** The refused first attempt
   left an empty line that was read as the stick. A border router that runs

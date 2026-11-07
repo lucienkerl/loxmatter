@@ -51,6 +51,9 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 STACK="${LOXMATTER_STACK_DIR:-$SCRIPT_DIR/../deploy/testhost}"
+# Printed in every message: /home/pi/loxmatter/deploy/testhost reads better
+# than /home/pi/loxmatter/scripts/../deploy/testhost.
+STACK="$(cd "$STACK" 2>/dev/null && pwd -P || printf '%s' "$STACK")"
 RECORD="$STACK/.homeassistant-handover"
 DATA="$STACK/data"
 # How long loxmatter's border router may take to answer its REST API.
@@ -197,8 +200,10 @@ take() {
   if [ -n "$HA_OTBR" ]; then
     [ "$(same_device "$(env_value RADIO_DEVICE)")" = "$(same_device "$HA_RADIO")" ] ||
       die "RADIO_DEVICE in .env is not Home Assistant's stick ($HA_RADIO). Nothing was changed."
-    [ "$rest_port" != "$HA_REST_PORT" ] ||
-      die "OTBR_REST_PORT in .env equals Home Assistant's border router port ($HA_REST_PORT). Nothing was changed."
+    # OTBR_REST_PORT may equal Home Assistant's port - the installer picks
+    # it so that Home Assistant's OTBR integration keeps a border router to
+    # talk to. Theirs is stopped before ours starts, and ours before theirs
+    # on give-back, so the two never hold it at once.
     dataset="$(thread_dataset_from_home_assistant)" ||
       die "Could not read the Thread network from Home Assistant's border router on port $HA_REST_PORT. Nothing was changed."
     note "Thread network read from $HA_OTBR"

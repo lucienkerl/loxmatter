@@ -229,3 +229,18 @@ def test_check_only_reads(handover):
     changes = ("docker stop", "docker start", "docker update", "docker rename", "docker compose")
     assert not any(call.startswith(changes) for call in calls)
     assert not any("-X PUT" in call for call in calls)
+
+
+def test_loxmatters_border_router_may_take_over_home_assistants_rest_port(handover):
+    # The installer picks Home Assistant's port so its OTBR integration keeps
+    # a border router: theirs stops before ours starts.
+    env_file = handover.stack / ".env"
+    env_file.write_text(env_file.read_text().replace("OTBR_REST_PORT=8084", "OTBR_REST_PORT=8082"))
+    proc, calls = handover("take")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    stop_otbr = _index(calls, "docker stop homeassistant-otbr-1")
+    put_dataset = _index(calls, "curl -sf --max-time 10 -X PUT -H Content-Type: text/plain")
+    assert stop_otbr < put_dataset
+    assert "http://127.0.0.1:8082/node/dataset/active" in calls[put_dataset]
+    # Paths are printed resolved, without scripts/../
+    assert "/../" not in proc.stdout

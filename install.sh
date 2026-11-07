@@ -843,6 +843,9 @@ decide_take_over() {
       sed -n 's#^OT_RCP_DEVICE=[^:]*://\(/[^?]*\).*#\1#p' | head -n 1)"
   fi
   to_radio="$(stable_serial_name "$to_radio")"
+  TO_REST_PORT="$(printf '%s\n' "$to_env" |
+    sed -n 's/^OT_REST_LISTEN_PORT=\([0-9]*\)$/\1/p' | head -n 1)"
+  TO_REST_PORT="${TO_REST_PORT:-8081}"
   to_baud="$(printf '%s\n' "$to_env" |
     sed -n 's/.*uart-baudrate=\([0-9]*\).*/\1/p' | head -n 1)"
   [ -n "$to_radio" ] ||
@@ -865,6 +868,10 @@ decide_take_over() {
 
 CHOSEN_PORT=""
 CHOSEN_OTBR_REST_PORT=""
+# Home Assistant's border router REST port, read by decide_take_over: after
+# the take-over loxmatter's border router answers there, so Home Assistant's
+# OTBR integration keeps pointing at a border router.
+TO_REST_PORT=""
 
 # The listener on TCP port $1 as "process" (or "another program" when the
 # name is not visible to this user), or nothing when the port is free. No
@@ -874,6 +881,13 @@ port_holder() {
   ph_line="$(ss -Hltnp "sport = :$1" 2>/dev/null | head -n 1)" || ph_line=""
   [ -n "$ph_line" ] || return 0
   ph_name="$(printf '%s' "$ph_line" | sed -n 's/.*users:(("\([^"]*\)".*/\1/p')"
+  # Home Assistant's border router is stopped by the take-over before
+  # anything of loxmatter starts, so what it holds is free by then.
+  if [ -n "${LOXMATTER_TAKE_OVER:-}" ]; then
+    case "$ph_name" in
+      otbr-web|otbr-agent) return 0 ;;
+    esac
+  fi
   printf '%s' "${ph_name:-another program}"
 }
 
@@ -943,6 +957,14 @@ Two Matter servers cannot share this host. Nothing was changed."
   fi
   pick_port LOXMATTER_PORT "${LOXMATTER_PORT:-}" 8080 "web interface" ""
   CHOSEN_PORT="$PICKED_PORT"
+  if [ -n "$TO_REST_PORT" ] && [ -z "${OTBR_REST_PORT:-}" ] &&
+     [ "$TO_REST_PORT" != "${CHOSEN_PORT:-8080}" ]; then
+    if [ "$TO_REST_PORT" != 8081 ]; then
+      CHOSEN_OTBR_REST_PORT="$TO_REST_PORT"
+    fi
+    note "Border router REST port: $TO_REST_PORT, as Home Assistant's had."
+    return 0
+  fi
   pick_port OTBR_REST_PORT "${OTBR_REST_PORT:-}" 8081 "border router" "${CHOSEN_PORT:-8080}"
   CHOSEN_OTBR_REST_PORT="$PICKED_PORT"
 }
@@ -1013,6 +1035,10 @@ check_config_source() {
   case "${LOXMATTER_TAKE_OVER:-}" in
     ""|home-assistant) ;;
     *) die "LOXMATTER_TAKE_OVER can only be 'home-assistant' (got: $LOXMATTER_TAKE_OVER)" ;;
+  esac
+  case "${LOXMATTER_HEALTH_TIMEOUT:-}" in
+    "") ;;
+    *[!0-9]*|0*) die "LOXMATTER_HEALTH_TIMEOUT is not a number of seconds: '$LOXMATTER_HEALTH_TIMEOUT'" ;;
   esac
   case "${LOXMATTER_IMAGE_TAG:-}" in
     "") ;;
@@ -1618,7 +1644,15 @@ check_health() {
   health_url="http://127.0.0.1:$PORT/health"
   health_ok=0
   health_tries=0
-  while [ "$health_tries" -lt 20 ]; do
+  # A take-over's first start reads Home Assistant's Matter data before the
+  # bridge can connect: about 30 seconds on a Raspberry Pi 4, so 20 was too
+  # short there (7 November 2026).
+  health_limit="${LOXMATTER_HEALTH_TIMEOUT:-20}"
+  if [ -n "${LOXMATTER_TAKE_OVER:-}" ] && [ -z "${LOXMATTER_HEALTH_TIMEOUT:-}" ]; then
+    health_limit=120
+    note "The first start after a take-over takes up to two minutes."
+  fi
+  while [ "$health_tries" -lt "$health_limit" ]; do
     if curl -fsS -m 3 "$health_url" >/dev/null 2>&1; then
       health_ok=1
       break
