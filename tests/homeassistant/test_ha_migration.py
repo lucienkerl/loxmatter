@@ -504,3 +504,40 @@ async def test_clean_up_removes_zha_only_when_asked(store, ha):
 
     assert ha.deleted == ["/api/config/config_entries/entry/entry-zha"]
     assert result["zha_removed"] is True
+
+
+async def test_a_node_that_does_not_answer_yet_is_still_offered_from_this_fabric(
+    store, ha, monkeypatch
+):
+    # Right after the take-over, Home Assistant waits on nodes loxmatter's
+    # Matter server has not reached yet. The list must not wait with it, and
+    # a node of this fabric is still offered - its identifier names it.
+    import asyncio
+
+    from loxmatter.homeassistant import inventory as inventory_module
+
+    monkeypatch.setattr(inventory_module, "_DIAGNOSTICS_SECONDS", 0.05)
+    answer = ha.call
+
+    async def slow_plug(command: str, **payload: Any) -> Any:
+        if command == "matter/node_diagnostics" and payload["device_id"] == "dev-plug":
+            await asyncio.sleep(5)
+        return await answer(command, **payload)
+
+    monkeypatch.setattr(ha, "call", slow_plug)
+    migration = build(store, ha)
+    migration._client = SharedFabricClient()  # type: ignore[assignment]
+
+    inventory = await asyncio.wait_for(migration.inventory(), 2)
+    by_id = {device.ha_device_id: device for device in inventory.devices}
+    assert by_id["dev-plug"].in_fabric
+    assert by_id["dev-plug"].availability == "ready"
+
+
+async def test_reads_of_the_device_list_at_the_same_time_share_one(store, ha):
+    import asyncio
+
+    migration = build(store, ha)
+    first, second = await asyncio.gather(migration.inventory(), migration.inventory())
+    assert first is second
+    assert ha.commands().count("config/device_registry/list") == 1

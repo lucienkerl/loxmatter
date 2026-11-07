@@ -637,7 +637,7 @@
               <input type="url" x-model="haUrl" @keydown.enter="haSignIn()" />
             </label>
             <div class="row">
-              <button class="primary" :disabled="haBusy" @click="haSignIn()" x-text="t('web.setup.ha_sign_in')"></button>
+              <button class="primary" :disabled="haBusyWith('sign_in')" @click="haSignIn()" x-text="t('web.setup.ha_sign_in')"></button>
             </div>
             <p class="hint" x-text="t('web.setup.ha_sign_in_hint')"></p>
             <p class="banner danger" x-show="haError" x-cloak x-text="haError"></p>
@@ -647,7 +647,7 @@
                 <p class="hint" x-text="t('web.setup.ha_token_text')"></p>
                 <input type="password" autocomplete="off" x-model="haToken" placeholder="eyJhbGciOi…" />
                 <div class="row">
-                  <button :disabled="haBusy || haToken.trim().length < 20" @click="haSignInWithToken()"
+                  <button :disabled="haBusyWith('sign_in') || haToken.trim().length < 20" @click="haSignInWithToken()"
                           x-text="t('web.setup.ha_token_submit')"></button>
                 </div>
               </div>
@@ -675,7 +675,6 @@
         <section class="setup-step">
           <h1 x-text="t('web.setup.ha_devices_heading')"></h1>
           <p x-text="t('web.setup.ha_devices_text')"></p>
-          <p class="hint" x-show="haBusy && !haInventory" x-cloak x-text="t('web.setup.ha_loading')"></p>
           <p class="banner danger" x-show="haError" x-cloak x-text="haError"></p>
           <template x-if="haInventory">
             <div>
@@ -717,7 +716,7 @@
               </div>
               <p class="hint" x-text="t('web.setup.ha_devices_legend')"></p>
               <div class="row">
-                <button :disabled="haBusy" @click="haLoadInventory()" x-text="t('web.setup.refresh')"></button>
+                <button :disabled="haBusyWith('inventory')" @click="haLoadInventory()" x-text="t('web.setup.refresh')"></button>
               </div>
             </div>
           </template>
@@ -732,10 +731,9 @@
             <div>
               <p x-text="t('web.setup.ha_thread_text', { name: haInventory.thread_network.network_name || '?' })"></p>
               <div class="row">
-                <button class="primary" :disabled="haBusy || haThreadResult" @click="haAdoptThread()"
+                <button class="primary" :disabled="haBusyWith('thread') || haThreadResult" @click="haAdoptThread()"
                         x-text="t('web.setup.ha_thread_start')"></button>
               </div>
-              <p class="hint" x-show="haBusy" x-cloak x-text="t('web.setup.ha_thread_running')"></p>
               <p class="banner ok" x-show="haThreadResult" x-cloak
                  x-text="haThreadResult && t('web.setup.ha_thread_' + haThreadResult.outcome, { name: haThreadResult.network_name || '?' })"></p>
             </div>
@@ -763,7 +761,7 @@
               <p class="hint" x-show="!haChosen('matter_wifi', 'matter_bridge', 'matter_thread').length" x-cloak
                  x-text="t('web.setup.ha_matter_none')"></p>
               <div class="row">
-                <button class="primary" :disabled="haBusy || !haChosen('matter_wifi', 'matter_bridge', 'matter_thread').length"
+                <button class="primary" :disabled="haBusyWith('matter_start') || !haChosen('matter_wifi', 'matter_bridge', 'matter_thread').length"
                         @click="haStartMatter()"
                         x-text="t('web.setup.ha_matter_start', { count: haChosen('matter_wifi', 'matter_bridge', 'matter_thread').length })"></button>
               </div>
@@ -781,7 +779,7 @@
             </ul>
           </template>
           <div class="row" x-show="haJobFor('matter') && !haJobFor('matter').running" x-cloak>
-            <button :disabled="haBusy" @click="haJob = null" x-text="t('web.setup.ha_again')"></button>
+            <button :disabled="haBusyWith('matter_start')" @click="haJob = null" x-text="t('web.setup.ha_again')"></button>
           </div>
           <p class="banner danger" x-show="haError" x-cloak x-text="haError"></p>
         </section>
@@ -800,12 +798,12 @@
                 <div>
                   <p x-text="t('web.setup.ha_zigbee_pause_text')"></p>
                   <div class="row" x-show="!haZigbeeConfirmPause">
-                    <button class="primary" :disabled="haBusy" @click="haZigbeeConfirmPause = true" x-text="t('web.setup.ha_zigbee_pause_button')"></button>
+                    <button class="primary" :disabled="haBusyWith('pause')" @click="haZigbeeConfirmPause = true" x-text="t('web.setup.ha_zigbee_pause_button')"></button>
                   </div>
                   <div class="dialog-inline" x-show="haZigbeeConfirmPause" x-cloak>
                     <p x-text="t('web.setup.ha_zigbee_pause_confirm')"></p>
                     <div class="row">
-                      <button class="primary" :disabled="haBusy" @click="haPauseZha()" x-text="t('web.setup.ha_zigbee_pause_yes')"></button>
+                      <button class="primary" :disabled="haBusyWith('pause')" @click="haPauseZha()" x-text="t('web.setup.ha_zigbee_pause_yes')"></button>
                       <button @click="haZigbeeConfirmPause = false" x-text="t('web.radios.cancel')"></button>
                     </div>
                   </div>
@@ -856,7 +854,7 @@
                   </label>
                   <p class="banner warn" x-text="t('web.setup.ha_zigbee_restore_warning')"></p>
                   <div class="row">
-                    <button class="primary" :disabled="haBusy" @click="haRestoreZigbee()" x-text="t('web.setup.ha_zigbee_restore_button')"></button>
+                    <button class="primary" :disabled="haBusyWith('restore')" @click="haRestoreZigbee()" x-text="t('web.setup.ha_zigbee_restore_button')"></button>
                   </div>
                 </div>
               </template>
@@ -868,7 +866,7 @@
                   <p x-text="t('web.setup.ha_zigbee_import_text')"></p>
                   <template x-if="!haJobFor('zigbee')">
                     <div class="row">
-                      <button class="primary" :disabled="haBusy || !haChosen('zigbee').length" @click="haStartZigbee()"
+                      <button class="primary" :disabled="haBusyWith('matter_start') || !haChosen('zigbee').length" @click="haStartZigbee()"
                               x-text="t('web.setup.ha_zigbee_import_button', { count: haChosen('zigbee').length })"></button>
                     </div>
                   </template>
@@ -906,7 +904,7 @@
           </label>
           <p class="hint" x-text="t('web.setup.ha_cleanup_thread')"></p>
           <div class="row">
-            <button class="primary" :disabled="haBusy || (!haCleanupMatter && !haCleanupZha) || haCleanupResult"
+            <button class="primary" :disabled="haBusyWith('cleanup') || (!haCleanupMatter && !haCleanupZha) || haCleanupResult"
                     @click="haCleanUp()" x-text="t('web.setup.ha_cleanup_button')"></button>
           </div>
           <p class="banner ok" x-show="haCleanupResult" x-cloak
@@ -932,6 +930,17 @@
       </template>
 
       <p class="banner danger" x-show="setupError" x-cloak x-text="setupError"></p>
+      <!-- What runs right now, kept in view at the bottom of the window:
+           one line instead of a disabled button with no reason given. -->
+      <div class="setup-busy" role="status" aria-live="polite" x-show="setupActivity()" x-cloak>
+        <span class="spinner" aria-hidden="true"></span>
+        <div>
+          <strong x-text="setupActivity()?.text"></strong>
+          <span class="hint" x-show="setupActivity()?.hint" x-text="setupActivity()?.hint"></span>
+        </div>
+      </div>
+      <p class="hint" x-show="setupZigbeeImportPending() && !setupActivity()" x-cloak
+         x-text="t('web.setup.ha_zigbee_next_waits', { count: haChosen('zigbee').length })"></p>
       <div class="setup-nav" x-show="setupStepIndex() > 0 || setupNextShown()">
         <button x-show="setupStepIndex() > 0" @click="setupBack()" :disabled="setupBusy" x-text="t('web.setup.back')"></button>
         <button class="primary" x-show="setupNextShown()" @click="setupNext()" :disabled="setupNextBlocked()"

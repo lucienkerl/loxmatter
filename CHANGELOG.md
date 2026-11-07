@@ -53,6 +53,25 @@ people who don't know the code.
 
 ### Fixed
 
+- **The setup assistant says what it is doing.** While something runs
+  against Home Assistant or the Zigbee stick, a line at the bottom of the
+  window names it, and for the slow steps says how long they may take. Each
+  action has its own busy state, so a device list that finishes first no
+  longer re-enables "pause ZHA" while the pause is still running. The Zigbee
+  step reads the stick's state again every few seconds, and Next waits until
+  the stick is connected and the chosen Zigbee devices are entered, so they
+  keep Home Assistant's names and rooms.
+- **Home Assistant's device list no longer takes minutes right after a
+  take-over.** A Matter device that does not answer yet holds it up for 5
+  seconds instead of 30, and is still offered when it is already in
+  loxmatter's fabric. Reloading the page joins the read that is under way,
+  and the header no longer says "Connecting…" while the list loads.
+- **After a take-over from Home Assistant, the installer waits up to two
+  minutes for the bridge** instead of 20 seconds, so the first start, which
+  reads Home Assistant's Matter data, no longer ends in a false "does not
+  answer". loxmatter's border router now answers on Home Assistant's old
+  REST port, so Home Assistant's OTBR integration keeps working, and a web
+  port held only by Home Assistant's border router page counts as free.
 - **Taking over from Home Assistant no longer stops at "Could not tell which
   stick" for a user outside the `docker` group.** The refused first attempt
   left an empty line that was read as the stick. A border router that runs

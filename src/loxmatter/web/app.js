@@ -1227,7 +1227,14 @@ function app() {
     ha: null,
     haUrl: "http://homeassistant.local:8123",
     haToken: "",
-    haBusy: false,
+    // What is running against Home Assistant, by name: one flag for all of
+    // it let a device list that finished first re-enable the "pause ZHA"
+    // button while the pause was still running (7 November 2026).
+    haWorking: {},
+    get haBusy() {
+      return Object.keys(this.haWorking).length > 0;
+    },
+    setupZigbeeTimer: null,
     haError: null,
     haInventory: null,
     haSelected: {},
@@ -7221,6 +7228,7 @@ function app() {
     },
 
     async setupGo(step) {
+      this.setupStopZigbeePoll();
       this.setupError = null;
       this.setupBusy = true;
       try {
@@ -7258,7 +7266,16 @@ function app() {
     setupNextBlocked() {
       const step = this.setupStep();
       if (step === "ha_devices") return !this.haInventory;
-      if (step === "ha_matter" || step === "ha_zigbee") return Boolean(this.haJob?.running);
+      if (step === "ha_matter" && this.haBusyWith("matter_start")) return true;
+      if (step === "ha_matter" || step === "ha_zigbee") {
+        if (this.haJob?.running) return true;
+      }
+      // Moving on while the stick is still being set up left the next step
+      // with a stick that was not there yet (7 November 2026).
+      if (["sticks", "networks", "ha_zigbee"].includes(step)) {
+        if (this.zigbeeBusy || this.setupZigbeeConnecting() || this.haBusyWith("pause", "restore")) return true;
+      }
+      if (this.setupZigbeeImportPending()) return true;
       return this.setupBusy;
     },
 
@@ -7318,6 +7335,9 @@ function app() {
       if (step.startsWith("ha_") || step === "sticks" || step === "done") {
         await this.loadHomeAssistant();
       }
+      // Before the device list, which can take minutes: the Zigbee step's
+      // first button waits for this, not for the list.
+      if (step === "ha_zigbee") await this.haLoadZigbee();
       if (this.haCallback && step === "ha_login") {
         await this.haFinishSignIn();
       }
@@ -7325,9 +7345,13 @@ function app() {
       // there turns "needs a Thread stick" into "can move".
       const fresh = ["ha_matter", "ha_zigbee", "ha_cleanup", "done"].includes(step);
       const wants = step.startsWith("ha_") || step === "sticks" || step === "done";
-      if (wants && this.ha?.signed_in && (fresh || !this.haInventory)) await this.haLoadInventory();
-      if (step === "ha_zigbee") await this.haLoadZigbee();
+      // Not awaited: Home Assistant's device list can take minutes right
+      // after a take-over, and startApp() waits for this step before it
+      // opens the live connection - the header said "Connecting…" all that
+      // time (7 November 2026). The step shows its own loading line.
+      if (wants && this.ha?.signed_in && (fresh || !this.haInventory)) this.haLoadInventory();
       if (step === "ha_matter" || step === "ha_zigbee") await this.haPollJob();
+      this.setupScheduleZigbeePoll();
     },
 
     async setupSaveMiniserver() {
@@ -7377,7 +7401,7 @@ function app() {
 
     async haSignIn() {
       this.haError = null;
-      this.haBusy = true;
+      this.haStartWork("sign_in");
       try {
         const probe = await this.request("POST", "/api/homeassistant/probe", { url: this.haUrl });
         this.haUrl = probe.url;
@@ -7390,7 +7414,7 @@ function app() {
         window.location.href = answer.authorize_url;
       } catch (error) {
         this.haError = error.message;
-        this.haBusy = false;
+        this.haEndWork("sign_in");
       }
     },
 
@@ -7401,21 +7425,21 @@ function app() {
         this.haError = t("web.setup.ha_sign_in_cancelled");
         return;
       }
-      this.haBusy = true;
+      this.haStartWork("sign_in");
       try {
         this.ha = await this.request("POST", "/api/homeassistant/auth/finish", callback);
       } catch (error) {
         this.haError = error.message;
         return;
       } finally {
-        this.haBusy = false;
+        this.haEndWork("sign_in");
       }
       await this.setupGo("ha_devices");
     },
 
     async haSignInWithToken() {
       this.haError = null;
-      this.haBusy = true;
+      this.haStartWork("sign_in");
       try {
         this.ha = await this.request("POST", "/api/homeassistant/auth/token", {
           url: this.haUrl,
@@ -7426,14 +7450,14 @@ function app() {
         this.haError = error.message;
         return;
       } finally {
-        this.haBusy = false;
+        this.haEndWork("sign_in");
       }
       await this.setupGo("ha_devices");
     },
 
     async haLoadInventory() {
       this.haError = null;
-      this.haBusy = true;
+      this.haStartWork("inventory");
       try {
         this.haInventory = await this.request("GET", "/api/homeassistant/inventory");
         // Everything that can come over is ticked; what cannot is not.
@@ -7445,7 +7469,7 @@ function app() {
       } catch (error) {
         this.haError = error.message;
       } finally {
-        this.haBusy = false;
+        this.haEndWork("inventory");
       }
     },
 
@@ -7506,13 +7530,13 @@ function app() {
 
     async haAdoptThread() {
       this.haError = null;
-      this.haBusy = true;
+      this.haStartWork("thread");
       try {
         this.haThreadResult = await this.request("POST", "/api/homeassistant/thread");
       } catch (error) {
         this.haError = error.message;
       } finally {
-        this.haBusy = false;
+        this.haEndWork("thread");
       }
     },
 
@@ -7528,14 +7552,14 @@ function app() {
 
     async haStartJob(path, devices) {
       this.haError = null;
-      this.haBusy = true;
+      this.haStartWork("matter_start");
       try {
         this.haJob = await this.request("POST", path, { devices });
       } catch (error) {
         this.haError = error.message;
         return;
       } finally {
-        this.haBusy = false;
+        this.haEndWork("matter_start");
       }
       this.haScheduleJobPoll();
     },
@@ -7566,6 +7590,82 @@ function app() {
       this.haJobTimer = null;
     },
 
+    haStartWork(name) {
+      this.haWorking = { ...this.haWorking, [name]: true };
+    },
+
+    haEndWork(name) {
+      const { [name]: _ended, ...rest } = this.haWorking;
+      this.haWorking = rest;
+    },
+
+    haBusyWith(...names) {
+      return names.some((name) => this.haWorking[name]);
+    },
+
+    /** The one line the assistant shows while something runs: what it is
+     * and, for the slow ones, how long it may take. `null` when nothing
+     * runs. The most specific running thing wins. */
+    setupActivity() {
+      const order = ["pause", "restore", "matter_start", "thread", "cleanup", "sign_in", "inventory"];
+      const running = order.find((name) => this.haWorking[name]);
+      if (running) {
+        return {
+          text: t(`web.setup.busy_${running}`),
+          hint: ["pause", "restore", "inventory"].includes(running) ? t(`web.setup.busy_${running}_hint`) : null,
+        };
+      }
+      if (this.zigbeeBusy) return { text: t("web.setup.busy_zigbee_apply"), hint: null };
+      const step = this.setupStep();
+      if (["sticks", "networks", "ha_zigbee"].includes(step) && this.setupZigbeeConnecting()) {
+        return {
+          text: this.zigbeeProgressText(this.zigbee.progress, this.zigbee.configured_device_present),
+          hint: t("web.setup.busy_zigbee_connect_hint"),
+        };
+      }
+      if (this.haJob?.running) {
+        const done = this.haJob.items.filter((item) => !["pending", "running"].includes(item.state)).length;
+        return { text: t("web.setup.busy_job", { done, count: this.haJob.items.length }), hint: null };
+      }
+      return null;
+    },
+
+    /** Zigbee devices ticked for the move and not entered yet. Next used
+     * to walk past them, and they then had to be added by hand - without
+     * Home Assistant's names and rooms (7 November 2026). Unticking them
+     * on the device list, or Back, still leaves the step. */
+    setupZigbeeImportPending() {
+      if (this.setupStep() !== "ha_zigbee" || this.haZigbeeMode === "skip") return false;
+      if (!this.haChosen("zigbee").length) return false;
+      const job = this.haJobFor("zigbee");
+      return !job || job.running;
+    },
+
+    /** A Zigbee stick chosen and its connection still under way. */
+    setupZigbeeConnecting() {
+      return Boolean(this.zigbee && this.zigbeeRadioPolling(this.zigbee.progress));
+    },
+
+    /** While the Zigbee step waits for the stick, its state is read again
+     * every few seconds: the Settings card's own timer only runs on the
+     * Settings page, so the assistant showed a stick that had long
+     * connected as still connecting until "Rescan". */
+    setupScheduleZigbeePoll() {
+      this.setupStopZigbeePoll();
+      if (!["sticks", "networks", "ha_zigbee"].includes(this.setupStep())) return;
+      this.setupZigbeeTimer = window.setTimeout(async () => {
+        this.setupZigbeeTimer = null;
+        await this.loadZigbeeRadio();
+        if (this.setupStep() === "ha_zigbee" && !this.haBusyWith("pause", "restore")) await this.haLoadZigbee();
+        this.setupScheduleZigbeePoll();
+      }, 3000);
+    },
+
+    setupStopZigbeePoll() {
+      if (this.setupZigbeeTimer !== null) window.clearTimeout(this.setupZigbeeTimer);
+      this.setupZigbeeTimer = null;
+    },
+
     haJobFor(kind) {
       return this.haJob?.kind === kind ? this.haJob : null;
     },
@@ -7585,19 +7685,19 @@ function app() {
     async haPauseZha() {
       this.haZigbeeConfirmPause = false;
       this.haError = null;
-      this.haBusy = true;
+      this.haStartWork("pause");
       try {
         this.haZigbee = await this.request("POST", "/api/homeassistant/zigbee/pause");
       } catch (error) {
         this.haError = error.message;
       } finally {
-        this.haBusy = false;
+        this.haEndWork("pause");
       }
     },
 
     async haRestoreZigbee() {
       this.haError = null;
-      this.haBusy = true;
+      this.haStartWork("restore");
       try {
         this.haZigbee = await this.request("POST", "/api/homeassistant/zigbee/restore", {
           overwrite_ieee: this.haOverwriteIeee,
@@ -7605,7 +7705,7 @@ function app() {
       } catch (error) {
         this.haError = error.message;
       } finally {
-        this.haBusy = false;
+        this.haEndWork("restore");
       }
       // The stick reconnects after a restore; its new identity follows.
       window.setTimeout(() => this.haLoadZigbee(), 5000);
@@ -7622,7 +7722,7 @@ function app() {
 
     async haCleanUp() {
       this.haError = null;
-      this.haBusy = true;
+      this.haStartWork("cleanup");
       const devices = this.haCleanupMatter
         ? (this.haInventory?.devices ?? [])
             .filter((d) => d.availability === "done" && d.integration === "matter")
@@ -7637,7 +7737,7 @@ function app() {
         this.haError = error.message;
         return;
       } finally {
-        this.haBusy = false;
+        this.haEndWork("cleanup");
       }
       await this.haLoadInventory();
     },
