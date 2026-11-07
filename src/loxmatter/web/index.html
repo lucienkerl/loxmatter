@@ -367,14 +367,587 @@
       would stay unaffected by that, but the two paths into the same view
       would drift apart.
     -->
-    <nav class="tabs">
+    <!--
+      The first-run assistant (design 2026-11-07). It replaces the tabs and
+      the main area until the setup is completed - the header stays, so the
+      way out (log out) and the connection state are where they always are.
+      Each step is one `x-if` so that only the visible step is in the DOM;
+      `enterSetupStep()` in app.js loads what a step needs.
+    -->
+    <template x-if="setupActive()">
+    <main class="setup">
+      <p class="setup-progress" x-text="setupProgressText()"></p>
+
+      <!-- Welcome and language. -->
+      <template x-if="setupStep() === 'welcome'">
+        <section class="setup-step">
+          <svg class="setup-figure" viewBox="0 0 560 170" role="img" :aria-label="t('web.setup.welcome_figure')">
+            <rect x="10" y="45" width="130" height="80" rx="10" class="fig-soft" />
+            <circle cx="45" cy="72" r="10" class="fig-line" /><circle cx="75" cy="98" r="10" class="fig-line" /><circle cx="105" cy="72" r="10" class="fig-line" />
+            <text x="75" y="155" text-anchor="middle" class="fig-caption" x-text="t('web.setup.fig_devices')"></text>
+            <path d="M150 85 H205" class="fig-arrow" /><path d="M198 77 L208 85 L198 93" class="fig-arrow" />
+            <rect x="215" y="35" width="130" height="100" rx="14" class="fig-accent" />
+            <path d="M255 110 L280 62 L305 110" class="fig-mark" />
+            <text x="280" y="155" text-anchor="middle" class="fig-caption">loxmatter</text>
+            <path d="M355 85 H410" class="fig-arrow" /><path d="M403 77 L413 85 L403 93" class="fig-arrow" />
+            <rect x="420" y="45" width="130" height="80" rx="10" class="fig-soft" />
+            <rect x="438" y="62" width="94" height="10" rx="5" class="fig-bar" /><rect x="438" y="80" width="70" height="10" rx="5" class="fig-bar-light" /><rect x="438" y="98" width="82" height="10" rx="5" class="fig-bar-light" />
+            <text x="485" y="155" text-anchor="middle" class="fig-caption">Loxone Miniserver</text>
+          </svg>
+          <h1 x-text="t('web.setup.welcome_heading')"></h1>
+          <p x-text="t('web.setup.welcome_text')"></p>
+          <fieldset class="setup-language">
+            <legend x-text="t('web.settings.language_heading')"></legend>
+            <nav class="tabs">
+              <button :class="{ active: language === 'de' }" @click="setLanguage('de')">Deutsch</button>
+              <button :class="{ active: language === 'en' }" @click="setLanguage('en')">English</button>
+            </nav>
+          </fieldset>
+          <p class="hint" x-text="t('web.setup.welcome_duration')"></p>
+          <p class="banner danger" x-show="settingsError" x-cloak x-text="settingsError"></p>
+          <div class="row">
+            <button class="primary" @click="setupNext()" :disabled="setupBusy" x-text="t('web.setup.start')"></button>
+          </div>
+        </section>
+      </template>
+
+      <!-- Miniserver. -->
+      <template x-if="setupStep() === 'miniserver'">
+        <section class="setup-step setup-split">
+          <div>
+            <h1 x-text="t('web.setup.miniserver_heading')"></h1>
+            <p x-text="t('web.setup.miniserver_text')"></p>
+            <label>
+              <span x-text="t('web.settings.miniserver_ip_label')"></span>
+              <input type="text" inputmode="decimal" x-model="settingsDraft.miniserver_ip"
+                     :placeholder="t('web.settings.miniserver_ip_placeholder')" />
+            </label>
+            <label>
+              <span x-text="t('web.bridge_ip_label')"></span>
+              <input type="text" inputmode="decimal" x-model="settingsDraft.bridge_ip"
+                     :placeholder="t('web.settings.bridge_ip_placeholder')" />
+            </label>
+            <p class="hint" x-text="t('web.setup.miniserver_bridge_hint')"></p>
+            <div class="row">
+              <button @click="saveSettings()" :disabled="settingsBusy || !settingsDraft.miniserver_ip.trim()"
+                      x-text="t('web.setup.miniserver_check')"></button>
+            </div>
+            <p x-show="bridgeSettings.miniserver_check" x-cloak class="banner"
+               :class="bridgeSettings.miniserver_check?.found ? 'ok' : 'warn'"
+               x-text="bridgeSettings.miniserver_check?.message"></p>
+            <p x-show="settingsError" x-cloak class="banner danger" x-text="settingsError"></p>
+            <details class="commission-disclosure">
+              <summary x-text="t('web.setup.miniserver_later_summary')"></summary>
+              <div class="disclosure-body"><p class="hint" x-text="t('web.setup.miniserver_later_text')"></p></div>
+            </details>
+          </div>
+          <figure class="setup-aside">
+            <svg viewBox="0 0 200 300" role="img" :aria-label="t('web.setup.miniserver_figure')">
+              <rect x="20" y="8" width="160" height="284" rx="22" class="fig-dark" />
+              <rect x="30" y="30" width="140" height="244" rx="8" class="fig-paper" />
+              <rect x="38" y="70" width="124" height="30" rx="6" class="fig-soft" />
+              <rect x="38" y="106" width="124" height="30" rx="6" class="fig-accent-soft" />
+              <text x="48" y="126" class="fig-caption-strong">Miniserver</text>
+              <rect x="38" y="142" width="124" height="30" rx="6" class="fig-soft" />
+              <rect x="38" y="190" width="124" height="54" rx="6" class="fig-paper fig-outline" />
+              <text x="48" y="230" class="fig-caption-strong">192.168.1.77</text>
+            </svg>
+            <figcaption x-text="t('web.setup.miniserver_figure')"></figcaption>
+          </figure>
+        </section>
+      </template>
+
+      <!-- New or moving from Home Assistant? -->
+      <template x-if="setupStep() === 'path'">
+        <section class="setup-step">
+          <h1 x-text="t('web.setup.path_heading')"></h1>
+          <p x-text="t('web.setup.path_text')"></p>
+          <div class="setup-choices">
+            <button type="button" class="setup-choice" :class="{ chosen: setup.path === 'new' }"
+                    :disabled="setupBusy" @click="setupChoosePath('new')">
+              <svg viewBox="0 0 240 110" aria-hidden="true">
+                <rect x="70" y="20" width="100" height="70" rx="12" class="fig-accent" />
+                <path d="M100 72 L120 38 L140 72" class="fig-mark" />
+                <circle cx="200" cy="40" r="14" class="fig-accent-soft" />
+                <path d="M193 40 H207 M200 33 V47" class="fig-arrow" />
+              </svg>
+              <strong x-text="t('web.setup.path_new')"></strong>
+              <span x-text="t('web.setup.path_new_text')"></span>
+            </button>
+            <button type="button" class="setup-choice" :class="{ chosen: setup.path === 'ha' }"
+                    :disabled="setupBusy" @click="setupChoosePath('ha')">
+              <svg viewBox="0 0 240 110" aria-hidden="true">
+                <rect x="10" y="25" width="80" height="62" rx="10" class="fig-ha" />
+                <path d="M30 70 V50 L50 36 L70 50 V70 Z" class="fig-ha-line" />
+                <path d="M100 56 H140" class="fig-arrow" /><path d="M133 48 L143 56 L133 64" class="fig-arrow" />
+                <rect x="150" y="22" width="80" height="68" rx="12" class="fig-accent" />
+                <path d="M172 74 L190 42 L208 74" class="fig-mark" />
+              </svg>
+              <strong x-text="t('web.setup.path_ha')"></strong>
+              <span x-text="t('web.setup.path_ha_text')"></span>
+            </button>
+          </div>
+          <p class="hint" x-text="t('web.setup.path_z2m')"></p>
+        </section>
+      </template>
+
+      <!-- USB sticks - both paths. Reuses the radios card's own state and
+           actions (`radiosDraft`, `confirmApplyRadios`, `zigbeeDraft`,
+           `applyZigbeeRadio`), so the assistant and Settings can never
+           disagree about a stick. -->
+      <template x-if="setupStep() === 'sticks'">
+        <section class="setup-step">
+          <h1 x-text="t('web.setup.sticks_heading')"></h1>
+          <p x-text="t('web.setup.sticks_text')"></p>
+
+          <!-- Home Assistant path with ZHA: where the Zigbee network goes. -->
+          <template x-if="setup.path === 'ha' && haInventory?.zha">
+            <div>
+              <h2 x-text="t('web.setup.zigbee_mode_heading')"></h2>
+              <div class="setup-choices">
+                <button type="button" class="setup-choice" :class="{ chosen: haZigbeeMode === 'move' }" @click="haSetZigbeeMode('move')">
+                  <strong x-text="t('web.setup.zigbee_mode_move')"></strong>
+                  <span x-text="t('web.setup.zigbee_mode_move_text')"></span>
+                  <span class="setup-pill ok" x-text="t('web.setup.recommended')"></span>
+                </button>
+                <button type="button" class="setup-choice" :class="{ chosen: haZigbeeMode === 'own' }" @click="haSetZigbeeMode('own')">
+                  <strong x-text="t('web.setup.zigbee_mode_own')"></strong>
+                  <span x-text="t('web.setup.zigbee_mode_own_text')"></span>
+                </button>
+                <button type="button" class="setup-choice" :class="{ chosen: haZigbeeMode === 'skip' }" @click="haSetZigbeeMode('skip')">
+                  <strong x-text="t('web.setup.zigbee_mode_skip')"></strong>
+                  <span x-text="t('web.setup.zigbee_mode_skip_text')"></span>
+                </button>
+              </div>
+            </div>
+          </template>
+
+          <p class="hint" x-show="radiosSidecarMessage()" x-cloak x-text="radiosSidecarMessage()"></p>
+          <template x-if="radios">
+            <div class="card">
+              <h2 x-text="t('web.setup.sticks_thread')"></h2>
+              <p class="hint" x-text="t('web.setup.sticks_thread_text')"></p>
+              <div class="row">
+                <label>
+                  <span x-text="t('web.radios.thread_label')"></span>
+                  <select x-model="radiosDraft.threadDevice" @change="radiosDirty = true"
+                          :disabled="radios.sidecar !== 'ready' || radiosJobRunning() || radiosBusy">
+                    <template x-for="option in radiosThreadOptions()" :key="option.value">
+                      <option :value="option.value" :disabled="option.zigbee" x-text="radiosThreadOptionLabel(option)"></option>
+                    </template>
+                  </select>
+                </label>
+                <button class="primary" x-show="radios.sidecar === 'ready' && radiosChanged() && !radiosJobRunning()" x-cloak
+                        :disabled="radiosBusy" @click="confirmApplyRadios()" x-text="t('web.radios.apply')"></button>
+                <button @click="rescanRadios(); loadZigbeeRadio()" x-text="t('web.radios.rescan')"></button>
+              </div>
+              <template x-if="radiosThreadStatus()">
+                <p :class="radiosThreadStatus().warn ? 'banner warn' : 'hint'" x-text="t(radiosThreadStatus().key)"></p>
+              </template>
+              <template x-if="radios.job && radiosJobRunning()">
+                <ul class="steps">
+                  <template x-for="step in radios.job.steps" :key="step">
+                    <li :class="radiosStepClass(step)" x-text="radiosStepLabel(step)"></li>
+                  </template>
+                </ul>
+              </template>
+              <p x-show="radiosResultKey() && !radiosJobRunning()" x-cloak class="hint"
+                 x-text="radiosResultKey() && t(radiosResultKey(), { reason: radiosReason() })"></p>
+              <p x-show="radiosApplyError" x-cloak class="banner danger" x-text="radiosApplyError"></p>
+              <p x-show="setup.path === 'ha' && haCount('matter_thread') && !setupHasThreadStick()" x-cloak class="banner warn"
+                 x-text="t('web.setup.sticks_no_thread_ha', { count: haCount('matter_thread') })"></p>
+            </div>
+          </template>
+
+          <template x-if="zigbee && (setup.path === 'new' || haZigbeeMode === 'own' || !haInventory?.zha)">
+            <div class="card">
+              <h2 x-text="t('web.setup.sticks_zigbee')"></h2>
+              <p class="hint" x-text="t(setup.path === 'ha' && haZigbeeMode === 'own' ? 'web.setup.sticks_zigbee_own_text' : 'web.setup.sticks_zigbee_text')"></p>
+              <div class="row">
+                <label>
+                  <span x-text="t('web.radios.zigbee_label')"></span>
+                  <select x-model="zigbeeDraft.path" @change="zigbeeSelectionChanged()" :disabled="zigbeeBusy">
+                    <template x-for="option in zigbeeRadioOptions()" :key="option.value">
+                      <option :value="option.value" :disabled="option.disabled" x-text="option.label"></option>
+                    </template>
+                  </select>
+                </label>
+                <button class="primary" @click="applyZigbeeRadio()" :disabled="!zigbeeCanApply()" x-text="t('web.radios.apply')"></button>
+              </div>
+              <p class="hint" x-show="zigbeeThreadHint()" x-cloak x-text="zigbeeThreadHint()"></p>
+              <p class="hint" :class="{ 'danger-text': zigbeeProgressFailing(zigbee.progress, zigbee.configured_device_present) }"
+                 x-text="zigbeeProgressText(zigbee.progress, zigbee.configured_device_present)"></p>
+              <p x-show="zigbeeApplyError" x-cloak class="banner danger" x-text="zigbeeApplyError"></p>
+            </div>
+          </template>
+          <p class="hint" x-show="setup.path === 'ha' && haInventory?.zha && haZigbeeMode === 'move'" x-cloak
+             x-text="t('web.setup.sticks_zigbee_later')"></p>
+
+          <p class="hint" x-text="t('web.setup.sticks_which')"></p>
+          <p class="hint" x-text="t('web.setup.sticks_none_ok')"></p>
+        </section>
+      </template>
+
+      <!-- New path: the networks come up on their own. -->
+      <template x-if="setupStep() === 'networks'">
+        <section class="setup-step">
+          <h1 x-text="t('web.setup.networks_heading')"></h1>
+          <p x-text="t('web.setup.networks_text')"></p>
+          <ul class="setup-checklist">
+            <li>
+              <strong x-text="t('web.setup.networks_thread')"></strong>
+              <span x-show="!setupHasThreadStick()" x-text="t('web.setup.networks_not_used')"></span>
+              <template x-if="setupHasThreadStick() && radiosThreadNetworkLine()">
+                <span x-text="t(radiosThreadNetworkLine().key, radiosThreadNetworkLine().params)"></span>
+              </template>
+              <span x-show="setupHasThreadStick() && !radiosThreadNetworkLine()" x-text="t('web.setup.networks_waiting')"></span>
+            </li>
+            <li>
+              <strong x-text="t('web.setup.networks_zigbee')"></strong>
+              <span x-show="!setupHasZigbeeStick()" x-text="t('web.setup.networks_not_used')"></span>
+              <span x-show="setupHasZigbeeStick() && zigbee" x-text="zigbee && zigbeeProgressText(zigbee.progress, zigbee.configured_device_present)"></span>
+            </li>
+            <li>
+              <strong x-text="t('web.setup.networks_miniserver')"></strong>
+              <span x-text="bridgeSettings.miniserver_check?.message || (bridgeSettings.miniserver_ip ? bridgeSettings.miniserver_ip : t('web.setup.networks_later'))"></span>
+            </li>
+          </ul>
+          <div class="row">
+            <button @click="loadRadios(); loadZigbeeRadio()" x-text="t('web.setup.refresh')"></button>
+          </div>
+        </section>
+      </template>
+
+      <!-- Home Assistant: sign in. -->
+      <template x-if="setupStep() === 'ha_login'">
+        <section class="setup-step setup-split">
+          <div>
+            <h1 x-text="t('web.setup.ha_login_heading')"></h1>
+            <p x-text="t('web.setup.ha_login_text')"></p>
+            <template x-if="ha?.signed_in">
+              <div>
+                <p class="banner ok" x-text="t('web.setup.ha_signed_in', { url: ha.url })"></p>
+                <div class="row">
+                  <button class="primary" @click="setupGo('ha_devices')" x-text="t('web.setup.next')"></button>
+                </div>
+              </div>
+            </template>
+            <label>
+              <span x-text="t('web.setup.ha_url_label')"></span>
+              <input type="url" x-model="haUrl" @keydown.enter="haSignIn()" />
+            </label>
+            <div class="row">
+              <button class="primary" :disabled="haBusy" @click="haSignIn()" x-text="t('web.setup.ha_sign_in')"></button>
+            </div>
+            <p class="hint" x-text="t('web.setup.ha_sign_in_hint')"></p>
+            <p class="banner danger" x-show="haError" x-cloak x-text="haError"></p>
+            <details class="commission-disclosure">
+              <summary x-text="t('web.setup.ha_token_summary')"></summary>
+              <div class="disclosure-body">
+                <p class="hint" x-text="t('web.setup.ha_token_text')"></p>
+                <input type="password" autocomplete="off" x-model="haToken" placeholder="eyJhbGciOi…" />
+                <div class="row">
+                  <button :disabled="haBusy || haToken.trim().length < 20" @click="haSignInWithToken()"
+                          x-text="t('web.setup.ha_token_submit')"></button>
+                </div>
+              </div>
+            </details>
+          </div>
+          <figure class="setup-aside">
+            <svg viewBox="0 0 280 170" role="img" :aria-label="t('web.setup.ha_login_figure')">
+              <rect x="10" y="40" width="100" height="90" rx="12" class="fig-ha" />
+              <path d="M38 105 V78 L60 60 L82 78 V105 Z" class="fig-ha-line" />
+              <text x="60" y="152" text-anchor="middle" class="fig-caption">Home Assistant</text>
+              <rect x="170" y="40" width="100" height="90" rx="12" class="fig-accent" />
+              <path d="M198 108 L220 66 L242 108" class="fig-mark" />
+              <text x="220" y="152" text-anchor="middle" class="fig-caption">loxmatter</text>
+              <rect x="118" y="62" width="44" height="34" rx="4" class="fig-paper fig-outline" />
+              <path d="M126 72 H154 M126 80 H150 M126 88 H146" class="fig-thin" />
+              <path d="M112 115 H166" class="fig-arrow" /><path d="M160 109 L168 115 L160 121" class="fig-arrow" />
+            </svg>
+            <figcaption x-text="t('web.setup.ha_login_figure')"></figcaption>
+          </figure>
+        </section>
+      </template>
+
+      <!-- Home Assistant: what is there. -->
+      <template x-if="setupStep() === 'ha_devices'">
+        <section class="setup-step">
+          <h1 x-text="t('web.setup.ha_devices_heading')"></h1>
+          <p x-text="t('web.setup.ha_devices_text')"></p>
+          <p class="hint" x-show="haBusy && !haInventory" x-cloak x-text="t('web.setup.ha_loading')"></p>
+          <p class="banner danger" x-show="haError" x-cloak x-text="haError"></p>
+          <template x-if="haInventory">
+            <div>
+              <div class="setup-tiles">
+                <div><strong x-text="haCount('matter_wifi', 'matter_bridge')"></strong><span x-text="t('web.setup.ha_tile_wifi')"></span></div>
+                <div><strong x-text="haCount('matter_thread')"></strong><span x-text="t('web.setup.ha_tile_thread')"></span></div>
+                <div><strong x-text="haCount('zigbee')"></strong><span x-text="t('web.setup.ha_tile_zigbee')"></span></div>
+                <div><strong x-text="haCount('other')"></strong><span x-text="t('web.setup.ha_tile_other')"></span></div>
+              </div>
+              <div class="table-scroll">
+                <table class="setup-table">
+                  <thead>
+                    <tr>
+                      <th><span class="visually-hidden" x-text="t('web.setup.ha_col_select')"></span></th>
+                      <th x-text="t('web.setup.ha_col_device')"></th>
+                      <th x-text="t('web.setup.ha_col_room')"></th>
+                      <th x-text="t('web.setup.ha_col_kind')"></th>
+                      <th x-text="t('web.setup.ha_col_status')"></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <template x-for="device in haInventory.devices" :key="device.ha_device_id">
+                      <tr>
+                        <td><input type="checkbox" x-model="haSelected[device.ha_device_id]"
+                                   :disabled="!haSelectable(device)"
+                                   :aria-label="t('web.setup.ha_select_device', { name: device.name })" /></td>
+                        <td>
+                          <span x-text="device.name"></span>
+                          <span class="hint" x-show="device.members.length" x-cloak
+                                x-text="t('web.setup.ha_members', { names: device.members.join(', ') })"></span>
+                        </td>
+                        <td x-text="device.room || '–'"></td>
+                        <td x-text="haKindLabel(device)"></td>
+                        <td><span class="setup-pill" :class="haAvailabilityTone(device)" x-text="haAvailabilityLabel(device)"></span></td>
+                      </tr>
+                    </template>
+                  </tbody>
+                </table>
+              </div>
+              <p class="hint" x-text="t('web.setup.ha_devices_legend')"></p>
+              <div class="row">
+                <button :disabled="haBusy" @click="haLoadInventory()" x-text="t('web.setup.refresh')"></button>
+              </div>
+            </div>
+          </template>
+        </section>
+      </template>
+
+      <!-- Home Assistant: join the Thread network. -->
+      <template x-if="setupStep() === 'ha_thread'">
+        <section class="setup-step">
+          <h1 x-text="t('web.setup.ha_thread_heading')"></h1>
+          <template x-if="setupHasThreadStick() && haInventory?.thread_network">
+            <div>
+              <p x-text="t('web.setup.ha_thread_text', { name: haInventory.thread_network.network_name || '?' })"></p>
+              <div class="row">
+                <button class="primary" :disabled="haBusy || haThreadResult" @click="haAdoptThread()"
+                        x-text="t('web.setup.ha_thread_start')"></button>
+              </div>
+              <p class="hint" x-show="haBusy" x-cloak x-text="t('web.setup.ha_thread_running')"></p>
+              <p class="banner ok" x-show="haThreadResult" x-cloak
+                 x-text="haThreadResult && t('web.setup.ha_thread_' + haThreadResult.outcome, { name: haThreadResult.network_name || '?' })"></p>
+            </div>
+          </template>
+          <p class="banner warn" x-show="!setupHasThreadStick()" x-cloak
+             x-text="t('web.setup.ha_thread_no_stick', { count: haCount('matter_thread') })"></p>
+          <p class="banner warn" x-show="setupHasThreadStick() && !haInventory?.thread_network" x-cloak
+             x-text="t('web.setup.ha_thread_no_network')"></p>
+          <p class="banner danger" x-show="haError" x-cloak x-text="haError"></p>
+        </section>
+      </template>
+
+      <!-- Home Assistant: Matter devices. -->
+      <template x-if="setupStep() === 'ha_matter'">
+        <section class="setup-step">
+          <h1 x-text="t('web.setup.ha_matter_heading')"></h1>
+          <p x-text="t('web.setup.ha_matter_text')"></p>
+          <template x-if="!haJobFor('matter')">
+            <div>
+              <ul class="setup-checklist">
+                <template x-for="device in haChosen('matter_wifi', 'matter_bridge', 'matter_thread')" :key="device.ha_device_id">
+                  <li><strong x-text="device.name"></strong><span x-text="(device.room || '–') + ' · ' + haKindLabel(device)"></span></li>
+                </template>
+              </ul>
+              <p class="hint" x-show="!haChosen('matter_wifi', 'matter_bridge', 'matter_thread').length" x-cloak
+                 x-text="t('web.setup.ha_matter_none')"></p>
+              <div class="row">
+                <button class="primary" :disabled="haBusy || !haChosen('matter_wifi', 'matter_bridge', 'matter_thread').length"
+                        @click="haStartMatter()"
+                        x-text="t('web.setup.ha_matter_start', { count: haChosen('matter_wifi', 'matter_bridge', 'matter_thread').length })"></button>
+              </div>
+            </div>
+          </template>
+          <template x-if="haJobFor('matter')">
+            <ul class="setup-checklist">
+              <template x-for="item in haJobFor('matter').items" :key="item.ha_device_id">
+                <li :class="'item-' + item.state">
+                  <strong x-text="item.name"></strong>
+                  <span x-text="haJobItemLabel(item)"></span>
+                  <span class="danger-text" x-show="item.detail" x-cloak x-text="item.detail"></span>
+                </li>
+              </template>
+            </ul>
+          </template>
+          <div class="row" x-show="haJobFor('matter') && !haJobFor('matter').running" x-cloak>
+            <button :disabled="haBusy" @click="haJob = null" x-text="t('web.setup.ha_again')"></button>
+          </div>
+          <p class="banner danger" x-show="haError" x-cloak x-text="haError"></p>
+        </section>
+      </template>
+
+      <!-- Home Assistant: Zigbee from ZHA. Four stages, see
+           `haZigbeeStage()`: pause ZHA, get the stick here, (own stick)
+           transfer the network, enter the devices. -->
+      <template x-if="setupStep() === 'ha_zigbee'">
+        <section class="setup-step">
+          <h1 x-text="t(haZigbeeMode === 'own' ? 'web.setup.ha_zigbee_heading_own' : 'web.setup.ha_zigbee_heading_move')"></h1>
+          <ol class="setup-stages">
+            <li :class="{ current: haZigbeeStage() === 'pause', done: haZigbeeStage() !== 'pause' }">
+              <strong x-text="t('web.setup.ha_zigbee_pause')"></strong>
+              <template x-if="haZigbeeStage() === 'pause'">
+                <div>
+                  <p x-text="t('web.setup.ha_zigbee_pause_text')"></p>
+                  <div class="row" x-show="!haZigbeeConfirmPause">
+                    <button class="primary" :disabled="haBusy" @click="haZigbeeConfirmPause = true" x-text="t('web.setup.ha_zigbee_pause_button')"></button>
+                  </div>
+                  <div class="dialog-inline" x-show="haZigbeeConfirmPause" x-cloak>
+                    <p x-text="t('web.setup.ha_zigbee_pause_confirm')"></p>
+                    <div class="row">
+                      <button class="primary" :disabled="haBusy" @click="haPauseZha()" x-text="t('web.setup.ha_zigbee_pause_yes')"></button>
+                      <button @click="haZigbeeConfirmPause = false" x-text="t('web.radios.cancel')"></button>
+                    </div>
+                  </div>
+                </div>
+              </template>
+            </li>
+            <li :class="{ current: haZigbeeStage() === 'stick' }">
+              <strong x-text="t(haZigbeeMode === 'own' ? 'web.setup.ha_zigbee_unplug' : 'web.setup.ha_zigbee_plug')"></strong>
+              <template x-if="haZigbeeStage() === 'stick'">
+                <div>
+                  <p x-text="t(haZigbeeMode === 'own' ? 'web.setup.ha_zigbee_unplug_text' : 'web.setup.ha_zigbee_plug_text')"></p>
+                  <svg x-show="haZigbeeMode !== 'own'" class="setup-figure" viewBox="0 0 420 110" role="img" :aria-label="t('web.setup.ha_zigbee_plug')">
+                    <rect x="10" y="30" width="120" height="60" rx="10" class="fig-ha" /><text x="70" y="66" text-anchor="middle" class="fig-caption">Home Assistant</text>
+                    <rect x="290" y="30" width="120" height="60" rx="10" class="fig-accent-soft" /><text x="350" y="66" text-anchor="middle" class="fig-caption">loxmatter</text>
+                    <rect x="178" y="12" width="64" height="20" rx="5" class="fig-ha-line-fill" /><rect x="242" y="17" width="14" height="10" class="fig-bar-light" />
+                    <path d="M130 60 Q160 20 176 22" class="fig-thin" />
+                    <path d="M258 22 Q275 25 288 52" class="fig-arrow" /><path d="M280 47 L289 54 L291 43" class="fig-arrow" />
+                  </svg>
+                  <template x-if="zigbee">
+                    <div class="row">
+                      <label>
+                        <span x-text="t('web.radios.zigbee_label')"></span>
+                        <select x-model="zigbeeDraft.path" @change="zigbeeSelectionChanged()" :disabled="zigbeeBusy">
+                          <template x-for="option in zigbeeRadioOptions()" :key="option.value">
+                            <option :value="option.value" :disabled="option.disabled" x-text="option.label"></option>
+                          </template>
+                        </select>
+                      </label>
+                      <button class="primary" @click="applyZigbeeRadio()" :disabled="!zigbeeCanApply()" x-text="t('web.radios.apply')"></button>
+                      <button @click="loadZigbeeRadio(); haLoadZigbee()" x-text="t('web.radios.rescan')"></button>
+                    </div>
+                  </template>
+                  <p class="hint" x-show="zigbee" x-cloak x-text="zigbee && zigbeeProgressText(zigbee.progress, zigbee.configured_device_present)"></p>
+                  <p class="banner warn" x-show="haZigbee?.stick && !haZigbee?.same_network && haZigbeeMode !== 'own'" x-cloak
+                     x-text="t('web.setup.ha_zigbee_other_network')"></p>
+                  <p x-show="zigbeeApplyError" x-cloak class="banner danger" x-text="zigbeeApplyError"></p>
+                </div>
+              </template>
+            </li>
+            <li x-show="haZigbeeMode === 'own'" :class="{ current: haZigbeeStage() === 'restore' }">
+              <strong x-text="t('web.setup.ha_zigbee_restore')"></strong>
+              <template x-if="haZigbeeStage() === 'restore'">
+                <div>
+                  <p x-text="t('web.setup.ha_zigbee_restore_text')"></p>
+                  <label class="checkbox-label">
+                    <input type="checkbox" x-model="haOverwriteIeee" />
+                    <span x-text="t('web.setup.ha_zigbee_overwrite_ieee')"></span>
+                  </label>
+                  <p class="banner warn" x-text="t('web.setup.ha_zigbee_restore_warning')"></p>
+                  <div class="row">
+                    <button class="primary" :disabled="haBusy" @click="haRestoreZigbee()" x-text="t('web.setup.ha_zigbee_restore_button')"></button>
+                  </div>
+                </div>
+              </template>
+            </li>
+            <li :class="{ current: haZigbeeStage() === 'import' }">
+              <strong x-text="t('web.setup.ha_zigbee_import')"></strong>
+              <template x-if="haZigbeeStage() === 'import'">
+                <div>
+                  <p x-text="t('web.setup.ha_zigbee_import_text')"></p>
+                  <template x-if="!haJobFor('zigbee')">
+                    <div class="row">
+                      <button class="primary" :disabled="haBusy || !haChosen('zigbee').length" @click="haStartZigbee()"
+                              x-text="t('web.setup.ha_zigbee_import_button', { count: haChosen('zigbee').length })"></button>
+                    </div>
+                  </template>
+                  <template x-if="haJobFor('zigbee')">
+                    <ul class="setup-checklist">
+                      <template x-for="item in haJobFor('zigbee').items" :key="item.ha_device_id">
+                        <li :class="'item-' + item.state">
+                          <strong x-text="item.name"></strong>
+                          <span x-text="haJobItemLabel(item)"></span>
+                          <span class="danger-text" x-show="item.detail" x-cloak x-text="item.detail"></span>
+                        </li>
+                      </template>
+                    </ul>
+                  </template>
+                </div>
+              </template>
+            </li>
+          </ol>
+          <p class="banner danger" x-show="haError" x-cloak x-text="haError"></p>
+        </section>
+      </template>
+
+      <!-- Home Assistant: clean up, voluntarily. -->
+      <template x-if="setupStep() === 'ha_cleanup'">
+        <section class="setup-step">
+          <h1 x-text="t('web.setup.ha_cleanup_heading')"></h1>
+          <p x-text="t('web.setup.ha_cleanup_text')"></p>
+          <label class="checkbox-label">
+            <input type="checkbox" x-model="haCleanupMatter" />
+            <span x-text="t('web.setup.ha_cleanup_matter')"></span>
+          </label>
+          <label class="checkbox-label" x-show="haInventory?.zha" x-cloak>
+            <input type="checkbox" x-model="haCleanupZha" />
+            <span x-text="t('web.setup.ha_cleanup_zha')"></span>
+          </label>
+          <p class="hint" x-text="t('web.setup.ha_cleanup_thread')"></p>
+          <div class="row">
+            <button class="primary" :disabled="haBusy || (!haCleanupMatter && !haCleanupZha) || haCleanupResult"
+                    @click="haCleanUp()" x-text="t('web.setup.ha_cleanup_button')"></button>
+          </div>
+          <p class="banner ok" x-show="haCleanupResult" x-cloak
+             x-text="haCleanupResult && t('web.setup.ha_cleanup_done', { count: haCleanupResult.removed.length })"></p>
+          <p class="banner warn" x-show="haCleanupResult?.failed.length" x-cloak
+             x-text="haCleanupResult && t('web.setup.ha_cleanup_failed', { count: haCleanupResult.failed.length })"></p>
+          <p class="banner danger" x-show="haError" x-cloak x-text="haError"></p>
+        </section>
+      </template>
+
+      <!-- Done. -->
+      <template x-if="setupStep() === 'done'">
+        <section class="setup-step">
+          <h1 x-text="t('web.setup.done_heading')"></h1>
+          <p x-show="setup.path === 'ha'" x-cloak x-text="t('web.setup.done_ha', { count: haDoneCount() })"></p>
+          <p x-text="t('web.setup.done_text')"></p>
+          <p class="hint" x-text="t('web.setup.done_later')"></p>
+          <div class="row">
+            <button class="primary" :disabled="setupBusy" @click="setup.path === 'ha' ? haSignOutAndFinish() : setupComplete()"
+                    x-text="t('web.setup.finish')"></button>
+          </div>
+        </section>
+      </template>
+
+      <p class="banner danger" x-show="setupError" x-cloak x-text="setupError"></p>
+      <div class="setup-nav" x-show="setupStepIndex() > 0 || setupNextShown()">
+        <button x-show="setupStepIndex() > 0" @click="setupBack()" :disabled="setupBusy" x-text="t('web.setup.back')"></button>
+        <button class="primary" x-show="setupNextShown()" @click="setupNext()" :disabled="setupNextBlocked()"
+                x-text="t('web.setup.next')"></button>
+      </div>
+    </main>
+    </template>
+
+    <nav class="tabs" x-show="!setupActive()">
       <a href="#/devices" :class="{ active: view === 'devices' }" :aria-current="view === 'devices' ? 'page' : null" x-text="t('web.nav.devices')"></a>
       <a href="#/export" :class="{ active: view === 'export' }" :aria-current="view === 'export' ? 'page' : null" x-text="t('web.nav.export')"></a>
       <a href="#/system" :class="{ active: view === 'system' }" :aria-current="view === 'system' ? 'page' : null" x-text="t('web.nav.system')"></a>
       <a href="#/settings" :class="{ active: view === 'settings' }" :aria-current="view === 'settings' ? 'page' : null" x-text="t('web.nav.settings')"></a>
     </nav>
 
-    <main :class="{ 'main-wide': view === 'devices' }">
+    <main x-show="!setupActive()" :class="{ 'main-wide': view === 'devices' }">
       <!-- ================================================================
            View 1: Devices
            ================================================================ -->
@@ -2780,6 +3353,17 @@
             </div>
           </template>
           <p x-show="!zigbee && zigbeeError" x-cloak class="banner danger" x-text="zigbeeError"></p>
+        </div>
+
+        <!-- The first-run assistant again (design 2026-11-07): for the Home
+             Assistant devices left behind the first time - a Thread stick
+             bought later, Zigbee skipped. Devices already set up stay. -->
+        <div class="card">
+          <h2 x-text="t('web.setup.restart_heading')"></h2>
+          <p class="hint" x-text="t('web.setup.restart_text')"></p>
+          <div class="row">
+            <button @click="setupRestart()" x-text="t('web.setup.restart_button')"></button>
+          </div>
         </div>
 
         <div class="card">

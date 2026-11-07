@@ -89,6 +89,9 @@ _ACTIVE_DATASET_PATH: Final = "/node/dataset/active"
 _NODE_STATE_PATH: Final = "/node/state"
 _JSON: Final = {"Accept": "application/json", "Content-Type": "application/json"}
 _NETWORK_NAME_TLV_TYPE: Final = 0x03
+# Where a dataset handed over by the Home Assistant migration came from, for
+# `validated_dataset`'s messages - resolved at call time like every key.
+MIGRATION_DATASET_ORIGIN_KEY: Final = "api.homeassistant.dataset_origin"
 
 NetworkCreation = Literal["created", "exists", "busy"]
 
@@ -398,6 +401,46 @@ async def enable_thread(
         raise _unexpected(url, status, key="api.errors.otbr_http_status")
 
 
+async def disable_thread(
+    base_url: str | None = None,
+    *,
+    session_factory: Callable[[], Any] | None = None,
+) -> None:
+    """`thread stop` plus `ifconfig down`, through the REST API - the state
+    in which ot-br-posix accepts a new active dataset at all."""
+    url = _url(base_url, _NODE_STATE_PATH)
+    status, _ = await _request("PUT", url, dict(_JSON), '"disable"', session_factory)
+    if status != 200:
+        raise _unexpected(url, status, key="api.errors.otbr_http_status")
+
+
+async def replace_active_dataset(
+    dataset: str,
+    base_url: str | None = None,
+    *,
+    session_factory: Callable[[], Any] | None = None,
+) -> None:
+    """Make `dataset` (hex TLV) the border router's active network.
+
+    For joining a Thread network another border router already runs - the
+    Home Assistant migration (design 2026-11-07, section 5). The agent is
+    taken out of any network it is in first: ot-br-posix refuses a new
+    ACTIVE dataset with 409 while Thread is up. The caller decides whether
+    replacing is allowed; `matter/thread_network.py`'s rule that a network
+    devices live in is never replaced is the caller's to keep.
+
+    The dataset is a credential and appears in no message here."""
+    dataset = validated_dataset(dataset, i18n.t(MIGRATION_DATASET_ORIGIN_KEY))
+    if await border_router_role(base_url, session_factory=session_factory) != "disabled":
+        await disable_thread(base_url, session_factory=session_factory)
+    url = _url(base_url, _ACTIVE_DATASET_PATH)
+    headers = {"Content-Type": "text/plain"}
+    status, _ = await _request("PUT", url, headers, dataset, session_factory)
+    if status not in (200, 201, 204):
+        raise _unexpected(url, status, key="api.errors.otbr_http_status")
+    await enable_thread(base_url, session_factory=session_factory)
+
+
 def thread_network_name_from_dataset(dataset: str) -> str | None:
     """The Network Name TLV (type 3, UTF-8, at most 16 bytes), or `None`.
 
@@ -423,5 +466,33 @@ def thread_network_name_from_dataset(dataset: str) -> str | None:
                 return raw[value_start:value_end].decode("utf-8")
             except UnicodeDecodeError:
                 return None
+        index = value_end
+    return None
+
+
+_EXTENDED_PAN_ID_TLV_TYPE: Final = 0x02
+_EXTENDED_PAN_ID_LENGTH: Final = 8
+
+
+def extended_pan_id_from_dataset(dataset: str) -> str | None:
+    """The Extended PAN ID TLV (type 2, eight bytes) as 16 lower-case hex
+    digits, or `None` - what tells two Thread networks apart. Not a secret,
+    and the same tolerance as `thread_network_name_from_dataset`."""
+    try:
+        raw = bytes.fromhex(dataset)
+    except ValueError:
+        return None
+    index = 0
+    while index + 2 <= len(raw):
+        tlv_type = raw[index]
+        length = raw[index + 1]
+        value_start = index + 2
+        value_end = value_start + length
+        if value_end > len(raw):
+            return None
+        if tlv_type == _EXTENDED_PAN_ID_TLV_TYPE:
+            if length != _EXTENDED_PAN_ID_LENGTH:
+                return None
+            return raw[value_start:value_end].hex()
         index = value_end
     return None

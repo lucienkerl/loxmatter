@@ -417,19 +417,17 @@ decide_mode() {
   elif [ -n "${RADIO_DEVICE:-}" ]; then
     MODE="thread"
   else
+    # The sticks are no longer asked about here (design 2026-11-07): the
+    # first-run assistant in the web interface lists them by model, says
+    # which is which, and also handles the move from Home Assistant, where
+    # the Zigbee stick may only arrive halfway through. The installer starts
+    # without Thread; choosing a Thread stick there switches it on.
+    # LOXMATTER_MODE=thread and RADIO_DEVICE still choose one from a script.
+    MODE="wifi"
     list_serial_candidates
-    if [ -z "$SERIAL_CANDIDATES" ]; then
-      note "No USB stick found - installing for WiFi and Ethernet only."
-      note "Thread can be switched on later on the Radios card."
-      MODE="wifi"
-    else
-      show_thread_menu 1
-      if [ "$CHOICE" -eq 0 ]; then
-        MODE="wifi"
-      else
-        MODE="thread"
-        CHOSEN_RADIO="$(nth_line "$SERIAL_CANDIDATES" "$CHOICE")"
-      fi
+    if [ -n "$SERIAL_CANDIDATES" ]; then
+      note "USB sticks found: $(count_lines "$SERIAL_CANDIDATES"). The setup assistant in the"
+      note "web interface asks what each one is for."
     fi
   fi
   if [ "$MODE" = "thread" ] && [ -z "$CHOSEN_RADIO" ]; then
@@ -509,20 +507,19 @@ thread_menu_expected() {
   if [ -f "$TARGET_DIR/deploy/testhost/.env" ] || [ -n "${RADIO_DEVICE:-}" ]; then
     return 1
   fi
+  # Only an explicit LOXMATTER_MODE=thread still asks here; everyone else
+  # chooses the stick in the web interface's setup assistant.
   case "${LOXMATTER_MODE:-}" in
-    ""|thread) : ;;
+    thread) : ;;
     *) return 1 ;;
   esac
   list_serial_candidates
   [ -n "$SERIAL_CANDIDATES" ]
 }
 
+# The Bluetooth adapter is never asked about any more (see decide_bluetooth).
 bluetooth_menu_expected() {
-  if [ -n "${BLUETOOTH_ADAPTER:-}" ] || [ -n "$(env_file_value BLUETOOTH_ADAPTER)" ]; then
-    return 1
-  fi
-  list_bt_adapters
-  [ "$(count_lines "$BT_ADAPTERS")" -gt 1 ]
+  return 1
 }
 
 # Appends $1 as the next announced question, without eval: aq_count picks
@@ -950,24 +947,15 @@ decide_bluetooth() {
     note "Bluetooth: hci$CHOSEN_BT - ${bt_line#*"$TAB"}, used to commission Matter devices."
     return 0
   fi
-  say "Bluetooth adapter"
-  note "Most Matter devices are commissioned over Bluetooth. The built-in"
-  note "adapter is usually enough; a USB adapter reaches further."
-  printf '\n'
-  bt_position=0
-  while IFS="$TAB" read -r bt_index bt_label; do
-    if [ -z "$bt_index" ]; then
-      continue
-    fi
-    bt_position=$((bt_position + 1))
-    note "  $bt_position) hci$bt_index - $bt_label"
-  done <<EOF
-$BT_ADAPTERS
-EOF
-  printf '\n'
-  choose "Which adapter should be used?" 1 "$bt_count" 0
-  bt_line="$(nth_line "$BT_ADAPTERS" "$CHOICE")"
+  # Several adapters: the first one, without a question (design
+  # 2026-11-07 - every choice moves to the web interface). The built-in
+  # adapter is listed first on a Pi and is usually enough; a USB adapter
+  # that reaches further is chosen on the Radios card.
+  bt_line="$(nth_line "$BT_ADAPTERS" 1)"
   CHOSEN_BT="${bt_line%%"$TAB"*}"
+  note "Bluetooth: hci$CHOSEN_BT - ${bt_line#*"$TAB"}, used to commission Matter devices."
+  note "$bt_count adapters were found; another one can be chosen under Settings,"
+  note "Radios, in the web interface."
 }
 
 # The .env.example explains why the token has to be plain [0-9a-f]: it travels
@@ -1283,7 +1271,8 @@ report() {
   printf '  Web interface: http://%s:%s/\n' "$lan_ip" "$PORT"
   printf '  Open it and set a password. Until you do, no /api route answers -\n'
   printf '  there is no open state.\n'
-  printf '\n  Then enter the Miniserver'\''s address under Settings -> Miniserver connection.\n'
+  printf '\n  A setup assistant then asks for the Miniserver, the USB sticks and,\n'
+  printf '  if you are moving from Home Assistant, takes your devices over.\n'
   if [ "$MODE" = "thread" ]; then
     # No crontab line to add any more: the updater service runs the same
     # watchdog every minute on its own (deploy/updater/watchdog-once.sh), and
@@ -1293,8 +1282,8 @@ report() {
     printf '  runs every minute, and it keeps the border router on the image and\n'
     printf '  device this host is configured for. Nothing to set up by hand.\n'
   else
-    printf '\n  Running WiFi and Ethernet only. To add Thread later: plug the radio in,\n'
-    printf '  then open Settings -> Radios in the web interface and switch Thread on.\n'
+    printf '\n  Thread is off until a Thread stick is chosen in the setup assistant\n'
+    printf '  (or later under Settings -> Radios).\n'
   fi
   # Updates go through the web interface only: the bridge backs up its
   # database first and the updater service rolls back a version that does

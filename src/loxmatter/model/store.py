@@ -61,9 +61,11 @@ from loxmatter.model.auth_store import AuthStore
 from loxmatter.model.dcl_store import DclStore
 from loxmatter.model.firmware_settings_store import FirmwareSettingsStore
 from loxmatter.model.firmware_status_store import FirmwareStatusStore
+from loxmatter.model.homeassistant_store import HomeAssistantStore
 from loxmatter.model.locale_store import LocaleStore
 from loxmatter.model.resend_settings_store import ResendSettingsStore
 from loxmatter.model.settings_store import BridgeSettingsStore
+from loxmatter.model.setup_store import SetupStore
 from loxmatter.model.update_settings_store import UpdateSettingsStore
 from loxmatter.model.zigbee_pending_store import ZigbeePendingStore
 from loxmatter.model.zigbee_settings_store import ZigbeeSettingsStore
@@ -1525,6 +1527,9 @@ class Store:
         self.firmware_status = FirmwareStatusStore(self._db)
         self.firmware_settings = FirmwareSettingsStore(self._db)
         self.dcl = DclStore(self._db)
+        # Where the first-run setup assistant stands (design 2026-11-07).
+        self.setup = SetupStore(self._db)
+        self.homeassistant = HomeAssistantStore(self._db)
 
     def close(self) -> None:
         self._db.close()

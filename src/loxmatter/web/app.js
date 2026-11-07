@@ -1212,6 +1212,40 @@ function app() {
     settingsBusy: false,
     settingsError: null,
 
+    // --- First-run assistant (design 2026-11-07) -------------------------
+    // `setup` is the last `GET /api/setup` body. While it says the setup is
+    // not completed, the assistant replaces the whole app below the header
+    // (`setupActive()`), and every step is written back with
+    // `PATCH /api/setup` so a reload lands on the same screen.
+    setup: null,
+    setupBusy: false,
+    setupError: null,
+    // The Home Assistant half. `ha` mirrors `GET /api/homeassistant`;
+    // `haInventory` is the device list, `haSelected` the ticked boxes by
+    // Home Assistant device id. `haZigbeeMode` is the user's answer to
+    // "where should the Zigbee network run": move | own | skip.
+    ha: null,
+    haUrl: "http://homeassistant.local:8123",
+    haToken: "",
+    haBusy: false,
+    haError: null,
+    haInventory: null,
+    haSelected: {},
+    haZigbeeMode: "move",
+    haThreadResult: null,
+    haJob: null,
+    haJobTimer: null,
+    haZigbee: null,
+    haZigbeeConfirmPause: false,
+    haOverwriteIeee: true,
+    haCleanupMatter: true,
+    haCleanupZha: false,
+    haCleanupResult: null,
+    // The code Home Assistant's sign-in page sent the browser back with,
+    // read from the address bar in `init()` and handed to the bridge once
+    // the session is known.
+    haCallback: null,
+
     // The radios card (design "Radios in the Web UI", 2026-09-11, section
     // 8). `radios` is the last GET /api/radios body; `radiosDraft` what the
     // selects show. `radiosDirty` keeps a poll from overwriting a choice the
@@ -1520,6 +1554,15 @@ function app() {
       // time, so a reloaded page shows the truth, and a Stop on unload would
       // also close a window another tab or a phone is watching (design 3.1).
       this.restoreCommission();
+      // Home Assistant's sign-in page sends the browser back here with
+      // `?ha_auth=1&code=…&state=…` (see `homeassistant/client.py`). Read
+      // once and taken out of the address bar at once, so a reload does
+      // not hand the same one-time code over a second time.
+      const query = new URLSearchParams(window.location.search);
+      if (query.get("ha_auth") === "1") {
+        this.haCallback = { code: query.get("code"), state: query.get("state") };
+        window.history.replaceState(null, "", window.location.pathname + window.location.hash);
+      }
       await Promise.all([this.loadI18n(), this.loadAuthInfo()]);
       if (this.authenticated) {
         await this.startApp();
@@ -1687,6 +1730,10 @@ function app() {
       this.signalsByDevice = {};
       this.groupsError = null;
       this.groupActionError = null;
+      // The assistant first: an installation that has not finished it shows
+      // the assistant instead of the dashboard, and the rest below loads in
+      // the background for the moment it is done.
+      await this.loadSetup();
       // Groups before the fan-out below, because the group controls are
       // loaded per group and that list has to exist first. Sequential with
       // the device list for no deeper reason than that both are cheap.
@@ -7117,6 +7164,496 @@ function app() {
       } finally {
         this.settingsBusy = false;
       }
+    },
+
+// ---------------------------------------------------------------------
+    // First-run assistant (design 2026-11-07)
+    // ---------------------------------------------------------------------
+
+    async loadSetup() {
+      try {
+        this.setup = await this.request("GET", "/api/setup");
+      } catch (error) {
+        // Without an answer the dashboard is the safe place to be: an
+        // installation that predates the assistant must never be locked
+        // into it by a failed request.
+        this.setup = { completed: true, step: null, path: null };
+        return;
+      }
+      if (this.setupActive()) {
+        await this.enterSetupStep(this.setupStep());
+      }
+    },
+
+    setupActive() {
+      return Boolean(this.setup && !this.setup.completed);
+    },
+
+    setupStep() {
+      return this.setup?.step || "welcome";
+    },
+
+    /** The steps of the chosen path, in order. Steps that do not apply
+     * to this installation are left out rather than shown empty: the HA
+     * Thread step needs a Thread stick, the Zigbee step needs ZHA and an
+     * answer other than "skip". */
+    setupSteps() {
+      const common = ["welcome", "miniserver", "path"];
+      if (this.setup?.path === "ha") {
+        const steps = [...common, "ha_login", "ha_devices", "sticks"];
+        if (this.setupHasThreadStick() || this.haDevicesOf("matter_thread").length) steps.push("ha_thread");
+        steps.push("ha_matter");
+        if (this.haInventory?.zha && this.haZigbeeMode !== "skip") steps.push("ha_zigbee");
+        steps.push("ha_cleanup", "done");
+        return steps;
+      }
+      if (this.setup?.path === "new") return [...common, "sticks", "networks", "done"];
+      return common;
+    },
+
+    setupStepIndex() {
+      return Math.max(0, this.setupSteps().indexOf(this.setupStep()));
+    },
+
+    setupProgressText() {
+      const steps = this.setupSteps();
+      return t("web.setup.progress", { current: this.setupStepIndex() + 1, total: steps.length });
+    },
+
+    async setupGo(step) {
+      this.setupError = null;
+      this.setupBusy = true;
+      try {
+        this.setup = await this.request("PATCH", "/api/setup", { step });
+      } catch (error) {
+        this.setupError = error.message;
+        return;
+      } finally {
+        this.setupBusy = false;
+      }
+      window.scrollTo(0, 0);
+      await this.enterSetupStep(step);
+    },
+
+    async setupNext() {
+      if (this.setupStep() === "miniserver" && !(await this.setupSaveMiniserver())) return;
+      const steps = this.setupSteps();
+      const next = steps[this.setupStepIndex() + 1];
+      if (next) await this.setupGo(next);
+    },
+
+    async setupBack() {
+      const steps = this.setupSteps();
+      const index = this.setupStepIndex();
+      if (index > 0) await this.setupGo(steps[index - 1]);
+    },
+
+    /** Whether the Next button is offered on this step - the steps that
+     * end in an action of their own (choosing a path, finishing) or
+     * wait for one say so themselves. */
+    setupNextShown() {
+      return !["welcome", "path", "done", "ha_login"].includes(this.setupStep());
+    },
+
+    setupNextBlocked() {
+      const step = this.setupStep();
+      if (step === "ha_devices") return !this.haInventory;
+      if (step === "ha_matter" || step === "ha_zigbee") return Boolean(this.haJob?.running);
+      return this.setupBusy;
+    },
+
+    async setupChoosePath(path) {
+      this.setupError = null;
+      this.setupBusy = true;
+      try {
+        this.setup = await this.request("PATCH", "/api/setup", { path });
+      } catch (error) {
+        this.setupError = error.message;
+        return;
+      } finally {
+        this.setupBusy = false;
+      }
+      await this.setupGo(path === "ha" ? "ha_login" : "sticks");
+    },
+
+    async setupComplete() {
+      this.setupBusy = true;
+      try {
+        this.setup = await this.request("POST", "/api/setup/complete");
+      } catch (error) {
+        this.setupError = error.message;
+        return;
+      } finally {
+        this.setupBusy = false;
+      }
+      this.stopHaJobTimer();
+      await this.loadDevices();
+      await this.selectView("devices");
+    },
+
+    /** Settings → "Run the assistant again": for the Home Assistant
+     * devices left behind the first time, once a stick is there. */
+    async setupRestart() {
+      try {
+        this.setup = await this.request("POST", "/api/setup/restart");
+      } catch (error) {
+        this.settingsError = error.message;
+        return;
+      }
+      window.scrollTo(0, 0);
+      await this.enterSetupStep(this.setupStep());
+    },
+
+    /** Loads what a step shows. Called on every entry, a reload included. */
+    async enterSetupStep(step) {
+      if (step === "miniserver") {
+        await this.loadSettings();
+        if (!this.settingsDraft.bridge_ip && /^\d+\.\d+\.\d+\.\d+$/.test(window.location.hostname)) {
+          this.settingsDraft.bridge_ip = window.location.hostname;
+        }
+      }
+      if (step === "sticks" || step === "networks" || step === "ha_zigbee") {
+        await Promise.all([this.loadRadios(), this.loadZigbeeRadio()]);
+      }
+      if (step.startsWith("ha_") || step === "sticks" || step === "done") {
+        await this.loadHomeAssistant();
+      }
+      if (this.haCallback && step === "ha_login") {
+        await this.haFinishSignIn();
+      }
+      // Read again on the steps after the sticks: a Thread stick set up
+      // there turns "needs a Thread stick" into "can move".
+      const fresh = ["ha_matter", "ha_zigbee", "ha_cleanup", "done"].includes(step);
+      const wants = step.startsWith("ha_") || step === "sticks" || step === "done";
+      if (wants && this.ha?.signed_in && (fresh || !this.haInventory)) await this.haLoadInventory();
+      if (step === "ha_zigbee") await this.haLoadZigbee();
+      if (step === "ha_matter" || step === "ha_zigbee") await this.haPollJob();
+    },
+
+    async setupSaveMiniserver() {
+      // Empty is allowed: the Miniserver can be entered later.
+      if (!this.settingsDraft.bridge_ip.trim()) {
+        this.settingsError = t("web.settings.bridge_ip_required");
+        return false;
+      }
+      await this.saveSettings();
+      return !this.settingsError;
+    },
+
+    setupHasThreadStick() {
+      return Boolean(this.radios?.current?.thread?.enabled) || this.radiosDraft.threadDevice !== "";
+    },
+
+    setupHasZigbeeStick() {
+      return Boolean(this.zigbee?.configured_path);
+    },
+
+    // --- Home Assistant -------------------------------------------------
+
+    /** The Zigbee answer lives in this browser only - it decides which
+     * screens follow, nothing on the bridge depends on it - and survives a
+     * reload, including the one Home Assistant's sign-in causes. */
+    haSetZigbeeMode(mode) {
+      this.haZigbeeMode = mode;
+      try {
+        window.localStorage.setItem("loxmatter.haZigbeeMode", mode);
+      } catch {
+        // Private mode: the choice holds until the page is reloaded.
+      }
+    },
+
+    async loadHomeAssistant() {
+      try {
+        const kept = window.localStorage.getItem("loxmatter.haZigbeeMode");
+        if (["move", "own", "skip"].includes(kept)) this.haZigbeeMode = kept;
+      } catch {
+        // See `haSetZigbeeMode`.
+      }
+      try {
+        this.ha = await this.request("GET", "/api/homeassistant");
+        if (this.ha.url) this.haUrl = this.ha.url;
+        if (this.ha.job) this.haJob = this.ha.job;
+      } catch (error) {
+        this.haError = error.message;
+      }
+    },
+
+    async haSignIn() {
+      this.haError = null;
+      this.haBusy = true;
+      try {
+        const probe = await this.request("POST", "/api/homeassistant/probe", { url: this.haUrl });
+        this.haUrl = probe.url;
+        const answer = await this.request("POST", "/api/homeassistant/auth/start", {
+          url: this.haUrl,
+          origin: window.location.origin,
+        });
+        // The same window, not a pop-up: a blocked pop-up is the one
+        // failure here the page could not even see.
+        window.location.href = answer.authorize_url;
+      } catch (error) {
+        this.haError = error.message;
+        this.haBusy = false;
+      }
+    },
+
+    async haFinishSignIn() {
+      const callback = this.haCallback;
+      this.haCallback = null;
+      if (!callback?.code || !callback?.state) {
+        this.haError = t("web.setup.ha_sign_in_cancelled");
+        return;
+      }
+      this.haBusy = true;
+      try {
+        this.ha = await this.request("POST", "/api/homeassistant/auth/finish", callback);
+      } catch (error) {
+        this.haError = error.message;
+        return;
+      } finally {
+        this.haBusy = false;
+      }
+      await this.setupGo("ha_devices");
+    },
+
+    async haSignInWithToken() {
+      this.haError = null;
+      this.haBusy = true;
+      try {
+        this.ha = await this.request("POST", "/api/homeassistant/auth/token", {
+          url: this.haUrl,
+          token: this.haToken,
+        });
+        this.haToken = "";
+      } catch (error) {
+        this.haError = error.message;
+        return;
+      } finally {
+        this.haBusy = false;
+      }
+      await this.setupGo("ha_devices");
+    },
+
+    async haLoadInventory() {
+      this.haError = null;
+      this.haBusy = true;
+      try {
+        this.haInventory = await this.request("GET", "/api/homeassistant/inventory");
+        // Everything that can come over is ticked; what cannot is not.
+        const selected = {};
+        for (const device of this.haInventory.devices) {
+          selected[device.ha_device_id] = this.haSelectable(device);
+        }
+        this.haSelected = { ...selected, ...this.haSelectedKept() };
+      } catch (error) {
+        this.haError = error.message;
+      } finally {
+        this.haBusy = false;
+      }
+    },
+
+    /** Choices already made in this tab survive a reload of the list. */
+    haSelectedKept() {
+      const kept = {};
+      for (const [key, value] of Object.entries(this.haSelected)) {
+        if (this.haInventory?.devices.some((d) => d.ha_device_id === key && this.haSelectable(d))) {
+          kept[key] = value;
+        }
+      }
+      return kept;
+    },
+
+    haDevicesOf(...kinds) {
+      return (this.haInventory?.devices ?? []).filter((device) => kinds.includes(device.kind));
+    },
+
+    haCount(...kinds) {
+      return this.haDevicesOf(...kinds).length;
+    },
+
+    /** Whether a device's box can be ticked. A Thread or Zigbee device
+     * whose stick is not set up YET can be: the sticks step comes after
+     * this list, and the box records what the user wants to move. */
+    haSelectable(device) {
+      if (device.kind === "zigbee" && this.haZigbeeMode === "skip") return false;
+      return ["ready", "needs_thread", "needs_zigbee"].includes(device.availability);
+    },
+
+    /** The ticked devices that can move NOW - a Zigbee device only needs
+     * its stick by the time it is entered, which the Zigbee step checks. */
+    haChosen(...kinds) {
+      return this.haDevicesOf(...kinds).filter(
+        (device) =>
+          this.haSelected[device.ha_device_id] &&
+          this.haSelectable(device) &&
+          (device.availability === "ready" || device.availability === "needs_zigbee"),
+      );
+    },
+
+    haKindLabel(device) {
+      return t(`web.setup.ha_kind_${device.kind}`);
+    },
+
+    haAvailabilityLabel(device) {
+      return t(`web.setup.ha_availability_${device.availability}`);
+    },
+
+    haAvailabilityTone(device) {
+      if (device.availability === "ready" || device.availability === "done") return "ok";
+      if (device.availability === "unsupported") return "";
+      return "warn";
+    },
+
+    async haAdoptThread() {
+      this.haError = null;
+      this.haBusy = true;
+      try {
+        this.haThreadResult = await this.request("POST", "/api/homeassistant/thread");
+      } catch (error) {
+        this.haError = error.message;
+      } finally {
+        this.haBusy = false;
+      }
+    },
+
+    async haStartMatter() {
+      const devices = this.haChosen("matter_wifi", "matter_bridge", "matter_thread").map((d) => d.ha_device_id);
+      await this.haStartJob("/api/homeassistant/matter", devices);
+    },
+
+    async haStartZigbee() {
+      const devices = this.haChosen("zigbee").map((d) => d.ha_device_id);
+      await this.haStartJob("/api/homeassistant/zigbee/import", devices);
+    },
+
+    async haStartJob(path, devices) {
+      this.haError = null;
+      this.haBusy = true;
+      try {
+        this.haJob = await this.request("POST", path, { devices });
+      } catch (error) {
+        this.haError = error.message;
+        return;
+      } finally {
+        this.haBusy = false;
+      }
+      this.haScheduleJobPoll();
+    },
+
+    async haPollJob() {
+      try {
+        const answer = await this.request("GET", "/api/homeassistant/job");
+        this.haJob = answer.job;
+      } catch (error) {
+        this.haError = error.message;
+        return;
+      }
+      if (this.haJob?.running) {
+        this.haScheduleJobPoll();
+      } else if (this.haJob) {
+        // The list's "done" marks come from the bridge's own record.
+        await this.haLoadInventory();
+      }
+    },
+
+    haScheduleJobPoll() {
+      this.stopHaJobTimer();
+      this.haJobTimer = window.setTimeout(() => this.haPollJob(), 2000);
+    },
+
+    stopHaJobTimer() {
+      if (this.haJobTimer !== null) window.clearTimeout(this.haJobTimer);
+      this.haJobTimer = null;
+    },
+
+    haJobFor(kind) {
+      return this.haJob?.kind === kind ? this.haJob : null;
+    },
+
+    haJobItemLabel(item) {
+      return t(`web.setup.ha_item_${item.state}`);
+    },
+
+    async haLoadZigbee() {
+      try {
+        this.haZigbee = await this.request("GET", "/api/homeassistant/zigbee");
+      } catch (error) {
+        this.haError = error.message;
+      }
+    },
+
+    async haPauseZha() {
+      this.haZigbeeConfirmPause = false;
+      this.haError = null;
+      this.haBusy = true;
+      try {
+        this.haZigbee = await this.request("POST", "/api/homeassistant/zigbee/pause");
+      } catch (error) {
+        this.haError = error.message;
+      } finally {
+        this.haBusy = false;
+      }
+    },
+
+    async haRestoreZigbee() {
+      this.haError = null;
+      this.haBusy = true;
+      try {
+        this.haZigbee = await this.request("POST", "/api/homeassistant/zigbee/restore", {
+          overwrite_ieee: this.haOverwriteIeee,
+        });
+      } catch (error) {
+        this.haError = error.message;
+      } finally {
+        this.haBusy = false;
+      }
+      // The stick reconnects after a restore; its new identity follows.
+      window.setTimeout(() => this.haLoadZigbee(), 5000);
+    },
+
+    /** Where the Zigbee step stands, as one of four stages the page
+     * walks through. */
+    haZigbeeStage() {
+      if (!this.haZigbee?.backup) return "pause";
+      if (!this.haZigbee.stick_configured) return "stick";
+      if (!this.haZigbee.same_network) return this.haZigbeeMode === "own" ? "restore" : "stick";
+      return "import";
+    },
+
+    async haCleanUp() {
+      this.haError = null;
+      this.haBusy = true;
+      const devices = this.haCleanupMatter
+        ? (this.haInventory?.devices ?? [])
+            .filter((d) => d.availability === "done" && d.integration === "matter")
+            .map((d) => d.ha_device_id)
+        : [];
+      try {
+        this.haCleanupResult = await this.request("POST", "/api/homeassistant/cleanup", {
+          devices,
+          remove_zha: this.haCleanupZha,
+        });
+      } catch (error) {
+        this.haError = error.message;
+        return;
+      } finally {
+        this.haBusy = false;
+      }
+      await this.haLoadInventory();
+    },
+
+    haDoneCount() {
+      return (this.haInventory?.devices ?? []).filter((d) => d.availability === "done").length;
+    },
+
+    async haSignOutAndFinish() {
+      try {
+        await this.request("POST", "/api/homeassistant/sign-out");
+      } catch {
+        // Finishing must not depend on it: the bridge forgets the
+        // sign-in on its own the next time the assistant runs.
+      }
+      await this.setupComplete();
     },
 
     async loadResendInterval() {

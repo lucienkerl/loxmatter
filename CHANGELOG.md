@@ -8,6 +8,24 @@ people who don't know the code.
 
 ## [Unreleased]
 
+### Added
+
+- **A setup assistant on first start.** After setting the password, the web
+  interface walks you through the Miniserver address and your USB sticks
+  (Thread, Zigbee, or nothing - every combination works). The installer no
+  longer asks about sticks or Bluetooth adapters. The assistant remembers
+  where you left off, and Settings can start it again. Installations that
+  already have devices never see it.
+- **Move from Home Assistant.** Sign in to Home Assistant from the assistant
+  (on Home Assistant's own page, or with an access token), pick the devices,
+  and loxmatter takes them over with their names and rooms: Matter devices
+  through a pairing code Home Assistant hands out, Thread devices after
+  joining Home Assistant's Thread network, and Zigbee devices from ZHA
+  without re-pairing - either by moving the stick over or by copying the
+  network onto loxmatter's own stick. Nothing in Home Assistant changes until
+  you pause ZHA, and removing devices there is a separate, optional last step
+  that only touches devices which arrived here.
+
 ## [0.6.0] — 2026-10-21
 
 ### Before you update

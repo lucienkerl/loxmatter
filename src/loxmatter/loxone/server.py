@@ -151,12 +151,14 @@ from loxmatter.api.diagnostics_live import build_diagnostics_live_router
 from loxmatter.api.export import build_export_router
 from loxmatter.api.firmware import build_firmware_router
 from loxmatter.api.groups import build_groups_router
+from loxmatter.api.homeassistant import build_homeassistant_router
 from loxmatter.api.language import build_i18n_router, build_language_router
 from loxmatter.api.live import BEARER_SUBPROTOCOL, ObservableRuntime, build_live_router
 from loxmatter.api.outputs import build_outputs_router
 from loxmatter.api.project_sync import build_project_sync_router
 from loxmatter.api.radios import build_radios_router
 from loxmatter.api.settings import build_settings_router
+from loxmatter.api.setup import build_setup_router
 from loxmatter.api.update import build_update_router
 from loxmatter.api.version import build_version_router
 from loxmatter.api.zigbee import build_zigbee_router
@@ -171,6 +173,7 @@ from loxmatter.commissioning.run import ThreadDatasetSource
 from loxmatter.commissioning.session import CommissioningSession
 from loxmatter.diagnostics.logbuffer import LogBufferHandler
 from loxmatter.firmware.service import FirmwareService
+from loxmatter.homeassistant.migration import HomeAssistantMigration
 from loxmatter.loxone.sender import UdpSender
 from loxmatter.matter.client import BridgeMatterClient
 from loxmatter.matter.commissioning_progress import CommissioningTracker
@@ -507,6 +510,10 @@ def build_app(
     # exists, since every card ends in `client.commission_with_code`.
     commissioning_session: CommissioningSession | None = None,
     identify: IdentifyCoordinator | None = None,
+    # The Home Assistant migration (design 2026-11-07). Built here when not
+    # passed, from the same client, tracker and keepers every other route
+    # uses; a test passes one with a fake Home Assistant behind it.
+    homeassistant: HomeAssistantMigration | None = None,
 ) -> FastAPI:
     # Callers that predate the device source boundary pass only `client`;
     # for them the registry is the Matter client alone, which is exactly
@@ -535,6 +542,18 @@ def build_app(
             kernel=kernel_log,
             dcl=DclDirectory(store.dcl),
             identify=identify,
+        )
+    if commissioning_tracker is None:
+        commissioning_tracker = CommissioningTracker()
+    if homeassistant is None:
+        homeassistant = HomeAssistantMigration(
+            store,
+            client=client,
+            runtime=runtime,
+            tracker=commissioning_tracker,
+            fetch_dataset=thread_dataset_source or fetch_active_dataset,
+            thread_network=thread_network,
+            zigbee_runtime=zigbee_runtime,
         )
     app = FastAPI(title="loxmatter", docs_url=None, redoc_url=None)
     command_log: RingBuffer[CommandLogEntry] = RingBuffer(maxlen=COMMAND_LOG_SIZE)
@@ -720,6 +739,11 @@ def build_app(
             dependencies=api_guard,
         )
     app.include_router(build_language_router(store), dependencies=api_guard)
+    # The first-run assistant (design 2026-11-07): behind the guard like
+    # every other `/api` router - `/auth/setup` comes first, so by the time
+    # the assistant asks anything, a session exists.
+    app.include_router(build_setup_router(store), dependencies=api_guard)
+    app.include_router(build_homeassistant_router(homeassistant), dependencies=api_guard)
     app.include_router(build_version_router(), dependencies=api_guard)
     app.include_router(build_password_router(store), dependencies=api_guard)
     app.include_router(build_live_router(runtime), dependencies=api_guard)

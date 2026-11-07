@@ -67,7 +67,6 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field, model_validator
 
 from loxmatter import i18n
-from loxmatter.export.commands import extract_commands
 from loxmatter.matter.models import NodeSnapshot
 from loxmatter.model.store import Store
 from loxmatter.model.zigbee_settings_store import ZigbeeRadioSettings, settings_for_path
@@ -83,6 +82,7 @@ from loxmatter.radios.inventory import (
 )
 from loxmatter.radios.thread_lockout import is_thread_stick, read_thread_stick
 from loxmatter.sources import DeviceUnreachableError, bounded_source_call
+from loxmatter.zigbee.adopt import register_zigbee_device
 from loxmatter.zigbee.runtime import ZigbeeRuntime
 from loxmatter.zigbee.source import (
     PERMIT_MAX_SECONDS,
@@ -684,13 +684,7 @@ def build_zigbee_router(
         _require_still_live(source)
         _require_ready_row(source, ieee)
 
-        device_id = store.register_device(snapshot, room=patch.room)
-        if patch.name is not None:
-            store.rename_device(device_id, patch.name)
-        if patch.room is not None:
-            store.set_room(device_id, patch.room)
-        store.register_signals(device_id, snapshot)
-        store.register_commands(device_id, extract_commands(snapshot))
+        register_zigbee_device(store, snapshot, name=patch.name, room=patch.room)
         try:
             await bounded_source_call(source.follow(ieee, seed_even_without_new_paths=True))
         except Exception:
