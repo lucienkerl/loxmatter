@@ -307,136 +307,156 @@ async def commission(
     # this guard only closes the tracker out, it does not change what
     # the caller sees - the `raise` below is unchanged and unwrapped.
     try:
-        # The same sequence as in the CLI export (cli.py): register_device
-        # before register_signals before register_commands, because both
-        # need the freshly assigned device_id.
-        device_id = store.register_device(snapshot, room=room)
-        # Per its docstring, `register_device`'s `room` argument only takes
-        # effect on a newly inserted row - an already known, active device
-        # is caught there before the INSERT and simply keeps its previous
-        # room, the selection from this request would be discarded without
-        # comment (review finding, Finding 4). That is correct when
-        # re-commissioning an unchanged, already known device WITHOUT a
-        # chosen room - a re-commissioning must not silently clear a
-        # maintained room. But if, as here, a room was explicitly selected
-        # (the tile in the commissioning dialog offers it), that exact
-        # choice should apply, whether the device was new or already
-        # known - so it is additionally applied here via `set_room`
-        # afterwards. `set_room`, not `rename_device`: the room ends up in
-        # no export template, so re-commissioning with a chosen room must
-        # not mark the device as "changed since" as a result.
-        #
-        # Deliberately UNCONDITIONAL, not only for the early-return case
-        # (review finding, Finding 5): for a new device, `register_device`
-        # has already set the room the same way through the INSERT row, so
-        # the second write here is a no-op in that case (same
-        # normalisation, `updated_at` remains untouched in both cases). A
-        # case distinction "was the device new?" would need either a
-        # return value from `register_device`, which its signature does
-        # not provide today, or a second query before the call - the no-op
-        # is the simpler and more robust choice.
-        if room is not None:
-            store.set_room(device_id, room)
-        store.register_signals(device_id, snapshot)
-        store.register_commands(device_id, extract_commands(snapshot))
-
-        # The reachability of the new device MUST be seeded here, from
-        # `snapshot.available` - exactly as `Runtime.seed_from_snapshot`
-        # does for the already known devices when the bridge starts.
-        #
-        # The reason is an ordering that cannot be influenced from here
-        # (recorded on 2026-09-04): matter-server reports `NODE_ADDED`
-        # already WHILE `commission_with_code` is running
-        # (`device_controller._setup_node` calls `signal_event(
-        # EventType.NODE_ADDED, ...)` before the call even returns). At
-        # that point, `register_device` above has not yet given the node a
-        # device_id, and `BridgeMatterClient._dispatch_loop` accordingly
-        # discards the notification ("update for unknown node ...
-        # discarded") - the one opportunity at which `d<id>_online` would
-        # have arisen by itself is thus gone before this function even gets
-        # its turn again.
-        #
-        # For a device sitting quietly on the network, no further
-        # `NODE_ADDED`/`NODE_UPDATED` notification follows after that, and
-        # `_device_out` reads a missing key as `False`. The device
-        # therefore showed as "offline" after commissioning and stayed
-        # that way until the bridge's next restart - even though
-        # matter-server had long since interviewed it and built a
-        # subscription for it.
-        #
-        # From here on only follow-up work runs, and follow-up work must
-        # not retroactively cancel the process: BEFORE `register_device`,
-        # an error is a cancellation - the device is then not commissioned,
-        # and an error message is the right response. AFTER it, the device
-        # is in the fabric AND in the store, and an error message would
-        # simply be wrong. It would lead into a dead end: the UI would
-        # show "commissioning failed" and no device tile, the operator
-        # would press "commission" again, and the printed code would
-        # already be used up (422). The failure therefore belongs in the
-        # log, not in the response. Concretely reachable via
-        # `UdpSender.send` -> `socket.sendto`, which throws `OSError` when
-        # the Miniserver's network is briefly down - hence `Exception` and
-        # not just a single type.
-        try:
-            await runtime.set_online(device_id, snapshot.available)
-        except Exception:
-            logger.exception(
-                "Could not seed reachability of freshly commissioned device %s - the "
-                "device is commissioned, but its tile shows offline until the next "
-                "notification from matter-server",
-                device_id,
-            )
-
-        # Only now, after `register_device`: `follow` resolves the
-        # node ID via the store, and before that there would be nothing to
-        # resolve there - the same race that `NODE_ADDED` already lost
-        # (see the comment above and the docstring of `_follow_node`).
-        # Creates the attribute subscriptions for this device and seeds
-        # its values, so the signals show numbers immediately instead of
-        # dashes - previously this required a restart of the bridge.
-        #
-        # `seed_even_without_new_paths`, because the subscriptions are, as
-        # a rule, already in place by this point: the same `NODE_ADDED`
-        # run that lost the reachability above has already had
-        # `BridgeMatterClient`'s dispatch loop subscribe to every path of
-        # this node - just without a device_id, i.e. without seeding.
-        # Without the flag, this call here would find an empty diff and
-        # turn back before seeding; the initial values would then never
-        # arrive, and a static path (voltage with no load, battery level,
-        # the off state of a plug) would remain a dash, because
-        # matter-server suppresses unchanged values.
-        #
-        # Also follow-up work, also safeguarded (see above): the most
-        # likely scenario is a matter-server that restarts immediately
-        # after commissioning - then `follow` runs into
-        # `_require_upstream` and throws `MatterUnavailableError`, even
-        # though the device is fully commissioned. Without values, but
-        # commissioned: the signal rows exist (they are created by
-        # `register_signals` above).
-        #
-        # That they also fill in again is NOT carried by the next
-        # `NODE_ADDED`/`NODE_UPDATED` alone - its diff is empty for a
-        # device that has long been subscribed, and without the flag the
-        # call would not even get to the seeding. It is carried by
-        # `_seed_pending` in `BridgeMatterClient`: the bridge remembers
-        # every node it still owes a snapshot - whether because the store
-        # did not know it yet, or because the handler threw during
-        # seeding -, and the next `_follow_node` from the dispatch loop
-        # catches up on it. That is why the assurance here holds for BOTH
-        # cases: a failure before subscribing as well as one after (say, a
-        # `sqlite3.OperationalError` under concurrent write load from the
-        # resend loop).
-        try:
-            await client.follow(snapshot.address, seed_even_without_new_paths=True)
-        except Exception:
-            logger.exception(
-                "Could not catch up on subscriptions of freshly commissioned device %s "
-                "- the device is commissioned, but its signals remain without values "
-                "until the next notification from matter-server",
-                device_id,
-            )
+        device_id = await register_node(
+            snapshot, room=room, client=client, store=store, runtime=runtime
+        )
         await tracker.finish(None, token=token)
         return CommissionResult(device_id=device_id, snapshot=snapshot)
     except Exception:
         await tracker.finish("other", token=token)
         raise
+
+
+async def register_node(
+    snapshot: NodeSnapshot,
+    *,
+    room: str | None,
+    client: BridgeMatterClient,
+    store: Store,
+    runtime: RuntimeValues,
+) -> int:
+    """Everything that follows once a node is in this bridge's fabric: the
+    store entry, its signals and commands, its reachability and its
+    subscriptions. `commission` runs it after `commission_with_code`; the
+    move from Home Assistant on the same host runs it for nodes that are
+    already in the fabric because loxmatter's Matter server took over Home
+    Assistant's data (scripts/home-assistant-handover.sh)."""
+    # The same sequence as in the CLI export (cli.py): register_device
+    # before register_signals before register_commands, because both
+    # need the freshly assigned device_id.
+    device_id = store.register_device(snapshot, room=room)
+    # Per its docstring, `register_device`'s `room` argument only takes
+    # effect on a newly inserted row - an already known, active device
+    # is caught there before the INSERT and simply keeps its previous
+    # room, the selection from this request would be discarded without
+    # comment (review finding, Finding 4). That is correct when
+    # re-commissioning an unchanged, already known device WITHOUT a
+    # chosen room - a re-commissioning must not silently clear a
+    # maintained room. But if, as here, a room was explicitly selected
+    # (the tile in the commissioning dialog offers it), that exact
+    # choice should apply, whether the device was new or already
+    # known - so it is additionally applied here via `set_room`
+    # afterwards. `set_room`, not `rename_device`: the room ends up in
+    # no export template, so re-commissioning with a chosen room must
+    # not mark the device as "changed since" as a result.
+    #
+    # Deliberately UNCONDITIONAL, not only for the early-return case
+    # (review finding, Finding 5): for a new device, `register_device`
+    # has already set the room the same way through the INSERT row, so
+    # the second write here is a no-op in that case (same
+    # normalisation, `updated_at` remains untouched in both cases). A
+    # case distinction "was the device new?" would need either a
+    # return value from `register_device`, which its signature does
+    # not provide today, or a second query before the call - the no-op
+    # is the simpler and more robust choice.
+    if room is not None:
+        store.set_room(device_id, room)
+    store.register_signals(device_id, snapshot)
+    store.register_commands(device_id, extract_commands(snapshot))
+
+    # The reachability of the new device MUST be seeded here, from
+    # `snapshot.available` - exactly as `Runtime.seed_from_snapshot`
+    # does for the already known devices when the bridge starts.
+    #
+    # The reason is an ordering that cannot be influenced from here
+    # (recorded on 2026-09-04): matter-server reports `NODE_ADDED`
+    # already WHILE `commission_with_code` is running
+    # (`device_controller._setup_node` calls `signal_event(
+    # EventType.NODE_ADDED, ...)` before the call even returns). At
+    # that point, `register_device` above has not yet given the node a
+    # device_id, and `BridgeMatterClient._dispatch_loop` accordingly
+    # discards the notification ("update for unknown node ...
+    # discarded") - the one opportunity at which `d<id>_online` would
+    # have arisen by itself is thus gone before this function even gets
+    # its turn again.
+    #
+    # For a device sitting quietly on the network, no further
+    # `NODE_ADDED`/`NODE_UPDATED` notification follows after that, and
+    # `_device_out` reads a missing key as `False`. The device
+    # therefore showed as "offline" after commissioning and stayed
+    # that way until the bridge's next restart - even though
+    # matter-server had long since interviewed it and built a
+    # subscription for it.
+    #
+    # From here on only follow-up work runs, and follow-up work must
+    # not retroactively cancel the process: BEFORE `register_device`,
+    # an error is a cancellation - the device is then not commissioned,
+    # and an error message is the right response. AFTER it, the device
+    # is in the fabric AND in the store, and an error message would
+    # simply be wrong. It would lead into a dead end: the UI would
+    # show "commissioning failed" and no device tile, the operator
+    # would press "commission" again, and the printed code would
+    # already be used up (422). The failure therefore belongs in the
+    # log, not in the response. Concretely reachable via
+    # `UdpSender.send` -> `socket.sendto`, which throws `OSError` when
+    # the Miniserver's network is briefly down - hence `Exception` and
+    # not just a single type.
+    try:
+        await runtime.set_online(device_id, snapshot.available)
+    except Exception:
+        logger.exception(
+            "Could not seed reachability of freshly commissioned device %s - the "
+            "device is commissioned, but its tile shows offline until the next "
+            "notification from matter-server",
+            device_id,
+        )
+
+    # Only now, after `register_device`: `follow` resolves the
+    # node ID via the store, and before that there would be nothing to
+    # resolve there - the same race that `NODE_ADDED` already lost
+    # (see the comment above and the docstring of `_follow_node`).
+    # Creates the attribute subscriptions for this device and seeds
+    # its values, so the signals show numbers immediately instead of
+    # dashes - previously this required a restart of the bridge.
+    #
+    # `seed_even_without_new_paths`, because the subscriptions are, as
+    # a rule, already in place by this point: the same `NODE_ADDED`
+    # run that lost the reachability above has already had
+    # `BridgeMatterClient`'s dispatch loop subscribe to every path of
+    # this node - just without a device_id, i.e. without seeding.
+    # Without the flag, this call here would find an empty diff and
+    # turn back before seeding; the initial values would then never
+    # arrive, and a static path (voltage with no load, battery level,
+    # the off state of a plug) would remain a dash, because
+    # matter-server suppresses unchanged values.
+    #
+    # Also follow-up work, also safeguarded (see above): the most
+    # likely scenario is a matter-server that restarts immediately
+    # after commissioning - then `follow` runs into
+    # `_require_upstream` and throws `MatterUnavailableError`, even
+    # though the device is fully commissioned. Without values, but
+    # commissioned: the signal rows exist (they are created by
+    # `register_signals` above).
+    #
+    # That they also fill in again is NOT carried by the next
+    # `NODE_ADDED`/`NODE_UPDATED` alone - its diff is empty for a
+    # device that has long been subscribed, and without the flag the
+    # call would not even get to the seeding. It is carried by
+    # `_seed_pending` in `BridgeMatterClient`: the bridge remembers
+    # every node it still owes a snapshot - whether because the store
+    # did not know it yet, or because the handler threw during
+    # seeding -, and the next `_follow_node` from the dispatch loop
+    # catches up on it. That is why the assurance here holds for BOTH
+    # cases: a failure before subscribing as well as one after (say, a
+    # `sqlite3.OperationalError` under concurrent write load from the
+    # resend loop).
+    try:
+        await client.follow(snapshot.address, seed_even_without_new_paths=True)
+    except Exception:
+        logger.exception(
+            "Could not catch up on subscriptions of freshly commissioned device %s "
+            "- the device is commissioned, but its signals remain without values "
+            "until the next notification from matter-server",
+            device_id,
+        )
+    return device_id

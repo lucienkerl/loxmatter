@@ -137,6 +137,11 @@ case "${1-}" in
     cp "$LOXMATTER_REPO/deploy/testhost/docker-compose.yml" "$target/deploy/testhost/"
     cp "$LOXMATTER_REPO/deploy/testhost/.env.example" "$target/deploy/testhost/"
     cp "$LOXMATTER_REPO/scripts/update.sh" "$target/scripts/"
+    # The take-over itself has tests of its own; here it only has to be
+    # called, so a stand-in logs the call.
+    printf '#!/bin/sh\nprintf "%%s\\n" "handover $*" >> "$STUB_LOG"\n' \
+      > "$target/scripts/home-assistant-handover.sh"
+    chmod 755 "$target/scripts/home-assistant-handover.sh"
     ;;
   rev-list) echo "${FAKE_BEHIND-0}" ;;
 esac
@@ -773,13 +778,13 @@ def test_the_miniserver_ip_comes_from_the_environment(installer):
 def test_without_a_miniserver_ip_it_installs_and_leaves_the_address_to_the_web_interface(
     installer,
 ):
-    """Design 2026-09-25, section 10: the address is entered under
-    Settings -> Miniserver connection, not asked for here."""
+    """Design 2026-09-25, section 10, and 2026-11-07: the address is entered
+    in the web interface's setup assistant, not asked for here."""
     result = installer(env={"MINISERVER_IP": ""})
     assert result.returncode == 0
     assert "the address of your Loxone Miniserver" not in result.output
     assert _env(result)["MINISERVER_IP"] == ""
-    assert "Settings -> Miniserver connection" in result.output
+    assert "setup assistant then asks for the Miniserver" in result.output
 
 
 def test_a_passed_miniserver_ip_is_written_without_contacting_it(installer):
@@ -987,6 +992,104 @@ def test_the_health_port_comes_from_the_compose_file(installer):
     assert "assuming 8080" not in result.output
 
 
+def test_a_chosen_port_is_written_and_probed(installer):
+    # A host where 8080 is taken (Home Assistant's border router web page):
+    # LOXMATTER_PORT lands in .env, and the health probe follows it.
+    result = installer(env={"LOXMATTER_PORT": "8000"})
+    assert result.returncode == 0
+    env_file = result.home / "loxmatter" / "deploy" / "testhost" / ".env"
+    assert "LOXMATTER_PORT=8000" in env_file.read_text()
+    assert any(":8000/health" in call for call in result.calls)
+    assert not any(":8080/health" in call for call in result.calls)
+
+
+def test_a_port_that_is_not_a_number_stops_before_anything_is_written(installer):
+    result = installer(env={"LOXMATTER_PORT": "80a"})
+    assert result.returncode != 0
+    assert "LOXMATTER_PORT is not a port number" in result.output
+    assert not (result.home / "loxmatter").exists()
+
+
+def test_a_chosen_image_tag_is_written(installer):
+    # Testing an unreleased main on a real host: the bridge then pulls :dev
+    # instead of :stable.
+    result = installer(env={"LOXMATTER_IMAGE_TAG": "dev"})
+    assert result.returncode == 0, result.output
+    text = result.env_file.read_text()
+    assert "LOXMATTER_IMAGE_TAG=dev" in text
+    assert "LOXMATTER_IMAGE_TAG=stable" not in text
+
+
+def test_an_image_tag_with_shell_characters_stops_before_anything_is_written(installer):
+    result = installer(env={"LOXMATTER_IMAGE_TAG": "dev;reboot"})
+    assert result.returncode != 0
+    assert "LOXMATTER_IMAGE_TAG is not an image tag" in result.output
+    assert not (result.home / "loxmatter").exists()
+
+
+# `ss -Hltnp "sport = :PORT"` for the ports listed in FAKE_LISTENERS as
+# "port:process" pairs - the shape the real one prints, reduced to what
+# port_holder reads.
+_SS = """for a in "$@"; do last="$a"; done
+port="${last##*:}"
+for pair in ${FAKE_LISTENERS-}; do
+  if [ "${pair%%:*}" = "$port" ]; then
+    echo "LISTEN 0 4096 0.0.0.0:$port 0.0.0.0:* users:((\\"${pair#*:}\\",pid=1,fd=3))"
+  fi
+done
+exit 0
+"""
+
+
+def test_taken_ports_move_to_the_next_free_ones(installer):
+    # The Pi of the first real migration: Home Assistant's border router web
+    # page on 8080, ioBroker's admin page on 8081 and 8082 also taken.
+    result = installer(
+        stubs={"ss": _SS},
+        env={"FAKE_LISTENERS": "8080:otbr-web 8081:iobroker.js-con 8082:otbr-agent"},
+    )
+    assert result.returncode == 0, result.output
+    text = result.env_file.read_text()
+    assert "LOXMATTER_PORT=8083" in text
+    assert "OTBR_REST_PORT=8084" in text
+    assert "Port 8080 (web interface) is in use by otbr-web" in result.output
+    assert "Port 8081 (border router) is in use by iobroker.js-con" in result.output
+    assert any(":8083/health" in call for call in result.calls)
+
+
+def test_free_ports_write_nothing(installer):
+    result = installer(stubs={"ss": _SS})
+    assert result.returncode == 0, result.output
+    text = result.env_file.read_text()
+    assert "LOXMATTER_PORT=8" not in text
+    assert "OTBR_REST_PORT=8" not in text
+
+
+def test_a_chosen_port_that_is_taken_stops_before_anything_is_written(installer):
+    result = installer(
+        stubs={"ss": _SS}, env={"LOXMATTER_PORT": "9000", "FAKE_LISTENERS": "9000:nginx"}
+    )
+    assert result.returncode != 0
+    assert "LOXMATTER_PORT=9000 is already in use by nginx" in result.output
+    assert not (result.home / "loxmatter").exists()
+
+
+def test_another_matter_server_stops_the_run_before_anything_is_written(installer):
+    result = installer(stubs={"ss": _SS}, env={"FAKE_LISTENERS": "5580:python3"})
+    assert result.returncode != 0
+    assert "Port 5580 is in use by python3" in result.output
+    assert not (result.home / "loxmatter").exists()
+
+
+def test_a_second_run_does_not_trip_over_its_own_ports(installer):
+    first = installer(stubs={"ss": _SS})
+    assert first.returncode == 0
+    second = installer(
+        stubs={"ss": _SS}, env={"FAKE_LISTENERS": "8080:loxmatter 8081:otbr-agent 5580:node"}
+    )
+    assert second.returncode == 0, second.output
+
+
 def test_an_ambiguous_port_falls_back_audibly(installer):
     # Two --listen entries: better to give up loudly than to silently pick
     # the wrong number and blame the service for it afterward.
@@ -1131,6 +1234,9 @@ STICK_B = "usb-SONOFF_SONOFF_Dongle_Plus_MG24_d86e1106-if00-port0"
 # Keeps the backbone and Bluetooth questions out of a test about the Thread
 # stick. Both are skipped when their environment variable is set.
 _ONLY_THE_STICK = {"BACKBONE_IF": "eth0", "BLUETOOTH_ADAPTER": "0"}
+# Since the first-run assistant (design 2026-11-07) the Thread menu appears
+# only when a script asks for Thread explicitly.
+_THREAD_REQUESTED = {**_ONLY_THE_STICK, "LOXMATTER_MODE": "thread"}
 
 
 def _serial(tmp_path, *names):
@@ -1179,31 +1285,41 @@ def test_answers_are_read_one_after_another(installer, tmp_path):
     # ask() runs inside $(...). Reopening the terminal on every call would
     # read the first line of an answers file again and again; one
     # descriptor opened once is what makes the second answer arrive.
-    hw = _bluetooth(tmp_path, (0, None), (1, "TP-Link UB500 Adapter"))
+    hw = _serial(tmp_path, STICK_A, STICK_B)
     result = installer(
-        env={**hw, "LOXMATTER_MODE": "wifi"},
+        env={**hw, **_THREAD_REQUESTED},
         answers=["not-a-number", "2"],
     )
     assert result.returncode == 0
-    assert _env(result)["BLUETOOTH_ADAPTER"] == "1"
+    assert _env(result)["RADIO_DEVICE"] == f"{hw['SERIAL_BY_ID_DIR']}/{STICK_B}"
 
 
 def test_running_out_of_answers_aborts_instead_of_looping(installer, tmp_path):
     # A question that rejects an out-of-range answer used to spin forever on
     # a closed terminal: read failed, ask() returned nothing, choose() took
     # that as another invalid answer, and asked again.
-    hw = _bluetooth(tmp_path, (0, None), (1, "TP-Link UB500 Adapter"))
+    hw = _serial(tmp_path, STICK_A, STICK_B)
     result = installer(
-        env={**hw, "LOXMATTER_MODE": "wifi"},
+        env={**hw, **_THREAD_REQUESTED},
         answers=["not-a-number"],
     )
     assert result.returncode == 2
     assert "terminal closed" in result.output
 
 
+def test_by_default_the_sticks_are_left_to_the_setup_assistant(installer, tmp_path):
+    hw = _serial(tmp_path, STICK_A, STICK_B)
+    result = installer(env={**hw, **_ONLY_THE_STICK}, answers=[])
+    assert result.returncode == 0
+    assert "Which one is the Thread stick" not in result.output
+    assert "USB sticks found: 2" in result.output
+    assert "Operating mode: wifi" in result.output
+    assert _env(result)["COMPOSE_PROFILES"] == ""
+
+
 def test_two_sticks_are_offered_by_their_by_id_names(installer, tmp_path):
     hw = _serial(tmp_path, STICK_A, STICK_B)
-    result = installer(env={**hw, **_ONLY_THE_STICK}, answers=["2"])
+    result = installer(env={**hw, **_THREAD_REQUESTED}, answers=["2"])
     assert result.returncode == 0
     assert f"1) {STICK_A}" in result.output
     assert f"2) {STICK_B}" in result.output
@@ -1213,20 +1329,9 @@ def test_two_sticks_are_offered_by_their_by_id_names(installer, tmp_path):
     assert values["RADIO_DEVICE"] == f"{hw['SERIAL_BY_ID_DIR']}/{STICK_B}"
 
 
-def test_with_two_sticks_the_default_is_none(installer, tmp_path):
-    # Two candidates and no way to tell them apart by name: the default
-    # must never be a silent pick of one of them.
-    hw = _serial(tmp_path, STICK_A, STICK_B)
-    result = installer(env={**hw, **_ONLY_THE_STICK}, answers=[""])
-    assert result.returncode == 0
-    assert "Which one is the Thread stick? [0]" in result.output
-    assert "Operating mode: wifi" in result.output
-    assert _env(result)["COMPOSE_PROFILES"] == ""
-
-
 def test_with_one_stick_the_default_is_that_stick(installer, tmp_path):
     hw = _serial(tmp_path, STICK_B)
-    result = installer(env={**hw, **_ONLY_THE_STICK}, answers=[""])
+    result = installer(env={**hw, **_THREAD_REQUESTED}, answers=[""])
     assert result.returncode == 0
     assert "Which one is the Thread stick? [1]" in result.output
     assert _env(result)["RADIO_DEVICE"] == f"{hw['SERIAL_BY_ID_DIR']}/{STICK_B}"
@@ -1239,7 +1344,7 @@ def test_without_by_id_the_tty_nodes_are_offered(installer, tmp_path):
     env = {
         "SERIAL_BY_ID_DIR": str(dev / "serial" / "by-id"),
         "SERIAL_DEV_DIR": str(dev),
-        **_ONLY_THE_STICK,
+        **_THREAD_REQUESTED,
     }
     result = installer(env=env, answers=["1"])
     assert result.returncode == 0
@@ -1253,7 +1358,7 @@ def test_a_dangling_by_id_link_is_not_offered(installer, tmp_path):
     (Path(hw["SERIAL_BY_ID_DIR"]) / "usb-Gone_Stick-if00-port0").symlink_to(
         tmp_path / "hw" / "dev" / "ttyUSB9"
     )
-    result = installer(env={**hw, **_ONLY_THE_STICK}, answers=[""])
+    result = installer(env={**hw, **_THREAD_REQUESTED}, answers=[""])
     assert result.returncode == 0
     assert "usb-Gone_Stick" not in result.output
     assert "Which one is the Thread stick? [1]" in result.output
@@ -1261,7 +1366,7 @@ def test_a_dangling_by_id_link_is_not_offered(installer, tmp_path):
 
 def test_an_invalid_answer_is_asked_again(installer, tmp_path):
     hw = _serial(tmp_path, STICK_A, STICK_B)
-    result = installer(env={**hw, **_ONLY_THE_STICK}, answers=["7", "1"])
+    result = installer(env={**hw, **_THREAD_REQUESTED}, answers=["7", "1"])
     assert result.returncode == 0
     assert "one of the numbers shown" in result.output
     assert _env(result)["RADIO_DEVICE"] == f"{hw['SERIAL_BY_ID_DIR']}/{STICK_A}"
@@ -1271,14 +1376,14 @@ def test_the_baud_rate_is_not_asked(installer, tmp_path):
     # answers=["1"] and nothing more: a baud rate question would hit the
     # end of the answers and abort the run.
     hw = _serial(tmp_path, STICK_B)
-    result = installer(env={**hw, **_ONLY_THE_STICK}, answers=["1"])
+    result = installer(env={**hw, **_THREAD_REQUESTED}, answers=["1"])
     assert result.returncode == 0
     assert _env(result)["RADIO_BAUDRATE"] == "460800"
 
 
 def test_the_baud_rate_from_the_environment_wins(installer, tmp_path):
     hw = _serial(tmp_path, STICK_B)
-    env = {**hw, **_ONLY_THE_STICK, "RADIO_BAUDRATE": "115200"}
+    env = {**hw, **_THREAD_REQUESTED, "RADIO_BAUDRATE": "115200"}
     result = installer(env=env, answers=["1"])
     assert result.returncode == 0
     assert _env(result)["RADIO_BAUDRATE"] == "115200"
@@ -1286,7 +1391,7 @@ def test_the_baud_rate_from_the_environment_wins(installer, tmp_path):
 
 def test_without_a_terminal_a_single_stick_is_taken(installer, tmp_path):
     hw = _serial(tmp_path, STICK_B)
-    result = installer(env={**hw, **_ONLY_THE_STICK})
+    result = installer(env={**hw, **_THREAD_REQUESTED})
     assert result.returncode == 0
     assert "Taking 1" in result.output
     assert _env(result)["RADIO_DEVICE"] == f"{hw['SERIAL_BY_ID_DIR']}/{STICK_B}"
@@ -1352,7 +1457,7 @@ def test_a_second_run_does_not_show_the_thread_menu(installer, tmp_path):
     # configure_mode lets the existing .env win anyway; asking first and
     # overruling the answer with a warning asked a question for nothing.
     hw = {**_serial(tmp_path, STICK_A, STICK_B), **_ONLY_THE_STICK}
-    first = installer(env=hw, answers=["2"])
+    first = installer(env={**hw, "LOXMATTER_MODE": "thread"}, answers=["2"])
     assert first.returncode == 0
     second = installer(env=hw, answers=[])
     assert second.returncode == 0
@@ -1367,7 +1472,7 @@ def test_a_closed_terminal_at_the_thread_menu_aborts_cleanly(installer, tmp_path
     # empty terminal there has to abort through die() with exit code 2,
     # not with a bare `set -e` exit.
     hw = _serial(tmp_path, STICK_A, STICK_B)
-    result = installer(env={**hw, **_ONLY_THE_STICK}, answers=[])
+    result = installer(env={**hw, **_THREAD_REQUESTED}, answers=[])
     assert result.returncode == 2
     assert "terminal closed" in result.output
 
@@ -1376,7 +1481,9 @@ def test_a_detected_backbone_is_not_asked(installer, tmp_path):
     # answers=["1"] only: a backbone question would hit the end of the
     # answers and abort.
     hw = _serial(tmp_path, STICK_B)
-    result = installer(env={**hw, "BLUETOOTH_ADAPTER": "0"}, answers=["1"])
+    result = installer(
+        env={**hw, "BLUETOOTH_ADAPTER": "0", "LOXMATTER_MODE": "thread"}, answers=["1"]
+    )
     assert result.returncode == 0
     assert "Border router network interface: eth0" in result.output
     assert _env(result)["BACKBONE_IF"] == "eth0"
@@ -1385,7 +1492,7 @@ def test_a_detected_backbone_is_not_asked(installer, tmp_path):
 def test_an_undetectable_backbone_is_asked_until_answered(installer, tmp_path):
     hw = _serial(tmp_path, STICK_B)
     result = installer(
-        env={**hw, "BLUETOOTH_ADAPTER": "0"},
+        env={**hw, "BLUETOOTH_ADAPTER": "0", "LOXMATTER_MODE": "thread"},
         stubs={"ip": "echo\n"},
         answers=["1", "", "eth1"],
     )
@@ -1400,20 +1507,21 @@ def test_a_single_adapter_is_used_without_a_question(installer, tmp_path):
     assert _env(result)["BLUETOOTH_ADAPTER"] == "0"
 
 
-def test_two_adapters_are_offered_by_name(installer, tmp_path):
+def test_of_two_adapters_the_first_is_taken_without_a_question(installer, tmp_path):
     hw = _bluetooth(tmp_path, (0, None), (1, "TP-Link UB500 Adapter"))
-    result = installer(env=hw, answers=["2"])
+    result = installer(env=hw, answers=[])
     assert result.returncode == 0
-    assert "1) hci0 - built in (UART)" in result.output
-    assert "2) hci1 - USB: TP-Link UB500 Adapter" in result.output
-    assert _env(result)["BLUETOOTH_ADAPTER"] == "1"
+    assert "Which adapter" not in result.output
+    assert "Bluetooth: hci0 - built in (UART)" in result.output
+    assert "2 adapters were found" in result.output
+    assert _env(result)["BLUETOOTH_ADAPTER"] == "0"
 
 
-def test_the_adapter_index_is_written_not_the_menu_position(installer, tmp_path):
-    hw = _bluetooth(tmp_path, (0, None), (3, "TP-Link UB500 Adapter"))
-    result = installer(env=hw, answers=["2"])
+def test_the_adapter_index_is_written_not_the_list_position(installer, tmp_path):
+    hw = _bluetooth(tmp_path, (2, None), (3, "TP-Link UB500 Adapter"))
+    result = installer(env=hw, answers=[])
     assert result.returncode == 0
-    assert _env(result)["BLUETOOTH_ADAPTER"] == "3"
+    assert _env(result)["BLUETOOTH_ADAPTER"] == "2"
 
 
 def test_no_adapter_is_a_warning_not_a_question(installer):
@@ -1438,19 +1546,25 @@ def test_the_adapter_from_the_environment_skips_the_menu(installer, tmp_path):
     assert _env(result)["BLUETOOTH_ADAPTER"] == "5"
 
 
-def test_the_questions_are_announced(installer, tmp_path):
+def test_a_default_install_asks_nothing(installer, tmp_path):
     env = {
         **_serial(tmp_path, STICK_A, STICK_B),
         **_bluetooth(tmp_path, (0, None), (1, "TP-Link UB500 Adapter")),
     }
-    result = installer(env=env, answers=["0", "1"])
+    result = installer(env=env, answers=[])
     assert result.returncode == 0
-    assert "Two questions follow: the Thread stick and the Bluetooth adapter." in result.output
+    assert "question follows" not in result.output
+    assert "questions follow" not in result.output
 
 
-def test_a_single_question_is_announced_as_one(installer, tmp_path):
-    hw = _serial(tmp_path, STICK_A)
-    result = installer(env={**hw, **_ONLY_THE_STICK}, answers=["1"])
+def test_a_requested_thread_stick_is_announced_as_the_one_question(installer, tmp_path):
+    env = {
+        **_serial(tmp_path, STICK_A, STICK_B),
+        **_bluetooth(tmp_path, (0, None), (1, "TP-Link UB500 Adapter")),
+        "LOXMATTER_MODE": "thread",
+        "BACKBONE_IF": "eth0",
+    }
+    result = installer(env=env, answers=["1"])
     assert result.returncode == 0
     assert "One question follows: the Thread stick." in result.output
 
@@ -1463,28 +1577,86 @@ def test_without_a_terminal_nothing_is_announced(installer):
 
 
 def test_every_question_comes_before_anything_is_installed(installer, tmp_path):
-    # The Bluetooth menu is now the last question. Its heading, printed by
-    # say("Bluetooth adapter") (install.sh ~956) as "\n\033[1mBluetooth
-    # adapter\033[0m\n", is distinct from the plain "the Bluetooth adapter"
-    # inside the "Two questions follow: ..." announcement above it - the
-    # bold-on escape immediately before "Bluetooth" is what makes it so.
-    # Result.output is proc.stdout + proc.stderr; every marker checked here
-    # is a say() on stdout, and stdout keeps its own order among itself.
-    # stderr (prompts via tty_prompt when LOXMATTER_TTY is set, and die())
-    # is only appended after it in result.output, not interleaved, so
-    # stdout's order still reflects execution order for the comparisons
-    # below. This heading has to come before the first package and before
-    # Docker - otherwise the user is called back to the keyboard minutes
-    # into the installation.
+    # The Thread menu, the one question left (and only on request), has to
+    # come before the first package and before Docker - otherwise the user
+    # is called back to the keyboard minutes into the installation. Its
+    # heading is say("Thread stick"), printed as "\033[1mThread stick\033[0m".
+    # Result.output is stdout followed by stderr; every marker here is on
+    # stdout, which keeps its own order.
     env = {
         **_serial(tmp_path, STICK_A, STICK_B),
-        **_bluetooth(tmp_path, (0, None), (1, "TP-Link UB500 Adapter")),
+        **_THREAD_REQUESTED,
         "MINISERVER_IP": "",
     }
-    result = installer(env=env, omit=("git", "docker"), answers=["2", "2"])
+    result = installer(env=env, omit=("git", "docker"), answers=["2"])
     assert result.returncode == 0
-    bluetooth_heading = result.output.index("\033[1mBluetooth adapter\033[0m")
+    thread_heading = result.output.index("\033[1mThread stick\033[0m")
     packages = result.output.index("Installing missing tools")
     docker = result.output.index("Docker is not installed")
-    assert bluetooth_heading < packages
-    assert bluetooth_heading < docker
+    assert thread_heading < packages
+    assert thread_heading < docker
+
+
+# Home Assistant Container on the same host: its Matter server and its border
+# router on the MG24 stick, as `docker ps -a` and `docker inspect` show them on
+# the Pi of the first real migration (7 November 2026).
+_DOCKER_HA = _DOCKER.replace(
+    """if [ "${1-}" = "ps" ]; then""",
+    """if [ "${1-}" = "ps" ] && [ "${2-}" = "-a" ]; then
+  printf 'homeassistant\\tghcr.io/home-assistant/home-assistant:stable\\n'
+  printf 'matter-server\\tghcr.io/home-assistant-libs/python-matter-server:stable\\n'
+  printf 'homeassistant-otbr-1\\topenthread/border-router:latest\\n'
+  exit 0
+fi
+if [ "${1-}" = "inspect" ]; then
+  case "$3" in
+    *Devices*) printf '/dev/serial/by-id/usb-SONOFF_MG24-if00-port0\\n/dev/net/tun\\n' ;;
+    *Env*) printf 'OT_RCP_DEVICE=spinel+hdlc+uart:///dev/ttyUSB0?uart-baudrate=460800\\nOT_REST_LISTEN_PORT=8082\\n' ;;
+  esac
+  exit 0
+fi
+if [ "${1-}" = "ps" ]; then""",
+)
+
+
+def test_home_assistants_matter_server_stops_the_run_with_the_way_out(installer):
+    result = installer(
+        stubs={"ss": _SS, "docker": _DOCKER_HA}, env={"FAKE_LISTENERS": "5580:python3"}
+    )
+    assert result.returncode != 0
+    assert "Port 5580 is in use by Home Assistant's Matter server" in result.output
+    assert "LOXMATTER_TAKE_OVER=home-assistant" in result.output
+    assert not (result.home / "loxmatter").exists()
+
+
+def test_the_take_over_takes_home_assistants_stick_and_hands_the_start_to_the_script(installer):
+    result = installer(
+        stubs={"ss": _SS, "docker": _DOCKER_HA},
+        env={
+            "LOXMATTER_TAKE_OVER": "home-assistant",
+            "FAKE_LISTENERS": "5580:python3 8080:otbr-web 8081:iobroker.js-con 8082:otbr-agent",
+        },
+    )
+    assert result.returncode == 0, result.output
+    text = result.env_file.read_text()
+    assert "RADIO_DEVICE=/dev/serial/by-id/usb-SONOFF_MG24-if00-port0" in text
+    assert "RADIO_BAUDRATE=460800" in text
+    assert "COMPOSE_PROFILES=thread" in text
+    # Neither the ports Home Assistant still holds nor ioBroker's.
+    assert "LOXMATTER_PORT=8083" in text
+    assert "OTBR_REST_PORT=8084" in text
+    assert "handover take" in result.calls
+    assert not any(call.startswith("docker compose up") for call in result.calls)
+
+
+def test_a_take_over_without_home_assistant_stops_before_anything_is_written(installer):
+    result = installer(stubs={"ss": _SS}, env={"LOXMATTER_TAKE_OVER": "home-assistant"})
+    assert result.returncode != 0
+    assert "No Home Assistant Matter server" in result.output
+    assert not (result.home / "loxmatter").exists()
+
+
+def test_an_unknown_take_over_is_refused(installer):
+    result = installer(env={"LOXMATTER_TAKE_OVER": "openhab"})
+    assert result.returncode != 0
+    assert "LOXMATTER_TAKE_OVER can only be 'home-assistant'" in result.output

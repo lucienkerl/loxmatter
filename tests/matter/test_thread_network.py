@@ -30,7 +30,9 @@ import pytest
 
 from loxmatter.matter.client import MatterUnavailableError
 from loxmatter.matter.models import NodeSnapshot
+from loxmatter.matter.otbr import extended_pan_id_from_dataset
 from loxmatter.matter.thread_network import (
+    ThreadNetworkInUseError,
     ThreadNetworkKeeper,
     ThreadNetworkStatus,
     is_thread_node,
@@ -431,3 +433,69 @@ def test_the_json_shape_carries_no_dataset() -> None:
         "channel": 24,
         "thread_devices": 0,
     }
+
+
+# The Home Assistant migration (design 2026-11-07, section 5): `adopt` joins
+# a Thread network another border router runs. Two datasets that differ in
+# their Extended PAN ID (TLV type 2) are two networks.
+HA_DATASET = "0003000018" + "0208" + "1111111111111111" + "030f" + "4f70656e5468726561642d30376630"
+OWN_DATASET = "000300000f" + "0208" + "2222222222222222" + "030f" + "4f70656e5468726561642d30376630"
+
+
+async def test_adopting_the_network_the_border_router_already_runs_writes_nothing() -> None:
+    otbr, matter = FakeOtbr(dataset=HA_DATASET, role="leader"), FakeMatter()
+
+    assert await _keeper(otbr, matter).adopt(HA_DATASET) == "same"
+
+    assert otbr.puts == []
+    assert matter.datasets_set == [HA_DATASET]
+
+
+async def test_adopting_replaces_a_network_no_thread_device_lives_in() -> None:
+    otbr = FakeOtbr(dataset=OWN_DATASET, role="leader")
+    otbr.create_status = 204  # ot-br-posix answers a replacing PUT with 204
+    matter = FakeMatter(nodes=[WIFI_NODE])
+    keeper = _keeper(otbr, matter)
+
+    assert await keeper.adopt(HA_DATASET) == "adopted"
+
+    assert [(path, data) for path, _, data in otbr.puts] == [
+        ("/node/state", '"disable"'),
+        ("/node/dataset/active", HA_DATASET),
+        ("/node/state", '"enable"'),
+    ]
+    assert matter.datasets_set == [HA_DATASET]
+    assert keeper.status.state == "formed"
+    assert keeper.status.channel == 24
+
+
+async def test_adopting_never_replaces_a_network_thread_devices_live_in() -> None:
+    otbr = FakeOtbr(dataset=OWN_DATASET, role="leader")
+    matter = FakeMatter(nodes=[THREAD_NODE, WIFI_NODE])
+
+    with pytest.raises(ThreadNetworkInUseError):
+        await _keeper(otbr, matter).adopt(HA_DATASET)
+
+    assert otbr.puts == []
+    assert matter.datasets_set == []
+
+
+async def test_adopting_on_a_border_router_without_a_network_needs_no_disable() -> None:
+    otbr = FakeOtbr()
+    otbr.create_status = 204
+    matter = FakeMatter()
+
+    assert await _keeper(otbr, matter).adopt(HA_DATASET) == "adopted"
+
+    assert [(path, data) for path, _, data in otbr.puts] == [
+        ("/node/dataset/active", HA_DATASET),
+        ("/node/state", '"enable"'),
+    ]
+
+
+def test_the_extended_pan_id_tells_two_networks_apart() -> None:
+    assert extended_pan_id_from_dataset(HA_DATASET) == "1111111111111111"
+    assert extended_pan_id_from_dataset(OWN_DATASET) == "2222222222222222"
+    assert extended_pan_id_from_dataset(DATASET) is None
+    assert extended_pan_id_from_dataset("02041111") is None
+    assert extended_pan_id_from_dataset("not hex") is None

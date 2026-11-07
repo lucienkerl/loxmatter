@@ -197,13 +197,17 @@ Debian-based Linux host:
 curl -fsSL https://raw.githubusercontent.com/lucienkerl/loxmatter/main/install.sh | sh
 ```
 
-It asks up to two things before it installs anything: which USB stick is your
-Thread stick (or none), and which Bluetooth adapter to use when there is more
-than one. After that you can walk away — it installs what is missing and starts
-the containers. When it finishes it prints the address of the web interface.
-**Open it and set a password**: until you do, no `/api` route answers. Then
-enter your Miniserver's IP address under Settings → Miniserver connection; the
-bridge checks it right away.
+It asks nothing: it installs what is missing and starts the containers. When it
+finishes it prints the address of the web interface. **Open it and set a
+password**: until you do, no `/api` route answers. A setup assistant then walks
+you through the rest — your Miniserver's address, what each USB stick is for
+(Thread, Zigbee, or nothing), and, if you used Home Assistant before, taking
+your Matter, Thread and Zigbee (ZHA) devices over from there with their names
+and rooms. Every combination of sticks works, including none. It can be run
+again later under Settings.
+
+A script that must choose the Thread stick itself still can:
+`LOXMATTER_MODE=thread` or `RADIO_DEVICE=/dev/serial/by-id/…`.
 
 **Prefer to read it before running it?** Same script, three lines:
 

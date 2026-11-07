@@ -4432,3 +4432,312 @@ p.zigbee-countdown {
     border-top-color: var(--accent);
   }
 }
+
+/* ---------------------------------------------------------------------------
+ * The first-run assistant (design 2026-11-07). One column, wide enough for
+ * the device table; the drawings use the theme's own colours so they work
+ * in the dark scheme as well.
+ * ------------------------------------------------------------------------- */
+main.setup {
+  max-width: 880px;
+}
+
+.setup-progress {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  margin: 0 0 0.5rem;
+}
+
+.setup-step {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+}
+
+.setup-step h1 {
+  margin: 0;
+  font-size: 1.6rem;
+}
+
+.setup-step > p {
+  margin: 0;
+}
+
+.setup-split {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr);
+  gap: 1.5rem;
+  align-items: start;
+}
+
+.setup-split > div {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+}
+
+.setup-split label:not(.checkbox-label),
+.setup-step > label:not(.checkbox-label) {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+@media (max-width: 720px) {
+  .setup-split {
+    grid-template-columns: 1fr;
+  }
+}
+
+.setup-aside {
+  margin: 0;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 1rem;
+}
+
+.setup-aside svg {
+  width: 100%;
+  max-height: 280px;
+}
+
+.setup-aside figcaption {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  margin-top: 0.5rem;
+}
+
+.setup-figure {
+  width: 100%;
+  max-width: 560px;
+  height: auto;
+}
+
+.setup-language {
+  border: none;
+  padding: 0;
+  margin: 0;
+}
+
+.setup-language legend {
+  font-weight: 600;
+  margin-bottom: 0.4rem;
+}
+
+.setup-choices {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 1rem;
+}
+
+.setup-choice {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.45rem;
+  text-align: left;
+  padding: 1rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+
+.setup-choice svg {
+  width: 100%;
+  height: auto;
+}
+
+.setup-choice span {
+  color: var(--text-muted);
+  font-size: 0.9rem;
+}
+
+.setup-choice:hover,
+.setup-choice.chosen {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+.setup-pill {
+  display: inline-block;
+  padding: 0.15rem 0.55rem;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  background: var(--off-bg);
+  color: var(--off);
+  white-space: nowrap;
+}
+
+.setup-choice .setup-pill.ok,
+.setup-pill.ok {
+  background: var(--ok-bg);
+  color: var(--ok);
+}
+
+.setup-pill.warn {
+  background: var(--warn-bg);
+  color: var(--warn);
+}
+
+.setup-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+.setup-tiles > div {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0.75rem;
+  display: flex;
+  flex-direction: column;
+}
+
+.setup-tiles strong {
+  font-size: 1.5rem;
+}
+
+.setup-tiles span {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+
+.table-scroll {
+  overflow-x: auto;
+}
+
+.setup-table {
+  width: 100%;
+  border-collapse: collapse;
+  background: var(--surface);
+  font-size: 0.92rem;
+}
+
+.setup-table th,
+.setup-table td {
+  text-align: left;
+  padding: 0.5rem 0.6rem;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+
+.setup-table td .hint {
+  display: block;
+  font-size: 0.8rem;
+}
+
+.setup-checklist {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.setup-checklist li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 0.75rem;
+  align-items: baseline;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0.6rem 0.8rem;
+}
+
+.setup-checklist li > span {
+  color: var(--text-muted);
+}
+
+.setup-checklist li.item-done > span:first-of-type {
+  color: var(--ok);
+}
+
+.setup-checklist li.item-failed > span:first-of-type {
+  color: var(--danger);
+}
+
+.setup-checklist li > .danger-text {
+  flex-basis: 100%;
+}
+
+.setup-stages {
+  margin: 0;
+  padding-left: 1.4rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+}
+
+.setup-stages li.done > strong {
+  color: var(--ok);
+}
+
+.setup-stages li.current > strong {
+  color: var(--accent);
+}
+
+.setup-stages li > div {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  margin-top: 0.5rem;
+}
+
+.setup-nav {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-top: 1.5rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border);
+}
+
+.setup-nav .primary {
+  margin-left: auto;
+}
+
+/* The drawings: shapes take the theme's colours. */
+.fig-soft { fill: var(--off-bg); }
+.fig-paper { fill: var(--surface); }
+.fig-dark { fill: var(--text); }
+.fig-outline { stroke: var(--border); }
+.fig-accent { fill: var(--accent); }
+.fig-accent-soft { fill: var(--type-bg); stroke: var(--accent); stroke-width: 2; }
+.fig-ha { fill: #e3ecf7; }
+.fig-ha-line { stroke: #2f5d8a; stroke-width: 3.5; fill: none; stroke-linejoin: round; }
+.fig-ha-line-fill { fill: #2f5d8a; }
+.fig-mark { stroke: var(--accent-contrast); stroke-width: 5; fill: none; stroke-linecap: round; stroke-linejoin: round; }
+.fig-line { fill: var(--surface); stroke: var(--text-muted); stroke-width: 2.5; }
+.fig-arrow { stroke: var(--accent); stroke-width: 3; fill: none; }
+.fig-thin { stroke: var(--text-muted); stroke-width: 2; fill: none; stroke-dasharray: 4 4; }
+.fig-bar { fill: var(--text-muted); }
+.fig-bar-light { fill: var(--border); }
+.fig-caption { fill: var(--text-muted); font-size: 12px; font-family: inherit; }
+.fig-caption-strong { fill: var(--text); font-size: 12px; font-weight: 700; font-family: inherit; }
+
+.setup-step .row {
+  margin-top: 0.4rem;
+}
+
+.setup-step .checkbox-label {
+  gap: 0.5rem;
+}
+
+/* The same narrow-screen rule as `.radios-card`: a long stick name must not
+   push the select past the screen edge. */
+.setup-step .row > label {
+  min-width: 0;
+  max-width: 100%;
+}
+.setup-step select {
+  max-width: 100%;
+}

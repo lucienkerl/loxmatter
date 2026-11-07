@@ -181,7 +181,9 @@ say "Restarting the service"
   || die "Restart failed. The backup above is the way back."
 
 say "Checking whether it's alive"
-PORT="$(grep -A1 -- '--listen' "$STACK/docker-compose.yml" | tail -1 | tr -dc '0-9')"
+# LOXMATTER_PORT in .env wins; the compose file's own default otherwise.
+PORT="$( { sed -n 's/^LOXMATTER_PORT=//p' "$STACK/.env" 2>/dev/null || true; } | tr -dc '0-9')"
+[ -n "$PORT" ] || PORT="$(grep -A1 -- '--listen' "$STACK/docker-compose.yml" | tail -1 | tr -dc '0-9')"
 PORT="${PORT:-8080}"
 URL="http://127.0.0.1:$PORT/health"
 # The service needs noticeably long before its first response: it connects

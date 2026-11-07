@@ -105,6 +105,13 @@ from loxmatter.zigbee.configure import (
     install_command_handlers,
     watch_for_wakeups,
 )
+from loxmatter.zigbee.migration import (
+    ImportedDevice,
+    NetworkIdentity,
+    build_device,
+    network_identity,
+    restore_backup,
+)
 from loxmatter.zigbee.quirks import ensure_quirks_loaded
 from loxmatter.zigbee.translate import (
     TRADFRI_MOTION_SENSOR_MODEL,
@@ -2037,6 +2044,64 @@ class ZigbeeSource:
         row = self._pairing.get(address)
         if row is not None:
             self._pairing[address] = replace(row, state="interviewing", changed_at=now_iso())
+
+    # ------------------------------------------------------------ migration --
+
+    def network_identity(self) -> NetworkIdentity | None:
+        """The network the stick is running right now, or `None` while no
+        stick is connected - what the Home Assistant migration compares
+        against ZHA's backup (design 2026-11-07, section 6)."""
+        app = self._app
+        if app is None or not self._connected:
+            return None
+        return network_identity(app)
+
+    async def restore_network(self, backup: dict[str, Any], *, overwrite_ieee: bool) -> None:
+        """Writes a ZHA network backup onto this stick, then lets the
+        supervisor reconnect.
+
+        The reconnect is not optional: bellows forms the restored network
+        while the application keeps the old one's state, and zigpy's own
+        ZHA restarts the whole application after a restore for the same
+        reason. Marking the link as lost is what makes `sources/supervisor.py`
+        build a fresh application - `connect()` shuts this one down first -
+        and with `CONF_NWK_VALIDATE_SETTINGS` the new start finds the
+        backup the restore itself just stored, so it adopts the network
+        rather than refusing it."""
+        app = self._require_app()
+        try:
+            await restore_backup(app, backup, overwrite_ieee=overwrite_ieee)
+        finally:
+            self._connected = False
+            self._link_lost.set()
+            self._close_window()
+            self._set_progress("opening_radio")
+
+    def import_devices(self, devices: list[ImportedDevice]) -> list[str]:
+        """Rebuilds devices from ZHA's description and announces each one.
+
+        A device zigpy already knows is left alone - it is on this network
+        already, and its own interview is better than a copy - and its
+        address is returned all the same, so the caller can adopt it. Every
+        new device goes through `device_initialized`, which saves it to
+        zigpy's database, applies its quirk and reaches `_handle_device_event`
+        as `"ready"`: configure-on-join runs exactly as for a device paired
+        here, and a sleeping sensor waits for its wake-up the same way."""
+        app = self._require_app()
+        known = {str(device.ieee) for device in self._devices()}
+        addresses: list[str] = []
+        for imported in devices:
+            if imported.ieee in known:
+                addresses.append(imported.ieee)
+                continue
+            try:
+                device = build_device(app, imported)
+                app.device_initialized(device)
+            except Exception:
+                logger.exception("could not take over Zigbee device %s", imported.ieee)
+                continue
+            addresses.append(imported.ieee)
+        return addresses
 
 
 async def _shutdown_even_if_cancelled(application: Any) -> None:

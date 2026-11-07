@@ -645,6 +645,16 @@ class BridgeMatterClient:
 
     _FIRMWARE_REFRESH_PATHS: Final = ("0/42/2", "0/42/3", "0/40/9", "0/40/10")
 
+    @property
+    def compressed_fabric_id(self) -> int | None:
+        """This Matter server's fabric, as matter-server reports it - what
+        tells whether a node Home Assistant knows is already in this
+        bridge's own fabric (the take-over on the same host,
+        scripts/home-assistant-handover.sh)."""
+        info = getattr(self._upstream, "server_info", None)
+        value = getattr(info, "compressed_fabric_id", None)
+        return value if isinstance(value, int) else None
+
     def firmware_supported(self) -> bool:
         info = getattr(self._upstream, "server_info", None)
         schema = getattr(info, "schema_version", None)

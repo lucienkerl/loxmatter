@@ -142,6 +142,13 @@ These environment variables skip the matching question:
   BACKBONE_IF         network interface for the border router (thread mode only)
   BLUETOOTH_ADAPTER   Bluetooth adapter, e.g. 0 for hci0
   LOXMATTER_API_TOKEN token for scripts and curl; generated when unset
+  LOXMATTER_PORT      port of the web interface; 8080, or the next free one
+  OTBR_REST_PORT      port of the border router's REST API; 8081, or the next free one
+  LOXMATTER_TAKE_OVER home-assistant: take over Home Assistant's Matter server and
+                      border router on this host (scripts/home-assistant-handover.sh
+                      give-back undoes it)
+  LOXMATTER_IMAGE_TAG image tag of the bridge; stable when unset. dev is the
+                      newest build of main, for testing before a release
 EOF
 }
 
@@ -450,19 +457,17 @@ decide_mode() {
   elif [ -n "${RADIO_DEVICE:-}" ]; then
     MODE="thread"
   else
+    # The sticks are no longer asked about here (design 2026-11-07): the
+    # first-run assistant in the web interface lists them by model, says
+    # which is which, and also handles the move from Home Assistant, where
+    # the Zigbee stick may only arrive halfway through. The installer starts
+    # without Thread; choosing a Thread stick there switches it on.
+    # LOXMATTER_MODE=thread and RADIO_DEVICE still choose one from a script.
+    MODE="wifi"
     list_serial_candidates
-    if [ -z "$SERIAL_CANDIDATES" ]; then
-      note "No USB stick found - installing for WiFi and Ethernet only."
-      note "Thread can be switched on later on the Radios card."
-      MODE="wifi"
-    else
-      show_thread_menu 1
-      if [ "$CHOICE" -eq 0 ]; then
-        MODE="wifi"
-      else
-        MODE="thread"
-        CHOSEN_RADIO="$(nth_line "$SERIAL_CANDIDATES" "$CHOICE")"
-      fi
+    if [ -n "$SERIAL_CANDIDATES" ]; then
+      note "USB sticks found: $(count_lines "$SERIAL_CANDIDATES"). The setup assistant in the"
+      note "web interface asks what each one is for."
     fi
   fi
   if [ "$MODE" = "thread" ] && [ -z "$CHOSEN_RADIO" ]; then
@@ -542,20 +547,19 @@ thread_menu_expected() {
   if [ -f "$TARGET_DIR/deploy/testhost/.env" ] || [ -n "${RADIO_DEVICE:-}" ]; then
     return 1
   fi
+  # Only an explicit LOXMATTER_MODE=thread still asks here; everyone else
+  # chooses the stick in the web interface's setup assistant.
   case "${LOXMATTER_MODE:-}" in
-    ""|thread) : ;;
+    thread) : ;;
     *) return 1 ;;
   esac
   list_serial_candidates
   [ -n "$SERIAL_CANDIDATES" ]
 }
 
+# The Bluetooth adapter is never asked about any more (see decide_bluetooth).
 bluetooth_menu_expected() {
-  if [ -n "${BLUETOOTH_ADAPTER:-}" ] || [ -n "$(env_file_value BLUETOOTH_ADAPTER)" ]; then
-    return 1
-  fi
-  list_bt_adapters
-  [ "$(count_lines "$BT_ADAPTERS")" -gt 1 ]
+  return 1
 }
 
 # Appends $1 as the next announced question, without eval: aq_count picks
@@ -597,9 +601,159 @@ announce_questions() {
 # the package and Docker installation.
 ask_questions() {
   announce_questions
+  decide_take_over
   decide_mode
   decide_backbone
   decide_bluetooth
+  decide_ports
+}
+
+# ------------------------------------------------------------ take-over --
+#
+# Home Assistant Container on the same host runs a Matter server on 5580 and
+# a border router on the Thread stick, and neither can run twice.
+# LOXMATTER_TAKE_OVER=home-assistant hands both to loxmatter: the
+# installer only reads here, and writes the stick into .env; the change
+# itself is scripts/home-assistant-handover.sh `take`, run in place of
+# `compose up` (start_stack), and its `give-back` undoes it.
+
+# Docker for reading, before join_docker_group has settled whether this user
+# needs sudo for it.
+docker_read() {
+  docker "$@" 2>/dev/null || { [ -n "$SUDO" ] && $SUDO docker "$@" 2>/dev/null; }
+}
+
+# The name of a container running Home Assistant's Matter server, or nothing.
+home_assistant_matter_container() {
+  docker_read ps -a --format '{{.Names}}	{{.Image}}' |
+    awk -F '	' '$2 ~ /python-matter-server/ { print $1; exit }'
+}
+
+decide_take_over() {
+  [ -n "${LOXMATTER_TAKE_OVER:-}" ] || return 0
+  step "looking at Home Assistant on this host"
+  say "Taking over from Home Assistant"
+  if [ -f "$TARGET_DIR/deploy/testhost/.env" ]; then
+    note "Configured by an earlier run; kept."
+    return 0
+  fi
+  if [ "$NEED_DOCKER" -eq 1 ]; then
+    die "LOXMATTER_TAKE_OVER=home-assistant needs Docker, and Docker is not installed here. Nothing was changed."
+  fi
+  to_matter="$(home_assistant_matter_container)"
+  [ -n "$to_matter" ] ||
+    die "No Home Assistant Matter server (python-matter-server) runs on this host - nothing to take over. Nothing was changed."
+  note "Matter server: $to_matter - loxmatter starts on a copy of its data"
+  to_otbr="$(docker_read ps -a --format '{{.Names}}	{{.Image}}' |
+    awk -F '	' '$1 != "otbr" && ($2 ~ /border-router/ || $2 ~ /\/otbr(:|$)/) { print $1; exit }')"
+  if [ -z "$to_otbr" ]; then
+    note "Thread border router: none - Thread stays off"
+    return 0
+  fi
+  to_radio="$(docker_read inspect -f '{{range .HostConfig.Devices}}{{.PathOnHost}}{{"\n"}}{{end}}' "$to_otbr" |
+    grep -v '/dev/net/tun' | head -n 1)"
+  to_baud="$(docker_read inspect -f '{{range .Config.Env}}{{.}}{{"\n"}}{{end}}' "$to_otbr" |
+    sed -n 's/.*uart-baudrate=\([0-9]*\).*/\1/p' | head -n 1)"
+  [ -n "$to_radio" ] ||
+    die "Could not tell which stick $to_otbr uses. Nothing was changed."
+  RADIO_DEVICE="$to_radio"
+  if [ -z "${RADIO_BAUDRATE:-}" ] && [ -n "$to_baud" ]; then
+    RADIO_BAUDRATE="$to_baud"
+  fi
+  note "Thread border router: $to_otbr on $to_radio - loxmatter's border router takes this stick"
+}
+
+# ----------------------------------------------------------------- ports --
+#
+# A host that already runs something else - Home Assistant's border router
+# web page on 8080, ioBroker's admin page on 8081, another Matter server on
+# 5580 - would otherwise fail at `compose up`, or worse, start a second
+# service that loses the port race silently. Checked before anything is
+# installed, with no question: a port that is taken moves to the next free
+# one, and the run says which and why.
+
+CHOSEN_PORT=""
+CHOSEN_OTBR_REST_PORT=""
+
+# The listener on TCP port $1 as "process" (or "another program" when the
+# name is not visible to this user), or nothing when the port is free. No
+# `ss` means no check: a host without iproute2 is told so once, and the
+# defaults stand.
+port_holder() {
+  ph_line="$(ss -Hltnp "sport = :$1" 2>/dev/null | head -n 1)" || ph_line=""
+  [ -n "$ph_line" ] || return 0
+  ph_name="$(printf '%s' "$ph_line" | sed -n 's/.*users:(("\([^"]*\)".*/\1/p')"
+  printf '%s' "${ph_name:-another program}"
+}
+
+# The first port from $1 upward (at most 50 tries) that nothing listens on
+# and that is not $2 - the other port this run has already picked.
+next_free_port() {
+  nf_port="$1"
+  nf_tries=0
+  while [ "$nf_tries" -lt 50 ]; do
+    if [ "$nf_port" != "$2" ] && [ -z "$(port_holder "$nf_port")" ]; then
+      printf '%s' "$nf_port"
+      return 0
+    fi
+    nf_port=$((nf_port + 1))
+    nf_tries=$((nf_tries + 1))
+  done
+  return 1
+}
+
+# $1 variable name, $2 its value from the environment (may be empty), $3 the
+# default, $4 what it is for, $5 the port already taken by this run. Sets
+# PICKED_PORT: the port to write, or empty when the default stands. Not a
+# function whose output is captured: `die` has to end the run, not a
+# subshell.
+pick_port() {
+  PICKED_PORT=""
+  pp_wanted="${2:-$3}"
+  pp_holder="$(port_holder "$pp_wanted")"
+  if [ -z "$pp_holder" ]; then
+    PICKED_PORT="$2"
+    return 0
+  fi
+  if [ -n "$2" ]; then
+    die "$1=$2 is already in use by $pp_holder. Pick another port, or leave $1 unset to have a free one chosen. Nothing was changed."
+  fi
+  pp_free="$(next_free_port $((pp_wanted + 1)) "$5")" ||
+    die "Port $pp_wanted ($4) is in use by $pp_holder, and no free port was found after it. Set $1=... to a free port. Nothing was changed."
+  note "Port $pp_wanted ($4) is in use by $pp_holder - using $pp_free instead ($1=$pp_free)."
+  PICKED_PORT="$pp_free"
+}
+
+decide_ports() {
+  # Passed in: written as given, also where nothing below runs.
+  CHOSEN_PORT="${LOXMATTER_PORT:-}"
+  CHOSEN_OTBR_REST_PORT="${OTBR_REST_PORT:-}"
+  # A second run keeps what the first one chose: the bridge itself holds
+  # these ports by now, and would otherwise be "in the way" of itself.
+  if [ -f "$TARGET_DIR/deploy/testhost/.env" ]; then
+    return 0
+  fi
+  if ! command -v ss >/dev/null 2>&1; then
+    note "Cannot check for ports in use (no 'ss' on this host); 8080, 8081 and 5580 are assumed free."
+    return 0
+  fi
+  matter_holder="$(port_holder 5580)"
+  if [ -n "$matter_holder" ] && [ -z "${LOXMATTER_TAKE_OVER:-}" ]; then
+    if [ "$NEED_DOCKER" -eq 0 ] && [ -n "$(home_assistant_matter_container)" ]; then
+      die "Port 5580 is in use by Home Assistant's Matter server. Two Matter servers
+cannot share this host. To let loxmatter take over Home Assistant's Matter
+server and Thread border router (Home Assistant keeps its Matter devices
+through loxmatter's server), run this again with
+  LOXMATTER_TAKE_OVER=home-assistant
+Nothing was changed."
+    fi
+    die "Port 5580 is in use by $matter_holder - another Matter server runs on this host.
+Two Matter servers cannot share this host. Nothing was changed."
+  fi
+  pick_port LOXMATTER_PORT "${LOXMATTER_PORT:-}" 8080 "web interface" ""
+  CHOSEN_PORT="$PICKED_PORT"
+  pick_port OTBR_REST_PORT "${OTBR_REST_PORT:-}" 8081 "border router" "${CHOSEN_PORT:-8080}"
+  CHOSEN_OTBR_REST_PORT="$PICKED_PORT"
 }
 
 # Strict IPv4 check. Octets are shape-checked with `case` BEFORE any numeric
@@ -656,6 +810,33 @@ check_config_source() {
   if [ -n "${MINISERVER_IP:-}" ] && ! valid_ipv4 "$MINISERVER_IP"; then
     die "MINISERVER_IP is not a valid IPv4 address: '$MINISERVER_IP'"
   fi
+  case "${LOXMATTER_PORT:-}" in
+    "") ;;
+    *[!0-9]*|0*) die "LOXMATTER_PORT is not a port number: '$LOXMATTER_PORT'" ;;
+    *)
+      if [ "$LOXMATTER_PORT" -gt 65535 ]; then
+        die "LOXMATTER_PORT is not a port number: '$LOXMATTER_PORT'"
+      fi
+      ;;
+  esac
+  case "${LOXMATTER_TAKE_OVER:-}" in
+    ""|home-assistant) ;;
+    *) die "LOXMATTER_TAKE_OVER can only be 'home-assistant' (got: $LOXMATTER_TAKE_OVER)" ;;
+  esac
+  case "${LOXMATTER_IMAGE_TAG:-}" in
+    "") ;;
+    -*|.*|*[!A-Za-z0-9._-]*)
+      die "LOXMATTER_IMAGE_TAG is not an image tag: '$LOXMATTER_IMAGE_TAG'" ;;
+  esac
+  case "${OTBR_REST_PORT:-}" in
+    "") ;;
+    *[!0-9]*|0*) die "OTBR_REST_PORT is not a port number: '$OTBR_REST_PORT'" ;;
+    *)
+      if [ "$OTBR_REST_PORT" -gt 65535 ]; then
+        die "OTBR_REST_PORT is not a port number: '$OTBR_REST_PORT'"
+      fi
+      ;;
+  esac
 }
 
 # ------------------------------------------------------------- phase two --
@@ -1011,24 +1192,15 @@ decide_bluetooth() {
     note "Bluetooth: hci$CHOSEN_BT - ${bt_line#*"$TAB"}, used to commission Matter devices."
     return 0
   fi
-  say "Bluetooth adapter"
-  note "Most Matter devices are commissioned over Bluetooth. The built-in"
-  note "adapter is usually enough; a USB adapter reaches further."
-  printf '\n'
-  bt_position=0
-  while IFS="$TAB" read -r bt_index bt_label; do
-    if [ -z "$bt_index" ]; then
-      continue
-    fi
-    bt_position=$((bt_position + 1))
-    note "  $bt_position) hci$bt_index - $bt_label"
-  done <<EOF
-$BT_ADAPTERS
-EOF
-  printf '\n'
-  choose "Which adapter should be used?" 1 "$bt_count" 0
-  bt_line="$(nth_line "$BT_ADAPTERS" "$CHOICE")"
+  # Several adapters: the first one, without a question (design
+  # 2026-11-07 - every choice moves to the web interface). The built-in
+  # adapter is listed first on a Pi and is usually enough; a USB adapter
+  # that reaches further is chosen on the Radios card.
+  bt_line="$(nth_line "$BT_ADAPTERS" 1)"
   CHOSEN_BT="${bt_line%%"$TAB"*}"
+  note "Bluetooth: hci$CHOSEN_BT - ${bt_line#*"$TAB"}, used to commission Matter devices."
+  note "$bt_count adapters were found; another one can be chosen under Settings,"
+  note "Radios, in the web interface."
 }
 
 # The .env.example explains why the token has to be plain [0-9a-f]: it travels
@@ -1125,6 +1297,20 @@ configure() {
   # One passed in is still written, and the bridge takes it over on its first
   # start; check_config_source has already refused a malformed one.
   write_env_value MINISERVER_IP "${MINISERVER_IP:-}" 0
+  # Only written when passed in: an empty line would say nothing that the
+  # defaults do not already say.
+  if [ -n "$CHOSEN_PORT" ]; then
+    write_env_value LOXMATTER_PORT "$CHOSEN_PORT" 0
+  fi
+  if [ -n "$CHOSEN_OTBR_REST_PORT" ]; then
+    write_env_value OTBR_REST_PORT "$CHOSEN_OTBR_REST_PORT" 0
+  fi
+  # .env.example already says stable, so write_env_value would keep that on
+  # a second run; a tag passed in is what the caller wants pulled, always.
+  if [ -n "${LOXMATTER_IMAGE_TAG:-}" ]; then
+    env_set LOXMATTER_IMAGE_TAG "$LOXMATTER_IMAGE_TAG"
+    note "LOXMATTER_IMAGE_TAG=$LOXMATTER_IMAGE_TAG"
+  fi
   if [ "$ENV_IS_NEW" -eq 1 ] || [ -z "$(env_file_value LOXMATTER_API_TOKEN)" ]; then
     token_value="${LOXMATTER_API_TOKEN:-$(gen_token)}"
     # gen_token's /dev/urandom fallback runs through a pipe with no pipefail,
@@ -1162,6 +1348,14 @@ start_stack() {
     return 0
   fi
   mkdir -p "$STACK_DIR/data"
+  if [ -n "${LOXMATTER_TAKE_OVER:-}" ] && [ ! -f "$STACK_DIR/.homeassistant-handover" ]; then
+    "$TARGET_DIR/scripts/home-assistant-handover.sh" take ||
+      die "The take-over from Home Assistant stopped. What it printed above says where; to return
+to Home Assistant:
+  $TARGET_DIR/scripts/home-assistant-handover.sh give-back"
+    STACK_STARTED=1
+    return 0
+  fi
   # No --build: deploy/testhost/docker-compose.yml names a published image,
   # and `up` only falls back to building when no such image can be obtained
   # at all (see the comment above that file's `image:` line) - the exact
@@ -1204,6 +1398,11 @@ $1"
 # would probe it for its whole budget and then blame the service for not
 # answering.
 stack_port() {
+  port_value="$(env_file_value LOXMATTER_PORT)"
+  case "$port_value" in
+    ""|*[!0-9]*) ;;
+    *) printf '%s' "$port_value"; return 0 ;;
+  esac
   port_value="$(awk '
     /^[[:space:]]*-[[:space:]]*--listen[[:space:]]*$/ { want = 1; next }
     want { gsub(/[^0-9]/, ""); if ($0 != "") { print; found++ }; want = 0 }
@@ -1344,7 +1543,8 @@ report() {
   printf '  Web interface: http://%s:%s/\n' "$lan_ip" "$PORT"
   printf '  Open it and set a password. Until you do, no /api route answers -\n'
   printf '  there is no open state.\n'
-  printf '\n  Then enter the Miniserver'\''s address under Settings -> Miniserver connection.\n'
+  printf '\n  A setup assistant then asks for the Miniserver, the USB sticks and,\n'
+  printf '  if you are moving from Home Assistant, takes your devices over.\n'
   if [ "$MODE" = "thread" ]; then
     # No crontab line to add any more: the updater service runs the same
     # watchdog every minute on its own (deploy/updater/watchdog-once.sh), and
@@ -1354,8 +1554,8 @@ report() {
     printf '  runs every minute, and it keeps the border router on the image and\n'
     printf '  device this host is configured for. Nothing to set up by hand.\n'
   else
-    printf '\n  Running WiFi and Ethernet only. To add Thread later: plug the radio in,\n'
-    printf '  then open Settings -> Radios in the web interface and switch Thread on.\n'
+    printf '\n  Thread is off until a Thread stick is chosen in the setup assistant\n'
+    printf '  (or later under Settings -> Radios).\n'
   fi
   # Updates go through the web interface only: the bridge backs up its
   # database first and the updater service rolls back a version that does

@@ -42,6 +42,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any, Final, Literal, Protocol
 
+from loxmatter import i18n
 from loxmatter.matter.client import MatterUnavailableError
 from loxmatter.matter.models import NodeSnapshot
 from loxmatter.matter.otbr import (
@@ -49,7 +50,9 @@ from loxmatter.matter.otbr import (
     border_router_role,
     create_network_if_absent,
     enable_thread,
+    extended_pan_id_from_dataset,
     read_active_dataset,
+    replace_active_dataset,
     thread_channel_from_dataset,
     thread_network_name_from_dataset,
 )
@@ -63,6 +66,16 @@ _ROOT_SERVER_LIST: Final = "0/29/1"
 _THREAD_DIAGNOSTICS_PREFIX: Final = f"0/{THREAD_DIAGNOSTICS_CLUSTER}/"
 
 ThreadNetworkState = Literal["unknown", "formed", "forming", "missing"]
+AdoptOutcome = Literal["same", "adopted"]
+
+
+class ThreadNetworkInUseError(RuntimeError):
+    """The border router's own network has Thread devices in it, and
+    joining another one would cut them off."""
+
+    def __init__(self, thread_devices: int) -> None:
+        super().__init__(i18n.t("api.homeassistant.fail_thread_in_use", count=thread_devices))
+        self.thread_devices = thread_devices
 
 
 @dataclass(frozen=True)
@@ -248,3 +261,46 @@ class ThreadNetworkKeeper:
             return False
         self._handover_owed = False
         return True
+
+    async def adopt(self, dataset: str) -> AdoptOutcome:
+        """Join the Thread network `dataset` describes - the Home Assistant
+        migration (design 2026-11-07, section 5).
+
+        `"same"` when the border router already runs that network (same
+        Extended PAN ID): nothing is replaced, matter-server is handed the
+        dataset all the same. Otherwise the border router's own network is
+        replaced - but only while matter-server has no Thread device. A
+        network devices live in is never replaced, the rule section 4.3 of
+        the fresh-installation design keeps for the keeper's own forming;
+        `ThreadNetworkInUseError` says so instead.
+
+        Raises `ThreadDatasetUnavailableError` for a border router that is
+        missing or refuses, and `MatterUnavailableError` when matter-server
+        cannot take the dataset."""
+        current = await read_active_dataset(**self._otbr)
+        wanted = extended_pan_id_from_dataset(dataset)
+        if (
+            current is not None
+            and wanted is not None
+            and extended_pan_id_from_dataset(current) == wanted
+        ):
+            self._status = _formed(current)
+            if not await self._hand_over(current, force=True):
+                raise MatterUnavailableError(i18n.t("api.homeassistant.fail_handover"))
+            return "same"
+        if current is not None:
+            nodes = await self._client.snapshots()
+            thread_devices = sum(1 for node in nodes if is_thread_node(node))
+            if thread_devices:
+                raise ThreadNetworkInUseError(thread_devices)
+        await replace_active_dataset(dataset, **self._otbr)
+        self._status = _formed(dataset)
+        self._handover_owed = True
+        logger.info(
+            "Joined the Thread network %s on channel %s",
+            self._status.name,
+            self._status.channel,
+        )
+        if not await self._hand_over(dataset, force=True):
+            raise MatterUnavailableError(i18n.t("api.homeassistant.fail_handover"))
+        return "adopted"

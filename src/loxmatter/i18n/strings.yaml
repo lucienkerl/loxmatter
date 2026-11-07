@@ -3643,3 +3643,517 @@ web.errors.http_status:
 web.errors.bridge_unreachable:
   en: "The bridge is unreachable – it may not be running."
   de: "Die Brücke ist nicht erreichbar – sie läuft möglicherweise nicht."
+
+# --- api.setup / api.homeassistant — first-run assistant and the migration
+# from Home Assistant (design 2026-11-07) ---
+api.setup.fail_completed:
+  en: "Setup is already complete. It can be started again under Settings."
+  de: "Die Einrichtung ist bereits abgeschlossen. Unter Einstellungen lässt sie sich erneut starten."
+api.homeassistant.dataset_origin:
+  # Appears as {url} in `otbr.validated_dataset`'s messages; log only.
+  en: "Home Assistant's Thread network"
+  de: "Das Thread-Netz von Home Assistant"
+api.homeassistant.fail_url:
+  en: "That is not a web address. Enter it like http://homeassistant.local:8123."
+  de: "Das ist keine Web-Adresse. Bitte so eingeben: http://homeassistant.local:8123."
+api.homeassistant.fail_not_found:
+  en: "No Home Assistant answers at {url}. Check the address and that Home Assistant is running."
+  de: "Unter {url} antwortet kein Home Assistant. Bitte Adresse prüfen und ob Home Assistant läuft."
+api.homeassistant.fail_unreachable:
+  en: "Home Assistant at {url} cannot be reached right now."
+  de: "Home Assistant unter {url} ist gerade nicht erreichbar."
+api.homeassistant.fail_sign_in:
+  en: "Home Assistant did not accept the sign-in. Please sign in again."
+  de: "Home Assistant hat die Anmeldung nicht angenommen. Bitte erneut anmelden."
+api.homeassistant.fail_sign_in_expired:
+  en: "This sign-in has expired. Please start it again."
+  de: "Diese Anmeldung ist abgelaufen. Bitte noch einmal starten."
+api.homeassistant.fail_not_signed_in:
+  en: "loxmatter is not signed in to Home Assistant."
+  de: "loxmatter ist nicht bei Home Assistant angemeldet."
+api.homeassistant.fail_not_admin:
+  en: "The Home Assistant user needs administrator rights for this step."
+  de: "Der Home-Assistant-Benutzer braucht für diesen Schritt Administratorrechte."
+api.homeassistant.fail_protocol:
+  en: "Home Assistant answered in an unexpected way."
+  de: "Home Assistant hat unerwartet geantwortet."
+api.homeassistant.fail_command:
+  # {command} is a Home Assistant API name, {message} its own error text.
+  en: "Home Assistant refused the step ({command}): {message}"
+  de: "Home Assistant hat den Schritt abgelehnt ({command}): {message}"
+api.homeassistant.fail_busy:
+  en: "Another step is still running. Please wait until it has finished."
+  de: "Ein anderer Schritt läuft noch. Bitte warten, bis er fertig ist."
+api.homeassistant.fail_no_thread:
+  en: "This loxmatter has no Thread stick, so it cannot join a Thread network."
+  de: "Dieses loxmatter hat keinen Thread-Stick und kann daher keinem Thread-Netz beitreten."
+api.homeassistant.fail_no_thread_network:
+  en: "Home Assistant has no Thread network to share."
+  de: "Home Assistant hat kein Thread-Netz, das es teilen könnte."
+api.homeassistant.fail_thread_in_use:
+  en: "loxmatter's own Thread network already has {count} device(s) in it. Joining Home Assistant's network would cut them off, so nothing was changed."
+  de: "Im eigenen Thread-Netz von loxmatter sind schon {count} Gerät(e). Ein Wechsel ins Netz von Home Assistant würde sie abschneiden, daher wurde nichts geändert."
+api.homeassistant.fail_handover:
+  en: "loxmatter joined the Thread network, but matter-server did not take it. Try again in a minute."
+  de: "loxmatter ist dem Thread-Netz beigetreten, aber matter-server hat es nicht übernommen. Bitte in einer Minute erneut versuchen."
+api.homeassistant.fail_no_code:
+  en: "Home Assistant did not open a pairing window for this device. Is it online in Home Assistant?"
+  de: "Home Assistant hat für dieses Gerät kein Kopplungsfenster geöffnet. Ist es in Home Assistant erreichbar?"
+api.homeassistant.fail_no_zha:
+  en: "Home Assistant has no Zigbee (ZHA) integration."
+  de: "Home Assistant hat keine Zigbee-Integration (ZHA)."
+api.homeassistant.fail_backup:
+  en: "Home Assistant could not save its Zigbee network. ZHA was not paused."
+  de: "Home Assistant konnte sein Zigbee-Netz nicht sichern. ZHA wurde nicht pausiert."
+api.homeassistant.fail_paused_without_backup:
+  en: "ZHA is already paused in Home Assistant, but loxmatter has no backup of its network. Switch ZHA back on in Home Assistant and repeat this step."
+  de: "ZHA ist in Home Assistant schon pausiert, aber loxmatter hat keine Sicherung des Netzes. Bitte ZHA in Home Assistant wieder einschalten und diesen Schritt wiederholen."
+api.homeassistant.fail_no_backup:
+  en: "There is no saved Zigbee network yet. Pause ZHA first."
+  de: "Es gibt noch kein gesichertes Zigbee-Netz. Bitte zuerst ZHA pausieren."
+api.homeassistant.fail_no_zigbee:
+  en: "No Zigbee stick is set up in loxmatter."
+  de: "In loxmatter ist kein Zigbee-Stick eingerichtet."
+api.homeassistant.fail_restore:
+  en: "The Zigbee network could not be written onto the stick."
+  de: "Das Zigbee-Netz konnte nicht auf den Stick geschrieben werden."
+api.homeassistant.fail_restore_ieee:
+  en: "This stick does not let its address be changed. The network can be transferred without it, but then some devices have to be paired again."
+  de: "Dieser Stick lässt seine Adresse nicht ändern. Das Netz lässt sich auch ohne übertragen, dann müssen aber einige Geräte neu gekoppelt werden."
+api.homeassistant.fail_network_differs:
+  en: "The Zigbee stick does not run Home Assistant's network yet. Move the stick over or transfer the network first."
+  de: "Der Zigbee-Stick hat das Netz von Home Assistant noch nicht. Bitte zuerst den Stick umstecken oder das Netz übertragen."
+api.homeassistant.fail_zigbee_device:
+  en: "This device could not be entered."
+  de: "Dieses Gerät konnte nicht eingetragen werden."
+api.homeassistant.fail_nothing:
+  en: "Nothing was selected to remove."
+  de: "Es wurde nichts zum Entfernen ausgewählt."
+
+# --- web.setup — the first-run assistant (design 2026-11-07) ---
+web.setup.progress:
+  en: "Step {current} of {total}"
+  de: "Schritt {current} von {total}"
+web.setup.next:
+  en: "Next"
+  de: "Weiter"
+web.setup.back:
+  en: "Back"
+  de: "Zurück"
+web.setup.start:
+  en: "Let's go"
+  de: "Los geht's"
+web.setup.refresh:
+  en: "Refresh"
+  de: "Aktualisieren"
+web.setup.recommended:
+  en: "Recommended"
+  de: "Empfohlen"
+web.setup.welcome_heading:
+  en: "Welcome to loxmatter"
+  de: "Willkommen bei loxmatter"
+web.setup.welcome_text:
+  en: "loxmatter brings your Matter, Thread and Zigbee devices to your Loxone Miniserver. A few steps and everything is set up. If you have been using Home Assistant, your devices come along from there."
+  de: "loxmatter bringt Ihre Matter-, Thread- und Zigbee-Geräte zu Ihrem Loxone Miniserver. In ein paar Schritten ist alles eingerichtet. Wenn Sie bisher Home Assistant benutzen, nehmen wir Ihre Geräte von dort mit."
+web.setup.welcome_duration:
+  en: "Takes about 5 minutes, 15 to 30 minutes when moving from Home Assistant."
+  de: "Dauer: etwa 5 Minuten, mit Umzug aus Home Assistant 15 bis 30 Minuten."
+web.setup.welcome_figure:
+  en: "Your devices, loxmatter and the Loxone Miniserver"
+  de: "Ihre Geräte, loxmatter und der Loxone Miniserver"
+web.setup.fig_devices:
+  en: "Your devices"
+  de: "Ihre Geräte"
+web.setup.miniserver_heading:
+  en: "Your Loxone Miniserver"
+  de: "Ihr Loxone Miniserver"
+web.setup.miniserver_text:
+  en: "loxmatter sends your devices' values to the Miniserver. For that it needs the Miniserver's address in your network."
+  de: "loxmatter schickt die Werte Ihrer Geräte an den Miniserver. Dafür braucht es seine Adresse im Netzwerk."
+web.setup.miniserver_bridge_hint:
+  en: "The second address is this loxmatter device's own; the Miniserver sends its commands there. It is usually filled in already."
+  de: "Die zweite Adresse ist die dieses loxmatter-Geräts; dorthin schickt der Miniserver seine Befehle. Meist ist sie schon ausgefüllt."
+web.setup.miniserver_check:
+  en: "Check"
+  de: "Prüfen"
+web.setup.miniserver_later_summary:
+  en: "I have no Miniserver or want to enter it later"
+  de: "Ich habe keinen Miniserver oder will ihn später eintragen"
+web.setup.miniserver_later_text:
+  en: "No problem: leave the Miniserver address empty and continue. It can be entered under Settings at any time; until then loxmatter only collects the values."
+  de: "Kein Problem: Lassen Sie die Adresse des Miniservers leer und machen Sie weiter. Sie lässt sich jederzeit unter Einstellungen eintragen; bis dahin sammelt loxmatter die Werte nur."
+web.setup.miniserver_figure:
+  en: "Where to find the address: in the Loxone app under Settings, then Miniserver."
+  de: "So finden Sie die Adresse: in der Loxone-App unter Einstellungen, dann Miniserver."
+web.setup.path_heading:
+  en: "Do you already have devices in Home Assistant?"
+  de: "Haben Sie schon Geräte in Home Assistant?"
+web.setup.path_text:
+  en: "If so, loxmatter takes them over from there, with their names and rooms. They do not have to be paired again."
+  de: "Wenn ja, übernimmt loxmatter sie von dort, mit Namen und Räumen. Sie müssen nicht neu gekoppelt werden."
+web.setup.path_new:
+  en: "No, I am starting fresh"
+  de: "Nein, ich fange neu an"
+web.setup.path_new_text:
+  en: "We set up your USB sticks and create new radio networks. Then you pair your devices."
+  de: "Wir richten Ihre USB-Sticks ein und erstellen neue Funknetze. Danach koppeln Sie Ihre Geräte."
+web.setup.path_ha:
+  en: "Yes, move from Home Assistant"
+  de: "Ja, aus Home Assistant umziehen"
+web.setup.path_ha_text:
+  en: "Matter, Thread and Zigbee (ZHA) devices come over. Nothing is removed from Home Assistant until everything works here."
+  de: "Matter-, Thread- und Zigbee-Geräte (ZHA) werden übernommen. In Home Assistant wird erst etwas entfernt, wenn hier alles läuft."
+web.setup.path_z2m:
+  en: "Using Zigbee2MQTT instead of ZHA? That comes in a later version. Matter and Thread devices can already come over."
+  de: "Sie nutzen Zigbee2MQTT statt ZHA? Das kommt in einer späteren Version. Matter- und Thread-Geräte lassen sich trotzdem schon übernehmen."
+web.setup.sticks_heading:
+  en: "Your USB radio sticks"
+  de: "Ihre USB-Funksticks"
+web.setup.sticks_text:
+  en: "Tell loxmatter what each stick is for. A stick can have only one job. Every combination works: both, only one, or none at all."
+  de: "Sagen Sie loxmatter, wofür jeder Stick gedacht ist. Ein Stick kann nur eine Aufgabe haben. Jede Kombination geht: beide, nur einer oder gar keiner."
+web.setup.sticks_thread:
+  en: "Thread"
+  de: "Thread"
+web.setup.sticks_thread_text:
+  en: "For Thread devices (many newer Matter devices). Applying it restarts the Thread service, which takes about a minute."
+  de: "Für Thread-Geräte (viele neuere Matter-Geräte). Beim Übernehmen startet der Thread-Dienst neu, das dauert etwa eine Minute."
+web.setup.sticks_zigbee:
+  en: "Zigbee"
+  de: "Zigbee"
+web.setup.sticks_zigbee_text:
+  en: "For Zigbee devices such as IKEA, Aqara or Philips Hue without a bridge."
+  de: "Für Zigbee-Geräte wie IKEA, Aqara oder Philips Hue ohne Bridge."
+web.setup.sticks_zigbee_own_text:
+  en: "Choose loxmatter's own Zigbee stick here. Home Assistant's Zigbee network is copied onto it in the Zigbee step."
+  de: "Wählen Sie hier den eigenen Zigbee-Stick von loxmatter. Das Zigbee-Netz von Home Assistant wird im Zigbee-Schritt darauf kopiert."
+web.setup.sticks_zigbee_later:
+  en: "The Zigbee stick is moved over in the Zigbee step - leave it in Home Assistant until then."
+  de: "Der Zigbee-Stick wird im Zigbee-Schritt umgesteckt. Lassen Sie ihn bis dahin in Home Assistant."
+web.setup.sticks_no_thread_ha:
+  en: "No Thread stick chosen: your {count} Thread device(s) stay in Home Assistant for now. Plug one in and press Rescan, or fetch them later under Settings."
+  de: "Kein Thread-Stick gewählt: Ihre {count} Thread-Geräte bleiben vorerst in Home Assistant. Stecken Sie einen ein und tippen Sie auf „Neu einlesen“, oder holen Sie sie später unter Einstellungen nach."
+web.setup.sticks_which:
+  en: "How do I tell? The stick or its packaging usually says \"Thread\", \"Matter\" or \"Zigbee\". The list names each stick by its model; if a choice is wrong, loxmatter says so when the stick starts."
+  de: "Woran erkenne ich das? Auf dem Stick oder seiner Verpackung steht meist „Thread“, „Matter“ oder „Zigbee“. Die Liste nennt jeden Stick nach seinem Modell; passt eine Wahl nicht, meldet loxmatter das beim Start des Sticks."
+web.setup.sticks_none_ok:
+  en: "No stick? That is fine. Matter devices on Wi-Fi or Ethernet need none. A stick can be added at any time under Settings."
+  de: "Kein Stick? Das ist in Ordnung. Matter-Geräte über WLAN oder Netzwerkkabel brauchen keinen. Ein Stick lässt sich jederzeit unter Einstellungen nachrüsten."
+web.setup.zigbee_mode_heading:
+  en: "Where should your Zigbee network run from now on?"
+  de: "Wo soll Ihr Zigbee-Netz künftig laufen?"
+web.setup.zigbee_mode_move:
+  en: "Move the stick over"
+  de: "Den Stick umstecken"
+web.setup.zigbee_mode_move_text:
+  en: "Unplug the stick from the Home Assistant device and plug it in here. Simplest and safest: every device stays connected."
+  de: "Sie ziehen den Stick aus dem Home-Assistant-Gerät und stecken ihn hier ein. Am einfachsten und sichersten, alle Geräte bleiben verbunden."
+web.setup.zigbee_mode_own:
+  en: "loxmatter has its own stick"
+  de: "loxmatter hat einen eigenen Stick"
+web.setup.zigbee_mode_own_text:
+  en: "The Zigbee network is copied onto loxmatter's stick. The old stick must stay unplugged for good afterwards."
+  de: "Das Zigbee-Netz wird auf den Stick von loxmatter kopiert. Der alte Stick muss danach dauerhaft abgezogen bleiben."
+web.setup.zigbee_mode_skip:
+  en: "Do not take Zigbee over"
+  de: "Zigbee nicht übernehmen"
+web.setup.zigbee_mode_skip_text:
+  en: "Your Zigbee devices stay in Home Assistant. They can be fetched later under Settings."
+  de: "Ihre Zigbee-Geräte bleiben in Home Assistant. Sie lassen sich später unter Einstellungen nachholen."
+web.setup.networks_heading:
+  en: "Your radio networks"
+  de: "Ihre Funknetze"
+web.setup.networks_text:
+  en: "loxmatter sets the networks up on its own; this takes about a minute. There is nothing to do here."
+  de: "loxmatter richtet die Netze selbst ein; das dauert etwa eine Minute. Hier ist nichts zu tun."
+web.setup.networks_thread:
+  en: "Thread"
+  de: "Thread"
+web.setup.networks_zigbee:
+  en: "Zigbee"
+  de: "Zigbee"
+web.setup.networks_miniserver:
+  en: "Miniserver"
+  de: "Miniserver"
+web.setup.networks_not_used:
+  en: "not used"
+  de: "nicht genutzt"
+web.setup.networks_waiting:
+  en: "being set up …"
+  de: "wird eingerichtet …"
+web.setup.networks_later:
+  en: "enter later under Settings"
+  de: "später unter Einstellungen eintragen"
+web.setup.ha_login_heading:
+  en: "Connect to Home Assistant"
+  de: "Mit Home Assistant verbinden"
+web.setup.ha_login_text:
+  en: "So that loxmatter can see your devices, sign in to Home Assistant once. You enter your password there, not here. Nothing is changed before you agree."
+  de: "Damit loxmatter Ihre Geräte sehen kann, melden Sie sich einmal bei Home Assistant an. Ihr Passwort geben Sie dort ein, nicht hier. Es wird nichts verändert, bevor Sie zustimmen."
+web.setup.ha_url_label:
+  en: "Address of Home Assistant"
+  de: "Adresse von Home Assistant"
+web.setup.ha_sign_in:
+  en: "Sign in to Home Assistant"
+  de: "Bei Home Assistant anmelden"
+web.setup.ha_sign_in_hint:
+  en: "Home Assistant's own sign-in page opens and then brings you back here. The user needs administrator rights."
+  de: "Es öffnet sich die Anmeldeseite von Home Assistant, danach geht es hier weiter. Der Benutzer braucht Administratorrechte."
+web.setup.ha_sign_in_cancelled:
+  en: "The sign-in in Home Assistant was cancelled."
+  de: "Die Anmeldung in Home Assistant wurde abgebrochen."
+web.setup.ha_signed_in:
+  en: "Connected to Home Assistant at {url}."
+  de: "Mit Home Assistant unter {url} verbunden."
+web.setup.ha_token_summary:
+  en: "Enter an access token instead"
+  de: "Stattdessen einen Zugangstoken eingeben"
+web.setup.ha_token_text:
+  en: "In Home Assistant: click your name at the bottom left, then \"Security\", at the very bottom \"Long-lived access tokens\", \"Create token\". Paste the token here."
+  de: "In Home Assistant: unten links auf Ihren Namen, dann „Sicherheit“, ganz unten „Langlebige Zugangstoken“, „Token erstellen“. Den Token hier einfügen."
+web.setup.ha_token_submit:
+  en: "Connect with token"
+  de: "Mit Token verbinden"
+web.setup.ha_login_figure:
+  en: "loxmatter only reads the device list, rooms and names. Changes come later, and only when you agree."
+  de: "loxmatter liest nur die Geräteliste, Räume und Namen. Geändert wird erst später, und nur wenn Sie zustimmen."
+web.setup.ha_devices_heading:
+  en: "This is what Home Assistant has"
+  de: "Das haben wir in Home Assistant gefunden"
+web.setup.ha_devices_text:
+  en: "Choose what should move. Names and rooms come over as Home Assistant has them."
+  de: "Wählen Sie aus, was umziehen soll. Namen und Räume werden so übernommen, wie sie in Home Assistant heißen."
+web.setup.ha_loading:
+  en: "Reading Home Assistant's device list …"
+  de: "Lese die Geräteliste von Home Assistant …"
+web.setup.ha_tile_wifi:
+  en: "Matter over Wi-Fi"
+  de: "Matter über WLAN"
+web.setup.ha_tile_thread:
+  en: "Matter over Thread"
+  de: "Matter über Thread"
+web.setup.ha_tile_zigbee:
+  en: "Zigbee (ZHA)"
+  de: "Zigbee (ZHA)"
+web.setup.ha_tile_other:
+  en: "cannot move"
+  de: "nicht übertragbar"
+web.setup.ha_col_select:
+  en: "Select"
+  de: "Auswahl"
+web.setup.ha_col_device:
+  en: "Device"
+  de: "Gerät"
+web.setup.ha_col_room:
+  en: "Room"
+  de: "Raum"
+web.setup.ha_col_kind:
+  en: "Kind"
+  de: "Art"
+web.setup.ha_col_status:
+  en: "In loxmatter"
+  de: "In loxmatter"
+web.setup.ha_select_device:
+  en: "Take over {name}"
+  de: "{name} übernehmen"
+web.setup.ha_members:
+  en: "with {names}"
+  de: "mit {names}"
+web.setup.ha_kind_matter_wifi:
+  en: "Matter, Wi-Fi"
+  de: "Matter, WLAN"
+web.setup.ha_kind_matter_thread:
+  en: "Matter, Thread"
+  de: "Matter, Thread"
+web.setup.ha_kind_matter_bridge:
+  en: "Matter bridge"
+  de: "Matter-Bridge"
+web.setup.ha_kind_zigbee:
+  en: "Zigbee"
+  de: "Zigbee"
+web.setup.ha_kind_other:
+  en: "other"
+  de: "andere"
+web.setup.ha_availability_ready:
+  en: "can move"
+  de: "kann umziehen"
+web.setup.ha_availability_in_fabric:
+  en: "already connected"
+  de: "schon verbunden"
+web.setup.ha_availability_needs_thread:
+  en: "needs a Thread stick"
+  de: "braucht Thread-Stick"
+web.setup.ha_availability_needs_zigbee:
+  en: "needs a Zigbee stick"
+  de: "braucht Zigbee-Stick"
+web.setup.ha_availability_later:
+  en: "comes later"
+  de: "kommt später"
+web.setup.ha_availability_unsupported:
+  en: "stays in Home Assistant"
+  de: "bleibt in Home Assistant"
+web.setup.ha_availability_done:
+  en: "moved"
+  de: "umgezogen"
+web.setup.ha_devices_legend:
+  en: "\"Comes later\": remote controls and buttons send commands rather than values, which loxmatter cannot pass on to Loxone yet. \"Stays in Home Assistant\": neither Matter nor Zigbee. \"Needs a Zigbee stick\": the stick moves over in the Zigbee step."
+  de: "„Kommt später“: Fernbedienungen und Taster senden Befehle statt Werte, die loxmatter noch nicht an Loxone weitergeben kann. „Bleibt in Home Assistant“: weder Matter noch Zigbee. „Braucht Zigbee-Stick“: der Stick wird im Zigbee-Schritt umgesteckt."
+web.setup.ha_thread_heading:
+  en: "Join the Thread network"
+  de: "Dem Thread-Netz beitreten"
+web.setup.ha_thread_text:
+  en: "Thread devices share one radio network. loxmatter becomes a second access point in your existing network \"{name}\". Your devices stay where they are."
+  de: "Thread-Geräte funken in einem gemeinsamen Netz. loxmatter wird ein zweiter Zugangspunkt in Ihrem bestehenden Netz „{name}“. Ihre Geräte bleiben, wo sie sind."
+web.setup.ha_thread_start:
+  en: "Join the Thread network"
+  de: "Thread-Netz übernehmen"
+web.setup.ha_thread_running:
+  en: "Joining … this can take a minute."
+  de: "Trete bei … das kann eine Minute dauern."
+web.setup.ha_thread_same:
+  en: "loxmatter is already in the Thread network \"{name}\"."
+  de: "loxmatter ist schon im Thread-Netz „{name}“."
+web.setup.ha_thread_adopted:
+  en: "loxmatter joined the Thread network \"{name}\"."
+  de: "loxmatter ist dem Thread-Netz „{name}“ beigetreten."
+web.setup.ha_thread_no_stick:
+  en: "loxmatter has no Thread stick, so your {count} Thread device(s) stay in Home Assistant for now. They can be fetched later under Settings."
+  de: "loxmatter hat keinen Thread-Stick, daher bleiben Ihre {count} Thread-Geräte vorerst in Home Assistant. Sie lassen sich später unter Einstellungen nachholen."
+web.setup.ha_thread_no_network:
+  en: "Home Assistant shares no Thread network. Thread devices stay in Home Assistant."
+  de: "Home Assistant teilt kein Thread-Netz. Thread-Geräte bleiben in Home Assistant."
+web.setup.ha_matter_heading:
+  en: "Take over Matter devices"
+  de: "Matter-Geräte übernehmen"
+web.setup.ha_matter_text:
+  en: "loxmatter asks Home Assistant for a pairing code for each device and pairs it here with that code. The device keeps working in Home Assistant until you remove it there. About 30 seconds per device."
+  de: "loxmatter bittet Home Assistant für jedes Gerät um einen Kopplungscode und koppelt es damit hier. Das Gerät läuft in Home Assistant weiter, bis Sie es dort entfernen. Etwa 30 Sekunden pro Gerät."
+web.setup.ha_matter_none:
+  en: "No Matter device is selected."
+  de: "Es ist kein Matter-Gerät ausgewählt."
+web.setup.ha_matter_start:
+  en: "Take over {count} device(s)"
+  de: "{count} Gerät(e) übernehmen"
+web.setup.ha_again:
+  en: "Try the rest again"
+  de: "Den Rest erneut versuchen"
+web.setup.ha_item_waiting:
+  en: "waiting"
+  de: "wartet"
+web.setup.ha_item_running:
+  en: "in progress …"
+  de: "läuft …"
+web.setup.ha_item_done:
+  en: "done"
+  de: "fertig"
+web.setup.ha_item_failed:
+  en: "failed"
+  de: "fehlgeschlagen"
+web.setup.ha_zigbee_heading_move:
+  en: "Move the Zigbee stick"
+  de: "Zigbee-Stick umstecken"
+web.setup.ha_zigbee_heading_own:
+  en: "Copy the Zigbee network"
+  de: "Zigbee-Netz übertragen"
+web.setup.ha_zigbee_pause:
+  en: "Pause Zigbee in Home Assistant"
+  de: "Zigbee in Home Assistant pausieren"
+web.setup.ha_zigbee_pause_text:
+  en: "loxmatter saves Home Assistant's Zigbee network and then switches ZHA off. This is the first change in Home Assistant; it can be undone there by switching ZHA back on."
+  de: "loxmatter sichert das Zigbee-Netz von Home Assistant und schaltet ZHA danach ab. Das ist die erste Änderung in Home Assistant; sie lässt sich dort durch erneutes Einschalten von ZHA rückgängig machen."
+web.setup.ha_zigbee_pause_button:
+  en: "Save the network and pause ZHA"
+  de: "Netz sichern und ZHA pausieren"
+web.setup.ha_zigbee_pause_confirm:
+  en: "Pause ZHA in Home Assistant now? Your Zigbee devices stop working in Home Assistant until they run here."
+  de: "ZHA in Home Assistant jetzt pausieren? Ihre Zigbee-Geräte funktionieren dann in Home Assistant nicht mehr, bis sie hier laufen."
+web.setup.ha_zigbee_pause_yes:
+  en: "Yes, pause ZHA"
+  de: "Ja, ZHA pausieren"
+web.setup.ha_zigbee_plug:
+  en: "Move the stick over"
+  de: "Stick umstecken"
+web.setup.ha_zigbee_plug_text:
+  en: "Unplug the Zigbee stick from the Home Assistant device and plug it into this one, ideally on a USB extension cable. Then choose it here and apply."
+  de: "Ziehen Sie den Zigbee-Stick aus dem Home-Assistant-Gerät und stecken Sie ihn hier ein, am besten an ein USB-Verlängerungskabel. Dann hier auswählen und übernehmen."
+web.setup.ha_zigbee_unplug:
+  en: "Unplug the old stick"
+  de: "Alten Stick abziehen"
+web.setup.ha_zigbee_unplug_text:
+  en: "Unplug the Zigbee stick from the Home Assistant device and put it away - it must not come back. Make sure loxmatter's own Zigbee stick is chosen here."
+  de: "Ziehen Sie den Zigbee-Stick aus dem Home-Assistant-Gerät und legen Sie ihn weg; er darf nicht wieder eingesteckt werden. Stellen Sie sicher, dass hier der eigene Zigbee-Stick von loxmatter gewählt ist."
+web.setup.ha_zigbee_other_network:
+  en: "The stick here runs a different Zigbee network than the one saved from Home Assistant. Is it the stick from Home Assistant?"
+  de: "Der Stick hier hat ein anderes Zigbee-Netz als das aus Home Assistant gesicherte. Ist es der Stick aus Home Assistant?"
+web.setup.ha_zigbee_restore:
+  en: "Transfer the network"
+  de: "Netz übertragen"
+web.setup.ha_zigbee_restore_text:
+  en: "loxmatter writes the saved network onto its own stick. The stick restarts afterwards."
+  de: "loxmatter schreibt das gesicherte Netz auf seinen eigenen Stick. Der Stick startet danach neu."
+web.setup.ha_zigbee_overwrite_ieee:
+  en: "Also take over the old stick's address (recommended)"
+  de: "Auch die Adresse des alten Sticks übernehmen (empfohlen)"
+web.setup.ha_zigbee_restore_warning:
+  en: "Most sticks allow their address to be changed only once. Without the old address, some devices (for example alarm sensors) have to be paired again."
+  de: "Die meisten Sticks erlauben das Ändern ihrer Adresse nur einmal. Ohne die alte Adresse müssen einige Geräte (zum Beispiel Alarmsensoren) neu gekoppelt werden."
+web.setup.ha_zigbee_restore_button:
+  en: "Transfer the network"
+  de: "Netz übertragen"
+web.setup.ha_zigbee_import:
+  en: "Enter the devices"
+  de: "Geräte eintragen"
+web.setup.ha_zigbee_import_text:
+  en: "The stick runs Home Assistant's network. loxmatter enters the chosen devices with their names and rooms - nobody has to pair or wake them."
+  de: "Der Stick hat das Netz von Home Assistant. loxmatter trägt die gewählten Geräte mit Namen und Räumen ein; niemand muss sie neu koppeln oder aufwecken."
+web.setup.ha_zigbee_import_button:
+  en: "Enter {count} device(s)"
+  de: "{count} Gerät(e) eintragen"
+web.setup.ha_cleanup_heading:
+  en: "Everything moved. Tidy up Home Assistant?"
+  de: "Alles umgezogen. Home Assistant aufräumen?"
+web.setup.ha_cleanup_text:
+  en: "Optional. Only devices that arrived here are removed. Everything else stays in Home Assistant."
+  de: "Freiwillig. Entfernt werden nur Geräte, die hier angekommen sind. Alles andere bleibt in Home Assistant."
+web.setup.ha_cleanup_matter:
+  en: "Remove the moved Matter devices from Home Assistant"
+  de: "Umgezogene Matter-Geräte aus Home Assistant entfernen"
+web.setup.ha_cleanup_zha:
+  en: "Remove the paused Zigbee integration (ZHA) from Home Assistant"
+  de: "Pausierte Zigbee-Integration (ZHA) aus Home Assistant entfernen"
+web.setup.ha_cleanup_thread:
+  en: "Home Assistant's Thread network stays as it is: your Thread devices use it, now through loxmatter as well."
+  de: "Das Thread-Netz von Home Assistant bleibt, wie es ist: Ihre Thread-Geräte nutzen es, jetzt auch über loxmatter."
+web.setup.ha_cleanup_button:
+  en: "Tidy up"
+  de: "Aufräumen"
+web.setup.ha_cleanup_done:
+  en: "{count} device(s) removed from Home Assistant."
+  de: "{count} Gerät(e) aus Home Assistant entfernt."
+web.setup.ha_cleanup_failed:
+  en: "Home Assistant kept {count} device(s). They can be removed there by hand."
+  de: "Home Assistant hat {count} Gerät(e) behalten. Sie lassen sich dort von Hand entfernen."
+web.setup.done_heading:
+  en: "All set"
+  de: "Fertig eingerichtet"
+web.setup.done_ha:
+  en: "{count} device(s) moved from Home Assistant."
+  de: "{count} Gerät(e) aus Home Assistant übernommen."
+web.setup.done_text:
+  en: "Next: pair more devices under Devices, then create the Loxone template under Export and import it into Loxone Config."
+  de: "Als Nächstes: weitere Geräte unter Geräte koppeln, dann unter Export die Loxone-Vorlage erstellen und in Loxone Config importieren."
+web.setup.done_later:
+  en: "Everything here can be changed later under Settings, and the assistant can be run again there."
+  de: "Alles hier lässt sich später unter Einstellungen ändern, und der Assistent lässt sich dort erneut starten."
+web.setup.finish:
+  en: "Go to my devices"
+  de: "Zu meinen Geräten"
+web.setup.restart_heading:
+  en: "Setup assistant"
+  de: "Einrichtungsassistent"
+web.setup.restart_text:
+  en: "Run the assistant again, for example to fetch devices from Home Assistant that were left behind the first time. Devices already set up are not touched."
+  de: "Den Assistenten erneut starten, zum Beispiel um Geräte aus Home Assistant nachzuholen, die beim ersten Mal zurückgeblieben sind. Bereits eingerichtete Geräte bleiben unverändert."
+web.setup.restart_button:
+  en: "Run the assistant again"
+  de: "Assistent erneut starten"

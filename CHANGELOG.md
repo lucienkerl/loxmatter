@@ -8,6 +8,44 @@ people who don't know the code.
 
 ## [Unreleased]
 
+### Added
+
+- **A setup assistant on first start.** After setting the password, the web
+  interface walks you through the Miniserver address and your USB sticks
+  (Thread, Zigbee, or nothing - every combination works). The installer no
+  longer asks about sticks or Bluetooth adapters. The assistant remembers
+  where you left off, and Settings can start it again. Installations that
+  already have devices never see it.
+- **Move from Home Assistant.** Sign in to Home Assistant from the assistant
+  (on Home Assistant's own page, or with an access token), pick the devices,
+  and loxmatter takes them over with their names and rooms: Matter devices
+  through a pairing code Home Assistant hands out, Thread devices after
+  joining Home Assistant's Thread network, and Zigbee devices from ZHA
+  without re-pairing - either by moving the stick over or by copying the
+  network onto loxmatter's own stick. Nothing in Home Assistant changes until
+  you pause ZHA, and removing devices there is a separate, optional last step
+  that only touches devices which arrived here.
+
+- **Ports that are already taken no longer stop the installation.** The
+  installer checks the web interface's port (8080) and the border router's
+  REST port (8081) first and moves a taken one to the next free port, saying
+  which program holds it - Home Assistant's border router page and
+  ioBroker's admin page are common. Both can also be set in `.env`
+  (`LOXMATTER_PORT`, `OTBR_REST_PORT`). Another Matter server on port 5580
+  stops the run before anything is changed.
+- **Taking over from Home Assistant on the same host.** With
+  `LOXMATTER_TAKE_OVER=home-assistant` the installer hands Home Assistant
+  Container's Matter server and Thread border router to loxmatter:
+  loxmatter's Matter server starts on a copy of Home Assistant's Matter data
+  (same fabric, nothing is paired again, and Home Assistant keeps its Matter
+  devices through it), and loxmatter's border router takes the Thread stick
+  with the same Thread network. `scripts/home-assistant-handover.sh
+  give-back` starts Home Assistant's containers again on their untouched
+  data. The setup assistant then enters those Matter devices with their
+  names and rooms without pairing them.
+- **Testing before a release.** `LOXMATTER_IMAGE_TAG=dev` makes the
+  installer pull the newest build of `main` instead of the released version.
+
 ### Fixed
 
 - **The installer no longer stops at "Starting the containers" when your user
