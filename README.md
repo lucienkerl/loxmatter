@@ -1,15 +1,17 @@
 <div align="center">
 
-<img src="src/loxmatter/web/icon.svg" alt="" width="96" height="96" />
+<img src="src/loxmatter/web/icon.svg" alt="loxmatter logo" width="96" height="96" />
 
 # loxmatter
 
-### Matter devices in Loxone — self-hosted, no cloud
+### A Matter bridge for the Loxone Miniserver — self-hosted, no cloud
 
-Your Miniserver does not speak Matter. This bridge makes it anyway: any value a
-Matter device reports can become a virtual input, every Loxone command becomes a
-Matter command, and the Loxone objects for it are generated rather than typed by
-hand.
+Your Loxone Miniserver does not speak Matter. loxmatter makes it anyway: it is an
+open-source Matter controller that runs next to your Miniserver, on a Raspberry Pi
+or any Linux host, and connects Thread, Wi-Fi, Ethernet and Zigbee devices to Loxone.
+Any value a Matter device reports can become a virtual input, every Loxone command
+becomes a Matter command, and the Loxone objects for it are generated rather than
+typed by hand.
 
 ![License: GPL-3.0-or-later](https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg)
 ![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)
