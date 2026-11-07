@@ -121,10 +121,23 @@ discover() {
     HA_RADIO="$(dk inspect -f '{{range .HostConfig.Devices}}{{.PathOnHost}}{{"\n"}}{{end}}' "$HA_OTBR" | grep -v '/dev/net/tun' | head -n 1)"
     local env_lines
     env_lines="$(dk inspect -f '{{range .Config.Env}}{{.}}{{"\n"}}{{end}}' "$HA_OTBR")"
+    # Privileged, as in Home Assistant's own compose example: no device is
+    # listed, the stick is only named in OT_RCP_DEVICE.
+    if [ -z "$HA_RADIO" ]; then
+      HA_RADIO="$(printf '%s\n' "$env_lines" | sed -n 's#^OT_RCP_DEVICE=[^:]*://\(/[^?]*\).*#\1#p' | head -n 1)"
+    fi
     HA_BAUD="$(printf '%s\n' "$env_lines" | sed -n 's/.*uart-baudrate=\([0-9]*\).*/\1/p' | head -n 1)"
     HA_REST_PORT="$(printf '%s\n' "$env_lines" | sed -n 's/^OT_REST_LISTEN_PORT=\([0-9]*\)$/\1/p' | head -n 1)"
     HA_REST_PORT="${HA_REST_PORT:-8081}"
   fi
+}
+
+# The device a path finally points at - a by-id link and /dev/ttyUSB0 are
+# the same stick - or the path itself where it does not exist.
+same_device() {
+  local real
+  real="$(readlink -f "$1" 2>/dev/null)" || real=""
+  printf '%s' "${real:-$1}"
 }
 
 show_findings() {
@@ -182,7 +195,7 @@ take() {
   rest_port="$(env_value OTBR_REST_PORT)"
   rest_port="${rest_port:-8081}"
   if [ -n "$HA_OTBR" ]; then
-    [ "$(env_value RADIO_DEVICE)" = "$HA_RADIO" ] ||
+    [ "$(same_device "$(env_value RADIO_DEVICE)")" = "$(same_device "$HA_RADIO")" ] ||
       die "RADIO_DEVICE in .env is not Home Assistant's stick ($HA_RADIO). Nothing was changed."
     [ "$rest_port" != "$HA_REST_PORT" ] ||
       die "OTBR_REST_PORT in .env equals Home Assistant's border router port ($HA_REST_PORT). Nothing was changed."

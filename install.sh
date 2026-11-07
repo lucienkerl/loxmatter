@@ -743,7 +743,15 @@ review_settings() {
 # Docker for reading, before join_docker_group has settled whether this user
 # needs sudo for it.
 docker_read() {
-  docker "$@" 2>/dev/null || { [ -n "$SUDO" ] && $SUDO docker "$@" 2>/dev/null; }
+  # `docker inspect -f` still prints an empty line when the socket refuses
+  # this user. Passed on, that line came first and was taken for the stick
+  # (the Pi of the first real migration, 7 November 2026), so a failed
+  # attempt's output is dropped.
+  if dr_out="$(docker "$@" 2>/dev/null)"; then
+    printf '%s\n' "$dr_out"
+    return 0
+  fi
+  [ -n "$SUDO" ] && $SUDO docker "$@" 2>/dev/null
 }
 
 # The name of a container running Home Assistant's Matter server, or nothing.
@@ -787,6 +795,21 @@ offer_take_over() {
   LOXMATTER_TAKE_OVER=home-assistant
 }
 
+# ttyUSB0 can become ttyUSB1 after a reboot; the by-id link that points at
+# the same device cannot. Echoes that link, or $1 unchanged.
+stable_serial_name() {
+  for ssn_link in "$SERIAL_BY_ID_DIR"/*; do
+    # -ef (same device and inode) follows the link without readlink -f,
+    # which is not POSIX; dash, bash and busybox test all have it.
+    # shellcheck disable=SC3013
+    if [ -e "$ssn_link" ] && [ "$ssn_link" -ef "$1" ]; then
+      printf '%s' "$ssn_link"
+      return 0
+    fi
+  done
+  printf '%s' "$1"
+}
+
 decide_take_over() {
   offer_take_over
   [ -n "${LOXMATTER_TAKE_OVER:-}" ] || return 0
@@ -809,9 +832,18 @@ decide_take_over() {
     note "Thread border router: none - Thread stays off"
     return 0
   fi
+  to_env="$(docker_read inspect -f '{{range .Config.Env}}{{.}}{{"\n"}}{{end}}' "$to_otbr")"
   to_radio="$(docker_read inspect -f '{{range .HostConfig.Devices}}{{.PathOnHost}}{{"\n"}}{{end}}' "$to_otbr" |
     grep -v '/dev/net/tun' | head -n 1)"
-  to_baud="$(docker_read inspect -f '{{range .Config.Env}}{{.}}{{"\n"}}{{end}}' "$to_otbr" |
+  # A privileged container (Home Assistant's own compose example) gets all
+  # of /dev and lists no device: the stick is then only named in
+  # OT_RCP_DEVICE, as spinel+hdlc+uart:///dev/ttyUSB0?uart-baudrate=...
+  if [ -z "$to_radio" ]; then
+    to_radio="$(printf '%s\n' "$to_env" |
+      sed -n 's#^OT_RCP_DEVICE=[^:]*://\(/[^?]*\).*#\1#p' | head -n 1)"
+  fi
+  to_radio="$(stable_serial_name "$to_radio")"
+  to_baud="$(printf '%s\n' "$to_env" |
     sed -n 's/.*uart-baudrate=\([0-9]*\).*/\1/p' | head -n 1)"
   [ -n "$to_radio" ] ||
     die "Could not tell which stick $to_otbr uses. Nothing was changed."

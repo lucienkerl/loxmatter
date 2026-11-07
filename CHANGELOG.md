@@ -53,6 +53,11 @@ people who don't know the code.
 
 ### Fixed
 
+- **Taking over from Home Assistant no longer stops at "Could not tell which
+  stick" for a user outside the `docker` group.** The refused first attempt
+  left an empty line that was read as the stick. A border router that runs
+  privileged, with the stick named only in `OT_RCP_DEVICE`, is recognised
+  too.
 - **The installer no longer stops at "Starting the containers" when your user
   is not in the `docker` group.** It now notices this before cloning, adds you
   to the group with `sudo usermod -aG docker`, and finishes the run with
