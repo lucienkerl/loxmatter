@@ -147,6 +147,8 @@ These environment variables skip the matching question:
   LOXMATTER_TAKE_OVER home-assistant: take over Home Assistant's Matter server and
                       border router on this host (scripts/home-assistant-handover.sh
                       give-back undoes it)
+  LOXMATTER_IMAGE_TAG image tag of the bridge; stable when unset. dev is the
+                      newest build of main, for testing before a release
 EOF
 }
 
@@ -821,6 +823,11 @@ check_config_source() {
     ""|home-assistant) ;;
     *) die "LOXMATTER_TAKE_OVER can only be 'home-assistant' (got: $LOXMATTER_TAKE_OVER)" ;;
   esac
+  case "${LOXMATTER_IMAGE_TAG:-}" in
+    "") ;;
+    -*|.*|*[!A-Za-z0-9._-]*)
+      die "LOXMATTER_IMAGE_TAG is not an image tag: '$LOXMATTER_IMAGE_TAG'" ;;
+  esac
   case "${OTBR_REST_PORT:-}" in
     "") ;;
     *[!0-9]*|0*) die "OTBR_REST_PORT is not a port number: '$OTBR_REST_PORT'" ;;
@@ -1297,6 +1304,12 @@ configure() {
   fi
   if [ -n "$CHOSEN_OTBR_REST_PORT" ]; then
     write_env_value OTBR_REST_PORT "$CHOSEN_OTBR_REST_PORT" 0
+  fi
+  # .env.example already says stable, so write_env_value would keep that on
+  # a second run; a tag passed in is what the caller wants pulled, always.
+  if [ -n "${LOXMATTER_IMAGE_TAG:-}" ]; then
+    env_set LOXMATTER_IMAGE_TAG "$LOXMATTER_IMAGE_TAG"
+    note "LOXMATTER_IMAGE_TAG=$LOXMATTER_IMAGE_TAG"
   fi
   if [ "$ENV_IS_NEW" -eq 1 ] || [ -z "$(env_file_value LOXMATTER_API_TOKEN)" ]; then
     token_value="${LOXMATTER_API_TOKEN:-$(gen_token)}"

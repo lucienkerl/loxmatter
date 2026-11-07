@@ -1010,6 +1010,23 @@ def test_a_port_that_is_not_a_number_stops_before_anything_is_written(installer)
     assert not (result.home / "loxmatter").exists()
 
 
+def test_a_chosen_image_tag_is_written(installer):
+    # Testing an unreleased main on a real host: the bridge then pulls :dev
+    # instead of :stable.
+    result = installer(env={"LOXMATTER_IMAGE_TAG": "dev"})
+    assert result.returncode == 0, result.output
+    text = result.env_file.read_text()
+    assert "LOXMATTER_IMAGE_TAG=dev" in text
+    assert "LOXMATTER_IMAGE_TAG=stable" not in text
+
+
+def test_an_image_tag_with_shell_characters_stops_before_anything_is_written(installer):
+    result = installer(env={"LOXMATTER_IMAGE_TAG": "dev;reboot"})
+    assert result.returncode != 0
+    assert "LOXMATTER_IMAGE_TAG is not an image tag" in result.output
+    assert not (result.home / "loxmatter").exists()
+
+
 # `ss -Hltnp "sport = :PORT"` for the ports listed in FAKE_LISTENERS as
 # "port:process" pairs - the shape the real one prints, reduced to what
 # port_holder reads.

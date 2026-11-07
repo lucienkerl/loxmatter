@@ -43,6 +43,8 @@ people who don't know the code.
   give-back` starts Home Assistant's containers again on their untouched
   data. The setup assistant then enters those Matter devices with their
   names and rooms without pairing them.
+- **Testing before a release.** `LOXMATTER_IMAGE_TAG=dev` makes the
+  installer pull the newest build of `main` instead of the released version.
 
 ### Fixed
 
