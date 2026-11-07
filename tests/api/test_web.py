@@ -18167,3 +18167,24 @@ def test_the_slow_steps_say_how_long_they_take():
         "hint": "web.setup.busy_inventory_hint",
         "none": None,
     }
+
+
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
+def test_next_waits_for_the_chosen_zigbee_devices_to_be_entered():
+    values = _app_state(
+        """
+        state.setup = { completed: false, step: "ha_zigbee", path: "ha" };
+        state.haInventory = { devices: [
+          { ha_device_id: "z1", kind: "zigbee", availability: "ready" },
+        ] };
+        state.haSelected = { z1: true };
+        const before = state.setupNextBlocked();
+        state.haJob = { kind: "zigbee", running: false, items: [] };
+        const after = state.setupNextBlocked();
+        state.haJob = null;
+        state.haSelected = { z1: false };
+        const unticked = state.setupNextBlocked();
+        console.log(JSON.stringify({ before, after, unticked }));
+        """
+    )
+    assert values == {"before": True, "after": False, "unticked": False}

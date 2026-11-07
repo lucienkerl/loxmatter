@@ -4028,6 +4028,9 @@ web.setup.ha_matter_none:
 web.setup.ha_matter_start:
   en: "Take over {count} device(s)"
   de: "{count} Gerät(e) übernehmen"
+web.setup.ha_zigbee_next_waits:
+  en: "Next waits until the {count} chosen Zigbee devices are entered - they keep Home Assistant's names and rooms only this way. To leave them out, untick them on the device list."
+  de: "Weiter geht es, sobald die {count} gewählten Zigbee-Geräte eingetragen sind - nur so behalten sie Namen und Räume aus Home Assistant. Um sie auszulassen, nehmen Sie den Haken in der Geräteliste heraus."
 web.setup.busy_inventory:
   en: "Reading Home Assistant's device list …"
   de: "Lese die Geräteliste von Home Assistant …"

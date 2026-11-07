@@ -59,7 +59,8 @@ people who don't know the code.
   action has its own busy state, so a device list that finishes first no
   longer re-enables "pause ZHA" while the pause is still running. The Zigbee
   step reads the stick's state again every few seconds, and Next waits until
-  the stick is connected.
+  the stick is connected and the chosen Zigbee devices are entered, so they
+  keep Home Assistant's names and rooms.
 - **Home Assistant's device list no longer takes minutes right after a
   take-over.** A Matter device that does not answer yet holds it up for 5
   seconds instead of 30, and is still offered when it is already in

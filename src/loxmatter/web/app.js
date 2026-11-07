@@ -7275,6 +7275,7 @@ function app() {
       if (["sticks", "networks", "ha_zigbee"].includes(step)) {
         if (this.zigbeeBusy || this.setupZigbeeConnecting() || this.haBusyWith("pause", "restore")) return true;
       }
+      if (this.setupZigbeeImportPending()) return true;
       return this.setupBusy;
     },
 
@@ -7627,6 +7628,17 @@ function app() {
         return { text: t("web.setup.busy_job", { done, count: this.haJob.items.length }), hint: null };
       }
       return null;
+    },
+
+    /** Zigbee devices ticked for the move and not entered yet. Next used
+     * to walk past them, and they then had to be added by hand - without
+     * Home Assistant's names and rooms (7 November 2026). Unticking them
+     * on the device list, or Back, still leaves the step. */
+    setupZigbeeImportPending() {
+      if (this.setupStep() !== "ha_zigbee" || this.haZigbeeMode === "skip") return false;
+      if (!this.haChosen("zigbee").length) return false;
+      const job = this.haJobFor("zigbee");
+      return !job || job.running;
     },
 
     /** A Zigbee stick chosen and its connection still under way. */
