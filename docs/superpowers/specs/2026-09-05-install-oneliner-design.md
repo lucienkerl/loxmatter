@@ -119,6 +119,15 @@ only takes effect after a re-login. The final report says so: log out
 and back in once, after that `docker` works without `sudo`, and
 `scripts/update.sh` needs that.
 
+The same applies when Docker is already installed but the user is not in the
+`docker` group (added 2026-11 after a Raspberry Pi run as `pi` failed at
+"Starting the containers" with "permission denied while trying to connect to
+the docker API"). Phase 1 asks `docker info`; only a permission error counts,
+a daemon that is down is left to `compose up` to report. Phase 2 then runs
+`usermod -aG docker <user>` (skipped if the group database already lists the
+user) and continues with `sudo docker`. Without sudo and without root, the
+run aborts in Phase 1 with the `usermod` line to run as root.
+
 ### Phase 3 — Clone
 
 `git clone https://github.com/lucienkerl/loxmatter.git ~/loxmatter`, branch
@@ -325,6 +334,7 @@ Cases checked:
 | `uname` stub reports `Darwin` | abort, no directory created, exit ≠ 0 |
 | `git`/`curl`/`openssl` missing | exactly these three in the `apt-get` call, no others |
 | Docker missing | `get.docker.com` only **after** `apt-get`; then `sudo docker` in all following calls |
+| Docker present, user outside the `docker` group | `usermod -aG docker` before the clone, then `sudo docker compose up -d`; no `usermod` if already listed in the group |
 | no `sudo`, no root, Docker missing | abort in Phase 1; `git clone` does **not** appear in the log |
 | `MINISERVER_IP` missing, no TTY | abort before the clone |
 | second run with a complete `.env` | no `git clone`, `.env` byte-identical, `compose up -d` again |
