@@ -41,6 +41,12 @@ _SETUP_KEY: Final = "setup"
 SetupPath = Literal["new", "ha"]
 _PATHS: Final = frozenset({"new", "ha"})
 
+# The answer to "how does Zigbee come over from Home Assistant": the stick
+# is moved over, the network goes onto loxmatter's own stick, or Zigbee
+# stays where it is. It decides which screens follow.
+ZigbeeMode = Literal["move", "own", "skip"]
+_ZIGBEE_MODES: Final = frozenset({"move", "own", "skip"})
+
 
 @dataclass(frozen=True)
 class SetupState:
@@ -51,6 +57,7 @@ class SetupState:
     completed: bool = False
     step: str | None = None
     path: SetupPath | None = None
+    zigbee: ZigbeeMode | None = None
 
     def as_json(self) -> dict[str, object]:
         return asdict(self)
@@ -72,10 +79,12 @@ class SetupStore:
             return None
         step = raw.get("step")
         path = raw.get("path")
+        zigbee = raw.get("zigbee")
         return SetupState(
             completed=bool(raw.get("completed", False)),
             step=step if isinstance(step, str) else None,
             path=path if path in _PATHS else None,
+            zigbee=zigbee if zigbee in _ZIGBEE_MODES else None,
         )
 
     def stored(self) -> bool:
@@ -107,6 +116,7 @@ class SetupStore:
         has_devices: bool = False,
         step: str | None = None,
         path: SetupPath | None = None,
+        zigbee: ZigbeeMode | None = None,
         completed: bool | None = None,
     ) -> SetupState:
         """Changes only what is passed; `None` leaves a field as it is."""
@@ -117,6 +127,10 @@ class SetupStore:
             if path not in _PATHS:
                 raise ValueError(f"unknown setup path {path!r}")
             state = replace(state, path=path)
+        if zigbee is not None:
+            if zigbee not in _ZIGBEE_MODES:
+                raise ValueError(f"unknown Zigbee mode {zigbee!r}")
+            state = replace(state, zigbee=zigbee)
         if completed is not None:
             state = replace(state, completed=completed)
         return self.save(state)

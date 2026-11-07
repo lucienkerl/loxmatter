@@ -45,7 +45,7 @@ async def test_a_new_installation_starts_the_assistant(api):
     response = await client.get("/api/setup")
 
     assert response.status_code == 200
-    assert response.json() == {"completed": False, "step": None, "path": None}
+    assert response.json() == {"completed": False, "step": None, "path": None, "zigbee": None}
 
 
 async def test_an_installation_with_devices_from_before_the_assistant_never_sees_it(api):
@@ -67,9 +67,23 @@ async def test_the_step_and_path_are_kept_for_a_reload(api):
 
     await client.patch("/api/setup", json={"path": "ha"})
     await client.patch("/api/setup", json={"step": "ha_login"})
+    await client.patch("/api/setup", json={"zigbee": "own"})
     response = await client.get("/api/setup")
 
-    assert response.json() == {"completed": False, "step": "ha_login", "path": "ha"}
+    assert response.json() == {
+        "completed": False,
+        "step": "ha_login",
+        "path": "ha",
+        "zigbee": "own",
+    }
+
+
+async def test_an_unknown_zigbee_answer_is_refused(api):
+    client, _ = api
+
+    response = await client.patch("/api/setup", json={"zigbee": "zigbee2mqtt"})
+
+    assert response.status_code == 422
 
 
 async def test_an_unknown_path_is_refused(api):
@@ -96,7 +110,7 @@ async def test_restarting_opens_the_assistant_at_the_path_choice(api):
 
     response = await client.post("/api/setup/restart")
 
-    assert response.json() == {"completed": False, "step": "path", "path": None}
+    assert response.json() == {"completed": False, "step": "path", "path": None, "zigbee": None}
 
 
 async def test_the_routes_need_a_session(tmp_path, no_invoke, fake_runtime):

@@ -39,6 +39,7 @@ from loxmatter.model.store import Store
 class SetupPatch(BaseModel):
     step: str | None = Field(default=None, max_length=40)
     path: Literal["new", "ha"] | None = None
+    zigbee: Literal["move", "own", "skip"] | None = None
 
 
 def build_setup_router(store: Store) -> APIRouter:
@@ -63,7 +64,7 @@ def build_setup_router(store: Store) -> APIRouter:
         state = _current()
         if state.completed:
             raise HTTPException(status_code=409, detail=i18n.t("api.setup.fail_completed"))
-        return store.setup.update(step=patch.step, path=patch.path).as_json()
+        return store.setup.update(step=patch.step, path=patch.path, zigbee=patch.zigbee).as_json()
 
     @router.post("/setup/complete")
     async def complete_setup() -> dict[str, object]:

@@ -1222,7 +1222,7 @@ function app() {
     setupError: null,
     // The Home Assistant half. `ha` mirrors `GET /api/homeassistant`;
     // `haInventory` is the device list, `haSelected` the ticked boxes by
-    // Home Assistant device id. `haZigbeeMode` is the user's answer to
+    // Home Assistant device id. `haZigbeeMode` mirrors `setup.zigbee`, the answer to
     // "where should the Zigbee network run": move | own | skip.
     ha: null,
     haUrl: "http://homeassistant.local:8123",
@@ -7350,25 +7350,22 @@ function app() {
 
     // --- Home Assistant -------------------------------------------------
 
-    /** The Zigbee answer lives in this browser only - it decides which
-     * screens follow, nothing on the bridge depends on it - and survives a
-     * reload, including the one Home Assistant's sign-in causes. */
-    haSetZigbeeMode(mode) {
+    /** The Zigbee answer is kept with the assistant's state on the bridge,
+     * so it survives a reload - including the one Home Assistant's sign-in
+     * causes - and a second browser sees the same screens. */
+    async haSetZigbeeMode(mode) {
+      const previous = this.haZigbeeMode;
       this.haZigbeeMode = mode;
       try {
-        window.localStorage.setItem("loxmatter.haZigbeeMode", mode);
-      } catch {
-        // Private mode: the choice holds until the page is reloaded.
+        this.setup = await this.request("PATCH", "/api/setup", { zigbee: mode });
+      } catch (error) {
+        this.haZigbeeMode = previous;
+        this.haError = error.message;
       }
     },
 
     async loadHomeAssistant() {
-      try {
-        const kept = window.localStorage.getItem("loxmatter.haZigbeeMode");
-        if (["move", "own", "skip"].includes(kept)) this.haZigbeeMode = kept;
-      } catch {
-        // See `haSetZigbeeMode`.
-      }
+      if (this.setup?.zigbee) this.haZigbeeMode = this.setup.zigbee;
       try {
         this.ha = await this.request("GET", "/api/homeassistant");
         if (this.ha.url) this.haUrl = this.ha.url;

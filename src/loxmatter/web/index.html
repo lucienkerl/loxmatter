@@ -447,7 +447,7 @@
               <rect x="30" y="30" width="140" height="244" rx="8" class="fig-paper" />
               <rect x="38" y="70" width="124" height="30" rx="6" class="fig-soft" />
               <rect x="38" y="106" width="124" height="30" rx="6" class="fig-accent-soft" />
-              <text x="48" y="126" class="fig-caption-strong">Miniserver</text>
+              <text x="44" y="125" class="fig-caption-strong" style="font-size: 10.5px">Loxone Miniserver</text>
               <rect x="38" y="142" width="124" height="30" rx="6" class="fig-soft" />
               <rect x="38" y="190" width="124" height="54" rx="6" class="fig-paper fig-outline" />
               <text x="48" y="230" class="fig-caption-strong">192.168.1.77</text>
@@ -539,10 +539,10 @@
                 </label>
                 <button class="primary" x-show="radios.sidecar === 'ready' && radiosChanged() && !radiosJobRunning()" x-cloak
                         :disabled="radiosBusy" @click="confirmApplyRadios()" x-text="t('web.radios.apply')"></button>
-                <button @click="rescanRadios(); loadZigbeeRadio()" x-text="t('web.radios.rescan')"></button>
+                <button @click="rescanRadios()" x-text="t('web.radios.rescan')"></button>
               </div>
               <template x-if="radiosThreadStatus()">
-                <p :class="radiosThreadStatus().warn ? 'banner warn' : 'hint'" x-text="t(radiosThreadStatus().key)"></p>
+                <p :class="radiosThreadStatus().warn ? 'banner warn' : 'hint radios-row-hint'" x-text="t(radiosThreadStatus().key)"></p>
               </template>
               <template x-if="radios.job && radiosJobRunning()">
                 <ul class="steps">

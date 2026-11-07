@@ -263,14 +263,16 @@ async def test_the_interface_offers_setup_and_login_instead_of_a_token_field(api
     (review fix Fix 1). Both screens are unconditionally present in the
     delivered markup - Alpine only shows or hides them in the browser via
     `x-if`/`x-show`, so a test without a browser engine always sees both.
-    Checked here: five password fields of type `password` (two for setup,
-    one for login, two for changing it in Settings - type `password` so
-    nothing can be read over someone's shoulder), the two submit labels,
-    and that the old token input is gone."""
+    Checked here: six fields of type `password` (two for setup, one for
+    login, two for changing it in Settings, one for a Home Assistant access
+    token in the setup assistant - type `password` so nothing can be read
+    over someone's shoulder), the two submit labels, and that the old token
+    input is gone."""
     client, _, _ = api
     page = (await client.get("/")).text
-    # Two for setup, one for login, two for the password card in Settings.
-    assert page.count('type="password"') == 5
+    # Two for setup, one for login, two for the password card in Settings,
+    # one for the Home Assistant token in the setup assistant.
+    assert page.count('type="password"') == 6
     assert "x-text=\"t('web.auth.setup_submit')\"" in page
     assert "x-text=\"t('web.auth.login_submit')\"" in page
     assert "token-box" not in page
@@ -11931,8 +11933,10 @@ async def test_the_radios_zigbee_hint_sits_under_thread_and_names_the_product(ap
             for index, (tag, attributes, _) in enumerate(elements)
             if predicate(tag, attributes)
         ]
-        assert len(found) == 1, found
-        return found[0]
+        # The setup assistant's sticks step carries its own Thread select
+        # earlier in the document; the Settings card is the last one.
+        assert found, found
+        return found[-1]
 
     thread = position(
         lambda tag, a: tag == "select" and a.get("x-model") == "radiosDraft.threadDevice"
