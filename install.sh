@@ -45,6 +45,9 @@ NEED_DOCKER=0
 MODE=""
 DOCKER_INSTALL_URL="https://get.docker.com"
 DOCKER_SUDO=0
+# 1 when Docker is installed but this user cannot reach its socket - phase
+# one finds it, phase two adds the user to the 'docker' group.
+NEED_DOCKER_GROUP=0
 TEMP_FILE=""
 STACK_DIR=""
 ENV_FILE=""
@@ -303,6 +306,36 @@ collect_missing() {
 On Debian and Ubuntu: apt-get install docker-compose-plugin
 Then run this again."
   fi
+}
+
+# Docker can be installed and still refuse this user: the socket belongs to
+# root and the 'docker' group, and a user outside that group gets "permission
+# denied while trying to connect to the docker API" - on the very first
+# `compose up`, after the clone and the .env were already written. Asking
+# `docker info` here finds that in phase one instead. Only a permission error
+# counts: a daemon that is down is a different problem, and `compose up`
+# reports it with Docker's own words.
+check_docker_access() {
+  step "checking access to Docker"
+  NEED_DOCKER_GROUP=0
+  if [ "$NEED_DOCKER" -eq 1 ] || [ "$(id -u)" -eq 0 ]; then
+    return 0
+  fi
+  if docker_info="$(docker info 2>&1)"; then
+    return 0
+  fi
+  if ! printf '%s' "$docker_info" | grep -qi "permission denied"; then
+    return 0
+  fi
+  docker_user="$(id -un)"
+  if [ -z "$SUDO" ]; then
+    die "$docker_user may not use Docker: it is not in the 'docker' group, and sudo
+is not available to add it. As root, run:
+  usermod -aG docker $docker_user
+then log out, log back in and run this again."
+  fi
+  NEED_DOCKER_GROUP=1
+  note "$docker_user is not in the 'docker' group yet; will add it."
 }
 
 check_can_install() {
@@ -752,6 +785,34 @@ Install the compose plugin (on Debian and Ubuntu: apt-get install docker-compose
 then run this again."
   fi
   note "docker compose is available"
+}
+
+# The other half of check_docker_access. The new group only takes effect in
+# a new login session, so this run cannot switch to plain `docker` after
+# usermod - it carries on with `sudo docker`, exactly like a run that just
+# installed Docker. If the user is already in the group (added earlier, but
+# not logged in again since), usermod is skipped and only the sudo part
+# applies.
+join_docker_group() {
+  if [ "$NEED_DOCKER_GROUP" -eq 0 ]; then
+    return 0
+  fi
+  step "adding the user to the 'docker' group"
+  docker_user="$(id -un)"
+  say "Granting $docker_user access to Docker"
+  if id -nG "$docker_user" 2>/dev/null | tr ' ' '\n' | grep -qx docker; then
+    note "$docker_user is already in the 'docker' group, but this login session"
+    note "started before that."
+  else
+    note "This adds $docker_user to the 'docker' group and needs root."
+    run_root usermod -aG docker "$docker_user" ||
+      die "Could not add $docker_user to the 'docker' group. Run
+  sudo usermod -aG docker $docker_user
+yourself, log out, log back in and run this again."
+  fi
+  DOCKER_SUDO=1
+  warn "The group only takes effect after you log out and back in."
+  note "This run continues with 'sudo docker'."
 }
 
 # ----------------------------------------------------------- phase three --
@@ -1303,8 +1364,9 @@ report() {
   printf '\n  Updates: open System -> Version in the web interface.\n'
   if [ "$DOCKER_SUDO" -eq 1 ]; then
     printf '\n'
-    warn "Docker was installed during this run. Log out and back in once, so"
-    warn "that 'docker' works without sudo."
+    warn "This run used 'sudo docker': your login session is not in the"
+    warn "'docker' group yet. Log out and back in once, so that 'docker'"
+    warn "works without sudo."
   fi
   if [ -n "$FINDINGS" ]; then
     printf '\n'
@@ -1327,11 +1389,13 @@ main() {
   check_tty
   check_privileges
   collect_missing
+  check_docker_access
   check_can_install
   check_config_source
   ask_questions
   install_packages
   install_docker
+  join_docker_group
   ensure_checkout
   configure
   start_stack
