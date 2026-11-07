@@ -1,11 +1,32 @@
 [project]
 name = "loxmatter"
 version = "0.6.0"
-description = "Connects Matter devices (Thread, Wi-Fi or Ethernet) to a Loxone Miniserver"
+description = "Matter bridge for the Loxone Miniserver: connects Thread, Wi-Fi, Ethernet and Zigbee devices to Loxone, self-hosted"
 readme = "README.md"
 license = "GPL-3.0-or-later"
 license-files = ["LICENSE", "src/loxmatter/web/vendor/LICENSE"]
 requires-python = ">=3.12"
+keywords = [
+    "loxone",
+    "miniserver",
+    "matter",
+    "matter-bridge",
+    "thread",
+    "zigbee",
+    "smart-home",
+    "home-automation",
+    "raspberry-pi",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Web Environment",
+    "Framework :: FastAPI",
+    "Intended Audience :: End Users/Desktop",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Home Automation",
+]
 dependencies = [
     "aiohttp>=3.9",
     "fastapi>=0.115",
@@ -60,6 +81,12 @@ dependencies = [
     "zha-quirks>=2.2.2",
     "dbus-fast>=2.24",
 ]
+
+[project.urls]
+Homepage = "https://github.com/lucienkerl/loxmatter"
+Documentation = "https://github.com/lucienkerl/loxmatter/tree/main/docs"
+Issues = "https://github.com/lucienkerl/loxmatter/issues"
+Changelog = "https://github.com/lucienkerl/loxmatter/blob/main/CHANGELOG.md"
 
 [project.scripts]
 loxmatter = "loxmatter.cli:app"

@@ -81,6 +81,7 @@ _HOSTNAME = 'echo "10.0.1.56"\n'
 # the test suite runs as. FAKE_UID=0 turns it into a root run.
 _ID = """case "${1-}" in
   -un|-nu|-n) echo "tester" ;;
+  -nG|-Gn) echo "${FAKE_GROUPS-tester}" ;;
   *) echo "${FAKE_UID-1000}" ;;
 esac
 """
@@ -102,9 +103,11 @@ done
 exit 0
 """
 
+# STUB_VIA_SUDO lets a stub tell whether it runs as root - the docker stub
+# below that refuses a user outside the 'docker' group needs it.
 _SUDO = """cmd=$1
 shift
-exec "$cmd" "$@"
+STUB_VIA_SUDO=1 exec "$cmd" "$@"
 """
 
 _DOCKER = """if [ "${1-}" = "compose" ] && [ "${2-}" = "version" ]; then
@@ -514,6 +517,64 @@ def test_after_installing_docker_findings_use_sudo(installer):
     result = installer(omit=("docker",), env={"FAKE_SERVICES": "loxmatter"})
     assert result.returncode == 0
     assert "&& sudo docker compose logs matter-server" in result.output
+
+
+# Docker is installed, but this user is not in the 'docker' group: every
+# command that needs the daemon is refused unless it runs through sudo - the
+# error a Raspberry Pi user 'pi' hit on the first `compose up`.
+_DOCKER_NO_GROUP = (
+    """if [ -z "${STUB_VIA_SUDO-}" ] && [ "${1-} ${2-}" != "compose version" ]; then
+  echo "permission denied while trying to connect to the docker API at unix:///var/run/docker.sock" >&2
+  exit 1
+fi
+"""
+    + _DOCKER
+)
+
+
+def test_a_user_outside_the_docker_group_is_added_and_the_run_succeeds(installer):
+    result = installer(stubs={"docker": _DOCKER_NO_GROUP})
+    assert result.returncode == 0, result.output
+    assert result.called("usermod -aG docker tester")
+    assert result.called("sudo docker compose up -d")
+    assert "log out and back in" in result.output.lower()
+
+
+def test_the_missing_docker_group_is_handled_before_cloning(installer):
+    result = installer(stubs={"docker": _DOCKER_NO_GROUP})
+    calls = result.calls
+    usermod = next(i for i, c in enumerate(calls) if c.startswith("usermod"))
+    clone = next(i for i, c in enumerate(calls) if c.startswith("git clone"))
+    assert usermod < clone
+
+
+def test_a_user_already_in_the_group_is_not_added_again(installer):
+    # Added earlier, but this login session started before that.
+    result = installer(stubs={"docker": _DOCKER_NO_GROUP}, env={"FAKE_GROUPS": "tester docker"})
+    assert result.returncode == 0, result.output
+    assert not result.called("usermod")
+    assert result.called("sudo docker compose up -d")
+
+
+def test_outside_the_docker_group_without_sudo_it_aborts_before_cloning(installer):
+    result = installer(stubs={"docker": _DOCKER_NO_GROUP}, omit=("sudo",))
+    assert result.returncode == 2
+    assert "usermod -aG docker tester" in result.output
+    assert not result.called("git clone")
+
+
+def test_a_user_with_docker_access_is_left_alone(installer):
+    result = installer()
+    assert result.returncode == 0
+    assert not result.called("usermod")
+
+
+def test_a_dry_run_only_announces_the_group_change(installer):
+    result = installer("--dry-run", stubs={"docker": _DOCKER_NO_GROUP})
+    assert result.returncode == 0, result.output
+    assert not result.called("usermod")
+    assert not result.called("sudo")
+    assert "would run: usermod -aG docker tester" in result.output
 
 
 # ------------------------------------------------------------- phase three --

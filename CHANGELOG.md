@@ -26,6 +26,13 @@ people who don't know the code.
   you pause ZHA, and removing devices there is a separate, optional last step
   that only touches devices which arrived here.
 
+### Fixed
+
+- **The installer no longer stops at "Starting the containers" when your user
+  is not in the `docker` group.** It now notices this before cloning, adds you
+  to the group with `sudo usermod -aG docker`, and finishes the run with
+  `sudo docker`. Log out and back in once afterwards.
+
 ## [0.6.0] — 2026-10-21
 
 ### Before you update
