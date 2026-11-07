@@ -53,6 +53,13 @@ people who don't know the code.
 
 ### Fixed
 
+- **The setup assistant says what it is doing.** While something runs
+  against Home Assistant or the Zigbee stick, a line at the bottom of the
+  window names it, and for the slow steps says how long they may take. Each
+  action has its own busy state, so a device list that finishes first no
+  longer re-enables "pause ZHA" while the pause is still running. The Zigbee
+  step reads the stick's state again every few seconds, and Next waits until
+  the stick is connected.
 - **Home Assistant's device list no longer takes minutes right after a
   take-over.** A Matter device that does not answer yet holds it up for 5
   seconds instead of 30, and is still offered when it is already in

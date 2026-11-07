@@ -3923,9 +3923,6 @@ web.setup.ha_devices_heading:
 web.setup.ha_devices_text:
   en: "Choose what should move. Names and rooms come over as Home Assistant has them."
   de: "Wählen Sie aus, was umziehen soll. Namen und Räume werden so übernommen, wie sie in Home Assistant heißen."
-web.setup.ha_loading:
-  en: "Reading Home Assistant's device list …"
-  de: "Lese die Geräteliste von Home Assistant …"
 web.setup.ha_tile_wifi:
   en: "Matter over Wi-Fi"
   de: "Matter über WLAN"
@@ -4007,9 +4004,6 @@ web.setup.ha_thread_text:
 web.setup.ha_thread_start:
   en: "Join the Thread network"
   de: "Thread-Netz übernehmen"
-web.setup.ha_thread_running:
-  en: "Joining … this can take a minute."
-  de: "Trete bei … das kann eine Minute dauern."
 web.setup.ha_thread_same:
   en: "loxmatter is already in the Thread network \"{name}\"."
   de: "loxmatter ist schon im Thread-Netz „{name}“."
@@ -4034,6 +4028,45 @@ web.setup.ha_matter_none:
 web.setup.ha_matter_start:
   en: "Take over {count} device(s)"
   de: "{count} Gerät(e) übernehmen"
+web.setup.busy_inventory:
+  en: "Reading Home Assistant's device list …"
+  de: "Lese die Geräteliste von Home Assistant …"
+web.setup.busy_inventory_hint:
+  en: "Right after the move this can take a minute or two: Home Assistant asks every device, and some are not reachable again yet."
+  de: "Direkt nach dem Umzug kann das ein bis zwei Minuten dauern: Home Assistant fragt jedes Gerät an, und manche sind noch nicht wieder erreichbar."
+web.setup.busy_thread:
+  en: "Joining the Thread network … this can take a minute."
+  de: "Trete dem Thread-Netz bei … das kann eine Minute dauern."
+web.setup.busy_matter_start:
+  en: "Starting the move …"
+  de: "Starte die Übernahme …"
+web.setup.busy_job:
+  en: "Moving devices: {done} of {count} done"
+  de: "Übernehme Geräte: {done} von {count} fertig"
+web.setup.busy_pause:
+  en: "Backing up the Zigbee network and pausing ZHA …"
+  de: "Sichere das Zigbee-Netz und pausiere ZHA …"
+web.setup.busy_pause_hint:
+  en: "Home Assistant writes the backup first; this usually takes less than a minute."
+  de: "Home Assistant schreibt zuerst die Sicherung; das dauert meist unter einer Minute."
+web.setup.busy_restore:
+  en: "Writing the Zigbee network onto the stick …"
+  de: "Schreibe das Zigbee-Netz auf den Stick …"
+web.setup.busy_restore_hint:
+  en: "The stick restarts afterwards; that takes up to a minute."
+  de: "Der Stick startet danach neu; das dauert bis zu einer Minute."
+web.setup.busy_cleanup:
+  en: "Cleaning up Home Assistant …"
+  de: "Räume Home Assistant auf …"
+web.setup.busy_sign_in:
+  en: "Connecting to Home Assistant …"
+  de: "Verbinde mit Home Assistant …"
+web.setup.busy_zigbee_apply:
+  en: "Setting up the Zigbee stick …"
+  de: "Richte den Zigbee-Stick ein …"
+web.setup.busy_zigbee_connect_hint:
+  en: "The first connection loads the device library and the network; that takes up to a minute. Next is available once the stick is connected."
+  de: "Die erste Verbindung lädt die Gerätebibliothek und das Netz; das dauert bis zu einer Minute. Weiter geht es, sobald der Stick verbunden ist."
 web.setup.ha_again:
   en: "Try the rest again"
   de: "Den Rest erneut versuchen"

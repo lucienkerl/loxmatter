@@ -18109,3 +18109,61 @@ def test_a_background_removal_that_failed_says_why():
     assert values["error"] == "could not remove: no answer"
     assert values["devices"] == [9]
     assert values["removing"] is False
+
+
+# ---------------------------------------------------------------------------
+# The assistant's Home Assistant steps under load (first real migration,
+# 7 November 2026): one shared busy flag let the device list re-enable
+# "pause ZHA" mid-pause, and Next stayed clickable while the Zigbee stick
+# was still connecting.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
+def test_a_finished_device_list_does_not_free_the_pause_still_running():
+    values = _app_state(
+        """
+        state.haStartWork("pause");
+        state.haStartWork("inventory");
+        state.haEndWork("inventory");
+        console.log(JSON.stringify({
+          pause: state.haBusyWith("pause"),
+          busy: state.haBusy,
+          activity: state.setupActivity().text,
+        }));
+        """
+    )
+    assert values == {"pause": True, "busy": True, "activity": "web.setup.busy_pause"}
+
+
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
+def test_next_waits_for_the_zigbee_stick_to_connect():
+    values = _app_state(
+        """
+        state.setup = { completed: false, step: "ha_zigbee", path: "ha" };
+        state.zigbee = { progress: { state: "opening_radio" }, configured_device_present: true };
+        const connecting = state.setupNextBlocked();
+        const line = state.setupActivity() !== null;
+        state.zigbee = { progress: { state: "connected" }, configured_device_present: true };
+        console.log(JSON.stringify({ connecting, line, connected: state.setupNextBlocked() }));
+        """
+    )
+    assert values == {"connecting": True, "line": True, "connected": False}
+
+
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
+def test_the_slow_steps_say_how_long_they_take():
+    values = _app_state(
+        """
+        state.haStartWork("inventory");
+        const a = state.setupActivity();
+        state.haEndWork("inventory");
+        const none = state.setupActivity();
+        console.log(JSON.stringify({ text: a.text, hint: a.hint, none }));
+        """
+    )
+    assert values == {
+        "text": "web.setup.busy_inventory",
+        "hint": "web.setup.busy_inventory_hint",
+        "none": None,
+    }
