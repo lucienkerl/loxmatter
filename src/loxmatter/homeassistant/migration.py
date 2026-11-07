@@ -165,6 +165,10 @@ class HomeAssistantMigration:
         self._session_factory = session_factory
         self._pending: dict[str, _PendingSignIn] = {}
         self._inventory: Inventory | None = None
+        # A read already under way: a reload of the page waits for it instead
+        # of starting another one of the same length (7 November 2026: four
+        # ran at once, each minutes long).
+        self._inventory_read: asyncio.Task[Inventory] | None = None
         self._job: Job | None = None
         self._task: asyncio.Task[None] | None = None
         self._lock = asyncio.Lock()
@@ -290,9 +294,16 @@ class HomeAssistantMigration:
 
     async def inventory(self, *, fresh: bool = True) -> Inventory:
         if self._inventory is None or fresh:
-            async with self._api() as api:
-                self._inventory = await read_inventory(api, self._capabilities())
+            if self._inventory_read is None or self._inventory_read.done():
+                self._inventory_read = asyncio.create_task(self._read_inventory())
+            # shield: a caller that gives up (a closed page) does not cancel
+            # the read the others are waiting for.
+            self._inventory = await asyncio.shield(self._inventory_read)
         return self._inventory
+
+    async def _read_inventory(self) -> Inventory:
+        async with self._api() as api:
+            return await read_inventory(api, self._capabilities())
 
     # ------------------------------------------------------------- thread --
 

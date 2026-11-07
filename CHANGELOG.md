@@ -53,6 +53,11 @@ people who don't know the code.
 
 ### Fixed
 
+- **Home Assistant's device list no longer takes minutes right after a
+  take-over.** A Matter device that does not answer yet holds it up for 5
+  seconds instead of 30, and is still offered when it is already in
+  loxmatter's fabric. Reloading the page joins the read that is under way,
+  and the header no longer says "Connecting…" while the list loads.
 - **After a take-over from Home Assistant, the installer waits up to two
   minutes for the bridge** instead of 20 seconds, so the first start, which
   reads Home Assistant's Matter data, no longer ends in a false "does not

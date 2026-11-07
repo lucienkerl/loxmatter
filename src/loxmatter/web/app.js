@@ -7325,7 +7325,11 @@ function app() {
       // there turns "needs a Thread stick" into "can move".
       const fresh = ["ha_matter", "ha_zigbee", "ha_cleanup", "done"].includes(step);
       const wants = step.startsWith("ha_") || step === "sticks" || step === "done";
-      if (wants && this.ha?.signed_in && (fresh || !this.haInventory)) await this.haLoadInventory();
+      // Not awaited: Home Assistant's device list can take minutes right
+      // after a take-over, and startApp() waits for this step before it
+      // opens the live connection - the header said "Connecting…" all that
+      // time (7 November 2026). The step shows its own loading line.
+      if (wants && this.ha?.signed_in && (fresh || !this.haInventory)) this.haLoadInventory();
       if (step === "ha_zigbee") await this.haLoadZigbee();
       if (step === "ha_matter" || step === "ha_zigbee") await this.haPollJob();
     },

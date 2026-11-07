@@ -31,6 +31,7 @@ whole, so the list shows it once, with the bridged devices' names under it.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from dataclasses import dataclass, field
@@ -182,6 +183,20 @@ def _matter_fabric(entry: dict[str, Any]) -> int | None:
     return None
 
 
+def _matter_node(entry: dict[str, Any]) -> int | None:
+    """The node id from the same identifier, or `None`."""
+    for identifier in entry.get("identifiers") or []:
+        if (
+            isinstance(identifier, list | tuple)
+            and len(identifier) == 2
+            and identifier[0] == "matter"
+            and isinstance(identifier[1], str)
+            and (match := _MATTER_DEVICE_ID.match(identifier[1]))
+        ):
+            return int(match.group(2), 16)
+    return None
+
+
 def _device_name(entry: dict[str, Any]) -> str:
     return (
         _str(entry.get("name_by_user"))
@@ -227,14 +242,25 @@ async def _thread_datasets(api: HomeAssistantApi) -> tuple[ThreadDataset, ...]:
     return tuple(found)
 
 
+# Home Assistant asks the Matter server for each node; a node that is not
+# reachable yet - a sleeping Thread device right after the move from Home
+# Assistant - kept the device list waiting up to 30 seconds for each, which
+# on the first real migration (7 November 2026) looked like a hang. Such a
+# node is listed as "other" and is there on the next read.
+_DIAGNOSTICS_SECONDS = 5.0
+
+
 async def _matter_kind(
     api: HomeAssistantApi, ha_device_id: str
 ) -> tuple[int | None, str | None, str | None]:
     """`(node_id, network_type, node_type)` from Home Assistant's Matter
     diagnostics, or `None`s for a device it cannot describe (offline)."""
     try:
-        diagnostics = await api.call("matter/node_diagnostics", device_id=ha_device_id)
-    except HomeAssistantError:
+        diagnostics = await asyncio.wait_for(
+            api.call("matter/node_diagnostics", device_id=ha_device_id),
+            _DIAGNOSTICS_SECONDS,
+        )
+    except (HomeAssistantError, TimeoutError):
         return None, None, None
     if not isinstance(diagnostics, dict):
         return None, None, None
@@ -291,6 +317,14 @@ async def read_inventory(api: HomeAssistantApi, capabilities: Capabilities) -> I
         if "matter" not in _domains(entry):
             continue
         node_id, network_type, node_type = await _matter_kind(api, str(entry["id"]))
+        if (
+            node_id is None
+            and capabilities.fabric is not None
+            and _matter_fabric(entry) == capabilities.fabric
+        ):
+            # Not answering yet, but already in this bridge's fabric: the
+            # identifier names the node, and entering it needs no answer.
+            node_id = _matter_node(entry)
         if node_id is None:
             devices.append(
                 InventoryDevice(
