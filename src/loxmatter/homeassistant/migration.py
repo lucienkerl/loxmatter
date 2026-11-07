@@ -47,7 +47,12 @@ from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Literal
 
 from loxmatter import i18n
-from loxmatter.commissioning.run import CommissionFailed, ThreadDatasetSource, commission
+from loxmatter.commissioning.run import (
+    CommissionFailed,
+    ThreadDatasetSource,
+    commission,
+    register_node,
+)
 from loxmatter.homeassistant.client import (
     HomeAssistantApi,
     HomeAssistantAuthError,
@@ -61,7 +66,7 @@ from loxmatter.homeassistant.client import (
     refresh_tokens,
 )
 from loxmatter.homeassistant.inventory import Capabilities, Inventory, read_inventory
-from loxmatter.matter.client import BridgeMatterClient
+from loxmatter.matter.client import BridgeMatterClient, MatterUnavailableError
 from loxmatter.matter.commissioning_progress import CommissioningTracker
 from loxmatter.matter.thread_network import ThreadNetworkKeeper
 from loxmatter.model.homeassistant_store import HomeAssistantConnection, MigrationResult
@@ -280,7 +285,8 @@ class HomeAssistantMigration:
             for key, result in self._store.homeassistant.results().items()
             if result.state == "done"
         )
-        return Capabilities(thread=thread, zigbee=zigbee, done=done)
+        fabric = getattr(self._client, "compressed_fabric_id", None)
+        return Capabilities(thread=thread, zigbee=zigbee, done=done, fabric=fabric)
 
     async def inventory(self, *, fresh: bool = True) -> Inventory:
         if self._inventory is None or fresh:
@@ -367,7 +373,12 @@ class HomeAssistantMigration:
     async def start_matter(self, ha_device_ids: list[str]) -> dict[str, object]:
         """Opens a commissioning window in Home Assistant for each chosen
         Matter device and commissions it here with the code that answers.
-        Home Assistant keeps the device as well (Matter multi-admin)."""
+        Home Assistant keeps the device as well (Matter multi-admin).
+
+        A device already in this bridge's fabric - Home Assistant talks to
+        loxmatter's Matter server after the take-over on the same host - is
+        not paired at all: it only gets its store entry, with Home
+        Assistant's name and room."""
         if self._client is None:
             raise MigrationError(i18n.t("api.devices.fail_no_matter_client"), 503)
         client = self._client
@@ -381,12 +392,31 @@ class HomeAssistantMigration:
         ]
         items = [JobItem(device.ha_device_id, device.name) for device in chosen]
         rooms = {device.ha_device_id: device.room for device in chosen}
+        in_fabric = {
+            device.ha_device_id: device.matter_node_id
+            for device in chosen
+            if device.in_fabric and device.matter_node_id is not None
+        }
 
         async def work(job: Job) -> None:
             for item in job.items:
                 item.state = "running"
                 device_id: int | None = None
                 try:
+                    node_id = in_fabric.get(item.ha_device_id)
+                    if node_id is not None:
+                        snapshot = await client.snapshot(node_id)
+                        device_id = await register_node(
+                            snapshot,
+                            room=rooms.get(item.ha_device_id),
+                            client=client,
+                            store=self._store,
+                            runtime=self._runtime,
+                        )
+                        self._store.rename_device(device_id, item.name)
+                        item.state = "done"
+                        self._record("matter", item, device_id)
+                        continue
                     async with self._api() as api:
                         window = await api.call(
                             "matter/open_commissioning_window", device_id=item.ha_device_id
@@ -411,6 +441,8 @@ class HomeAssistantMigration:
                     item.state, item.detail = "failed", str(exc)
                 except CommissionFailed as exc:
                     item.state, item.detail = "failed", exc.detail
+                except MatterUnavailableError as exc:
+                    item.state, item.detail = "failed", str(exc)
                 self._record("matter", item, device_id)
 
         return self._start("matter", items, work).as_json()

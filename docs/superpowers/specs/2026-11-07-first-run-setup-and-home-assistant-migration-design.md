@@ -150,7 +150,34 @@ to the assistant. Several Bluetooth adapters: the first is taken. A script
 can still choose the Thread stick with `LOXMATTER_MODE=thread` or
 `RADIO_DEVICE=…`.
 
-## 9. Not yet
+## 9. Home Assistant on the same host
+
+Found on the first real target (a Raspberry Pi running Home Assistant
+Container, 7 November 2026): one host cannot run two Matter servers (both
+want 5580) or two border routers on one stick, and Home Assistant's border
+router page holds 8080 while ioBroker's admin page holds 8081.
+
+- **Ports.** The installer checks 8080 (web interface) and 8081 (border
+  router REST) before it installs anything and moves a taken one to the
+  next free port (`LOXMATTER_PORT`, `OTBR_REST_PORT` in `.env`). The otbr
+  image's entrypoint has no option for the REST port; the value rides in
+  its `--trel-url` slot, which it passes to otbr-agent as it stands. Unset,
+  the otbr command renders exactly as before.
+- **Take-over.** `LOXMATTER_TAKE_OVER=home-assistant` runs
+  `scripts/home-assistant-handover.sh take` in place of `compose up`. It
+  reads Home Assistant's Thread dataset before it stops anything, stops and
+  renames Home Assistant's Matter server and border router, starts
+  loxmatter's Matter server on a copy of the Matter data (owned by UID
+  1000) and writes the dataset into loxmatter's border router before the
+  bridge starts. Home Assistant's Matter integration reconnects to
+  `ws://localhost:5580/ws` by itself, so Home Assistant keeps its Matter
+  devices. `give-back` undoes it from the record `take` leaves.
+- **The Matter step** then pairs nothing: a node whose Home Assistant
+  identifier carries this bridge's compressed fabric id (`in_fabric`) is
+  entered into the store from its snapshot with Home Assistant's name and
+  room (`register_node`, shared with commissioning).
+
+## 10. Not yet
 
 Zigbee2MQTT (the assistant says so on the path screen); remotes and buttons
 (listed as "comes later"). The Home Assistant calls are built from Home

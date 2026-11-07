@@ -32,6 +32,7 @@ whole, so the list shows it once, with the bridged devices' names under it.
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
@@ -65,6 +66,10 @@ class InventoryDevice:
     integration: str | None = None
     members: tuple[str, ...] = ()
     matter_node_id: int | None = None
+    # True when the node is already in this bridge's own fabric: Home
+    # Assistant talks to loxmatter's Matter server after the take-over on
+    # the same host, so the device needs no pairing, only a store entry.
+    in_fabric: bool = False
     zigbee: ImportedDevice | None = field(default=None, compare=False)
 
     def as_json(self) -> dict[str, object]:
@@ -78,6 +83,7 @@ class InventoryDevice:
             "model": self.model,
             "integration": self.integration,
             "members": list(self.members),
+            "in_fabric": self.in_fabric,
             "ieee": self.zigbee.ieee if self.zigbee is not None else None,
         }
 
@@ -138,6 +144,8 @@ class Capabilities:
 
     thread: bool
     zigbee: bool
+    # This bridge's compressed fabric id, when its Matter server reports one.
+    fabric: int | None = None
     done: frozenset[str] = frozenset()
 
 
@@ -151,6 +159,27 @@ def _domains(entry: dict[str, Any]) -> set[str]:
         if isinstance(identifier, list | tuple) and identifier and isinstance(identifier[0], str):
             found.add(identifier[0])
     return found
+
+
+# Home Assistant's Matter device identifier: `deviceid_` + the compressed
+# fabric id and the node id, 16 hex digits each, then a suffix
+# (homeassistant/components/matter/helpers.py, `get_device_id`).
+_MATTER_DEVICE_ID = re.compile(r"^deviceid_([0-9A-Fa-f]+)-([0-9A-Fa-f]{16})-")
+
+
+def _matter_fabric(entry: dict[str, Any]) -> int | None:
+    """The compressed fabric id Home Assistant's Matter server put into the
+    device's identifier, or `None`."""
+    for identifier in entry.get("identifiers") or []:
+        if (
+            isinstance(identifier, list | tuple)
+            and len(identifier) == 2
+            and identifier[0] == "matter"
+            and isinstance(identifier[1], str)
+            and (match := _MATTER_DEVICE_ID.match(identifier[1]))
+        ):
+            return int(match.group(1), 16)
+    return None
 
 
 def _device_name(entry: dict[str, Any]) -> str:
@@ -295,18 +324,23 @@ async def read_inventory(api: HomeAssistantApi, capabilities: Capabilities) -> I
         else:
             kind = "matter_wifi"
         ha_id = str(root["id"])
+        in_fabric = capabilities.fabric is not None and _matter_fabric(root) == capabilities.fabric
+        node_availability: Availability = (
+            "ready" if in_fabric else _availability(kind, capabilities)
+        )
         devices.append(
             InventoryDevice(
                 ha_device_id=ha_id,
                 name=_device_name(root),
                 room=room_of(root),
                 kind=kind,
-                availability=done_or(ha_id, _availability(kind, capabilities)),
+                availability=done_or(ha_id, node_availability),
                 manufacturer=_str(root.get("manufacturer")),
                 model=_str(root.get("model")),
                 integration="matter",
                 members=tuple(_device_name(entry) for entry, _, _ in members if entry is not root),
                 matter_node_id=node_id,
+                in_fabric=in_fabric,
             )
         )
 

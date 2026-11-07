@@ -3977,6 +3977,9 @@ web.setup.ha_kind_other:
 web.setup.ha_availability_ready:
   en: "can move"
   de: "kann umziehen"
+web.setup.ha_availability_in_fabric:
+  en: "already connected"
+  de: "schon verbunden"
 web.setup.ha_availability_needs_thread:
   en: "needs a Thread stick"
   de: "braucht Thread-Stick"

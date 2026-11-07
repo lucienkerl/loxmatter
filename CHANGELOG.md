@@ -41,7 +41,8 @@ people who don't know the code.
   devices through it), and loxmatter's border router takes the Thread stick
   with the same Thread network. `scripts/home-assistant-handover.sh
   give-back` starts Home Assistant's containers again on their untouched
-  data.
+  data. The setup assistant then enters those Matter devices with their
+  names and rooms without pairing them.
 
 ### Fixed
 

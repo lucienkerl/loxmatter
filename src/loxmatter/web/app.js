@@ -7492,6 +7492,9 @@ function app() {
     },
 
     haAvailabilityLabel(device) {
+      // Already in this bridge's fabric (the take-over on the same host):
+      // it moves without pairing, which is worth saying.
+      if (device.in_fabric && device.availability === "ready") return t("web.setup.ha_availability_in_fabric");
       return t(`web.setup.ha_availability_${device.availability}`);
     },
 

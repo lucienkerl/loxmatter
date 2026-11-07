@@ -303,6 +303,48 @@ async def test_each_matter_device_is_commissioned_with_a_code_from_home_assistan
     assert results["dev-plug"].kind == "matter"
 
 
+class SharedFabricClient:
+    """loxmatter's Matter server after the take-over on the same host: it
+    runs Home Assistant's fabric (compressed fabric id 1 in the fake
+    registry's identifiers) and already knows its nodes."""
+
+    compressed_fabric_id = 1
+
+    def __init__(self) -> None:
+        self.snapshots: list[int] = []
+
+    async def snapshot(self, node_id: int) -> NodeSnapshot:
+        self.snapshots.append(node_id)
+        return matter_snapshot(node_id)
+
+
+async def test_nodes_already_in_this_fabric_are_entered_without_pairing(store, ha, monkeypatch):
+    async def no_commission(**kwargs: Any) -> CommissionResult:
+        raise AssertionError("a node in this fabric is not paired again")
+
+    async def fake_register(snapshot: NodeSnapshot, *, room: str | None, **kwargs: Any) -> int:
+        return kwargs["store"].register_device(snapshot, room=room)
+
+    monkeypatch.setattr(migration_module, "commission", no_commission)
+    monkeypatch.setattr(migration_module, "register_node", fake_register)
+    migration = build(store, ha)  # no border router: Thread needs none here
+    client = SharedFabricClient()
+    migration._client = client  # type: ignore[assignment]
+
+    inventory = (await migration.inventory()).as_json()
+    by_id = {device["ha_device_id"]: device for device in inventory["devices"]}  # type: ignore[union-attr]
+    assert by_id["dev-plug"]["in_fabric"] is True
+    assert by_id["dev-motion"]["availability"] == "ready"
+
+    await migration.start_matter(["dev-plug", "dev-motion"])
+    await migration.wait()
+
+    assert client.snapshots == [5, 6]
+    assert not any(command == "matter/open_commissioning_window" for command, _ in ha.calls)
+    assert sorted(device.label for device in store.devices()) == ["Kaffeemaschine", "Motion"]
+    assert store.homeassistant.results()["dev-plug"].state == "done"
+
+
 async def test_a_failed_device_is_reported_and_the_next_one_still_runs(store, ha, monkeypatch):
     calls = 0
 
