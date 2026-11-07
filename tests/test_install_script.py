@@ -1660,3 +1660,84 @@ def test_an_unknown_take_over_is_refused(installer):
     result = installer(env={"LOXMATTER_TAKE_OVER": "openhab"})
     assert result.returncode != 0
     assert "LOXMATTER_TAKE_OVER can only be 'home-assistant'" in result.output
+
+
+def test_the_take_over_is_offered_and_enter_cancels_it(installer):
+    # Someone who copied the one-liner gets a question instead of a variable
+    # to learn - and Enter stops nothing of Home Assistant.
+    result = installer(
+        stubs={"ss": _SS, "docker": _DOCKER_HA},
+        env={"FAKE_LISTENERS": "5580:python3"},
+        answers=[""],
+    )
+    assert result.returncode != 0
+    assert "Take over Home Assistant's Matter server and border router?" in result.output
+    assert "Cancelled. Nothing was changed." in result.output
+    assert not (result.home / "loxmatter").exists()
+    assert "handover take" not in result.calls
+
+
+def test_a_yes_to_the_offered_take_over_takes_over(installer):
+    result = installer(
+        stubs={"ss": _SS, "docker": _DOCKER_HA},
+        env={"FAKE_LISTENERS": "5580:python3 8080:otbr-web 8081:iobroker.js-con 8082:otbr-agent"},
+        answers=["1"],
+    )
+    assert result.returncode == 0, result.output
+    text = result.env_file.read_text()
+    assert "RADIO_DEVICE=/dev/serial/by-id/usb-SONOFF_MG24-if00-port0" in text
+    assert "handover take" in result.calls
+    assert "its Matter server and border router are taken over" in result.output
+
+
+def test_the_settings_are_shown_and_enter_installs_with_them(installer):
+    result = installer(stubs={"ss": _SS}, answers=[""])
+    assert result.returncode == 0, result.output
+    assert "Install with these settings" in result.output
+    assert "Version:              stable" in result.output
+    text = result.env_file.read_text()
+    assert "LOXMATTER_IMAGE_TAG=stable" in text
+    assert "LOXMATTER_PORT=8" not in text
+
+
+def test_changed_settings_reach_env(installer):
+    # 2 = change; folder kept, version dev, web port 8090, border router port
+    # kept, a Miniserver; then 1 = install.
+    result = installer(
+        stubs={"ss": _SS},
+        answers=["2", "", "2", "8090", "", "192.168.1.20", "1"],
+    )
+    assert result.returncode == 0, result.output
+    text = result.env_file.read_text()
+    assert "LOXMATTER_IMAGE_TAG=dev" in text
+    assert "LOXMATTER_PORT=8090" in text
+    assert "OTBR_REST_PORT=8" not in text
+    assert "MINISERVER_IP=192.168.1.20" in text
+    assert any(":8090/health" in call for call in result.calls)
+
+
+def test_a_taken_port_and_a_bad_address_are_asked_again(installer):
+    result = installer(
+        stubs={"ss": _SS},
+        env={"FAKE_LISTENERS": "8090:node"},
+        answers=["2", "", "", "8090", "8091", "", "1.2.3", "", "1"],
+    )
+    assert result.returncode == 0, result.output
+    assert "Port 8090 is in use by node." in result.output
+    assert "'1.2.3' is not an IPv4 address" in result.output
+    text = result.env_file.read_text()
+    assert "LOXMATTER_PORT=8091" in text
+
+
+def test_a_cancel_on_the_settings_changes_nothing(installer):
+    result = installer(stubs={"ss": _SS}, answers=["0"])
+    assert result.returncode != 0
+    assert "Cancelled. Nothing was changed." in result.output
+    assert not (result.home / "loxmatter").exists()
+
+
+def test_a_changed_folder_is_where_it_installs(installer):
+    result = installer(stubs={"ss": _SS}, answers=["2", "~/lox", "", "", "", "", "1"])
+    assert result.returncode == 0, result.output
+    assert (result.home / "lox" / "deploy" / "testhost" / ".env").exists()
+    assert not (result.home / "loxmatter").exists()

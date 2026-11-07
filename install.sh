@@ -133,7 +133,8 @@ Options:
   --dry-run    print every step without changing anything
   --help       show this text
 
-These environment variables skip the matching question:
+These environment variables answer the matching question, or fill in the
+settings screen shown before anything is installed:
   LOXMATTER_DIR       where to clone
   LOXMATTER_MODE      thread | wifi (wifi skips the Thread stick menu)
   MINISERVER_IP       address of the Loxone Miniserver; optional, also set later in the web interface
@@ -581,7 +582,10 @@ announce_questions() {
   aq_count=0
   aq_1=""
   aq_2=""
-  if thread_menu_expected; then
+  if take_over_offer_expected; then
+    # A yes takes Home Assistant's stick, so the Thread menu never comes.
+    aq_add "whether to take over from Home Assistant"
+  elif thread_menu_expected; then
     aq_add "the Thread stick"
   fi
   if bluetooth_menu_expected; then
@@ -606,6 +610,125 @@ ask_questions() {
   decide_backbone
   decide_bluetooth
   decide_ports
+  review_settings
+}
+
+# ------------------------------------------------------------- settings --
+#
+# Everything else that used to come only from environment variables - the
+# folder, the version, both ports, the Miniserver - is shown on one screen
+# before anything is installed. Enter installs with what is shown; 2 changes
+# it. A variable that was passed in only fills in the value shown.
+# Not on this screen: the token (a secret has no business in a terminal's
+# echo; it is generated), RADIO_BAUDRATE (the bundled border router image
+# expects 460800), and the sticks, which the setup assistant in the web
+# interface asks about.
+
+# Like ask, but the end of the terminal's input keeps $2: these questions
+# come last, after everything a file of answers was written for.
+ask_or_keep() {
+  ask "$1" "$2" || printf '%s' "$2"
+}
+
+# $1 what the port is for, $2 its current value, $3 the standard port, $4
+# the other port, which this one must not equal. Sets ASKED_PORT.
+ask_port() {
+  while :; do
+    ASKED_PORT="$(ask_or_keep "$1" "$2")"
+    case "$ASKED_PORT" in
+      ""|*[!0-9]*|0*) warn "Please give a port number." ; continue ;;
+    esac
+    if [ "$ASKED_PORT" -gt 65535 ]; then
+      warn "Please give a port number."
+      continue
+    fi
+    if [ "$ASKED_PORT" = "$4" ]; then
+      warn "Port $ASKED_PORT is already the other port of loxmatter."
+      continue
+    fi
+    if [ "$ASKED_PORT" != "$2" ] && have ss; then
+      ap_holder="$(port_holder "$ASKED_PORT")"
+      if [ -n "$ap_holder" ]; then
+        warn "Port $ASKED_PORT is in use by $ap_holder."
+        continue
+      fi
+    fi
+    return 0
+  done
+}
+
+change_settings() {
+  cs_dir="$(ask_or_keep "Folder" "$TARGET_DIR")"
+  # A typed ~ is the user's home, as in a shell.
+  # shellcheck disable=SC2088
+  case "$cs_dir" in
+    "~") cs_dir="$HOME" ;;
+    "~/"*) cs_dir="$HOME/${cs_dir#\~/}" ;;
+  esac
+  if [ "$cs_dir" != "$TARGET_DIR" ]; then
+    if [ -f "$cs_dir/deploy/testhost/.env" ]; then
+      warn "loxmatter is already installed in $cs_dir. To update it, run this"
+      warn "again with --dir $cs_dir. The folder stays $TARGET_DIR."
+    else
+      TARGET_DIR="$cs_dir"
+    fi
+  fi
+  note "Version: 1) stable - the released version (recommended)"
+  note "         2) dev - the newest build of main, for testing"
+  case "${LOXMATTER_IMAGE_TAG:-stable}" in
+    stable) cs_tag=1 ;;
+    dev) cs_tag=2 ;;
+    *) cs_tag="$LOXMATTER_IMAGE_TAG" ;;
+  esac
+  case "$(ask_or_keep "Version" "$cs_tag")" in
+    1|stable) LOXMATTER_IMAGE_TAG="" ;;
+    2|dev) LOXMATTER_IMAGE_TAG=dev ;;
+    *) warn "Kept: ${LOXMATTER_IMAGE_TAG:-stable}" ;;
+  esac
+  ask_port "Port of the web interface" "${CHOSEN_PORT:-8080}" 8080 "${CHOSEN_OTBR_REST_PORT:-8081}"
+  if [ "$ASKED_PORT" = 8080 ] && [ -z "$CHOSEN_PORT" ]; then :; else CHOSEN_PORT="$ASKED_PORT"; fi
+  ask_port "Port of the border router's REST API" "${CHOSEN_OTBR_REST_PORT:-8081}" 8081 "${CHOSEN_PORT:-8080}"
+  if [ "$ASKED_PORT" = 8081 ] && [ -z "$CHOSEN_OTBR_REST_PORT" ]; then :; else CHOSEN_OTBR_REST_PORT="$ASKED_PORT"; fi
+  while :; do
+    cs_ip="$(ask_or_keep "Miniserver address (empty: set it later in the web interface)" "${MINISERVER_IP:-}")"
+    if [ -z "$cs_ip" ] || valid_ipv4 "$cs_ip"; then
+      MINISERVER_IP="$cs_ip"
+      break
+    fi
+    warn "'$cs_ip' is not an IPv4 address like 192.168.1.20."
+  done
+}
+
+review_settings() {
+  if [ "$HAVE_TTY" -eq 0 ] || [ "$DRY_RUN" -eq 1 ]; then
+    return 0
+  fi
+  # A second run keeps what the first one wrote, as every question above does.
+  if [ -f "$TARGET_DIR/deploy/testhost/.env" ]; then
+    return 0
+  fi
+  while :; do
+    say "Settings"
+    note "Folder:               $TARGET_DIR"
+    note "Version:              ${LOXMATTER_IMAGE_TAG:-stable}"
+    note "Web interface port:   ${CHOSEN_PORT:-8080}"
+    note "Border router port:   ${CHOSEN_OTBR_REST_PORT:-8081}"
+    note "Miniserver:           ${MINISERVER_IP:-set later in the web interface}"
+    if [ -n "${LOXMATTER_TAKE_OVER:-}" ]; then
+      note "Home Assistant:       its Matter server and border router are taken over"
+    fi
+    note ""
+    note "  1) Install with these settings"
+    note "  2) Change them"
+    note "  0) Cancel - nothing is changed"
+    rs_answer="$(ask_or_keep "Your choice" 1)"
+    case "$rs_answer" in
+      1) return 0 ;;
+      2) change_settings ;;
+      0) die "Cancelled. Nothing was changed." ;;
+      *) warn "Please answer with one of the numbers shown." ;;
+    esac
+  done
 }
 
 # ------------------------------------------------------------ take-over --
@@ -629,7 +752,43 @@ home_assistant_matter_container() {
     awk -F '	' '$2 ~ /python-matter-server/ { print $1; exit }'
 }
 
+# True when Home Assistant's Matter server holds 5580 on a fresh install with
+# a terminal and no LOXMATTER_TAKE_OVER: the one case offer_take_over asks.
+take_over_offer_expected() {
+  [ -z "${LOXMATTER_TAKE_OVER:-}" ] || return 1
+  [ "$HAVE_TTY" -eq 1 ] && [ "$DRY_RUN" -eq 0 ] || return 1
+  [ ! -f "$TARGET_DIR/deploy/testhost/.env" ] || return 1
+  [ "$NEED_DOCKER" -eq 0 ] || return 1
+  have ss || return 1
+  [ -n "$(port_holder 5580)" ] || return 1
+  [ -n "$(home_assistant_matter_container)" ]
+}
+
+# Someone who copied the one-liner should not have to learn a variable and
+# start again: with a terminal the take-over is a question, asked before
+# anything is installed. Enter cancels - stopping part of a running smart
+# home is never the default. Without a terminal decide_ports still stops with
+# the LOXMATTER_TAKE_OVER hint, so nothing is ever taken over silently.
+offer_take_over() {
+  take_over_offer_expected || return 0
+  ot_matter="$(home_assistant_matter_container)"
+  say "Home Assistant on this host"
+  note "Home Assistant's Matter server ($ot_matter) uses port 5580, and two"
+  note "Matter servers cannot share one host."
+  note ""
+  note "  1) Take over - loxmatter runs the Matter server and Thread border router;"
+  note "     Home Assistant keeps its Matter devices through loxmatter."
+  note "     Undo: ~/loxmatter/scripts/home-assistant-handover.sh give-back"
+  note "  0) Cancel - nothing is changed"
+  choose "Take over Home Assistant's Matter server and border router?" 0 1 1
+  if [ "$CHOICE" -eq 0 ]; then
+    die "Cancelled. Nothing was changed."
+  fi
+  LOXMATTER_TAKE_OVER=home-assistant
+}
+
 decide_take_over() {
+  offer_take_over
   [ -n "${LOXMATTER_TAKE_OVER:-}" ] || return 0
   step "looking at Home Assistant on this host"
   say "Taking over from Home Assistant"

@@ -43,8 +43,13 @@ people who don't know the code.
   give-back` starts Home Assistant's containers again on their untouched
   data. The setup assistant then enters those Matter devices with their
   names and rooms without pairing them.
-- **Testing before a release.** `LOXMATTER_IMAGE_TAG=dev` makes the
-  installer pull the newest build of `main` instead of the released version.
+- **The installer asks instead of expecting variables.** When Home
+  Assistant's Matter server is found, it asks whether loxmatter should take
+  it over (Enter cancels). Before installing, it shows the folder, the
+  version, both ports and the Miniserver on one screen: Enter installs, 2
+  changes them, with a taken port or a malformed address asked again. The
+  version can be `dev`, the newest build of `main`, for testing before a
+  release. Every environment variable still works and fills in its value.
 
 ### Fixed
 
