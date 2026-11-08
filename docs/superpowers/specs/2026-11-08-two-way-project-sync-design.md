@@ -126,6 +126,15 @@ further ones"), the clean-up list with link warnings, and a summary in two
 columns (loxmatter → Loxone, Loxone → loxmatter). The former per-signal
 plan stays below, folded away.
 
+### Page order (update 2026-11-08)
+
+The user found the room overview confusing before any file was read: it
+looked like a result with nothing compared yet. The export page now starts
+with the sync card ("Sync with Loxone"); the overview by room, with its
+summary column, appears only once a file is read, below the sync, under
+"What goes to Loxone, by room". The template details stay at the bottom for
+installations without a project file.
+
 ## 7. Non-goals
 
 - Signals renamed in Loxone (`Title` of a command) stay the user's, as

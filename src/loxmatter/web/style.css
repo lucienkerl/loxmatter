@@ -5343,3 +5343,7 @@ main.main-export {
   padding: 0.25rem;
   line-height: 0;
 }
+
+.export-overview-heading {
+  margin: 1.5rem 0 0.75rem;
+}
