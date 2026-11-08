@@ -134,7 +134,7 @@ def _colour(
     temperature command where the member carries it, else as a colour point.
     A colour goes as the colour command the group command names where the
     member carries it, else as the other one; `lumitech` names neither and
-    takes hue/saturation first."""
+    takes hue/saturation first - XY first on a Zigbee lamp."""
     if colour.kelvin is not None:
         if COLOUR_TEMPERATURE in here:
             return [_call(sample, COLOUR_TEMPERATURE, colour_temperature_payload(colour.kelvin))]
@@ -147,7 +147,14 @@ def _colour(
     # KAJPLATS E14 CWS on 1 October 2026, red came back at saturation 209 of
     # 254, while hue/saturation took it to its own red edge (design
     # 2026-09-24, 3.1, as amended on that day).
-    if COLOUR_XY in here and (named == COLOUR_XY or COLOUR_HS not in here):
+    #
+    # A Zigbee lamp is the exception: it takes XY whenever it carries XY and
+    # the command does not name hue/saturation. ZHA sends a colour as XY,
+    # and a Tuya TS0505B in the maintainer's living room acknowledged
+    # MoveToHueAndSaturation with Success on 8 November 2026 and kept its
+    # colour (design 2026-09-24, 3.1, as amended on that day).
+    zigbee_xy = sample.technology == "zigbee" and named != COLOUR_HS
+    if COLOUR_XY in here and (named == COLOUR_XY or COLOUR_HS not in here or zigbee_xy):
         return [_call(sample, COLOUR_XY, xy_payload(*rgb_to_cie_xy(*colour.rgb)))]
     if COLOUR_HS in here:
         return [

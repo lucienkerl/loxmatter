@@ -304,7 +304,11 @@ def xy_payload(x: int, y: int) -> dict[str, object]:
 
 
 def colour_temperature_payload(kelvin: float) -> dict[str, object]:
-    return {"colorTemperatureMireds": kelvin_to_mireds(kelvin), **_OPTIONS_EXECUTE_IF_OFF}
+    return {
+        "colorTemperatureMireds": kelvin_to_mireds(kelvin),
+        "transitionTime": 0,
+        **_OPTIONS_EXECUTE_IF_OFF,
+    }
 
 
 def _white(colour: LoxoneColour) -> _Built:

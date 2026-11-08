@@ -18,6 +18,8 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
 from loxmatter import i18n
@@ -147,7 +149,7 @@ def test_brightness_zero_is_a_single_off_and_no_colour(member, expected):
 def test_white_on_a_lamp_with_colour_temperature_sends_the_temperature():
     got = shape(adapt_group_command(COLOUR_HS, WS, WHITE_2700_30))
     assert got == [
-        (768, 10, {"colorTemperatureMireds": 370, **EIF}),
+        (768, 10, {"colorTemperatureMireds": 370, "transitionTime": 0, **EIF}),
         (8, 4, {"level": 76, "transitionTime": 0}),
     ]
     assert shape(adapt_group_command(COLOUR_HS, CWS, WHITE_2700_30))[0][:2] == (768, 10)
@@ -191,7 +193,7 @@ def test_level_on_a_dimmable_member_sends_the_same_command_it_names():
 
 def test_colortemp_follows_the_member():
     assert shape(adapt_group_command(COLOUR_TEMPERATURE, WS, "2700")) == [
-        (768, 10, {"colorTemperatureMireds": 370, **EIF})
+        (768, 10, {"colorTemperatureMireds": 370, "transitionTime": 0, **EIF})
     ]
     assert shape(adapt_group_command(COLOUR_TEMPERATURE, XY_ONLY, "2700"))[0][:2] == (768, 7)
 
@@ -424,9 +426,27 @@ def test_lumitech_rgb_on_a_colour_lamp_without_hue_saturation_sends_xy():
     assert got[0] == (768, 7, {"colorX": x, "colorY": y, "transitionTime": 0, **EIF})
 
 
+def test_lumitech_rgb_on_a_zigbee_colour_lamp_sends_xy_although_it_carries_hue_saturation():
+    """A Tuya TS0505B (Zigbee, colour capabilities HS + XY + CT) answered
+    MoveToHueAndSaturation with Success on 8 November 2026 and kept its
+    colour; ZHA drives the same lamps with XY. A Zigbee lamp takes XY.
+
+    Fault to prove it: drop `zigbee_xy` from `_colour` - this gets
+    (768, 6)."""
+    member = [replace(row, technology="zigbee") for row in _with_lumitech(CWS)]
+    got = shape(adapt_group_command(LUMITECH, member, BLUE_60))
+    x, y = rgb_to_cie_xy(0, 0, 153)
+    assert got[0] == (768, 7, {"colorX": x, "colorY": y, "transitionTime": 0, **EIF})
+
+
+def test_a_zigbee_lamp_still_takes_hue_saturation_when_the_command_names_it():
+    member = [replace(row, technology="zigbee") for row in CWS]
+    assert shape(adapt_group_command(COLOUR_HS, member, BLUE_60))[0][:2] == (768, 6)
+
+
 def test_lumitech_white_on_the_colour_lamp_sends_the_temperature_then_brightness():
     assert shape(adapt_group_command(LUMITECH, _with_lumitech(CWS), WHITE_2700_30)) == [
-        (768, 10, {"colorTemperatureMireds": 370, **EIF}),
+        (768, 10, {"colorTemperatureMireds": 370, "transitionTime": 0, **EIF}),
         (8, 4, {"level": 76, "transitionTime": 0}),
     ]
 
@@ -446,7 +466,7 @@ def test_lumitech_on_the_tunable_white_lamp():
         (8, 4, {"level": 152, "transitionTime": 0})
     ]
     assert shape(adapt_group_command(LUMITECH, member, WHITE_2700_30)) == [
-        (768, 10, {"colorTemperatureMireds": 370, **EIF}),
+        (768, 10, {"colorTemperatureMireds": 370, "transitionTime": 0, **EIF}),
         (8, 4, {"level": 76, "transitionTime": 0}),
     ]
 
