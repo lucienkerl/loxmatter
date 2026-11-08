@@ -3477,13 +3477,11 @@ web.radios.reason.unknown:
 
 # --- web.export.projectsync — project file sync card ---
 web.export.projectsync_heading:
-  en: "Project file sync"
-  de: "Projektdatei-Sync"
+  en: "Sync with Loxone"
+  de: "Abgleich mit Loxone"
 web.export.projectsync_intro:
-  en: |
-    Upload an existing Loxone project file – existing virtual inputs/outputs are updated, new signals are added, and new devices get inputs/outputs of their own. Nothing is downloaded before you have seen the plan.
-  de: |
-    Bestehende Loxone-Projektdatei hochladen – vorhandene virtuelle Ein-/Ausgänge werden aktualisiert, neue Signale ergänzt, und neue Geräte bekommen eigene Ein-/Ausgänge. Nichts wird heruntergeladen, bevor du den Plan gesehen hast.
+  en: "Read in your Loxone project file (.Loxone). loxmatter compares it with its devices in both directions, asks where they differ, and gives you the updated file back."
+  de: "Lies deine Loxone-Projektdatei (.Loxone) ein. loxmatter vergleicht sie in beide Richtungen mit seinen Geräten, fragt bei Unterschieden nach und gibt dir die aktualisierte Datei zurück."
 web.export.projectsync_bridge_ip_hint_prefix:
   en: "Please set the bridge IP in "
   de: "Bitte zuerst in "
@@ -4335,12 +4333,6 @@ web.export.summary_differs_many:
 web.export.overview_differs:
   en: "Differs from file"
   de: "Weicht von Datei ab"
-web.export.summary_update_project:
-  en: "Update Loxone project"
-  de: "Loxone-Projekt aktualisieren"
-web.export.summary_update_project_hint:
-  en: "Upload your project file and get it back with the changes."
-  de: "Projektdatei hochladen und mit den Änderungen zurückbekommen."
 web.export.summary_zip:
   en: "Templates as ZIP"
   de: "Vorlagen als ZIP"
@@ -4592,3 +4584,6 @@ web.sync.finish:
 api.errors.projectsync_bad_decisions:
   en: "The sync decisions could not be read."
   de: "Die Entscheidungen zum Abgleich konnten nicht gelesen werden."
+web.export.overview_heading:
+  en: "What goes to Loxone, by room"
+  de: "Was nach Loxone geht, nach Räumen"

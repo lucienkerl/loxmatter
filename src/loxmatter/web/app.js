@@ -6205,12 +6205,6 @@ function app() {
     /** "Update Loxone project": the project sync below does the work; this
      * opens its file picker and brings its card into view, where the plan
      * appears. */
-    startProjectUpdate() {
-      const card = document.getElementById("export-project-sync");
-      if (card) card.scrollIntoView({ behavior: "smooth", block: "start" });
-      this.$refs.projectFile?.click();
-    },
-
     exportStatusFor(deviceId) {
       return this.exportStatusByDevice[deviceId] || null;
     },

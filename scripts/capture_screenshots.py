@@ -378,7 +378,7 @@ def capture(page: Page) -> None:
     page.click('button:has-text("View preview")')
     page.wait_for_selector("table", timeout=5000)
     page.wait_for_timeout(300)
-    shoot(page, "export", "card:Project file sync", "card:Preview")
+    shoot(page, "export", "card:Sync with Loxone", "card:Preview")
     page.set_viewport_size({"width": VIEWPORT_NARROW, "height": VIEWPORT_HEIGHT})
 
     # The "System check" card right at the top shows two "Error" rows in

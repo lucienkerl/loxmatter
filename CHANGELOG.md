@@ -36,6 +36,10 @@ people who don't know the code.
   over several rooms in Loxone is left as it is, and a new signal joins the
   room its siblings share in Loxone.
 
+- **The export screen starts with your project file.** Before a file is
+  read, the page only offers reading it in; the overview by room appears
+  afterwards, below the sync, with what differs marked.
+
 - **A setup assistant on first start.** After setting the password, the web
   interface walks you through the Miniserver address and your USB sticks
   (Thread, Zigbee, or nothing - every combination works). The installer no

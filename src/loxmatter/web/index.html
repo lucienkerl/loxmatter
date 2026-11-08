@@ -2005,263 +2005,9 @@
            ================================================================ -->
       <section x-show="view === 'export'" x-cloak>
         <!--
-          The export overview by room (design 2026-11-07, section 3): what
-          goes to Loxone, one card per room, groups first with their members
-          folded away, capabilities as chips instead of signal lists. Built
-          from `GET /api/export/overview`, which cuts every device to its
-          group export mode the way the export itself does. The two actions
-          sit in the summary column; the project sync and the template
-          details below stay what they were and do the actual work.
-        -->
-        <div class="export-overview">
-          <div class="export-main">
-            <p class="hint export-bridge-line">
-              <span x-text="exportBridgeLine()"></span>
-              ·
-              <a href="#/settings" x-text="t('web.settings.miniserver_link')"></a>
-            </p>
-            <div class="export-toolbar">
-              <label class="export-search">
-                <svg class="icon" aria-hidden="true"><use href="#i-search"></use></svg>
-                <input
-                  type="search"
-                  x-model="exportSearch"
-                  :placeholder="t('web.export.overview_search_placeholder')"
-                  :aria-label="t('web.export.overview_search_label')"
-                />
-              </label>
-              <div
-                class="segmented"
-                role="group"
-                :aria-label="t('web.export.overview_filter_label')"
-                x-show="exportCompared()"
-              >
-                <button
-                  type="button"
-                  :class="{ active: !exportChangedOnly }"
-                  :aria-pressed="String(!exportChangedOnly)"
-                  @click="exportChangedOnly = false"
-                  x-text="t('web.export.overview_filter_all')"
-                ></button>
-                <button
-                  type="button"
-                  :class="{ active: exportChangedOnly }"
-                  :aria-pressed="String(exportChangedOnly)"
-                  @click="exportChangedOnly = true"
-                  x-text="t('web.export.overview_filter_changed', { count: exportChangedTotal() })"
-                ></button>
-              </div>
-            </div>
-            <p x-show="exportOverviewError" x-cloak class="banner danger" x-text="exportOverviewError"></p>
-            <p
-              class="hint"
-              x-show="exportOverview && exportOverview.rooms.length === 0"
-              x-cloak
-              x-text="t('web.export.overview_empty')"
-            ></p>
-            <p
-              class="hint"
-              x-show="exportOverview && exportOverview.rooms.length > 0 && exportVisibleRooms().length === 0"
-              x-cloak
-              x-text="t('web.export.overview_no_match')"
-            ></p>
-
-            <template x-for="room in exportVisibleRooms()" :key="exportRoomKey(room)">
-              <section class="card export-room">
-                <button
-                  type="button"
-                  class="export-room-head"
-                  :aria-expanded="String(exportRoomOpen(room))"
-                  @click="toggleExportRoom(room)"
-                >
-                  <svg class="icon chevron" :class="{ open: exportRoomOpen(room) }" aria-hidden="true"><use href="#i-chevron"></use></svg>
-                  <h3 x-text="exportRoomLabel(room)"></h3>
-                  <span class="hint" x-text="exportRoomMeta(room)"></span>
-                  <span class="export-spacer"></span>
-                  <span
-                    class="status-pill warn"
-                    x-show="exportRoomChangedCount(room) > 0"
-                    x-text="t('web.export.overview_room_changed', { count: exportRoomChangedCount(room) })"
-                  ></span>
-                  <span
-                    class="hint"
-                    x-show="exportCompared() && exportRoomChangedCount(room) === 0"
-                    x-text="t('web.export.overview_room_current')"
-                  ></span>
-                </button>
-                <div x-show="exportRoomOpen(room)">
-                  <template x-for="group in room.groups" :key="'g' + group.group_id">
-                    <div class="export-group">
-                      <div class="export-row">
-                        <span class="export-icon is-group" aria-hidden="true"
-                          ><svg class="icon"><use :href="'#i-cat-' + group.category"></use></svg
-                        ></span>
-                        <div class="export-name">
-                          <span x-text="group.label"></span>
-                          <span class="hint" x-text="exportGroupSub(group)"></span>
-                        </div>
-                        <div class="export-chips">
-                          <template x-for="(chip, i) in exportChips(group).shown" :key="i">
-                            <span
-                              class="export-chip"
-                              :class="'is-' + chip.direction"
-                              :title="chip.direction === 'in' ? t('web.export.overview_to_loxone') : t('web.export.overview_from_loxone')"
-                              x-text="(chip.direction === 'in' ? '→ ' : '← ') + chip.label"
-                            ></span>
-                          </template>
-                          <span
-                            class="export-chip is-more"
-                            x-show="exportChips(group).more > 0"
-                            x-text="t('web.export.overview_more', { count: exportChips(group).more })"
-                          ></span>
-                        </div>
-                        <span
-                          class="status-pill warn"
-                          x-show="exportOwnerChanged('g', group.group_id)"
-                          x-text="t('web.export.overview_differs')"
-                        ></span>
-                      </div>
-                      <div class="export-members" x-show="group.members.length > 0">
-                        <button
-                          type="button"
-                          class="export-members-head"
-                          :aria-expanded="String(exportMembersOpen(group))"
-                          @click="toggleExportMembers(group)"
-                        >
-                          <svg class="icon chevron" :class="{ open: exportMembersOpen(group) }" aria-hidden="true"><use href="#i-chevron"></use></svg>
-                          <span x-text="t('web.export.overview_members_heading', { count: group.members.length })"></span>
-                          <span
-                            class="hint"
-                            x-text="exportGroupOwnCount(group) === 0 ? t('web.export.overview_members_all_via_group') : t('web.export.overview_members_some_own', { count: exportGroupOwnCount(group) })"
-                          ></span>
-                        </button>
-                        <div x-show="exportMembersOpen(group)">
-                          <template x-for="member in group.members" :key="member.device_id">
-                            <div class="export-row export-member" :class="{ 'is-via-group': member.mode === 'group' }">
-                              <div class="export-name">
-                                <span x-text="member.label"></span>
-                              </div>
-                              <div class="export-chips">
-                                <template x-for="(chip, i) in exportChips(member).shown" :key="i">
-                                  <span
-                                    class="export-chip"
-                                    :class="'is-' + chip.direction"
-                                    x-text="(chip.direction === 'in' ? '→ ' : '← ') + chip.label"
-                                  ></span>
-                                </template>
-                                <span
-                                  class="export-chip is-more"
-                                  x-show="exportChips(member).more > 0"
-                                  x-text="t('web.export.overview_more', { count: exportChips(member).more })"
-                                ></span>
-                                <span
-                                  class="hint"
-                                  x-show="member.mode !== 'group' && exportChips(member).shown.length === 0"
-                                  x-text="t('web.export.overview_nothing')"
-                                ></span>
-                              </div>
-                              <select
-                                class="export-mode"
-                                :aria-label="t('web.export.overview_mode_label', { label: member.label })"
-                                :disabled="exportModeBusy[member.device_id]"
-                                @change="setMemberExport(member, $event.target.value)"
-                              >
-                                <option value="group" :selected="member.mode === 'group'" x-text="t('web.export.overview_mode_group')"></option>
-                                <option value="status" :selected="member.mode === 'status'" x-text="t('web.export.overview_mode_status')"></option>
-                                <option value="full" :selected="member.mode === 'full'" x-text="t('web.export.overview_mode_full')"></option>
-                              </select>
-                              <span
-                                class="status-pill warn"
-                                x-show="exportOwnerChanged('d', member.device_id)"
-                                x-text="t('web.export.overview_differs')"
-                              ></span>
-                            </div>
-                          </template>
-                        </div>
-                      </div>
-                    </div>
-                  </template>
-                  <template x-for="device in room.devices" :key="'d' + device.device_id">
-                    <div class="export-row">
-                      <span class="export-icon" aria-hidden="true"
-                        ><svg class="icon"><use :href="'#i-cat-' + device.category"></use></svg
-                      ></span>
-                      <div class="export-name">
-                        <span x-text="device.label"></span>
-                        <span class="hint" x-text="exportDeviceSub(device)"></span>
-                      </div>
-                      <div class="export-chips">
-                        <template x-for="(chip, i) in exportChips(device).shown" :key="i">
-                          <span
-                            class="export-chip"
-                            :class="'is-' + chip.direction"
-                            :title="chip.direction === 'in' ? t('web.export.overview_to_loxone') : t('web.export.overview_from_loxone')"
-                            x-text="(chip.direction === 'in' ? '→ ' : '← ') + chip.label"
-                          ></span>
-                        </template>
-                        <span
-                          class="export-chip is-more"
-                          x-show="exportChips(device).more > 0"
-                          x-text="t('web.export.overview_more', { count: exportChips(device).more })"
-                        ></span>
-                        <span
-                          class="hint"
-                          x-show="exportChips(device).shown.length === 0"
-                          x-text="t('web.export.overview_nothing')"
-                        ></span>
-                      </div>
-                      <span
-                        class="status-pill warn"
-                        x-show="exportOwnerChanged('d', device.device_id)"
-                        x-text="t('web.export.overview_differs')"
-                      ></span>
-                    </div>
-                  </template>
-                </div>
-              </section>
-            </template>
-          </div>
-
-          <aside class="card export-summary" x-show="exportOverview" x-cloak>
-            <h2 x-text="t('web.export.summary_heading')"></h2>
-            <div class="export-tiles">
-              <div class="export-tile">
-                <strong x-text="exportOverview ? exportOverview.totals.groups : 0"></strong>
-                <span x-text="t('web.export.summary_groups')"></span>
-              </div>
-              <div class="export-tile">
-                <strong x-text="exportOverview ? exportOverview.totals.devices : 0"></strong>
-                <span x-text="t('web.export.summary_devices')"></span>
-              </div>
-              <div class="export-tile is-in">
-                <strong x-text="exportOverview ? exportOverview.totals.inputs : 0"></strong>
-                <span x-text="t('web.export.summary_inputs')"></span>
-              </div>
-              <div class="export-tile is-out">
-                <strong x-text="exportOverview ? exportOverview.totals.outputs : 0"></strong>
-                <span x-text="t('web.export.summary_outputs')"></span>
-              </div>
-            </div>
-            <p class="hint" x-show="exportSummaryViaGroup()" x-text="exportSummaryViaGroup()"></p>
-            <p class="hint" x-show="exportSummaryChanged()" x-text="exportSummaryChanged()"></p>
-            <button
-              type="button"
-              class="primary"
-              @click="startProjectUpdate()"
-              :disabled="projectSync.busy"
-              x-text="t('web.export.summary_update_project')"
-            ></button>
-            <p class="hint" x-text="t('web.export.summary_update_project_hint')"></p>
-            <button type="button" @click="downloadExport()" x-text="t('web.export.summary_zip')"></button>
-            <p x-show="exportError" x-cloak class="banner danger" x-text="exportError"></p>
-          </aside>
-        </div>
-
-        <!--
-          Project file sync (originally further down in "System" -
-          moved up here as the topmost item at the user's request, because
-          this is meant to become the primary path going forward instead
-          of the template ZIPs below): upload an existing
+          Project file sync - the page's starting point (user request
+          2026-11-08: a screen of exports before any file was read made no
+          sense). Upload an existing
           Loxone project file, view the plan, download the patched file
           - only AFTER the plan has been seen (design: no download before
           the plan). The patched file already arrives with the upload
@@ -2631,6 +2377,254 @@
             </div>
           </template>
         </div>
+
+        <!--
+          The export overview by room (design 2026-11-07, section 3): what
+          goes to Loxone, one card per room, groups first with their members
+          folded away, capabilities as chips instead of signal lists. Built
+          from `GET /api/export/overview`, which cuts every device to its
+          group export mode the way the export itself does. Shown only once
+          a project file is read: before that there is nothing to compare,
+          and the page starts with reading the file in (user request
+          2026-11-08).
+        -->
+        <h2 class="export-overview-heading" x-show="projectSync.plan" x-cloak x-text="t('web.export.overview_heading')"></h2>
+        <div class="export-overview" x-show="projectSync.plan" x-cloak>
+          <div class="export-main">
+            <p class="hint export-bridge-line">
+              <span x-text="exportBridgeLine()"></span>
+              ·
+              <a href="#/settings" x-text="t('web.settings.miniserver_link')"></a>
+            </p>
+            <div class="export-toolbar">
+              <label class="export-search">
+                <svg class="icon" aria-hidden="true"><use href="#i-search"></use></svg>
+                <input
+                  type="search"
+                  x-model="exportSearch"
+                  :placeholder="t('web.export.overview_search_placeholder')"
+                  :aria-label="t('web.export.overview_search_label')"
+                />
+              </label>
+              <div
+                class="segmented"
+                role="group"
+                :aria-label="t('web.export.overview_filter_label')"
+                x-show="exportCompared()"
+              >
+                <button
+                  type="button"
+                  :class="{ active: !exportChangedOnly }"
+                  :aria-pressed="String(!exportChangedOnly)"
+                  @click="exportChangedOnly = false"
+                  x-text="t('web.export.overview_filter_all')"
+                ></button>
+                <button
+                  type="button"
+                  :class="{ active: exportChangedOnly }"
+                  :aria-pressed="String(exportChangedOnly)"
+                  @click="exportChangedOnly = true"
+                  x-text="t('web.export.overview_filter_changed', { count: exportChangedTotal() })"
+                ></button>
+              </div>
+            </div>
+            <p x-show="exportOverviewError" x-cloak class="banner danger" x-text="exportOverviewError"></p>
+            <p
+              class="hint"
+              x-show="exportOverview && exportOverview.rooms.length === 0"
+              x-cloak
+              x-text="t('web.export.overview_empty')"
+            ></p>
+            <p
+              class="hint"
+              x-show="exportOverview && exportOverview.rooms.length > 0 && exportVisibleRooms().length === 0"
+              x-cloak
+              x-text="t('web.export.overview_no_match')"
+            ></p>
+
+            <template x-for="room in exportVisibleRooms()" :key="exportRoomKey(room)">
+              <section class="card export-room">
+                <button
+                  type="button"
+                  class="export-room-head"
+                  :aria-expanded="String(exportRoomOpen(room))"
+                  @click="toggleExportRoom(room)"
+                >
+                  <svg class="icon chevron" :class="{ open: exportRoomOpen(room) }" aria-hidden="true"><use href="#i-chevron"></use></svg>
+                  <h3 x-text="exportRoomLabel(room)"></h3>
+                  <span class="hint" x-text="exportRoomMeta(room)"></span>
+                  <span class="export-spacer"></span>
+                  <span
+                    class="status-pill warn"
+                    x-show="exportRoomChangedCount(room) > 0"
+                    x-text="t('web.export.overview_room_changed', { count: exportRoomChangedCount(room) })"
+                  ></span>
+                  <span
+                    class="hint"
+                    x-show="exportCompared() && exportRoomChangedCount(room) === 0"
+                    x-text="t('web.export.overview_room_current')"
+                  ></span>
+                </button>
+                <div x-show="exportRoomOpen(room)">
+                  <template x-for="group in room.groups" :key="'g' + group.group_id">
+                    <div class="export-group">
+                      <div class="export-row">
+                        <span class="export-icon is-group" aria-hidden="true"
+                          ><svg class="icon"><use :href="'#i-cat-' + group.category"></use></svg
+                        ></span>
+                        <div class="export-name">
+                          <span x-text="group.label"></span>
+                          <span class="hint" x-text="exportGroupSub(group)"></span>
+                        </div>
+                        <div class="export-chips">
+                          <template x-for="(chip, i) in exportChips(group).shown" :key="i">
+                            <span
+                              class="export-chip"
+                              :class="'is-' + chip.direction"
+                              :title="chip.direction === 'in' ? t('web.export.overview_to_loxone') : t('web.export.overview_from_loxone')"
+                              x-text="(chip.direction === 'in' ? '→ ' : '← ') + chip.label"
+                            ></span>
+                          </template>
+                          <span
+                            class="export-chip is-more"
+                            x-show="exportChips(group).more > 0"
+                            x-text="t('web.export.overview_more', { count: exportChips(group).more })"
+                          ></span>
+                        </div>
+                        <span
+                          class="status-pill warn"
+                          x-show="exportOwnerChanged('g', group.group_id)"
+                          x-text="t('web.export.overview_differs')"
+                        ></span>
+                      </div>
+                      <div class="export-members" x-show="group.members.length > 0">
+                        <button
+                          type="button"
+                          class="export-members-head"
+                          :aria-expanded="String(exportMembersOpen(group))"
+                          @click="toggleExportMembers(group)"
+                        >
+                          <svg class="icon chevron" :class="{ open: exportMembersOpen(group) }" aria-hidden="true"><use href="#i-chevron"></use></svg>
+                          <span x-text="t('web.export.overview_members_heading', { count: group.members.length })"></span>
+                          <span
+                            class="hint"
+                            x-text="exportGroupOwnCount(group) === 0 ? t('web.export.overview_members_all_via_group') : t('web.export.overview_members_some_own', { count: exportGroupOwnCount(group) })"
+                          ></span>
+                        </button>
+                        <div x-show="exportMembersOpen(group)">
+                          <template x-for="member in group.members" :key="member.device_id">
+                            <div class="export-row export-member" :class="{ 'is-via-group': member.mode === 'group' }">
+                              <div class="export-name">
+                                <span x-text="member.label"></span>
+                              </div>
+                              <div class="export-chips">
+                                <template x-for="(chip, i) in exportChips(member).shown" :key="i">
+                                  <span
+                                    class="export-chip"
+                                    :class="'is-' + chip.direction"
+                                    x-text="(chip.direction === 'in' ? '→ ' : '← ') + chip.label"
+                                  ></span>
+                                </template>
+                                <span
+                                  class="export-chip is-more"
+                                  x-show="exportChips(member).more > 0"
+                                  x-text="t('web.export.overview_more', { count: exportChips(member).more })"
+                                ></span>
+                                <span
+                                  class="hint"
+                                  x-show="member.mode !== 'group' && exportChips(member).shown.length === 0"
+                                  x-text="t('web.export.overview_nothing')"
+                                ></span>
+                              </div>
+                              <select
+                                class="export-mode"
+                                :aria-label="t('web.export.overview_mode_label', { label: member.label })"
+                                :disabled="exportModeBusy[member.device_id]"
+                                @change="setMemberExport(member, $event.target.value)"
+                              >
+                                <option value="group" :selected="member.mode === 'group'" x-text="t('web.export.overview_mode_group')"></option>
+                                <option value="status" :selected="member.mode === 'status'" x-text="t('web.export.overview_mode_status')"></option>
+                                <option value="full" :selected="member.mode === 'full'" x-text="t('web.export.overview_mode_full')"></option>
+                              </select>
+                              <span
+                                class="status-pill warn"
+                                x-show="exportOwnerChanged('d', member.device_id)"
+                                x-text="t('web.export.overview_differs')"
+                              ></span>
+                            </div>
+                          </template>
+                        </div>
+                      </div>
+                    </div>
+                  </template>
+                  <template x-for="device in room.devices" :key="'d' + device.device_id">
+                    <div class="export-row">
+                      <span class="export-icon" aria-hidden="true"
+                        ><svg class="icon"><use :href="'#i-cat-' + device.category"></use></svg
+                      ></span>
+                      <div class="export-name">
+                        <span x-text="device.label"></span>
+                        <span class="hint" x-text="exportDeviceSub(device)"></span>
+                      </div>
+                      <div class="export-chips">
+                        <template x-for="(chip, i) in exportChips(device).shown" :key="i">
+                          <span
+                            class="export-chip"
+                            :class="'is-' + chip.direction"
+                            :title="chip.direction === 'in' ? t('web.export.overview_to_loxone') : t('web.export.overview_from_loxone')"
+                            x-text="(chip.direction === 'in' ? '→ ' : '← ') + chip.label"
+                          ></span>
+                        </template>
+                        <span
+                          class="export-chip is-more"
+                          x-show="exportChips(device).more > 0"
+                          x-text="t('web.export.overview_more', { count: exportChips(device).more })"
+                        ></span>
+                        <span
+                          class="hint"
+                          x-show="exportChips(device).shown.length === 0"
+                          x-text="t('web.export.overview_nothing')"
+                        ></span>
+                      </div>
+                      <span
+                        class="status-pill warn"
+                        x-show="exportOwnerChanged('d', device.device_id)"
+                        x-text="t('web.export.overview_differs')"
+                      ></span>
+                    </div>
+                  </template>
+                </div>
+              </section>
+            </template>
+          </div>
+
+          <aside class="card export-summary" x-show="exportOverview" x-cloak>
+            <h2 x-text="t('web.export.summary_heading')"></h2>
+            <div class="export-tiles">
+              <div class="export-tile">
+                <strong x-text="exportOverview ? exportOverview.totals.groups : 0"></strong>
+                <span x-text="t('web.export.summary_groups')"></span>
+              </div>
+              <div class="export-tile">
+                <strong x-text="exportOverview ? exportOverview.totals.devices : 0"></strong>
+                <span x-text="t('web.export.summary_devices')"></span>
+              </div>
+              <div class="export-tile is-in">
+                <strong x-text="exportOverview ? exportOverview.totals.inputs : 0"></strong>
+                <span x-text="t('web.export.summary_inputs')"></span>
+              </div>
+              <div class="export-tile is-out">
+                <strong x-text="exportOverview ? exportOverview.totals.outputs : 0"></strong>
+                <span x-text="t('web.export.summary_outputs')"></span>
+              </div>
+            </div>
+            <p class="hint" x-show="exportSummaryViaGroup()" x-text="exportSummaryViaGroup()"></p>
+            <p class="hint" x-show="exportSummaryChanged()" x-text="exportSummaryChanged()"></p>
+            <button type="button" @click="downloadExport()" x-text="t('web.export.summary_zip')"></button>
+            <p x-show="exportError" x-cloak class="banner danger" x-text="exportError"></p>
+          </aside>
+        </div>
+
 
         <!-- The template ZIP in detail (design 2026-11-07, section 3): the
              summary's "Templates as ZIP" downloads the same file; this keeps
