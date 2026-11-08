@@ -385,3 +385,32 @@ def test_a_device_without_a_room_gets_no_assignment(rooms_project):
     plan = build_plan(index, [_device(2, "Neues Geraet")], {2: [_signal("d2_1_onoff", 2)]}, {2: []})
     assert plan.rooms == []
     assert all(entry.room is None for entry in plan.entries)
+
+
+def test_an_event_input_saved_by_loxone_config_without_analog_is_unchanged(sample_project):
+    """2026-11-08, the maintainer's project file: Loxone Config leaves
+    `Analog` out when it is false, so every event input it had saved - a
+    digital pulse - carried none, and all 24 of them were listed as
+    conflicts and skipped. The start tag below is the shape found there.
+
+    Fault to prove it: put `Analog` back into `_REQUIRED_INPUT_ATTRS`."""
+    pulse_tag = (
+        '\t\t\t\t\t<C Type="VirtualUdpInCmd" IName="VCI55" V="179"'
+        ' U="1000-0020-0000-aaaaaaaaaaaaaaaa" Title="press" Nio="2" WF="16384"'
+        ' Check="d1_1_press:1" Signed="true" SourceValHigh="100" DestValHigh="100"'
+        ' MinVal="-2147483647" MaxVal="2147483647">\r\n'
+        '\t\t\t\t\t\t<Co K="Q" U="1000-0021-0000-bbbbbbbbbbbbbbbb"/>\r\n'
+        "\t\t\t\t\t</C>\r\n"
+    )
+    anchor = '\t\t\t\t\t<C Type="VirtualUdpInCmd" IName="VCI3"'
+    assert anchor in sample_project
+    project = sample_project.replace(anchor, pulse_tag + anchor, 1)
+    press = dataclasses.replace(
+        _signal("d1_1_press", 1),
+        title="press",
+        ref=SignalRef(endpoint=1, cluster_id=59, element_id=1, kind=SignalKind.EVENT),
+    )
+    plan = build_plan(build_index(project), [_device(1, "Taster")], {1: [press]}, {1: []})
+    entry = next(e for e in plan.entries if e.key == "d1_1_press")
+    assert entry.status == PlanStatus.UNCHANGED
+    assert entry.changes == {}
