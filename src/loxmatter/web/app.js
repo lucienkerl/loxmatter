@@ -1368,6 +1368,18 @@ function app() {
     exportStatusByGroup: {},
     exportBusy: false,
     exportError: null,
+    // The export overview by room (design 2026-11-07, section 3):
+    // `GET /api/export/overview`, plus what the user narrowed it to. Which
+    // rooms and member lists are open lives here, keyed by room name ("" is
+    // "no room") and group id - a room the user never touched follows
+    // `exportRoomOpen`'s default.
+    exportOverview: null,
+    exportOverviewError: null,
+    exportSearch: "",
+    exportChangedOnly: false,
+    exportOpenRooms: {},
+    exportOpenMembers: {},
+    exportModeBusy: {},
 
     // --- System ----------------------------------------------------------
     // Build identity (GET /api/version). `null` as long as the System tab
@@ -1929,7 +1941,7 @@ function app() {
         // every five seconds (`scheduleCommissioningPoll()`).
         await this.loadCommissioning();
       } else if (view === "export") {
-        await this.loadExportStatus();
+        await Promise.all([this.loadExportStatus(), this.loadExportOverview()]);
       } else if (view === "system") {
         await this.loadSystem();
       } else if (view === "settings") {
@@ -5925,6 +5937,219 @@ function app() {
       }
     },
 
+    async loadExportOverview() {
+      this.exportOverviewError = null;
+      try {
+        this.exportOverview = await this.request("GET", "/api/export/overview");
+      } catch (error) {
+        this.exportOverviewError = t("web.export.overview_load_error", { message: error.message });
+      }
+    },
+
+    /** A capability chip's text (`export.capabilities`): a known key is
+     * translated, anything else is the signal's title as it is. */
+    exportCapabilityLabel(capability) {
+      return capability.key ? t(`web.export.cap_${capability.key}`) : capability.label;
+    },
+
+    /** The chips of one row: values to Loxone first, then commands from
+     * Loxone, at most `limit`, and how many more there are. A member shows
+     * what its mode exports - nothing through the group, inputs only for
+     * status values. */
+    exportChips(entry, limit = 4) {
+      const mode = entry.mode ?? "full";
+      const inputs = mode === "group" ? [] : entry.inputs ?? [];
+      const outputs = mode === "full" ? entry.outputs ?? [] : [];
+      const all = [
+        ...inputs.map((c) => ({ direction: "in", label: this.exportCapabilityLabel(c) })),
+        ...outputs.map((c) => ({ direction: "out", label: this.exportCapabilityLabel(c) })),
+      ];
+      return { shown: all.slice(0, limit), more: Math.max(0, all.length - limit) };
+    },
+
+    exportRoomKey(room) {
+      return room.name ?? "";
+    },
+
+    exportRoomLabel(room) {
+      return room.name ?? t("web.export.overview_no_room");
+    },
+
+    exportGroupOwnCount(group) {
+      return group.members.filter((m) => m.mode !== "group").length;
+    },
+
+    exportRoomChangedCount(room) {
+      let count = 0;
+      for (const group of room.groups) {
+        if (group.changed_since_export) count += 1;
+        count += group.members.filter((m) => m.changed_since_export).length;
+      }
+      return count + room.devices.filter((d) => d.changed_since_export).length;
+    },
+
+    exportRoomMeta(room) {
+      const parts = [];
+      const groups = room.groups.length;
+      const devices = room.devices.length;
+      if (groups > 0) {
+        parts.push(
+          groups === 1
+            ? t("web.export.overview_room_groups_one")
+            : t("web.export.overview_room_groups_many", { count: groups }),
+        );
+      }
+      if (devices > 0) {
+        parts.push(
+          devices === 1
+            ? t("web.export.overview_room_devices_one")
+            : t("web.export.overview_room_devices_many", { count: devices }),
+        );
+      }
+      return parts.join(" · ");
+    },
+
+    exportGroupSub(group) {
+      const count = group.members.length;
+      const members =
+        count === 1
+          ? t("web.export.overview_room_devices_one")
+          : t("web.export.overview_room_devices_many", { count });
+      return t("web.export.overview_group_sub", { members });
+    },
+
+    exportDeviceSub(device) {
+      if (device.transport) return t(`web.devices.transport_${device.transport}`);
+      return device.technology === "zigbee" ? "Zigbee" : "Matter";
+    },
+
+    /** A room starts open when something in it changed; searching opens
+     * every room it found something in. A room the user opened or closed
+     * stays that way. */
+    exportRoomOpen(room) {
+      if (this.exportSearch.trim()) return true;
+      const key = this.exportRoomKey(room);
+      if (key in this.exportOpenRooms) return this.exportOpenRooms[key];
+      return this.exportRoomChangedCount(room) > 0;
+    },
+
+    toggleExportRoom(room) {
+      const key = this.exportRoomKey(room);
+      this.exportOpenRooms = { ...this.exportOpenRooms, [key]: !this.exportRoomOpen(room) };
+    },
+
+    exportMembersOpen(group) {
+      if (group.group_id in this.exportOpenMembers) return this.exportOpenMembers[group.group_id];
+      // Open when one of them is exported on its own: the user chose that,
+      // so it is worth seeing.
+      return this.exportGroupOwnCount(group) > 0;
+    },
+
+    toggleExportMembers(group) {
+      this.exportOpenMembers = {
+        ...this.exportOpenMembers,
+        [group.group_id]: !this.exportMembersOpen(group),
+      };
+    },
+
+    exportMatches(text, room, ...lists) {
+      const query = this.exportSearch.trim().toLowerCase();
+      if (!query) return true;
+      const haystack = [text, this.exportRoomLabel(room)];
+      for (const list of lists) {
+        for (const capability of list ?? []) haystack.push(this.exportCapabilityLabel(capability));
+      }
+      return haystack.some((value) => String(value).toLowerCase().includes(query));
+    },
+
+    /** The rooms as shown: narrowed by the search and by "changed only",
+     * a room with nothing left in it dropped. A group stays when it or one
+     * of its members matches. */
+    exportVisibleRooms() {
+      if (!this.exportOverview) return [];
+      const rooms = [];
+      for (const room of this.exportOverview.rooms) {
+        const groups = room.groups.filter((group) => {
+          if (
+            this.exportChangedOnly &&
+            !group.changed_since_export &&
+            !group.members.some((m) => m.changed_since_export)
+          ) {
+            return false;
+          }
+          return (
+            this.exportMatches(group.label, room, group.outputs) ||
+            group.members.some((m) => this.exportMatches(m.label, room, m.inputs, m.outputs))
+          );
+        });
+        const devices = room.devices.filter(
+          (device) =>
+            (!this.exportChangedOnly || device.changed_since_export) &&
+            this.exportMatches(device.label, room, device.inputs, device.outputs),
+        );
+        if (groups.length + devices.length > 0) rooms.push({ ...room, groups, devices });
+      }
+      return rooms;
+    },
+
+    exportChangedTotal() {
+      return this.exportOverview ? this.exportOverview.totals.changed : 0;
+    },
+
+    exportSummaryViaGroup() {
+      const count = this.exportOverview ? this.exportOverview.totals.via_group : 0;
+      if (count === 0) return "";
+      return count === 1
+        ? t("web.export.summary_via_group_one")
+        : t("web.export.summary_via_group_many", { count });
+    },
+
+    exportSummaryChanged() {
+      const count = this.exportChangedTotal();
+      if (count === 0) return "";
+      return count === 1
+        ? t("web.export.summary_changed_one")
+        : t("web.export.summary_changed_many", { count });
+    },
+
+    exportBridgeLine() {
+      const missing = t("web.export.overview_not_set");
+      const bridge = this.bridgeSettings.bridge_ip
+        ? `${this.bridgeSettings.bridge_ip}:${this.bridgeSettings.listen_port}`
+        : missing;
+      return t("web.export.overview_bridge_line", {
+        miniserver: this.bridgeSettings.miniserver_ip || missing,
+        bridge,
+      });
+    },
+
+    /** A group member's export mode (design 2026-11-07, section 2). The
+     * device tiles' "changed since export" depends on it too, hence the
+     * status reload. */
+    async setMemberExport(member, mode) {
+      if (member.mode === mode) return;
+      this.exportOverviewError = null;
+      this.exportModeBusy = { ...this.exportModeBusy, [member.device_id]: true };
+      try {
+        await this.request("PATCH", `/api/devices/${member.device_id}`, { group_export: mode });
+        await Promise.all([this.loadExportOverview(), this.loadExportStatus()]);
+      } catch (error) {
+        this.exportOverviewError = t("web.export.overview_mode_failed", { message: error.message });
+      } finally {
+        const { [member.device_id]: _, ...rest } = this.exportModeBusy;
+        this.exportModeBusy = rest;
+      }
+    },
+
+    /** "Update Loxone project": the project sync below does the work; this
+     * opens its file picker and brings its card into view, where the plan
+     * appears. */
+    startProjectUpdate() {
+      const card = document.getElementById("export-project-sync");
+      if (card) card.scrollIntoView({ behavior: "smooth", block: "start" });
+      this.$refs.projectFile?.click();
+    },
+
     exportStatusFor(deviceId) {
       return this.exportStatusByDevice[deviceId] || null;
     },
@@ -7132,7 +7357,9 @@ function app() {
           miniserver_ip: this.settingsDraft.miniserver_ip.trim() || null,
           bridge_ip: this.settingsDraft.bridge_ip.trim(),
           udp_port: Number(this.settingsDraft.udp_port),
-          listen_port: Number(this.settingsDraft.listen_port),
+          // Not from the draft: the field is read only, and the bridge
+          // answers with the port it really listens on anyway.
+          listen_port: this.bridgeSettings.listen_port,
         });
         this.showToast(t("web.settings.saved_toast"));
       } catch (error) {
@@ -7908,7 +8135,7 @@ function app() {
       // and the "only not-yet-exported" filter kept showing the devices
       // just exported - until someone eventually reloaded the preview
       // (Review-Fix Fix 12, 2026-09-03).
-      await this.loadExportStatus();
+      await Promise.all([this.loadExportStatus(), this.loadExportOverview()]);
     },
 
     // Export button on an individual device card (device dashboard

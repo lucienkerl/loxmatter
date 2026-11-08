@@ -25,7 +25,14 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta, timezone
 
 from loxmatter import i18n
-from loxmatter.model.store import Store, StoredCommand, StoredGroupCommand, StoredSignal
+from loxmatter.export.scope import export_mode, exports_on_its_own, scoped
+from loxmatter.model.store import (
+    Store,
+    StoredCommand,
+    StoredDevice,
+    StoredGroupCommand,
+    StoredSignal,
+)
 from loxmatter.projectsync.diff import SyncPlan, build_plan
 from loxmatter.projectsync.index import ProjectFormatError, build_index
 from loxmatter.projectsync.patch import apply_plan
@@ -80,13 +87,22 @@ def run_sync(
     # all" case (empty `candidates`) remains a genuine 400. Without an
     # unambiguous Miniserver, there is no place to compare against at all.
     index = build_index(text, miniserver_ip)
-    devices = store.devices()
-    signals_by_device: dict[int, Sequence[StoredSignal]] = {
-        device.id: store.signals(device.id) for device in devices
-    }
-    commands_by_device: dict[int, Sequence[StoredCommand]] = {
-        device.id: store.commands(device.id) for device in devices
-    }
+    # Each device cut down to its group export mode (design 2026-11-07,
+    # section 2) - the same `export.scope` the template ZIP uses. A member
+    # switched only through its group is left out entirely: even with no
+    # signals it would still bring its online input along (`to_inputs`).
+    member_ids = store.group_member_ids()
+    devices: list[StoredDevice] = []
+    signals_by_device: dict[int, Sequence[StoredSignal]] = {}
+    commands_by_device: dict[int, Sequence[StoredCommand]] = {}
+    for device in store.devices():
+        mode = export_mode(device, member_ids)
+        if not exports_on_its_own(mode):
+            continue
+        devices.append(device)
+        signals_by_device[device.id], commands_by_device[device.id] = scoped(
+            mode, store.signals(device.id), store.commands(device.id)
+        )
     groups = store.groups()
     commands_by_group: dict[int, Sequence[StoredGroupCommand]] = {
         group.id: store.group_commands(group.id) for group in groups

@@ -755,3 +755,135 @@ async def test_preview_and_status_skip_a_group_with_no_exported_commands(
     assert not any(e.get("group_id") == group.id for e in status)
     names = zipfile.ZipFile(io.BytesIO(response.content)).namelist()
     assert not any(n.startswith(f"VO_g{group.id}_") for n in names)
+
+
+# --- Group members and the export overview (design 2026-11-07) ---------------
+
+
+def _zip_names(response: httpx.Response) -> set[str]:
+    return set(zipfile.ZipFile(io.BytesIO(response.content)).namelist())
+
+
+async def test_a_group_member_is_exported_only_through_its_group_by_default(api):
+    """Section 2: a member brings no template of its own - only the group's
+    `VO_g*.xml` is written, and the preview says the same."""
+    client, store, device_id = api
+    group = store.create_group("Solo", [device_id])
+
+    preview = (await client.get("/api/export/preview?bridge_ip=192.168.1.50")).json()
+    assert preview["devices"] == []
+    assert [g["group_id"] for g in preview["groups"]] == [group.id]
+
+    names = _zip_names(await client.get("/api/export/download?bridge_ip=192.168.1.50"))
+    assert not any(name.startswith(("VIU_", "VO_d")) for name in names)
+    assert f"VO_g{group.id}_Solo.xml" in names
+
+
+async def test_a_member_switched_through_its_group_is_never_pending(api):
+    """Nothing of its own to export, so nothing of its own pending - its
+    tile would otherwise ask for an export forever."""
+    client, store, device_id = api
+    store.create_group("Solo", [device_id])
+
+    status = (await client.get("/api/export/status")).json()
+    entry = next(e for e in status if e.get("device_id") == device_id)
+    assert entry["changed_since_export"] is False
+
+
+async def test_a_status_member_exports_its_inputs_but_no_outputs(api):
+    client, store, device_id = api
+    store.create_group("Solo", [device_id])
+    response = await client.patch(f"/api/devices/{device_id}", json={"group_export": "status"})
+    assert response.status_code == 200
+
+    preview = (await client.get("/api/export/preview?bridge_ip=192.168.1.50")).json()
+    (device,) = preview["devices"]
+    assert device["inputs"] == 5
+    assert device["commands"] == 0
+
+    names = _zip_names(await client.get("/api/export/download?bridge_ip=192.168.1.50"))
+    assert device["viu_filename"] in names
+    assert device["vo_filename"] not in names
+
+
+async def test_a_full_member_exports_like_a_device_outside_any_group(api):
+    client, store, device_id = api
+    store.create_group("Solo", [device_id])
+    await client.patch(f"/api/devices/{device_id}", json={"group_export": "full"})
+
+    preview = (await client.get("/api/export/preview?bridge_ip=192.168.1.50")).json()
+    (device,) = preview["devices"]
+    assert (device["inputs"], device["commands"]) == (5, 3)
+
+
+async def test_changing_the_group_export_marks_the_device_changed(api):
+    """The next export changes, so the device is pending again."""
+    client, store, device_id = api
+    store.create_group("Solo", [device_id])
+    await client.patch(f"/api/devices/{device_id}", json={"group_export": "full"})
+    await client.get("/api/export/download?bridge_ip=192.168.1.50")
+    store.set_group_export(device_id, "status")
+
+    status = (await client.get("/api/export/status")).json()
+    entry = next(e for e in status if e.get("device_id") == device_id)
+    assert entry["changed_since_export"] is True
+
+
+async def test_an_unknown_group_export_is_refused(api):
+    client, _, device_id = api
+    response = await client.patch(f"/api/devices/{device_id}", json={"group_export": "half"})
+    assert response.status_code == 422
+
+
+async def test_a_device_asked_for_by_id_is_exported_whole_even_in_a_group(api):
+    """Like `loxmatter export`: whoever names a device wants its template."""
+    client, store, device_id = api
+    store.create_group("Solo", [device_id])
+
+    response = await client.get(
+        f"/api/export/download?bridge_ip=192.168.1.50&device_id={device_id}"
+    )
+    names = _zip_names(response)
+    assert any(name.startswith(f"VIU_d{device_id}_") for name in names)
+    assert any(name.startswith(f"VO_d{device_id}_") for name in names)
+
+
+async def test_the_overview_lists_a_device_by_room_with_its_capabilities(api):
+    """Section 3: one room per name, "no room" last; the plug's outputs
+    fold `on`, `off` and `toggle` into one on/off capability."""
+    client, store, device_id = api
+    second = _second_device(store)
+    store.set_room(second, "Kitchen")
+
+    overview = (await client.get("/api/export/overview")).json()
+    assert [room["name"] for room in overview["rooms"]] == ["Kitchen", None]
+    (plug,) = overview["rooms"][1]["devices"]
+    assert plug["device_id"] == device_id
+    assert plug["outputs"] == [{"key": "onoff", "label": "onoff"}]
+    # Counted as the template writes them: on, off, toggle and the combined
+    # on/off output.
+    assert plug["output_count"] == 4
+    assert plug["input_count"] == 5
+    assert overview["totals"]["devices"] == 2
+    assert overview["totals"]["via_group"] == 0
+
+
+async def test_the_overview_shows_a_member_under_its_group_only(api):
+    client, store, device_id = api
+    group = store.create_group("Solo", [device_id])
+    store.set_group_room(group.id, "Hall")
+
+    overview = (await client.get("/api/export/overview")).json()
+    (room,) = overview["rooms"]
+    assert room["name"] == "Hall"
+    assert room["devices"] == []
+    (entry,) = room["groups"]
+    assert entry["label"] == "Solo"
+    (member,) = entry["members"]
+    assert member["device_id"] == device_id
+    assert member["mode"] == "group"
+    # What the member would bring on its own, shown before the user picks.
+    assert member["outputs"] == [{"key": "onoff", "label": "onoff"}]
+    totals = overview["totals"]
+    assert (totals["groups"], totals["devices"], totals["via_group"]) == (1, 0, 1)
+    assert totals["outputs"] == entry["output_count"]

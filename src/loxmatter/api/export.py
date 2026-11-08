@@ -93,12 +93,20 @@ from fastapi.responses import Response
 
 from loxmatter import i18n
 from loxmatter.api.models import (
+    CapabilityOut,
     ExportDeviceOut,
     ExportGroupOut,
+    ExportOverviewOut,
     ExportPreviewOut,
     ExportStatusOut,
     GroupExportStatusOut,
+    OverviewDeviceOut,
+    OverviewGroupOut,
+    OverviewMemberOut,
+    OverviewRoomOut,
+    OverviewTotalsOut,
 )
+from loxmatter.export.capabilities import Capability, input_capabilities, output_capabilities
 from loxmatter.export.documents import (
     LoxoneCommand,
     filename_for,
@@ -107,6 +115,7 @@ from loxmatter.export.documents import (
     render_virtual_out,
 )
 from loxmatter.export.outputs import to_group_outputs, to_outputs
+from loxmatter.export.scope import ExportMode, export_mode, exports_on_its_own, scoped
 from loxmatter.export.signals import to_inputs
 from loxmatter.model.store import (
     DEFAULT_LISTEN_PORT,
@@ -119,7 +128,9 @@ from loxmatter.model.store import (
     UnknownDeviceError,
 )
 from loxmatter.model.store import changed_since_export as _changed_since_export_at
+from loxmatter.profiles.categories import category_for
 from loxmatter.profiles.table import is_exportable
+from loxmatter.profiles.transport import transport_for
 
 # Public, because the UI has to assign the same file name: ever since
 # downloads run via `fetch` instead of a link, the browser names the file
@@ -169,9 +180,12 @@ def _group_has_export(commands: Sequence[StoredGroupCommand]) -> bool:
     return bool(to_group_outputs(commands))
 
 
-def _device_preview(device: StoredDevice, store: Store) -> ExportDeviceOut:
-    signals = store.signals(device.id)
-    commands = store.commands(device.id)
+def _capabilities_out(capabilities: Sequence[Capability]) -> list[CapabilityOut]:
+    return [CapabilityOut(key=c.key, label=c.label) for c in capabilities]
+
+
+def _device_preview(device: StoredDevice, store: Store, mode: ExportMode) -> ExportDeviceOut:
+    signals, commands = scoped(mode, store.signals(device.id), store.commands(device.id))
     inputs = to_inputs(signals, device.id, device.label)
     # `is_exportable` instead of an inversion noted here (since the
     # review of 2026-09-03): until then the rule "text, lists, structs and
@@ -225,8 +239,11 @@ def _changed_since_export(device: StoredDevice) -> bool:
     return _changed_since_export_at(device.exported_at, device.updated_at)
 
 
-def _status_for(device: StoredDevice) -> ExportStatusOut:
-    changed = _changed_since_export(device)
+def _status_for(device: StoredDevice, mode: ExportMode) -> ExportStatusOut:
+    # A member switched only through its group has nothing of its own to
+    # export (design 2026-11-07, section 2), so nothing of its own can be
+    # pending either - otherwise its tile would ask for an export forever.
+    changed = exports_on_its_own(mode) and _changed_since_export(device)
     return ExportStatusOut(
         device_id=device.id,
         label=device.label,
@@ -314,7 +331,15 @@ def build_export_router(store: Store) -> APIRouter:
         `download` applies before writing a file) - is skipped here
         exactly as `download` skips it (design 4.3: an emptied group has
         nothing to export)."""
-        devices = [_device_preview(device, store) for device in store.devices()]
+        # A group member switched only through its group writes no file of
+        # its own in `download`, so it is not listed here either (design
+        # 2026-11-07, section 2).
+        member_ids = store.group_member_ids()
+        devices = []
+        for device in store.devices():
+            mode = export_mode(device, member_ids)
+            if exports_on_its_own(mode):
+                devices.append(_device_preview(device, store, mode))
         groups = []
         for group in store.groups():
             group_commands = store.group_commands(group.id)
@@ -416,14 +441,29 @@ def build_export_router(store: Store) -> APIRouter:
                 archive.writestr("VIU_Matter_System.xml", viu_system)
                 archive.writestr("VO_Matter_System.xml", vo_system)
 
+            member_ids = store.group_member_ids()
             for device in store.devices():
+                # One device asked for by id is exported whole, like
+                # `loxmatter export` on the command line: whoever names a
+                # device wants its template. Everything else follows the
+                # device's group export mode (design 2026-11-07, section 2).
+                mode: ExportMode = (
+                    "full" if device_id is not None else export_mode(device, member_ids)
+                )
                 if device_id is not None:
                     if device.id != device_id:
                         continue
-                elif only_pending and not _changed_since_export(device):
+                elif (
+                    not exports_on_its_own(mode)
+                    or only_pending
+                    and not _changed_since_export(device)
+                ):
                     continue
-                signals = store.signals(device.id)
-                commands = _loxone_commands(store.commands(device.id))
+                stored_signals, stored_commands = scoped(
+                    mode, store.signals(device.id), store.commands(device.id)
+                )
+                signals = list(stored_signals)
+                commands = _loxone_commands(stored_commands)
                 inputs = to_inputs(signals, device.id, device.label)
 
                 archive.writestr(
@@ -489,6 +529,103 @@ def build_export_router(store: Store) -> APIRouter:
             headers={"Content-Disposition": f'attachment; filename="{ARCHIVE_NAME}"'},
         )
 
+    @router.get("/overview")
+    async def overview() -> ExportOverviewOut:
+        """Everything the export screen shows, by room (design 2026-11-07,
+        section 3). Reads only, like `preview`.
+
+        Built from the same scoped lists as `download` and the project
+        sync (`export.scope`), so a number here is the number of objects
+        the export writes."""
+        member_ids = store.group_member_ids()
+        devices = {device.id: device for device in store.devices()}
+        modes = {device.id: export_mode(device, member_ids) for device in devices.values()}
+        rooms: dict[str | None, tuple[list[OverviewGroupOut], list[OverviewDeviceOut]]] = {}
+        totals = {"groups": 0, "devices": 0, "inputs": 0, "outputs": 0, "changed": 0}
+
+        def room(name: str | None) -> tuple[list[OverviewGroupOut], list[OverviewDeviceOut]]:
+            return rooms.setdefault(name, ([], []))
+
+        for device in devices.values():
+            mode = modes[device.id]
+            if not exports_on_its_own(mode):
+                continue
+            signals, commands = scoped(mode, store.signals(device.id), store.commands(device.id))
+            inputs = len(to_inputs(signals, device.id, device.label))
+            outputs = len(_loxone_commands(commands))
+            totals["devices"] += 1
+            totals["inputs"] += inputs
+            totals["outputs"] += outputs
+            totals["changed"] += int(_changed_since_export(device))
+            if device.id in member_ids:
+                # Shown under its group, below.
+                continue
+            room(device.room)[1].append(
+                OverviewDeviceOut(
+                    device_id=device.id,
+                    label=device.label,
+                    category=category_for(device.device_types).value,
+                    technology=device.technology,
+                    transport=transport_for(device.technology, device.network_features),
+                    inputs=_capabilities_out(input_capabilities(signals)),
+                    outputs=_capabilities_out(output_capabilities(commands)),
+                    input_count=inputs,
+                    output_count=outputs,
+                    changed_since_export=_changed_since_export(device),
+                )
+            )
+
+        for group in store.groups():
+            group_commands = store.group_commands(group.id)
+            if not _group_has_export(group_commands):
+                continue
+            members = [m for m in store.group_members(group.id) if m.id in devices]
+            output_count = len(to_group_outputs(group_commands))
+            changed = _group_changed_since_export(group)
+            totals["groups"] += 1
+            totals["outputs"] += output_count
+            totals["changed"] += int(changed)
+            room(group.room)[0].append(
+                OverviewGroupOut(
+                    group_id=group.id,
+                    label=group.label,
+                    category=group.category,
+                    outputs=_capabilities_out(output_capabilities(group_commands)),
+                    output_count=output_count,
+                    changed_since_export=changed,
+                    members=[
+                        OverviewMemberOut(
+                            device_id=member.id,
+                            label=member.label,
+                            mode=modes[member.id],
+                            inputs=_capabilities_out(input_capabilities(store.signals(member.id))),
+                            outputs=_capabilities_out(
+                                output_capabilities(store.commands(member.id))
+                            ),
+                            changed_since_export=exports_on_its_own(modes[member.id])
+                            and _changed_since_export(member),
+                        )
+                        for member in sorted(members, key=lambda m: m.label.casefold())
+                    ],
+                )
+            )
+
+        ordered = sorted(rooms, key=lambda name: (name is None, (name or "").casefold()))
+        return ExportOverviewOut(
+            rooms=[
+                OverviewRoomOut(
+                    name=name,
+                    groups=sorted(rooms[name][0], key=lambda g: g.label.casefold()),
+                    devices=sorted(rooms[name][1], key=lambda d: d.label.casefold()),
+                )
+                for name in ordered
+            ],
+            totals=OverviewTotalsOut(
+                **totals,
+                via_group=sum(1 for mode in modes.values() if not exports_on_its_own(mode)),
+            ),
+        )
+
     @router.get("/status")
     async def status() -> list[ExportStatusOut | GroupExportStatusOut]:
         """Per active device: when last exported, changed since (see
@@ -506,8 +643,9 @@ def build_export_router(store: Store) -> APIRouter:
         export (`_group_has_export`) is left out, the same as in
         `preview` above and for the same reason: it produces no file for
         `download` to mark exported."""
+        member_ids = store.group_member_ids()
         entries: list[ExportStatusOut | GroupExportStatusOut] = [
-            _status_for(device) for device in store.devices()
+            _status_for(device, export_mode(device, member_ids)) for device in store.devices()
         ]
         for group in store.groups():
             if not _group_has_export(store.group_commands(group.id)):

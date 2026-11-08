@@ -241,6 +241,9 @@ async def test_project_sync_distinguishes_a_group_from_a_same_numbered_device(ap
     (plug,) = store.devices()
     group = store.create_group("Kitchen group", [plug.id])
     assert group.id == plug.id == 1  # the collision this test exists to cover
+    # A member is exported only through its group by default (design
+    # 2026-11-07); this test needs the plug's own objects as well.
+    store.set_group_export(plug.id, "full")
 
     response = await client.post(
         "/api/export/project-sync",
@@ -415,3 +418,41 @@ async def test_project_sync_without_a_room_list_names_no_target(api):
     body = response.json()
     assert body["rooms"] == [{"name": "Werkstatt", "status": "not_creatable", "loxone_title": None}]
     assert all(entry["target_room"] is None for entry in body["entries"])
+
+
+async def test_project_sync_leaves_out_a_member_switched_through_its_group(api):
+    """Design 2026-11-07, section 2: a group member is exported only
+    through its group by default - the plan carries the group's outputs and
+    nothing of the member's own, not even its online input."""
+    client, store = api
+    (plug,) = store.devices()
+    store.create_group("Kitchen group", [plug.id])
+
+    response = await client.post(
+        "/api/export/project-sync",
+        params={"bridge_ip": "10.0.0.5"},
+        files={"file": ("projekt.Loxone", SAMPLE_PROJECT.encode("utf-8"), "application/xml")},
+    )
+    assert response.status_code == 200
+    entries = response.json()["entries"]
+    owners = {e["owner_kind"] for e in entries if e["status"] != "orphaned"}
+    assert owners == {"group"}
+
+
+async def test_project_sync_writes_only_the_inputs_of_a_status_member(api):
+    """`status`: the member's values reach Loxone, its commands do not."""
+    client, store = api
+    (plug,) = store.devices()
+    store.create_group("Kitchen group", [plug.id])
+    store.set_group_export(plug.id, "status")
+
+    response = await client.post(
+        "/api/export/project-sync",
+        params={"bridge_ip": "10.0.0.5"},
+        files={"file": ("projekt.Loxone", SAMPLE_PROJECT.encode("utf-8"), "application/xml")},
+    )
+    entries = response.json()["entries"]
+    device_kinds = {
+        e["kind"] for e in entries if e["owner_kind"] == "device" and e["status"] != "orphaned"
+    }
+    assert device_kinds == {"input"}

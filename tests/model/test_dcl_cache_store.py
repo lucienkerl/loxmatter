@@ -6,8 +6,8 @@ from loxmatter.matter.dcl import DclModel, DclVendor
 from loxmatter.model.store import Store, schema_version
 
 
-def test_schema_is_17():
-    assert schema_version() == 17
+def test_schema_is_18():
+    assert schema_version() == 18
 
 
 def test_vendor_and_model_round_trip(tmp_path):

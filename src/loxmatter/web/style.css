@@ -4773,3 +4773,348 @@ main.setup {
 .setup-step select {
   max-width: 100%;
 }
+
+/* --- Export overview by room (design 2026-11-07, section 3) ------------- */
+
+/* Wider than the 960px of the other form views: the room list and the
+ * summary column sit side by side. */
+main.main-export {
+  max-width: 1240px;
+}
+
+.export-overview {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  align-items: flex-start;
+  margin-bottom: 1rem;
+}
+
+.export-main {
+  flex: 999 1 560px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.export-main .card {
+  margin-bottom: 0;
+}
+
+.export-bridge-line {
+  margin: 0;
+}
+
+.export-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  align-items: center;
+}
+
+.export-search {
+  flex: 1 1 240px;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0 0.6rem;
+  min-height: 40px;
+  color: var(--text-muted);
+}
+
+.export-search input {
+  flex: 1;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 0.9rem;
+  min-width: 0;
+}
+
+.export-search:focus-within {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.segmented {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.segmented button {
+  border: 0;
+  border-radius: 0;
+  min-height: 40px;
+  padding: 0 0.9rem;
+}
+
+.segmented button + button {
+  border-left: 1px solid var(--border);
+}
+
+.segmented button.active {
+  background: var(--text);
+  color: var(--surface);
+}
+
+.export-room {
+  padding: 0;
+  overflow: hidden;
+}
+
+.export-room-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  width: 100%;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 0.75rem 1rem;
+  min-height: 48px;
+  text-align: left;
+}
+
+.export-room-head h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.export-spacer {
+  flex: 1 1 auto;
+}
+
+.export-room-head .chevron,
+.export-members-head .chevron {
+  color: var(--text-muted);
+  transition: transform 0.15s ease;
+}
+
+.export-room-head .chevron.open,
+.export-members-head .chevron.open {
+  transform: rotate(90deg);
+}
+
+.export-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem 0.8rem;
+  padding: 0.6rem 1rem;
+  border-top: 1px solid var(--border);
+}
+
+.export-group {
+  background: color-mix(in srgb, var(--type-bg) 40%, var(--surface));
+  border-top: 1px solid var(--border);
+}
+
+.export-group > .export-row {
+  border-top: 0;
+}
+
+.export-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  background: var(--off-bg);
+  color: var(--text-muted);
+  flex: none;
+}
+
+.export-icon.is-group {
+  background: var(--type-bg);
+  color: var(--type-fg);
+}
+
+.export-name {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 200px;
+  min-width: 0;
+  font-weight: 600;
+  font-size: 0.92rem;
+}
+
+.export-name .hint {
+  font-weight: 400;
+  margin: 0;
+}
+
+.export-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  flex: 2 1 260px;
+  align-items: center;
+}
+
+.export-chips .hint {
+  margin: 0;
+}
+
+.export-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.15rem 0.6rem;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  line-height: 1.4;
+  white-space: nowrap;
+  background: var(--off-bg);
+  color: var(--text);
+}
+
+.export-chip.is-in {
+  background: var(--ok-bg);
+  color: var(--ok);
+}
+
+.export-chip.is-out {
+  background: var(--type-bg);
+  color: var(--type-fg);
+}
+
+.export-chip.is-more {
+  background: transparent;
+  border: 1px dashed var(--border);
+  color: var(--text-muted);
+}
+
+.export-members {
+  margin: 0 1rem 0.75rem 3.4rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+}
+
+.export-members-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  min-height: 40px;
+  padding: 0.4rem 0.75rem;
+  text-align: left;
+  font-size: 0.85rem;
+}
+
+.export-members-head .hint {
+  margin: 0;
+}
+
+.export-member {
+  padding: 0.5rem 0.75rem;
+}
+
+.export-member .export-name {
+  font-weight: 500;
+}
+
+.export-member.is-via-group .export-name {
+  color: var(--text-muted);
+}
+
+.export-mode {
+  min-height: 36px;
+}
+
+.export-summary {
+  flex: 1 1 260px;
+  max-width: 340px;
+  margin-bottom: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  position: sticky;
+  top: 1rem;
+}
+
+.export-summary h2 {
+  margin: 0;
+}
+
+.export-summary .hint {
+  margin: 0;
+}
+
+.export-summary button {
+  min-height: 44px;
+  font-size: 0.92rem;
+}
+
+.export-tiles {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.5rem;
+}
+
+.export-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  background: var(--bg);
+  border-radius: 6px;
+  padding: 0.6rem 0.7rem;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.export-tile strong {
+  font-size: 1.4rem;
+  color: var(--text);
+}
+
+.export-tile.is-in {
+  background: var(--ok-bg);
+}
+
+.export-tile.is-in strong {
+  color: var(--ok);
+}
+
+.export-tile.is-out {
+  background: var(--type-bg);
+}
+
+.export-tile.is-out strong {
+  color: var(--type-fg);
+}
+
+.export-templates {
+  margin-bottom: 1rem;
+}
+
+.export-templates > summary {
+  cursor: pointer;
+  font-weight: 600;
+  padding: 0.6rem 0;
+  min-height: 24px;
+}
+
+/* On a phone the summary drops below the list and stops sticking. */
+@media (max-width: 860px) {
+  .export-summary {
+    max-width: none;
+    position: static;
+  }
+
+  .export-members {
+    margin-left: 1rem;
+  }
+}

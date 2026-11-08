@@ -467,8 +467,8 @@ def build_device_router(
 
     @router.patch("/devices/{device_id}")
     async def patch_device(device_id: int, patch: DevicePatch) -> DeviceOut:
-        """Changes label and/or room. `None` means "unchanged" for both
-        fields; the empty string in room means "remove".
+        """Changes label, room and/or group export mode. `None` means
+        "unchanged" for each field; the empty string in room means "remove".
 
         The two write paths are deliberately different: `rename_device`
         also sets `updated_at` (the label is exported as `Title`),
@@ -479,6 +479,8 @@ def build_device_router(
             store.rename_device(device.id, patch.label)
         if patch.room is not None:
             store.set_room(device.id, patch.room)
+        if patch.group_export is not None:
+            store.set_group_export(device.id, patch.group_export)
         return _with_removal(
             _device_out(store.device(device.id), store, runtime, _supports_identify)
         )
